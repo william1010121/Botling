@@ -34,8 +34,9 @@ import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
-import { botCounts, canIdle, idleCounts, idleList, peekCard, railOrder, railSplit } from "./rail-idle";
-import { peekHover } from "./peek-hover";
+import { botCounts, canIdle, idleCounts, idleList, railOrder, railSplit } from "./rail-idle";
+import { markViewed, railWords, railWorkers, readRailFold, readRailSince, readViewedWorkers, toggleRailFold, type RailFold, type RailMarks } from "./rail-workers";
+import { RailWorkerList, type RailWorkerActions } from "./RailWorkers";
 import { SubBotFace, SubBotNav } from "./SubBotNav";
 import { flashMs, headerNav, leaveMark, movePinned, newSinceMark, newSubBotAsk, NEW_SINCE_PREFIX, pinnedTarget, rememberRoom, roomStep, subBotRow, togglePinned, withNewSince, type LastRooms, type LeaveMarks } from "./sub-bot-nav";
 
@@ -44,7 +45,7 @@ const leaveMarks: { current: LeaveMarks } = { current: {} };
 /** ⌘⌥1–9's shortcut ids, by the number. */
 const PINNED_KEYS = ([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => `pinnedSubBot${n}` as const);
 const pinnedNumber = (id: string | null | undefined): number | null => { const n = /^pinnedSubBot([1-9])$/.exec(id ?? "")?.[1]; return n ? Number(n) : null; };
-import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDialog, StripPeek, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
+import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, StripPeek, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { useApprovalSheet } from "./ApprovalSheet";
 import { WorkerAskBar, WorkersBadge, WorkersMenu } from "./Workers";
@@ -154,29 +155,12 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     const now = (store.getView().settings?.idleBots ?? []).filter((id) => store.getView().bots.some((candidate) => candidate.id === id));
     void client.request({ type: "settings.set", change: { key: "idleBots", value: idleList(now, botId, away) } }).catch(() => {});
   }, [client, store]);
-  /**
-   * The status card beside a bot row (PeekCard): the bot, where its row is, and whether the focus goes into it.
-   * It opens on hover (peek-hover.ts: after a short delay, kept while the pointer crosses into it), on keyboard focus,
-   * or, where nothing hovers (touch), on a tap. A click on a row only opens the chat.
-   */
-  const [peek, setPeek] = useState<{ botId: string; top: number; right: number; keyboard: boolean } | null>(null);
-  const peekInto = useRef(false);
-  const peeking = useMemo(() => peekHover({
-    onOpen: (botId, anchor) => { const keyboard = peekInto.current; peekInto.current = false; setPeek({ botId, ...anchor, keyboard }); },
-    onClose: () => setPeek(null),
-  }), []);
-  useEffect(() => () => peeking.dispose(), [peeking]);
-  // Focus put back on a row by Escape does not open its card again.
-  const peekQuiet = useRef(false);
-  const closePeek = useCallback((refocus: boolean) => {
-    const botId = peeking.shown();
-    peeking.close();
-    if (botId && refocus) {
-      peekQuiet.current = true;
-      document.querySelector<HTMLElement>(`.rail .bot-row[data-bot="${botId}"]`)?.focus();
-      peekQuiet.current = false;
-    }
-  }, [peeking]);
+  // The worker list under each bot row (rail-workers.ts): finished workers you opened, the list's first start (older ones
+  // count as opened), the fold (kept across restarts) and the bots whose "N more" is open (this window only).
+  const [viewedWorkers, setViewedWorkers] = useState<ReadonlySet<string>>(() => readViewedWorkers());
+  const [railSince] = useState(() => readRailSince(Date.now()));
+  const [railFold, setRailFold] = useState<RailFold>(() => readRailFold());
+  const [railAll, setRailAll] = useState<ReadonlySet<string>>(() => new Set());
   // Navigation v5: the Sub bots menu left of Chat | Board (⌘⇧S), and ⌘[ / ⌘] between a project bot and the
   // sub bot last shown under it (kept for this window only, never in a bot's context).
   const [subBotsOpen, setSubBotsOpen] = useState(false);
@@ -364,6 +348,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   // and opening a failed one counts as seen.
   const shownWorker = useMemo(() => watchedWorker(bot, view.subagent ?? null), [bot, view.subagent]);
   useEffect(() => { if (shownWorker?.status === "failed") seeWorker(shownWorker.id); }, [shownWorker?.id, shownWorker?.status, seeWorker]);
+  // A finished worker opened in the main area is viewed: its blue dot goes, and it leaves the list once you move on.
+  useEffect(() => { if (shownWorker && shownWorker.status !== "running") setViewedWorkers(markViewed(shownWorker.id)); }, [shownWorker?.id, shownWorker?.status]);
   useEffect(() => {
     setWorkersMenu(workersMenuAfterMove(workersMenuPending.current, chat?.botId));
     workersMenuPending.current = null;
@@ -593,10 +579,19 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                 const look = view.settings?.botLook ?? "original";
                 const split = railSplit(view.bots, pinned, idle);
                 const shownId = !watching ? chat?.botId ?? null : null;
-                const hasPeek = (candidate: BotView) => { const card = peekCard(candidate, view.bots, view.waiting, now); return card.subBots.length > 0 || card.agents.length > 0; };
+                const lang = view.settings?.effectiveLanguage ?? null;
+                const words = railWords(lang);
+                const workerMarks: RailMarks = { viewed: viewedWorkers, since: railSince, watching: watching && chat?.botId ? { botId: chat.botId, id: watching } : null,
+                  folded: new Set(railFold.folded), all: railAll };
+                const workerActions: RailWorkerActions = {
+                  onOpen: openSubagent,
+                  onSettle: (ownerId, workerRow) => settleSubagent(ownerId, workerRow, true),
+                  onAll: (botId) => setRailAll((current) => { const next = new Set(current); if (!next.delete(botId)) next.add(botId); return next; }),
+                };
                 const row = (candidate: BotView, away: boolean) => {
                   const counts = botCounts(candidate, view.bots, view.waiting, candidate.id === shownId);
-                  return (
+                  const list = railWorkers(candidate, view.bots, now, workerMarks);
+                  return (<>
                     <BotRow
                       bot={candidate}
                       look={look}
@@ -604,27 +599,20 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                       inside={bot?.parent === candidate.id && !watching ? bot.name : undefined}
                       waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
                       counts={counts}
-                      onSelect={(from) => {
-                        selectBot(candidate.id);
-                        // A click only opens the chat. Enter on a focused row also takes the focus into its card; a tap
-                        // where nothing hovers opens the card (the hover's stand-in).
-                        if (!from || !hasPeek(candidate)) return;
-                        if (from.keyboard) {
-                          if (peeking.shown() === candidate.id) setPeek((current) => (current ? { ...current, keyboard: true } : current));
-                          else { peekInto.current = true; peeking.openNow(candidate.id, anchorOf(from.el)); }
-                        } else if (!canHover()) peeking.openNow(candidate.id, anchorOf(from.el));
-                      }}
-                      peek={{
-                        enter: (el) => { if (hasPeek(candidate)) peeking.enterRow(candidate.id, () => anchorOf(el)); else peeking.leaveRow(); },
-                        leave: () => peeking.leaveRow(),
-                        focus: (el) => { if (!peekQuiet.current && hasPeek(candidate)) peeking.openNow(candidate.id, anchorOf(el)); },
-                      }}
+                      // A click opens the chat; its workers are listed under the row (no card on hover any more).
+                      onSelect={() => selectBot(candidate.id)}
+                      workers={list.total > 0 ? {
+                        total: list.total, unread: list.unread, folded: list.folded, unreadTip: words.unread(list.unread),
+                        label: list.folded ? words.unfold(candidate.name, list.total) : words.fold(candidate.name),
+                        onToggle: () => setRailFold(toggleRailFold(candidate.id)),
+                      } : undefined}
                       pinned={!away && canIdle(candidate) ? pinned.includes(candidate.id) : undefined}
                       onTogglePin={() => togglePin(candidate.id)}
-                      idle={canIdle(candidate) ? { away, onToggle: () => { setIdle(candidate.id, !away); peeking.close(); } } : undefined}
+                      idle={canIdle(candidate) ? { away, onToggle: () => setIdle(candidate.id, !away) } : undefined}
                       onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
                     />
-                  );
+                    {list.items.length > 0 && <RailWorkerList botId={candidate.id} list={list} name={candidate.name} now={now} lang={lang} actions={workerActions} />}
+                  </>);
                 };
                 const idleNumbers = idleCounts(split.idle, view.bots, view.waiting);
                 return <>
@@ -650,15 +638,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             </>
           )}
         </nav>
-        {peek && !query.trim() && (() => {
-          const target = view.bots.find((candidate) => candidate.id === peek.botId);
-          return target ? <PeekCard key={target.id} bot={target} card={peekCard(target, view.bots, view.waiting, now)} anchor={{ top: peek.top, right: peek.right }} now={now} focusFirst={peek.keyboard}
-            onOpenChat={(botId) => { peeking.close(); selectBot(botId); }}
-            onOpenAgent={(botId, agentRow) => { peeking.close(); openSubagent(botId, agentRow); }}
-            onPointerIn={() => peeking.enterCard()} onPointerOut={() => peeking.leaveCard()}
-            onSubBotMenu={(subBotId, at) => setSubBotMenu({ botId: subBotId, ...at })}
-            onClose={closePeek} /> : null;
-        })()}
         {web ? <div className="rail-settings web-rail-footer">{web.railFooter}</div> : <>
         {makingBot && <NewBotForm onDone={createBot} busy={creating} />}
         <div className="rail-add">
@@ -801,7 +780,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   );
 }
 
-export function BotRow({ bot, selected, inside, onSelect, look, waiting, counts, onMenu, pinned, onTogglePin, idle, peek }: {
+export function BotRow({ bot, selected, inside, onSelect, look, waiting, counts, onMenu, pinned, onTogglePin, idle, peek, workers }: {
   bot: BotView; selected: boolean;
   /** Navigation v5: the sub bot of this project bot on screen ("› Release" on the row); sub bots are never rows of their own. */
   inside?: string; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void;
@@ -815,6 +794,8 @@ export function BotRow({ bot, selected, inside, onSelect, look, waiting, counts,
   idle?: { away: boolean; onToggle: () => void };
   /** Its status card: the pointer came onto the row (corner buttons included) or left it; the keyboard focused the row. */
   peek?: { enter: (row: HTMLElement) => void; leave: () => void; focus: (row: HTMLElement) => void };
+  /** Its worker list's count at the row's end (rail-workers.ts): a click folds or unfolds the list; folded, the unread number beside it. */
+  workers?: { total: number; unread: number; folded: boolean; label: string; unreadTip: string; onToggle: () => void };
 }) {
   const asleep = bot.phase === "asleep" && !bot.working;
   const unread = counts ? counts.unread : selected ? 0 : bot.unread;
@@ -822,7 +803,7 @@ export function BotRow({ bot, selected, inside, onSelect, look, waiting, counts,
   const label = [bot.name, statusText(bot), needsYou ? `${needsYou} waiting on you` : waiting ? "waiting on you" : null, unread ? `${unread} unread` : null,
     inside ? `in ${inside}` : null, pinned ? "pinned" : null, idle?.away ? "in Idle" : null].filter(Boolean).join(", ");
   return (
-    <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}${idle ? " idleable" : ""}`}
+    <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}${idle ? " idleable" : ""}${workers ? " has-workers" : ""}`}
       // A touch has no hover: its tap opens the card instead (onSelect).
       onPointerEnter={peek ? (event) => { if (event.pointerType !== "touch") peek.enter(event.currentTarget.querySelector<HTMLElement>(".bot-row") ?? event.currentTarget); } : undefined}
       onPointerLeave={peek ? (event) => { if (event.pointerType !== "touch") peek.leave(); } : undefined}>
@@ -851,22 +832,18 @@ export function BotRow({ bot, selected, inside, onSelect, look, waiting, counts,
           <Icon name={pinned ? "pinSlash" : "pin"} size={12} />
         </button>
       )}
+      {workers && (
+        <button type="button" className={`rail-wk-pill${workers.folded ? " folded" : ""}`} aria-expanded={!workers.folded} aria-label={workers.label} title={workers.label} onClick={workers.onToggle}>
+          {workers.total}
+          {workers.folded && workers.unread > 0 && <span className="rail-wk-count" title={workers.unreadTip}>{workers.unread}</span>}
+          <span className={`rail-wk-chevron${workers.folded ? "" : " open"}`} aria-hidden="true"><Icon name="chevronLeft" size={9} /></span>
+        </button>
+      )}
     </div>
   );
 }
 
 export { railOrder } from "./rail-idle";
-
-/** Where a row's card sits: beside the row. */
-function anchorOf(row: HTMLElement): { top: number; right: number } {
-  const box = row.getBoundingClientRect();
-  return { top: box.top, right: box.right };
-}
-
-/** Whether the pointer can hover here (a touch screen cannot: a tap opens the card instead). */
-function canHover(): boolean {
-  return typeof window === "undefined" || typeof window.matchMedia !== "function" || window.matchMedia("(hover: hover)").matches;
-}
 
 /** Focus from the keyboard (not the focus a mouse click leaves on the row). */
 function focusVisible(el: Element): boolean {
