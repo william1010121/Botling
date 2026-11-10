@@ -1095,3 +1095,66 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .col-handle[data-column="noteChat"]::before, .col-handle[data-column="noteChat"]::after { left: auto; right: 0; }
 @media (max-width: 860px) { .shell > .col-handle[data-column="right"] { display: none; } }
 @media (prefers-reduced-motion: reduce) { .col-handle::after { transition: none; } }
+
+/* The worker list under a bot row (RailWorkers.tsx): each worker a 2-line item, 26 pt in,
+   its name over its state and time; a blue dot until a finished one is opened; the settle clock on a
+   finished one; a sub bot's worker has its sub bot's tag before its state. The bot row's count (a pill at its end)
+   folds the list. Marks as the workers menu's (.wk-s). */
+.bot-row-wrap.has-workers .bot-row { padding-right: 64px; }
+.bot-row-wrap.has-workers.idleable:hover .bot-row, .bot-row-wrap.has-workers.pinnable:hover .bot-row { padding-right: 92px; }
+.rail-wk-pill {
+  position: absolute; right: 10px; top: 15px; display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px 0 7px;
+  border: 0; border-radius: 9px; background: var(--info-bg); color: var(--link); font-size: 11px; line-height: 18px; cursor: pointer; -webkit-app-region: no-drag;
+}
+.rail-wk-pill:hover { background: var(--accent-bg); }
+.bot-row-wrap.idleable:hover .rail-wk-pill { right: 32px; }
+.bot-row-wrap.pinnable:not(.idleable):hover .rail-wk-pill { right: 38px; }
+.rail-wk-count {
+  min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--blue); color: #fff; font-size: 10.5px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.rail-wk-pill .rail-wk-count { margin-left: 2px; height: 14px; min-width: 14px; font-size: 10px; }
+.rail-wk-chevron { display: inline-flex; transform: rotate(180deg); transition: transform .12s; }
+.rail-wk-chevron.open { transform: rotate(270deg); }
+.rail-wk { display: flex; flex-direction: column; }
+.rail-wk-row { display: flex; align-items: center; border-radius: 10px; -webkit-app-region: no-drag; }
+.rail-wk-row:hover { background: var(--hover); }
+.rail-wk-row.selected, .rail-wk-row.selected:hover { background: var(--selected); }
+.rail-wk-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 3px 4px 3px 26px;
+  background: none; border: 0; color: var(--text); text-align: left; cursor: pointer;
+}
+.rail-wk-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.rail-wk-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-wk-meta { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-wk-row.unread .rail-wk-name { font-weight: 600; }
+.rail-wk-row.viewed .rail-wk-open { color: var(--muted); }
+.rail-wk-row.running .rail-wk-state { color: var(--link); }
+.rail-wk-row.done.unread .rail-wk-state { color: var(--green); }
+.rail-wk-row.failed .rail-wk-state { color: var(--error); }
+.rail-wk-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); flex-shrink: 0; }
+.rail-wk-mark { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 800; color: #fff; line-height: 1; }
+.rail-wk-mark.running { border: 2px solid var(--blue); border-right-color: var(--accent-line); animation: wk-spin 1s linear infinite; }
+.rail-wk-mark.done { background: var(--green); }
+.rail-wk-mark.done.viewed { background: var(--faint); }
+.rail-wk-mark.failed { background: var(--error); color: #1A0E0D; }
+.rail-wk-mark.stopped { background: var(--faint); font-size: 6px; }
+@media (prefers-reduced-motion: reduce) { .rail-wk-mark.running { animation: none; } }
+:root[data-theme="light"] .rail-wk-mark.failed { color: #fff; }
+.rail-wk-settle {
+  width: 24px; height: 30px; margin-right: 6px; flex-shrink: 0; border: 0; border-radius: 6px; background: none; padding: 0;
+  color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.rail-wk-row:hover .rail-wk-settle { background: var(--chip); color: var(--text); }
+.rail-wk-more {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px 0 45px; border: 0; border-radius: 6px;
+  background: none; color: var(--faint); font-size: 12px; cursor: pointer; -webkit-app-region: no-drag;
+}
+.rail-wk-more:hover { color: var(--text); }
+.rail-wk-more .rail-wk-chevron { transform: rotate(270deg); }
+.rail-wk-more .rail-wk-chevron.open { transform: rotate(90deg); }
+.rail-wk-tag { display: inline-flex; align-items: center; gap: 3px; margin-right: 5px; color: var(--muted); vertical-align: top; }
+.rail-wk-subface {
+  width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; background: var(--chip); color: var(--text);
+  font-size: 8.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+}
