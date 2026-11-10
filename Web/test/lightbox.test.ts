@@ -64,16 +64,15 @@ describe("image lightbox", () => {
     expect(document.querySelector(".lightbox")).toBeNull();
   });
 
-  it("zooms to full size when the picture is clicked, and opens in Preview only on request", () => {
+  it("zooms in when the picture is clicked (no longer closes), and opens in Preview only on request", () => {
     const row = messageElement(message({ text: "![shot](file:///tmp/a.png)" }), {});
     document.body.append(row);
     row.querySelector<HTMLImageElement>("img.media")!.click();
     const box = document.querySelector<HTMLElement>(".lightbox")!;
     box.querySelector<HTMLImageElement>(".lightbox-image")!.click();
-    expect(box.classList.contains("actual")).toBe(true);
     expect(document.querySelector(".lightbox")).not.toBeNull();
     box.querySelector<HTMLButtonElement>(".lightbox-open")!.click();
-    expect(sent).toEqual([{ type: "openExternal", url: "file:///tmp/a.png" }]);
+    expect(sent).toEqual([{ type: "openExternal", url: "file:///tmp/a.png", shown: "file:///tmp/a.png" }]);
   });
 
   it("opens an attached picture's thumbnail in the lightbox too", () => {
@@ -92,7 +91,7 @@ describe("image lightbox", () => {
     const box = document.querySelector<HTMLElement>(".lightbox")!;
     expect(box.querySelector<HTMLElement>(".lightbox-open")!.dataset.url).toBe(url);
     box.querySelector<HTMLButtonElement>(".lightbox-reveal")!.click();
-    expect(sent).toEqual([{ type: "revealFile", url }]);
+    expect(sent).toEqual([{ type: "revealFile", url, shown: url }]);
   });
 
   it("still sends HTML pages and other files to their window", () => {
