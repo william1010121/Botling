@@ -11,11 +11,12 @@ describe("botFace", () => {
     expect(botFace({ avatar: "star", heads: ["claude"] }, "original", { asleep: true, working: false, waiting: false })).toBe(avatarURL("star", "closed"));
   });
 
-  it("draws the Cute look from its head's character in the mood of the moment, its shape as a hat", () => {
+  it("draws the Cute look from its head's character in the mood of the moment, as a badge on its shape face", () => {
     const pictures = { gpt: { working: "R1BU" }, claude: { idle: "Q0xB" } };
     const svg = decode(botFace({ avatar: "heart", heads: ["codex", "claude"] }, "cute", { asleep: false, working: true, waiting: false }, pictures));
     expect(svg).toContain("data:image/png;base64,R1BU");
-    expect(svg).toContain("<svg x=\"22.5\"");
+    expect(svg).toContain('clip-path="url(#badge)"');
+    expect(svg).toContain('fill="#FF7EA0"');
     // No picture for that mood: the original look.
     expect(botFace({ avatar: "heart", heads: ["claude"] }, "cute", { asleep: true, working: false, waiting: false }, pictures)).toBe(avatarURL("heart", "closed"));
   });

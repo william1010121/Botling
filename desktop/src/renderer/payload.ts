@@ -5,7 +5,7 @@ import type { BotView, ChatDecoration, ComponentInfoView, DisplayView, HeadsView
 import type { ComponentInfo, DisplayView as WebDisplay, PinSize, DecorationView, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskChipView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
-import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
+import { characterURL, faceURL, type Look } from "./avatars";
 import { menuItems, slashMenu } from "./plugin-commands";
 
 /** What the chat frame needs besides the page's own state: turn states. */
@@ -162,10 +162,10 @@ export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[
 
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
   { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original", bots = [], feedback = false, plugins = null }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[]; feedback?: boolean; plugins?: PluginsView | null } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
-  const face = avatarURL(bot.avatar);
+  const face = faceURL(bot, "original");
   // A line another bot said here (called in with @): its name and face (`speaker`).
   const guestOf = (message: { role: string; sourceId?: string }) => (message.role === "bot" && message.sourceId ? bots.find((other) => other.id === message.sourceId) ?? null : null);
-  const guestFace = (other: BotView, engine?: string | null) => (look === "cute" ? faceURL(other, "cute", { engine: engine ?? "claude" }) : avatarURL(other.avatar));
+  const guestFace = (other: BotView, engine?: string | null) => (look === "cute" ? faceURL(other, "cute", { engine: engine ?? "claude" }) : faceURL(other, "original"));
   // Cute: each reply shows the character of the head that wrote it, with the bot's face as its hat.
   // Keep the legacy Claude default stable. Changing heads must not relabel that history.
   const faceOf = (engine: string | null | undefined) => (look === "cute" ? faceURL(bot, "cute", { engine: engine ?? "claude" }) : face);
@@ -261,8 +261,8 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     // Call-ins not answered yet, by name: shown whether or not the chat's own bot is at work.
     callIns: (bot.callIns ?? []).map((call) => ({ name: bots.find((other) => other.id === call.id)?.name ?? "A bot", state: call.state })),
     answeringIn: bot.answeringIn ? bots.find((other) => other.id === bot.answeringIn)?.name ?? "another bot" : null,
-    avatar: answering ? (look === "cute" ? faceURL(answering, "cute", { working: true }) : avatarURL(answering.avatar, "open"))
-      : look === "cute" ? faceURL(bot, "cute", { engine: activeHead, working: runs.length > 0, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
+    avatar: answering ? (look === "cute" ? faceURL(answering, "cute", { working: true }) : faceURL(answering, "original"))
+      : look === "cute" ? faceURL(bot, "cute", { engine: activeHead, working: runs.length > 0, waiting: bot.approvals > 0 }) : faceURL(bot, "original"),
     ...(bots.length ? mentionNames(bot, bots) : {}),
     placeholder: placeholder(bot),
     ...(lang ? { lang } : {}),
@@ -274,7 +274,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     ...(!answering ? { liveRuns: runs.map((run) => {
       const head = run.head ?? chat.messages.find((message) => message.id === run.messageId)?.engine ?? "claude";
       return { id: run.turnId,
-        avatar: look === "cute" ? faceURL(bot, "cute", { engine: head, working: true, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
+        avatar: look === "cute" ? faceURL(bot, "cute", { engine: head, working: true, waiting: bot.approvals > 0 }) : faceURL(bot, "original"),
         label: two ? `${bot.name} · ${headName(head)}` : bot.name,
         // Reply history may be collapsed; current activity must stay visible independently.
         live: run.live.map(step),
@@ -307,7 +307,7 @@ function clock(iso: string | null): string | null {
  * its bot, what it said with the tool calls before each, and its report at the end.
  */
 export function subagentState(bot: BotView, subagent: SubagentView): { state: ChatState; extras: FrameExtras } {
-  const face = avatarURL(bot.avatar);
+  const face = faceURL(bot, "original");
   const extras: FrameExtras = { botId: bot.id, running: false, states: {} };
   const line = (id: string, role: "user" | "bot" | "error", text: string, steps: WebStep[], time: string | null = null, said?: { you?: boolean; queued?: boolean }): WebMessage => ({
     id: `${subagent.id}-${id}`, role, text, stamp: null, avatar: role === "bot" ? face : null, choices: null, chosen: null, answer: null, open: false,
@@ -348,7 +348,7 @@ export function subagentState(bot: BotView, subagent: SubagentView): { state: Ch
     botName: subagent.title,
     messages,
     working: running,
-    avatar: avatarURL(bot.avatar, "open"),
+    avatar: faceURL(bot, "original"),
     placeholder: "",
     replyingTo: null,
     pendingFiles: [],
