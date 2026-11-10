@@ -156,6 +156,8 @@ export const zhHant: Dictionary = {
   "subagent.you": "你",
   "messages.queued": "排隊中",
   "messages.queuedHint": "等目前這一輪結束後才會送出。",
+  "messages.answerQueuedHint": "發問的 bot 正在忙：你的答案會送進它的聊天，送到後才算數。",
+  "messages.answerNotDelivered": "你上次的答案沒送到 {name}，請再答一次。",
   "subagent.engine.claude": "Claude 子代理",
   "subagent.engine.codex": "Codex 子代理",
   "subagent.engine.codexWorker": "Codex 工作 agent",

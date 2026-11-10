@@ -505,6 +505,15 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
   } else if (message.choices) {
     // Loose: the app leaves out a nil chosen or answer (undefined), not only null.
     const answered = message.chosen != null || message.answer != null;
+    // Your answer waits to reach the bot that asked (it is at work): shown as given, "Queued" until it gets there.
+    if (message.queued) bubble.append(queuedBadge({ label: t("messages.queued"), hint: t("messages.answerQueuedHint") }));
+    // The last answer did not reach it: the card is open again and says so.
+    if (message.notDelivered && message.open) {
+      const note = document.createElement("div");
+      note.className = "interrupted-note";
+      note.textContent = t("messages.answerNotDelivered", { name: message.notDelivered });
+      bubble.append(note);
+    }
     bubble.append(answered && !unfolded.has(message.id) ? foldedChoices(message, components) : choicesElement(message, components));
   }
   // Ones at the end, or with no place (saved before places were kept), come after the text.

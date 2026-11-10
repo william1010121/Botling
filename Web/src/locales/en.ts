@@ -157,6 +157,8 @@ export const en = {
   "subagent.you": "you",
   "messages.queued": "Queued",
   "messages.queuedHint": "Waiting for the current turn to end; it is sent then.",
+  "messages.answerQueuedHint": "The bot that asked is at work: your answer goes into its chat and counts once it gets there.",
+  "messages.answerNotDelivered": "Your last answer did not reach {name}. Answer again.",
   "subagent.engine.claude": "Claude subagent",
   "subagent.engine.codex": "Codex subagent",
   "subagent.engine.codexWorker": "Codex worker",

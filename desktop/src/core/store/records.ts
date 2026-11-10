@@ -74,6 +74,11 @@ export interface ChatRecord {
   ignoredAt?: string;
   /** Startup invalidated a copied app question; not a user answer. Retained as provenance after Ignore. */
   questionInvalidatedAt?: string;
+  /** A called-in bot's card answered while it could not take the answer yet: the answer, waiting to reach it (`to`, its
+   * name; `Bot.holdCardAnswer`). The card is not open meanwhile, nor answered. */
+  pendingAnswer?: { chosen?: number; answer?: string; to: string };
+  /** The last answer on this card did not reach the bot that asked (its name): the card is open again, saying so. */
+  notDelivered?: string;
   attachments?: { url: string; kind: string }[];
   replyTo?: string;
   replyPreview?: string;
@@ -116,7 +121,8 @@ export function isChatRecord(value: unknown): value is ChatRecord {
 
 /** An open question: it has buttons and neither a pick nor an answer yet (`isOpenQuestion`). */
 export const isOpenQuestion = (record: ChatRecord): boolean =>
-  !!record.choices?.length && record.chosen == null && record.answer == null && record.ignoredAt == null && record.questionInvalidatedAt == null;
+  !!record.choices?.length && record.chosen == null && record.answer == null && record.ignoredAt == null && record.questionInvalidatedAt == null
+  && record.pendingAnswer == null;
 
 /** `Workspace.Project`: a row of projects.json. `folder` is a file URL. */
 export interface ProjectRecord {

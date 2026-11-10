@@ -335,8 +335,11 @@ export const MessageView = z.strictObject({
   to: Engine.optional(),
   /** A user line a plugin sent (`bots.send`): the plugin's name as the page shows it. */
   via: z.string().max(200).optional(),
-  /** A user line the head cannot take into its turn under way (an Antigravity head): it waits, and is sent when the turn ends. */
+  /** A user line the head cannot take into its turn under way (an Antigravity head): it waits, and is sent when the turn ends.
+   * On a card: your answer (`chosen`/`answer`) waits to reach the called-in bot that asked; the card cannot be answered meanwhile. */
   queued: z.boolean().optional(),
+  /** An open card whose last answer did not reach the called-in bot that asked (its name): answer it again. */
+  notDelivered: z.string().max(200).optional(),
   /** With two heads: the heads this line has reached. */
   seenBy: z.array(Engine).max(3).optional(),
   /** A question shared between the heads: its source question's id. */

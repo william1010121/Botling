@@ -77,7 +77,7 @@ import { unsupportedRequest, type BotRequest } from "./reply";
 import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
 import { Conversations } from "./conversations";
-import { answeredNote, pickedNote, relayedAnswerNote, type GROUP_TIMING } from "./groups";
+import { answeredNote, guestCardAnswerNote, pickedNote, relayedAnswerNote, type GROUP_TIMING } from "./groups";
 import { ComponentsContext } from "./components/service";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { FolderWatch, type WatchTarget } from "./folder-watch";
@@ -2565,13 +2565,7 @@ First write a test that shows this, then fix it.`;
     if (!isOpenQuestion(record) || label === undefined) return { accepted: false };
     const relayed = this.answerRelayedCopy(chat, record, label, { chosen: index });
     if (relayed) return relayed;
-    if (!this.conversations.answerCallIn(chat, record, pickedNote(label))) {
-      chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED });
-      return { accepted: false };
-    }
-    chat.settleAppQuestion(messageId, { chosen: index });
-    this.settleRelayedOriginal(record, { chosen: index });
-    return { accepted: true };
+    return this.answerGuestLine(chat, record, pickedNote(label), label, { chosen: index });
   }
 
   /** Your words on a called-in bot's question go back to it. */
@@ -2583,12 +2577,29 @@ First write a test that shows this, then fix it.`;
     if (!shown || !isOpenQuestion(record)) return { accepted: false };
     const relayed = this.answerRelayedCopy(chat, record, text.trim() || shown, { answer: shown });
     if (relayed) return relayed;
-    if (!this.conversations.answerCallIn(chat, record, answeredNote(shown))) {
-      chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED });
+    return this.answerGuestLine(chat, record, answeredNote(shown), text.trim() || shown, { answer: shown });
+  }
+
+  /**
+   * Your answer on a called-in bot's line in this chat (its guest line, `isCalledIn`) goes back to it, and counts once it
+   * gets there (spec/models/callin/RelayedCard.tla): free, it answers here (a call-in, as when you named it); at work, the
+   * answer goes into its own chat, read into its turn under way or waiting for it to end. Meanwhile the card shows the
+   * answer "Queued"; if it never gets there (taken back, the bot stopped or removed), the card is open again and says so.
+   */
+  private answerGuestLine(chat: Bot, record: ChatRecord, note: string, words: string, outcome: { chosen?: number; answer?: string }): { accepted: boolean } {
+    const guest = typeof record.sourceID === "string" ? this.bots.get(record.sourceID) : undefined;
+    if (!guest || !this.conversations.callable(chat.id).some((member) => member.id === guest.id)) {
+      chat.settleAppQuestion(record.id, { answer: NO_LONGER_NEEDED });
       return { accepted: false };
     }
-    chat.settleAppQuestion(messageId, { answer: shown });
-    this.settleRelayedOriginal(record, { answer: shown });
+    if (!chat.holdCardAnswer(record.id, outcome, guest.profile.name)) return { accepted: false };
+    const told = (delivered: boolean) => chat.releaseCardAnswer(record.id, delivered);
+    const intoItsChat = () => {
+      try { guest.send(words, { appNote: guestCardAnswerNote(chat.profile.name), onDelivery: told }); } catch { told(false); }
+    };
+    if (guest.takesGuest && !this.conversations.callIns(chat.id).length) {
+      this.conversations.answerCallIn(chat, record, note, { began: () => told(true), busy: intoItsChat, failed: () => told(false) });
+    } else intoItsChat();
     return { accepted: true };
   }
 
