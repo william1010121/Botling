@@ -92,6 +92,8 @@ body.board #pin-area.has-composer-bar { min-height: 0; }
 }
 .float-btn:hover { background: var(--hover); color: var(--text); }
 .float-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+/* Collapse is always there and easy to find: the one button drawn in the text colour. */
+.float-collapse { color: var(--text); }
 .float-grip {
   position: fixed; right: 1px; bottom: 1px; width: 16px; height: 16px; z-index: 60; cursor: nwse-resize; touch-action: none;
   background:
@@ -100,6 +102,11 @@ body.board #pin-area.has-composer-bar { min-height: 0; }
 }
 .float-grip:hover, .float-grip.dragging { opacity: 1; }
 .float-grip[hidden] { display: none; }
+/* The panel's edge: a quiet 1px frame in the app's border colour (light and dark), following the rounded corners main
+   gives the floating view (editor-host.ts FLOAT_RADIUS), so it reads as a window over whatever page is under it. */
 body.floating-chat:not(.floating-docked)::before {
-  content: ""; position: fixed; inset: 0; z-index: 70; pointer-events: none; border: 1px solid var(--accent-line);
+  content: ""; position: fixed; inset: 0; z-index: 70; pointer-events: none; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 12px;
 }
+body.floating-chat:not(.floating-docked) .float-chrome { border-radius: 12px 12px 0 0; }
+.float-grip { right: 3px; bottom: 3px; }

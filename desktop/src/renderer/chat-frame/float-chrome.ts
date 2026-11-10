@@ -14,7 +14,8 @@ const GRAB = `<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor
 /** Dock beside: a window with its right column; float: a small window over a big one. */
 const DOCK = svg(`<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/>`);
 const FLOAT = svg(`<rect x="2" y="3" width="12" height="10" rx="2"/><rect x="8" y="8" width="4.5" height="3.5" rx="1" fill="currentColor" stroke="none"/>`);
-const COLLAPSE = svg(`<path d="M4 8h8"/>`);
+/** Fold back to the strip: a chevron down, as the strip's own chevron points the other way. */
+const COLLAPSE = svg(`<path d="M4 6l4 4 4-4"/>`, 16);
 
 export interface FloatChrome {
   show(spec: FloatChromeSpec | null): void;

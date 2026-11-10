@@ -30,6 +30,8 @@ export function nativeEditorNavigation(contents:WebContents,details:{isMainFrame
  return false;
 }
 /** The shell measures in CSS pixels; a zoomed shell (Cmd-minus) scales them to window DIPs. */
+/** The floating chat panel's corner radius (styles.css .float-backdrop and chat-frame/frame.css draw the same). */
+export const FLOAT_RADIUS=12;
 export function editorBounds(value:unknown,size:{width:number;height:number},zoom=1):Electron.Rectangle|null {
  if(!value||typeof value!=='object')return null;const v=value as Record<string,unknown>,keys=['x','y','width','height'];
  if(Object.keys(v).length!==4||keys.some(k=>typeof v[k]!=='number'||!Number.isFinite(v[k])))return null;
@@ -48,6 +50,7 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  let snapshotTimer:ReturnType<typeof setTimeout>|undefined;
  let snapshotDirty=false,captureInFlight=false,lastCaptureAt=-Infinity;
  let lastBounds:Electron.Rectangle|undefined;
+ let cornerRadius=0;
  let settleInitial!:(ready:boolean)=>void;
  const initial=new Promise<boolean>(resolve=>{settleInitial=resolve;});
  const checkInitial=()=>{if(laidOut&&initialized)settleInitial(true);};
@@ -103,6 +106,9 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
   const bounds=editorBounds(value.bounds,owner.getContentBounds(),ownerContents.getZoomFactor());if(!bounds)return;
   const boundsChanged=!lastBounds||(['x','y','width','height'] as const).some(key=>lastBounds![key]!==bounds[key]);
   lastBounds=bounds;if(!htmlFullscreen)view.setBounds(bounds);
+  // Floating over a page (the renderer's FloatingChat), the chat is a panel with rounded corners; laid out in its
+  // column, square.
+  const radius=value.rounded===true?FLOAT_RADIUS:0;if(radius!==cornerRadius){cornerRadius=radius;if(!htmlFullscreen)view.setBorderRadius(radius);}
   if(value.occluded===true){
    // Quick settings must be usable before capture/PNG decode (or the 1s capture budget).
    // The snapshot fills the background asynchronously; other overlays keep their handoff.
@@ -128,8 +134,8 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  // (Electron makes the window itself fullscreen) and goes back to its layout when the video leaves it.
  let htmlFullscreen=false;
  const fillWindow=()=>{if(htmlFullscreen&&!owner.isDestroyed()){const {width,height}=owner.getContentBounds();view.setBounds({x:0,y:0,width,height});}};
- const enterFullscreen=()=>{htmlFullscreen=true;fillWindow();};
- const leaveFullscreen=()=>{if(!htmlFullscreen)return;htmlFullscreen=false;if(lastBounds)view.setBounds(lastBounds);};
+ const enterFullscreen=()=>{htmlFullscreen=true;if(cornerRadius)view.setBorderRadius(0);fillWindow();};
+ const leaveFullscreen=()=>{if(!htmlFullscreen)return;htmlFullscreen=false;if(lastBounds)view.setBounds(lastBounds);if(cornerRadius)view.setBorderRadius(cornerRadius);};
  contents.on('enter-html-full-screen',enterFullscreen);contents.on('leave-html-full-screen',leaveFullscreen);owner.on('resize',fillWindow);
  droppers.set(contents,dropped);listenForDrops();
  ipcMain.on(EDITOR_CHANNEL.up,up);ipcMain.on(EDITOR_CHANNEL.down,down);ipcMain.on(EDITOR_CHANNEL.layout,layout);

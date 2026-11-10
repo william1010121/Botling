@@ -17,7 +17,7 @@ import { DEFAULT_H, DEFAULT_W, FLOAT_KEY, MARGIN } from "../../src/renderer/floa
 import { desktop } from "../helpers";
 
 type Box = { x: number; y: number; width: number; height: number };
-type Probe = { note: Box; strip: Box | null; header: Box | null; grip: Box | null; dock: Box | null; collapse: Box | null; native: Box | null; saved: string | null };
+type Probe = { note: Box; strip: Box | null; header: Box | null; grip: Box | null; dock: Box | null; collapse: Box | null; native: Box | null; rounded: boolean | null; refused: unknown[]; saved: string | null };
 
 const probe = `(() => {
   const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return r.width ? { x: r.x, y: r.y, width: r.width, height: r.height } : null; };
@@ -25,7 +25,8 @@ const probe = `(() => {
   return { note: box(document.querySelector(".main-tab")), strip: box(document.querySelector(".float-strip-holder .bot-strip-open")),
     header: box(document.querySelector(".float-chrome")), grip: box(document.querySelector(".float-grip:not([hidden])")),
     dock: box(document.querySelector(".float-dock")), collapse: box(document.querySelector(".float-collapse")),
-    native: list.length ? list[list.length - 1] : null, sent: window.__sent.slice(-4), saved: localStorage.getItem(${JSON.stringify(FLOAT_KEY)}) };
+    native: list.length ? list[list.length - 1] : null, rounded: list.length ? window.__native.rounded[list.length - 1] : null,
+    refused: window.__native.refused.slice(), sent: window.__sent.slice(-4), saved: localStorage.getItem(${JSON.stringify(FLOAT_KEY)}) };
 })()`;
 
 const runner = `const { app, BrowserWindow } = require("electron");
@@ -74,6 +75,9 @@ app.whenReady().then(async () => {
     await click(out.floatedAgain.collapse); out.collapsed = await probe();
     if (process.env.FLOAT_SHOT) fs.writeFileSync(process.env.FLOAT_SHOT.replace(/\.png$/, "-strip.png"), (await web.capturePage()).toPNG());
     await click(out.collapsed.strip); out.reopened = await probe();
+    // Esc in the chat folds the panel back to the strip too.
+    web.sendInputEvent({ type: "keyDown", keyCode: "Escape" }); web.sendInputEvent({ type: "keyUp", keyCode: "Escape" }); await wait(300);
+    out.escaped = await probe();
     process.stdout.write("LAYOUT " + JSON.stringify(out) + "\\n");
   } catch (error) { process.stdout.write("LAYOUT-ERROR " + String(error && error.stack || error) + "\\n"); }
   app.exit(0);
@@ -106,6 +110,12 @@ const bottom = (box: Box) => box.y + box.height;
 describe.runIf(process.platform === "darwin" || !!process.env.DISPLAY)("the floating chat over the Note as laid out (offscreen window)", () => {
   let run: Record<string, Probe>;
   beforeAll(async () => { run = await layout(); }, 120_000);
+
+  it("everything the shell and the chat say about the panel passes the native chat's wire (editor-host-wire.ts)", () => {
+    // The app's chat is a native view: what main's wire check refuses never arrives, and the panel had no header,
+    // no grip and no collapse button (the browser's full screen showed a bare, stuck block).
+    expect(run.escaped!.refused).toEqual([]);
+  });
 
   it("the strip sits in the Note's bottom right corner; the chat is hidden", () => {
     const { start } = run;
@@ -156,9 +166,25 @@ describe.runIf(process.platform === "darwin" || !!process.env.DISPLAY)("the floa
     expect(collapsed.native).toBeNull();
     expect(collapsed.strip).toBeTruthy();
     expect(reopened.native).toEqual(floatedAgain.native);
+    expect(reopened.header).toBeTruthy();
+    expect(reopened.collapse).toBeTruthy();
     const saved = JSON.parse(collapsed.saved!);
     expect(saved.note.docked).toBe(false);
     expect(saved.browser.panel).toBeNull();
     expect(saved.preview.panel).toBeNull();
+  });
+
+  it("Esc collapses the open panel to the strip, in its remembered corner", () => {
+    const { reopened, escaped } = run;
+    expect(reopened.native).toBeTruthy();
+    expect(escaped.native).toBeNull();
+    expect(escaped.header).toBeNull();
+    expect(escaped.strip).toBeTruthy();
+    expect(right(escaped.note) - right(escaped.strip!)).toBeLessThan(40);
+  });
+
+  it("floating, the native chat is drawn with rounded corners; docked, square", () => {
+    expect(run.open.rounded).toBe(true);
+    expect(run.docked.rounded).toBe(false);
   });
 });

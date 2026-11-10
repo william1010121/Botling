@@ -120,3 +120,18 @@ it('passes a plugin command the shell asks the chat page to run, and how a page 
  // Sent only to an iframe chat page (the takeover's), never across this wire: still refused.
  expect(editorMessageAllowed('down',{botling:'pluginEvent',plugin:'x',name:'y',data:null})).toBe(false);
 });
+it('passes the floating chat\'s header down and its buttons and drags up, nothing else shaped like them',()=>{
+ const chrome={name:'botling',status:'Writing…',tone:'working',face:'data:image/svg+xml;base64,PHN2Zz4=',docked:false};
+ expect(editorMessageAllowed('down',{botling:'floatChrome',chrome})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'floatChrome',chrome:null})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'floatChrome',chrome:{...chrome,face:null}})).toBe(true);
+ for(const bad of [{...chrome,face:'https://example.invalid/x.png'},{...chrome,tone:'loud'},{...chrome,docked:'no'},{...chrome,extra:1},{...chrome,name:'x'.repeat(201)}])
+  expect(editorMessageAllowed('down',{botling:'floatChrome',chrome:bad})).toBe(false);
+ expect(editorMessageAllowed('up',{botling:'floatChrome',chrome:null})).toBe(false);
+ for(const act of ['collapse','dock','float','reset'])expect(editorMessageAllowed('up',{botling:'floatAct',act})).toBe(true);
+ expect(editorMessageAllowed('up',{botling:'floatAct',act:'close-window'})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'floatAct',act:'collapse'})).toBe(false);
+ expect(editorMessageAllowed('up',{botling:'floatDrag',kind:'move',phase:'move',dx:-12,dy:30.5})).toBe(true);
+ for(const bad of [{kind:'spin',phase:'move',dx:0,dy:0},{kind:'move',phase:'move',dx:Infinity,dy:0},{kind:'resize',phase:'end',dx:'1',dy:0},{kind:'move',phase:'start',dx:0,dy:0,x:1}])
+  expect(editorMessageAllowed('up',{botling:'floatDrag',...bad})).toBe(false);
+});

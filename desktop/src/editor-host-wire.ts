@@ -55,6 +55,17 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
  if(direction==='down'&&value.botling==='composerBarReply')return keys(value,['botling','frame','data'])&&barFrame(value.frame);
  if(direction==='up'&&value.botling==='composerBarAsk')return keys(value,['botling']);
  if(direction==='up'&&value.botling==='composerBarFrame')return keys(value,['botling','frame','data'])&&barFrame(value.frame);
+ // The floating chat (renderer/FloatingChat.tsx, chat-frame/float-chrome.ts): down, the panel's header for the chat
+ // page to draw (null: none); up, its buttons (or Esc) and how far its header or corner grip was dragged.
+ if(direction==='down'&&value.botling==='floatChrome'){
+  const chrome=value.chrome;if(!keys(value,['botling','chrome']))return false;if(chrome===null)return true;
+  return object(chrome)&&keys(chrome,['name','status','tone','face','docked'])&&['name','status'].every(key=>typeof chrome[key]==='string'&&chrome[key].length<=200)
+   &&['idle','working','waiting'].includes(chrome.tone)&&typeof chrome.docked==='boolean'
+   &&(chrome.face===null||typeof chrome.face==='string'&&chrome.face.startsWith('data:image/')&&chrome.face.length<=4*1024*1024);
+ }
+ if(direction==='up'&&value.botling==='floatAct')return keys(value,['botling','act'])&&['collapse','dock','float','reset'].includes(value.act);
+ if(direction==='up'&&value.botling==='floatDrag')return keys(value,['botling','kind','phase','dx','dy'])&&['move','resize'].includes(value.kind)
+  &&['start','move','end'].includes(value.phase)&&['dx','dy'].every(key=>typeof value[key]==='number'&&Number.isFinite(value[key])&&Math.abs(value[key])<=100_000);
  // A plugin command a web part in the chat page registered, run from the app page (a key, menu or the palette: App.tsx runPluginCommand).
  if(direction==='down'&&value.botling==='runCommand')return keys(value,['botling','id'])&&typeof value.id==='string'&&/^[A-Za-z0-9_.:-]{1,200}$/.test(value.id);
  // How the app page's ApprovalSheet ended for a web part's ask (botling.board's pin commands: App.tsx approvalRequest).
