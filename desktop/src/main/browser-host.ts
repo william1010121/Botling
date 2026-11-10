@@ -3,8 +3,9 @@
 //
 // Every page is an ordinary website and gets nothing of the app's: its own session ('persist:botling-web', so
 // sign-ins last but share nothing with the app's pages), sandboxed, context-isolated, no Node and no preload.
-// Only http(s) loads; a site's popup (window.open, target=_blank) becomes a new tab; every permission it asks
-// for (camera, notifications, location, …) is refused.
+// Only http(s) loads; target=_blank becomes a new tab, a sign-in popup (window.open with features) a popup window
+// of its page; the session sends plain Chrome's user agent (browser-auth.ts); every permission it asks for
+// (camera, notifications, location, …) is refused.
 //
 // Phase 2: every tab's network traffic is captured in the background (the DevTools protocol's Network domain on its
 // page, kept in a bounded NetCapture, browser-bot.ts) for the bot tools; no panel shows it. A bot's extraction runs
@@ -15,6 +16,7 @@ import { join } from "node:path";
 import { BROWSER_CHANNEL, isWebUrl, urlFromInput, type BrowserDown, type BrowserMenuPick, type BrowserRect, type BrowserToolRun, type BrowserUp } from "../browser-wire";
 import { runOptions, siteOf, toolIsOn, toolsFor, type RunFile, type SiteToolOptions } from "../browser-site-tools";
 import { NetCapture } from "../browser-bot";
+import { paneUserAgent, popupWay } from "../browser-auth";
 import type { BotBrowserWindow } from "./browser-bot-host";
 import { BrowserTabs, type TabPage } from "./browser-tabs";
 import { editorBounds } from "./editor-host";
@@ -41,6 +43,8 @@ export function browserSession(): Session {
   const web = session.fromPartition(BROWSER_PARTITION);
   if (!hardened) {
     hardened = true;
+    // Plain Chrome's user agent: Google's sign-in refuses one naming Electron (browser-auth.ts).
+    web.setUserAgent(paneUserAgent(app.userAgentFallback));
     web.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     web.setPermissionCheckHandler(() => false);
     if (typeof web.setDevicePermissionHandler === "function") web.setDevicePermissionHandler(() => false);
@@ -128,11 +132,21 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
 
   function wire(botId: string, tabId: string, view: WebContentsView, contents: WebContents) {
     const update = (change: Parameters<BrowserTabs["update"]>[2]) => tabs.update(botId, tabId, change);
-    // A popup or target=_blank: a new tab of the same bot (web pages only), never a window of its own.
-    contents.setWindowOpenHandler(({ url }) => {
-      if (isWebUrl(url)) setImmediate(() => tabs.open(botId, url, { reveal: false }));
-      else options.note(`browser: refused a popup to ${url.slice(0, 200)}`);
+    // target=_blank (or window.open with no features): a new tab of the same bot. A real popup (window.open with
+    // features, as sign-ins open): a popup window of the page, on its session with the same safety settings, so it
+    // can report back to its opener (browser-auth.ts).
+    const openHandler = (details: Electron.HandlerDetails): Electron.WindowOpenHandlerResponse => {
+      const way = popupWay(details.url, details.disposition);
+      if (way === "popup") return { action: "allow", overrideBrowserWindowOptions: { parent: owner, width: 520, height: 680, autoHideMenuBar: true, webPreferences: { ...SECURE } } };
+      if (way === "tab") setImmediate(() => tabs.open(botId, details.url, { reveal: false }));
+      else options.note(`browser: refused a popup to ${details.url.slice(0, 200)}`);
       return { action: "deny" };
+    };
+    contents.setWindowOpenHandler(openHandler);
+    contents.on("did-create-window", (popup) => {
+      popup.webContents.setWindowOpenHandler(openHandler);
+      popup.webContents.on("will-attach-webview", (event) => event.preventDefault());
+      popup.webContents.on("will-navigate", (event) => { if (!isWebUrl(event.url)) { event.preventDefault(); options.note(`browser: refused a navigation to ${event.url.slice(0, 200)}`); } });
     });
     contents.on("will-attach-webview", (event) => event.preventDefault());
     contents.on("will-navigate", (event) => { if (extracting.has(tabId)) { event.preventDefault(); options.note("browser: refused a navigation during a bot's extraction"); return; } if (!isWebUrl(event.url)) { event.preventDefault(); options.note(`browser: refused a navigation to ${event.url.slice(0, 200)}`); } });
