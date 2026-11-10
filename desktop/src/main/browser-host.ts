@@ -4,7 +4,8 @@
 // Every page is an ordinary website and gets nothing of the app's: its own session ('persist:botling-web', so
 // sign-ins last but share nothing with the app's pages), sandboxed, context-isolated, no Node and no preload.
 // Only http(s) loads; target=_blank becomes a new tab, a sign-in popup (window.open with features) a popup window
-// of its page; the session sends plain Chrome's user agent (browser-auth.ts); every permission it asks for
+// of its page; the session sends plain Chrome's user agent (browser-auth.ts) with Chrome's client hints
+// (browser-hints.ts); every permission it asks for
 // (camera, notifications, location, …) is refused.
 //
 // Phase 2: every tab's network traffic is captured in the background (the DevTools protocol's Network domain on its
@@ -17,6 +18,7 @@ import { BROWSER_CHANNEL, isWebUrl, urlFromInput, type BrowserDown, type Browser
 import { runOptions, siteOf, toolIsOn, toolsFor, type RunFile, type SiteToolOptions } from "../browser-site-tools";
 import { NetCapture } from "../browser-bot";
 import { paneUserAgent, popupWay } from "../browser-auth";
+import { HintAsks, acceptLanguages, withHints, type HintFacts } from "../browser-hints";
 import type { BotBrowserWindow } from "./browser-bot-host";
 import { BrowserTabs, type TabPage } from "./browser-tabs";
 import { editorBounds } from "./editor-host";
@@ -46,7 +48,19 @@ export function browserSession(): Session {
   if (!hardened) {
     hardened = true;
     // Plain Chrome's user agent: Google's sign-in refuses one naming Electron (browser-auth.ts).
-    web.setUserAgent(paneUserAgent(app.userAgentFallback));
+    // Electron sends no Sec-CH-UA* headers and the Accept-Language of one language only; Chrome sends both, matching
+    // navigator.userAgentData and navigator.languages, and a site's human check (Cloudflare's) weighs a mismatch
+    // (browser-hints.ts).
+    web.setUserAgent(paneUserAgent(app.userAgentFallback), acceptLanguages(app.getPreferredSystemLanguages()) || undefined);
+    const facts: HintFacts = { chrome: process.versions.chrome, platform: process.platform, arch: process.arch, systemVersion: process.getSystemVersion() };
+    const asks = new HintAsks();
+    web.webRequest.onBeforeSendHeaders((details, callback) => {
+      callback({ requestHeaders: withHints(details.url, details.requestHeaders, facts, asks.for(details.url)) });
+    });
+    web.webRequest.onHeadersReceived((details, callback) => {
+      asks.record(details.url, details.responseHeaders);
+      callback({});
+    });
     web.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     web.setPermissionCheckHandler(() => false);
     if (typeof web.setDevicePermissionHandler === "function") web.setDevicePermissionHandler(() => false);
