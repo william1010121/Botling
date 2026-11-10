@@ -18,7 +18,7 @@ const bot = (over: Partial<BotView> & { id: string }): BotView => ({
   problem: null, heads: ["claude"], job: null, subagentRows: [], ...over,
 } as BotView);
 const marks: RailMarks = { viewed: new Set(), since: 0, watching: null, folded: new Set(), all: new Set() };
-const actions: RailWorkerActions = { onOpen() {}, onSettle() {}, onAll() {} };
+const actions: RailWorkerActions = { onOpen() {}, onSettle() {}, onAll() {}, onToggleJob() {} };
 
 const root = bot({ id: "botling", subagentRows: [
   row({ id: "Draw the worker list" }), row({ id: "Fix scrolling", status: "completed", startedAt: NOW - 17 * MIN, endedAt: NOW - 5 * MIN }),
@@ -31,15 +31,15 @@ describe("the worker list as drawn", () => {
     const list = railWorkers(root, [root, release], NOW, marks);
     return renderToStaticMarkup(createElement(RailWorkerList, { botId: "botling", list, name: "botling", now: NOW, lang, actions }));
   };
-  it("names each item by its worker, with state and time, the unread dot and the settle clock on the finished one", () => {
+  it("names each item by its worker, with state and time and the settle clock on the finished one; no blue dot on a worker", () => {
     const out = draw(null);
     expect(out).toContain('<span class="rail-wk-name">Fix scrolling</span>');
-    expect(out).toContain("rail-wk-row done unread");
+    expect(out).toContain('class="rail-wk-row done"');
     expect(out).toContain('<span class="rail-wk-state">Done</span>・ran 12m');
     expect(out).toContain('<span class="rail-wk-state">Running</span>・4m');
     expect(out).toContain('aria-label="Settle down Fix scrolling"');
     expect(out.match(/rail-wk-settle/g)).toHaveLength(2);
-    expect(out).toContain("rail-wk-dot");
+    expect(out).not.toContain("rail-wk-dot");
   });
   it("shows 3 (the sub bot's failure first, labelled with its sub bot), then 'N more'", () => {
     const out = draw(null);
@@ -54,6 +54,33 @@ describe("the worker list as drawn", () => {
     expect(out).toContain(">還有 3 個<");
     expect(out).toContain('<span class="rail-wk-state">做完</span>・跑了 12 分');
     expect(out).toContain('aria-label="收起 Fix scrolling"');
+  });
+});
+
+describe("one job's workers as drawn", () => {
+  const job = { id: "t:turn-1", title: "比較 GPU 雲" };
+  const gpu = bot({ id: "b", subagentRows: [
+    row({ id: "aws", group: job, startedAt: NOW - 12 * MIN }), row({ id: "gcp", status: "completed", endedAt: NOW - MIN, group: job }),
+    row({ id: "lambda", status: "failed", endedAt: NOW - MIN, group: job }), row({ id: "Pack dmg" }),
+  ] });
+  const draw = (open: boolean) => renderToStaticMarkup(createElement(RailWorkerList, {
+    botId: "b", name: "b", now: NOW, lang: "zh-Hant", actions,
+    list: railWorkers(gpu, [gpu], NOW, { ...marks, jobsOpen: new Set(open ? ["b|t:turn-1"] : []) }),
+  }));
+  it("one row with a dot per worker, failures, count and time; its workers not shown until opened; no blue dot", () => {
+    const out = draw(false);
+    expect(out.match(/class="rail-wk-row /g)).toHaveLength(2);
+    expect(out).toContain('<span class="rail-wk-name">比較 GPU 雲<span class="rail-wk-pips" aria-hidden="true"><span class="rail-wk-pip failed"></span><span class="rail-wk-pip done"></span><span class="rail-wk-pip running"></span></span></span>');
+    expect(out).toContain('<span class="rail-wk-state failed">1 失敗・3 個・12 分</span>');
+    expect(out).toContain('aria-expanded="false"');
+    expect(out).not.toContain(">aws<");
+    expect(out).not.toContain("rail-wk-dot");
+  });
+  it("opened, its workers are listed under it", () => {
+    const out = draw(true);
+    expect(out).toContain('aria-expanded="true"');
+    expect(out).toContain('<div class="rail-wk-members">');
+    expect(out.match(/class="rail-wk-row /g)).toHaveLength(5);
   });
 });
 

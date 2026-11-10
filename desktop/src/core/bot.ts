@@ -1372,6 +1372,18 @@ export class Bot {
     }
   }
 
+  /**
+   * The turn a worker is handed off in, as its job: workers handed off in one turn are listed as one job unless their
+   * bot named one (app_handoff's `group`). Titled by the user's words (else the turn's), first 20 characters.
+   */
+  private jobOfTurn(): { turnId: string; title: string } | undefined {
+    const turn = this.turn ?? (this.options.primary as Bot | undefined)?.turn;
+    if (!turn) return undefined;
+    const said = turn.userId ? this.owner.records.find((record) => record.id === turn.userId)?.text : undefined;
+    const words = (typeof said === "string" && said.trim() ? said : turn.words).replace(/\s+/g, " ").trim();
+    return { turnId: turn.id, title: [...words].length > 20 ? `${[...words].slice(0, 20).join("")}…` : words };
+  }
+
   /** Whether a Codex or Antigravity head keeps work it must stay awake for (its workers, a report turn to come). */
   private onItemPending(pending: boolean) {
     this.managedPending = pending;
@@ -3681,7 +3693,7 @@ export class Bot {
         return true;
       case "subagentStarted":
         // Initial ownership comes from the Agent call, never from whichever turn is now visible.
-        if (this.subagents.started(item)) this.subagentChanged(this.subagents.get(item.id));
+        if (this.subagents.started(item, undefined, isWorkerType(item.type) ? this.jobOfTurn() : undefined)) this.subagentChanged(this.subagents.get(item.id));
         if (item.background) this.addBackgroundTask(this.subagents.get(item.id)?.id ?? item.id, "agent", item.description);
         // A worker started for a bot's @: its news goes back to that bot (`callInWork`).
         if (isWorkerType(item.type)) this.linkCallInWork(item.id);

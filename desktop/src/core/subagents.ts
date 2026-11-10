@@ -19,7 +19,7 @@ import type { SubagentLine } from "./store/subagent-store";
 export type SubagentStatus = "running" | "completed" | "failed" | "stopped";
 
 /** A row for the left column / "Settled" (the contract's SubagentRowView). */
-export interface SubagentRow { outputTokens?: number | null; id: string; title: string; status: SubagentStatus; head: "claude" | "codex" | "agy" | null; startedAt: number; endedAt: number | null; unsettledAt: number | null; settled: boolean; prompt: string }
+export interface SubagentRow { outputTokens?: number | null; id: string; title: string; status: SubagentStatus; head: "claude" | "codex" | "agy" | null; startedAt: number; endedAt: number | null; unsettledAt: number | null; settled: boolean; prompt: string; group?: { id: string; title: string } }
 
 export { LISTED_AFTER_ENDING_MS, LISTED_AT_MOST, listedRows, settledRows } from "../contract";
 
@@ -93,6 +93,11 @@ export interface SubagentRecord {
   runStartedAt?: number;
   /** Running token-speed sums of its finished requests (token-speed.ts); absent: none timed. */
   speed?: SpeedTotals;
+  /** The job its coordinator named it for (app_handoff's `group`). */
+  group?: string;
+  /** The coordinator's turn that started it, and that turn's words in short (the job of workers handed off together). */
+  turnId?: string;
+  turnTitle?: string;
   [key: string]: unknown;
 }
 
@@ -116,6 +121,16 @@ function describe(input: Record<string, unknown>): string {
   const about = typeof input.description === "string" ? input.description.trim() : "";
   const said = about ? firstLine(about) : typeof input.prompt === "string" ? firstLine(input.prompt) : "";
   return [...said].length > 60 ? `${characterPrefix(said, 60)}…` : said;
+}
+
+/** The job a row is listed under: the name its bot gave, else the turn that handed it off (`SubagentRowView.group`). */
+export function jobOf(subagent: Pick<SubagentRecord, "group" | "turnId" | "turnTitle">): { group?: { id: string; title: string } } {
+  const named = typeof subagent.group === "string" ? subagent.group.trim() : "";
+  if (named) return { group: { id: `g:${named.toLowerCase()}`.slice(0, 300), title: named.slice(0, 200) } };
+  if (typeof subagent.turnId === "string" && subagent.turnId) {
+    return { group: { id: `t:${subagent.turnId}`.slice(0, 300), title: (typeof subagent.turnTitle === "string" ? subagent.turnTitle : "").slice(0, 200) } };
+  }
+  return {};
 }
 
 export function readSubagent(value: unknown): SubagentRecord | null {
@@ -265,7 +280,11 @@ export class SubagentBook {
     return true;
   }
 
-  started(item: { id: string; description: string; type: string | null; prompt: string; background: boolean; agentID?: string; execution?: SubagentExecution; previousRunEnd?: PreviousRunEnd }, now = toSwiftDate()): boolean {
+  /**
+   * A subagent's run started (`job`: the job a new one is for, see `SubagentRecord.group`/`turnId`; an existing one
+   * keeps the job it had).
+   */
+  started(item: { id: string; description: string; type: string | null; prompt: string; background: boolean; agentID?: string; execution?: SubagentExecution; previousRunEnd?: PreviousRunEnd; group?: string }, now = toSwiftDate(), job?: { turnId: string; title: string }): boolean {
     const existing = this.get(item.id) ?? (item.agentID ? this.resolve(item.agentID) : undefined);
     if (existing) {
       if(item.agentID)existing.agentID=item.agentID;
@@ -297,6 +316,8 @@ export class SubagentBook {
     if (item.agentID) record.agentID = item.agentID;
     if (item.execution) record.execution = item.execution;
     if (item.execution) record.runStartedAt = now;
+    if (item.group) record.group = item.group;
+    if (job) { record.turnId = job.turnId; record.turnTitle = job.title; }
     this.create(record);
     this.trim();
     return true;
@@ -419,6 +440,7 @@ export class SubagentBook {
       unsettledAt: typeof subagent.unsettledAt === "number" ? fromSwiftDate(subagent.unsettledAt) : null,
       settled: typeof subagent.dismissedAt === "number",
       prompt: subagent.prompt.slice(0, 1_000),
+      ...jobOf(subagent),
     }));
   }
 

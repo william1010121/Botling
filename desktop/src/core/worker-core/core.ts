@@ -445,6 +445,8 @@ export class WorkerCore implements WorkerHost {
       type: request.type, ownerSessionId: this.options.ownerSessionId(), run: 0, status: "new", report: noReport(), conversationId: null,
       processes: [], createdAt: this.now(), runStartedAt: null, endedAt: null, engineData: { ...(prepared.engineData ?? {}) },
     };
+    const group = firstText(args.group)?.trim().slice(0, 80);
+    if (group) r.group = group;
     this.records.set(r.id, r);
     // Room is made among the others: the worker being made is never the one forgotten (with none forgettable it is
     // kept as one more; the ledger keeps it too, as a running record).
@@ -744,7 +746,7 @@ export class WorkerCore implements WorkerHost {
 
   private opening(r: WorkerLedgerRecord, adapter: WorkerAdapter, words: string) {
     const runtime = adapter.runtime?.(r) ?? { reasoningEffort: null };
-    for (const item of workerRunStarted({ id: r.id, engine: r.engine, name: r.name, run: r.run, conversationId: r.conversationId, ownerSessionId: this.options.ownerSessionId() }, words, runtime, adapter.subagentType))
+    for (const item of workerRunStarted({ id: r.id, engine: r.engine, name: r.name, ...(r.group ? { group: r.group } : {}), run: r.run, conversationId: r.conversationId, ownerSessionId: this.options.ownerSessionId() }, words, runtime, adapter.subagentType))
       this.emit(item);
   }
 

@@ -14,6 +14,8 @@ export interface HandoffArgs {
   instructions?: unknown; prompt?: unknown; task?: unknown;
   /** A short name (`description`: the Agent tool's). */
   name?: unknown; description?: unknown;
+  /** The job it is for (app_handoff's `group`): workers of one job are listed as one. */
+  group?: unknown;
   subagent_type?: unknown;
   model?: unknown;
   /** Its thinking effort (Claude's app_handoff; an engine that takes none ignores it). */

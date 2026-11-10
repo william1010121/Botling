@@ -33,6 +33,8 @@ export interface WorkerLedgerRecord {
   engine: Engine;
   adapter: WorkerAdapterKind;
   name: string;
+  /** The job it is for, as its coordinator named it (app_handoff's `group`; absent: none named). */
+  group?: string;
   instructions: string;
   /** subagent_type (Claude definitions). */
   type: string | null;
@@ -99,7 +101,7 @@ export function readLedgerRecord(value: unknown): WorkerLedgerRecord | null {
     : undefined;
   const owner = readWorkerOwner(r.owner);
   return {
-    v: 3, id: r.id, engine: r.engine, adapter: r.adapter, name: r.name, instructions: r.instructions, type: str(r.type) ? r.type : null,
+    v: 3, id: r.id, engine: r.engine, adapter: r.adapter, name: r.name, ...(str(r.group) && r.group ? { group: r.group } : {}), instructions: r.instructions, type: str(r.type) ? r.type : null,
     ownerSessionId: r.ownerSessionId, run: r.run, ...(Number.isSafeInteger(r.segment) && r.segment > 0 ? { segment: r.segment } : {}), status: r.status,
     report: { state: report.state, text: str(report.text) ? report.text : null, status: RUN_STATUSES.has(report.status) ? report.status : null,
       attempts: Number.isSafeInteger(report.attempts) && report.attempts >= 0 ? report.attempts : 0, ...(checkpoint ? { checkpoint } : {}) },

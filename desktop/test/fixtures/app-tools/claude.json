@@ -11,6 +11,10 @@
     "instructions": {
      "type": "string"
     },
+    "group": {
+     "type": "string",
+     "description": "The job this worker is for, a short name (e.g. \"Compare GPU clouds\"). Give every worker you start for the same job the same group, so the app lists them as one job."
+    },
     "subagent_type": {
      "type": "string"
     },

@@ -369,6 +369,11 @@ export const SubagentRowView = z.strictObject({
   host: z.strictObject({ botId: BotId, name: z.string().max(400) }).optional(),
   /** Whether "Move to…" can move it (present only with the agentMoves setting on). */
   movable: z.strictObject({ ok: z.boolean(), reason: z.string().max(200).nullable() }).optional(),
+  /**
+   * The job it was opened for: the name its bot gave with app_handoff's `group` (id `g:<name>`), else the turn that
+   * handed it off (id `t:<turn>`, titled by the user's message). The left column merges a bot's workers of one job.
+   */
+  group: z.strictObject({ id: z.string().max(300), title: z.string().max(200) }).optional(),
 });
 export type SubagentRowView = z.infer<typeof SubagentRowView>;
 
