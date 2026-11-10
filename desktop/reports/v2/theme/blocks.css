@@ -247,8 +247,16 @@
 
 [data-zoom]{cursor:zoom-in}
 [data-zoom]:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
-.lb{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.94);cursor:zoom-out;outline:none}
-.lb .lb-fig{display:block;width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain;border:0;border-radius:6px;background:var(--bubble);color:var(--text);cursor:zoom-out}
+.lb{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:2vmin;background:rgba(0,0,0,.94);cursor:zoom-out;outline:none;overflow:hidden;touch-action:none;overscroll-behavior:contain}
+/* The fitted copy; the lightbox script zooms and pans it with one transform from its top-left corner. */
+.lb .lb-fig{display:block;width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain;border:0;border-radius:6px;background:var(--bubble);color:var(--text);cursor:zoom-in;transform-origin:0 0;user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
+.lb .lb-fig img{-webkit-user-drag:none}
+.lb.zoomed .lb-fig{cursor:grab}
+.lb.dragging .lb-fig{cursor:grabbing}
+.lb-bar{position:fixed;top:10px;right:12px;display:flex;align-items:center;gap:6px;z-index:1;padding:3px 3px 3px 10px;border-radius:11px;background:rgba(0,0,0,.6)}
+.lb-bar output{min-width:3.5em;text-align:right;font-size:12px;color:rgba(255,255,255,.75);font-variant-numeric:tabular-nums}
+.lb-bar .lb-x{width:30px;height:30px;border:0;border-radius:8px;background:rgba(255,255,255,.14);color:rgba(255,255,255,.85);font:inherit;font-size:14px;cursor:pointer}
+.lb-bar .lb-x:hover,.lb-bar .lb-x:focus-visible{background:rgba(255,255,255,.26);outline:none}
 .lb svg.lb-fig{width:96vw;height:96vh}
 /* glossary: term → one plain sentence */
 .blk-glossary dl{margin:0;display:flex;flex-direction:column;gap:.55em}
@@ -275,7 +283,7 @@
 .fg,.lb-fig{--orange:var(--orange-chart)}
 /* Lightbox of a figure: the enlarged copy is the figure's own box, sized to the window; the SVG (or PNG) inside
    scales to fit it with its aspect ratio kept (SVG is vector, PNGs are drawn at 200 dpi), so it stays sharp. */
-.lb .fg.lb-fig{box-sizing:border-box;width:92vw;height:90vh;max-width:none;max-height:none;padding:2vmin;display:flex;align-items:center;justify-content:center;cursor:zoom-out}
+.lb .fg.lb-fig{box-sizing:border-box;width:92vw;height:90vh;max-width:none;max-height:none;padding:2vmin;display:flex;align-items:center;justify-content:center}
 .lb .fg.lb-fig svg{width:100%;height:100%;max-width:100%;max-height:100%}
 .lb .fg.lb-fig img{width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .fg-l{display:none}:root:not([data-theme="light"]) .fg-d{display:block}}

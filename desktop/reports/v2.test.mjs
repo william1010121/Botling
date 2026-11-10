@@ -178,6 +178,79 @@ test('lightbox: images and flow figures open enlarged; script is inline, only pr
   assert.equal(dom(plain.html).querySelectorAll('script').length, 0);
 });
 
+// 2026-11-10: the report's enlarged figure could not be zoomed or moved (and a wide picture was cut). It now zooms smoothly
+// around the pointer (wheel, pinch, + / - / 0) and pans by dragging, kept inside the window, like the chat's lightbox.
+test('lightbox: an enlarged figure zooms around the pointer, pans by dragging and stays inside the window', async () => {
+  const img = api.blocks.find(b => b.type === 'image').examples[0];
+  const r = await api.renderV2(spec([img]), { mode: 'doc' });
+  const win = new JSDOM(r.html, { runScripts: 'dangerously', pretendToBeVisual: true }).window;
+  const d = win.document;
+  // jsdom has no layout: a 1000×800 window, the fitted picture 800×400 centred in it (left 100, top 200).
+  Object.defineProperty(win.HTMLElement.prototype, 'clientWidth', { configurable: true, get() { return this.classList.contains('lb') ? 1000 : 0; } });
+  Object.defineProperty(win.HTMLElement.prototype, 'clientHeight', { configurable: true, get() { return this.classList.contains('lb') ? 800 : 0; } });
+  win.Element.prototype.getBoundingClientRect = function () {
+    // The script measures the fitted box with its transform cleared.
+    if (this.classList.contains('lb-fig')) return { left: 100, top: 200, width: 800, height: 400, right: 900, bottom: 600, x: 100, y: 200 };
+    return { left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800, x: 0, y: 0 };
+  };
+  d.querySelector('.blk-image img').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  const box = d.querySelector('.lb'), fig = () => d.querySelector('.lb .lb-fig');
+  assert.ok(box && fig(), 'opens');
+  const at = () => { const m = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(fig().style.transform); return m ? m.slice(1).map(Number) : [0, 0, 1]; };
+  const wheel = (o) => fig().dispatchEvent(new win.WheelEvent('wheel', { bubbles: true, cancelable: true, ...o }));
+  const ptr = (type, x, y) => { const e = new win.MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }); Object.defineProperty(e, 'pointerId', { value: 1 }); fig().dispatchEvent(e); return e; };
+
+  // A pinch (ctrl + wheel) zooms in smoothly, not in two steps; while still smaller than the window the picture stays centred.
+  wheel({ deltaY: -20, ctrlKey: true, clientX: 300, clientY: 300 });
+  const [x1, y1, s1] = at();
+  assert.ok(s1 > 1.1 && s1 < 1.5, `smooth zoom step, got ${s1}`);
+  assert.ok(Math.abs(100 + x1 + 400 * s1 - 500) < 0.5 && Math.abs(200 + y1 + 200 * s1 - 400) < 0.5, 'centred while smaller than the window');
+  // Larger than the window, the wheel zooms around the pointer: the picture's point under it stays where it is.
+  const px = (300 - 100 - x1) / s1, py = (400 - 200 - y1) / s1;
+  wheel({ deltaY: -300, clientX: 300, clientY: 400 });
+  const [x2, y2, s2] = at();
+  assert.ok(s2 > s1 && 800 * s2 > 1000 && 400 * s2 > 800, `the plain wheel zooms too (${s2})`);
+  assert.ok(Math.abs(100 + x2 + px * s2 - 300) < 0.5 && Math.abs(200 + y2 + py * s2 - 400) < 0.5, 'zoom keeps the point under the pointer');
+
+  // Dragging pans, only until the picture's edge meets the window's; the click that ends a drag does not close.
+  const [bx, by, bs] = at();
+  ptr('pointerdown', 500, 400); ptr('pointermove', 540, 420); ptr('pointermove', 560, 430); ptr('pointerup', 560, 430);
+  fig().dispatchEvent(new win.MouseEvent('click', { bubbles: true, clientX: 560, clientY: 430 }));
+  assert.ok(d.querySelector('.lb'), 'a drag does not close the lightbox');
+  const [dx, dy] = at();
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  assert.ok(Math.abs(dx - clamp(bx + 60, 900 - 800 * bs, -100)) < 0.5 && Math.abs(dy - clamp(by + 30, 600 - 400 * bs, -200)) < 0.5, `drag pans (${bx},${by} → ${dx},${dy})`);
+  assert.notDeepEqual([dx, dy], [bx, by]);
+  ptr('pointerdown', 500, 400); ptr('pointermove', 99999, 99999); ptr('pointerup', 99999, 99999);
+  box.dispatchEvent(new win.MouseEvent('click', { bubbles: true, clientX: 999, clientY: 799 }));
+  assert.ok(d.querySelector('.lb'), 'a drag that ends outside the picture does not close it either');
+  const [ex, ey, es] = at();
+  assert.equal(es, bs);
+  assert.ok(100 + ex <= 0.5 && 200 + ey <= 0.5, 'its left/top edge stops at the window edge');
+  assert.ok(100 + ex + 800 * es >= 1000 - 0.5 && 200 + ey + 400 * es >= 800 - 0.5, 'and still covers the window');
+
+  // Zoom out never goes below the fitted size; 0 fits again; a click on the backdrop closes.
+  wheel({ deltaY: 5000, clientX: 300, clientY: 300 });
+  assert.deepEqual(at().map(v => Math.round(v * 1000) / 1000), [0, 0, 1]);
+  d.querySelector('.lb').dispatchEvent(new win.KeyboardEvent('keydown', { key: '+', bubbles: true }));
+  assert.ok(at()[2] > 1, '+ zooms in');
+  d.querySelector('.lb').dispatchEvent(new win.KeyboardEvent('keydown', { key: '0', bubbles: true }));
+  assert.equal(at()[2], 1, '0 fits');
+  // A click on the picture zooms in (fit ↔ 2×), a click outside it closes.
+  fig().dispatchEvent(new win.MouseEvent('click', { bubbles: true, clientX: 500, clientY: 400 }));
+  assert.ok(d.querySelector('.lb') && at()[2] > 1, 'a click on the picture zooms instead of closing');
+  box.dispatchEvent(new win.MouseEvent('click', { bubbles: true, clientX: 5, clientY: 5 }));
+  assert.equal(d.querySelector('.lb'), null, 'a click on the backdrop closes');
+  win.close();
+});
+
+test('lightbox: an enlarged PNG figure shows one picture (its theme copy), never both side by side', async () => {
+  // The two copies (.fg-l, .fg-d) sat in the enlarged box's flex row at 100% width each: a wide figure looked cut and doubled.
+  const css = api.v2css.blocks;
+  assert.match(css, /\.fg \.fg-d\{display:none\}/);
+  assert.doesNotMatch(css, /\.lb \.fg\.lb-fig img\{[^}]*display:(block|flex|inline)/);
+});
+
 test('colours come only from theme tokens; light and dark sets are both defined', () => {
   const css = Object.values(api.v2css).join('\n');
   assert.match(css, /prefers-color-scheme:dark/); assert.match(css, /\[data-theme="dark"\]/);
@@ -204,7 +277,8 @@ test('the four examples render clean in doc and slide mode; doc output has no sc
     const slides = await api.renderV2(s, { mode: 'slide', baseDir: exDir });
     const sd = dom(slides.html);
     assert.equal(sd.querySelectorAll('script').length, 1);
-    assert.ok(sd.querySelector('script').textContent.length < 3200);
+    // The pager plus the lightbox (zoom and pan since 2026-11-10): kept small, inline, no library.
+    assert.ok(sd.querySelector('script').textContent.length < 5200);
     assert.equal(sd.querySelectorAll('.sv').length, slides.slides);
     assert.ok(sd.querySelector('.m-cover') && sd.querySelector('.sv:last-child .m-closing'));
     for (const sec of s.sections.filter(x => x.takeaway)) assert.ok([...sd.querySelectorAll('.sl>h2')].some(h => h.textContent.startsWith(sec.takeaway)), sec.takeaway);
