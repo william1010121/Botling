@@ -126,6 +126,16 @@
   min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
+/* A narrow chat (docked beside the Note, about 330px) crowds the row: a chip with a value drops its component's icon
+   and keeps its tone dot and value, and the chips share the room (each value cut with … down to a small chip, then
+   the row scrolls as before). A chip with no value and the + keep their icons. */
+@container status-strip (max-width: 520px) {
+  .pin-chip:has(.pin-chip-status) { flex: 0 1 auto; min-width: 62px; gap: 5px; padding: 0 8px; max-width: 104px; }
+  .pin-chip:has(.pin-chip-status) .pin-chip-icon { width: auto; height: auto; font-size: 0; }
+  .pin-chip:has(.pin-chip-status) .pin-chip-icon > :not(.pin-chip-dot) { display: none; }
+  .pin-chip:has(.pin-chip-status) .pin-chip-icon:not(:has(.pin-chip-dot)) { display: none; }
+  .pin-chip:has(.pin-chip-status) .pin-chip-dot { position: static; box-shadow: none; }
+}
 /* An opened pin and a floating pin are one card: the same header (pins.ts fillPinHead: icon, name,
    status, ↻ ⋯), border, radius and type, and the component under it as tall as its content up to
    the card's most, then scrolling (no empty area under a short one). The component is told it is
