@@ -1,16 +1,19 @@
 // spec/driver/relayed-card-driver.ts against the real Core: a project bot P and its sub bot S, P calling S in with @
 // for real (receiveBotMention, the call-in, bot.groupTurn, callInFollowUp after a worker's report), and the user's
 // answers given through the Core's commands (chat.choose, chat.answer with words or a group's picks,
-// chat.ignoreQuestion). Only handing a turn to an agent is left out (deliver): turns begin for real and are ended
-// here as the model's actions say. groupTiming waits 0 ms for a busy callee, as the model does.
-// A turn handed to a bot with a card's answer is seen where the bot makes it (newTurn): the answers carry the card's
-// number ("ans-<k>-…"), the last one in the turn's words names the card it answers.
+// chat.ignoreQuestion, turn.stop on a message waiting in S's queue). Only handing a turn to an agent is left out
+// (deliver): turns begin for real and are ended here as the model's actions say. Without an agent nothing is read into
+// a turn under way, so an answer for S at work is queued (the model's Steers = FALSE). groupTiming waits 0 ms for a
+// busy callee.
+// The answers carry the card's number ("ans-<k>-…"); the last one in a turn's words names the card it answers. A turn
+// handed to P is seen where P makes it (newTurn: P's turns are the end of the answer's way); one handed to S where it
+// begins (begin), as the model counts an answer reaching S.
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RelayedCardDriver, RelayedCardSession } from "../../spec/driver/relayed-card-driver";
 import type { Chat, Kind, LineState, View } from "../../spec/reference/relayed-card";
-import type { Bot } from "../src/core/bot";
+import { NO_LONGER_NEEDED, type Bot } from "../src/core/bot";
 import type { Conversations } from "../src/core/conversations";
 import { saveProjectRow } from "../src/core/projects";
 import { Core } from "../src/core/server";
@@ -60,17 +63,24 @@ export const relayedCardDriver: RelayedCardDriver = {
     let told = 0;
     let gone = false;
     let refused = false;
-    for (const [key, bot] of [["P", p], ["S", s]] as [Chat, Bot][]) {
-      const real = bot as any;
-      real.deliver = async () => {};
-      const newTurn = real.newTurn.bind(real);
-      real.newTurn = (origin: unknown, words: string, userId: unknown) => {
-        const marks = [...words.matchAll(/ans-(\d+)-/g)];
-        const k = marks.length ? Number(marks[marks.length - 1]![1]) : 0;
-        if (counting && k) woke[k - 1]![key] += 1;
-        return newTurn(origin, words, userId);
-      };
-    }
+    /** The card whose answer `words` carry (0: none). */
+    const cardIn = (words: string) => {
+      const marks = [...words.matchAll(/ans-(\d+)-/g)];
+      return marks.length ? Number(marks[marks.length - 1]![1]) : 0;
+    };
+    for (const bot of [p, s]) (bot as any).deliver = async () => {};
+    const newTurn = (p as any).newTurn.bind(p);
+    (p as any).newTurn = (origin: unknown, words: string, userId: unknown) => {
+      const k = cardIn(words);
+      if (counting && k) woke[k - 1]!.P += 1;
+      return newTurn(origin, words, userId);
+    };
+    const begin = (s as any).begin.bind(s);
+    (s as any).begin = (turn: { words: string }, ...rest: unknown[]) => {
+      const k = cardIn(turn.words);
+      if (counting && k) woke[k - 1]!.S += 1;
+      return begin(turn, ...rest);
+    };
     const appNotice = (p as any).appNotice.bind(p);
     (p as any).appNotice = (text: string, ...rest: unknown[]) => { if (counting && text.startsWith("Did not answer this time")) told += 1; return appNotice(text, ...rest); };
 
@@ -85,7 +95,11 @@ export const relayedCardDriver: RelayedCardDriver = {
     /** P's turns (hand-backs, answers) end, so its next line routes from a quiet chat. */
     const drainP = async () => { for (let i = 0; i < 20 && ((p as any).turn || (p as any).queue.length); i++) { if ((p as any).turn) await end(p, "OK."); else await flush(); } };
     const turnOf = (bot: Bot, ok: (turn: any) => boolean) => until("a turn", () => !!(bot as any).turn && ok((bot as any).turn));
-    const state = (line: ChatRecord | null | undefined): LineState => (!line ? "none" : isOpenQuestion(line) ? "open" : "settled");
+    const state = (line: ChatRecord | null | undefined): LineState =>
+      (!line ? "none" : line.pendingAnswer ? "pending" : isOpenQuestion(line) ? "open" : "settled");
+    /** A guest line shows the user's answer as chosen (not ignored, not "No longer needed", not still on its way). */
+    const shows = (line: ChatRecord | null | undefined) => !!line && !line.pendingAnswer && line.ignoredAt == null
+      && (line.chosen != null || (line.answer != null && line.answer !== NO_LONGER_NEEDED));
 
     const session: RelayedCardSession = {
       async ask(kind) {
@@ -129,6 +143,12 @@ export const relayedCardDriver: RelayedCardDriver = {
         void result;
         await flush();
       },
+      async drop(i) {
+        const waiting = (s as any).queue[i - 1];
+        if (!waiting) throw new Error(`S has no message ${i} waiting`);
+        await s.stop(waiting.id);
+        await flush();
+      },
       async ignore(k, chat) {
         const card = cards[k - 1]!;
         try {
@@ -152,12 +172,16 @@ export const relayedCardDriver: RelayedCardDriver = {
       view(): View {
         const turn = gone ? null : (s as any).turn;
         return {
-          cards: cards.map((card, i) => ({
-            kind: card.kind, P: state(p.line(card.p)),
-            S: gone ? null : card.s ? state(s.line(card.s)) : "none", woke: { ...woke[i]! },
-          })),
+          cards: cards.map((card, i) => {
+            const line = p.line(card.p);
+            return {
+              kind: card.kind, P: state(line),
+              S: gone ? null : card.s ? state(s.line(card.s)) : "none", woke: { ...woke[i]! },
+              shows: card.kind === "guest" && shows(line), noted: !!line?.notDelivered && isOpenQuestion(line),
+            };
+          }),
           s: !turn ? "idle" : turn.guest ? "guest" : "own",
-          queued: gone ? 0 : (s as any).queue.length,
+          queue: gone ? [] : (s as any).queue.map((waiting: { words: string }) => cardIn(waiting.words)),
           calls: conversations.callIns(P.id).filter((call) => call.state === "queued").length,
           told, gone, refused,
         };
