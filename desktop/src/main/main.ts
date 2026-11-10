@@ -20,6 +20,8 @@ import { CHECK_EVERY_MS, Updater } from "./updates";
 import { linkOpenWay, markdownLinkPath, reportPreviewURL, shellReportNavigation } from "./report-preview";
 import { MARKDOWN_CSP, markdownPage, markdownResponse, markdownStyles } from "./markdown-page";
 import { pluginLinkRoute } from "../core/plugin-link";
+import { createBrowserHost, type BrowserHost } from "./browser-host";
+import { BROWSER_CHANNEL, isWebUrl, parseBrowserUp } from "../browser-wire";
 import { previewResponse } from "./preview-response";
 import { reportNeedsMark, resolveReportTheme, themeHtml, type ReportTheme } from "./report-theme";
 import { themeSourceFor, windowBackground, type AppTheme } from "./app-theme";
@@ -352,7 +354,12 @@ function coreEnvironment(): Record<string, string> {
   return env;
 }
 
+/** Each app window's in-app browser (browser-host.ts), by its page's contents id. */
+const browserHosts = new Map<number, BrowserHost>();
+const browserFor = (contents: WebContents) => browserHosts.get(contents.id) ?? null;
 function broadcast(event: EventEnvelope) {
+  // A removed bot's browser tabs go with it.
+  if (event.event.type === "bot.removed") for (const host of browserHosts.values()) host.closeBot(event.event.botId);
   for (const window of BrowserWindow.getAllWindows()) {
     if (!appContents.has(window.webContents.id) || window.webContents.isDestroyed()) continue;
     window.webContents.send("botling:message", event);
@@ -399,6 +406,14 @@ ipcMain.on("botling:shortcuts:suspend", (event, on: unknown) => {
   menuSuspended = on === true;
   if (menuSuspended) suspendTimer = setTimeout(() => { menuSuspended = false; applyMenu(shortcutOverrides); }, 60_000);
   applyMenu(shortcutOverrides);
+});
+
+// The in-app browser pane (browser-host.ts): the app page's tab strip and toolbar, and where the page goes.
+ipcMain.on(BROWSER_CHANNEL, (event, raw: unknown) => {
+  if (!fromAppFrame(event)) return;
+  const message = parseBrowserUp(raw);
+  if (!message) { note("refused a malformed browser message"); return; }
+  browserFor(event.sender)?.receive(message);
 });
 
 ipcMain.on("botling:post", (event, raw: unknown) => {
@@ -522,13 +537,15 @@ async function openResult(botId: string, url: string): Promise<{ opened: boolean
   const markdown = markdownLinkPath(url);
   return markdown ? markdownPreview(markdown, url) : openLink(url);
 }
-async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string,pinId?:string,reveal=false,preview=false,cardImage?:string): Promise<{opened:boolean;previewURL?:string}> {
+async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string,pinId?:string,reveal=false,preview=false,cardImage?:string,external=false,sender?:WebContents): Promise<{opened:boolean;previewURL?:string}> {
   // A file attached in this chat, as the chat page shows it (served by the chat origin): the file it
   // names, which the core accepts only when a line of this chat has it (1.x opens it like any link).
   url = attachmentFile(url, botId) ?? url;
   const access = await core.call({type:"link.authorize",source,botId,url,...(messageId?{messageId}:{}),...(pinId?{pinId}:{}),...(cardImage?{cardImage}:{})});
   if (!(source === "user" && /^(https?|mailto):/i.test(url)) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
-  const way = linkOpenWay({ url, source, preview, reveal });
+  const pane = sender ? browserFor(sender) : null;
+  const way = linkOpenWay({ url, source, preview, reveal, external, pane: !!pane });
+  if (way === "pane") { openedResults.push(url); pane!.open(botId, url); return { opened: true }; }
   if (way === "markdown") return markdownPreview(markdownLinkPath(url)!, url);
   if (way === "preview") return { opened: true, previewURL: reportPreviewURL(url) };
   return openLink(url, reveal);
@@ -552,9 +569,12 @@ function markdownPreview(path: string, link = path): { opened: boolean; previewU
  * from the preview origin like a chat report, any other drawn once as a page; the page shows `previewURL`); any other file
  * with its app when it is a page, picture, video or document, else in Finder (never run). No prompt.
  */
-async function openPluginLink(cmd: Extract<Command, { type: "plugins.openLink" }>): Promise<{ opened: boolean; previewURL?: string }> {
+async function openPluginLink(cmd: Extract<Command, { type: "plugins.openLink" }>, sender?: WebContents): Promise<{ opened: boolean; previewURL?: string }> {
   const target = await core.call({ type: "plugins.linkTarget", name: cmd.name, botId: cmd.botId, href: cmd.href });
   const route = pluginLinkRoute(target);
+  // A web page opens in the app's browser pane, for the bot the plugin named (mailto: still goes outside).
+  const pane = sender ? browserFor(sender) : null;
+  if (target.kind === "web" && pane && isWebUrl(target.url)) { openedResults.push(target.url); pane.open(cmd.botId, target.url); return { opened: true }; }
   if (target.kind === "web") return openLink(target.url);
   if (route === "markdown") return markdownPreview(target.path);
   return openLink(target.path);
@@ -667,7 +687,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
         reveal: (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") shell.showItemInFolder(path); },
       });
     }
-    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId,cmd.reveal===true,cmd.preview===true,cmd.cardImage);
+    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId,cmd.reveal===true,cmd.preview===true,cmd.cardImage,cmd.external===true,sender);
     case "doctor.copy": return copyDoctorFix(cmd.tool, await core.call({ type: "doctor.view" }), text => clipboard.writeText(text));
     case "chat.reloadPage": return { reloaded: await reloadNativeEditor(sender) };
     case "updates.check": return announce(await updater.check(cmd.manual));
@@ -689,7 +709,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     }
     case "component.report": return reportComponent(cmd, sender);
     case "plugins.noteSnapshot": return noteSnapshot(cmd, sender);
-    case "plugins.openLink": return openPluginLink(cmd);
+    case "plugins.openLink": return openPluginLink(cmd, sender);
     case "chat.feedback": return withScreenshot(cmd, sender);
     case "files.pick": return pickFiles(cmd.botId, sender);
     case "projects.pick": return pickProject(sender);
@@ -775,7 +795,8 @@ function createWindow() {
   window.webContents.on('did-start-navigation',(details)=>traceWriter?.observe('native.navigation.start',{contentsId:id,url:details.url.slice(0,2048),isMainFrame:details.isMainFrame,frame:traceFrameIdentity(details.frame)}));
   window.webContents.on('did-frame-finish-load',(_event,isMainFrame,processId,routingId)=>traceWriter?.observe('native.frame.loaded',{contentsId:id,isMainFrame,processId,routingId}));
   window.webContents.on('did-finish-load',()=>traceWriter?.observe('native.document.loaded',{contentsId:id}));
-  window.on("closed", () => { appContents.delete(id); if (mainWindow === window) mainWindow = null; });
+  browserHosts.set(id, createBrowserHost(window, { note, noExternal: process.env.BOTLING_NO_EXTERNAL === "1" }));
+  window.on("closed", () => { appContents.delete(id); browserHosts.delete(id); if (mainWindow === window) mainWindow = null; });
   window.webContents.once('did-finish-load',()=>startup.mark('window.loaded'));
   const ownerReady=window.loadURL(`${APP_ORIGIN}/index.html`);
   const editor=prepareNativeEditorHost(window,root,ownerReady,preloadDir,{onDroppedFile:droppedFile});

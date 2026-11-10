@@ -50,6 +50,8 @@ import { useApprovalSheet } from "./ApprovalSheet";
 import { WorkerAskBar, WorkersBadge, WorkersMenu } from "./Workers";
 import { askOwnerText, askReference, filesChanged, readSeenFailed, watchedWorker, workersMenuAfterMove, writeSeenFailed, type AskWorker } from "./worker-panel";
 import { asksUser, cardApprove, cardRun } from "./card-approval";
+import { BrowserPane } from "./BrowserPane";
+import { browserStore, useBrowser } from "./browser-state";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
  * header (the phone's bot list button) and the left column's foot in place of the desktop's add,
@@ -489,13 +491,30 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request(shownChat(bot?.id ?? null, { subagent: !!watching, tab, board: shownBoard })).catch(() => {});
   }, [client, web, view.ready, view.resyncs, bot?.id, watching, shownTabKey, shownBoard]);
 
+  // The in-app browser pane beside the chat (BrowserPane.tsx): open for this bot once a link opened in it. While it is
+  // open the right panel folds to its strip unless you open it again; full screen hides everything else but the pane
+  // (and the chat, docked beside it, when you open it from the bot's bubble).
+  const browser = useBrowser();
+  const browserState = bot ? browser.states[bot.id] : undefined;
+  const paneOpen = !web && !!bot && !!browser.open[bot.id] && !!browserState?.tabs.length;
+  const browserFull = paneOpen && browser.full;
+  const [miniChat, setMiniChat] = useState(false);
+  const [rightWithPane, setRightWithPane] = useState(false);
+  useEffect(() => { if (!paneOpen) { setRightWithPane(false); if (browser.full) browserStore.setFull(false); } }, [paneOpen]);
+  useEffect(() => { if (!browserFull) setMiniChat(false); }, [browserFull]);
+  const rightFolded = collapsed || (paneOpen && !rightWithPane);
+  const toggleRightHere = useCallback(() => {
+    if (!paneOpen) { toggleRight(); return; }
+    if (rightFolded) { setRightWithPane(true); if (collapsed) toggleRight(); } else setRightWithPane(false);
+  }, [paneOpen, rightFolded, collapsed, toggleRight]);
+
   // Reading a chat clears its unread count.
   useEffect(() => {
     if (bot && bot.unread > 0) void client.request({ type: "chat.read", botId: bot.id }).catch(() => {});
   }, [client, bot]);
 
   return (
-    <div className="shell" data-ready={view.ready ? "1" : "0"}>
+    <div className={`shell${paneOpen ? " browser-on" : ""}${browserFull ? " browser-full" : ""}${browserFull && miniChat ? " browser-mini" : ""}`} data-ready={view.ready ? "1" : "0"}>
       {/* A panel a plugin's program part opened (`ui.openView`). */}
       {!web && view.pluginPanel && (
         <PanelFrame key={`${view.pluginPanel.plugin}/${view.pluginPanel.panel}`} client={client} plugin={view.pluginPanel.plugin} panel={view.pluginPanel.panel}
@@ -687,6 +706,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
+      {paneOpen && bot && browserState && (
+        <BrowserPane bot={bot} state={browserState} full={browserFull} look={view.settings?.botLook ?? "original"}
+          miniChat={miniChat} onMiniChat={setMiniChat} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}`} />
+      )}
       {bot && takeover && takeoverView && (
         <TakeoverPage key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}
           plugins={view.plugins} onError={fail} onAsk={approval.ask} />
@@ -696,7 +719,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           onDrawerSettings={() => setBotSettings(true)}
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
           status={{ key: status(bot), text: statusText(bot) }}
-          results={results} watching={watching} collapsed={collapsed}
+          results={results} watching={watching} collapsed={rightFolded}
           onSelect={selectBot}
           onIgnore={(item) => void client.request(item.messageId ? { type: "chat.ignoreQuestion", botId: item.botId, messageId: item.messageId } : { type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
           onOpenResult={openResult}
@@ -708,7 +731,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           settingsPage={botSettings ? <BotSettings client={client} bot={bot} settings={view.settings} onOpenAppSettings={() => openSettings("models")} /> : undefined}
           pluginSections={rightPanelSectionsFor(view.plugins, bot).map((block) => <SlotFrame key={`${bot.id}/${block.plugin}/${block.id}`} client={client} plugin={block.plugin} view={block.id} title={block.title} fontSize={13} botId={bot.id} onBuiltin={runBuiltin} />)}
           onCloseSettings={() => setBotSettings(false)}
-          onExpand={toggleRight}
+          onExpand={toggleRightHere}
         />
       )}
       {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)}
@@ -1386,7 +1409,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
         case "openExternal":
         case "openURL":
         case "revealFile":
-          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", ...(message.reportPreview === true && action.type === "openURL" ? {preview: true} : {}), ...(action.type === "revealFile" ? { reveal: true } : {}), ...(cardImageOf(action.shown) ? { cardImage: cardImageOf(action.shown)! } : {}), source: message.linkSource === "user" ? "user" : "component", ...(typeof message.linkMessageId === "string" ? {messageId:message.linkMessageId} : {}), ...(typeof message.linkPinId === "string" ? {pinId:message.linkPinId} : {}), botId: chat.botId, url: action.url.slice(0, 8_000) }).then(result => { if (result.previewURL && store.getChatView().chat?.botId === chat.botId) setReport({botId: chat.botId, url: result.previewURL}); }).catch(onError);
+          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", ...(action.type === "openExternal" || message.linkExternal === true ? { external: true } : {}), ...(message.reportPreview === true && action.type === "openURL" ? {preview: true} : {}), ...(action.type === "revealFile" ? { reveal: true } : {}), ...(cardImageOf(action.shown) ? { cardImage: cardImageOf(action.shown)! } : {}), source: message.linkSource === "user" ? "user" : "component", ...(typeof message.linkMessageId === "string" ? {messageId:message.linkMessageId} : {}), ...(typeof message.linkPinId === "string" ? {pinId:message.linkPinId} : {}), botId: chat.botId, url: action.url.slice(0, 8_000) }).then(result => { if (result.previewURL && store.getChatView().chat?.botId === chat.botId) setReport({botId: chat.botId, url: result.previewURL}); }).catch(onError);
           return;
         // "Not right" on a reply (developer mode): main adds the chat frame as you saw it.
         case "feedback": {
