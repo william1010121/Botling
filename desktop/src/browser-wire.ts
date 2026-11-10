@@ -3,6 +3,8 @@
 // browser-host.ts); the app page draws the tab strip and toolbar and says where the page goes (its bounds).
 // Main checks every message (parseBrowserUp) and only takes them from the app page's own main frame.
 
+import type { SiteToolOptions, SiteToolProblem, SiteToolSiteState, SiteToolView } from "./browser-site-tools";
+
 export const BROWSER_CHANNEL = "botling:browser";
 /** At most this many tabs per bot. */
 export const BROWSER_MAX_TABS = 8;
@@ -40,7 +42,23 @@ export type BrowserUp =
   /** Whether the pane is full screen (Esc in the page then leaves it). */
   | { type: "mode"; fullscreen: boolean }
   /** Every bot's tabs again (a reloaded app page). */
-  | { type: "hello" };
+  | { type: "hello" }
+  /** Site tools (browser-site-tools.ts): run a tool on a tab's page with the form's values. */
+  | { type: "tool.run"; botId: string; tabId: string; toolId: string; options?: SiteToolOptions }
+  /** A tool on or off for the tab's site (a toggle tool runs at once, on or off). */
+  | { type: "tool.set"; botId: string; tabId: string; toolId: string; on: boolean };
+
+/** Every site tool, what is on per site, and where the tools live (sent when any of it changes). */
+export interface BrowserToolCatalog { tools: SiteToolView[]; problems: SiteToolProblem[]; state: SiteToolSiteState; folder: string; guide: string }
+/** A tool's run on a tab, as the sheet shows it. */
+export interface BrowserToolRun {
+  botId: string; tabId: string; toolId: string;
+  status: "running" | "done" | "failed";
+  /** The progress line while running, the result or the reason when done. */
+  text?: string;
+  /** Files saved (their paths). */
+  saved?: string[];
+}
 
 /** Main → app page. */
 export type BrowserDown =
@@ -51,10 +69,28 @@ export type BrowserDown =
   /** A key pressed in the page that the app handles: ⌘L (the URL bar), Esc (leave full screen). */
   | { type: "key"; botId: string; key: "focusUrl" | "escape" }
   /** The More menu's "Close browser". */
-  | { type: "closePane"; botId: string };
+  | { type: "closePane"; botId: string }
+  | ({ type: "tools" } & BrowserToolCatalog)
+  | ({ type: "toolRun" } & BrowserToolRun);
 
 const ID = /^[A-Za-z0-9._:-]{1,160}$/;
 const TAB = /^t[0-9]{1,12}$/;
+const TOOL = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const OPTION = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
+
+/** A form's values from the app page: at most 8, each a short text or a boolean. */
+function toolOptions(value: unknown): SiteToolOptions | null | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 8) return null;
+  const out: SiteToolOptions = {};
+  for (const [key, each] of entries) {
+    if (!OPTION.test(key) || !(typeof each === "boolean" || (typeof each === "string" && each.length <= 2_000))) return null;
+    out[key] = each;
+  }
+  return out;
+}
 const str = (value: unknown, max: number) => typeof value === "string" && value.length > 0 && value.length <= max;
 const num = (value: unknown) => typeof value === "number" && Number.isFinite(value) && Math.abs(value) < 100_000;
 
@@ -90,6 +126,14 @@ export function parseBrowserUp(raw: unknown): BrowserUp | null {
       return { type: "navigate", botId: m.botId as string, input: m.input as string, ...(m.tabId ? { tabId: m.tabId as string } : {}) };
     case "back": case "forward": case "reload": case "stop": case "copy": case "external": case "window": case "focus":
       return bot() ? { type: m.type, botId: m.botId as string } : null;
+    case "tool.run": case "tool.set": {
+      if (!bot() || typeof m.tabId !== "string" || !TAB.test(m.tabId) || typeof m.toolId !== "string" || !TOOL.test(m.toolId)) return null;
+      const base = { botId: m.botId as string, tabId: m.tabId, toolId: m.toolId };
+      if (m.type === "tool.set") return typeof m.on === "boolean" ? { type: "tool.set", ...base, on: m.on } : null;
+      const options = toolOptions(m.options);
+      if (options === null) return null;
+      return { type: "tool.run", ...base, ...(options ? { options } : {}) };
+    }
     case "menu":
       return bot() && num(m.x) && num(m.y) ? { type: "menu", botId: m.botId as string, x: m.x as number, y: m.y as number } : null;
     default: return null;

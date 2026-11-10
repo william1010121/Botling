@@ -6,7 +6,9 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { hostOf, type BrowserBotState, type BrowserTabInfo } from "../browser-wire";
 import type { BotView } from "../contract";
 import { faceURL } from "./avatars";
-import { browserStore, postBrowser } from "./browser-state";
+import { browserStore, postBrowser, useBrowser } from "./browser-state";
+import { askForToolText } from "../browser-site-tools";
+import { SiteToolsSheet, countedTools } from "./SiteToolsSheet";
 import { ToolbarVisibility } from "./browser-toolbar";
 import { ShellOverlay, shellOverlayActive, subscribeShellOverlays } from "./ShellOverlay";
 
@@ -62,15 +64,19 @@ export interface BrowserPaneProps {
   onMiniChat(open: boolean): void;
   /** Changes when something around the pane moves it (its bounds are measured again). */
   layoutKey: string;
+  /** Sends a message to this bot's chat ("Ask Botling to make a tool for this site"). */
+  onAskTool(text: string): Promise<void>;
 }
 
-export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layoutKey }: BrowserPaneProps) {
+export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layoutKey, onAskTool }: BrowserPaneProps) {
   const botId = bot.id;
   const active = state.tabs.find((tab) => tab.id === state.active) ?? state.tabs[0] ?? null;
   const [toolbar, setToolbar] = useState(false);
   const visibility = useMemo(() => new ToolbarVisibility(setToolbar), []);
   useEffect(() => () => visibility.dispose(), [visibility]);
   const [sheet, setSheet] = useState(false);
+  const { tools: catalog, runs } = useBrowser();
+  const toolCount = countedTools(catalog, active?.url);
   const [draft, setDraft] = useState<string | null>(null);
   /** The URL bar opens a new tab (the + button) rather than going somewhere in this one. */
   const [newTab, setNewTab] = useState(false);
@@ -225,7 +231,10 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
                   }} />
                 {draft === null && <span className="bp-url-shown" aria-hidden="true"><b>{shown.host}</b>{shown.rest}</span>}
               </label>
-              <button type="button" className={`bp-round${sheet ? " on" : ""}`} aria-label="Site tools" title="Site tools" aria-pressed={sheet} onClick={() => setSheet(!sheet)}>{ICONS.puzzle()}</button>
+              <button type="button" className={`bp-round${sheet ? " on" : ""}`} aria-label={toolCount ? `Site tools, ${toolCount} for this site` : "Site tools"} title="Site tools" aria-pressed={sheet} onClick={() => setSheet(!sheet)}>
+                {ICONS.puzzle()}
+                {toolCount > 0 && <span className="bp-round-badge" aria-hidden="true">{toolCount > 9 ? "9+" : toolCount}</span>}
+              </button>
               <button type="button" className={`bp-round${full ? " on" : ""}`} aria-label={full ? "Exit full screen (Esc)" : "Full screen"} title={full ? "Exit full screen (Esc)" : "Full screen"} aria-pressed={full}
                 onClick={() => browserStore.setFull(!full)}>{full ? ICONS.shrink() : ICONS.expand()}</button>
               <button type="button" className="bp-round" aria-label="More" aria-haspopup="menu" title="More"
@@ -242,13 +251,8 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
           <span className="bp-page-hint">{host}</span>
         </div>
         {sheet && (
-          <aside className="bp-sheet" aria-label={`Site tools for ${host}`}>
-            <div className="bp-sheet-head">
-              <span>Tools for {host}</span>
-              <button type="button" aria-label="Close site tools" onClick={() => setSheet(false)}>{ICONS.close()}</button>
-            </div>
-            <p className="bp-sheet-empty">No tools for this site yet.</p>
-          </aside>
+          <SiteToolsSheet botId={botId} botName={bot.name} tab={active} catalog={catalog} runs={runs} onClose={() => setSheet(false)}
+            onAsk={onAskTool} askText={(page) => askForToolText(page, catalog?.folder ?? "the app's browser-tools folder", catalog?.guide ?? "its README.md")} closeIcon={ICONS.close()} />
         )}
       </div>
     </section>

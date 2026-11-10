@@ -5,10 +5,15 @@
 // sign-ins last but share nothing with the app's pages), sandboxed, context-isolated, no Node and no preload.
 // Only http(s) loads; a site's popup (window.open, target=_blank) becomes a new tab; every permission it asks
 // for (camera, notifications, location, …) is refused.
-import { BrowserWindow, Menu, WebContentsView, clipboard, session, shell, type Session, type WebContents } from "electron";
-import { BROWSER_CHANNEL, isWebUrl, urlFromInput, type BrowserDown, type BrowserMenuPick, type BrowserRect, type BrowserUp } from "../browser-wire";
+import { BrowserWindow, Menu, WebContentsView, app, clipboard, dialog, session, shell, type Session, type WebContents } from "electron";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { BROWSER_CHANNEL, isWebUrl, urlFromInput, type BrowserDown, type BrowserMenuPick, type BrowserRect, type BrowserToolRun, type BrowserUp } from "../browser-wire";
+import { runOptions, siteOf, toolIsOn, toolsFor, type RunFile, type SiteToolOptions } from "../browser-site-tools";
 import { BrowserTabs, type TabPage } from "./browser-tabs";
 import { editorBounds } from "./editor-host";
+import { runSiteTool } from "./site-tool-runner";
+import type { SiteToolStore } from "./site-tools";
 
 export const BROWSER_PARTITION = "persist:botling-web";
 /** The top edge of a page, in px, where the pointer brings out the floating toolbar. */
@@ -38,6 +43,10 @@ export interface BrowserHostOptions {
   note(text: string): void;
   /** Tests: never open the default browser. */
   noExternal?: boolean;
+  /** Site tools (site-tools.ts), shared by every window. */
+  tools?: SiteToolStore;
+  /** Tests: files a tool saves go here, with no save dialog. */
+  saveFolder?: string;
 }
 
 export interface BrowserHost {
@@ -56,6 +65,8 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
   let htmlFull: WebContentsView | null = null;
   let lastBounds: BrowserRect | null = null;
   const views = new Map<string, WebContentsView>();
+  const execs = new Map<string, (worldId: number, code: string) => Promise<unknown>>();
+  const running = new Set<string>();
 
   const tabs: BrowserTabs = new BrowserTabs({
     create: (botId, tabId) => makePage(botId, tabId),
@@ -73,6 +84,8 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
     const shellIndex = children.findIndex((child) => (child as Partial<WebContentsView>).webContents === owner.webContents);
     owner.contentView.addChildView(view, shellIndex + 1);
     views.set(tabId, view);
+    // Site tools run in an isolated world of the page: they see its DOM, never its scripts, and it never sees them.
+    execs.set(tabId, (worldId, code) => contents.isDestroyed() ? Promise.reject(new Error("the page is gone")) : contents.executeJavaScriptInIsolatedWorld(worldId, [{ code }], true));
     wire(botId, tabId, view, contents);
     return {
       load: (url) => { if (isWebUrl(url)) void contents.loadURL(url).catch(() => {}); },
@@ -87,6 +100,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       focus: () => { if (!contents.isDestroyed()) contents.focus(); },
       destroy: () => {
         views.delete(tabId);
+        execs.delete(tabId);
         if (htmlFull === view) htmlFull = null;
         if (!owner.isDestroyed()) owner.contentView.removeChildView(view);
         if (!contents.isDestroyed()) contents.close();
@@ -110,6 +124,8 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
     contents.on("did-navigate-in-page", (_event, url, isMainFrame) => { if (isMainFrame) update({ url }); });
     contents.on("page-title-updated", (_event, title) => update({ title: title.slice(0, 300) }));
     contents.on("page-favicon-updated", (_event, favicons) => { void favicon(favicons[0]).then((icon) => update({ favicon: icon })); });
+    // Toggle tools turned on for this site come back on every load.
+    contents.on("did-finish-load", () => applyToggles(botId, tabId));
     contents.on("render-process-gone", () => update({ loading: false, crashed: true }));
     // A video going full screen fills the window, then goes back.
     contents.on("enter-html-full-screen", () => { htmlFull = view; const { width, height } = owner.getContentBounds(); view.setBounds({ x: 0, y: 0, width, height }); });
@@ -145,6 +161,71 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       const bytes = Buffer.from(await response.arrayBuffer());
       return bytes.length > 0 && bytes.length <= FAVICON_MAX ? `data:${type};base64,${bytes.toString("base64")}` : null;
     } catch { return null; }
+  }
+
+  // --- Site tools ---------------------------------------------------------------------------------------------
+  const store = options.tools;
+  const sendCatalog = () => { if (store) send({ type: "tools", ...store.catalog() }); };
+  const stopCatalog = store?.subscribe(sendCatalog);
+  const report = (run: BrowserToolRun) => send({ type: "toolRun", ...run });
+
+  /** A file a tool asked to save: where the person picks (Downloads to start with), or the tests' folder. */
+  async function saveToolFile(file: RunFile): Promise<string | null> {
+    const extension = file.name.slice(file.name.lastIndexOf(".") + 1);
+    let path: string | null = null;
+    if (options.saveFolder) { await mkdir(options.saveFolder, { recursive: true }); path = join(options.saveFolder, file.name); }
+    else {
+      if (owner.isDestroyed()) return null;
+      const picked = await dialog.showSaveDialog(owner, { defaultPath: join(app.getPath("downloads"), file.name), filters: [{ name: extension.toUpperCase(), extensions: [extension] }] });
+      if (picked.canceled || !picked.filePath) return null;
+      path = picked.filePath;
+    }
+    await writeFile(path, file.content, "utf8");
+    return path;
+  }
+
+  async function runTool(botId: string, tabId: string, toolId: string, given: SiteToolOptions | undefined, active: boolean | null, quiet = false) {
+    const tool = store?.tool(toolId);
+    const tab = tabs.tab(botId, tabId);
+    const exec = execs.get(tabId);
+    const key = `${tabId}/${toolId}`;
+    if (!tool || !tab || !exec || running.has(key)) return;
+    const site = siteOf(tab.url);
+    if (!site || !toolsFor([tool], tab.url).length) { if (!quiet) report({ botId, tabId, toolId, status: "failed", text: "This tool is not for this site." }); return; }
+    if (tool.kind === "action" && !toolIsOn(store!.siteState(), tool, site)) return;
+    running.add(key);
+    if (!quiet) report({ botId, tabId, toolId, status: "running" });
+    try {
+      const result = await runSiteTool({
+        tool, options: runOptions(tool, given), exec,
+        active: tool.kind === "toggle" ? active ?? toolIsOn(store!.siteState(), tool, site) : null,
+        save: tool.kind === "action" ? saveToolFile : undefined,
+        onProgress: quiet ? undefined : (text) => report({ botId, tabId, toolId, status: "running", text }),
+      });
+      if (tool.kind === "toggle" && result.active !== null && result.active !== toolIsOn(store!.siteState(), tool, site)) store!.setOn(tool.id, site, result.active);
+      if (!result.ok) options.note(`site tool ${tool.id} on ${site}: ${result.text}`);
+      if (!quiet || !result.ok) report({ botId, tabId, toolId, status: result.ok ? "done" : "failed", text: result.text, ...(result.saved.length ? { saved: result.saved } : {}) });
+    } catch (error) {
+      report({ botId, tabId, toolId, status: "failed", text: `Failed: ${String((error as Error)?.message ?? error).slice(0, 300)}` });
+    } finally { running.delete(key); }
+  }
+
+  function applyToggles(botId: string, tabId: string) {
+    const tab = tabs.tab(botId, tabId);
+    const site = tab ? siteOf(tab.url) : null;
+    if (!store || !tab || !site) return;
+    for (const tool of toolsFor(store.all(), tab.url)) {
+      if (tool.kind === "toggle" && toolIsOn(store.siteState(), tool, site)) void runTool(botId, tabId, tool.id, undefined, true, true);
+    }
+  }
+
+  function setTool(botId: string, tabId: string, toolId: string, on: boolean) {
+    const tool = store?.tool(toolId);
+    const tab = tabs.tab(botId, tabId);
+    const site = tab ? siteOf(tab.url) : null;
+    if (!store || !tool || !tab || !site || !toolsFor([tool], tab.url).length) return;
+    store.setOn(tool.id, site, on);
+    if (tool.kind === "toggle") void runTool(botId, tabId, tool.id, undefined, on);
   }
 
   const openOutside = (url: string) => { if (!options.noExternal && isWebUrl(url)) void shell.openExternal(url); };
@@ -191,7 +272,9 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
 
   function receive(message: BrowserUp) {
     switch (message.type) {
-      case "hello": for (const botId of tabs.botIds()) send({ type: "state", ...tabs.state(botId) }); break;
+      case "hello": for (const botId of tabs.botIds()) send({ type: "state", ...tabs.state(botId) }); sendCatalog(); break;
+      case "tool.run": void runTool(message.botId, message.tabId, message.toolId, message.options, null); break;
+      case "tool.set": setTool(message.botId, message.tabId, message.toolId, message.on); break;
       case "mode": fullscreen = message.fullscreen; break;
       case "layout": {
         const bounds = message.bounds ? editorBounds(message.bounds, owner.getContentBounds(), owner.webContents.getZoomFactor()) : null;
@@ -221,7 +304,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
 
   const resize = () => { if (htmlFull && !owner.isDestroyed()) { const { width, height } = owner.getContentBounds(); htmlFull.setBounds({ x: 0, y: 0, width, height }); } };
   owner.on("resize", resize);
-  const dispose = () => { owner.removeListener("resize", resize); tabs.dispose(); views.clear(); };
+  const dispose = () => { owner.removeListener("resize", resize); stopCatalog?.(); tabs.dispose(); views.clear(); execs.clear(); };
   owner.once("closed", dispose);
 
   return {
