@@ -952,3 +952,73 @@ button.wk-fc:hover { text-decoration: underline; }
 }
 .task-details-sheet > .detail-panel.workers-panel { padding: 16px 0 0; }
 .task-details-sheet > .detail-panel.workers-panel .panel-tabs, .task-details-sheet > .detail-panel .panel-tabs { margin-top: 0; }
+
+/* The in-app browser pane beside the chat (BrowserPane.tsx; design "Botling in-app browser" v4). The web page is a
+   native view main lays over `.bp-page`; nothing here may sit on that box. */
+.browser-pane { position: relative; flex: 0 1 50%; min-width: 320px; display: flex; flex-direction: column; background: var(--side); border-left: 1px solid var(--line); }
+.browser-pane.full { flex: 1 1 auto; border-left: 0; }
+.shell.browser-on:not(.browser-full) > .chat-pane { min-width: 360px; }
+.bp-divider { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; z-index: 5; cursor: col-resize; -webkit-app-region: no-drag; }
+.bp-divider:hover, .bp-divider.dragging { background: linear-gradient(to right, transparent 3px, var(--blue) 3px, var(--blue) 5px, transparent 5px); }
+.bp-tabs { height: 40px; flex-shrink: 0; display: flex; align-items: flex-end; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--line); }
+.browser-pane.full .bp-tabs { padding-left: 84px; align-items: center; padding-top: 0; }
+.bp-tab { height: 32px; min-width: 0; flex: 0 1 230px; display: flex; align-items: center; gap: 7px; padding: 0 6px 0 10px; border-radius: 9px 9px 0 0; color: var(--muted); font-size: 12.5px; cursor: default; -webkit-app-region: no-drag; }
+.browser-pane.full .bp-tab { align-self: flex-end; }
+.bp-tab:hover { color: var(--text); }
+.bp-tab.on { background: var(--ground); color: var(--text); }
+.bp-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.bp-tab-icon { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; object-fit: contain; }
+.bp-tab-letter { display: inline-flex; align-items: center; justify-content: center; background: var(--chip); color: var(--muted); font-size: 9px; font-weight: 700; }
+.bp-tab-spinner { width: 12px; height: 12px; margin: 1px; flex-shrink: 0; border-radius: 50%; border: 1.6px solid var(--chip); border-top-color: var(--blue); animation: bp-spin 0.8s linear infinite; }
+@keyframes bp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bp-tab-spinner { animation-duration: 2.4s; } }
+.bp-tab-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bp-tab-close { width: 18px; height: 18px; flex-shrink: 0; border: 0; border-radius: 5px; background: transparent; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; opacity: 0; cursor: pointer; padding: 0; }
+.bp-tab:hover .bp-tab-close, .bp-tab.on .bp-tab-close, .bp-tab-close:focus-visible { opacity: 1; }
+.bp-tab-close:hover { background: var(--hover); color: var(--text); }
+.bp-new { width: 28px; height: 28px; margin-bottom: 2px; flex-shrink: 0; border: 0; border-radius: 7px; background: transparent; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; -webkit-app-region: no-drag; }
+.bp-new:hover { background: var(--hover); color: var(--text); }
+.bp-gap { flex: 1; }
+.bp-exit { height: 26px; margin-bottom: 7px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font-size: 12px; cursor: pointer; -webkit-app-region: no-drag; flex-shrink: 0; }
+.bp-exit:hover { color: var(--text); }
+.bp-bubble { position: relative; width: 34px; height: 34px; margin: 0 2px 3px 8px; flex-shrink: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--bubble); display: inline-flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; -webkit-app-region: no-drag; }
+.bp-bubble.on { background: var(--selected); }
+.bp-bubble img { width: 24px; height: 24px; }
+.bp-bubble-dot { position: absolute; right: 0; bottom: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); border: 2px solid var(--bubble); }
+.bp-bubble-dot[data-status="working"] { background: var(--blue); }
+.bp-bubble-dot[data-status="waiting"] { background: var(--orange); }
+.bp-bubble-badge { position: absolute; right: -6px; top: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--blue); color: #fff; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+/* The top strip: a grip while the toolbar hides, the toolbar row while it shows (the page moves down under it). */
+.bp-top { flex-shrink: 0; }
+.bp-edge { height: 8px; display: flex; justify-content: center; align-items: center; background: var(--ground); }
+.bp-grip { width: 40px; height: 4px; border-radius: 2px; background: var(--chip); }
+.bp-edge:hover .bp-grip { background: var(--faint); }
+.bp-toolbar-row { height: 46px; padding: 6px 12px; background: var(--ground); }
+.bp-toolbar { height: 34px; display: flex; align-items: center; gap: 4px; padding: 2px; border-radius: 999px; background: var(--popover); border: 1px solid var(--border); box-shadow: 0 10px 30px rgb(0 0 0 / calc(0.3 * var(--shade, 1))); }
+.bp-round { width: 30px; height: 30px; flex-shrink: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.bp-round:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+.bp-round:disabled { opacity: 0.4; cursor: default; }
+.bp-round.on { background: var(--selected); color: var(--text); }
+.bp-round:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.bp-url { position: relative; flex: 1 1 160px; min-width: 0; height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border-radius: 15px; background: var(--chip); font-size: 13px; cursor: text; }
+.bp-url-lock { color: var(--faint); display: inline-flex; flex-shrink: 0; }
+.bp-url input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; padding: 0; }
+.bp-url input::placeholder { color: var(--faint); }
+.bp-url:focus-within { box-shadow: 0 0 0 2px var(--accent-line, var(--blue)); }
+.bp-url-shown { position: absolute; left: 31px; right: 12px; top: 0; bottom: 0; display: flex; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--faint); pointer-events: none; }
+.bp-url-shown b { color: var(--text); font-weight: 400; }
+.bp-body { flex: 1; min-height: 0; display: flex; }
+.bp-page { position: relative; flex: 1; min-width: 0; background: var(--ground); display: flex; align-items: center; justify-content: center; }
+.bp-page-hint { color: var(--faint); font-size: 12.5px; }
+.bp-sheet { width: 272px; flex-shrink: 0; background: var(--side); border-left: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 14px; font-size: 13px; }
+.bp-sheet-head { display: flex; align-items: center; gap: 8px; }
+.bp-sheet-head span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.bp-sheet-head button { width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.bp-sheet-head button:hover { background: var(--hover); color: var(--text); }
+.bp-sheet-empty { margin: 0; padding: 12px; border-radius: 12px; background: var(--bubble); color: var(--muted); }
+/* Full screen: only the pane, and the chat docked at its right when the bubble opens it. */
+.shell.browser-full > .rail, .shell.browser-full > .rail-strip, .shell.browser-full > .detail-panel, .shell.browser-full > .right-strip,
+.shell.browser-full > .takeover-panel, .shell.browser-full .right-toggle, .shell.browser-full .task-details-entry { display: none; }
+.shell.browser-full:not(.browser-mini) > .chat-pane { display: none; }
+.shell.browser-mini > .chat-pane { order: 2; flex: 0 0 380px; border-left: 1px solid var(--line); }
+.shell.browser-mini > .chat-pane .board-switch-bar { display: none; }

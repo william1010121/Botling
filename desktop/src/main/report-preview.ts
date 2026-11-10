@@ -1,3 +1,4 @@
+import { isWebUrl } from "../browser-wire";
 import { fileURLToPath } from "node:url";
 import { previewFile, previewURL } from "../core/preview-url";
 
@@ -30,8 +31,11 @@ export function markdownLinkPath(url: string): string | null {
  * (never the system's app for .md, VS Code on the user's Mac), whoever clicked it and wherever it is; an HTML report the
  * preview card asks for in its embedded preview; anything else (and Show in Finder) as before.
  */
-export function linkOpenWay(link: { url: string; source: "user" | "component"; preview: boolean; reveal: boolean }): "markdown" | "preview" | "open" {
+export function linkOpenWay(link: { url: string; source: "user" | "component"; preview: boolean; reveal: boolean; external?: boolean; pane?: boolean }): "markdown" | "preview" | "pane" | "open" {
   if (link.reveal) return "open";
   if (markdownLinkPath(link.url)) return "markdown";
-  return link.preview && link.source === "component" ? "preview" : "open";
+  if (link.preview && link.source === "component") return "preview";
+  // 2026-11-10: a web page opens in the app's browser pane beside the chat; ⌘-click (`external`) and the lightbox's
+  // "open in browser" still use the default browser.
+  return link.pane && !link.external && isWebUrl(link.url) ? "pane" : "open";
 }

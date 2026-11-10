@@ -946,7 +946,7 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("worker.cwd"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   z.strictObject({ type: z.literal("worker.file"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), path: z.string().min(1).max(4096) }),
   z.strictObject({ type: z.literal("result.open"), botId, url: z.string().min(1).max(4_000) }),
-  z.strictObject({ type: z.literal("link.open"), cardImage: z.string().regex(/^[0-9a-f]{40}$/).optional(), preview: z.boolean().optional(), reveal: z.boolean().optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
+  z.strictObject({ type: z.literal("link.open"), /** Open a web page in the default browser, not the app's browser pane (⌘-click, the lightbox's button). */ external: z.boolean().optional(), cardImage: z.string().regex(/^[0-9a-f]{40}$/).optional(), preview: z.boolean().optional(), reveal: z.boolean().optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
   /** Core-only membership lookup: no chat payload or component rendering. */
   z.strictObject({ type: z.literal("link.authorize"), cardImage: z.string().regex(/^[0-9a-f]{40}$/).optional(), source:z.enum(["user","component"]).optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("chat.read"), botId }),
