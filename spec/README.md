@@ -22,7 +22,7 @@ Keep adapters thin (translation only); every change to them is reviewed.
 | Name | Protocol |
 |---|---|
 | `restart` | restart continuation journal (`desktop/src/core/restart-continuation.ts`) |
-| `worker` | worker lifecycle and report delivery (`desktop/src/core/worker-core/`) |
+| `worker` | worker lifecycle and report delivery (`desktop/src/core/worker-core/`); `WorkerProcess` checks a Claude worker's process under it: the keep-alive, an input closed while background work runs, words held for a closing process and sent to the next one (`desktop/src/core/agent/claude-workers.ts`) |
 | `callin` | @ routing and call-ins between bots (`desktop/src/core/conversations.ts`) |
 | `routines` | routines scheduling (`desktop/src/core/routines.ts`); `RoutinesOnce` checks its one-shot `@once` lines of routines.cron (taken out before they run; an app rewrite appends back what scripts appended meanwhile) |
 | `datalock` | one core per data folder, `core.lock` (`desktop/src/core/store/data-dir-lock.ts`) |
