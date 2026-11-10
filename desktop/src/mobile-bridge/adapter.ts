@@ -57,7 +57,7 @@ export function webSnapshot(snapshot: ResultOf<'chat.snapshot'>) {
     components: snapshot.components,
     settings: settings ? { language: settings.language, effectiveLanguage: settings.effectiveLanguage, botLook: settings.botLook,
       chatAvatarSize: settings.chatAvatarSize, rightPanelCollapsed: settings.rightPanelCollapsed,
-      railCollapsed: settings.railCollapsed, pinnedBots: settings.pinnedBots, idleBots: settings.idleBots } : undefined,
+      railCollapsed: settings.railCollapsed, pinnedBots: settings.pinnedBots, idleBots: settings.idleBots, botColors: settings.botColors } : undefined,
     waiting: snapshot.waiting,
   };
 }

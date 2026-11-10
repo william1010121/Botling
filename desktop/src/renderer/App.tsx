@@ -25,7 +25,7 @@ import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
 import { commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
 import { ChatStateChannel } from "./chat-state-channel";
-import { faceURL, setBotColors } from "./avatars";
+import { faceURL, sameHeldColors, setBotColors } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
@@ -78,7 +78,12 @@ function useWhiteboardChoice(): [boolean, (on: boolean) => void] {
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
   // Bots whose colours clash get the least clashing one (avatars.ts); before any face below is drawn.
-  setBotColors(view.bots, view.settings?.pinnedBots ?? []);
+  // Once settled a colour is held in settings.json `botColors`, so nothing later moves it.
+  const heldColors = setBotColors(view.bots, view.settings?.pinnedBots ?? [], view.settings?.botColors);
+  const heldToWrite = view.settings && !web && view.bots.length > 0 && !sameHeldColors(view.settings.botColors, heldColors) ? heldColors : null;
+  useEffect(() => {
+    if (heldToWrite) void client.request({ type: "settings.set", change: { key: "botColors", value: heldToWrite } }).catch(() => {});
+  }, [client, heldToWrite]);
   const [error, setError] = useState<string | null>(null);
   const [bottomControls, setBottomControls] = useState<HTMLSpanElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);

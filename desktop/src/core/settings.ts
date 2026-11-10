@@ -85,6 +85,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     updateCheck: bool(raw.updateCheckEnabled, true),
     shortcuts: normalizeOverrides(raw.shortcutBindings),
     mainTabs: mainTabs(raw.mainTabs),
+    botColors: botColors(raw.botColors),
   };
 }
 
@@ -150,6 +151,17 @@ function mainTabs(value: unknown): Record<string, string> {
   return Object.fromEntries(entries.slice(-500).map(([id, tab]) => [id.toUpperCase(), tab]));
 }
 
+/** settings.json `botColors`: each bot's settled face colour; a bad entry is dropped. */
+function botColors(value: unknown): Record<string, { avatar: string; color: string }> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = Object.entries(value as Record<string, unknown>).filter((entry): entry is [string, { avatar: string; color: string }] => {
+    const held = entry[1] as Record<string, unknown> | null;
+    return entry[0].length > 0 && entry[0].length <= 200 && !!held && typeof held === "object"
+      && typeof held.avatar === "string" && held.avatar.length <= 40 && typeof held.color === "string" && /^#[0-9A-Fa-f]{6}$/.test(held.color);
+  });
+  return Object.fromEntries(entries.slice(-2_000).map(([id, held]) => [id, { avatar: held.avatar, color: held.color }]));
+}
+
 /** One change from the Settings page, as 1.x's setters make it (`Workspace+Settings`). */
 export function applySetting(raw: RawSettings, change: SettingsChange): RawSettings {
   const next: RawSettings = { ...raw };
@@ -186,6 +198,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     // 1.x keeps the project when developer mode goes off (`setDeveloperMode(_:project:)`).
     case "developerMode": set("developerMode", change.value); break;
     case "updateCheck": set("updateCheckEnabled", change.value); break;
+    case "botColors": set("botColors", botColors(change.value)); break;
     case "shortcuts": { const kept = normalizeOverrides(change.value); set("shortcutBindings", Object.keys(kept).length ? kept : null); break; }
     case "mainTab": {
       const tabs = { ...mainTabs(raw.mainTabs) };

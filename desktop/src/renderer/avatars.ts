@@ -97,8 +97,8 @@ export function avatarURL(shape: string, eyes: Eyes = "open", color?: string): s
 // circle and a red burst, two yellow stars and drops, a second bot on the same shape). Bots are
 // taken in a stable order (the main bot, Maintainer, the pinned bots, the other bots, sub bots last,
 // each group by id) and each keeps its shape's colour unless a bot before it already has one too
-// close; then it gets the colour furthest from all taken so far. Same bots in, same colours out,
-// whatever order the column lists them in. The spare colours are the shapes' own, a few picked
+// close; then it gets the colour furthest from all taken so far. Once settled, a bot's colour is held
+// (settings.json `botColors`, see heldBotColors): later bots, pins and removals never move it. The spare colours are the shapes' own, a few picked
 // ones, then a wheel of hues at three lightnesses, so even ~60 bots each find a free colour (16
 // shape colours alone ran out at a user's 46 bots, and every later clash then fell to the first
 // spare, the main bot's red).
@@ -153,12 +153,17 @@ const MAINTAINER_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
 type ColorBot = { id: string; avatar: string; role?: string; parent?: string | null };
 
 /** Each bot's colour by id, clashes moved to the least clashing colour (see above). `pinned`: the
- * pinned bots' ids, served right after the main bot and Maintainer, as the column shows them together. */
-export function resolveBotColors(bots: readonly ColorBot[], pinned: readonly string[] = []): Map<string, string> {
+ * pinned bots' ids, served right after the main bot and Maintainer, as the column shows them together.
+ * `held`: colours already settled (still on the same shape), kept as they are and taken first. */
+export function resolveBotColors(bots: readonly ColorBot[], pinned: readonly string[] = [], held: HeldColors = {}): Map<string, string> {
   const rank = (bot: ColorBot) => (bot.role === "main" ? 0 : bot.id === MAINTAINER_ID ? 1 : pinned.includes(bot.id) ? 2 : bot.parent ? 4 : 3);
   const ordered = [...bots].sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const out = new Map<string, string>();
   const taken: string[] = [];
+  for (const bot of ordered) {
+    const kept = held[bot.id];
+    if (kept && kept.avatar === bot.avatar && !out.has(bot.id)) { out.set(bot.id, kept.color); taken.push(kept.color); }
+  }
   const nearest = (color: string) => taken.reduce((min, other) => Math.min(min, colorDistance(color, other)), Infinity);
   for (const bot of ordered) {
     if (out.has(bot.id)) continue;
@@ -177,15 +182,43 @@ export function resolveBotColors(bots: readonly ColorBot[], pinned: readonly str
   return out;
 }
 
+/** Settled colours by bot id, with the shape each was settled on (settings.json `botColors`). */
+export type HeldColors = Record<string, { avatar: string; color: string }>;
+
+/**
+ * The colours to keep from now on: every held one stays (whatever is added, removed or pinned), a new
+ * bot or one on a new shape gets the least clashing colour against all held, a removed bot's is freed.
+ * Nothing held yet (the first run): today's colours, as resolveBotColors gives them, become the held ones.
+ */
+export function heldBotColors(bots: readonly ColorBot[], pinned: readonly string[] = [], held: HeldColors | undefined): HeldColors {
+  const colors = resolveBotColors(bots, pinned, held ?? {});
+  const out: HeldColors = {};
+  for (const bot of bots) {
+    const color = colors.get(bot.id);
+    if (color) out[bot.id] = { avatar: bot.avatar, color };
+  }
+  return out;
+}
+
 let botColors = new Map<string, string>();
 let botColorsKey = "";
+let botColorsHeld: HeldColors = {};
 
-/** The app's bots, so every face drawn after this uses their resolved colours (App calls it on each bot list). */
-export function setBotColors(bots: readonly ColorBot[], pinned: readonly string[] = []): void {
-  const key = bots.map((bot) => `${bot.id}:${bot.avatar}:${bot.role ?? ""}:${bot.parent ?? ""}`).sort().join(",") + `|${pinned.join(",")}`;
-  if (key === botColorsKey) return;
+/** The app's bots, so every face drawn after this uses their colours (App calls it on each bot list).
+ * `held`: the settled colours (settings `botColors`). Returns the colours to hold from now on, for App to keep. */
+export function setBotColors(bots: readonly ColorBot[], pinned: readonly string[] = [], held?: HeldColors): HeldColors {
+  const key = bots.map((bot) => `${bot.id}:${bot.avatar}:${bot.role ?? ""}:${bot.parent ?? ""}`).sort().join(",") + `|${pinned.join(",")}|${JSON.stringify(held ?? null)}`;
+  if (key === botColorsKey) return botColorsHeld;
   botColorsKey = key;
-  botColors = resolveBotColors(bots, pinned);
+  botColorsHeld = heldBotColors(bots, pinned, held);
+  botColors = new Map(Object.entries(botColorsHeld).map(([id, entry]) => [id, entry.color]));
+  return botColorsHeld;
+}
+
+/** Whether two held maps are the same (so App writes settings only on a change). */
+export function sameHeldColors(a: HeldColors | undefined, b: HeldColors): boolean {
+  const keys = Object.keys(b);
+  return !!a && Object.keys(a).length === keys.length && keys.every((id) => a[id]?.avatar === b[id]!.avatar && a[id]?.color === b[id]!.color);
 }
 
 /** A bot's colour: its resolved one when the app knows it, else its shape's own. */
