@@ -136,11 +136,12 @@ export function directSubBotEngine(asked: string | undefined, parent: { engine: 
 export interface SubBotRow { name: string; progress: string; working: boolean; status: string | null }
 
 /** The sub bot list a project bot wakes with (like the main bot's project list): who, and where to read their progress. */
-export function subBotBriefing(rows: SubBotRow[]): string {
+/** `parent`: the project bot's own name, for the @Parent/Sub example. */
+export function subBotBriefing(rows: SubBotRow[], parent = "your name"): string {
   if (!rows.length) return "";
   const lines = rows.map((row) => `- ${row.name}${row.status ? ` (${row.status})` : ""}${row.working ? " (working now)" : ""}: progress file ${row.progress}`);
   const example = rows[0].name;
-  return `(App: Your sub bots. To check how one is going, read its progress file and do not wake it; the user can also open it and talk to it directly. To give one a task or pass the user's request on, start a line of your reply with @ and its exact name, then the request: "@${example} ...". The app delivers it and the answer shows in this chat. SendMessage and app_send_message do not reach a sub bot. If the user asks you to ask a sub bot, @ it; do not do its job yourself, and if you cannot @ it, say so instead of doing it yourself.)\n${lines.join("\n")}`;
+  return `(App: Your sub bots. To check how one is going, read its progress file and do not wake it; the user can also open it and talk to it directly. To give one a task or pass the user's request on, start a line of your reply with @ and its exact name, then the request: "@${example} ..."; when another bot has the same name, write its full name, @ your name / its name ("@${parent}/${example} ..."). The app delivers it and the answer shows in this chat. SendMessage and app_send_message do not reach a sub bot. If the user asks you to ask a sub bot, @ it; do not do its job yourself, and if you cannot @ it, say so instead of doing it yourself.)\n${lines.join("\n")}`;
 }
 
 /** progress.md's first "Status:" line, lower-cased ("done", "working"…), or null. */

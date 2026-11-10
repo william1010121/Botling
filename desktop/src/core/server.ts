@@ -915,7 +915,7 @@ First write a test that shows this, then fix it.`;
       let status: string | null = null;
       try { status = progressStatus(readFileSync(file, "utf8")); } catch { /* not written yet */ }
       return { name: sub.name, progress: file, working: Boolean(this.bots.get(sub.id)?.view().working), status };
-    }));
+    }), profile.role === "main" ? "Main bot" : profile.name);
   }
 
   /**

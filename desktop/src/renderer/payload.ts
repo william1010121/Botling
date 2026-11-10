@@ -150,7 +150,14 @@ export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[
   const callable = bots.filter((other) => other.id !== bot.id);
   const first = callable.filter((other) => OFFERED.includes(other.id));
   const rest = callable.filter((other) => !OFFERED.includes(other.id));
-  return { mentions: first.map((other) => other.name), allMentions: [...first, ...rest].map((other) => other.name) };
+  // A sub bot whose name another bot also has is offered by its full path, @Parent/Sub (what a bot's @ accepts too).
+  const count = new Map<string, number>();
+  for (const other of bots) count.set(other.name.toLowerCase(), (count.get(other.name.toLowerCase()) ?? 0) + 1);
+  const label = (other: BotView) => {
+    const parent = other.parent && (count.get(other.name.toLowerCase()) ?? 0) > 1 ? bots.find((candidate) => candidate.id === other.parent) : null;
+    return parent ? `${parent.name}/${other.name}` : other.name;
+  };
+  return { mentions: first.map(label), allMentions: [...first, ...rest].map(label) };
 }
 
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
