@@ -653,6 +653,7 @@ button { font: inherit; color: inherit; }
 .report-viewer header button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--chip); cursor: pointer; }
 .report-viewer header button:hover { background: var(--hover); }
 .report-viewer header button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.report-viewer .bp-bubble.report-bubble { position: absolute; right: 18px; bottom: 18px; margin: 0; z-index: 5; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28); }
 
 /* Panels under the chat that plugins bring (BottomPanels.tsx): the page lays out the frame, a divider and the header's toggle. */
 .bottom-panel { height: 300px; min-height: min(120px, 70vh); max-height: 70vh; overflow: hidden; display: flex; flex-direction: column; flex-shrink: 0; background: var(--panel-ground); color: var(--panel-text); border-top: 1px solid var(--panel-line); }

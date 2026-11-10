@@ -719,6 +719,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           overlay={noteKey ? <BotBubble bot={bot} look={view.settings?.botLook ?? "original"} on={noteDocked} onToggle={toggleNoteDock} className="note-bubble" /> : null} /> : null}
         {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onAsk={approval.ask}
+          bubbleBot={bot && !paneOpen && (!tab || noteDocked) ? bot : null} look={view.settings?.botLook ?? "original"}
           askAbout={askAbout} onAskDone={() => setAskAbout(null)} />
         </ChatBody>
         {bot && shownWorker && view.subagent && (
@@ -1002,7 +1003,10 @@ function runPluginCommand(client: Client, plugins: PluginsView | null | undefine
   else postToChat({ botling: "runCommand", id });
 }
 
-function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onAskDone }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
+function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onAskDone, bubbleBot = null, look = "original" }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
+  /** The bot whose bubble the report preview offers (ReportViewer): only while its native chat has its place, i.e. the
+   * chat column shows the chat (not under a tab, unless docked) and no browser pane would show its page over the report. */
+  bubbleBot?: BotView | null; look?: "original" | "cute";
   askAbout?: { botId: string; worker: AskWorker; ownerName: string } | null; onAskDone?: () => void;
   onAsk: (view: ApprovalAskView, approve: import("../contract").Command, done?: (allowed: boolean) => void) => void }) {
   const [report, setReport] = useState<{botId: string; url: string} | null>(null);
@@ -1016,6 +1020,25 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
   const ready = useRef(false);
   const view = useSyncExternalStore(store.subscribeChat, store.getChatView);
   useEffect(() => { setReport(null); }, [view.chat?.botId]);
+  // The report preview's bubble (the same BotBubble as the Note tab and the browser's full screen): shows this bot's real
+  // chat over the page; closed whenever the preview closes or changes. Open: the input box gets the focus; Esc in the
+  // app's own page (the native chat forwards it) hides it again.
+  const bubble = report && bubbleBot && bubbleBot.id === report.botId ? bubbleBot : null;
+  const [reportChat, setReportChat] = useState(false);
+  const chatOverReport = reportChat && !!bubble;
+  useEffect(() => { setReportChat(false); }, [report?.url, report?.botId, !!bubble]);
+  useEffect(() => {
+    if (!chatOverReport) return;
+    let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => focusComposer()); });
+    const settle = setTimeout(focusComposer, 120);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || shellOverlayActive()) return;
+      event.preventDefault();
+      setReportChat(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => { cancelAnimationFrame(frame); clearTimeout(settle); window.removeEventListener("keydown", onKey); };
+  }, [chatOverReport]);
   // A plugin frame's `ccb.openLink` of a Markdown file (the Note tab): the same report preview, for the bot it names.
   useEffect(() => setReportOpener((botId, url) => setReport({ botId, url })), []);
   // The line the next message answers (the page's Reply), per chat.
@@ -1528,7 +1551,8 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
     return () => window.removeEventListener("message", onMessage);
   }, [client, onError, onSent, onAsk, push, pushPlugins, store, channel]);
 
-  const viewer = report && report.botId === view.chat?.botId ? <ReportViewer url={report.url} onClose={() => setReport(null)} /> : null;
+  const viewer = report && report.botId === view.chat?.botId ? <ReportViewer url={report.url} onClose={() => setReport(null)}
+    bubble={bubble ? { bot: bubble, look, on: reportChat, onToggle: () => setReportChat(on => !on) } : undefined} /> : null;
   if (nativeEditor()) return <>{viewer}<div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>
     {snapshot && <img data-native-chat-snapshot="" src={snapshot.image} onLoad={() => nativeEditor()?.snapshotReady(snapshot.revision)} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", position: "absolute", inset: 0, pointerEvents: "none" }} />}
   </div></>;
