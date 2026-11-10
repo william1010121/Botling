@@ -21,6 +21,8 @@ import { linkOpenWay, markdownLinkPath, reportPreviewURL, shellReportNavigation 
 import { MARKDOWN_CSP, markdownPage, markdownResponse, markdownStyles } from "./markdown-page";
 import { pluginLinkRoute } from "../core/plugin-link";
 import { createBrowserHost, type BrowserHost } from "./browser-host";
+import { SiteToolStore } from "./site-tools";
+import { SITE_TOOLS_GUIDE_TEXT } from "./site-tools-guide";
 import { BROWSER_CHANNEL, isWebUrl, parseBrowserUp } from "../browser-wire";
 import { previewResponse } from "./preview-response";
 import { reportNeedsMark, resolveReportTheme, themeHtml, type ReportTheme } from "./report-theme";
@@ -357,6 +359,15 @@ function coreEnvironment(): Record<string, string> {
 /** Each app window's in-app browser (browser-host.ts), by its page's contents id. */
 const browserHosts = new Map<number, BrowserHost>();
 const browserFor = (contents: WebContents) => browserHosts.get(contents.id) ?? null;
+/** The browser's site tools (site-tools.ts): `<data>/browser-tools/<id>/`, watched, shared by every window. */
+let siteTools: SiteToolStore | null = null;
+function siteToolStore(): SiteToolStore {
+  if (!siteTools) {
+    siteTools = new SiteToolStore({ folder: join(dataDir, "browser-tools"), stateFile: join(dataDir, "browser-tools-state.json"), guide: SITE_TOOLS_GUIDE_TEXT, note });
+    app.once("will-quit", () => siteTools?.dispose());
+  }
+  return siteTools;
+}
 function broadcast(event: EventEnvelope) {
   // A removed bot's browser tabs go with it.
   if (event.event.type === "bot.removed") for (const host of browserHosts.values()) host.closeBot(event.event.botId);
@@ -795,7 +806,7 @@ function createWindow() {
   window.webContents.on('did-start-navigation',(details)=>traceWriter?.observe('native.navigation.start',{contentsId:id,url:details.url.slice(0,2048),isMainFrame:details.isMainFrame,frame:traceFrameIdentity(details.frame)}));
   window.webContents.on('did-frame-finish-load',(_event,isMainFrame,processId,routingId)=>traceWriter?.observe('native.frame.loaded',{contentsId:id,isMainFrame,processId,routingId}));
   window.webContents.on('did-finish-load',()=>traceWriter?.observe('native.document.loaded',{contentsId:id}));
-  browserHosts.set(id, createBrowserHost(window, { note, noExternal: process.env.BOTLING_NO_EXTERNAL === "1" }));
+  browserHosts.set(id, createBrowserHost(window, { note, noExternal: process.env.BOTLING_NO_EXTERNAL === "1", tools: siteToolStore(), ...(process.env.BOTLING_SITE_TOOL_SAVE_DIR ? { saveFolder: process.env.BOTLING_SITE_TOOL_SAVE_DIR } : {}) }));
   window.on("closed", () => { appContents.delete(id); browserHosts.delete(id); if (mainWindow === window) mainWindow = null; });
   window.webContents.once('did-finish-load',()=>startup.mark('window.loaded'));
   const ownerReady=window.loadURL(`${APP_ORIGIN}/index.html`);

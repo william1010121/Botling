@@ -708,7 +708,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       </section>
       {paneOpen && bot && browserState && (
         <BrowserPane bot={bot} state={browserState} full={browserFull} look={view.settings?.botLook ?? "original"}
-          miniChat={miniChat} onMiniChat={setMiniChat} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}`} />
+          miniChat={miniChat} onMiniChat={setMiniChat} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}`}
+          onAskTool={async (text) => { await client.request({ type: "chat.send", botId: bot.id, text }); }} />
       )}
       {bot && takeover && takeoverView && (
         <TakeoverPage key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}

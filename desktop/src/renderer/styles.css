@@ -1016,6 +1016,46 @@ button.wk-fc:hover { text-decoration: underline; }
 .bp-sheet-head button { width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .bp-sheet-head button:hover { background: var(--hover); color: var(--text); }
 .bp-sheet-empty { margin: 0; padding: 12px; border-radius: 12px; background: var(--bubble); color: var(--muted); }
+.bp-round { position: relative; }
+.bp-round-badge { position: absolute; right: -1px; top: -1px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--blue); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 14px; text-align: center; pointer-events: none; }
+.bp-tools { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.bp-tool { padding: 12px; border-radius: 12px; background: var(--bubble); display: flex; flex-direction: column; gap: 10px; }
+.bp-tool.off .bp-tool-name { color: var(--muted); }
+.bp-tool-toggle { padding: 0 12px; gap: 0; }
+.bp-tool-toggle .bp-tool-row { height: 44px; }
+.bp-tool-toggle .bp-tool-status { padding-bottom: 10px; }
+.bp-tool-row { display: flex; align-items: center; gap: 10px; }
+.bp-tool-name { flex: 1; min-width: 0; font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-tool-toggle .bp-tool-name { font-weight: 400; font-size: 13px; }
+.bp-tool-about { margin-top: -4px; font-size: 12px; color: var(--faint); }
+.bp-switch { position: relative; width: 28px; height: 16px; flex-shrink: 0; border: 0; border-radius: 8px; background: var(--chip); padding: 0; cursor: pointer; transition: background 0.15s; }
+.bp-switch span { position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left 0.15s; }
+.bp-switch.on { background: var(--blue); }
+.bp-switch.on span { left: 14px; }
+.bp-switch:disabled { opacity: 0.5; cursor: default; }
+.bp-switch:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .bp-switch, .bp-switch span { transition: none; } }
+.bp-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+.bp-field-label { color: var(--faint); }
+.bp-field-check { flex-direction: row; align-items: center; gap: 7px; color: var(--text); font-size: 12.5px; }
+.bp-field-check input { accent-color: var(--blue); margin: 0; }
+.bp-field-text { height: 28px; padding: 0 9px; border: 1px solid var(--chip); border-radius: 8px; background: var(--ground); color: var(--text); font: inherit; font-size: 12.5px; outline: 0; }
+.bp-field-text:focus { border-color: var(--blue); }
+.bp-segments { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--chip); border-radius: 9px; background: var(--ground); }
+.bp-segments button { flex: 1; min-width: 0; height: 24px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-segments button.on { background: var(--selected); color: var(--text); }
+.bp-segments button:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
+.bp-tool-run { height: 32px; border: 0; border-radius: 9px; background: var(--blue); color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.bp-tool-run:disabled { opacity: 0.6; cursor: default; }
+.bp-tool-run:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.bp-tool-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
+.bp-tool-status.failed { color: var(--error); }
+.bp-tool-problems { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; }
+.bp-tool-problems > span:first-child { font-weight: 600; }
+.bp-tool-problems b { color: var(--muted); font-weight: 600; }
+.bp-tool-ask { flex-shrink: 0; min-height: 36px; padding: 6px 10px; border: 1px dashed var(--border); border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.bp-tool-ask:hover:not(:disabled) { color: var(--text); border-color: var(--faint); }
+.bp-tool-ask:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 /* Full screen: only the pane, and the chat docked at its right when the bubble opens it. */
 .shell.browser-full > .rail, .shell.browser-full > .rail-strip, .shell.browser-full > .detail-panel, .shell.browser-full > .right-strip,
 .shell.browser-full > .takeover-panel, .shell.browser-full .right-toggle, .shell.browser-full .task-details-entry { display: none; }

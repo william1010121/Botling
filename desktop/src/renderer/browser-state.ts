@@ -1,7 +1,7 @@
 // The app page's side of the in-app browser (browser-wire.ts): each bot's tabs as main reports them, which bots
 // show the pane, and whether it is full screen. Main owns the pages; this only mirrors them for drawing.
 import { useSyncExternalStore } from "react";
-import type { BrowserBotState, BrowserDown, BrowserUp } from "../browser-wire";
+import type { BrowserBotState, BrowserDown, BrowserToolCatalog, BrowserToolRun, BrowserUp } from "../browser-wire";
 
 interface Bridge { post(message: unknown): void; subscribe(listener: (message: unknown) => void): () => void }
 export const browserBridge = (): Bridge | undefined => (window as unknown as { botling?: { browser?: Bridge } }).botling?.browser;
@@ -11,10 +11,15 @@ export interface BrowserView {
   /** Bots whose pane is open (a link was opened for them and they still have tabs). */
   open: Readonly<Record<string, true>>;
   full: boolean;
+  /** The site tools main has (null until it says). */
+  tools: BrowserToolCatalog | null;
+  /** The last run of each tool on each tab, by `tabId/toolId`. */
+  runs: Readonly<Record<string, BrowserToolRun>>;
 }
 type Signal = Extract<BrowserDown, { type: "edge" | "key" | "closePane" }>;
 
-let view: BrowserView = { states: {}, open: {}, full: false };
+let view: BrowserView = { states: {}, open: {}, full: false, tools: null, runs: {} };
+export const runKey = (tabId: string, toolId: string) => `${tabId}/${toolId}`;
 const listeners = new Set<() => void>();
 const signals = new Set<(signal: Signal) => void>();
 let started = false;
@@ -33,6 +38,16 @@ function receive(raw: unknown) {
     if (!state.tabs.length) delete open[state.botId];
     else if (reveal) open[state.botId] = true;
     set({ states: { ...view.states, [state.botId]: state }, open, full: view.full && Object.keys(open).length > 0 });
+    return;
+  }
+  if (message.type === "tools") {
+    const { type: _type, ...tools } = message;
+    set({ tools });
+    return;
+  }
+  if (message.type === "toolRun") {
+    const { type: _type, ...run } = message;
+    set({ runs: { ...view.runs, [runKey(run.tabId, run.toolId)]: run } });
     return;
   }
   if (message.type === "closePane") {
