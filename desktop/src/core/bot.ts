@@ -298,6 +298,9 @@ interface Turn {
   guest?: boolean;
   /** Called into this chat (its id) with @: hidden here, but its own chat and row show it at work. */
   callIn?: string;
+  /** Told once whether it reached the head (true: it began, or was read into the turn under way) or never will (false:
+   * taken back or dropped while it waited): `send`'s `onDelivery`. */
+  delivery?: (delivered: boolean) => void;
   /** For a call-in: what it was asked there (a worker it starts reports back with it, `callInWork`). */
   callInAsked?: string;
   /** Its turn on the report or note of a worker it started for a bot's @: its reply goes back to that bot's chat too. */
@@ -763,6 +766,13 @@ export class Bot {
     // Background work that ran when the app went away went with it (`stopBackgroundTasks(as: .interrupted)`).
     if (stopBackgroundTasks(records, "interrupted").length) changed = true;
     for (const record of records) {
+      // An answer that waited to reach a called-in bot when the core stopped never got there: its card is open again.
+      if (record.pendingAnswer) {
+        record.notDelivered = record.pendingAnswer.to;
+        delete record.pendingAnswer;
+        delete record.picks;
+        changed = true;
+      }
       // A turn that was streaming when the core died is not resumed or re-sent: it is marked.
       if (record.state === "streaming") {
         record.state = "failed";
@@ -798,6 +808,13 @@ export class Bot {
     const view = messageView(record, this.members.map(bot => bot.approvals.get(record.id)).find(Boolean), lookup, this.owner.displayViews(record));
     // Your line a head could not take into its turn under way waits in a queue: it says so until it is sent.
     if (record.role === "user" && this.members.some(bot => bot.waitsFor(record.id))) view.queued = true;
+    // A card's answer that waits to reach the bot that asked: shown as given, "Queued" (`holdCardAnswer`).
+    if (record.pendingAnswer) {
+      if (record.pendingAnswer.chosen !== undefined) view.chosen = record.pendingAnswer.chosen;
+      else view.answer = (record.pendingAnswer.answer ?? "").slice(0, 4_000);
+      view.queued = true;
+    }
+    if (record.notDelivered && isOpenQuestion(record)) view.notDelivered = record.notDelivered;
     // The result pages it links to, as preview cards, when the library has the card (Phase 5c).
     const previews = this.owner.previews(record);
     if (previews) view.previews = previews.map((data) => ({ name: PAGE_COMPONENT, data }));
@@ -934,8 +951,8 @@ export class Bot {
    * showing neither in this chat. Wakes it if asleep. While it is busy with its own chat it waits up to
    * `waitForMs`, then gives up (busy); once asked, it has `answerWithinMs` to reply.
    */
-  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked }: { callIn?: string; asked?: string } = {}): Promise<GuestAnswer> {
-    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked });
+  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked, onBegin }: { callIn?: string; asked?: string; onBegin?: () => void } = {}): Promise<GuestAnswer> {
+    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked, onBegin });
     const deadline = Date.now() + waitForMs;
     while (this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold) {
       if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
@@ -968,12 +985,19 @@ export class Bot {
         // A failed or stopped turn hands "" here (finishTurn): not a reply; turn.done says what happened.
         turn.onReply = (reply) => { if (reply) settle({ kind: "reply", text: reply, steps: turn.steps.slice(-500), engine }); };
         void turn.done.then((status) => settle(status === "done" ? { kind: "reply", text: turn.reply.text, steps: turn.steps.slice(-500), engine } : { kind: "failed", why: status === "failed" ? "It could not answer." : "It was stopped." }));
+        onBegin?.();
         this.begin(turn);
       });
     } finally {
       this.guestTurn = false;
       if (!this.shuttingDown) this.next();
     }
+  }
+
+  /** Free to take a turn in another chat now (`groupTurn` would not wait): no turn under way or waiting, not tidying. */
+  get takesGuest(): boolean {
+    if (this.options.primary) return this.options.primary.takesGuest;
+    return !this.shuttingDown && !(this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold);
   }
 
   /** A line in this chat that is not part of its own conversation (a guest's line, a group's lines): `Bot.post`. */
@@ -1090,6 +1114,33 @@ export class Bot {
     if (!record || !isOpenQuestion(record)) return;
     if (outcome.chosen !== undefined && record.choices?.[outcome.chosen]) record.chosen = outcome.chosen;
     else record.answer = outcome.answer ?? NO_LONGER_NEEDED;
+    this.changed(record);
+  }
+
+  /**
+   * Your answer on a called-in bot's card in this chat (`outcome`) waits to reach that bot (`to`, its name): the card
+   * shows it "Queued" and cannot be answered again until `releaseCardAnswer` says whether it got there.
+   */
+  holdCardAnswer(id: string, outcome: { chosen?: number; answer?: string }, to: string): boolean {
+    if (this.options.primary) return this.options.primary.holdCardAnswer(id, outcome, to);
+    const record = this.records.find((candidate) => candidate.id === id);
+    if (!record || !isOpenQuestion(record)) return false;
+    record.pendingAnswer = { ...outcome, to };
+    delete record.notDelivered;
+    this.changed(record);
+    return true;
+  }
+
+  /** The answer `holdCardAnswer` kept reached the bot (the card shows it answered), or never will (it is open again, with a note). */
+  releaseCardAnswer(id: string, delivered: boolean): void {
+    if (this.options.primary) { this.options.primary.releaseCardAnswer(id, delivered); return; }
+    const record = this.records.find((candidate) => candidate.id === id);
+    const pending = record?.pendingAnswer;
+    if (!record || !pending) return;
+    delete record.pendingAnswer;
+    if (delivered) { this.settleAppQuestion(id, pending.chosen !== undefined ? { chosen: pending.chosen } : { answer: pending.answer ?? "" }); return; }
+    record.notDelivered = pending.to;
+    delete record.picks;
     this.changed(record);
   }
 
@@ -1942,8 +1993,8 @@ export class Bot {
    * showing; `decisionOwner`: a shared decision's answer, for the head that asked it only; `via`: a
    * plugin sent it (its title, shown on the line).
    */
-  send(text: string, { replyTo, to, appNote, decisionOwner, files, originals, via }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; originals?: string[]; via?: string } = {}): ResultOf<"chat.send"> {
-    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files, ...(originals ? { originals } : {}), via });
+  send(text: string, { replyTo, to, appNote, decisionOwner, files, originals, via, onDelivery }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; originals?: string[]; via?: string; onDelivery?: (delivered: boolean) => void } = {}): ResultOf<"chat.send"> {
+    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files, ...(originals ? { originals } : {}), via, onDelivery });
     this.refuseIfClosed();
     const words = text.trim();
     if (!words && !files?.length) throw new ContractError("bad_request", "Nothing to send.");
@@ -1978,21 +2029,21 @@ export class Bot {
     if (kept.length) lines.push(attachmentList(kept.map((file) => file.path)));
     const message = lines.join("\n\n");
     if (!two) {
-      const turn = this.route(this.newTurn("user", message, user.id));
+      const turn = this.route(this.watchDelivery(this.newTurn("user", message, user.id), onDelivery));
       return { messageId: turn.messageId, turnId: turn.id };
     }
     this.conduct(this.conductor.userMessage(words));
     if (decisionOwner) {
       // A shared decision has one owner: no copy goes to the other head as context.
-      const turn = this.deliverTo(decisionOwner, message, user.id);
+      const turn = this.deliverTo(decisionOwner, message, user.id, { delivery: onDelivery });
       return { messageId: turn.messageId, turnId: turn.id };
     }
-    const turn = this.deliverTo(target, message, user.id);
+    const turn = this.deliverTo(target, message, user.id, { delivery: onDelivery });
     return { messageId: turn.messageId, turnId: turn.id };
   }
 
   /** A turn for `head` (this bot's or its partner's), routed there now. */
-  private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin">> = {}): Turn {
+  private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery">> = {}): Turn {
     // Work for a head the bot does not have (a hand-off from a bot with one head): made when first needed (1.x's `bot(for:)`).
     this.requireEngineRoute(head);
     const bot = this.botFor(head) ?? this.owner.makePartner(head);
@@ -2001,7 +2052,23 @@ export class Bot {
     if (extra.conducted) turn.conducted = true;
     if (extra.handoffId) turn.handoffId = extra.handoffId;
     if (extra.about) turn.about = extra.about;
-    return bot.route(turn);
+    return bot.route(bot.watchDelivery(turn, extra.delivery));
+  }
+
+  /** `turn` tells `delivery` once whether it reached the head: it begins or is read into the turn under way
+   * (`delivered`), or it ends without either (taken back, dropped at a stop or shutdown). */
+  private watchDelivery(turn: Turn, delivery?: (delivered: boolean) => void): Turn {
+    if (!delivery) return turn;
+    turn.delivery = delivery;
+    void turn.done.then(() => { const tell = turn.delivery; turn.delivery = undefined; tell?.(false); });
+    return turn;
+  }
+
+  /** `turn` reached the head: its `delivery` is told so (once). */
+  private delivered(turn: Turn) {
+    const tell = turn.delivery;
+    turn.delivery = undefined;
+    tell?.(true);
   }
 
   private newTurn(origin: Origin, words: string, userId: string | null): Turn {
@@ -2767,6 +2834,7 @@ export class Bot {
     next.head = head;
     next.sent = true;
     this.joinTurn(current, next);
+    this.delivered(next);
     this.redrawQueued(next);
     this.log("Antigravity read your message with a tool result: it joined its turn");
   }
@@ -2797,6 +2865,7 @@ export class Bot {
       current.steeredNow = true;
     }
     this.joinTurn(current, next);
+    this.delivered(next);
     this.log(head instanceof CodexHead ? "you wrote while Codex worked: your message joined its turn (turn/steer)" : "you wrote while claude worked: your message went into its turn");
     return true;
   }
@@ -2881,6 +2950,7 @@ export class Bot {
   /** Makes `turn` the one under way and sends it (waking the bot if it sleeps). */
   private begin(turn: Turn, head?: AgentHead) {
     this.turn = turn;
+    this.delivered(turn);
     this.redrawQueued(turn);
     this.clearIdle();
     if (turn.origin !== "tidy") {

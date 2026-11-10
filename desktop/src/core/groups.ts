@@ -296,6 +296,12 @@ Tell the user, in one or two sentences in their language, that the result did no
  */
 export const relayedAnswerNote = (callee: string) => `(App: The user's message below answers the card ${quoteName(callee)} posted in this chat on your @ request. ${quoteName(callee)}'s own card shows the same answer, but it was not handed it as a turn: carry on with the user's request yourself, and tell it with @ and its name only if it has to act on the answer.)`;
 
+/**
+ * `guestCardAnswerNote`: with your answer on the card this bot posted in `host`'s chat when called in there, sent into
+ * its own chat because it was at work (it is read into the turn under way, or waits for it to end).
+ */
+export const guestCardAnswerNote = (host: string) => `(App: The user's message below answers the card you posted in ${quoteName(host)}'s chat when you were called in there. You were at work, so it comes here, into your own chat: take it into what you are doing and answer here.)`;
+
 /** `pickedNote` / `answeredNote`: what a guest is told of your pick or words on its line. */
 export const pickedNote = (label: string) => `The user picked: ${label}`;
 export const answeredNote = (shown: string) => `The user answered: ${shown}`;

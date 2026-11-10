@@ -77,6 +77,8 @@ interface BotMention { message: string; recipient: string; body: string; depth?:
 
 /** A call-in not answered yet: whom, since when (ms), the words a bot's @ gave it, and whether its turn has come. */
 interface PendingCallIn { member: Member; since: number; body: string | null; state: "queued" | "answering" }
+/** What a call-in carrying a card's answer is told (`answerCallIn`): its turn began, the bot is busy, or it never will. */
+export interface CallInDelivery { began(): void; busy(): void; failed(): void }
 
 /** `HH:mm` in local time, as the chat shows it. */
 const clock = (ms: number) => { const date = new Date(ms); return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`; };
@@ -246,11 +248,15 @@ export class Conversations {
     return record.role === "bot" && typeof record.sourceID === "string" && this.deps.members().some((member) => member.id === chatId);
   }
 
-  /** Your pick or words on a called-in bot's line go back to it (`answerCallIn`); false if it is gone. */
-  answerCallIn(chat: Bot, record: ChatRecord, text: string): boolean {
+  /**
+   * Your pick or words on a called-in bot's line go back to it (`answerCallIn`); false if it is gone. With `delivery`
+   * (a card's answer that must reach it): the call-in does not wait for it to be free; it is told when the bot's turn
+   * begins (`began`), that the bot is busy (`busy`: the answer goes another way), or that it never will (`failed`).
+   */
+  answerCallIn(chat: Bot, record: ChatRecord, text: string, delivery?: CallInDelivery): boolean {
     const member = this.callable(chat.id).find((candidate) => candidate.id === record.sourceID);
     if (!member) return false;
-    this.startCallIn(chat, [member], null, text);
+    this.startCallIn(chat, [member], null, text, undefined, delivery);
     return true;
   }
 
@@ -346,12 +352,12 @@ export class Conversations {
   private followUps = new Map<string, { depth: number; until: number }>();
 
   /** Queues the called bots' turns after any still running for this chat, so they never talk over each other (`startCallIn`). */
-  startCallIn(chat: Bot, members: Member[], newest: string | null, ask: string | null, caller?: BotMention) {
+  startCallIn(chat: Bot, members: Member[], newest: string | null, ask: string | null, caller?: BotMention, delivery?: CallInDelivery) {
     const entries: PendingCallIn[] = members.map((member) => ({ member, since: Date.now(), body: caller?.body ?? null, state: "queued" }));
     this.pending.set(chat.id, [...(this.pending.get(chat.id) ?? []), ...entries]);
     this.deps.speaking(chat.id);
     this.enqueue(chat.id, async () => {
-      try { await this.runCallIn(chat, entries, newest, ask, caller); } finally { for (const entry of entries) this.settle(chat.id, entry); }
+      try { await this.runCallIn(chat, entries, newest, ask, caller, delivery); } finally { for (const entry of entries) this.settle(chat.id, entry); }
     });
   }
 
@@ -363,7 +369,7 @@ export class Conversations {
     void next.then(() => { if (this.queues.get(key) === next) this.queues.delete(key); });
   }
 
-  private async runCallIn(chat: Bot, entries: PendingCallIn[], newest: string | null, ask: string | null, caller?: BotMention) {
+  private async runCallIn(chat: Bot, entries: PendingCallIn[], newest: string | null, ask: string | null, caller?: BotMention, delivery?: CallInDelivery) {
     const before = transcriptBefore(newest, chat.lines());
     const unheard: string[] = [];
     const host = this.speakerName(chat.id) ?? chat.profile.name;
@@ -371,7 +377,9 @@ export class Conversations {
       const member = entry.member;
       const bot = this.deps.bot(member.id);
       // Not answered (`why`): a bot that asked is handed a turn saying so, like an answer; otherwise told with the notice below.
+      let began = false;
       const notHeard = (action: "Start" | "GiveUp" | "NoAnswer", why: string) => {
+        if (delivery && !began) delivery.failed();
         if (!this.wakeUnheard(chat, member.name, why, caller)) unheard.push(`${member.name} (${why})`);
         this.trace(action, chat.id, { to: member.id, outcome: "unheard", followUp: this.followUps.get(chat.id)?.depth ?? 0 });
       };
@@ -387,7 +395,10 @@ export class Conversations {
       const asked = ask ?? (caller ? `@${member.name} ${caller.body}` : (newest ? chat.lines().find((line) => line.id === newest)?.text : undefined) ?? "");
       let answer: GuestAnswer;
       try {
-        answer = await bot.groupTurn(prompt, this.timing.busyNamed, this.timing.answerNamed, { callIn: chat.id, ...(caller ? { asked: caller.body } : {}) });
+        // A card's answer does not wait for a busy bot: it goes into the bot's own chat instead (`delivery.busy`).
+        answer = await bot.groupTurn(prompt, delivery ? 0 : this.timing.busyNamed, this.timing.answerNamed, {
+          callIn: chat.id, ...(caller ? { asked: caller.body } : {}), onBegin: () => { began = true; delivery?.began(); },
+        });
       } catch (error) {
         answer = { kind: "failed", why: (error as Error).message || "Its turn could not start." };
       } finally {
@@ -396,7 +407,8 @@ export class Conversations {
         this.speak(chat.id, null, member.id);
       }
       if (member.id === this.deps.mainBotId) this.deps.afterMainTurn();
-      if (answer.kind === "busy") notHeard("GiveUp", "busy");
+      if (answer.kind === "busy" && delivery) { this.trace("GiveUp", chat.id, { to: member.id, outcome: "rerouted" }); delivery.busy(); }
+      else if (answer.kind === "busy") notHeard("GiveUp", "busy");
       else if (answer.kind === "failed") notHeard("NoAnswer", firstLineOf(answer.why));
       else {
         // You named it, so its tags act as they would in its own chat. Called in by a bot, its answer

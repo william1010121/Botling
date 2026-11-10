@@ -221,7 +221,8 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       replyTo: message.replyTo ?? null,
       replyPreview: message.replyPreview ?? null,
       ...(message.role === "user" && message.via ? { via: message.via } : {}),
-      ...(message.role === "user" && message.queued ? { queued: true } : {}),
+      ...((message.role === "user" || choices) && message.queued ? { queued: true } : {}),
+      ...(message.notDelivered ? { notDelivered: message.notDelivered } : {}),
       openable: false,
       steps: steps?.length ? steps.map(step) : null,
       // Stopped or cut off: its words so far stay, and it says so.

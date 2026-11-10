@@ -104,16 +104,106 @@ describe("a sub bot's card answered in the parent's chat reaches the parent bot"
 });
 
 describe("a relayed card whose bot was removed (spec/models/callin/RelayedCard.tla)", () => {
-  it("can still be ignored in the parent's chat", async () => {
+  it("is no longer needed in the parent's chat once the bot is removed", async () => {
     const h = fixture();
     try {
       const { copy } = await relayedCard(h, "要哪一種？\n<choices>\n- 形狀臉\n- 色塊\n</choices>");
       await h.core.removeBot(DESIGN, { quiet: true });
-      expect(isOpenQuestion(h.caller.line(copy.id)!)).toBe(true);
+      expect(isOpenQuestion(h.caller.line(copy.id)!)).toBe(false);
+      expect(h.caller.line(copy.id)!.answer).toBe("No longer needed");
+      expect(h.delivered).toEqual([]);
+    } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
+  });
+
+  it("a copy whose original line is gone can still be ignored where it is", async () => {
+    const h = fixture();
+    try {
+      const { copy, original } = await relayedCard(h, "要哪一種？\n<choices>\n- 形狀臉\n- 色塊\n</choices>");
+      vi.spyOn(h.design, "line").mockImplementation(((id: string) => (id === original.id ? null : undefined)) as any);
       expect(await (h.core as any).handle({ type: "chat.ignoreQuestion", botId: BOTLING, messageId: copy.id }, new AbortController().signal))
         .toEqual({ accepted: true });
-      expect(isOpenQuestion(h.caller.line(copy.id)!)).toBe(false);
       expect(h.caller.line(copy.id)!.ignoredAt).toBeTruthy();
+    } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
+  });
+});
+
+/** 設計's card posted in botling's chat while botling's @ called it in (a guest line), botling idle again. */
+async function guestCard(h: ReturnType<typeof fixture>, card: string, mention = "R2") {
+  h.conversations.receiveBotMention({ id: mention, role: "bot", text: "@設計 給使用者挑一個", date: 0 }, h.caller);
+  await vi.waitFor(() => expect((h.design as any).turn?.callIn).toBe(BOTLING));
+  await answer(h.design, card);
+  return await vi.waitFor(() => { const line = h.caller.lines().find((l) => l.sourceID === DESIGN && l.choices?.length && !l.sourceMessageID); expect(line).toBeTruthy(); return line!; });
+}
+const view = (bot: Bot, id: string) => (bot as any).messageView(bot.line(id)!);
+const choose = (h: ReturnType<typeof fixture>, id: string, index: number) =>
+  (h.core as any).handle({ type: "chat.choose", botId: BOTLING, messageId: id, index }, new AbortController().signal);
+
+describe("an answer on a called-in bot's card counts once it reaches the bot (spec/models/callin/RelayedCard.tla)", () => {
+  const CARD = "要哪一種？\n<choices>\n- 形狀臉\n- 色塊\n</choices>";
+
+  it("free: it is called in with the answer, and the card shows it answered as its turn begins", async () => {
+    const h = fixture();
+    try {
+      const card = await guestCard(h, CARD);
+      expect(await choose(h, card.id, 1)).toEqual({ accepted: true });
+      await vi.waitFor(() => expect((h.design as any).turn?.callIn).toBe(BOTLING));
+      expect(h.caller.line(card.id)!.chosen).toBe(1);
+      expect(h.caller.line(card.id)!.pendingAnswer).toBeUndefined();
+    } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
+  });
+
+  it("at work: the answer goes into its own chat, the card shows it Queued, and answered once its turn begins", async () => {
+    const h = fixture();
+    try {
+      const card = await guestCard(h, CARD);
+      h.design.send("Work on the next page.");
+      await vi.waitFor(() => expect((h.design as any).turn?.open).toBe(true));
+      expect(await choose(h, card.id, 1)).toEqual({ accepted: true });
+      expect(isOpenQuestion(h.caller.line(card.id)!)).toBe(false);
+      expect(h.caller.line(card.id)!.chosen).toBeUndefined();
+      expect(view(h.caller, card.id)).toMatchObject({ chosen: 1, queued: true });
+      expect(await choose(h, card.id, 0)).toEqual({ accepted: false });
+      const line = h.design.lines().find((l) => l.role === "user" && l.text === "色塊");
+      expect(line).toBeTruthy();
+      expect((h.design as any).queue).toHaveLength(1);
+      await answer(h.design, "Page done.");
+      await vi.waitFor(() => expect(h.caller.line(card.id)!.chosen).toBe(1));
+      expect(view(h.caller, card.id).queued).toBeFalsy();
+      expect(h.caller.lines().some((l) => l.role === "notice" && l.text.startsWith("Did not answer"))).toBe(false);
+    } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
+  });
+
+  it("taken back while it waited: the card is open again and says the answer did not reach it", async () => {
+    const h = fixture();
+    try {
+      const card = await guestCard(h, CARD);
+      h.design.send("Work on the next page.");
+      await vi.waitFor(() => expect((h.design as any).turn?.open).toBe(true));
+      expect(await choose(h, card.id, 1)).toEqual({ accepted: true });
+      await h.design.stop((h.design as any).queue[0].id);
+      await vi.waitFor(() => expect(isOpenQuestion(h.caller.line(card.id)!)).toBe(true));
+      expect(h.caller.line(card.id)!.notDelivered).toBe("設計");
+      expect(view(h.caller, card.id)).toMatchObject({ notDelivered: "設計", chosen: null });
+      // Answered again (it is free now): the note goes.
+      await answer(h.design, "Page done.");
+      expect(await choose(h, card.id, 0)).toEqual({ accepted: true });
+      await vi.waitFor(() => expect(h.caller.line(card.id)!.chosen).toBe(0));
+      expect(h.caller.line(card.id)!.notDelivered).toBeUndefined();
+    } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
+  });
+
+  it("the bot removed while the answer waited: the card is open again, saying so", async () => {
+    const h = fixture();
+    try {
+      const card = await guestCard(h, CARD);
+      h.design.send("Work on the next page.");
+      await vi.waitFor(() => expect((h.design as any).turn?.open).toBe(true));
+      expect(await choose(h, card.id, 1)).toEqual({ accepted: true });
+      await h.core.removeBot(DESIGN, { quiet: true });
+      await vi.waitFor(() => expect(h.caller.line(card.id)!.notDelivered).toBe("設計"));
+      expect(isOpenQuestion(h.caller.line(card.id)!)).toBe(true);
+      expect(await choose(h, card.id, 1)).toEqual({ accepted: false });
+      expect(h.caller.line(card.id)!.answer).toBe("No longer needed");
     } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
   });
 });

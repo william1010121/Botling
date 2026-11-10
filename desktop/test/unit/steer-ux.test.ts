@@ -98,3 +98,22 @@ it('an Antigravity head queues the message, marks its line Queued, and clears th
  expect(head.sent[1]).toContain('second');
  await until(()=>!line(b,'second').queued);
 });
+
+it('a line sent with onDelivery is told at once when Claude takes it into its turn',async()=>{
+ const {b,head}=await working('claude');
+ const told:boolean[]=[];
+ b.send('second',{onDelivery:(delivered)=>told.push(delivered)});await settle();
+ expect(head.sent).toHaveLength(2);expect(told).toEqual([true]);
+});
+
+it('a queued line sent with onDelivery is told when its turn begins, or that it never will when taken back',async()=>{
+ const {b,head}=await working('agy');
+ const told:boolean[]=[],dropped:boolean[]=[];
+ b.send('second',{onDelivery:(delivered)=>told.push(delivered)});
+ b.send('third',{onDelivery:(delivered)=>dropped.push(delivered)});await settle();
+ expect(told).toEqual([]);
+ await b.stop((b as any).queue[1].id);await settle();
+ expect(dropped).toEqual([false]);
+ head.endTurn();await until(()=>told.length);
+ expect(told).toEqual([true]);
+});

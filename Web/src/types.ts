@@ -95,6 +95,8 @@ export interface MessageView {
   via?: string;
   /** Waiting for the bot's turn under way to end: it cannot take the line in yet. Drawn as a "Queued" badge until it is sent. */
   queued?: boolean;
+  /** An open card whose last answer did not reach the called-in bot that asked (its name). */
+  notDelivered?: string;
   /** A queued line of a worker that waits for its process to finish background work, not for a turn: "Not delivered yet". */
   queuedOn?: SubagentWaitingOn;
   /** What the bot did on the way to this reply. */

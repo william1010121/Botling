@@ -8,13 +8,15 @@ export interface RelayedCardSession {
   ask(kind: Kind): Promise<void>;
   /** The user answers card `k` on its line in `chat` (a pick, words or a question group's picks, as the card has). */
   answer(k: number, chat: Chat): Promise<void>;
+  /** The user takes back the `i`-th message (from 1) waiting in S's queue. */
+  drop(i: number): Promise<void>;
   /** The user ignores card `k` on its line in `chat`. */
   ignore(k: number, chat: Chat): Promise<void>;
   /** A user line in S's own chat: a turn of its own begins. */
   work(): Promise<void>;
   /** S's turn under way ends. */
   endTurn(): Promise<void>;
-  /** S is removed. */
+  /** S is removed (not during a call-in). */
   remove(): Promise<void>;
   /** What the app shows now. */
   view(): View;
