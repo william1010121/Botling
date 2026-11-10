@@ -2,7 +2,7 @@
 // bubble). This page draws the tab strip, the toolbar and the site-tools sheet; the web page itself is a native
 // view main lays where `.bp-page` is (browser-host.ts), so nothing of this page may sit over that box: the toolbar
 // pushes the page down while it shows, the sheet narrows it, and the ⋯ menu is a native menu.
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hostOf, type BrowserBotState, type BrowserTabInfo } from "../browser-wire";
 import type { BotView } from "../contract";
 import { faceURL } from "./avatars";
@@ -10,16 +10,7 @@ import { browserStore, postBrowser, useBrowser } from "./browser-state";
 import { askForToolText } from "../browser-site-tools";
 import { SiteToolsSheet, countedTools } from "./SiteToolsSheet";
 import { ToolbarVisibility } from "./browser-toolbar";
-import { ShellOverlay, shellOverlayActive, subscribeShellOverlays } from "./ShellOverlay";
-
-const WIDTH_KEY = "botling.browserPaneWidth";
-const MIN_PANE = 320;
-const MIN_CHAT = 360;
-
-function savedWidth(): number | null {
-  try { const value = Number(localStorage.getItem(WIDTH_KEY)); return Number.isFinite(value) && value >= MIN_PANE ? value : null; } catch { return null; }
-}
-function saveWidth(width: number) { try { localStorage.setItem(WIDTH_KEY, String(Math.round(width))); } catch { /* per-viewer convenience only */ } }
+import { shellOverlayActive, subscribeShellOverlays } from "./ShellOverlay";
 
 const svg = (size: number, children: ReactNode, fill = false) => (
   <svg width={size} height={size} viewBox="0 0 16 16" fill={fill ? "currentColor" : "none"} stroke={fill ? "none" : "currentColor"} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>
@@ -82,9 +73,6 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
   const [newTab, setNewTab] = useState(false);
   const url = useRef<HTMLInputElement>(null);
   const page = useRef<HTMLDivElement>(null);
-  const pane = useRef<HTMLElement>(null);
-  const [width, setWidth] = useState<number | null>(savedWidth);
-  const [dragging, setDragging] = useState(false);
 
   useEffect(() => { visibility.sheet(sheet); }, [sheet, visibility]);
   useEffect(() => { setSheet(false); setDraft(null); setNewTab(false); }, [botId]);
@@ -120,7 +108,8 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
   }, [full, active?.url]);
 
   // Where the page goes: `.bp-page`'s box, in this page's CSS px (main scales it by the zoom). Hidden while a sheet
-  // or menu of the app covers the window, and while the divider is dragged (the pointer must stay on this page).
+  // or menu of the app covers the window. The divider beside the pane (ColumnDivider, App.tsx) resizes it live: the
+  // page follows, and its grab strip is never under the page (styles.css insets .bp-body).
   useEffect(() => {
     const element = page.current;
     if (!element) return;
@@ -145,31 +134,6 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
     return () => { observer.disconnect(); stop(); window.removeEventListener("resize", update); clearTimeout(settle); postBrowser({ type: "layout", botId: null, bounds: null }); };
   }, [botId, layoutKey, full, miniChat]);
 
-  // The divider between the chat and the pane.
-  const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (full || event.button !== 0) return;
-    event.preventDefault();
-    const handle = event.currentTarget;
-    handle.setPointerCapture(event.pointerId);
-    setDragging(true);
-    const right = pane.current?.getBoundingClientRect().right ?? window.innerWidth;
-    const left = (pane.current?.parentElement?.querySelector(".chat-pane") as HTMLElement | null)?.getBoundingClientRect().left ?? 0;
-    const move = (next: PointerEvent) => {
-      const wanted = right - next.clientX;
-      setWidth(Math.max(MIN_PANE, Math.min(wanted, right - left - MIN_CHAT)));
-    };
-    const end = () => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", end);
-      handle.removeEventListener("pointercancel", end);
-      setDragging(false);
-      setWidth((current) => { if (current) saveWidth(current); return current; });
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", end);
-    handle.addEventListener("pointercancel", end);
-  };
-
   const submit = () => {
     const text = (draft ?? "").trim();
     if (!text) return;
@@ -181,14 +145,11 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
 
   const host = active ? hostOf(active.url) : "";
   const shown = addressParts(active?.url ?? "");
-  const style: CSSProperties | undefined = !full && width ? { flexBasis: `${width}px` } : undefined;
   const statusKey = bot.working ? "working" : bot.approvals > 0 ? "waiting" : "idle";
   const unread = bot.unread;
 
   return (
-    <section ref={pane} className={`browser-pane${full ? " full" : ""}`} aria-label="Browser" style={style}>
-      {!full && <div className={`bp-divider${dragging ? " dragging" : ""}`} role="separator" aria-orientation="vertical" aria-label="Resize the browser" onPointerDown={startDrag} />}
-      <ShellOverlay active={dragging} revealImmediately><></></ShellOverlay>
+    <section className={`browser-pane${full ? " full" : ""}`} aria-label="Browser">
       <div className="bp-tabs drag" role="tablist" aria-label="Pages">
         {state.tabs.map((tab) => (
           <div key={tab.id} role="tab" aria-selected={tab.id === active?.id} className={`bp-tab${tab.id === active?.id ? " on" : ""}`} title={tab.url}
@@ -251,7 +212,7 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
       </div>
       <div className="bp-body">
         <div ref={page} className="bp-page">
-          {/* Shown only while the page itself is hidden (a sheet of the app over the window, the divider dragged). */}
+          {/* Shown only while the page itself is hidden (a sheet of the app over the window). */}
           {active ? <span className="bp-page-hint">{host}</span> : (
             <span className="bp-page-hint bp-page-empty">Type a web address or search above. To bring your sign-ins from Arc, use ⋯ › Import logins from Arc.</span>
           )}

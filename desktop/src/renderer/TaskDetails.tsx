@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { RightPanel, RightToggle, type RightPanelProps } from "./RightPanel";
 import { ShellOverlay } from "./ShellOverlay";
+import { ColumnDivider } from "./ColumnDivider";
 
 const narrowQuery = "(max-width: 860px)";
 
@@ -56,7 +57,7 @@ export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => v
     };
   }, [narrow, open]);
 
-  if (!narrow) return <><RightPanel {...props} /><RightToggle collapsed={props.collapsed} onToggle={props.onExpand} /></>;
+  if (!narrow) return <>{!props.collapsed && <ColumnDivider column="right" />}<RightPanel {...props} /><RightToggle collapsed={props.collapsed} onToggle={props.onExpand} /></>;
   return <>
     <button ref={entry} type="button" className="task-details-entry" aria-label="Details" aria-expanded={open}
       aria-controls="task-details-drawer" onClick={() => setOpen(true)}>Details</button>
