@@ -192,6 +192,10 @@ describe("handoff.md written by the app", () => {
     expect(note).toMatch(/SendMessage and app_send_message do not reach a sub bot/);
     expect(note).toMatch(/do not do its job yourself/);
   });
+  it("tells a project bot the full name, @Parent/Sub, for a sub bot whose name another bot also has", () => {
+    const note = subBotBriefing([{ name: "TLA", progress: "/p/progress.md", working: false, status: null }], "botling");
+    expect(note).toContain('"@botling/TLA ..."');
+  });
 });
 
 function fixture(extra: { sub?: boolean; subName?: string } = {}) {

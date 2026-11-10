@@ -159,6 +159,55 @@ export class Conversations {
     return (this.deps.subBots?.() ?? []).filter((sub) => sub.parent === chatId).map(({ id, name }) => ({ id, name }));
   }
 
+  /**
+   * The names a bot's @ can be written with, for `chatId`'s chat: every project bot by its name, every sub bot by
+   * its full path ("Parent/Sub"), and by its name alone the chat's own sub bots (and, to say they are out of
+   * reach, other bots' sub bots).
+   */
+  private mentionAliases(chatId: string): { member: Member; name: string; full: boolean; own: boolean; path: string }[] {
+    const tops = this.deps.members();
+    const own = this.subBotsOf(chatId);
+    const aliases: { member: Member; name: string; full: boolean; own: boolean; path: string }[] = tops.map((member) => ({ member, name: member.name, full: true, own: true, path: member.name }));
+    for (const sub of this.deps.subBots?.() ?? []) {
+      const parent = tops.find((member) => member.id === sub.parent);
+      const member = { id: sub.id, name: sub.name };
+      const isOwn = own.some((candidate) => candidate.id === sub.id);
+      const path = parent ? `${parent.name}/${sub.name}` : sub.name;
+      if (parent) aliases.push({ member, name: path, full: true, own: isOwn, path });
+      aliases.push({ member, name: sub.name, full: false, own: isOwn, path });
+    }
+    return aliases;
+  }
+
+  /**
+   * Which bot a line starting with @ names in `chatId`'s chat: a full name ("Parent/Sub" or a project bot's name)
+   * names that one bot; a sub bot's name alone names it while exactly one bot here has that name. Longer names win.
+   */
+  private resolveMention(candidate: string, chatId: string):
+    | { kind: "bot" | "elsewhere"; member: Member; written: string }
+    | { kind: "ambiguous"; note: string }
+    | { kind: "unknown" } {
+    const aliases = this.mentionAliases(chatId).map((alias, index) => ({ ...alias, id: String(index) }));
+    const first = mentioned(candidate, aliases)[0];
+    if (!first || !candidate.toLowerCase().startsWith("@" + first.name.toLowerCase())) return { kind: "unknown" };
+    const key = first.name.toLowerCase();
+    const same = aliases.filter((alias) => alias.name.toLowerCase() === key);
+    // The bots it can mean here: those with that full name, and the chat's own sub bots by their name alone.
+    const reachable = same.filter((alias) => alias.full || alias.own);
+    const pick = reachable.length ? reachable : same;
+    const distinct = [...new Map(pick.map((alias) => [alias.member.id, alias])).values()];
+    if (distinct.length > 1) {
+      const paths = [...new Set(distinct.map((alias) => alias.path))];
+      const shown = paths.map((path) => `@${path}`).join(", ");
+      const note = paths.length < distinct.length
+        ? `Not sent with @: ${distinct.length} bots are named "${first.name}" (${shown}) and @ cannot tell them apart; rename one.`
+        : `Not sent with @: ${distinct.length} bots are named "${first.name}" (${shown}); write the full name, @Parent/${first.name} (e.g. ${`@${paths.find((path) => path.includes("/")) ?? paths[0]}`}).`;
+      return { kind: "ambiguous", note };
+    }
+    const one = distinct[0]!;
+    return { kind: reachable.length ? "bot" : "elsewhere", member: one.member, written: first.name };
+  }
+
   /** The bots that can be called into `chat` with @: everyone but its own bot, and its own sub bots (`callable(into:)`). */
   callable(chatId: string): Member[] {
     const members = this.deps.members();
@@ -178,7 +227,12 @@ export class Conversations {
   /** The bots your words call into `chat` (`calledIn`). */
   calledIn(text: string, chatId: string): Member[] {
     const callable = this.callable(chatId);
-    return callable.length ? mentioned(text, callable) : [];
+    if (!callable.length) return [];
+    // A sub bot may also be named by its full path, @Parent/Sub.
+    const paths = this.mentionAliases(chatId).filter((alias) => alias.full && callable.some((member) => member.id === alias.member.id))
+      .map((alias, index) => ({ id: `path:${index}`, name: alias.name, member: alias.member }));
+    const named = mentioned(text, [...callable.map((member) => ({ ...member, member })), ...paths]).map((entry) => entry.member);
+    return [...new Map(named.map((member) => [member.id, member])).values()];
   }
 
   /** What goes to the chat's own bot, unseen, with your line: what guests said since, who else answers. */
@@ -216,40 +270,36 @@ export class Conversations {
     if (!record.text.includes("@")) { route(null, null, "none"); return; }
     const isSub = (this.deps.subBots?.() ?? []).some((sub) => sub.id === chat.id);
     if (!isSub && !this.deps.members().some((member) => member.id === chat.id)) return;
-    const members = [...this.deps.members(), ...this.subBotsOf(chat.id)];
     const callable = this.callable(chat.id);
-    // Other bots' sub bots: not callable here, only named so the @ is not lost without a word.
-    const elsewhere = (this.deps.subBots?.() ?? []).filter((sub) => sub.parent !== chat.id).map(({ id, name }) => ({ id, name }));
     const addressed: { member: Member; body: string }[] = [];
-    const unreachable: Member[] = [];
+    const unreachable: { id: string; name: string }[] = [];
     const unknown: string[] = [];
-    let ambiguous = false;
+    const ambiguous: string[] = [];
     for (const candidate of botMentionCandidates(record.text)) {
-      // Every bot, itself among them, so "@itself …" is not read as a shorter name.
-      const named = mentioned(candidate, members);
-      const first = named[0];
-      if (!first || !candidate.toLowerCase().startsWith("@" + first.name.toLowerCase())) {
-        const other = mentioned(candidate, elsewhere)[0];
-        if (other && candidate.toLowerCase().startsWith("@" + other.name.toLowerCase())) unreachable.push(other);
-        else { const word = /^@([^\s,，:：、]+)/u.exec(candidate)?.[1]; if (word) unknown.push(word); }
-        continue;
-      }
-      if (named.filter((member) => member.name.toLowerCase() === first.name.toLowerCase()).length > 1) { ambiguous = true; continue; }
-      if (first.id === chat.id) continue;
-      if (!callable.some((member) => member.id === first.id)) { unreachable.push(first); continue; }
-      addressed.push({ member: first, body: mentionBody(candidate, first.name) });
+      const found = this.resolveMention(candidate, chat.id);
+      if (found.kind === "unknown") { const word = /^@([^\s,，:：、]+)/u.exec(candidate)?.[1]; if (word) unknown.push(word); continue; }
+      if (found.kind === "ambiguous") { ambiguous.push(found.note); continue; }
+      if (found.member.id === chat.id) continue;
+      if (found.kind === "elsewhere" || !callable.some((member) => member.id === found.member.id)) { unreachable.push({ id: found.member.id, name: found.written }); continue; }
+      addressed.push({ member: found.member, body: mentionBody(candidate, found.written) });
     }
     if (unreachable.length) {
-      const names = [...new Set(unreachable.map((member) => member.name))];
+      const names = [...new Set(unreachable.map((entry) => entry.name))];
       this.failed(chat, `Not sent to ${names.join(", ")} with @: ${names.length === 1 ? "it is" : "they are"} not a bot this chat can call in (another bot's sub bot answers only in that bot's chat).`);
     }
     if (unknown.length) {
       const names = [...new Set(unknown)].map((name) => `@${name}`);
       this.failed(chat, `Not sent to ${names.join(", ")}: no bot with that name (a sub bot that was closed is gone; the bots this chat can call in are listed in the @ menu).`);
     }
+    // A name more than one bot has: nothing in this reply is sent, and the bot is told the full names to write.
+    if (ambiguous.length) {
+      for (const note of new Set(ambiguous)) this.failed(chat, note);
+      route(null, null, "many");
+      return;
+    }
     const recipients = [...new Set(addressed.map((entry) => entry.member.id))];
-    if (!recipients.length && !ambiguous) { route(unreachable[0]?.id ?? null, null, unreachable.length ? "unreachable" : "none"); return; }
-    if (recipients.length !== 1 || ambiguous) {
+    if (!recipients.length) { route(unreachable[0]?.id ?? null, null, unreachable.length ? "unreachable" : "none"); return; }
+    if (recipients.length !== 1) {
       this.failed(chat, "Not sent with @: this reply names more than one bot at the start of a line. Name one bot per reply.");
       route(null, null, "many");
       return;
