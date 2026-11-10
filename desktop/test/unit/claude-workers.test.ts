@@ -545,3 +545,36 @@ describe("background work its process left running", () => {
     expect(on.since).toBeLessThanOrEqual(before);
   });
 });
+
+describe("a held run and the tree checks of earlier processes (spec/models/worker/WorkerProcess.tla)", () => {
+  it("an earlier process's tree check answering late leaves a run held for the closing process alone", async () => {
+    const h = harness(undefined, { keepAliveMs: 10 });
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Run one" }) as any;
+    const first = h.heads[0]!;
+    h.say(first, { kind: "init", sessionId: first.config.sessionId });
+    // Its tree check (endTree) does not answer until the test says so.
+    let answer!: (result: { killed: number[]; forced: boolean }) => void;
+    first.terminate = () => new Promise((resolve) => { answer = resolve; });
+    first.exit(1);
+    await wait();
+    expect(await h.workers.sendToWorker(task_id, "Run two")).toMatchObject({ ok: true, run: 2 });
+    const second = h.heads[1]!;
+    second.gone = function () { return !this.running; };
+    // Its input is closed, but it lives on for a while (background work).
+    second.finish = function () { this.finished = true; };
+    h.result(second, "Two done.");
+    await wait(40);
+    expect(second.finished).toBe(true);
+    expect(await h.workers.sendToWorker(task_id, "Run three")).toMatchObject({ ok: true, run: 3 });
+    // The first process's check answers now: run 3 waits for the second process, not for it.
+    answer({ killed: [], forced: false });
+    await wait();
+    expect(h.heads).toHaveLength(2);
+    expect(h.workers.core.get(task_id)).toMatchObject({ status: "running", run: 3 });
+    second.exit(0, true);
+    await wait();
+    expect(h.heads).toHaveLength(3);
+    expect(h.heads[2]!.sent.map((m) => m.text)).toEqual(["Run three"]);
+    expect(h.heads[2]!.config).toMatchObject({ resume: true, sessionId: first.config.sessionId });
+  });
+});

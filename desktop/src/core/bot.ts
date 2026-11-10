@@ -4840,7 +4840,8 @@ export class Bot {
     this.watchesRunning.add(key);
     const title = routineTitle(job.task);
     this.log(`watch "${title}" runs`);
-    void runWatch(command, this.profile.folder).then((result) => {
+    // Its group is in the process ledger while it runs: a start after the app died ends it (no run beside it).
+    void runWatch(command, this.profile.folder, undefined, (pid, alive) => (alive ? this.options.ledger.record(pid) : this.options.ledger.forget(pid))).then((result) => {
       this.watchesRunning.delete(key);
       if (this.shuttingDown || this.readOnly) return;
       const { state, wake } = nextWatchState(this.routineWatches[key], result);

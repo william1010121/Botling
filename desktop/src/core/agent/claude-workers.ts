@@ -438,9 +438,12 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     // Its leader exited; the tree it led is kept until it is confirmed gone (children may outlive it). A held run then
     // goes into a new process on the same session, with every word that waited.
     void endTree(head, 1_500).then((gone) => {
-      if (gone && proc.tree === head) proc.tree = undefined;
+      // Only the check of the process the session is on acts: an earlier process's check answering late (a new
+      // process took the session since, and may be closing now) leaves the run held for that one alone.
+      const latest = proc.tree === head;
+      if (gone && latest) proc.tree = undefined;
       const held = proc.held;
-      if (!held || this.closed) return;
+      if (!held || this.closed || !latest) return;
       proc.held = undefined;
       held.run.emit({ type: "waitingOn", on: null });
       const sessionId = nonEmpty(held.record.engineData.sessionId) ?? held.record.conversationId ?? held.record.id;

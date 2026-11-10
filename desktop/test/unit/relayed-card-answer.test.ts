@@ -102,3 +102,18 @@ describe("a sub bot's card answered in the parent's chat reaches the parent bot"
     } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
   });
 });
+
+describe("a relayed card whose bot was removed (spec/models/callin/RelayedCard.tla)", () => {
+  it("can still be ignored in the parent's chat", async () => {
+    const h = fixture();
+    try {
+      const { copy } = await relayedCard(h, "要哪一種？\n<choices>\n- 形狀臉\n- 色塊\n</choices>");
+      await h.core.removeBot(DESIGN, { quiet: true });
+      expect(isOpenQuestion(h.caller.line(copy.id)!)).toBe(true);
+      expect(await (h.core as any).handle({ type: "chat.ignoreQuestion", botId: BOTLING, messageId: copy.id }, new AbortController().signal))
+        .toEqual({ accepted: true });
+      expect(isOpenQuestion(h.caller.line(copy.id)!)).toBe(false);
+      expect(h.caller.line(copy.id)!.ignoredAt).toBeTruthy();
+    } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
+  });
+});
