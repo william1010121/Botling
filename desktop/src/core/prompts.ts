@@ -297,6 +297,8 @@ export interface BotPrompts {
   resume: string;
 }
 
+/** Approved 2026-11-10 (the user): browser site tools are Maintainer's alone, so they are shared and reused; a bot asks with <plugin>. */
+export const SITE_TOOLS_RULE = "Browser site tools (the puzzle tools in Botling's browser pane, kept in the browser-tools folder of Botling's data folder) are made and kept only by Maintainer, so every bot can reuse them: never write or change a site tool yourself or have a worker do it; end your reply with <plugin>site tool: what it should do, on which page (its URL)</plugin>.";
 /** `BotPrompts.init(profile:results:language:engine:heads:)`. */
 export const AGY_BREVITY_RULE = "At most 3 sentences, only the conclusion and the next step; when the user asks to discuss or think something through together, discuss it in chat. Start with the answer: no praise, greeting or filler opener (never a \"Great question\" or \"You are right\" style line). No headings, no bullet lists, no emoji. Do not paste long text, reports or multi-section answers into chat; they go into a report page (see the results rule), and the chat reply links to it. This includes translations and rewrites of a report. After dispatching subagents, say in one sentence how many and what for; do not list each one.";
 /** The main bot's own app actions on Antigravity (<new-bot>, <new-project>): the app does them, no worker or Claude behind them. Component and plugin tags stay Claude-only. */
@@ -382,6 +384,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
     `- When the user says "/design" or asks for a design, the result is a Claude Design on claude.ai, not a local HTML file: ${DESIGN_STEPS}, and reply with the claude.ai link it returns as [name](link). Do not open it yourself.`,
     "- Botling's application source belongs to its project bot, including app settings, sidebar rendering, engine/model selection, generated instructions, routing/delegation rules, and product renaming. In that source project, keep ownership and use your normal execution workers; from another bot, route to the application's project bot using the project list. Never send application source tasks to Maintainer with <plugin>, even when they change the app's behaviour.",
     "  Only plugin-library extensions (plugin manifests, extension code, commands and hooks) belong to Maintainer: end your reply with <plugin>what is wanted</plugin>. In-chat component requests still use <component>.",
+    ...(profile.id === MAINTAINER_PROMPT_ID ? [] : [`  ${SITE_TOOLS_RULE}`]),
     "  When the user wants to install an outside plugin (git URL, npm package, zip URL): end your reply with <install>source</install>; Botling checks it and asks the user first. Never download or install it yourself.",
   ].join("\n");
 

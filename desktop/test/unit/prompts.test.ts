@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
+import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, SITE_TOOLS_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
 import { WORKER_NOTIFY_RULE, workerNoteRule } from "../../src/core/prompts/delegation";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
@@ -63,6 +63,8 @@ function withApprovedRouting(swift: string): string {
     (_all, folder: string, between: string) => `saved to ${folder}/<english-file-name>.html${between}Pictures and videos shown inline stay file:// links. ${reportOnlyRule(folder)}`);
   // Approved 2026-11-06 (Math): a verbatim request hands over its source, after the coordinator's Maintainer sentence.
   expected = expected.replace(MAINTAINER_ROUTE, `${MAINTAINER_ROUTE} ${VERBATIM_HANDOFF_RULE}`);
+  // Approved 2026-11-10 (the user): browser site tools are Maintainer's; a bot asks with <plugin>, after the plugin-library line.
+  expected = expected.replace(/(  Only plugin-library extensions [^\n]*\n)/, (line) => `${line}  ${SITE_TOOLS_RULE}\n`);
   // Approved 2026-11-08 (Note tab): the user's note for the bot, after the archive line.
   expected = expected.replace(/(search it with Grep there; read only the parts you need\. Never edit it\.\n)/, (_all, line: string) => `${line}- ${noteRule(swift.includes("- Your memory lives only in memory.md") ? "note.md" : ".bot/note.md")}\n`);
   // Approved 2026-11-08 (Math): the memory note goes with the choices block, never in its place.
