@@ -451,9 +451,12 @@ export class Conversations {
     if (record.choices) line.choices = record.choices;
     if (record.questions) line.questions = record.questions;
     if (record.displays) line.displays = record.displays;
+    // A question: the copy names its original, so an answer on either one shows on both (Core.closeRelayedCopies).
+    if (record.choices?.length || record.questions?.length) line.sourceMessageID = record.id;
     chat.post(line);
     this.followUps.set(chat.id, { depth: 1, until: Date.now() + 30 * 60_000 });
-    chat.appMessage(botFollowUpNote({ callee: member.name, question: asked, news: record.text, choices: record.choices?.map((choice) => choice.label) }));
+    chat.appMessage(botFollowUpNote({ callee: member.name, question: asked, news: record.text, choices: record.choices?.map((choice) => choice.label)
+      ?? record.questions?.map((question) => `${question.question}: ${question.options.map((option) => option.label).join(" / ")}`) }));
   }
 
   /**

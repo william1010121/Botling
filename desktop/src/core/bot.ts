@@ -1060,7 +1060,7 @@ export class Bot {
   syncIgnoredCopies(sourceID: string, sourceMessageID: string, at: string): void {
     if (this.options.primary) { this.options.primary.syncIgnoredCopies(sourceID, sourceMessageID, at); return; }
     for (const record of this.records) {
-      if (record.role !== "notice" || record.sourceID !== sourceID || record.sourceMessageID !== sourceMessageID
+      if ((record.role !== "notice" && record.role !== "bot") || record.sourceID !== sourceID || record.sourceMessageID !== sourceMessageID
         || record.chosen != null || record.answer != null || record.ignoredAt != null
         || !(isOpenQuestion(record) || record.questionInvalidatedAt != null)
         || record.permissionTool || this.approvals.has(record.id) || this.peers.some(peer => peer.approvals.has(record.id))
