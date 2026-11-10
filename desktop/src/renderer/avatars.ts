@@ -95,9 +95,13 @@ export function avatarURL(shape: string, eyes: Eyes = "open", color?: string): s
 // ---------------------------------------------------------------------------------------------
 // Colour clashes: the shapes' colours are fixed, so two bots can look alike (the main bot's red
 // circle and a red burst, two yellow stars and drops, a second bot on the same shape). Bots are
-// taken in a stable order (the main bot, Maintainer, then by id) and each keeps its shape's colour
-// unless a bot before it already has one too close; then it gets the colour furthest from all
-// taken so far. Same bots in, same colours out, whatever order the column lists them in.
+// taken in a stable order (the main bot, Maintainer, the pinned bots, the other bots, sub bots last,
+// each group by id) and each keeps its shape's colour unless a bot before it already has one too
+// close; then it gets the colour furthest from all taken so far. Same bots in, same colours out,
+// whatever order the column lists them in. The spare colours are the shapes' own, a few picked
+// ones, then a wheel of hues at three lightnesses, so even ~60 bots each find a free colour (16
+// shape colours alone ran out at a user's 46 bots, and every later clash then fell to the first
+// spare, the main bot's red).
 
 /** OKLab (L, a, b) of a #RRGGBB colour. */
 export function oklab(hex: string): [number, number, number] {
@@ -111,6 +115,25 @@ export function oklab(hex: string): [number, number, number] {
   return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
 }
 
+/** #RRGGBB of an OKLCH colour, its chroma lowered until it fits in sRGB. */
+function oklch(lightness: number, chroma: number, hueDeg: number): string {
+  const h = (hueDeg * Math.PI) / 180;
+  for (let c = chroma; c >= 0; c -= 0.005) {
+    const [A, B] = [c * Math.cos(h), c * Math.sin(h)];
+    const l = (lightness + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+    const m = (lightness - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+    const s = (lightness - 0.0894841775 * A - 1.291485548 * B) ** 3;
+    const rgb = [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s];
+    if (rgb.every((v) => v >= -1e-4 && v <= 1 + 1e-4)) {
+      return `#${rgb.map((v) => {
+        const x = Math.min(1, Math.max(0, v));
+        return Math.round(255 * (x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055)).toString(16).padStart(2, "0");
+      }).join("").toUpperCase()}`;
+    }
+  }
+  return "#808080";
+}
+
 /** How far apart two colours look (OKLab distance; about 0.02 is "the same red"). */
 export function colorDistance(a: string, b: string): number {
   const [x, y] = [oklab(a), oklab(b)];
@@ -119,14 +142,20 @@ export function colorDistance(a: string, b: string): number {
 
 /** Closer than this, two bots' colours clash. The shapes' own colours are all further apart, but for four near pairs. */
 export const CLASH_DISTANCE = 0.06;
-/** Colours a clashing bot may get: the shapes' own, then a few more for when those run out. */
-export const SPARE_COLORS = [...new Set(Object.values(COLORS))].concat(["#E040C8", "#8A5A2B", "#6E7B8B", "#00A37A", "#3B3FD9", "#C2185B", "#7A9A00", "#00ACC1"]);
+/** Colours a clashing bot may get: the shapes' own, a few picked ones, then a hue wheel at three lightnesses. */
+export const SPARE_COLORS = [...new Set([
+  ...Object.values(COLORS),
+  "#E040C8", "#8A5A2B", "#6E7B8B", "#00A37A", "#3B3FD9", "#C2185B", "#7A9A00", "#00ACC1",
+  ...[0.5, 0.68, 0.84].flatMap((lightness, ring) => Array.from({ length: 18 }, (_, i) => oklch(lightness, 0.16, i * 20 + ring * 10))),
+])];
 
 const MAINTAINER_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
-const rank = (bot: { id: string; role?: string }) => (bot.role === "main" ? 0 : bot.id === MAINTAINER_ID ? 1 : 2);
+type ColorBot = { id: string; avatar: string; role?: string; parent?: string | null };
 
-/** Each bot's colour by id, clashes moved to the least clashing colour (see above). */
-export function resolveBotColors(bots: readonly { id: string; avatar: string; role?: string }[]): Map<string, string> {
+/** Each bot's colour by id, clashes moved to the least clashing colour (see above). `pinned`: the
+ * pinned bots' ids, served right after the main bot and Maintainer, as the column shows them together. */
+export function resolveBotColors(bots: readonly ColorBot[], pinned: readonly string[] = []): Map<string, string> {
+  const rank = (bot: ColorBot) => (bot.role === "main" ? 0 : bot.id === MAINTAINER_ID ? 1 : pinned.includes(bot.id) ? 2 : bot.parent ? 4 : 3);
   const ordered = [...bots].sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const out = new Map<string, string>();
   const taken: string[] = [];
@@ -152,11 +181,11 @@ let botColors = new Map<string, string>();
 let botColorsKey = "";
 
 /** The app's bots, so every face drawn after this uses their resolved colours (App calls it on each bot list). */
-export function setBotColors(bots: readonly { id: string; avatar: string; role?: string }[]): void {
-  const key = bots.map((bot) => `${bot.id}:${bot.avatar}:${bot.role ?? ""}`).sort().join(",");
+export function setBotColors(bots: readonly ColorBot[], pinned: readonly string[] = []): void {
+  const key = bots.map((bot) => `${bot.id}:${bot.avatar}:${bot.role ?? ""}:${bot.parent ?? ""}`).sort().join(",") + `|${pinned.join(",")}`;
   if (key === botColorsKey) return;
   botColorsKey = key;
-  botColors = resolveBotColors(bots);
+  botColors = resolveBotColors(bots, pinned);
 }
 
 /** A bot's colour: its resolved one when the app knows it, else its shape's own. */

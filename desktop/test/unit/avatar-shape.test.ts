@@ -49,6 +49,29 @@ describe("colour clashes", () => {
     expect(resolveBotColors(bots)).toEqual(colors);
   });
 
+  it("still gives a user's 46 bots distinct colours (16 shape colours ran out; every later clash fell to the main bot's red)", () => {
+    // The user's real top-level bots (projects.json), plus 15 sub bots on the reds and the main bot and Maintainer.
+    const real: [string, string, string][] = [["35755CC2-281D-4707-9251-7049C09C2841", "square", "EEG-remove-signaltual"], ["DCC66D54-07D2-441E-9A47-92317D74B169", "triangle", "ai-cgroup"], ["7757A552-476C-495C-BA93-93A2907A4340", "hexagon", "token-speed"], ["3CCCE0BE-F505-4C3A-AFD4-9C6902CE239C", "star", "view-latex-md"], ["6F097BCC-C202-476C-9C82-859432BC7DA5", "diamond", "chatgpt-extension"], ["9574ED38-C902-4701-97F3-BE5F7B5D3D6F", "clover", "disk-ananlyze"], ["92FCB255-BF5B-4543-B788-91EE69B174AB", "heart", "laas-0.6.1"], ["95D5E320-1068-4A8E-9AA6-9B9D7005363D", "drop", "laas-0.7.2"], ["DB21BA12-C95A-4590-9FCF-0CDCF4DC493A", "pentagon", "laas-copy"], ["98BDBF26-850C-4521-AEB4-CCF9073E8BD0", "cloud", "botling"], ["4D183B94-CE43-425C-9A34-688774F59D71", "octagon", "Deck"], ["38625952-22DE-4229-8F59-FA2995756556", "moon", "NotchDo"], ["D3836D93-B3B9-4317-9471-7A66EA467DC2", "pill", "YTP_Webpage_Diary"], ["6290B52A-F62B-4485-8511-6C888E53A1B8", "ghost", "socrate"], ["7E8758CD-D903-4F38-BEAA-FD4CE3183961", "burst", "cv-compress"], ["DE9A5A2E-86F8-4F8C-B734-E1B0CB0DB066", "square", "dafaji"], ["525203F0-FF85-4BAD-92D3-C77EA8B633F2", "triangle", "eeg"], ["51EE5BF3-96F0-4B3E-B276-5EF3433EE163", "hexagon", "icpc-codebook"], ["05CCFE79-A859-4A65-8B60-CB462588655D", "star", "math-innovations"], ["FB41101C-FF52-447A-BF2A-B0BFB3194207", "diamond", "neural-interfaces-2026"], ["998D3E81-C986-4C97-8BDE-B517824624D5", "clover", "Users"], ["2B98993D-9517-40B5-94B3-0CB9A0983B6A", "heart", "X"], ["D66BE5B7-2152-4BCA-A4EA-7B7FE509707F", "drop", "共用"], ["8498B140-7DE6-49E2-8734-825E85FEC99C", "pentagon", "disk"], ["5A96229D-A289-4F28-B4D5-B9BE4B7F6333", "cloud", "jenytsian_progress"], ["DF19EE79-F6D8-4BB2-93E6-5BD085633434", "octagon", "CSIT"], ["BC243C06-7AF9-488C-940B-03DC35C2DB2C", "moon", "CLIC-website"], ["7FD11DEE-A493-4107-9754-24D43A939EE5", "pill", "resilient-shannon"], ["6AC64E3A-C7D7-4382-B8A1-9A4756A8F77C", "ghost", "flux-k8s"]];
+    const top = real.map(([id, avatar]) => ({ id, avatar }));
+    const subs = Array.from({ length: 15 }, (_, i) => ({ id: `SUB${i}`, avatar: ["circle", "burst", "octagon", "cloud", "star"][i % 5]!, parent: real[i]![0] }));
+    const bots = [MAIN, MAINTAINER, ...top, ...subs];
+    const colors = resolveBotColors(bots);
+    const red = (name: string) => colorDistance(colors.get(real.find(([, , n]) => n === name)![0])!, "#FF4B42");
+    for (const name of ["botling", "cv-compress", "CSIT", "laas-copy", "ai-cgroup"]) expect(red(name)).toBeGreaterThan(CLASH_DISTANCE);
+    expect(new Set(colors.values()).size).toBe(bots.length);
+    const shown = [MAIN, MAINTAINER, ...top].map((bot) => colors.get(bot.id)!);
+    for (let i = 0; i < shown.length; i++) for (let j = i + 1; j < shown.length; j++) expect(colorDistance(shown[i]!, shown[j]!)).toBeGreaterThan(CLASH_DISTANCE);
+  });
+
+  it("serves the pinned bots right after the main bot and Maintainer, sub bots last", () => {
+    const bots = [MAIN, { id: "a", avatar: "circle" }, { id: "b", avatar: "circle", parent: "a" }, { id: "z", avatar: "circle" }];
+    const plain = resolveBotColors(bots);
+    const pinned = resolveBotColors(bots, ["z"]);
+    expect(pinned.get("z")).toBe(plain.get("a"));
+    expect(pinned.get("a")).toBe(plain.get("z"));
+    expect(colorDistance(pinned.get("b")!, "#FF4B42")).toBeGreaterThan(CLASH_DISTANCE);
+  });
+
   it("draws each face in the resolved colour once the app has told it the bots", () => {
     const burst = { id: "x", avatar: "burst" };
     expect(botColor(burst)).toBe("#FF5A45");
