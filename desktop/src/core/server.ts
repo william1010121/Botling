@@ -2465,6 +2465,8 @@ First write a test that shows this, then fix it.`;
     }
     // A question copied into the main bot's chat was settled in its own: so is the copy.
     if (event.type === "message.updated" && (this.copies.size || event.message.ignoredAt)) this.closeCopiesOf(event.botId, event.message.id);
+    // A called-in bot's question relayed into the chat that called it was answered in its own: so is the copy there.
+    if (event.type === "message.updated") this.closeRelayedCopies(event.botId, event.message.id);
     // A question asked or answered, a bot added: what waits on you may have changed.
     if (event.type === "message.added" || event.type === "message.updated" || event.type === "message.removed" || event.type === "bot.updated") this.waitingSoon();
   }
@@ -2547,6 +2549,7 @@ First write a test that shows this, then fix it.`;
       return { accepted: false };
     }
     chat.settleAppQuestion(messageId, { chosen: index });
+    this.settleRelayedOriginal(record, { chosen: index });
     return { accepted: true };
   }
 
@@ -2562,7 +2565,36 @@ First write a test that shows this, then fix it.`;
       return { accepted: false };
     }
     chat.settleAppQuestion(messageId, { answer: shown });
+    this.settleRelayedOriginal(record, { answer: shown });
     return { accepted: true };
+  }
+
+  /**
+   * A called-in bot's question relayed into another chat (`callInFollowUp`: the copy names it with `sourceMessageID`)
+   * was answered on the copy: the answer went to that bot with the call-in, so its own card only shows it.
+   */
+  private settleRelayedOriginal(copy: ChatRecord, outcome: { chosen?: number; answer?: string }) {
+    if (copy.role !== "bot" || typeof copy.sourceID !== "string" || typeof copy.sourceMessageID !== "string") return;
+    const source = this.bots.get(copy.sourceID);
+    const original = source?.line(copy.sourceMessageID);
+    if (!source || !original || !isOpenQuestion(original)) return;
+    if (copy.picks && original.questions) original.picks = copy.picks;
+    source.settleAppQuestion(original.id, outcome);
+  }
+
+  /** A called-in bot answered in its own chat on a question relayed into other chats: every open copy shows the answer. */
+  private closeRelayedCopies(botId: string, messageId: string) {
+    const original = this.bots.get(botId)?.line(messageId);
+    if (!original || original.role !== "bot" || original.sourceMessageID || isOpenQuestion(original) || original.ignoredAt
+      || !(original.choices?.length || original.questions?.length)) return;
+    for (const chat of this.bots.values()) {
+      if (chat.id === botId) continue;
+      for (const copy of chat.lines()) {
+        if (copy.role !== "bot" || copy.sourceID !== botId || copy.sourceMessageID !== messageId || !isOpenQuestion(copy)) continue;
+        if (original.picks && copy.questions) copy.picks = original.picks;
+        chat.settleAppQuestion(copy.id, original.chosen != null ? { chosen: original.chosen } : { answer: original.answer ?? NO_LONGER_NEEDED });
+      }
+    }
   }
 
   /** A called-in bot's question group answered together: its one answer message goes to that bot, as words would. */
