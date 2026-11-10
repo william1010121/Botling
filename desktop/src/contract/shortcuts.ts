@@ -8,7 +8,7 @@
 
 /** ⌘⌥1–9: the pinned sub bots of the project bot on screen, in their pinned order. */
 export type PinnedSubBotShortcut = `pinnedSubBot${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
-export type ShortcutId = "search" | "settings" | "subBots" | "roomBack" | "roomForward" | PinnedSubBotShortcut | "toggleSidebar" | "toggleRightPanel" | "toggleWorkers" | "reload" | "forceReload" | "reloadChat";
+export type ShortcutId = "search" | "settings" | "subBots" | "roomBack" | "roomForward" | PinnedSubBotShortcut | "toggleSidebar" | "toggleRightPanel" | "toggleWorkers" | "toggleBrowser" | "reload" | "forceReload" | "reloadChat";
 export type ShortcutGroup = "navigation" | "panels" | "view";
 export interface ShortcutDef { id: ShortcutId; group: ShortcutGroup; default: string }
 /** Every key the app handles itself and lets you change. Order is the order on the Settings page. */
@@ -24,6 +24,8 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: "toggleSidebar", group: "panels", default: "Ctrl+Cmd+S" },
   { id: "toggleRightPanel", group: "panels", default: "Ctrl+Cmd+I" },
   { id: "toggleWorkers", group: "panels", default: "Mod+Shift+W" },
+  // The in-app browser pane of the bot on screen (BrowserPane.tsx).
+  { id: "toggleBrowser", group: "panels", default: "Mod+Shift+B" },
   { id: "reload", group: "view", default: "Mod+R" },
   { id: "forceReload", group: "view", default: "Mod+Shift+R" },
   { id: "reloadChat", group: "view", default: "Mod+Alt+R" },

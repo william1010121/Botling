@@ -820,7 +820,7 @@ function createWindow() {
   window.webContents.on('did-start-navigation',(details)=>traceWriter?.observe('native.navigation.start',{contentsId:id,url:details.url.slice(0,2048),isMainFrame:details.isMainFrame,frame:traceFrameIdentity(details.frame)}));
   window.webContents.on('did-frame-finish-load',(_event,isMainFrame,processId,routingId)=>traceWriter?.observe('native.frame.loaded',{contentsId:id,isMainFrame,processId,routingId}));
   window.webContents.on('did-finish-load',()=>traceWriter?.observe('native.document.loaded',{contentsId:id}));
-  browserHosts.set(id, createBrowserHost(window, { note, noExternal: process.env.BOTLING_NO_EXTERNAL === "1", tools: siteToolStore(), ...(process.env.BOTLING_SITE_TOOL_SAVE_DIR ? { saveFolder: process.env.BOTLING_SITE_TOOL_SAVE_DIR } : {}) }));
+  browserHosts.set(id, createBrowserHost(window, { note, shortcuts: () => bindingsFor(shortcutOverrides), noExternal: process.env.BOTLING_NO_EXTERNAL === "1", tools: siteToolStore(), ...(process.env.BOTLING_SITE_TOOL_SAVE_DIR ? { saveFolder: process.env.BOTLING_SITE_TOOL_SAVE_DIR } : {}) }));
   window.on("closed", () => { appContents.delete(id); browserHosts.delete(id); if (mainWindow === window) mainWindow = null; });
   window.webContents.once('did-finish-load',()=>startup.mark('window.loaded'));
   const ownerReady=window.loadURL(`${APP_ORIGIN}/index.html`);

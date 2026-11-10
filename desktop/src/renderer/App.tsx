@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { cardImageOf } from "../contract/attachment-url";
 import { status, statusText } from "../contract/bot-status";
 import { actionForEvent, bindingsFor, commandBindings, commandForEvent, formatCombo } from "../contract/shortcuts";
-import { setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
+import { say, setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
 import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultView, type RoutineView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
@@ -115,6 +115,12 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (store.getView().subagent) { workersMenuPending.current = shown; store.watch(null); setWorkersMenu(shown); return; }
     setWorkersMenu((open) => (open === shown ? null : shown));
   }, [store]);
+  // The Browser button in the chat header and ⌘⇧B: the in-app browser pane of the bot on screen, shown or hidden.
+  const toggleBrowser = useCallback(() => {
+    const current = store.getView();
+    if (web || !current.chat?.botId) return;
+    browserStore.toggle(current.chat.botId);
+  }, [store, web]);
   // The left column: folded into a strip of faces (⌃⌘S), its search (⌘K) and the pinned bots (1.x's RailView).
   const railCollapsed = view.settings?.railCollapsed ?? false;
   const toggleRail = useCallback((collapse?: boolean) => {
@@ -213,6 +219,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       case "settings": openSettings(); break;
       case "toggleRightPanel": toggleRight(); break;
       case "toggleWorkers": toggleWorkers(); break;
+      case "toggleBrowser": toggleBrowser(); break;
       case "toggleSidebar": toggleRail(); break;
       case "search": startSearch(); break;
       case "subBots": toggleSubBots(); break;
@@ -224,7 +231,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         break;
       }
     }
-  }, [openSettings, toggleRight, toggleWorkers, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
+  }, [openSettings, toggleRight, toggleWorkers, toggleBrowser, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const action = actionForEvent(event, shortcutBindings);
@@ -234,6 +241,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         case "settings": event.preventDefault(); openSettings(); break;
         case "toggleRightPanel": event.preventDefault(); toggleRight(); break;
         case "toggleWorkers": event.preventDefault(); toggleWorkers(); break;
+        case "toggleBrowser": event.preventDefault(); toggleBrowser(); break;
         case "toggleSidebar": event.preventDefault(); toggleRail(); break;
         case "search": event.preventDefault(); startSearch(); break;
         case "subBots": event.preventDefault(); toggleSubBots(); break;
@@ -253,6 +261,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         case "settings": openSettings(); break;
         case "rightPanel": toggleRight(); break;
         case "workers": toggleWorkers(); break;
+        case "browser": toggleBrowser(); break;
         case "sidebar": toggleRail(); break;
         case "search": startSearch(); break;
         case "subBots": toggleSubBots(); break;
@@ -263,7 +272,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     window.addEventListener("botling:chat-command", onCommand);
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("botling:chat-command", onCommand); };
-  }, [openSettings, toggleRight, toggleWorkers, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
+  }, [openSettings, toggleRight, toggleWorkers, toggleBrowser, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   const watching = view.subagent?.id ?? null;
@@ -496,7 +505,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   // (and the chat, docked beside it, when you open it from the bot's bubble).
   const browser = useBrowser();
   const browserState = bot ? browser.states[bot.id] : undefined;
-  const paneOpen = !web && !!bot && !!browser.open[bot.id] && !!browserState?.tabs.length;
+  // The Browser button (⌘⇧B) opens it with no tabs too: an empty new tab with the address bar focused.
+  const paneOpen = !web && !!bot && !!browser.open[bot.id];
   const browserFull = paneOpen && browser.full;
   const [miniChat, setMiniChat] = useState(false);
   const [rightWithPane, setRightWithPane] = useState(false);
@@ -649,6 +659,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           {!web && <span className="bottom-controls" ref={setBottomControls} />}
           {bot && chat && !web && (
             <span className="chat-actions">
+              <button type="button" className={`header-button${paneOpen ? " on" : ""}`} aria-pressed={paneOpen} onClick={toggleBrowser}
+                title={`${say(view.settings?.effectiveLanguage, "browser.headerHint")} (${shortcutLabel("toggleBrowser")})`}>{say(view.settings?.effectiveLanguage, "browser.header")}</button>
               <ChatHeaderViews client={client} views={view.plugins?.chatHeaderViews ?? []} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />
             </span>
           )}
@@ -706,8 +718,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
-      {paneOpen && bot && browserState && (
-        <BrowserPane bot={bot} state={browserState} full={browserFull} look={view.settings?.botLook ?? "original"}
+      {paneOpen && bot && (
+        <BrowserPane bot={bot} state={browserState ?? { botId: bot.id, tabs: [], active: null }} full={browserFull} look={view.settings?.botLook ?? "original"}
           miniChat={miniChat} onMiniChat={setMiniChat} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}`}
           onAskTool={async (text) => { await client.request({ type: "chat.send", botId: bot.id, text }); }} />
       )}
@@ -1262,7 +1274,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
           return;
         }
         case "shellCommand":
-          if (nativeEditor() && (["settings", "rightPanel", "workers", "sidebar", "search", "subBots", "roomBack", "roomForward"].includes(String(action.command)) || pinnedNumber(String(action.command)) !== null)) {
+          if (nativeEditor() && (["settings", "rightPanel", "workers", "browser", "sidebar", "search", "subBots", "roomBack", "roomForward"].includes(String(action.command)) || pinnedNumber(String(action.command)) !== null)) {
             window.dispatchEvent(new CustomEvent("botling:chat-command", { detail: action.command }));
           }
           return;

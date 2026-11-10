@@ -20,6 +20,8 @@ import { paneUserAgent, popupWay } from "../browser-auth";
 import type { BotBrowserWindow } from "./browser-bot-host";
 import { BrowserTabs, type TabPage } from "./browser-tabs";
 import { editorBounds } from "./editor-host";
+import { arcKeychainPassword, importArcLogins, NOT_IMPORTED } from "./arc-import";
+import { actionForEvent, type Bindings } from "../contract/shortcuts";
 import { runSiteTool } from "./site-tool-runner";
 import type { SiteToolStore } from "./site-tools";
 
@@ -60,6 +62,8 @@ export interface BrowserHostOptions {
   tools?: SiteToolStore;
   /** Tests: files a tool saves go here, with no save dialog. */
   saveFolder?: string;
+  /** The app's keys now (Settings > Shortcuts): ⌘⇧B pressed in a page hides the pane. */
+  shortcuts?: () => Bindings;
 }
 
 export interface BrowserHost {
@@ -178,6 +182,9 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       else if (command && !input.alt && key === "r") { event.preventDefault(); contents.reload(); }
       else if (command && !input.alt && !input.shift && key === "[") { event.preventDefault(); tabs.back(botId); }
       else if (command && !input.alt && !input.shift && key === "]") { event.preventDefault(); tabs.forward(botId); }
+      else if (options.shortcuts && actionForEvent({ key: input.key, code: input.code, metaKey: input.meta, ctrlKey: input.control, altKey: input.alt, shiftKey: input.shift }, options.shortcuts()) === "toggleBrowser") {
+        event.preventDefault(); owner.webContents.focus(); send({ type: "key", botId, key: "toggle" });
+      }
       else if (key === "escape" && fullscreen && htmlFull !== view) { event.preventDefault(); send({ type: "key", botId, key: "escape" }); }
     });
   }
@@ -325,8 +332,47 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       case "copy": if (tab) clipboard.writeText(tab.url); break;
       case "external": if (tab) openOutside(tab.url); break;
       case "window": if (tab) { ownWindow(tab.url); tabs.close(botId, tab.id); } break;
+      case "importArc": void importArc(botId); break;
       case "close": tabs.closeBot(botId); send({ type: "closePane", botId }); break;
     }
+  }
+
+  /** "Import logins from Arc": asks first, lets you pick a profile when there are several, then says what came in. */
+  let importing = false;
+  async function importArc(botId: string) {
+    if (importing || owner.isDestroyed()) return;
+    importing = true;
+    try {
+      const ask = await dialog.showMessageBox(owner, {
+        type: "question", buttons: ["Import", "Cancel"], defaultId: 0, cancelId: 1,
+        message: "Import logins from Arc?",
+        detail: "Copies Arc's cookies (the sites you are signed in to) into this browser. macOS will ask you to allow access to \u201cArc Safe Storage\u201d in the Keychain. Everything stays on this Mac. " + NOT_IMPORTED,
+      });
+      if (ask.response !== 0) return;
+      const web = browserSession();
+      const result = await importArcLogins({
+        password: arcKeychainPassword,
+        pick: async (profiles) => {
+          const shown = profiles.slice(0, 8);
+          const picked = await dialog.showMessageBox(owner, {
+            type: "question", message: "Which Arc profile?", detail: "Import the cookies of every profile, or of one.",
+            buttons: [`All ${profiles.length} profiles`, ...shown.map((profile) => profile.name), "Cancel"], defaultId: 0, cancelId: shown.length + 1,
+          });
+          if (picked.response === 0) return profiles;
+          return picked.response <= shown.length ? [shown[picked.response - 1]!] : null;
+        },
+        setCookie: async (cookie) => { await web.cookies.set(cookie); },
+        flush: () => web.cookies.flushStore(),
+      });
+      // Counts only, never a cookie.
+      options.note(`browser: Arc import ${result.status}${result.status === "done" ? ` (${result.imported} cookies, ${result.profiles} profiles, ${result.skipped} skipped)` : ""}`);
+      if (result.status === "done" && tabs.active(botId)) tabs.reload(botId);
+      if (result.status !== "cancelled" && !owner.isDestroyed()) {
+        await dialog.showMessageBox(owner, { type: result.status === "done" ? "info" : "warning", buttons: ["OK"], message: result.status === "done" ? "Logins imported from Arc" : "Logins not imported", detail: result.text });
+      }
+    } catch (error) {
+      options.note(`browser: Arc import failed (${String((error as Error)?.message ?? error).slice(0, 200)})`);
+    } finally { importing = false; }
   }
 
   function menu(botId: string, x: number, y: number) {
@@ -342,6 +388,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       item("Open in default browser", "external", undefined, !!tab),
       item("Open in its own window", "window", undefined, !!tab),
       { type: "separator" },
+      ...(mac ? [item("Import logins from Arc\u2026", "importArc", undefined, !importing), { type: "separator" } as const] : []),
       item("Close browser", "close"),
     ];
     const zoom = owner.webContents.getZoomFactor();

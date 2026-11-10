@@ -40,7 +40,7 @@ export function setShortcutBindings(next: Record<string, string>, nextCommands: 
   bindings = bindingsFor(next);
   commands = { ...nextCommands };
 }
-const SHELL_COMMANDS: Record<string, string> = { settings: "settings", toggleRightPanel: "rightPanel", toggleWorkers: "workers", toggleSidebar: "sidebar", search: "search",
+const SHELL_COMMANDS: Record<string, string> = { settings: "settings", toggleRightPanel: "rightPanel", toggleWorkers: "workers", toggleBrowser: "browser", toggleSidebar: "sidebar", search: "search",
   subBots: "subBots", roomBack: "roomBack", roomForward: "roomForward",
   ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`pinnedSubBot${n}`, `pinnedSubBot${n}`])) };
 

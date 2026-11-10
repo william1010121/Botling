@@ -27,7 +27,7 @@ export interface BrowserTabInfo {
 export interface BrowserBotState { botId: string; tabs: BrowserTabInfo[]; active: string | null }
 
 /** What the More (⋯) menu offers; main shows it as a native menu (an HTML menu would sit under the page). */
-export type BrowserMenuPick = "forward" | "reload" | "copy" | "external" | "window" | "close";
+export type BrowserMenuPick = "forward" | "reload" | "copy" | "external" | "window" | "importArc" | "close";
 
 /** App page → main. */
 export type BrowserUp =
@@ -68,8 +68,8 @@ export type BrowserDown =
   | ({ type: "state"; reveal?: boolean } & BrowserBotState)
   /** The pointer reached the top edge of the page (the floating toolbar shows). */
   | { type: "edge"; botId: string }
-  /** A key pressed in the page that the app handles: ⌘L (the URL bar), Esc (leave full screen). */
-  | { type: "key"; botId: string; key: "focusUrl" | "escape" }
+  /** A key pressed in the page that the app handles: ⌘L (the URL bar), Esc (leave full screen), ⌘⇧B (hide the pane). */
+  | { type: "key"; botId: string; key: "focusUrl" | "escape" | "toggle" }
   /** The More menu's "Close browser". */
   | { type: "closePane"; botId: string }
   | ({ type: "tools" } & BrowserToolCatalog)

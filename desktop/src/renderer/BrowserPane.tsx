@@ -88,6 +88,9 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
 
   useEffect(() => { visibility.sheet(sheet); }, [sheet, visibility]);
   useEffect(() => { setSheet(false); setDraft(null); setNewTab(false); }, [botId]);
+  // Opened with no tabs (the Browser button, ⌘⇧B): an empty new tab, the address bar focused.
+  const empty = state.tabs.length === 0;
+  useEffect(() => { if (empty) focusUrl(true); }, [botId, empty]);
 
   const focusUrl = (forNewTab = false) => {
     setNewTab(forNewTab);
@@ -214,18 +217,18 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
         )}
       </div>
       <div className="bp-top" onPointerEnter={() => visibility.enter()} onPointerLeave={() => visibility.leave()}>
-        {toolbar ? (
+        {toolbar || empty ? (
           <div className="bp-toolbar-row" style={sheet ? { paddingRight: 0, marginRight: 272 } : undefined}>
             <div className="bp-toolbar" role="toolbar" aria-label="Browser toolbar">
               <button type="button" className="bp-round" aria-label="Back" title="Back (⌘[)" disabled={!active?.canGoBack} onClick={() => postBrowser({ type: "back", botId })}>{ICONS.back()}</button>
               <label className="bp-url">
                 <span className="bp-url-lock">{ICONS.lock()}</span>
                 <input ref={url} type="text" spellCheck={false} aria-label="Address"
-                  placeholder={newTab ? "Type a web address or search" : ""}
+                  placeholder={newTab || !active ? "Type a web address or search" : ""}
                   value={draft ?? ""}
                   onChange={(event) => setDraft(event.target.value)}
                   onFocus={() => { if (draft === null) setDraft(active?.url ?? ""); visibility.focusUrl(true); requestAnimationFrame(() => url.current?.select()); }}
-                  onBlur={() => { setDraft(null); setNewTab(false); visibility.focusUrl(false); }}
+                  onBlur={() => { setDraft(null); setNewTab(!active); visibility.focusUrl(false); }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") { event.preventDefault(); submit(); }
                     if (event.key === "Escape") { event.preventDefault(); setDraft(null); url.current?.blur(); postBrowser({ type: "focus", botId }); }
@@ -249,7 +252,9 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
       <div className="bp-body">
         <div ref={page} className="bp-page">
           {/* Shown only while the page itself is hidden (a sheet of the app over the window, the divider dragged). */}
-          <span className="bp-page-hint">{host}</span>
+          {active ? <span className="bp-page-hint">{host}</span> : (
+            <span className="bp-page-hint bp-page-empty">Type a web address or search above. To bring your sign-ins from Arc, use ⋯ › Import logins from Arc.</span>
+          )}
         </div>
         {sheet && (
           <SiteToolsSheet botId={botId} botName={bot.name} tab={active} catalog={catalog} runs={runs} onClose={() => setSheet(false)}
