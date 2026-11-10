@@ -77,7 +77,7 @@ import { unsupportedRequest, type BotRequest } from "./reply";
 import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
 import { Conversations } from "./conversations";
-import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
+import { answeredNote, pickedNote, relayedAnswerNote, type GROUP_TIMING } from "./groups";
 import { ComponentsContext } from "./components/service";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { FolderWatch, type WatchTarget } from "./folder-watch";
@@ -2549,6 +2549,8 @@ First write a test that shows this, then fix it.`;
     if (!record || !this.conversations.isCalledIn(record, chat.id)) return null;
     const label = record.choices?.[index]?.label;
     if (!isOpenQuestion(record) || label === undefined) return { accepted: false };
+    const relayed = this.answerRelayedCopy(chat, record, label, { chosen: index });
+    if (relayed) return relayed;
     if (!this.conversations.answerCallIn(chat, record, pickedNote(label))) {
       chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED });
       return { accepted: false };
@@ -2565,12 +2567,30 @@ First write a test that shows this, then fix it.`;
     if (!record || !this.conversations.isCalledIn(record, chat.id) || !record.choices?.length) return null;
     const shown = answerLabel(text.trim(), files);
     if (!shown || !isOpenQuestion(record)) return { accepted: false };
+    const relayed = this.answerRelayedCopy(chat, record, text.trim() || shown, { answer: shown });
+    if (relayed) return relayed;
     if (!this.conversations.answerCallIn(chat, record, answeredNote(shown))) {
       chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED });
       return { accepted: false };
     }
     chat.settleAppQuestion(messageId, { answer: shown });
     this.settleRelayedOriginal(record, { answer: shown });
+    return { accepted: true };
+  }
+
+  /**
+   * A called-in bot's question relayed into the chat of the bot that called it (`callInFollowUp`: the copy names it
+   * with `sourceMessageID`) answered there: received where it was given. The answer is your message to this chat's own
+   * bot (it asked on your behalf and carries the work on), and the card it copies shows the answer in the called-in
+   * bot's chat; that bot is not woken, so two bots never act on one answer: the caller tells it with @ when needed.
+   * null: not such a copy.
+   */
+  private answerRelayedCopy(chat: Bot, copy: ChatRecord, words: string, outcome: { chosen?: number; answer?: string }): { accepted: boolean } | null {
+    if (copy.role !== "bot" || typeof copy.sourceID !== "string" || typeof copy.sourceMessageID !== "string") return null;
+    const name = this.bots.get(copy.sourceID)?.profile.name ?? "the bot you called in";
+    chat.send(words, { replyTo: copy.id, appNote: relayedAnswerNote(name) });
+    chat.settleAppQuestion(copy.id, outcome);
+    this.settleRelayedOriginal(copy, outcome);
     return { accepted: true };
   }
 

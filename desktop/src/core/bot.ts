@@ -1954,7 +1954,8 @@ export class Bot {
     // What its components kept since your last message, and cards it drew empty (`componentStateNote`, `emptyShowNote`).
     for (const note of this.componentNotes(user)) lines.push(note);
     if (quoted) {
-      const whose = quoted.role === "user" ? "what I said earlier" : quoted.role === "notice" ? "the app's message" : "what you said earlier";
+      const whose = quoted.role === "user" ? "what I said earlier" : quoted.role === "notice" ? "the app's message"
+        : typeof quoted.sourceID === "string" ? "another bot's line in this chat" : "what you said earlier";
       lines.push(`(Replying to ${whose}: "${preview(quoted)}")`);
     }
     if (words) lines.push(words);
