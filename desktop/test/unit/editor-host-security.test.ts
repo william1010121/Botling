@@ -4,7 +4,7 @@ import {EDITOR_URL,EDITOR_ARGUMENT,EDITOR_CHANNEL,editorMessageAllowed,editorPre
 import {editorBridge} from '../../src/preload/editor-bridge';
 const peer=(id:number,url:string):EditorContents=>({id,mainFrame:{url},isDestroyed:()=>false});
 const shell=()=>peer(1,'app://botling/index.html'),editor=()=>peer(2,EDITOR_URL);
-const message={botling:'messageWidth',value:640};
+const message={botling:'stop'};
 it('routes editor messages and state only between the registered independent root documents',()=>{
  const boundary=new EditorHostBoundary(),a=shell(),b=editor(),stamp=boundary.bind(a,b);
  expect(boundary.route('up',{sender:b,senderFrame:b.mainFrame},{stamp,message})?.recipient).toBe(a);

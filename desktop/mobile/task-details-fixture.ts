@@ -9,7 +9,7 @@ export function detailsFixture() {
   const primary: BotView = { id: 'project', name: 'Project', role: 'manager', avatar: 'circle', folder: '/fixture', phase: 'awake', working: false,
     approvals: 0, unread: 0, subagents: 0, problem: null, heads: ['claude'], job: null, subagentRows: [] };
   const snapshot = (botId = primary.id): ResultOf<'chat.snapshot'> => ({ epoch: 'fixture', seq: 1, imported: null, components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null }, waiting: { items: [], doing: {} },
-    settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: collapsed, railCollapsed: false, pinnedBots: [],
+    settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, rightPanelCollapsed: collapsed, railCollapsed: false, pinnedBots: [],
       subagentModel: null, subagentHourCache: false, claudeBypassPermissions: false, codexBypassPermissions: false, codexWorkersFollow: true,
       codexWorkers: { model: null, effort: null, fast: null }, componentEditorModel: 'sonnet', resultPublishing: 'localOnly', stallReminderMinutes: 15,
       developerMode: false, developerProject: null, updateCheck: false },

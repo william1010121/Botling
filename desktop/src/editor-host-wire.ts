@@ -59,12 +59,10 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
  if(direction==='down'&&value.botling==='runCommand')return keys(value,['botling','id'])&&typeof value.id==='string'&&/^[A-Za-z0-9_.:-]{1,200}$/.test(value.id);
  // How the app page's ApprovalSheet ended for a web part's ask (botling.board's pin commands: App.tsx approvalRequest).
  if(direction==='down'&&value.botling==='approvalReply')return keys(value,['botling','requestId','allowed'])&&Number.isSafeInteger(value.requestId)&&value.requestId>=0&&typeof value.allowed==='boolean';
- if(direction==='down')return ['widthRejected','widthPreview','shortcuts','state','stateDelta','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','spec','focus'].includes(value.botling);
+ if(direction==='down')return ['shortcuts','state','stateDelta','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','spec','focus'].includes(value.botling);
  switch(value.botling){
   case 'action':return object(value.action)&&typeof value.action.type==='string'&&value.action.type.length<=80&&!['keydown','keyup','keypress','insertText','editReplay'].includes(value.action.type);
   case 'stop':return true;
-  case 'messageWidth':return value.value===null||typeof value.value==='number'&&Number.isFinite(value.value);
-  case 'messageWidthDrag':return typeof value.active==='boolean';
   case 'page':return Number.isSafeInteger(value.id)&&value.id>=0&&typeof value.html==='string'&&value.html.length<=200_000;
   case 'hostObservation':return (value.chatId===null||typeof value.chatId==='string'&&value.chatId.length<=160)&&Number.isSafeInteger(value.intentEpoch)&&value.intentEpoch>=0&&Number.isSafeInteger(value.revision)&&value.revision>=0;
   default:return false;

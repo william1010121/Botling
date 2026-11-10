@@ -1,7 +1,6 @@
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
 import { PhoneSettings } from "./PhoneSettings";
-import { postToChat } from "./editor-surface";
 import { UpdateActions } from "./Updates";
 // The Settings window as a sheet over the app, in four groups (settings-pages.ts): App (General, Appearance,
 // Shortcuts), Bots (Models & workers, Permissions, Chat & reports), Connect (Engine setup, Plugins and their pages,
@@ -10,7 +9,6 @@ import { UpdateActions } from "./Updates";
 // out, the answer (or `settings.updated`) comes back.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BotView, PluginsView, SettingsChange, SettingsView, UpdateView } from "../contract";
-import { MESSAGE_WIDTH_DEFAULT, MESSAGE_WIDTH_MIN, MESSAGE_WIDTH_MAX } from "../contract/message-width";
 import { Client } from "./client";
 import { PanelFrame, PluginsPanel, SlotFrame } from "./Plugins";
 import { faceURL } from "./avatars";
@@ -138,10 +136,6 @@ function General({ settings, change, onNavigate }: { settings: SettingsView; cha
   );
 }
 
-function previewWidth(value: number | null | undefined) {
-  postToChat({botling:"widthPreview",value});
-}
-
 /** The theme cards: a small picture of the app in each look, drawn with the app's own ground and side colours. */
 const THEMES = [
   { id: "light", label: "Light" },
@@ -149,23 +143,8 @@ const THEMES = [
   { id: "system", label: "Match system" },
 ] as const;
 
-/** Settings → Appearance: the app's theme, report pages, and the chat's avatar size and message column width. */
+/** Settings → Appearance: the app's theme, report pages, and the chat's avatar size. */
 function Appearance({ settings, change, bot }: { settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; bot: BotView | null }) {
-  const input = useRef<HTMLInputElement>(null);
-  const latest = useRef(settings.messageColumnWidth); latest.current = settings.messageColumnWidth;
-  const editing = useRef<{before: number | null; value: number} | null>(null);
-  const [draft,setDraft] = useState<number | null>(null);
-  const cancel = useCallback(() => { editing.current=null;setDraft(null);previewWidth(undefined); },[]);
-  // External updates win over an unfinished local drag, while unrelated settings pushes do not.
-  const previous = useRef(settings.messageColumnWidth);
-  useEffect(() => { if (previous.current !== settings.messageColumnWidth) { previous.current=settings.messageColumnWidth;cancel(); } },[settings.messageColumnWidth,cancel]);
-  useEffect(() => () => previewWidth(undefined),[]);
-  const commit = useCallback(() => {
-    const edit=editing.current;if(!edit)return;editing.current=null;
-    void change({key:"messageColumnWidth",value:edit.value}).then(ok=>{if(!ok)cancel();});
-  },[change,cancel]);
-  useEffect(() => { const el=input.current;el?.addEventListener("change",commit);return()=>el?.removeEventListener("change",commit); },[commit]);
-  const width=draft ?? settings.messageColumnWidth ?? MESSAGE_WIDTH_DEFAULT;
   const size = settings.chatAvatarSize ?? 48;
   const preview = { avatar: bot?.avatar ?? "circle", heads: bot?.heads ?? ["claude"] };
   const theme = settings.appTheme ?? "dark";
@@ -192,17 +171,10 @@ function Appearance({ settings, change, bot }: { settings: SettingsView; change:
       <img className="settings-avatar-preview" src={faceURL(preview, settings.botLook)} alt="Preview" width={28} height={28} />
       <input type="range" aria-label="Chat avatar size" min={32} max={96} value={size} onChange={(event) => void change({ key: "chatAvatarSize", value: Number(event.target.value) })} />
     </Row>
-    <Row label="Message column width" hint={`${width} px${settings.messageColumnWidth === null && draft===null ? " (default)" : ""} · or drag a column edge in chat (double-click it to reset)`}>
-      <input ref={input} type="range" aria-label="Message column width" min={MESSAGE_WIDTH_MIN} max={MESSAGE_WIDTH_MAX} value={width}
-        onInput={event=>{const value=Number(event.currentTarget.value);editing.current={before:editing.current?.before ?? latest.current,value};setDraft(value);previewWidth(value);}}
-        onChange={()=>{}} onPointerUp={commit} onPointerCancel={cancel} onBlur={commit}
-        onKeyUp={event=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(event.key))commit();}}
-        onKeyDown={event=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();cancel();}}} />
-    </Row>
   </Group>
   <div className="settings-actions settings-actions-end">
-    <button type="button" disabled={settings.messageColumnWidth === null && settings.chatAvatarSize === null && draft === null}
-      onClick={() => { cancel(); void change({ key: "messageColumnWidth", value: null }).then(() => change({ key: "chatAvatarSize", value: null })); }}>Reset chat sizes</button>
+    <button type="button" disabled={settings.chatAvatarSize === null}
+      onClick={() => void change({ key: "chatAvatarSize", value: null })}>Reset avatar size</button>
   </div>
   </>;
 }

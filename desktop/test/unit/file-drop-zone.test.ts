@@ -48,16 +48,13 @@ function outlineStyle() {
 }
 
 describe("desktop file drop outline", () => {
-  it("keeps the chat viewport inset and stays visible above floating cards and width handles", () => {
+  it("keeps the chat viewport inset and stays visible above floating cards", () => {
     drag("dragover", document.getElementById("messages")!);
     const outline = outlineStyle();
     expect(outline.position).toBe("fixed");
     expect(outline.inset).toBe("12px");
     expect(outline.pointerEvents).toBe("none");
-    const handle = document.createElement("div");
-    handle.className = "message-width-handle left";
-    document.body.append(handle);
-    for (const obstacle of [document.querySelector(".float-layer")!, handle]) {
+    for (const obstacle of [document.querySelector(".float-layer")!]) {
       expect(Number(outline.zIndex) || 0).toBeGreaterThan(Number(getComputedStyle(obstacle).zIndex));
     }
   });

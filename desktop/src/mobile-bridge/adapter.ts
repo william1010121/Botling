@@ -56,7 +56,7 @@ export function webSnapshot(snapshot: ResultOf<'chat.snapshot'>) {
     chat: snapshot.chat,
     components: snapshot.components,
     settings: settings ? { language: settings.language, effectiveLanguage: settings.effectiveLanguage, botLook: settings.botLook,
-      chatAvatarSize: settings.chatAvatarSize, messageColumnWidth: settings.messageColumnWidth, rightPanelCollapsed: settings.rightPanelCollapsed,
+      chatAvatarSize: settings.chatAvatarSize, rightPanelCollapsed: settings.rightPanelCollapsed,
       railCollapsed: settings.railCollapsed, pinnedBots: settings.pinnedBots, idleBots: settings.idleBots } : undefined,
     waiting: snapshot.waiting,
   };

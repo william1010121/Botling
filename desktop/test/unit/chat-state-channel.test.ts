@@ -10,7 +10,7 @@ const components = { demo: { template: "<p>template-marker</p>", version: 1, upd
 function packet(text = "hello", count = 2): ChatPacket {
   return { ...chatState(bot, { botId: bot.id, running: null, live: [],
     messages: Array.from({ length: count }, (_, i) => ({ id: String(i), role: "bot", text: i === count - 1 ? text : "History ".repeat(40), time: "2026-10-27T08:00:00Z" })) }, new Date("2026-10-27T09:00:00Z"), null, { components }),
-    libraryVersion: 1, resyncs: 1, messageColumnWidth: null };
+    libraryVersion: 1, resyncs: 1 };
 }
 afterEach(() => vi.useRealTimers());
 describe("chat state channel", () => {
@@ -55,9 +55,9 @@ describe("chat state channel", () => {
     const delta = send.mock.calls[2][0];
     expect(delta.patch.order).toEqual(["1"]); expect(delta.patch.changed).toEqual([]);
     expect(delta.patch).not.toHaveProperty("components");
-    current = { ...current, state: { ...current.state, replyingTo: { id: "1", who: "blog", preview: "hello" }, lang: "ja" }, messageColumnWidth: 800 };
+    current = { ...current, state: { ...current.state, replyingTo: { id: "1", who: "blog", preview: "hello" }, lang: "ja" } };
     channel.flush();
-    expect(send.mock.calls[3][0]).toMatchObject({ botling: "stateDelta", patch: { base: { lang: "ja", replyingTo: { id: "1" } } }, messageColumnWidth: 800 });
+    expect(send.mock.calls[3][0]).toMatchObject({ botling: "stateDelta", patch: { base: { lang: "ja", replyingTo: { id: "1" } } } });
   });
 
   it("keeps first load, core resync, subagent/chat switches, explicit page resync and rebind complete", () => {

@@ -56,11 +56,6 @@ test("a reply's result page as a preview card: the page runs in its frame, Open 
   const { app, page, chat } = await launch({ dataDir });
   try {
     await page.setViewportSize({ width: 1660, height: 900 });
-    // Cumulative 5c: the preview and finished component share the persisted message width.
-    expect(await post(page, { v: PROTOCOL_VERSION, id: "preview-width", cmd: {
-      type: "settings.set", change: { key: "messageColumnWidth", value: 800 },
-    } })).toMatchObject({ ok: true });
-    await expect.poll(() => chat.locator("#messages").evaluate(el => el.getBoundingClientRect().width)).toBe(800);
     // The app is dark (main's nativeTheme); Playwright's own emulation says light unless told.
     await page.emulateMedia({ colorScheme: "dark" });
     const url = `file://${artifacts}/sales.html`;
@@ -99,7 +94,7 @@ test("a reply's result page as a preview card: the page runs in its frame, Open 
     const built = chat.locator(".row.bot", { hasText: "The report is ready" }).locator(".spec-built");
     await expect(built).toBeVisible({ timeout: 15_000 });
     await expect(built.frameLocator("iframe").locator("#sales")).toHaveText("Sales component filled");
-    await expect.poll(() => chat.locator("#messages").evaluate(el => el.getBoundingClientRect().width)).toBe(800);
+    await expect.poll(() => chat.locator("#messages").evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThan(800);
     for (const frame of page.frames()) await frame.evaluate(async () => {
       for (const image of Array.from(document.images).filter(image => {
         const rect = image.getBoundingClientRect(); return rect.width > 0 && rect.height > 0;
