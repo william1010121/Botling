@@ -14,6 +14,9 @@ export function postToChat(message: ShellMessage): void {
   (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow?.postMessage(message, CHAT_TARGET);
 }
 
+/** Said on `window` when the chat's placeholder moved without changing size (the floating chat dragged). */
+export const CHAT_MOVED = "botling:chat-moved";
+
 /** The placeholder occupies exactly the former iframe's layout; it never contains an editor. */
 export function observeEditorLayout(element: HTMLElement, bridge: EditorBridge, visible: () => boolean): () => void {
   let previous = "";
@@ -36,7 +39,9 @@ export function observeEditorLayout(element: HTMLElement, bridge: EditorBridge, 
   if (pane) observer.observe(pane);
   const stopOverlays = subscribeShellOverlays(update);
   window.addEventListener("resize", update);
+  // The floating chat's panel moves the placeholder without resizing it (FloatingChat.tsx says so).
+  window.addEventListener(CHAT_MOVED, update);
   const unsubscribe = bridge.subscribe(packet => { if ("bound" in packet) update(); });
   update();
-  return () => { observer.disconnect(); stopOverlays(); window.removeEventListener("resize", update); unsubscribe(); bridge.layout(null); };
+  return () => { observer.disconnect(); stopOverlays(); window.removeEventListener("resize", update); window.removeEventListener(CHAT_MOVED, update); unsubscribe(); bridge.layout(null); };
 }

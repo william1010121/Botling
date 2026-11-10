@@ -37,7 +37,7 @@ function Shell() {
       <section className="chat-pane"><div className="chat-column"><header className="chat-header drag" /><Chat /></div></section>
       <ColumnDivider column="browser" />
       <BrowserPane bot={bot} state={{ botId: bot.id, tabs: [{ id: 1, url: "https://example.com/", title: "Example", loading: false, canGoBack: false }], active: 1 } as never}
-        full={false} look="original" miniChat={false} onMiniChat={() => {}} layoutKey="k" onAskTool={async () => {}} />
+        full={false} look="original" miniChat={false} onMiniChat={() => {}} line="" layoutKey="k" onAskTool={async () => {}} />
       <ColumnDivider column="right" />
       <RightPanel bot={bot} bots={[bot]} waiting={{ items: [], doing: {} }} look="original" status={{ key: "awake", text: "Awake" }} results={[]} watching={null} collapsed={false}
         onSelect={() => {}} onIgnore={() => {}} onOpenResult={() => {}} onOpenSubagent={() => {}} onUnsettle={() => {}} onSettings={() => {}} onExpand={() => {}} />

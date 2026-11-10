@@ -649,6 +649,7 @@ button { font: inherit; color: inherit; }
 .report-viewer { position: fixed; inset: 38px 0 0; z-index: 1000; display: flex; flex-direction: column; background: var(--ground); }
 .report-viewer header { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .report-viewer header span { opacity: .65; }
+.report-viewer .report-page { position: relative; flex: 1; min-height: 0; display: flex; }
 .report-viewer iframe { flex: 1; min-height: 0; width: 100%; border: 0; background: white; }
 .report-viewer header button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--chip); cursor: pointer; }
 .report-viewer header button:hover { background: var(--hover); }
@@ -1159,3 +1160,61 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
   width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; background: var(--chip); color: var(--text);
   font-size: 8.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
 }
+
+/* The floating chat (design B; FloatingChat.tsx, floating-chat.ts). Closed: the strip in a corner of the page (the bot's
+   face, its newest line, the unread count, a chevron), dragged to another corner by its six dots. Open: the chat's
+   placeholder moves to the panel's box (the native chat follows it) over a backdrop that gives the panel its shadow
+   and rounded edge; the chat page draws the header and the corner grip (chat-frame/float-chrome.ts). */
+.bot-strip {
+  display: flex; align-items: center; height: 44px; max-width: min(360px, calc(100vw - 48px)); box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 22px; background: var(--bubble); color: var(--text);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.32); -webkit-app-region: no-drag;
+}
+.bot-strip.unread { border-color: color-mix(in srgb, var(--blue) 55%, var(--border)); }
+.bot-strip-grab { display: inline-flex; align-items: center; justify-content: center; align-self: stretch; padding: 0 4px 0 12px; color: var(--faint); cursor: grab; touch-action: none; }
+.float-strip-holder.dragging .bot-strip-grab { cursor: grabbing; }
+.bot-strip-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; height: 100%; padding: 0 12px 0 6px; border: 0;
+  background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; border-radius: 0 22px 22px 0;
+}
+.bot-strip:not(:has(.bot-strip-grab)) .bot-strip-open { padding-left: 6px; border-radius: 22px; }
+.bot-strip-open:hover { background: var(--hover); }
+.bot-strip-open:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.bot-strip-face { position: relative; flex: none; width: 28px; height: 28px; display: inline-flex; }
+.bot-strip-face img { width: 28px; height: 28px; }
+.bot-strip-face .bp-bubble-dot { border-color: var(--bubble); }
+.bot-strip-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); text-align: left; }
+.bot-strip.unread .bot-strip-line { color: var(--text); font-weight: 600; }
+.bot-strip-badge { flex: none; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px; background: var(--blue); color: #fff; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.bot-strip-chevron { flex: none; display: inline-flex; color: var(--faint); }
+.float-strip-holder { position: absolute; z-index: 5; }
+.float-strip-holder[data-corner="br"] { right: 16px; bottom: 16px; }
+.float-strip-holder[data-corner="bl"] { left: 16px; bottom: 16px; }
+.float-strip-holder[data-corner="tr"] { right: 16px; top: 16px; }
+.float-strip-holder[data-corner="tl"] { left: 16px; top: 16px; }
+.float-strip-holder.dragging { z-index: 20; transition: none; }
+/* In the browser's tab row: a short strip in place of the round bubble. */
+.bot-strip.inline { height: 32px; max-width: 280px; margin: 0 2px 3px 8px; flex: 0 1 280px; box-shadow: none; border-radius: 16px; }
+.bot-strip.inline .bot-strip-open { padding: 0 10px 0 3px; gap: 7px; font-size: 12px; border-radius: 16px; }
+.bot-strip.inline .bot-strip-face, .bot-strip.inline .bot-strip-face img { width: 24px; height: 24px; }
+.bot-strip.inline[aria-expanded="true"], .bot-strip.inline:has([aria-expanded="true"]) { background: var(--selected); }
+.bot-strip.inline:has([aria-expanded="true"]) .bot-strip-chevron { transform: rotate(180deg); }
+/* The panel: the backdrop under the native chat, and the chat's placeholder moved onto it. */
+.float-backdrop {
+  position: fixed; z-index: 3; box-sizing: border-box; border-radius: 12px; pointer-events: none;
+  outline: 1px solid var(--blue); outline-offset: 0; background: var(--ground);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+#chat-frame.chat-floating {
+  display: block !important; position: fixed !important; z-index: 4; flex: none !important; max-width: none !important;
+  left: var(--float-left); top: var(--float-top); width: var(--float-width) !important; height: var(--float-height) !important;
+  border: 0 !important; border-radius: 12px; overflow: hidden;
+}
+/* Under the app's sheets and menus (an occluded native chat leaves its snapshot here), but over the report preview it
+   floats on. */
+.float-backdrop[data-place="preview"] { z-index: 1001; }
+#chat-frame.chat-floating[data-float-place="preview"] { z-index: 1002; }
+/* The browser's full screen with the chat floating: the chat pane stays laid out (so its placeholder has a box) but
+   shows nothing of its own; only the placeholder, moved onto the panel, is seen. */
+.shell.browser-full.browser-float > .chat-pane { display: flex; position: fixed; inset: 0; visibility: hidden; pointer-events: none; z-index: 0; }
+.shell.browser-full.browser-float > .chat-pane #chat-frame.chat-floating { visibility: visible; pointer-events: auto; }

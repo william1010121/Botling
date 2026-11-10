@@ -28,35 +28,40 @@ it("tracks replacement authorized URLs, including slides without a filename suff
   expect(close).toHaveBeenCalledOnce();
 });
 
-// 2026-11-10: the report preview offers the page's bot's bubble, the same BotBubble as the Note tab and the browser's
-// full screen (so a later restyle applies to all three). Clicking it shows the bot's real chat over the page (the viewer
-// stops hiding the native chat); Esc hides the chat first, then closes the preview.
+// 2026-11-10: the report preview offers the page's bot's chat, the same BotBubble as the Note tab and the browser's
+// full screen (so a restyle applies to all three). Since the floating chat (design B) it is the strip in a corner of the
+// page; clicking it opens the bot's real chat over the page (the viewer stops hiding the native chat); Esc hides the
+// chat first, then closes the preview.
 const bot = { id: "b", name: "Bot", role: "bot", avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 1, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] } as unknown as import("../../src/contract").BotView;
 const url = "botling-card://preview/project/artifacts/report.html";
 
-it("offers the page's bot's chat bubble (the shared BotBubble)", async () => {
-  const toggle = vi.fn(), close = vi.fn();
-  await act(async () => { root.render(createElement(ReportViewer, { url, onClose: close, bubble: { bot, look: "original", on: false, onToggle: toggle } })); });
-  const bubble = document.querySelector<HTMLButtonElement>(".report-viewer .bp-bubble.report-bubble");
-  expect(bubble).not.toBeNull();
-  expect(bubble!.getAttribute("aria-pressed")).toBe("false");
+it("offers the page's bot's chat as the floating chat's strip (the shared BotBubble)", async () => {
+  const open = vi.fn(), close = vi.fn();
+  await act(async () => { root.render(createElement(ReportViewer, { url, onClose: close, bubble: { bot, look: "original", on: false, onOpen: open, line: "首頁標題放大到 32px 了" } })); });
+  const strip = document.querySelector<HTMLElement>(".report-viewer .float-strip-holder[data-place=\"preview\"] .bot-strip");
+  expect(strip).not.toBeNull();
+  expect(strip!.textContent).toContain("首頁標題放大到 32px 了");
+  expect(strip!.querySelector(".bot-strip-badge")?.textContent).toBe("1");
+  const button = strip!.querySelector<HTMLButtonElement>(".bot-strip-open")!;
+  expect(button.getAttribute("aria-expanded")).toBe("false");
   expect(document.querySelector("section")?.getAttribute("aria-modal")).toBe("true");
-  await act(async () => { bubble!.click(); });
-  expect(toggle).toHaveBeenCalledOnce();
+  await act(async () => { button.click(); });
+  expect(open).toHaveBeenCalledWith(true);
 });
 
 it("lets the chat show while it is open, and Esc hides it before closing the preview", async () => {
   const { shellOverlayActive } = await import("../../src/renderer/ShellOverlay");
-  const toggle = vi.fn(), close = vi.fn();
-  await act(async () => { root.render(createElement(ReportViewer, { url, onClose: close, bubble: { bot, look: "original", on: false, onToggle: toggle } })); });
+  const open = vi.fn(), close = vi.fn();
+  await act(async () => { root.render(createElement(ReportViewer, { url, onClose: close, bubble: { bot, look: "original", on: false, onOpen: open, line: "" } })); });
   expect(shellOverlayActive()).toBe(true);
-  await act(async () => { root.render(createElement(ReportViewer, { url, onClose: close, bubble: { bot, look: "original", on: true, onToggle: toggle } })); });
+  await act(async () => { root.render(createElement(ReportViewer, { url, onClose: close, bubble: { bot, look: "original", on: true, onOpen: open, line: "" } })); });
   expect(shellOverlayActive()).toBe(false);
   const section = document.querySelector("section")!;
   expect(section.getAttribute("aria-modal")).not.toBe("true");
-  expect(document.querySelector(".report-bubble")?.getAttribute("aria-pressed")).toBe("true");
+  // Open, the strip makes way for the panel.
+  expect(document.querySelector(".report-viewer .bot-strip")).toBeNull();
   await act(async () => { section.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
-  expect(toggle).toHaveBeenCalledOnce();
+  expect(open).toHaveBeenCalledWith(false);
   expect(close).not.toHaveBeenCalled();
 });
 

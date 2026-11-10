@@ -66,3 +66,40 @@ body.board #pin-area.has-composer-bar { min-height: 0; }
 }
 .escape-stop-hint.shown { opacity: 1; transform: translate(-50%, 0); }
 @media (prefers-reduced-motion: reduce) { .escape-stop-hint { transition: none; } }
+
+/* The floating chat's chrome (float-chrome.ts; design B): the panel's header, drawn by this page because the chat is a
+   native view nothing of the shell can sit over. Drag it to move the panel; the grip at the bottom right resizes it;
+   the 1px frame is the panel's edge over the page under it. Docked beside the page, the header keeps its buttons. */
+.float-chrome {
+  flex: none; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 8px 0 10px; box-sizing: border-box;
+  border-bottom: 1px solid var(--line); background: var(--side); color: var(--text); font-size: 13px; line-height: 1;
+  cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none;
+}
+.float-chrome.dragging { cursor: grabbing; }
+.float-chrome.docked { cursor: default; }
+.float-grab { display: inline-flex; color: var(--faint); }
+.float-chrome.docked .float-grab { display: none; }
+.float-face { width: 22px; height: 22px; flex: none; }
+.float-face[hidden] { display: none; }
+.float-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.float-status { flex: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.float-status[data-tone="working"] { color: var(--blue); }
+.float-status[data-tone="waiting"] { color: var(--orange); }
+.float-gap { flex: 1; }
+.float-btn {
+  flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.float-btn:hover { background: var(--hover); color: var(--text); }
+.float-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.float-grip {
+  position: fixed; right: 1px; bottom: 1px; width: 16px; height: 16px; z-index: 60; cursor: nwse-resize; touch-action: none;
+  background:
+    linear-gradient(135deg, transparent 0 55%, var(--faint) 55% 62%, transparent 62% 72%, var(--faint) 72% 79%, transparent 79%);
+  opacity: .7;
+}
+.float-grip:hover, .float-grip.dragging { opacity: 1; }
+.float-grip[hidden] { display: none; }
+body.floating-chat:not(.floating-docked)::before {
+  content: ""; position: fixed; inset: 0; z-index: 70; pointer-events: none; border: 1px solid var(--accent-line);
+}

@@ -40,7 +40,16 @@ export type FrameMessage =
   /** The page is up: what the row above the input box shows again (composer-bar.ts). */
   | { botling: "composerBarAsk" }
   /** What a `composerBar` view's frame posted (its window and opaque origin checked here); the shell answers it as a plugin frame's. */
-  | { botling: "composerBarFrame"; frame: ComposerBarFrame; data: unknown };
+  | { botling: "composerBarFrame"; frame: ComposerBarFrame; data: unknown }
+  /** The floating chat's header (float-chrome.ts): a button pressed, or Esc folding it to the strip. */
+  | { botling: "floatAct"; act: FloatAct }
+  /** The header (move) or the corner grip (resize) dragged: how far from where the drag started, in this page's px. */
+  | { botling: "floatDrag"; kind: "move" | "resize"; phase: "start" | "move" | "end"; dx: number; dy: number };
+
+/** collapse: back to the strip; dock: beside the page; float: out of the dock again; reset: the default corner. */
+export type FloatAct = "collapse" | "dock" | "float" | "reset";
+/** The floating chat's header as the chat page draws it (null: not floating nor docked, no header). */
+export interface FloatChromeSpec { name: string; status: string; tone: "idle" | "working" | "waiting"; face: string | null; docked: boolean }
 
 /** The `composerBar` view's two frames: the one-line one in the row, and the card a click opens above it. */
 export type ComposerBarFrame = "compact" | "expanded";
@@ -51,6 +60,8 @@ export interface ComposerBarSpec { plugin: string; view: string; title: string; 
 export type ShellMessage =
   /** The `composerBar` view at the right end of the row above the input box (null: none). */
   | { botling: "composerBar"; bar: ComposerBarSpec | null }
+  /** The floating chat's header and corner grip (float-chrome.ts; null: none). */
+  | { botling: "floatChrome"; chrome: FloatChromeSpec | null }
   /** A reply or push for one of its frames, passed on to that frame as it is. */
   | { botling: "composerBarReply"; frame: ComposerBarFrame; data: unknown }
   | { botling: "composerModelsResult"; requestID: number; value?: unknown; error?: string }
