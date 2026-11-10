@@ -616,6 +616,8 @@ export type PluginView = z.infer<typeof PluginView>;
 const BotModel = z.enum(["haiku", "sonnet", "opus"]);
 const Effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 const ModelId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:\/-]+$/);
+/** A bot's settled face colour: #RRGGBB and the avatar shape it was settled on. */
+export const HeldBotColor = z.strictObject({ avatar: z.string().max(40), color: z.string().regex(/^#[0-9A-Fa-f]{6}$/) });
 export const SettingsView = z.strictObject({
   agyAcpPath: z.string().nullable().optional(),
   language: z.enum(["en", "zh-Hant"]).nullable(),
@@ -678,6 +680,8 @@ export const SettingsView = z.strictObject({
   shortcuts: z.record(z.string().max(200), z.string().max(40)).default({}),
   /** The plugin tab each bot's main area last showed ("<plugin>/<view id>", PluginsView `mainTabs`); a bot left out shows Chat or Board. */
   mainTabs: z.record(BotId, z.string().max(320)).optional(),
+  /** Each bot's settled face colour and the shape it was settled on (avatars.ts heldBotColors); absent: none yet. */
+  botColors: z.record(BotId, HeldBotColor).optional(),
 });
 export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
@@ -718,6 +722,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("mainTab"), value: z.strictObject({ botId: BotId, tab: z.string().min(1).max(320).nullable() }) }),
   /** All rebound shortcuts at once (an empty object: every default). */
   z.strictObject({ key: z.literal("shortcuts"), value: z.record(z.string().max(200), z.string().max(40)) }),
+  /** All settled bot colours at once (the renderer holds them, see avatars.ts heldBotColors). */
+  z.strictObject({ key: z.literal("botColors"), value: z.record(BotId, HeldBotColor).refine((value) => Object.keys(value).length <= 2_000) }),
 ]);
 export type SettingsChange = z.infer<typeof SettingsChange>;
 /** A newer Botling 2 on GitHub Releases (found by electron-updater); installation needs an explicit download and restart. */

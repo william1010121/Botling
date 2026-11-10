@@ -48,7 +48,7 @@ it('the browser scope snapshot lists every bot the desktop does, with display se
   expect(result.bots.find((row: any) => row.id === 'project-a')).toMatchObject({ folder: 'botling', avatar: 'circle', phase: 'awake' });
   expect(result.chat.botId).toBe('project-a');
   expect(result.components).toEqual({ card: { name: 'card' } });
-  expect(Object.keys(result.settings).sort()).toEqual(['botLook', 'chatAvatarSize', 'effectiveLanguage', 'idleBots', 'language', 'pinnedBots', 'railCollapsed', 'rightPanelCollapsed']);
+  expect(Object.keys(result.settings).sort()).toEqual(['botColors', 'botLook', 'chatAvatarSize', 'effectiveLanguage', 'idleBots', 'language', 'pinnedBots', 'railCollapsed', 'rightPanelCollapsed']);
   // The left column groups as on the desktop: Pinned and the collapsed Idle group come from these two lists.
   expect(result.settings).toMatchObject({ pinnedBots: ['project-b'], idleBots: ['project-a'] });
   for (const hidden of ['plugins', 'doctor', 'web', 'spec']) expect(result).not.toHaveProperty(hidden);
