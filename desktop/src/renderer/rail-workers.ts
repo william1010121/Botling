@@ -209,17 +209,23 @@ export function railWorkerTime(item: RailWorkerItem, now: number, lang: string |
 
 /** A job's second line: how many failed (if any), how many workers, how long since the first started (to its last end). */
 export function railJobMeta(job: RailJob, now: number, lang: string | null | undefined): string {
+  const parts = railJobParts(job, now, lang);
+  return [parts.failed, parts.rest].filter(Boolean).join(railWords(lang).sep);
+}
+
+/** A job's mark: running while one runs (its failures show on the second line), then failed if one failed, else done. */
+export function railJobState(job: RailJob): RailWorkerState {
+  if (job.members.some((item) => item.state === "running")) return "running";
+  return job.members.some((item) => item.state === "failed") ? "failed" : "done";
+}
+
+/** A job's second line in parts: the failures (red, absent when none), then how many and how long. */
+export function railJobParts(job: RailJob, now: number, lang: string | null | undefined): { failed: string | null; rest: string } {
   const w = railWords(lang);
   const failed = job.members.filter((item) => item.state === "failed").length;
   const start = Math.min(...job.members.map((item) => item.row.startedAt));
   const end = job.members.some((item) => item.state === "running") ? now : Math.max(...job.members.map((item) => ended(item.row)));
-  return [failed ? w.failedCount(failed) : "", w.workers(job.members.length), duration(end - start, lang)].filter(Boolean).join(w.sep);
-}
-
-/** A job's state: failed if one failed, running while one runs, else done. */
-export function railJobState(job: RailJob): RailWorkerState {
-  if (job.members.some((item) => item.state === "failed")) return "failed";
-  return job.members.some((item) => item.state === "running") ? "running" : "done";
+  return { failed: failed ? w.failedCount(failed) : null, rest: [w.workers(job.members.length), duration(end - start, lang)].join(w.sep) };
 }
 
 /** An item's state word ("Done", or "Viewed" once opened). */

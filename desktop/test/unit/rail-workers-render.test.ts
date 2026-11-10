@@ -70,8 +70,13 @@ describe("one job's workers as drawn", () => {
   it("one row with a dot per worker, failures, count and time; its workers not shown until opened; no blue dot", () => {
     const out = draw(false);
     expect(out.match(/class="rail-wk-row /g)).toHaveLength(2);
-    expect(out).toContain('<span class="rail-wk-name">比較 GPU 雲<span class="rail-wk-pips" aria-hidden="true"><span class="rail-wk-pip failed"></span><span class="rail-wk-pip done"></span><span class="rail-wk-pip running"></span></span></span>');
-    expect(out).toContain('<span class="rail-wk-state failed">1 失敗・3 個・12 分</span>');
+    // The dots sit beside the name, outside its ellipsis: a long name is cut, never the dots.
+    expect(out).toContain('<span class="rail-wk-jobline"><span class="rail-wk-name">比較 GPU 雲</span><span class="rail-wk-pips" aria-hidden="true"><span class="rail-wk-pip failed"></span><span class="rail-wk-pip done"></span><span class="rail-wk-pip running"></span></span></span>');
+    // Only the failures are red; the rest of the line is plain.
+    expect(out).toContain('<span class="rail-wk-state"><span class="rail-wk-failed">1 失敗</span>・3 個・12 分</span>');
+    // One still runs: the job's mark is the running one (as the spec draws it), and its row takes no state colour class.
+    expect(out).toContain('class="rail-wk-row rail-wk-job" data-state="running"');
+    expect(out).toContain('rail-wk-mark running');
     expect(out).toContain('aria-expanded="false"');
     expect(out).not.toContain(">aws<");
     expect(out).not.toContain("rail-wk-dot");

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { BotView, SubagentRowView } from "../../src/contract";
 import {
   RAIL_WORKERS_AT_MOST, markViewed, railWorkerItems, railWorkers, railWorkerTime, readRailFold, readRailSince, readViewedWorkers,
-  railJobMeta, toggleRailFold, type RailEntry, type RailMarks, type RailWorkerItem,
+  railJobMeta, railJobState, toggleRailFold, type RailEntry, type RailMarks, type RailWorkerItem,
 } from "../../src/renderer/rail-workers";
 
 const NOW = new Date(2026, 10, 10, 16, 0).getTime();
@@ -211,5 +211,15 @@ describe("one job's workers as one item", () => {
     const job = railWorkers(b, [b], NOW, marks()).items[0]!;
     expect(job.kind === "job" && railJobMeta(job, NOW, "zh-Hant")).toBe("1 失敗・2 個・12 分");
     expect(job.kind === "job" && railJobMeta(job, NOW, null)).toBe("1 failed · 2 workers · 12m");
+  });
+});
+
+describe("a job's mark", () => {
+  const job = { id: "t:1", title: "j" };
+  const state = (rows: SubagentRowView[]) => { const entry = railWorkers(bot({ id: "b", subagentRows: rows }), [], NOW, marks()).items[0]!; return entry.kind === "job" ? railJobState(entry) : null; };
+  it("runs while one runs, even with a failure; then failed if one failed; else done", () => {
+    expect(state([row({ id: "a", group: job }), row({ id: "c", status: "failed", endedAt: NOW - MIN, group: job })])).toBe("running");
+    expect(state([done("a", { group: job }), row({ id: "c", status: "failed", endedAt: NOW - MIN, group: job })])).toBe("failed");
+    expect(state([done("a", { group: job }), done("c", { group: job })])).toBe("done");
   });
 });
