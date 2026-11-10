@@ -30,6 +30,10 @@ export function observeEditorLayout(element: HTMLElement, bridge: EditorBridge, 
   };
   const observer = new ResizeObserver(update);
   observer.observe(element);
+  // The chat can move without changing size: docked beside the Note at a fixed width (NoteDock.tsx), it slides when
+  // the left column folds. The chat pane around it changes size then.
+  const pane = element.closest(".chat-pane");
+  if (pane) observer.observe(pane);
   const stopOverlays = subscribeShellOverlays(update);
   window.addEventListener("resize", update);
   const unsubscribe = bridge.subscribe(packet => { if ("bound" in packet) update(); });

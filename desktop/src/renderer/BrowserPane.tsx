@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hostOf, type BrowserBotState, type BrowserTabInfo } from "../browser-wire";
 import type { BotView } from "../contract";
 import { faceURL } from "./avatars";
+import { BotBubble } from "./BotBubble";
 import { browserStore, postBrowser, useBrowser } from "./browser-state";
 import { askForToolText } from "../browser-site-tools";
 import { SiteToolsSheet, countedTools } from "./SiteToolsSheet";
@@ -145,8 +146,6 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
 
   const host = active ? hostOf(active.url) : "";
   const shown = addressParts(active?.url ?? "");
-  const statusKey = bot.working ? "working" : bot.approvals > 0 ? "waiting" : "idle";
-  const unread = bot.unread;
 
   return (
     <section className={`browser-pane${full ? " full" : ""}`} aria-label="Browser">
@@ -168,12 +167,7 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
           <>
             <span className="bp-gap" />
             <button type="button" className="bp-exit" onClick={() => browserStore.setFull(false)} title="Exit full screen (Esc)">Exit full screen</button>
-            <button type="button" className={`bp-bubble${miniChat ? " on" : ""}`} onClick={() => onMiniChat(!miniChat)}
-              aria-label={`${bot.name}, ${statusKey}${unread ? `, ${unread} new message${unread === 1 ? "" : "s"}` : ""}. ${miniChat ? "Hide" : "Show"} the chat`} aria-pressed={miniChat}>
-              <img src={faceURL(bot, look, { asleep: bot.phase === "asleep" && !bot.working, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
-              <span className="bp-bubble-dot" data-status={statusKey} aria-hidden="true" />
-              {unread > 0 && !miniChat && <span className="bp-bubble-badge" aria-hidden="true">{unread > 99 ? "99+" : unread}</span>}
-            </button>
+            <BotBubble bot={bot} look={look} on={miniChat} onToggle={() => onMiniChat(!miniChat)} />
           </>
         )}
       </div>

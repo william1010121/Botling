@@ -4,7 +4,7 @@
 // (the chat, the browser's page) follow their placeholders' boxes as usual (editor-surface.ts, BrowserPane.tsx).
 // Handles never sit over those boxes (styles.css insets the page by HANDLE px), so the pointer always reaches them.
 
-export type ColumnId = "rail" | "right" | "browser";
+export type ColumnId = "rail" | "right" | "browser" | "noteChat";
 
 export interface ColumnSpec {
   id: ColumnId;
@@ -21,6 +21,9 @@ export interface ColumnSpec {
   /** Which side of its divider the column lies on: a column on the left grows as the pointer moves right. */
   side: "left" | "right";
   label: string;
+  /** A column inside the chat pane (the Note's docked chat): `selector` is matched anywhere in `.shell`, and its room
+   *  comes from this neighbour keeping `min`, not from the chat pane keeping MIN_CHAT. */
+  within?: { neighbour: string; min: number };
 }
 
 /** The chat between the columns never gets narrower than this while you drag. */
@@ -34,6 +37,9 @@ export const COLUMNS: Record<ColumnId, ColumnSpec> = {
   rail: { id: "rail", key: "botling.railWidth", cssVar: "--rail-w", selector: ".rail", min: 200, max: 420, fallback: 248, side: "left", label: "Resize the bot list" },
   right: { id: "right", key: "botling.rightPanelWidth", cssVar: "--right-w", selector: ".detail-panel", min: 240, max: 480, fallback: 272, side: "right", label: "Resize the right panel" },
   browser: { id: "browser", key: "botling.browserPaneWidth", cssVar: "--browser-w", selector: ".browser-pane", min: 320, max: 2000, fallback: null, side: "right", label: "Resize the browser" },
+  // The bot's chat docked beside the Note (NoteDock.tsx): the Note keeps NOTE_MIN.
+  noteChat: { id: "noteChat", key: "botling.noteChatWidth", cssVar: "--note-chat-w", selector: ".chat-body.note-docked > #chat-frame", min: 300, max: 900, fallback: 380, side: "right", label: "Resize the chat beside the Note",
+    within: { neighbour: ".chat-body.note-docked > .main-tab", min: 320 } },
 };
 
 /** The width a column may take: its own limits, and at most `room` (what leaves the chat its minimum), never under min. */
@@ -49,8 +55,8 @@ export function dragWidth(spec: ColumnSpec, startWidth: number, startX: number, 
 }
 
 /** How wide a column may grow from `width` while the chat, now `chat` wide, keeps MIN_CHAT. */
-export function roomFor(width: number, chat: number): number {
-  return width + Math.max(0, chat - MIN_CHAT);
+export function roomFor(width: number, chat: number, min = MIN_CHAT): number {
+  return width + Math.max(0, chat - min);
 }
 
 type Storage = Pick<globalThis.Storage, "getItem" | "setItem" | "removeItem">;
@@ -83,11 +89,12 @@ export function applyWidth(shell: HTMLElement | null, spec: ColumnSpec, width: n
 
 /** The column's and the chat's widths now, for a drag or a key press. */
 export function measure(shell: HTMLElement | null, spec: ColumnSpec): { width: number; room: number } | null {
-  const column = shell?.querySelector<HTMLElement>(`:scope > ${spec.selector}`);
+  const column = shell?.querySelector<HTMLElement>(spec.within ? spec.selector : `:scope > ${spec.selector}`);
   if (!shell || !column) return null;
   const width = column.getBoundingClientRect().width;
-  const chat = shell.querySelector<HTMLElement>(":scope > .chat-pane")?.getBoundingClientRect().width ?? MIN_CHAT;
-  return { width, room: roomFor(width, chat) };
+  const neighbour = spec.within ?? { neighbour: ":scope > .chat-pane", min: MIN_CHAT };
+  const other = shell.querySelector<HTMLElement>(neighbour.neighbour)?.getBoundingClientRect().width ?? neighbour.min;
+  return { width, room: roomFor(width, other, neighbour.min) };
 }
 
 export interface DragOptions {
