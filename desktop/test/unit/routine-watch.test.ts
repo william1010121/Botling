@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { tempDir } from "../helpers";
 import { parseRoutine, ScheduledRoutineStore } from "../../src/core/routines";
 import { nextWatchState, runWatch, watchCommand, watchFailure, watchPrompt, WATCH_REWAKE_MS, type WatchResult } from "../../src/core/routine-watch";
+import { ProcessLedger } from "../../src/core/process/ledger";
 
 const pass: WatchResult = { exit: 0, timedOut: false, output: "all good\n", ranAt: 0 };
 const fail: WatchResult = { exit: 3, timedOut: false, output: "disk 97% full\n", ranAt: 0 };
@@ -94,6 +95,24 @@ describe("running a watch", () => {
     plain();
     const result = await runWatch("sleep 5", tempDir("watch"), 300);
     expect(result).toMatchObject({ timedOut: true, exit: null });
+  });
+
+  it("keeps its group in the process ledger while it runs: a start after the app died ends it (RoutineWatch.tla NoOverlap)", async () => {
+    plain();
+    const dir = tempDir("watch");
+    const file = join(dir, "children.json");
+    const heard: [number, boolean][] = [];
+    const ledger = new ProcessLedger(file);
+    const run = runWatch("sleep 30", dir, 60_000, (pid, alive) => { heard.push([pid, alive]); if (alive) ledger.record(pid); else ledger.forget(pid); });
+    const pid = heard[0]![0];
+    expect(heard).toEqual([[pid, true]]);
+    // The next core's start (server.ts) ends what the ledger names.
+    expect(new ProcessLedger(file).endLeftovers()).toEqual([pid]);
+    expect(await run).toMatchObject({ exit: null, timedOut: false });
+    expect(heard).toEqual([[pid, true], [pid, false]]);
+    const done = await runWatch("true", dir, 60_000, (p, alive) => heard.push([p, alive]));
+    expect(done.exit).toBe(0);
+    expect(heard.slice(2).map(([, alive]) => alive)).toEqual([true, false]);
   });
 });
 

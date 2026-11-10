@@ -85,8 +85,12 @@ export function watchPrompt(name: string, command: string, result: WatchResult, 
     + "Decide what to do: look into it, fix it, or tell the user. While it keeps failing you are woken again only every 6 hours; once it passes, the next failure wakes you at once.)";
 }
 
-/** Runs a watch's command in `folder` (the user's shell, as component commands), stopping its whole group after `timeoutMs`. */
-export function runWatch(command: string, folder: string, timeoutMs = WATCH_TIMEOUT_MS): Promise<WatchResult> {
+/**
+ * Runs a watch's command in `folder` (the user's shell, as component commands), stopping its whole group after
+ * `timeoutMs`. `onPid` hears its group start and end (the process ledger: if the app dies meanwhile, the next start
+ * ends the group, so a watch never runs beside one an earlier app life left; spec/models/routines/RoutineWatch.tla).
+ */
+export function runWatch(command: string, folder: string, timeoutMs = WATCH_TIMEOUT_MS, onPid?: (pid: number, alive: boolean) => void): Promise<WatchResult> {
   return new Promise((done) => {
     let isFolder = false;
     try { isFolder = statSync(folder).isDirectory(); } catch { /* not there */ }
@@ -96,6 +100,9 @@ export function runWatch(command: string, folder: string, timeoutMs = WATCH_TIME
     let output = "";
     let timedOut = false;
     let finished = false;
+    const pid = child.pid;
+    if (pid) onPid?.(pid, true);
+    const forget = () => { if (pid) onPid?.(pid, false); };
     const keep = (chunk: Buffer) => { output = (output + chunk.toString("utf8")).slice(-KEPT_OUTPUT); };
     const signal = (name: NodeJS.Signals) => {
       if (child.pid && killTree(child.pid, name)) return;
@@ -112,6 +119,7 @@ export function runWatch(command: string, folder: string, timeoutMs = WATCH_TIME
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      forget();
       done({ exit: null, timedOut: false, output: `Couldn't start the command: ${error.message}`, ranAt: Date.now() });
     });
     child.once("close", (code) => {
@@ -119,6 +127,7 @@ export function runWatch(command: string, folder: string, timeoutMs = WATCH_TIME
       finished = true;
       clearTimeout(timer);
       signal("SIGKILL"); // Whatever it left behind in its group goes too.
+      forget();
       done({ exit: timedOut ? null : code, timedOut, output, ranAt: Date.now() });
     });
   });
