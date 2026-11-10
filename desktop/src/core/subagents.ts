@@ -133,6 +133,15 @@ export function jobOf(subagent: Pick<SubagentRecord, "group" | "turnId" | "turnT
   return {};
 }
 
+/**
+ * Whether it is settled: settled since its current run began. A run that starts after it was settled (a follow-up)
+ * brings it back; `started` clears the mark, and a record an older build kept settled across a new run reads as not.
+ */
+export function isSettled(subagent: Pick<SubagentRecord, "runStartedAt"> & { dismissedAt?: unknown }): boolean {
+  if (typeof subagent.dismissedAt !== "number") return false;
+  return !(typeof subagent.runStartedAt === "number" && subagent.runStartedAt > subagent.dismissedAt);
+}
+
 export function readSubagent(value: unknown): SubagentRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
@@ -300,6 +309,8 @@ export class SubagentBook {
         existing.toolCount = 0;
         this.hydrated.add(existing);
         existing.runStartedAt = now;
+        // Settled was for the run that ended: a new run is listed again (settling it again hides it again).
+        delete existing.dismissedAt;
         delete existing.result;
         delete existing.endedAt;
       }
@@ -410,8 +421,7 @@ export class SubagentBook {
   settle(id: string, settled: boolean, now = toSwiftDate()): boolean {
     const subagent = this.list.findLast((candidate) => candidate.id === id);
     if (!subagent) return false;
-    const isSettled = typeof subagent.dismissedAt === "number";
-    if (settled === isSettled) return false;
+    if (settled === isSettled(subagent)) return false;
     if (settled) subagent.dismissedAt = now;
     else { delete subagent.dismissedAt; subagent.unsettledAt = now; }
     return true;
@@ -438,7 +448,7 @@ export class SubagentBook {
       startedAt: fromSwiftDate(subagent.startedAt),
       endedAt: typeof subagent.endedAt === "number" ? fromSwiftDate(subagent.endedAt) : null,
       unsettledAt: typeof subagent.unsettledAt === "number" ? fromSwiftDate(subagent.unsettledAt) : null,
-      settled: typeof subagent.dismissedAt === "number",
+      settled: isSettled(subagent),
       prompt: subagent.prompt.slice(0, 1_000),
       ...jobOf(subagent),
     }));

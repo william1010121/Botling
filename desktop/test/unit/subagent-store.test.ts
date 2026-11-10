@@ -261,3 +261,20 @@ it("a worker's job: the name its bot gave, else the turn that handed it off; row
     ["loose", null],
   ]);
 });
+
+it("a settled worker given a new run comes back to the left column (socrate/board's board-v4-design stayed hidden while running)", () => {
+  const base = { id: "w", description: "board-v4-design", type: "claude-worker", prompt: "p", background: true };
+  const book = new SubagentBook([]);
+  book.started({ ...base, execution: { run: 1, ownerSessionId: null, threadId: null, turnId: null } }, 10);
+  book.ended({ id: "w", status: "completed", summary: "done" } as never, 20);
+  expect(book.settle("w", true, 30)).toBe(true);
+  expect(book.rows("claude")[0]).toMatchObject({ status: "completed", settled: true });
+  // A follow-up starts its next run: listed again, and settling it again works.
+  book.started({ ...base, execution: { run: 2, ownerSessionId: null, threadId: null, turnId: null } }, 40);
+  expect(book.rows("claude")[0]).toMatchObject({ status: "running", settled: false });
+  expect(book.settle("w", true, 50)).toBe(true);
+  expect(book.rows("claude")[0]).toMatchObject({ status: "running", settled: true });
+  // A record saved by an older build (settled before its newer run began) reads as not settled.
+  const old = new SubagentBook([{ ...base, status: "running", startedAt: 10, runStartedAt: 40, dismissedAt: 30, steps: [] }]);
+  expect(old.rows("claude")[0]).toMatchObject({ status: "running", settled: false });
+});
