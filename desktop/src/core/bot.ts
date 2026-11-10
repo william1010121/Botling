@@ -103,7 +103,7 @@ import { fromRoutineWatches, nextWatchState, runWatch, watchCommand, watchPrompt
 import { specTrace } from "./spec-trace";
 import { CallInWorkBook, type CallInRelay } from "./call-in-work";
 import { codexWorkerDefaults, codexWorkersJSON } from "./settings";
-import { PAGE_COMPONENT, previewCards } from "./page-preview";
+import { cardData, PAGE_COMPONENT, previewCards } from "./page-preview";
 import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import { alwaysAllows } from "./permission-rules";
@@ -5335,7 +5335,9 @@ export class Bot {
       const every = command ? card.refresh ?? context.library.refreshInterval(card.name) : null;
       // A note card has no Detail command of its own (its page cannot run one): only its command is allowed.
       const state = command ? context.commands.state(this.noteRunKey(card.key), command, null, folder) : null;
-      const data = state?.data ?? card.data;
+      // The preview card's data gets what the app adds in the chat (displayView): where its frame loads the page from, its URL and name.
+      const shown = state?.data ?? card.data;
+      const data = card.name === PAGE_COMPONENT ? cardData(shown) : shown;
       return {
         key: card.key, name: card.name, exists, command, folder, every,
         status: state ? state.status : "static", data, error: state?.error ?? null, ranAt: state?.ranAt ?? null,

@@ -112,6 +112,34 @@ describe("cards in a bot's note", () => {
     await expect(c.call({ type: "plugins.call", name: "nosy", method: "go", params: { method: "components", args: [MAIN] }, from: "frame" })).rejects.toThrow(/"files" permission/);
   });
 
+  it("a 網頁預覽卡片 in the note (in a route too) gets what the app adds in the chat: where its frame loads the page, its file URL, name and title", async () => {
+    const dir = tempDir("note-preview");
+    notePlugin(dir, "notetest", ["files"]);
+    const page = join(dir, "work", ".bot", "artifacts", "report.html");
+    mkdirSync(dirname(page), { recursive: true });
+    writeFileSync(page, "<h1>Report</h1>");
+    const c = core(dir);
+    const go = async (method: string, ...args: unknown[]): Promise<any> => (await c.call({ type: "plugins.call", name: "notetest", method: "go", params: { method, args }, from: "frame" })).result;
+    await until(async () => (await c.call({ type: "plugins.list" })).host.running && go("read", MAIN).then(() => true, () => false), { timeout: 20_000 });
+    const text = [
+      "<!-- branch: Plan -->",
+      "<!-- route: a -->",
+      `<show name="網頁預覽卡片">${JSON.stringify({ path: page, title: "架構實驗報告" })}</show>`,
+      "<!-- end branch -->",
+      `<show name="網頁預覽卡片">${JSON.stringify({ path: join(dir, "work", ".bot", "artifacts", "gone.html") })}</show>`,
+    ].join("\n");
+    const [shown, gone] = await go("cards", MAIN, { text });
+    // Its JSON is shown: no command, nothing to allow.
+    expect(shown).toMatchObject({ name: "網頁預覽卡片", exists: true, command: null, status: "static" });
+    expect(JSON.parse(shown.data)).toEqual({
+      path: page, title: "架構實驗報告", name: "report.html", missing: false,
+      url: expect.stringMatching(/^file:\/\/.*report\.html$/), src: expect.stringMatching(/^botling-card:\/\/preview\//),
+    });
+    expect(gone).toMatchObject({ command: null, status: "static" });
+    expect(JSON.parse(gone.data)).toMatchObject({ missing: true, name: "gone.html", title: "gone" });
+    expect(JSON.parse(gone.data).src).toBeUndefined();
+  });
+
   it("freeze to image: main's picture of the card goes into the note's note-assets; none taken, or no \"files\": refused", async () => {
     const dir = tempDir("note-snapshot");
     notePlugin(dir, "notetest", ["files"]);
