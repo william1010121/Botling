@@ -229,5 +229,126 @@
    ],
    "additionalProperties": false
   }
+ },
+ {
+  "type": "function",
+  "name": "app_browser_tabs",
+  "description": "List the tabs open in the user's in-app browser pane beside your chat: tab_id, url, title, which one is selected, and how many network requests were captured. The pane is the user's own browser (their sign-ins); you read it, you do not drive it.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  }
+ },
+ {
+  "type": "function",
+  "name": "app_browser_open",
+  "description": "Open an http(s) address in a tab of the user's browser pane beside your chat (it shows the pane; an open tab on that address is selected instead). Its network traffic is captured from then on, for app_browser_requests. Returns tab_id; the page loads in the background.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string",
+     "description": "An http(s) address."
+    }
+   },
+   "required": [
+    "url"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "type": "function",
+  "name": "app_browser_requests",
+  "description": "Read the network requests a tab of the user's browser pane made (captured in the background since the tab opened, the latest 500): method, URL, type, status, request and response headers, post data, and response bodies with include_bodies. Filter with url_contains, resource_type, method, limit. Cookie, Set-Cookie and Authorization are masked unless unmasked_headers. Use it to find a site's API and build a tool on it. save_as json saves everything to a file.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string",
+     "description": "A tab of your browser pane, from app_browser_tabs (e.g. t3). Default: the tab the user has selected."
+    },
+    "url_contains": {
+     "type": "string",
+     "description": "Only requests whose URL contains this text (case does not matter)."
+    },
+    "resource_type": {
+     "type": "string",
+     "description": "Only this DevTools resource type: document, xhr (Fetch/XHR), script, stylesheet, image, font, media, websocket, other."
+    },
+    "method": {
+     "type": "string",
+     "description": "Only this HTTP method (GET, POST, …)."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 200,
+     "description": "The newest this many matching requests (default 50)."
+    },
+    "include_bodies": {
+     "type": "boolean",
+     "description": "Include response bodies (text; base64 for binary). Default false."
+    },
+    "unmasked_headers": {
+     "type": "boolean",
+     "description": "Show Cookie, Set-Cookie and Authorization values instead of <masked>. Only when the user asked for them."
+    },
+    "save_as": {
+     "type": "string",
+     "enum": [
+      "json",
+      "csv",
+      "txt"
+     ],
+     "description": "Save the full result to a file (csv: rows or the first table) and get its path; give the user that path as a link in your reply. Large results are saved anyway."
+    }
+   },
+   "additionalProperties": false
+  }
+ },
+ {
+  "type": "function",
+  "name": "app_browser_extract",
+  "description": "Read data from the page in a tab of the user's browser pane: its tables, visible text, links, the elements matching a CSS selector, or your own read-only script's result (JSON). Nothing on the page is clicked, typed or submitted. Data the user should get (a table, a CSV) goes to a file with save_as; link that file in your reply.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "tab_id": {
+     "type": "string",
+     "description": "A tab of your browser pane, from app_browser_tabs (e.g. t3). Default: the tab the user has selected."
+    },
+    "what": {
+     "type": "string",
+     "enum": [
+      "tables",
+      "text",
+      "links",
+      "selector",
+      "script"
+     ],
+     "description": "tables: every <table> as headers + rows (default); text: the page's visible text; links: every link; selector: the elements matching selector; script: your own read-only script."
+    },
+    "selector": {
+     "type": "string",
+     "description": "A CSS selector (what: selector)."
+    },
+    "script": {
+     "type": "string",
+     "description": "what: script. The body of an async function run in the page (an isolated world, sees the DOM): return JSON-able data, e.g. return [...document.querySelectorAll('.price')].map(e => e.textContent). Read-only: clicking, submitting, typing, navigation and network calls are refused."
+    },
+    "save_as": {
+     "type": "string",
+     "enum": [
+      "json",
+      "csv",
+      "txt"
+     ],
+     "description": "Save the full result to a file (csv: rows or the first table) and get its path; give the user that path as a link in your reply. Large results are saved anyway."
+    }
+   },
+   "additionalProperties": false
+  }
  }
 ]

@@ -15,13 +15,13 @@ const harness = (...args: Parameters<typeof claudeHarness>) => { const h = claud
 const wait = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("a Claude worker's run", () => {
-  it("starts its own claude process in the host folder with the worker policy, its own session and of the app tools only app_notify_owner", async () => {
+  it("starts its own claude process in the host folder with the worker policy, its own session and of the app tools app_notify_owner and the browser tools", async () => {
     const h = harness();
     const r: any = await h.workers.tool("app_handoff", { name: "Research", instructions: "Look up the API" });
     expect(r).toMatchObject({ accepted: true, run: 1 });
     const head = h.heads[0]!;
     expect(head.config).toMatchObject({ cwd: h.cwd, resume: false, model: "sonnet", monitorWorker: true, persistSession: true });
-    expect(head.config.appMcp?.tools.map((tool: { name: string }) => tool.name)).toEqual(["app_notify_owner"]);
+    expect(head.config.appMcp?.tools.map((tool: { name: string }) => tool.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"]);
     expect(head.config.sessionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(head.config.sessionId).not.toBe("coordinator");
     expect(head.config.systemPrompt).toBe(CLAUDE_WORKER_POLICY);

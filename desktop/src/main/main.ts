@@ -23,6 +23,8 @@ import { pluginLinkRoute } from "../core/plugin-link";
 import { createBrowserHost, type BrowserHost } from "./browser-host";
 import { SiteToolStore } from "./site-tools";
 import { SITE_TOOLS_GUIDE_TEXT } from "./site-tools-guide";
+import { BrowserBotHost } from "./browser-bot-host";
+import { parseBrowserBotRequest } from "../browser-bot";
 import { BROWSER_CHANNEL, isWebUrl, parseBrowserUp } from "../browser-wire";
 import { previewResponse } from "./preview-response";
 import { reportNeedsMark, resolveReportTheme, themeHtml, type ReportTheme } from "./report-theme";
@@ -225,7 +227,14 @@ const core: CoreClient = new CoreClient({
     }
     app.quit();
   },
-  app: async (op): Promise<{ ok: boolean; file?: string; error?: string }> => {
+  app: async (op, args): Promise<{ ok: boolean; file?: string; error?: string; data?: unknown }> => {
+    if (op === "browser") {
+      // A bot's tool on the in-app browser (browser-bot.ts): its own pane's tabs only.
+      let request: ReturnType<typeof parseBrowserBotRequest> = null;
+      try { request = parseBrowserBotRequest(JSON.parse(args.request ?? "")); } catch { /* refused below */ }
+      if (!request) return { ok: false, error: "Refused: not a browser request." };
+      return browserBot.answer(request);
+    }
     if (op === "quit") {
       // An install of a developer build: the script outside the app waits for it to quit.
       note("quitting to install a developer build");
@@ -368,6 +377,11 @@ function siteToolStore(): SiteToolStore {
   }
   return siteTools;
 }
+/** The bot tools on the browser (browser-bot-host.ts): the main window's first, then the others. */
+const browserBot = new BrowserBotHost(() => {
+  const first = mainWindow && !mainWindow.isDestroyed() ? browserFor(mainWindow.webContents) : null;
+  return [...(first ? [first] : []), ...[...browserHosts.values()].filter((host) => host !== first)].map((host) => host.bot);
+});
 function broadcast(event: EventEnvelope) {
   // A removed bot's browser tabs go with it.
   if (event.event.type === "bot.removed") for (const host of browserHosts.values()) host.closeBot(event.event.botId);

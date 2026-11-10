@@ -1,4 +1,6 @@
 import { readImagePaths, readImages } from "./read-images";
+import { isBrowserTool, type BrowserToolName } from "../browser-bot";
+import { runBrowserTool } from "./browser-tools";
 import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
 import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from './restart-continuation';
@@ -1259,9 +1261,18 @@ export class Bot {
       processStarted: (pid) => this.options.ledger.record(pid),
       maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
       specWriters: () => this.options.launch?.().specWriters ?? DEFAULT_SPEC_WRITERS,
+      browser: (name, args) => this.browserTool(name, args),
     }, (item) => this.onWorkerOutput(item), (id, text) => this.workerReport(text, id), (config, handlers) => new ClaudeHead(config, handlers));
     this.syncWorkerOwners();
     return this.claudeWorkerHost;
+  }
+
+  /**
+   * A browser tool call from this bot's head or one of its workers (core/browser-tools.ts): the user's pane beside this
+   * bot's chat; saved data goes to the bot's own `.bot/browser/`.
+   */
+  private browserTool(name: BrowserToolName, args: Record<string, unknown>): Promise<unknown> {
+    return runBrowserTool(name, args, { botId: this.owner.profile.id, folder: this.owner.profile.folder });
   }
 
   /** A Claude worker's run ended: its report goes to this head as the app's message (waking it, or queued behind its turn). */
@@ -3205,7 +3216,7 @@ export class Bot {
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, ...(tree ? { addDirs: tree.addDirs } : {}), sessionId: start.sessionId, resume: start.resume,
-        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && (!this.queue.length || !!this.settingsHold) && !this.draining && !this.shuttingDown, });
+        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), browser: (name, args) => this.browserTool(name, args), canStartReport: () => !this.turn && (!this.queue.length || !!this.settingsHold) && !this.draining && !this.shuttingDown, });
       if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
       head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) }, undefined,
         { core: this.workerCore, sink: (item) => this.onWorkerOutput(item) });
@@ -3223,7 +3234,7 @@ export class Bot {
       this.restartProviderTurn=undefined;
       this.restartWorkerRecords=undefined;
       this.restartWorkersSince=undefined;
-      head = new CodexHead({...config, restartWorkers, restartRecovery, restartTurn, strictResume:this.restartRecovery && config.resume,
+      head = new CodexHead({...config, browser: (name, args) => this.browserTool(name, args), restartWorkers, restartRecovery, restartTurn, strictResume:this.restartRecovery && config.resume,
         workerCore: this.workerCore, workerSink: (item) => this.onWorkerOutput(item)}, { onItem: item => {
         this.onItem(head, item);
       }, onExit: exit => this.onExit(head, exit) });
@@ -3235,7 +3246,7 @@ export class Bot {
       const workers = !config.harmless && this.claudeWorkersOn() ? this.ensureClaudeWorkers() : null;
       head = new ClaudeHead({ ...config, monitorWorker: false, ...(workers ? { appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_APP_TOOLS }, agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
         onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit),
-        ...(workers ? { onAppTool: (name: string, args: Record<string, unknown>) => workers.tool(name, args) } : {}),
+        ...(workers ? { onAppTool: (name: string, args: Record<string, unknown>) => isBrowserTool(name) ? this.browserTool(name, args) : workers.tool(name, args) } : {}),
       });
     }
     head.start();

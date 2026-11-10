@@ -21,6 +21,8 @@ export interface BrowserTabInfo {
   canGoForward: boolean;
   /** Its page crashed; selecting it loads it again. */
   crashed?: boolean;
+  /** A bot is reading this tab now (phase 2, browser-bot.ts): the tab shows the bot's face. */
+  reading?: boolean;
 }
 export interface BrowserBotState { botId: string; tabs: BrowserTabInfo[]; active: string | null }
 

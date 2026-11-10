@@ -7,10 +7,11 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CORE_EXIT_DATA_DIR_IN_USE } from "../core/store/data-dir-lock";
 
-export type AppOp = "screenshot" | "quit" | "installRelease";
-const APP_OPS = new Set<string>(["screenshot", "quit", "installRelease"]);
-/** Which strings each op may carry (anything else is dropped). */
-const APP_ARGS: Record<string, string[]> = {};
+export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
+const APP_OPS = new Set<string>(["screenshot", "quit", "installRelease", "browser"]);
+/** Which strings each op may carry (anything else is dropped). `browser`: a bot tool's request, as JSON (browser-bot.ts). */
+const APP_ARGS: Record<string, string[]> = { browser: ["request"] };
+const ARG_MAX: Record<string, number> = { note: 4_000, request: 64_000 };
 
 /** The plugin host that goes with a core build: `<build>/host/host-utility.mjs` beside `<build>/core/main.cjs`, when it is there. */
 export function hostScriptFor(script: string): string | null {
@@ -41,7 +42,7 @@ export interface CoreClientOptions {
    * The core's asks of the app (botling.dev and core/self-update.ts): a picture of the main window, quitting for a developer
    * build's install, or installing the newer release.
    */
-  app?: (op: AppOp, args: Record<string, string>) => Promise<{ ok: boolean; file?: string; error?: string }>;
+  app?: (op: AppOp, args: Record<string, string>) => Promise<{ ok: boolean; file?: string; error?: string; data?: unknown }>;
 }
 
 interface Pending { resolve: (response: ResponseEnvelopeT) => void }
@@ -192,13 +193,13 @@ export class CoreClient {
     }
     if (raw && typeof raw === "object" && raw.botling === "app") {
       const child = this.child;
-      const reply = (answer: { ok: boolean; file?: string; error?: string; }) => child?.postMessage({ botling: "appDone", id: raw.id, ...answer });
+      const reply = (answer: { ok: boolean; file?: string; error?: string; data?: unknown }) => child?.postMessage({ botling: "appDone", id: raw.id, ...answer });
       if (typeof raw.id !== "number" || typeof raw.op !== "string" || !APP_OPS.has(raw.op) || !this.options.app) { reply({ ok: false, error: "Refused." }); return; }
       const given = (raw as { args?: unknown }).args;
       const args: Record<string, string> = {};
       for (const key of APP_ARGS[raw.op] ?? []) {
         const value = given && typeof given === "object" ? (given as Record<string, unknown>)[key] : undefined;
-        if (typeof value === "string") args[key] = value.slice(0, key === "note" ? 4_000 : 1_000);
+        if (typeof value === "string") args[key] = value.slice(0, ARG_MAX[key] ?? 1_000);
       }
       this.options.app(raw.op as AppOp, args).then(reply, (error) => reply({ ok: false, error: String((error as Error)?.message ?? error).slice(0, 500) }));
       return;

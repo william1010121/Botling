@@ -189,7 +189,7 @@ export class BrowserTabs {
     tab.page.destroy();
   }
   private info(tab: Tab): BrowserTabInfo {
-    return { id: tab.id, url: tab.url, title: tab.title, favicon: tab.favicon, loading: tab.loading, canGoBack: tab.canGoBack, canGoForward: tab.canGoForward, ...(tab.crashed ? { crashed: true } : {}) };
+    return { id: tab.id, url: tab.url, title: tab.title, favicon: tab.favicon, loading: tab.loading, canGoBack: tab.canGoBack, canGoForward: tab.canGoForward, ...(tab.crashed ? { crashed: true } : {}), ...(tab.reading ? { reading: true } : {}) };
   }
   private emit(botId: string, reveal: boolean): void {
     this.options.onChange(this.state(botId), reveal);
