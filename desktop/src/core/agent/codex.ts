@@ -63,7 +63,7 @@ import { readCodexModels, resolveCodexModel, type CodexModelEntry } from "./code
 
 /** `value` as a level Codex's `effort` takes; null: none, or one it does not take. */
 export const codexEffort = (value: unknown): string | null => (EFFORTS_BY_ENGINE.codex as readonly unknown[]).includes(value) ? value as string : null;
-import { RoutineError, ScheduledRoutineStore } from "../routines";
+import { appRoutinesCall } from "../routines";
 import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, saveMonitors, type CommandMonitor } from "./monitors";
 import { toSwiftDate } from "../store/records";
 import { codexRateLimits, codexTokens, isEmptyLimits, minusTokens, noTokens, totalTokens, type TokenUsage } from "../usage";
@@ -1866,12 +1866,7 @@ export class CodexSession implements CoordinatorPort {
 
   /** `app_routines`: this bot's schedules, through the same store as the app's clock. */
   private routinesTool(args: Record<string, unknown>): { payload: unknown; success: boolean } {
-    if (!this.config.routinesFile) return { payload: { error: "Routine storage is unavailable for this session. Open this bot in Botling and retry; do not write cron or schedule state as a workaround." }, success: false };
-    try {
-      return { payload: new ScheduledRoutineStore(this.config.routinesFile).perform(args), success: true };
-    } catch (error) {
-      return { payload: { error: error instanceof RoutineError ? error.message : `Routine storage failed: ${(error as Error).message}` }, success: false };
-    }
+    return appRoutinesCall(this.config.routinesFile, args);
   }
 
   /**

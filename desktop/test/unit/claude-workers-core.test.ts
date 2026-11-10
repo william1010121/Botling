@@ -94,7 +94,7 @@ describe("Claude's app-managed workers", () => {
     expect(ledger.records[0]).toMatchObject({ id: taskId, status: "interrupted", interruptedBy: "quit", recovery: "required" });
   });
 
-  it("the hidden settings.json claudeWorkers: native gives the head its Agent tool back and no app tools", async () => {
+  it("the hidden settings.json claudeWorkers: native gives the head its Agent tool back and of the app tools only app_routines", async () => {
     const dir = tempDir("claude-workers-native");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "settings.json"), JSON.stringify({ claudeWorkers: "native" }));
@@ -102,7 +102,7 @@ describe("Claude's app-managed workers", () => {
     const { event } = await turn(c, "hello");
     expect(event.text).toBe("You said: hello");
     const head = starts(dir)[0]!;
-    expect(head.args).not.toContain("--mcp-config");
+    expect(flag(head.args, "--allowedTools")!.split(",").filter((tool) => tool.startsWith("mcp__botling__"))).toEqual(["mcp__botling__app_routines"]);
     expect(flag(head.args, "--disallowedTools")?.split(",") ?? []).not.toContain("Agent");
     expect(flag(head.args, "--append-system-prompt")).not.toContain("app_handoff tool");
   });

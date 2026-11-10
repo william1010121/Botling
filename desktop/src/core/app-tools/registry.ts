@@ -1,6 +1,6 @@
 // The app tools, defined once (provider-layer plan 4.1). A coordinator steers its workers and the app through these
 // tools: app_handoff, app_send_message, app_cancel_task, the report tools (app_task_checkpoint, app_reconcile_report),
-// routines and monitors. A worker gets one tool of its own, app_notify_owner (`workerAppTools`): a note to the bot that
+// routines (app_routines, every engine) and monitors. A worker gets one tool of its own, app_notify_owner (`workerAppTools`): a note to the bot that
 // started it while it keeps working. Each engine gets them over its own transport: Claude's in-process MCP server (head.ts
 // `appMcp`) and the agy bridge (agy-mcp.ts `AgyMcpBridge.tools`) take MCP tools, Codex takes dynamic tools on
 // `thread/start` (codex.ts `MANAGED_TOOLS`).
@@ -123,10 +123,7 @@ const APP_TOOLS: readonly AppToolDef[] = [
     agy: { description: "Needs no user approval card. Acknowledge an uncertain report as received, or retry only its delivery. Never replays the worker task.",
       params: ["task_id", "run", "action"], required: ["task_id", "run", "action"] },
   } },
-  { name: "app_routines", forms: {
-    codex: { description: "Manage this bot's persistent routines directly. Operations: list; create kind=once with at (ISO-8601 seconds and explicit offset/Z), or kind=recurring with cron (5 fields), or kind=watch with cron and command (the app runs that shell command in this bot's folder on the schedule without waking you, and wakes you only when it exits non-zero, times out or prints a line starting with ALERT; task is its name). create requires task and unique request_id (reuse on retries), optional timezone (IANA, defaults to local at creation). Returns saved id/status; use id for pause/resume/cancel. List includes legacy cron IDs. Reschedule by cancel then create with a new request_id. Once jobs overdue while closed run on next app check; recurring catches up only today in its saved timezone. fired means the trigger reached the app router, not proof of agent startup or task completion. delivery_uncertain means a crash may have interrupted dispatch: never auto retry. Cancel stops future dispatch, not active work. App must be running; no OS wakeup. Do not edit app-owned schedule JSON or use shell/cron for this tool.",
-      params: ["operation", "kind", "task", "request_id", "at", "cron", "timezone", "id", "command"], required: ["operation"] },
-  } },
+  { name: "app_routines", forms: routinesForms() },
   { name: "app_monitor_start", forms: {
     codex: { description: "Coordinator only; workers must return command intent in their task report. Start one already authorized command in this bot workspace after an explicit Allow once card, including in auto mode. Supply command as shell text. This is a completion monitor, not a polling/line-event monitor. Returns monitor_id and awaitingApproval immediately; finish the turn without polling. The app queues app_monitor_result on success or nonzero failure with monitor_id, owner_session_id, exit_code and bounded output. No network or permission escalation. Never use to expand scope, bypass a denial or rerun interrupted work. Stop/cancel suppresses callbacks. Commands are not replayed on restart; unconfirmed executions become interrupted. Callback dispatch interrupted before acknowledgement is uncertain and never automatically duplicated; inspect status/owner thread.",
       params: ["command"], required: ["command"] },
@@ -168,6 +165,18 @@ function browserTools(): AppToolDef[] {
 const BROWSER_TOOL_NAMES: readonly AppToolName[] = ["app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"];
 
 /**
+ * app_routines: this bot's schedules (routines.ts `appRoutinesCall`). Every engine's coordinator gets it with the same
+ * words (2026-11-11: Claude and Antigravity too, not only Codex); Codex's form is unchanged, so its threads keep their tools.
+ */
+function routinesForms(): Partial<Record<AppToolProvider, ToolForm>> {
+  const form: ToolForm = {
+    description: "Manage this bot's persistent routines directly. Operations: list; create kind=once with at (ISO-8601 seconds and explicit offset/Z), or kind=recurring with cron (5 fields), or kind=watch with cron and command (the app runs that shell command in this bot's folder on the schedule without waking you, and wakes you only when it exits non-zero, times out or prints a line starting with ALERT; task is its name). create requires task and unique request_id (reuse on retries), optional timezone (IANA, defaults to local at creation). Returns saved id/status; use id for pause/resume/cancel. List includes legacy cron IDs. Reschedule by cancel then create with a new request_id. Once jobs overdue while closed run on next app check; recurring catches up only today in its saved timezone. fired means the trigger reached the app router, not proof of agent startup or task completion. delivery_uncertain means a crash may have interrupted dispatch: never auto retry. Cancel stops future dispatch, not active work. App must be running; no OS wakeup. Do not edit app-owned schedule JSON or use shell/cron for this tool.",
+    params: ["operation", "kind", "task", "request_id", "at", "cron", "timezone", "id", "command"], required: ["operation"],
+  };
+  return { claude: form, agy: form, codex: form };
+}
+
+/**
  * app_notify_owner, the one tool an app-managed worker has (every engine the same words): interim news or a question
  * for the bot that started it, while it keeps working.
  */
@@ -182,8 +191,8 @@ function notifyForms(): Partial<Record<AppToolProvider, ToolForm>> {
 
 /** Which tools each provider's coordinator gets, in the order it lists them. */
 const PROVIDER_TOOLS: Record<AppToolProvider, readonly AppToolName[]> = {
-  claude: ["app_handoff", "app_send_message", "app_cancel_task", ...BROWSER_TOOL_NAMES],
-  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", ...BROWSER_TOOL_NAMES],
+  claude: ["app_handoff", "app_send_message", "app_cancel_task", "app_routines", ...BROWSER_TOOL_NAMES],
+  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", "app_routines", ...BROWSER_TOOL_NAMES],
   codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", ...BROWSER_TOOL_NAMES],
 };
 

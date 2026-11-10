@@ -13,10 +13,10 @@ import {AgyAcpHead} from '../../src/core/agent/agy-acp';
 const heads:AgyAcpHead[]=[];
 afterEach(async()=>{await Promise.all(heads.splice(0).map(h=>h.terminate()));fixture.workers.length=0;});
 const settle=()=>new Promise<void>(r=>setImmediate(r));
-async function setup(worker=false){
+async function setup(worker=false,routines?:(args:Record<string,unknown>)=>unknown){
  const dir=mkdtempSync(join(tmpdir(),'agy-bridge-offline-')),cwd=join(dir,'workspace'),home=join(dir,'profile');mkdirSync(cwd);mkdirSync(home);
  const events:any[]=[],prompts:string[]=[],acknowledged:{available:boolean,ok:boolean,decide:boolean}={available:false,ok:true,decide:true};
- const head=new AgyAcpHead({command:'/never-spawned',cwd,acpHome:home,sessionId:'owner',resume:false,worker,canStartReport:()=>acknowledged.available},{onItem:i=>events.push(i),onExit(){}});heads.push(head);
+ const head=new AgyAcpHead({command:'/never-spawned',cwd,acpHome:home,sessionId:'owner',resume:false,worker,canStartReport:()=>acknowledged.available,...(routines?{routines}:{})},{onItem:i=>events.push(i),onExit(){}});heads.push(head);
  await (head as any).connectTools(cwd,home);
  (head as any).protocol={send:async(text:string)=>{
    prompts.push(text);
@@ -50,6 +50,16 @@ it('uncertain report reconciliation needs no approval card and never replays the
 it('worker profiles expose no nested worker transport even with fixture capability gates',async()=>{
  const h=await setup(true);expect(h.bridge.tools.map((t:any)=>t.name)).toEqual(['read_file','write_file','run_command']);
  h.bridge.grant('botling_app_handoff',{instructions:'forbidden'});await expect(h.bridge.invoke('app_handoff',{instructions:'forbidden'})).rejects.toThrow('Unsupported');expect(fixture.workers).toEqual([]);
+});
+
+it('coordinator gets app_routines: the bot\'s store, no approval card; a worker does not',async()=>{
+ const calls:any[]=[],h=await setup(false,args=>{calls.push(args);return {routines:[]};});
+ expect(h.bridge.tools.map((t:any)=>t.name)).toContain('app_routines');
+ await expect(h.bridge.invoke('app_routines',{operation:'list'})).resolves.toEqual({routines:[]});
+ expect(calls).toEqual([{operation:'list'}]);expect(h.events.filter((e:any)=>e.kind==='permission')).toEqual([]);
+ const none=await setup();await expect(none.bridge.invoke('app_routines',{operation:'list'})).rejects.toThrow('Routine storage is unavailable');
+ const w=await setup(true,()=>({}));expect(w.bridge.tools.map((t:any)=>t.name)).not.toContain('app_routines');
+ await expect(w.bridge.invoke('app_routines',{operation:'list'})).rejects.toThrow('Unsupported');
 });
 
 it('coordinator exposes delegation only and checkpoint needs its own exact grant',async()=>{
