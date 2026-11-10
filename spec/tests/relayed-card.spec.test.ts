@@ -4,8 +4,8 @@
 // ignores either line, S works, its turns end, S is removed); after every step the app's view must equal the
 // reference's and the model's properties must hold. TLC's counterexamples are replayed, and the reference explored
 // like TLC breaks the properties only with the model's bugs.
-// SPEC_BUG=card-callee (before 505457a0), card-open or card-ignoregone (before this model's fix) turns on the
-// reference's bug: the walks must go red.
+// SPEC_BUG=card-callee (before 505457a0), card-open, card-keepcopy (removeBot before it settled relayed copies) or
+// card-ignoregone (before 3a2d13fa) turns on the reference's bug: the walks must go red.
 import { describe, expect, it } from "vitest";
 import { relayedCardDriver } from "../../desktop/spec-adapters/relayed-card-adapter";
 import type { RelayedCardSession } from "../driver/relayed-card-driver";
@@ -101,7 +101,7 @@ describe("relayed card model: conformance", () => {
     expect([...seen].sort()).toEqual(expect.arrayContaining([
       "answer queued behind S's turn", "call-in gives up: S busy",
       "guest line answered", "guest line answered, S removed", "guest line ignored", "original answered", "original ignored",
-      "relayed copy answered", "relayed copy answered, S removed", "relayed copy ignored",
+      "relayed copy answered", "relayed copy ignored",
     ]));
   }, 300_000);
 
@@ -128,9 +128,9 @@ describe("relayed card model: conformance", () => {
     expect(shown.cards[0]).toMatchObject({ P: "settled", S: "settled", woke: { P: 1, S: 0 } });
   });
 
-  it("TLC's counterexample for RelayedCard_bug_ignoregone.cfg: a relayed copy of a removed bot can be ignored", async () => {
-    const shown = await replay(cfg, [{ type: "Ask", kind: "relayed" }, { type: "Remove" }, { type: "Ignore", k: 1, c: "P" }]);
-    expect(shown).toMatchObject({ refused: false, cards: [{ P: "settled" }] });
+  it("TLC's counterexample for RelayedCard_bug_keepcopy.cfg: removing S settles its relayed copy in P's chat", async () => {
+    const shown = await replay(cfg, [{ type: "Ask", kind: "relayed" }, { type: "Ask", kind: "guest" }, { type: "Remove" }]);
+    expect(shown).toMatchObject({ gone: true, cards: [{ kind: "relayed", P: "settled" }, { kind: "guest", P: "open" }] });
   });
 });
 
@@ -158,7 +158,7 @@ describe("relayed card model: the reference explored like TLC", () => {
     expect(result.states).toBeGreaterThan(1_000);
   });
 
-  it.each([["callee", "WakesItsBot"], ["open", "AnsweredOnce"], ["ignoregone", "IgnoreNeverRefused"]] as [Bug, string][])(
+  it.each([["callee", "WakesItsBot"], ["open", "AnsweredOnce"], ["keepcopy", "NoCopyOfGone"], ["ignoregone", "IgnoreNeverRefused"]] as [Bug, string][])(
     "with bug %s breaks %s", (bug, property) => {
       expect(explore({ maxCards: 2, bug }, property).broken).toContain(property);
     });

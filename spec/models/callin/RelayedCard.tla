@@ -26,10 +26,11 @@ CONSTANTS
   MaxCards,   \* cards S asks in one behaviour
   Bug         \* "none"; "callee": before 505457a0, an answer on a relayed copy went to S as a call-in in P's chat
               \* (the bot that asked, not the bot of the chat); "open": an answer on the copy leaves the original open
-              \* (no settleRelayedOriginal); "ignoregone": ignoring a copy whose bot was removed is refused (the app
-              \* looked its original up in a bot that is gone; before this model's fix)
+              \* (no settleRelayedOriginal); "keepcopy": removing S leaves its relayed copies open in P's chat
+              \* (removeBot settled only the main bot's copies); "ignoregone": that, and ignoring such a copy is refused
+              \* (the app looked its original up in a bot that is gone; before 3a2d13fa)
 
-ASSUME MaxCards \in Nat /\ Bug \in {"none", "callee", "open", "ignoregone"}
+ASSUME MaxCards \in Nat /\ Bug \in {"none", "callee", "open", "keepcopy", "ignoregone"}
 
 Kinds == {"guest", "relayed"}
 Lines == {"open", "settled", "none"}   \* "none": the card has no line there (a guest card in S's chat)
@@ -141,10 +142,15 @@ EndTurn ==
      ELSE s' = "idle" /\ UNCHANGED <<queued, calls, woke, told>>
   /\ UNCHANGED <<kind, line, at, answers, gone, refused>>
 
-(* S is removed while idle. Its chat goes; the lines in P's chat stay. *)
+(* S is removed while idle. Its chat goes; its cards relayed into P's chat can no longer be answered there: they are
+   settled ("No longer needed", removeBot), as the main bot's copies of its questions are. Its guest lines stay; an
+   answer on one finds it gone. *)
+KeepsCopies == Bug \in {"keepcopy", "ignoregone"}
 Remove ==
   /\ ~gone /\ s = "idle" /\ queued = 0 /\ calls = <<>> /\ gone' = TRUE
-  /\ UNCHANGED <<kind, line, at, answers, woke, told, s, queued, calls, refused>>
+  /\ line' = IF KeepsCopies THEN line
+             ELSE [k \in DOMAIN line |-> IF kind[k] = "relayed" /\ line[k].P = "open" THEN [line[k] EXCEPT !.P = "settled"] ELSE line[k]]
+  /\ UNCHANGED <<kind, at, answers, woke, told, s, queued, calls, refused>>
 
 Next ==
   \/ \E kd \in Kinds : Ask(kd)
@@ -175,6 +181,8 @@ BothShowIt == \A k \in DOMAIN kind : kind[k] = "relayed" /\ ~gone => line[k].P =
 AnsweredIsSettled == \A k \in DOMAIN kind : at[k] # "none" => line[k][at[k]] = "settled"
 (* Every open line can be ignored. *)
 IgnoreNeverRefused == ~refused
+(* A card of a removed bot is not left open as a copy in another chat. *)
+NoCopyOfGone == gone => \A k \in DOMAIN kind : kind[k] = "relayed" => line[k].P # "open"
 (* Call-ins wait only behind one under way. *)
 CallsWait == calls # <<>> => s = "guest"
 

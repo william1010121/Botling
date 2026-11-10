@@ -2,10 +2,10 @@
 // TypeScript state machine: the same variables, the same actions under the same names, the same properties. Tests
 // drive it beside the real Core (spec/tests/relayed-card.spec.test.ts). No app imports.
 // SPEC_BUG=card-callee (before 505457a0: an answer on a relayed copy goes to the bot that asked), card-open (the
-// original stays open when its copy is answered) or card-ignoregone (ignoring a copy of a removed bot is refused,
-// before the fix that came with this model) turns on the model's bug.
+// original stays open when its copy is answered), card-keepcopy (removing the bot leaves its relayed copies open) or
+// card-ignoregone (that, and ignoring such a copy is refused: before 3a2d13fa) turns on the model's bug.
 
-export type Bug = "none" | "callee" | "open" | "ignoregone";
+export type Bug = "none" | "callee" | "open" | "keepcopy" | "ignoregone";
 export type Kind = "guest" | "relayed";
 export type Chat = "P" | "S";
 export type LineState = "open" | "settled" | "none";
@@ -27,7 +27,8 @@ export type Action =
 
 export const bugFromEnv = (): Bug => {
   const bug = typeof process !== "undefined" ? process.env.SPEC_BUG : undefined;
-  return bug === "card-callee" ? "callee" : bug === "card-open" ? "open" : bug === "card-ignoregone" ? "ignoregone" : "none";
+  return bug === "card-callee" ? "callee" : bug === "card-open" ? "open" : bug === "card-keepcopy" ? "keepcopy"
+    : bug === "card-ignoregone" ? "ignoregone" : "none";
 };
 const bugOf = (cfg: Config): Bug => cfg.bug ?? bugFromEnv();
 
@@ -101,7 +102,11 @@ export function step(s: State, cfg: Config, a: Action): State {
       }
       return { ...s, s: "idle" };
     }
-    case "Remove": return { ...s, gone: true };
+    case "Remove": {
+      // Its relayed copies in P's chat are settled ("No longer needed"), unless the bug keeps them.
+      if (bug === "keepcopy" || bug === "ignoregone") return { ...s, gone: true };
+      return { ...s, gone: true, cards: s.cards.map((c) => (c.kind === "relayed" && c.line.P === "open" ? settle(c, "P") : c)) };
+    }
   }
 }
 
@@ -127,6 +132,7 @@ export function violations(s: State): string[] {
     if (c.at !== "none" && c.line[c.at] !== "settled") out.add("AnsweredIsSettled");
   }
   if (s.refused) out.add("IgnoreNeverRefused");
+  if (s.gone && s.cards.some((c) => c.kind === "relayed" && c.line.P === "open")) out.add("NoCopyOfGone");
   if (s.calls.length && s.s !== "guest") out.add("CallsWait");
   return [...out];
 }
