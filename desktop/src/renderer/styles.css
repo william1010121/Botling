@@ -635,7 +635,15 @@ button { font: inherit; color: inherit; }
 
 /* A plugin's main-area tab (plan W2): its frame in the chat's place, the chat page kept loaded under it. */
 .chat-column.main-tab-on #chat-frame { display: none; }
-.main-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.main-tab { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* The Note's docked chat (NoteDock.tsx): no box of its own until docked, then the Note, the divider and the chat in a
+   row. The chat's placeholder keeps its remembered width; the Note takes the rest. */
+.chat-body { display: contents; }
+.chat-body.note-docked { display: flex; flex-direction: row; flex: 1; min-height: 0; min-width: 0; }
+.chat-body.note-docked > .main-tab { min-width: 0; }
+.chat-column.main-tab-on .chat-body.note-docked > #chat-frame { display: block; flex: 0 0 var(--note-chat-w, 380px); width: auto; min-width: 0; max-width: calc(100% - 320px); border-top: 1px solid var(--line); }
+/* The bot's bubble at the bottom right of the Note: the browser's full screen bubble (BotBubble.tsx), floating. */
+.bp-bubble.note-bubble { position: absolute; right: 18px; bottom: 18px; margin: 0; z-index: 5; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28); }
 .main-tab-frame { flex: 1; width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; }
 /* Full-page reports cover the shell without unmounting its conversation. */
 .report-viewer { position: fixed; inset: 38px 0 0; z-index: 1000; display: flex; flex-direction: column; background: var(--ground); }
@@ -1083,5 +1091,7 @@ button.wk-fc:hover { text-decoration: underline; }
 .col-handle.dragging::after { transition-delay: 0s; }
 html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-select: none !important; }
 .shell.browser-full > .col-handle { display: none; }
+/* The Note's chat divider reaches into the Note (a frame of this page), never over the native chat on its right. */
+.col-handle[data-column="noteChat"]::before, .col-handle[data-column="noteChat"]::after { left: auto; right: 0; }
 @media (max-width: 860px) { .shell > .col-handle[data-column="right"] { display: none; } }
 @media (prefers-reduced-motion: reduce) { .col-handle::after { transition: none; } }

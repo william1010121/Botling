@@ -11,7 +11,7 @@ import { ownsCommand } from "../../../Web/src/frame-protocol";
 import { inputTrace } from "./input-trace";
 import { ReportViewer } from "./ReportViewer";
 import { openReport, setReportOpener } from "./report-opener";
-import { ShellOverlay } from "./ShellOverlay";
+import { ShellOverlay, shellOverlayActive } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -52,6 +52,9 @@ import { askOwnerText, askReference, filesChanged, readSeenFailed, watchedWorker
 import { asksUser, cardApprove, cardRun } from "./card-approval";
 import { BrowserPane } from "./BrowserPane";
 import { ColumnDivider } from "./ColumnDivider";
+import { BotBubble } from "./BotBubble";
+import { ChatBody } from "./NoteDock";
+import { dockKey, docked as dockShown, keepDock, toggleDock } from "./note-dock";
 import { browserStore, useBrowser } from "./browser-state";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
@@ -513,6 +516,29 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [rightWithPane, setRightWithPane] = useState(false);
   useEffect(() => { if (!paneOpen) { setRightWithPane(false); if (browser.full) browserStore.setFull(false); } }, [paneOpen]);
   useEffect(() => { if (!browserFull) setMiniChat(false); }, [browserFull]);
+  // The Note tab's bubble (note-dock.ts): docks this bot's chat beside the Note; another tab or bot closes it.
+  const noteKey = web || browserFull ? null : dockKey(bot?.id, tab, !!watching);
+  const [noteDockAt, setNoteDockAt] = useState<string | null>(null);
+  const noteDocked = dockShown(noteDockAt, noteKey);
+  useEffect(() => { setNoteDockAt((open) => keepDock(open, noteKey)); }, [noteKey]);
+  const toggleNoteDock = useCallback(() => {
+    // The docked chat shows the chat, not the Board the chat page may have been showing.
+    if (!noteDocked && store.getView().board) store.showBoard(false);
+    setNoteDockAt((open) => toggleDock(open, noteKey));
+  }, [noteDocked, noteKey, store]);
+  // Docked: the input box gets the focus once the chat has its place; Esc (in the app's own page) closes it.
+  useEffect(() => {
+    if (!noteDocked) return;
+    let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => focusComposer()); });
+    const settle = setTimeout(focusComposer, 120);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || shellOverlayActive()) return;
+      event.preventDefault();
+      setNoteDockAt(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => { cancelAnimationFrame(frame); clearTimeout(settle); window.removeEventListener("keydown", onKey); };
+  }, [noteDocked]);
   const rightFolded = collapsed || (paneOpen && !rightWithPane);
   const toggleRightHere = useCallback(() => {
     if (!paneOpen) { toggleRight(); return; }
@@ -707,10 +733,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <button type="button" onClick={() => void client.request({ type: "rounds.stop", botId: bot.id }).catch(fail)}>Stop now</button>
           </div>
         )}
-        {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />}
+        <ChatBody docked={noteDocked}>
+        {tab && bot ? <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask}
+          overlay={noteKey ? <BotBubble bot={bot} look={view.settings?.botLook ?? "original"} on={noteDocked} onToggle={toggleNoteDock} className="note-bubble" /> : null} /> : null}
         {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onAsk={approval.ask}
           askAbout={askAbout} onAskDone={() => setAskAbout(null)} />
+        </ChatBody>
         {bot && shownWorker && view.subagent && (
           <WorkerAskBar key={shownWorker.id} owner={bot} worker={shownWorker} files={filesChanged(view.subagent.steps)} onAsk={askOwner}
             onOpenFile={(path) => { void client.request({ type: "worker.file", botId: bot.id, subagentId: shownWorker.id, path }).catch(fail); }} />

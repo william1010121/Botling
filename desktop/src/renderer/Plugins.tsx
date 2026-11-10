@@ -2,7 +2,7 @@ import { ShellOverlay } from "./ShellOverlay";
 // The plugin library (1.x: Settings → Plugins): each plugin on or off, its settings (a secret is only
 // ever sent, never shown back: the page knows whether it is set), its commands, and its panels, which
 // open in a sandboxed frame (panel-page.ts). A small stand-in until 2.0 has 1.x's Settings window.
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { MAINTAINER_BOT_ID, type BotView, type ComponentInfoView, type PluginView, type PluginsView } from "../contract";
 import { buildRequest, PLUGIN_STARTERS } from "./plugin-starters";
 import { Client, RequestFailed } from "./client";
@@ -247,13 +247,16 @@ export function PanelFrame({ client, plugin, panel, title, onClose, onBuiltin, .
 }
 
 /** A plugin's main-area tab (`where: "mainTab"`, plan W2): the same frame, in the chat's place. */
-export function MainTabFrame({ client, plugin, view, title, onBuiltin, botId, ...services }: { client: Client; plugin: string; view: string; title: string; onBuiltin: BuiltinRunner; botId?: string } & FrameServices) {
+export function MainTabFrame({ client, plugin, view, title, onBuiltin, botId, overlay, ...services }: { client: Client; plugin: string; view: string; title: string; onBuiltin: BuiltinRunner; botId?: string;
+  /** Drawn over the tab's frame (the Note's bot bubble, NoteDock.tsx). */
+  overlay?: ReactNode } & FrameServices) {
   const { frame, url, problem, note } = usePluginFrame(client, plugin, view, onBuiltin, services, undefined, botId ? { botId } : undefined);
   return (
     <div className="main-tab" role="region" aria-label={title} data-plugin={plugin}>
       {problem && <p className="plugins-problem">{problem}</p>}
       {note && <p className="plugins-result" role="status">{note}</p>}
       {url && <iframe ref={frame} className="main-tab-frame" sandbox="allow-scripts" referrerPolicy="no-referrer" src={url} title={title} />}
+      {overlay}
     </div>
   );
 }

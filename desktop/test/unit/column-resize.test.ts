@@ -30,6 +30,18 @@ describe("clampWidth", () => {
   });
 });
 
+describe("the Note's docked chat", () => {
+  it("is a right column inside the chat pane, its room coming from the Note's minimum", () => {
+    const spec = COLUMNS.noteChat;
+    expect(spec.side).toBe("right");
+    expect(spec.within?.min).toBe(320);
+    // Note 500 wide, chat 380: the chat may take 180 more.
+    expect(clampWidth(spec, 1000, roomFor(380, 500, spec.within!.min))).toBe(560);
+    expect(dragWidth(spec, 380, 900, 800)).toBe(480);
+    expect(dragWidth(spec, 380, 900, 1200)).toBe(spec.min);
+  });
+});
+
 describe("dragWidth", () => {
   it("grows a left column as the pointer moves right, and a right column as it moves left", () => {
     expect(dragWidth(COLUMNS.rail, 248, 248, 300)).toBe(300);
@@ -83,6 +95,11 @@ describe("the stylesheet agrees", () => {
     expect(css).toContain(`.shell > .detail-panel { width: var(${COLUMNS.right.cssVar}, ${COLUMNS.right.fallback}px); }`);
     expect(css).toContain(`.browser-pane { position: relative; flex: 0 1 var(${COLUMNS.browser.cssVar}, 50%);`);
     expect(css).toContain(`min-width: ${COLUMNS.browser.min}px`);
+  });
+  it("sizes the Note's docked chat with its variable, and keeps the Note its minimum", () => {
+    expect(css).toContain(`flex: 0 0 var(${COLUMNS.noteChat.cssVar}, ${COLUMNS.noteChat.fallback}px)`);
+    expect(css).toContain(`max-width: calc(100% - ${COLUMNS.noteChat.within!.min}px)`);
+    expect(css).toContain('.col-handle[data-column="noteChat"]::before');
   });
   it("insets the browser's page by the handle's width", () => {
     expect(css).toContain(`.browser-pane:not(.full) > .bp-body { padding-left: ${HANDLE}px; }`);
