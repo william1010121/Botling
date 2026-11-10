@@ -21,13 +21,13 @@ export interface DelegationCaps {
 }
 
 export const DELEGATION_CAPS: Record<Engine, DelegationCaps> = {
-  claude: { name: "Claude", appTools: new Set(["app_handoff", "app_send_message", "app_cancel_task"]), steerWorkerRun: true, reportVia: "message" },
+  claude: { name: "Claude", appTools: new Set(["app_handoff", "app_send_message", "app_cancel_task", "app_routines"]), steerWorkerRun: true, reportVia: "message" },
   codex: {
     name: "Codex",
     appTools: new Set(["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint"]),
     steerWorkerRun: true, reportVia: "toolOutput",
   },
-  agy: { name: "Antigravity", appTools: new Set(["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task"]), steerWorkerRun: false, reportVia: "prompt" },
+  agy: { name: "Antigravity", appTools: new Set(["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", "app_routines"]), steerWorkerRun: false, reportVia: "prompt" },
 };
 
 export interface PromptContext {

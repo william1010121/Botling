@@ -282,6 +282,19 @@ export const ROUTINE_TICK_MS = 15_000;
 
 export class RoutineError extends Error {}
 
+/**
+ * One `app_routines` call, as every engine's coordinator makes it (Codex's dynamic tool, Claude's and Antigravity's botling
+ * MCP server): the bot's scheduled-routines.json (null: none for this session) and the payload the model reads.
+ */
+export function appRoutinesCall(file: string | null | undefined, args: Record<string, unknown>): { payload: Record<string, unknown>; success: boolean } {
+  if (!file) return { payload: { error: "Routine storage is unavailable for this session. Open this bot in Botling and retry; do not write cron or schedule state as a workaround." }, success: false };
+  try {
+    return { payload: new ScheduledRoutineStore(file).perform(args), success: true };
+  } catch (error) {
+    return { payload: { error: error instanceof RoutineError ? error.message : `Routine storage failed: ${(error as Error).message}` }, success: false };
+  }
+}
+
 /** The whole of an open file, from its start (whatever was written to it since it was opened, too). */
 function readAll(fd: number): string {
   const size = fstatSync(fd).size;

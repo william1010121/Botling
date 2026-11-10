@@ -544,12 +544,23 @@ const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
 
 /** The main bot's 1.x line (kept byte for byte in the Swift goldens) that sent the user to the left column to remove a bot. */
 const MAIN_REMOVE_LINE = "To remove or rename a bot, tell the user to right-click it in the left column.";
-/** The legacy routines rule's last line (Claude and Codex; Antigravity's prompt has no routines rule, so it gets the line at the end). */
-const LEGACY_ROUTINES_LINE = /^  Claude may edit this legacy file[^\n]*$/m;
-/** A script or monitor the bot starts can wake it with a one-shot routines.cron line (desktop only; 2026-11-09, the user). */
-export function scriptWakeRule(routines: string): string {
-  return `  A script or monitor you start can wake you by appending the line "@once Alert: what happened" to ${routines}; the app runs it once at its next check and removes the line.\n`
-    + `  A watch checks something without waking you: a line "*/10 * * * * Name: !shell command" (on Codex, app_routines kind=watch with cron and command) makes the app run that command in your folder on the schedule; only a non-zero exit, a timeout or an output line starting with ALERT wakes you, with its output, to decide what to do (once per failing streak, again after 6 hours or after it passed).`;
+/**
+ * The routines rule as botPrompts gives it (kept byte for byte with the Swift goldens): Codex's app_routines line, then the
+ * legacy routines.cron lines. Antigravity's prompt has none.
+ */
+const BOT_ROUTINES_RULE = /^- Routines support [^\n]*\n(?:  [^\n]*\n)*?  Claude may edit this legacy file[^\n]*$/m;
+/**
+ * The routines rule every engine's bot is given on the desktop: app_routines first (every coordinator has it since
+ * 2026-11-11; the user: "開成一個 tool 給他"), the legacy routines.cron still read and still editable, and a script or
+ * monitor waking the bot with a one-shot "@once Alert" line (2026-11-09, the user).
+ */
+export function routinesRule(routines: string): string {
+  return [
+    "- Routines: timed work for this bot, one-time, recurring or a watch. Use the app_routines tool (one of the app's tools, on every engine): list; create with kind=once, at=ISO-8601 with an explicit UTC offset or Z, task, request_id; kind=recurring, cron=five cron fields, timezone=IANA name, task, request_id; or kind=watch (below). Reuse request_id on retries and keep the returned id: pause/resume/cancel use it. To reschedule, cancel and create with a new request_id. Never encode a one-time request as a yearly cron job. Confirm only after the tool succeeds and say what changed; show actionable errors. An overdue once job runs at the next check while Botling is running (no OS wakeup). fired means a trigger attempt, not agent startup or task success; delivery_uncertain requires checking chat before explicitly replacing. Do not edit scheduled-routines.json.",
+    `  Older routines live in ${routines}, crontab format, one job per line: "minute hour day month weekday Name: what to do", where what to do is a one-line prompt or @file-path (follow that file when the time comes); a leading # pauses a job, deleting the line removes it. The app still runs that file, and app_routines lists, pauses, resumes and cancels its jobs too. You may still edit it, but prefer app_routines.`,
+    `  A script or monitor you start can wake you by appending the line "@once Alert: what happened" to ${routines}; the app runs it once at its next check and removes the line.`,
+    `  A watch checks something without waking you: app_routines kind=watch with cron, command and task (its name) makes the app run that shell command in your folder on the schedule (a line "*/10 * * * * Name: !shell command" in ${routines} does the same); only a non-zero exit, a timeout or an output line starting with ALERT wakes you, with its output, to decide what to do (once per failing streak, again after 6 hours or after it passed).`,
+  ].join("\n");
 }
 /**
  * The instructions as 2.0 gives them: `botPrompts`, plus the prompt sections (`sections`: by default the whiteboard picture line, after
@@ -568,12 +579,12 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   // progress.md in .bot/subagents/<id>/, and it is told how to move a running subagent or worker out into a sub bot (Claude, Codex
   // and Antigravity alike; Antigravity's own prompt has no such line to extend, so its text is appended whole).
   // The main bot removes a project or bot through the app (a card first) instead of sending the user to the left column.
-  // Every engine's bot runs its routines.cron, so every bot is told; the file is the one profilePaths names.
-  if (profile.folder) {
-    const file = join(profile.folder, profilePaths({ role: profile.role, folder: profile.folder, memoryPath: "", id: profile.id, parent: profile.parent }).routines);
-    system = LEGACY_ROUTINES_LINE.test(system)
-      ? system.replace(LEGACY_ROUTINES_LINE, (line) => `${line}\n${scriptWakeRule(file)}`)
-      : `${system}\n${scriptWakeRule(file).trim()}`;
+  // Every engine's bot has app_routines and runs its routines.cron, so every bot gets the same routines rule; the file is
+  // the one profilePaths names (in full when the folder is known).
+  {
+    const relative = profilePaths({ role: profile.role, folder: profile.folder ?? "", memoryPath: "", id: profile.id, parent: profile.parent }).routines;
+    const rule = routinesRule(profile.folder ? join(profile.folder, relative) : relative);
+    system = BOT_ROUTINES_RULE.test(system) ? system.replace(BOT_ROUTINES_RULE, () => rule) : `${system}\n${rule}`;
   }
   if (profile.role === "main") {
     system = system.replace(MAIN_REMOVE_LINE, "To rename a bot, tell the user to right-click it in the left column; to remove one, use <remove-bot> (below).");

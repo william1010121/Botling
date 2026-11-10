@@ -13,6 +13,8 @@ export interface AgyConfig {
   workerNotify?: (args: Record<string, unknown>) => unknown;
   /** The in-app browser tools (core/browser-tools.ts), for this bot's pane; its workers inherit it. */
   browser?: (name: BrowserToolName, args: Record<string, unknown>) => Promise<unknown>;
+  /** The coordinator's app_routines (bot.ts `routinesTool`): its result, or a thrown error. Workers never get it. */
+  routines?: (args: Record<string, unknown>) => unknown;
   /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). Bot heads are not restricted. */
   specWriters?: readonly string[];
   processStarted?: (pid: number) => void;

@@ -96,7 +96,7 @@ import { headTurnContent, headTurnEnd } from "./head-turn";
 import { costDelta, hasVisibleContent, WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "./worker-core";
 import { projectWorker } from "./worker-projection";
 import {
-  CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
+  appRoutinesCall, CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, routinesSpecState, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "./routines";
 import { fromRoutineWatches, nextWatchState, runWatch, watchCommand, watchPrompt, type WatchState } from "./routine-watch";
@@ -122,7 +122,7 @@ import {
 } from "./store/records";
 import type { BotProfile } from "./store/workspace";
 import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./agent/workers";
-import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
+import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
 import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
 
 export type Status = "done" | "stopped" | "failed";
@@ -3236,7 +3236,7 @@ export class Bot {
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, ...(tree ? { addDirs: tree.addDirs } : {}), sessionId: start.sessionId, resume: start.resume,
-        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), browser: (name, args) => this.browserTool(name, args), canStartReport: () => !this.turn && (!this.queue.length || !!this.settingsHold) && !this.draining && !this.shuttingDown, });
+        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), browser: (name, args) => this.browserTool(name, args), routines: (args) => this.routinesTool(args), canStartReport: () => !this.turn && (!this.queue.length || !!this.settingsHold) && !this.draining && !this.shuttingDown, });
       if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
       head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) }, undefined,
         { core: this.workerCore, sink: (item) => this.onWorkerOutput(item) });
@@ -3265,9 +3265,12 @@ export class Bot {
       // and the native Agent/Task tool is gone. The hidden settings.json `claudeWorkers: "native"` keeps the native one.
       const workers = !config.harmless && this.claudeWorkersOn() ? this.ensureClaudeWorkers() : null;
       const siteTools = this.options.siteToolsFolder ? { siteToolsGuard: { folder: this.options.siteToolsFolder } } : {};
-      head = new ClaudeHead({ ...config, ...siteTools, monitorWorker: false, ...(workers ? { appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_APP_TOOLS }, agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
+      // app_routines comes on the same server, also for the native fallback (which gets only that tool).
+      const appMcp = config.harmless ? null : { server: CLAUDE_APP_SERVER, tools: workers ? CLAUDE_APP_TOOLS : CLAUDE_ROUTINE_TOOLS };
+      head = new ClaudeHead({ ...config, ...siteTools, monitorWorker: false, ...(appMcp ? { appMcp } : {}), ...(workers ? { agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
         onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit),
-        ...(workers ? { onAppTool: (name: string, args: Record<string, unknown>) => isBrowserTool(name) ? this.browserTool(name, args) : workers.tool(name, args) } : {}),
+        ...(appMcp ? { onAppTool: async (name: string, args: Record<string, unknown>) => name === "app_routines" ? this.routinesTool(args)
+          : isBrowserTool(name) ? this.browserTool(name, args) : workers ? workers.tool(name, args) : Promise.reject(new Error(`Unknown app tool ${name}.`)) } : {}),
       });
     }
     head.start();
@@ -4736,6 +4739,17 @@ export class Bot {
   /** Codex changed its routines through `app_routines`: the app's view follows. */
   routinesEdited() {
     this.owner.routinesChanged();
+  }
+
+  /**
+   * A Claude or Antigravity head's `app_routines` (its botling MCP server): the same store and words as Codex's
+   * (codex.ts `routinesTool`); a failure is thrown, so the model reads it as the tool's error.
+   */
+  routinesTool(args: Record<string, unknown>): Record<string, unknown> {
+    const { payload, success } = appRoutinesCall(this.routineStorePath, args);
+    if (!success) throw new Error(String(payload.error));
+    if (args.operation !== "list") this.routinesEdited();
+    return payload;
   }
 
   /** `isDue`: its latest time today has passed and it has not run since; a job seen for the first time starts from now. */

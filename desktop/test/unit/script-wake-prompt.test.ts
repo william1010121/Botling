@@ -1,8 +1,8 @@
-// A script or monitor a bot starts can wake it: the app rereads routines.cron every 15 s, so a script appends an
-// every-minute line on an event and the bot deletes it first thing. The prompt says so, so a bot never claims a
-// background script cannot wake it (swordgale, 2026-11-09).
+// Routines in the prompt. Every engine's coordinator has app_routines (2026-11-11), so every bot is told the same rule:
+// use app_routines; the legacy routines.cron still runs and may still be edited, but the tool comes first. A script or
+// monitor a bot starts can still wake it with a one-shot "@once Alert" line in routines.cron (swordgale, 2026-11-09).
 import { describe, expect, it } from "vitest";
-import { botPrompts, desktopPrompts } from "../../src/core/prompts";
+import { botPrompts, desktopPrompts, routinesRule } from "../../src/core/prompts";
 
 const profile = (role: "main" | "manager" | "bot") => ({ id: `${role}-id`, name: "P", role, folder: "/p/repo", memoryPath: role === "main" ? "memory.md" : ".bot/memory.md", job: null, instructions: null });
 const system = (engine: "claude" | "codex" | "agy", role: "main" | "manager" | "bot" = "manager") =>
@@ -10,17 +10,22 @@ const system = (engine: "claude" | "codex" | "agy", role: "main" | "manager" | "
 
 const LINE = (file: string) => `A script or monitor you start can wake you by appending the line "@once Alert: what happened" to ${file}; the app runs it once at its next check and removes the line.`;
 
-describe("a script can wake the bot", () => {
-  it("tells a Claude bot, in one sentence right after the legacy routines rule, with the full path", () => {
-    const text = system("claude");
-    expect(text).toContain(`this legacy file for recurring jobs; Codex uses app_routines instead. Never encode a one-time request as a yearly cron job. For one-time scheduling on Claude, use the app’s Routines settings. Say what changed only after it is saved.\n  ${LINE("/p/repo/.bot/routines.cron")}\n`);
-    expect(text).not.toMatch(/delete that line first|after 3 minutes/);
+describe("the routines rule", () => {
+  it("tells every engine the same rule: app_routines first, routines.cron still readable", () => {
+    for (const engine of ["claude", "codex", "agy"] as const) {
+      const text = system(engine);
+      expect(text).toContain(routinesRule("/p/repo/.bot/routines.cron"));
+      expect(text).not.toMatch(/On Codex, use app_routines|Codex uses app_routines instead|For one-time scheduling on Claude/);
+    }
+    const rule = routinesRule("/p/repo/.bot/routines.cron");
+    expect(rule).toMatch(/^- Routines: [^\n]*app_routines/);
+    expect(rule).toContain("kind=watch");
+    expect(rule).toContain("prefer app_routines");
   });
-  it("gives the main bot its own routines.cron path", () => {
-    expect(system("claude", "main")).toContain(LINE("/p/repo/routines.cron"));
-  });
-  it("tells Codex and Antigravity bots the same sentence: their routines.cron runs too", () => {
+  it("keeps the @once Alert line for scripts, with the full path", () => {
+    expect(system("claude")).toContain(`  ${LINE("/p/repo/.bot/routines.cron")}\n`);
     expect(system("codex")).toContain(`  ${LINE("/p/repo/.bot/routines.cron")}`);
-    expect(system("agy")).toContain(`\n${LINE("/p/repo/.bot/routines.cron")}`);
+    expect(system("agy")).toContain(`  ${LINE("/p/repo/.bot/routines.cron")}`);
+    expect(system("claude", "main")).toContain(LINE("/p/repo/routines.cron"));
   });
 });
