@@ -20,11 +20,12 @@ export function useMinuteClock(): number {
 }
 
 /** 1.x's SubagentOwnerMark: the parent's face, with its head identified in either look. */
-export function OwnerMark({ head, avatar, look = "original" }: { head: "claude" | "codex" | "agy" | null; avatar: string; look?: Look }) {
+export function OwnerMark({ head, avatar, botId, look = "original" }: { head: "claude" | "codex" | "agy" | null; avatar: string; botId?: string; look?: Look }) {
   if (!head) return null;
+  // At this size the Cute face drops its character badge (avatars.ts), so both looks name the head with a letter.
   return <span className="subagent-owner" title={head === "agy" ? "Antigravity" : head === "codex" ? "Codex" : "Claude"} aria-hidden="true">
-    <img src={faceURL({ avatar }, look, { engine: head })} alt="" />
-    {look === "original" && <span className="subagent-owner-badge">{head === "agy" ? "A" : head === "codex" ? "X" : "C"}</span>}
+    <img src={faceURL({ id: botId, avatar }, look, { engine: head })} alt="" />
+    <span className="subagent-owner-badge">{head === "agy" ? "A" : head === "codex" ? "X" : "C"}</span>
   </span>;
 }
 
@@ -78,7 +79,7 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
           <button type="button" className="subagent-open" title={row.prompt} onClick={() => onOpen(row)}
             aria-label={row.subBot ? `Sub bot of ${bot.name}: ${row.title}` : `Subagent of ${bot.name}${row.head ? ` (${row.head === "agy" ? "Antigravity" : row.head === "codex" ? "Codex" : "Claude"})` : ""}: ${row.title || "Subagent"}, ${row.status}`}>
             <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
-            <OwnerMark head={row.head} avatar={bot.avatar} look={look} />
+            <OwnerMark head={row.head} avatar={bot.avatar} botId={bot.id} look={look} />
             <span className="subagent-title">{row.title || "Subagent"}</span>
             {row.subBot && <span className="subagent-kind">sub bot</span>}
             {row.host && <span className="subagent-kind subagent-host" title={`It runs on ${row.host.name}; its reports come here`}>on {row.host.name}</span>}
@@ -171,7 +172,7 @@ export function StripPeek({ bot, subs, detail, look = "original", top, shown, on
             <button type="button" className="subagent-open" data-sub-bot={sub.id} title={sub.job ?? undefined} onClick={() => onOpen(sub.id)}
               aria-label={`Sub bot of ${owner.name}: ${sub.name}`}>
               <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
-              <OwnerMark head={sub.heads[0] ?? "claude"} avatar={owner.avatar} look={look} />
+              <OwnerMark head={sub.heads[0] ?? "claude"} avatar={owner.avatar} botId={owner.id} look={look} />
               <span className="subagent-title">{sub.name}</span>
               <span className="subagent-kind">sub bot</span>
             </button>

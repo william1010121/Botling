@@ -88,7 +88,7 @@ describe("desktop payload rendered by the production chat page", () => {
   });
 });
 
-it("restores the parent's avatar beside subagent rows, with an engine badge only in the original look", async () => {
+it("restores the parent's avatar beside subagent rows, with an engine letter in either look (the Cute face drops its character badge at this size)", async () => {
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { SubagentRows } = await import("../../src/renderer/Rail");
@@ -98,7 +98,7 @@ it("restores the parent's avatar beside subagent rows, with an engine badge only
     host.innerHTML = renderToStaticMarkup(createElement(SubagentRows, { bot: parent, look, now: Date.now(), watching: null, onOpen() {}, onSettle() {} }));
     const owner = host.querySelector(".subagent-owner")!;
     expect(owner.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/svg\+xml;base64,/);
-    expect(owner.querySelector(".subagent-owner-badge")?.textContent ?? "").toBe(look === "original" ? "X" : "");
+    expect(owner.querySelector(".subagent-owner-badge")?.textContent ?? "").toBe("X");
     expect(host.querySelector(".subagent-row")?.classList.contains("running")).toBe(true);
   }
 });

@@ -70,32 +70,104 @@ function eyesSVG(shape: string, eyes: Eyes): string {
 
 const cache = new Map<string, string>();
 
-/** The shape's own SVG (its body and eyes in a -4…104 box). */
-function shapeSVG(shape: string, eyes: Eyes, mask = "bite"): string {
+/** The shape's own SVG (its body and eyes in a -4…104 box), in its own colour unless `color` is given. */
+function shapeSVG(shape: string, eyes: Eyes, mask = "bite", color?: string): string {
   const known = COLORS[shape] ? shape : "circle";
-  const color = COLORS[known]!;
+  const fill = color ?? COLORS[known]!;
   // A same-coloured stroke rounds the polygons' corners, as in the Swift app.
   // The moon is a circle with a bite out of it (a mask, so the stroke is bitten too).
   const moon = known === "moon";
   const defs = moon ? `<defs><mask id="${mask}"><rect x="-4" y="-4" width="108" height="108" fill="#fff"/><circle cx="76" cy="32" r="30" fill="#000"/></mask></defs>` : "";
-  return `${defs}<g fill="${color}" stroke="${color}" stroke-width="${moon ? 0 : 8}" stroke-linejoin="round"${moon ? ` mask="url(#${mask})"` : ""}>${body(known)}</g>${eyesSVG(known, eyes)}`;
+  return `${defs}<g fill="${fill}" stroke="${fill}" stroke-width="${moon ? 0 : 8}" stroke-linejoin="round"${moon ? ` mask="url(#${mask})"` : ""}>${body(known)}</g>${eyesSVG(known, eyes)}`;
 }
 
-/** An avatar as an SVG data URL. Unknown shapes draw as the main bot's circle. */
-export function avatarURL(shape: string, eyes: Eyes = "open"): string {
-  const key = `${shape}/${eyes}`;
+/** An avatar as an SVG data URL. Unknown shapes draw as the main bot's circle; `color` replaces the shape's own. */
+export function avatarURL(shape: string, eyes: Eyes = "open", color?: string): string {
+  const key = `${shape}/${eyes}/${color ?? ""}`;
   const cached = cache.get(key);
   if (cached) return cached;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -4 108 108">${shapeSVG(shape, eyes)}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -4 108 108">${shapeSVG(shape, eyes, "bite", color)}</svg>`;
   const url = `data:image/svg+xml;base64,${btoa(svg)}`;
   cache.set(key, url);
   return url;
 }
 
 // ---------------------------------------------------------------------------------------------
-// Bot look "Cute" (Chibi.swift): the head's character (Claude, Codex/gpt, or Antigravity/gemini)
-// in the mood of the moment, wearing the bot's own face as a hat so bots stay apart. The pictures
-// are 1.x's CharacterArt/avatars-static, bundled in at build time.
+// Colour clashes: the shapes' colours are fixed, so two bots can look alike (the main bot's red
+// circle and a red burst, two yellow stars and drops, a second bot on the same shape). Bots are
+// taken in a stable order (the main bot, Maintainer, then by id) and each keeps its shape's colour
+// unless a bot before it already has one too close; then it gets the colour furthest from all
+// taken so far. Same bots in, same colours out, whatever order the column lists them in.
+
+/** OKLab (L, a, b) of a #RRGGBB colour. */
+export function oklab(hex: string): [number, number, number] {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+}
+
+/** How far apart two colours look (OKLab distance; about 0.02 is "the same red"). */
+export function colorDistance(a: string, b: string): number {
+  const [x, y] = [oklab(a), oklab(b)];
+  return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+}
+
+/** Closer than this, two bots' colours clash. The shapes' own colours are all further apart, but for four near pairs. */
+export const CLASH_DISTANCE = 0.06;
+/** Colours a clashing bot may get: the shapes' own, then a few more for when those run out. */
+export const SPARE_COLORS = [...new Set(Object.values(COLORS))].concat(["#E040C8", "#8A5A2B", "#6E7B8B", "#00A37A", "#3B3FD9", "#C2185B", "#7A9A00", "#00ACC1"]);
+
+const MAINTAINER_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
+const rank = (bot: { id: string; role?: string }) => (bot.role === "main" ? 0 : bot.id === MAINTAINER_ID ? 1 : 2);
+
+/** Each bot's colour by id, clashes moved to the least clashing colour (see above). */
+export function resolveBotColors(bots: readonly { id: string; avatar: string; role?: string }[]): Map<string, string> {
+  const ordered = [...bots].sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const out = new Map<string, string>();
+  const taken: string[] = [];
+  const nearest = (color: string) => taken.reduce((min, other) => Math.min(min, colorDistance(color, other)), Infinity);
+  for (const bot of ordered) {
+    if (out.has(bot.id)) continue;
+    const own = COLORS[bot.avatar] ?? COLORS.circle!;
+    let color = own;
+    if (nearest(own) < CLASH_DISTANCE) {
+      let best = -1;
+      for (const candidate of SPARE_COLORS) {
+        const far = nearest(candidate);
+        if (far > best + 1e-9) { best = far; color = candidate; }
+      }
+    }
+    out.set(bot.id, color);
+    taken.push(color);
+  }
+  return out;
+}
+
+let botColors = new Map<string, string>();
+let botColorsKey = "";
+
+/** The app's bots, so every face drawn after this uses their resolved colours (App calls it on each bot list). */
+export function setBotColors(bots: readonly { id: string; avatar: string; role?: string }[]): void {
+  const key = bots.map((bot) => `${bot.id}:${bot.avatar}:${bot.role ?? ""}`).sort().join(",");
+  if (key === botColorsKey) return;
+  botColorsKey = key;
+  botColors = resolveBotColors(bots);
+}
+
+/** A bot's colour: its resolved one when the app knows it, else its shape's own. */
+export function botColor(bot: { id?: string; avatar: string }): string {
+  return (bot.id ? botColors.get(bot.id) : undefined) ?? COLORS[bot.avatar] ?? COLORS.circle!;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bot look "Cute": the bot's own shape face with the head's character (Claude, Codex/gpt, or
+// Antigravity/gemini) in the mood of the moment as a badge (1.x's Chibi.swift wore the face as a hat,
+// too small to tell bots apart). The pictures are 1.x's CharacterArt/avatars-static, bundled in at build time.
 
 declare const __CHARACTERS__: Record<string, Record<string, string>>;
 export type Look = "original" | "cute";
@@ -113,27 +185,53 @@ export function mood(asleep: boolean, working: boolean, waiting: boolean): Mood 
 /** The pictures by character and expression (base64 PNG): bundled into the page; the core reads its own (core/faces.ts). */
 export type Characters = Record<string, Record<string, string>>;
 
-/** The character of a head with the bot's face as a hat (null `shape`: no hat), as an SVG data URL. */
-export function characterURL(engine: string, moodNow: Mood = "normal", shape: string | null = null, characters: Characters = typeof __CHARACTERS__ === "object" ? __CHARACTERS__ : {}): string {
-  const key = `chibi/${engine}/${moodNow}/${shape ?? ""}`;
-  const cached = cache.get(key);
-  if (cached) return cached;
+/** The picture of a head's character in a mood (base64 PNG), or null. */
+function art(engine: string, moodNow: Mood, characters: Characters): string | null {
   // Antigravity is the engine ID; Gemini is the supplied character asset name.
   const character = engine === "codex" ? "gpt" : engine === "agy" || engine === "gemini" ? "gemini" : "claude";
-  const art = characters[character]?.[EXPRESSION[moodNow]];
-  if (!art) return avatarURL(shape ?? "circle", moodNow === "sleep" ? "closed" : "open");
-  // Room at the top for the hat without cropping hair (as Chibi.svg: y 18, height 46).
-  const y = shape ? 18 : 0;
-  const height = shape ? 46 : 64;
-  const hat = shape ? `<svg x="22.5" y="1.5" width="19" height="19" viewBox="-4 -4 108 108">${shapeSVG(shape, moodNow === "sleep" ? "closed" : "open", "hatbite")}</svg>` : "";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><image x="0" y="${y}" width="64" height="${height}" preserveAspectRatio="xMidYMax meet" href="data:image/png;base64,${art}"/>${hat}</svg>`;
+  return characters[character]?.[EXPRESSION[moodNow]] ?? null;
+}
+
+/**
+ * A head's face (`shape` null: its character alone, as the seen marks use it), as an SVG data URL.
+ * With a shape, the bot's own shape face is the avatar and the character a round badge at its
+ * bottom right (the "shape first" design): the face is what tells bots apart, the badge which
+ * head speaks. Drawn below 26 px (the folded column, owner marks) the badge would be a smudge, so
+ * the picture's own media query leaves only the face, filling the box.
+ */
+export function characterURL(engine: string, moodNow: Mood = "normal", shape: string | null = null, characters: Characters = typeof __CHARACTERS__ === "object" ? __CHARACTERS__ : {}, color?: string): string {
+  const key = `chibi/${engine}/${moodNow}/${shape ?? ""}/${color ?? ""}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const picture = art(engine, moodNow, characters);
+  const eyes: Eyes = moodNow === "sleep" ? "closed" : "open";
+  if (!picture) return avatarURL(shape ?? "circle", eyes, color);
+  let svg: string;
+  if (!shape) {
+    svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><image x="0" y="0" width="64" height="64" preserveAspectRatio="xMidYMax meet" href="data:image/png;base64,${picture}"/></svg>`;
+  } else {
+    // In a 64 box: the face takes 0…57 (a 32 px avatar's 28.5 px), the badge 56% of the face across,
+    // hanging past its corner as the design's -4 px does, cut out of the face by a 2.5 unit gap so it
+    // reads on any background, light or dark.
+    const r = 16, cx = 64 - r, cy = 64 - r, d = 2 * r;
+    const zoom = engine === "agy" || engine === "gemini" ? { w: 1.24, x: 0.12, y: 0.12 } : { w: 1.32, x: 0.16, y: 0.04 };
+    svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">`
+      + `<style>.big{display:none}@media (min-width:26px){.big{display:inline}.small{display:none}}</style>`
+      + `<defs><mask id="gap"><rect width="64" height="64" fill="#fff"/><circle cx="${cx}" cy="${cy}" r="${r + 2.5}" fill="#000"/></mask><clipPath id="badge"><circle cx="${cx}" cy="${cy}" r="${r}"/></clipPath></defs>`
+      + `<svg class="small" x="0" y="0" width="64" height="64" viewBox="-4 -4 108 108">${shapeSVG(shape, eyes, "bite-s", color)}</svg>`
+      + `<g class="big"><g mask="url(#gap)"><svg x="0" y="0" width="57" height="57" viewBox="-4 -4 108 108">${shapeSVG(shape, eyes, "bite-b", color)}</svg></g>`
+      + `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#F3EEE8"/>`
+      + `<g clip-path="url(#badge)"><image x="${cx - r - zoom.x * d}" y="${cy - r - zoom.y * d}" width="${zoom.w * d}" height="${zoom.w * d}" preserveAspectRatio="xMidYMin meet" href="data:image/png;base64,${picture}"/></g></g></svg>`;
+  }
   const url = `data:image/svg+xml;base64,${btoa(svg)}`;
   cache.set(key, url);
   return url;
 }
 
-/** A bot's face in the look the settings name. */
-export function faceURL(bot: { avatar: string; heads?: string[] }, look: Look, state: { asleep?: boolean; working?: boolean; waiting?: boolean; engine?: string } = {}, characters?: Characters): string {
-  if (look !== "cute") return avatarURL(bot.avatar, state.asleep ? "closed" : "open");
-  return characterURL(state.engine ?? bot.heads?.[0] ?? "claude", mood(!!state.asleep, !!state.working, !!state.waiting), bot.avatar, characters);
+/** A bot's face in the look the settings name, in its resolved colour (see setBotColors). */
+export function faceURL(bot: { id?: string; avatar: string; heads?: string[] }, look: Look, state: { asleep?: boolean; working?: boolean; waiting?: boolean; engine?: string } = {}, characters?: Characters): string {
+  const color = botColor(bot);
+  const own = color === (COLORS[bot.avatar] ?? COLORS.circle) ? undefined : color;
+  if (look !== "cute") return avatarURL(bot.avatar, state.asleep ? "closed" : "open", own);
+  return characterURL(state.engine ?? bot.heads?.[0] ?? "claude", mood(!!state.asleep, !!state.working, !!state.waiting), bot.avatar, characters, own);
 }

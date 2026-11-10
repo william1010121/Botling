@@ -25,7 +25,7 @@ import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
 import { commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
 import { ChatStateChannel } from "./chat-state-channel";
-import { faceURL } from "./avatars";
+import { faceURL, setBotColors } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
@@ -76,6 +76,8 @@ function useWhiteboardChoice(): [boolean, (on: boolean) => void] {
 
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
+  // Bots whose colours clash get the least clashing one (avatars.ts); before any face below is drawn.
+  setBotColors(view.bots);
   const [error, setError] = useState<string | null>(null);
   const [bottomControls, setBottomControls] = useState<HTMLSpanElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
