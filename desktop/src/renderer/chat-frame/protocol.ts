@@ -28,7 +28,7 @@ export const CHAT_FRAME_ALLOW = WEB ? "clipboard-write; fullscreen" : "fullscree
 /** Frame → shell. */
 export type FrameMessage =
   /** Something the chat page posted for "the app" (`Action` in Web/src/types.ts). */
-  | { botling: "action"; reportPreview?: boolean; linkSource?: "user" | "component"; linkMessageId?:string; linkPinId?:string; action: { type: string; [key: string]: unknown } }
+  | { botling: "action"; reportPreview?: boolean; linkSource?: "user" | "component"; linkExternal?: boolean; linkMessageId?:string; linkPinId?:string; action: { type: string; [key: string]: unknown } }
   /** The Stop button the desktop adds to the input box. */
   | { botling: "stop" }
   /** Global message column setting, committed after a drag or reset. */

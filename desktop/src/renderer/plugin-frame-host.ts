@@ -79,7 +79,8 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       // back as a report page this page shows, as the chat's own report links do.
       const bot = bots().find((each) => each.id === botId || (botId === "main" && each.role === "main"));
       if (!bot) throw new Error("No such bot.");
-      const result = await client.request({ type: "plugins.openLink", name: plugin, botId, href }).catch(failed);
+      // The bot by its own id (not "main"): a web link opens in that bot's browser tabs.
+      const result = await client.request({ type: "plugins.openLink", name: plugin, botId: bot.id, href }).catch(failed);
       if (result.previewURL && !openReport(bot.id, result.previewURL)) throw new Error("This page shows no report preview.");
       return { opened: result.opened };
     },
