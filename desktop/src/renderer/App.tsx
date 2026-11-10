@@ -53,7 +53,8 @@ import { askOwnerText, askReference, filesChanged, readSeenFailed, watchedWorker
 import { asksUser, cardApprove, cardRun } from "./card-approval";
 import { BrowserPane } from "./BrowserPane";
 import { ColumnDivider } from "./ColumnDivider";
-import { BotBubble } from "./BotBubble";
+import { FloatingChat, floatChatMessage, resendFloatChrome, useFloatMemory } from "./FloatingChat";
+import { lastLine } from "./floating-chat";
 import { ChatBody } from "./NoteDock";
 import { dockKey, docked as dockShown, keepDock, toggleDock } from "./note-dock";
 import { browserStore, useBrowser } from "./browser-state";
@@ -501,22 +502,33 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const paneOpen = !web && !!bot && !!browser.open[bot.id];
   const browserFull = paneOpen && browser.full;
   const [miniChat, setMiniChat] = useState(false);
+  // The floating chat (FloatingChat.tsx): each place floats the chat over its page, or docks it beside as before.
+  const floatMemory = useFloatMemory();
+  const browserDocked = browserFull && miniChat && floatMemory.browser.docked;
+  const browserFloat = browserFull && miniChat && !floatMemory.browser.docked;
+  // The strip's line: the bot's newest line in the chat on screen.
+  const chatMessages = chat && bot && chat.botId === bot.id ? chat.messages : null;
+  const stripLine = useMemo(() => lastLine(chatMessages ?? []), [chatMessages]);
   const [rightWithPane, setRightWithPane] = useState(false);
   useEffect(() => { if (!paneOpen) { setRightWithPane(false); if (browser.full) browserStore.setFull(false); } }, [paneOpen]);
   useEffect(() => { if (!browserFull) setMiniChat(false); }, [browserFull]);
-  // The Note tab's bubble (note-dock.ts): docks this bot's chat beside the Note; another tab or bot closes it.
+  // The Note tab's strip (note-dock.ts, FloatingChat.tsx): opens this bot's chat floating over the Note, or docked
+  // beside it when that was chosen in the panel's header; another tab or bot closes it.
   const noteKey = web || browserFull ? null : dockKey(bot?.id, tab, !!watching);
   const [noteDockAt, setNoteDockAt] = useState<string | null>(null);
-  const noteDocked = dockShown(noteDockAt, noteKey);
+  const noteOpen = dockShown(noteDockAt, noteKey);
+  const noteDocked = noteOpen && floatMemory.note.docked;
   useEffect(() => { setNoteDockAt((open) => keepDock(open, noteKey)); }, [noteKey]);
-  const toggleNoteDock = useCallback(() => {
-    // The docked chat shows the chat, not the Board the chat page may have been showing.
-    if (!noteDocked && store.getView().board) store.showBoard(false);
-    setNoteDockAt((open) => toggleDock(open, noteKey));
-  }, [noteDocked, noteKey, store]);
-  // Docked: the input box gets the focus once the chat has its place; Esc (in the app's own page) closes it.
+  const openNoteChat = useCallback((open: boolean) => {
+    if (open === noteOpen) return;
+    // The chat shows the chat, not the Board the chat page may have been showing.
+    if (open && store.getView().board) store.showBoard(false);
+    setNoteDockAt((now) => toggleDock(now, noteKey));
+  }, [noteOpen, noteKey, store]);
+  const noteArea = useCallback(() => document.querySelector<HTMLElement>(".chat-column .main-tab"), []);
+  // Open: the input box gets the focus once the chat has its place; Esc (in the app's own page) closes it.
   useEffect(() => {
-    if (!noteDocked) return;
+    if (!noteOpen) return;
     let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => focusComposer()); });
     const settle = setTimeout(focusComposer, 120);
     const onKey = (event: KeyboardEvent) => {
@@ -526,7 +538,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     };
     window.addEventListener("keydown", onKey);
     return () => { cancelAnimationFrame(frame); clearTimeout(settle); window.removeEventListener("keydown", onKey); };
-  }, [noteDocked]);
+  }, [noteOpen]);
   const rightFolded = collapsed || (paneOpen && !rightWithPane);
   const toggleRightHere = useCallback(() => {
     if (!paneOpen) { toggleRight(); return; }
@@ -539,7 +551,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   }, [client, bot]);
 
   return (
-    <div className={`shell${paneOpen ? " browser-on" : ""}${browserFull ? " browser-full" : ""}${browserFull && miniChat ? " browser-mini" : ""}`} data-ready={view.ready ? "1" : "0"}>
+    <div className={`shell${paneOpen ? " browser-on" : ""}${browserFull ? " browser-full" : ""}${browserDocked ? " browser-mini" : ""}${browserFloat ? " browser-float" : ""}`} data-ready={view.ready ? "1" : "0"}>
       {/* A panel a plugin's program part opened (`ui.openView`). */}
       {!web && view.pluginPanel && (
         <PanelFrame key={`${view.pluginPanel.plugin}/${view.pluginPanel.panel}`} client={client} plugin={view.pluginPanel.plugin} panel={view.pluginPanel.panel}
@@ -716,10 +728,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         )}
         <ChatBody docked={noteDocked}>
         {tab && bot ? <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask}
-          overlay={noteKey ? <BotBubble bot={bot} look={view.settings?.botLook ?? "original"} on={noteDocked} onToggle={toggleNoteDock} className="note-bubble" /> : null} /> : null}
+          overlay={noteKey ? <FloatingChat place="note" bot={bot} look={view.settings?.botLook ?? "original"} open={noteOpen} onOpen={openNoteChat} line={stripLine} area={noteArea} /> : null} /> : null}
         {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onAsk={approval.ask}
-          bubbleBot={bot && !paneOpen && (!tab || noteDocked) ? bot : null} look={view.settings?.botLook ?? "original"}
+          bubbleBot={bot && !paneOpen && (!tab || noteDocked || !floatMemory.preview.docked) ? bot : null} look={view.settings?.botLook ?? "original"} stripLine={stripLine}
           askAbout={askAbout} onAskDone={() => setAskAbout(null)} />
         </ChatBody>
         {bot && shownWorker && view.subagent && (
@@ -734,7 +746,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {paneOpen && bot && !browserFull && <ColumnDivider column="browser" />}
       {paneOpen && bot && (
         <BrowserPane bot={bot} state={browserState ?? { botId: bot.id, tabs: [], active: null }} full={browserFull} look={view.settings?.botLook ?? "original"}
-          miniChat={miniChat} onMiniChat={setMiniChat} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}`}
+          miniChat={miniChat} onMiniChat={setMiniChat} line={stripLine} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}/${floatMemory.browser.docked}`}
           onAskTool={async (text) => { await client.request({ type: "chat.send", botId: bot.id, text }); }} />
       )}
       {bot && takeover && takeoverView && (
@@ -1003,9 +1015,12 @@ function runPluginCommand(client: Client, plugins: PluginsView | null | undefine
   else postToChat({ botling: "runCommand", id });
 }
 
-function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onAskDone, bubbleBot = null, look = "original" }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
-  /** The bot whose bubble the report preview offers (ReportViewer): only while its native chat has its place, i.e. the
-   * chat column shows the chat (not under a tab, unless docked) and no browser pane would show its page over the report. */
+function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onAskDone, bubbleBot = null, look = "original", stripLine = "" }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
+  /** The bot's newest line, for the report preview's strip (FloatingChat). */
+  stripLine?: string;
+  /** The bot whose strip the report preview offers (ReportViewer): only while its native chat can show there, i.e. the
+   * chat floats over the preview, or the chat column shows the chat (not under a tab, unless docked beside it), and no
+   * browser pane would show its page over the report. */
   bubbleBot?: BotView | null; look?: "original" | "cute";
   askAbout?: { botId: string; worker: AskWorker; ownerName: string } | null; onAskDone?: () => void;
   onAsk: (view: ApprovalAskView, approve: import("../contract").Command, done?: (allowed: boolean) => void) => void }) {
@@ -1222,6 +1237,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
         return;
       }
       if (composerBarMessage(message)) return;
+      if (floatChatMessage(message)) return;
       if (message.botling === "page") {
         // A component frame's page: main serves it from botling-card://page/ under its own CSP.
         const answer = (url: string | null) => {
@@ -1278,6 +1294,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
         case "ready":
           ready.current = true;
           push();
+          resendFloatChrome();
           // A page that (re)loaded has no plugins yet.
           lastSpecs.current = "";
           pushPlugins();
@@ -1552,7 +1569,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
   }, [client, onError, onSent, onAsk, push, pushPlugins, store, channel]);
 
   const viewer = report && report.botId === view.chat?.botId ? <ReportViewer url={report.url} onClose={() => setReport(null)}
-    bubble={bubble ? { bot: bubble, look, on: reportChat, onToggle: () => setReportChat(on => !on) } : undefined} /> : null;
+    bubble={bubble ? { bot: bubble, look, on: reportChat, onOpen: setReportChat, line: stripLine } : undefined} /> : null;
   if (nativeEditor()) return <>{viewer}<div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>
     {snapshot && <img data-native-chat-snapshot="" src={snapshot.image} onLoad={() => nativeEditor()?.snapshotReady(snapshot.revision)} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", position: "absolute", inset: 0, pointerEvents: "none" }} />}
   </div></>;

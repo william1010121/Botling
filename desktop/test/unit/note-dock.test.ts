@@ -47,13 +47,16 @@ describe("the docked chat", () => {
 
 describe("App.tsx draws it", () => {
   const app = readFileSync(join(desktop, "src/renderer/App.tsx"), "utf8");
-  it("wraps the tab and the chat page in ChatBody, the bubble over the Note, closed on Esc", () => {
+  it("wraps the tab and the chat page in ChatBody (docked beside when chosen), the floating chat's strip over the Note, closed on Esc", () => {
     expect(app).toContain("<ChatBody docked={noteDocked}>");
-    expect(app).toContain('className="note-bubble"');
+    expect(app).toContain("const noteDocked = noteOpen && floatMemory.note.docked;");
+    expect(app).toContain('<FloatingChat place="note" bot={bot}');
     expect(app).toContain("const noteKey = web || browserFull ? null : dockKey(bot?.id, tab, !!watching);");
     expect(app).toMatch(/event\.key !== "Escape"[^\n]*\n\s*event\.preventDefault\(\);\n\s*setNoteDockAt\(null\)/);
   });
-  it("the browser pane uses the same bubble", () => {
-    expect(readFileSync(join(desktop, "src/renderer/BrowserPane.tsx"), "utf8")).toContain("<BotBubble bot={bot} look={look} on={miniChat}");
+  it("the browser pane and the report preview use the same floating chat (and its BotBubble strip)", () => {
+    expect(readFileSync(join(desktop, "src/renderer/BrowserPane.tsx"), "utf8")).toContain('<FloatingChat place="browser" bot={bot} look={look} open={miniChat}');
+    expect(readFileSync(join(desktop, "src/renderer/ReportViewer.tsx"), "utf8")).toContain('<FloatingChat place="preview" bot={bubble.bot}');
+    expect(readFileSync(join(desktop, "src/renderer/FloatingChat.tsx"), "utf8")).toContain("<BotBubble bot={bot}");
   });
 });

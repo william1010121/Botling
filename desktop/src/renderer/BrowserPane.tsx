@@ -2,11 +2,11 @@
 // bubble). This page draws the tab strip, the toolbar and the site-tools sheet; the web page itself is a native
 // view main lays where `.bp-page` is (browser-host.ts), so nothing of this page may sit over that box: the toolbar
 // pushes the page down while it shows, the sheet narrows it, and the ⋯ menu is a native menu.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hostOf, type BrowserBotState, type BrowserTabInfo } from "../browser-wire";
 import type { BotView } from "../contract";
 import { faceURL } from "./avatars";
-import { BotBubble } from "./BotBubble";
+import { FloatingChat } from "./FloatingChat";
 import { browserStore, postBrowser, useBrowser } from "./browser-state";
 import { askForToolText } from "../browser-site-tools";
 import { SiteToolsSheet, countedTools } from "./SiteToolsSheet";
@@ -51,16 +51,18 @@ export interface BrowserPaneProps {
   state: BrowserBotState;
   full: boolean;
   look: "original" | "cute";
-  /** Full screen: the mini chat beside the page is open. */
+  /** Full screen: the bot's chat is open, floating over the page or docked beside it (FloatingChat). */
   miniChat: boolean;
   onMiniChat(open: boolean): void;
+  /** The bot's newest line, for the strip in the tab row. */
+  line: string;
   /** Changes when something around the pane moves it (its bounds are measured again). */
   layoutKey: string;
   /** Sends a message to this bot's chat ("Ask Botling to make a tool for this site"). */
   onAskTool(text: string): Promise<void>;
 }
 
-export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layoutKey, onAskTool }: BrowserPaneProps) {
+export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, line, layoutKey, onAskTool }: BrowserPaneProps) {
   const botId = bot.id;
   const active = state.tabs.find((tab) => tab.id === state.active) ?? state.tabs[0] ?? null;
   const [toolbar, setToolbar] = useState(false);
@@ -74,6 +76,7 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
   const [newTab, setNewTab] = useState(false);
   const url = useRef<HTMLInputElement>(null);
   const page = useRef<HTMLDivElement>(null);
+  const pageArea = useCallback(() => page.current, []);
 
   useEffect(() => { visibility.sheet(sheet); }, [sheet, visibility]);
   useEffect(() => { setSheet(false); setDraft(null); setNewTab(false); }, [botId]);
@@ -167,7 +170,9 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
           <>
             <span className="bp-gap" />
             <button type="button" className="bp-exit" onClick={() => browserStore.setFull(false)} title="Exit full screen (Esc)">Exit full screen</button>
-            <BotBubble bot={bot} look={look} on={miniChat} onToggle={() => onMiniChat(!miniChat)} />
+            {/* The page is a native view nothing can sit over: the strip stays in the tab row, the open chat floats
+                over the page (the native chat is above it) or docks beside it. */}
+            <FloatingChat place="browser" bot={bot} look={look} open={miniChat} onOpen={onMiniChat} line={line} area={pageArea} inline />
           </>
         )}
       </div>

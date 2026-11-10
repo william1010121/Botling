@@ -12,6 +12,7 @@ import "./composer-bar";
 import { installInputRecovery } from "./input-focus";
 import "../../../../Web/src/main";
 import { installEscapeStop } from "./escape-stop";
+import { mountFloatChrome } from "./float-chrome";
 import { t } from "../../../../Web/src/i18n";
 import { EditorView } from "@codemirror/view";
 import type { FrameExtras } from "../payload";
@@ -178,6 +179,10 @@ nativeChat?.subscribe(packet => {
     toShell({ botling: "action", action: { type: "ready" } });
   }
 });
+
+// The floating chat's header and corner grip, while the shell floats (or docks) the chat over a page (float-chrome.ts).
+const floatChrome = mountFloatChrome(document.body, toShell, () => document.body.classList.contains("botling-running"));
+fromShell(message => { if (message?.botling === "floatChrome") floatChrome.show(message.chrome); });
 
 // Escape twice, close together, stops a reply being written (escape-stop.ts); one press only says so.
 installEscapeStop({
