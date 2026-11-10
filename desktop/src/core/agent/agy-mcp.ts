@@ -11,6 +11,7 @@ import { resolve, relative, isAbsolute, join } from 'node:path';
 import { processTreeAdapter, type ManagedProcess } from '../process/tree';
 import { inSpec, shellWritesSpec, specRoots, SPEC_DENIED } from '../spec-guard';
 import { appTools, workerAppTools } from '../app-tools/registry';
+import { isBrowserTool, type BrowserToolName } from '../../browser-bot';
 
 export const AGY_FILE_HELPER_SHA = '1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403';
 export function verifyAgyFileHelper(path: string | undefined, workspace: string) {
@@ -87,7 +88,7 @@ export class AgyMcpBridge {
   private extra: { raw: string; real: string }[];
   private rootIdentity: string[];
   private protectedIdentity: string[];
-  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void, extraRoots: string[] = [], private specLocked: () => boolean = () => false, private notify?: (args: Args) => unknown) {
+  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void, extraRoots: string[] = [], private specLocked: () => boolean = () => false, private notify?: (args: Args) => unknown, private browser?: (name: BrowserToolName, args: Args) => Promise<unknown>) {
     // The project's .bot when the session starts in an app worktree (the same extra folder Claude and Codex get).
     this.extra = extraRoots.flatMap(dir => { try { return [{ raw: resolve(dir), real: realpathSync(dir) }]; } catch { return []; } });
     // Worker transport is deliberately unavailable until live isolation/recovery validation.
@@ -198,6 +199,11 @@ export class AgyMcpBridge {
     // Coordination tools only dispatch/steer/cancel app-managed workers and never grant file or command
     // permission (workers' own tool calls keep their normal approval flow), so they need no user card.
     // A worker's note to its owner: grants no file or command permission, so it needs no user card.
+    // The user's browser pane: reading it (and opening a page there) grants no file or command permission.
+    if (isBrowserTool(name)) {
+      if (!this.browser) throw new Error('The in-app browser is not available here.');
+      return this.browser(name, args);
+    }
     if (name === 'app_notify_owner') {
       if (!this.notify) throw new Error('Only an app-managed worker can use app_notify_owner.');
       return this.notify(args);

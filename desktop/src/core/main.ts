@@ -349,8 +349,8 @@ if (parentPort) {
     if (data && typeof data === "object" && swapControl(data, (message) => parentPort.postMessage(message))) return;
     if (data && typeof data === "object" && data.botling === "sealed") portSealer?.answer(data as Parameters<PortSealer["answer"]>[0]);
     else if (data && typeof data === "object" && data.botling === "appDone") {
-      const answer = data as { id?: unknown; ok?: unknown; file?: unknown; error?: unknown; plan?: unknown };
-      if (typeof answer.id === "number") appAnswers.get(answer.id)?.({ ok: answer.ok === true, ...(typeof answer.file === "string" ? { file: answer.file } : {}), ...(typeof answer.error === "string" ? { error: answer.error } : {}), ...(answer.plan !== undefined ? { plan: answer.plan } : {}) });
+      const answer = data as { id?: unknown; ok?: unknown; file?: unknown; error?: unknown; plan?: unknown; data?: unknown };
+      if (typeof answer.id === "number") appAnswers.get(answer.id)?.({ ok: answer.ok === true, ...(typeof answer.file === "string" ? { file: answer.file } : {}), ...(typeof answer.error === "string" ? { error: answer.error } : {}), ...(answer.plan !== undefined ? { plan: answer.plan } : {}), ...(answer.data !== undefined ? { data: answer.data } : {}) });
     }
     else if (data && typeof data === "object" && data.botling === "release") {
       // Main found a newer release (main/updates.ts): an update notice in the main bot's chat (self-update.ts).

@@ -5,11 +5,17 @@
 // sign-ins last but share nothing with the app's pages), sandboxed, context-isolated, no Node and no preload.
 // Only http(s) loads; a site's popup (window.open, target=_blank) becomes a new tab; every permission it asks
 // for (camera, notifications, location, …) is refused.
+//
+// Phase 2: every tab's network traffic is captured in the background (the DevTools protocol's Network domain on its
+// page, kept in a bounded NetCapture, browser-bot.ts) for the bot tools; no panel shows it. A bot's extraction runs
+// in an isolated world (EXTRACT_WORLD) and the page may not navigate while it runs.
 import { BrowserWindow, Menu, WebContentsView, app, clipboard, dialog, session, shell, type Session, type WebContents } from "electron";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BROWSER_CHANNEL, isWebUrl, urlFromInput, type BrowserDown, type BrowserMenuPick, type BrowserRect, type BrowserToolRun, type BrowserUp } from "../browser-wire";
 import { runOptions, siteOf, toolIsOn, toolsFor, type RunFile, type SiteToolOptions } from "../browser-site-tools";
+import { NetCapture } from "../browser-bot";
+import type { BotBrowserWindow } from "./browser-bot-host";
 import { BrowserTabs, type TabPage } from "./browser-tabs";
 import { editorBounds } from "./editor-host";
 import { runSiteTool } from "./site-tool-runner";
@@ -19,6 +25,9 @@ export const BROWSER_PARTITION = "persist:botling-web";
 /** The top edge of a page, in px, where the pointer brings out the floating toolbar. */
 const EDGE = 6;
 const FAVICON_MAX = 64_000;
+/** The isolated world bot extractions run in (site tools use their own). */
+export const EXTRACT_WORLD = 1077;
+const EXTRACT_TIMEOUT_MS = 15_000;
 
 const SECURE = {
   partition: BROWSER_PARTITION,
@@ -55,6 +64,8 @@ export interface BrowserHost {
   receive(message: BrowserUp): void;
   closeBot(botId: string): void;
   tabs: BrowserTabs;
+  /** What the bot tools read (browser-bot-host.ts). */
+  bot: BotBrowserWindow;
   dispose(): void;
 }
 
@@ -67,6 +78,9 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
   const views = new Map<string, WebContentsView>();
   const execs = new Map<string, (worldId: number, code: string) => Promise<unknown>>();
   const running = new Set<string>();
+  const captures = new Map<string, NetCapture>();
+  /** Tabs a bot's extraction runs in now: their page may not navigate. */
+  const extracting = new Set<string>();
 
   const tabs: BrowserTabs = new BrowserTabs({
     create: (botId, tabId) => makePage(botId, tabId),
@@ -87,6 +101,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
     // Site tools run in an isolated world of the page: they see its DOM, never its scripts, and it never sees them.
     execs.set(tabId, (worldId, code) => contents.isDestroyed() ? Promise.reject(new Error("the page is gone")) : contents.executeJavaScriptInIsolatedWorld(worldId, [{ code }], true));
     wire(botId, tabId, view, contents);
+    capture(tabId, contents);
     return {
       load: (url) => { if (isWebUrl(url)) void contents.loadURL(url).catch(() => {}); },
       back: () => { if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack(); },
@@ -101,6 +116,9 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       destroy: () => {
         views.delete(tabId);
         execs.delete(tabId);
+        captures.delete(tabId);
+        extracting.delete(tabId);
+        try { if (!contents.isDestroyed() && contents.debugger.isAttached()) contents.debugger.detach(); } catch { /* going anyway */ }
         if (htmlFull === view) htmlFull = null;
         if (!owner.isDestroyed()) owner.contentView.removeChildView(view);
         if (!contents.isDestroyed()) contents.close();
@@ -117,7 +135,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       return { action: "deny" };
     });
     contents.on("will-attach-webview", (event) => event.preventDefault());
-    contents.on("will-navigate", (event) => { if (!isWebUrl(event.url)) { event.preventDefault(); options.note(`browser: refused a navigation to ${event.url.slice(0, 200)}`); } });
+    contents.on("will-navigate", (event) => { if (extracting.has(tabId)) { event.preventDefault(); options.note("browser: refused a navigation during a bot's extraction"); return; } if (!isWebUrl(event.url)) { event.preventDefault(); options.note(`browser: refused a navigation to ${event.url.slice(0, 200)}`); } });
     contents.on("did-start-loading", () => update({ loading: true }));
     contents.on("did-stop-loading", () => update({ loading: false, url: contents.getURL() || tabs.tab(botId, tabId)?.url, title: contents.getTitle() }));
     contents.on("did-navigate", (_event, url) => update({ url }));
@@ -149,6 +167,52 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       else if (key === "escape" && fullscreen && htmlFull !== view) { event.preventDefault(); send({ type: "key", botId, key: "escape" }); }
     });
   }
+
+  /** The tab's traffic, always on (no panel): the Network domain of its page's DevTools protocol, into a bounded ring. */
+  function capture(tabId: string, contents: WebContents) {
+    const ring = new NetCapture();
+    captures.set(tabId, ring);
+    const cdp = contents.debugger;
+    try { cdp.attach("1.3"); } catch (error) { options.note(`browser: no network capture for a tab (${(error as Error).message})`); return; }
+    cdp.on("message", (_event, method, params) => {
+      const wanted = ring.handle(method, params);
+      if (!wanted) return;
+      void (cdp.sendCommand("Network.getResponseBody", { requestId: wanted }) as Promise<{ body: string; base64Encoded: boolean }>)
+        .then((got) => ring.setBody(wanted, got.body, got.base64Encoded), () => {});
+    });
+    cdp.on("detach", (_event, reason) => { if (reason !== "target closed") options.note(`browser: network capture stopped for a tab (${reason})`); });
+    void cdp.sendCommand("Network.enable", { maxTotalBufferSize: 50_000_000, maxResourceBufferSize: 10_000_000 }).catch(() => {});
+  }
+
+  const bot: BotBrowserWindow = {
+    tabs,
+    open: (botId, url) => tabs.open(botId, url),
+    capture: (tabId) => captures.get(tabId) ?? null,
+    fetchBody: async (tabId, requestId) => {
+      const contents = views.get(tabId)?.webContents;
+      if (!contents || contents.isDestroyed() || !contents.debugger.isAttached()) return null;
+      try {
+        const got = await contents.debugger.sendCommand("Network.getResponseBody", { requestId: requestId.split(":")[0] }) as { body: string; base64Encoded: boolean };
+        return { body: got.body, base64: got.base64Encoded };
+      } catch { return null; }
+    },
+    run: async (tabId, code) => {
+      const contents = views.get(tabId)?.webContents;
+      if (!contents || contents.isDestroyed()) throw new Error("That tab's page is gone.");
+      if (contents.isCrashed()) throw new Error("That tab's page crashed; ask the user to select it so it loads again.");
+      extracting.add(tabId);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          contents.executeJavaScriptInIsolatedWorld(EXTRACT_WORLD, [{ code }], false),
+          new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error("The extraction took over 15 s.")), EXTRACT_TIMEOUT_MS); }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+        extracting.delete(tabId);
+      }
+    },
+  };
 
   /** The site's icon as a data: URL (the app page's CSP takes no remote pictures); null when it cannot be had. */
   async function favicon(url: string | undefined): Promise<string | null> {
@@ -304,7 +368,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
 
   const resize = () => { if (htmlFull && !owner.isDestroyed()) { const { width, height } = owner.getContentBounds(); htmlFull.setBounds({ x: 0, y: 0, width, height }); } };
   owner.on("resize", resize);
-  const dispose = () => { owner.removeListener("resize", resize); stopCatalog?.(); tabs.dispose(); views.clear(); execs.clear(); };
+  const dispose = () => { owner.removeListener("resize", resize); stopCatalog?.(); tabs.dispose(); views.clear(); execs.clear(); captures.clear(); };
   owner.once("closed", dispose);
 
   return {
@@ -312,6 +376,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
     receive,
     closeBot: (botId) => tabs.closeBot(botId),
     tabs,
+    bot,
     dispose,
   };
 }

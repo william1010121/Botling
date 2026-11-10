@@ -21,6 +21,7 @@ import {
   type HandoffRequest, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord,
 } from "../worker-core";
 import { appTools, workerAppTools } from "../app-tools/registry";
+import { isBrowserTool, type BrowserToolName } from "../../browser-bot";
 import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
@@ -140,6 +141,8 @@ export interface ClaudeWorkersOptions {
   maxRunning?(): number;
   /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). */
   specWriters?(): readonly string[];
+  /** The in-app browser tools (core/browser-tools.ts), for this bot's pane; absent: they answer that it is not available. */
+  browser?(name: BrowserToolName, args: Record<string, unknown>): Promise<unknown>;
   home?: string;
   /** The core's log lines (a run's verdict, a failed delivery). */
   log?(line: string): void;
@@ -182,7 +185,7 @@ interface Proc {
 }
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
-export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters">;
+export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "browser">;
 
 /**
  * The Claude engine adapter (shared-core spec 4.1, the Claude row of 4.2): one `claude` process per worker, its
@@ -271,8 +274,12 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     // A kept-alive process carries later runs too: its items belong to whichever run is under way.
     const head: ClaudeWorkerHead = this.factory(config, {
       onItem: (item) => this.onItem(r.id, head, item), onExit: (exit) => this.onExit(r.id, head, exit),
-      // Its one app tool: a note to its owner, from the run under way in this process.
+      // Its app tools: a note to its owner, from the run under way in this process, and the browser tools.
       onAppTool: async (name, args) => {
+        if (isBrowserTool(name)) {
+          if (!this.options.browser) throw new Error("The in-app browser is not available here.");
+          return this.options.browser(name, args);
+        }
         if (name !== "app_notify_owner" || !this.notify) throw new Error(`Unknown app tool ${name}.`);
         if (this.procs.get(r.id)?.head !== head) throw new Error("This worker's run is not under way: say it in your final report instead.");
         return this.notify(r.id, args);

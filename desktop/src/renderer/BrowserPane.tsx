@@ -195,6 +195,7 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, layo
             onAuxClick={(event) => { if (event.button === 1) postBrowser({ type: "close", botId, tabId: tab.id }); }}>
             <TabIcon tab={tab} />
             <span className="bp-tab-label">{tab.crashed ? `${hostOf(tab.url)} (stopped)` : tabLabel(tab)}</span>
+            {tab.reading && <span className="bp-tab-reading" title={`${bot.name} is reading this page`}><img src={faceURL(bot, look, { working: true })} alt="" />reading</span>}
             <button type="button" className="bp-tab-close" aria-label={`Close ${hostOf(tab.url)}`} onClick={(event) => { event.stopPropagation(); postBrowser({ type: "close", botId, tabId: tab.id }); }}>{ICONS.close()}</button>
           </div>
         ))}

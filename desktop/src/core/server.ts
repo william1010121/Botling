@@ -1,4 +1,5 @@
 import { agyPermissionSessions, changeAgyPermissions } from "./agent/agy-permissions";
+import { setBrowserBridge } from "./browser-tools";
 import { ROUTINE_TICK_MS } from "./routines";
 import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
 import { discoveryFailure } from "./agent/model-discovery";
@@ -92,8 +93,8 @@ import type { ChatRecord } from "./store/records";
 import { ReleaseNotices, confirmHealthy, devWorkRoot, spawnInstaller } from "./self-update";
 
 /** What the core asks of main (self-update.ts, plugins/app-seam.ts). */
-export type AppOp = "screenshot" | "quit" | "installRelease";
-export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown }
+export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
+export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown; data?: unknown }
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
 
 export interface CoreOptions {
@@ -578,6 +579,8 @@ export class Core {
       log: (line) => this.log(`maintainer: ${line}`),
     });
     const app = options.app ?? null;
+    // The bots' tools on the in-app browser pane (browser-tools.ts) ask main through this.
+    setBrowserBridge(app ? (request) => app.request("browser", { request }) : null);
     this.releases = new ReleaseNotices({
       root: options.dataDir,
       developerMode: () => settingsView(readSettings(Layout.settings(options.dataDir))).developerMode,

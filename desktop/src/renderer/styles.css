@@ -1062,3 +1062,7 @@ button.wk-fc:hover { text-decoration: underline; }
 .shell.browser-full:not(.browser-mini) > .chat-pane { display: none; }
 .shell.browser-mini > .chat-pane { order: 2; flex: 0 0 380px; border-left: 1px solid var(--line); }
 .shell.browser-mini > .chat-pane .board-switch-bar { display: none; }
+
+/* A bot reading a browser tab (phase 2): its face and a quiet word in the tab. */
+.bp-tab-reading { display: inline-flex; align-items: center; gap: 3px; flex: none; font-size: 10px; color: var(--muted); }
+.bp-tab-reading img { width: 12px; height: 12px; border-radius: 50%; }

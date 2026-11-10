@@ -1,3 +1,4 @@
+import type { BrowserToolName } from "../../browser-bot";
 export const AGY_EXECUTION_BLOCKED = "Antigravity execution is blocked: the CLI has no verified pre-task policy barrier. No process or task was started. Choose another engine until a safe transport is available.";
 export interface AgyConfig {
   command: string;
@@ -10,6 +11,8 @@ export interface AgyConfig {
   workerEngine?: "agy" | "codex";
   /** A worker's app_notify_owner, from its run under way (its core's `notifyOwner`); absent: the worker has no such tool. */
   workerNotify?: (args: Record<string, unknown>) => unknown;
+  /** The in-app browser tools (core/browser-tools.ts), for this bot's pane; its workers inherit it. */
+  browser?: (name: BrowserToolName, args: Record<string, unknown>) => Promise<unknown>;
   /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). Bot heads are not restricted. */
   specWriters?: readonly string[];
   processStarted?: (pid: number) => void;

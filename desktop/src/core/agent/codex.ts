@@ -57,6 +57,7 @@ import type { HeadExit, HeadHandlers } from "./head";
 import { movedTaskError, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./workers";
 import { ComponentEditorAdapter, EditorTransport, type ComponentEditorAction, type ComponentEditorRoute } from "./component-editor";
 import { appTools, codexDynamicTools, workerAppTools } from "../app-tools/registry";
+import { isBrowserTool, type BrowserToolName } from "../../browser-bot";
 import { EFFORTS_BY_ENGINE } from "../../contract/efforts";
 import { readCodexModels, resolveCodexModel, type CodexModelEntry } from "./codex-models";
 
@@ -107,7 +108,9 @@ export type CodexOutput =
   | { kind: "close" }
   | { kind: "componentEditor"; action: ComponentEditorAction }
   | { kind: "recoverEditor"; task:string; run:number; session:string; checkpoint:string }
-  | { kind: "failed"; message: string };
+  | { kind: "failed"; message: string }
+  /** A browser tool call (any thread of this session): the head answers `rpcId` once main has. */
+  | { kind: "browser"; rpcId: unknown; tool: BrowserToolName; args: Record<string, unknown> };
 
 /** A worker as codex-threads/<session>.workers.json keeps it (`CodexManagedWorkerRecord`, 1.x's keys). */
 export interface WorkerRecord {
@@ -1918,6 +1921,10 @@ export class CodexSession implements CoordinatorPort {
     let args: any = params.arguments;
     if (typeof args === "string") { try { args = JSON.parse(args); } catch { args = null; } }
     if (!args || typeof args !== "object") args = {};
+    if (tool && isBrowserTool(tool)) {
+      // The user's browser pane (the coordinator's or a worker's call alike): answered when main has.
+      return [{ kind: "browser", rpcId, tool, args }];
+    }
     if (tool === "app_notify_owner") {
       // A worker's note to its owner (never the coordinator's tool): its run goes on.
       const requester = params.threadId !== this.threadId ? this.threads.requester(params.threadId) : null;
@@ -2208,6 +2215,8 @@ export class CodexThreads {
 // The process
 
 export interface CodexHeadConfig {
+  /** The in-app browser tools (core/browser-tools.ts), for this bot's pane: the coordinator's and its workers'. */
+  browser?: (name: BrowserToolName, args: Record<string, unknown>) => Promise<unknown>;
   restartWorkers?: WorkerRecord[];
   /** After an explicit restart (its time): the workers the ledger says it interrupted are checked and resumed. */
   restartRecovery?: number;
@@ -2430,6 +2439,15 @@ export class CodexHead {
         case "componentEditor":
           this.performEditor(output.action);
           break;
+        case "browser": {
+          const reply = (payload: unknown, success: boolean) => {
+            if (!this.closed && this.process) this.process.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: output.rpcId, result: { success, contentItems: [{ type: "inputText", text: typeof payload === "string" ? payload : JSON.stringify(payload) }] } })}\n`);
+          };
+          const run = this.config.browser;
+          if (!run) { reply({ error: "The in-app browser is not available here." }, false); break; }
+          void run(output.tool, output.args).then((result) => reply(result, true), (error) => reply({ error: (error as Error).message }, false));
+          break;
+        }
         case "close":
           this.stopEditors();
           this.closeInput();

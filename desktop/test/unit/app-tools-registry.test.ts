@@ -32,6 +32,6 @@ describe("app tools, byte for byte", () => {
   it("Codex's dynamic tools, and their signature (a change restarts every Codex coordinator thread)", () => {
     expect(pretty(MANAGED_TOOLS)).toBe(golden("codex"));
     expect(MANAGED_TOOL_SIGNATURE).toBe(JSON.stringify(JSON.parse(golden("codex"))));
-    expect(createHash("sha256").update(MANAGED_TOOL_SIGNATURE).digest("hex")).toBe("ec5c76def245474b0e6a8a950189ca6043676599e0d1a2fdbb7546d9e0790b16");
+    expect(createHash("sha256").update(MANAGED_TOOL_SIGNATURE).digest("hex")).toBe("7ea06c059ae792fcc4f9e1ecd4617549e34dfc29c9476ba09ccbaa6a37e32d39");
   });
 });

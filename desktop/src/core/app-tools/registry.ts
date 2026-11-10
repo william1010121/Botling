@@ -14,7 +14,8 @@ export type AppToolProvider = "claude" | "agy" | "codex";
 export type AppToolName =
   | "app_handoff" | "app_send_message" | "app_cancel_task" | "app_task_checkpoint" | "app_reconcile_report"
   | "app_routines" | "app_monitor_start" | "app_monitor_status" | "app_monitor_cancel"
-  | "app_notify_owner";
+  | "app_notify_owner"
+  | "app_browser_tabs" | "app_browser_open" | "app_browser_requests" | "app_browser_extract";
 type JsonSchema = Record<string, unknown>;
 /** A tool as an MCP server lists it (Claude's `appMcp`, the agy bridge). */
 export interface McpTool { name: string; description: string; inputSchema: JsonSchema }
@@ -64,6 +65,19 @@ const PARAMS = {
   command: () => text,
   monitor_id: () => text,
   files: () => ({ type: "array", items: text, maxItems: 20, description: "Full paths of files the note is about (a plan, a progress file, a result)." }),
+  // The in-app browser tools (browser-bot.ts, core/browser-tools.ts).
+  tab_id: () => ({ type: "string", description: "A tab of your browser pane, from app_browser_tabs (e.g. t3). Default: the tab the user has selected." }),
+  url: () => ({ type: "string", description: "An http(s) address." }),
+  url_contains: () => ({ type: "string", description: "Only requests whose URL contains this text (case does not matter)." }),
+  resource_type: () => ({ type: "string", description: "Only this DevTools resource type: document, xhr (Fetch/XHR), script, stylesheet, image, font, media, websocket, other." }),
+  method: () => ({ type: "string", description: "Only this HTTP method (GET, POST, …)." }),
+  limit: () => ({ type: "integer", minimum: 1, maximum: 200, description: "The newest this many matching requests (default 50)." }),
+  include_bodies: () => ({ type: "boolean", description: "Include response bodies (text; base64 for binary). Default false." }),
+  unmasked_headers: () => ({ type: "boolean", description: "Show Cookie, Set-Cookie and Authorization values instead of <masked>. Only when the user asked for them." }),
+  what: () => ({ type: "string", enum: ["tables", "text", "links", "selector", "script"], description: "tables: every <table> as headers + rows (default); text: the page's visible text; links: every link; selector: the elements matching selector; script: your own read-only script." }),
+  selector: () => ({ type: "string", description: "A CSS selector (what: selector)." }),
+  script: () => ({ type: "string", description: "what: script. The body of an async function run in the page (an isolated world, sees the DOM): return JSON-able data, e.g. return [...document.querySelectorAll('.price')].map(e => e.textContent). Read-only: clicking, submitting, typing, navigation and network calls are refused." }),
+  save_as: () => ({ type: "string", enum: ["json", "csv", "txt"], description: "Save the full result to a file (csv: rows or the first table) and get its path; give the user that path as a link in your reply. Large results are saved anyway." }),
 } satisfies Record<string, (options: AppToolOptions & { provider?: AppToolProvider }) => JsonSchema>;
 type ParamName = keyof typeof PARAMS;
 
@@ -125,7 +139,32 @@ const APP_TOOLS: readonly AppToolDef[] = [
       params: ["monitor_id"], required: ["monitor_id"] },
   } },
   { name: "app_notify_owner", forms: notifyForms() },
+  ...browserTools(),
 ];
+
+/**
+ * The in-app browser tools (phase 2, browser-bot.ts): every engine's coordinators and workers, the same words. They
+ * read only the user's own browser pane beside this bot's chat (its tabs, their captured traffic, the page) and may
+ * open a page there; they never click, type or submit.
+ */
+function browserTools(): AppToolDef[] {
+  const same = (form: ToolForm): Partial<Record<AppToolProvider, ToolForm>> => ({ claude: form, agy: form, codex: form });
+  return [
+    { name: "app_browser_tabs", forms: same({
+      description: "List the tabs open in the user's in-app browser pane beside your chat: tab_id, url, title, which one is selected, and how many network requests were captured. The pane is the user's own browser (their sign-ins); you read it, you do not drive it.",
+      params: [] }) },
+    { name: "app_browser_open", forms: same({
+      description: "Open an http(s) address in a tab of the user's browser pane beside your chat (it shows the pane; an open tab on that address is selected instead). Its network traffic is captured from then on, for app_browser_requests. Returns tab_id; the page loads in the background.",
+      params: ["url"], required: ["url"] }) },
+    { name: "app_browser_requests", forms: same({
+      description: "Read the network requests a tab of the user's browser pane made (captured in the background since the tab opened, the latest 500): method, URL, type, status, request and response headers, post data, and response bodies with include_bodies. Filter with url_contains, resource_type, method, limit. Cookie, Set-Cookie and Authorization are masked unless unmasked_headers. Use it to find a site's API and build a tool on it. save_as json saves everything to a file.",
+      params: ["tab_id", "url_contains", "resource_type", "method", "limit", "include_bodies", "unmasked_headers", "save_as"] }) },
+    { name: "app_browser_extract", forms: same({
+      description: "Read data from the page in a tab of the user's browser pane: its tables, visible text, links, the elements matching a CSS selector, or your own read-only script's result (JSON). Nothing on the page is clicked, typed or submitted. Data the user should get (a table, a CSV) goes to a file with save_as; link that file in your reply.",
+      params: ["tab_id", "what", "selector", "script", "save_as"] }) },
+  ];
+}
+const BROWSER_TOOL_NAMES: readonly AppToolName[] = ["app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"];
 
 /**
  * app_notify_owner, the one tool an app-managed worker has (every engine the same words): interim news or a question
@@ -142,13 +181,13 @@ function notifyForms(): Partial<Record<AppToolProvider, ToolForm>> {
 
 /** Which tools each provider's coordinator gets, in the order it lists them. */
 const PROVIDER_TOOLS: Record<AppToolProvider, readonly AppToolName[]> = {
-  claude: ["app_handoff", "app_send_message", "app_cancel_task"],
-  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task"],
-  codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint"],
+  claude: ["app_handoff", "app_send_message", "app_cancel_task", ...BROWSER_TOOL_NAMES],
+  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", ...BROWSER_TOOL_NAMES],
+  codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", ...BROWSER_TOOL_NAMES],
 };
 
-/** The tools an app-managed worker gets (never a coordinator): only app_notify_owner. */
-export const WORKER_APP_TOOLS: readonly AppToolName[] = ["app_notify_owner"];
+/** The tools an app-managed worker gets (never a coordinator): app_notify_owner and the browser tools. */
+export const WORKER_APP_TOOLS: readonly AppToolName[] = ["app_notify_owner", ...BROWSER_TOOL_NAMES];
 
 const render = (provider: AppToolProvider, names: readonly AppToolName[], options: AppToolOptions): McpTool[] => names.map((name) => {
   const form = APP_TOOLS.find((tool) => tool.name === name)!.forms[provider];

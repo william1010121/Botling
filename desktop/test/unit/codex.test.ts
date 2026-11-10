@@ -41,7 +41,7 @@ describe("Codex head: one coordinator thread", () => {
     const thread = out.params("thread/start");
     expect(thread).toMatchObject({ cwd: "/tmp/bot", approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write", developerInstructions: "You are a test bot.", environments: [] });
     expect(thread.config).toEqual({ "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled", "auto_review.extra_policy": expect.any(String) });
-    expect(thread.dynamicTools.map((t: { name: string }) => t.name)).toEqual(["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint"]);
+    expect(thread.dynamicTools.map((t: { name: string }) => t.name)).toEqual(["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"]);
     expect(out.all.find((o) => o.kind === "thread")).toEqual({ kind: "thread", id: "01a1640c-e2db-7742-998a-553a14d4336f" });
     expect(out.params("turn/start")).toMatchObject({ input: [{ type: "text", text: "Reply with the single word: hello" }], effort: "high" });
   });
@@ -231,7 +231,7 @@ describe("Codex head: app-managed workers", () => {
     const workerStart = handed.params("thread/start");
     expect(workerStart).toMatchObject({ cwd: "/tmp/bot", approvalPolicy: "on-request", sandbox: "workspace-write", developerInstructions: expect.stringContaining("You are a worker."), model: "gpt-worker", config: { "features.multi_agent": false, "agents.enabled": false } });
     // A worker thread's only dynamic tool: a note to its owner.
-    expect(workerStart.dynamicTools.map((t: { name: string }) => t.name)).toEqual(["app_notify_owner"]);
+    expect(workerStart.dynamicTools.map((t: { name: string }) => t.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"]);
     expect(session.workerRecords).toMatchObject([{ id: task, name: "Parser", run: 1, wasActive: true, reportPending: false }]);
     // The same request again (a retry) gets the same receipt and starts nothing.
     expect(new Out(session.receive(JSON.stringify({ method: "item/tool/call", id: serverId, params: { threadId: COORD, turnId: "t1", callId: `call-${serverId}`, tool: "app_handoff", arguments: { instructions: "Build the parser\nwith tests", name: "Parser" } } }))).writes[0]).toEqual(handed.writes[0]);
