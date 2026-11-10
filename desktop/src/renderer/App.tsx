@@ -544,7 +544,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           title={view.pluginPanel.title} onClose={() => store.closePluginPanel()} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />
       )}
       {railCollapsed ? (
-        <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!watching ? chat?.botId ?? null : null}
+        <RailStrip bots={view.bots} pinned={pinned} idle={idle} look={view.settings?.botLook ?? "original"} shown={!watching ? chat?.botId ?? null : null}
           waiting={(id) => view.waiting.items.some((item) => item.botId === id)}
           onSelect={selectBot} onMenu={(candidate, x, y) => setMenu({ bot: candidate, x, y })}
           onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }}
@@ -905,12 +905,13 @@ function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 const PEEK_GRACE_MS = 200;
 
 /**
- * The left column folded (1.x's RailStrip): faces only, the pinned ones first; hover (or focus) a face for a peek
+ * The left column folded (1.x's RailStrip): faces only, the rows the open column keeps above its Idle group (railSplit;
+ * the idle bots are left out), the pinned ones first, with no unread dot (no room beside a face); hover (or focus) a face for a peek
  * (StripPeek) with its name and status and, for a bot with sub bots, those sub bots, each opening its chat.
  * The chat is a native view above the shell, so an open peek covers it as one shell overlay across faces.
  */
-export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, settingsControl }: {
-  bots: BotView[]; pinned: string[]; look: "original" | "cute"; shown: string | null; waiting: (id: string) => boolean;
+export function RailStrip({ bots, pinned, idle = [], look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, settingsControl }: {
+  bots: BotView[]; pinned: string[]; idle?: string[]; look: "original" | "cute"; shown: string | null; waiting: (id: string) => boolean;
   onSelect: (id: string) => void; onMenu: (bot: BotView, x: number, y: number) => void; onExpand: () => void; onAddProject: () => void; onNewBot: () => void; settingsControl: ReactNode;
 }) {
   const [tip, setTip] = useState<{ botId: string; top: number } | null>(null);
@@ -925,8 +926,8 @@ export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu
     else setTip(null);
   }, [keep]);
   useEffect(() => keep, [keep]);
-  const order = railOrder(bots, pinned);
-  const pinnedCount = pinned.length;
+  const order = railSplit(bots, pinned, idle).rows;
+  const pinnedCount = order.filter(({ bot }) => pinned.includes(bot.id)).length;
   const faces = useRef(new Map<string, HTMLButtonElement>());
   return (
     <aside className="rail-strip" aria-label="Bots (folded)">
@@ -953,7 +954,6 @@ export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu
                 onContextMenu={bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
                 <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
                 {bot.connection && <span className="strip-disconnected" aria-hidden="true">!</span>}
-                {unread && <span className="strip-unread" aria-hidden="true" />}
               </button>
               {open && tip && (
                 <StripPeek bot={bot} subs={subs} detail={parts.join(" · ")} look={look} top={tip.top} shown={shown}
