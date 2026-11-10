@@ -23,6 +23,7 @@ import { pluginLinkRoute } from "../core/plugin-link";
 import { createBrowserHost, type BrowserHost } from "./browser-host";
 import { SiteToolStore } from "./site-tools";
 import { SITE_TOOLS_GUIDE_TEXT } from "./site-tools-guide";
+import { SITE_TOOLS_FOLDER } from "../core/site-tools-guard";
 import { BrowserBotHost } from "./browser-bot-host";
 import { parseBrowserBotRequest } from "../browser-bot";
 import { BROWSER_CHANNEL, isWebUrl, parseBrowserUp } from "../browser-wire";
@@ -372,7 +373,7 @@ const browserFor = (contents: WebContents) => browserHosts.get(contents.id) ?? n
 let siteTools: SiteToolStore | null = null;
 function siteToolStore(): SiteToolStore {
   if (!siteTools) {
-    siteTools = new SiteToolStore({ folder: join(dataDir, "browser-tools"), stateFile: join(dataDir, "browser-tools-state.json"), guide: SITE_TOOLS_GUIDE_TEXT, note });
+    siteTools = new SiteToolStore({ folder: join(dataDir, SITE_TOOLS_FOLDER), stateFile: join(dataDir, "browser-tools-state.json"), guide: SITE_TOOLS_GUIDE_TEXT, note });
     app.once("will-quit", () => siteTools?.dispose());
   }
   return siteTools;

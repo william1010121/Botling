@@ -141,6 +141,8 @@ export interface ClaudeWorkersOptions {
   maxRunning?(): number;
   /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). */
   specWriters?(): readonly string[];
+  /** The site tools folder these workers may not write (site-tools-guard.ts); none for Maintainer's. */
+  siteToolsFolder?(): string | null | undefined;
   /** The in-app browser tools (core/browser-tools.ts), for this bot's pane; absent: they answer that it is not available. */
   browser?(name: BrowserToolName, args: Record<string, unknown>): Promise<unknown>;
   home?: string;
@@ -185,7 +187,7 @@ interface Proc {
 }
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
-export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "browser">;
+export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "siteToolsFolder" | "browser">;
 
 /**
  * The Claude engine adapter (shared-core spec 4.1, the Claude row of 4.2): one `claude` process per worker, its
@@ -263,10 +265,12 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (!base) throw new Error("Workers cannot start now: this bot's Claude head is unavailable.");
     const def = r.type ? this.definition(r.type) : null;
     if (def && "error" in def) throw new Error(def.error);
+    const siteToolsFolder = this.options.siteToolsFolder?.();
     const config: HeadConfig = {
       ...base, cwd: this.options.cwd(), sessionId, resume: r.engineData.sessionStarted === true, forkSession: false, persistSession: true,
       model: this.model(r, base), effort: this.effort(r, base), monitorWorker: true, appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_WORKER_TOOLS }, agentGuard: CLAUDE_WORKER_GUARD,
       specGuard: { writers: this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
+      ...(siteToolsFolder ? { siteToolsGuard: { folder: siteToolsFolder } } : {}),
       systemPrompt: [CLAUDE_WORKER_POLICY, def?.prompt ?? ""].filter(Boolean).join("\n\n"),
       disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
       ...(def?.tools ? { tools: def.tools } : {}),

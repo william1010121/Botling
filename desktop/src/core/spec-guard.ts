@@ -101,10 +101,19 @@ interface Word { text: string; redirect?: boolean }
 
 /** Whether a shell command clearly writes into spec/ (best effort; see the top of this file). */
 export function shellWritesSpec(command: string, cwd: string, depth = 0): boolean {
+  const roots = specRoots(cwd);
+  return shellWritesUnder(command, cwd, (path, here) => inSpec(path, here, roots) || (here !== cwd && inSpec(path, here)), SPEC_MENTION, depth);
+}
+
+/**
+ * Whether a shell command clearly writes a path `inside` says is guarded (`here` is the folder the command is in at
+ * that point, following `cd`). `mention` finds the guarded folder in a one-line interpreter's code. Also used by
+ * site-tools-guard.ts.
+ */
+export function shellWritesUnder(command: string, cwd: string, inside: (path: string, here: string) => boolean, mention: RegExp | null = null, depth = 0): boolean {
   if (depth > 3) return false;
   let here = resolve(cwd);
-  const roots = specRoots(cwd);
-  const spec = (path: string) => inSpec(path, here, roots) || (here !== cwd && inSpec(path, here));
+  const spec = (path: string) => inside(path, here);
   const pipelines = segments(tokens(command));
   for (const pipeline of pipelines) {
     const mentions = pipeline.some((words) => words.some((w) => !w.redirect && spec(w.text)));
@@ -134,11 +143,11 @@ export function shellWritesSpec(command: string, cwd: string, depth = 0): boolea
       if (name === "xargs" && mentions && rest.some((a) => WRITES_ANY.has(basename(a)) || WRITES_LAST.has(basename(a)) || IN_PLACE.has(basename(a)))) return true;
       if (SHELLS.has(name) || name === "eval") {
         const script = name === "eval" ? rest.join(" ") : optionValue(rest, ["-c"]);
-        if (script && shellWritesSpec(script, here, depth + 1)) return true;
+        if (script && shellWritesUnder(script, here, inside, mention, depth + 1)) return true;
       }
       if (INTERPRETERS.test(name)) {
         const code = optionValue(rest, ["-c", "-e", "-p", "--eval", "--print"]);
-        if (code && SPEC_MENTION.test(code) && WRITE_WORDS.test(code)) return true;
+        if (code && mention?.test(code) && WRITE_WORDS.test(code)) return true;
       }
     }
   }

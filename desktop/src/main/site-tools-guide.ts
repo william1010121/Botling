@@ -8,6 +8,19 @@ in this folder:
     <this folder>/<tool-id>/tool.json
     <this folder>/<tool-id>/script.js
 
+## Who makes them
+
+Site tools are made and kept by Maintainer, so every bot reuses the same tools. Other bots never write in this
+folder (the app refuses it): they end their reply with \`<plugin>site tool: what it should do, on which page (its
+URL)</plugin>\` and Maintainer builds or widens a tool. Maintainer works in this order:
+
+1. Save the target page's HTML locally first (\`app_browser_extract\` on the page open in Botling's browser, or
+   save the page) and build and test the tool against that saved copy, not against guesses about the markup.
+2. Try it on the real page in Botling's browser and fix what differs.
+3. Finish with a screenshot of the tool working on the real page. A tool is not done without that screenshot.
+
+## Files
+
 The tool id is the folder name: lowercase letters, digits and dashes (\`hn-export\`). The app loads a tool as soon as
 its files are saved and shows it on the sites it matches; a broken tool is listed at the bottom of the sheet with
 the reason. A folder named like a built-in (\`reader-layout\`, \`chatgpt-export\`) replaces it.

@@ -2,6 +2,7 @@ import { ClaudeRequestTracker } from "../token-speed";
 import { claudeMonitorDecision, MONITOR_HOOK } from "./monitor-policy";
 import { claudeAutoRiskSettings } from "./auto-risk-policy";
 import { specGuardDecision } from "../spec-guard";
+import { siteToolsGuardDecision } from "../site-tools-guard";
 import { claudeHotEffortEnabled, settingsChange, type HotSettings } from "./hot-settings";
 // A bot's head: one long-lived `claude -p --input-format stream-json` process (as the Swift app's
 // `ClaudeAgentProcess`). Messages go in as JSON lines on stdin; replies, tool calls and permission
@@ -84,6 +85,8 @@ export interface HeadConfig {
    * (spec-guard.ts). Bot heads leave it out. None in harmless mode.
    */
   specGuard?: { writers: readonly string[] } | null;
+  /** The site tools folder this session may not write (every bot but Maintainer, and their workers; site-tools-guard.ts). */
+  siteToolsGuard?: { folder: string } | null;
 }
 
 /** One app tool as MCP's tools/list gives it. */
@@ -94,6 +97,8 @@ export const AGENT_GUARD_HOOK = "botling-agent-guard";
 const NATIVE_AGENT_TOOLS = ["Agent", "Task"];
 /** The PreToolUse hook that keeps a worker not on a spec writer's model out of spec/. */
 export const SPEC_GUARD_HOOK = "botling-spec-guard";
+/** The PreToolUse hook that keeps every session but Maintainer's out of the browser's site tools folder. */
+export const SITE_TOOLS_GUARD_HOOK = "botling-site-tools-guard";
 /** How long the CLI has to answer the policy `initialize` before the head fails closed. Under load it took ~20 s (2026-11-06). */
 export const POLICY_INIT_TIMEOUT_MS = 60_000;
 
@@ -233,12 +238,14 @@ export class ClaudeHead {
     const guard = !this.config.harmless && !!this.config.agentGuard;
     const app = !this.config.harmless && this.config.appMcp ? this.config.appMcp : null;
     const spec = !this.config.harmless && !!this.config.specGuard;
-    if (monitor || guard || app || spec) {
+    const siteTools = !this.config.harmless && !!this.config.siteToolsGuard;
+    if (monitor || guard || app || spec || siteTools) {
       this.monitorInit = `monitor-policy-${randomUUID()}`;
       this.monitorInitTimer = setTimeout(() => this.failMonitorPolicy(), POLICY_INIT_TIMEOUT_MS);
       this.monitorInitTimer.unref();
       const hooks = [...(monitor ? [{ matcher: "^Monitor$", hookCallbackIds: [MONITOR_HOOK] }] : []), ...(guard ? [{ matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }] : []),
-        ...(spec ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SPEC_GUARD_HOOK] }] : [])];
+        ...(spec ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SPEC_GUARD_HOOK] }] : []),
+        ...(siteTools ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SITE_TOOLS_GUARD_HOOK] }] : [])];
       this.write({ type: "control_request", request_id: this.monitorInit, request: { subtype: "initialize",
         ...(hooks.length ? { hooks: { PreToolUse: hooks } } : {}), ...(app ? { sdkMcpServers: [app.server] } : {}) } });
     }
@@ -296,6 +303,12 @@ export class ClaudeHead {
       const guard = this.config.specGuard;
       this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id,
         response: guard ? specGuardDecision(message.request.input, { model: this.config.model, writers: guard.writers, cwd: this.config.cwd }) : {} } });
+      return;
+    }
+    if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === SITE_TOOLS_GUARD_HOOK) {
+      const guard = this.config.siteToolsGuard;
+      this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id,
+        response: guard ? siteToolsGuardDecision(message.request.input, { folder: guard.folder, cwd: this.config.cwd }) : {} } });
       return;
     }
     if (message?.type === "control_request" && message.request?.subtype === "mcp_message") { void this.appMcp(message); return; }

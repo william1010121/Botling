@@ -27,3 +27,18 @@ export function componentEditorAgent(model: "sonnet" | "opus" | "haiku" | string
 export function pluginGuide(builtIns = "(no built-in plugins this time)"): string {
   return pluginGuideIndex(builtIns);
 }
+
+/**
+ * Approved 2026-11-10 (the user), desktop only, appended after the Swift golden text: browser site tools are Maintainer's
+ * alone (bots ask with <plugin>), and every visual tool, a site tool or a component, is built against the target page's
+ * saved HTML and ends with a screenshot. `folder` is the site tools folder (<data>/browser-tools).
+ */
+export function maintainerVisualToolRules(folder: string): string {
+  return [
+    `- Browser site tools (the puzzle tools in Botling's browser pane) are yours alone: they live in ${folder}, one folder per tool, and every bot reuses them. Read ${folder}/README.md for the format. Bots never write there; they ask you with <plugin>site tool: …</plugin>. Before making a new one, check whether a tool there already does it or can be widened (its matches, a field) instead.`,
+    "- For any visual tool (a site tool, or a component that copies a page's look), work in this order:",
+    "  1. First save the target page's HTML locally (app_browser_extract on the page open in Botling's browser, or save the page) into a scratch folder, and build and test the tool against that saved copy, not from memory or guesses about the markup.",
+    "  2. Then try it on the real page in Botling's browser (the site may have changed since the copy) and fix what differs.",
+    "  3. End with a screenshot of the tool working on the real page, and show it in your reply (![…](file://…)). Never report a visual tool done without that screenshot; if you cannot take one, say what is missing instead of calling it done.",
+  ].join("\n");
+}

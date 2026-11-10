@@ -223,6 +223,8 @@ export interface BotOptions {
   wakeNote?: () => string;
   /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
   addDirs?: () => string[];
+  /** The browser's site tools folder, which only Maintainer writes: this bot's Claude head and workers are refused writes there (site-tools-guard.ts). */
+  siteToolsFolder?: string;
   /** App-managed worktree (a plugin's `sessions.folder`, plugins/session-folders.ts): where its session starts instead of the project folder, and what else it may use there. */
   worktree?: () => { cwd: string; addDirs: string[] } | null;
   /** Another bot answering in its chat right now (a call-in's speaker). */
@@ -1261,6 +1263,7 @@ export class Bot {
       processStarted: (pid) => this.options.ledger.record(pid),
       maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
       specWriters: () => this.options.launch?.().specWriters ?? DEFAULT_SPEC_WRITERS,
+      siteToolsFolder: () => this.options.siteToolsFolder,
       browser: (name, args) => this.browserTool(name, args),
     }, (item) => this.onWorkerOutput(item), (id, text) => this.workerReport(text, id), (config, handlers) => new ClaudeHead(config, handlers));
     this.syncWorkerOwners();
@@ -3244,7 +3247,8 @@ export class Bot {
       // Claude's subagents are app-managed workers (claude-workers.ts): the app's tools come in over the control channel
       // and the native Agent/Task tool is gone. The hidden settings.json `claudeWorkers: "native"` keeps the native one.
       const workers = !config.harmless && this.claudeWorkersOn() ? this.ensureClaudeWorkers() : null;
-      head = new ClaudeHead({ ...config, monitorWorker: false, ...(workers ? { appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_APP_TOOLS }, agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
+      const siteTools = this.options.siteToolsFolder ? { siteToolsGuard: { folder: this.options.siteToolsFolder } } : {};
+      head = new ClaudeHead({ ...config, ...siteTools, monitorWorker: false, ...(workers ? { appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_APP_TOOLS }, agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
         onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit),
         ...(workers ? { onAppTool: (name: string, args: Record<string, unknown>) => isBrowserTool(name) ? this.browserTool(name, args) : workers.tool(name, args) } : {}),
       });
