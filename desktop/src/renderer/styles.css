@@ -556,7 +556,6 @@ button { font: inherit; color: inherit; }
 .strip-bot.working::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; border: 1.5px dashed var(--blue); }
 .strip-bot.disconnected::after { content: ""; position: absolute; inset: 3px; border-radius: 12px; border: 1.5px solid var(--orange); }
 .strip-disconnected { position: absolute; z-index: 1; right: 1px; bottom: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--orange); color: var(--side); box-shadow: 0 0 0 2px var(--side); font-size: 10px; font-weight: 900; line-height: 14px; text-align: center; }
-.strip-unread { position: absolute; right: 3px; top: 3px; width: 9px; height: 9px; border-radius: 50%; background: var(--blue); border: 2px solid var(--side); }
 .rail-tip-title { font-size: 12px; font-weight: 500; }
 .rail-tip-detail { font-size: 11px; color: var(--muted); }
 /* A folded face's peek (StripPeek): the bot's name, then any sub bots as the open column's rows; a strip on its
