@@ -149,7 +149,7 @@ export const SPARE_COLORS = [...new Set([
   ...[0.5, 0.68, 0.84].flatMap((lightness, ring) => Array.from({ length: 18 }, (_, i) => oklch(lightness, 0.16, i * 20 + ring * 10))),
 ])];
 
-const MAINTAINER_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
+export const MAINTAINER_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
 type ColorBot = { id: string; avatar: string; role?: string; parent?: string | null };
 
 /** Each bot's colour by id, clashes moved to the least clashing colour (see above). `pinned`: the

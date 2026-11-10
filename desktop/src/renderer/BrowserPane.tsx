@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hostOf, type BrowserBotState, type BrowserTabInfo } from "../browser-wire";
 import type { BotView } from "../contract";
-import { faceURL } from "./avatars";
+import { MAINTAINER_ID, faceURL } from "./avatars";
 import { FloatingChat } from "./FloatingChat";
 import { browserStore, postBrowser, useBrowser } from "./browser-state";
 import { askForToolText } from "../browser-site-tools";
@@ -218,7 +218,7 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, line
         </div>
         {sheet && (
           <SiteToolsSheet botId={botId} botName={bot.name} tab={active} catalog={catalog} runs={runs} onClose={() => setSheet(false)}
-            onAsk={onAskTool} askText={(page) => askForToolText(page, catalog?.folder ?? "the app's browser-tools folder", catalog?.guide ?? "its README.md")} closeIcon={ICONS.close()} />
+            onAsk={onAskTool} askText={(page) => askForToolText(page, catalog?.folder ?? "the app's browser-tools folder", catalog?.guide ?? "its README.md", botId === MAINTAINER_ID)} closeIcon={ICONS.close()} />
         )}
       </div>
     </section>

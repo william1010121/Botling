@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ClaudeHead, SITE_TOOLS_GUARD_HOOK, type HeadConfig } from "../../src/core/agent/head";
-import { SITE_TOOLS_DENIED, siteToolsGuardDecision } from "../../src/core/site-tools-guard";
+import { SITE_TOOLS_DENIED, siteToolsFolder, siteToolsGuardDecision } from "../../src/core/site-tools-guard";
 import { botPrompts } from "../../src/core/prompts";
 import { SITE_TOOLS_RULE } from "../../src/core/prompts";
 import { maintainerVisualToolRules } from "../../src/core/maintainer-text";
@@ -42,6 +42,20 @@ describe("the site tools guard", () => {
     ["Bash", { command: "echo x > /tmp/a" }],
   ])("allows %s %j", (tool, input) => {
     expect(siteToolsGuardDecision(hook(tool, input), { folder: FOLDER, cwd: "/p" })).toEqual({});
+  });
+
+  it.each([
+    ["Write", { file_path: "/Users/u/Library/Application Support/Botling 2/browser-tools/gemini-export/script.js", content: "x" }],
+    ["Bash", { command: "cat > \"/Users/u/Library/Application Support/Botling 2/browser-tools/gemini-export/script.js\" <<'EOF'\nx\nEOF" }],
+    ["Bash", { command: "cd \"/Users/u/Library/Application Support/Botling 2/browser-tools\" && cat > gemini-wide/tool.json <<EOF\n{}\nEOF" }],
+  ])("denies %s into a folder whose path has spaces %j", (tool, input) => {
+    expect(denied(siteToolsGuardDecision(hook(tool, input), { folder: "/Users/u/Library/Application Support/Botling 2/browser-tools", cwd: "/p" }))).toBe(true);
+  });
+
+  it("guards the app's site tools folder, not one inside the core's data folder", () => {
+    // The core runs with BOTLING_DATA_DIR=<app data>/core; the app keeps the site tools in <app data>/browser-tools.
+    expect(siteToolsFolder("/A/Botling 2/core", "/A/Botling 2")).toBe("/A/Botling 2/browser-tools");
+    expect(siteToolsFolder("/d", null)).toBe("/d/browser-tools");
   });
 
   it("the denial tells the session to ask Maintainer", () => {
