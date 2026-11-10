@@ -26,10 +26,12 @@ export function observeEditorLayout(element: HTMLElement, bridge: EditorBridge, 
       ? { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.floor(rect.width), height: Math.floor(rect.height) } : null;
     const occluded = shellOverlayActive();
     const revealImmediately = shellOverlayRevealImmediately();
-    const key = JSON.stringify({bounds, occluded, revealImmediately, stamp: bridge.current()});
+    // Floating over a page (FloatingChat.tsx), the native chat is drawn as a panel with rounded corners.
+    const rounded = !!bounds && element.classList.contains("chat-floating");
+    const key = JSON.stringify({bounds, occluded, revealImmediately, rounded, stamp: bridge.current()});
     if (key === previous) return;
     previous = key;
-    bridge.layout(bounds, occluded, revealImmediately);
+    bridge.layout(bounds, occluded, revealImmediately, rounded);
   };
   const observer = new ResizeObserver(update);
   observer.observe(element);

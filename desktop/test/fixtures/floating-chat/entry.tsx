@@ -9,21 +9,28 @@ import type { BotView } from "../../../src/contract";
 import { mountFloatChrome, type FloatChrome } from "../../../src/renderer/chat-frame/float-chrome";
 import type { ShellMessage } from "../../../src/renderer/chat-frame/protocol";
 import { observeEditorLayout, type EditorBridge } from "../../../src/renderer/editor-surface";
+import { editorMessageAllowed } from "../../../src/editor-host-wire";
 import { FloatingChat, floatChatMessage, useFloatMemory } from "../../../src/renderer/FloatingChat";
 import { ChatBody } from "../../../src/renderer/NoteDock";
 import { ColumnDivider } from "../../../src/renderer/ColumnDivider";
 
 type Box = { x: number; y: number; width: number; height: number } | null;
-const native: { chat: Box[] } = { chat: [] };
+const native: { chat: Box[]; rounded: boolean[]; refused: unknown[] } = { chat: [], rounded: [], refused: [] };
 let chrome: FloatChrome | null = null;
 const sent: unknown[] = [];
 (window as unknown as { __sent: unknown[] }).__sent = sent;
 (window as unknown as { __native: typeof native }).__native = native;
 const bridge = {
   current: () => "stamp",
-  layout(bounds: Box) { native.chat.push(bounds); return true; },
+  layout(bounds: Box, _occluded?: boolean, _reveal?: boolean, rounded?: boolean) { native.chat.push(bounds); native.rounded.push(!!rounded); return true; },
   subscribe() { return () => {}; },
-  post(message: ShellMessage) { if (message.botling === "floatChrome") chrome?.show(message.chrome); return true; },
+  // Through the same wire check main applies between the shell and the native chat (editor-host-wire.ts): a message
+  // it refuses never arrives, as in the app.
+  post(message: ShellMessage) {
+    if (!editorMessageAllowed("down", message)) { native.refused.push(message); return true; }
+    if (message.botling === "floatChrome") chrome?.show(message.chrome);
+    return true;
+  },
 } as unknown as EditorBridge;
 (window as unknown as { botling: { editorHost: EditorBridge } }).botling = { editorHost: bridge };
 
@@ -41,7 +48,11 @@ function Chat() {
   const page = useRef<HTMLDivElement>(null);
   useEffect(() => observeEditorLayout(placeholder.current!, bridge, () => true), []);
   useEffect(() => {
-    chrome = mountFloatChrome(page.current!, (message) => { sent.push(message); floatChatMessage(message); }, () => false);
+    chrome = mountFloatChrome(page.current!, (message) => {
+      sent.push(message);
+      if (!editorMessageAllowed("up", message)) { native.refused.push(message); return; }
+      floatChatMessage(message);
+    }, () => false);
     return () => chrome?.dispose();
   }, []);
   return (
