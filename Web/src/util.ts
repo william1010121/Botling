@@ -5,10 +5,10 @@ export function escapeHTML(text: string): string {
 }
 
 /** The small "Queued" mark on a line that waits to be sent; the line is drawn again without it once it is sent. */
-export function queuedBadge(): HTMLElement {
+export function queuedBadge(note?: { label: string; hint: string }): HTMLElement {
   const badge = document.createElement("span");
   badge.className = "queued-badge";
-  badge.textContent = t("messages.queued");
-  badge.title = t("messages.queuedHint");
+  badge.textContent = note?.label ?? t("messages.queued");
+  badge.title = note?.hint ?? t("messages.queuedHint");
   return badge;
 }

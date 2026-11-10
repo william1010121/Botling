@@ -476,3 +476,72 @@ describe("review round 4", () => {
     expect(await h.workers.sendToWorker(started.task_id, "Again.")).toMatchObject({ ok: true, run: 2 });
   });
 });
+
+describe("background work its process left running", () => {
+  const bg = { kind: "backgroundStarted", id: "bg1", description: "Write deploy record and update TODO", monitor: false };
+  const waits = (h: ReturnType<typeof harness>) => h.items.filter((i) => i.kind === "subagentWaitingOn");
+
+  it("keeps its process past the keep-alive while a background command runs, so the next run goes in at once", async () => {
+    const h = harness(undefined, { keepAliveMs: 10 });
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Deploy" }) as any;
+    const head = h.heads[0]!;
+    h.say(head, bg);
+    h.result(head, "Deployed.");
+    await wait(40);
+    expect(head.finished).toBe(false);
+    expect(h.workers.sendToWorker(task_id, "Next deploy")).toEqual({ ok: true, how: "newRun", run: 2 });
+    expect(head.sent.map((m) => m.text)).toEqual(["Deploy", "Next deploy"]);
+    expect(waits(h)).toEqual([]);
+    h.result(head, "Next done.");
+    // Its background command ends: the keep-alive may end the process again.
+    h.say(head, { kind: "subagentEnded", id: "bg1", status: "killed", summary: null });
+    await wait(40);
+    expect(head.finished).toBe(true);
+  });
+
+  it("never sends into a process whose stdin it closed: the run waits, says what for, takes steers, then goes into a resumed process", async () => {
+    const h = harness(undefined, { keepAliveMs: 10 });
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Deploy" }) as any;
+    const old = h.heads[0]!;
+    h.say(old, { kind: "init", sessionId: old.config.sessionId });
+    // Its stdin is closed, but claude stays until what it left in the background is done.
+    old.finish = function () { this.finished = true; };
+    h.result(old, "Deployed.");
+    await wait(40);
+    expect(old.finished).toBe(true);
+    expect(h.workers.sendToWorker(task_id, "Run five")).toEqual({ ok: true, how: "newRun", run: 2 });
+    expect(old.sent.map((m) => m.text)).toEqual(["Deploy"]);
+    expect(waits(h).at(-1)).toMatchObject({ id: task_id, on: { kind: "process", queued: 1 } });
+    expect(h.workers.sendToWorker(task_id, "Faster please")).toEqual({ ok: true, how: "steered", run: 2 });
+    expect(waits(h).at(-1)).toMatchObject({ id: task_id, on: { queued: 2 } });
+    // The old process's last turn (its background command's notice) is not this run's end.
+    h.result(old, "The background command was stopped.");
+    await wait(20);
+    expect(h.reports.map((r) => r.run)).toEqual([1]);
+    old.exit(0, true);
+    await wait(20);
+    const fresh = h.heads[1]!;
+    expect(fresh.config).toMatchObject({ resume: true, sessionId: old.config.sessionId });
+    expect(fresh.sent.map((m) => m.text)).toEqual(["Run five\n\nFaster please"]);
+    expect(waits(h).at(-1)).toEqual({ kind: "subagentWaitingOn", id: task_id, on: null });
+    h.result(fresh, "Run five done.");
+    await wait(20);
+    expect(h.reports.map((r) => r.run)).toEqual([1, 2]);
+  });
+
+  it("names the background command it waits for, and when it started", async () => {
+    const h = harness(undefined, { keepAliveMs: 10 });
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Deploy" }) as any;
+    const old = h.heads[0]!;
+    old.finish = function () { this.finished = true; };
+    h.say(old, bg);
+    h.result(old, "Deployed.");
+    // A stop of the keep-alive for another reason (it already closed stdin) leaves the command running.
+    (h.workers as any).adapter.procs.get(task_id).finishing = old;
+    const before = Date.now();
+    expect(h.workers.sendToWorker(task_id, "Run five")).toMatchObject({ ok: true, run: 2 });
+    const on = waits(h).at(-1)!.on;
+    expect(on).toMatchObject({ kind: "command", title: "Write deploy record and update TODO", queued: 1 });
+    expect(on.since).toBeLessThanOrEqual(before);
+  });
+});

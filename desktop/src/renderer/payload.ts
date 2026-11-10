@@ -335,6 +335,16 @@ export function subagentState(bot: BotView, subagent: SubagentView): { state: Ch
     }
   }
   const running = subagent.status === "running";
+  // Its words not delivered yet (its process still finishing background work): the last ones it was sent say so.
+  const waiting = running ? subagent.waitingOn ?? null : null;
+  if (waiting) {
+    let left = waiting.queued;
+    for (let i = messages.length - 1; i >= 0 && left > 0; i--) {
+      if (messages[i]!.role !== "user") continue;
+      messages[i] = { ...messages[i]!, queued: true, queuedOn: waiting };
+      left -= 1;
+    }
+  }
   if (!running) {
     const result = subagent.result?.trim() ?? "";
     if (pending.length || (result && result !== said)) {
@@ -360,6 +370,7 @@ export function subagentState(bot: BotView, subagent: SubagentView): { state: Ch
       engine: subagent.engine ?? (subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : subagent.type === "agy-worker" ? "agy" : subagent.type === "claude-worker" ? "claude" : bot.heads[0] ?? "claude"), model: subagent.model,
       runtime: subagent.runtime ?? null, outputTokens: subagent.outputTokens ?? null, tokenSpeed: subagent.tokenSpeed ?? null,
       startedAt: new Date(subagent.startedAt).getTime(), endedAt: subagent.endedAt ? new Date(subagent.endedAt).getTime() : null,
+      ...(waiting ? { waitingOn: waiting } : {}),
     },
   };
   return { state, extras };

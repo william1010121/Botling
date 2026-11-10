@@ -3679,6 +3679,9 @@ export class Bot {
       case "subagentRuntime":
         if (this.subagents.runtime(item.id, item.runtime, item.model)) this.subagentChanged(this.subagents.get(item.id), true);
         return true;
+      case "subagentWaitingOn":
+        if (this.subagents.waitingOn(item.id, item.on)) this.subagentChanged(this.subagents.get(item.id), true);
+        return true;
       case "subagentOutput":
         if (this.subagents.output(item.id, item.counter, item.tokens)) this.subagentChanged(this.subagents.get(item.id), true);
         return true;
@@ -6096,6 +6099,7 @@ export function subagentView(subagent: SubagentRecord, owner: string, book: Suba
     runtime: runtime ? { reasoningEffort: text(runtime.reasoningEffort), serviceTier: text(runtime.serviceTier) } : null,
     outputTokens: reportedOutputTokens(subagent),
     tokenSpeed: speedView(readTotals(subagent.speed)),
+    waitingOn: book.waitOf(subagent),
     execution: subagent.execution ?? null,
     prompt: clip(subagent.prompt, 20_000) ?? "",
     steps: [

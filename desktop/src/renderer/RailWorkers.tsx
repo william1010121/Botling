@@ -28,7 +28,8 @@ function WorkerItem({ item, now, lang, actions }: { item: RailWorkerItem; now: n
   const name = item.row.title || "Worker";
   const state = railStateWord(item, lang);
   const time = railWorkerTime(item, now, lang);
-  const classes = ["rail-wk-row", item.state, item.viewed ? "viewed" : "", item.selected ? "selected" : ""].filter(Boolean).join(" ");
+  const waiting = item.state === "running" && !!item.row.waitingOn;
+  const classes = ["rail-wk-row", item.state, waiting ? "waiting" : "", item.viewed ? "viewed" : "", item.selected ? "selected" : ""].filter(Boolean).join(" ");
   return (
     <div className={classes} data-worker={item.row.id}>
       <button type="button" className="rail-wk-open" title={item.row.prompt} onClick={() => actions.onOpen(item.ownerId, item.row)}
@@ -39,7 +40,7 @@ function WorkerItem({ item, now, lang, actions }: { item: RailWorkerItem; now: n
           <span className="rail-wk-name">{name}</span>
           <span className="rail-wk-meta">
             <SubBotTag subBot={item.subBot} />
-            <span className="rail-wk-state">{state}</span>{time && <>・{time}</>}
+            <span className="rail-wk-state" title={waiting ? state : undefined}>{state}</span>{time && <>・{time}</>}
           </span>
         </span>
       </button>

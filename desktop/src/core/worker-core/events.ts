@@ -4,6 +4,10 @@
 import type { Engine } from "../heads";
 import type { RequestEvent } from "../token-speed";
 import type { RateLimits, TokenUsage } from "../usage";
+import type { WaitingOnView } from "../../contract";
+
+/** What a run's undelivered words wait for (contract `WaitingOnView`). */
+export type WaitingOn = WaitingOnView;
 
 export type { Engine };
 
@@ -39,6 +43,8 @@ export type WorkerEvent =
   | { type: "permissionDenied"; toolUseId: string; tool: string | null; reason: string; confirmed: boolean }
   | { type: "connectionLost" }
   | { type: "rateLimits"; engine: "claude" | "codex"; limits: RateLimits }
+  /** The run's words wait before they reach its session (its process still finishing background work); null: delivered. */
+  | { type: "waitingOn"; on: WaitingOn | null }
   /** The engine says this run's turn is over. Exactly one per run; later events of the run are dropped by the core. */
   | { type: "end"; end: RunEnd };
 

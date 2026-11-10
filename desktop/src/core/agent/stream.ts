@@ -5,7 +5,7 @@
 import { estimateContentTokens, type RequestEvent } from "../token-speed";
 import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
 
-import type { RunEnd } from "../worker-core/events";
+import type { RunEnd, WaitingOn } from "../worker-core/events";
 import type { SubagentRuntime, SubagentExecution, PreviousRunEnd } from "../subagents";
 import { scheduleResult, type ScheduleResult } from "../session-schedules";
 import { isConnectionLoss } from "../network-resume";
@@ -51,6 +51,8 @@ export type StreamItem =
   | { kind: "subagentEnded"; id: string; status: string; summary: string | null }
   /** A notification that is not a report: the subagent waits on its own background work. */
   | { kind: "subagentWaiting"; id: string }
+  /** A worker's run whose words are not delivered yet, and what they wait for (null: delivered). */
+  | { kind: "subagentWaitingOn"; id: string; on: WaitingOn | null }
   /** A tool approval. Codex's workerId makes its lifetime independent of the coordinator turn. */
   /** `safetyCheck`: why Claude Code's own safety check asks, even with permissions bypassed; `noAlways`: no always rule may cover it. */
   | { kind: "permission"; requestId: string; tool: string; summary: string; input: Record<string, unknown>; workerId?: string; safetyCheck?: string; noAlways?: boolean }
