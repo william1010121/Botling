@@ -89,7 +89,7 @@ import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
 import { maintainerInstructions, maintainerVisualToolRules } from "./maintainer-text";
-import { SITE_TOOLS_FOLDER } from "./site-tools-guard";
+import { siteToolsFolder } from "./site-tools-guard";
 import type { ChatRecord } from "./store/records";
 import { ReleaseNotices, confirmHealthy, devWorkRoot, spawnInstaller } from "./self-update";
 
@@ -461,7 +461,7 @@ export class Core {
       if (Array.isArray(removed)) for (const key of removed) if (typeof key === "string") this.removedPluginBots.add(key);
     } catch { /* none */ }
     const appMaintainer = maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, options.shotCommand ?? null)
-      + "\n" + maintainerVisualToolRules(join(options.dataDir, SITE_TOOLS_FOLDER)));
+      + "\n" + maintainerVisualToolRules(siteToolsFolder(options.dataDir, options.app?.dataDir)));
     const profiles = [...loaded.profiles, appMaintainer];
     const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig);
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
@@ -516,9 +516,9 @@ export class Core {
         addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.parent && !other.problem).map((other) => join(other.folder, ".bot"))
           // Maintainer: the folders you let it read (<need-folder>).
           // and the browser's site tools, which are its alone.
-          : profile.id === MAINTAINER_ID ? () => [join(options.dataDir, SITE_TOOLS_FOLDER), ...this.maintainer.approvedFolders()] : undefined,
+          : profile.id === MAINTAINER_ID ? () => [siteToolsFolder(options.dataDir, options.app?.dataDir), ...this.maintainer.approvedFolders()] : undefined,
         // Every other bot's Claude head and workers are refused writes into the site tools folder (site-tools-guard.ts).
-        siteToolsFolder: profile.id === MAINTAINER_ID ? undefined : join(options.dataDir, SITE_TOOLS_FOLDER),
+        siteToolsFolder: profile.id === MAINTAINER_ID ? undefined : siteToolsFolder(options.dataDir, options.app?.dataDir),
         subBotRows: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => this.subBotRows(profile.id),
         components: this.components,
         onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),

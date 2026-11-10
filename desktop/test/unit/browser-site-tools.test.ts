@@ -278,8 +278,17 @@ describe("wire", () => {
     expect(parseBrowserUp({ type: "tool.run", botId: "b1", tabId: "t1", toolId: "a", options: Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`k${i}`, "v"])) })).toBeNull();
   });
 
-  it("asks the bot with the page, the folder and the guide", () => {
-    const text = askForToolText("https://chatgpt.com/c/1", "/data/browser-tools", "/data/browser-tools/README.md");
+  it("asks any other bot to hand the request on to Maintainer, never to write the tool itself", () => {
+    const text = askForToolText("https://gemini.google.com/app/1", "/data/browser-tools", "/data/browser-tools/README.md", false);
+    expect(text).toContain("https://gemini.google.com/app/1");
+    expect(text).toContain("Maintainer");
+    expect(text).toContain("<plugin>site tool:");
+    expect(text).not.toContain("/data/browser-tools");
+    expect(text).not.toMatch(/Write it as a folder/);
+  });
+
+  it("asks Maintainer with the page, the folder and the guide", () => {
+    const text = askForToolText("https://chatgpt.com/c/1", "/data/browser-tools", "/data/browser-tools/README.md", true);
     expect(text).toContain("https://chatgpt.com/c/1");
     expect(text).toContain("/data/browser-tools/<tool-id>/");
     expect(text).toContain("/data/browser-tools/README.md");

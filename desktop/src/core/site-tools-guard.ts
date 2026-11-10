@@ -13,6 +13,14 @@ import { shellWritesUnder } from "./spec-guard";
 export const SITE_TOOLS_FOLDER = "browser-tools";
 export const SITE_TOOLS_DENIED = "Browser site tools are made and kept only by Maintainer, so every bot can reuse them; this session may read the site tools folder but not write it. Leave it as it is: a bot ends its reply with <plugin>site tool: what it should do, on which page (its URL)</plugin>; a worker says in its report that a site tool is needed.";
 
+/**
+ * The site tools folder the app reads (main.ts `SiteToolStore`): in the app's data folder, which is the parent of the
+ * core's own (`BOTLING_DATA_DIR` is <app data>/core). Without the app around it, the core's data folder.
+ */
+export function siteToolsFolder(coreDataDir: string, appDataDir: string | null | undefined): string {
+  return join(appDataDir || coreDataDir, SITE_TOOLS_FOLDER);
+}
+
 const FILE_EDIT_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 
 /** Whether `path` (absolute, or relative to `cwd`) is the site tools folder or inside it. */

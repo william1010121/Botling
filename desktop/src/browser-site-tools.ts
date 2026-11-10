@@ -312,8 +312,17 @@ export function safeFileName(name: string): string | null {
   return stem ? `${stem}.${extension}` : null;
 }
 
-/** What the "Ask Botling to make a tool" button sends to the bot's chat. */
-export function askForToolText(url: string, folder: string, guide: string): string {
+/**
+ * What the "Ask Botling to make a tool" button sends to the bot's chat. Site tools are Maintainer's alone
+ * (core/site-tools-guard.ts): any other bot asks what the tool should do and hands it on with <plugin>.
+ */
+export function askForToolText(url: string, folder: string, guide: string, maintainer: boolean): string {
+  if (!maintainer) return [
+    `Please get a site tool made for this page in the app's browser: ${url}`,
+    "",
+    "First ask me in one line what it should do (suggest two or three ideas that fit this site).",
+    `Then hand it to Maintainer, who makes and keeps every site tool: end your reply with <plugin>site tool: what it should do, on ${url}</plugin>. Do not write the tool yourself.`,
+  ].join("\n");
   return [
     `Please make a site tool for this page in the app's browser: ${url}`,
     "",
