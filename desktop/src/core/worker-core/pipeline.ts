@@ -71,6 +71,7 @@ export class RunPipeline {
         return;
       case "connectionLost": this.out({ kind: "connectionLost", parent: this.ids.workerId }); return;
       case "rateLimits": this.out({ kind: "rateLimits", engine: event.engine, limits: event.limits }); return;
+      case "waitingOn": this.out({ kind: "subagentWaitingOn", id: this.ids.workerId, on: event.on }); return;
       case "session": case "process": case "permission": case "permissionCancelled":
         this.hooks.control(event);
         return;

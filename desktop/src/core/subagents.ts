@@ -9,6 +9,7 @@
 // Every step and run boundary goes to `sink`, which the store appends.
 
 // Dates are Swift dates (seconds since 2001); keys 2.0 does not know are kept on each record.
+import type { WaitingOnView } from "../contract";
 import { addSample, readTotals, type RequestEvent, type SpeedTotals } from "./token-speed";
 import type { Launch } from "./agent/stream";
 import { characterPrefix } from "./briefing";
@@ -19,7 +20,7 @@ import type { SubagentLine } from "./store/subagent-store";
 export type SubagentStatus = "running" | "completed" | "failed" | "stopped";
 
 /** A row for the left column / "Settled" (the contract's SubagentRowView). */
-export interface SubagentRow { outputTokens?: number | null; id: string; title: string; status: SubagentStatus; head: "claude" | "codex" | "agy" | null; startedAt: number; endedAt: number | null; unsettledAt: number | null; settled: boolean; prompt: string; group?: { id: string; title: string } }
+export interface SubagentRow { waitingOn?: WaitingOnView; outputTokens?: number | null; id: string; title: string; status: SubagentStatus; head: "claude" | "codex" | "agy" | null; startedAt: number; endedAt: number | null; unsettledAt: number | null; settled: boolean; prompt: string; group?: { id: string; title: string } }
 
 export { LISTED_AFTER_ENDING_MS, LISTED_AT_MOST, listedRows, settledRows } from "../contract";
 
@@ -182,6 +183,8 @@ export class SubagentBook {
   /** The current run's last steps of a subagent loaded without them (set by the bot). */
   loadSteps: ((id: string) => StepRecord[]) | null = null;
   private readonly hydrated = new WeakSet<SubagentRecord>();
+  /** What each running worker's undelivered words wait for (`waitingOn`). */
+  private readonly waits = new Map<string, WaitingOnView>();
   /**
    * An app-managed worker's status/endedAt/result are the worker ledger's projection (`project`), not its end notices
    * (shared-core spec 3.5). Off until the bot projects the ledger (S4b).
@@ -351,6 +354,21 @@ export class SubagentBook {
     return changed;
   }
 
+  /** What its run's undelivered words wait for (null: nothing). Kept in memory only: a restart starts a new process. */
+  waitingOn(id: string, on: WaitingOnView | null): boolean {
+    const child = this.resolve(id);
+    if (!child) return false;
+    const before = this.waits.get(child.id) ?? null;
+    if (JSON.stringify(before) === JSON.stringify(on)) return false;
+    if (on) this.waits.set(child.id, on); else this.waits.delete(child.id);
+    return true;
+  }
+
+  /** What it waits for, while it is running. */
+  waitOf(subagent: SubagentRecord): WaitingOnView | null {
+    return subagent.status === "running" ? this.waits.get(subagent.id) ?? null : null;
+  }
+
   /** A finished request of this child, into its running token-speed sums (see token-speed.ts). */
   speed(id: string, request: RequestEvent): boolean {
     const child = this.resolve(id);
@@ -451,6 +469,7 @@ export class SubagentBook {
       settled: isSettled(subagent),
       prompt: subagent.prompt.slice(0, 1_000),
       ...jobOf(subagent),
+      ...(this.waitOf(subagent) ? { waitingOn: this.waitOf(subagent)! } : {}),
     }));
   }
 

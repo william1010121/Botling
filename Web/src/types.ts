@@ -95,6 +95,8 @@ export interface MessageView {
   via?: string;
   /** Waiting for the bot's turn under way to end: it cannot take the line in yet. Drawn as a "Queued" badge until it is sent. */
   queued?: boolean;
+  /** A queued line of a worker that waits for its process to finish background work, not for a turn: "Not delivered yet". */
+  queuedOn?: SubagentWaitingOn;
   /** What the bot did on the way to this reply. */
   steps?: StepView[] | null;
   /** Result pages it links to, drawn as 「網頁預覽卡片」 cards under it. */
@@ -292,7 +294,11 @@ export interface SubagentHeaderView {
   runtime?: { reasoningEffort?: string | null; serviceTier?: string | null } | null;
   /** The parent head's effort, an inference for a subagent that reports none: shown marked. */
   inheritedEffort?: string | null;
+  /** Its words not delivered yet: what they wait for (a background command, a Monitor, an agent, its process ending); `since` in ms. */
+  waitingOn?: SubagentWaitingOn | null;
 }
+
+export interface SubagentWaitingOn { kind: "command" | "monitor" | "agent" | "process"; title: string; since: number; queued: number }
 
 export interface ChatState {
   /** The head's own token speed; absent or null: nothing timed yet. */

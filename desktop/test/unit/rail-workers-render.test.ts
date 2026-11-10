@@ -104,3 +104,14 @@ describe("the count on the bot row", () => {
     expect(folded).toContain('<span class="rail-wk-count" title="2 finished">2</span>');
   });
 });
+
+describe("a worker whose words wait for its background work, as drawn", () => {
+  it("says what it waits for (the reason may be cut, never the time) instead of Running", () => {
+    const waiting = bot({ id: "board", subagentRows: [row({ id: "board-zero-downtime", startedAt: NOW - 40 * MIN,
+      waitingOn: { kind: "command", title: "Write deploy record and update TODO", since: NOW - 25 * MIN, queued: 2 } })] });
+    const out = renderToStaticMarkup(createElement(RailWorkerList, { botId: "board", list: railWorkers(waiting, [waiting], NOW, marks), name: "board", now: NOW, lang: null, actions }));
+    expect(out).toContain('class="rail-wk-row running waiting"');
+    expect(out).toContain('<span class="rail-wk-state" title="Waiting for background command: Write deploy record and update TODO">Waiting for background command: Write deploy record and update TODO</span>・25m');
+    expect(out).not.toContain(">Running<");
+  });
+});

@@ -150,6 +150,19 @@ export const TaskView = z.strictObject({
 });
 export type TaskView = z.infer<typeof TaskView>;
 
+/**
+ * What a worker's run waits for before its words reach its session: its process still finishing what it left in the
+ * background (a command, a Monitor, a background agent) after the app closed its input. `since`: when that started
+ * (ms); `queued`: messages not delivered yet.
+ */
+export const WaitingOnView = z.strictObject({
+  kind: z.enum(["command", "monitor", "agent", "process"]),
+  title: z.string().max(400),
+  since: z.number(),
+  queued: z.number().int().nonnegative(),
+});
+export type WaitingOnView = z.infer<typeof WaitingOnView>;
+
 /** A subagent's own conversation, read only. */
 export const SubagentView = z.strictObject({
   id: z.string().max(200),
@@ -184,6 +197,8 @@ export const SubagentView = z.strictObject({
   endedAt: z.string().nullable(),
   /** The bot whose process runs it, when that is not its owner (A1: an agent moved to another bot). */
   host: z.string().max(200).nullable().optional(),
+  /** Running, its words not delivered yet: what it waits for. */
+  waitingOn: WaitingOnView.nullable().optional(),
 });
 export type SubagentView = z.infer<typeof SubagentView>;
 
@@ -359,6 +374,8 @@ export const SubagentRowView = z.strictObject({
   settled: z.boolean(),
   /** Cut off by a connection error; cleared once its owner resumes (1.x subagentIsWaitingForNetwork). */
   waitingForNetwork: z.boolean().optional(),
+  /** Running, its words not delivered yet: what it waits for (SubagentView's). */
+  waitingOn: WaitingOnView.optional(),
   /** What it was asked (the row's tooltip). */
   prompt: z.string().max(1_000),
   /** A sub bot (a hidden bot of its own under this one): the row opens its chat, with an input box, and this is its bot id. */

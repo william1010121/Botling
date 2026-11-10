@@ -1131,6 +1131,9 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .rail-wk-meta { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rail-wk-row.viewed .rail-wk-open { color: var(--muted); }
 .rail-wk-row.running .rail-wk-state { color: var(--link); }
+/* Its words wait for its process to finish background work: the reason truncates, the time it has waited stays. */
+.rail-wk-row.waiting .rail-wk-meta { display: flex; align-items: baseline; }
+.rail-wk-row.waiting .rail-wk-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--orange-text, var(--link)); }
 .rail-wk-row.done:not(.viewed) .rail-wk-state { color: var(--green); }
 .rail-wk-row.failed .rail-wk-state { color: var(--error); }
 /* One job's workers as one item: a dot per worker, its workers indented under it once opened (no blue dot). */

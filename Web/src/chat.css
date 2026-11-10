@@ -560,6 +560,9 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 .sub-text > :last-child { margin-bottom: 0; }
 .sub-text.error { color: var(--error); }
 .sub-dots { padding: 6px 0 0; }
+/* Its words not delivered yet: what they wait for, in the header (instead of "Running") and under its work. */
+#subagent-bar .waiting-on { flex: 0 1 auto; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--orange-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-waiting { padding: 6px 0 0; font-size: 13px; color: var(--orange-text); overflow-wrap: anywhere; }
 
 /* Pictures going with a component report. */
 .report.dropping { border-color: var(--blue); }

@@ -316,7 +316,7 @@ class Chat {
         updateTypingElement(row, run.live, run.retrying);
       } else {
         row?.remove();
-        row = state.subagent ? subagentLiveElement(run.live) : typingElement(run.avatar, run.live, run.retrying);
+        row = state.subagent ? subagentLiveElement(run.live, state.subagent.waitingOn) : typingElement(run.avatar, run.live, run.retrying);
         this.typing.set(run.id, row);
       }
       row.dataset.runId = run.id;

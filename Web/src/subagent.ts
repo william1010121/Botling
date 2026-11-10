@@ -4,7 +4,7 @@ import { t, type Key } from "./i18n";
 import { queuedBadge } from "./util";
 import { renderMarkdown } from "./markdown";
 import { foldedRun, liveElement, statusWord } from "./steps";
-import type { MessageView, StepView, SubagentHeaderView } from "./types";
+import type { MessageView, StepView, SubagentHeaderView, SubagentWaitingOn } from "./types";
 
 /**
  * A subagent's view, read only (there is nothing to type to it): a header with its bot › its
@@ -29,7 +29,7 @@ export function subagentMessageElement(message: MessageView): HTMLElement {
     // "From {bot}" in the page's language, with the name set apart.
     const [before, after = ""] = t("subagent.from", { bot: "\u0000" }).split("\u0000");
     label.append(before, who, after, message.time ? ` · ${message.time}` : "");
-    if (message.queued) label.append(queuedBadge());
+    if (message.queued) label.append(queuedBadge(message.queuedOn ? { label: t("subagent.notDelivered"), hint: t("subagent.notDeliveredOn", { what: waitingWhat(message.queuedOn) }) } : undefined));
     const body = document.createElement("div");
     body.className = "sub-from-body markdown";
     body.innerHTML = renderMarkdown(message.text);
@@ -42,12 +42,46 @@ export function subagentMessageElement(message: MessageView): HTMLElement {
   return row;
 }
 
-/** What it is doing right now, the way the main chat shows a turn under way: its latest steps, the one under way spinning. */
-export function subagentLiveElement(steps: StepView[]): HTMLElement {
+/** What its undelivered words wait for: "background command: Write deploy record…". */
+export function waitingWhat(on: SubagentWaitingOn): string {
+  return on.kind === "process" ? t("subagent.wait.process") : t(`subagent.wait.${on.kind}` as Key, { title: on.title });
+}
+
+/** How long it has waited: "25 min", "1 h 5 min". */
+export function waitedFor(on: SubagentWaitingOn, now = Date.now()): string {
+  const minutes = Math.floor(Math.max(0, now - on.since) / 60_000);
+  if (minutes < 1) return t("subagent.underMinute");
+  return minutes < 60 ? t("subagent.minutes", { n: String(minutes) }) : t("subagent.hours", { h: String(Math.floor(minutes / 60)), m: String(minutes % 60) });
+}
+
+/** The header's line: "Waiting for background command: Write deploy record… · 25 min". */
+export function waitingLine(on: SubagentWaitingOn, now = Date.now()): string {
+  return `${t("subagent.waitingOn", { what: waitingWhat(on) })} · ${waitedFor(on, now)}`;
+}
+
+// The header's waiting time moves with the clock alone: refreshed every 30 s.
+let waitingTimer: ReturnType<typeof setInterval> | null = null;
+function tickWaiting(element: HTMLElement, on: SubagentWaitingOn) {
+  (element as HTMLElement & { waitingOn?: SubagentWaitingOn }).waitingOn = on;
+  waitingTimer ??= setInterval(() => {
+    const shown = [...document.querySelectorAll<HTMLElement & { waitingOn?: SubagentWaitingOn }>(".waiting-on")];
+    if (!shown.length && waitingTimer) { clearInterval(waitingTimer); waitingTimer = null; return; }
+    for (const each of shown) if (each.waitingOn) each.textContent = waitingLine(each.waitingOn);
+  }, 30_000);
+}
+
+/** What it is doing right now, the way the main chat shows a turn under way: its latest steps, the one under way spinning. Its words not delivered yet: what they wait for, instead of the typing dots. */
+export function subagentLiveElement(steps: StepView[], waiting?: SubagentWaitingOn | null): HTMLElement {
   const row = document.createElement("div");
   row.className = "row sub-work live";
   if (steps.length) row.append(liveElement(steps));
-  if (!steps.some((step) => !step.done)) {
+  if (waiting) {
+    const note = document.createElement("div");
+    note.className = "sub-waiting";
+    note.setAttribute("role", "status");
+    note.textContent = t("subagent.notDeliveredOn", { what: waitingWhat(waiting) });
+    row.append(note);
+  } else if (!steps.some((step) => !step.done)) {
     const dots = document.createElement("div");
     dots.className = "dots sub-dots";
     dots.setAttribute("aria-label", t("messages.working"));
@@ -97,8 +131,20 @@ export function fillSubagentBar(bar: HTMLElement, header: SubagentHeaderView): v
   const fast = tier === "fast" || tier === "priority" ? t("subagent.fastOn")
     : tier === "default" || tier === "flex" ? t("subagent.fastOff")
     : tier === "ultrafast" ? "Ultrafast" : t("subagent.fastUnknown");
+  const waiting = status === "running" ? header.waitingOn ?? null : null;
   meta.textContent = [header.host ? `Host: ${header.host}` : null, header.model, worker ? null : type, t("subagent.effort", { effort }), engine === "codex" ? fast : null,
-    statusWord(status), t("subagent.watchOnly")].filter(Boolean).join(" · ");
+    waiting ? null : statusWord(status), t("subagent.watchOnly")].filter(Boolean).join(" · ");
   meta.title = t("subagent.runtimeHelp") + (engine === "codex" && tier ? ` (${tier})` : "");
-  bar.append(back, separator, name, badge, meta, subagentSpeedElement(header));
+  bar.append(back, separator, name, badge, meta);
+  if (waiting) {
+    // Not "Running": its words have not reached it yet; say what they wait for and for how long.
+    const line = document.createElement("span");
+    line.className = "waiting-on";
+    line.setAttribute("role", "status");
+    line.textContent = waitingLine(waiting);
+    line.title = t("subagent.notDeliveredOn", { what: waitingWhat(waiting) });
+    tickWaiting(line, waiting);
+    bar.append(line);
+  }
+  bar.append(subagentSpeedElement(header));
 }

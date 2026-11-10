@@ -26,6 +26,7 @@ import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import { commandEnded, type StreamItem } from "./stream";
+import type { WaitingOn } from "../worker-core/events";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
 import { WORKER_NOTIFY_RULE } from "../prompts/delegation";
 import { EFFORTS_BY_ENGINE, type EffortLevel } from "../../contract/efforts";
@@ -186,7 +187,17 @@ interface Proc {
   model?: string | null;
   /** The config a run started with, for its opening items (null: it went into the kept-alive process). */
   opening?: { run: number; base: HeadConfig | null };
+  /** What its process left running in the background (a command, a Monitor, an agent), by tool call. */
+  background: Map<string, { kind: "command" | "monitor" | "agent"; title: string; since: number }>;
+  /** Its head once the app closed its input (`finish`): nothing more can be written to it; it ends after its background work. */
+  finishing?: ClaudeWorkerHead;
+  finishingSince?: number;
+  /** A run whose words wait for the finishing process to end: then a new process (`--resume`) takes them all. */
+  held?: { run: RunHandle; record: Readonly<WorkerLedgerRecord>; words: string[]; since: number };
 }
+
+/** Background work started longer ago than this no longer keeps a worker's process past its keep-alive (the bots' rule). */
+const BACKGROUND_HOLDS_MS = 6 * 3600_000;
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
 export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "siteToolsFolder" | "browser">;
@@ -208,7 +219,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
 
   private procOf(id: string): Proc {
     let proc = this.procs.get(id);
-    if (!proc) { proc = { queued: new Set(), stream: new ClaudeStreamEvents() }; this.procs.set(id, proc); }
+    if (!proc) { proc = { queued: new Set(), stream: new ClaudeStreamEvents(), background: new Map() }; this.procs.set(id, proc); }
     return proc;
   }
 
@@ -253,6 +264,15 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const proc = this.procOf(r.id);
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
     const sessionId = nonEmpty(r.engineData.sessionId) ?? r.conversationId ?? r.id;
+    if (proc.head?.running && proc.finishing === proc.head) {
+      // Its input is closed (it went to sleep) but it lives on until its background work ends: words written now are
+      // lost. They wait, shown as waiting, and go into a new process on its session once this one has ended.
+      Object.assign(proc, { run: undefined, record: r, opening: { run: run.run, base: null }, pendingResult: undefined });
+      proc.held = { run, record: r, words: [words], since: Date.now() };
+      run.emit({ type: "session", conversationId: sessionId });
+      run.emit({ type: "waitingOn", on: this.waitingOn(proc) });
+      return;
+    }
     if (proc.head?.running) {
       Object.assign(proc, { run, record: r, opening: { run: run.run, base: null }, pendingResult: undefined });
       proc.stream.newRun();
@@ -261,6 +281,11 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       proc.head.send(words, randomUUID());
       return;
     }
+    this.spawn(proc, r, words, run, sessionId);
+  }
+
+  /** A new process for the run (`--resume` once its session exists), sent the run's first words. */
+  private spawn(proc: Proc, r: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle, sessionId: string) {
     // Never two processes on one session: an earlier tree must be gone first (a leader that exited may leave children).
     if (proc.tree && proc.tree.gone?.() === false) throw new Error("This worker's earlier process is still ending; try again in a moment.");
     const base = this.options.base();
@@ -292,7 +317,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       },
     });
     head.start();
-    Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, model: config.model ?? null, opening: { run: run.run, base }, pendingResult: undefined });
+    Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, model: config.model ?? null, opening: { run: run.run, base }, pendingResult: undefined, finishing: undefined, finishingSince: undefined });
+    proc.background.clear();
     proc.stream.newProcess();
     proc.queued.clear();
     run.emit({ type: "session", conversationId: sessionId });
@@ -305,16 +331,46 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
 
   steer(r: Readonly<WorkerLedgerRecord>, words: string): boolean {
     const proc = this.procs.get(r.id);
-    if (!proc?.run || !proc.head?.running) return false;
+    if (proc?.held) {
+      proc.held.words.push(words);
+      proc.held.run.emit({ type: "waitingOn", on: this.waitingOn(proc) });
+      return true;
+    }
+    if (!proc?.run || !proc.head?.running || proc.finishing === proc.head) return false;
     const uuid = randomUUID();
     proc.queued.add(uuid);
     proc.head.send(words, uuid);
     return true;
   }
 
+  /** What a held run waits for: the background work its finishing process still runs (the oldest first), else its end. */
+  private waitingOn(proc: Proc): WaitingOn {
+    const queued = proc.held?.words.length ?? 0;
+    const task = [...proc.background.values()].sort((a, b) => a.since - b.since)[0];
+    return task ? { ...task, queued } : { kind: "process", title: "", since: proc.finishingSince ?? proc.held?.since ?? Date.now(), queued };
+  }
+
+  /** After a run: the process stays a while for a quick follow-up, then its input is closed (it sleeps). Not while it has background work running. */
+  private keepAlive(proc: Proc, head: ClaudeWorkerHead) {
+    proc.keepAlive = setTimeout(() => {
+      proc.keepAlive = undefined;
+      if (proc.head !== head || proc.run || proc.held) return;
+      const now = Date.now();
+      if ([...proc.background.values()].some((task) => now - task.since < BACKGROUND_HOLDS_MS)) { this.keepAlive(proc, head); return; }
+      proc.finishing = head;
+      proc.finishingSince = now;
+      head.finish();
+    }, this.options.keepAliveMs ?? 10 * 60_000);
+    proc.keepAlive.unref?.();
+  }
+
   private onItem(id: string, head: ClaudeWorkerHead, item: StreamItem) {
     const proc = this.procs.get(id);
     if (!proc || proc.head !== head || this.closed) return;
+    // What it leaves running in the background, between runs too (it keeps the process awake; a held run names it).
+    if (item.kind === "backgroundStarted") proc.background.set(item.id, { kind: item.monitor ? "monitor" : "command", title: item.description, since: Date.now() });
+    else if (item.kind === "subagentStarted" && item.background) proc.background.set(item.id, { kind: "agent", title: item.description, since: Date.now() });
+    else if (item.kind === "subagentEnded" && proc.background.delete(item.id) && proc.held) proc.held.run.emit({ type: "waitingOn", on: this.waitingOn(proc) });
     const run = proc.run;
     if (item.kind === "init") {
       // Its session exists now (later runs resume it); claude may name it differently.
@@ -366,10 +422,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     proc.run = undefined;
     proc.queued.clear();
     const head = proc.head;
-    if (head?.running) {
-      proc.keepAlive = setTimeout(() => { proc.keepAlive = undefined; if (proc.head === head && !proc.run) head.finish(); }, this.options.keepAliveMs ?? 10 * 60_000);
-      proc.keepAlive.unref?.();
-    }
+    if (head?.running) this.keepAlive(proc, head);
     run.emit({ type: "end", end: {
       how: result.how ?? (result.ok ? "normal" : "error"), finalText: result.ok ? result.text : null,
       error: result.ok ? null : result.error || result.text || null, detail: result.subtype,
@@ -380,8 +433,21 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const proc = this.procs.get(id);
     if (!proc || proc.head !== head) return;
     proc.head = undefined;
-    // Its leader exited; the tree it led is kept until it is confirmed gone (children may outlive it).
-    void endTree(head, 1_500).then((gone) => { if (gone && proc.tree === head) proc.tree = undefined; });
+    proc.finishing = undefined;
+    proc.background.clear();
+    // Its leader exited; the tree it led is kept until it is confirmed gone (children may outlive it). A held run then
+    // goes into a new process on the same session, with every word that waited.
+    void endTree(head, 1_500).then((gone) => {
+      if (gone && proc.tree === head) proc.tree = undefined;
+      const held = proc.held;
+      if (!held || this.closed) return;
+      proc.held = undefined;
+      held.run.emit({ type: "waitingOn", on: null });
+      const sessionId = nonEmpty(held.record.engineData.sessionId) ?? held.record.conversationId ?? held.record.id;
+      try { this.spawn(proc, held.record, held.words.join("\n\n"), held.run, sessionId); } catch (error) {
+        held.run.emit({ type: "end", end: { how: "error", finalText: null, error: (error as Error).message, detail: "spawn" } });
+      }
+    });
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
     const run = proc.run;
     if (proc.settle) {
@@ -404,6 +470,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const proc = this.procs.get(r.id);
     if (!proc) return { cleaned: true };
     proc.run = undefined;
+    proc.held = undefined;
     proc.queued.clear();
     if (proc.settle) { clearTimeout(proc.settle); proc.settle = undefined; proc.pendingResult = undefined; }
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
@@ -454,7 +521,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     await Promise.allSettled([...this.procs.values()].map((proc) => {
       if (proc.settle) clearTimeout(proc.settle);
       if (proc.keepAlive) clearTimeout(proc.keepAlive);
-      Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined });
+      Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined, held: undefined });
       const tree = proc.tree ?? proc.head;
       proc.head = undefined;
       return tree?.terminate(1_500);
