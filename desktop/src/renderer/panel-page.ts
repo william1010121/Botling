@@ -8,7 +8,10 @@
 // allow a bot's command). What only the chat page could lend (the input box, markdown, components) does
 // nothing here. It also hears what the page pushes (`ccb.on(name, fn)`: its program part's `ui.emit`, and for a `bottomPanel`
 // view "visible" and "toggle"), may ask to be shown or hidden (`ccb.panel.setVisible`) and may hand the page a key
-// combination it did not use (`ccb.forwardKey(event)`, for the page's shortcuts).
+// combination it did not use (`ccb.forwardKey(event)`, for the page's shortcuts). `ccb.composer.insertQuote(text, { botId, focus })`
+// puts text into the input box of the bot the frame was opened for (the Note's "ask about this block").
+import { QUOTE_MAX } from "../../../Web/src/frame-protocol";
+
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c").replace(new RegExp("\u2028", "g"), "\\u2028").replace(new RegExp("\u2029", "g"), "\\u2029");
 
 /**
@@ -141,8 +144,17 @@ const ccb = {
   openLink: (href, opts) => ask({ ccb: "openLink", href: String(href ?? ""), botId: String(opts?.botId ?? "") }),
   /** Asks the user to allow a bot's command in its folder ({ botId, command, folder, card? }); resolves { allowed }. */
   requestApproval: (req) => ask({ ccb: "approval", botId: String(req?.botId ?? ""), command: String(req?.command ?? ""), folder: String(req?.folder ?? ""), ...(req?.card != null ? { card: String(req.card) } : {}), ...(req?.detail != null ? { detail: String(req.detail) } : {}) }),
-  // Only the chat page can lend these; in a panel frame they do nothing.
-  composer: { element: null, view: null, getText: () => "", insert() {}, addExtension: nothing, showPopover: nothing, onKeyDown: nothing },
+  // Only the chat page can lend these; in a panel frame they do nothing, except insertQuote: text put into the input box of
+  // the bot this frame was opened for (its botId; no other bot), after its draft. Resolves { inserted }.
+  composer: {
+    element: null, view: null, getText: () => "", insert() {}, addExtension: nothing, showPopover: nothing, onKeyDown: nothing,
+    insertQuote(text, opts) {
+      const words = String(text ?? ""), botId = String(opts?.botId ?? CONTEXT.botId ?? "");
+      // What the page would not take as a request (nothing to quote, too long, no bot) is simply not inserted.
+      if (!words || words.length > ${QUOTE_MAX} || !botId || botId.length > 64) return Promise.resolve({ inserted: false });
+      return ask({ ccb: "composerQuote", text: words, botId, focus: !!opts?.focus });
+    },
+  },
   messages: { use() {}, afterRender: nothing },
   components: { register: nothing },
   codemirror: {},

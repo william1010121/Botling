@@ -94,5 +94,7 @@ export type ShellMessage =
   | { botling: "detailReply"; requestID: number; ok: boolean; value: string }
   /** The cursor back in the input box (after the left column's search; `ccb.focus`). */
   | { botling: "focus" }
+  /** A plugin frame's quote for chat `botID`'s input box (`ccb.quote`); answered with action `composerQuoteResult`. */
+  | { botling: "composerQuote"; requestID: number; botID: string; text: string; focus: boolean }
   /** Ask the frame to recover only its own still-intended, recently lost composer. */
   | { botling: "recoverFocus"; traceId?: string }

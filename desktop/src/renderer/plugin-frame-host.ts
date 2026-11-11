@@ -15,6 +15,7 @@ import type { Client } from "./client";
 import type { ComponentInfo } from "../../../Web/src/types";
 import type { PluginFrameHost } from "./frame-broker";
 import { openReport } from "./report-opener";
+import { quoteIntoComposer } from "./composer-quote";
 
 /** The most of a tile's data (as JSON) a frame may give: a whiteboard picture's limit. */
 export const TILE_DATA_MAX = 256_000;
@@ -83,6 +84,11 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       const result = await client.request({ type: "plugins.openLink", name: plugin, botId: bot.id, href }).catch(failed);
       if (result.previewURL && !openReport(bot.id, result.previewURL)) throw new Error("This page shows no report preview.");
       return { opened: result.opened };
+    },
+    async composerQuote(_plugin, { botId, text, focus }) {
+      // The broker has checked it is the frame's own bot; App writes into that bot's input box (composer-quote.ts).
+      if (!bots().some((each) => each.id === botId)) return { inserted: false };
+      return { inserted: await quoteIntoComposer(botId, text, focus).catch(() => false) };
     },
     async requestApproval(plugin, { botId, command, folder, card, detail }) {
       const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}), ...(detail ? { detail } : {}) }).catch(failed);

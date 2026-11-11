@@ -105,6 +105,8 @@ export interface PluginFrameHost {
   snapshot?(plugin: string, frame: HTMLIFrameElement, spec: Omit<Extract<FrameRequest, { ccb: "snapshot" }>, "ccb" | "id">): Promise<unknown>;
   /** Opens a link of a bot's note as a chat link opens (`ccb.openLink`). */
   openLink?(plugin: string, spec: Omit<Extract<FrameRequest, { ccb: "openLink" }>, "ccb" | "id">): Promise<unknown>;
+  /** Puts text into bot `botId`'s input box (`ccb.composer.insertQuote`); the broker only asks for the frame's own bot. */
+  composerQuote?(plugin: string, spec: Omit<Extract<FrameRequest, { ccb: "composerQuote" }>, "ccb" | "id">): Promise<{ inserted: boolean }>;
   /** The page's own ApprovalSheet for what `plugin`'s frame asks: whether the user allowed it. */
   requestApproval?(plugin: string, ask: Omit<Extract<FrameRequest, { ccb: "approval" }>, "ccb" | "id">): Promise<{ allowed: boolean }>;
 }
@@ -124,10 +126,12 @@ export interface PluginFrame {
   onKey?(key: Extract<FrameRequest, { ccb: "key" }>): void;
   /** See `FrameTarget.rate`. */
   rate?: { burst: number; perSecond: number };
+  /** The bot the frame was opened for (a main-area tab's, the Note's): the only input box it may quote into. */
+  bot?: string;
 }
 
 /** Hears a plugin's frame; who it is comes from here, never from its messages. */
-export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, { frame, plugin, onNotice, onError, onResize, onReady, onPanel, onKey, rate }: PluginFrame): () => void {
+export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, { frame, plugin, onNotice, onError, onResize, onReady, onPanel, onKey, rate, bot }: PluginFrame): () => void {
   const target: FrameTarget = {
     frame,
     label: plugin,
@@ -178,6 +182,19 @@ export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, 
             : host.requestApproval?.(plugin, ask as never);
           if (!answer) { reply(id, false, `This page does not answer ccb.${kind === "approval" ? "requestApproval" : kind}.`); return; }
           answer.then((value) => reply(id, true, value), (failure) => reply(id, false, why(failure)));
+          return;
+        }
+        case "composerQuote": {
+          if (!broker.allow(target)) { reply(message.id, false, "Too many calls; wait a moment."); return; }
+          const { id, ccb: _kind, ...ask } = message;
+          // Only the frame's own bot: a card never writes into another bot's input box. It is told only that nothing went in.
+          if (!bot || ask.botId !== bot) {
+            broker.refuse(bot ? "a quote into another bot's input box" : "a quote from a frame opened for no bot", target);
+            reply(id, true, { inserted: false });
+            return;
+          }
+          const answer = host.composerQuote?.(plugin, ask) ?? Promise.resolve({ inserted: false });
+          answer.then((value) => reply(id, true, { inserted: value.inserted === true }), () => reply(id, true, { inserted: false }));
           return;
         }
         case "notify":

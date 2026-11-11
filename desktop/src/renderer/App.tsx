@@ -11,6 +11,7 @@ import { ownsCommand } from "../../../Web/src/frame-protocol";
 import { inputTrace } from "./input-trace";
 import { ReportViewer } from "./ReportViewer";
 import { openReport, setReportOpener } from "./report-opener";
+import { askChatToQuote, chatQuoteAnswered, setComposerQuoter } from "./composer-quote";
 import { ShellOverlay, shellOverlayActive } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
@@ -535,6 +536,20 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     setNoteDockAt((now) => toggleDock(now, noteKey));
   }, [noteOpen, noteKey, store]);
   const noteArea = useCallback(() => document.querySelector<HTMLElement>(".chat-column .main-tab"), []);
+  // A plugin frame's `ccb.composer.insertQuote` (the Note's "ask about this block", composer-quote.ts): the text goes into
+  // the bot's input box in the chat page; to focus it while the Note fills the chat column, its floating (or docked) chat
+  // opens first.
+  const quoteNow = useRef({ botId: bot?.id ?? null, noteKey, noteOpen, openNoteChat });
+  quoteNow.current = { botId: bot?.id ?? null, noteKey, noteOpen, openNoteChat };
+  useEffect(() => setComposerQuoter(async (botId, text, focus) => {
+    const now = quoteNow.current;
+    const opening = focus && !!now.noteKey && now.botId === botId && !now.noteOpen;
+    if (opening) now.openNoteChat(true);
+    const inserted = await askChatToQuote(postToChat, botId, text, focus);
+    // Opening the chat focuses its input box once it has its place; already open, it is focused here.
+    if (inserted && focus && !opening) focusComposer();
+    return inserted;
+  }), []);
   // Open: the input box gets the focus once the chat has its place; Esc (in the app's own page) closes it.
   useEffect(() => {
     if (!noteOpen) return;
@@ -1265,6 +1280,9 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
       };
       const composerFailure = (error: unknown) => { composerReply(false, error instanceof Error ? error.message : String(error)); onError(error); };
       switch (action?.type) {
+        case "composerQuoteResult":
+          chatQuoteAnswered(action.requestID, action.inserted);
+          return;
         case "composerModels": {
           const requestID = action.requestID;
           if (!Number.isSafeInteger(requestID) || typeof requestID !== 'number' || requestID < 1) return;

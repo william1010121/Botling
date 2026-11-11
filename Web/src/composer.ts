@@ -28,6 +28,13 @@ export const slashQuery = new RegExp(`(?:^|[\\s${escapeRegExp(shared.componentMe
  * web. Return sends, Shift-Return adds a line, and Return while an input method is choosing a
  * candidate only commits the candidate.
  */
+/** `draft` with `quote` after it as its own paragraph: one blank line before it (when there is text) and after it. */
+export function quoteAppend(draft: string, quote: string): string {
+  const body = quote.replace(/^\n+|\n+$/g, "");
+  const before = !draft ? "" : draft.endsWith("\n\n") ? "" : draft.endsWith("\n") ? "\n" : "\n\n";
+  return `${draft}${before}${body}\n\n`;
+}
+
 export class Composer {
   readonly root: HTMLElement;
   readonly view: EditorView;
@@ -234,6 +241,27 @@ export class Composer {
 
   focus(): void {
     this.view.focus();
+  }
+
+  /**
+   * A block quoted into chat `key`'s input box (the Note's "ask about this block", `ccb.quote`): after what is there, a
+   * blank line before and after it, the caret at the end. The chat on screen gets it as an edit of its own (undoable,
+   * kept as its draft); another chat's kept draft gets it as the app's draft. False: nothing written (no text, or the
+   * box does not know its chat yet).
+   */
+  quote(key: string, text: string, focus: boolean): boolean {
+    if (this.draftKey === null || !key || !text.replace(/\n/g, "")) return false;
+    if (key === this.draftKey) {
+      const doc = this.view.state.doc.toString();
+      const next = quoteAppend(doc, text);
+      this.view.dispatch({ changes: { from: doc.length, insert: next.slice(doc.length) }, selection: { anchor: next.length }, userEvent: "input.paste", scrollIntoView: true });
+      if (focus) this.view.focus();
+      return true;
+    }
+    const next = quoteAppend(this.drafts.get(key)?.text ?? "", text);
+    this.drafts.set(key, { text: next, cursor: next.length });
+    post({ type: "draft", botID: key, text: next, cursor: next.length });
+    return true;
   }
 
   /** The drafts the app kept (from before a restart); ones typed since the page loaded win. */
