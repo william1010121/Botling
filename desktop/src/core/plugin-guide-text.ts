@@ -150,7 +150,7 @@ export function pluginGuideFiles(): Record<string, string> {
     "- `ccb.storage.dir`, `ccb.storage.get(key)`, `ccb.storage.set(key, value)`.",
     "- `ccb.commands.register(id, run)`, `ccb.web.handle(method, fn)`, `ccb.settings.get/onChange`, `ccb.notify(text)`.",
     "- `ccb.workspace.*` (read only, Promises; types in Web/host/src/api.ts `WorkspaceApi`): `bots()`, `memory(botId)`, `tasks(botId)`, `results(botId)`, `waiting()`, `pendingApprovals(botId)`, `face(botId, look)`.",
-    "  `ccb.workspace.current()`: the chat the user has open in the main window now, or null: `{ botId, engine, sessionId, heads: [{ engine, sessionId }], view: \"chat\"|\"board\"|\"tab\"|\"subagent\", tab }`",
+    "  `ccb.workspace.current()`: the chat the user has open in the main window now, or null: `{ botId, engine, sessionId, heads: [{ engine, sessionId }], view: \"chat\"|\"storage\"|\"tab\"|\"subagent\", tab }`",
     "  (`botId` as in `bots()`, \"main\" for the main bot; `sessionId`: its primary head's session, Claude's session log is `<sessionId>.jsonl`, null before one started; `tab`: \"<plugin>/<view id>\" when view is \"tab\").",
     "  `ccb.workspace.onChange(change => …)` (returns a function that stops it): `{ stamp, botIds, kinds }`, kinds of bots, tasks, memory, waiting, results, current; \"current\" names the bot left and the bot opened (switching chats, view or session), told within about a second.",
     "  Antigravity (agy) usage, from agy's own conversation file, exact (not estimated): `ccb.workspace.agyUsage(sessionId)` (an agy session id, as in `current().heads`) gives",

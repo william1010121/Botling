@@ -1,6 +1,6 @@
 // `electron <desktop> --component-shot <component folder> …` (1.x's ComponentShotRun.swift): draws one
-// component in this build's real chat page — in a reply, as Board tiles of several sizes, opened above
-// the input box, floating in a corner — in a hidden window, pictures each frame, judges it
+// component in this build's real chat page — in a reply, opened above the input box, floating in a
+// corner — in a hidden window, pictures each frame, judges it
 // (src/core/component-shot.ts, checked against the Swift strings), writes a contact sheet and
 // report.json, prints the summary and exits (0: no problems, 1: problems, 2: bad usage, 3: it could not
 // draw). Main serves the pages as for the app; no core starts and no data folder is touched.
@@ -41,7 +41,7 @@ export const SHOT_JS = (protocolVersion: number) => `(() => {
       ready = true;
       window.__shotReady = true;
       push();
-      // The Board's web part (botling.board) draws the pins, as the app page hands it to the chat page.
+      // botling.board's web part draws the pins, as the app page hands it to the chat page.
       const plugins = "shot" + (++next);
       waiting.set(plugins, (answer) => { if (answer.ok) frame.contentWindow.postMessage({ botling: "plugins", specs: (answer.result.specs || []).filter((spec) => spec.name === "botling.board") }, chat); });
       window.botling.post({ v: ${protocolVersion}, id: plugins, cmd: { type: "plugins.web" } });
@@ -65,15 +65,14 @@ function stateFor(surface: Surface, name: string, data: string, sizes: string[],
   });
   const bot = { id: "6A0B0000-0000-4000-8000-000000000002", name: "Main bot", role: "main", avatar: "circle", folder: "/", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0,
     problem: null, heads: ["claude"], job: null, subagentRows: [] } as unknown as BotView;
-  const pins = surface === "board" ? sizes.map((size, index) => pin(index + 1, size, false))
-    : surface === "pinned" ? [pin(1, sizes.includes("2x2") ? "2x2" : sizes[0]!, false)]
+  const pins = surface === "pinned" ? [pin(1, sizes.includes("2x2") ? "2x2" : sizes[0]!, false)]
     : surface === "floating" ? [pin(1, "2x2", true)] : [];
   const chat: ChatSnapshot = {
     botId: bot.id, running: null, live: [], runs: [], heads: null,
     messages: surface === "chat" ? [{ id: "00000000-0000-4000-8000-0000000000A1", role: "bot", text: "", time: new Date().toISOString(), displays: [display] }] : [],
     pluginData: { "botling.board": { pins, floating: pins.filter((entry) => entry.float), pinChoices: [] } },
   };
-  return chatState(bot, chat, new Date(), null, { components: { [name]: info }, board: surface === "board", look: "original" }).state;
+  return chatState(bot, chat, new Date(), null, { components: { [name]: info }, look: "original" }).state;
 }
 
 /** The window's picture, cropped to `rect` (page points) with `pad` points around it. */
@@ -168,8 +167,7 @@ export async function runShot(argv: readonly string[], makeWindow: (size: { widt
   const view: ComponentInfoView = { template: info.template, version: 0, updated: false, sizes: info.sizes, icon: info.icon, title: info.title };
   const drawn: Drawn[] = [];
   for (const surface of options.surfaces) {
-    const rows = sizes.map((size) => Number(size.split("x")[1] ?? 1)).reduce((a, b) => a + b, 0);
-    const size = surface === "chat" ? { width: 760, height: 1100 } : surface === "board" ? { width: 900, height: Math.min(4000, 300 + rows * 200) }
+    const size = surface === "chat" ? { width: 760, height: 1100 }
       : surface === "pinned" ? { width: 760, height: 1000 } : { width: 1000, height: 800 };
     const open = surface === "pinned" ? `document.dispatchEvent(new CustomEvent('ccb-open-pin', {detail: ${JSON.stringify(name)}}))` : null;
     drawn.push(await draw(surface, size, stateFor(surface, name, data, sizes, view), open, makeWindow));
@@ -187,7 +185,7 @@ export async function runShot(argv: readonly string[], makeWindow: (size: { widt
       const key = `${frame.surface}|${frame.size}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const place = result.surface === "board" ? `board ${frame.size}` : result.surface;
+      const place = result.surface;
       const report = result.reports.get(key);
       if (!report) { findings.push(neverLoaded(place)); continue; }
       let uniform = false;
@@ -207,7 +205,7 @@ export async function runShot(argv: readonly string[], makeWindow: (size: { widt
     // Reported but not on the page (scrolled away, hidden): judged without a picture.
     for (const [key, report] of result.reports) {
       if (seen.has(key)) continue;
-      findings.push(...judge(report, result.surface === "board" ? `board ${report.size}` : result.surface, false));
+      findings.push(...judge(report, result.surface, false));
     }
   }
   let sheet: string | null = null;

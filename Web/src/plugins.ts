@@ -61,11 +61,11 @@ export interface ChatHooks {
   slots?: PageSlots;
 }
 
-/** Elements of the chat page a plugin may fill: above the input box, the Board's place instead of the messages, and over the whole page. */
-export interface PageSlots { pinArea: HTMLElement; board: HTMLElement; overlay: HTMLElement }
+/** Elements of the chat page a plugin may fill: above the input box, and over the whole page. */
+export interface PageSlots { pinArea: HTMLElement; overlay: HTMLElement }
 
 /**
- * What the chat page lends a plugin that draws cards of its own over it (botling.board, the Board and pins; plugin-extraction.md §3.3,
+ * What the chat page lends a plugin that draws cards of its own over it (botling.board, the pins; plugin-extraction.md §3.3,
  * plugin-platform.md M8): the state it draws from, a way to post what the user did, the page's words and clocks, and the
  * component frames. The same functions the page draws its own cards with, so a card is one thing wherever it shows.
  */
@@ -412,7 +412,7 @@ export class PluginHost {
   }
 
   private pageKit(name: string, own: (dispose: Dispose) => Dispose, remove: <T>(list: T[], item: T) => () => void): PageKit {
-    const slots = this.hooks.slots ?? { pinArea: document.createElement("div"), board: document.createElement("div"), overlay: document.body };
+    const slots = this.hooks.slots ?? { pinArea: document.createElement("div"), overlay: document.body };
     return pageKit(slots, {
       onState: (fn) => {
         const item = { plugin: name, fn };

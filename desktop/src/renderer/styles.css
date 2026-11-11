@@ -1239,3 +1239,63 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
    shows nothing of its own; only the placeholder, moved onto the panel, is seen. */
 .shell.browser-full.browser-float > .chat-pane { display: flex; position: fixed; inset: 0; visibility: hidden; pointer-events: none; z-index: 0; }
 .shell.browser-full.browser-float > .chat-pane #chat-frame.chat-floating { visibility: visible; pointer-events: auto; }
+
+/* The Storage tab (檔案庫, StorageTab.tsx): layout A, a list like Finder's list view. The bar (search, sort, Add files),
+   the type chips with counts, the rows (thumbnail badge, name, from, size, date, ⋯), the drop hint at the bottom. */
+.storage-main { border-top: 1px solid var(--line); }
+.storage-tab { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 10px 18px 14px; font-size: 13px; color: var(--text); }
+.storage-bar { display: flex; align-items: center; gap: 8px; }
+.storage-search { flex: 1; min-width: 0; height: 32px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 9px; background: var(--bubble); border: 1px solid var(--border); color: var(--faint); }
+.storage-search:focus-within { border-color: var(--accent-line); }
+.storage-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
+.storage-search input::placeholder { color: var(--faint); }
+.storage-sort { height: 32px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; padding: 0 4px 0 10px; border-radius: 9px; border: 1px solid var(--border); color: var(--soft-text); font-size: 12.5px; white-space: nowrap; }
+.storage-sort select { border: 0; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; outline: 0; }
+.storage-sort select option { background: var(--popover); color: var(--text); }
+.storage-button { height: 32px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; border: 0; border-radius: 9px; background: var(--chip); color: var(--text); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer; }
+.storage-button:hover { background: var(--hover-strong); }
+.storage-button:focus-visible, .storage-chip:focus-visible, .storage-more:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.storage-chips { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.storage-chip { height: 26px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.storage-chip:hover { color: var(--text); }
+.storage-chip[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent-line); color: var(--link); }
+.storage-count { color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.storage-chip[aria-pressed="true"] .storage-count { color: var(--link); }
+.storage-list { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--side); }
+.storage-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(56px, 120px) 64px 64px 28px; align-items: center; gap: 10px; height: 46px; padding: 0 10px; border-top: 1px solid var(--hover); outline: 0; cursor: default; user-select: none; }
+.storage-row:first-child { border-top: 0; }
+.storage-row:not(.storage-head):hover { background: var(--hover); }
+.storage-row.selected { background: var(--accent-bg); }
+.storage-row:focus-visible { box-shadow: inset 0 0 0 2px var(--blue); }
+.storage-row[draggable="true"] { cursor: grab; }
+.storage-head { position: sticky; top: 0; z-index: 1; height: 30px; font-size: 11.5px; color: var(--faint); background: var(--notice); }
+.storage-thumb { width: 32px; height: 32px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 700; letter-spacing: .3px; overflow: hidden; background: var(--chip); color: var(--soft-text); }
+.storage-thumb.kind-image { background: var(--accent-bg-hover); color: var(--link); }
+.storage-thumb.kind-pdf { background: var(--stale-bg); color: var(--error); }
+.storage-thumb.kind-doc, .storage-thumb.kind-page { background: var(--accent-bg); color: var(--link); }
+.storage-thumb.kind-sheet { background: var(--done-bg); color: var(--green); }
+.storage-thumb.kind-video, .storage-thumb.kind-audio { background: color-mix(in srgb, #A879F0 18%, transparent); color: #A879F0; }
+.storage-name { min-width: 0; display: flex; align-items: baseline; gap: 6px; overflow: hidden; }
+.storage-file { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-folder { flex: none; max-width: 40%; color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-source { min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-num { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+.storage-row.missing .storage-file { color: var(--faint); text-decoration: line-through; }
+.storage-row.missing .storage-thumb { opacity: .5; }
+.storage-missing { color: var(--orange-text); font-size: 11.5px; }
+.storage-more-slot { position: relative; display: inline-flex; justify-content: center; }
+.storage-more { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; }
+.storage-more svg { stroke-width: 2.6; }
+.storage-row:hover .storage-more, .storage-row.selected .storage-more, .storage-more[aria-expanded="true"], .storage-more:focus-visible { opacity: 1; }
+.storage-more:hover { background: var(--selected); color: var(--text); }
+.storage-menu { position: absolute; top: 28px; right: 0; z-index: 5; min-width: 190px; padding: 4px; display: flex; flex-direction: column; border-radius: 10px; background: var(--popover); border: 1px solid var(--border); box-shadow: 0 10px 28px rgb(0 0 0 / calc(.5 * var(--shade))); }
+.storage-menu button { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.storage-menu button:hover, .storage-menu button:focus-visible { background: var(--selected); outline: 0; }
+.storage-menu button.danger { color: var(--error); }
+.storage-menu button small { color: var(--faint); font-size: 11px; }
+.storage-menu-note { margin: 4px 10px 6px; color: var(--faint); font-size: 11px; line-height: 1.45; }
+.storage-empty { margin: 0; padding: 28px 20px; color: var(--faint); font-size: 13px; line-height: 1.6; text-align: center; }
+.storage-hint { flex: none; height: 40px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px dashed var(--strong-line); border-radius: 10px; color: var(--faint); font-size: 12.5px; padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-drop { position: absolute; inset: 6px; z-index: 6; display: flex; align-items: center; justify-content: center; gap: 8px; border: 2px dashed var(--blue); border-radius: 14px; background: rgba(76, 141, 255, 0.10); color: var(--link); font-size: 14px; pointer-events: none; }
+@container chatbar (width < 520px) { .storage-switch svg { display: none; } }
+@media (width < 640px) { .storage-row { grid-template-columns: 34px minmax(0, 1fr) 64px 28px; } .storage-row > :nth-child(3), .storage-row > :nth-child(5) { display: none; } }

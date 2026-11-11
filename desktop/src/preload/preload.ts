@@ -1,7 +1,7 @@
 // The app page's only bridge: post an envelope, receive envelopes. No ipcRenderer, no Node, no
 // event objects (they would expose `sender`). Main validates everything posted here; this file
 // stays tiny on purpose so there is little privileged code to get wrong.
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import {editorBridge} from "./editor-bridge";
 import { BROWSER_CHANNEL } from "../browser-wire";
 
@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld("botling", Object.freeze({
     },
   }) } : {}),
   // Only main selects the native-editor shell; child frames never receive this bridge.
+  // The Storage tab's drop (StorageTab.tsx): the on-disk path of a File dropped from Finder ('' when it has none). Main
+  // still checks every path is a file before the core remembers it.
+  ...(process.isMainFrame ? { pathForFile: (file: unknown) => { try { return webUtils.getPathForFile(file as File); } catch { return ""; } } } : {}),
   ...(process.isMainFrame&&process.argv.includes("--botling-editor-shell=1")?{editorHost:editorBridge(ipcRenderer,"shell")} : {}),
   platform: process.platform,
   post(envelope: unknown) {

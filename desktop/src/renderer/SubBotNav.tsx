@@ -1,4 +1,4 @@
-// Navigation v5, sub bots: drawn left of Chat | Board. A project bot shows "Sub bots · N ▾" (the only one's
+// Navigation v5, sub bots: drawn left of Chat | Storage. A project bot shows "Sub bots · N ▾" (the only one's
 // name when it has one, nothing when it has none); inside a sub bot the same place is the way back,
 // "‹ botling / Release ▾". The menu lists the sub bots by section (sub-bot-nav.ts); ↑↓ ↵ Esc work in it.
 import { useEffect, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";

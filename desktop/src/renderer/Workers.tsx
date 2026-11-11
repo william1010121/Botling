@@ -1,4 +1,4 @@
-// Navigation v5, part 2: the "<owner>'s workers" badge beside the Chat / Board switch, its menu, and the bar under a
+// Navigation v5, part 2: the "<owner>'s workers" badge beside the Chat / Storage switch, its menu, and the bar under a
 // worker watched in the main area. The menu lists the room's app-managed workers (Claude, Codex, Antigravity) by owner:
 // the room expanded, its parent and sibling sub bots folded to one line each. A row opens the worker in the chat's place,
 // read only, the same view a left-column click opens (the chat page renders its transcript like any chat). Under it,
@@ -103,7 +103,7 @@ function WorkerList({ bot, bots, onOpen }: { bot: BotView; bots: BotView[]; onOp
   );
 }
 
-/** The badge beside the Chat / Board switch: "<owner>'s workers · 2 running"; hidden with no worker today. `on` while its menu is open. */
+/** The badge beside the Chat / Storage switch: "<owner>'s workers · 2 running"; hidden with no worker today. `on` while its menu is open. */
 export function WorkersBadge({ bot, bots, seen, on, onClick }: { bot: BotView; bots: BotView[]; seen: ReadonlySet<string>; on: boolean; onClick: () => void }) {
   const now = Date.now();
   const badge = workersBadge(workerRowsOf(bot), now, seen);

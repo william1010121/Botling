@@ -516,6 +516,84 @@ async function pickFiles(botId: string, sender: WebContents): Promise<unknown> {
 }
 
 /**
+ * The Storage tab's files dropped in (from Finder: their paths; from the chat: a file: link or a chat attachment of this bot):
+ * only files that are there are remembered, by path (references, nothing copied; core/storage.ts). A folder is left out.
+ */
+async function storageAdd(botId: string, paths: string[], urls: string[]): Promise<{ added: number }> {
+  const named = [...paths, ...urls.map((url) => {
+    const link = attachmentFile(url, botId) ?? url;
+    try { return link.startsWith("file:") ? fileURLToPath(link) : ""; } catch { return ""; }
+  })];
+  const files = [...new Set(named.filter((path) => {
+    if (!path.startsWith("/")) return false;
+    try { return statSync(path).isFile(); } catch { return false; }
+  }).map((path) => normalize(path)))].slice(0, 50);
+  if (!files.length) return { added: 0 };
+  return core.call({ type: "storage.add", botId, paths: files, urls: [] });
+}
+
+/** The Storage tab's "Add files": main's own picker (as the + button's); tests (unpackaged only) answer with BOTLING_TEST_PICK. */
+async function storagePick(botId: string, sender: WebContents): Promise<{ added: number }> {
+  let paths: string[];
+  if (!app.isPackaged && process.env.BOTLING_TEST_PICK) {
+    paths = JSON.parse(process.env.BOTLING_TEST_PICK) as string[];
+  } else {
+    const owner = BrowserWindow.fromWebContents(sender);
+    const options: Electron.OpenDialogOptions = { properties: ["openFile", "multiSelections"], buttonLabel: "Add" };
+    const answer = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+    if (answer.canceled) return { added: 0 };
+    paths = answer.filePaths;
+  }
+  return storageAdd(botId, paths, []);
+}
+
+/** A Storage row's file, as the core lists it for that bot now (a page cannot name another path); missing: not_found. */
+async function storageFile(botId: string, id: string): Promise<string> {
+  const { items } = await core.call({ type: "storage.list", botId });
+  const item = items.find((candidate) => candidate.id === id);
+  if (!item) throw Object.assign(new Error("That file is no longer in Storage."), { code: "not_found" });
+  if (item.missing || !existsSync(item.path)) throw Object.assign(new Error("That file is not there any more (moved or deleted)."), { code: "not_found" });
+  return item.path;
+}
+
+/**
+ * Opens a Storage row: a page or Markdown file in the app's report preview (from the preview origin when it is in an
+ * artifacts folder, a Markdown file elsewhere drawn once as a page), anything else (PDF, pictures, documents) with its
+ * app, as a chat result opens; `reveal`: shown in Finder.
+ */
+async function storageOpen(botId: string, id: string, reveal: boolean): Promise<{ opened: boolean; previewURL?: string }> {
+  const path = await storageFile(botId, id);
+  if (reveal) return openLink(path, true);
+  if (/\.(md|markdown)$/i.test(path)) return markdownPreview(path);
+  if (/\.html?$/i.test(path)) {
+    try { const previewURL = reportPreviewURL(path); openedResults.push(path); return { opened: true, previewURL }; } catch { /* not in an artifacts folder: its app */ }
+  }
+  return openLink(path);
+}
+
+/** Tests: the files a Storage drag started with (the OS drag itself needs a real pointer). */
+const storageDrags: string[] = [];
+(globalThis as unknown as { __botlingStorageDrags: string[] }).__botlingStorageDrags = storageDrags;
+
+/**
+ * A Storage row's drag began in the app page: an OS-level file drag of that file (webContents.startDrag), so it can be
+ * dropped anywhere a file can: a web page's file input or drop zone in the Browser pane (its own WebContentsView) gets
+ * it as a real upload, and Finder or another app gets the file too.
+ */
+async function storageDrag(botId: string, id: string, sender: WebContents): Promise<{ started: boolean }> {
+  const path = await storageFile(botId, id);
+  let icon: Electron.NativeImage | null = null;
+  try { icon = await Promise.race([app.getFileIcon(path, { size: "normal" }), new Promise<null>((done) => setTimeout(() => done(null), 150))]); } catch { icon = null; }
+  if (!icon || icon.isEmpty()) icon = nativeImage.createFromDataURL(DRAG_ICON);
+  if (sender.isDestroyed()) return { started: false };
+  storageDrags.push(path);
+  sender.startDrag({ file: path, icon });
+  return { started: true };
+}
+/** A plain 16×16 document glyph for a drag when the system has no icon for the file. */
+const DRAG_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAJklEQVR4nGNgoCY4ceLcf2IwXgNsbFye4cOjBowaMFIMoCgzkQMAtlQwzK1akYkAAAAASUVORK5CYII=";
+
+/**
  * A file dropped on the chat, by its path on disk: it waits in the input box like a picked one, so the
  * message attaches the original where it is (copied only from a temporary place). A folder is refused.
  */
@@ -738,6 +816,10 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     case "plugins.openLink": return openPluginLink(cmd, sender);
     case "chat.feedback": return withScreenshot(cmd, sender);
     case "files.pick": return pickFiles(cmd.botId, sender);
+    case "storage.add": return storageAdd(cmd.botId, cmd.paths, cmd.urls);
+    case "storage.pick": return storagePick(cmd.botId, sender);
+    case "storage.open": return storageOpen(cmd.botId, cmd.id, cmd.reveal === true);
+    case "storage.drag": return storageDrag(cmd.botId, cmd.id, sender);
     case "projects.pick": return pickProject(sender);
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };
     default: throw new Error(`main does not handle ${cmd.type}`);

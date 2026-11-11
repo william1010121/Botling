@@ -48,7 +48,7 @@ describe("the chat open in the main window (workspace.current)", () => {
     expect(currentChat({ botId: "B1", view: "tab", tab: "p/v" }, "B1", "codex", heads)).toEqual({
       botId: "B1", engine: "codex", sessionId: "T1", heads: [{ engine: "codex", sessionId: "T1" }, { engine: "claude", sessionId: null }], view: "tab", tab: "p/v",
     });
-    expect(currentChat({ botId: "M", view: "board", tab: "p/v" }, "main", "claude", heads)).toMatchObject({ botId: "main", engine: "claude", sessionId: null, view: "board", tab: null });
+    expect(currentChat({ botId: "M", view: "storage", tab: "p/v" }, "main", "claude", heads)).toMatchObject({ botId: "main", engine: "claude", sessionId: null, view: "storage", tab: null });
     expect(currentChat({ botId: "M", view: "chat", tab: null }, "main", "agy", [])).toMatchObject({ engine: "agy", sessionId: null, heads: [] });
   });
 

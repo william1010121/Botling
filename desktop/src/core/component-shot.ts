@@ -1,6 +1,6 @@
 // `botling --component-shot <component folder>` (the Swift app's ComponentShot.swift): draws one
 // component the way this build of the app draws it, in the real chat page, on every surface (in a chat
-// reply, as Board tiles of several sizes, opened above the input box, floating in a corner), takes
+// reply, opened above the input box, floating in a corner), takes
 // pictures, and reports what is wrong: script errors, failed `ccb` calls, missing resources, content
 // wider than its frame, and frames that draw nothing. The drawing is Electron main's (src/main/shot.ts);
 // what is measured, how it is judged and how it is reported is here, so it can be tested. Every string
@@ -13,7 +13,7 @@ import { COMMAND_TIMEOUT_MS, OUTPUT_LIMIT, execute, type CommandOutcome } from "
 
 export const FLAG = "--component-shot";
 
-export const SURFACES = ["chat", "board", "pinned", "floating"] as const;
+export const SURFACES = ["chat", "pinned", "floating"] as const;
 export type Surface = (typeof SURFACES)[number];
 
 /** The Board sizes shot when neither `--sizes` nor the about.md `Sizes:` line names others: the smallest, a wide strip, the default and the chat's widest. */
@@ -40,7 +40,7 @@ export function isRequested(argv: readonly string[]): boolean {
 }
 
 export const USAGE = `Usage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]
-                     [--surfaces chat,board,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]
+                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]
 Draws the component in this build's real chat page on each surface, saves a picture of each
 and a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.
 Data: --data, else its Command run in --folder, else about.md's example (\`\`\`json block or Data: line), else null.
@@ -84,7 +84,7 @@ export function parse(argv: readonly string[], cwd = process.cwd(), now = Date.n
         const surfaces: Surface[] = [];
         for (const part of parts(value, ",")) {
           const name = trimSpaces(part).toLowerCase();
-          if (!(SURFACES as readonly string[]).includes(name)) return fail("usage", `Unknown surface ${name}: chat, board, pinned or floating.`);
+          if (!(SURFACES as readonly string[]).includes(name)) return fail("usage", `Unknown surface ${name}: chat, pinned or floating.`);
           if (!surfaces.includes(name as Surface)) surfaces.push(name as Surface);
         }
         if (!surfaces.length) return fail("usage", "--surfaces names none.");
@@ -99,7 +99,7 @@ export function parse(argv: readonly string[], cwd = process.cwd(), now = Date.n
         const sizes: string[] = [];
         for (const part of parts(value, ",")) {
           const size = spelledSize(part);
-          if (!size) return fail("usage", `Not a Board size: ${part} (${RANGE_TEXT}).`);
+          if (!size) return fail("usage", `Not a card size: ${part} (${RANGE_TEXT}).`);
           if (!sizes.includes(size)) sizes.push(size);
         }
         if (!sizes.length) return fail("usage", "--sizes names none.");
@@ -318,9 +318,6 @@ export function judge(report: FrameReport, place: string, uniform: boolean): Fin
     problem(`Draws nothing: its content is ${Math.trunc(report.contentHeight)}px tall`);
   } else if (uniform && !report.hasText && !report.hasMedia) {
     problem("Looks blank: one flat colour, no text or pictures");
-  }
-  if (report.surface === "board" && report.scrollHeight > report.height + SLACK) {
-    findings.push({ level: "warning", place, text: `Taller than its tile: ${Math.trunc(report.scrollHeight)}px of content in ${Math.trunc(report.height)}px, the rest is cut off (collapse to a summary when short)` });
   }
   return findings;
 }

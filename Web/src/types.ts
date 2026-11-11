@@ -352,8 +352,6 @@ export interface ChatState {
   feedback?: boolean;
   /** What plugins keep for the page to draw from (`chat.setData`), by plugin: botling.board's pins, those floating and its picker's list. */
   pluginData?: Record<string, unknown> | null;
-  /** The Board shows instead of the messages. */
-  board?: boolean | null;
   /** Replies can be made into components (absent where they can't, e.g. a subagent). */
   /** The language of the page's own words (Settings → General → Language); absent means English. */
   lang?: string | null;

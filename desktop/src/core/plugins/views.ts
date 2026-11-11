@@ -1,5 +1,5 @@
 // Plugin views where the app page draws them (plugin-platform.md §3.3, plan W2): a `mainTab` view is a tab
-// beside Chat / Board in the chat header, for the bots its `forRole` names; a `settings.section` view is a page
+// beside Chat / Storage in the chat header, for the bots its `forRole` names; a `settings.section` view is a page
 // of Settings and a `quickSettings` view a block in the sidebar gear's popover (each a sandboxed frame, as every
 // view). Read from the one contribution list (contributions.ts); a view needs a web part to draw it in its
 // frame (panel-page.ts).

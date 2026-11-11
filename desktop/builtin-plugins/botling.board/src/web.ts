@@ -8,7 +8,7 @@ import { reportVisiblePins, reportVisiblePinsSoon, resetVisiblePins } from "./vi
 
 export const PLUGIN = "botling.board";
 
-/** What the chat page's state says for the Board: the pins its program part keeps (`state.pluginData`), as the page's state once held them. */
+/** What the chat page's state says for the pins: the pins its program part keeps (`state.pluginData`), as the page's state once held them. */
 export function boardState(state: ChatState): BoardState {
   const data = state.pluginData?.[PLUGIN] as BoardData | undefined;
   if (!data) return state;
@@ -19,15 +19,14 @@ export function boardState(state: ChatState): BoardState {
 }
 
 /**
- * The Board and pins: the strip of pinned components above the input box (and the sheet a chip raises), the Board in the place of the
- * messages, pins floating in a corner, and the pin / ↻ / ⋯ bar over a component in a reply. Everything is drawn here, in the chat page
+ * Pins: the strip of pinned components above the input box (and the sheet a chip raises), pins floating in a corner, and the pin / ↻ / ⋯ bar over a component in a reply. Everything is drawn here, in the chat page
  * (a pin's card is the page's own component frame); what a pin is, where it sits and when it runs is the program part's (host.ts),
  * which tells each chat what to draw (`chat.setData`) and hears what the user did to pins (`action`).
  */
 export function activate(ccb: CcbWeb): () => void {
   useKit(ccb.page);
   resetVisiblePins();
-  const area = new PinArea(ccb.page.slots.pinArea, ccb.page.slots.board);
+  const area = new PinArea(ccb.page.slots.pinArea);
   const floats = new FloatLayer(ccb.page.slots.overlay);
   // A chat with no data yet (just opened, or the program part came back) asks for it, at most every few seconds.
   const asked = new Map<string, number>();
@@ -56,7 +55,7 @@ export function activate(ccb: CcbWeb): () => void {
   );
   // The pin button in the head of a component the component studio made from a reply: through the studio's seam, not the chat page's.
   ccb.studio.specButton((spec) => specPinButton(spec));
-  // Which pins the user can see changes as the chat or Board scrolls, the window resizes, or a pin
+  // Which pins the user can see changes as the chat scrolls, the window resizes, or a pin
   // is opened or closed: the program part's timer reruns only those.
   const listeners = new AbortController();
   for (const type of ["scroll", "resize", "click", "visibilitychange"]) {

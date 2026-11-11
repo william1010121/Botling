@@ -30,7 +30,8 @@ import { faceURL, sameHeldColors, setBotColors } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
-import { boardOffered, composerBarFor, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { composerBarFor, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { StorageTab } from "./StorageTab";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
@@ -65,7 +66,7 @@ import { browserStore, useBrowser } from "./browser-state";
  * plugin and settings controls, which the web has no commands for. The desktop passes neither. */
 export interface WebChrome { headerLead?: ReactNode; railFooter: ReactNode }
 
-/** The main view of the main bot: the whiteboard tab unless you last picked Chat or Board (kept for the next start). */
+/** The main view of the main bot: the whiteboard tab unless you last picked Chat or Storage (kept for the next start). */
 const CHOICE_KEY = "botling.mainWhiteboard";
 function useWhiteboardChoice(): [boolean, (on: boolean) => void] {
   const [on, setOn] = useState(() => { try { return localStorage.getItem(CHOICE_KEY) !== "0"; } catch { return true; } });
@@ -171,7 +172,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [railFold, setRailFold] = useState<RailFold>(() => readRailFold());
   const [railAll, setRailAll] = useState<ReadonlySet<string>>(() => new Set());
   const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(() => readOpenJobs());
-  // Navigation v5: the Sub bots menu left of Chat | Board (⌘⇧S), and ⌘[ / ⌘] between a project bot and the
+  // Navigation v5: the Sub bots menu left of Chat | Storage (⌘⇧S), and ⌘[ / ⌘] between a project bot and the
   // sub bot last shown under it (kept for this window only, never in a bot's context).
   const [subBotsOpen, setSubBotsOpen] = useState(false);
   const lastRooms = useRef<LastRooms>({});
@@ -283,8 +284,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   // botling.whiteboard's tab; with that plugin off there is no whiteboard.
   const boardTab = bot?.role === "main" ? tabs.find((candidate) => candidate.plugin === WHITEBOARD_PLUGIN) ?? null : null;
   const remembered = bot && !watching ? shownTab(tabs, view.settings?.mainTabs?.[bot.id]) : null;
-  // The main bot opens on the whiteboard unless you last picked Chat or Board: the choice is kept for the next start.
-  const tab = remembered ?? (boardTab && whiteboardOn && !watching ? boardTab : null);
+  // The app's own Storage tab (StorageTab.tsx), right of the plugins' tabs; not in Botling Web.
+  const storageOn = !!bot && !web && !watching && view.settings?.mainTabs?.[bot.id] === STORAGE_TAB;
+  // The main bot opens on the whiteboard unless you last picked Chat (or Storage): the choice is kept for the next start.
+  const tab = storageOn ? null : remembered ?? (boardTab && whiteboardOn && !watching ? boardTab : null);
   // The header's left side (navigation v5): this bot's Sub bots button, or inside a sub bot the way back.
   const nav = useMemo(() => (bot && !web ? headerNav(bot, view.bots, view.waiting, now, subBotRoutines) : { kind: "none" as const }), [bot, web, view.bots, view.waiting, now, subBotRoutines]);
   const navIds = nav.kind === "none" ? "" : nav.rows.map((row) => row.id).join(",");
@@ -439,9 +442,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request({ type: "bots.remove", botId: target.id }).catch(fail);
   }, [client, fail]);
 
-  /** Shows a plugin tab for a bot, or none (Chat or Board), and keeps it for next time. */
-  const chooseTab = useCallback((botId: string, next: MainTab | null) => {
-    const key = next ? tabKey(next) : null;
+  /** Shows a plugin tab for a bot, the Storage tab (`STORAGE_TAB`), or none (Chat), and keeps it for next time. */
+  const chooseTab = useCallback((botId: string, next: MainTab | typeof STORAGE_TAB | null) => {
+    const key = next === STORAGE_TAB ? STORAGE_TAB : next ? tabKey(next) : null;
     if ((store.getView().settings?.mainTabs?.[botId] ?? null) === key) return;
     void client.request({ type: "settings.set", change: { key: "mainTab", value: { botId, tab: key } } }).catch(fail);
   }, [client, store, fail]);
@@ -496,12 +499,11 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
 
   // The core learns what the main window shows, for plugins' `workspace.current`; said again after every snapshot
   // (a restarted core knows nothing). Botling Web's page never says it: it is not the main window.
-  const shownBoard = !!view.board && boardOffered(view.plugins);
   const shownTabKey = tab ? tabKey(tab) : null;
   useEffect(() => {
     if (web || !view.ready) return;
-    void client.request(shownChat(bot?.id ?? null, { subagent: !!watching, tab, board: shownBoard })).catch(() => {});
-  }, [client, web, view.ready, view.resyncs, bot?.id, watching, shownTabKey, shownBoard]);
+    void client.request(shownChat(bot?.id ?? null, { subagent: !!watching, tab, storage: storageOn })).catch(() => {});
+  }, [client, web, view.ready, view.resyncs, bot?.id, watching, shownTabKey, storageOn]);
 
   // The in-app browser pane beside the chat (BrowserPane.tsx): open for this bot once a link opened in it. While it is
   // open the right panel folds to its strip unless you open it again; full screen hides everything else but the pane
@@ -531,10 +533,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   useEffect(() => { setNoteDockAt((open) => keepDock(open, noteKey)); }, [noteKey]);
   const openNoteChat = useCallback((open: boolean) => {
     if (open === noteOpen) return;
-    // The chat shows the chat, not the Board the chat page may have been showing.
-    if (open && store.getView().board) store.showBoard(false);
     setNoteDockAt((now) => toggleDock(now, noteKey));
-  }, [noteOpen, noteKey, store]);
+  }, [noteOpen, noteKey]);
   const noteArea = useCallback(() => document.querySelector<HTMLElement>(".chat-column .main-tab"), []);
   // A plugin frame's `ccb.composer.insertQuote` (the Note's "ask about this block", composer-quote.ts): the text goes into
   // the bot's input box in the chat page; to focus it while the Note fills the chat column, its floating (or docked) chat
@@ -694,7 +694,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       )}
       {!railCollapsed && <ColumnDivider column="rail" />}
       <section className="chat-pane">
-        <div className={`chat-column${tab ? " main-tab-on" : ""}`}>
+        <div className={`chat-column${tab || storageOn ? " main-tab-on" : ""}`}>
         <header className="chat-header drag">
           {web?.headerLead}
           {bot && <span className="chat-title">{bot.parent ? <SubBotTitle bot={bot} parent={view.bots.find((candidate) => candidate.id === bot.parent) ?? null} onOpenParent={selectBot} /> : bot.name}</span>}
@@ -712,7 +712,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           )}
         </header>
         {bot && chat && !watching && (
-          // 1.x's BoardSwitch: its own centered bar above the messages, even with no pins.
+          // The Chat / tabs switch (1.x's BoardSwitch bar): its own centered bar above the messages.
           <div className="board-switch-bar">
             <span className="workers-badge-slot">
               <WorkersBadge bot={bot} bots={view.bots} seen={seenFailed} on={workersMenu === bot.id} onClick={() => setWorkersMenu(workersMenu === bot.id ? null : bot.id)} />
@@ -730,14 +730,15 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                 onArchive={(botId) => { const target = view.bots.find((candidate) => candidate.id === botId); if (target) setClosingSubBot(target); }} />
             </div>
             <div className="board-switch" role="group" aria-label="Chat views">
-              <button type="button" aria-pressed={!(view.board && boardOffered(view.plugins)) && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
-              {boardOffered(view.plugins) && <button type="button" aria-pressed={view.board && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>}
+              <button type="button" aria-pressed={!tab && !storageOn} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); }}><Icon name="bubble" size={13} />Chat</button>
               {tabs.map((candidate) => (
                 <button key={tabKey(candidate)} type="button" className={`main-tab-switch${candidate === boardTab ? " whiteboard-switch" : ""}`} data-tab={tabKey(candidate)} aria-pressed={tab === candidate}
                   onClick={() => { setWhiteboardOn(candidate === boardTab); chooseTab(bot.id, candidate); }}>
                   {candidate.icon && isIconName(candidate.icon) && <Icon name={candidate.icon} size={13} />}{candidate.title}
                 </button>
               ))}
+              {!web && <button type="button" className="main-tab-switch storage-switch" data-tab={STORAGE_TAB} aria-pressed={storageOn}
+                onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, STORAGE_TAB); }}><Icon name="tray" size={13} />{say(view.settings?.effectiveLanguage, "storage.tab")}</button>}
             </div>
           </div>
         )}
@@ -753,10 +754,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         )}
         <ChatBody docked={noteDocked}>
         {tab && bot ? <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask}
-          overlay={noteKey ? <FloatingChat place="note" bot={bot} look={view.settings?.botLook ?? "original"} open={noteOpen} onOpen={openNoteChat} line={stripLine} area={noteArea} /> : null} /> : null}
+          overlay={noteKey ? <FloatingChat place="note" bot={bot} look={view.settings?.botLook ?? "original"} open={noteOpen} onOpen={openNoteChat} line={stripLine} area={noteArea} /> : null} />
+          : storageOn && bot ? <div className="main-tab storage-main" role="region" aria-label={say(view.settings?.effectiveLanguage, "storage.tab")}>
+            <StorageTab key={bot.id} client={client} botId={bot.id} botName={bot.name} lang={view.settings?.effectiveLanguage} onError={fail} />
+          </div> : null}
         {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onAsk={approval.ask}
-          bubbleBot={bot && !paneOpen && (!tab || noteDocked || !floatMemory.preview.docked) ? bot : null} look={view.settings?.botLook ?? "original"} stripLine={stripLine}
+          bubbleBot={bot && !paneOpen && (!(tab || storageOn) || noteDocked || !floatMemory.preview.docked) ? bot : null} look={view.settings?.botLook ?? "original"} stripLine={stripLine}
           askAbout={askAbout} onAskDone={() => setAskAbout(null)} />
         </ChatBody>
         {bot && shownWorker && view.subagent && (
@@ -1103,7 +1107,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
     // "Ask <owner>" under a worker in the main area: the worker as the input box's reference (the same bar, its × drops it).
     if (!quoted && askRef.current?.botId === chat.botId) quoted = askReference(askRef.current.worker, askRef.current.ownerName);
     const { state, extras } = current.subagent ? subagentState(bot, current.subagent) : chatState(bot, chat, new Date(), quoted, {
-      components: current.components, board: current.board, look: current.settings?.botLook ?? "original",
+      components: current.components, look: current.settings?.botLook ?? "original",
       lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null, bots: current.bots,
       // Developer mode with Botling's source among the projects: replies get "not right" (`feedback`).
       feedback: !!current.settings?.developerMode && current.bots.some((candidate) => candidate.id === current.settings?.developerProject && candidate.role === "manager"),

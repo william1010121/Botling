@@ -1,10 +1,10 @@
-// The main area's tabs (plan W2): a plugin's `mainTab` view is a tab beside Chat / Board for the bots
+// The main area's tabs (plan W2): a plugin's `mainTab` view is a tab beside Chat for the bots
 // its `forRole` names, and which tab each bot last showed is kept in settings.json (`mainTabs`), so
 // it shows again next time (the core's memory, in place of the whiteboard's own localStorage later).
 import { describe, expect, it } from "vitest";
 import { Command, SettingsChange, type PluginsView } from "../../src/contract";
 import { applySetting, settingsView } from "../../src/core/settings";
-import { composerBarFor, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, tabKey } from "../../src/renderer/main-tabs";
+import { composerBarFor, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey } from "../../src/renderer/main-tabs";
 
 const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 const PROJECT = "B0000000-0000-4000-8000-000000000001";
@@ -50,7 +50,7 @@ describe("main-area tabs", () => {
     expect(composerBarFor(null, { role: "main" })).toBeNull();
   });
 
-  it("shows the tab remembered for the bot while it is offered; otherwise none (Chat or Board)", () => {
+  it("shows the tab remembered for the bot while it is offered; otherwise none (Chat, or the app's Storage tab)", () => {
     const tabs = mainTabsFor(plugins, { role: "main" });
     expect(shownTab(tabs, "board/board.wall")?.title).toBe("Wall");
     expect(shownTab(tabs, "git/git.log")).toBeNull();
@@ -94,13 +94,21 @@ describe("remembering the tab (settings.json mainTabs)", () => {
 });
 
 describe("what the main window says it shows (chat.shown, for workspace.current)", () => {
-  it("a subagent's run over a tab, a tab over the Board, the Board over the chat; no bot: none", () => {
+  it("a subagent's run over a tab, a plugin tab, the Storage tab, else the chat; no bot: none", () => {
     const tab = plugins.mainTabs[2];
-    expect(shownChat(PROJECT, { subagent: true, tab, board: true })).toEqual({ type: "chat.shown", botId: PROJECT, view: "subagent", tab: null });
-    expect(shownChat(PROJECT, { subagent: false, tab, board: true })).toEqual({ type: "chat.shown", botId: PROJECT, view: "tab", tab: "notes/notes.page" });
-    expect(shownChat(MAIN, { subagent: false, tab: null, board: true })).toEqual({ type: "chat.shown", botId: MAIN, view: "board", tab: null });
-    expect(shownChat(MAIN, { subagent: false, tab: null, board: false })).toEqual({ type: "chat.shown", botId: MAIN, view: "chat", tab: null });
-    expect(shownChat(null, { subagent: false, tab, board: true })).toEqual({ type: "chat.shown", botId: null, view: "chat", tab: null });
-    for (const command of [shownChat(PROJECT, { subagent: false, tab, board: false }), shownChat(null, { subagent: false, tab: null, board: false })]) expect(Command.safeParse(command).success).toBe(true);
+    expect(shownChat(PROJECT, { subagent: true, tab, storage: true })).toEqual({ type: "chat.shown", botId: PROJECT, view: "subagent", tab: null });
+    expect(shownChat(PROJECT, { subagent: false, tab })).toEqual({ type: "chat.shown", botId: PROJECT, view: "tab", tab: "notes/notes.page" });
+    expect(shownChat(MAIN, { subagent: false, tab: null, storage: true })).toEqual({ type: "chat.shown", botId: MAIN, view: "storage", tab: null });
+    expect(shownChat(MAIN, { subagent: false, tab: null })).toEqual({ type: "chat.shown", botId: MAIN, view: "chat", tab: null });
+    expect(shownChat(null, { subagent: false, tab, storage: true })).toEqual({ type: "chat.shown", botId: null, view: "chat", tab: null });
+    for (const command of [shownChat(PROJECT, { subagent: false, tab }), shownChat(MAIN, { subagent: false, tab: null, storage: true }), shownChat(null, { subagent: false, tab: null })]) expect(Command.safeParse(command).success).toBe(true);
+    // The Board is gone: a "board" view is refused.
+    expect(Command.safeParse({ type: "chat.shown", botId: MAIN, view: "board", tab: null }).success).toBe(false);
+  });
+
+  it("remembers the Storage tab like a plugin's tab, under a key no plugin view has; no plugin tab is shown for it", () => {
+    expect(SettingsChange.safeParse({ key: "mainTab", value: { botId: MAIN, tab: STORAGE_TAB } }).success).toBe(true);
+    expect(settingsView(applySetting({}, { key: "mainTab", value: { botId: MAIN, tab: STORAGE_TAB } })).mainTabs).toEqual({ [MAIN]: STORAGE_TAB });
+    expect(shownTab(mainTabsFor(plugins, { role: "main" }), STORAGE_TAB)).toBeNull();
   });
 });

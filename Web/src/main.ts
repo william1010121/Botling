@@ -108,8 +108,8 @@ class Chat {
       if (typeof id === "string") this.revealMessage(id);
     });
     this.composer = new Composer(document.getElementById("composer-slot")!);
-    // Where botling.board draws pins and the Board (its web part fills them; empty, they take no room).
-    const slots = { pinArea: slot("pin-area", "div"), board: slot("board", "section"), overlay: document.body };
+    // Where botling.board draws pins (its web part fills it; empty, it takes no room).
+    const slots = { pinArea: slot("pin-area", "div"), overlay: document.body };
     const composer = this.composer;
     this.plugins = new PluginHost({
       composer: {

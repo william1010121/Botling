@@ -36,7 +36,7 @@ function pin(overrides: Partial<PinView> = {}): PinView {
 }
 
 function state(overrides: Partial<BoardState> = {}): BoardState {
-  return { botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, ...overrides } as BoardState;
+  return { botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], ...overrides } as BoardState;
 }
 
 function box(element: Element, top: number, height = 100): void {
@@ -48,7 +48,7 @@ const runs = () => sent.filter((action) => action.type === "componentCommand" ||
 beforeEach(() => {
   installBoard();
   sent.length = 0;
-  document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
+  document.body.innerHTML = `<main id="scroller"></main><div id="pin-area"></div><div id="composer-slot"></div>`;
   document.body.className = "";
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1000 });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
@@ -82,7 +82,7 @@ describe("a floating card that refreshes by itself", () => {
 
 describe("which pins the page shows", () => {
   it("tells the app the pins the user can see, and only when that changes", () => {
-    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
+    const area = new PinArea(document.getElementById("pin-area")!);
     area.update(state({ pins: [pin(), pin({ id: "P2" })] }));
     const chips = document.querySelectorAll<HTMLElement>(".pin-chip[data-id]");
     box(chips[0], 700, 30);
@@ -99,15 +99,4 @@ describe("which pins the page shows", () => {
     expect(sent).toContainEqual({ type: "pinsVisible", ids: [] });
   });
 
-  it("a Board tile scrolled out of the Board is not seen", () => {
-    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
-    area.update(state({ pins: [pin(), pin({ id: "P2" })], board: true }));
-    const board = document.getElementById("board")!;
-    board.style.overflowY = "auto";
-    box(board, 0, 600);
-    const tiles = document.querySelectorAll<HTMLElement>(".board-card[data-id]");
-    box(tiles[0], 20, 200);
-    box(tiles[1], 900, 200);
-    expect(visiblePinIDs()).toEqual(["P1"]);
-  });
 });
