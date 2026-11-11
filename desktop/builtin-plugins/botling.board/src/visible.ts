@@ -12,7 +12,7 @@ export function visiblePinIDs(): string[] {
   const add = (id: string | undefined) => {
     if (id && !ids.includes(id)) ids.push(id);
   };
-  for (const element of document.querySelectorAll<HTMLElement>(".pin-chip[data-id], .board-card[data-id], .float-card[data-id]")) {
+  for (const element of document.querySelectorAll<HTMLElement>(".pin-chip[data-id], .float-card[data-id]")) {
     if (onScreen(element)) add(element.dataset.id);
   }
   const sheet = document.querySelector<HTMLElement>(".pin-sheet:not([hidden])");

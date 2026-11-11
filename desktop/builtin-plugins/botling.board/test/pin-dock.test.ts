@@ -19,8 +19,8 @@ const state = (items = pins): BoardState => ({
 let area: PinArea;
 beforeEach(() => {
   installBoard();
-  document.body.innerHTML = '<div id="pin-area"></div><section id="board"></section>';
-  area = new PinArea(document.querySelector("#pin-area")!, document.querySelector("#board")!);
+  document.body.innerHTML = '<div id="pin-area"></div>';
+  area = new PinArea(document.querySelector("#pin-area")!);
   area.update(state());
 });
 

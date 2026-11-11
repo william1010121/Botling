@@ -66,8 +66,8 @@ export interface CurrentChat {
   sessionId: string | null;
   /** Every head of the chat and its session, the primary first. */
   heads: { engine: "claude" | "codex" | "agy"; sessionId: string | null }[];
-  /** What the main area shows of it: the chat, the Board, a plugin's tab, or a subagent's run. */
-  view: "chat" | "board" | "tab" | "subagent";
+  /** What the main area shows of it: the chat, the Storage tab, a plugin's tab, or a subagent's run. */
+  view: "chat" | "storage" | "tab" | "subagent";
   /** With view "tab": "<plugin>/<view id>"; otherwise null. */
   tab: string | null;
 }

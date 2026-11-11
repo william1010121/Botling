@@ -1,18 +1,16 @@
-// The main area's plugin tabs (plan W2): a `mainTab` view (PluginsView `mainTabs`) is a tab beside Chat /
-// Board in the chat header of the bots its `forRole` names; which tab each bot showed last is kept in
+// The main area's plugin tabs (plan W2): a `mainTab` view (PluginsView `mainTabs`) is a tab beside Chat
+// in the chat header of the bots its `forRole` names; which tab each bot showed last is kept in
 // settings.json (`mainTabs`, SettingsChange "mainTab"), so it shows again when the bot is opened.
 import type { BotView, PluginsView } from "../contract";
 
 /** The first-party plugin whose tab takes the place of this page's own whiteboard (plan W5). */
 export const WHITEBOARD_PLUGIN = "botling.whiteboard";
 
-/** The first-party plugin that draws pins and the Board in the chat page; the header's Board switch shows while it is on. */
-export const BOARD_PLUGIN = "botling.board";
-
-/** Whether the Board is offered: its plugin is on (the library not yet known: yes, the page loads it at once). */
-export function boardOffered(plugins: PluginsView | null | undefined): boolean {
-  return !plugins || plugins.plugins.some((plugin) => plugin.name === BOARD_PLUGIN && plugin.enabled);
-}
+/**
+ * The app's own Storage tab (檔案庫, StorageTab.tsx), right of the plugins' tabs: remembered in `mainTabs` like a plugin's
+ * tab, under a key no plugin view can have (a plugin's name has a dot).
+ */
+export const STORAGE_TAB = "botling/storage";
 
 export type MainTab = NonNullable<PluginsView["mainTabs"]>[number];
 
@@ -38,17 +36,17 @@ export function composerBarFor(plugins: PluginsView | null | undefined, bot: Pic
   return (plugins?.composerBarViews ?? []).find((view) => view.forRole === "any" || view.forRole === role || (view.forRole === "bots" && bot.role !== "main")) ?? null;
 }
 
-/** The tab shown: the one remembered for the bot, while it is offered; null: Chat or Board. */
+/** The tab shown: the one remembered for the bot, while it is offered; null: Chat (or the app's own Storage tab). */
 export function shownTab(tabs: MainTab[], remembered: string | undefined): MainTab | null {
   return (remembered && tabs.find((tab) => tabKey(tab) === remembered)) || null;
 }
 
 /** What the main window tells the core it shows (`chat.shown`, for plugins' `workspace.current`). */
-export function shownChat(botId: string | null, shown: { subagent: boolean; tab: MainTab | null; board: boolean }): { type: "chat.shown"; botId: string | null; view: "chat" | "board" | "tab" | "subagent"; tab: string | null } {
+export function shownChat(botId: string | null, shown: { subagent: boolean; tab: MainTab | null; storage?: boolean }): { type: "chat.shown"; botId: string | null; view: "chat" | "storage" | "tab" | "subagent"; tab: string | null } {
   if (!botId) return { type: "chat.shown", botId: null, view: "chat", tab: null };
   if (shown.subagent) return { type: "chat.shown", botId, view: "subagent", tab: null };
   if (shown.tab) return { type: "chat.shown", botId, view: "tab", tab: tabKey(shown.tab) };
-  return { type: "chat.shown", botId, view: shown.board ? "board" : "chat", tab: null };
+  return { type: "chat.shown", botId, view: shown.storage ? "storage" : "chat", tab: null };
 }
 
 /** The bot a plugin names in botling.openChat / openResult ("main": the main bot, as plugins see it), if it is there. */

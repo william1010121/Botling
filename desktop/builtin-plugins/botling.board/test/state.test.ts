@@ -39,7 +39,7 @@ function pin(overrides: Partial<PinView> = {}): PinView {
 function state(overrides: Partial<BoardState> = {}): BoardState {
   return {
     botID: "b1", botName: "ClaudeCodeBot", messages: [], working: false, avatar: "", placeholder: "",
-    replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, ...overrides,
+    replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], ...overrides,
   };
 }
 
@@ -65,20 +65,9 @@ beforeEach(() => {
 
 describe("a pinned component's saved data", () => {
   function setUp(): PinArea {
-    document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
-    return new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
+    document.body.innerHTML = `<main id="scroller"></main><div id="pin-area"></div><div id="composer-slot"></div>`;
+    return new PinArea(document.getElementById("pin-area")!);
   }
-
-  it("a Board tile saves to its pin and keeps its frame when the pin comes back", () => {
-    const area = setUp();
-    area.update(state({ board: true, pins: [pin()] }));
-    sent.length = 0;
-    const frame = document.querySelector<HTMLIFrameElement>(".board-card .component-frame")!;
-    say(frame, { ccb: "save", data: ticked });
-    expect(sent).toEqual([{ type: "pinSave", id: "P1", data: ticked }]);
-    area.update(state({ board: true, pins: [pin({ display: { name: "todo", data: ticked }, headline: "Milk · Eggs" })] }));
-    expect(document.querySelector(".board-card .component-frame")).toBe(frame);
-  });
 
   it("an opened pin saves too; a pinned command's card does not", () => {
     const area = setUp();
@@ -91,22 +80,11 @@ describe("a pinned component's saved data", () => {
     area.update(state({ pins: [pin({ display: { name: "todo", data: ticked } })] }));
     expect(document.querySelector(".pin-sheet .component-frame")).toBe(frame);
 
-    // The Board's tile, drawn before with the old data, draws again with the saved data (behind
-    // the shown frame until it is ready).
-    area.update(state({ board: true, pins: [pin()] }));
-    const tile = document.querySelector<HTMLIFrameElement>(".board-card .component-frame")!;
-    // Back to the chat: the pin is still open above the input box.
-    area.update(state({ board: false, pins: [pin()] }));
-    say(document.querySelector<HTMLIFrameElement>(".pin-sheet .component-frame")!, { ccb: "save", data: ticked });
-    area.update(state({ board: true, pins: [pin({ display: { name: "todo", data: ticked } })] }));
-    const redrawn = document.querySelector<HTMLIFrameElement>(".board-card .component-frame.incoming")!;
-    expect(redrawn).not.toBe(tile);
-    expect(redrawn.srcdoc).toContain("Eggs");
-
-    const board = setUp();
-    board.update(state({ board: true, pins: [pin({ id: "P2", name: "stats", display: { name: "stats", data: "{}", command: "echo {}", folder: "/p", status: "done" } })] }));
+    const other = setUp();
+    other.update(state({ pins: [pin({ id: "P2", name: "stats", display: { name: "stats", data: "{}", command: "echo {}", folder: "/p", status: "done" } })] }));
+    (document.querySelector(".pin-chip") as HTMLElement).click();
     sent.length = 0;
-    say(document.querySelector<HTMLIFrameElement>(".board-card .component-frame")!, { ccb: "save", data: ticked });
+    say(document.querySelector<HTMLIFrameElement>(".pin-sheet .component-frame")!, { ccb: "save", data: ticked });
     expect(sent).toEqual([]);
   });
 });

@@ -25,6 +25,10 @@ const paths: Record<string, string> = {
   search: "M7 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM10 10l3 3",
   people: "M8 3.2a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM4.2 13c0-2.2 1.7-3.8 3.8-3.8s3.8 1.6 3.8 3.8M3.6 5a1.5 1.5 0 1 1 0 3M1.2 12.2c0-1.6 1-2.7 2.3-2.9M12.4 5a1.5 1.5 0 1 0 0 3M14.8 12.2c0-1.6-1-2.7-2.3-2.9",
   gear: "M8 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1",
+  // The Storage tab: its header tab, a row's ⋯ and a file glyph.
+  tray: "M2.5 9.5l1.6-5.2a1 1 0 0 1 1-.8h5.8a1 1 0 0 1 1 .8l1.6 5.2v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1zM2.5 9.5h3.2l.8 1.5h3l.8-1.5h3.2",
+  more: "M3.5 8h.01M8 8h.01M12.5 8h.01",
+  doc: "M4.5 2h4.5l2.5 2.5V14h-7zM9 2v2.5h2.5",
 };
 
 export type IconName = keyof typeof paths;

@@ -1,9 +1,8 @@
 import {
-  commandCard, componentElement, componentSizes, detailTarget, escapeHTML, hasFrame, intervalRow, isComposingEnter, keepFrames, language, markPinFrames,
-  maxColumns, parseInterval, pieces, pinSize, pinSizes, post, presetMinutes, presetSeconds, refreshWords, reportComponent, resizeFrame, setChat, shared, sizeInfo, t,
+  commandCard, componentElement, componentSizes, detailTarget, escapeHTML, intervalRow, isComposingEnter, keepFrames, language, markPinFrames,
+  parseInterval, pieces, pinSizes, post, presetMinutes, presetSeconds, refreshWords, reportComponent, setChat, shared, sizeInfo, t,
   type WordKey,
 } from "./kit";
-import { arrange, cellFor, clampTarget, drop, resize as resizeTiles, trailingCell, type Place, type Tile } from "./board-layout";
 import type { Interval, IntervalRow, IntervalUnit } from "../../../../Web/src/refresh";
 import type { ComponentInfo, DisplayView, PinRefresh, PinSize, SpecChipView } from "../../../../Web/src/types";
 import type { BoardState, ChipStatus, FloatMenu, PinAction, PinChoiceView, PinView } from "./types";
@@ -11,8 +10,8 @@ import type { BoardState, ChipStatus, FloatMenu, PinAction, PinChoiceView, PinVi
 /**
  * Components pinned to a bot. In the chat a component shows pin / ↻ / ⋯ on hover; pinning asks
  * how it should refresh and shows its command, then offers Undo. Pins show as chips above the
- * input box (click one: the full component rises from the bottom) and as cards on the bot's
- * Board. Commands only run once allowed, as for any card: Swift checks.
+ * input box (click one: the full component rises from the bottom) or as cards floating in a
+ * corner. Commands only run once allowed, as for any card: Swift checks.
  */
 
 /** What the pin bar in the chat needs from the latest state. */
@@ -605,7 +604,7 @@ function openPicker(): void {
       backdrop.remove();
       const pin = (refresh: PinRefresh, minutes: number, seconds?: number): PinAdd => ({ type: "pin", id: newID(), name: choice.name, refresh, minutes, ...(seconds ? { seconds } : {}) });
       if (choice.command) {
-        openPinDialog(document.querySelector<HTMLElement>(".pin-chip.add, .board-add") ?? document.body, { name: choice.name, command: choice.command, pin });
+        openPinDialog(document.querySelector<HTMLElement>(".pin-chip.add") ?? document.body, { name: choice.name, command: choice.command, pin });
       } else {
         const action = pin("manual", 15);
         post(action);
@@ -832,8 +831,7 @@ function panelHeight(height: number): number {
 }
 
 /**
- * The pins of the chat on show: chips above the input box with the sheet they raise, and the
- * Board in place of the messages. Drawn from each state; parts that did not change are kept, so
+ * The pins of the chat on show: chips above the input box with the sheet they raise. Drawn from each state; parts that did not change are kept, so
  * component frames do not load again.
  */
 export class PinArea {
@@ -843,26 +841,12 @@ export class PinArea {
   private readonly chipList: HTMLElement;
   private readonly addChip: HTMLButtonElement;
   private readonly sheet: HTMLElement;
-  private readonly board: HTMLElement;
-  private readonly grid: HTMLElement;
-  private readonly boardHead: HTMLElement;
   private openID: string | null = null;
   private sheetKey = "";
   private dockKey = "";
-  private headKey = "";
-  private readonly cards = new Map<string, { key: string; element: HTMLElement }>();
-  private boardShown = false;
   private botID: string | null = null;
   private dragging: string | null = null;
   private enabled = false;
-  /** The Board's columns of square cells, from its width. */
-  private columns = 0;
-  /** Every tile's cells as last drawn (see board-layout.ts), in pin order. */
-  private tiles: Tile[] = [];
-  /** Places and sizes this page gave tiles (a drop, a resize) that Swift has not sent back yet. */
-  private readonly placed = new Map<string, { place: Place; size: PinSize }>();
-  /** Pins without a place whose first one was sent to Swift (each only once). */
-  private readonly migrated = new Set<string>();
   /** While the opened pin's panel is being dragged taller or shorter. */
   private sheetDrag = false;
   /** The opened pin's header, kept (filled again when what it shows changed). */
@@ -871,9 +855,8 @@ export class PinArea {
   /** The language its words were last drawn in. */
   private wordsIn = "";
   private readonly listeners = new AbortController();
-  private readonly resizes = new ResizeObserver(() => this.layOut());
 
-  constructor(area: HTMLElement, board: HTMLElement) {
+  constructor(area: HTMLElement) {
     this.sheet = document.createElement("section");
     this.sheet.className = "pin-sheet";
     this.sheet.hidden = true;
@@ -891,13 +874,6 @@ export class PinArea {
     this.row.className = "dock-row";
     this.row.append(this.dock);
     area.append(this.sheet, this.row);
-    this.board = board;
-    this.boardHead = document.createElement("div");
-    this.boardHead.className = "board-head";
-    this.grid = document.createElement("div");
-    this.grid.className = "board-grid";
-    board.append(this.boardHead, this.grid);
-    this.resizes.observe(this.grid);
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       if (document.querySelector(".pin-popup")) closePopups();
@@ -905,19 +881,15 @@ export class PinArea {
     }, { signal: this.listeners.signal });
     document.addEventListener("ccb-open-pin", (event) => {
       const pin = current.pins.find((p) => p.name === (event as CustomEvent<string>).detail);
-      if (pin && !this.boardShown) this.open(pin.id);
+      if (pin) this.open(pin.id);
     }, { signal: this.listeners.signal });
   }
 
-  /** The plugin unloads: what it put in the page goes, and the Board gives the messages back. */
+  /** The plugin unloads: what it put in the page goes. */
   dispose(): void {
     this.listeners.abort();
-    this.resizes.disconnect();
     this.sheet.remove();
     this.row.remove();
-    this.boardHead.remove();
-    this.grid.remove();
-    document.body.classList.remove("board");
     closePopups();
   }
 
@@ -928,10 +900,7 @@ export class PinArea {
       this.dock.setAttribute("aria-label", t("pins.dock"));
       this.addChip.title = t("pins.pinAComponent");
       this.addChip.setAttribute("aria-label", t("pins.pinAComponent"));
-      this.board.setAttribute("aria-label", t("pins.board"));
-      this.sheetKey = this.dockKey = this.headKey = this.sheetHeadKey = "";
-      for (const entry of this.cards.values()) entry.key = "";
-      this.grid.querySelector(".board-add")?.remove();
+      this.sheetKey = this.dockKey = this.sheetHeadKey = "";
     }
     prime(state);
     this.enabled = current.enabled;
@@ -939,13 +908,8 @@ export class PinArea {
       this.botID = state.botID;
       this.openID = null;
     }
-    const board = this.enabled && !!state.board;
-    document.body.classList.toggle("board", board);
     this.drawDock();
     this.drawSheet();
-    if (board) this.drawBoard(state);
-    if (board && !this.boardShown) post({ type: "pinShown", ids: null });
-    this.boardShown = board;
   }
 
   private open(id: string): void {
@@ -1038,7 +1002,7 @@ export class PinArea {
   }
 
   private drawSheet(): void {
-    const pin = this.enabled && !document.body.classList.contains("board") ? current.pins.find((p) => p.id === this.openID) : undefined;
+    const pin = this.enabled ? current.pins.find((p) => p.id === this.openID) : undefined;
     if (!pin) {
       if (this.openID && !current.pins.some((p) => p.id === this.openID)) this.openID = null;
       this.sheet.hidden = true;
@@ -1141,446 +1105,4 @@ export class PinArea {
     return handle;
   }
 
-  private drawBoard(state: BoardState): void {
-    const pins = current.pins;
-    const headKey = JSON.stringify([state.botName, pins.length, pins.some((p) => p.display.command)]);
-    if (headKey !== this.headKey) {
-      this.headKey = headKey;
-      this.boardHead.innerHTML = "";
-      const title = document.createElement("span");
-      title.className = "board-title";
-      title.textContent = state.botName;
-      const count = document.createElement("span");
-      count.className = "board-count";
-      count.textContent = pins.length ? t("pins.count", { n: pins.length }) : t("pins.nothingPinned");
-      const fill = document.createElement("span");
-      fill.className = "pin-fill";
-      this.boardHead.append(title, count, fill);
-      if (pins.some((p) => p.display.command)) {
-        const all = button("board-button board-refresh-all", t("pins.refreshAll"), `${icons.refresh}<span>${escapeHTML(t("pins.refreshAll"))}</span>`, () => current.pins.forEach(refreshPin));
-        this.boardHead.append(all);
-      }
-      this.boardHead.append(button("board-button primary-outline", t("pins.addComponent"), `${icons.plus}<span>${escapeHTML(t("pins.addComponent"))}</span>`, () => openPicker()));
-    }
-
-    const keep = new Set(pins.map((p) => p.id));
-    // What this page placed, once Swift's state says the same, is Swift's again.
-    for (const [id, local] of this.placed) {
-      const pin = pins.find((p) => p.id === id);
-      if (!pin || (pin.size === local.size && pin.place?.col === local.place.col && pin.place?.row === local.place.row)) this.placed.delete(id);
-    }
-    for (const [id, entry] of this.cards) {
-      if (!keep.has(id)) {
-        entry.element.remove();
-        this.cards.delete(id);
-      }
-    }
-    let previous: Element | null = null;
-    pins.forEach((pin) => {
-      // Its size and place are not part of it: a resized or moved card keeps its frame (a
-      // resized one tells the component).
-      const key = JSON.stringify([{ ...drawnPart(pin, "board"), size: null }, current.components[pin.name] ?? null]);
-      let entry = this.cards.get(pin.id);
-      if (!entry || entry.key !== key) {
-        let element: HTMLElement;
-        if (entry && hasFrame(entry.element)) {
-          // A tile with a component keeps its tile and frame, drawn anew around it: given only
-          // new data, the frame takes it (ccb.onData) or is drawn anew behind what it shows, so
-          // a refresh never shows an empty tile.
-          element = this.card(pin, entry.element);
-        } else {
-          element = this.card(pin);
-          if (entry) entry.element.replaceWith(element);
-        }
-        entry = { key, element };
-        this.cards.set(pin.id, entry);
-      } else if (entry.element.dataset.size !== pin.size) {
-        this.resize(entry.element, pin);
-      }
-      const expected: Element | null = previous ? previous.nextElementSibling : this.grid.firstElementChild;
-      if (expected !== entry.element) {
-        if (previous) previous.after(entry.element);
-        else this.grid.prepend(entry.element);
-      }
-      previous = entry.element;
-    });
-    let add = this.grid.querySelector<HTMLElement>(".board-add");
-    if (!add) {
-      add = document.createElement("button");
-      add.className = "board-add";
-      add.innerHTML = `${icons.plus}<span>${escapeHTML(t("pins.addComponent"))}</span><span class="board-add-note">${escapeHTML(t("pins.addNote"))}</span>`;
-      add.addEventListener("click", () => openPicker());
-    }
-    if (this.grid.lastElementChild !== add) this.grid.append(add);
-    this.layOut();
-  }
-
-  /**
-   * The Board as a grid of square cells, like a home screen's widgets: as many columns of at
-   * least 150px as its width holds (fewer in a narrow window, never wider than it), rows as tall
-   * as a column is wide. Every tile sits at its own cells (`place`), gaps kept; nothing packs
-   * toward the left or the top.
-   */
-  private layOut(): void {
-    const width = this.grid.clientWidth;
-    if (width <= 0) {
-      this.place();
-      return;
-    }
-    const columns = Math.max(1, Math.floor((width + boardGap) / (boardCell + boardGap)));
-    const cell = Math.floor((width - boardGap * (columns - 1)) / columns);
-    this.grid.style.setProperty("--board-cols", String(columns));
-    this.grid.style.setProperty("--board-cell", `${cell}px`);
-    this.columns = columns;
-    this.place();
-  }
-
-  /** The columns tiles are laid out in: the Board's, or 4 until it has measured. */
-  private get cols(): number {
-    return this.columns || maxColumns;
-  }
-
-  /** Each pin's size and place as this page knows them (its own drop or resize first). */
-  private items(): { id: string; w: number; h: number; at: Place | null }[] {
-    return current.pins.map((pin) => {
-      const local = this.placed.get(pin.id);
-      const { w, h } = sizeInfo(local?.size ?? pin.size);
-      return { id: pin.id, w, h, at: local?.place ?? pin.place ?? null };
-    });
-  }
-
-  /**
-   * Lays every tile out (`arrange`) and puts each card at its cells. Pins without a place yet
-   * (from before free placement, or new) get the first free cells, where the packed Board drew
-   * them, and Swift is asked to keep that, once the Board has measured its columns.
-   */
-  private place(): void {
-    this.tiles = arrange(this.items(), this.cols);
-    for (const card of this.grid.querySelectorAll<HTMLElement>(".board-card")) this.placeCard(card);
-    const add = this.grid.querySelector<HTMLElement>(".board-add");
-    if (add) {
-      const cell = trailingCell(this.tiles, this.cols);
-      add.style.gridColumn = `${cell.col + 1}`;
-      add.style.gridRow = `${cell.row + 1}`;
-    }
-    if (!this.columns || !this.enabled) return;
-    const fresh = this.tiles.filter((tile) => {
-      const pin = current.pins.find((p) => p.id === tile.id);
-      return pin && !pin.place && !this.placed.has(tile.id) && !this.migrated.has(tile.id);
-    });
-    if (!fresh.length) return;
-    for (const tile of fresh) this.migrated.add(tile.id);
-    post({ type: "arrangePins", places: fresh.map((tile) => ({ id: tile.id, col: tile.col, row: tile.row })) });
-  }
-
-  /** A card at its cells: its tile's top-left, its size's span (or the one it is being dragged to, no wider than the Board from there). */
-  private placeCard(card: HTMLElement): void {
-    const tile = this.tiles.find((t) => t.id === card.dataset.id);
-    const { w, h } = card.dataset.preview ? sizeInfo(card.dataset.preview as PinSize) : tile ?? sizeInfo((card.dataset.size ?? "2x2") as PinSize);
-    const col = tile ? tile.col : 0;
-    const span = Math.max(1, Math.min(w, this.cols - col));
-    const column = tile ? `${col + 1} / span ${span}` : `span ${span}`;
-    const row = tile ? `${tile.row + 1} / span ${h}` : `span ${h}`;
-    // Only what changed is written: an unchanged style lays nothing out again.
-    if (card.style.gridColumn !== column) card.style.gridColumn = column;
-    if (card.style.gridRow !== row) card.style.gridRow = row;
-  }
-
-  /** A cell and a gap, across and down, in px, and a cell's size: measured once, when a drag starts. */
-  private metrics(): { pitchX: number; pitchY: number; cell: number } {
-    const cell = parseFloat(this.grid.style.getPropertyValue("--board-cell")) || boardCell;
-    const width = this.grid.clientWidth;
-    const pitchX = width > 0 ? (width + boardGap) / this.cols : cell + boardGap;
-    return { pitchX, pitchY: cell + boardGap, cell };
-  }
-
-  /**
-   * Keeps a new layout: the tiles that moved (and one resized, with its size) are drawn there at
-   * once and sent to Swift together. The cards stay in the page as they are (only their cells
-   * change), so no component loads again.
-   */
-  private commit(next: Tile[], resized?: string): void {
-    const before = new Map(this.tiles.map((t) => [t.id, t]));
-    const changed = next.filter((t) => {
-      const was = before.get(t.id);
-      return t.id === resized || !was || was.col !== t.col || was.row !== t.row || was.w !== t.w || was.h !== t.h;
-    });
-    if (!changed.length) return;
-    for (const tile of changed) {
-      const pin = current.pins.find((p) => p.id === tile.id);
-      const size = tile.id === resized ? pinSize(tile.w, tile.h) : (this.placed.get(tile.id)?.size ?? pin?.size ?? pinSize(tile.w, tile.h));
-      this.placed.set(tile.id, { place: { col: tile.col, row: tile.row }, size });
-    }
-    this.place();
-    post({
-      type: "arrangePins",
-      places: changed.map((t) => (t.id === resized ? { id: t.id, col: t.col, row: t.row, size: pinSize(t.w, t.h) } : { id: t.id, col: t.col, row: t.row })),
-    });
-  }
-
-  /** A tile at a new size (its menu, or its corner let go): its top-left kept, what it now overlaps pushed down. */
-  private resizeTo(id: string, size: PinSize): void {
-    const { w, h } = sizeInfo(size);
-    this.commit(resizeTiles(this.tiles, id, w, h, this.cols), id);
-  }
-
-  /**
-   * A tile's resize handles (on hover): its bottom-right corner, and its right and bottom edges
-   * for one way only. Dragging one resizes the tile cell by cell, from 1×1 up to 4×4 (no wider
-   * than the Board's columns). The tile and its component follow the drag (`ccb.onSize` at each
-   * new cell); letting go keeps the size.
-   */
-  private resizeHandle(card: HTMLElement, pin: PinView, edge: "se" | "e" | "s"): HTMLElement {
-    const handle = document.createElement("div");
-    handle.className = (edge === "se" ? "board-resize" : `board-resize-${edge}`) + " resize-handle";
-    handle.title = t("float.dragToResize");
-    handle.setAttribute("aria-hidden", "true");
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const rect = card.getBoundingClientRect();
-      const cell = parseFloat(this.grid.style.getPropertyValue("--board-cell")) || boardCell;
-      const startX = event.clientX;
-      const startY = event.clientY;
-      // From where the tile is now, in cells (its rect is 0 before layout, as in a test).
-      const was = (this.placed.get(pin.id)?.size ?? card.dataset.size ?? pin.size) as PinSize;
-      const { w: startW, h: startH } = sizeInfo(was);
-      const width = rect.width || startW * cell + (startW - 1) * boardGap;
-      const height = rect.height || startH * cell + (startH - 1) * boardGap;
-      let size = was;
-      card.classList.add("resizing");
-      document.body.classList.add("pin-resizing");
-      capture(handle, event.pointerId);
-      const move = (moved: PointerEvent) => {
-        const w = edge === "s" ? startW : Math.round((width + moved.clientX - startX + boardGap) / (cell + boardGap));
-        const h = edge === "e" ? startH : Math.round((height + moved.clientY - startY + boardGap) / (cell + boardGap));
-        // No wider than the Board from where it is: it grows in place, over the others until let go.
-        const col = this.tiles.find((t) => t.id === pin.id)?.col ?? 0;
-        const next = pinSize(Math.min(w, this.cols - col), h);
-        if (next === size) return;
-        size = next;
-        card.dataset.preview = next;
-        this.placeCard(card);
-        const label = card.querySelector<HTMLElement>(".board-size");
-        if (label) label.textContent = next.replace("x", "×");
-        for (const frame of card.querySelectorAll<HTMLIFrameElement>("iframe.component-frame")) resizeFrame(frame, next);
-      };
-      const up = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        window.removeEventListener("pointercancel", up);
-        card.classList.remove("resizing");
-        document.body.classList.remove("pin-resizing");
-        // Kept at the new size, where it is, pushing what it now overlaps down, until Swift's
-        // state says so; unchanged, as it was.
-        delete card.dataset.preview;
-        if (size !== was) this.resizeTo(pin.id, size);
-        else this.placeCard(card);
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-      window.addEventListener("pointercancel", up);
-    });
-    return handle;
-  }
-
-  /**
-   * Lets a tile be dragged by `handle` (its grip, or the grab bar along its top edge) with the
-   * pointer, not HTML drag and drop: its component's frame covers the whole tile, so a drop
-   * would land in the frame and never reach the Board. While it moves, the tile follows the
-   * pointer by its transform alone, once a frame; a ghost shows the cells it snaps to (blue when
-   * free, amber where it would swap or push tiles down, those tiles outlined) and nothing else
-   * on the Board is laid out again, nor any component drawn again. Nothing is measured while it
-   * moves: the cell under it is arithmetic from where it started. Letting go puts it there
-   * (`drop`'s rule) and asks Swift to keep it; a small wobble is a click.
-   */
-  private movable(handle: HTMLElement, card: HTMLElement, pin: PinView): void {
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const id = pin.id;
-      const from = this.tiles.find((t) => t.id === id);
-      if (!from) return;
-      const columns = this.cols;
-      const { pitchX, pitchY } = this.metrics();
-      const box = this.grid.getBoundingClientRect();
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const startScroll = this.grid.scrollTop;
-      let x = startX;
-      let y = startY;
-      let moving = false;
-      let frame = 0;
-      let target: Place = { col: from.col, row: from.row };
-      let ghost: HTMLElement | null = null;
-      let hits: HTMLElement[] = [];
-      document.body.classList.add("pin-resizing");
-      capture(handle, event.pointerId);
-      const offset = () => ({ dx: x - startX, dy: y - startY + (this.grid.scrollTop - startScroll) });
-      const showTarget = () => {
-        const result = drop(this.tiles, id, target, columns);
-        const home = target.col === from.col && target.row === from.row;
-        ghost!.dataset.mode = home ? "home" : result.mode;
-        ghost!.style.transform = `translate3d(${Math.round(target.col * pitchX)}px, ${Math.round(target.row * pitchY)}px, 0)`;
-        const label = ghost!.firstElementChild as HTMLElement;
-        label.textContent = home || result.mode === "free" ? "" : t(result.mode === "swap" ? "pins.dropSwap" : "pins.dropPush");
-        // The tiles it would swap with or push down, outlined (a paint, not a layout).
-        const before = new Map(this.tiles.map((tile) => [tile.id, tile]));
-        const moved = new Set(result.tiles.filter((tile) => tile.id !== id && (before.get(tile.id)!.row !== tile.row || before.get(tile.id)!.col !== tile.col)).map((tile) => tile.id));
-        for (const hit of hits) if (!moved.has(hit.dataset.id ?? "")) hit.classList.remove("drop-hit");
-        hits = [...moved].map((other) => this.cards.get(other)?.element).filter((e): e is HTMLElement => !!e);
-        for (const hit of hits) hit.classList.add("drop-hit");
-      };
-      const paint = () => {
-        frame = 0;
-        const { dx, dy } = offset();
-        card.style.transform = `translate3d(${Math.round(dx)}px, ${Math.round(dy)}px, 0)`;
-        const next = clampTarget(this.tiles, id, cellFor(from, dx, dy, pitchX, pitchY), columns);
-        if (next.col !== target.col || next.row !== target.row || !ghost!.dataset.mode) {
-          target = next;
-          showTarget();
-        }
-        // Near the Board's top or bottom edge, it scrolls, a little more each frame the nearer.
-        const edge = 48;
-        const step = y > box.bottom - edge ? Math.ceil((y - (box.bottom - edge)) / 4) : y < box.top + edge ? -Math.ceil((box.top + edge - y) / 4) : 0;
-        if (step && box.height > 0) {
-          const top = this.grid.scrollTop;
-          this.grid.scrollTop = top + step;
-          if (this.grid.scrollTop !== top) frame = nextFrame(paint);
-        }
-      };
-      const move = (moved: PointerEvent) => {
-        x = moved.clientX;
-        y = moved.clientY;
-        if (!moving) {
-          if (Math.hypot(x - startX, y - startY) < 4) return;
-          moving = true;
-          card.classList.add("moving");
-          ghost = document.createElement("div");
-          ghost.className = "board-ghost";
-          ghost.setAttribute("aria-hidden", "true");
-          ghost.style.width = `${Math.round(from.w * pitchX - boardGap)}px`;
-          ghost.style.height = `${Math.round(from.h * pitchY - boardGap)}px`;
-          ghost.append(document.createElement("span"));
-          this.grid.append(ghost);
-          // At its own cells until the first frame says otherwise.
-          showTarget();
-        }
-        // At most once a frame, however often the pointer reports.
-        if (!frame) frame = nextFrame(paint);
-      };
-      const up = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        window.removeEventListener("pointercancel", up);
-        if (frame && typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(frame);
-        frame = 0;
-        document.body.classList.remove("pin-resizing");
-        if (!moving) return;
-        paint();
-        if (frame && typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(frame);
-        const { dx, dy } = offset();
-        ghost?.remove();
-        for (const hit of hits) hit.classList.remove("drop-hit");
-        card.classList.remove("moving");
-        card.style.transform = "";
-        if (target.col === from.col && target.row === from.row) return;
-        this.commit(drop(this.tiles, id, target, columns).tiles);
-        // It glides the last bit from under the pointer into its cells.
-        const glide = `translate3d(${Math.round(dx - (target.col - from.col) * pitchX)}px, ${Math.round(dy - (target.row - from.row) * pitchY)}px, 0)`;
-        if (typeof window.requestAnimationFrame === "function" && glide !== "translate3d(0px, 0px, 0)") {
-          // At its new cells, moved back under the pointer, with no transition yet, and that
-          // style computed now: a transition starts from the last style the page computed, which
-          // is still the dragged one at its old cells, so gliding from there would draw it a
-          // whole move past its cells for the first frames (the flash on drop).
-          card.style.transform = glide;
-          void getComputedStyle(card).transform;
-          window.requestAnimationFrame(() => {
-            card.classList.add("landing");
-            card.style.transform = "";
-            card.addEventListener("transitionend", () => card.classList.remove("landing"), { once: true });
-            setTimeout(() => card.classList.remove("landing"), 300);
-          });
-        }
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-      window.addEventListener("pointercancel", up);
-    });
-  }
-
-  /** Puts a card at its pin's new size, keeping the component's frame (it hears `ccb.onSize`). */
-  private resize(card: HTMLElement, pin: PinView): void {
-    card.className = this.cardClass(pin);
-    card.dataset.size = pin.size;
-    delete card.dataset.preview;
-    this.placeCard(card);
-    card.querySelector(".board-card-tools")?.replaceWith(this.cardTools(card, pin));
-    for (const frame of card.querySelectorAll<HTMLIFrameElement>("iframe.component-frame")) resizeFrame(frame, pin.size);
-  }
-
-  /** A tile's classes: its size, and while its command runs (its tools stay in sight). */
-  private cardClass(pin: PinView): string {
-    return `board-card size-${pin.size}` + (pin.display.status === "running" ? " running" : "");
-  }
-
-  /**
-   * A tile's controls, floating over its top-right corner on hover or keyboard focus: a grip to
-   * drag it by, its size, ↻ and ⋯ (name, when it ran, refresh, sizes, move, unpin).
-   */
-  private cardTools(card: HTMLElement, pin: PinView): HTMLElement {
-    const tools = document.createElement("div");
-    tools.className = "board-card-tools";
-    tools.setAttribute("role", "toolbar");
-    tools.setAttribute("aria-label", `${pin.name}: ${whenWords(pin)}`);
-    const grip = document.createElement("span");
-    grip.className = "board-grip";
-    grip.title = `${pin.name} · ${whenWords(pin)} · ${t("pins.dragToMoveLower")}`;
-    grip.setAttribute("aria-hidden", "true");
-    grip.innerHTML = icons.grip;
-    this.movable(grip, card, pin);
-    const size = button("board-size pin-tool", t("pins.sizeLabel", { size: sizeLabel(pin.size) }), sizeInfo(pin.size).w + "×" + sizeInfo(pin.size).h, () => openMenu(size, sizeItems(pin, (picked) => this.resizeTo(pin.id, picked))));
-    tools.append(grip, size);
-    const status = pin.display.status;
-    if (pin.display.command) {
-      const refresh = button("pin-tool" + (status === "running" ? " spinning" : ""), t("pins.refreshWhen", { when: whenWords(pin) }), icons.refresh, () => refreshPin(pin));
-      refresh.disabled = status === "running" || status === "approve";
-      tools.append(refresh);
-    }
-    const more = button("pin-tool", t("pins.more"), icons.more, () => pinMenu(more, pin, { sizes: true, about: true, report: card.querySelector<HTMLElement>(".board-card-body") ?? card, resize: (picked) => this.resizeTo(pin.id, picked) }));
-    tools.append(more);
-    return tools;
-  }
-
-  /** A tile: the component is all of it, like a home-screen widget; its controls float over it. */
-  private card(pin: PinView, reuse?: HTMLElement): HTMLElement {
-    const card = reuse ?? document.createElement("section");
-    card.className = this.cardClass(pin);
-    card.dataset.id = pin.id;
-    card.dataset.size = pin.size;
-    if (pin.display.status) card.dataset.status = pin.display.status;
-    else delete card.dataset.status;
-    card.setAttribute("aria-label", pin.name);
-    this.placeCard(card);
-    const body = document.createElement("div");
-    body.className = "board-card-body";
-    body.append(pinBody(pin, pin.size));
-    // A grab bar along its top edge (on hover), as an opened pin's panel has: drag it to move.
-    const bar = document.createElement("div");
-    bar.className = "board-move resize-handle";
-    bar.title = t("pins.dragToMove");
-    bar.setAttribute("aria-hidden", "true");
-    this.movable(bar, card, pin);
-    // A tile drawn anew around a live frame: its body stays in place (taken out, the frame would
-    // load again) and takes the new one's content; everything else is new.
-    const before = reuse?.querySelector<HTMLElement>(":scope > .board-card-body") ?? null;
-    const shown = before ? keepFrames(before, body) : body;
-    for (const child of [...card.children]) if (child !== shown) child.remove();
-    if (shown.parentElement !== card) card.append(shown);
-    card.append(this.cardTools(card, pin), bar, this.resizeHandle(card, pin, "e"), this.resizeHandle(card, pin, "s"), this.resizeHandle(card, pin, "se"));
-    if (pin.makingLive) card.append(liveNote());
-    return card;
-  }
 }

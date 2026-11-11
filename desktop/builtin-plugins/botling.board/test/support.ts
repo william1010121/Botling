@@ -23,7 +23,7 @@ export function installBoard({ bars = true }: { bars?: boolean } = {}): void {
     if (method === "action") sent.push((params as { action: never }).action);
     return Promise.resolve(null);
   };
-  useKit(pageKit({ pinArea: document.createElement("div"), board: document.createElement("div"), overlay: document.body },
+  useKit(pageKit({ pinArea: document.createElement("div"), overlay: document.body },
     { onState: () => () => {}, onWindowVisible: () => () => {}, call, requestApproval: () => Promise.resolve(false) }));
   if (!bars) return;
   bar = { plugin: "botling.board", make: (display, messageID, index) => (barFor(display.name).offered ? pinBar(display, messageID, index) : null) };

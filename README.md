@@ -46,7 +46,7 @@ components you can pin, and change the app itself with plugins. All local, on th
 - **Catch up at a glance.** Unread replies fold into a short summary when you come back, and any
   stretch between your messages can be summarized, each point linked to the messages it came from.
 - **Answers you can see.** Charts and cards drawn right in the chat, one click from becoming a
-  pinned chip or a Board tile.
+  pinned chip or a floating card.
 - **An app that changes itself.** Plugins hot-reload, and in developer mode the bot works on
   Botling's own source.
 - **Nothing leaves your Mac but the models.** It drives the `claude` and `codex` CLIs you
@@ -93,16 +93,16 @@ fire). Press an icon to see the list and each task's last lines of output.
 </td>
 <td valign="top">
 
-### 2. Components, pins and a Board in the chat
+### 2. Components and pins in the chat
 
 Bots draw small HTML components (charts, cards, test summaries) inside their replies, fed by
 their own data or a CLI command (`<show name="…" command="git diff --stat">`). Cards can be
 **live** (`Refresh: every 2s`), updated in place by id, and keep their own state
 (`ccb.save(data)`, so a todo list's ticks survive a restart).
 
-Pin one above the input box as a status chip, **float** it in a corner over every chat to watch
-a build, or lay pins out on a per-bot **Board**: a widget grid where each tile keeps its own
-cell, and a drop swaps or pushes tiles down instead of reshuffling everything.
+Pin one above the input box as a status chip, or **float** it in a corner over every chat to watch
+a build. Each bot's **Storage** tab (beside Note) lists the files it made and the ones you dragged
+in; drag a row onto a web page in the Browser pane to upload it there.
 
 </td>
 </tr>

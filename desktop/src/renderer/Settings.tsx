@@ -166,7 +166,7 @@ function Appearance({ settings, change, bot }: { settings: SettingsView; change:
         <Segmented label="Report pages" options={[{ id: "system", label: "Match app" }, { id: "light", label: "Light" }, { id: "dark", label: "Dark" }] as const} value={settings.reportTheme ?? "system"} onChange={(value) => void change({ key: "reportTheme", value })} />
       </Row>
     </div>
-    <p className="settings-note">The look of the whole app: chat, sidebar, Settings, Board and panels. It changes right away.</p>
+    <p className="settings-note">The look of the whole app: chat, sidebar, Settings, Storage and panels. It changes right away.</p>
   </section>
   <Group title="Chat">
     <Row label="Avatar size" hint={`${size} px${settings.chatAvatarSize === null ? " (default)" : ""}`}>

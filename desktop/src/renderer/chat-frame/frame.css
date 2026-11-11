@@ -52,8 +52,7 @@ body.dropping::after { z-index: 50; }
   box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
 }
 .composer-bar-card-frame { display: block; width: 100%; border: 0; background: transparent; }
-body.board .composer-bar, body.board .composer-bar-card, body.panel-mode .composer-bar { display: none; }
-body.board #pin-area.has-composer-bar { min-height: 0; }
+body.panel-mode .composer-bar { display: none; }
 @media (width < 480px) { .composer-bar { right: 16px; } }
 
 /* "Press Esc again to stop", under the input box after one Escape while a reply is written (escape-stop.ts).

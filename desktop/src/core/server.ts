@@ -62,7 +62,8 @@ import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
 import { headsJSON, singleHead, type Engine, type Heads } from "./heads";
-import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, withPluginSections, type BotPrompts } from "./prompts";
+import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, profilePaths, savedLanguage, withPluginSections, type BotPrompts } from "./prompts";
+import { StorageBook, storageItems } from "./storage";
 import { BotStore, readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
@@ -231,6 +232,8 @@ export class Core {
   private waitingTimer: NodeJS.Timeout | null = null;
   /** Files waiting in each bot's input box. */
   readonly pending: PendingFiles;
+  /** The Storage tab's dragged-in files, by bot (references only; storage.ts). */
+  readonly storage: StorageBook;
   readonly maintainer: MaintainerDesk;
   private lastPlugins = "";
   /** The plugins' Claude parts as bots last heard of them (`followClaudeParts`). */
@@ -255,6 +258,7 @@ export class Core {
   constructor(private options: CoreOptions) {
     this.doctor = new DoctorModel(options.doctor ?? new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(options.dataDir)), options.dataDir) }), doctor => this.event({ type: "doctor.updated", doctor }));
     mkdirSync(options.dataDir, { recursive: true });
+    this.storage = new StorageBook(join(options.dataDir, "storage.json"));
     this.pending = new PendingFiles(join(options.dataDir, "incoming"), (botId, files) => this.event({ type: "files.updated", botId, files }));
     this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
     const leftovers = this.ledger.endLeftovers();
@@ -2768,6 +2772,14 @@ First write a test that shows this, then fix it.`;
         return {result,linked};
       }
       case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
+      case "storage.list": {
+        const profile = this.bot(cmd.botId).profile;
+        const artifacts = profile.folder ? profilePaths(profile).artifacts : null;
+        return { items: storageItems(artifacts, this.storage.refs(cmd.botId)), artifacts };
+      }
+      // Main checked the paths are files (main.ts storageAdd).
+      case "storage.add": this.bot(cmd.botId); return { added: this.storage.add(cmd.botId, cmd.paths) };
+      case "storage.remove": this.bot(cmd.botId); return { removed: this.storage.remove(cmd.botId, cmd.id) };
       case "waiting.list": return this.waiting();
       case "waiting.ignore": return this.ignoreWaiting(cmd.botId, cmd.text);
       case "settings.set": return this.changeSetting(cmd.change);

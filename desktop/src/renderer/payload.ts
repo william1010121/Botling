@@ -161,7 +161,7 @@ export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[
 }
 
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
-  { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original", bots = [], feedback = false, plugins = null }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[]; feedback?: boolean; plugins?: PluginsView | null } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
+  { components = {}, lang = null, chatAvatarSize = null, look = "original", bots = [], feedback = false, plugins = null }: { components?: Record<string, ComponentInfoView>; bots?: BotView[]; feedback?: boolean; plugins?: PluginsView | null } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
   const face = faceURL(bot, "original");
   // A line another bot said here (called in with @): its name and face (`speaker`).
   const guestOf = (message: { role: string; sourceId?: string }) => (message.role === "bot" && message.sourceId ? bots.find((other) => other.id === message.sourceId) ?? null : null);
@@ -291,7 +291,6 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     seenHeads: look === "cute" && two ? Object.fromEntries(engines.map((engine) => [markLetter(engine), characterURL(engine)])) : null,
     // What plugins keep for the page to draw from (botling.board's pins).
     pluginData: chat.pluginData ?? {},
-    board,
     // "Make into component" on replies (1.x: every chat but a subagent's).
     feedback,
     decorations: (chat.decorations ?? []).map((decoration) => decorationView(decoration)),

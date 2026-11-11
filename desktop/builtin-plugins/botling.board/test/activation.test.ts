@@ -23,7 +23,7 @@ const pin: PinView = {
 const withData = (pins: PinView[] = [pin], floating: PinView[] = [], pinChoices: BoardData["pinChoices"] = []) => ({ [PLUGIN]: { pins, floating, pinChoices } });
 const state = (extra: Partial<ChatState> = {}): ChatState => ({
   botID: "b1", botName: "Bot", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [],
-  components, pluginData: withData(), board: false, ...extra,
+  components, pluginData: withData(), ...extra,
 });
 const message = (display: DisplayView): MessageView => ({
   id: "m1", role: "bot", text: "", stamp: null, avatar: null, choices: null, chosen: null, answer: null, open: false, displays: [display],
@@ -37,11 +37,11 @@ beforeEach(async () => {
   sent.length = 0;
   redraws = 0;
   document.body.className = "";
-  document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
+  document.body.innerHTML = `<main id="scroller"></main><div id="pin-area"></div><div id="composer-slot"></div>`;
   host = new PluginHost({
     composer: {} as never,
     redraw: () => { redraws++; },
-    slots: { pinArea: document.getElementById("pin-area")!, board: document.getElementById("board")!, overlay: document.body },
+    slots: { pinArea: document.getElementById("pin-area")!, overlay: document.body },
   });
   await host.sync([spec], async () => activate);
 });
@@ -65,9 +65,6 @@ describe("botling.board loaded into the chat page", () => {
   it("draws the pins of each state in the slots the page gave it", () => {
     host.chatState(state());
     expect(document.querySelectorAll("#pin-area .pin-chip:not(.add)")).toHaveLength(1);
-    host.chatState(state({ board: true }));
-    expect(document.body.classList.contains("board")).toBe(true);
-    expect(document.querySelectorAll("#board .board-card")).toHaveLength(1);
   });
 
   it("draws exactly one strip when the page syncs plugins twice while the first import is still running", async () => {
@@ -107,14 +104,12 @@ describe("botling.board loaded into the chat page", () => {
     expect(sent).toContainEqual(told([]));
   });
 
-  it("leaves nothing behind when it unloads: no chips, no Board, no bar, no floating layer", () => {
-    host.chatState(state({ board: true, pluginData: withData([pin], [{ ...pin, float: { corner: "topRight", collapsed: false } }]) }));
+  it("leaves nothing behind when it unloads: no chips, no bar, no floating layer", () => {
+    host.chatState(state({ pluginData: withData([pin], [{ ...pin, float: { corner: "topRight", collapsed: false } }]) }));
     expect(document.querySelector(".float-layer")).not.toBeNull();
     host.unload(manifest.name);
     expect(document.querySelector("#pin-area")!.children).toHaveLength(0);
-    expect(document.querySelector("#board")!.children).toHaveLength(0);
     expect(document.querySelector(".float-layer")).toBeNull();
-    expect(document.body.classList.contains("board")).toBe(false);
     expect(messageElement(message({ name: "cpu", data: "{}" }), components).querySelector(".pin-bar")).toBeNull();
     expect(redraws).toBeGreaterThan(0);
   });

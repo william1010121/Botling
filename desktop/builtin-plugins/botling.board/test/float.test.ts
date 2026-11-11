@@ -29,12 +29,12 @@ function floating(...pins: PinView[]): FloatingPinView[] {
 function state(overrides: Partial<BoardState> = {}): BoardState {
   return {
     botID: "b2", botName: "Other bot", messages: [], working: false, avatar: "", placeholder: "",
-    replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, floating: floating(pin()), ...overrides,
+    replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], floating: floating(pin()), ...overrides,
   };
 }
 
 function setUp(): FloatLayer {
-  document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
+  document.body.innerHTML = `<main id="scroller"></main><div id="pin-area"></div><div id="composer-slot"></div>`;
   return new FloatLayer(document.body);
 }
 
@@ -257,8 +257,8 @@ describe("a floating card", () => {
 
 describe("the pin's menu", () => {
   function area(pins: PinView[]): PinArea {
-    document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
-    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
+    document.body.innerHTML = `<main id="scroller"></main><div id="pin-area"></div><div id="composer-slot"></div>`;
+    const area = new PinArea(document.getElementById("pin-area")!);
     area.update(state({ pins, floating: [] }));
     return area;
   }

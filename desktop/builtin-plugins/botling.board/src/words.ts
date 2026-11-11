@@ -1,5 +1,5 @@
 /**
- * The Board's own words in the app's two languages (the chat page's `t` has the rest: this plugin asks it for those). `command`, `refresh`
+ * The pins' own words in the app's two languages (the chat page's `t` has the rest: this plugin asks it for those). `command`, `refresh`
  * and `suggested` are also the chat page's (the component spec panel uses them); a key is looked up here first.
  */
 const en = {
@@ -61,7 +61,6 @@ const en = {
   "pins.refreshWhen": "Refresh ({when})",
   "pins.collapse": "Collapse",
   "pins.dock": "Pinned components",
-  "pins.board": "Board",
   "pins.sheetHandle": "Drag to resize · double-click to fit its content",
   "pins.nothingPinned": "Nothing pinned yet",
   "pins.refreshAll": "Refresh all",
@@ -135,7 +134,6 @@ const zhHant: Record<OwnKey, string | readonly [string, string]> = {
   "pins.refreshWhen": "重新整理（{when}）",
   "pins.collapse": "收起",
   "pins.dock": "釘選的元件",
-  "pins.board": "看板",
   "pins.sheetHandle": "拖曳以調整大小 · 按兩下以符合內容",
   "pins.nothingPinned": "還沒有釘選任何東西",
   "pins.refreshAll": "全部重新整理",

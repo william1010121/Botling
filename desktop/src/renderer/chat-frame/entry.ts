@@ -201,7 +201,7 @@ installEscapeStop({
  * web parts bundled in, as their manifests describe them, with their stylesheets (and ccb-latex's fonts)
  * beside chat.html, and their settings' defaults. ccb-latex's key (Mod+Shift+M) is the shell's to bind
  * (plugin-commands.ts). botling.catchup's draws the summaries the desktop wrote (its Retry needs the desktop). botling.board's draws the
- * pins and the Board the desktop keeps (a pin's command needs the desktop).
+ * pins the desktop keeps (a pin's command needs the desktop).
  */
 const defaults = (settings: Record<string, { default: unknown }>) => Object.fromEntries(Object.entries(settings).map(([key, setting]) => [key, setting.default]));
 const standalone = WEB ? [{

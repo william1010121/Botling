@@ -25,7 +25,7 @@ export { CARD_SAVE_LIMIT, FILE_DATA_LIMIT } from "./editor-card";
  * 4: Codex heads and bots with two heads (who said a line, who it was for and has seen it, the
  *    composer's Both/Claude/Codex, hand-offs and their rounds), several turns at once.
  * 5: routines (routines.cron and app-owned schedules), chat summaries, components (`<show>`
- *    displays, the component library, pins and the Board) and their commands' approvals.
+ *    displays, the component library and pins) and their commands' approvals.
  * 6: plugins (the library, on/off, settings, sealed secrets, commands, sandboxed panels and their
  *    program part's calls), a message a plugin stopped, Maintainer.
  * 7: the chat page on its own origin with plugins' web parts in it, attachments (files for the next
@@ -714,7 +714,7 @@ export const SettingsView = z.strictObject({
   updateCheck: z.boolean(),
   /** Keyboard shortcuts the user rebound (id to binding, see shortcuts.ts); an id left out has its default. */
   shortcuts: z.record(z.string().max(200), z.string().max(40)).default({}),
-  /** The plugin tab each bot's main area last showed ("<plugin>/<view id>", PluginsView `mainTabs`); a bot left out shows Chat or Board. */
+  /** The plugin tab each bot's main area last showed ("<plugin>/<view id>", PluginsView `mainTabs`); a bot left out shows Chat. */
   mainTabs: z.record(BotId, z.string().max(320)).optional(),
   /** Each bot's settled face colour and the shape it was settled on (avatars.ts heldBotColors); absent: none yet. */
   botColors: z.record(BotId, HeldBotColor).optional(),
@@ -754,7 +754,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("idleBots"), value: z.array(BotId).max(200) }),
   z.strictObject({ key: z.literal("pinnedSubBots"), value: z.array(BotId).max(200) }),
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
-  /** The plugin tab a bot's main area shows (null: none, Chat or Board). */
+  /** The plugin tab a bot's main area shows (null: none, Chat). */
   z.strictObject({ key: z.literal("mainTab"), value: z.strictObject({ botId: BotId, tab: z.string().min(1).max(320).nullable() }) }),
   /** All rebound shortcuts at once (an empty object: every default). */
   z.strictObject({ key: z.literal("shortcuts"), value: z.record(z.string().max(200), z.string().max(40)) }),
@@ -923,7 +923,7 @@ export const PluginsView = z.strictObject({
   /** Without `command` the name goes into the message as words, for the bot (botling.design's /design). */
   slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId.optional(), plugin: PluginName })).max(200).optional(),
   menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200), icon: z.string().max(40).optional(), quick: z.boolean().optional(), alt: z.string().max(200).optional(), hint: z.string().max(400).optional(), locales: z.record(z.string().max(20), z.strictObject({ title: z.string().max(400).optional(), alt: z.string().max(400).optional(), hint: z.string().max(400).optional() })).optional() })).max(200).optional(),
-  /** Plugin views that are tabs beside Chat / Board (`where: "mainTab"`), for the main bot, project bots or any (plan W2). */
+  /** Plugin views that are tabs beside Chat / Storage (`where: "mainTab"`), for the main bot, project bots or any (plan W2). */
   mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "bots", "any"]) })).max(50).optional(),
   /** Plugin views that are pages of Settings (`where: "settings.section"`): `after` names the core page it follows, `link` the sidebar popover's link that opens it. */
   settingsSections: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), terms: z.string().max(1_000), after: z.string().max(40).optional(), link: z.string().max(100).optional() })).max(20).optional(),
@@ -1019,15 +1019,30 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("worker.cwd"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   z.strictObject({ type: z.literal("worker.file"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), path: z.string().min(1).max(4096) }),
   z.strictObject({ type: z.literal("result.open"), botId, url: z.string().min(1).max(4_000) }),
+  /** The Storage tab (檔案庫): the bot's own files (its artifacts folder) and the files dragged in (references only). */
+  z.strictObject({ type: z.literal("storage.list"), botId }),
+  /**
+   * Remembers files for a bot's Storage, by path (dropped from Finder) or by a link the chat handed over (a file: URL or
+   * a chat attachment). Main checks each is a file and passes the paths on; nothing is copied.
+   */
+  z.strictObject({ type: z.literal("storage.add"), botId, paths: z.array(z.string().min(1).max(4_096)).max(50).default([]), urls: z.array(z.string().min(1).max(4_096)).max(50).default([]) }),
+  /** Main only: its file picker, then `storage.add`. */
+  z.strictObject({ type: z.literal("storage.pick"), botId }),
+  /** Forgets a dragged-in file (`r:…`); the original is never touched. A bot's own file is not removed here. */
+  z.strictObject({ type: z.literal("storage.remove"), botId, id: z.string().min(1).max(4_200) }),
+  /** Main only: opens one of the list's files (a page or Markdown in the app's report preview, anything else with its app; `reveal`: in Finder). */
+  z.strictObject({ type: z.literal("storage.open"), botId, id: z.string().min(1).max(4_200), reveal: z.boolean().optional() }),
+  /** Main only: a row's drag began; main starts an OS file drag of that file, so a web page in the Browser pane gets it as an upload. */
+  z.strictObject({ type: z.literal("storage.drag"), botId, id: z.string().min(1).max(4_200) }),
   z.strictObject({ type: z.literal("link.open"), /** Open a web page in the default browser, not the app's browser pane (⌘-click, the lightbox's button). */ external: z.boolean().optional(), cardImage: z.string().regex(/^[0-9a-f]{40}$/).optional(), preview: z.boolean().optional(), reveal: z.boolean().optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
   /** Core-only membership lookup: no chat payload or component rendering. */
   z.strictObject({ type: z.literal("link.authorize"), cardImage: z.string().regex(/^[0-9a-f]{40}$/).optional(), source:z.enum(["user","component"]).optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("chat.read"), botId }),
   /**
-   * Main window only: the chat on screen now (null: none) and which of its views — its chat, the Board, a plugin's
+   * Main window only: the chat on screen now (null: none) and which of its views — its chat, the Storage tab, a plugin's
    * main tab (`tab`: "<plugin>/<view id>") or a subagent's run. Plugins read it with `workspace.current`.
    */
-  z.strictObject({ type: z.literal("chat.shown"), botId: botId.nullable(), view: z.enum(["chat", "board", "tab", "subagent"]), tab: z.string().min(1).max(400).nullable() }),
+  z.strictObject({ type: z.literal("chat.shown"), botId: botId.nullable(), view: z.enum(["chat", "storage", "tab", "subagent"]), tab: z.string().min(1).max(400).nullable() }),
   z.strictObject({ type: z.literal("turn.stop"), botId, turnId: id }),
   /** Resolves when the turn ends. Cancelling the request stops the wait, never the turn. */
   z.strictObject({ type: z.literal("turn.await"), botId, turnId: id }),
@@ -1223,10 +1238,25 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "worker.file",
+  "storage.list", "storage.add", "storage.pick", "storage.remove", "storage.open", "storage.drag",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["card.page", "files.pick", "projects.pick", "result.open", "link.open", "worker.file", "component.report", "plugins.noteSnapshot", "plugins.openLink", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["storage.add", "storage.pick", "storage.open", "storage.drag", "card.page", "files.pick", "projects.pick", "result.open", "link.open", "worker.file", "component.report", "plugins.noteSnapshot", "plugins.openLink", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
+
+/** What kind of file a Storage row is (its icon and the type filter). */
+export const StorageKind = z.enum(["image", "pdf", "doc", "page", "sheet", "video", "audio", "text", "other"]);
+export type StorageKind = z.infer<typeof StorageKind>;
+/**
+ * One row of a bot's Storage: `source` "bot" for a file in its artifacts folder (`id` "a:<path inside it>", `folder` the
+ * subfolder or null), "added" for a file the user dragged in (`id` "r:<ref id>", `added` when; `missing` when the original
+ * moved or was deleted, then `size` and `modified` are null). Dates in ms.
+ */
+export const StorageItemView = z.strictObject({
+  id: z.string().max(4_200), source: z.enum(["bot", "added"]), name: z.string().max(1_000), folder: z.string().max(4_096).nullable(), path: z.string().max(4_096),
+  size: z.number().nullable(), modified: z.number().nullable(), added: z.number().nullable(), kind: StorageKind, missing: z.boolean(),
+});
+export type StorageItemView = z.infer<typeof StorageItemView>;
 
 /** A link handed over in a chat (`[label](url)`, 1.x's `Chip`). */
 export const ResultView = z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) });
@@ -1289,6 +1319,12 @@ export interface Results {
   "bots.remove": { removed: boolean };
   "results.list": { results: ResultView[] };
   "result.open": { opened: boolean; previewURL?: string };
+  "storage.list": { items: StorageItemView[]; artifacts: string | null };
+  "storage.add": { added: number };
+  "storage.pick": { added: number };
+  "storage.remove": { removed: boolean };
+  "storage.open": { opened: boolean; previewURL?: string };
+  "storage.drag": { started: boolean };
   "link.open": { opened: boolean; previewURL?: string };
   "worker.cwd": { cwd: string | null };
   "worker.file": { route: "preview" | "reveal" | "open" };

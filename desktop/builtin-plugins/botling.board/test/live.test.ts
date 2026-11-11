@@ -67,31 +67,9 @@ afterEach(() => vi.unstubAllGlobals());
 
 
 
-describe("a live Board tile", () => {
-  it("keeps its tile and frame when only its data changes, with fresh controls", () => {
-    document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
-    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
-    const pin = (data: string): PinView => ({ id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15, display: card({ data, every: null }) });
-    const state = (data: string) => ({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin(data)], pinChoices: [], board: true }) as BoardState;
-    area.update(state(`{"cpu":1}`));
-    const tile = document.querySelector<HTMLElement>(".board-card")!;
-    const frame = tile.querySelector<HTMLIFrameElement>(".component-frame")!;
-    const posts: unknown[] = [];
-    vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation((data: unknown) => { posts.push(data); });
-    say(frame, { ccb: "live" });
-    area.update(state(`{"cpu":2}`));
-    expect(document.querySelector(".board-card")).toBe(tile);
-    expect(tile.querySelector(".component-frame")).toBe(frame);
-    expect(posts).toContainEqual({ ccbData: `{"cpu":2}` });
-    expect(tile.querySelectorAll(".board-card-tools")).toHaveLength(1);
-    expect(tile.querySelectorAll(".board-card-body")).toHaveLength(1);
-    vi.restoreAllMocks();
-  });
-});
-
-describe("a Board tile, a pinned panel and a floating card that do not take live data", () => {
+describe("a pinned panel and a floating card that do not take live data", () => {
   const pin = (data: string, extra: Partial<PinView> = {}): PinView => ({ id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15, display: card({ data, every: null }), ...extra });
-  const state = (data: string, extra: Partial<BoardState> = {}) => ({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin(data)], pinChoices: [], board: true, ...extra }) as BoardState;
+  const state = (data: string, extra: Partial<BoardState> = {}) => ({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin(data)], pinChoices: [], ...extra }) as BoardState;
   /** Counts every srcdoc `frame` is given from here on. */
   function watch(frame: HTMLIFrameElement): { count: number } {
     const counter = { count: 0 };
@@ -117,37 +95,25 @@ describe("a Board tile, a pinned panel and a floating card that do not take live
   }
 
   beforeEach(() => {
-    document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
-  });
-
-  it("a Board tile keeps its tile and drawing until the new data is drawn", () => {
-    const paints = holdPaints();
-    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
-    area.update(state(`{"cpu":1}`));
-    const tile = document.querySelector<HTMLElement>(".board-card")!;
-    const frame = tile.querySelector<HTMLIFrameElement>(".component-frame")!;
-    const count = watch(frame);
-    area.update(state(`{"cpu":2}`));
-    expect(document.querySelector(".board-card")).toBe(tile);
-    staysUntilDrawn(() => document.querySelector<HTMLElement>(".board-card")!, frame, count, paints);
+    document.body.innerHTML = `<main id="scroller"></main><div id="pin-area"></div><div id="composer-slot"></div>`;
   });
 
   it("an opened pin keeps its drawing until the new data is drawn", () => {
     const paints = holdPaints();
-    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
-    area.update(state(`{"cpu":1}`, { board: false }));
+    const area = new PinArea(document.getElementById("pin-area")!);
+    area.update(state(`{"cpu":1}`));
     document.querySelector<HTMLElement>(".pin-chip:not(.add)")!.click();
     const sheet = () => document.querySelector<HTMLElement>(".pin-sheet")!;
     const frame = sheet().querySelector<HTMLIFrameElement>(".component-frame")!;
     const count = watch(frame);
-    area.update(state(`{"cpu":2}`, { board: false }));
+    area.update(state(`{"cpu":2}`));
     staysUntilDrawn(sheet, frame, count, paints);
   });
 
   it("a floating card keeps its drawing until the new data is drawn", () => {
     const paints = holdPaints();
     const layer = new FloatLayer(document.body);
-    const floating = (data: string) => ({ floating: [{ botID: "b", botName: "B", pin: pin(data, { float: { corner: "topRight", width: 280, height: 160, collapsed: false }, floatMenu: "stop" }) }], board: false });
+    const floating = (data: string) => ({ floating: [{ botID: "b", botName: "B", pin: pin(data, { float: { corner: "topRight", width: 280, height: 160, collapsed: false }, floatMenu: "stop" }) }] });
     layer.update(state(`{"cpu":1}`, floating(`{"cpu":1}`)));
     const body = () => document.querySelector<HTMLElement>(".float-card")!;
     const frame = body().querySelector<HTMLIFrameElement>(".component-frame")!;
@@ -182,16 +148,14 @@ describe("a card that refreshes by itself", () => {
 
   const runs = () => sent.filter((action) => action.type === "componentCommand");
 
-
-
-
-  it("a pin's Board tile too", () => {
-    document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
-    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
+  it("an opened pin's card too", () => {
+    document.body.innerHTML = `<main id="scroller"></main><div id="pin-area"></div><div id="composer-slot"></div>`;
+    const area = new PinArea(document.getElementById("pin-area")!);
     const pin: PinView = { id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15, display: card() };
-    area.update({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin], pinChoices: [], board: true } as BoardState);
-    const tile = document.querySelector<HTMLElement>(".board-card .command-card")!;
-    tile.getBoundingClientRect = () => ({ top: 10, bottom: 110, left: 0, right: 300, width: 300, height: 100, x: 0, y: 10, toJSON() {} }) as DOMRect;
+    area.update({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin], pinChoices: [] } as BoardState);
+    document.querySelector<HTMLElement>(".pin-chip:not(.add)")!.click();
+    const sheet = document.querySelector<HTMLElement>(".pin-sheet .command-card")!;
+    sheet.getBoundingClientRect = () => ({ top: 10, bottom: 110, left: 0, right: 300, width: 300, height: 100, x: 0, y: 10, toJSON() {} }) as DOMRect;
     sent.length = 0;
     vi.advanceTimersByTime(2500);
     expect(sent).toContainEqual({ type: "pinCommand", id: "P1", command: "top -l 1", folder: "/p", force: true, live: true });

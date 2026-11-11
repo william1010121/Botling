@@ -42,8 +42,6 @@ export interface WorkspaceView {
   resyncs: number;
   /** The component library as the page draws it. */
   components: Record<string, ComponentInfoView>;
-  /** The chat shows its Board instead of its messages. */
-  board: boolean;
   /** The plugin library, once asked for (`plugins.list`) or changed (`plugins.updated`). */
   plugins: PluginsView | null;
   /** The app's settings (language, avatar size, look…). */
@@ -58,7 +56,7 @@ export interface WorkspaceView {
 }
 
 /** Only inputs used by the selected chat page; sidebar activity is deliberately excluded. */
-export type ChatRenderView = Pick<WorkspaceView, "chat" | "subagent" | "board" | "settings" | "components" | "resyncs" | "bots" | "plugins"> & { libraryVersion: number };
+export type ChatRenderView = Pick<WorkspaceView, "chat" | "subagent" | "settings" | "components" | "resyncs" | "bots" | "plugins"> & { libraryVersion: number };
 
 // Worker progress changes the selected bot's sidebar row on every step. Compare only
 // its chat inputs before invalidating the expensive history conversion. Keep unknown/new
@@ -71,7 +69,7 @@ const chatBotKey = (bot: BotView): string => {
 type Snapshot = ResultOf<"chat.snapshot">;
 
 export class WorkspaceStore {
-  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false, plugins: null, settings: null, waiting: { items: [], doing: {} } };
+  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, plugins: null, settings: null, waiting: { items: [], doing: {} } };
   private epoch: string | null = null;
   private seq = 0;
   private syncing = false;
@@ -127,10 +125,10 @@ export class WorkspaceStore {
       return old.id === bot.id && (bot.id === view.chat?.botId ? old === bot || chatBotKey(old) === chatBotKey(bot)
         : old.name === bot.name && old.avatar === bot.avatar && old.role === bot.role);
     }) ? previous.bots : view.bots;
-    if (previous && previous.chat === view.chat && previous.subagent === view.subagent && previous.board === view.board
+    if (previous && previous.chat === view.chat && previous.subagent === view.subagent
       && previous.settings === view.settings && previous.libraryVersion === this.libraryVersion
       && previous.resyncs === view.resyncs && previous.bots === bots && previous.plugins === view.plugins) return previous;
-    return this.chatView = { chat: view.chat, subagent: view.subagent, board: view.board, settings: view.settings,
+    return this.chatView = { chat: view.chat, subagent: view.subagent, settings: view.settings,
       components: view.components, libraryVersion: this.libraryVersion, resyncs: view.resyncs, bots, plugins: view.plugins };
   };
 
@@ -167,10 +165,6 @@ export class WorkspaceStore {
     return this.resync();
   }
 
-  /** Shows the chat's Board instead of its messages, or the messages again. */
-  showBoard(board: boolean) {
-    this.set({ ...this.view, board });
-  }
 
   /** The panel a plugin opened was closed. */
   closePluginPanel() {
@@ -200,8 +194,7 @@ export class WorkspaceStore {
       this.seq = snapshot.seq;
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
       const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ ...run })) } : null;
-      const board = this.view.board && chat?.botId === this.view.chat?.botId;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, doctor: snapshot.doctor ?? this.view.doctor, waiting: snapshot.waiting ?? this.view.waiting, coreSwap: null });
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, doctor: snapshot.doctor ?? this.view.doctor, waiting: snapshot.waiting ?? this.view.waiting, coreSwap: null });
     } catch (error) {
       // A failed obsolete request must not discard a later user's selection.
       if (generation !== this.selectionGeneration) return;

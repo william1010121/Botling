@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The chat header's main-area tabs on the real App (plan W2): a plugin declaring a `mainTab` view gets a
-// tab button beside Chat / Board for the bots its forRole names; pressing it keeps the choice for that bot
+// tab button beside Chat (and before Storage) for the bots its forRole names; pressing it keeps the choice for that bot
 // (settings.json mainTabs), and the tab's frame takes the chat's place. Without such a plugin nothing changes.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
@@ -14,8 +14,8 @@ import { WorkspaceStore, type WorkspaceView } from "../../src/renderer/store";
 const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 const PROJECT = "B0000000-0000-4000-8000-000000000001";
 const bot = (id: string, role: BotView["role"], name: string): BotView => ({ id, name, role, avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] });
-/** botling.board, the plugin the header's Board button belongs to. */
-const boardPlugin = (enabled = true): PluginsView["plugins"][number] => ({ name: "botling.board", title: "Board and pins", version: "1.0.0", description: null, enabled, failure: null, installedFrom: null, builtIn: true, permissions: [], parts: ["web"], settings: [], commands: [], panels: [] });
+/** botling.board (pins only now: the Board it drew is gone). */
+const boardPlugin = (enabled = true): PluginsView["plugins"][number] => ({ name: "botling.board", title: "Pins", version: "1.0.0", description: null, enabled, failure: null, installedFrom: null, builtIn: true, permissions: [], parts: ["web"], settings: [], commands: [], panels: [] });
 const plugins: PluginsView = {
   plugins: [boardPlugin()], broken: [], host: { running: true, problem: null }, secretsProblem: null,
   mainTabs: [{ plugin: "board", id: "board.wall", title: "Wall", forRole: "main" }, { plugin: "git", id: "git.log", title: "Git", forRole: "project" }],
@@ -31,9 +31,9 @@ async function render(botId: string, extra: Partial<WorkspaceView> = {}, whitebo
   let view: WorkspaceView = { ...defaults, ready: true, bots: [bot(MAIN, "main", "Main bot"), bot(PROJECT, "manager", "Site")], settings: settingsView({}), plugins, chat: { botId, messages: [], running: null, live: [] }, ...extra };
   const listeners = new Set<() => void>();
   const subscribe = (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn); };
-  const store = { getView: () => view, getChatView: () => view, subscribe, subscribeChat: subscribe, showBoard: () => {} } as unknown as WorkspaceStore;
+  const store = { getView: () => view, getChatView: () => view, subscribe, subscribeChat: subscribe } as unknown as WorkspaceStore;
   const requests: any[] = [];
-  const client = { request: vi.fn(async (command: any) => { requests.push(command); return command.type === "plugins.panel" ? { title: "Wall", source: "", settings: {} } : command.type === "card.page" ? { url: "botling-card://page/t" } : { specs: [] }; }), onEvent: () => () => {} } as unknown as Client;
+  const client = { request: vi.fn(async (command: any) => { requests.push(command); return command.type === "plugins.panel" ? { title: "Wall", source: "", settings: {} } : command.type === "card.page" ? { url: "botling-card://page/t" } : command.type === "storage.list" ? { items: [], artifacts: null } : { specs: [] }; }), onEvent: () => () => {} } as unknown as Client;
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -47,11 +47,11 @@ async function render(botId: string, extra: Partial<WorkspaceView> = {}, whitebo
 
 it("the main bot's header gets the main tab, a project bot's the project tab; nothing else changes", async () => {
   const main = await render(MAIN);
-  expect(main.buttons()).toEqual(["Chat", "Board", "Wall"]);
+  expect(main.buttons()).toEqual(["Chat", "Wall", "Storage"]);
   const project = await render(PROJECT);
-  expect(project.buttons()).toEqual(["Chat", "Board", "Git"]);
+  expect(project.buttons()).toEqual(["Chat", "Git", "Storage"]);
   const none = await render(PROJECT, { plugins: { ...plugins, mainTabs: [] } });
-  expect(none.buttons()).toEqual(["Chat", "Board"]);
+  expect(none.buttons()).toEqual(["Chat", "Storage"]);
 });
 
 it("pressing a tab keeps it for that bot, and its frame takes the chat's place; Chat goes back", async () => {
@@ -82,11 +82,11 @@ const board: PluginsView = { ...plugins, mainTabs: [{ plugin: "botling.whiteboar
 
 it("with botling.whiteboard on, its tab is the Whiteboard button (same place, same icon) and the app page's own is gone", async () => {
   const { host, buttons } = await render(MAIN, { plugins: board }, true);
-  expect(buttons()).toEqual(["Chat", "Board", "Whiteboard"]);
+  expect(buttons()).toEqual(["Chat", "Whiteboard", "Storage"]);
   const tab = host.querySelector<HTMLButtonElement>('.main-tab-switch[data-tab="botling.whiteboard/botling.whiteboard"]')!;
   expect(tab.className).toContain("whiteboard-switch");
   expect(tab.querySelector("svg")).not.toBeNull();
-  // The main bot opens on it unless Chat or Board was picked last (the choice the page kept for its own whiteboard goes on).
+  // The main bot opens on it unless Chat or Storage was picked last (the choice the page kept for its own whiteboard goes on).
   expect(host.querySelector(".main-tab")?.getAttribute("data-plugin")).toBe("botling.whiteboard");
   expect(host.querySelector(".whiteboard")).toBeNull();
   expect(tab.getAttribute("aria-pressed")).toBe("true");
@@ -109,15 +109,28 @@ it("picking Chat keeps Chat for the next start; picking the Whiteboard tab again
 
 it("with the plugin off there is no Whiteboard button (the core has no whiteboard of its own); a project bot has none either", async () => {
   const off = await render(MAIN, { plugins: { ...plugins, mainTabs: [] } }, true);
-  expect(off.buttons()).toEqual(["Chat", "Board"]);
+  expect(off.buttons()).toEqual(["Chat", "Storage"]);
   expect(off.host.querySelector(".chat-column")?.className).not.toContain("whiteboard-on");
   const project = await render(PROJECT, { plugins: board }, true);
-  expect(project.buttons()).toEqual(["Chat", "Board"]);
+  expect(project.buttons()).toEqual(["Chat", "Storage"]);
 });
 
-it("the Board button is its plugin's: with botling.board off the header offers Chat only", async () => {
+it("there is no Board button, with botling.board on, off or not known yet; the Storage tab is always there", async () => {
   const off = await render(MAIN, { plugins: { ...plugins, plugins: [boardPlugin(false)] } });
-  expect(off.buttons()).toEqual(["Chat", "Wall"]);
+  expect(off.buttons()).toEqual(["Chat", "Wall", "Storage"]);
   const unknown = await render(MAIN, { plugins: null });
-  expect(unknown.buttons()).toEqual(["Chat", "Board"]);
+  expect(unknown.buttons()).toEqual(["Chat", "Storage"]);
+});
+
+it("the Storage tab is kept for the bot like a plugin tab, and its list takes the chat's place", async () => {
+  const { host, requests, update } = await render(MAIN);
+  const storage = host.querySelector<HTMLButtonElement>(".main-tab-switch.storage-switch")!;
+  await act(async () => storage.click());
+  expect(requests).toContainEqual({ type: "settings.set", change: { key: "mainTab", value: { botId: MAIN, tab: "botling/storage" } } });
+  await update({ settings: { ...settingsView({}), mainTabs: { [MAIN]: "botling/storage" } } });
+  expect(storage.getAttribute("aria-pressed")).toBe("true");
+  expect(host.querySelector(".chat-column")?.classList.contains("main-tab-on")).toBe(true);
+  expect(host.querySelector(".storage-main .storage-tab")).not.toBeNull();
+  expect(host.querySelector(".main-tab[data-plugin]")).toBeNull();
+  expect(requests).toContainEqual({ type: "storage.list", botId: MAIN });
 });
