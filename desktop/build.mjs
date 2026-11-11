@@ -39,6 +39,8 @@ await Promise.all([
   // The shell's preload and the native chat editor's (build-preloads.mjs; also `npm run preload:build`).
   buildPreloads({ root: here, outdir: join(out, "preload") }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
+  // `botling run`: one task with no GUI under plain Node, driving the core above (src/cli/run.ts, docs/headless-run.md).
+  build({ ...node, entryPoints: [join(here, "src/cli/run.ts")], outfile: join(out, "cli/run.cjs") }),
   // The plugin host: Web/host/src/host.ts unchanged
   // (its own process, started by the core; see src/core/plugins/host-client.ts).
   build({ entryPoints: [join(web, "host/src/host.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(out, "host/host.mjs") }),
