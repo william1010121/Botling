@@ -138,8 +138,6 @@ export const workerSubBotRule = [
 export const NATIVE_SUBAGENT_LINE = "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.";
 /** What a Claude bot is told instead when its subagents are app-managed workers (the default; claude-workers.ts). */
 export const CLAUDE_WORKERS_RULE = delegationPolicy(DELEGATION_CAPS.claude, { engine: "claude", form: "line" });
-/** Added after CLAUDE_WORKERS_RULE for a Claude bot with app workers: it must hand real work off, not do it itself. */
-export const CLAUDE_DELEGATE_RULE = "- Any real work (building, fixing, researching, editing several files, running tests, anything beyond a few quick reads) must be handed to a worker with app_handoff; do only quick answers yourself, then end your turn.";
 const CLAUDE_MAIN_WORKERS_LINE = "- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id. A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.";
 const NATIVE_SUB_BOT_AGENTS = "you may start your own subagents with the Agent tool.";
 
@@ -198,8 +196,12 @@ export function resultsRule(choice: ResultPublishing, folder: string): string {
  * chat; every result page is a ReportSpec v2 report (also the local fallback).
  */
 export function reportOnlyRule(_folder: string): string {
-  return `Text still being discussed or explained (explanations, how to read a figure, research reasoning, drafts, translations) stays short in chat. Every result page, the local fallback included, is one report built from a ReportSpec v2 JSON with the report command. A page opens with one sentence that answers the user's question ("You asked X; the answer is Y"); if it cannot, do not publish it: answer in chat.`;
+  return `${DISCUSS_IN_CHAT} ${REPORT_PAGE_SENTENCES}`;
 }
+/** What stays in chat (results rule). */
+const DISCUSS_IN_CHAT = "Text still being discussed or explained (explanations, how to read a figure, research reasoning, drafts, translations) stays short in chat.";
+/** What the results rule says of a result page; botling.report's page rule says it (and DISCUSS_IN_CHAT) too, so with that rule told both are left out here (audit 2026-11-11). */
+export const REPORT_PAGE_SENTENCES = `Every result page, the local fallback included, is one report built from a ReportSpec v2 JSON with the report command. A page opens with one sentence that answers the user's question ("You asked X; the answer is Y"); if it cannot, do not publish it: answer in chat.`;
 
 /** What a bot does first when the user's message signals confusion or doubt (approved 2026-11-04). */
 export const RESTATE_RULE = "- When the user's message signals confusion or doubt (\"why\", \"seems wrong\", \"I don't understand\", 怪怪的, 為什麼, 看不懂), first restate in one or two sentences what they are asking and your working hypothesis, then wait for them to confirm before making a page or starting a worker.";
@@ -368,7 +370,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
     `  2 to 4 options; start the recommended one with * (exactly one), the others with -. Also write the decision into the "${waiting}" section of your memory file. ${CHOICES_NOT_MEMORY_RULE}`,
     `  Once the user picks, you receive the text of the chosen option; carry on with it and move it from "${waiting}" to "${decided}".`,
     QUESTION_GROUP_RULE,
-    "- When auto mode blocks a tool call you need (\"denied by the Claude Code auto mode classifier\"), the app shows the user a card to allow that very call. Never ask the user to add a permission rule or edit .claude/settings.local.json or any settings file by hand, and never write those files yourself: say in one sentence what you wanted to do and why, and no choices block for it. When \"(App: The user allowed …\" arrives, run it again exactly as it was; when they did not allow it, carry on without it.",
+    `- When ${codex ? "Codex's reviewer refuses" : "auto mode blocks"} a tool call you need${codex ? "" : " (\"denied by the Claude Code auto mode classifier\")"}, the app shows the user a card to allow that very call. Never ask the user to add a permission rule or edit .claude/settings.local.json or any settings file by hand, and never write those files yourself: say in one sentence what you wanted to do and why, and no choices block for it. When \"(App: The user allowed …\" arrives, run it again exactly as it was; when they did not allow it, carry on without it.`,
     `- When a background task's notification wakes you (a subagent, a background command or a Monitor reporting) and it is only interim (a subagent still waiting on its own work, a Monitor event with nothing new), reply with only <no-reply/> and the app shows nothing. A worker's question (<app_worker_note kind="question">) is never only interim: answer it. A subagent that finished (its hand-back report, or a notification with status completed or failed) is never interim: always tell the user what came of it, even when its report says little ("pending", empty)${completionFollowUp} Likewise report real news from other work (a result, a failure, something the user must decide).`,
     "- Routines support one-time and recurring schedules. On Codex, use app_routines directly: list; create with kind=once, at=ISO-8601 with explicit UTC offset/Z, task, request_id; or kind=recurring, cron=five cron fields, timezone=IANA name, task, request_id. Reuse request_id on retries and retain the returned persisted id. Pause/resume/cancel use that id. To reschedule, cancel and create a new request_id. Confirm only after tool success; show actionable errors. An overdue once job runs on the next check while Botling is running (no OS wakeup). fired means a trigger attempt, not agent startup or task success; delivery_uncertain requires checking chat before explicitly replacing. Do not edit scheduled-routines.json. The tool also lists/cancels/pauses/resumes legacy cron jobs.",
     `  Legacy recurring routines live in ${paths.routines}, crontab format, one job per line:`,
@@ -381,7 +383,8 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
     "  To get a component changed, a new one made, or one from the shared library added to your own list: end your reply with <component name=\"component name\">what you need</component>; do not change the app yourself.",
     "  Designing chat components (new looks, several kinds to choose from) is Maintainer's: end your reply with one <component> tag per design, carrying the user's words (including /design when they said it); never draw design pages of your own for them.",
     "  When what you just showed is something the user will likely ask for again (a status, a summary of a command's output), you may offer to make it a component: end that reply with <suggest-component name=\"short-english-name\">one line: what it would show and the command that gives its data</suggest-component>. The app only adds a small chip under your reply; nothing happens until the user presses it, and only then does Maintainer build a first version. At most one per reply, not for one-off answers, and never inside code or examples.",
-    `- When the user says "/design" or asks for a design, the result is a Claude Design on claude.ai, not a local HTML file: ${DESIGN_STEPS}, and reply with the claude.ai link it returns as [name](link). Do not open it yourself.`,
+    // Codex has no Artifact tool: its note hands a Design to Claude instead (audit 2026-11-11).
+    ...(codex ? [] : [`- When the user says "/design" or asks for a design, the result is a Claude Design on claude.ai, not a local HTML file: ${DESIGN_STEPS}, and reply with the claude.ai link it returns as [name](link). Do not open it yourself.`]),
     "- Botling's application source belongs to its project bot, including app settings, sidebar rendering, engine/model selection, generated instructions, routing/delegation rules, and product renaming. In that source project, keep ownership and use your normal execution workers; from another bot, route to the application's project bot using the project list. Never send application source tasks to Maintainer with <plugin>, even when they change the app's behaviour.",
     "  Only plugin-library extensions (plugin manifests, extension code, commands and hooks) belong to Maintainer: end your reply with <plugin>what is wanted</plugin>. In-chat component requests still use <component>.",
     ...(profile.id === MAINTAINER_PROMPT_ID ? [] : [`  ${SITE_TOOLS_RULE}`]),
@@ -539,7 +542,7 @@ function insertAfterLine(text: string, anchor: string, line: string): string {
 const RESULTS_ANCHOR = "Results meant for the user";
 const REPORT_SECTION_ID = "botling.report.page";
 export const HAND_WRITTEN_PAGE = `one HTML page: a single file with its styles inline, starting with <!doctype html><meta charset="utf-8">,`;
-export const REPORT_FIRST_PAGE = `one HTML page (a report page is built from a ReportSpec v2 JSON with the report command, as the report page rule says, never written by hand; any other page is a single file with its styles inline, starting with <!doctype html><meta charset="utf-8">),`;
+export const REPORT_FIRST_PAGE = `one HTML page (a report page as the report page rule says, never written by hand; any other page is a single file with its styles inline, starting with <!doctype html><meta charset="utf-8">),`;
 const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
 
 /** The main bot's 1.x line (kept byte for byte in the Swift goldens) that sent the user to the left column to remove a bot. */
@@ -572,7 +575,7 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
   const workers = engine === "claude" && claudeWorkers;
   if (workers) {
-    system = system.replace(NATIVE_SUBAGENT_LINE, `${CLAUDE_WORKERS_RULE}\n${CLAUDE_DELEGATE_RULE}`).replace(NATIVE_SUB_BOT_AGENTS, "you may start your own workers with app_handoff.");
+    system = system.replace(NATIVE_SUBAGENT_LINE, CLAUDE_WORKERS_RULE).replace(NATIVE_SUB_BOT_AGENTS, "you may start your own workers with app_handoff.");
     if (profile.role === "main") system = `${system}\n${CLAUDE_MAIN_WORKERS_LINE}`;
   }
   // Sub bots (desktop only; the Swift goldens stay as they are): a project's or bot's own bot may write handoff.md and
@@ -614,8 +617,9 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   // With botling.report's rule told, the results rule's hand-written page is for other pages only: read first, it sent
   // reports there, and an Antigravity head briefed its worker to hand-write the report's HTML (Math, 2026-11-06).
   if (told.some((section) => section.id === REPORT_SECTION_ID && section.after === "results" && section.tool)) {
-    system = system.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE);
-    codexWorkerSystem = codexWorkerSystem.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE);
+    // The page rule says what stays in chat, what a result page is and how it opens: the results rule no longer repeats it.
+    system = system.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE).replaceAll(` ${reportOnlyRule("")}`, "");
+    codexWorkerSystem = codexWorkerSystem.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE).replaceAll(` ${reportOnlyRule("")}`, "");
   }
   for (const section of told.filter((entry) => entry.after === "results").reverse()) {
     const line = fillSection(section.text, section.tool, artifacts);

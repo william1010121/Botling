@@ -1,10 +1,10 @@
 // The component pieces on their own: what a bot is told (checked string for string against the
 // Swift app's ComponentKnowledge), about.md's lines, a command's run (JSON or text, its limits,
 // its whole process group ended), the Detail command's values, pins' chip lines, and pictures.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { aboutLine, aboutSizes, ComponentLibrary, knowledgeChanges, knowledgeFull, refreshSeconds, safeName, spelledSize } from "../../src/core/components/library";
+import { aboutLine, aboutSizes, ComponentLibrary, componentKnowledgeFor, knowledgeChanges, knowledgeFull, refreshSeconds, safeName, spelledSize } from "../../src/core/components/library";
 import { ComponentCommands, dataFromOutput, detailCommandLine, detailValues, execute, placeholders } from "../../src/core/components/commands";
 import { ImageRegistry } from "../../src/core/components/service";
 import { alive, desktop, pidsIn, sleep, tempDir, until } from "../helpers";
@@ -46,6 +46,22 @@ describe("the library", () => {
     expect(library.names).toEqual(["clock"]);
     expect(library.catalog(["clock"])).toBe("- clock: Clock card：the time.\n  - Command: `date +%H:%M`\n  Detail command: git show {hash}\n  Refresh: every 2s\n  Sizes: 1x1, 2×1, huge, wide\n  Icon: 🕐");
     expect(library.summaries(["clock"])).toBe("- clock: Clock card：the time.");
+    // A Command component's brief: its lead paragraph and where the rest is; choices is never listed (audit 2026-11-11).
+    writeFileSync(join(root, "clock", "about.md"), `${about}\n\n## Data format\n\nLong builder details.`);
+    expect(library.brief("clock")).toBe(`- clock: Clock card：the time.\n  - Command: \`date +%H:%M\`\n  Detail command: git show {hash}\n  Refresh: every 2s\n  Sizes: 1x1, 2×1, huge, wide\n  Icon: 🕐\n  (Full usage: ${join(root, "clock", "about.md")})`);
+    mkdirSync(join(root, "choices"), { recursive: true });
+    writeFileSync(join(root, "choices", "template.html"), "<b>choices</b>");
+    writeFileSync(join(root, "choices", "about.md"), "Buttons.\n## Look\nLong.");
+    mkdirSync(join(root, "table"), { recursive: true });
+    writeFileSync(join(root, "table", "template.html"), "<table></table>");
+    writeFileSync(join(root, "table", "about.md"), "A table.\n## Data format\nrows");
+    library.rescan();
+    const k = componentKnowledgeFor(library, ["choices", "clock", "table"]);
+    expect(k.own).toEqual([{ name: "clock", text: library.brief("clock") }, { name: "table", text: library.catalog(["table"]) }]);
+    expect(k.others).toEqual([]);
+    for (const name of ["choices", "table"]) rmSync(join(root, name), { recursive: true });
+    writeFileSync(join(root, "clock", "about.md"), about);
+    library.rescan();
     expect(library.info("clock")).toMatchObject({ template: "<div>clock</div>", version: 0, sizes: ["1x1", "2x1"], icon: "🕐", title: "Clock card" });
     expect(library.refreshInterval("clock")).toBe(2);
     // A new folder, a changed template, a changed about.md.

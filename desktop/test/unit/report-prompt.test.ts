@@ -7,12 +7,12 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { promptDoc } from "../../reports/v2/promptdoc";
 import { AGY_DELEGATION_POLICY } from "../../src/core/prompts-agy";
-import { botPrompts, desktopPrompts, HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE, codexLocalReportRule, codexWorkerInstructions, shellQuote, type ReportTool } from "../../src/core/prompts";
+import { botPrompts, desktopPrompts, HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE, reportOnlyRule, codexLocalReportRule, codexWorkerInstructions, shellQuote, type ReportTool } from "../../src/core/prompts";
 import { legacyReportPageLine, REPORT_SECTION, reportPageLine, reportSections } from "../report-section";
 
 const tool: ReportTool = { command: "env -u ELECTRON_RUN_AS_NODE '/Applications/Botling 2.app/Contents/MacOS/Botling 2' --render-report", docs: "/Applications/Botling 2.app/Contents/Resources/report/report-blocks.md" };
-/** The prompts without the report rule, their results rule pointing report pages at it (what the rule changes besides its line). */
-const reportFirst = (text: string) => text.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE);
+/** The prompts without the report rule, their results rule pointing report pages at it and leaving what the page rule says to it (what the rule changes besides its line). */
+const reportFirst = (text: string) => text.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE).replaceAll(` ${reportOnlyRule("")}`, "");
 const profile = (role: "main" | "manager" | "bot") => ({ name: "P", role, folder: "/tmp/p", memoryPath: role === "main" ? "memory.md" : ".bot/memory.md", job: role === "bot" ? "News" : null });
 
 describe("the report page rule as botling.report gives it", () => {
@@ -74,7 +74,7 @@ describe("the report page rule", () => {
         const text = ours.system.split("\n").find((l) => l.includes("ReportSpec v2 JSON, never hand-written HTML")) ?? "";
         expect(text).toContain("--render-report");
         expect(text).toMatch(/settled result that needs visuals or comparison/);
-        expect(text).toContain("still being discussed or explained stays short in chat");
+        expect(text).toContain("still being discussed or explained (explanations, how to read a figure, research reasoning, drafts, translations) stays short in chat");
         expect(text).not.toContain("a .md file");
         expect(text).toContain("opens with one sentence that answers the user's question");
         expect(text).toMatch(/chat reply (carries|has) only a brief conclusion and the link/);

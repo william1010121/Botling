@@ -82,6 +82,15 @@ function withApprovedRouting(swift: string): string {
   return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.`);
 }
 
+// Approved 2026-11-11 (context-waste audit, fix 4): a Codex head is not told Claude-only things: the auto-mode classifier's
+// words (its own reviewer refuses instead), the /design steps (its note hands a Design to Claude) and Claude Code's tool names.
+function withoutClaudeOnly(swift: string): string {
+  return swift
+    .replace(/- When auto mode blocks a tool call you need \("denied by the Claude Code auto mode classifier"\),/, "- When Codex's reviewer refuses a tool call you need,")
+    .replace(/^- When the user says "\/design" or asks for a design[^\n]*\n/m, "")
+    .replace("The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours:", "The Artifact tool, Claude Design and Claude Code's own tools are not yours:");
+}
+
 describe("prompts: the Swift app's strings", () => {
   it("has golden strings for every configuration", () => {
     expect(golden.prompts.length).toBeGreaterThanOrEqual(13);
@@ -106,7 +115,7 @@ describe("prompts: the Swift app's strings", () => {
           ? withDesktopReportGuidance(entry.output[key], key === "codexWorkerSystem")
           : entry.output[key];
         if (key === "headsRule") continue;
-        expect(ours[key].replace(ours.headsRule, ""), `${entry.name}.${key}`).toBe(withApprovedRouting(expected.replace(entry.output.headsRule, "")));
+        expect(ours[key].replace(ours.headsRule, ""), `${entry.name}.${key}`).toBe(withoutClaudeOnly(withApprovedRouting(expected.replace(entry.output.headsRule, ""))));
       }
     });
   }

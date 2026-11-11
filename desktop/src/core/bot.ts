@@ -90,7 +90,7 @@ import { masked, parseReply, pluginTagNames, unsupportedRequest, type BotRequest
 import { SubagentBook, readSubagent, readExecution, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "./components/service";
-import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
+import { BUILT_INS, COMPONENT_LIMIT, componentKnowledgeFor, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
 import { detailValues, type CommandStatus } from "./components/commands";
 import type { Display } from "./reply";
 import { answerMessage, savedPicks, savedQuestions, validPicks, type QuestionPick } from "./questions";
@@ -5006,13 +5006,7 @@ export class Bot {
   private componentKnowledge(): ComponentKnowledge | null {
     const context = this.context;
     if (!context || !context.library.names.length) return null;
-    const own = this.ownComponents();
-    const others = context.library.names.filter((name) => !own.includes(name));
-    return {
-      own: own.map((name) => ({ name, text: context.library.catalog([name]) })),
-      others: others.map((name) => ({ name, text: context.library.summaries([name]) })),
-      limit: COMPONENT_LIMIT,
-    };
+    return componentKnowledgeFor(context.library, this.ownComponents());
   }
 
   /** The components part of a message (`componentNote`): the whole briefing the first time in a session, then only what changed. */
