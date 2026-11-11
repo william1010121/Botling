@@ -6,10 +6,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const pair = vi.fn();
+const resumed: boolean[] = [];
 vi.mock('./relay-client', () => ({
-  RelayClient: class { static pair = pair; static connect = vi.fn(); watch() { return () => {}; } close() {} },
+  RelayClient: class { static pair = pair; static connect = vi.fn(); watch() { return () => {}; } close() {} resume(restart: boolean) { resumed.push(restart); } },
 }));
-vi.mock('./relay-session', () => ({ loadRelaySession: async () => null, saveRelaySession: async () => true, forgetRelaySession: async () => {} }));
+vi.mock('./relay-session', () => ({ loadRelaySession: async () => null, saveRelaySession: async () => true, forgetRelaySession: async () => {},
+  loadBridgeLogin: async () => null, saveBridgeLogin: async () => true, forgetBridgeLogin: async () => {} }));
 const { WebApp } = await import('./WebApp');
 const { MobileError } = await import('./transport');
 
@@ -60,4 +62,28 @@ it('a relay code that fails asks for a new code, never for an access token', asy
   expect(container.querySelector('input.web-token')).toBeNull();
   expect(container.textContent).not.toContain('access token');
   expect(container.textContent).toContain('Settings › Phone');
+});
+
+it('coming back to the page reconnects the relay at once: a long absence or a network change replaces the socket', async () => {
+  const client = new ((await import('./relay-client')).RelayClient as any)();
+  client.request = async (cmd: any) => ({ epoch: 'e', seq: 1, imported: null, components: {}, waiting: { items: [], doing: {} },
+    settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: [] },
+    bots: [bot(MAIN, 'Main bot', 'main')], chat: { botId: cmd.botId ?? MAIN, messages: [], running: null, live: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [], pendingFiles: [] } });
+  client.closed = false;
+  pair.mockResolvedValue({ client, session: { botIds: ['*'] } });
+  await act(async () => root.render(<WebApp />));
+  await flush();
+  resumed.length = 0;
+  let hidden = true;
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+  const now = vi.spyOn(Date, 'now');
+  try {
+    now.mockReturnValue(1_000_000);
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    hidden = false;
+    now.mockReturnValue(1_000_000 + 60_000);
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    await act(async () => { window.dispatchEvent(new Event('online')); });
+  } finally { now.mockRestore(); Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); }
+  expect(resumed).toEqual([true, true]);
 });

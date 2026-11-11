@@ -98,6 +98,19 @@ export class RelayStore {
     const file = this.file('relay-devices.json');
     withFileLock(file, () => this.write('relay-devices.json', [...this.devices().filter(d => d.id !== device.id), RelayDevice.parse(device)]));
   }
+  /** Moves an existing phone's expiry; never brings back a phone revoked meanwhile (checked under the lock). */
+  renew(id: string, expiresAt: number): RelayDevice | undefined {
+    const file = this.file('relay-devices.json');
+    if (!existsSync(file)) return undefined;
+    return withFileLock(file, () => {
+      const all = this.devices();
+      const found = all.find(d => d.id === id);
+      if (!found) return undefined;
+      const renewed = RelayDevice.parse({ ...found, expiresAt });
+      this.write('relay-devices.json', all.map(d => d.id === id ? renewed : d));
+      return renewed;
+    });
+  }
   revoke(id: string): boolean {
     const file = this.file('relay-devices.json');
     if (!existsSync(file)) return false;

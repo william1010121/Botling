@@ -111,8 +111,17 @@ iOS Safari 17+, Chrome 133+, Firefox 130+ provide X25519.
 - **Reconnect/resume**: the phone retries with backoff (1 s, 3 s, 10 s, 30 s) and a new handshake. Requests asked
   while the channel is down wait (15 s) and are sent after it is back **with their original request id**; the
   desktop's mutation journal answers a resent `chat.send` with its first outcome (at-most-once, as the bridge).
+- **Back on the page**: the page shown again, back online, or restored from the back-forward cache calls
+  `RelayClient.resume`: a client waiting out its backoff connects at once, and after more than 10 s away (or a network
+  change) the socket is replaced, since one that slept can look open and carry nothing. The chat on screen is then read
+  again, which catches up what was missed. A page that could not connect with a kept pairing tries again on the same
+  events and every 15 s.
+- **Expiry**: a paired phone's 30 days start again when it connects (written at most once a day,
+  `RelayStore.renew`, which never brings back a phone revoked meanwhile); the phone keeps the new expiry it is told.
 - **Desktop restart / pod restart**: the relay keeps nothing; the desktop reconnects and re-sends its allow list,
-  phones reconnect. A second copy of the desktop (core hand-over) takes the room over; the older copy backs off 30 s.
+  phones reconnect. A phone that joins in the moment between the desktop reopening its room and its allow list
+  arriving is refused by the relay; the phone tries again and treats only three refusals in a row as a sign-out (the
+  desktop's own `revoked` or handshake refusal counts at once). A second copy of the desktop (core hand-over) takes the room over; the older copy backs off 30 s.
 
 ## Threat model
 

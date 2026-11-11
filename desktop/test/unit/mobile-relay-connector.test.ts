@@ -103,7 +103,38 @@ async function setup(options: { ackMs?: number } = {}) {
     await until(() => connector.devices().some(d => d.id === result.session.deviceId));
     return { ...result, link, offer };
   };
-  return { relay, store, connector, core, calls, change, connect, pairPhone };
+  return { relay, store, connector, core, calls, change, connect, pairPhone, dir };
+}
+
+/** The first `times` joins are refused by the relay as an unknown token (what a phone hears when it joins in the
+ * moment after the desktop reopened its room and before its allow list arrived). */
+function refusedJoins(connect: (url: string) => SocketLike, times: number) {
+  let left = times;
+  return (url: string): SocketLike => {
+    if (left-- <= 0) return connect(url);
+    const sock: SocketLike & { readyState: number } = {
+      readyState: 0, onopen: null, onmessage: null, onclose: null, onerror: null,
+      send(text: string) {
+        if (JSON.parse(text).t !== "join") return;
+        queueMicrotask(() => { sock.onmessage?.({ data: JSON.stringify({ t: "error", code: "denied" }) }); sock.readyState = 3; sock.onclose?.({ code: 4403 }); });
+      },
+      close() { sock.readyState = 3; },
+    };
+    queueMicrotask(() => { sock.readyState = 1; sock.onopen?.({}); });
+    return sock;
+  };
+}
+/** Sockets that can go silent while still looking open (a phone that slept: iOS keeps the socket object, nothing passes). */
+function sleepySockets(connect: (url: string) => SocketLike) {
+  const made: { asleep: boolean }[] = [];
+  const factory = (url: string): SocketLike => {
+    const sock = connect(url), state = { asleep: false };
+    made.push(state);
+    const send = sock.send.bind(sock);
+    sock.send = (text: string) => { if (!state.asleep) send(text); };
+    return sock;
+  };
+  return { factory, sleep: () => { for (const s of made) s.asleep = true; } };
 }
 
 describe("relay connector + phone client", () => {
@@ -180,6 +211,83 @@ describe("relay connector + phone client", () => {
     expect(relay.stats().peers).toBe(1);
   });
 
+  it("a desktop restart keeps its paired phones: the saved session connects to the new process", async () => {
+    const { connector, core, connect, pairPhone, dir } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    connector.stop();
+    const restarted = new RelayConnector({ store: new RelayStore(join(dir, "mobile")), core, ledger: () => new MutationLedger(join(dir, "mobile-mutations")), coreId: () => "c".repeat(32), socket: connect, waits: [20] });
+    cleanup.push(() => restarted.stop());
+    restarted.start();
+    await until(() => restarted.view().state === "online");
+    const again = await RelayClient.connect(session, { socket: connect, waits: [20] });
+    cleanup.push(() => again.close());
+    expect(((await again.request({ type: "chat.snapshot", botId: "main" })) as any).chat.botId).toBe("main");
+  });
+
+  it("a relay refusal alone (the desktop's allow list not there yet) does not sign the phone out: it tries again", async () => {
+    const { connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    let revoked: MobileError | undefined;
+    const again = await RelayClient.connect(session, { socket: refusedJoins(connect, 2), waits: [20], onRevoked: error => { revoked = error; } });
+    cleanup.push(() => again.close());
+    expect(((await again.request({ type: "chat.snapshot", botId: "main" })) as any).chat.botId).toBe("main");
+    expect(revoked).toBeUndefined();
+  });
+
+  it("a refusal that keeps coming is a sign-out", async () => {
+    const { connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    await expect(RelayClient.connect(session, { socket: refusedJoins(connect, 99), waits: [20] })).rejects.toMatchObject({ auth: true });
+  });
+
+  it("coming back to the page (resume) replaces a socket that went silent; a request asked meanwhile is answered once", async () => {
+    const { calls, connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    const sleepy = sleepySockets(connect);
+    const phone = await RelayClient.connect(session, { socket: sleepy.factory, waits: [60_000], timeoutMs: 2_000 });
+    cleanup.push(() => phone.close());
+    sleepy.sleep();
+    const asked = phone.request({ type: "chat.send", botId: "main", text: "hi" } as any);
+    await new Promise(r => setTimeout(r, 50));
+    phone.resume(true);
+    expect(await asked).toMatchObject({ messageId: "m1" });
+    expect(calls.filter(c => c.cmd.type === "chat.send")).toHaveLength(1);
+  });
+
+  it("resume does not wait out the reconnect backoff once the desktop is back", async () => {
+    const { connector, connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    const phone = await RelayClient.connect(session, { socket: connect, waits: [60_000] });
+    cleanup.push(() => phone.close());
+    let live = true;
+    phone.watch(() => {}, value => { live = value; });
+    connector.stop();
+    await until(() => !live);
+    connector.start();
+    await until(() => connector.view().state === "online");
+    phone.resume(false);
+    await until(() => live, 2_000);
+    expect(((await phone.request({ type: "chat.snapshot", botId: "main" })) as any).chat.botId).toBe("main");
+  });
+
+  it("a phone in use stays paired: connecting renews its 30 days on the desktop and tells the phone", async () => {
+    const { store, connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    const device = store.device(session.deviceId)!;
+    store.add({ ...device, expiresAt: Date.now() + 86_400_000 });
+    let renewed: RelaySession | undefined;
+    const again = await RelayClient.connect(session, { socket: connect, waits: [20], onSession: next => { renewed = next; } });
+    cleanup.push(() => again.close());
+    expect(store.device(session.deviceId)!.expiresAt).toBeGreaterThan(Date.now() + 29 * 86_400_000);
+    expect(renewed!.expiresAt).toBeGreaterThan(Date.now() + 29 * 86_400_000);
+  });
+
   it("a pairing code works once", async () => {
     const { connect, pairPhone } = await setup();
     const { link } = await pairPhone();
@@ -249,13 +357,13 @@ describe("relay connector + phone client", () => {
     const { session, client } = await pairPhone();
     client.close();
     let revoked: MobileError | undefined;
-    const live = await RelayClient.connect(session, { socket: connect, onRevoked: error => { revoked = error; } });
+    const live = await RelayClient.connect(session, { socket: connect, waits: [20], onRevoked: error => { revoked = error; } });
     cleanup.push(() => live.close());
     expect(await connector.revoke(session.deviceId)).toBe(true);
     await until(() => revoked !== undefined);
     expect(revoked!.auth).toBe(true);
     expect(live.closed).toBe(true);
-    await expect(RelayClient.connect(session, { socket: connect })).rejects.toMatchObject({ auth: true });
+    await expect(RelayClient.connect(session, { socket: connect, waits: [20] })).rejects.toMatchObject({ auth: true });
     expect(connector.devices()).toEqual([]);
   });
 
