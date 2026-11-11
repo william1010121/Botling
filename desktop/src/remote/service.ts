@@ -18,6 +18,7 @@ import { SshTransport, fileSha, scanHostKey, shq, sshConfigHosts, writeKnownHost
 import { MachineRelay, RelayTransport } from "./relay/hub";
 import { RelayStore } from "../mobile-relay/store";
 import type { SocketLike } from "../mobile-relay/connector";
+import type { MachinesView } from "../contract";
 
 interface SavedSession extends SessionState { machine: string; base?: string | null }
 
@@ -170,6 +171,31 @@ export class RemoteWorkers {
   }
 
   // ---- Settings › Machines.
+
+  /** What Settings › Machines lists (no secrets: the relay install line is only in pairRelay's answer). */
+  view(): MachinesView {
+    const working = new Map<string, number>();
+    for (const [id, session] of this.live) {
+      const machine = this.saved[id]?.machine;
+      if (machine && (session.w === "running" || session.w === "interrupted")) working.set(machine, (working.get(machine) ?? 0) + 1);
+    }
+    const clip = (value: unknown, max: number) => (typeof value === "string" && value ? value.slice(0, max) : null);
+    let url: string | null = null;
+    try { url = this.relay.options.url()?.slice(0, 300) ?? null; } catch { url = null; }
+    return {
+      enabled: true,
+      relay: { url, state: this.relay.state },
+      machines: this.machines.list().slice(0, 100).map((m) => ({
+        id: m.id, name: m.name, via: m.via, trust: m.trust, host: clip(m.host, 255),
+        fingerprint: clip(m.via === "ssh" ? m.hostKey?.fingerprint : m.relay?.fingerprint, 120),
+        known: !!m.hostKey?.known,
+        waiting: m.via === "relay" && m.trust === "asked" && this.relay.waiting(m.id),
+        connected: m.via === "relay" && this.relay.connected(m.id),
+        info: m.info ? { node: clip(m.info.node, 100), git: clip(m.info.git, 200), claude: clip(m.info.claude, 200), platform: clip(m.info.platform, 100), at: m.info.at, error: clip(m.info.error, 2_000) } : null,
+        workers: working.get(m.id) ?? 0,
+      })),
+    };
+  }
 
   sshHosts(): string[] { return sshConfigHosts(); }
 

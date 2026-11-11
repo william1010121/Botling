@@ -387,6 +387,8 @@ export const SubagentRowView = z.strictObject({
   agentId: z.string().max(40).optional(),
   /** The bot that runs it, present only when that is not this row's bot (an agent moved here: "on <host>"). */
   host: z.strictObject({ botId: BotId, name: z.string().max(400) }).optional(),
+  /** A Claude worker on another machine (Settings › Machines): its name, and whether Botling is connected to it now. */
+  machine: z.strictObject({ name: z.string().max(64), connected: z.boolean() }).optional(),
   /** Whether "Move to…" can move it (present only with the agentMoves setting on). */
   movable: z.strictObject({ ok: z.boolean(), reason: z.string().max(200).nullable() }).optional(),
   /**
@@ -859,8 +861,44 @@ export const BotSettingsView = z.strictObject({
   /** Its Antigravity workers' model and effort (bot.json `agyWorkerModel`, `agyWorkerEffort`); null: the same as its Antigravity head. */
   agyWorkerModel: z.string().max(200).nullable().optional(),
   agyWorkerEffort: Effort.nullable().optional(),
+  /** Where its Claude workers run when app_handoff names no machine (bot.json `workerMachine`, Settings › Machines); null: here. */
+  workerMachine: z.string().max(64).nullable().optional(),
 });
 export type BotSettingsView = z.infer<typeof BotSettingsView>;
+
+/**
+ * Settings › Machines (remote/service.ts): the machines Claude workers can run on, how each is reached (an ssh host
+ * from ~/.ssh/config, or the relay), its trust, and what its last check found. An ssh machine waits for its host key
+ * to be approved; a relay machine for the code it shows. The relay install line holds a one-time secret, so it is only
+ * in `MachinePairView`.
+ */
+export const MachineView = z.strictObject({
+  id: z.string().max(64), name: z.string().max(64), via: z.enum(["ssh", "relay"]), trust: z.enum(["asked", "trusted", "revoked"]),
+  /** ssh: the alias. */
+  host: z.string().max(255).nullable(),
+  /** ssh: the host key's ("SHA256:…"); relay: the agent key's (shown on the machine too). */
+  fingerprint: z.string().max(120).nullable(),
+  /** ssh: the key was already in ~/.ssh/known_hosts. */
+  known: z.boolean(),
+  /** relay: it is waiting for its code here now. */
+  waiting: z.boolean(),
+  /** relay: its agent is connected to the relay. */
+  connected: z.boolean(),
+  info: z.strictObject({ node: z.string().max(100).nullable(), git: z.string().max(200).nullable(), claude: z.string().max(200).nullable(), platform: z.string().max(100).nullable(),
+    at: z.number(), error: z.string().max(2_000).nullable() }).nullable(),
+  /** Workers on it now (running or reconnecting). */
+  workers: z.number().int().nonnegative(),
+});
+export type MachineView = z.infer<typeof MachineView>;
+export const MachinesView = z.strictObject({
+  /** False: workers on other machines are not available in this app (a test or probe run). */
+  enabled: z.boolean(),
+  relay: z.strictObject({ url: z.string().max(300).nullable(), state: z.enum(["off", "connecting", "online", "offline"]) }),
+  machines: z.array(MachineView).max(100),
+});
+export type MachinesView = z.infer<typeof MachinesView>;
+export const MachinePairView = z.strictObject({ command: z.string().max(4_000), expiresAt: z.number() });
+export type MachinePairView = z.infer<typeof MachinePairView>;
 
 /** A plugin's web part for the chat page (1.x's `WebPluginSpec`). */
 export const WebPluginSpecView = z.strictObject({
@@ -1122,6 +1160,17 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("mobile.revoke"), deviceId: z.string().max(64) }),
   /** Turns the phone relay on (its wss:// address) or off (null). */
   z.strictObject({ type: z.literal("mobile.relay"), url: z.string().max(300).nullable() }),
+  /** Settings › Machines: the list; ~/.ssh/config's hosts; add an ssh host (its key is read, to approve next); a relay
+   * install line (a one-time secret); approve (ssh: its key; relay: the code it shows); decline; revoke; remove; check. */
+  z.strictObject({ type: z.literal("machines.view") }),
+  z.strictObject({ type: z.literal("machines.hosts") }),
+  z.strictObject({ type: z.literal("machines.add"), host: z.string().min(1).max(255), name: z.string().max(64).optional() }),
+  z.strictObject({ type: z.literal("machines.pair") }),
+  z.strictObject({ type: z.literal("machines.approve"), id: z.string().min(1).max(64), code: z.string().max(40).optional() }),
+  z.strictObject({ type: z.literal("machines.decline"), id: z.string().min(1).max(64) }),
+  z.strictObject({ type: z.literal("machines.revoke"), id: z.string().min(1).max(64) }),
+  z.strictObject({ type: z.literal("machines.remove"), id: z.string().min(1).max(64) }),
+  z.strictObject({ type: z.literal("machines.check"), id: z.string().min(1).max(64) }),
   /** "Restart bot": each head starts again in the same session before the bot's next message, told the app's current instructions (asleep: the next wake). */
   z.strictObject({ type: z.literal("bot.restart"), botId }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
@@ -1130,6 +1179,8 @@ export const Command = z.discriminatedUnion("type", [
     subagentModel: ModelId.nullable().optional(), subagentEffort: Effort.nullable().optional(), codexModel: ModelId.nullable().optional(), agyModel: ModelId.nullable().optional(),
     /** Its Antigravity workers' model and effort (null: the same as its Antigravity head). */
     agyWorkerModel: ModelId.nullable().optional(), agyWorkerEffort: Effort.nullable().optional(),
+    /** Where its Claude workers run when app_handoff names no machine (a machine's name; null: here). */
+    workerMachine: z.string().max(64).nullable().optional(),
     /** Its Codex workers' model, effort and Fast mode (null: ~/.codex/config.toml's); used from a Codex head's next wake. */
     codexWorkers: z.strictObject({ model: ModelId.nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }).nullable().optional(),
     /** The bot's own primary engine (null: follow the app's default). */
@@ -1170,7 +1221,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "projects.pick", "waiting.list", "waiting.ignore",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "worker.file",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -1308,6 +1359,15 @@ export interface Results {
   "mobile.pair": MobilePairView;
   "mobile.revoke": MobileDeskView;
   "mobile.relay": MobileDeskView;
+  "machines.view": MachinesView;
+  "machines.hosts": { hosts: string[] };
+  "machines.add": MachinesView;
+  "machines.pair": MachinePairView;
+  "machines.approve": MachinesView;
+  "machines.decline": MachinesView;
+  "machines.revoke": MachinesView;
+  "machines.remove": MachinesView;
+  "machines.check": MachinesView;
   "bot.configure": BotSettingsView;
   "bot.restart": { restart: "next-message" | "asleep" };
   "engineDefaults.applyAll": { applied: number; failed: { botId: string; name: string; reason: string }[] };

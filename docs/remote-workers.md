@@ -4,12 +4,19 @@ A Claude worker can run on another computer while the bot that started it stays 
 `machine` to `app_handoff`; everything else about the worker is the same: its stream, its approval cards, its report,
 `app_send_message` and `app_cancel_task`.
 
+A bot can also send all its Claude workers to one machine: its settings (the right panel, one level in) have
+**Workers' machine**. A handoff without `machine` then runs there; `machine: "local"` still runs one here. A default
+machine that is revoked or removed is refused at the handoff (nothing starts) with a note saying so. The worker's row in
+the left column names its machine, in orange while Botling is not connected to it.
+
 The protocol is `spec/models/remoteworker/RemoteWorker.tla`. The app's side is `desktop/src/remote/`; the machine's
 side is `botling-agent` (`desktop/src/remote/agent/`, bundled to `out/agent/botling-agent.cjs`, plain Node 18+).
 
 ## Adding a machine
 
-Machines are listed in Settings › Machines (`<data>/remote/machines.json`).
+Machines are listed in Settings › Machines (`<data>/remote/machines.json`) with how each is reached, its trust,
+whether a relay machine is connected, how many workers run on it, and what its last check found (Node, git, claude);
+**Check** runs the check again (ssh: it installs or updates the agent first).
 
 - **ssh:** pick a host from `~/.ssh/config`. Botling reads its host key and shows the fingerprint (and whether
   `~/.ssh/known_hosts` already has it). Once you approve it, Botling writes the key to its own file
@@ -110,4 +117,6 @@ again saying so. When the resumed claude asks the same thing again, the same car
   client (Node 18 has none).
 - `npx vitest run test/unit/remote-agent-release.test.ts` builds the release assets and runs the install script and
   the agent's own upgrade against a local server standing in for the release.
+- `npx vitest run test/unit/machines-settings.test.ts` covers the `machines.*` commands, the Settings › Machines page,
+  a bot's workers' machine and the worker row.
 - `npm run test:spec` holds the app to the model (`spec/tests/remote-worker.spec.test.ts`).

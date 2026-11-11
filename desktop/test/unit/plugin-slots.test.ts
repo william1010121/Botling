@@ -67,7 +67,7 @@ it("Settings: without a plugin page the core pages are the same, and Usage is no
   const { client: c } = client();
   await act(async () => root.render(createElement(SettingsSheet, { client: c, settings: settingsView({}), bot: null, plugins: null, onClose() {} })));
   expect([...host.querySelectorAll(".settings-tab")].map((tab) => tab.textContent?.replace("New", ""))).toEqual(
-    ["General", "Appearance", "Shortcuts", "Models & workers", "Permissions", "Chat & reports", "Engine setup", "Plugins", "Phone", "Updates", "Developer"]);
+    ["General", "Appearance", "Shortcuts", "Models & workers", "Permissions", "Chat & reports", "Engine setup", "Plugins", "Phone", "Machines", "Updates", "Developer"]);
   expect(frameOf()).toBeNull();
 });
 

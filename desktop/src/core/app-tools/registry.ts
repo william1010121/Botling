@@ -43,7 +43,7 @@ const PARAMS = {
   // The levels the provider's own engine takes (its workers run on it): Claude's or Codex's.
   effort: ({ provider = "claude" }) => ({ type: "string", enum: [...EFFORTS_BY_ENGINE[provider === "codex" ? "codex" : "claude"]] }),
   engine: ({ engines = ["agy", "codex"] }) => ({ type: "string", enum: [...engines] }),
-  machine: () => ({ type: "string", description: "Optional: run this worker on another machine the user set up in Settings › Machines (its name). The project goes there as its current commit (uncommitted changes stay here); the worker works on a branch there, and the branch comes back here when its run ends. Omit to run it here." }),
+  machine: () => ({ type: "string", description: "Optional: run this worker on another machine the user set up in Settings › Machines (its name). The project goes there as its current commit (uncommitted changes stay here); the worker works on a branch there, and the branch comes back here when its run ends. Omit to run it where this bot's workers run by default (here, unless its settings name a machine); \"local\" runs it here." }),
   role: () => ({ type: "string", enum: ["component-editor"], description: "Only for the plugin-library Maintainer: launch its existing Claude ccb-core component editor on its configured model. No new folders, tools, authorization or settings. Omit for ordinary work." }),
   isolated_git: () => ({
     type: "object",
