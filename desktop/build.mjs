@@ -41,6 +41,9 @@ await Promise.all([
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
   // `botling run`: one task with no GUI under plain Node, driving the core above (src/cli/run.ts, docs/headless-run.md).
   build({ ...node, entryPoints: [join(here, "src/cli/run.ts")], outfile: join(out, "cli/run.cjs") }),
+  // `botling-agent`: runs Claude workers on another machine (src/remote/agent/, docs/remote-workers.md). Plain Node 18+
+  // there; Botling uploads this one file over ssh, or the machine downloads it from the release (agent-release.mjs).
+  build({ ...node, target: "node18", sourcemap: false, entryPoints: [join(here, "src/remote/agent/main.ts")], outfile: join(out, "agent/botling-agent.cjs") }),
   // The plugin host: Web/host/src/host.ts unchanged
   // (its own process, started by the core; see src/core/plugins/host-client.ts).
   build({ entryPoints: [join(web, "host/src/host.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(out, "host/host.mjs") }),

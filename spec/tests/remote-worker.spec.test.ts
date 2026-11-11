@@ -1,13 +1,15 @@
 // A Claude worker on another machine (spec/models/remoteworker/RemoteWorker.tla), reached over ssh or the relay.
-// The app does not have remote workers yet (multi-machine phase 1): until its adapter exists
-// (desktop/spec-adapters/remote-worker-adapter.ts behind spec/driver/remote-worker-driver.ts), these tests hold the
-// reference to the model: explored like TLC it reaches exactly TLC's states for RemoteWorker.cfg and breaks no
+// The reference is held to the model: explored like TLC it reaches exactly TLC's states for RemoteWorker.cfg and breaks no
 // property; each bug breaks its property; the scenarios TLC's counterexamples walk through end as the model says.
 // SPEC_BUG=remote-nolock, remote-stale, remote-nogen or remote-revoke turns on that bug: the exploration goes red.
+// The app (desktop/spec-adapters/remote-worker-adapter.ts behind spec/driver/remote-worker-driver.ts) is held to the
+// reference: scenario paths and seeded random walks, its view and the claude processes on the machine after every step.
 import { describe, expect, it } from "vitest";
 import {
   actions, init, label, step, stepViolations, view, violations, type Action, type Bug, type Config, type State,
 } from "../reference/remote-worker";
+import type { RemoteWorkerSession } from "../driver/remote-worker-driver";
+import { remoteWorkerDriver } from "../../desktop/spec-adapters/remote-worker-adapter";
 
 /** Every reachable state (breadth first): how many, and the first broken property with the path to it. */
 function explore(cfg: Config, only?: string): { states: number; broken: string | null } {
@@ -144,5 +146,82 @@ describe("remote worker model: scenarios", () => {
     expect(s.alive).toEqual([1]);
   });
 
-  it.todo("the app through spec/driver/remote-worker-driver.ts: random walks equal the reference's view after every step");
+});
+
+describe("remote worker: the app through spec/driver/remote-worker-driver.ts", () => {
+  const cfg: Config = { ...CFG, bug: "none" };
+  const driver = remoteWorkerDriver({ maxReqs: cfg.maxReqs });
+
+  async function apply(app: RemoteWorkerSession, a: Action) {
+    switch (a.type) {
+      case "Pair": return app.pair(a.p);
+      case "Approve": return app.approve();
+      case "Decline": return app.decline();
+      case "Expire": return app.expire();
+      case "Revoke": return app.revoke(a.i);
+      case "AppUpdate": return app.appUpdate();
+      case "Connect": return app.connect();
+      case "Upgrade": return app.upgrade();
+      case "Start": return app.start();
+      case "Cancel": return app.cancel();
+      case "Notice": return app.notice();
+      case "Answer": return app.answer(a.k);
+      case "Drop": return app.drop(a.i);
+      case "AppRecv": return app.appRecv(a.g);
+      case "AgentRecv": return app.agentRecv(a.g);
+      case "Out": return app.out(a.r);
+      case "Ask": return app.ask(a.r, a.k);
+      case "Finish": return app.finish(a.r);
+    }
+  }
+
+  /** Walks `path` (or, past it, `steps` random enabled actions) on the reference and the app side by side. */
+  async function walk(path: Action[], steps: number, random: () => number): Promise<string[]> {
+    const app = await driver.open();
+    let s = init(cfg);
+    const done: string[] = [];
+    try {
+      for (let i = 0; i < path.length + steps; i++) {
+        const options = actions(s, cfg);
+        const a = path[i] ?? pick(options, random);
+        if (!a) break;
+        s = step(s, cfg, a);
+        await apply(app, a);
+        done.push(label(a));
+        expect(app.view(), done.join(" → ")).toEqual(view(s));
+        expect(app.alive(), done.join(" → ")).toEqual(s.alive);
+      }
+    } finally { await app.close(); }
+    return done;
+  }
+
+  /** A random enabled action, deliveries more often than losses (so walks get somewhere before the next drop). */
+  const WEIGHT: Partial<Record<Action["type"], number>> = { AppRecv: 6, AgentRecv: 6, Drop: 1, Revoke: 0.5, Notice: 1, Decline: 0.5, Expire: 0.5, AppUpdate: 0.5 };
+  function pick(options: Action[], random: () => number): Action | undefined {
+    const weights = options.map((a) => WEIGHT[a.type] ?? 2);
+    let r = random() * weights.reduce((x, y) => x + y, 0);
+    for (let i = 0; i < options.length; i++) { r -= weights[i]!; if (r < 0) return options[i]; }
+    return options[options.length - 1];
+  }
+
+  /** A small seeded generator (SPEC_SEED repeats a run). */
+  const seeded = (seed: number) => () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+
+  it.each(["ssh", "relay"] as const)("over %s: the lost answer, the refused stale one and the re-asked request go as the model says", async (path) => {
+    const lost = [...asked(path), A.drop(1), CONNECT, A.agent(3), A.app(3), A.agent(3), A.app(3)];
+    await walk([...lost, A.agent(2), A.answer(1)], 0, Math.random);
+    await walk([...lost, A.agent(2), A.agent(3), A.ask(2, 1), A.app(3), A.answer(1), A.agent(3), A.app(3)], 0, Math.random);
+    await walk([...asked(path), A.drop(0), CANCEL, CONNECT, A.agent(3), A.app(3), A.agent(3), A.app(3)], 0, Math.random);
+    await walk([...asked(path), { type: "Revoke", i: 0 }, A.pair("ssh"), APPROVE, CONNECT, A.agent(3), A.app(3), A.agent(3), A.app(3)], 0, Math.random);
+  });
+
+  it("random walks equal the reference's view after every step", async () => {
+    const seed = Number(process.env.SPEC_SEED ?? Date.now() % 100_000);
+    const random = seeded(seed);
+    for (let n = 0; n < 600; n++) {
+      // Half the walks start from a worker that asked its first request, so the deep part of the model is walked often.
+      const start = n % 2 ? asked(n % 4 === 1 ? "ssh" : "relay") : [];
+      try { await walk(start, 40, random); } catch (error) { throw new Error(`SPEC_SEED=${seed}, walk ${n}: ${(error as Error).message}`); }
+    }
+  }, 120_000);
 });
