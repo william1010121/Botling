@@ -44,7 +44,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
   const asset = (from, to, tokens = false) => files.set(join(outdir, to), tokens
     ? inlineTokens(readFileSync(from, "utf8"), from) : readFileSync(from));
   if (webBuild) {
-    for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg", "frame-host.html", "frame-host.js"]) asset(join(root, "mobile", name), name);
+    for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png", "frame-host.html", "frame-host.js"]) asset(join(root, "mobile", name), name);
   } else asset(join(root, "src/renderer/index.html"), "index.html");
   asset(join(root, "src/renderer/styles.css"), "styles.css", true);
   files.set(join(outdir, "styles.css"), Buffer.concat([Buffer.from(files.get(join(outdir, "styles.css"))), Buffer.from("\n"), readFileSync(join(root, "src/renderer/ModelPicker.css"))]));

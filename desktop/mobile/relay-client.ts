@@ -27,6 +27,8 @@ export interface RelayClientOptions {
   onLive?: (live: boolean) => void;
   /** The desktop revoked this phone (or the relay no longer admits its token): sign in again. */
   onRevoked?: (error: MobileError) => void;
+  /** The desktop confirmed the channel and said how long the pairing lasts now (it renews a phone in use): keep it. */
+  onSession?: (session: RelaySession) => void;
   timeoutMs?: number;
   waits?: number[];
 }
@@ -39,6 +41,10 @@ export function relaySocketURL(link: Pick<RelayLink, 'ws'>, origin: string): str
 }
 
 const WAITS = [1_000, 3_000, 10_000, 30_000];
+/** The relay refusing a saved token is not proof of a sign-out on its own: just after the desktop (re)opens its room,
+ * before its allow list arrives, every phone is refused. Only this many refusals in a row (with the usual waits
+ * between) count as one. The desktop's own word (`revoked`, or a handshake refusal) counts at once. */
+const DENIED_LIMIT = 3;
 interface Pending { id: string; cmd: Command; resolve: (value: unknown) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout>; sent: boolean }
 type Hello = { kind: 'pair'; link: RelayLink; secret: Uint8Array; name: string; done: (session: RelaySession) => void; fail: (error: MobileError) => void } | { kind: 'session' };
 
@@ -57,6 +63,10 @@ export class RelayClient {
   /** Paired with an ack and not yet connected again: if the desktop does not know this phone, the ack did not
    * arrive and the pairing was undone (the code works again while it lasts). */
   private fresh = false;
+  /** Relay refusals in a row (reset once the desktop confirms the channel). */
+  private denials = 0;
+  /** The last connection ended with a relay refusal that is tried again. */
+  private refused = false;
 
   private constructor(private session: RelaySession | null, private options: RelayClientOptions) {}
 
@@ -155,7 +165,13 @@ export class RelayClient {
     const msg = JSON.parse(text);
     if (msg.t === 'error') {
       // The relay no longer admits this token: the desktop revoked it (or the pairing code expired).
-      if (msg.code === 'denied') throw new MobileError(this.hello.kind === 'pair' ? 'This code has expired or already been used. Show a new code on your computer.' : this.signedOut(), true);
+      if (msg.code === 'denied') {
+        if (this.hello.kind === 'pair') throw new MobileError('This code has expired or already been used. Show a new code on your computer.', true);
+        // A pairing whose ack was lost is refused for good at once; a saved pairing is tried again a few times.
+        if (this.fresh || ++this.denials >= DENIED_LIMIT) throw new MobileError(this.signedOut(), true);
+        this.refused = true;
+        return; // the close follows and we try again
+      }
       if (msg.code === 'desk_offline' && this.hello.kind === 'pair') throw new MobileError('Botling is not connected to the relay. Keep it running and try again.', true);
       return; // desktop offline: the close follows and we try again
     }
@@ -203,6 +219,7 @@ export class RelayClient {
         this.fresh = false;
         this.session = { ...this.session!, coreId: message.coreId, botIds: message.botIds, expiresAt: message.expiresAt };
         this.ready();
+        this.options.onSession?.(this.session);
         return;
       case 'res': {
         const id = (message.env as { id?: unknown })?.id;
@@ -222,7 +239,7 @@ export class RelayClient {
   }
 
   private ready() {
-    this.stage = 'ready'; this.failures = 0;
+    this.stage = 'ready'; this.failures = 0; this.denials = 0;
     this.setLive(true);
     this.firstReady?.resolve(); this.firstReady = null;
     // Anything asked while the channel was down goes now, with its original id (a resent mutation is answered from the desktop's journal).
@@ -243,11 +260,34 @@ export class RelayClient {
     this.setLive(false);
     if (this.stage === 'closed') return;
     if (this.hello.kind === 'pair') return this.fail(new MobileError('Could not reach Botling through the relay. Check the connection and scan the code again.', true));
-    if (this.firstReady) return this.fail(new MobileError('Could not reach Botling through the relay. Keep Botling running on your computer and try again.'));
+    const refused = this.refused;
+    this.refused = false;
+    if (this.firstReady && !refused) return this.fail(new MobileError('Could not reach Botling through the relay. Keep Botling running on your computer and try again.'));
     this.stage = 'idle';
     const waits = this.options.waits ?? WAITS;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => { void this.open(); }, waits[Math.min(this.failures++, waits.length - 1)]);
+  }
+
+  /** The page is in front again (shown, back online, restored from the back-forward cache). Waiting out a backoff:
+   * connect now. `restart`: the socket held may have gone silent while the phone slept (it can still look open), so
+   * drop it and connect again now. Requests still waiting are resent with their ids once the channel is back (the
+   * desktop's journal answers a resent mutation with its first outcome). */
+  resume(restart = false) {
+    if (this.stage === 'closed' || this.hello.kind === 'pair') return;
+    if (this.stage === 'idle') { clearTimeout(this.timer); this.failures = 0; void this.open(); return; }
+    if (!restart) return;
+    const socket = this.socket;
+    this.socket = null;
+    if (socket) {
+      socket.onopen = null; socket.onmessage = null; socket.onerror = null; socket.onclose = null;
+      try { socket.close(1000, 'resume'); } catch { /* gone */ }
+    }
+    this.channel?.close(); this.channel = null; this.ephemeral = null;
+    this.setLive(false);
+    this.stage = 'idle'; clearTimeout(this.timer); this.failures = 0;
+    for (const pending of this.pending.values()) pending.sent = false;
+    void this.open();
   }
 
   /** A security failure, a refusal or a revocation: stop for good and say why. */

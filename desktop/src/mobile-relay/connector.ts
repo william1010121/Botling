@@ -2,7 +2,7 @@
 // this desktop's room, tell the relay which phone tokens may join, and serve each paired phone over its own
 // end-to-end encrypted channel with the same core calls the HTTPS bridge makes (core.mobileCommand, the mutation
 // ledger, change notices). The relay only ever carries ciphertext; this file is where frames are opened.
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { PROTOCOL_VERSION, RequestEnvelope, errorResponse, type ResponseEnvelope } from '../contract';
 import type { MobileCore } from '../mobile-bridge/bridge';
 import type { MutationLedger } from '../mobile-bridge/ledger';
@@ -18,9 +18,13 @@ const HANDSHAKE_MS = 15_000;
 /** How long a pairing phone has to acknowledge `paired` before its code is given back. */
 const ACK_MS = 15_000;
 const NOTICE_MS = 250;
+/** How old a paired phone's expiry may get before a connection renews it. */
+const RENEW_AFTER_MS = 86_400_000;
 /** Leave room under the relay's default 4 MiB frame limit for the relay's own wrapping. */
 const MAX_FRAME_CHARS = 3_800_000;
 const WAITS = [1_000, 2_000, 5_000, 10_000, 30_000];
+/** Two hex SHA-256 hashes compared in constant time. */
+const sameHash = (a: string, b: string) => a.length === 64 && b.length === 64 && timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
 const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 const label = (value: unknown) => typeof value === 'string' ? value.replace(/[^\p{L}\p{N} ._()-]/gu, '').trim().slice(0, 40) : '';
 
@@ -262,7 +266,7 @@ export class RelayConnector {
       const offer = this.offers.get(hello.offer);
       // The relay admitted this phone with the offer's own token, and the offer is still unused and not taken by
       // another open handshake (that phone would win at confirm and this one would only see its socket close).
-      if (!offer || offer.used || offer.tokenHash !== peer.tokenHash || (offer.claim && offer.claim !== peer && offer.claim.stage !== 'closed')) return nope('offer');
+      if (!offer || offer.used || !sameHash(offer.tokenHash, peer.tokenHash) || (offer.claim && offer.claim !== peer && offer.claim.stage !== 'closed')) return nope('offer');
       offer.claim = peer;
       phoneStatic = b64u.decode(hello.device);
       deviceId = await deviceIdOf(phoneStatic);
@@ -271,7 +275,7 @@ export class RelayConnector {
     } else {
       const device = this.options.store.device(hello.device);
       // A phone's token and key belong together: the relay admitted this token, the handshake proves this key.
-      if (!device || device.tokenHash !== peer.tokenHash) return nope('device');
+      if (!device || !sameHash(device.tokenHash, peer.tokenHash)) return nope('device');
       phoneStatic = b64u.decode(device.publicKey);
       deviceId = device.id;
     }
@@ -316,8 +320,14 @@ export class RelayConnector {
       return;
     }
     if (msg.t !== 'hello') return this.end(peer);
-    const device = this.options.store.device(peer.deviceId!);
+    let device = this.options.store.device(peer.deviceId!);
     if (!device) return this.end(peer, true);
+    // A phone in use stays paired: its 30 days start again (written at most once a day). Revoking still ends it at once.
+    const now = this.now();
+    if (device.expiresAt - now < PAIRED_TTL_MS - RENEW_AFTER_MS) {
+      try { device = this.options.store.renew(device.id, now + PAIRED_TTL_MS); } catch { /* kept as it was; it still works until it expires */ }
+      if (!device) return this.end(peer, true); // revoked meanwhile
+    }
     peer.stage = 'ready'; clearTimeout(peer.timer);
     if (this.options.onStep) await this.options.onStep('Grant', peer.id);
     this.toPeer(peer, await peer.channel!.seal({ t: 'ready', coreId, botIds: device.botIds, expiresAt: device.expiresAt }));

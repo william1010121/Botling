@@ -64,7 +64,7 @@ const waiting = { items: [{ botId: 'proj-rl', text: 'Approve the training run bu
 let seq = 0, authenticated = true, denied = false;
 const TOKEN = 'f'.repeat(43);
 const snapshot = botId => ({ epoch: 'fixture', seq, bots, imported: null, chat: chats.get(botId ?? MAIN) ?? null, components, settings, waiting, });
-const types = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', svg: 'image/svg+xml', webmanifest: 'application/manifest+json', woff2: 'font/woff2' };
+const types = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', svg: 'image/svg+xml', webmanifest: 'application/manifest+json', png: 'image/png', woff2: 'font/woff2' };
 // The bridge's policies (src/mobile-bridge/bridge.ts webChatCSP, frameHostCSP) for this origin.
 const chatCSP = origin => `default-src 'none'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; frame-src ${origin}/mobile/frame-host.html; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'self'`;
 const hostCSP = origin => `sandbox allow-scripts; default-src 'none'; script-src ${origin}/mobile/frame-host.js 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'`;

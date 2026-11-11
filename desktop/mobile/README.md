@@ -60,10 +60,13 @@ Packaging does not set `BOTLING_MOBILE_CONFIG`, create credentials, or start a l
 ## Browser authentication
 
 The sign-in page asks for the access token the owner issued (the same bearer token the bridge's
-client file holds a hash of). It is kept only in the page's memory and sent as
+client file holds a hash of), or redeems a scanned pairing code for one. It is sent as
 `Authorization: Bearer` on `/api/mobile/command`; there are no cookies, no session endpoints and
-no Google or OAuth flow. Sign out forgets the token. Each token keeps its explicit bot list.
-Credentials and chat snapshots never go into storage; only the layout toggles above use localStorage.
+no Google or OAuth flow. After a successful sign-in the token is kept so the page opened again (a new tab,
+the home-screen app, a tab the system discarded) signs in without a new code: only encrypted, in IndexedDB,
+under a non-extractable AES-GCM key (`relay-session.ts`), for this origin. A 401 or Sign out forgets it;
+revoking the phone on the desktop ends it. Each token keeps its explicit bot list. Chat snapshots never go into
+storage; the layout toggles above use localStorage. The page is installable (manifest, PNG and Apple touch icons).
 
 ## Isolated responsive acceptance
 
