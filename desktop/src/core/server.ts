@@ -1,5 +1,6 @@
 import { agyPermissionSessions, changeAgyPermissions } from "./agent/agy-permissions";
 import { setBrowserBridge } from "./browser-tools";
+import { configureNotes, noteService, setNoteBots } from "./note-tools";
 import { ROUTINE_TICK_MS } from "./routines";
 import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
 import { discoveryFailure } from "./agent/model-discovery";
@@ -589,6 +590,16 @@ export class Core {
     const app = options.app ?? null;
     // The bots' tools on the in-app browser pane (browser-tools.ts) ask main through this.
     setBrowserBridge(app ? (request) => app.request("browser", { request }) : null);
+    // Every bot's Note (note-tools.ts): this process is the one writer of each note.db; it watches each note.md it opened
+    // for edits made there, and one it cannot take (made on an older copy) is kept beside it and told to plugins.
+    configureNotes({
+      watch: true, log: (line) => this.log(line),
+      conflict: (note, kept, reason) => {
+        const entry = [...this.bots.entries()].find(([id, bot]) => !this.removed.has(id) && notePath(bot.profile) === note);
+        if (entry) this.plugins.event("noteConflict", { botId: entry[0] === MAIN_BOT_ID ? "main" : entry[0], file: kept, reason });
+      },
+    });
+    setNoteBots(() => [...this.bots.entries()].filter(([id]) => !this.removed.has(id)).map(([id, bot]) => ({ id, name: bot.profile.name, folder: bot.profile.folder, note: notePath(bot.profile) })));
     this.releases = new ReleaseNotices({
       root: options.dataDir,
       developerMode: () => settingsView(readSettings(Layout.settings(options.dataDir))).developerMode,
@@ -3050,6 +3061,7 @@ First write a test that shows this, then fix it.`;
     participants.push(() => this.plugins.shutdown());
     const results = await Promise.allSettled(participants.map(stop => Promise.resolve().then(stop)));
     try { this.options.remoteWorkers?.close(); } catch (error) { this.log(`remote workers: ${(error as Error).message}`); }
+    try { noteService().close(); } catch (error) { this.log(`notes: ${(error as Error).message}`); }
     const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     if (this.restarting) results.forEach((result, i) => specTrace("restart", "Settle", { part: bots[i]?.[0] ?? "plugins", ok: result.status === "fulfilled" }));
     // Each bot's continuation rests on its own shutdown: one that failed is held back (with why), the others resume.

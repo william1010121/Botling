@@ -59,7 +59,7 @@ describe("Claude's app-managed workers", () => {
     // The worker: its own session in the bot's folder, no subagents, and of the app's tools only app_notify_owner.
     expect(worker!.session).not.toBe(head!.session);
     expect(worker!.cwd).toBe(head!.cwd);
-    expect(flag(worker!.args, "--allowedTools")!.split(",").filter((tool) => tool.startsWith("mcp__botling__"))).toEqual(["mcp__botling__app_notify_owner", "mcp__botling__app_browser_tabs", "mcp__botling__app_browser_open", "mcp__botling__app_browser_requests", "mcp__botling__app_browser_extract"]);
+    expect(flag(worker!.args, "--allowedTools")!.split(",").filter((tool) => tool.startsWith("mcp__botling__"))).toEqual(["mcp__botling__app_notify_owner", "mcp__botling__app_browser_tabs", "mcp__botling__app_browser_open", "mcp__botling__app_browser_requests", "mcp__botling__app_browser_extract", "mcp__botling__app_note_outline", "mcp__botling__app_note_read", "mcp__botling__app_note_search"]);
     expect(flag(worker!.args, "--disallowedTools")!.split(",")).toEqual(expect.arrayContaining(["Agent", "Task", "SendMessage"]));
     expect(flag(worker!.args, "--append-system-prompt")).toContain("app-managed worker");
     // Its report: the app's message to the bot, which answers it in a turn of its own.

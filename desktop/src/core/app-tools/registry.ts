@@ -1,7 +1,8 @@
 // The app tools, defined once (provider-layer plan 4.1). A coordinator steers its workers and the app through these
 // tools: app_handoff, app_send_message, app_cancel_task, the report tools (app_task_checkpoint, app_reconcile_report),
 // routines (app_routines, every engine) and monitors. A worker gets one tool of its own, app_notify_owner (`workerAppTools`): a note to the bot that
-// started it while it keeps working. Each engine gets them over its own transport: Claude's in-process MCP server (head.ts
+// started it while it keeps working. Coordinators and workers alike get the browser tools; the Note tools (app_note_*)
+// go to every coordinator, their three read tools to workers too. Each engine gets them over its own transport: Claude's in-process MCP server (head.ts
 // `appMcp`) and the agy bridge (agy-mcp.ts `AgyMcpBridge.tools`) take MCP tools, Codex takes dynamic tools on
 // `thread/start` (codex.ts `MANAGED_TOOLS`).
 //
@@ -15,7 +16,9 @@ export type AppToolName =
   | "app_handoff" | "app_send_message" | "app_cancel_task" | "app_task_checkpoint" | "app_reconcile_report"
   | "app_routines" | "app_monitor_start" | "app_monitor_status" | "app_monitor_cancel"
   | "app_notify_owner"
-  | "app_browser_tabs" | "app_browser_open" | "app_browser_requests" | "app_browser_extract";
+  | "app_browser_tabs" | "app_browser_open" | "app_browser_requests" | "app_browser_extract"
+  | "app_note_outline" | "app_note_read" | "app_note_search"
+  | "app_note_edit" | "app_note_insert" | "app_note_delete" | "app_note_move" | "app_note_split" | "app_note_merge" | "app_note_branch";
 type JsonSchema = Record<string, unknown>;
 /** A tool as an MCP server lists it (Claude's `appMcp`, the agy bridge). */
 export interface McpTool { name: string; description: string; inputSchema: JsonSchema }
@@ -80,6 +83,23 @@ const PARAMS = {
   selector: () => ({ type: "string", description: "A CSS selector (what: selector)." }),
   script: () => ({ type: "string", description: "what: script. The body of an async function run in the page (an isolated world, sees the DOM): return JSON-able data, e.g. return [...document.querySelectorAll('.price')].map(e => e.textContent). Read-only: clicking, submitting, typing, navigation and network calls are refused." }),
   save_as: () => ({ type: "string", enum: ["json", "csv", "txt"], description: "Save the full result to a file (csv: rows or the first table) and get its path; give the user that path as a link in your reply. Large results are saved anyway." }),
+  // The Note tools (note-tools.ts): a bot's Note by cell id.
+  bot: () => ({ type: "string", description: "Whose Note: a bot of this project, by name or id. Default: your own." }),
+  ids: () => ({ type: "array", items: text, maxItems: 200, description: "Cell or branch ids (from app_note_outline)." }),
+  route: () => ({ type: "string", description: "A route id (from app_note_outline)." }),
+  query: () => ({ type: "string", description: "The text to find (case does not matter)." }),
+  rev: () => ({ type: "integer", minimum: 1, description: "The rev you read; a different one means someone changed it since." }),
+  text: () => ({ type: "string", description: "Markdown. <!-- cell --> lines or a <show> card in it cut it into several cells." }),
+  old_text: () => ({ type: "string", description: "Text that is in the cell exactly once." }),
+  new_text: () => ({ type: "string", description: "What replaces old_text." }),
+  after: () => ({ type: "string", description: "A cell or branch id: right after it." }),
+  before: () => ({ type: "string", description: "A cell or branch id: right before it." }),
+  line: () => ({ type: "integer", minimum: 2, description: "The cell's line (1-based) where the new cell starts." }),
+  next_rev: () => ({ type: "integer", minimum: 1, description: "Optional: the next cell's rev you read." }),
+  names: () => ({ type: "array", items: text, maxItems: 20, description: "op create: the routes' names, in order (default \"路線 1\", \"路線 2\")." }),
+  branch: () => ({ type: "string", description: "A branch id (from app_note_outline)." }),
+  keep: () => ({ type: "string", description: "op dissolve: the route id whose cells stay where the branch was." }),
+  op: () => text,
 } satisfies Record<string, (options: AppToolOptions & { provider?: AppToolProvider }) => JsonSchema>;
 type ParamName = keyof typeof PARAMS;
 
@@ -139,7 +159,62 @@ const APP_TOOLS: readonly AppToolDef[] = [
   } },
   { name: "app_notify_owner", forms: notifyForms() },
   ...browserTools(),
+  ...noteTools(),
 ];
+
+/**
+ * The Note tools (note-sqlite design, phase 1; note-tools.ts, note-db.ts): a bot's Note (the Note tab, note.md, kept in
+ * note.db) read and changed by cell id, each change one transaction checked by rev. Every engine the same words, all at
+ * once (a Codex tool list change restarts its coordinator threads). A bot reads its own and its project's bots' Notes
+ * and changes only its own; a worker gets the three read tools.
+ */
+function noteTools(): AppToolDef[] {
+  const same = (form: ToolForm): Partial<Record<AppToolProvider, ToolForm>> => ({ claude: form, agy: form, codex: form });
+  const id = (what: string) => ({ type: "string", description: what });
+  const at = { type: "string", enum: ["start", "end"], description: "With route (or with none of after / before / route: the Note itself): its start or its end (default end)." };
+  return [
+    { name: "app_note_outline", forms: same({
+      description: "The outline of a bot's Note (the user's Note tab, note.md) by id: each cell's id, kind (text, card, image), rev and first line, and each branch with its routes (ids, names) and the cells in them, nested. Start here, then read cells with app_note_read. Ids never change; note.md shows them as <!-- cell: <id> --> lines.",
+      params: ["bot"] }) },
+    { name: "app_note_read", forms: same({
+      description: "Read cells of a bot's Note with their ids, revs, paths (the branch › route they are in) and text: ids (cells or branches), or route (a route id, or \"Branch › Route\" by name) for all in it, or neither for the whole Note in order. A deleted id reads as deleted, with its last text and the note rev it went at. Give the rev back when you change a cell.",
+      params: ["bot", "ids", "route"], schemas: { route: { type: "string", description: "A route id, or \"Branch › Route\" by name (nested: \"Outer › Route › Inner › Route\")." } } }) },
+    { name: "app_note_search", forms: same({
+      description: "Find text in a bot's Note: the cells (id, rev, path, line number, the line), branch and route names that contain query. bot \"all\": every Note of this project.",
+      params: ["query", "bot", "limit"], required: ["query"],
+      schemas: { bot: { type: "string", description: "Whose Note: a bot of this project by name or id, or \"all\" for every Note of this project. Default: your own." }, limit: { type: "integer", minimum: 1, maximum: 200, description: "At most this many matches (default 20)." } } }) },
+    { name: "app_note_edit", forms: same({
+      description: "Change one cell of your own Note: text (the whole new cell) with rev, or old_text and new_text (old_text in the cell exactly once; no rev needed, so changes elsewhere never get in the way). A stale rev, or old_text not found once, is refused with the cell's current text and rev: read it and retry. Text that holds <!-- cell --> lines or a <show> card becomes several cells (the first keeps the id; added lists the others). Change the Note with these tools, not by editing note.md. Other bots' Notes are read-only.",
+      params: ["id", "rev", "text", "old_text", "new_text"], required: ["id"], schemas: { id: id("The cell's id.") } }) },
+    { name: "app_note_insert", forms: same({
+      description: "Add cells to your own Note: text goes after or before a cell or branch, or into a route, or with none of these to the Note itself (at: start or end, default end). Returns the new ids.",
+      params: ["text", "after", "before", "route", "at"], required: ["text"], schemas: { at } }) },
+    { name: "app_note_delete", forms: same({
+      description: "Delete a cell of your own Note (rev optional: refused if it changed since). It stays as a tombstone: reading its id says it was deleted, with its last text. A branch: app_note_branch.",
+      params: ["id", "rev"], required: ["id"], schemas: { id: id("The cell's id.") } }) },
+    { name: "app_note_move", forms: same({
+      description: "Move a cell or a whole branch of your own Note: after or before a cell or branch, into a route (into or out of a branch), or with none of these to the Note's top level (at: start or end). Ids and revs stay.",
+      params: ["id", "after", "before", "route", "at"], required: ["id"], schemas: { id: id("The cell's or branch's id."), at } }) },
+    { name: "app_note_split", forms: same({
+      description: "Split a cell of your own Note in two at line: the lines before it keep the id, the rest become a new cell right after (new_id). rev is required. Not inside a code, math or card block.",
+      params: ["id", "rev", "line"], required: ["id", "rev", "line"], schemas: { id: id("The cell's id.") } }) },
+    { name: "app_note_merge", forms: same({
+      description: "Merge a cell of your own Note with the next cell in its route: the next one's text joins it (on a new line) and the next one is deleted. rev (this cell's) is required. A card does not merge.",
+      params: ["id", "rev", "next_rev"], required: ["id", "rev"], schemas: { id: id("The cell's id.") } }) },
+    { name: "app_note_branch", forms: same({
+      description: "Branches in your own Note (alternative routes for one part; the Note tab shows one route at a time). op create: ids (cells next to each other, in order) become the first route, or give a place (after / before / route / at) for an empty branch; name the branch, names its routes. add_route: branch, name. rename: branch or route, name. delete_route: route (not a branch's last one). dissolve: branch, keep (the route whose cells stay in its place; the rest go). delete: branch, all in it. rev: optional, the branch's or route's. Returns the ids made.",
+      params: ["op", "ids", "name", "names", "branch", "route", "keep", "after", "before", "at", "rev"], required: ["op"],
+      schemas: {
+        op: { type: "string", enum: ["create", "add_route", "rename", "delete_route", "dissolve", "delete"] },
+        name: { type: "string", description: "op create: the branch's name; add_route: the new route's; rename: the new name." },
+        route: { type: "string", description: "A route id: op rename / delete_route, the route; op create, the route the new branch goes into." },
+        ids: { type: "array", items: text, maxItems: 200, description: "op create: cells (or branches) next to each other that become the first route." },
+        at,
+      } }) },
+  ];
+}
+const NOTE_READ_TOOL_NAMES: readonly AppToolName[] = ["app_note_outline", "app_note_read", "app_note_search"];
+const NOTE_TOOL_NAMES: readonly AppToolName[] = [...NOTE_READ_TOOL_NAMES, "app_note_edit", "app_note_insert", "app_note_delete", "app_note_move", "app_note_split", "app_note_merge", "app_note_branch"];
 
 /**
  * The in-app browser tools (phase 2, browser-bot.ts): every engine's coordinators and workers, the same words. They
@@ -192,13 +267,13 @@ function notifyForms(): Partial<Record<AppToolProvider, ToolForm>> {
 
 /** Which tools each provider's coordinator gets, in the order it lists them. */
 const PROVIDER_TOOLS: Record<AppToolProvider, readonly AppToolName[]> = {
-  claude: ["app_handoff", "app_send_message", "app_cancel_task", "app_routines", ...BROWSER_TOOL_NAMES],
-  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", "app_routines", ...BROWSER_TOOL_NAMES],
-  codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", ...BROWSER_TOOL_NAMES],
+  claude: ["app_handoff", "app_send_message", "app_cancel_task", "app_routines", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
+  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", "app_routines", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
+  codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
 };
 
-/** The tools an app-managed worker gets (never a coordinator): app_notify_owner and the browser tools. */
-export const WORKER_APP_TOOLS: readonly AppToolName[] = ["app_notify_owner", ...BROWSER_TOOL_NAMES];
+/** The tools an app-managed worker gets (never a coordinator): app_notify_owner, the browser tools and the Note read tools. */
+export const WORKER_APP_TOOLS: readonly AppToolName[] = ["app_notify_owner", ...BROWSER_TOOL_NAMES, ...NOTE_READ_TOOL_NAMES];
 
 const render = (provider: AppToolProvider, names: readonly AppToolName[], options: AppToolOptions): McpTool[] => names.map((name) => {
   const form = APP_TOOLS.find((tool) => tool.name === name)!.forms[provider];

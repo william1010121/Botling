@@ -173,7 +173,7 @@ export function profilePaths(profile: Pick<BotProfile, "role" | "folder" | "memo
 
 /** Where the user's own note for this bot is (the Note tab, 2026-11-08): read when relevant, changed only when asked. */
 export function noteRule(note: string): string {
-  return `The user's notes for this bot are in ${note} (the Note tab): read them when relevant; edit them only when the user asks. Its format (cells, branches and routes, live cards) is in the note skill (botling.note): load it before writing the Note or when unsure, instead of searching Botling's source.`;
+  return `The user's notes for this bot are in ${note} (the Note tab): read them when relevant; edit them only when the user asks. Use the app_note_* tools for it: app_note_outline, app_note_read and app_note_search read your Note or another bot's of this project by cell id; app_note_edit, app_note_insert, app_note_delete, app_note_move, app_note_split, app_note_merge and app_note_branch change your own Note one cell at a time (give the rev you read; on a conflict, read again). The <!-- cell: id --> lines in the file are those ids: keep them if you edit the file directly. Its format (cells, branches and routes, live cards) is in the note skill (botling.note): load it before writing the Note or when unsure, instead of searching Botling's source.`;
 }
 
 export function localPage(folder: string): string {

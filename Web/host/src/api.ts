@@ -48,11 +48,13 @@ export interface PluginEvents {
   noteChanged: { botId: string; mtime: number | null };
   /** A card in a bot's note ran (started or finished): read `notes.cards` again for its state. `key` is the card's (`NoteCard.key`). */
   noteCardChanged: { botId: string; key: string };
+  /** An edit made in a bot's note.md (by hand, a bot's file edit, git) could not be taken into note.db (it changed an older copy of a cell); it is kept as `file` beside it and note.md is the database's again. */
+  noteConflict: { botId: string; file: string; reason: string };
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged", "noteConflict"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
@@ -405,6 +407,31 @@ export interface NoteParsed {
   problems: { line: number; message: string }[];
   /** With `picks`: the note as that way reads it, without markers, and where each line came from. */
   view?: { text: string; lines: number[] };
+  /** The Note tab's own cells (desktop/src/core/note-cells.ts `cellRuns`, the editor's rules): lines 0-based; `id` from a `<!-- cell: id -->` line. */
+  cells: NoteCellRun[];
+  /** Its branches as the editor reads them (`parseBranches`): keys "<parent fork key>/<parent route>>name#n". */
+  branches: NoteBranch[];
+  /** With `lines`: what each line is (fence / code / card / table / mathb / text) and its block's lines. */
+  lines?: Array<{ kind: "text" } | { kind: "fence" | "code" | "card" | "table" | "mathb"; start: number; end: number }>;
+}
+export interface NoteCellRun {
+  start: number; end: number; above: number; below: number; softAbove: boolean; softBelow: boolean; aboveCell: boolean; belowCell: boolean;
+  first: number; last: number; empty: boolean; type: "markdown" | "code" | "math" | "table" | "card"; id: string | null;
+}
+export interface NoteBranch {
+  key: string; name: string; start: number; endLine: number; depth: number; parent: { fork: string; route: string } | null;
+  routes: Array<{ name: string; marker: number; start: number; end: number; implicit: boolean }>;
+}
+/** Where a cell sits: each fork and route around it, outermost first. */
+export interface NotePathStep { fork: string; forkId: string; route: string; routeId: string }
+/** `notes.outline`: the ids note.db gives the cells and forks of a text (lines 0-based, `end` inclusive for cells). */
+export interface NoteOutline {
+  mode: "db" | "file"; reason: string | null; rev: number; mtime: number;
+  /** Without `text` in the ask: the note it refers to (as notes.read gives it). */
+  text?: string;
+  /** `id` null: a cell not saved yet. `rev` null: not saved as it reads now. `label`: "Note #<id> · Fork › Route", for a quote's first line. */
+  cells: Array<{ id: string | null; rev: number | null; kind: "text" | "card" | "image"; type: NoteCellRun["type"]; start: number; end: number; path: NotePathStep[]; label: string }>;
+  forks: Array<{ id: string | null; name: string; start: number; end: number; path: NotePathStep[]; routes: Array<{ id: string | null; name: string; implicit: boolean; start: number; end: number }> }>;
 }
 /** A component for a note's insert menu. */
 export interface NoteComponent {
@@ -487,8 +514,15 @@ export interface BotlingApi {
     assetUrls(botId: string, refs: string[]): Promise<Record<string, string | null>>;
     /** Copies every picture the note links by absolute path, ~/… or file: URL into note-assets and links the copies instead. */
     localizeImages(botId: string, opts?: { base?: number }): Promise<NoteLocalized>;
-    /** A note's branches and cards as the core reads them (what bots are told), from `text`; with `picks`, also the view of that way through. */
-    parse(text: string, picks?: NoteRoutePicks): Promise<NoteParsed>;
+    /** A note's branches and cards as the core reads them (what bots are told), from `text`; with `picks`, also the view of that way through; with `lines`, each line's kind. */
+    parse(text: string, picks?: NoteRoutePicks, opts?: { lines?: boolean }): Promise<NoteParsed>;
+    /**
+     * The ids of the note's cells and forks (note.db), with their lines: in `text` (the editor's words, saved or not; cells
+     * matched as a save would match them) or, without it, in the note as `read` gives it (returned as `text`).
+     */
+    outline(botId: string, opts?: { text?: string }): Promise<NoteOutline>;
+    /** Whether the note is kept in note.db ("db") or as a plain file ("file", with why); with `mode`, switches it ("file" writes note.md without ids). */
+    mode(botId: string, mode?: "db" | "file"): Promise<{ mode: "db" | "file"; reason: string | null }>;
     /** The bot's components for the insert menu: its own list first, then the rest of the library. */
     components(botId: string): Promise<{ folder: string; readOnly: boolean; components: NoteComponent[] }>;
     /** Each card in the note (or in `text`, the editor's words not yet saved) with what it draws now. */
@@ -766,7 +800,9 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       importAsset: async (botId, source) => (await ask("notes.importAsset", { bot: botId, ...("path" in source ? { path: source.path } : { data: source.data, name: source.name }) })) as NoteAsset & { url: string },
       assetUrls: async (botId, refs) => (await ask("notes.assetUrls", { bot: botId, refs })) as Record<string, string | null>,
       localizeImages: async (botId, opts = {}) => (await ask("notes.localizeImages", { bot: botId, ...(opts.base === undefined ? {} : { base: opts.base }) })) as NoteLocalized,
-      parse: async (text, picks) => (await ask("notes.parse", { text, ...(picks ? { picks } : {}) })) as NoteParsed,
+      parse: async (text, picks, opts = {}) => (await ask("notes.parse", { text, ...(picks ? { picks } : {}), ...(opts.lines ? { lines: true } : {}) })) as NoteParsed,
+      outline: async (botId, opts = {}) => (await ask("notes.outline", { bot: botId, ...(opts.text === undefined ? {} : { text: opts.text }) })) as NoteOutline,
+      mode: async (botId, mode) => (await ask("notes.mode", { bot: botId, ...(mode ? { mode } : {}) })) as { mode: "db" | "file"; reason: string | null },
       components: async (botId) => (await ask("notes.components", { bot: botId })) as { folder: string; readOnly: boolean; components: NoteComponent[] },
       cards: async (botId, opts = {}) => (await ask("notes.cards", { bot: botId, ...(opts.text === undefined ? {} : { text: opts.text }) })) as NoteCardState[],
       runCard: async (botId, key, opts = {}) => (await ask("notes.runCard", { bot: botId, key, ...(opts.force ? { force: true } : {}), ...(opts.text === undefined ? {} : { text: opts.text }) })) as { started: boolean; needsApproval: { command: string; folder: string; card: string } | null },

@@ -21,7 +21,7 @@ import {
   type HandoffRequest, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord,
 } from "../worker-core";
 import { appTools, workerAppTools } from "../app-tools/registry";
-import { isBrowserTool, type BrowserToolName } from "../../browser-bot";
+import { isBotTool, type BotToolRunner } from "../bot-tools";
 import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
@@ -154,8 +154,8 @@ export interface ClaudeWorkersOptions {
   specWriters?(): readonly string[];
   /** The site tools folder these workers may not write (site-tools-guard.ts); none for Maintainer's. */
   siteToolsFolder?(): string | null | undefined;
-  /** The in-app browser tools (core/browser-tools.ts), for this bot's pane; absent: they answer that it is not available. */
-  browser?(name: BrowserToolName, args: Record<string, unknown>): Promise<unknown>;
+  /** The bot tools (core/bot-tools.ts: the browser pane, the Note), answered by this bot; absent: they answer that they are not available. */
+  browser?: BotToolRunner;
   home?: string;
   /** Workers on other machines; absent or null: app_handoff's `machine` is refused. */
   remote?(): RemoteWorkerHost | null;
@@ -332,9 +332,9 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       onItem: (item) => this.onItem(r.id, head, item), onExit: (exit) => this.onExit(r.id, head, exit),
       // Its app tools: a note to its owner, from the run under way in this process, and the browser tools.
       onAppTool: async (name, args) => {
-        if (isBrowserTool(name)) {
-          if (!this.options.browser) throw new Error("The in-app browser is not available here.");
-          return this.options.browser(name, args);
+        if (isBotTool(name)) {
+          if (!this.options.browser) throw new Error("That tool is not available here.");
+          return this.options.browser(name, args, "worker");
         }
         if (name !== "app_notify_owner" || !this.notify) throw new Error(`Unknown app tool ${name}.`);
         if (this.procs.get(r.id)?.head !== head) throw new Error("This worker's run is not under way: say it in your final report instead.");

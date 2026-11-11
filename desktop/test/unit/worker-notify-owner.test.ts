@@ -126,13 +126,13 @@ describe("app_notify_owner is a worker's tool only", () => {
     for (const provider of ["claude", "agy", "codex"] as const) {
       expect(appTools(provider).map((tool) => tool.name)).not.toContain("app_notify_owner");
       const [tool, ...rest] = workerAppTools(provider);
-      expect(rest.map((each) => each.name)).toEqual(["app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"]);
+      expect(rest.map((each) => each.name)).toEqual(["app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract", "app_note_outline", "app_note_read", "app_note_search"]);
       expect(tool).toMatchObject({ name: "app_notify_owner", inputSchema: { required: ["kind", "message"], properties: { kind: { enum: ["report", "question"] }, files: { type: "array" } } } });
       expect(tool!.description).toMatch(/app_send_message|joins this run/);
       expect(tool!.description).toContain("never the user or another bot");
     }
     expect(CLAUDE_APP_TOOLS.map((tool) => tool.name)).not.toContain("app_notify_owner");
-    expect(CLAUDE_WORKER_TOOLS.map((tool) => tool.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"]);
+    expect(CLAUDE_WORKER_TOOLS.map((tool) => tool.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract", "app_note_outline", "app_note_read", "app_note_search"]);
     expect(CLAUDE_WORKER_POLICY).toContain(WORKER_NOTIFY_RULE);
   });
 
@@ -181,7 +181,7 @@ describe("Codex workers' app_notify_owner", () => {
     const handed = h.call(COORD, "t1", "app_handoff", { instructions: "Import DAFAWU", name: "Importer" });
     const task = JSON.parse(handed[0].result.contentItems[0].text).task_id as string;
     const start = handed.find((w) => w.method === "thread/start");
-    expect(start.params.dynamicTools.map((tool: { name: string }) => tool.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"]);
+    expect(start.params.dynamicTools.map((tool: { name: string }) => tool.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract", "app_note_outline", "app_note_read", "app_note_search"]);
     const started = h.answer(start.id, { thread: { id: "w1" } });
     h.answer(started.find((w) => w.method === "turn/start").id, { turn: { id: "wt1" } });
     const [sent] = h.call("w1", "wt1", "app_notify_owner", { kind: "report", message: "Plan ready", files: ["/tmp/bot/progress.md"] });
@@ -240,7 +240,7 @@ describe("a Claude worker's note to its bot (DAFAWU)", () => {
     expect(JSON.parse(flag(worker.args, "--mcp-config")!)).toEqual({ mcpServers: { botling: { type: "sdk", name: "botling" } } });
     const allowed = flag(worker.args, "--allowedTools")!.split(",");
     expect(allowed).toContain("mcp__botling__app_notify_owner");
-    expect(allowed.filter((tool) => tool.startsWith("mcp__botling__"))).toEqual(["mcp__botling__app_notify_owner", "mcp__botling__app_browser_tabs", "mcp__botling__app_browser_open", "mcp__botling__app_browser_requests", "mcp__botling__app_browser_extract"]);
+    expect(allowed.filter((tool) => tool.startsWith("mcp__botling__"))).toEqual(["mcp__botling__app_notify_owner", "mcp__botling__app_browser_tabs", "mcp__botling__app_browser_open", "mcp__botling__app_browser_requests", "mcp__botling__app_browser_extract", "mcp__botling__app_note_outline", "mcp__botling__app_note_read", "mcp__botling__app_note_search"]);
     // The owner's chat: the note as a relay line (not the user's), no second user line.
     const messages = (await c.chat()).messages as { role: string; text: string }[];
     expect(messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["/worker /notify:report Plan ready in progress.md"]);

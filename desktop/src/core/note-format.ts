@@ -14,9 +14,14 @@
 //   the Note tab; `command="…"` (or none and no JSON: the component's Command) fills it from a command.
 //
 // Markers and cards inside code (fences, `inline`) are text. Nothing here reads or writes a file.
+//
+// How the Note tab cuts a note into cells (and the `<!-- cell: <id> -->` lines note.db exports) is note-cells.ts, one
+// copy for the app and the plugin, re-exported here.
 import { createHash } from "node:crypto";
 import { refreshSeconds } from "./components/library";
 import { attributes, masked, showTag } from "./reply";
+
+export * from "./note-cells";
 
 export interface NoteRoute {
   /** "<fork key>/<name>" (a second route of one name in the same fork: "…/<name>#2"). */

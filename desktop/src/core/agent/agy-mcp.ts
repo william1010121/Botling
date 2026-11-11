@@ -11,7 +11,7 @@ import { resolve, relative, isAbsolute, join } from 'node:path';
 import { processTreeAdapter, type ManagedProcess } from '../process/tree';
 import { inSpec, shellWritesSpec, specRoots, SPEC_DENIED } from '../spec-guard';
 import { appTools, workerAppTools } from '../app-tools/registry';
-import { isBrowserTool, type BrowserToolName } from '../../browser-bot';
+import { isBotTool, type BotToolName } from '../bot-tools';
 
 export const AGY_FILE_HELPER_SHA = '1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403';
 export function verifyAgyFileHelper(path: string | undefined, workspace: string) {
@@ -88,7 +88,7 @@ export class AgyMcpBridge {
   private extra: { raw: string; real: string }[];
   private rootIdentity: string[];
   private protectedIdentity: string[];
-  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void, extraRoots: string[] = [], private specLocked: () => boolean = () => false, private notify?: (args: Args) => unknown, private browser?: (name: BrowserToolName, args: Args) => Promise<unknown>, private routines?: (args: Args) => unknown) {
+  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void, extraRoots: string[] = [], private specLocked: () => boolean = () => false, private notify?: (args: Args) => unknown, private browser?: (name: BotToolName, args: Args) => Promise<unknown>, private routines?: (args: Args) => unknown) {
     // The project's .bot when the session starts in an app worktree (the same extra folder Claude and Codex get).
     this.extra = extraRoots.flatMap(dir => { try { return [{ raw: resolve(dir), real: realpathSync(dir) }]; } catch { return []; } });
     // Worker transport is deliberately unavailable until live isolation/recovery validation.
@@ -200,8 +200,9 @@ export class AgyMcpBridge {
     // permission (workers' own tool calls keep their normal approval flow), so they need no user card.
     // A worker's note to its owner: grants no file or command permission, so it needs no user card.
     // The user's browser pane: reading it (and opening a page there) grants no file or command permission.
-    if (isBrowserTool(name)) {
-      if (!this.browser) throw new Error('The in-app browser is not available here.');
+    // The Note tools (a worker's bridge lists only the read ones; the caller is told by the head): app state only.
+    if (isBotTool(name)) {
+      if (!this.browser) throw new Error('That tool is not available here.');
       return this.browser(name, args);
     }
     // This bot's schedules (bot.ts `routinesTool`): app state, no file or command permission, so no user card.
