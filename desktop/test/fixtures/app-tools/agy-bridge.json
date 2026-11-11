@@ -309,5 +309,336 @@
    },
    "additionalProperties": false
   }
+ },
+ {
+  "name": "app_note_outline",
+  "description": "The outline of a bot's Note (the user's Note tab, note.md) by id: each cell's id, kind (text, card, image), rev and first line, and each branch with its routes (ids, names) and the cells in them, nested. Start here, then read cells with app_note_read. Ids never change; note.md shows them as <!-- cell: <id> --> lines.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "bot": {
+     "type": "string",
+     "description": "Whose Note: a bot of this project, by name or id. Default: your own."
+    }
+   },
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_note_read",
+  "description": "Read cells of a bot's Note with their ids, revs, paths (the branch › route they are in) and text: ids (cells or branches), or route (a route id, or \"Branch › Route\" by name) for all in it, or neither for the whole Note in order. A deleted id reads as deleted, with its last text and the note rev it went at. Give the rev back when you change a cell.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "bot": {
+     "type": "string",
+     "description": "Whose Note: a bot of this project, by name or id. Default: your own."
+    },
+    "ids": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "maxItems": 200,
+     "description": "Cell or branch ids (from app_note_outline)."
+    },
+    "route": {
+     "type": "string",
+     "description": "A route id, or \"Branch › Route\" by name (nested: \"Outer › Route › Inner › Route\")."
+    }
+   },
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_note_search",
+  "description": "Find text in a bot's Note: the cells (id, rev, path, line number, the line), branch and route names that contain query. bot \"all\": every Note of this project.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "The text to find (case does not matter)."
+    },
+    "bot": {
+     "type": "string",
+     "description": "Whose Note: a bot of this project by name or id, or \"all\" for every Note of this project. Default: your own."
+    },
+    "limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 200,
+     "description": "At most this many matches (default 20)."
+    }
+   },
+   "required": [
+    "query"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_note_edit",
+  "description": "Change one cell of your own Note: text (the whole new cell) with rev, or old_text and new_text (old_text in the cell exactly once; no rev needed, so changes elsewhere never get in the way). A stale rev, or old_text not found once, is refused with the cell's current text and rev: read it and retry. Text that holds <!-- cell --> lines or a <show> card becomes several cells (the first keeps the id; added lists the others). Change the Note with these tools, not by editing note.md. Other bots' Notes are read-only.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "The cell's id."
+    },
+    "rev": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "The rev you read; a different one means someone changed it since."
+    },
+    "text": {
+     "type": "string",
+     "description": "Markdown. <!-- cell --> lines or a <show> card in it cut it into several cells."
+    },
+    "old_text": {
+     "type": "string",
+     "description": "Text that is in the cell exactly once."
+    },
+    "new_text": {
+     "type": "string",
+     "description": "What replaces old_text."
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_note_insert",
+  "description": "Add cells to your own Note: text goes after or before a cell or branch, or into a route, or with none of these to the Note itself (at: start or end, default end). Returns the new ids.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "Markdown. <!-- cell --> lines or a <show> card in it cut it into several cells."
+    },
+    "after": {
+     "type": "string",
+     "description": "A cell or branch id: right after it."
+    },
+    "before": {
+     "type": "string",
+     "description": "A cell or branch id: right before it."
+    },
+    "route": {
+     "type": "string",
+     "description": "A route id (from app_note_outline)."
+    },
+    "at": {
+     "type": "string",
+     "enum": [
+      "start",
+      "end"
+     ],
+     "description": "With route (or with none of after / before / route: the Note itself): its start or its end (default end)."
+    }
+   },
+   "required": [
+    "text"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_note_delete",
+  "description": "Delete a cell of your own Note (rev optional: refused if it changed since). It stays as a tombstone: reading its id says it was deleted, with its last text. A branch: app_note_branch.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "The cell's id."
+    },
+    "rev": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "The rev you read; a different one means someone changed it since."
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_note_move",
+  "description": "Move a cell or a whole branch of your own Note: after or before a cell or branch, into a route (into or out of a branch), or with none of these to the Note's top level (at: start or end). Ids and revs stay.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "The cell's or branch's id."
+    },
+    "after": {
+     "type": "string",
+     "description": "A cell or branch id: right after it."
+    },
+    "before": {
+     "type": "string",
+     "description": "A cell or branch id: right before it."
+    },
+    "route": {
+     "type": "string",
+     "description": "A route id (from app_note_outline)."
+    },
+    "at": {
+     "type": "string",
+     "enum": [
+      "start",
+      "end"
+     ],
+     "description": "With route (or with none of after / before / route: the Note itself): its start or its end (default end)."
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_note_split",
+  "description": "Split a cell of your own Note in two at line: the lines before it keep the id, the rest become a new cell right after (new_id). rev is required. Not inside a code, math or card block.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "The cell's id."
+    },
+    "rev": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "The rev you read; a different one means someone changed it since."
+    },
+    "line": {
+     "type": "integer",
+     "minimum": 2,
+     "description": "The cell's line (1-based) where the new cell starts."
+    }
+   },
+   "required": [
+    "id",
+    "rev",
+    "line"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_note_merge",
+  "description": "Merge a cell of your own Note with the next cell in its route: the next one's text joins it (on a new line) and the next one is deleted. rev (this cell's) is required. A card does not merge.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "The cell's id."
+    },
+    "rev": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "The rev you read; a different one means someone changed it since."
+    },
+    "next_rev": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "Optional: the next cell's rev you read."
+    }
+   },
+   "required": [
+    "id",
+    "rev"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_note_branch",
+  "description": "Branches in your own Note (alternative routes for one part; the Note tab shows one route at a time). op create: ids (cells next to each other, in order) become the first route, or give a place (after / before / route / at) for an empty branch; name the branch, names its routes. add_route: branch, name. rename: branch or route, name. delete_route: route (not a branch's last one). dissolve: branch, keep (the route whose cells stay in its place; the rest go). delete: branch, all in it. rev: optional, the branch's or route's. Returns the ids made.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "op": {
+     "type": "string",
+     "enum": [
+      "create",
+      "add_route",
+      "rename",
+      "delete_route",
+      "dissolve",
+      "delete"
+     ]
+    },
+    "ids": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "maxItems": 200,
+     "description": "op create: cells (or branches) next to each other that become the first route."
+    },
+    "name": {
+     "type": "string",
+     "description": "op create: the branch's name; add_route: the new route's; rename: the new name."
+    },
+    "names": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "maxItems": 20,
+     "description": "op create: the routes' names, in order (default \"路線 1\", \"路線 2\")."
+    },
+    "branch": {
+     "type": "string",
+     "description": "A branch id (from app_note_outline)."
+    },
+    "route": {
+     "type": "string",
+     "description": "A route id: op rename / delete_route, the route; op create, the route the new branch goes into."
+    },
+    "keep": {
+     "type": "string",
+     "description": "op dissolve: the route id whose cells stay where the branch was."
+    },
+    "after": {
+     "type": "string",
+     "description": "A cell or branch id: right after it."
+    },
+    "before": {
+     "type": "string",
+     "description": "A cell or branch id: right before it."
+    },
+    "at": {
+     "type": "string",
+     "enum": [
+      "start",
+      "end"
+     ],
+     "description": "With route (or with none of after / before / route: the Note itself): its start or its end (default end)."
+    },
+    "rev": {
+     "type": "integer",
+     "minimum": 1,
+     "description": "The rev you read; a different one means someone changed it since."
+    }
+   },
+   "required": [
+    "op"
+   ],
+   "additionalProperties": false
+  }
  }
 ]

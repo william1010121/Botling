@@ -487,6 +487,9 @@ describe("main-area tabs (plan W2)", () => {
 });
 
 
+// note.md carries each cell's id (note.db, note-db.ts); the Note tab's text is the same without them.
+const withoutIds = (text: string) => text.replace(/^<!-- cell: [A-Za-z0-9_-]+ -->\n/, "").replace(/^<!-- cell: [A-Za-z0-9_-]+ -->$/gm, "<!-- cell -->");
+
 describe("a bot's note for plugins (the Note tab)", () => {
   it("notes.read makes and reads only that bot's note; notes.write saves it, refusing a stale base; both need \"files\"", async () => {
     const dir = tempDir("plugin-api");
@@ -503,12 +506,12 @@ describe("a bot's note for plugins (the Note tab)", () => {
     // A path in the ask changes nothing: the core alone says where the note is.
     const saved = await ask("notes.write", { plugin: "note", bot: "main", text: "# Ideas\n", base: first.mtime, path: join(dir, "elsewhere.md") });
     expect(saved).toEqual({ saved: true, mtime: expect.any(Number) });
-    expect(readFileSync(join(project, ".bot", "note.md"), "utf8")).toBe("# Ideas\n");
+    expect(withoutIds(readFileSync(join(project, ".bot", "note.md"), "utf8"))).toBe("# Ideas\n");
     expect(existsSync(join(dir, "elsewhere.md"))).toBe(false);
     writeFileSync(join(project, ".bot", "note.md"), "the bot's edit");
     utimesSync(join(project, ".bot", "note.md"), Date.now() / 1000 + 5, Date.now() / 1000 + 5);
     expect(await ask("notes.write", { plugin: "note", bot: "main", text: "mine", base: saved.mtime })).toEqual({ saved: false, text: "the bot's edit", mtime: expect.any(Number) });
-    expect(readFileSync(join(project, ".bot", "note.md"), "utf8")).toBe("the bot's edit");
+    expect(withoutIds(readFileSync(join(project, ".bot", "note.md"), "utf8"))).toBe("the bot's edit");
     await expect(ask("notes.write", { plugin: "note", bot: "main", text: 7 })).rejects.toThrow();
   });
 
@@ -555,7 +558,7 @@ describe("a bot's note for plugins (the Note tab)", () => {
       text: `# Plot\n![reward](${imported.ref})\n![gone](${join(dir, "figs", "gone.png")})\n`,
       copied: [{ from: `file://${fig}`, ref: imported.ref }], missing: [join(dir, "figs", "gone.png")],
     });
-    expect(readFileSync(note, "utf8")).toBe(done.text);
+    expect(withoutIds(readFileSync(note, "utf8"))).toBe(done.text);
   });
 
   it("a note read by a plugin is watched: a change on disk is the noteChanged event (bot and mtime, never the words)", async () => {

@@ -473,7 +473,8 @@ export class AgyAcpHead {
       (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h,this.tree)), this.wiring.core);
     this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true, item => this.handlers.onItem(item), this.config.addDirs,
       () => this.config.worker === true && !maySpecWrite(this.config.model, this.config.specWriters ?? DEFAULT_SPEC_WRITERS),
-      this.config.worker === true ? this.config.workerNotify : undefined, this.config.browser, this.config.worker === true ? undefined : this.config.routines);
+      this.config.worker === true ? this.config.workerNotify : undefined,
+      this.config.browser ? (name, args) => this.config.browser!(name, args, this.config.worker === true ? "worker" : "coordinator") : undefined, this.config.worker === true ? undefined : this.config.routines);
     this.bridge.attach = () => this.takeInserts();
     return this.bridge.start().then(server => [server]);
   }

@@ -16,6 +16,7 @@
 // chat origin (only files the manifest names, and fonts beside them). A plugin's panels still run its
 // web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). Since step M11 ccb-latex
 // is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { z } from "zod";
@@ -38,9 +39,10 @@ import { AppBriefingParams, AppCardParams, AppInstallParams, AppTellParams, Brie
 import { isStudioMethod, StudioParams, studioAnswer, type StudioWorld } from "./studio-seam";
 import { agyUsageInProfiles, agyWorkerUsage } from "../agy-usage-db";
 import { refreshAntigravityQuota } from "../antigravity-quota";
-import { NOTE_MAX, NoteWatcher, readNote, writeNote } from "../bot-note";
+import { NOTE_MAX, NoteWatcher, readNote } from "../bot-note";
 import { pluginLinkTarget, type PluginLinkTarget } from "../plugin-link";
-import { noteBranches, noteCards, noteRoutes, noteView } from "../note-format";
+import { cellRuns, classifyLines, noteBranches, noteCards, noteRoutes, noteView, parseBranches } from "../note-format";
+import { noteService } from "../note-tools";
 import { ASSET_BYTES_MAX, assetFile, importAssetBytes, importAssetFile, linkedFile, linkedPictures, localizeImages } from "../note-assets";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
@@ -244,7 +246,9 @@ const NoteAssetParams = z.union([
 ]);
 const NoteRefsParams = BotParams.extend({ refs: z.array(z.string().max(4096)).max(500) });
 const NoteLocalizeParams = BotParams.extend({ base: z.number().finite().optional() });
-const NoteParseParams = z.object({ plugin: str(214), text: z.string().max(NOTE_MAX), picks: z.record(z.string().max(4_000), z.string().max(1_000)).optional() });
+const NoteParseParams = z.object({ plugin: str(214), text: z.string().max(NOTE_MAX), picks: z.record(z.string().max(4_000), z.string().max(1_000)).optional(), lines: z.boolean().optional() });
+const NoteOutlineParams = BotParams.extend({ text: z.string().max(NOTE_MAX).optional() });
+const NoteModeParams = BotParams.extend({ mode: z.enum(["db", "file"]).optional() });
 const NoteCardsParams = BotParams.extend({ text: z.string().max(NOTE_MAX).optional() });
 const NoteRunParams = NoteCardsParams.extend({ key: z.string().regex(/^note\/[0-9a-f]{16}-[0-9]{1,5}$/), force: z.boolean().optional() });
 const WakeParams = BotParams.extend({ prompt: z.string().min(1).max(100_000).optional() });
@@ -268,7 +272,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged"] as const;
+const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged", "noteConflict"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -1061,7 +1065,8 @@ export class Plugins {
         const { plugin, data } = this.asked(BotParams, params);
         this.needs(plugin, "files", "Reading a bot's note");
         const file = this.noteFile(data.bot);
-        const note = readNote(file);
+        // Through note.db (note-tools.ts): the plain note, without the ids note.md carries.
+        const note = noteService().read(file, data.bot);
         this.notes.watch(data.bot, file, note.mtime);
         return note;
       }
@@ -1069,7 +1074,7 @@ export class Plugins {
         const { plugin, data } = this.asked(NoteWriteParams, params);
         this.needs(plugin, "files", "Changing a bot's note");
         const file = this.noteFile(data.bot);
-        const result = writeNote(file, data.text, data.base);
+        const result = noteService().write(file, data.text, data.base, data.bot);
         this.notes.watch(data.bot, file, result.mtime);
         return result;
       }
@@ -1098,13 +1103,13 @@ export class Plugins {
         const { plugin, data } = this.asked(NoteLocalizeParams, params);
         this.needs(plugin, "files", "Changing a bot's note");
         const file = this.noteFile(data.bot);
-        const note = readNote(file);
+        const note = noteService().read(file, data.bot);
         if (data.base !== undefined && note.mtime !== data.base) {
           this.notes.watch(data.bot, file, note.mtime);
           return { saved: false, text: note.text, mtime: note.mtime, copied: [], missing: [], failed: [] };
         }
         const done = localizeImages(file, note.text);
-        const result = done.copied.length ? writeNote(file, done.text, note.mtime) : { saved: true as const, mtime: note.mtime };
+        const result = done.copied.length ? noteService().write(file, done.text, note.mtime, data.bot) : { saved: true as const, mtime: note.mtime };
         this.notes.watch(data.bot, file, result.mtime);
         if (!result.saved) return { ...result, copied: [], missing: [], failed: [] };
         return { saved: true, text: done.text, mtime: result.mtime, copied: done.copied, missing: done.missing, failed: done.failed };
@@ -1115,11 +1120,37 @@ export class Plugins {
         this.needs(plugin, "files", "Reading a bot's note");
         const branches = noteBranches(data.text);
         const cards = noteCards(data.text);
+        // The Note tab's own cutting rules (note-cells.ts), so the editor can drop its copy: its cells and branches as it reads them.
+        const lines = data.text.split("\n");
+        const info = classifyLines(lines);
+        const meta = parseBranches(lines, info);
         return {
           forks: branches.forks, cards: cards.cards, routes: noteRoutes(data.text),
           problems: [...branches.problems, ...cards.problems].sort((a, b) => a.line - b.line),
           ...(data.picks ? { view: noteView(data.text, data.picks) } : {}),
+          cells: cellRuns(lines, info, meta).runs,
+          branches: meta.forks.map((fork) => ({
+            key: fork.key, name: fork.name, start: fork.start, endLine: fork.endLine, depth: fork.depth,
+            parent: fork.parentPath.length ? { fork: fork.parentPath[fork.parentPath.length - 1]!.fork.key, route: fork.parentPath[fork.parentPath.length - 1]!.route.name } : null,
+            routes: fork.routes.map(({ name, marker, start, end, implicit }) => ({ name, marker, start, end, implicit })),
+          })),
+          ...(data.lines ? { lines: info.map((at) => ("start" in at ? { kind: at.kind, start: at.start, end: at.end } : { kind: at.kind })) } : {}),
         };
+      }
+      case "notes.outline": {
+        // The ids note.db gives the note's cells and forks, with their lines in the text the Note tab has (the 問 quote names a cell by id).
+        const { plugin, data } = this.asked(NoteOutlineParams, params);
+        this.needs(plugin, "files", "Reading a bot's note");
+        return noteService().note(this.noteFile(data.bot), data.bot).outlineLines(data.text);
+      }
+      case "notes.mode": {
+        // A note in note.db ("db") or a plain file ("file"); switching to file writes note.md without ids.
+        const { plugin, data } = this.asked(NoteModeParams, params);
+        this.needs(plugin, "files", data.mode ? "Changing a bot's note" : "Reading a bot's note");
+        const file = this.noteFile(data.bot);
+        const answer = noteService().mode(file, data.mode, data.bot);
+        if (data.mode) { try { this.notes.watch(data.bot, file, statSync(file).mtimeMs); } catch { /* gone */ } }
+        return answer;
       }
       case "notes.components": {
         const { plugin, data } = this.asked(BotParams, params);
@@ -1131,7 +1162,7 @@ export class Plugins {
       case "notes.cards": {
         const { plugin, data } = this.asked(NoteCardsParams, params);
         this.needs(plugin, "files", "Reading a bot's note");
-        const text = data.text ?? readNote(this.noteFile(data.bot)).text;
+        const text = data.text ?? noteService().read(this.noteFile(data.bot), data.bot).text;
         const cards = noteCards(text).cards;
         const states = world.noteCards?.states(data.bot, cards.map(({ key, name, command, data: json, refresh }) => ({ key, name, command, data: json, refresh })));
         if (!states) throw new Error("No such bot.");
@@ -1141,7 +1172,7 @@ export class Plugins {
         // Runs only a command the user allowed for this bot's folder; the frame asks with ccb.requestApproval({ botId, command, folder, card }).
         const { plugin, data } = this.asked(NoteRunParams, params);
         this.needs(plugin, "files", "Running a card in a bot's note");
-        const text = data.text ?? readNote(this.noteFile(data.bot)).text;
+        const text = data.text ?? noteService().read(this.noteFile(data.bot), data.bot).text;
         const card = noteCards(text).cards.find((candidate) => candidate.key === data.key);
         if (!card) throw new Error("No such card in the note.");
         const [state] = world.noteCards?.states(data.bot, [{ key: card.key, name: card.name, command: card.command, data: card.data, refresh: card.refresh }]) ?? [];

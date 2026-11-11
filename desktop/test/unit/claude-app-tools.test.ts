@@ -97,7 +97,7 @@ describe("the in-process app server", () => {
     await t.settle();
     expect(answer("m1").response.mcp_response).toMatchObject({ id: 0, result: { protocolVersion: "2025-11-25", capabilities: { tools: {} } } });
     expect(answer("m2").response.mcp_response).toEqual({ jsonrpc: "2.0", result: {} });
-    expect(answer("m3").response.mcp_response.result.tools.map((tool: any) => tool.name)).toEqual(["app_handoff", "app_send_message", "app_cancel_task", "app_routines", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"]);
+    expect(answer("m3").response.mcp_response.result.tools.map((tool: any) => tool.name)).toEqual(["app_handoff", "app_send_message", "app_cancel_task", "app_routines", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract", "app_note_outline", "app_note_read", "app_note_search", "app_note_edit", "app_note_insert", "app_note_delete", "app_note_move", "app_note_split", "app_note_merge", "app_note_branch"]);
     expect(JSON.parse(answer("m4").response.mcp_response.result.content[0].text)).toEqual({ accepted: true, task_id: "t-1", run: 1 });
     expect(calls).toEqual([["app_handoff", { name: "probe", instructions: "say hi" }]]);
   });

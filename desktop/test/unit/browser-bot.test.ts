@@ -274,7 +274,7 @@ describe("every engine has the tools", () => {
   it("coordinators and workers of Claude, Codex and Antigravity list them", () => {
     for (const provider of ["claude", "codex", "agy"] as const) {
       expect(appTools(provider).map((tool) => tool.name)).toEqual(expect.arrayContaining(names));
-      expect(workerAppTools(provider).map((tool) => tool.name)).toEqual(["app_notify_owner", ...names]);
+      expect(workerAppTools(provider).map((tool) => tool.name)).toEqual(["app_notify_owner", ...names, "app_note_outline", "app_note_read", "app_note_search"]);
     }
   });
 

@@ -21,7 +21,7 @@ describe("a Claude worker's run", () => {
     expect(r).toMatchObject({ accepted: true, run: 1 });
     const head = h.heads[0]!;
     expect(head.config).toMatchObject({ cwd: h.cwd, resume: false, model: "sonnet", monitorWorker: true, persistSession: true });
-    expect(head.config.appMcp?.tools.map((tool: { name: string }) => tool.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract"]);
+    expect(head.config.appMcp?.tools.map((tool: { name: string }) => tool.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract", "app_note_outline", "app_note_read", "app_note_search"]);
     expect(head.config.sessionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(head.config.sessionId).not.toBe("coordinator");
     expect(head.config.systemPrompt).toBe(CLAUDE_WORKER_POLICY);

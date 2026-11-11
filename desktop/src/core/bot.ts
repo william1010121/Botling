@@ -1,6 +1,8 @@
 import { readImagePaths, readImages } from "./read-images";
-import { isBrowserTool, type BrowserToolName } from "../browser-bot";
+import { isBrowserTool } from "../browser-bot";
 import { runBrowserTool } from "./browser-tools";
+import { isBotTool, type BotToolName, type ToolCaller } from "./bot-tools";
+import { isNoteTool, runNoteTool } from "./note-tools";
 import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
 import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from './restart-continuation';
@@ -1321,7 +1323,7 @@ export class Bot {
       maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
       specWriters: () => this.options.launch?.().specWriters ?? DEFAULT_SPEC_WRITERS,
       siteToolsFolder: () => this.options.siteToolsFolder,
-      browser: (name, args) => this.browserTool(name, args),
+      browser: (name, args, caller) => this.botTool(name, args, caller),
       remote: () => this.options.remoteWorkers?.() ?? null,
     }, (item) => this.onWorkerOutput(item), (id, text) => this.workerReport(text, id), (config, handlers) => new ClaudeHead(config, handlers));
     this.syncWorkerOwners();
@@ -1329,10 +1331,13 @@ export class Bot {
   }
 
   /**
-   * A browser tool call from this bot's head or one of its workers (core/browser-tools.ts): the user's pane beside this
-   * bot's chat; saved data goes to the bot's own `.bot/browser/`.
+   * A bot tool call from this bot's head or one of its workers (core/bot-tools.ts): the browser tools read the user's
+   * pane beside this bot's chat (saved data goes to the bot's own `.bot/browser/`); the Note tools read this project's
+   * Notes and change this bot's own (a worker only reads).
    */
-  private browserTool(name: BrowserToolName, args: Record<string, unknown>): Promise<unknown> {
+  private async botTool(name: BotToolName, args: Record<string, unknown>, caller: ToolCaller = "coordinator"): Promise<unknown> {
+    if (isNoteTool(name)) return runNoteTool(name, args, { botId: this.owner.profile.id, caller });
+    if (!isBrowserTool(name)) throw new Error(`Unknown app tool ${name}.`);
     return runBrowserTool(name, args, { botId: this.owner.profile.id, folder: this.owner.profile.folder });
   }
 
@@ -3309,7 +3314,7 @@ export class Bot {
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, ...(tree ? { addDirs: tree.addDirs } : {}), sessionId: start.sessionId, resume: start.resume,
-        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), browser: (name, args) => this.browserTool(name, args), routines: (args) => this.routinesTool(args), canStartReport: () => !this.turn && (!this.queue.length || !!this.settingsHold) && !this.draining && !this.shuttingDown, });
+        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), browser: (name, args, caller) => this.botTool(name, args, caller), routines: (args) => this.routinesTool(args), canStartReport: () => !this.turn && (!this.queue.length || !!this.settingsHold) && !this.draining && !this.shuttingDown, });
       if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
       head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) }, undefined,
         { core: this.workerCore, sink: (item) => this.onWorkerOutput(item) });
@@ -3327,7 +3332,7 @@ export class Bot {
       this.restartProviderTurn=undefined;
       this.restartWorkerRecords=undefined;
       this.restartWorkersSince=undefined;
-      head = new CodexHead({...config, browser: (name, args) => this.browserTool(name, args), restartWorkers, restartRecovery, restartTurn, strictResume:this.restartRecovery && config.resume,
+      head = new CodexHead({...config, browser: (name, args, caller) => this.botTool(name, args, caller), restartWorkers, restartRecovery, restartTurn, strictResume:this.restartRecovery && config.resume,
         workerCore: this.workerCore, workerSink: (item) => this.onWorkerOutput(item)}, { onItem: item => {
         this.onItem(head, item);
       }, onExit: exit => this.onExit(head, exit) });
@@ -3343,7 +3348,7 @@ export class Bot {
       head = new ClaudeHead({ ...config, ...siteTools, monitorWorker: false, ...(appMcp ? { appMcp } : {}), ...(workers ? { agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
         onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit),
         ...(appMcp ? { onAppTool: async (name: string, args: Record<string, unknown>) => name === "app_routines" ? this.routinesTool(args)
-          : isBrowserTool(name) ? this.browserTool(name, args) : workers ? workers.tool(name, args) : Promise.reject(new Error(`Unknown app tool ${name}.`)) } : {}),
+          : isBotTool(name) ? this.botTool(name, args, "coordinator") : workers ? workers.tool(name, args) : Promise.reject(new Error(`Unknown app tool ${name}.`)) } : {}),
       });
     }
     head.start();
