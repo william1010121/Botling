@@ -97,6 +97,18 @@ export class MachineRelay {
   /** Whether the machine's agent is connected now. */
   connected(machineId: string) { return this.channels.has(machineId); }
 
+  /** Waits for the machine's agent to connect again on a new channel (after it restarted); false on timeout. */
+  async reconnected(machineId: string, ms = 20_000): Promise<boolean> {
+    const before = this.channels.get(machineId);
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      const now = this.channels.get(machineId);
+      if (now && now !== before) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  }
+
   // ---- Keys.
 
   private loadKeys() {

@@ -16,6 +16,9 @@ import { APP_VERSION } from "../../src/remote/protocol";
 import { AgentRelay, pairMachine, readRelayConfig } from "../../src/remote/relay/agent";
 import { decodeOffer } from "../../src/remote/relay/wire";
 import { MiniWebSocket } from "../../src/remote/relay/ws";
+import { agentUpgrader } from "../../src/remote/agent/install";
+import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { RemoteWorkers } from "../../src/remote/service";
 
 const root = resolve(__dirname, "../..");
@@ -107,7 +110,7 @@ describe("remote worker over the relay", () => {
     try {
       // Pair: the offer goes to the machine in the install line.
       const { offer, command } = await remote.pairRelay();
-      expect(command).toMatch(/^curl -fsSL https:\/\/github\.com\/.+\/botling-agent-install\.sh \| sh -s -- 'botling-machine1\./);
+      expect(command).toMatch(/^curl -fsSL https:\/\/github\.com\/.+\/botling-agent-install\.sh \| sh -s -- --sha [0-9a-f]{64} 'botling-machine1\./);
       expect(decodeOffer(offer).u).toBe("ws://localhost/ws");
       await until("Botling on the relay", () => remote.relay.state === "online");
 
@@ -264,4 +267,78 @@ describe("remote worker over the relay", () => {
       await server.close();
     }
   }, 60_000);
+
+  it("an older agent there updates itself from the release of Botling's version, checked by its SHA-256, and the worker runs", async () => {
+    const relay = await makeRelay();
+    const net = sockets(relay);
+    const bundlePath = join(root, "out/agent/botling-agent.cjs");
+    const bundle = readFileSync(bundlePath);
+    const http = createServer((req, res) => {
+      if (req.url === `/v${APP_VERSION}/botling-agent-${APP_VERSION}.cjs`) { res.writeHead(200); res.end(bundle); return; }
+      res.writeHead(404); res.end();
+    });
+    await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
+    process.env.BOTLING_AGENT_RELEASES = `http://127.0.0.1:${(http.address() as { port: number }).port}`;
+    const home = join(dir, "machine-4"), project = join(dir, "project-4");
+    mkdirSync(project, { recursive: true });
+    git(project, "init", "-q", "-b", "main");
+    git(project, "config", "user.name", "Test"); git(project, "config", "user.email", "test@example.invalid");
+    writeFileSync(join(project, "a.txt"), "a\n");
+    git(project, "add", "."); git(project, "commit", "-q", "-m", "first");
+    const remote = new RemoteWorkers({ dataDir: join(dir, "data-4"), bundle: bundlePath, relayUrl: () => "ws://localhost/ws", relaySocket: net, waits: [50, 100, 200], relayWaitMs: 3_000 });
+    // The machine runs an older agent; after its upgrade it "restarts" as the app's version.
+    let daemon: AgentRelay | null = null, server: AgentServer | null = null;
+    let upgrades = 0;
+    const startAgent = (version: string, own: string) => {
+      const gitOps = gitRpc(home);
+      const upgrade = agentUpgrader(home, own);
+      server = new AgentServer({
+        home, version, sha: "", config: (spec) => machineConfig(spec), spawn: (config, handlers) => new ClaudeHead(config, handlers),
+        rpc: async (op, args, link) => {
+          if (op === "info") return { version, node: process.version };
+          if (op === "upgrade") {
+            const result = await upgrade(args);
+            if (result.installed) { upgrades += 1; setTimeout(() => void restart(), 300); }
+            return result;
+          }
+          return gitOps(op, args, link);
+        },
+      });
+      daemon = new AgentRelay({ home, server, socket: net, waits: [50, 100, 200] });
+      daemon.start();
+    };
+    const restart = async () => { await daemon!.stop(); await server!.close(); startAgent(APP_VERSION, createHash("sha256").update(bundle).digest("hex")); };
+    let workers: ClaudeWorkers | null = null;
+    try {
+      const { offer } = await remote.pairRelay();
+      await until("Botling on the relay", () => remote.relay.state === "online");
+      const printed: string[] = [];
+      const paired = pairMachine({ home, offer, name: "old-box", socket: net, print: (l) => printed.push(l) });
+      await until("the code", () => printed.some((l) => l.includes("Code:")));
+      const machine = await remote.approveRelay(remote.machines.find("old-box")!.id, /Code:\s+(\S+)/.exec(printed.join("\n"))![1]!);
+      await paired;
+      startAgent("0.0.1", "old");
+
+      const items: any[] = [], reports: string[] = [];
+      workers = new ClaudeWorkers({
+        file: join(dir, "claude-workers-4.json"), ownerSessionId: () => "coordinator", base: () => ({ command: "claude", cwd: project, sessionId: "c", resume: true, allowedTools: [] }), cwd: () => project,
+        subagentModel: () => null, settleMs: 5, keepAliveMs: 60_000, home: join(dir, "home"), remote: () => remote,
+      }, (item) => items.push(item), (_id, text) => { reports.push(text); return true; }, () => { throw new Error("no local process"); });
+      await workers.tool("app_handoff", { instructions: "/tool echo up", name: "Upgraded", machine: "old-box" });
+      await until("the card from the upgraded agent", () => items.some((i) => i.kind === "permission"), 30_000);
+      const installed = readFileSync(join(home, "lib/botling-agent.cjs"));
+      expect(createHash("sha256").update(installed).digest("hex")).toBe(createHash("sha256").update(bundle).digest("hex"));
+      expect(existsSync(join(home, "bin/botling-agent"))).toBe(true);
+      expect(remote.relay.connected(machine.id)).toBe(true);
+      expect(upgrades).toBe(1);
+    } finally {
+      delete process.env.BOTLING_AGENT_RELEASES;
+      await workers?.close();
+      await (daemon as AgentRelay | null)?.stop();
+      await (server as AgentServer | null)?.close();
+      remote.close();
+      relay.shutdown();
+      http.close();
+    }
+  }, 90_000);
 });

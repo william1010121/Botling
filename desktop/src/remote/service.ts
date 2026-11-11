@@ -9,7 +9,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { HeadConfig, HeadHandlers } from "../core/agent/head";
 import type { ClaudeWorkerHead } from "../core/agent/claude-workers";
-import { APP_VERSION, validSession } from "./protocol";
+import { AGENT_INSTALL_SCRIPT, AGENT_RELEASES, APP_VERSION, validSession } from "./protocol";
 import { MachineStore, type Machine } from "./machines";
 import { RemoteSession, type SessionState, type SessionTransport } from "./session";
 import { RemoteClaudeHead } from "./head";
@@ -113,7 +113,7 @@ export class RemoteWorkers {
     if (held && held.epoch === machine.epoch) return held.transport;
     const transport = this.options.transport?.(machine) ?? (machine.via === "ssh" && machine.host
       ? new SshTransport({ machine: { id: machine.id, host: machine.host }, knownHosts: this.knownHosts, bundle: this.options.bundle, ssh: this.options.ssh, log: this.options.log })
-      : machine.via === "relay" ? new RelayTransport(this.relay, { id: machine.id, name: () => this.machineName(machine.id) })
+      : machine.via === "relay" ? new RelayTransport(this.relay, { id: machine.id, name: () => this.machineName(machine.id) }, () => this.upgradeRelay(machine.id))
         : null);
     if (!transport) throw new Error(`Botling cannot reach ${machine.name} this way yet.`);
     this.transports.set(machine.id, { epoch: machine.epoch, transport });
@@ -216,7 +216,7 @@ export class RemoteWorkers {
    */
   async pairRelay(): Promise<{ offer: string; command: string; expiresAt: number }> {
     const { offer, expiresAt } = await this.relay.offer();
-    return { offer, command: installCommand(offer), expiresAt };
+    return { offer, command: installCommand(offer, this.agentSha()), expiresAt };
   }
 
   /** Approve (relay): the code the machine shows. Wrong three times: declined. */
@@ -233,19 +233,46 @@ export class RemoteWorkers {
     return this.machines.decline(id);
   }
 
+  /**
+   * Upgrade (relay): the agent there fetches the release of this app's version and installs it only if it is the
+   * very file this Botling ships (the SHA-256 goes over the end-to-end channel); then it restarts and reconnects.
+   */
+  private upgrading = new Map<string, Promise<void>>();
+  private upgradeRelay(id: string): Promise<void> {
+    let running = this.upgrading.get(id);
+    if (!running) {
+      running = this.upgradeRelayNow(id).finally(() => this.upgrading.delete(id));
+      this.upgrading.set(id, running);
+    }
+    return running;
+  }
+
+  private async upgradeRelayNow(id: string): Promise<void> {
+    const sha = this.agentSha();
+    if (!sha) throw new Error("This Botling has no agent bundle to compare with.");
+    let closed: string | undefined;
+    const link = this.relay.openLink(id, () => this.machineName(id), { frame: () => {}, closed: (error) => { closed = error; } });
+    try {
+      const result = await link.rpc("upgrade", { version: APP_VERSION, sha }) as { installed?: boolean; restarting?: boolean };
+      this.options.log?.(`botling-agent on ${this.machineName(id)}: ${result?.installed ? `updated to ${APP_VERSION}` : result?.restarting ? "restarting" : "already this version"}`);
+      // It restarts with the new version: connecting before that would only meet the old one again.
+      if ((result?.installed || result?.restarting) && !await this.relay.reconnected(id)) throw new Error("botling-agent was updated but did not come back.");
+    } catch (error) { throw new Error(closed ?? (error as Error).message); }
+    finally { link.close(); }
+  }
+
   revoke(id: string) { return this.machines.revoke(id); }
   remove(id: string) { return this.machines.remove(id) || this.machines.decline(id); }
 
   close() { for (const session of this.live.values()) session.close(); this.live.clear(); this.relay.stop(); }
 }
 
-/** Where the agent is released (milestone 3 builds the assets; nothing is published from here). */
-export const AGENT_RELEASES = "https://github.com/william1010121/Botling/releases/download";
-
 /**
- * The line the user runs on a relay machine: fetches the install script of this app's version from the release, which
- * downloads botling-agent, checks its signature and checksum, installs it under ~/.botling-agent, pairs and starts it.
+ * The line the user runs on a relay machine: fetches the install script of this app's version from the release; the
+ * script downloads botling-agent, checks it is the very file this Botling ships (its SHA-256), installs it under
+ * ~/.botling-agent, pairs and starts it.
  */
-export function installCommand(offer: string, version = APP_VERSION): string {
-  return `curl -fsSL ${AGENT_RELEASES}/v${version}/botling-agent-install.sh | sh -s -- ${shq(offer)}`;
+export function installCommand(offer: string, sha: string, version = APP_VERSION): string {
+  const base = (process.env.BOTLING_AGENT_RELEASES?.trim() || AGENT_RELEASES).replace(/\/+$/, "");
+  return `curl -fsSL ${base}/v${version}/${AGENT_INSTALL_SCRIPT} | sh -s --${/^[0-9a-f]{64}$/.test(sha) ? ` --sha ${sha}` : ""} ${shq(offer)}`;
 }

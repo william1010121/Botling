@@ -180,6 +180,7 @@ export class AgentRelay {
     const token = config?.token;
     if (!config || !token) { this.state = "off"; this.log("this machine is not paired: run `botling-agent pair <code>` with the line from Botling"); return; }
     const me = await importKeyPair(b64u.decode(config.key), b64u.decode(config.pub));
+    if (this.stopped || this.socket) return; // stopped (or started again) while the key loaded
     this.state = "connecting";
     let socket: SocketLike;
     try { socket = (this.options.socket ?? openSocket)(config.url); } catch (error) { this.log(`cannot connect: ${(error as Error).message}`); this.retry(); return; }

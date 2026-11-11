@@ -41,6 +41,23 @@ Pairing (device code):
    own token (kept in `~/.botling-agent/relay.json`, 0600) and approves it.
 4. `botling-agent relay` (the script starts it) keeps the machine connected. It reconnects by itself with backoff.
 
+The install script takes `--name NAME` (the name Botling shows), `--no-start` and `--no-pair`. It keeps the agent
+running as a systemd user service on Linux (`loginctl enable-linger` keeps it up after you log out), a LaunchAgent on
+macOS, or in the background elsewhere (`~/.botling-agent/relay.log`).
+
+### Versions over the relay
+
+The agent and Botling run the same version, as over ssh. When Botling meets an older agent, it asks it to update: the
+agent downloads `botling-agent-<version>.cjs` from the GitHub release of Botling's version, installs it only if its
+SHA-256 is the one Botling sent over the encrypted channel (the agent bundle inside Botling is that same file), then
+restarts and reconnects. The install line carries the same SHA-256 (`--sha`), so the install script never runs a
+download that is not Botling's own agent. A Botling built locally ships an agent no release has; it cannot update a
+relay machine (install that machine's agent by hand, or over ssh).
+
+The release assets are built by `npm run dist:agent` (`scripts/agent-release.mjs`): the agent, its install script and
+`SHA256SUMS-agent.txt`. The release workflow builds them in the macOS job from the bundle that goes into the app, and
+publishes them with the release.
+
 Revoking a relay machine takes its token off the relay's allow list, so the relay closes its connection at once, and
 the agent cannot join again; pair it again with a new line.
 
@@ -91,4 +108,6 @@ again saying so. When the resumed claude asks the same thing again, the same car
 - `npx vitest run test/unit/remote-worker-relay.test.ts` pairs a machine over the relay's own room logic, runs a
   worker there, drops the channel, revokes it, and pairs over a real relay server with the agent's own WebSocket
   client (Node 18 has none).
+- `npx vitest run test/unit/remote-agent-release.test.ts` builds the release assets and runs the install script and
+  the agent's own upgrade against a local server standing in for the release.
 - `npm run test:spec` holds the app to the model (`spec/tests/remote-worker.spec.test.ts`).

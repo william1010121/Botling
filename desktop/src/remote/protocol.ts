@@ -103,3 +103,23 @@ export class LineReader {
     }
   }
 }
+
+/** The launcher installed as ~/.botling-agent/bin/botling-agent (ssh upload, `botling-agent install`, self-upgrade). */
+export const LAUNCHER = `#!/bin/sh
+# botling-agent launcher, installed by Botling (multi-machine). Runs lib/botling-agent.cjs with Node 18+.
+dir="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -n "$SHELL" ] && [ -z "$BOTLING_AGENT_NO_LOGIN_PATH" ]; then
+  p="$("$SHELL" -lc 'printf "\\n__BOTLING_PATH__%s\\n" "$PATH"' </dev/null 2>/dev/null | sed -n 's/^__BOTLING_PATH__//p' | tail -n 1)"
+  [ -n "$p" ] && PATH="$p:$PATH" && export PATH
+fi
+node="\${BOTLING_AGENT_NODE:-$(command -v node 2>/dev/null)}"
+if [ -z "$node" ]; then echo "botling-agent: Node.js was not found on this machine (Botling needs Node 18 or newer)." >&2; exit ${EXIT_NO_NODE}; fi
+major="$("$node" -p 'process.versions.node.split(".")[0]' 2>/dev/null)"
+if [ "\${major:-0}" -lt 18 ] 2>/dev/null; then echo "botling-agent: Node $("$node" --version) is too old (Botling needs Node 18 or newer)." >&2; exit ${EXIT_NO_NODE}; fi
+exec "$node" "$dir/lib/botling-agent.cjs" "$@"
+`;
+
+/** Where the agent is released: <base>/v<version>/botling-agent-<version>.cjs and botling-agent-install.sh. */
+export const AGENT_RELEASES = "https://github.com/william1010121/Botling/releases/download";
+export const agentAsset = (version: string) => `botling-agent-${version}.cjs`;
+export const AGENT_INSTALL_SCRIPT = "botling-agent-install.sh";

@@ -121,12 +121,18 @@ jobs:
           spctl --assess --type execute --verbose=4 "$APP"
       - name: Check the installers and the update feed
         run: node scripts/release-check.mjs --artifacts dist --platform mac
+      - name: Build the botling-agent assets from the bundle this app ships (remote workers over the relay)
+        # The agent's SHA-256 is the one Botling sends with each install line and upgrade, so it must be this build's
+        # out/agent/botling-agent.cjs, the file inside the app.
+        run: |
+          node scripts/agent-release.mjs dist
+          sh -n dist/botling-agent-install.sh
       - name: Record source and checksums
         run: |
           VERSION=$(node -p 'require("./package.json").version')
           git rev-parse HEAD > dist/SOURCE_COMMIT.txt
           cd dist
-          FILES="Botling-2-$VERSION-mac-arm64.zip Botling-2-$VERSION-mac-arm64.dmg latest-mac.yml"
+          FILES="Botling-2-$VERSION-mac-arm64.zip Botling-2-$VERSION-mac-arm64.dmg latest-mac.yml botling-agent-$VERSION.cjs botling-agent-install.sh"
           shasum -a 256 $FILES > SHA256SUMS.txt
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
@@ -140,6 +146,9 @@ jobs:
             desktop/dist/Botling-2-${{ env.RELEASE_VERSION }}-mac-arm64.dmg
             desktop/dist/SHA256SUMS.txt
             desktop/dist/SOURCE_COMMIT.txt
+            desktop/dist/botling-agent-${{ env.RELEASE_VERSION }}.cjs
+            desktop/dist/botling-agent-install.sh
+            desktop/dist/SHA256SUMS-agent.txt
 
   windows:
     if: ${{ inputs.run_id == '' }}
@@ -264,7 +273,7 @@ jobs:
       - name: Check the assets match the tag
         run: |
           VERSION="${TAG#v}"
-          for f in "Botling-2-$VERSION-mac-arm64.zip" "Botling-2-$VERSION-mac-arm64.dmg" latest-mac.yml latest-linux.yml latest.yml; do
+          for f in "Botling-2-$VERSION-mac-arm64.zip" "Botling-2-$VERSION-mac-arm64.dmg" latest-mac.yml latest-linux.yml latest.yml "botling-agent-$VERSION.cjs" botling-agent-install.sh SHA256SUMS-agent.txt; do
             [ -f "$RUNNER_TEMP/assets/$f" ] || { echo "::error::Missing asset $f for $TAG"; exit 1; }
           done
       - name: Create or update the release, upload the assets and publish it as Latest

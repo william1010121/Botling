@@ -35,6 +35,7 @@
     "dist:dir": "node scripts/package.mjs --dir",
     "dist:win": "node scripts/package.mjs --win",
     "dist:linux": "node scripts/package.mjs --linux",
+    "dist:agent": "node scripts/agent-release.mjs dist/agent",
     "test:packaged": "playwright test -c playwright.packaged.config.ts",
     "release:check": "node scripts/release-check.mjs",
     "test:release": "node --test scripts/release-check.test.mjs"
