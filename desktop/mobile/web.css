@@ -1,7 +1,10 @@
 /* Botling Web: only what the browser needs beyond the desktop's own styles.css (loaded first, unchanged):
    the full-height page, the sign-in page, and the phone width, where the left column becomes a drawer. */
 html, body { height: 100%; height: 100dvh; }
-.web-root { height: 100%; }
+.web-root { height: 100%; background: var(--ground); }
+/* The home-screen app draws under the status bar (black-translucent, viewport-fit=cover): keep the page below it
+   and above the home indicator. A browser tab has no insets, so this is 0 there. */
+.web-root { padding-top: env(safe-area-inset-top); padding-bottom: max(0px, calc(env(safe-area-inset-bottom) - 12px)); }
 .web-root .chat-header { position: relative; }
 .web-nav-button { display: none; }
 .web-scrim { display: none; }
@@ -13,7 +16,7 @@ html, body { height: 100%; height: 100dvh; }
 .web-root .strip-add { display: none; }
 
 /* Sign in: the app's own colours (tokens.css) and type. */
-.web-signin { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px 16px; background: var(--ground); }
+.web-signin { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); background: var(--ground); }
 .web-signin-card { width: min(380px, 100%); padding: 32px 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--side); text-align: center; }
 .web-signin-icon { width: 56px; height: 56px; }
 .web-signin h1 { margin: 12px 0 4px; font-size: 22px; font-weight: 600; }
@@ -24,25 +27,48 @@ html, body { height: 100%; height: 100dvh; }
 .web-primary, .web-secondary { height: 40px; border-radius: 10px; font-size: 14px; cursor: pointer; }
 .web-primary { border: 0; background: var(--text); color: var(--ground); font-weight: 600; }
 .web-secondary { border: 1px solid var(--border); background: transparent; color: var(--text); }
+.web-primary:disabled, .web-secondary:disabled { opacity: 0.6; cursor: default; }
+.web-scan-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; }
+.web-signin-or { margin: 4px 0; color: var(--faint); font-size: 12px; }
+.web-paste-row { display: flex; gap: 8px; }
+.web-paste-row .web-token { flex: 1; min-width: 0; }
+.web-paste { flex-shrink: 0; padding: 0 14px; }
+.web-signin-card > .web-primary { width: 100%; margin-bottom: 12px; }
+
+/* The pairing-code scanner: the camera full screen, a square to aim with, Cancel within thumb reach. */
+.web-scan { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; }
+.web-scan-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.web-scan-frame { position: relative; width: min(64vw, 280px); aspect-ratio: 1; border: 2px solid rgb(255 255 255 / 0.9); border-radius: 18px; box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.45); }
+.web-scan-hint { position: relative; margin: 20px 24px 0; color: #fff; font-size: 15px; text-align: center; }
+.web-scan-close { position: absolute; left: 50%; bottom: max(24px, calc(env(safe-area-inset-bottom) + 12px)); transform: translateX(-50%); min-width: 140px; height: 44px; border-color: rgb(255 255 255 / 0.5); background: rgb(0 0 0 / 0.5); color: #fff; }
 
 /* Phone width: one column. The chat fills the page; the left column (expanded or folded) slides over it
    from the button at the header's start; picking a bot closes it. Details has its own drawer. */
 @media (max-width: 700px) {
   .web-nav-button {
-    display: inline-flex; position: absolute; left: 10px; top: 8px; width: 32px; height: 24px; align-items: center; justify-content: center;
+    display: inline-flex; position: absolute; left: 6px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; align-items: center; justify-content: center;
     border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
   }
   .web-nav-button[aria-expanded="true"] { background: var(--selected); color: var(--text); }
   .web-root .chat-header { padding: 0 84px 0 48px; overflow: hidden; white-space: nowrap; }
   .web-root .chat-title { overflow: hidden; text-overflow: ellipsis; }
   .web-root .chat-status { display: none; }
+  /* The drawer: the open column (names and faces; layout.ts never folds it here), as wide as its rows need, below
+     the status bar. Closed, it is off screen and out of reach; the chat behind it stays whole and is dimmed. */
   .web-root .rail, .web-root .rail-strip {
-    position: fixed; top: 0; bottom: 0; left: 0; z-index: 40; width: min(320px, 86vw);
-    transform: translateX(-102%); transition: transform 180ms ease; box-shadow: 0 0 40px rgb(0 0 0 / calc(0.6 * var(--shade, 1)));
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 40; width: min(300px, 82vw); max-width: none;
+    padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
+    transform: translateX(-102%); visibility: hidden; transition: transform 200ms ease, visibility 0s linear 200ms;
+    box-shadow: 0 0 40px rgb(0 0 0 / calc(0.6 * var(--shade, 1)));
   }
-  .web-root[data-nav="open"] .rail, .web-root[data-nav="open"] .rail-strip { transform: none; }
-  .web-root[data-nav="open"] .web-scrim { display: block; position: fixed; inset: 0; z-index: 35; background: rgb(0 0 0 / calc(0.53 * var(--shade, 1))); }
+  .web-root .col-handle[data-column="rail"] { display: none; }
+  .web-root[data-nav="open"] .rail, .web-root[data-nav="open"] .rail-strip { transform: none; visibility: visible; transition: transform 200ms ease; }
+  .web-root[data-nav="open"] .web-scrim { display: block; position: fixed; inset: 0; z-index: 35; background: rgb(0 0 0 / 0.55); }
   .web-root .chat-pane { width: 100%; }
+  /* No keyboard shortcuts on a phone. */
+  .web-root .rail-search-key { display: none; }
+  /* Details sits in the header's end, below the status bar in the home-screen app. */
+  .web-root .task-details-entry { top: env(safe-area-inset-top); right: 4px; background: transparent; color: var(--muted); }
   .web-root .banner.bottom { bottom: 120px; padding: 6px 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .web-root .rail, .web-root .rail-strip { transition: none; } }

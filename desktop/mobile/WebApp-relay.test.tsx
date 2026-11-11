@@ -59,7 +59,8 @@ it('a relay code that fails asks for a new code, never for an access token', asy
   await act(async () => root.render(<WebApp />));
   await flush();
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('Show a new code');
-  expect(container.querySelector('input.web-token')).toBeNull();
+  // The field takes the pairing link (copied on the computer), not a token.
+  expect(container.querySelector('input.web-token')?.getAttribute('aria-label')).toBe('Pairing link');
   expect(container.textContent).not.toContain('access token');
   expect(container.textContent).toContain('Settings › Phone');
 });

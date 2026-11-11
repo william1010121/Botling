@@ -70,12 +70,13 @@ it('signed in, shows the desktop renderer with every bot and sends the bearer to
   expect((container.querySelector('input.web-token') as HTMLInputElement).value).toBe('');
 });
 
-it('signed out, asks for the access token and never shows the workspace', async () => {
+it('signed out, offers the camera scan and a field for a pairing link or access token, and never shows the workspace', async () => {
   const { commands } = server();
   await act(async () => root.render(<WebApp />));
   await flush();
   expect(container.querySelector('.shell')).toBeNull();
-  expect(container.querySelector('.web-primary')?.textContent).toBe('Connect');
+  expect(container.querySelector('.web-primary')?.textContent).toBe('Scan QR code');
+  expect(container.querySelector('input.web-token')?.getAttribute('aria-label')).toBe('Pairing link or access token');
   expect(container.textContent).not.toContain('Google');
   expect(commands).toEqual([]);
 });
@@ -85,7 +86,7 @@ it('a malformed token is refused without contacting the API; a wrong one is reje
   await act(async () => root.render(<WebApp />));
   await signIn('short');
   await flush();
-  expect(container.textContent).toContain('Enter the server’s access token.');
+  expect(container.textContent).toContain('Enter a pairing link or the server’s access token.');
   expect(commands).toEqual([]);
   await signIn('w'.repeat(43));
   await flush();
@@ -107,7 +108,7 @@ it.each([401, 403])('a background poll that hears %i returns to sign-in, clears 
     expire(status);
     await act(async () => { await vi.advanceTimersByTimeAsync(2_600); });
     expect(showsPrivateChat()).toBe(false);
-    expect(container.textContent).toContain('Connect');
+    expect(container.textContent).toContain('Scan QR code');
     const sent = commands.length;
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     expect(commands.length).toBe(sent);
@@ -124,7 +125,7 @@ it('a command that hears 401 returns to sign-in and clears the chat', async () =
   await act(async () => { (container.querySelector('.bot-row[data-bot="p2"]') as HTMLButtonElement).click(); });
   await flush();
   expect(showsPrivateChat()).toBe(false);
-  expect(container.textContent).toContain('Connect');
+  expect(container.textContent).toContain('Scan QR code');
 });
 
 it('sign-out clears the chat and this browser\'s kept layout', async () => {

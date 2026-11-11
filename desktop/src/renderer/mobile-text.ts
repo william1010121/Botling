@@ -4,7 +4,7 @@ type Words = {
   routes: string; routesNote: string; routeKind: { lan: string; tailscale: string; tunnel: string; relay: string }; first: string;
   relayTitle: string; relayNote: string; relayAddress: string; relayOn: string; relayOff: string; relaySaving: string;
   relayState: { off: string; connecting: string; online: string; offline: string }; viaRelay: string;
-  pairTitle: string; pairNote: string; allBots: string; route: string; create: string; creating: string; scan: string; expires: (minutes: number) => string; hide: string;
+  pairTitle: string; pairNote: string; allBots: string; route: string; create: string; creating: string; scan: string; expires: (minutes: number) => string; hide: string; copyLink: string; copied: string; copyNote: string;
   devices: string; none: string; paired: (when: string) => string; until: (when: string) => string; revoke: string; revokeAsk: (name: string) => string; revokeYes: string; cancel: string; unnamed: string;
 };
 const en: Words = {
@@ -17,7 +17,7 @@ const en: Words = {
   relayAddress: "Relay address", relayOn: "Turn on", relayOff: "Turn off", relaySaving: "Saving…",
   relayState: { off: "Off", connecting: "Connecting…", online: "Connected", offline: "Not connected — retrying" }, viaRelay: "via relay",
   pairTitle: "Pair a phone", pairNote: "Scan the code with the phone's camera. The phone gets all your bots. The code works once and expires in 5 minutes.",
-  allBots: "All bots", route: "Address in the code", create: "Create pairing code", creating: "Creating…", scan: "Scan with the phone's camera", expires: (m) => `Expires in ${m} min`, hide: "Hide code",
+  allBots: "All bots", route: "Address in the code", create: "Create pairing code", creating: "Creating…", scan: "Scan with the phone's camera", expires: (m) => `Expires in ${m} min`, hide: "Hide code", copyLink: "Copy link", copied: "Copied", copyNote: "Or copy the link and paste it into Botling on the phone (Universal Clipboard, or send it to yourself). It works once, for a few minutes.",
   devices: "Paired phones", none: "No phones are paired.", paired: (when) => `Paired ${when}`, until: (when) => `until ${when}`, revoke: "Revoke", revokeAsk: (name) => `Sign out ${name}? It will need a new code to connect again.`, revokeYes: "Revoke", cancel: "Cancel", unnamed: "Phone",
 };
 const zh: Words = {
@@ -30,7 +30,7 @@ const zh: Words = {
   relayAddress: "中繼站位址", relayOn: "開啟", relayOff: "關閉", relaySaving: "儲存中…",
   relayState: { off: "關閉", connecting: "連線中…", online: "已連線", offline: "未連線，重試中" }, viaRelay: "經由中繼站",
   pairTitle: "配對手機", pairNote: "用手機相機掃描代碼，手機就能使用你所有的機器人。代碼只能使用一次，5 分鐘後失效。",
-  allBots: "所有機器人", route: "代碼中的位址", create: "建立配對代碼", creating: "建立中…", scan: "用手機相機掃描", expires: (m) => `${m} 分鐘後失效`, hide: "隱藏代碼",
+  allBots: "所有機器人", route: "代碼中的位址", create: "建立配對代碼", creating: "建立中…", scan: "用手機相機掃描", expires: (m) => `${m} 分鐘後失效`, hide: "隱藏代碼", copyLink: "複製連結", copied: "已複製", copyNote: "也可以複製連結，貼到手機上的 Botling（通用剪貼板，或傳給自己）。只能用一次，幾分鐘內有效。",
   devices: "已配對的手機", none: "沒有已配對的手機。", paired: (when) => `${when} 配對`, until: (when) => `有效至 ${when}`, revoke: "撤銷", revokeAsk: (name) => `要登出「${name}」嗎？它需要新的代碼才能再次連線。`, revokeYes: "撤銷", cancel: "取消", unnamed: "手機",
 };
 export const mobileWords = (lang: string | null): Words => (lang === "zh-Hant" ? zh : en);
