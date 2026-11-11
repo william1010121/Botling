@@ -15,7 +15,7 @@ export type AppToolProvider = "claude" | "agy" | "codex";
 export type AppToolName =
   | "app_handoff" | "app_send_message" | "app_cancel_task" | "app_task_checkpoint" | "app_reconcile_report"
   | "app_routines" | "app_monitor_start" | "app_monitor_status" | "app_monitor_cancel"
-  | "app_notify_owner"
+  | "app_notify_owner" | "app_component_usage"
   | "app_browser_tabs" | "app_browser_open" | "app_browser_requests" | "app_browser_extract"
   | "app_note_outline" | "app_note_read" | "app_note_search"
   | "app_note_edit" | "app_note_insert" | "app_note_delete" | "app_note_move" | "app_note_split" | "app_note_merge" | "app_note_branch";
@@ -158,6 +158,7 @@ const APP_TOOLS: readonly AppToolDef[] = [
       params: ["monitor_id"], required: ["monitor_id"] },
   } },
   { name: "app_notify_owner", forms: notifyForms() },
+  { name: "app_component_usage", forms: componentUsageForms() },
   ...browserTools(),
   ...noteTools(),
 ];
@@ -265,11 +266,24 @@ function notifyForms(): Partial<Record<AppToolProvider, ToolForm>> {
   return { claude: form, agy: form, codex: form };
 }
 
+/**
+ * app_component_usage (2026-11-11, components on demand): the wake note lists each component in one line; a coordinator
+ * reads one component's whole usage (its about.md) only when it needs it. Every engine's coordinator, the same words.
+ */
+function componentUsageForms(): Partial<Record<AppToolProvider, ToolForm>> {
+  const form: ToolForm = {
+    description: "Read the full usage of one in-chat component (its about.md: data format, options, examples), by the name the app's component list gives. Call it before you fill a component's JSON or use one of its options; a component listed as (command) needs only <show name=\"name\"></show>.",
+    params: ["name"], required: ["name"],
+    schemas: { name: { type: "string", description: "The component's name, as the component list gives it." } },
+  };
+  return { claude: form, agy: form, codex: form };
+}
+
 /** Which tools each provider's coordinator gets, in the order it lists them. */
 const PROVIDER_TOOLS: Record<AppToolProvider, readonly AppToolName[]> = {
-  claude: ["app_handoff", "app_send_message", "app_cancel_task", "app_routines", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
-  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", "app_routines", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
-  codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
+  claude: ["app_handoff", "app_send_message", "app_cancel_task", "app_routines", "app_component_usage", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
+  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", "app_routines", "app_component_usage", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
+  codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", "app_component_usage", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
 };
 
 /** The tools an app-managed worker gets (never a coordinator): app_notify_owner, the browser tools and the Note read tools. */
