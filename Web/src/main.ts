@@ -532,6 +532,10 @@ class Chat {
     this.composer.setDrafts(drafts);
   }
 
+  quote(botID: string, text: string, focus: boolean): boolean {
+    return this.composer.quote(botID, text, focus);
+  }
+
   answerWithSaved(ack: { botID: string; requestID: number; chosen: string }): void {
     this.composer.answerWithSaved(ack);
   }
@@ -641,6 +645,8 @@ declare global {
       setState(state: ChatState): void;
       /** The drafts the app kept, by chat: sent once when the page loads. */
       setDrafts(drafts: Record<string, Draft>): void;
+      /** A block quoted into chat `botID`'s input box (after its draft, the caret at the end); false: nothing written. */
+      quote(botID: string, text: string, focus: boolean): boolean;
       answerWithSaved(ack: { botID: string; requestID: number; chosen: string }): void;
       patchState(patch: StatePatch): void;
       setPlugins(specs: PluginSpec[]): Promise<void>;
@@ -700,6 +706,7 @@ window.ccb = {
     chat.setState(state);
   },
   setDrafts: (drafts) => chat.setDrafts(drafts),
+  quote: (botID, text, focus) => chat.quote(botID, text, focus),
   answerWithSaved: (ack) => chat.answerWithSaved(ack),
   patchState: (patch) => {
     chat.patchState(patch);

@@ -23,6 +23,11 @@
 //                                                         the default browser, a Markdown file in the app's report preview,
 //                                                         another file with its app (or in Finder); a relative href against the
 //                                                         note's folder. The reply is { opened } (`ccb.openLink`; a file needs "files")
+//                  { ccb: "composerQuote", id, text, botId, focus }
+//                                                         puts text into the bot's input box, after its draft (a blank line
+//                                                         before and after, the caret at the end); focus: the input box gets
+//                                                         the focus (the Note's floating chat opens first). Only the bot the
+//                                                         frame was opened for; the reply is { inserted } (`ccb.composer.insertQuote`)
 //                  { ccb: "approval", id, botId, command, folder, card?, detail? }
 //                                                         asks the user to allow a bot's command: the page around it
 //                                                         shows its own ApprovalSheet; the reply is { allowed }. A
@@ -48,6 +53,7 @@ export type FrameRequest =
   | { ccb: "card"; id: number; component: string; data: unknown; botId: string }
   | { ccb: "snapshot"; id: number; botId: string; rect: FrameRect }
   | { ccb: "openLink"; id: number; botId: string; href: string }
+  | { ccb: "composerQuote"; id: number; text: string; botId: string; focus: boolean }
   | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string; detail?: string };
 
 /** A part of a frame, in its own CSS px. */
@@ -87,7 +93,10 @@ const KEYS: Record<FrameRequest["ccb"], string[]> = {
   card: ["ccb", "id", "component", "data", "botId"],
   snapshot: ["ccb", "id", "botId", "rect"],
   openLink: ["ccb", "id", "botId", "href"],
+  composerQuote: ["ccb", "id", "text", "botId", "focus"],
 };
+/** The longest text a frame may quote into an input box. */
+export const QUOTE_MAX = 200_000;
 const text = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 
 /** A frame's message as a request, or null if it is not exactly one. */
@@ -127,6 +136,9 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
     case "openLink":
       if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !text(message.href, 4_000)) return null;
       return { ccb: "openLink", id: message.id as number, botId: message.botId, href: message.href };
+    case "composerQuote":
+      if (!Number.isSafeInteger(message.id) || !text(message.text, QUOTE_MAX) || !text(message.botId, 64) || typeof message.focus !== "boolean") return null;
+      return { ccb: "composerQuote", id: message.id as number, text: message.text, botId: message.botId, focus: message.focus };
     case "approval":
       if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !text(message.command, 20_000) || !text(message.folder, 4_000)) return null;
       if (message.card !== undefined && !text(message.card, 200)) return null;

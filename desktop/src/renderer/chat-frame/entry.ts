@@ -139,6 +139,11 @@ fromShell(message => {
     takeFocusBack();
   } else if (message.botling === "focus") {
     window.ccb.focus();
+  } else if (message.botling === "composerQuote") {
+    // The Note's "ask about this block": after the chat's draft, the caret at the end (composer-quote.ts in the shell).
+    let inserted = false;
+    try { inserted = window.ccb.quote(message.botID, message.text, message.focus); } catch { /* answered as not inserted */ }
+    toShell({ botling: "action", action: { type: "composerQuoteResult", requestID: message.requestID, inserted } });
   } else if (message.botling === "taskOutput") {
     if (document.documentElement.dataset.chat === message.botID) window.ccb.taskOutput(message.messageID, message.taskID, message.text);
   } else if (message.botling === "detailReply") {

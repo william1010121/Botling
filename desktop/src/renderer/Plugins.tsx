@@ -225,8 +225,10 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
       onPanel: (visible) => more.current.onPanel?.(visible),
       onKey: (key) => more.current.onKey?.(key),
       ...(hasRate ? { rate: more.current.rate } : {}),
+      // A main-area tab's (the Note's) bot: the one input box it may quote into (`ccb.composer.insertQuote`).
+      ...(botKey ? { bot: botKey } : {}),
     });
-  }, [client, plugin, url, runsBuiltins, !!fit, hasRate]);
+  }, [client, plugin, url, runsBuiltins, !!fit, hasRate, botKey]);
   return { frame, url, problem, note, height };
 }
 
