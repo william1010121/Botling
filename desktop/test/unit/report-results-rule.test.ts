@@ -17,7 +17,7 @@ for(const engine of ['agy','codex','claude'] as const) it(`${engine}: the result
   const results=text.split('\n').find(line=>line.includes('Results meant for the user'))!;
   expect(results).toBeTruthy();
   expect(results).not.toContain(HAND_WRITTEN);
-  expect(results).toContain('a report page is built from a ReportSpec v2 JSON');
+  expect(results).toContain('a report page as the report page rule says, never written by hand');
   expect(text).toContain(`read '${docs}'`);
  }
 });
@@ -26,5 +26,5 @@ it('without the report plugin the results rule keeps the hand-written page wordi
  const profile={name:'Math',role:'bot' as const,folder:'/Users/x/docs/Math',memoryPath:'.bot/memory.md',job:null};
  const base=botPrompts({profile,engine:'agy'});
  expect(desktopPrompts(base,profile,'agy',true,reportSections(null)).system).toContain('Results meant for the user');
- expect(desktopPrompts(base,profile,'agy',true,reportSections(null)).system).not.toContain('a report page is built from a ReportSpec v2 JSON');
+ expect(desktopPrompts(base,profile,'agy',true,reportSections(null)).system).not.toContain('a report page as the report page rule says');
 });

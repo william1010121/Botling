@@ -6,7 +6,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { AGENT_GUARD_HOOK, ClaudeHead, agentGuardDecision, headArguments, type HeadConfig } from "../../src/core/agent/head";
 import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS } from "../../src/core/agent/claude-workers";
-import { desktopPrompts, botPrompts, CLAUDE_WORKERS_RULE, CLAUDE_DELEGATE_RULE, NATIVE_SUBAGENT_LINE } from "../../src/core/prompts";
+import { desktopPrompts, botPrompts, CLAUDE_WORKERS_RULE, NATIVE_SUBAGENT_LINE } from "../../src/core/prompts";
 import { claudeWorkersMode, launchSettings } from "../../src/core/settings";
 
 const base: HeadConfig = { command: "claude", cwd: "/tmp", sessionId: "s", resume: false, allowedTools: ["Read", "Bash"] };
@@ -125,6 +125,9 @@ describe("the prompt and the hidden setting", () => {
     expect(native).not.toContain("app_handoff tool");
   });
   it("tells a Claude bot with workers to hand real work off, and never tells a worker or the native fallback so", () => {
+    // Merged into the workers line (audit 2026-11-11: it was said twice).
+    const CLAUDE_DELEGATE_RULE = "Hand all real work (building, fixing, researching, editing several files, running tests, anything beyond a few quick reads) to app-managed workers with the app_handoff tool and keep yourself free for the user; do only quick answers yourself.";
+    expect(CLAUDE_WORKERS_RULE).toContain(CLAUDE_DELEGATE_RULE);
     const plain = botPrompts({ profile: manager });
     expect(desktopPrompts(plain, manager).system).toContain(CLAUDE_DELEGATE_RULE);
     expect(desktopPrompts(plain, { ...manager, role: "main" as const }).system).toContain(CLAUDE_DELEGATE_RULE);

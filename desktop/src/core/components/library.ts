@@ -12,6 +12,8 @@ import { join } from "node:path";
 export const COMPONENT_LIMIT = 20;
 /** The app's own cards (1.x's built-ins): every bot has them from the start. */
 export const BUILT_INS = ["choices", "網頁預覽卡片"];
+/** Components the bots' component list leaves out: the instructions already teach the choices block. */
+export const UNLISTED_COMPONENTS = ["choices"];
 export const LIVE_RANGE = { min: 1, max: 3600 };
 
 /** Seconds from "2s", "every 2s", "1.5s", "5 seconds", "3", "1m", "500ms" (raised to a second); null for anything else or past an hour (`ComponentRefresh.seconds`). */
@@ -155,6 +157,20 @@ export class ComponentLibrary {
       const rest = lines.slice(1).map((line) => `  ${line}`).join("\n");
       return `- ${name}: ${lines[0] ?? ""}${rest ? `\n${rest}` : ""}`;
     }).join("\n");
+  }
+
+  /**
+   * A component whose data comes from its own Command: only its about.md up to the first heading (the purpose, the
+   * Command/Refresh/Sizes lines, how to show it), and where the rest is. A bot writes only the tag for these; the
+   * collection details, data format and layout are for whoever builds the component (audit 2026-11-11).
+   */
+  brief(name: string): string {
+    const lines = this.about(name).trim().split("\n");
+    const heading = lines.findIndex((line, at) => at > 0 && /^#{1,6}\s/.test(line));
+    const head = (heading < 0 ? lines : lines.slice(0, heading)).join("\n").trimEnd().split("\n");
+    const rest = head.slice(1).map((line) => `  ${line}`).join("\n");
+    const more = heading < 0 ? "" : `\n  (Full usage: ${join(this.folder(name), "about.md")})`;
+    return `- ${name}: ${head[0] ?? ""}${rest ? `\n${rest}` : ""}${more}`;
   }
 
   /** The first line of each one's about.md (`summaries(of:)`). */
@@ -344,6 +360,19 @@ export interface ComponentKnowledge {
   own: { name: string; text: string }[];
   others: { name: string; text: string }[];
   limit: number;
+}
+
+/** What a bot with these components of its own is told about the library (`componentKnowledge`). */
+export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "brief" | "catalog" | "summaries">, mine: readonly string[]): ComponentKnowledge {
+  // choices is the app's own buttons: the instructions already teach its block, so it is not listed again.
+  const own = library.names.filter((name) => mine.includes(name) && !UNLISTED_COMPONENTS.includes(name));
+  const others = library.names.filter((name) => !mine.includes(name) && !UNLISTED_COMPONENTS.includes(name));
+  return {
+    // A component with a Command needs only its tag: its lead paragraph, not its builder's details.
+    own: own.map((name) => ({ name, text: library.command(name) ? library.brief(name) : library.catalog([name]) })),
+    others: others.map((name) => ({ name, text: library.summaries([name]) })),
+    limit: COMPONENT_LIMIT,
+  };
 }
 
 export function knowledgeFull(k: ComponentKnowledge): string {
