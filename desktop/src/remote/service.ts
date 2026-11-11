@@ -4,6 +4,7 @@
 //   <data>/remote/machines.json     the machines and their trust
 //   <data>/remote/known_hosts       the approved ssh host keys (Botling's own; ~/.ssh/known_hosts is not touched)
 //   <data>/remote/sessions.json     each remote worker's session: its machine, connection number, last event, base
+//   <data>/remote/relay.json        the machines room on the relay (relay/hub.ts)
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { HeadConfig, HeadHandlers } from "../core/agent/head";
@@ -13,7 +14,10 @@ import { MachineStore, type Machine } from "./machines";
 import { RemoteSession, type SessionState, type SessionTransport } from "./session";
 import { RemoteClaudeHead } from "./head";
 import { RemoteGit } from "./git-sync";
-import { SshTransport, fileSha, scanHostKey, sshConfigHosts, writeKnownHosts } from "./ssh";
+import { SshTransport, fileSha, scanHostKey, shq, sshConfigHosts, writeKnownHosts } from "./ssh";
+import { MachineRelay, RelayTransport } from "./relay/hub";
+import { RelayStore } from "../mobile-relay/store";
+import type { SocketLike } from "../mobile-relay/connector";
 
 interface SavedSession extends SessionState { machine: string; base?: string | null }
 
@@ -23,8 +27,14 @@ export interface RemoteWorkersOptions {
   bundle: string;
   /** The ssh program (tests: a fake). */
   ssh?: string;
-  /** Transports by machine, for tests (the relay path adds its own). */
+  /** Transports by machine, for tests. */
   transport?(machine: Machine): SessionTransport | null;
+  /** The relay address for machines (default: Settings › Phone's relay, or BOTLING_MACHINE_RELAY). */
+  relayUrl?(): string | null;
+  /** The relay WebSocket (tests: in memory). */
+  relaySocket?(url: string): SocketLike;
+  /** How long a relay connection waits for the machine's agent. */
+  relayWaitMs?: number;
   waits?: number[];
   log?(line: string): void;
 }
@@ -41,13 +51,23 @@ export class RemoteWorkers {
   private live = new Map<string, RemoteSession>();
   private sha: string | null = null;
   private listeners = new Set<() => void>();
+  readonly relay: MachineRelay;
 
   constructor(readonly options: RemoteWorkersOptions) {
     this.machines = MachineStore.in(options.dataDir);
+    const phoneRelay = new RelayStore(join(options.dataDir, "mobile"));
+    this.relay = new MachineRelay({
+      dir: join(options.dataDir, "remote"), machines: this.machines, log: options.log,
+      url: options.relayUrl ?? (() => process.env.BOTLING_MACHINE_RELAY?.trim() || phoneRelay.url()),
+      ...(options.relaySocket ? { socket: options.relaySocket } : {}),
+      ...(options.relayWaitMs ? { channelWaitMs: options.relayWaitMs } : {}),
+    });
+    this.relay.onChange(() => this.changed());
     this.knownHosts = join(options.dataDir, "remote", "known_hosts");
     this.sessionsFile = join(options.dataDir, "remote", "sessions.json");
     try { this.saved = JSON.parse(readFileSync(this.sessionsFile, "utf8")).sessions ?? {}; } catch { this.saved = {}; }
     this.syncKnownHosts();
+    this.relay.sync();
     this.machines.onChange((machine, change) => {
       if (change === "revoked" || change === "removed" || change === "approved") {
         this.transports.delete(machine.id);
@@ -93,7 +113,8 @@ export class RemoteWorkers {
     if (held && held.epoch === machine.epoch) return held.transport;
     const transport = this.options.transport?.(machine) ?? (machine.via === "ssh" && machine.host
       ? new SshTransport({ machine: { id: machine.id, host: machine.host }, knownHosts: this.knownHosts, bundle: this.options.bundle, ssh: this.options.ssh, log: this.options.log })
-      : null);
+      : machine.via === "relay" ? new RelayTransport(this.relay, { id: machine.id, name: () => this.machineName(machine.id) })
+        : null);
     if (!transport) throw new Error(`Botling cannot reach ${machine.name} this way yet.`);
     this.transports.set(machine.id, { epoch: machine.epoch, transport });
     return transport;
@@ -171,11 +192,16 @@ export class RemoteWorkers {
     const machine = this.machines.get(id);
     if (!machine || machine.trust !== "trusted") throw new Error("That machine is not approved.");
     const transport = this.transport(machine);
-    if (!(transport instanceof SshTransport)) throw new Error("This machine is checked when its agent connects.");
+    if (!(transport instanceof SshTransport) && !(transport instanceof RelayTransport)) throw new Error("This machine cannot be checked.");
     try {
       let info: Record<string, unknown>;
-      try { info = await transport.info(); } catch { await transport.upgrade(); info = await transport.info(); }
-      if (info.version !== APP_VERSION || info.sha !== this.agentSha()) { await transport.upgrade(); info = await transport.info(); }
+      if (transport instanceof SshTransport) {
+        try { info = await transport.info(); } catch { await transport.upgrade(); info = await transport.info(); }
+        if (info.version !== APP_VERSION || info.sha !== this.agentSha()) { await transport.upgrade(); info = await transport.info(); }
+      } else {
+        info = await transport.info();
+        if (info.version !== APP_VERSION) { await transport.upgrade(); info = await transport.info(); }
+      }
       this.machines.update(id, { info: { node: String(info.node ?? ""), git: (info.git as string) ?? null, claude: (info.claude as string) ?? null, platform: String(info.platform ?? ""), at: Date.now() } });
       return info;
     } catch (error) {
@@ -184,8 +210,42 @@ export class RemoteWorkers {
     }
   }
 
+  /**
+   * Pair (relay): a one-time offer and the line to run on the machine. The machine then shows its name, fingerprint
+   * and a code; it is listed here as asked, and approveRelay takes the code.
+   */
+  async pairRelay(): Promise<{ offer: string; command: string; expiresAt: number }> {
+    const { offer, expiresAt } = await this.relay.offer();
+    return { offer, command: installCommand(offer), expiresAt };
+  }
+
+  /** Approve (relay): the code the machine shows. Wrong three times: declined. */
+  async approveRelay(id: string, code: string): Promise<Machine> {
+    const machine = await this.relay.approve(id, code);
+    void this.check(machine.id).catch(() => { /* shown in the machine's info */ });
+    return machine;
+  }
+
+  /** Decline a machine that asked (relay: it is told so). */
+  async decline(id: string) {
+    const machine = this.machines.get(id);
+    if (machine?.via === "relay") return this.relay.decline(id);
+    return this.machines.decline(id);
+  }
+
   revoke(id: string) { return this.machines.revoke(id); }
   remove(id: string) { return this.machines.remove(id) || this.machines.decline(id); }
 
-  close() { for (const session of this.live.values()) session.close(); this.live.clear(); }
+  close() { for (const session of this.live.values()) session.close(); this.live.clear(); this.relay.stop(); }
+}
+
+/** Where the agent is released (milestone 3 builds the assets; nothing is published from here). */
+export const AGENT_RELEASES = "https://github.com/william1010121/Botling/releases/download";
+
+/**
+ * The line the user runs on a relay machine: fetches the install script of this app's version from the release, which
+ * downloads botling-agent, checks its signature and checksum, installs it under ~/.botling-agent, pairs and starts it.
+ */
+export function installCommand(offer: string, version = APP_VERSION): string {
+  return `curl -fsSL ${AGENT_RELEASES}/v${version}/botling-agent-install.sh | sh -s -- ${shq(offer)}`;
 }

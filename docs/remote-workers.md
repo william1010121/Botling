@@ -16,10 +16,33 @@ Machines are listed in Settings › Machines (`<data>/remote/machines.json`).
   (`<data>/remote/known_hosts`, under the alias `botling-<id>`) and checks the key strictly on every connection.
   Botling runs ssh with `BatchMode=yes`, so `ssh <host>` must work without a password prompt (keys or an agent).
   Hosts behind ProxyJump are not supported on this path yet; use the relay.
-- **relay:** see the relay section (milestone 2).
+- **relay:** for a machine Botling cannot reach (no public address, no VPN). See [Over the relay](#over-the-relay).
 
 Revoking a machine ends every connection to it straight away and stops Botling from connecting again until you
 approve it again.
+
+## Over the relay
+
+The machine's agent dials out to the same relay the phone uses (Settings › Phone › Relay, or
+`BOTLING_MACHINE_RELAY`); Botling is the desk of its own machines room there (`<data>/remote/relay.json`: that room's
+key and Botling's key for it). Everything between Botling and the agent is end-to-end encrypted
+(`desktop/src/mobile-relay/e2e.ts`); the relay moves ciphertext and checks token hashes, nothing else. Botling only
+holds a relay connection while a relay machine is approved or a pairing is open.
+
+Pairing (device code):
+
+1. Settings › Machines › Add over the relay gives a one-line command, good for 10 minutes and one machine:
+   `curl -fsSL …/botling-agent-install.sh | sh -s -- 'botling-machine1.…'`. The script installs botling-agent (from
+   the GitHub release of Botling's version, checked against its checksum and signature) and runs
+   `botling-agent pair`.
+2. The machine prints its name, its fingerprint and a code such as `53RV-XFK8`. Botling lists the request with the
+   same name and fingerprint.
+3. Type the code in Botling. A wrong code three times declines the request. On a match, Botling sends the machine its
+   own token (kept in `~/.botling-agent/relay.json`, 0600) and approves it.
+4. `botling-agent relay` (the script starts it) keeps the machine connected. It reconnects by itself with backoff.
+
+Revoking a relay machine takes its token off the relay's allow list, so the relay closes its connection at once, and
+the agent cannot join again; pair it again with a new line.
 
 ## What the machine needs
 
@@ -27,7 +50,8 @@ approve it again.
 - `claude`, signed in, on the same PATH. If it lives somewhere else, write `~/.botling-agent/config.json`:
   `{"claude": "/path/to/claude"}`.
 - Nothing else is installed by hand: over ssh, Botling uploads its own agent to `~/.botling-agent` the first time
-  and again whenever Botling's version changes (the app and the agent always run the same version).
+  and again whenever Botling's version changes (the app and the agent always run the same version). Over the relay,
+  the agent fetches the release of Botling's version itself and checks it before it replaces itself.
 
 `~/.botling-agent` on the machine holds:
 
@@ -37,6 +61,7 @@ approve it again.
 | `sessions/<worker>/` | each worker's event log, tool requests and session lock |
 | `repos/<project>.git` | a bare repository per project (the bases Botling sent) |
 | `work/<worker>/` | each worker's worktree, on its branch |
+| `relay.json`, `relay.pid` | relay only: this machine's key, the relay, its token; the daemon running |
 
 ## Project files
 
@@ -63,4 +88,7 @@ again saying so. When the resumed claude asks the same thing again, the same car
 
 - `cd desktop && npx vitest run test/unit/remote-worker-ssh.test.ts test/unit/remote-agent-lock.test.ts` runs the
   ssh path end to end with a fake ssh and the fake claude, and the session lock across agent processes.
+- `npx vitest run test/unit/remote-worker-relay.test.ts` pairs a machine over the relay's own room logic, runs a
+  worker there, drops the channel, revokes it, and pairs over a real relay server with the agent's own WebSocket
+  client (Node 18 has none).
 - `npm run test:spec` holds the app to the model (`spec/tests/remote-worker.spec.test.ts`).
