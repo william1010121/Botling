@@ -58,6 +58,11 @@ button { font: inherit; color: inherit; }
 @media (width < 480px) {
   #messages { padding-left: 16px; padding-right: 16px; }
   :root { --chat-avatar-size: 40px; }
+  /* A phone: cards and a question's choices stay inside their bubble (the desktop's 280px floor would push them out). */
+  iframe.component-frame { min-width: 0; width: 100%; }
+  .bubble .choices { min-width: 0; }
+  .bubble .choice { flex-wrap: wrap; }
+  .bubble .choice .detail { white-space: normal; }
 }
 .mini-avatar { width: 18px; height: 18px; flex-shrink: 0; }
 

@@ -79,6 +79,10 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
    either side is older there is no `v` and no ack, and the pairing is final when `paired` is sent (a lost `paired`
    then spends the code). Model: `spec/models/relaypair/RelayPair.tla`.
 
+The phone can also scan the code inside the page (the home-screen app, which has its own storage) or take the same
+link pasted (Settings › Phone › Copy link). Either way it is the one-time, 5-minute secret above; nothing about pairing
+changes on the relay or the desktop.
+
 Later connections: join with the device token, `{h:'hello', device, eph}`, ack, `{t:'hello'}` → `{t:'ready'}`.
 
 When pairing fails, the page says why and asks for a new code; it never offers the bridge's access-token field (the

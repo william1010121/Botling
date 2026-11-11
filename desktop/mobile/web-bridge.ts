@@ -13,6 +13,7 @@
 import { CancelEnvelope, RequestEnvelope, errorResponse, okResponse, type Command, type ResponseEnvelope, type ResultOf } from '../src/contract';
 import type { Bridge } from '../src/renderer/client';
 import { MobileError, type MobileCommand } from './transport';
+import { phoneLayout } from './layout';
 
 export const REMOTE_COMMANDS: ReadonlySet<string> = new Set(['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer', 'turn.stop']);
 /** Layout settings this browser keeps for itself (the desktop keeps its own). */
@@ -35,6 +36,8 @@ export interface WebBridgeOptions {
   /** A layout setting changed here: show it (the caller resyncs the store). */
   onLocalChange?: () => void;
   now?: () => number;
+  /** A phone-width page: the left column is a drawer, never folded (layout.ts). */
+  narrow?: () => boolean;
 }
 
 export class WebBridge implements Bridge {
@@ -118,7 +121,7 @@ export class WebBridge implements Bridge {
   private overlay(snapshot: Snapshot): Snapshot {
     const settings = snapshot.settings ? { ...snapshot.settings } : undefined;
     if (settings) for (const key of LOCAL_SETTINGS) if (key in this.local) (settings as Record<string, unknown>)[key] = this.local[key];
-    return { ...snapshot, ...(settings ? { settings } : {}) };
+    return { ...snapshot, ...(settings ? { settings: phoneLayout(settings, this.options.narrow?.() ?? false) } : {}) };
   }
 
   private async handle(id: string, cmd: Command): Promise<{ response: ResponseEnvelope; ended?: MobileError }> {

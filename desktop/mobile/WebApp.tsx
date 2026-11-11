@@ -10,11 +10,14 @@ import { MobileError, MobileTransport, endpointURL } from './transport';
 import { clearDrafts } from './session';
 import { watchEvents } from './events';
 import { loadRouteBook, type RouteBook } from './routes';
-import { betterRoute, deviceId, deviceName, redeemPairing, takePairingLink } from './pair';
+import { betterRoute, deviceId, deviceName, redeemPairing, takePairingLink, type PairingLink } from './pair';
+import { readPairingInput } from './pair-input';
+import { QrScanner, cameraError, openCamera } from './QrScanner';
+import { PHONE_QUERY, phoneWidth } from './layout';
 import { WebBridge, forgetLocal } from './web-bridge';
 import { RelayClient, type RelaySession } from './relay-client';
 import { forgetBridgeLogin, forgetRelaySession, loadBridgeLogin, loadRelaySession, saveBridgeLogin, saveRelaySession } from './relay-session';
-import { parseRelayFragment } from '../src/mobile-relay/protocol';
+import { parseRelayFragment, type RelayLink } from '../src/mobile-relay/protocol';
 
 const POLL_MS = 2_500;
 /** While the event stream is up, a slow read is only a safety net. */
@@ -38,7 +41,7 @@ export function connectWorkspace(token: string, onAuthLost: (error: MobileError)
 export function workspaceOver(transport: MobileTransport | RelayClient, onAuthLost: (error: MobileError) => void): Connected {
   const wake = { poke: () => {} };
   const shown = { value: false };
-  const bridge = new WebBridge({ transport, storage: storage(), onAuthLost,
+  const bridge = new WebBridge({ transport, storage: storage(), onAuthLost, narrow: phoneWidth,
     openURL: url => { window.open(url, '_blank', 'noopener,noreferrer'); },
     onMutated: () => wake.poke(), onLocalChange: () => { void store.resync(); } });
   const client = new Client(bridge);
@@ -93,14 +96,15 @@ export function startSync(connected: Connected, interval = POLL_MS, liveInterval
   return () => { stopped = true; stopEvents(); clearTimeout(timer); document.removeEventListener('visibilitychange', visible); window.removeEventListener('online', visible); window.removeEventListener('pageshow', visible); };
 }
 
-const narrowQuery = '(max-width: 700px)';
 
 export function WebApp() {
   const [auth, setAuth] = useState<Auth>('signedOut');
   const [message, setMessage] = useState('');
   const [connected, setConnected] = useState<Connected | null>(null);
-  const [navOpen, setNavOpen] = useState(() => window.matchMedia?.(narrowQuery).matches ?? false);
+  const [navOpen, setNavOpen] = useState(() => phoneWidth());
   const [tokenText, setTokenText] = useState('');
+  /** The camera open for scanning a pairing code (opened from the Scan button's tap). */
+  const [camera, setCamera] = useState<MediaStream | null>(null);
   const connecting = useRef(false);
   /** A relay pairing is saved in this browser (it can reconnect without a new code). */
   const [relaySaved, setRelaySaved] = useState(false);
@@ -196,41 +200,81 @@ export function WebApp() {
     return () => { document.removeEventListener('visibilitychange', again); window.removeEventListener('online', again); window.removeEventListener('pageshow', again); clearInterval(timer); };
   }, [canRetry, resumeSaved]);
 
-  // A scanned pairing link: redeem it once for a token (the secret never leaves this function), then sign in
-  // exactly as a pasted token does. The fragment is cleared first; the token path stays available.
+  /** Pairs through the relay this page came from (end-to-end encrypted): the secret stays in this function. */
+  const pairRelay = useCallback(async (relayLink: RelayLink) => {
+    if (connecting.current) return;
+    setRelayPage(true);
+    connecting.current = true; setAuth('checking'); setMessage('Pairing…');
+    try {
+      const { client, session } = await RelayClient.pair(relayLink, location.origin, deviceName(), { onRevoked: relayLost, onSession: keepRelay });
+      setRelaySaved(await saveRelaySession(session));
+      await showRelay(client);
+    } catch (cause) { failed(cause, 'Pairing failed. Show a new code on your computer.'); }
+    finally { connecting.current = false; }
+  }, [showRelay, relayLost, failed, keepRelay]);
+
+  /** A bridge pairing link: redeem it once for a token, then sign in exactly as a pasted token does. */
+  const pairBridge = useCallback(async (link: PairingLink, mayMove: boolean) => {
+    setAuth('checking'); setMessage('Pairing…');
+    try {
+      // A route the core lists ahead of this one may be reachable (the home network, say): continue there.
+      const better = mayMove ? await betterRoute(link, location.origin) : null;
+      if (better) { location.replace(better); return; }
+      await connect(await redeemPairing(link, deviceId(), location.origin), link.coreId);
+    }
+    catch (cause) {
+      setAuth('signedOut'); setMessage(cause instanceof MobileError ? cause.message : 'Pairing failed. Show a new code on your computer.');
+    }
+  }, [connect]);
+
+  /** What was scanned, pasted or typed on the sign-in page: a pairing link (the QR code's own) or an access token. */
+  const takeInput = useCallback((text: string) => {
+    const input = readPairingInput(text, location.origin);
+    if (input.kind === 'relay') { setTokenText(''); return void pairRelay(input.link); }
+    if (input.kind === 'bridge') { setTokenText(''); return void pairBridge(input.link, true); }
+    // A code for another address (this page may talk only to its own): open it there.
+    if (input.kind === 'elsewhere') { setTokenText(''); location.assign(input.url); return; }
+    if (input.kind === 'token' && !relayPage) return void connect(input.token);
+    setAuth('signedOut');
+    setMessage(relayPage || input.kind === 'token' ? 'That is not a pairing link. Scan the code, or copy its link on your computer and paste it here.'
+      : 'Enter a pairing link or the server’s access token.');
+  }, [pairRelay, pairBridge, connect, relayPage]);
+
+  const scan = useCallback(async () => {
+    setMessage('');
+    // Asked straight from the tap: iOS opens the camera only from a user gesture.
+    try { setCamera(await openCamera()); } catch (cause) { setMessage(cameraError(cause)); }
+  }, []);
+  const scanned = useCallback((text: string) => { setCamera(null); takeInput(text); }, [takeInput]);
+  const closeCamera = useCallback(() => setCamera(null), []);
+  const pasteLink = useCallback(async () => {
+    try { const text = await navigator.clipboard.readText(); if (text.trim()) takeInput(text); else setMessage('The clipboard is empty. Copy the pairing link on your computer first.'); }
+    catch { setMessage('Paste the link into the field (touch and hold, then Paste).'); }
+  }, [takeInput]);
+
+  // A scanned pairing link that opened this page: the fragment is cleared first, then it pairs as one scanned here.
   useEffect(() => {
-    // A relay pairing code (end-to-end encrypted, through the relay this page came from): the secret stays in this function.
     const relayLink = parseRelayFragment(location.hash);
     if (relayLink) {
       history.replaceState(null, '', location.pathname + location.search);
-      void (async () => {
-        connecting.current = true; setAuth('checking'); setMessage('Pairing…');
-        try {
-          const { client, session } = await RelayClient.pair(relayLink, location.origin, deviceName(), { onRevoked: relayLost, onSession: keepRelay });
-          setRelaySaved(await saveRelaySession(session));
-          await showRelay(client);
-        } catch (cause) { failed(cause, 'Pairing failed. Show a new code on your computer.'); }
-        finally { connecting.current = false; }
-      })();
+      void pairRelay(relayLink);
       return;
     }
     const link = takePairingLink();
     if (!link) { void resumeSaved(); return; }
-    void (async () => {
-      setAuth('checking'); setMessage('Pairing…');
-      try {
-        // A route the core lists ahead of this one may be reachable (the home network, say): continue there.
-        const better = await betterRoute(link, location.origin);
-        if (better) { location.replace(better); return; }
-        await connect(await redeemPairing(link, deviceId(), location.origin), link.coreId);
-      }
-      catch (cause) {
-        setAuth('signedOut'); setMessage(cause instanceof MobileError ? cause.message : 'Pairing failed. Show a new code on your computer.');
-      }
-    })();
-  }, [connect, showRelay, relayLost, failed, resumeSaved, keepRelay]);
+    void pairBridge(link, true);
+  }, [pairRelay, pairBridge, resumeSaved]);
 
   useEffect(() => connected ? startSync(connected) : undefined, [connected]);
+  // Across the phone width (a rotation, a resized window): the drawer closes and the left column is shown as that width
+  // shows it (folded only on the desktop's own setting, never in the phone's drawer).
+  useEffect(() => {
+    const query = window.matchMedia?.(PHONE_QUERY);
+    if (!query || !connected) return;
+    const changed = () => { setNavOpen(false); void connected.store.resync().catch(() => {}); };
+    query.addEventListener?.('change', changed);
+    return () => query.removeEventListener?.('change', changed);
+  }, [connected]);
   useEffect(() => () => connected?.bridge.close(), [connected]);
 
   const signOut = useCallback(() => {
@@ -247,29 +291,42 @@ export function WebApp() {
     railFooter: <button type="button" className="rail-button web-sign-out" onClick={signOut}>Sign out</button>,
   }), [navOpen, signOut]);
 
-  if (!connected) return <main className="web-signin" aria-busy={auth === 'checking'}>
-    <form className="web-signin-card" onSubmit={event => { event.preventDefault(); if (!relayPage) void connect(tokenText); }}>
+  const busy = auth === 'checking';
+  if (!connected) return <main className="web-signin" aria-busy={busy}>
+    <form className="web-signin-card" onSubmit={event => { event.preventDefault(); takeInput(tokenText); }}>
       <img className="web-signin-icon" src="./icon.svg" alt="" />
       <h1>Botling</h1>
-      <p className="web-signin-lead">{relayPage ? 'Your bots, from anywhere. On your computer, open Botling › Settings › Phone, create a pairing code and scan it with this phone’s camera.'
-        : 'Your bots, from any browser. Scan the pairing code shown by your Botling, or enter an access token.'}</p>
+      <p className="web-signin-lead">Your bots, from anywhere. On your computer, open Botling › Settings › Phone, create a pairing code and scan it here.</p>
       {message && <p className="web-signin-message" role="alert">{message}</p>}
-      {relayPage ? auth === 'checking' && <p className="web-signin-muted">Connecting…</p> : <div className="web-signin-actions">
-        <input className="web-token" type="password" autoComplete="off" spellCheck={false} aria-label="Access token" placeholder="Access token"
-          value={tokenText} onChange={event => setTokenText(event.target.value)} disabled={auth === 'checking'} />
-        <button type="submit" className="web-primary" disabled={auth === 'checking'}>{auth === 'checking' ? 'Connecting…' : 'Connect'}</button>
-      </div>}
-      {relaySaved && <button type="button" className="web-primary" disabled={auth === 'checking'} onClick={() => void reconnectRelay()}>Reconnect through the relay</button>}
-      {!relaySaved && bridgeSaved && auth !== 'signedOut' && <button type="button" className="web-primary" disabled={auth === 'checking'} onClick={() => void resumeSaved()}>Reconnect</button>}
+      {relaySaved && <button type="button" className="web-primary" disabled={busy} onClick={() => void reconnectRelay()}>Reconnect through the relay</button>}
+      {!relaySaved && bridgeSaved && auth !== 'signedOut' && <button type="button" className="web-primary" disabled={busy} onClick={() => void resumeSaved()}>Reconnect</button>}
+      <div className="web-signin-actions">
+        <button type="button" className={relaySaved || (bridgeSaved && auth !== 'signedOut') ? 'web-secondary web-scan-button' : 'web-primary web-scan-button'} disabled={busy} onClick={() => void scan()}>
+          <Icon name="camera" size={16} />Scan QR code</button>
+        <div className="web-signin-or" aria-hidden="true">or</div>
+        <div className="web-paste-row">
+          <input className="web-token" type="password" autoComplete="off" autoCapitalize="off" spellCheck={false}
+            aria-label={relayPage ? 'Pairing link' : 'Pairing link or access token'} placeholder={relayPage ? 'Paste the pairing link' : 'Pairing link or access token'}
+            value={tokenText} onChange={event => setTokenText(event.target.value)} disabled={busy} />
+          {!tokenText && typeof navigator.clipboard?.readText === 'function' && <button type="button" className="web-secondary web-paste" disabled={busy} onClick={() => void pasteLink()}>Paste</button>}
+        </div>
+        {tokenText && <button type="submit" className="web-primary" disabled={busy}>{busy ? 'Connecting…' : 'Connect'}</button>}
+      </div>
+      {busy && !tokenText && <p className="web-signin-muted">Connecting…</p>}
       <p className="web-signin-muted">{relayPage ? 'Keep Botling running on your computer. Everything between this phone and Botling is end-to-end encrypted.'
         : 'Keep Botling running on your computer. This phone stays signed in until you sign out here or revoke it on your computer.'}</p>
     </form>
+    {camera && <QrScanner stream={camera} onResult={scanned} onClose={closeCamera} />}
   </main>;
 
   return <div className="web-root" data-nav={navOpen ? 'open' : 'closed'}
     onClickCapture={event => {
-      // A bot picked in the drawer opens its chat (phone widths).
-      if ((event.target as Element).closest?.('.bot-row, .strip-bot, .subagent-open') && window.matchMedia?.(narrowQuery).matches) setNavOpen(false);
+      if (!phoneWidth()) return;
+      const target = event.target as Element;
+      // On a phone the column is a drawer: its fold button closes it (a folded strip of faces is the desktop's).
+      if (target.closest?.('.rail .rail-toggle')) { event.preventDefault(); event.stopPropagation(); setNavOpen(false); return; }
+      // A bot picked in the drawer opens its chat.
+      if (target.closest?.('.bot-row, .strip-bot, .subagent-open')) setNavOpen(false);
     }}>
     <App client={connected.client} store={connected.store} web={chrome} />
     {message && <div className="banner bottom web-banner" role="alert">{message}<button type="button" onClick={() => setMessage('')} aria-label="Dismiss">×</button></div>}

@@ -23,6 +23,11 @@ export function PhoneSettings({ client, bots, lang }: { client: Client; bots: Bo
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  /** The pairing link last copied (pasted on the phone it pairs as the QR does: once, within its minutes). */
+  const [copied, setCopied] = useState<string | null>(null);
+  const copyLink = useCallback(async (url: string) => {
+    try { await navigator.clipboard.writeText(url); setCopied(url); } catch (failure) { setFailed(why(failure)); }
+  }, []);
 
   const refresh = useCallback(() => client.request({ type: "mobile.view" }).then((next) => { setView(next); setFailed(null); }, () => setFailed(words.unavailable)), [client, words.unavailable]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -133,7 +138,11 @@ export function PhoneSettings({ client, bots, lang }: { client: Client; bots: Bo
             <div className="phone-offer">
               <QrCode text={offer.url} label={words.scan} />
               <p className="settings-hint">{words.scan} · {words.expires(Math.max(1, Math.ceil((offer.expiresAt - now) / 60_000)))}</p>
-              <button type="button" className="task-report" onClick={() => setOffer(null)}>{words.hide}</button>
+              <p className="settings-hint">{words.copyNote}</p>
+              <div className="settings-actions">
+                <button type="button" onClick={() => void copyLink(offer.url)}>{copied === offer.url ? words.copied : words.copyLink}</button>
+                <button type="button" className="task-report" onClick={() => setOffer(null)}>{words.hide}</button>
+              </div>
             </div>
           )}
         </div>

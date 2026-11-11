@@ -21,6 +21,17 @@ pairing link (`/mobile/#relay=…&k=…&s=…`) pairs over an end-to-end encrypt
 pairing is kept in IndexedDB with a non-extractable key (`relay-session.ts`), and the page reconnects with it on the
 next visit. Sign out forgets it.
 
+The home-screen app keeps its own storage apart from Safari (and the Camera app would open a scanned link in Safari),
+so the sign-in page pairs on its own: **Scan QR code** opens the back camera in the page (`QrScanner.tsx`: asked
+from the tap, `playsInline`, decoded with jsQR, stopped as soon as a code is read), or the pairing link is pasted
+(Settings › Phone › Copy link on the desktop; Universal Clipboard carries it). A pasted link is the same one-time,
+expiring secret the QR carries (`pair-input.ts`); a link for another address is opened there. No short code: one the
+relay could exchange for the link would let the relay pair.
+
+At phone width (`layout.ts`) the left column is a drawer with the open column (names and faces), never the
+desktop's folded strip, whatever `railCollapsed` says; its fold button closes the drawer. The page keeps clear of the
+status bar and home indicator (`env(safe-area-inset-*)`).
+
 ## Build and checks
 
 From the repository root, after `desktop/scripts/link-deps.sh`:
