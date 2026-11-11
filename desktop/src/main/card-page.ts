@@ -75,6 +75,22 @@ export function tileNavigation(url: string, parent: { url: string; childOfApp: b
   return !!tile && !!panel && !!parent?.childOfApp && byParent && kind(tile) === "component" && kind(panel) === "panel";
 }
 
+/**
+ * Whether a frame may load a result page (botling-card://preview/) as a preview card's frame: started by the card's own
+ * component page (or by nothing), which is either in the chat page, or a card inside a plugin's panel page the app page
+ * itself holds (the Note tab's cards, `ccb.card`, in a main tab's panel). The shell's own viewer is checked apart.
+ */
+export function cardPreviewNavigation<F extends { url: string; parent: F | null }>(parent: F | null, initiator: F | null, mainFrame: F,
+  chatFrame: (frame: F | null) => boolean, kind: (token: string) => "panel" | "component" | null): boolean {
+  const token = (page: string) => (page.startsWith(PAGE_URL) ? page.slice(PAGE_URL.length).split(/[?#/]/)[0] || null : null);
+  if (!parent || (initiator && initiator !== parent)) return false;
+  const card = token(parent.url);
+  if (!card) return false;
+  if (chatFrame(parent.parent)) return true;
+  const panel = parent.parent ? token(parent.parent.url) : null;
+  return !!panel && parent.parent!.parent === mainFrame && kind(card) === "component" && kind(panel) === "panel";
+}
+
 export const PANEL_CSP = COMPONENT_CSP
   .replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' blob:")
   .replace("frame-src botling-card://preview", "frame-src botling-card://preview botling-card://page/");

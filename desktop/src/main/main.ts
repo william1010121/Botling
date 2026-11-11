@@ -40,7 +40,7 @@ import { appCommandScript } from "../core/plugins/app-command";
 import { CoreClient } from "./core-client";
 import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
-import { COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation } from "./card-page";
+import { COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation, cardPreviewNavigation } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
 import { attachmentFile, attachmentLine, attachmentTarget, cardImageToken } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
@@ -787,8 +787,9 @@ app.on("web-contents-created", (_, contents: WebContents) => {
     } else if (details.url.startsWith(PREVIEW_PREFIX)) {
       // A result page: a shell-owned full-page viewer, or a component-owned preview card child.
       // The sandboxed report itself still cannot initiate navigation.
-      const componentPage = (frame: Electron.WebFrameMain | null | undefined) => !!frame && frame.url.startsWith(PAGE_PREFIX) && chatFrame(frame.parent);
-      allowed = shellReportNavigation(parent, initiator, mainFrame) || (componentPage(parent) && (!initiator || initiator === parent));
+      // The card page sits in the chat page, or in a main tab's panel page (the Note tab's cards).
+      allowed = shellReportNavigation(parent, initiator, mainFrame) || cardPreviewNavigation(parent, initiator ?? null, mainFrame, chatFrame,
+        (token) => { const page = pages.get(token); return page ? (page.panel ? "panel" : "component") : null; });
     }
     if (!allowed) {
       details.preventDefault();
