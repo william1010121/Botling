@@ -8,7 +8,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
-import { EXIT_NO_NODE, LineReader, parseFrame, type UpFrame } from "./protocol";
+import { EXIT_NO_NODE, LAUNCHER, LineReader, parseFrame, type UpFrame } from "./protocol";
+
+export { LAUNCHER };
 import { FrameLink } from "./link";
 import type { LinkHandlers, SessionLink, SessionTransport } from "./session";
 
@@ -16,19 +18,6 @@ import type { LinkHandlers, SessionLink, SessionTransport } from "./session";
 export const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** The agent's launcher on the machine: finds Node 18+ (also on the login shell's PATH, e.g. nvm), then runs the bundle. */
-export const LAUNCHER = `#!/bin/sh
-# botling-agent launcher, installed by Botling (multi-machine). Runs lib/botling-agent.cjs with Node 18+.
-dir="$(cd "$(dirname "$0")/.." && pwd)"
-if [ -n "$SHELL" ] && [ -z "$BOTLING_AGENT_NO_LOGIN_PATH" ]; then
-  p="$("$SHELL" -lc 'printf "\\n__BOTLING_PATH__%s\\n" "$PATH"' </dev/null 2>/dev/null | sed -n 's/^__BOTLING_PATH__//p' | tail -n 1)"
-  [ -n "$p" ] && PATH="$p:$PATH" && export PATH
-fi
-node="\${BOTLING_AGENT_NODE:-$(command -v node 2>/dev/null)}"
-if [ -z "$node" ]; then echo "botling-agent: Node.js was not found on this machine (Botling needs Node 18 or newer)." >&2; exit ${EXIT_NO_NODE}; fi
-major="$("$node" -p 'process.versions.node.split(".")[0]' 2>/dev/null)"
-if [ "\${major:-0}" -lt 18 ] 2>/dev/null; then echo "botling-agent: Node $("$node" --version) is too old (Botling needs Node 18 or newer)." >&2; exit ${EXIT_NO_NODE}; fi
-exec "$node" "$dir/lib/botling-agent.cjs" "$@"
-`;
 
 const SERVE = `exec "$HOME/.botling-agent/bin/botling-agent" serve`;
 

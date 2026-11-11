@@ -5,9 +5,10 @@
 //   botling-agent info       prints what Botling checks: node, git, claude
 //   botling-agent pair <code> [--name N]   pairs this machine with Botling over the relay (the install line runs it)
 //   botling-agent relay      keeps this machine connected to Botling over the relay (the daemon)
+//   botling-agent install    installs this bundle and its launcher under ~/.botling-agent (the install script)
 import { createHash, webcrypto } from "node:crypto";
-import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ClaudeHead } from "../../core/agent/head";
@@ -15,6 +16,7 @@ import { AGENT_HOME_DIR, AGENT_PROTOCOL, APP_VERSION, LineReader, parseFrame } f
 import { AgentServer, machineConfig, pidAlive, type AgentLink } from "./server";
 import { AgentRelay, pairMachine, relayLock } from "../relay/agent";
 import { gitRpc } from "./git";
+import { agentUpgrader, installBundle } from "./install";
 
 // Node 18 has WebCrypto only as node:crypto's webcrypto (globalThis.crypto came in Node 19); the relay path's
 // end-to-end encryption (mobile-relay/e2e.ts) uses globalThis.crypto.
@@ -39,10 +41,16 @@ export async function machineInfo(home: string, sha: string) {
   return { version: APP_VERSION, sha, protocol: AGENT_PROTOCOL, node: process.version, platform: `${process.platform}-${process.arch}`, home, git, claude: claudeVersion };
 }
 
-export function agentRpc(home: string, sha: string) {
+export function agentRpc(home: string, sha: string, onUpgraded?: () => void) {
   const gitOps = gitRpc(home);
-  return (op: string, args: Record<string, unknown>, link: AgentLink): Promise<unknown> => {
+  const upgrade = agentUpgrader(home, sha);
+  return async (op: string, args: Record<string, unknown>, link: AgentLink): Promise<unknown> => {
     if (op === "info") return machineInfo(home, sha);
+    if (op === "upgrade") {
+      const result = await upgrade(args);
+      if (result.installed) onUpgraded?.();
+      return result;
+    }
     return gitOps(op, args, link);
   };
 }
@@ -61,13 +69,13 @@ export function agentSettings(home: string): { claude?: string; claudeArgs?: str
   } catch { return {}; }
 }
 
-export function newAgentServer(home = agentHome(), sha = ownSha()) {
+export function newAgentServer(home = agentHome(), sha = ownSha(), onUpgraded?: () => void) {
   const settings = agentSettings(home);
   return new AgentServer({
     home, version: APP_VERSION, sha,
     config: (spec) => machineConfig(spec, { command: settings.claude, args: settings.claudeArgs }),
     spawn: (config, handlers) => new ClaudeHead(config, handlers),
-    rpc: agentRpc(home, sha),
+    rpc: agentRpc(home, sha, onUpgraded),
     log: (line) => process.stderr.write(`botling-agent: ${line}\n`),
   });
 }
@@ -87,18 +95,38 @@ export async function serve(): Promise<void> {
   await server.close();
 }
 
-/** `relay`: the daemon. One per machine; SIGTERM/SIGINT stop it (claude processes stop with their links). */
+/**
+ * `relay`: the daemon. One per machine; SIGTERM/SIGINT stop it (claude processes stop with their links). After an
+ * upgrade it stops and the new version starts: systemd restarts it (Restart=always), otherwise it starts its own
+ * replacement (which waits for this one's lock).
+ */
 export async function relayDaemon(): Promise<void> {
   const home = agentHome();
-  const release = relayLock(home, pidAlive);
+  let release = relayLock(home, pidAlive);
+  for (let i = 0; !release && process.env.BOTLING_AGENT_WAIT_LOCK === "1" && i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    release = relayLock(home, pidAlive);
+  }
   if (!release) { process.stderr.write("botling-agent: the relay daemon already runs on this machine\n"); process.exit(0); }
-  const server = newAgentServer(home);
+  let upgraded = false;
+  let stop: () => void = () => {};
+  const stopped = new Promise<void>((resolve) => { stop = resolve; process.once("SIGTERM", resolve); process.once("SIGINT", resolve); });
+  const server = newAgentServer(home, ownSha(), () => {
+    upgraded = true;
+    process.stderr.write("botling-agent: upgraded; restarting\n");
+    setTimeout(stop, 1_500); // the answer leaves first
+  });
   const relay = new AgentRelay({ home, server, log: (line) => process.stderr.write(`botling-agent: ${line}\n`) });
   relay.start();
-  await new Promise<void>((resolve) => { process.once("SIGTERM", resolve); process.once("SIGINT", resolve); });
+  await stopped;
   await relay.stop();
   await server.close();
   release();
+  if (upgraded && !process.env.INVOCATION_ID) {
+    const log = openSync(join(home, "relay.log"), "a", 0o600);
+    spawn(join(home, "bin", "botling-agent"), ["relay"], { detached: true, stdio: ["ignore", log, log], env: { ...process.env, BOTLING_AGENT_WAIT_LOCK: "1" } }).unref();
+  }
+  process.exit(upgraded ? 75 : 0);
 }
 
 async function main(argv: string[]) {
@@ -111,10 +139,16 @@ async function main(argv: string[]) {
     process.exit(0);
   }
   if (command === "relay") { await relayDaemon(); process.exit(0); }
+  if (command === "install") {
+    const self = typeof __filename === "string" ? __filename : "";
+    installBundle(agentHome(), readFileSync(self));
+    process.stdout.write(`${JSON.stringify({ installed: join(agentHome(), "bin", "botling-agent"), version: APP_VERSION, sha: ownSha() })}\n`);
+    return;
+  }
   if (command === "serve") { await serve(); process.exit(0); }
   if (command === "version") { process.stdout.write(`${JSON.stringify({ version: APP_VERSION, sha: ownSha(), protocol: AGENT_PROTOCOL })}\n`); return; }
   if (command === "info") { process.stdout.write(`${JSON.stringify(await machineInfo(agentHome(), ownSha()))}\n`); return; }
-  process.stderr.write("usage: botling-agent serve | version | info | pair <code> | relay\n");
+  process.stderr.write("usage: botling-agent serve | version | info | pair <code> | relay | install\n");
   process.exit(2);
 }
 

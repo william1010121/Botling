@@ -345,9 +345,13 @@ export class RemoteSession {
     const g = this.gen;
     if (this.options.prepare && this.link) {
       this.preparing = true;
-      try { this.cwd = (await this.options.prepare(this.link)).cwd; } catch (error) { this.preparing = false; this.prepareFailed(error as Error); return; }
+      let failed: Error | null = null;
+      try { this.cwd = (await this.options.prepare(this.link)).cwd; } catch (error) { failed = error as Error; }
       this.preparing = false;
-      if (g !== this.gen || this.conn !== "up") return;
+      // The connection it ran on ended meanwhile: not the machine's fault. The connection up now (if any) skipped its
+      // own preparing while this one ran, so it prepares now; else the next connection does.
+      if (g !== this.gen || this.conn !== "up") { if (this.conn === "up") void this.ready(); return; }
+      if (failed) { this.prepareFailed(failed); return; }
     }
     this.start();
   }
