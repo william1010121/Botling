@@ -51,7 +51,7 @@ it("renderer-only publication keeps main/core/preload output and retains success
   expect(existsSync(join(f.outdir, "plugins"))).toBe(false);
   const web = join(f.root, "out/web");
   f.put("desktop/mobile/main.tsx", 'globalThis.shellVersion = "web-one";');
-  for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg", "frame-host.html", "frame-host.js"]) f.put(`desktop/mobile/${name}`, name);
+  for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png", "frame-host.html", "frame-host.js"]) f.put(`desktop/mobile/${name}`, name);
   await buildRenderer({ ...f, outdir: web, web: true });
   expect(readFileSync(join(web, "chat.js"), "utf8")).toContain("latex-one");
   expect(readFileSync(join(web, "chat.js"), "utf8")).toContain("extras-one");
