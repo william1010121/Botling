@@ -30,6 +30,10 @@
       "xhigh",
       "max"
      ]
+    },
+    "machine": {
+     "type": "string",
+     "description": "Optional: run this worker on another machine the user set up in Settings › Machines (its name). The project goes there as its current commit (uncommitted changes stay here); the worker works on a branch there, and the branch comes back here when its run ends. Omit to run it here."
     }
    },
    "required": [

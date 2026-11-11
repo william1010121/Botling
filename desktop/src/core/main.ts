@@ -29,6 +29,7 @@ import { resolveExecutable } from "./process/executable";
 import { UtilityHostLauncher, type PortLike } from "./plugins/utility-host";
 import { StartupMarks } from "../startup-marks";
 import { ROUTINE_TICK_MS } from "./routines";
+import { RemoteWorkers } from "../remote/service";
 
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
 const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
@@ -259,6 +260,9 @@ const core = new Core({
   ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { doctor: new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(dataDir)), dataDir) }) } : {}),
   dataDir,
   deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
+  // Workers on other machines (multi-machine phase 1): the real agent only (the fake agent's tests keep them off).
+  remoteWorkers: process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" || process.env.BOTLING_REMOTE_WORKERS === "1"
+    ? new RemoteWorkers({ dataDir, bundle: join(__dirname, "..", "agent", "botling-agent.cjs"), log: (line) => log(`remote: ${line}`) }) : null,
   headConfig,
   agyConfig: (profile, config) => {
     const command = resolveAgyRuntime(readSettings(Layout.settings(dataDir)), config.cwd);

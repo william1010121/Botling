@@ -99,6 +99,8 @@ export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: 
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
 
 export interface CoreOptions {
+  /** Workers on other machines (src/remote/service.ts): app_handoff's `machine`; absent: refused. */
+  remoteWorkers?: import("../remote/service").RemoteWorkers | null;
   quotaRetriever?: import("./quota").QuotaRetriever;
   /** Read-only CLI self-check; production starts it offline after activation. */
   doctor?: Doctor;
@@ -519,6 +521,7 @@ export class Core {
           : profile.id === MAINTAINER_ID ? () => [siteToolsFolder(options.dataDir, options.app?.dataDir), ...this.maintainer.approvedFolders()] : undefined,
         // Every other bot's Claude head and workers are refused writes into the site tools folder (site-tools-guard.ts).
         siteToolsFolder: profile.id === MAINTAINER_ID ? undefined : siteToolsFolder(options.dataDir, options.app?.dataDir),
+        remoteWorkers: () => options.remoteWorkers ?? null,
         subBotRows: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => this.subBotRows(profile.id),
         components: this.components,
         onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
@@ -3046,6 +3049,7 @@ First write a test that shows this, then fix it.`;
     const participants = bots.map(([, bot]) => () => bot.shutdown({ tidy }));
     participants.push(() => this.plugins.shutdown());
     const results = await Promise.allSettled(participants.map(stop => Promise.resolve().then(stop)));
+    try { this.options.remoteWorkers?.close(); } catch (error) { this.log(`remote workers: ${(error as Error).message}`); }
     const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     if (this.restarting) results.forEach((result, i) => specTrace("restart", "Settle", { part: bots[i]?.[0] ?? "plugins", ok: result.status === "fulfilled" }));
     // Each bot's continuation rests on its own shutdown: one that failed is held back (with why), the others resume.

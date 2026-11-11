@@ -45,6 +45,14 @@ export interface ClaudeWorkerHead {
   gone?(): boolean | undefined;
 }
 
+/** Workers on other machines (src/remote/service.ts): app_handoff's `machine` names one; its worker's process runs there. */
+export interface RemoteWorkerHost {
+  /** The trusted machine a name means, or why not (nothing is started). */
+  resolve(name: string): { id: string; name: string } | { error: string };
+  /** The worker's process on that machine, as a head (its connection, approvals and branch are the host's). */
+  head(machineId: string, worker: { id: string; name: string }, cwd: string, config: HeadConfig, handlers: HeadHandlers): ClaudeWorkerHead;
+}
+
 /** The in-process MCP server Claude coordinators get (head.ts `appMcp`). */
 export const CLAUDE_APP_SERVER = "botling";
 export const CLAUDE_APP_TOOLS: AppToolSpec[] = appTools("claude");
@@ -149,6 +157,8 @@ export interface ClaudeWorkersOptions {
   /** The in-app browser tools (core/browser-tools.ts), for this bot's pane; absent: they answer that it is not available. */
   browser?(name: BrowserToolName, args: Record<string, unknown>): Promise<unknown>;
   home?: string;
+  /** Workers on other machines; absent or null: app_handoff's `machine` is refused. */
+  remote?(): RemoteWorkerHost | null;
   /** The core's log lines (a run's verdict, a failed delivery). */
   log?(line: string): void;
 }
@@ -200,7 +210,7 @@ interface Proc {
 const BACKGROUND_HOLDS_MS = 6 * 3600_000;
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
-export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "siteToolsFolder" | "browser">;
+export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "siteToolsFolder" | "browser" | "remote">;
 
 /**
  * The Claude engine adapter (shared-core spec 4.1, the Claude row of 4.2): one `claude` process per worker, its
@@ -245,11 +255,23 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const wanted = typeof request.args.effort === "string" && request.args.effort.trim() ? request.args.effort.trim() : null;
     const effort = claudeEffort(wanted) ?? (wanted ? null : definition?.effort ?? null);
     const ignored = [...(wanted && !claudeEffort(wanted) ? [wanted] : []), ...(!wanted && definition?.effortIgnored ? [definition.effortIgnored] : [])];
-    return { engineData: { sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null, effort, ...(ignored.length ? { effortIgnored: ignored } : {}) } };
+    const machine = this.machine(request.args.machine);
+    return { engineData: { sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null, effort, ...(ignored.length ? { effortIgnored: ignored } : {}), ...(machine ? { machine: machine.id, machineName: machine.name } : {}) } };
+  }
+
+  /** app_handoff's `machine`: a trusted machine, or the refusal (nothing started). */
+  private machine(value: unknown): { id: string; name: string } | null {
+    const name = typeof value === "string" ? value.trim() : "";
+    if (!name || name === "local" || name === "this") return null;
+    const remote = this.options.remote?.();
+    if (!remote) throw new Error("Workers on other machines are not available here. Nothing was started.");
+    const found = remote.resolve(name);
+    if ("error" in found) throw new Error(found.error);
+    return found;
   }
 
   /** A run into its kept-alive process takes no slot. */
-  needsSlot(r: Readonly<WorkerLedgerRecord>) { return !this.procs.get(r.id)?.head?.running; }
+  needsSlot(r: Readonly<WorkerLedgerRecord>) { return !nonEmpty(r.engineData.machine) && !this.procs.get(r.id)?.head?.running; }
 
   runtime(r: Readonly<WorkerLedgerRecord>) {
     const proc = this.procs.get(r.id);
@@ -303,7 +325,10 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       ...(def?.tools ? { tools: def.tools } : {}),
     };
     // A kept-alive process carries later runs too: its items belong to whichever run is under way.
-    const head: ClaudeWorkerHead = this.factory(config, {
+    const machine = nonEmpty(r.engineData.machine);
+    const remote = machine ? this.options.remote?.() : null;
+    if (machine && !remote) throw new Error("This worker runs on another machine, and workers on other machines are not available here.");
+    const handlers: HeadHandlers = {
       onItem: (item) => this.onItem(r.id, head, item), onExit: (exit) => this.onExit(r.id, head, exit),
       // Its app tools: a note to its owner, from the run under way in this process, and the browser tools.
       onAppTool: async (name, args) => {
@@ -315,7 +340,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
         if (this.procs.get(r.id)?.head !== head) throw new Error("This worker's run is not under way: say it in your final report instead.");
         return this.notify(r.id, args);
       },
-    });
+    };
+    const head: ClaudeWorkerHead = machine ? remote!.head(machine, { id: r.id, name: r.name }, config.cwd, config, handlers) : this.factory(config, handlers);
     head.start();
     Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, model: config.model ?? null, opening: { run: run.run, base }, pendingResult: undefined, finishing: undefined, finishingSince: undefined });
     proc.background.clear();

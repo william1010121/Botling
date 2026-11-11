@@ -56,11 +56,12 @@
 // FAKE_CLAUDE_PIDS: a file this process appends "<pid>\n" to, for itself and each helper it starts.
 // FAKE_CLAUDE_CONTROLS: a file it appends {session, request} to for every set_model request.
 // FAKE_CLAUDE_LOG: a file it appends one JSON line to per start: {pid, args, resume, session, cwd}.
+// FAKE_CLAUDE_RUN_TOOLS=1: "/tool <command>" really runs <command> in its folder once allowed.
 // FAKE_CLAUDE_FORGET=1: `--resume` fails like claude's for a session it does not have (exit 1, stderr only).
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { safeWritePath } from "./safe-write.mjs";
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 const args = process.argv.slice(2);
@@ -528,6 +529,8 @@ async function turn(job) {
       return;
     }
     const allowed = answer.behavior === "allow";
+    // FAKE_CLAUDE_RUN_TOOLS=1: an allowed Bash command really runs, in claude's folder (remote workers' git round trip).
+    if (allowed && tool === "Bash" && process.env.FAKE_CLAUDE_RUN_TOOLS === "1") execSync(String(answer.updatedInput?.command ?? command), { cwd: process.cwd(), stdio: "ignore", shell: "/bin/sh" });
     out({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: allowed ? `ran: ${answer.updatedInput?.command}` : `denied: ${answer.message}`, is_error: !allowed }] } });
     out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
     const text = await stream(allowed ? `Allowed: ran ${answer.updatedInput?.command}` : `Denied: ${answer.message}`);

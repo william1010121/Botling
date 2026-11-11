@@ -122,7 +122,7 @@ import {
 } from "./store/records";
 import type { BotProfile } from "./store/workspace";
 import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./agent/workers";
-import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
+import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile, type RemoteWorkerHost } from "./agent/claude-workers";
 import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
 
 export type Status = "done" | "stopped" | "failed";
@@ -226,6 +226,8 @@ export interface BotOptions {
   addDirs?: () => string[];
   /** The browser's site tools folder, which only Maintainer writes: this bot's Claude head and workers are refused writes there (site-tools-guard.ts). */
   siteToolsFolder?: string;
+  /** Workers on other machines (app_handoff's `machine`); absent or null: refused. */
+  remoteWorkers?: () => RemoteWorkerHost | null;
   /** App-managed worktree (a plugin's `sessions.folder`, plugins/session-folders.ts): where its session starts instead of the project folder, and what else it may use there. */
   worktree?: () => { cwd: string; addDirs: string[] } | null;
   /** Another bot answering in its chat right now (a call-in's speaker). */
@@ -1320,6 +1322,7 @@ export class Bot {
       specWriters: () => this.options.launch?.().specWriters ?? DEFAULT_SPEC_WRITERS,
       siteToolsFolder: () => this.options.siteToolsFolder,
       browser: (name, args) => this.browserTool(name, args),
+      remote: () => this.options.remoteWorkers?.() ?? null,
     }, (item) => this.onWorkerOutput(item), (id, text) => this.workerReport(text, id), (config, handlers) => new ClaudeHead(config, handlers));
     this.syncWorkerOwners();
     return this.claudeWorkerHost;

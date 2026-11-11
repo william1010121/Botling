@@ -40,6 +40,7 @@ const PARAMS = {
   // The levels the provider's own engine takes (its workers run on it): Claude's or Codex's.
   effort: ({ provider = "claude" }) => ({ type: "string", enum: [...EFFORTS_BY_ENGINE[provider === "codex" ? "codex" : "claude"]] }),
   engine: ({ engines = ["agy", "codex"] }) => ({ type: "string", enum: [...engines] }),
+  machine: () => ({ type: "string", description: "Optional: run this worker on another machine the user set up in Settings › Machines (its name). The project goes there as its current commit (uncommitted changes stay here); the worker works on a branch there, and the branch comes back here when its run ends. Omit to run it here." }),
   role: () => ({ type: "string", enum: ["component-editor"], description: "Only for the plugin-library Maintainer: launch its existing Claude ccb-core component editor on its configured model. No new folders, tools, authorization or settings. Omit for ordinary work." }),
   isolated_git: () => ({
     type: "object",
@@ -93,7 +94,7 @@ interface AppToolDef { name: AppToolName; forms: Partial<Record<AppToolProvider,
 const APP_TOOLS: readonly AppToolDef[] = [
   { name: "app_handoff", forms: {
     claude: { description: "Start an app-managed worker: a Claude subagent that runs as its own session in this bot's folder and reports back to you. Use it wherever you would use the Agent tool (which is off here): give a short name and complete, self-contained instructions; subagent_type picks a .claude/agents definition, model overrides the worker's model (haiku, sonnet, opus), effort its thinking effort (low, medium, high, xhigh, max; default: the bot's subagent effort, else yours). Returns task_id and run at once; the worker's report arrives later as an app message (<app_task_result>). Finish your turn instead of waiting or polling.",
-      params: ["name", "instructions", "group", "subagent_type", "model", "effort"], required: ["instructions"] },
+      params: ["name", "instructions", "group", "subagent_type", "model", "effort", "machine"], required: ["instructions"] },
     agy: { description: "Assign an authorized task to an app-managed agy or Codex worker; engine identity cannot change on resume. Returns task_id immediately. A correlated app_task_result arrives later. Does not grant tool permissions.",
       params: ["instructions", "name", "group", "engine"], required: ["instructions"] },
     codex: { description: "Assign one independently accepted deliverable to an app-managed worker. Returns acceptance and task_id immediately, not a completed result. Continue other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn without waiting. The app delivers correlated app_task_result reports in later turns. A new handoff does not resolve the active report. Optional effort sets the worker's reasoning effort (low, medium, high, xhigh; default: the Codex workers setting, else yours). Optional model runs the worker on a Codex model Codex offers, by slug (e.g. gpt-6-luna) or short name (e.g. luna); default: the Codex workers setting, else yours. Workers are always Codex; model picks only which Codex model.",
