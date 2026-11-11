@@ -180,7 +180,7 @@ const WORDS = {
     ran: (t: string) => `ran ${t}`, minutes: (m: number) => `${m}m`, hours: (h: number, m: number) => `${h}h ${m}m`,
     fold: (name: string) => `Fold ${name}’s workers`, unfold: (name: string, n: number) => `Show ${name}’s ${n} worker${n === 1 ? "" : "s"}`,
     unread: (n: number) => `${n} finished, not viewed yet`, failedCount: (n: number) => `${n} failed`, workers: (n: number) => `${n} worker${n === 1 ? "" : "s"}`, sep: " · ",
-    openJob: (title: string, n: number) => `Show the ${n} workers of ${title}`, closeJob: (title: string) => `Fold ${title}`, ofSubBot: (name: string) => `of the sub bot ${name}`, moreLabel: (name: string, n: number) => `Show ${n} more of ${name}’s workers`,
+    openJob: (title: string, n: number) => `Show the ${n} workers of ${title}`, closeJob: (title: string) => `Fold ${title}`, ofSubBot: (name: string) => `of the sub bot ${name}`, onMachine: (name: string, connected: boolean) => `on ${name}${connected ? "" : " (not connected)"}`, moreLabel: (name: string, n: number) => `Show ${n} more of ${name}’s workers`,
   },
   "zh-Hant": {
     running: "進行中", done: "做完", failed: "失敗", stopped: "已停止", viewed: "已看過",
@@ -189,7 +189,7 @@ const WORDS = {
     ran: (t: string) => `跑了 ${t}`, minutes: (m: number) => `${m} 分`, hours: (h: number, m: number) => `${h} 小時 ${m} 分`,
     fold: (name: string) => `折起 ${name} 的 worker`, unfold: (name: string, n: number) => `展開 ${name} 的 ${n} 個 worker`,
     unread: (n: number) => `${n} 個做完還沒看`, failedCount: (n: number) => `${n} 失敗`, workers: (n: number) => `${n} 個`, sep: "・",
-    openJob: (title: string, n: number) => `展開 ${title} 的 ${n} 個 worker`, closeJob: (title: string) => `收合 ${title}`, ofSubBot: (name: string) => `sub bot ${name} 的`, moreLabel: (name: string, n: number) => `顯示 ${name} 其餘 ${n} 個 worker`,
+    openJob: (title: string, n: number) => `展開 ${title} 的 ${n} 個 worker`, closeJob: (title: string) => `收合 ${title}`, ofSubBot: (name: string) => `sub bot ${name} 的`, onMachine: (name: string, connected: boolean) => `在 ${name}${connected ? "" : "（未連線）"}`, moreLabel: (name: string, n: number) => `顯示 ${name} 其餘 ${n} 個 worker`,
   },
 } as const;
 

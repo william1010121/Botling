@@ -690,6 +690,13 @@ button { font: inherit; color: inherit; }
 
 .phone-offer { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0; }
 .qr-code { border-radius: 8px; background: #fff; }
+/* Settings › Machines: the relay install line (a one-time secret: shown, copied, never stored) and a fingerprint. */
+.machine-offer { display: flex; flex-direction: column; gap: 8px; padding: 12px 0 4px; }
+.machine-command { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--chip); color: var(--text); font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap; word-break: break-all; user-select: all; max-height: 140px; overflow: auto; }
+.machine-row .settings-hint code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.machine-row .settings-control { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+.machine-row .settings-control input { width: 110px; }
 
 /* A plugin's block in the app page's own surface (Settings page, gear popover): as tall as its content, no frame of its own. */
 .plugin-slot-frame { display: block; width: 100%; border: 0; background: transparent; color-scheme: dark; }
@@ -1167,6 +1174,8 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .rail-wk-more:hover { color: var(--text); }
 .rail-wk-more .rail-wk-chevron { transform: rotate(270deg); }
 .rail-wk-more .rail-wk-chevron.open { transform: rotate(90deg); }
+.rail-wk-machine { margin-right: 5px; color: var(--muted); }
+.rail-wk-machine.offline { color: var(--orange); }
 .rail-wk-tag { display: inline-flex; align-items: center; gap: 3px; margin-right: 5px; color: var(--muted); vertical-align: top; }
 .rail-wk-subface {
   width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; background: var(--chip); color: var(--text);

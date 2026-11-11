@@ -13,7 +13,7 @@ describe("Settings' pages", () => {
     expect(settingsNav(plugins).map((group) => [group.title, group.pages.map((page) => page.title)])).toEqual([
       ["App", ["General", "Appearance", "Shortcuts"]],
       ["Bots", ["Models & workers", "Permissions", "Chat & reports"]],
-      ["Connect", ["Engine setup", "Plugins", "Meter", "Phone"]],
+      ["Connect", ["Engine setup", "Plugins", "Meter", "Phone", "Machines"]],
       ["Advanced", ["Updates", "Developer"]],
     ]);
     expect(settingsNav(plugins).flatMap((group) => group.pages).find((page) => page.title === "Meter")).toMatchObject({ id: "meter/meter.page", indent: true });

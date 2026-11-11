@@ -3,7 +3,7 @@
 // still open the page that took their settings over.
 import type { PluginsView } from "../contract";
 
-export type CoreSection = "general" | "appearance" | "shortcuts" | "models" | "permissions" | "chat" | "setup" | "plugins" | "phone" | "updates" | "developer";
+export type CoreSection = "general" | "appearance" | "shortcuts" | "models" | "permissions" | "chat" | "setup" | "plugins" | "phone" | "machines" | "updates" | "developer";
 /** Page ids from before the pages were grouped, still accepted (links, plugins' `after`). */
 export type LegacySection = "engines" | "doctor";
 /** A page of Settings: a core one, or a plugin's (`settings.section` view: "<plugin>/<view id>"). */
@@ -29,6 +29,7 @@ export const SETTINGS_GROUPS: { title: string; pages: (SettingsPage & { id: Core
     { id: "setup", title: "Engine setup", terms: "doctor command-line tools claude codex antigravity install version login sign in check health acp runtime path verify" },
     { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
     { id: "phone", title: "Phone", terms: "phone mobile pair pairing qr code scan devices revoke route lan tailscale tunnel 手機 配對 撤銷" },
+    { id: "machines", title: "Machines", terms: "machines remote workers other computer server ssh host relay pair pairing code fingerprint install agent revoke linux 機器 遠端 配對 撤銷" },
   ] },
   { title: "Advanced", pages: [
     { id: "updates", title: "Updates", terms: "updates version release github check new" },

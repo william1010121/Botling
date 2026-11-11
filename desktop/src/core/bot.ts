@@ -1318,6 +1318,7 @@ export class Bot {
       cwd: () => this.owner.options.worktree?.()?.cwd ?? this.commandFolder,
       subagentModel: () => this.owner.choices().subagentModel,
       subagentEffort: () => this.owner.choices().subagentEffort,
+      defaultMachine: () => this.owner.choices().workerMachine,
       pluginDirs: () => this.options.plugins?.().dirs ?? [],
       processStarted: (pid) => this.options.ledger.record(pid),
       maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
@@ -1608,11 +1609,15 @@ export class Bot {
       const out = agents?.movedOut(bot.engine);
       return bot.subagents.rows(bot.engine).filter((row) => !out?.has(row.id)).map((row) => ({ row, bot }));
     });
+    const remote = this.options.remoteWorkers?.() ?? null;
+    const remoteStatus = (id: string) => { try { return remote?.status?.(id) ?? null; } catch { return null; } };
     const own: SubagentRowView[] = rows.slice(-100).map(({ row, bot }) => {
       const info = agents?.rowInfo?.(bot.engine, row.id);
+      const machine = row.head === "claude" ? remoteStatus(row.id) : null;
       return {
         ...row,
         waitingForNetwork: bot.outage?.subagents.includes(row.id) ?? false,
+        ...(machine ? { machine: { name: machine.machine.slice(0, 64), connected: machine.conn === "up" } } : {}),
         ...(info?.agentId ? { agentId: info.agentId } : {}),
         ...(info?.movable ? { movable: info.movable } : {}),
       };
@@ -1629,6 +1634,9 @@ export class Bot {
     primary.lastRows = text;
     primary.updated();
   }
+
+  /** Its workers' rows may show something new (a remote worker's connection): told only if they changed. */
+  workerRowsChanged() { if (!this.options.primary) this.rowsChanged(); }
 
   /** Every question in its chat still waiting for you. */
   openQuestions(): { id: string; text: string; sourceID?: string }[] {
@@ -2321,7 +2329,7 @@ export class Bot {
   }
 
   /** Its own choices in bot.json (1.x's `model`, `effort`, `subagentModel`, `codexWorkers`). */
-  private choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; subagentEffort: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null; agyWorkerModel: string | null; agyWorkerEffort: string | null } {
+  private choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; subagentEffort: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null; agyWorkerModel: string | null; agyWorkerEffort: string | null; workerMachine: string | null } {
     const settings = this.store.loadSettings();
     const pick = (value: unknown, list: readonly string[]) => (typeof value === "string" && list.includes(value) ? value : null);
     const workers = codexWorkerDefaults(settings.codexWorkers);
@@ -2337,6 +2345,8 @@ export class Bot {
       // Antigravity workers' own model and effort; none: the same as its Antigravity head (agy-workers.ts).
       agyWorkerModel: typeof settings.agyWorkerModel === "string" && settings.agyWorkerModel.trim() ? settings.agyWorkerModel.trim() : null,
       agyWorkerEffort: pick(settings.agyWorkerEffort, EFFORTS_BY_ENGINE.agy),
+      // Where its Claude workers run when app_handoff names no machine (Settings › Machines); none: here.
+      workerMachine: typeof settings.workerMachine === "string" && settings.workerMachine.trim() ? settings.workerMachine.trim() : null,
     };
   }
 
@@ -2383,11 +2393,12 @@ export class Bot {
       agyModel: typeof owner.store.loadSettings().agyModel === "string" ? owner.store.loadSettings().agyModel as string : null,
       codexWorkers: choices.codexWorkers as BotSettingsView["codexWorkers"],
       agyWorkerModel: choices.agyWorkerModel, agyWorkerEffort: choices.agyWorkerEffort as BotSettingsView["agyWorkerEffort"],
+      workerMachine: choices.workerMachine,
     };
   }
 
   /** Changes its own choices; a head already running keeps its own until it next wakes. */
-  configure(change: { agyModel?: string | null; agyWorkerModel?: string | null; agyWorkerEffort?: string | null; codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null; model?: string | null; effort?: string | null; subagentModel?: string | null; subagentEffort?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView {
+  configure(change: { workerMachine?: string | null; agyModel?: string | null; agyWorkerModel?: string | null; agyWorkerEffort?: string | null; codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null; model?: string | null; effort?: string | null; subagentModel?: string | null; subagentEffort?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView {
     const owner = this.owner;
     if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
     const before = owner.settingsView();
@@ -2410,6 +2421,17 @@ export class Bot {
     // Codex head's next wake (as the app's own Codex workers setting): nothing to restart.
     for (const key of ["model", "effort", "subagentModel", "subagentEffort", "agyModel", "agyWorkerModel", "agyWorkerEffort"] as const) {
       if (change[key] !== undefined) owner.store.saveSetting(key, change[key] ?? undefined);
+    }
+    // Read when each Claude worker starts: nothing to restart. A machine Settings › Machines does not have is refused.
+    if (change.workerMachine !== undefined) {
+      const name = change.workerMachine?.trim() || null;
+      if (name && name !== "local") {
+        const remote = owner.options.remoteWorkers?.();
+        if (!remote) throw new ContractError("conflict", "Workers on other machines are not available here.");
+        const found = remote.resolve(name);
+        if ("error" in found) throw new ContractError("bad_request", found.error.replace(/ Nothing was started\.$/, ""));
+        owner.store.saveSetting("workerMachine", found.name);
+      } else owner.store.saveSetting("workerMachine", undefined);
     }
     if (change.codexWorkers !== undefined) owner.store.saveSetting("codexWorkers", change.codexWorkers ? codexWorkersJSON(change.codexWorkers) : undefined);
     if (change.codexModel !== undefined) {

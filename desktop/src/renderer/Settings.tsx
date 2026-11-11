@@ -1,10 +1,11 @@
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
 import { PhoneSettings } from "./PhoneSettings";
+import { MachinesSettings } from "./MachinesSettings";
 import { UpdateActions } from "./Updates";
 // The Settings window as a sheet over the app, in four groups (settings-pages.ts): App (General, Appearance,
 // Shortcuts), Bots (Models & workers, Permissions, Chat & reports), Connect (Engine setup, Plugins and their pages,
-// Phone) and Advanced (Updates, Developer). Everything here is global (settings.json); the shown bot's own choices (its
+// Phone, Machines) and Advanced (Updates, Developer). Everything here is global (settings.json); the shown bot's own choices (its
 // bot.json) are `BotSettings`, in the right panel one level in. Each control shows what the core saved: a change goes
 // out, the answer (or `settings.updated`) comes back.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -97,6 +98,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
             {current?.plugin && <SlotFrame key={current.id} client={client} plugin={current.plugin} view={current.view ?? current.id} title={current.title} fontSize={15} />}
             {shown && current?.id === "phone" && <PhoneSettings client={client} bots={bots} lang={shown.effectiveLanguage} />}
+            {shown && current?.id === "machines" && <MachinesSettings client={client} lang={shown.effectiveLanguage} />}
             {shown && current?.id === "updates" && <Updates client={client} settings={shown} change={change} />}
             {shown && current?.id === "developer" && <Developer settings={shown} change={change} bots={bots} />}
           </div>

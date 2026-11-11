@@ -2,7 +2,7 @@
 // value in use and whether it follows the app's default ("App default") or is this bot's own ("Own · app default: …",
 // marked); each engine has "Use app defaults". Changing the app's defaults is Settings → Models & workers.
 import React, { useEffect, useState } from "react";
-import type { BotSettingsView, BotView, SettingsView } from "../contract";
+import type { BotSettingsView, BotView, MachinesView, SettingsView } from "../contract";
 import type { Client } from "./client";
 import { ModelPicker, useModelDiscovery } from "./ModelPicker";
 import { Group, Row, SelectSetting, Toggle, effortOptions, why } from "./settings-controls";
@@ -21,6 +21,7 @@ export function BotSettings({ client, bot, settings = null, onOpenAppSettings }:
 function ThisBot({ client, bot, appSettings, onProblem, onOpenAppSettings }: { client: Client; bot: BotView; appSettings: SettingsView | null; onProblem: (problem: string | null) => void; onOpenAppSettings?: () => void }) {
   const [view, setView] = useState<BotSettingsView | null>(null);
   const [fetched, setFetched] = useState<SettingsView | null>(null);
+  const [machines, setMachines] = useState<MachinesView | null>(null);
   // The app's defaults, to compare with (asked for when the caller has none; a reply without them compares nothing).
   const settings = appSettings ?? (fetched?.engineDefaults ? fetched : null);
   const engines = view?.engines ?? bot.heads;
@@ -31,6 +32,8 @@ function ThisBot({ client, bot, appSettings, onProblem, onOpenAppSettings }: { c
   };
   useEffect(() => { void client.request({ type: "bot.settings", botId: bot.id }).then(setView, (failure) => onProblem(why(failure))); }, [client, bot.id, bot.heads.length, onProblem]);
   useEffect(() => { if (!appSettings) void client.request({ type: "settings.get" }).then(setFetched, () => {}); }, [client, appSettings]);
+  // Settings › Machines' approved machines, for where its Claude workers run.
+  useEffect(() => { void client.request({ type: "machines.view" }).then(setMachines, () => setMachines(null)); }, [client, bot.id]);
   const configure = (change: ConfigureChange) => {
     onProblem(null);
     void client.request({ type: "bot.configure", botId: bot.id, ...change }).then(setView, (failure) => onProblem(why(failure)));
@@ -107,7 +110,24 @@ function ThisBot({ client, bot, appSettings, onProblem, onOpenAppSettings }: { c
           </Group>
         );
       })}
+      {view.engines.includes("claude") && <WorkerMachine view={view} machines={machines} onChange={(workerMachine) => configure({ workerMachine })} />}
       {onOpenAppSettings && <p className="settings-note"><button type="button" className="settings-link" onClick={onOpenAppSettings}>Change app defaults in Settings → Models &amp; workers</button></p>}
     </>
+  );
+}
+
+/** Where its Claude workers run when app_handoff names no machine: here, or an approved machine (Settings › Machines). */
+function WorkerMachine({ view, machines, onChange }: { view: BotSettingsView; machines: MachinesView | null; onChange: (name: string | null) => void }) {
+  const trusted = machines?.enabled ? machines.machines.filter((m) => m.trust === "trusted") : [];
+  const current = view.workerMachine ?? null;
+  if (!trusted.length && !current) return null;
+  const options = trusted.map((m) => ({ id: m.name, label: m.name }));
+  if (current && !options.some((o) => o.id.toLowerCase() === current.toLowerCase())) options.push({ id: current, label: `${current} (not available)` });
+  return (
+    <Group title="Workers’ machine" note="Where this bot’s Claude workers run unless it names a machine when it hands one off. Add machines in Settings → Machines.">
+      <Row label="Claude workers run on" className={current ? "own" : undefined}>
+        <SelectSetting label="Claude workers run on" blank="This computer" options={options} value={current} onChange={(value) => onChange(value)} />
+      </Row>
+    </Group>
   );
 }

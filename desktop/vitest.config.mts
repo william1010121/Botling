@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { defineConfig } from "vitest/config";
 
 // Tests that exercise macOS-only machinery. They are not run elsewhere because the code under test
@@ -15,8 +17,14 @@ const needsHelper = existsSync("out/core/agy-file-helper.base64") ? [] : ["test/
 // package.json's test:unit, which CI runs).
 const colocated = ["src/mobile-bridge/pairing.test.ts", "mobile/pair.test.ts"];
 
+// relay/src (the relay server some tests start) imports `ws`. relay/ has no install of its own in a checkout made with
+// `npm ci` here (link-deps.sh links one in a worktree), so Node would look up the folders above it and could find
+// another, older ws (~/node_modules); the tests use this install's ws 8 (relay/package.json pins 8.x too).
+const wsDir = (() => { try { return dirname(createRequire(import.meta.url).resolve("ws/package.json")); } catch { return null; } })();
+
 export default defineConfig({
   cacheDir: ".cache/vite",
+  resolve: { alias: wsDir ? [{ find: /^ws$/, replacement: join(wsDir, "wrapper.mjs") }] : [] },
   test: {
     include: ["test/unit/**/*.test.ts", ...colocated, "test/live/**/*.test.ts", "../spec/tests/**/*.test.ts", "builtin-plugins/*/test/**/*.test.ts"],
     exclude: [

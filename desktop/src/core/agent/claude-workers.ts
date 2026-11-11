@@ -51,6 +51,8 @@ export interface RemoteWorkerHost {
   resolve(name: string): { id: string; name: string } | { error: string };
   /** The worker's process on that machine, as a head (its connection, approvals and branch are the host's). */
   head(machineId: string, worker: { id: string; name: string }, cwd: string, config: HeadConfig, handlers: HeadHandlers): ClaudeWorkerHead;
+  /** What its worker row shows (null: not a remote worker). */
+  status?(workerId: string): { machine: string; conn: string } | null;
 }
 
 /** The in-process MCP server Claude coordinators get (head.ts `appMcp`). */
@@ -141,6 +143,8 @@ export interface ClaudeWorkersOptions {
   subagentModel(): string | null;
   /** The bot's subagent effort (null: the coordinator's effort). */
   subagentEffort?(): string | null;
+  /** The machine its workers run on when app_handoff names none (the bot's `workerMachine`); null: here. */
+  defaultMachine?(): string | null;
   /** Plugin folders whose agents/ count as definitions. */
   pluginDirs?(): string[];
   processStarted?(pid: number): void;
@@ -210,7 +214,7 @@ interface Proc {
 const BACKGROUND_HOLDS_MS = 6 * 3600_000;
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
-export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "siteToolsFolder" | "browser" | "remote">;
+export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "siteToolsFolder" | "browser" | "remote" | "defaultMachine">;
 
 /**
  * The Claude engine adapter (shared-core spec 4.1, the Claude row of 4.2): one `claude` process per worker, its
@@ -255,7 +259,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const wanted = typeof request.args.effort === "string" && request.args.effort.trim() ? request.args.effort.trim() : null;
     const effort = claudeEffort(wanted) ?? (wanted ? null : definition?.effort ?? null);
     const ignored = [...(wanted && !claudeEffort(wanted) ? [wanted] : []), ...(!wanted && definition?.effortIgnored ? [definition.effortIgnored] : [])];
-    const machine = this.machine(request.args.machine);
+    const machine = this.machine(request.args.machine) ?? this.defaultMachine(request.args.machine);
     return { engineData: { sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null, effort, ...(ignored.length ? { effortIgnored: ignored } : {}), ...(machine ? { machine: machine.id, machineName: machine.name } : {}) } };
   }
 
@@ -268,6 +272,15 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const found = remote.resolve(name);
     if ("error" in found) throw new Error(found.error);
     return found;
+  }
+
+  /** No `machine` given: the bot's default machine (its settings), if it has one; a default that cannot be used is refused. */
+  private defaultMachine(given: unknown): { id: string; name: string } | null {
+    if (typeof given === "string" && given.trim()) return null;
+    const name = this.options.defaultMachine?.()?.trim();
+    if (!name) return null;
+    try { return this.machine(name); }
+    catch (error) { throw new Error(`This bot's workers run on ${name} by default (its settings), but: ${(error as Error).message} Pass machine "local" to run it here.`); }
   }
 
   /** A run into its kept-alive process takes no slot. */

@@ -45,7 +45,7 @@ import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
-  type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView,
+  type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView,
 } from "../contract";
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
 import { agyWorkerList } from "./agy-usage-db";
@@ -98,6 +98,8 @@ import { ReleaseNotices, confirmHealthy, devWorkRoot, spawnInstaller } from "./s
 export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
 export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown; data?: unknown }
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
+import { MACHINE_NAME } from "../remote/machines";
+import { machineNameFrom } from "../remote/relay/wire";
 
 export interface CoreOptions {
   /** Workers on other machines (src/remote/service.ts): app_handoff's `machine`; absent: refused. */
@@ -258,6 +260,8 @@ export class Core {
     const leftovers = this.ledger.endLeftovers();
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
     this.importOnce();
+    // A remote worker's connection came or went: the worker rows that show it are drawn again (only those that changed).
+    options.remoteWorkers?.onChange(() => { for (const bot of this.bots.values()) bot.workerRowsChanged(); });
     // Maintainer (1.x's built-in project): the plugin library is its folder, with the app's files in it.
     // 1.x's key is componentEditorModel (2.0 before Phase 4a read componentEditor: both are honoured).
     // After the import (1.x's settings and library), before the component library first looks: a preview card
@@ -2526,6 +2530,16 @@ First write a test that shows this, then fix it.`;
     return { ...view, devices: [...view.devices.map((device) => ({ ...device, via: "bridge" as const })), ...relayed].sort((a, b) => b.pairedAt - a.pairedAt), relay: this.relay.view() };
   }
 
+  /** Settings › Machines (remote/service.ts); off when this app runs no remote workers (tests, probes). */
+  private machinesView(): MachinesView {
+    return this.options.remoteWorkers?.view() ?? { enabled: false, relay: { url: null, state: "off" }, machines: [] };
+  }
+  private machinesOr() {
+    const remote = this.options.remoteWorkers;
+    if (!remote) throw new ContractError("conflict", "Workers on other machines are not available here.");
+    return remote;
+  }
+
   /** Private mobile transport: the guard and handle's synchronous send prefix share this loop. */
   mobileCommand(raw: unknown, allowedBots: readonly string[]) {
     return mobileCommand({
@@ -2781,6 +2795,36 @@ First write a test that shows this, then fix it.`;
         if (!this.relay) throw new Error("The phone relay is not available.");
         await this.relay.setURL(cmd.url);
         return this.mobileView();
+      }
+      case "machines.view": return this.machinesView();
+      case "machines.hosts": return { hosts: this.machinesOr().sshHosts().slice(0, 500) };
+      case "machines.add": {
+        const name = cmd.name?.trim() || undefined;
+        if (name && !MACHINE_NAME.test(name)) throw new ContractError("bad_request", "A machine's name is letters, digits, and . _ @ - (up to 64).");
+        await this.machinesOr().addSsh(cmd.host.trim(), name ?? machineNameFrom(cmd.host.trim()));
+        return this.machinesView();
+      }
+      case "machines.pair": {
+        const { command, expiresAt } = await this.machinesOr().pairRelay();
+        return { command, expiresAt };
+      }
+      case "machines.approve": {
+        const remote = this.machinesOr();
+        const machine = remote.machines.get(cmd.id);
+        if (!machine) throw new ContractError("not_found", "No such machine.");
+        if (machine.via === "relay") {
+          if (!cmd.code?.trim()) throw new ContractError("bad_request", "Type the code the machine shows.");
+          await remote.approveRelay(cmd.id, cmd.code);
+        } else await remote.approveSsh(cmd.id);
+        return this.machinesView();
+      }
+      case "machines.decline": await this.machinesOr().decline(cmd.id); return this.machinesView();
+      case "machines.revoke": this.machinesOr().revoke(cmd.id); return this.machinesView();
+      case "machines.remove": this.machinesOr().remove(cmd.id); return this.machinesView();
+      case "machines.check": {
+        // What the check found (or why it failed) is in the machine's info.
+        try { await this.machinesOr().check(cmd.id); } catch (error) { if (!this.machinesOr().machines.get(cmd.id)?.info?.error) throw error; }
+        return this.machinesView();
       }
       case "bot.configure": {
         const { type: _type, botId, ...change } = cmd;

@@ -1,6 +1,6 @@
 // The left column's worker list under a bot row (rail-workers.ts decides what shows): each worker one item, its
 // worker name over its state and time, and "Settle down" (the settle clock) on a finished one; a sub bot's worker
-// labelled with its sub bot. One job's workers are one item: its name, a small dot per worker (running, done,
+// labelled with its sub bot, one on another machine with that machine. One job's workers are one item: its name, a small dot per worker (running, done,
 // failed), failures, count and time below; a click opens it to list them. No blue dot on either: the bot row's count
 // is where news shows. Then "N more".
 import type { SubagentRowView } from "../contract";
@@ -29,17 +29,19 @@ function WorkerItem({ item, now, lang, actions }: { item: RailWorkerItem; now: n
   const state = railStateWord(item, lang);
   const time = railWorkerTime(item, now, lang);
   const waiting = item.state === "running" && !!item.row.waitingOn;
+  const machine = item.row.machine;
   const classes = ["rail-wk-row", item.state, waiting ? "waiting" : "", item.viewed ? "viewed" : "", item.selected ? "selected" : ""].filter(Boolean).join(" ");
   return (
     <div className={classes} data-worker={item.row.id}>
       <button type="button" className="rail-wk-open" title={item.row.prompt} onClick={() => actions.onOpen(item.ownerId, item.row)}
-        aria-current={item.selected ? "page" : undefined} aria-label={[name, item.subBot ? w.ofSubBot(item.subBot.name) : "", state, time].filter(Boolean).join(", ")}>
+        aria-current={item.selected ? "page" : undefined} aria-label={[name, item.subBot ? w.ofSubBot(item.subBot.name) : "", machine ? w.onMachine(machine.name, machine.connected) : "", state, time].filter(Boolean).join(", ")}>
         <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
         <StateMark state={item.state} viewed={item.viewed} />
         <span className="rail-wk-text">
           <span className="rail-wk-name">{name}</span>
           <span className="rail-wk-meta">
             <SubBotTag subBot={item.subBot} />
+            {machine && <span className={`rail-wk-machine${machine.connected || item.state !== "running" ? "" : " offline"}`} data-machine={machine.name} title={w.onMachine(machine.name, machine.connected)}>{machine.name}</span>}
             <span className="rail-wk-state" title={waiting ? state : undefined}>{state}</span>{time && <>・{time}</>}
           </span>
         </span>
