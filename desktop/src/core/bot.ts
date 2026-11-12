@@ -1,7 +1,7 @@
 import { readImagePaths, readImages } from "./read-images";
 import { isBrowserTool } from "../browser-bot";
 import { runBrowserTool } from "./browser-tools";
-import { isBotTool, type BotToolName, type ToolCaller } from "./bot-tools";
+import { COMPONENT_USAGE_TOOL, isBotTool, type BotToolName, type ToolCaller } from "./bot-tools";
 import { isNoteTool, runNoteTool } from "./note-tools";
 import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
@@ -1338,8 +1338,24 @@ export class Bot {
    */
   private async botTool(name: BotToolName, args: Record<string, unknown>, caller: ToolCaller = "coordinator"): Promise<unknown> {
     if (isNoteTool(name)) return runNoteTool(name, args, { botId: this.owner.profile.id, caller });
+    if (name === COMPONENT_USAGE_TOOL) return this.componentUsage(args, caller);
     if (!isBrowserTool(name)) throw new Error(`Unknown app tool ${name}.`);
     return runBrowserTool(name, args, { botId: this.owner.profile.id, folder: this.owner.profile.folder });
+  }
+
+  /** app_component_usage: one component's whole usage (its about.md), for the coordinator that is about to use it. */
+  private componentUsage(args: Record<string, unknown>, caller: ToolCaller): Record<string, unknown> {
+    if (caller !== "coordinator") throw new Error("Only the bot itself reads component usage; a worker does not show components.");
+    const library = this.context?.library;
+    if (!library) throw new Error("The component library is not available here.");
+    const wanted = typeof args.name === "string" ? args.name.trim() : "";
+    const name = library.names.find((each) => each === wanted) ?? library.names.find((each) => each.toLowerCase() === wanted.toLowerCase());
+    if (!name) throw new Error(`No component named "${wanted}". The library has: ${library.names.join(", ")}.`);
+    const yours = this.ownComponents().includes(name) || BUILT_INS.includes(name);
+    return {
+      name, yours, command: library.command(name), usage: library.catalog([name]),
+      ...(yours ? {} : { note: `Not on your list yet: ask Maintainer with <component name="${name}">add it to my list</component> before you show it.` }),
+    };
   }
 
   /** A Claude worker's run ended: its report goes to this head as the app's message (waking it, or queued behind its turn). */
@@ -5081,7 +5097,7 @@ export class Bot {
     }
     if (names.length) {
       const tags = names.map((name) => `<show name="${name}"></show>`).join(", ");
-      notes.push(`(App: Your last reply had ${tags} with no JSON inside, and ${names.length === 1 ? "that component's" : "those components'"} usage has no "Command:" line, so nothing was drawn in the chat (the user saw no card there). A "Board command:" is not run in the chat. Put the data as JSON inside the tag, <show name="${names[0]}">{…}</show>, in the shape its usage gives, or use command="…" on the tag.)`);
+      notes.push(`(App: Your last reply had ${tags} with no JSON inside, and ${names.length === 1 ? "that component's" : "those components'"} usage has no "Command:" line, so nothing was drawn in the chat (the user saw no card there). A "Board command:" is not run in the chat. Put the data as JSON inside the tag, <show name="${names[0]}">{…}</show>, in the shape its usage gives (app_component_usage), or use command="…" on the tag.)`);
     }
     return notes;
   }

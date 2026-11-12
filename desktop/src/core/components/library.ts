@@ -159,20 +159,6 @@ export class ComponentLibrary {
     }).join("\n");
   }
 
-  /**
-   * A component whose data comes from its own Command: only its about.md up to the first heading (the purpose, the
-   * Command/Refresh/Sizes lines, how to show it), and where the rest is. A bot writes only the tag for these; the
-   * collection details, data format and layout are for whoever builds the component (audit 2026-11-11).
-   */
-  brief(name: string): string {
-    const lines = this.about(name).trim().split("\n");
-    const heading = lines.findIndex((line, at) => at > 0 && /^#{1,6}\s/.test(line));
-    const head = (heading < 0 ? lines : lines.slice(0, heading)).join("\n").trimEnd().split("\n");
-    const rest = head.slice(1).map((line) => `  ${line}`).join("\n");
-    const more = heading < 0 ? "" : `\n  (Full usage: ${join(this.folder(name), "about.md")})`;
-    return `- ${name}: ${head[0] ?? ""}${rest ? `\n${rest}` : ""}${more}`;
-  }
-
   /** The first line of each one's about.md (`summaries(of:)`). */
   summaries(of: string[]): string {
     return this.names.filter((name) => of.includes(name)).map((name) => `- ${name}: ${this.about(name).trim().split("\n")[0] ?? ""}`).join("\n");
@@ -355,29 +341,35 @@ export function componentMentions(text: string, names: readonly string[]): strin
   return found.sort((a, b) => a.at - b.at).map((entry) => entry.name);
 }
 
-/** What a bot is told about components (`ComponentKnowledge`): its own with their whole usage, one line for each of the rest. */
+/** What a bot is told about components (`ComponentKnowledge`): one line each; the whole usage comes from app_component_usage. */
 export interface ComponentKnowledge {
   own: { name: string; text: string }[];
   others: { name: string; text: string }[];
   limit: number;
 }
 
+/** "- name (command): first line" or "- name (JSON): first line" (`ownLine`): how to fill it, and what it is for. */
+export function ownLine(library: Pick<ComponentLibrary, "command" | "summaries">, name: string): string {
+  const line = library.summaries([name]).replace(/^- [^:]*: /, "");
+  return `- ${name} (${library.command(name) ? "command" : "JSON"}): ${line}`;
+}
+
 /** What a bot with these components of its own is told about the library (`componentKnowledge`). */
-export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "brief" | "catalog" | "summaries">, mine: readonly string[]): ComponentKnowledge {
+export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries">, mine: readonly string[]): ComponentKnowledge {
   // choices is the app's own buttons: the instructions already teach its block, so it is not listed again.
   const own = library.names.filter((name) => mine.includes(name) && !UNLISTED_COMPONENTS.includes(name));
   const others = library.names.filter((name) => !mine.includes(name) && !UNLISTED_COMPONENTS.includes(name));
   return {
-    // A component with a Command needs only its tag: its lead paragraph, not its builder's details.
-    own: own.map((name) => ({ name, text: library.command(name) ? library.brief(name) : library.catalog([name]) })),
+    // One line each, its whole usage only when the bot asks (app_component_usage), so a wake does not carry every about.md.
+    own: own.map((name) => ({ name, text: ownLine(library, name) })),
     others: others.map((name) => ({ name, text: library.summaries([name]) })),
     limit: COMPONENT_LIMIT,
   };
 }
 
 export function knowledgeFull(k: ComponentKnowledge): string {
-  let text = `(App: Components in the chat: ${k.own.length} / ${k.limit} yours, each with its usage below (a bot has at most ${k.limit}). <show name="name">JSON</show> draws one; <show name="name" command="git diff --stat"></show> fills it with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). A component whose usage has a "Command:" line needs only <show name="name"></show>; any other one (even with a "Board command:" line, which the chat never runs) needs its JSON inside the tag, and an empty one draws nothing; add refresh="2s" to rerun a command card every 2 seconds while it is on screen (a usage with a "Refresh: every 2s" line does so already). Give a card an id, <show name="name" id="tests">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name="name">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n` + k.own.map((e) => e.text).join("\n");
-  if (k.others.length) text += `\n(App: Also in the shared library, not yours yet, one line each. To use one, ask Maintainer for it with <component name="name">add it to my list</component>; you then get its usage.)\n` + k.others.map((e) => e.text).join("\n");
+  let text = `(App: Components in the chat: ${k.own.length} / ${k.limit} yours, one line each below (a bot has at most ${k.limit}). A (command) one fills itself from its own Command: <show name="name"></show> is all it needs. A (JSON) one needs its JSON inside the tag, <show name="name">JSON</show> (an empty one draws nothing; a "Board command:" is never run by the chat): call app_component_usage with its name for its data format and options before you fill it or use one of them. <show name="name" command="git diff --stat"></show> fills a card with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). Add refresh="2s" to rerun a command card every 2 seconds while it is on screen (a component whose usage says "Refresh: every 2s" does so already). Give a card an id, <show name="name" id="tests">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name="name">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n` + k.own.map((e) => e.text).join("\n");
+  if (k.others.length) text += `\n(App: Also in the shared library, not yours yet, one line each. To use one, ask Maintainer for it with <component name="name">add it to my list</component>; it then shows up in your list.)\n` + k.others.map((e) => e.text).join("\n");
   return text;
 }
 
@@ -392,8 +384,8 @@ export function knowledgeChanges(k: ComponentKnowledge, told: ComponentKnowledge
   const gone = [...told.own, ...told.others].map((e) => e.name).filter((name) => !library.has(name));
   const shelf = k.others.filter((e) => !toldOwn.has(e.name) && toldOthers.get(e.name) !== e.text);
   const parts: string[] = [];
-  if (added.length) parts.push(`New on your list, with usage:\n${added.map((e) => e.text).join("\n")}`);
-  if (changed.length) parts.push(`Usage changed (this replaces what you had):\n${changed.map((e) => e.text).join("\n")}`);
+  if (added.length) parts.push(`New on your list:\n${added.map((e) => e.text).join("\n")}`);
+  if (changed.length) parts.push(`Changed (this replaces what you had):\n${changed.map((e) => e.text).join("\n")}`);
   if (dropped.length) parts.push(`No longer yours (still in the shared library; ask Maintainer to get one back):\n${dropped.map((e) => e.text).join("\n")}`);
   if (gone.length) parts.push(`Gone from the library: ${gone.join(", ")}`);
   if (shelf.length) parts.push(`New or changed in the shared library, not yours yet:\n${shelf.map((e) => e.text).join("\n")}`);

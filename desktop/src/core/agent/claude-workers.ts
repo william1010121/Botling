@@ -58,8 +58,8 @@ export interface RemoteWorkerHost {
 /** The in-process MCP server Claude coordinators get (head.ts `appMcp`). */
 export const CLAUDE_APP_SERVER = "botling";
 export const CLAUDE_APP_TOOLS: AppToolSpec[] = appTools("claude");
-/** The same server for the hidden native-subagent fallback (no app workers): only app_routines. */
-export const CLAUDE_ROUTINE_TOOLS: AppToolSpec[] = CLAUDE_APP_TOOLS.filter((tool) => tool.name === "app_routines");
+/** The same server for the hidden native-subagent fallback (no app workers): only app_routines and app_component_usage. */
+export const CLAUDE_ROUTINE_TOOLS: AppToolSpec[] = CLAUDE_APP_TOOLS.filter((tool) => tool.name === "app_routines" || tool.name === "app_component_usage");
 /** The same server inside a worker: only app_notify_owner (a note to the bot that started it). */
 export const CLAUDE_WORKER_TOOLS: AppToolSpec[] = workerAppTools("claude");
 

@@ -195,6 +195,23 @@
   }
  },
  {
+  "name": "app_component_usage",
+  "description": "Read the full usage of one in-chat component (its about.md: data format, options, examples), by the name the app's component list gives. Call it before you fill a component's JSON or use one of its options; a component listed as (command) needs only <show name=\"name\"></show>.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "The component's name, as the component list gives it."
+    }
+   },
+   "required": [
+    "name"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
   "name": "app_browser_tabs",
   "description": "List the tabs open in the user's in-app browser pane beside your chat: tab_id, url, title, which one is selected, and how many network requests were captured. The pane is the user's own browser (their sign-ins); you read it, you do not drive it.",
   "inputSchema": {
