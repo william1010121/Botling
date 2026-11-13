@@ -44,7 +44,13 @@ export function subagentMessageElement(message: MessageView): HTMLElement {
 
 /** What its undelivered words wait for: "background command: Write deploy record…". */
 export function waitingWhat(on: SubagentWaitingOn): string {
+  if (on.kind === "apiRetry") return on.title;
   return on.kind === "process" ? t("subagent.wait.process") : t(`subagent.wait.${on.kind}` as Key, { title: on.title });
+}
+
+/** The status line or hint for it: words not delivered yet, or (apiRetry) the retry line itself. */
+export function waitingNote(on: SubagentWaitingOn): string {
+  return on.kind === "apiRetry" ? on.title : t("subagent.notDeliveredOn", { what: waitingWhat(on) });
 }
 
 /** How long it has waited: "25 min", "1 h 5 min". */
@@ -56,6 +62,8 @@ export function waitedFor(on: SubagentWaitingOn, now = Date.now()): string {
 
 /** The header's line: "Waiting for background command: Write deploy record… · 25 min". */
 export function waitingLine(on: SubagentWaitingOn, now = Date.now()): string {
+  // Waiting to try again after an API error: the core's own line ("API 暫時擋住，30 秒後重試（1/3）"), nothing undelivered.
+  if (on.kind === "apiRetry") return on.title;
   return `${t("subagent.waitingOn", { what: waitingWhat(on) })} · ${waitedFor(on, now)}`;
 }
 
@@ -79,7 +87,7 @@ export function subagentLiveElement(steps: StepView[], waiting?: SubagentWaiting
     const note = document.createElement("div");
     note.className = "sub-waiting";
     note.setAttribute("role", "status");
-    note.textContent = t("subagent.notDeliveredOn", { what: waitingWhat(waiting) });
+    note.textContent = waitingNote(waiting);
     row.append(note);
   } else if (!steps.some((step) => !step.done)) {
     const dots = document.createElement("div");
@@ -142,7 +150,7 @@ export function fillSubagentBar(bar: HTMLElement, header: SubagentHeaderView): v
     line.className = "waiting-on";
     line.setAttribute("role", "status");
     line.textContent = waitingLine(waiting);
-    line.title = t("subagent.notDeliveredOn", { what: waitingWhat(waiting) });
+    line.title = waitingNote(waiting);
     tickWaiting(line, waiting);
     bar.append(line);
   }

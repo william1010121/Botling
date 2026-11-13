@@ -175,7 +175,7 @@ export function railWorkers(bot: BotView, bots: BotView[], now: number, marks: R
 const WORDS = {
   en: {
     running: "Running", done: "Done", failed: "Failed", stopped: "Stopped", viewed: "Viewed",
-    waiting: { command: "Waiting for background command: ", monitor: "Waiting for Monitor: ", agent: "Waiting for background agent: ", process: "Waiting for its earlier process to end" },
+    waiting: { command: "Waiting for background command: ", monitor: "Waiting for Monitor: ", agent: "Waiting for background agent: ", process: "Waiting for its earlier process to end", apiRetry: "" },
     more: (n: number) => `${n} more`, fewer: "Show fewer", settle: "Settle down", settleHint: "Settle down: move to Settled in the right column",
     ran: (t: string) => `ran ${t}`, minutes: (m: number) => `${m}m`, hours: (h: number, m: number) => `${h}h ${m}m`,
     fold: (name: string) => `Fold ${name}’s workers`, unfold: (name: string, n: number) => `Show ${name}’s ${n} worker${n === 1 ? "" : "s"}`,
@@ -184,7 +184,7 @@ const WORDS = {
   },
   "zh-Hant": {
     running: "進行中", done: "做完", failed: "失敗", stopped: "已停止", viewed: "已看過",
-    waiting: { command: "等背景指令：", monitor: "等 Monitor：", agent: "等背景 agent：", process: "等它先前的行程結束" },
+    waiting: { command: "等背景指令：", monitor: "等 Monitor：", agent: "等背景 agent：", process: "等它先前的行程結束", apiRetry: "" },
     more: (n: number) => `還有 ${n} 個`, fewer: "收合", settle: "收起", settleHint: "收起：移到右側欄的「已收起」",
     ran: (t: string) => `跑了 ${t}`, minutes: (m: number) => `${m} 分`, hours: (h: number, m: number) => `${h} 小時 ${m} 分`,
     fold: (name: string) => `折起 ${name} 的 worker`, unfold: (name: string, n: number) => `展開 ${name} 的 ${n} 個 worker`,
@@ -236,6 +236,7 @@ export function railJobParts(job: RailJob, now: number, lang: string | null | un
 export function railStateWord(item: RailWorkerItem, lang: string | null | undefined): string {
   const w = railWords(lang);
   const on = item.state === "running" ? item.row.waitingOn : undefined;
+  // "apiRetry": the core's whole line ("API 暫時擋住，30 秒後重試（1/3）").
   if (on) return on.kind === "process" ? w.waiting.process : `${w.waiting[on.kind]}${on.title}`;
   if (item.viewed && item.state !== "running") return `${w[item.state]} · ${w.viewed}`;
   return w[item.state];

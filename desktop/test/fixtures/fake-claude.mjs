@@ -57,7 +57,10 @@
 // FAKE_CLAUDE_CONTROLS: a file it appends {session, request} to for every set_model request.
 // FAKE_CLAUDE_LOG: a file it appends one JSON line to per start: {pid, args, resume, session, cwd}.
 // FAKE_CLAUDE_RUN_TOOLS=1: "/tool <command>" really runs <command> in its folder once allowed.
-// FAKE_CLAUDE_FORGET=1: `--resume` fails like claude's for a session it does not have (exit 1, stderr only).
+// FAKE_CLAUDE_BLOCKED: a file holding a number N; while N > 0, each turn (not a worker report or claude's own) ends with
+// claude's API error and N goes down by one: "403 Attention Required! | Cloudflare" as claude 2.1.323 reports it (the
+// assistant line with is_api_error_message, then a result with is_error and api_error_status), or FAKE_CLAUDE_BLOCKED_AS's
+// status ("401": invalid API key; "529": overloaded). FAKE_CLAUDE_FORGET=1: `--resume` fails like claude's for a session it does not have (exit 1, stderr only).
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { safeWritePath } from "./safe-write.mjs";
@@ -297,10 +300,28 @@ async function backgroundTurn(job) {
   result(text);
 }
 
+/** FAKE_CLAUDE_BLOCKED: this turn ends with claude's API error (true), the count taken down by one. */
+function blocked() {
+  const file = process.env.FAKE_CLAUDE_BLOCKED;
+  if (!file || !existsSync(file)) return false;
+  const left = Number(readFileSync(file, "utf8").trim() || 0);
+  if (!(left > 0)) return false;
+  writeFileSync(file, String(left - 1));
+  const status = Number(process.env.FAKE_CLAUDE_BLOCKED_AS || 403);
+  const [error, text] = status === 401 ? ["authentication_failed", "Failed to authenticate. API Error: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}"]
+    : status === 529 ? ["server_error", "API Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"]
+    : ["authentication_failed", "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"];
+  out({ type: "assistant", parent_tool_use_id: null, is_api_error_message: true, api_error_status: status, error, message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text }] } });
+  turns += 1;
+  out({ type: "result", subtype: "success", is_error: true, api_error_status: status, result: text, session_id: session, total_cost_usd: 0 });
+  return true;
+}
+
 async function turn(job) {
   init();
   if (job.background) return backgroundTurn(job);
   const prompt = job.text;
+  if (!prompt.startsWith("<app_task_result ") && blocked()) return;
   // A worker's report (Claude app workers) answered with exactly FAKE_CLAUDE_REPORT_REPLY ("" ends the turn with nothing).
   if (process.env.FAKE_CLAUDE_REPORT_REPLY !== undefined && prompt.startsWith("<app_task_result ")) {
     result(await stream(process.env.FAKE_CLAUDE_REPORT_REPLY));

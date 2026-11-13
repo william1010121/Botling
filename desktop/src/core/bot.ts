@@ -114,6 +114,7 @@ import {
   WARM_WINDOW_MS, connectionErrorLine, isConnectionError, lostText, mentionsConnectionError, restoredText, resumeMode, resumeNote,
   type CutOff, type Outage,
 } from "./network-resume";
+import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "./api-retry";
 import { CONTINUE_NOTE, type SwapEntry } from "./hot-swap";
 import { MAX_PAGE_BYTES, PAGE_BYTES, pageBack, sliceViews } from "./history-page";
 import {
@@ -413,6 +414,9 @@ export class Bot {
   /** Cut off by the network (1.x's `outage`): it waits for the network to come back (`networkRestored`) to carry on. */
   outage: Outage | null = null;
   private retryingConnection = false;
+  /** Turns tried again in a row after an API error that passes (api-retry.ts), and the wait before the next try. */
+  private apiRetries = 0;
+  private apiRetryTimer: NodeJS.Timeout | null = null;
   /** Its Codex head waits to try a refused request again (BotView.codexRetry): until its next item, or the turn's end. */
   private codexRetry: NonNullable<BotView["codexRetry"]> | null = null;
   /** Subagents whose last line was claude's connection error (1.x's `cutOffByNetwork`). */
@@ -2118,6 +2122,8 @@ export class Bot {
   }
 
   private newTurn(origin: Origin, words: string, userId: string | null): Turn {
+    // Your message (or the app's) goes on with the session: the try waiting after an API error is not needed.
+    if (origin === "user" || origin === "app") this.clearApiRetry();
     let resolve!: Turn["resolve"];
     const done = new Promise<Status>((r) => (resolve = r));
     const turn: Turn = {
@@ -3724,6 +3730,16 @@ export class Bot {
           this.bumpUnread();
           return;
         }
+        // An API error that passes (a Cloudflare block, an overload): the turn is tried again in the same session after a
+        // wait, with a short line instead of claude's words; once every try failed, one plain failed line.
+        if (end.status === "failed" && item.apiPassing && turn.origin !== "tidy") {
+          if (this.retryApiLater(turn)) return;
+          this.apiRetries = 0;
+          turn.reply = new ReplyText();
+          this.finishTurn(turn, "failed", apiGaveUpText(apiRetryDelays().length, item.error || item.text));
+          return;
+        }
+        if (turn.origin !== "tidy") this.apiRetries = 0;
         // claude cut this turn off to take your line (priority "now"): the app's doing, not an error. It ends stopped,
         // with the words it wrote so far or, with none, no bubble at all; the raw subtype never shows.
         if (!item.ok && item.subtype === "error_during_execution" && turn.steeredNow) { this.finishTurn(turn, "stopped"); return; }
@@ -4390,6 +4406,41 @@ export class Bot {
       return;
     }
     this.deliverTo(this.engine, note, null, { origin: "app" });
+  }
+
+  /**
+   * The turn ended on an API error that passes: it ends stopped with the line "API 暫時擋住，30 秒後重試（1/3）" (its steps
+   * kept), and after the wait the same session is told to carry on (API_RETRY_NOTE) in a turn of the app's, which
+   * takes over its call-in relay. Claude already did the turn's tools; it goes on from there and redoes none. False:
+   * no try left (or a turn in another chat, which is not tried again here).
+   */
+  private retryApiLater(turn: Turn): boolean {
+    const delays = apiRetryDelays();
+    const attempt = this.apiRetries + 1;
+    if (attempt > delays.length || turn.guest || turn.callIn) return false;
+    this.apiRetries = attempt;
+    const delay = delays[attempt - 1]!;
+    const relay = turn.relayTo;
+    turn.relayTo = undefined;
+    turn.reply = new ReplyText();
+    turn.reply.add({ kind: "assistantText", text: apiRetryText(attempt, delays.length, delay) });
+    this.log(`API error that passes; trying the turn again in ${Math.round(delay / 1000)} s (${attempt}/${delays.length})`);
+    this.finishTurn(turn, "stopped");
+    this.clearApiRetry();
+    this.apiRetryTimer = setTimeout(() => {
+      this.apiRetryTimer = null;
+      if (this.shuttingDown || this.problem) return;
+      try {
+        const next = this.deliverTo(this.engine, API_RETRY_NOTE, null, { origin: "app" });
+        if (relay) next.relayTo = relay;
+      } catch (error) { this.log(`API retry not delivered: ${(error as Error).message}`); }
+    }, delay);
+    this.apiRetryTimer.unref?.();
+    return true;
+  }
+
+  private clearApiRetry() {
+    if (this.apiRetryTimer) { clearTimeout(this.apiRetryTimer); this.apiRetryTimer = null; }
   }
 
   // ------------------------------------------------------------------------------------------
@@ -6095,6 +6146,7 @@ export class Bot {
     if (this.claimHold) { clearTimeout(this.claimHold.timer); this.claimHold.turn.resolve("stopped"); this.claimHold = null; }
     const partner = Promise.allSettled(this.peers.map(peer => peer.shutdown({ tidy }))).then(results => results.find((r): r is PromiseRejectedResult => r.status === "rejected")?.reason);
     this.clearIdle();
+    this.clearApiRetry();
     this.shuttingDown = true;
     // Messages still waiting never reached claude.
     for (const waiting of this.queue.splice(0)) { waiting.open = false; waiting.resolve("stopped"); }
