@@ -260,6 +260,23 @@ export function openMedia(url: string, label: string, shown?: string): void {
   else post({ type: "openURL", url, label });
 }
 
+/**
+ * The local file a chat link, file chip or picture names, when it can be dragged out as a real file (onto a web page in
+ * the Browser pane as an upload, into Finder): a file:// URL, an absolute path, or a file attached in this chat as the
+ * chat origin serves it. Web links, data: pictures and anchors are not files. Main still checks the file is one of this
+ * chat's and is there before the drag starts.
+ */
+export function draggableFileURL(url: string | undefined): string | null {
+  if (!url) return null;
+  if (/^file:\/\//i.test(url)) return url;
+  if (url.startsWith("/") && !url.startsWith("//")) return url;
+  if (url.startsWith("botling-chat://chat/attachment/")) return url;
+  return null;
+}
+
+/** Where a drag out of the chat starts: a chip, file chip or picture with the URL it names. */
+const DRAG_SOURCES = "a.chip[data-url], a.file-chip[data-url], img.media[data-url], img.thumb[data-url]";
+
 const installed = new WeakSet<Document>();
 
 /** Chips, images and file chips: pictures open in the lightbox, the rest outside the page. */
@@ -282,5 +299,15 @@ export function handleMediaClicks(root: Document): void {
     if (!target || (event.key !== "Enter" && event.key !== " ")) return;
     event.preventDefault();
     if (!event.repeat) target.click();
+  });
+  // A local file's link or picture held and dragged: the app takes over with an OS file drag (dragFile), so a web page in
+  // the Browser pane gets it as an upload and Finder gets the file. Anything else drags as the browser would.
+  root.addEventListener("dragstart", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const target = event.target.closest<HTMLElement>(DRAG_SOURCES);
+    const url = draggableFileURL(target?.dataset.url);
+    if (!target || !url || target.classList.contains("missing")) return;
+    event.preventDefault();
+    post({ type: "dragFile", url });
   });
 }

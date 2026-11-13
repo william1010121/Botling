@@ -1470,6 +1470,10 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
         case "revealFile":
           if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", ...(action.type === "openExternal" || message.linkExternal === true ? { external: true } : {}), ...(message.reportPreview === true && action.type === "openURL" ? {preview: true} : {}), ...(action.type === "revealFile" ? { reveal: true } : {}), ...(cardImageOf(action.shown) ? { cardImage: cardImageOf(action.shown)! } : {}), source: message.linkSource === "user" ? "user" : "component", ...(typeof message.linkMessageId === "string" ? {messageId:message.linkMessageId} : {}), ...(typeof message.linkPinId === "string" ? {pinId:message.linkPinId} : {}), botId: chat.botId, url: action.url.slice(0, 8_000) }).then(result => { if (result.previewURL && store.getChatView().chat?.botId === chat.botId) setReport({botId: chat.botId, url: result.previewURL}); }).catch(onError);
           return;
+        // A local file's link or picture dragged out of the chat: main checks it is this chat's file and starts an OS file drag.
+        case "dragFile":
+          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.drag", botId: chat.botId, url: action.url.slice(0, 4_000) }).catch(onError);
+          return;
         // "Not right" on a reply (developer mode): main adds the chat frame as you saw it.
         case "feedback": {
           if (!chat || typeof action.messageID !== "string" || typeof action.text !== "string" || !paced("feedback")) return;

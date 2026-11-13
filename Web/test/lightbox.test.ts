@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
-import { closeLightbox, handleMediaClicks, isImageURL, openLightbox } from "../src/lightbox";
+import { closeLightbox, draggableFileURL, handleMediaClicks, isImageURL, openLightbox } from "../src/lightbox";
 import { messageElement } from "../src/messages";
 import { mediaHTML, renderMarkdown } from "../src/markdown";
 import type { MessageView } from "../src/types";
@@ -269,5 +269,50 @@ describe("standalone media keyboard handler IME safety", () => {
     image.dispatchEvent(new KeyboardEvent("keydown",{key:init.key,bubbles:true,cancelable:true}));
     expect(document.querySelector(".lightbox")).not.toBeNull();
     closeLightbox();expect(document.activeElement).toBe(image);
+  });
+});
+
+describe("dragging a local file out of the chat", () => {
+  function dragStart(element: Element): DragEvent {
+    const event = new Event("dragstart", { bubbles: true, cancelable: true }) as DragEvent;
+    element.dispatchEvent(event);
+    return event;
+  }
+
+  it("names only local files: file:// URLs, absolute paths and this chat's attachments", () => {
+    expect(draggableFileURL("file:///p/report.md")).toBe("file:///p/report.md");
+    expect(draggableFileURL("/Users/me/eeg/notes.md")).toBe("/Users/me/eeg/notes.md");
+    expect(draggableFileURL("botling-chat://chat/attachment/b1/x.png")).toBe("botling-chat://chat/attachment/b1/x.png");
+    for (const url of ["https://example.com/a.md", "mailto:a@b.c", "data:image/png;base64,AAAA", "//host/x", "notes.md", "#", "", undefined]) {
+      expect(draggableFileURL(url)).toBeNull();
+    }
+  });
+
+  it("asks the app for a file drag when a reply's file link or picture is dragged, and keeps the drag from the page", () => {
+    const row = messageElement(message({ text: "See [notes](file:///p/notes.md) and ![shot](file:///p/shot.png)" }), {});
+    document.body.append(row);
+    const link = row.querySelector<HTMLAnchorElement>("a.chip[data-url]")!;
+    const linkDrag = dragStart(link);
+    expect(linkDrag.defaultPrevented).toBe(true);
+    const picture = row.querySelector<HTMLImageElement>("img.media")!;
+    expect(dragStart(picture).defaultPrevented).toBe(true);
+    expect(sent).toEqual([{ type: "dragFile", url: "file:///p/notes.md" }, { type: "dragFile", url: "file:///p/shot.png" }]);
+  });
+
+  it("drags an attached file's chip", () => {
+    const row = messageElement(message({ role: "user", attachments: [{ name: "data.csv", kind: "file", url: "file:///p/data.csv" }] }), {});
+    document.body.append(row);
+    dragStart(row.querySelector("a.file-chip")!);
+    expect(sent).toEqual([{ type: "dragFile", url: "file:///p/data.csv" }]);
+  });
+
+  it("leaves web links as the browser drags them, and a click still opens a file link", () => {
+    const row = messageElement(message({ text: "[site](https://example.com) and [notes](file:///p/notes.md)" }), {});
+    document.body.append(row);
+    const [web, file] = [...row.querySelectorAll<HTMLAnchorElement>("a[data-url]")];
+    expect(dragStart(web!).defaultPrevented).toBe(false);
+    expect(sent).toEqual([]);
+    file!.click();
+    expect(sent).toEqual([{ type: "openURL", url: "file:///p/notes.md", label: "notes" }]);
   });
 });

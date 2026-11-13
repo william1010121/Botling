@@ -14,12 +14,19 @@ function userLink(url:unknown):boolean {
  return event instanceof MouseEvent && event.type==='click' && event.isTrusted
    && (event.target as Element|null)?.closest<HTMLElement>('[data-url]')?.dataset.url===url;
 }
+// A file drag out of the chat (Web/src/lightbox.ts dragFile) comes only from the user's own drag of the link that names it.
+function userDrag(url:unknown):boolean {
+ const event=window.event;
+ return typeof DragEvent!=='undefined' && event instanceof DragEvent && event.type==='dragstart' && event.isTrusted
+   && (event.target as Element|null)?.closest<HTMLElement>('[data-url]')?.dataset.url===url;
+}
 (window as unknown as { webkit: unknown }).webkit = Object.freeze({
   messageHandlers: Object.freeze({
     ccb: Object.freeze({
       postMessage(action: unknown) {
         if ((action as { type?: string })?.type === "pickFiles") { pickAttachments(); return; }
         const value = action as {type?:unknown;url?:unknown} | null;
+        if (value?.type === "dragFile" && !userDrag(value.url)) return;
         // Mirrored for Reload Chat Page (draft-keep.ts); the app still receives the action as before.
         if (nativeChat && value?.type === "draft") keepDraft(pageDraftStore(), (value as { botID?: unknown }).botID as string, value as { text?: unknown; cursor?: unknown } as { text: unknown; cursor: unknown });
         const linkSource = value?.type === "openURL" && userLink(value.url) ? "user" : "component";
