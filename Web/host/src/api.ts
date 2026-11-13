@@ -431,7 +431,8 @@ export interface NoteOutline {
   text?: string;
   /** `id` null: a cell not saved yet. `rev` null: not saved as it reads now. `label`: "Note #<id> · Fork › Route", for a quote's first line. */
   cells: Array<{ id: string | null; rev: number | null; kind: "text" | "card" | "image"; type: NoteCellRun["type"]; start: number; end: number; path: NotePathStep[]; label: string }>;
-  forks: Array<{ id: string | null; name: string; start: number; end: number; path: NotePathStep[]; routes: Array<{ id: string | null; name: string; implicit: boolean; start: number; end: number }> }>;
+  /** `label`: "Note #<id> · Fork › Route › Name" (the routes above it, then its name), for a quote's first line. */
+  forks: Array<{ id: string | null; name: string; start: number; end: number; path: NotePathStep[]; label: string; routes: Array<{ id: string | null; name: string; implicit: boolean; start: number; end: number }> }>;
 }
 /** A component for a note's insert menu. */
 export interface NoteComponent {

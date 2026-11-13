@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tempDir } from "../helpers";
-import { NoteConflict, NoteDb, align, branch, edit, evenKeys, insert, keyBetween, merge, move, noteDbPath, outline, read, remove, search, split } from "../../src/core/note-db";
+import { NoteConflict, NoteDb, align, branch, edit, evenKeys, insert, keyBetween, merge, move, noteDbPath, outline, read, remove, search, split, withoutBlankEdges, type OutlineBlock } from "../../src/core/note-db";
 import { cellRuns, classifyLines, exportNote, noteTree, parseBranches, treeShape } from "../../src/core/note-cells";
 
 const open: NoteDb[] = [];
@@ -322,6 +322,35 @@ describe("the Note tab's plain read and write", () => {
     expect(readFileSync(file, "utf8")).toContain(`<!-- cell: ${ids[0]} -->`);
   });
 
+  it("withoutBlankEdges drops only the blank lines at a cell's edges", () => {
+    expect(withoutBlankEdges("\n \nA\n\nB\n\t\n")).toBe("A\n\nB");
+    expect(withoutBlankEdges("A\n\nB")).not.toBe(withoutBlankEdges("A\nB"));
+    expect(withoutBlankEdges("  ")).toBe("");
+    expect(withoutBlankEdges("  indented")).toBe("  indented");
+  });
+
+  it("a nested fork's label names the routes above it", () => {
+    const { note } = noteAt("<!-- branch: Plan -->\n<!-- route: A -->\nx\n<!-- branch: Inner -->\n<!-- route: B -->\ny\n<!-- end branch -->\n<!-- end branch -->\n");
+    const forks = note.outlineLines().forks as { id: string; name: string; label: string }[];
+    expect(forks.map((fork) => fork.label)).toEqual([`Note #${forks[0]!.id} · Plan`, `Note #${forks[1]!.id} · Plan › A › Inner`]);
+  });
+
+  it("a cell dragged across blank lines keeps its id: blank lines at a cell's edges do not make it another cell", () => {
+    const { note } = noteAt("A\n\n<!-- cell -->\n\nB\n<!-- cell -->\nC\n");
+    const ids = () => Object.fromEntries(outline(note).items.map((item) => [(item as OutlineBlock).first, item.id]));
+    const before = ids();
+    const first = note.readPlain();
+    // The Note tab drags B to the top: the blank lines that were around the cell line stay behind, so B, A and C read without them / with others.
+    const saved = note.writePlain("B\n<!-- cell -->\nA\n<!-- cell -->\n\n\nC\n\n", first.mtime);
+    expect(saved.saved).toBe(true);
+    expect(ids()).toEqual(before);
+    // What a cell holds is still exactly what was saved.
+    expect(note.readPlain().text).toBe("B\n<!-- cell -->\nA\n<!-- cell -->\n\n\nC\n\n");
+    // outlineLines matches the editor's words the same way (the 問 quote names the cell by the id it keeps).
+    const typed = note.outlineLines("\nA\n<!-- cell -->\nB\n\n<!-- cell -->\nC\n").cells as { id: string | null }[];
+    expect(typed.map((cell) => cell.id)).toEqual([before.A, before.B, before.C]);
+  });
+
   it("outlineLines gives the 問 quote its ids, lines and route path, for the saved note or the editor's own words", () => {
     const { note } = noteAt("intro\n<!-- branch: Loading -->\n<!-- route: Lazy load -->\n每個分頁第一次打開時才載入外掛\n<!-- end branch -->\n");
     const saved = note.outlineLines();
@@ -330,6 +359,9 @@ describe("the Note tab's plain read and write", () => {
     expect(cell).toMatchObject({ start: 3, end: 3, rev: 1, path: [{ fork: "Loading", route: "Lazy load" }] });
     expect(cell.label).toBe(`Note #${cell.id} · Loading › Lazy load`);
     expect(saved.forks).toEqual([expect.objectContaining({ name: "Loading", start: 1, end: 4, routes: [expect.objectContaining({ name: "Lazy load", start: 2, end: 4 })] })]);
+    // A fork has its label too: its id, the routes above it and its name (the quote adds the route it shows).
+    const fork = saved.forks[0] as { id: string; label: string };
+    expect(fork.label).toBe(`Note #${fork.id} · Loading`);
     // Unsaved words: a line typed above moves the lines, the ids stay; a new cell has none yet.
     const typed = note.outlineLines("new line\nintro\n<!-- branch: Loading -->\n<!-- route: Lazy load -->\n每個分頁第一次打開時才載入外掛\n<!-- cell -->\nfresh\n<!-- end branch -->\n");
     const cells = typed.cells as { id: string | null; start: number; rev: number | null }[];

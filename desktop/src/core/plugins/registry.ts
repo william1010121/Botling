@@ -6,7 +6,7 @@
 //
 // Built-in plugins (step M11: ccb-latex, botling.cards, botling.design) are read from the app's own folder
 // first, as 1.x's `builtIns` root: read-only, on until you turn them off, and a plugin of the same name in
-// the library replaces one. Since Phase 4a web parts run in the chat page again (it has an origin of its
+// the library replaces one when its version is the same or newer (versions.ts; an older library copy is ignored). Since Phase 4a web parts run in the chat page again (it has an origin of its
 // own), with 1.x's "last version that worked" to fall back on when a new one breaks.
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -17,6 +17,7 @@ import type { Contribution } from "./contributions";
 import type { SecretStore } from "./secrets";
 import { swiftPrettyJSON } from "../swift-json";
 import { listInspectQueries, runInspect, type InspectContext, type InspectResult } from "./introspect";
+import { libraryCopyWins } from "./versions";
 
 /** A plugin's web part as the chat page loads it (`WebPluginSpec`). `styles` are paths in the plugin's folder. */
 export interface WebSpec {
@@ -39,8 +40,12 @@ const WEB_FILE_TYPES: Record<string, string> = {
 export interface InstalledPlugin {
   manifest: PluginManifest;
   folder: string;
-  /** Shipped with Botling (read-only, always approved); a plugin of the same name in the library replaces it. */
+  /** Shipped with Botling (read-only, always approved); a plugin of the same name in the library at the same or a newer version replaces it. */
   builtIn: boolean;
+  /** A library plugin running in place of a built-in one of the same name: the built-in's version. */
+  replacesBuiltIn?: string;
+  /** A built-in plugin running while the library holds an older copy (or one with a version that is not a semver), ignored: that copy. */
+  ignoredLibraryCopy?: { folder: string; version: string };
   enabled: boolean;
   /** Why it was turned off when it broke (until its files change). */
   failure: string | null;
@@ -455,12 +460,20 @@ export class PluginRegistry {
       if (loaded.ok) {
         const manifest = loaded.manifest;
         const print = PluginRegistry.fingerprint(folder, manifest);
+        // Both Botling and the library have it: the library's copy runs only at the built-in's version or a newer one (versions.ts).
+        const shipped = found.get(manifest.name);
+        if (!builtIn && shipped?.builtIn && !libraryCopyWins(manifest.version, shipped.manifest.version)) {
+          shipped.ignoredLibraryCopy = { folder, version: manifest.version };
+          delete this.reportedProblems[name];
+          continue;
+        }
         prints[manifest.name] = print;
         const failed = this.state.failures[manifest.name];
         const failure = failed && failed.fingerprint === print ? failed.message : null;
         found.set(manifest.name, {
           manifest, folder, builtIn, failure, enabled: !this.state.disabled.includes(manifest.name) && !failure,
           installedFrom: builtIn ? null : this.state.installed?.[manifest.name] ?? null,
+          ...(!builtIn && shipped?.builtIn ? { replacesBuiltIn: shipped.manifest.version } : {}),
         });
         delete this.reportedProblems[name];
       } else {

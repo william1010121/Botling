@@ -1,0 +1,3 @@
+{
+  "loaders": { ".css": "text", ".woff2": "base64" }
+}
