@@ -292,5 +292,33 @@ describe("wire", () => {
     expect(text).toContain("https://chatgpt.com/c/1");
     expect(text).toContain("/data/browser-tools/<tool-id>/");
     expect(text).toContain("/data/browser-tools/README.md");
+    expect(text).toContain("First ask me");
+  });
+
+  it("with the user's request, has any other bot hand exactly that to Maintainer at once", () => {
+    const text = askForToolText("https://gemini.google.com/app/1", "/data/browser-tools", "/data/browser-tools/README.md", false, "  Save each reply as Markdown\nwith its date  ");
+    expect(text).toContain("Save each reply as Markdown\nwith its date");
+    expect(text).toContain("<plugin>site tool: Save each reply as Markdown\nwith its date, on https://gemini.google.com/app/1</plugin>");
+    expect(text).toMatch(/Do not ask me anything first/);
+    expect(text).not.toContain("First ask me");
+    expect(text).not.toContain("suggest two or three ideas");
+    expect(text).not.toContain("/data/browser-tools");
+    expect(text).toContain("Do not write the tool yourself");
+  });
+
+  it("with the user's request, has Maintainer build exactly that in the folder without asking", () => {
+    const text = askForToolText("https://chatgpt.com/c/1", "/data/browser-tools", "/data/browser-tools/README.md", true, "Add a copy-all button");
+    expect(text).toContain("Add a copy-all button");
+    expect(text).toContain("Build exactly that; do not ask me first");
+    expect(text).toContain("/data/browser-tools/<tool-id>/");
+    expect(text).toContain("/data/browser-tools/README.md");
+    expect(text).not.toContain("First ask me");
+    expect(text).not.toContain("<plugin>");
+  });
+
+  it("treats a blank request like none", () => {
+    for (const maintainer of [true, false]) {
+      expect(askForToolText("https://x.com/", "/f", "/f/README.md", maintainer, "  \n ")).toBe(askForToolText("https://x.com/", "/f", "/f/README.md", maintainer));
+    }
   });
 });

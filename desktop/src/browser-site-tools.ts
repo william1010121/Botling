@@ -314,9 +314,28 @@ export function safeFileName(name: string): string | null {
 
 /**
  * What the "Ask Botling to make a tool" button sends to the bot's chat. Site tools are Maintainer's alone
- * (core/site-tools-guard.ts): any other bot asks what the tool should do and hands it on with <plugin>.
+ * (core/site-tools-guard.ts): any other bot hands the request on with <plugin>. With `request` (what the user typed in
+ * the sheet) the bot builds exactly that, quoting it verbatim and asking nothing first; without it, the bot first asks
+ * what the tool should do.
  */
-export function askForToolText(url: string, folder: string, guide: string, maintainer: boolean): string {
+export function askForToolText(url: string, folder: string, guide: string, maintainer: boolean, request = ""): string {
+  const wanted = request.trim();
+  if (wanted) {
+    const asked = [`What it should do, in my words:`, "", wanted, ""];
+    if (!maintainer) return [
+      `Please get this site tool made for this page in the app's browser: ${url}`,
+      "",
+      ...asked,
+      `Do not ask me anything first. Hand it to Maintainer right away, who makes and keeps every site tool: end your reply with <plugin>site tool: ${wanted}, on ${url}</plugin>. Pass my words on as they are. Do not write the tool yourself.`,
+    ].join("\n");
+    return [
+      `Please make this site tool for this page in the app's browser: ${url}`,
+      "",
+      ...asked,
+      "Build exactly that; do not ask me first. If something is truly unclear, pick the most likely reading and say which you picked.",
+      `Write it as a folder in ${folder}/<tool-id>/ with tool.json and script.js, following ${guide}. The app picks it up as soon as the files are saved.`,
+    ].join("\n");
+  }
   if (!maintainer) return [
     `Please get a site tool made for this page in the app's browser: ${url}`,
     "",
