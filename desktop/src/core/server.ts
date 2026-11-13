@@ -2778,9 +2778,9 @@ First write a test that shows this, then fix it.`;
       }
       case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
       case "storage.list": {
-        const profile = this.bot(cmd.botId).profile;
-        const artifacts = profile.folder ? profilePaths(profile).artifacts : null;
-        return { items: storageItems(artifacts, this.storage.refs(cmd.botId)), artifacts };
+        const bot = this.bot(cmd.botId);
+        const artifacts = bot.profile.folder ? profilePaths(bot.profile).artifacts : null;
+        return { items: storageItems(artifacts, this.storage.refs(cmd.botId), bot.linkedFiles()), artifacts };
       }
       // Main checked the paths are files (main.ts storageAdd).
       case "storage.add": this.bot(cmd.botId); return { added: this.storage.add(cmd.botId, cmd.paths) };

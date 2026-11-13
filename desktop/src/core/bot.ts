@@ -60,6 +60,7 @@ import { backgroundTaskOutput, backgroundTaskView, backgroundOutputFile } from "
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
+import { linkedFiles, type LinkedFile } from "./storage";
 import { answerLabel, attachmentKind, attachmentList, attachmentMissing, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
 import { dropLineMedia, keepLineMedia, lineMediaCopy } from "./chat-media";
 import { sameJSON } from "./same-json";
@@ -1666,6 +1667,11 @@ export class Bot {
   /** The links handed over in this chat, newest first (`Bot.results`). */
   results(): ResultView[] {
     return resultLinks(this.records);
+  }
+
+  /** The local files its replies handed over, newest first (its Storage lists them; core/storage.ts). */
+  linkedFiles(): LinkedFile[] {
+    return linkedFiles(this.records);
   }
 
   /** Told with its next message when it is awake (`Bot.queueNote`; a later note replaces an earlier one). An asleep bot reads it all at its wake. */
