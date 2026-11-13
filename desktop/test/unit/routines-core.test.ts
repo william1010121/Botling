@@ -100,7 +100,7 @@ describe("routines", () => {
     const dir = tempDir("routines");
     const c = core(dir, { BOTLING_PLAIN_SHELL: "1" });
     const file = join(dir, "main", "routines.cron");
-    await until(() => existsSync(file));
+    await until(() => existsSync(file) && existsSync(join(dir, "main", "bot.json")));
     await c.kill();
     const ok = "* * * * * Fine: !echo all good";
     const bad = "* * * * * Disk: !echo disk 97% full; exit 3";

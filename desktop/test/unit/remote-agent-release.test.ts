@@ -66,8 +66,7 @@ describe("botling-agent release", () => {
     const bad = join(dir, "home-bad");
     mkdirSync(bad);
     const refused = await run(bad, "--sha", "0".repeat(64), "--no-pair");
-    expect(refused.status).toBe(1);
-    expect(refused.stderr).toMatch(/does not match/);
+    expect(refused, JSON.stringify(refused)).toMatchObject({ status: 1, stderr: expect.stringMatching(/does not match/) });
     expect(existsSync(join(bad, ".botling-agent"))).toBe(false);
 
     // The right one: installed with its launcher.

@@ -42,7 +42,7 @@ try {
   page.on('response', async response => { if (response.url().endsWith('/frame-host.html')) result.hostHeaders ??= { csp: (await response.allHeaders())['content-security-policy'] }; });
   await page.goto(base);
   await page.fill('input.web-token', 'f'.repeat(43));
-  await page.click('button.web-primary');
+  await page.click('button[type="submit"].web-primary');
   await page.waitForSelector('.shell[data-ready="1"]');
   // Things a card must not see: a readable shell cookie and shell storage (the access token lives only in the shell's memory).
   await page.evaluate(() => { document.cookie = 'probe=shell-visible; path=/'; localStorage.setItem('probe', 'shell-visible'); });

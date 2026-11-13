@@ -44,10 +44,11 @@ describe("a second core on the same data folder", () => {
     await old.chat(MAIN);
     // What a rollback/data migration does: the live folder is renamed aside and a copy is put in its
     // place. The running core still writes by path, i.e. into the copy. The copy even carries the old
-    // core's lock file: the new core waits for the old one to let go.
+    // core's lock file: the new core waits for the old one to let go. (The old core checks every 100 ms
+    // here, so it may already have seen the swap and removed its record from the copy before the new one
+    // starts; either way the old one stops and the new one owns the folder.)
     renameSync(dir, `${dir}.moved`);
     cpSync(`${dir}.moved`, dir, { recursive: true });
-    expect(existsSync(join(dir, LOCK_DIR))).toBe(true);
     const fresh = start(dir);
     await fresh.chat(MAIN);
     expect((await exitCode(old)).code).toBe(CORE_EXIT_DATA_DIR_IN_USE);

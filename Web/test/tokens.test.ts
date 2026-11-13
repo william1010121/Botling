@@ -109,6 +109,7 @@ describe("tokens.css", () => {
     }
     // The shell reads only the tokens it always read (the whiteboard's own are the plugin's, builtin-plugins/botling.whiteboard); do not silently admit new token consumers.
     for (const name of Object.keys(vars)) if (!(name in shellBefore) && !(name in adoptedTokens) && !(name in lightLookTokens)) expect(used(own).has(name), name).toBe(false);
-    for (const name of used(own)) if (name.startsWith("--") && !/^--(board|message|task|chat)-/.test(name)) expect(vars[name] ?? own.includes(`${name}:`), name).toBeTruthy();
+    // Set at run time: the column widths (--rail-w, --right-w, --browser-w, --note-chat-w) by the draggable dividers, and the floating chat's place (--float-*).
+    for (const name of used(own)) if (name.startsWith("--") && !/^--(board|message|task|chat)-/.test(name) && !/^--((rail|right|browser|note-chat)-w|float-(left|top|width|height))$/.test(name)) expect(vars[name] ?? own.includes(`${name}:`), name).toBeTruthy();
   });
 });
