@@ -57,19 +57,18 @@ function fixture() {
 
 it("a partner's update to an old line outside the shared chat does not append it as a new line", () => {
   const f = fixture();
-  const before = (f.primary as any).records.map((record) => record.id);
+  const before = (f.primary as any).records.map((record: any) => record.id);
   // What Bot.projectWorker -> subagentChanged does for an old worker when the partner head's worker core starts.
   const record = (f.partner as any).records.find((r: any) => r.id === OLD);
   (f.partner as any).changed(record);
-  expect((f.primary as any).records.map((r) => r.id)).toEqual(before);
+  expect((f.primary as any).records.map((r: any) => r.id)).toEqual(before);
   expect(f.events.some((e) => e.type === "message.added" && e.message?.id === OLD)).toBe(false);
 });
 
 it("a partner's genuinely new line still joins the shared chat", () => {
   const f = fixture();
   const fresh = line(NEW, "bot", "已派出 1 個研究工作代理。", 816_249_100, { engine: "codex", state: "done" });
-  (f.partner as any).records.push(fresh);
-  (f.partner as any).changed(fresh);
+  (f.partner as any).add(fresh);
   expect((f.primary as any).records.at(-1)?.id).toBe(NEW);
 });
 
@@ -80,4 +79,33 @@ it("re-drawing an old worker's row at the partner head's start does not bring it
   (f.partner as any).onSubagentItem({ kind: "subagentStarted", id: "w1", description: "arch-investigation", type: "agy-worker", prompt: "Work", background: true });
   (f.partner as any).subagentChanged((f.partner as any).subagents.get("w1"));
   expect((f.primary as any).records.map((r: any) => r.id)).toEqual(before);
+});
+
+it("a partner line it moves below your new line (joinTurn: removed, then added) stays in the shared chat", () => {
+  const f = fixture();
+  const fresh = line(NEW, "bot", "查到一半。", 816_249_100, { engine: "codex", state: "streaming" });
+  (f.partner as any).add(fresh, { archive: false });
+  (f.partner as any).records.splice((f.partner as any).records.indexOf(fresh), 1);
+  (f.partner as any).emit({ type: "message.removed", botId: "x", messageId: NEW });
+  (f.partner as any).add(fresh, { archive: false });
+  expect((f.primary as any).records.filter((r: any) => r.id === NEW)).toHaveLength(1);
+  expect((f.primary as any).records.at(-1)?.id).toBe(NEW);
+});
+
+it("an old worker re-projected unchanged when its head starts does not redraw the line that sent it", () => {
+  const f = fixture();
+  const bot = f.partner as any;
+  bot.options.agents = { observed: vi.fn(), ended: vi.fn(), retained: () => [], movedOut: () => new Set() };
+  bot.onSubagentItem({ kind: "subagentStarted", id: "w1", description: "arch-investigation", type: "agy-worker", prompt: "Work", background: true });
+  const ledger = { v: 3, id: "w1", engine: "agy", adapter: "agy-acp", name: "arch-investigation", status: "done", run: 1,
+    report: { status: "done", state: "none", text: "報告完成。", attempts: 0 }, createdAt: 1, endedAt: 2 };
+  // What the partner itself sends (before the shared chat's own rule in fromPartner).
+  const sent = vi.spyOn(bot, "emit");
+  const redrawn = () => sent.mock.calls.filter(([e]: any[]) => e.type === "message.updated" && e.message?.id === OLD).length;
+  bot.projectWorker(ledger); // its end: the row changes, the line is drawn again
+  expect(redrawn()).toBe(1);
+  const observed = bot.options.agents.observed.mock.calls.length;
+  bot.projectWorker(structuredClone(ledger)); // WorkerCore.projectAll at the next head start: nothing changed
+  expect(redrawn()).toBe(1);
+  expect(bot.options.agents.observed.mock.calls.length).toBe(observed + 1); // the registry still hears of it
 });
