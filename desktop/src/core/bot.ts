@@ -720,6 +720,10 @@ export class Bot {
       case "message.updated": {
         let record = this.records.find((candidate) => candidate.id === event.message.id);
         if (!record) {
+          // A change to a line this chat no longer holds (an old one past its window, while the partner's own file
+          // still has it, e.g. an old worker's step re-drawn when its head starts) is no new line: only an added one
+          // joins the chat. Pushing it here put weeks-old replies after your newest line, where catch-up read them as new.
+          if (event.type !== "message.added") return;
           const theirs = partner.records.find((candidate) => candidate.id === event.message.id);
           if (!theirs) return;
           record = theirs;
@@ -1489,7 +1493,9 @@ export class Bot {
     if (!row || atStart || (!projected.rowChanged && !this.options.agents)) return;
     if (projected.ended) this.subagentEnded(record.id);
     else if (projected.rowChanged) this.markWorkerStep(record.id, projected.stepFailed);
-    this.subagentChanged(row);
+    // A row that did not change (every old worker, re-projected when its head starts) is told to the registry, but
+    // the line that sent it is not drawn again: nothing on it changed.
+    this.subagentChanged(row, false, projected.rowChanged || projected.ended);
   }
 
   /** The step that started a worker shows how its latest run ended (a report left unresolved later fails it too). */
@@ -3859,7 +3865,7 @@ export class Bot {
   }
 
   /** It changed: saved, its view sent, and the step that sent it (status, count) drawn again. */
-  private subagentChanged(subagent: SubagentRecord | undefined, progress = false) {
+  private subagentChanged(subagent: SubagentRecord | undefined, progress = false, redrawLine = true) {
     if (!subagent) return;
     this.saveSubagents(progress && subagent.status === "running", subagent);
     if (!subagent.parentID) this.options.agents?.observed(this.hostFacts(), subagent, this.workerViews.get(subagent.id));
@@ -3869,6 +3875,7 @@ export class Bot {
     this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents, this.engine, live) });
     const top = subagent.parentID ? this.subagents.get(subagent.parentID) ?? subagent : subagent;
     if (this.turn?.steps.some((step) => step.id === top.id)) this.emitSteps(this.turn);
+    if (!redrawLine) return;
     for (let i = this.records.length - 1, seen = 0; i >= 0 && seen < 80; i--, seen++) {
       const record = this.records[i]!;
       if (record !== this.turn?.record && record.steps?.some((step) => step.id === top.id)) {
