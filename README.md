@@ -101,8 +101,8 @@ their own data or a CLI command (`<show name="…" command="git diff --stat">`).
 (`ccb.save(data)`, so a todo list's ticks survive a restart).
 
 Pin one above the input box as a status chip, or **float** it in a corner over every chat to watch
-a build. Each bot's **Storage** tab (beside Note) lists the files it made and the ones you dragged
-in; drag a row onto a web page in the Browser pane to upload it there.
+a build. Each bot's **Storage** tab (beside Note) lists the files it made, the files its replies
+linked to and the ones you dragged in; drag a row onto a web page in the Browser pane to upload it there.
 
 </td>
 </tr>

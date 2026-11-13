@@ -1,13 +1,15 @@
 // The Storage tab (檔案庫, 2026-11-11): per bot, the files the bot made itself (everything in its artifacts folder:
-// reports, PDFs, Markdown, pictures; listed where they are, never copied) and the files the user dragged in (from Finder
-// or the chat), kept as references only: the original path is remembered, nothing is copied, and a reference whose file
-// moved or was deleted shows as missing. The references are app state (`<data>/storage.json`), never a file in .bot/,
+// reports, PDFs, Markdown, pictures; listed where they are, never copied), the files its replies handed over (file: links
+// outside that folder) and the files the user dragged in (from Finder or the chat), the last two kept as references only:
+// the original path is remembered, nothing is copied, and a reference whose file moved or was deleted shows as missing. The references are app state (`<data>/storage.json`), never a file in .bot/,
 // which the bots own. Removing a reference never touches the original.
 import { randomUUID } from "node:crypto";
 import { lstatSync, readdirSync, statSync, type Stats } from "node:fs";
-import { basename, extname, join, relative, sep } from "node:path";
+import { basename, extname, join, normalize, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { writeFileAtomic } from "./durable/atomic";
 import { readJSON } from "./store/bot-store";
+import { fromSwiftDate } from "./store/records";
 import type { StorageItemView, StorageKind } from "../contract";
 
 /** One file the user dragged into a bot's Storage: where it was, and when it was added (ms). */
@@ -73,12 +75,83 @@ export function refItem(ref: StorageRef): StorageItemView {
     size: ok ? stats.size : null, modified: ok ? Math.round(stats.mtimeMs) : null, added: ref.added, kind: storageKind(ref.path), missing: !ok };
 }
 
-/** Everything a bot's Storage lists: its own files, then the files dragged in (newest added first). A dragged-in file inside the artifacts folder shows once, as the bot's. */
-export function storageItems(artifacts: string | null, refs: StorageRef[]): StorageItemView[] {
+/** A file a bot handed over in a reply: its path, and when the newest reply naming it came (ms). */
+export interface LinkedFile { path: string; at: number }
+
+// file: URLs anywhere in a reply (markdown links, images, bare), and markdown links to an absolute path.
+const FILE_URL = /file:\/\/[^\s)<>"'`\]]+/g;
+const ABS_LINK = /\]\(<?(\/[^)\s>]+)>?\)/g;
+
+/** The local files a reply's text links to, in order, once each (query and fragment dropped; http(s) and relative links left out). */
+export function replyFilePaths(text: string): string[] {
+  if (!text.includes("file:") && !text.includes("](/") && !text.includes("](</")) return [];
+  const found: { index: number; path: string }[] = [];
+  for (const match of text.matchAll(FILE_URL)) {
+    const url = match[0].replace(/[?#].*$/, "").replace(/[.,;:!?]+$/, "");
+    try { found.push({ index: match.index ?? 0, path: normalize(fileURLToPath(url)) }); } catch { /* not a local file URL */ }
+  }
+  for (const match of text.matchAll(ABS_LINK)) {
+    const raw = match[1]!.replace(/[?#].*$/, "");
+    let path = raw;
+    try { path = decodeURIComponent(raw); } catch { /* keep as written */ }
+    found.push({ index: match.index ?? 0, path: normalize(path) });
+  }
+  return [...new Set(found.sort((a, b) => a.index - b.index).map((item) => item.path).filter((path) => path.startsWith("/") && path !== "/"))];
+}
+
+/** A chat line, as much of it as Storage reads. */
+interface ReplyLine { role: string; text: string; date: number; sourceID?: string }
+
+/**
+ * Each reply's linked files, parsed once while its text stays the same (a chat is up to HISTORY_LIMIT lines and the tab
+ * refreshes often): only the paths that were a file when the reply was first read, so a link to a folder or to a file
+ * that never existed is left out, and a file deleted later stays listed (as missing).
+ */
+const replyIndex = new WeakMap<object, { text: string; paths: string[] }>();
+
+function replyFiles(line: ReplyLine): string[] {
+  const known = replyIndex.get(line);
+  if (known && known.text === line.text) return known.paths;
+  const paths = replyFilePaths(line.text).filter((path) => statOf(path)?.isFile() === true);
+  replyIndex.set(line, { text: line.text, paths });
+  return paths;
+}
+
+/** The files the bot handed over in its own replies (not yours, not a guest bot's), newest reply first, once per path. */
+export function linkedFiles(lines: readonly ReplyLine[], limit = REF_LIMIT): LinkedFile[] {
+  const out: LinkedFile[] = [];
+  const seen = new Set<string>();
+  for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
+    const line = lines[i]!;
+    if (line.role !== "bot" || line.sourceID) continue;
+    for (const path of replyFiles(line)) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      out.push({ path, at: Math.round(fromSwiftDate(line.date)) });
+    }
+  }
+  return out;
+}
+
+/** A file handed over in a reply, as the list shows it: the bot's, dated by the reply, missing when the original is gone. */
+export function linkedItem(file: LinkedFile): StorageItemView {
+  const stats = statOf(file.path);
+  const ok = !!stats && stats.isFile();
+  return { id: `l:${file.path}`, source: "bot", name: basename(file.path), folder: null, path: file.path,
+    size: ok ? stats.size : null, modified: ok ? Math.round(stats.mtimeMs) : null, added: file.at, kind: storageKind(file.path), missing: !ok };
+}
+
+/**
+ * Everything a bot's Storage lists: its own files, then the files dragged in (newest added first), then the files its
+ * replies handed over (newest reply first). Each path shows once: as the bot's artifact, else as yours, else as linked.
+ */
+export function storageItems(artifacts: string | null, refs: StorageRef[], linked: readonly LinkedFile[] = []): StorageItemView[] {
   const own = artifacts ? artifactItems(artifacts) : [];
   const ownPaths = new Set(own.map((item) => item.path));
   const added = [...refs].sort((a, b) => b.added - a.added).filter((ref) => !ownPaths.has(ref.path)).map(refItem);
-  return [...own, ...added];
+  const addedPaths = new Set(added.map((item) => item.path));
+  const handed = linked.filter((file) => !ownPaths.has(file.path) && !addedPaths.has(file.path)).map(linkedItem);
+  return [...own, ...added, ...handed];
 }
 
 function isRef(value: unknown): value is StorageRef {

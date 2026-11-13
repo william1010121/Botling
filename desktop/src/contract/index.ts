@@ -1249,7 +1249,8 @@ export const StorageKind = z.enum(["image", "pdf", "doc", "page", "sheet", "vide
 export type StorageKind = z.infer<typeof StorageKind>;
 /**
  * One row of a bot's Storage: `source` "bot" for a file in its artifacts folder (`id` "a:<path inside it>", `folder` the
- * subfolder or null), "added" for a file the user dragged in (`id` "r:<ref id>", `added` when; `missing` when the original
+ * subfolder or null) or a file one of its replies linked to (`id` "l:<path>", `added` the reply's time, `missing` as below),
+ * "added" for a file the user dragged in (`id` "r:<ref id>", `added` when; `missing` when the original
  * moved or was deleted, then `size` and `modified` are null). Dates in ms.
  */
 export const StorageItemView = z.strictObject({
