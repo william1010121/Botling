@@ -333,6 +333,7 @@ export class Core {
           } : {});
         }),
         openPanel: (plugin, panel, title) => this.event({ type: "plugins.open", plugin, panel, title }),
+        openTab: (plugin, view, botId) => this.event({ type: "plugins.openTab", plugin, view, botId }),
         // Straight to the app page, not through `event()`: no plugin, workspace or phone listener has anything to do with it.
         frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? MAIN_BOT_ID : botId } : {}), data } }),
         botFolder: (botId) => this.pluginBot(botId)?.profile.folder ?? null,

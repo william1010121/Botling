@@ -925,7 +925,9 @@ export const PluginsView = z.strictObject({
   slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId.optional(), plugin: PluginName })).max(200).optional(),
   menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200), icon: z.string().max(40).optional(), quick: z.boolean().optional(), alt: z.string().max(200).optional(), hint: z.string().max(400).optional(), locales: z.record(z.string().max(20), z.strictObject({ title: z.string().max(400).optional(), alt: z.string().max(400).optional(), hint: z.string().max(400).optional() })).optional() })).max(200).optional(),
   /** Plugin views that are tabs beside Chat / Storage (`where: "mainTab"`), for the main bot, project bots or any (plan W2). */
-  mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "bots", "any"]) })).max(50).optional(),
+  // forRole "marked": only the bots in `bots` (the plugin's `ui.showTab`); chat "float": the bot's chat floats over the tab (as the Note tab's).
+  mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "bots", "any", "marked"]),
+    chat: z.literal("float").optional(), bots: z.array(z.string().max(100)).max(500).optional() })).max(50).optional(),
   /** Plugin views that are pages of Settings (`where: "settings.section"`): `after` names the core page it follows, `link` the sidebar popover's link that opens it. */
   settingsSections: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), terms: z.string().max(1_000), after: z.string().max(40).optional(), link: z.string().max(100).optional() })).max(20).optional(),
   /** Plugin views that are blocks in a bot's right panel overview, under its tasks (`where: "rightPanel.section"`), for the bots its `forRole` names. */
@@ -1460,6 +1462,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.emit"), plugin: PluginName, name: z.string().min(1).max(100), forBot: z.string().max(128).optional(), data: z.unknown() }),
   /** A plugin's program part opened one of its panels (`ui.openView`). */
   z.strictObject({ type: z.literal("plugins.open"), plugin: PluginName, panel: z.string().max(100), title: z.string().max(200) }),
+  /** A plugin's `ui.showTab(…, { open: true })`: the main window shows that bot with that `mainTab` view. */
+  z.strictObject({ type: z.literal("plugins.openTab"), plugin: PluginName, view: z.string().max(100), botId: BotId }),
   /** The app's settings changed. */
   z.strictObject({ type: z.literal("settings.updated"), settings: SettingsView }),
   z.strictObject({ type: z.literal("doctor.updated"), doctor: DoctorView }),

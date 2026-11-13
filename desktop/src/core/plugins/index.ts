@@ -26,6 +26,7 @@ import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } 
 import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
 import { viewSurfaces } from "./views";
+import { MarkedTabs } from "./marked-tabs";
 import { CORE_PROMPT_SECTIONS } from "../prompts";
 import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
@@ -128,6 +129,8 @@ export interface PluginWorld {
   ask(question: AppQuestion): Promise<AppAnswer>;
   /** Opens a plugin's panel on the app page. */
   openPanel(plugin: string, panel: string, title: string): void;
+  /** A plugin's `ui.showTab(…, { open: true })`: the main window shows that bot (the core's id) with that `mainTab` view. Absent: no window. */
+  openTab?(plugin: string, view: string, botId: string): void;
   /** A plugin's push to its frames (`ui.emit`), on its way to the app page; never part of a snapshot, and no other client hears it. */
   frameEvent?(plugin: string, name: string, botId: string | undefined, data: unknown): void;
   /** A bot's working folder as the core keeps it, the main bot's too (null: no such bot). */
@@ -267,6 +270,8 @@ const EMIT_MAX = 1_000_000;
 const ViewParams = z.object({ plugin: str(214), id: str(100).min(1), args: z.unknown().optional() });
 /** `ui.takeover`: opens one of the plugin's `rightPanel.takeover` views for a bot (`view`), or closes it (null). */
 const TakeoverParams = z.object({ plugin: str(214), view: str(100).min(1).nullable(), bot: str(128).optional(), wide: z.boolean().optional() });
+/** `ui.showTab`: shows (`on`) or hides one of the plugin's `forRole: "marked"` mainTab views for a bot; `open` also shows it now. */
+const ShowTabParams = z.object({ plugin: str(214), bot: str(128), view: str(100).min(1), on: z.boolean(), open: z.boolean().optional() });
 const SettingParams = z.object({ plugin: str(214), key: str(200), value: z.union([z.boolean(), z.number(), z.string().max(100_000), z.null()]) });
 const SecretKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
 const SecretGetParams = z.object({ plugin: str(214), key: SecretKey });
@@ -355,9 +360,12 @@ export class Plugins {
   private readonly chatDatas = new Map<string, Map<string, JSONValue>>();
   /** The `rightPanel.takeover` view open now (`ui.takeover`), by the core's bot id; at most one, gone when its plugin is. */
   private takeover: { plugin: string; view: string; botId: string; wide: boolean } | null = null;
+  /** The bots each plugin's `forRole: "marked"` tab shows for (`ui.showTab`), kept on disk. */
+  private readonly markedTabs: MarkedTabs;
 
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
+    this.markedTabs = new MarkedTabs(dataDir);
     this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer);
     this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
     this.dataRoot = join(dataDir, "plugin-data");
@@ -496,7 +504,10 @@ export class Plugins {
 
   /** Something plugins may listen for happened (`events.on`); only sent when one listens. */
   event(name: PluginEventName, data: unknown) {
-    if (name === "botRemoved") this.notes.unwatch((data as { botId: string }).botId);
+    if (name === "botRemoved") {
+      this.notes.unwatch((data as { botId: string }).botId);
+      if (this.markedTabs.forget((data as { botId: string }).botId)) this.announce();
+    }
     this.host.event(name, data);
   }
 
@@ -555,7 +566,7 @@ export class Plugins {
       host: { running: this.host.running, problem: this.host.problem?.slice(0, 2_000) ?? null },
       secretsProblem: this.secrets.problem?.slice(0, 2_000) ?? null,
       ...commandSurfaces(this.contributions()),
-      ...viewSurfaces(this.contributions(), (name) => !!this.registry.webPart(name)),
+      ...viewSurfaces(this.contributions(), (name) => !!this.registry.webPart(name), (plugin, view) => this.markedTabs.bots(plugin, view)),
       takeover: this.takeover ? { plugin: this.takeover.plugin, view: this.takeover.view, botId: this.takeover.botId, wide: this.takeover.wide } : null,
     };
   }
@@ -1208,6 +1219,18 @@ export class Plugins {
         const panel = plugin.manifest.ccb?.web ? plugin.manifest.ccb.contributes?.panels?.find((candidate) => candidate.id === data.id) : undefined;
         if (!panel) throw new Error(`Plugin "${name}" has no view "${data.id}".`);
         world.openPanel(name, panel.id, panel.title.slice(0, 200));
+        return null;
+      }
+      case "ui.showTab": {
+        const { plugin, data } = this.asked(ShowTabParams, params);
+        const name = plugin.manifest.name;
+        const tab = plugin.manifest.ccb?.web ? ofKind(this.contributions(), "view").find((entry) => entry.plugin === name && entry.id === data.view && entry.where === "mainTab") : undefined;
+        if (!tab) throw new Error(`Plugin "${name}" has no mainTab view "${data.view}".`);
+        if (tab.forRole !== "marked") throw new Error(`The view "${data.view}" is not forRole "marked": it shows for its role's bots already.`);
+        const botId = world.botId?.(data.bot) ?? null;
+        if (!botId) throw new Error("No such bot.");
+        if (this.markedTabs.set(name, data.view, botId, data.on)) this.announce();
+        if (data.on && data.open) world.openTab?.(name, data.view, botId);
         return null;
       }
       case "ui.takeover": {

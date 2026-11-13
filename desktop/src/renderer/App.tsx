@@ -464,7 +464,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       return;
     }
     if (command.id === "botling.openTab") {
-      const tab = mainTabsFor(store.getView().plugins, { role: store.getView().bots.find((candidate) => candidate.id === botId)?.role ?? "bot", parent: store.getView().bots.find((candidate) => candidate.id === botId)?.parent })
+      const tab = mainTabsFor(store.getView().plugins, { id: botId, role: store.getView().bots.find((candidate) => candidate.id === botId)?.role ?? "bot", parent: store.getView().bots.find((candidate) => candidate.id === botId)?.parent })
         .find((candidate) => candidate.plugin === command.plugin && candidate.id === command.view);
       if (!tab) { fail(new Error(`No tab "${command.view.slice(0, 80)}".`)); return; }
       selectBot(botId);
@@ -477,6 +477,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     setWhiteboardOn(false);
     selectBot(botId);
   }, [client, store, fail, chooseTab, setWhiteboardOn, selectBot]);
+  // A plugin's program part asked to show a bot with one of its tabs (`ui.showTab(…, { open: true })`): as its frame's openTab would.
+  const openTabSeq = view.openTab?.seq ?? 0;
+  useEffect(() => {
+    const asked = store.getView().openTab;
+    if (web || !asked) return;
+    runBuiltin(asked.plugin, { id: "botling.openTab", botId: asked.botId, plugin: asked.plugin, view: asked.view });
+  }, [openTabSeq]);
   // A plugin's view at the right end of the row above the input box (`composerBar`), drawn in the chat page.
   useComposerBar({ client, view: bot && !web ? composerBarFor(view.plugins, bot) : null, botId: bot?.id ?? null, onBuiltin: runBuiltin, components: view.components, bots: view.bots, ask: approval.ask });
 

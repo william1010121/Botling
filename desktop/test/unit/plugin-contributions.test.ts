@@ -177,7 +177,7 @@ describe("botling manifests", () => {
       { kind: "view", plugin: "board", id: "board.any", title: "Any", where: "mainTab", forRole: "any" },
     ]);
     expect(read.problems).toEqual([
-      'View "board.odd": forRole "everyone" must be main, project, bots or any.',
+      'View "board.odd": forRole "everyone" must be main, project, bots, any or marked.',
       'View "board.side": forRole is only for where "mainTab", "rightPanel.section" or "composerBar".',
     ]);
   });

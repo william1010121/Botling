@@ -4,15 +4,25 @@
 // view). Read from the one contribution list (contributions.ts); a view needs a web part to draw it in its
 // frame (panel-page.ts).
 import type { PluginsView } from "../../contract";
-import { COMPOSER_BAR_WIDTH, ofKind, type Contribution } from "./contributions";
+import { COMPOSER_BAR_WIDTH, ofKind, type Contribution, type MainTabRole, type ViewRole } from "./contributions";
+
+/** A role that is not a mainTab's: "marked" is only a mainTab's (the manifest refuses it elsewhere). */
+const viewRole = (role: MainTabRole | undefined): ViewRole => (role === undefined || role === "marked" ? "any" : role);
+
+/** The most bots one tab is marked for. */
+export const MARKED_BOTS_MAX = 500;
 
 export type ViewSurfaces = Required<Pick<PluginsView, "mainTabs" | "settingsSections" | "quickSettings" | "rightPanelSections" | "bottomPanels" | "chatHeaderViews" | "takeovers" | "composerBarViews">>;
 
-export function viewSurfaces(list: Contribution[], drawn: (plugin: string) => boolean): ViewSurfaces {
+/** `marked`: the bots (the core's ids) a plugin marked for one of its `forRole: "marked"` tabs (`ui.showTab`). */
+export function viewSurfaces(list: Contribution[], drawn: (plugin: string) => boolean, marked: (plugin: string, view: string) => string[] = () => []): ViewSurfaces {
   const views = ofKind(list, "view").filter((view) => drawn(view.plugin) && view.id.length <= 100);
   return {
     mainTabs: views.filter((view) => view.where === "mainTab").slice(0, 50)
-      .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), ...(view.icon ? { icon: view.icon.slice(0, 40) } : {}), forRole: view.forRole ?? "any" })),
+      .map((view) => ({
+        plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), ...(view.icon ? { icon: view.icon.slice(0, 40) } : {}), forRole: view.forRole ?? "any",
+        ...(view.chat ? { chat: view.chat } : {}), ...(view.forRole === "marked" ? { bots: marked(view.plugin, view.id).slice(0, MARKED_BOTS_MAX) } : {}),
+      })),
     settingsSections: views.filter((view) => view.where === "settings.section").slice(0, 20)
       .map((view) => ({
         plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), terms: (view.terms ?? "").slice(0, 1_000),
@@ -21,7 +31,7 @@ export function viewSurfaces(list: Contribution[], drawn: (plugin: string) => bo
     quickSettings: views.filter((view) => view.where === "quickSettings").slice(0, 10)
       .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200) })),
     rightPanelSections: views.filter((view) => view.where === "rightPanel.section").slice(0, 20)
-      .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), forRole: view.forRole ?? "any" })),
+      .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), forRole: viewRole(view.forRole) })),
     bottomPanels: views.filter((view) => view.where === "bottomPanel").slice(0, 5)
       .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), ...(view.toggle ? { toggle: view.toggle.slice(0, 200) } : {}) })),
     chatHeaderViews: views.filter((view) => view.where === "chatHeader").slice(0, 5)
@@ -29,6 +39,6 @@ export function viewSurfaces(list: Contribution[], drawn: (plugin: string) => bo
     takeovers: views.filter((view) => view.where === "rightPanel.takeover").slice(0, 5)
       .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200) })),
     composerBarViews: views.filter((view) => view.where === "composerBar").slice(0, 5)
-      .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), width: view.width ?? COMPOSER_BAR_WIDTH.default, forRole: view.forRole ?? "any" })),
+      .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), width: view.width ?? COMPOSER_BAR_WIDTH.default, forRole: viewRole(view.forRole) })),
   };
 }

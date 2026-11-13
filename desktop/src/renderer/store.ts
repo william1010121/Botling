@@ -53,6 +53,8 @@ export interface WorkspaceView {
   coreSwap?: "draining" | "updating" | null;
   /** A plugin panel its program part opened (`ui.openView`), until closed. */
   pluginPanel?: { plugin: string; panel: string; title: string } | null;
+  /** A plugin asked the window to show a bot with one of its tabs (`ui.showTab` with open); `seq` tells asks apart. */
+  openTab?: { plugin: string; view: string; botId: string; seq: number } | null;
 }
 
 /** Only inputs used by the selected chat page; sidebar activity is deliberately excluded. */
@@ -249,6 +251,7 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   if (event.type === "components.updated") return { ...view, components: event.components };
   if (event.type === "plugins.updated") return { ...view, plugins: event.plugins };
   if (event.type === "plugins.open") return { ...view, pluginPanel: { plugin: event.plugin, panel: event.panel, title: event.title } };
+  if (event.type === "plugins.openTab") return { ...view, openTab: { plugin: event.plugin, view: event.view, botId: event.botId, seq: (view.openTab?.seq ?? 0) + 1 } };
   if (event.type === "doctor.updated") return { ...view, doctor: event.doctor };
   if (event.type === "settings.updated") return { ...view, settings: event.settings };
   if (event.type === "waiting.updated") return { ...view, waiting: event.waiting };

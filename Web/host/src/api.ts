@@ -606,6 +606,11 @@ export interface BotlingApi {
      * while that bot's chat is shown. One at a time, across plugins; `opts.wide` makes it wide.
      */
     takeover(view: string | null, opts?: { bot?: string; wide?: boolean }): Promise<void>;
+    /**
+     * Shows (`on`) or hides one of this plugin's `mainTab` views declared with `"forRole": "marked"` in bot `botId`'s header: such a
+     * tab shows only for the bots marked here (kept across restarts). `opts.open`: also show that bot with this tab now.
+     */
+    showTab(botId: string, viewId: string, on: boolean, opts?: { open?: boolean }): Promise<void>;
     /** An item of this plugin's in the status area (null: gone). */
     setStatus(id: string, item: StatusItem | null): void;
     /** Opens `method` to this plugin's own frames (panels) and web part: the only methods they can call. */
@@ -896,6 +901,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       input: async (opts) => (await ask("ui.input", { title: opts?.title, ...(opts?.placeholder ? { placeholder: opts.placeholder } : {}), ...(opts?.secret ? { secret: true } : {}) })) as string | null,
       openView: async (id, args) => { await ask("ui.openView", { id, ...(args === undefined ? {} : { args }) }); },
       takeover: async (view, opts = {}) => { await ask("ui.takeover", { view, ...(opts.bot ? { bot: opts.bot } : {}), ...(opts.wide ? { wide: true } : {}) }); },
+      showTab: async (botId, viewId, on, opts = {}) => { await ask("ui.showTab", { bot: botId, view: viewId, on: on === true, ...(opts.open ? { open: true } : {}) }); },
       setStatus: (id, item) => host.notify("ui.setStatus", { plugin: name, id, item: item ?? null }),
       expose,
       emit: (event, data, opts = {}) => host.notify("ui.emit", { plugin: name, name: String(event), data: data === undefined ? null : data, ...(opts.botId ? { botId: opts.botId } : {}) }),

@@ -153,6 +153,37 @@ describe("Host API v3 in the core (plan M5)", () => {
     await expect(ask("bots.create", { plugin: "coach", name: "R", job: "j", delegation: "never" })).rejects.toThrow(/delegation/);
   });
 
+  it("ui.showTab marks the bots a \"marked\" mainTab view shows for, kept on disk; open asks the window to show it", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "coach", { web: "dist/web.js", contributes: { views: [
+      { id: "coach.page", title: "Reading", where: "mainTab", forRole: "marked", chat: "float" },
+      { id: "coach.any", title: "Any", where: "mainTab" },
+    ] } });
+    const first = await setup(dir);
+    const opened: string[][] = [];
+    first.world.botId = (botId) => (botId === "main" ? "MAIN-ID" : botId === "B1" || botId === "B2" ? botId : null);
+    first.world.openTab = (plugin, view, botId) => { opened.push([plugin, view, botId]); };
+    const tabs = () => first.plugins.view().mainTabs!;
+    expect(tabs()).toEqual([
+      { plugin: "coach", id: "coach.page", title: "Reading", forRole: "marked", chat: "float", bots: [] },
+      { plugin: "coach", id: "coach.any", title: "Any", forRole: "any" },
+    ]);
+    expect(await first.ask("ui.showTab", { plugin: "coach", bot: "B1", view: "coach.page", on: true })).toBeNull();
+    await first.ask("ui.showTab", { plugin: "coach", bot: "B2", view: "coach.page", on: true, open: true });
+    await first.ask("ui.showTab", { plugin: "coach", bot: "B2", view: "coach.page", on: true });
+    expect(tabs()[0]!.bots).toEqual(["B1", "B2"]);
+    expect(opened).toEqual([["coach", "coach.page", "B2"]]);
+    await first.ask("ui.showTab", { plugin: "coach", bot: "B1", view: "coach.page", on: false });
+    expect(tabs()[0]!.bots).toEqual(["B2"]);
+    await expect(first.ask("ui.showTab", { plugin: "coach", bot: "ghost", view: "coach.page", on: true })).rejects.toThrow("No such bot");
+    await expect(first.ask("ui.showTab", { plugin: "coach", bot: "B1", view: "coach.any", on: true })).rejects.toThrow(/forRole "marked"/);
+    await expect(first.ask("ui.showTab", { plugin: "coach", bot: "B1", view: "nope", on: true })).rejects.toThrow(/no mainTab view/);
+    await first.plugins.shutdown();
+    // Kept across a restart (plugin-tabs.json).
+    const again = await setup(dir);
+    expect(again.plugins.view().mainTabs![0]!.bots).toEqual(["B2"]);
+  });
+
   it("bots.wake sends its prompt as the plugin's; without one it is refused for now", async () => {
     const dir = tempDir("plugin-api");
     plugin(dir, "uptime");
