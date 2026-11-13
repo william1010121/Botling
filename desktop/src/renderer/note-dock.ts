@@ -31,3 +31,11 @@ export function toggleDock(open: string | null, key: string | null): string | nu
 export function keepDock(open: string | null, key: string | null): string | null {
   return docked(open, key) ? open : null;
 }
+
+/**
+ * botling.openChat(botId, messageId) while that bot shows a tab with the floating chat (`dockKey`): the tab stays and its
+ * chat opens over it at the line; otherwise the bot's Chat shows, as openChat always did.
+ */
+export function jumpInPlace(shownBotId: string | null | undefined, botId: string, key: string | null, messageId: string | undefined): boolean {
+  return !!messageId && !!key && shownBotId === botId;
+}

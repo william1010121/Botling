@@ -83,7 +83,7 @@ describe("the frame protocol", () => {
     expect(parseFrameRequest({ ccb: "command", id: "charts.open", args: ["x".repeat(4_001)] })).toBeNull();
   });
 
-  it("Botling's own commands a frame may run: openChat(botId) and openResult(botId, url), nothing else", () => {
+  it("Botling's own commands a frame may run: openChat(botId[, messageId]) and openResult(botId, url), nothing else", () => {
     expect(builtinCommand("botling.openChat", ["B1"])).toEqual({ id: "botling.openChat", botId: "B1" });
     expect(builtinCommand("botling.openResult", ["B1", "https://example.com/a"])).toEqual({ id: "botling.openResult", botId: "B1", url: "https://example.com/a" });
     expect(builtinCommand("botling.openLink", ["B1", "https://github.com/o/r/pull/1"])).toEqual({ id: "botling.openLink", botId: "B1", url: "https://github.com/o/r/pull/1" });
@@ -92,7 +92,11 @@ describe("the frame protocol", () => {
     expect(builtinCommand("botling.openTab", ["B1", "botling.git"])).toBeNull();
     expect(builtinCommand("botling.openTab", ["B1", "", "v"])).toBeNull();
     expect(builtinCommand("botling.openChat", [])).toBeNull();
-    expect(builtinCommand("botling.openChat", ["B1", "extra"])).toBeNull();
+    // openChat(botId, messageId): that bot's chat, at one of its lines.
+    expect(builtinCommand("botling.openChat", ["B1", "M7"])).toEqual({ id: "botling.openChat", botId: "B1", messageId: "M7" });
+    expect(builtinCommand("botling.openChat", ["B1", ""])).toBeNull();
+    expect(builtinCommand("botling.openChat", ["B1", "M7", "x"])).toBeNull();
+    expect(builtinCommand("botling.openChat", ["B1", "M1", "extra"])).toBeNull();
     expect(builtinCommand("botling.openResult", ["B1"])).toBeNull();
     expect(builtinCommand("botling.openChat", [""])).toBeNull();
     expect(builtinCommand("botling.settings", [])).toBeNull();

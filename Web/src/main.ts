@@ -69,6 +69,8 @@ class Chat {
   private loadingTimer: ReturnType<typeof setTimeout> | undefined;
   /** A line to jump to once the app has sent the page that holds it. */
   private pendingJump: string | null = null;
+  /** A line asked for in a chat not on screen yet (`ccb.jumpTo` comes before that chat's state): taken by its first state. */
+  private wantedJump: { botID: string; id: string; until: number } | null = null;
   private readonly historyLatest = document.createElement("button");
   private readonly historyMore = document.createElement("button");
   private historyRequest: number | null = null;
@@ -412,6 +414,25 @@ class Chat {
     // The component frames now in view (or near it) are built; the rest once scrolled to.
     buildNear();
     if (!this.stuck) this.restoreReadingAnchor();
+    const wanted = this.wantedJump;
+    if (wanted && (wanted.until < Date.now() || (state.botID === wanted.botID && !state.subagent))) {
+      this.wantedJump = null;
+      if (wanted.until >= Date.now()) setTimeout(() => jumpTo(wanted.id), 0);
+    }
+  }
+
+  /**
+   * Goes to line `id` of chat `botID` (scrolled to the middle and flashed; an older page is asked of the app first),
+   * now if that chat is on screen, else once its state comes (soon: the app shows it as it asks). A line the chat does
+   * not have does nothing: the chat just shows.
+   */
+  jumpTo(botID: string, id: string): void {
+    if (!this.last || this.last.botID !== botID || this.last.subagent) {
+      this.wantedJump = { botID, id, until: Date.now() + 10_000 };
+      return;
+    }
+    this.wantedJump = null;
+    jumpTo(id);
   }
 
   private historyStart(messages: MessageView[]): number {
@@ -647,6 +668,8 @@ declare global {
       setDrafts(drafts: Record<string, Draft>): void;
       /** A block quoted into chat `botID`'s input box (after its draft, the caret at the end); false: nothing written. */
       quote(botID: string, text: string, focus: boolean): boolean;
+      /** Goes to line `id` of chat `botID` once that chat shows (a plugin's botling.openChat(botId, messageId)). */
+      jumpTo(botID: string, id: string): void;
       answerWithSaved(ack: { botID: string; requestID: number; chosen: string }): void;
       patchState(patch: StatePatch): void;
       setPlugins(specs: PluginSpec[]): Promise<void>;
@@ -707,6 +730,7 @@ window.ccb = {
   },
   setDrafts: (drafts) => chat.setDrafts(drafts),
   quote: (botID, text, focus) => chat.quote(botID, text, focus),
+  jumpTo: (botID, id) => chat.jumpTo(botID, id),
   answerWithSaved: (ack) => chat.answerWithSaved(ack),
   patchState: (patch) => {
     chat.patchState(patch);

@@ -58,7 +58,7 @@ import { ColumnDivider } from "./ColumnDivider";
 import { FloatingChat, floatChatMessage, resendFloatChrome, useFloatMemory } from "./FloatingChat";
 import { lastLine } from "./floating-chat";
 import { ChatBody } from "./NoteDock";
-import { dockKey, docked as dockShown, keepDock, toggleDock } from "./note-dock";
+import { dockKey, docked as dockShown, jumpInPlace, keepDock, toggleDock } from "./note-dock";
 import { browserStore, useBrowser } from "./browser-state";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
@@ -472,10 +472,18 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       return;
     }
     const shown = store.getView().chat?.botId;
-    if (shown) chooseTab(shown, null);
-    chooseTab(botId, null);
-    setWhiteboardOn(false);
-    selectBot(botId);
+    // At one line (botling.openChat(botId, messageId)): from the bot's own tab with the floating chat, that chat opens
+    // over the tab; else its Chat shows. The chat page goes to the line once it shows that chat (none such: just the chat).
+    const dock = quoteNow.current;
+    if (jumpInPlace(dock.botId, botId, dock.noteKey, command.messageId)) {
+      if (!dock.noteOpen) dock.openNoteChat(true);
+    } else {
+      if (shown) chooseTab(shown, null);
+      chooseTab(botId, null);
+      setWhiteboardOn(false);
+      selectBot(botId);
+    }
+    if (command.messageId) postToChat({ botling: "jumpTo", botID: botId, messageID: command.messageId });
   }, [client, store, fail, chooseTab, setWhiteboardOn, selectBot]);
   // A plugin's program part asked to show a bot with one of its tabs (`ui.showTab(…, { open: true })`): as its frame's openTab would.
   const openTabSeq = view.openTab?.seq ?? 0;
