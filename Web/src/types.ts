@@ -425,6 +425,8 @@ export type Action =
   | { type: "openURL"; url: string; label: string }
   | { type: "openExternal"; url: string; shown?: string }
   | { type: "revealFile"; url: string; shown?: string }
+  /** A local file's link, chip or picture dragged out of the chat: the app starts an OS file drag of it. */
+  | { type: "dragFile"; url: string }
   | { type: "openSource"; messageID: string }
   | { type: "openSubagent"; id: string }
   | { type: "taskOutput"; messageID: string; taskID: string }

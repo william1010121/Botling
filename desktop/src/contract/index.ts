@@ -1034,6 +1034,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("storage.open"), botId, id: z.string().min(1).max(4_200), reveal: z.boolean().optional() }),
   /** Main only: a row's drag began; main starts an OS file drag of that file, so a web page in the Browser pane gets it as an upload. */
   z.strictObject({ type: z.literal("storage.drag"), botId, id: z.string().min(1).max(4_200) }),
+  /** A local file a line of this chat links or shows, dragged out of the chat: main starts an OS file drag of it. */
+  z.strictObject({ type: z.literal("link.drag"), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("link.open"), /** Open a web page in the default browser, not the app's browser pane (⌘-click, the lightbox's button). */ external: z.boolean().optional(), cardImage: z.string().regex(/^[0-9a-f]{40}$/).optional(), preview: z.boolean().optional(), reveal: z.boolean().optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
   /** Core-only membership lookup: no chat payload or component rendering. */
   z.strictObject({ type: z.literal("link.authorize"), cardImage: z.string().regex(/^[0-9a-f]{40}$/).optional(), source:z.enum(["user","component"]).optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), botId, url: z.string().min(1).max(4_000) }),
@@ -1237,12 +1239,12 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
-  "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "worker.file",
+  "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "link.drag", "worker.file",
   "storage.list", "storage.add", "storage.pick", "storage.remove", "storage.open", "storage.drag",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["storage.add", "storage.pick", "storage.open", "storage.drag", "card.page", "files.pick", "projects.pick", "result.open", "link.open", "worker.file", "component.report", "plugins.noteSnapshot", "plugins.openLink", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["storage.add", "storage.pick", "storage.open", "storage.drag", "card.page", "files.pick", "projects.pick", "result.open", "link.open", "link.drag", "worker.file", "component.report", "plugins.noteSnapshot", "plugins.openLink", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
 
 /** What kind of file a Storage row is (its icon and the type filter). */
 export const StorageKind = z.enum(["image", "pdf", "doc", "page", "sheet", "video", "audio", "text", "other"]);
@@ -1327,6 +1329,7 @@ export interface Results {
   "storage.open": { opened: boolean; previewURL?: string };
   "storage.drag": { started: boolean };
   "link.open": { opened: boolean; previewURL?: string };
+  "link.drag": { started: boolean };
   "worker.cwd": { cwd: string | null };
   "worker.file": { route: "preview" | "reveal" | "open" };
   "link.authorize": { result: boolean; linked: boolean };

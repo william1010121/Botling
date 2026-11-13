@@ -42,6 +42,7 @@ import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
 import { COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation, cardPreviewNavigation } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
+import { linkDragTarget } from "./link-drag";
 import { attachmentFile, attachmentLine, attachmentTarget, cardImageToken } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -582,11 +583,31 @@ const storageDrags: string[] = [];
  */
 async function storageDrag(botId: string, id: string, sender: WebContents): Promise<{ started: boolean }> {
   const path = await storageFile(botId, id);
+  return startFileDrag(path, sender, storageDrags);
+}
+/** Tests: the files a chat link drag started with. */
+const linkDrags: string[] = [];
+(globalThis as unknown as { __botlingLinkDrags: string[] }).__botlingLinkDrags = linkDrags;
+/**
+ * A local file's link, file chip or picture dragged out of the chat: the same OS file drag as a Storage row, so a web page
+ * in the Browser pane takes it as an upload (and Finder as the file). Only a file that is there, and only one a line of
+ * this chat links or attaches (the core's link.authorize, as a click on it): the page cannot ask for any path it likes.
+ */
+async function linkDrag(botId: string, url: string, sender: WebContents): Promise<{ started: boolean }> {
+  const target = linkDragTarget(url, botId, (path) => statSync(path).isFile());
+  if (!target) throw Object.assign(new Error("That file is not there."), { code: "not_found" });
+  const access = await core.call({ type: "link.authorize", source: "user", botId, url: target.link });
+  if (!access.linked) throw Object.assign(new Error("That link is not in this chat."), { code: "not_found" });
+  // startDrag drags from the sender's window (macOS: its content view), so the shell's own contents serve the native chat too.
+  return startFileDrag(target.path, sender, linkDrags);
+}
+/** An OS-level file drag of `path` from `sender` (webContents.startDrag), with the file's icon when the system has one. */
+async function startFileDrag(path: string, sender: WebContents, record: string[]): Promise<{ started: boolean }> {
   let icon: Electron.NativeImage | null = null;
   try { icon = await Promise.race([app.getFileIcon(path, { size: "normal" }), new Promise<null>((done) => setTimeout(() => done(null), 150))]); } catch { icon = null; }
   if (!icon || icon.isEmpty()) icon = nativeImage.createFromDataURL(DRAG_ICON);
   if (sender.isDestroyed()) return { started: false };
-  storageDrags.push(path);
+  record.push(path);
   sender.startDrag({ file: path, icon });
   return { started: true };
 }
@@ -820,6 +841,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     case "storage.pick": return storagePick(cmd.botId, sender);
     case "storage.open": return storageOpen(cmd.botId, cmd.id, cmd.reveal === true);
     case "storage.drag": return storageDrag(cmd.botId, cmd.id, sender);
+    case "link.drag": return linkDrag(cmd.botId, cmd.url, sender);
     case "projects.pick": return pickProject(sender);
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };
     default: throw new Error(`main does not handle ${cmd.type}`);
