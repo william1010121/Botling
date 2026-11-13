@@ -33,6 +33,14 @@ const allowed: Record<string, string> = {
   "Web/src/chat.css: video.media": "letterbox",
   // The remove button on an attachment is a dark disc over a picture in either look (its × turns white in the light one).
   "Web/src/chat.css: .pending .remove": "dark disc over a picture",
+  // Settings › Appearance's thumbnails picture each look, the dark one in its dark colours.
+  "desktop/src/renderer/styles.css: .theme-thumb-dark": "the dark look's thumbnail",
+  "desktop/src/renderer/styles.css: .theme-thumb-dark .theme-thumb-side": "the dark look's thumbnail",
+  "desktop/src/renderer/styles.css: .theme-thumb-dark .theme-thumb-main span": "the dark look's thumbnail",
+  "desktop/src/renderer/styles.css: .theme-thumb-dark .theme-thumb-main span + span": "the dark look's thumbnail",
+  "desktop/src/renderer/styles.css: .theme-thumb-system": "half light, half dark thumbnail",
+  // The phone's code scanner is a full-screen camera view, black behind the video in either look.
+  "desktop/mobile/web.css: .web-scan": "camera view",
 };
 
 const hex = /#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b/gi;

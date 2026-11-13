@@ -643,7 +643,7 @@ button { font: inherit; color: inherit; }
 .chat-body.note-docked > .main-tab { min-width: 0; }
 .chat-column.main-tab-on .chat-body.note-docked > #chat-frame { display: block; flex: 0 0 var(--note-chat-w, 380px); width: auto; min-width: 0; max-width: calc(100% - 320px); border-top: 1px solid var(--line); }
 /* The bot's bubble at the bottom right of the Note: the browser's full screen bubble (BotBubble.tsx), floating. */
-.bp-bubble.note-bubble { position: absolute; right: 18px; bottom: 18px; margin: 0; z-index: 5; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28); }
+.bp-bubble.note-bubble { position: absolute; right: 18px; bottom: 18px; margin: 0; z-index: 5; box-shadow: 0 4px 14px rgb(0 0 0 / calc(0.28 * var(--shade, 1))); }
 .main-tab-frame { flex: 1; width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; }
 /* Full-page reports cover the shell without unmounting its conversation. */
 .report-viewer { position: fixed; inset: 38px 0 0; z-index: 1000; display: flex; flex-direction: column; background: var(--ground); }
@@ -654,7 +654,7 @@ button { font: inherit; color: inherit; }
 .report-viewer header button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--chip); cursor: pointer; }
 .report-viewer header button:hover { background: var(--hover); }
 .report-viewer header button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-.report-viewer .bp-bubble.report-bubble { position: absolute; right: 18px; bottom: 18px; margin: 0; z-index: 5; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28); }
+.report-viewer .bp-bubble.report-bubble { position: absolute; right: 18px; bottom: 18px; margin: 0; z-index: 5; box-shadow: 0 4px 14px rgb(0 0 0 / calc(0.28 * var(--shade, 1))); }
 
 /* Panels under the chat that plugins bring (BottomPanels.tsx): the page lays out the frame, a divider and the header's toggle. */
 .bottom-panel { height: 300px; min-height: min(120px, 70vh); max-height: 70vh; overflow: hidden; display: flex; flex-direction: column; flex-shrink: 0; background: var(--panel-ground); color: var(--panel-text); border-top: 1px solid var(--panel-line); }
@@ -1189,7 +1189,7 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .bot-strip {
   display: flex; align-items: center; height: 44px; max-width: min(360px, calc(100vw - 48px)); box-sizing: border-box;
   border: 1px solid var(--border); border-radius: 22px; background: var(--bubble); color: var(--text);
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.32); -webkit-app-region: no-drag;
+  box-shadow: 0 6px 22px rgb(0 0 0 / calc(0.32 * var(--shade, 1))); -webkit-app-region: no-drag;
 }
 .bot-strip.unread { border-color: color-mix(in srgb, var(--blue) 55%, var(--border)); }
 .bot-strip-grab { display: inline-flex; align-items: center; justify-content: center; align-self: stretch; padding: 0 4px 0 12px; color: var(--faint); cursor: grab; touch-action: none; }
@@ -1224,7 +1224,7 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .float-backdrop {
   position: fixed; z-index: 3; box-sizing: border-box; border-radius: 12px; pointer-events: none;
   outline: 1px solid var(--border); outline-offset: 0; background: var(--ground);
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.32), 0 2px 8px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 16px 44px rgb(0 0 0 / calc(0.32 * var(--shade, 1))), 0 2px 8px rgb(0 0 0 / calc(0.18 * var(--shade, 1)));
 }
 #chat-frame.chat-floating {
   display: block !important; position: fixed !important; z-index: 4; flex: none !important; max-width: none !important;

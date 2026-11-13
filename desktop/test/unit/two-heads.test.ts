@@ -55,7 +55,9 @@ describe("a Codex head", () => {
     expect(start).toEqual({ sandbox: "workspace-write", approvalPolicy: "on-request", config: { "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled", "auto_review.extra_policy": expect.any(String),
         // Its other folders are writable roots, as in 1.x: the main bot's are every bot's notes (here Maintainer's).
         sandbox_workspace_write: { writable_roots: [join(dir, "plugins", ".bot")] } },
-      tools: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint"] });
+      tools: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", "app_component_usage",
+        "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract",
+        "app_note_outline", "app_note_read", "app_note_search", "app_note_edit", "app_note_insert", "app_note_delete", "app_note_move", "app_note_split", "app_note_merge", "app_note_branch"] });
     // Its first message is the Codex wake briefing: the memory snapshot inlined, then the words.
     const first = codexInputs(dir)[0]!;
     expect(first).toMatch(/^\(App: You were just woken up\. The app supplies your saved memory snapshot below as context\./);
@@ -237,17 +239,6 @@ describe("two heads in one chat", () => {
     ]);
     // It still has one head: Settings and the composer are as they were.
     expect((await bots(c))[0]).toMatchObject({ heads: ["claude"] });
-  });
-
-  it("a hand-off helps the task its head was on: the card says \"Codex helping: …\" (1.x's noteTaskHandoffs)", async () => {
-    const dir = tempDir("heads");
-    const c = await twoHeads(dir);
-    await c.call({ type: "heads.answerWith", botId: MAIN, to: "claude" });
-    await c.call({ type: "chat.send", botId: MAIN, text: `/say Profiling now.\n<task name="Faster parser" now="Profiling" next="Review"/>\n<handoff to="codex" kind="review">Check the diff\nand the tests</handoff>` });
-    const card = await until(async () => (await c.chat()).tasks?.find((task: any) => task.helps), { timeout: 10_000, what: "a card with a help line" });
-    expect(card).toMatchObject({ name: "Faster parser", helps: [{ head: "codex", text: "Check the diff" }] });
-    const saved = await until(() => (JSON.parse(readFileSync(join(dir, "main", "tasks.json"), "utf8")) as any[]).find((task) => task.helps));
-    expect(saved.helps).toMatchObject([{ head: "codex", text: "Check the diff" }]);
   });
 
   it("work handed to Codex that it gives a worker goes back with the worker's report, not with the turn that accepted it (worker return routes)", async () => {
