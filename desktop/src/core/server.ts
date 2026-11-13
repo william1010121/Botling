@@ -551,8 +551,8 @@ export class Core {
         callIns: () => this.conversations?.callIns(profile.id) ?? [],
         answeringIn: () => this.conversations?.answeringIn(profile.id) ?? null,
         callInNote: () => this.conversations?.callInStatus(profile.id) ?? null,
-        callInFollowUp: (caller, asked, record) => this.conversations?.callInFollowUp(caller, bot, asked, record),
-        callInFollowUpMissed: (caller, asked, why) => this.conversations?.callInFollowUpMissed(caller, bot, asked, why),
+        callInFollowUp: (caller, asked, record, by) => this.conversations?.callInFollowUp(caller, bot, asked, record, by),
+        callInFollowUpMissed: (caller, asked, why, by) => this.conversations?.callInFollowUpMissed(caller, bot, asked, why, by),
         agents: this.agentPort(profile),
       });
       return bot;
@@ -2625,7 +2625,11 @@ First write a test that shows this, then fix it.`;
       return { accepted: false };
     }
     if (!chat.holdCardAnswer(record.id, outcome, guest.profile.name)) return { accepted: false };
-    const told = (delivered: boolean) => chat.releaseCardAnswer(record.id, delivered);
+    const told = (delivered: boolean) => {
+      chat.releaseCardAnswer(record.id, delivered);
+      // A relayed copy of the user's call-in (`callInBy`): the card it copies shows the answer too.
+      if (delivered) this.settleRelayedOriginal(record, outcome);
+    };
     const intoItsChat = () => {
       try { guest.send(words, { appNote: guestCardAnswerNote(chat.profile.name), onDelivery: told }); } catch { told(false); }
     };
@@ -2640,10 +2644,11 @@ First write a test that shows this, then fix it.`;
    * with `sourceMessageID`) answered there: received where it was given. The answer is your message to this chat's own
    * bot (it asked on your behalf and carries the work on), and the card it copies shows the answer in the called-in
    * bot's chat; that bot is not woken, so two bots never act on one answer: the caller tells it with @ when needed.
-   * null: not such a copy.
+   * null: not such a copy, or a copy of a call-in the user made (`callInBy`): this chat's bot did not ask, so the answer
+   * goes to the called bot like its guest line's (answerGuestLine), and its own card shows it once it gets there.
    */
   private answerRelayedCopy(chat: Bot, copy: ChatRecord, words: string, outcome: { chosen?: number; answer?: string }): { accepted: boolean } | null {
-    if (copy.role !== "bot" || typeof copy.sourceID !== "string" || typeof copy.sourceMessageID !== "string") return null;
+    if (copy.role !== "bot" || typeof copy.sourceID !== "string" || typeof copy.sourceMessageID !== "string" || copy.callInBy === "user") return null;
     const name = this.bots.get(copy.sourceID)?.profile.name ?? "the bot you called in";
     chat.send(words, { replyTo: copy.id, appNote: relayedAnswerNote(name) });
     chat.settleAppQuestion(copy.id, outcome);

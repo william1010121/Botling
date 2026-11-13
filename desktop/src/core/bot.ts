@@ -238,10 +238,10 @@ export interface BotOptions {
   callIns?: () => { id: string; state: "queued" | "answering" }[];
   /** The chat it is answering a call-in in now (null: none). */
   answeringIn?: () => string | null;
-  /** Its reply on the news of a worker it started when `caller`'s bot called it in with `asked`: told back there (`callInFollowUp`). */
-  callInFollowUp?: (caller: string, asked: string, record: ChatRecord) => void;
-  /** Its turn on such a worker's report ended without a reply (`why`): the asking bot is told so (`callInFollowUpMissed`). */
-  callInFollowUpMissed?: (caller: string, asked: string, why: string) => void;
+  /** Its reply on the news of a worker it started when called into `caller`'s chat with `asked` (`by`: "user" for the user's @, else a bot's): told back there (`callInFollowUp`). */
+  callInFollowUp?: (caller: string, asked: string, record: ChatRecord, by?: "user") => void;
+  /** Its turn on such a worker's report ended without a reply (`why`): that chat is told so (`callInFollowUpMissed`). */
+  callInFollowUpMissed?: (caller: string, asked: string, why: string, by?: "user") => void;
   /** Its @s still being answered or waiting, said with its next turn (status only; null: none). */
   callInNote?: () => string | null;
   /** What a line shows besides itself for the component studio, through its seam (the plugins' `studioLineExtras`): the component it already is (Phase 5a). */
@@ -307,7 +307,9 @@ interface Turn {
   delivery?: (delivered: boolean) => void;
   /** For a call-in: what it was asked there (a worker it starts reports back with it, `callInWork`). */
   callInAsked?: string;
-  /** Its turn on the report or note of a worker it started for a bot's @: its reply goes back to that bot's chat too. */
+  /** For a call-in: "user" when the user's @ called it in (not a bot's). */
+  callInBy?: "user";
+  /** Its turn on the report or note of a worker it started in a call-in: its reply goes back to that chat too. */
   relayTo?: CallInRelay;
 }
 
@@ -955,8 +957,8 @@ export class Bot {
    * showing neither in this chat. Wakes it if asleep. While it is busy with its own chat it waits up to
    * `waitForMs`, then gives up (busy); once asked, it has `answerWithinMs` to reply.
    */
-  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked, onBegin }: { callIn?: string; asked?: string; onBegin?: () => void } = {}): Promise<GuestAnswer> {
-    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked, onBegin });
+  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked, by, onBegin }: { callIn?: string; asked?: string; by?: "user"; onBegin?: () => void } = {}): Promise<GuestAnswer> {
+    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked, by, onBegin });
     const deadline = Date.now() + waitForMs;
     while (this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold) {
       if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
@@ -972,7 +974,7 @@ export class Bot {
       return await new Promise<GuestAnswer>((resolve) => {
         const turn = this.newTurn("tidy", text, null);
         turn.guest = true;
-        if (callIn) { turn.callIn = callIn; turn.callInAsked = asked ?? ""; }
+        if (callIn) { turn.callIn = callIn; turn.callInAsked = asked ?? ""; if (by) turn.callInBy = by; }
         let settled = false;
         const settle = (answer: GuestAnswer) => { if (!settled) { settled = true; clearTimeout(timer); resolve(answer); } };
         const timer = setTimeout(() => {
@@ -1373,11 +1375,11 @@ export class Bot {
   }
   private callInWorkBook: CallInWorkBook | null = null;
 
-  /** A worker just started: in a call-in turn, its news is to go back to the bot that called it in. */
+  /** A worker just started: in a call-in turn (a bot's @ or the user's), its news is to go back to that chat. */
   private linkCallInWork(workerId: string) {
     const turn = this.turn ?? this.owner.turn;
     if (!turn?.open || !turn.callIn || !turn.callInAsked) return;
-    this.callInWork.link(workerId, turn.callIn, turn.callInAsked);
+    this.callInWork.link(workerId, turn.callIn, turn.callInAsked, turn.callInBy);
   }
 
   /** `turn` takes a worker's report or note: if that worker was started for a bot's @, its reply goes back there too. */
@@ -1391,8 +1393,8 @@ export class Bot {
     const relay = turn.relayTo;
     if (!relay) return;
     const told = this.callInWork.followUp(relay, { status: status === "done" ? "done" : status === "stopped" ? "stopped" : "failed", visible: !!record, error: error ?? null });
-    if (told?.kind === "reply" && record) this.owner.options.callInFollowUp?.(relay.caller, relay.asked, record);
-    else if (told?.kind === "noReply") this.owner.options.callInFollowUpMissed?.(relay.caller, relay.asked, told.why);
+    if (told?.kind === "reply" && record) this.owner.options.callInFollowUp?.(relay.caller, relay.asked, record, relay.by);
+    else if (told?.kind === "noReply") this.owner.options.callInFollowUpMissed?.(relay.caller, relay.asked, told.why, relay.by);
   }
 
   /**
