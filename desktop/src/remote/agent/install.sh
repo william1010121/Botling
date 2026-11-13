@@ -51,8 +51,11 @@ sum() {
 }
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/botling-agent.XXXXXX")"
-trap 'rm -rf "$tmp"' EXIT INT TERM
-say "Downloading botling-agent $VERSION…"
+# Keep the exit status: macOS's sh (bash 3.2) would otherwise exit with the trap's own status, 0.
+trap 'status=$?; rm -rf "$tmp"; exit $status' EXIT
+trap 'exit 1' INT TERM
+# ${VERSION} in braces: in a UTF-8 locale bash 3.2 reads the bytes of "…" as part of the name.
+say "Downloading botling-agent ${VERSION}…"
 fetch "$BASE/$ASSET" "$tmp/$ASSET" || die "Could not download $BASE/$ASSET."
 if [ -z "$sha" ]; then
   fetch "$BASE/SHA256SUMS-agent.txt" "$tmp/SHA256SUMS" || die "Could not download the release's checksums."
