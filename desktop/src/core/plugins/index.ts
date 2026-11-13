@@ -26,6 +26,9 @@ import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } 
 import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
 import { viewSurfaces } from "./views";
+import { MarkedTabs } from "./marked-tabs";
+import { tabMatches } from "../../browser-tab-menu";
+import { fileURLToPath } from "node:url";
 import { CORE_PROMPT_SECTIONS } from "../prompts";
 import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
@@ -128,6 +131,8 @@ export interface PluginWorld {
   ask(question: AppQuestion): Promise<AppAnswer>;
   /** Opens a plugin's panel on the app page. */
   openPanel(plugin: string, panel: string, title: string): void;
+  /** A plugin's `ui.showTab(…, { open: true })`: the main window shows that bot (the core's id) with that `mainTab` view. Absent: no window. */
+  openTab?(plugin: string, view: string, botId: string): void;
   /** A plugin's push to its frames (`ui.emit`), on its way to the app page; never part of a snapshot, and no other client hears it. */
   frameEvent?(plugin: string, name: string, botId: string | undefined, data: unknown): void;
   /** A bot's working folder as the core keeps it, the main bot's too (null: no such bot). */
@@ -176,8 +181,12 @@ export interface PluginWorld {
   component(botId: string, name: string, data: string | undefined, command: string | undefined): { exists: boolean; command: string | null } | null;
   /** The card-page URLs of the pictures a component's data names for that bot (what a tile needs); null: no such bot. */
   imageUrls(botId: string, data: string): Record<string, string> | null;
-  /** `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. */
-  createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined): BotInfo & { created: boolean };
+  /**
+   * `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. `more`: a sub bot's
+   * project bot (`parent`), instructions of any length kept in a file the bot reads, and its delegation ("onRequest": it does the
+   * work itself, starting subagents or workers only when the user asks).
+   */
+  createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined, more?: PluginBotExtras): BotInfo & { created: boolean };
   /** A chat's newest `limit` lines (`chat.messages`; null: no such bot). Absent: a world without chats (tests, spec adapters). */
   chat?(botId: string, limit: number): PluginChat | null;
   /** The bot a plugin names ("main" too) as the core knows it (null: none). */
@@ -263,6 +272,8 @@ const EMIT_MAX = 1_000_000;
 const ViewParams = z.object({ plugin: str(214), id: str(100).min(1), args: z.unknown().optional() });
 /** `ui.takeover`: opens one of the plugin's `rightPanel.takeover` views for a bot (`view`), or closes it (null). */
 const TakeoverParams = z.object({ plugin: str(214), view: str(100).min(1).nullable(), bot: str(128).optional(), wide: z.boolean().optional() });
+/** `ui.showTab`: shows (`on`) or hides one of the plugin's `forRole: "marked"` mainTab views for a bot; `open` also shows it now. */
+const ShowTabParams = z.object({ plugin: str(214), bot: str(128), view: str(100).min(1), on: z.boolean(), open: z.boolean().optional() });
 const SettingParams = z.object({ plugin: str(214), key: str(200), value: z.union([z.boolean(), z.number(), z.string().max(100_000), z.null()]) });
 const SecretKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
 const SecretGetParams = z.object({ plugin: str(214), key: SecretKey });
@@ -281,6 +292,10 @@ const RunParams = StateParams.extend({ minIntervalMs: z.number().int().min(0).ma
 const ComponentParams = BotParams.extend({ name: str(200).min(1), data: z.string().max(300_000).optional(), command: z.string().max(20_000).optional() });
 const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200), task: str(2_000) });
 const CreateParams = z.object({ plugin: str(214) }).passthrough();
+/** A plugin's instructions for a bot it makes: far longer than a job (they go to a file), within reason. */
+export const BOT_INSTRUCTIONS_LIMIT = 200_000;
+/** What `bots.create` takes beyond a name, a job and a face. */
+export interface PluginBotExtras { parent?: string; instructions?: string; delegation?: "default" | "onRequest" }
 const PluginOnly = z.object({ plugin: str(214) });
 const AgyUsageParams = z.object({ plugin: str(214), sessionId: str(200) });
 const AgyWorkerParams = z.object({ plugin: str(214), workerId: str(200) });
@@ -347,9 +362,12 @@ export class Plugins {
   private readonly chatDatas = new Map<string, Map<string, JSONValue>>();
   /** The `rightPanel.takeover` view open now (`ui.takeover`), by the core's bot id; at most one, gone when its plugin is. */
   private takeover: { plugin: string; view: string; botId: string; wide: boolean } | null = null;
+  /** The bots each plugin's `forRole: "marked"` tab shows for (`ui.showTab`), kept on disk. */
+  private readonly markedTabs: MarkedTabs;
 
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
+    this.markedTabs = new MarkedTabs(dataDir);
     this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer);
     this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
     this.dataRoot = join(dataDir, "plugin-data");
@@ -488,7 +506,10 @@ export class Plugins {
 
   /** Something plugins may listen for happened (`events.on`); only sent when one listens. */
   event(name: PluginEventName, data: unknown) {
-    if (name === "botRemoved") this.notes.unwatch((data as { botId: string }).botId);
+    if (name === "botRemoved") {
+      this.notes.unwatch((data as { botId: string }).botId);
+      if (this.markedTabs.forget((data as { botId: string }).botId)) this.announce();
+    }
     this.host.event(name, data);
   }
 
@@ -549,7 +570,7 @@ export class Plugins {
       host: { running: this.host.running, problem: this.host.problem?.slice(0, 2_000) ?? null },
       secretsProblem: this.secrets.problem?.slice(0, 2_000) ?? null,
       ...commandSurfaces(this.contributions()),
-      ...viewSurfaces(this.contributions(), (name) => !!this.registry.webPart(name)),
+      ...viewSurfaces(this.contributions(), (name) => !!this.registry.webPart(name), (plugin, view) => this.markedTabs.bots(plugin, view)),
       takeover: this.takeover ? { plugin: this.takeover.plugin, view: this.takeover.view, botId: this.takeover.botId, wide: this.takeover.wide } : null,
     };
   }
@@ -620,6 +641,26 @@ export class Plugins {
     if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
     try {
       return await this.host.command(id, args);
+    } catch (error) {
+      this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
+      throw new ContractError("conflict", (error as Error).message);
+    }
+  }
+
+  /**
+   * A plugin's button in the browser pane's toolbar (menu "browser/tab") was clicked: its command runs in the program part with one
+   * argument, `{ botId, tabId, url, path }` (`botId` as plugins name bots, "main" for the main bot; `path`: the local file a file: URL
+   * names, else null). Only a command offered there, on a tab its `when` matches.
+   */
+  async tabCommand(id: string, tab: { botId: string; tabId: string; url: string }): Promise<unknown> {
+    const offered = ofKind(this.contributions(), "menu").some((entry) => entry.menu === "browser/tab" && entry.command === id && entry.plugin && id.startsWith(`${entry.plugin}.`) && tabMatches(entry.when, tab.url));
+    if (!offered) throw new ContractError("forbidden", `"${id}" is not offered for this browser tab.`);
+    if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
+    let path: string | null = null;
+    try { if (new URL(tab.url).protocol === "file:") path = fileURLToPath(tab.url); } catch { /* not a local file */ }
+    const botId = this.options.world.botId?.("main") === tab.botId ? "main" : tab.botId;
+    try {
+      return await this.host.command(id, [{ botId, tabId: tab.tabId, url: tab.url, path }]);
     } catch (error) {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
       throw new ContractError("conflict", (error as Error).message);
@@ -1204,6 +1245,18 @@ export class Plugins {
         world.openPanel(name, panel.id, panel.title.slice(0, 200));
         return null;
       }
+      case "ui.showTab": {
+        const { plugin, data } = this.asked(ShowTabParams, params);
+        const name = plugin.manifest.name;
+        const tab = plugin.manifest.ccb?.web ? ofKind(this.contributions(), "view").find((entry) => entry.plugin === name && entry.id === data.view && entry.where === "mainTab") : undefined;
+        if (!tab) throw new Error(`Plugin "${name}" has no mainTab view "${data.view}".`);
+        if (tab.forRole !== "marked") throw new Error(`The view "${data.view}" is not forRole "marked": it shows for its role's bots already.`);
+        const botId = world.botId?.(data.bot) ?? null;
+        if (!botId) throw new Error("No such bot.");
+        if (this.markedTabs.set(name, data.view, botId, data.on)) this.announce();
+        if (data.on && data.open) world.openTab?.(name, data.view, botId);
+        return null;
+      }
       case "ui.takeover": {
         const { plugin, data } = this.asked(TakeoverParams, params);
         const name = plugin.manifest.name;
@@ -1266,7 +1319,17 @@ export class Plugins {
         if (!plugin?.manifest.ccb?.permissions?.includes("bots")) throw new Error("Creating bots needs the \"bots\" permission in package.json.");
         const raw = parsed.data as Record<string, unknown>;
         const text = (key: string) => (typeof raw[key] === "string" ? (raw[key] as string).slice(0, 4_000) : "");
-        return world.createBot(plugin.manifest.name, plugin.manifest.displayName ?? plugin.manifest.name, text("name"), text("job"), text("avatar") || undefined);
+        const more: PluginBotExtras = {};
+        if (typeof raw.parent === "string" && raw.parent) more.parent = raw.parent.slice(0, 200);
+        if (typeof raw.instructions === "string") {
+          if (raw.instructions.length > BOT_INSTRUCTIONS_LIMIT) throw new Error(`A bot's instructions are at most ${BOT_INSTRUCTIONS_LIMIT} characters.`);
+          more.instructions = raw.instructions;
+        }
+        if (raw.delegation !== undefined && raw.delegation !== null) {
+          if (raw.delegation !== "default" && raw.delegation !== "onRequest") throw new Error('delegation is "default" or "onRequest".');
+          more.delegation = raw.delegation;
+        }
+        return world.createBot(plugin.manifest.name, plugin.manifest.displayName ?? plugin.manifest.name, text("name"), text("job"), text("avatar") || undefined, more);
       }
       case "approvals.check": {
         // Whether the user allowed a command in a bot's folder (its frame asks with ccb.requestApproval).

@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { dockable, docked, dockKey, keepDock, NOTE_PLUGIN, toggleDock } from "../../src/renderer/note-dock";
+import { dockable, docked, dockKey, jumpInPlace, keepDock, NOTE_PLUGIN, toggleDock } from "../../src/renderer/note-dock";
 import type { MainTab } from "../../src/renderer/main-tabs";
 import { desktop } from "../helpers";
 
@@ -58,5 +58,20 @@ describe("App.tsx draws it", () => {
     expect(readFileSync(join(desktop, "src/renderer/BrowserPane.tsx"), "utf8")).toContain('<FloatingChat place="browser" bot={bot} look={look} open={miniChat}');
     expect(readFileSync(join(desktop, "src/renderer/ReportViewer.tsx"), "utf8")).toContain('<FloatingChat place="preview" bot={bubble.bot}');
     expect(readFileSync(join(desktop, "src/renderer/FloatingChat.tsx"), "utf8")).toContain("<BotBubble bot={bot}");
+  });
+});
+
+// botling.openChat(botId, messageId) from a tab with the floating chat (the reading coach's paper tab): the tab stays and
+// its chat opens over it at that line; anything else shows the bot's Chat as openChat always did.
+describe("going to a chat line from a tab", () => {
+  const key = dockKey("b1", note, false);
+  it("stays on the bot's own tab that offers the floating chat", () => {
+    expect(jumpInPlace("b1", "b1", key, "m1")).toBe(true);
+  });
+  it("shows Chat for another bot, a tab without the floating chat, or no line", () => {
+    expect(jumpInPlace("b2", "b1", key, "m1")).toBe(false);
+    expect(jumpInPlace("b1", "b1", null, "m1")).toBe(false);
+    expect(jumpInPlace("b1", "b1", key, undefined)).toBe(false);
+    expect(jumpInPlace(null, "b1", key, "m1")).toBe(false);
   });
 });

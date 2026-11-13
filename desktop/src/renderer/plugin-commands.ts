@@ -3,6 +3,7 @@
 // asks for runs only when a key, the / menu or that menu offers it now. The chat page is one realm with the
 // plugins' web parts, so this is no wall against them; it keeps it from running any other command.
 import type { PluginsView } from "../contract";
+import { tabMatches } from "../browser-tab-menu";
 import { legacyKey, type PluginKeybinding } from "../contract/shortcuts";
 import latex from "../../builtin-plugins/ccb-latex/package.json";
 import design from "../../builtin-plugins/botling.design/package.json";
@@ -63,6 +64,15 @@ export function menuItems(plugins: PluginsView | null | undefined, menu: PluginM
     const said = (lang ? item.locales?.[lang] : undefined) ?? {};
     const [title, alt, hint] = [said.title ?? item.title, said.alt ?? item.alt, said.hint ?? item.hint];
     return { command: item.command, title, ...(item.icon ? { icon: item.icon } : {}), ...(item.quick ? { quick: true } : {}), ...(alt ? { alt } : {}), ...(hint ? { hint } : {}) };
+  });
+}
+
+/** The plugins' buttons for the browser pane's toolbar (menu "browser/tab") on a tab at `url`: those whose `when` matches it. */
+export function browserTabActions(plugins: PluginsView | null | undefined, url: string | null | undefined, lang?: string | null): { command: string; title: string; icon?: string }[] {
+  if (!url) return [];
+  return (plugins?.menus ?? []).filter((item) => item.menu === "browser/tab" && tabMatches(item.when, url)).slice(0, 4).map((item) => {
+    const title = ((lang ? item.locales?.[lang]?.title : undefined) ?? item.title).slice(0, 200);
+    return { command: item.command, title, ...(item.icon ? { icon: item.icon } : {}) };
   });
 }
 

@@ -24,7 +24,7 @@ import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, typ
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
-import { commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
+import { browserTabActions, commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL, sameHeldColors, setBotColors } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
@@ -58,7 +58,7 @@ import { ColumnDivider } from "./ColumnDivider";
 import { FloatingChat, floatChatMessage, resendFloatChrome, useFloatMemory } from "./FloatingChat";
 import { lastLine } from "./floating-chat";
 import { ChatBody } from "./NoteDock";
-import { dockKey, docked as dockShown, keepDock, toggleDock } from "./note-dock";
+import { dockKey, docked as dockShown, jumpInPlace, keepDock, toggleDock } from "./note-dock";
 import { browserStore, useBrowser } from "./browser-state";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
@@ -464,7 +464,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       return;
     }
     if (command.id === "botling.openTab") {
-      const tab = mainTabsFor(store.getView().plugins, { role: store.getView().bots.find((candidate) => candidate.id === botId)?.role ?? "bot", parent: store.getView().bots.find((candidate) => candidate.id === botId)?.parent })
+      const tab = mainTabsFor(store.getView().plugins, { id: botId, role: store.getView().bots.find((candidate) => candidate.id === botId)?.role ?? "bot", parent: store.getView().bots.find((candidate) => candidate.id === botId)?.parent })
         .find((candidate) => candidate.plugin === command.plugin && candidate.id === command.view);
       if (!tab) { fail(new Error(`No tab "${command.view.slice(0, 80)}".`)); return; }
       selectBot(botId);
@@ -472,11 +472,26 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       return;
     }
     const shown = store.getView().chat?.botId;
-    if (shown) chooseTab(shown, null);
-    chooseTab(botId, null);
-    setWhiteboardOn(false);
-    selectBot(botId);
+    // At one line (botling.openChat(botId, messageId)): from the bot's own tab with the floating chat, that chat opens
+    // over the tab; else its Chat shows. The chat page goes to the line once it shows that chat (none such: just the chat).
+    const dock = quoteNow.current;
+    if (jumpInPlace(dock.botId, botId, dock.noteKey, command.messageId)) {
+      if (!dock.noteOpen) dock.openNoteChat(true);
+    } else {
+      if (shown) chooseTab(shown, null);
+      chooseTab(botId, null);
+      setWhiteboardOn(false);
+      selectBot(botId);
+    }
+    if (command.messageId) postToChat({ botling: "jumpTo", botID: botId, messageID: command.messageId });
   }, [client, store, fail, chooseTab, setWhiteboardOn, selectBot]);
+  // A plugin's program part asked to show a bot with one of its tabs (`ui.showTab(…, { open: true })`): as its frame's openTab would.
+  const openTabSeq = view.openTab?.seq ?? 0;
+  useEffect(() => {
+    const asked = store.getView().openTab;
+    if (web || !asked) return;
+    runBuiltin(asked.plugin, { id: "botling.openTab", botId: asked.botId, plugin: asked.plugin, view: asked.view });
+  }, [openTabSeq]);
   // A plugin's view at the right end of the row above the input box (`composerBar`), drawn in the chat page.
   useComposerBar({ client, view: bot && !web ? composerBarFor(view.plugins, bot) : null, botId: bot?.id ?? null, onBuiltin: runBuiltin, components: view.components, bots: view.bots, ask: approval.ask });
 
@@ -776,7 +791,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {paneOpen && bot && (
         <BrowserPane bot={bot} state={browserState ?? { botId: bot.id, tabs: [], active: null }} full={browserFull} look={view.settings?.botLook ?? "original"}
           miniChat={miniChat} onMiniChat={setMiniChat} line={stripLine} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}/${floatMemory.browser.docked}`}
-          onAskTool={async (text) => { await client.request({ type: "chat.send", botId: bot.id, text }); }} />
+          onAskTool={async (text) => { await client.request({ type: "chat.send", botId: bot.id, text }); }}
+          tabActions={browserTabActions(view.plugins, (browserState?.tabs.find((candidate) => candidate.id === browserState.active) ?? browserState?.tabs[0])?.url, view.settings?.effectiveLanguage)
+            .map((action) => ({ ...action, icon: action.icon && isIconName(action.icon) ? <Icon name={action.icon} size={15} /> : undefined }))}
+          onTabAction={(command, tab) => { void client.request({ type: "plugins.tabCommand", id: command, botId: bot.id, tabId: tab.id, url: tab.url }).catch(fail); }} />
       )}
       {bot && takeover && takeoverView && (
         <TakeoverPage key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}

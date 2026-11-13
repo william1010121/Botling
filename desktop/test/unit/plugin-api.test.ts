@@ -137,6 +137,71 @@ describe("Host API v3 in the core (plan M5)", () => {
     expect(log.sent).toEqual([{ botId: "main", text: "site is down", via: "Uptime" }, { botId: "main", text: "as me", via: null }]);
   });
 
+  it("bots.create hands a sub bot's parent, long instructions and its delegation to the core; a bad delegation is refused", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "coach", { permissions: ["bots"] });
+    const { ask, world } = await setup(dir);
+    const made: unknown[] = [];
+    world.createBot = (plugin, title, name, job, avatar, more) => { made.push({ plugin, title, name, job, avatar, more }); return { id: "S1", name, role: "bot", awake: false, created: true }; };
+    const long = "x".repeat(20_000);
+    expect(await ask("bots.create", { plugin: "coach", name: "Reader", job: "Read with me", parent: "P1", instructions: long, delegation: "onRequest" })).toMatchObject({ id: "S1", created: true });
+    expect(await ask("bots.create", { plugin: "coach", name: "Plain", job: "j" })).toMatchObject({ id: "S1" });
+    expect(made).toEqual([
+      { plugin: "coach", title: "Coach", name: "Reader", job: "Read with me", avatar: undefined, more: { parent: "P1", instructions: long, delegation: "onRequest" } },
+      { plugin: "coach", title: "Coach", name: "Plain", job: "j", avatar: undefined, more: {} },
+    ]);
+    await expect(ask("bots.create", { plugin: "coach", name: "R", job: "j", delegation: "never" })).rejects.toThrow(/delegation/);
+  });
+
+  it("ui.showTab marks the bots a \"marked\" mainTab view shows for, kept on disk; open asks the window to show it", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "coach", { web: "dist/web.js", contributes: { views: [
+      { id: "coach.page", title: "Reading", where: "mainTab", forRole: "marked", chat: "float" },
+      { id: "coach.any", title: "Any", where: "mainTab" },
+    ] } });
+    const first = await setup(dir);
+    const opened: string[][] = [];
+    first.world.botId = (botId) => (botId === "main" ? "MAIN-ID" : botId === "B1" || botId === "B2" ? botId : null);
+    first.world.openTab = (plugin, view, botId) => { opened.push([plugin, view, botId]); };
+    const tabs = () => first.plugins.view().mainTabs!;
+    expect(tabs()).toEqual([
+      { plugin: "coach", id: "coach.page", title: "Reading", forRole: "marked", chat: "float", bots: [] },
+      { plugin: "coach", id: "coach.any", title: "Any", forRole: "any" },
+    ]);
+    expect(await first.ask("ui.showTab", { plugin: "coach", bot: "B1", view: "coach.page", on: true })).toBeNull();
+    await first.ask("ui.showTab", { plugin: "coach", bot: "B2", view: "coach.page", on: true, open: true });
+    await first.ask("ui.showTab", { plugin: "coach", bot: "B2", view: "coach.page", on: true });
+    expect(tabs()[0]!.bots).toEqual(["B1", "B2"]);
+    expect(opened).toEqual([["coach", "coach.page", "B2"]]);
+    await first.ask("ui.showTab", { plugin: "coach", bot: "B1", view: "coach.page", on: false });
+    expect(tabs()[0]!.bots).toEqual(["B2"]);
+    await expect(first.ask("ui.showTab", { plugin: "coach", bot: "ghost", view: "coach.page", on: true })).rejects.toThrow("No such bot");
+    await expect(first.ask("ui.showTab", { plugin: "coach", bot: "B1", view: "coach.any", on: true })).rejects.toThrow(/forRole "marked"/);
+    await expect(first.ask("ui.showTab", { plugin: "coach", bot: "B1", view: "nope", on: true })).rejects.toThrow(/no mainTab view/);
+    await first.plugins.shutdown();
+    // Kept across a restart (plugin-tabs.json).
+    const again = await setup(dir);
+    expect(again.plugins.view().mainTabs![0]!.bots).toEqual(["B2"]);
+  });
+
+  it("a browser/tab button runs its command with the tab ({ botId, tabId, url, path }), only on a tab its when matches", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "coach", { contributes: { commands: [{ id: "coach.start", title: "Read" }, { id: "coach.web", title: "Web" }, { id: "coach.other", title: "Other" }],
+      menus: { "browser/tab": [{ command: "coach.start", when: { scheme: "file", ext: "pdf" } }, { command: "coach.web" }] } } });
+    const { plugins, tell, sent } = await setup(dir);
+    tell("registered", { beforeSend: 0, afterReply: 0, commands: ["coach.start", "coach.web", "coach.other"], exposed: {} });
+    await until(() => plugins.host.commands.includes("coach.start"));
+    const url = "file:///Users/me/Papers/Attention%20Is%20All.pdf";
+    expect(await plugins.tabCommand("coach.start", { botId: "MAIN-ID", tabId: "t1", url })).toBeNull();
+    const asked = sent.filter((m) => m.method === "command");
+    expect(asked.at(-1).params).toEqual({ id: "coach.start", args: [{ botId: "main", tabId: "t1", url, path: "/Users/me/Papers/Attention Is All.pdf" }] });
+    await expect(plugins.tabCommand("coach.start", { botId: "B1", tabId: "t2", url: "https://example.com/a.html" })).rejects.toThrow(/not offered/);
+    await expect(plugins.tabCommand("coach.other", { botId: "B1", tabId: "t2", url })).rejects.toThrow(/not offered/);
+    // A web page's tab: no path.
+    await plugins.tabCommand("coach.web", { botId: "B1", tabId: "t3", url: "https://example.com/a.html" });
+    expect(sent.filter((m) => m.method === "command").at(-1).params).toEqual({ id: "coach.web", args: [{ botId: "B1", tabId: "t3", url: "https://example.com/a.html", path: null }] });
+  });
+
   it("bots.wake sends its prompt as the plugin's; without one it is refused for now", async () => {
     const dir = tempDir("plugin-api");
     plugin(dir, "uptime");

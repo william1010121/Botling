@@ -12,8 +12,14 @@ export type JSONValue = unknown;
 
 /** "bot" is a bot of its own (made with `bots.create`), not a project's manager. */
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean; created?: boolean }
-/** A new bot: its name in the left column, what it is for, and optionally its shape. */
-export interface NewBot { name: string; job: string; avatar?: string }
+/**
+ * A new bot: its name in the left column, what it is for, and optionally its shape. `parent`: make it a sub bot under that project
+ * bot (or bot of its own) instead, hidden from the left column and working in its folder. `instructions`: any length (up to 200,000
+ * characters), kept in a file the bot is told to read (asked again, the file is rewritten). `delegation: "onRequest"`: the bot does
+ * its work itself and starts subagents or workers only when the user explicitly asks (it runs on Claude); "default" (or none): it
+ * hands real work to them by default, as every other bot.
+ */
+export interface NewBot { name: string; job: string; avatar?: string; parent?: string; instructions?: string; delegation?: "default" | "onRequest" }
 export interface Outgoing { bot: BotInfo; text: string }
 export interface Incoming { bot: BotInfo; text: string }
 
@@ -601,6 +607,11 @@ export interface BotlingApi {
      * while that bot's chat is shown. One at a time, across plugins; `opts.wide` makes it wide.
      */
     takeover(view: string | null, opts?: { bot?: string; wide?: boolean }): Promise<void>;
+    /**
+     * Shows (`on`) or hides one of this plugin's `mainTab` views declared with `"forRole": "marked"` in bot `botId`'s header: such a
+     * tab shows only for the bots marked here (kept across restarts). `opts.open`: also show that bot with this tab now.
+     */
+    showTab(botId: string, viewId: string, on: boolean, opts?: { open?: boolean }): Promise<void>;
     /** An item of this plugin's in the status area (null: gone). */
     setStatus(id: string, item: StatusItem | null): void;
     /** Opens `method` to this plugin's own frames (panels) and web part: the only methods they can call. */
@@ -751,7 +762,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       send: (botId, text, opts = {}) => quiet(ask("bots.send", { bot: botId, text, as: opts.as === "user" ? "user" : "plugin" }) as Promise<{ messageId: string }>),
       wake: async (botId, prompt) => { await ask("bots.wake", { bot: botId, ...(prompt === undefined ? {} : { prompt }) }); },
       interrupt: async (botId) => { await ask("bots.interrupt", { bot: botId }); },
-      create: async (bot) => (await ask("bots.create", { name: bot?.name, job: bot?.job, avatar: bot?.avatar })) as BotInfo,
+      create: async (bot) => (await ask("bots.create", { name: bot?.name, job: bot?.job, avatar: bot?.avatar, parent: bot?.parent, instructions: bot?.instructions, delegation: bot?.delegation })) as BotInfo,
       onReply: (fn) => {
         plugin.replyListeners.push(fn);
         return remove(plugin.replyListeners, fn);
@@ -891,6 +902,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       input: async (opts) => (await ask("ui.input", { title: opts?.title, ...(opts?.placeholder ? { placeholder: opts.placeholder } : {}), ...(opts?.secret ? { secret: true } : {}) })) as string | null,
       openView: async (id, args) => { await ask("ui.openView", { id, ...(args === undefined ? {} : { args }) }); },
       takeover: async (view, opts = {}) => { await ask("ui.takeover", { view, ...(opts.bot ? { bot: opts.bot } : {}), ...(opts.wide ? { wide: true } : {}) }); },
+      showTab: async (botId, viewId, on, opts = {}) => { await ask("ui.showTab", { bot: botId, view: viewId, on: on === true, ...(opts.open ? { open: true } : {}) }); },
       setStatus: (id, item) => host.notify("ui.setStatus", { plugin: name, id, item: item ?? null }),
       expose,
       emit: (event, data, opts = {}) => host.notify("ui.emit", { plugin: name, name: String(event), data: data === undefined ? null : data, ...(opts.botId ? { botId: opts.botId } : {}) }),

@@ -139,6 +139,8 @@ fromShell(message => {
     takeFocusBack();
   } else if (message.botling === "focus") {
     window.ccb.focus();
+  } else if (message.botling === "jumpTo") {
+    window.ccb.jumpTo(message.botID, message.messageID);
   } else if (message.botling === "composerQuote") {
     // The Note's "ask about this block": after the chat's draft, the caret at the end (composer-quote.ts in the shell).
     let inserted = false;

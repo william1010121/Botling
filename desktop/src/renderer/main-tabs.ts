@@ -17,11 +17,15 @@ export type MainTab = NonNullable<PluginsView["mainTabs"]>[number];
 /** How a tab is remembered: "<plugin>/<view id>". */
 export const tabKey = (tab: MainTab) => `${tab.plugin}/${tab.id}`;
 
-/** The tabs a bot's header offers: "main" for the main bot, "project" for project bots (and their sub bots), "bots" for every bot but the main bot, "any" for all. */
-export function mainTabsFor(plugins: PluginsView | null | undefined, bot: Pick<BotView, "role" | "parent">): MainTab[] {
+/**
+ * The tabs a bot's header offers: "main" for the main bot, "project" for project bots (and their sub bots), "bots" for every bot but
+ * the main bot, "any" for all, "marked" for the bots its plugin marked (`ui.showTab`, the tab's `bots`).
+ */
+export function mainTabsFor(plugins: PluginsView | null | undefined, bot: Pick<BotView, "role" | "parent"> & { id?: string }): MainTab[] {
   // A sub bot (a bot with a job under a project bot) works in its project's folder.
   const role = bot.role === "main" ? "main" : bot.role === "manager" || bot.parent ? "project" : null;
-  return (plugins?.mainTabs ?? []).filter((tab) => tab.forRole === "any" || tab.forRole === role || (tab.forRole === "bots" && bot.role !== "main"));
+  return (plugins?.mainTabs ?? []).filter((tab) => tab.forRole === "any" || tab.forRole === role || (tab.forRole === "bots" && bot.role !== "main")
+    || (tab.forRole === "marked" && !!bot.id && !!tab.bots?.includes(bot.id)));
 }
 
 /** The right panel blocks plugins add for a bot (`rightPanel.section` views), by the same `forRole`. */

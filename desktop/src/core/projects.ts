@@ -106,10 +106,21 @@ export function folderURLText(folder: string): string {
  * Adds a row to projects.json (1.x's format: {id, name, folder as a file URL, avatar}; a bot of its own
  * also its `job`, and the `plugin` that made it), keeping the rows and keys there.
  */
-export function saveProjectRow(root: string, row: { id: string; name: string; folder: string; avatar: string; job?: string; plugin?: string; parent?: string; createdAt?: number; handoff?: string }) {
+export function saveProjectRow(root: string, row: { id: string; name: string; folder: string; avatar: string; job?: string; plugin?: string; parent?: string; createdAt?: number; handoff?: string; delegation?: "onRequest"; instructionsFile?: string }) {
   const rows = projectRows(root);
-  rows.push({ id: row.id, name: row.name, folder: folderURLText(row.folder), avatar: row.avatar, ...(row.job !== undefined ? { job: row.job } : {}), ...(row.plugin ? { plugin: row.plugin } : {}), ...(row.parent ? { parent: row.parent, ...(row.createdAt !== undefined ? { createdAt: row.createdAt } : {}), ...(row.handoff ? { handoff: row.handoff } : {}) } : {}) });
+  rows.push({ id: row.id, name: row.name, folder: folderURLText(row.folder), avatar: row.avatar, ...(row.job !== undefined ? { job: row.job } : {}), ...(row.plugin ? { plugin: row.plugin } : {}), ...(row.parent ? { parent: row.parent, ...(row.createdAt !== undefined ? { createdAt: row.createdAt } : {}), ...(row.handoff ? { handoff: row.handoff } : {}) } : {}), ...(row.delegation ? { delegation: row.delegation } : {}), ...(row.instructionsFile ? { instructionsFile: row.instructionsFile } : {}) });
   mkdirSync(root, { recursive: true });
+  writeFileAtomic(Layout.projectsFile(root), JSON.stringify(rows));
+}
+
+/** Sets keys of one row of projects.json (by id), keeping the others as they are; undefined takes a key out. */
+export function updateProjectRow(root: string, id: string, patch: Record<string, unknown>) {
+  const rows = projectRows(root).map((row) => {
+    if (!(row && typeof row === "object" && (row as { id?: unknown }).id === id)) return row;
+    const next: Record<string, unknown> = { ...(row as Record<string, unknown>) };
+    for (const [key, value] of Object.entries(patch)) if (value === undefined) delete next[key]; else next[key] = value;
+    return next;
+  });
   writeFileAtomic(Layout.projectsFile(root), JSON.stringify(rows));
 }
 

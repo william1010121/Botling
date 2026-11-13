@@ -7,9 +7,9 @@ import { tabKey, type MainTab } from "./main-tabs";
 /** The first-party plugin whose tab (the Note) offers the docked chat. */
 export const NOTE_PLUGIN = "botling.note";
 
-/** Whether a main-area tab offers the bubble and the docked chat. */
-export function dockable(tab: Pick<MainTab, "plugin"> | null | undefined): boolean {
-  return tab?.plugin === NOTE_PLUGIN;
+/** Whether a main-area tab offers the bubble and the docked chat: the Note's, and any plugin tab declared with `"chat": "float"`. */
+export function dockable(tab: (Pick<MainTab, "plugin"> & Partial<Pick<MainTab, "chat">>) | null | undefined): boolean {
+  return tab?.plugin === NOTE_PLUGIN || tab?.chat === "float";
 }
 
 /** What the dock is open for: "<bot>/<plugin>/<view>" while a dockable tab shows (not a worker's page); null: no bubble. */
@@ -30,4 +30,12 @@ export function toggleDock(open: string | null, key: string | null): string | nu
 /** What the dock state becomes when what shows changes: it stays only while it was opened for that. */
 export function keepDock(open: string | null, key: string | null): string | null {
   return docked(open, key) ? open : null;
+}
+
+/**
+ * botling.openChat(botId, messageId) while that bot shows a tab with the floating chat (`dockKey`): the tab stays and its
+ * chat opens over it at the line; otherwise the bot's Chat shows, as openChat always did.
+ */
+export function jumpInPlace(shownBotId: string | null | undefined, botId: string, key: string | null, messageId: string | undefined): boolean {
+  return !!messageId && !!key && shownBotId === botId;
 }

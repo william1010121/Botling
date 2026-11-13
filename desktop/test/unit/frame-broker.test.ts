@@ -197,6 +197,18 @@ describe("Botling's own commands from a plugin frame (plan W2)", () => {
     expect(frames.refusals.map((refusal) => refusal.reason)).toEqual(['Botling\'s command "botling.openResult" with the wrong arguments', 'a command of another plugin ("botling.settings")']);
   });
 
+  it("openChat with a message id goes to the page with it (the chat at that line)", async () => {
+    const frames = broker();
+    const rpc = host();
+    const board = frame();
+    registerPluginFrame(frames, rpc, { frame: board.element, plugin: "board" });
+    send(board.element, { ccb: "command", id: "botling.openChat", args: ["B1", "M7"] });
+    send(board.element, { ccb: "command", id: "botling.openChat", args: ["B1", "M7", "x"] });
+    await settle();
+    expect(rpc.builtins).toEqual([["board", { id: "botling.openChat", botId: "B1", messageId: "M7" }]]);
+    expect(frames.refusals.map((refusal) => refusal.reason)).toEqual(['Botling\'s command "botling.openChat" with the wrong arguments']);
+  });
+
   it("a page that runs none refuses them", async () => {
     const frames = broker();
     const { builtin: _, ...rpc } = host();

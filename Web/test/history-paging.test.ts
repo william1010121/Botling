@@ -102,3 +102,51 @@ describe("history held by the app", () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 });
+
+// A plugin frame's botling.openChat(botId, messageId): the app shows that bot's chat and asks the page to go to the line.
+describe("going to one line of a chat (ccb.jumpTo)", () => {
+  beforeEach(() => { Element.prototype.scrollIntoView = vi.fn(); });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+  it("in the chat on screen: scrolls to the line and flashes it", async () => {
+    window.ccb.setState(state(history(10), { botID: "reader" }));
+    window.ccb.jumpTo("reader", "m4");
+    await settle();
+    expect(row("m4").classList.contains("flash")).toBe(true);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("asked before the chat it names is on screen: goes there once that chat's state comes", async () => {
+    window.ccb.setState(state(history(10), { botID: "other" }));
+    window.ccb.jumpTo("paper", "m2");
+    // A late update of the chat still on screen does not take it.
+    window.ccb.setState(state(history(10), { botID: "other" }));
+    await settle();
+    expect(row("m2").classList.contains("flash")).toBe(false);
+    window.ccb.setState(state(history(10), { botID: "paper" }));
+    await settle();
+    expect(row("m2").classList.contains("flash")).toBe(true);
+    // Used once: coming back to the chat later does not jump again.
+    window.ccb.setState(state(history(10), { botID: "other" }));
+    window.ccb.setState(state(history(10), { botID: "paper" }));
+    await settle();
+    expect(row("m2").classList.contains("flash")).toBe(false);
+  });
+
+  it("a line far up, outside the lines drawn: mounts it and goes there", async () => {
+    window.ccb.setState(state(history(400), { botID: "long" }));
+    expect(row("m3")).toBeNull();
+    window.ccb.jumpTo("long", "m3");
+    await settle();
+    expect(row("m3")).not.toBeNull();
+    expect(row("m3").classList.contains("flash")).toBe(true);
+  });
+
+  it("an unknown line: the chat just shows, nothing flashes and nothing breaks", async () => {
+    window.ccb.setState(state(history(10), { botID: "plain" }));
+    expect(() => window.ccb.jumpTo("plain", "no-such-line")).not.toThrow();
+    await settle();
+    expect(document.querySelector(".row.flash")).toBeNull();
+    expect(rows().map((r) => r.dataset.id)).toEqual(history(10).map((m) => m.id));
+  });
+});

@@ -177,7 +177,7 @@ describe("botling manifests", () => {
       { kind: "view", plugin: "board", id: "board.any", title: "Any", where: "mainTab", forRole: "any" },
     ]);
     expect(read.problems).toEqual([
-      'View "board.odd": forRole "everyone" must be main, project, bots or any.',
+      'View "board.odd": forRole "everyone" must be main, project, bots, any or marked.',
       'View "board.side": forRole is only for where "mainTab", "rightPanel.section" or "composerBar".',
     ]);
   });
@@ -279,7 +279,7 @@ describe("botling manifests", () => {
       'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section, bottomPanel, chatHeader, rightPanel.takeover or composerBar.',
       'Tile "mine.t": size "9x9" is not a Board size (for example 2x1).',
       'Setting "on" must start with "mine.".',
-      'Menu "toolbar" is not one of message/context, bot/context, composer/plus, commandPalette, message/preview.',
+      'Menu "toolbar" is not one of message/context, bot/context, composer/plus, commandPalette, message/preview, browser/tab.',
       'Hook "onEverything" must be beforeSend, afterReply or toolCall.',
       'contributes.skills "../outside" must be a relative path inside the plugin folder.',
     ]);
