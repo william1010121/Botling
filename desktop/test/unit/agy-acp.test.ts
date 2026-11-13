@@ -314,3 +314,11 @@ describe('agy per-turn reply reminder',()=>{
   expect(src).not.toContain('Reply rule:');
  });
 });
+it('names the model its conversation runs on: the one it set, else the one ACP started it on',async()=>{
+ const h=harness(),done=h.client.send('task','u');
+ h.reply({protocolVersion:1,agentInfo:{name:'antigravity-acp',version:'1.4.3'},agentCapabilities:{loadSession:true}});await tick();
+ h.reply({sessionId:'new',models:{currentModelId:'gemini-3.8-flash-high',availableModels:[{modelId:'gemini-3.8-flash-high'}]}});await tick();
+ h.policy();await tick();h.policy();await tick();
+ expect(h.items.find(i=>i.kind==='init')).toEqual({kind:'init',sessionId:'new',model:'gemini-3.8-flash-high'});
+ h.client.close();await done.catch(()=>undefined);
+});

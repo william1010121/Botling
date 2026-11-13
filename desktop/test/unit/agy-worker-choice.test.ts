@@ -38,3 +38,22 @@ it('a worker run starts on the choice read when it starts, and the runtime repor
   await m.tool('app_handoff',{instructions:'second'});
   expect(starts[1]).toMatchObject({worker:true,model:'gemini-head',effort:'high'});
 });
+
+// Its row, the workers menu and its own view show the model it runs on, as Claude's and Codex's workers do.
+it('a worker\'s opening runtime names its chosen model; with none chosen, the model its conversation started on',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'botling-agy-worker-model-'));
+  let choice:{model?:string|null;effort?:string|null}={model:'gemini-flash',effort:'low'};
+  const events:any[]=[];const handlers:any[]=[];
+  const m=new AgyWorkers({command:'not-executed',cwd:home,acpHome:home,sessionId:'owner',resume:false,systemPrompt:'You are the coordinator',workerInstructions:'fixture',effort:'high',workerChoice:()=>choice},i=>events.push(i),()=>{},(_config,h)=>{
+    handlers.push(h);
+    const head:AgyWorkerHead={start(){},send(){},answer(){},async terminate(){return {killed:[],forced:false};}};return head;
+  });managers.push(m);
+  const first=await m.tool('app_handoff',{instructions:'first'});
+  expect(events.find(e=>e.kind==='subagentRuntime'&&e.id===first.task_id)).toMatchObject({runtime:{engine:'agy',reasoningEffort:'low'},model:'gemini-flash'});
+  // "Same as head" with no head model: Antigravity's own default, which ACP names when the conversation starts.
+  choice={};
+  const second=await m.tool('app_handoff',{instructions:'second'});
+  expect(events.filter(e=>e.kind==='subagentRuntime'&&e.id===second.task_id).every(e=>!e.model)).toBe(true);
+  handlers[1].onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555',model:'gemini-3.8-flash-high'});
+  expect(events.filter(e=>e.kind==='subagentRuntime'&&e.id===second.task_id).at(-1)).toMatchObject({runtime:{engine:'agy',reasoningEffort:'high'},model:'gemini-3.8-flash-high'});
+});

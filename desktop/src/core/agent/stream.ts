@@ -18,7 +18,8 @@ export const commandEnded = (state: CommandState): boolean => state !== "queued"
 
 export type StreamItem =
   | { kind: "scheduleResult"; id: string; result: ScheduleResult; parent: string | null }
-  | { kind: "init"; sessionId: string }
+  /** `model`: the model the conversation runs on, where the engine names it (Antigravity's ACP). */
+  | { kind: "init"; sessionId: string; model?: string }
   /** A piece of the reply's text (`--include-partial-messages`). */
   | { kind: "delta"; text: string }
   /** A new text block started (after a tool call): the next text is a new paragraph. */

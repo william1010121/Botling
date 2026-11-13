@@ -35,7 +35,9 @@ const BUSY='This ACP worker is busy or cleaning up; try again after its report.'
 /** One run's head, and the approvals it asked (by ACP's request id, without its `acp:` prefix). */
 interface AgyRun {handle:RunHandle;head?:AgyWorkerHead;approvals:Map<string,Record<string,unknown>>;sawText:boolean;ended:boolean;
   /** Words steered into the run and not read yet (by offer id). */
-  offered:Map<string,string>}
+  offered:Map<string,string>;
+  /** The model and effort it started with (model null: Antigravity's default, until ACP names it). */
+  model:string|null;effort:string|null}
 /** Heads the words a run ended before reading, at the start of the worker's next run. */
 const CARRIED_NOTE='(App: Messages sent to you while your last run was at work, which it ended before reading:)';
 
@@ -68,6 +70,8 @@ export class AgyAcpAdapter implements WorkerAdapter {
   private sink?:(item:CodexItem)=>void;
   /** The effort the last worker run started with (undefined: none yet). */
   private lastEffort:string|null|undefined;
+  /** The model the last worker run started with (null: Antigravity's default; undefined: none yet). */
+  private lastModel:string|null|undefined;
   /** app_notify_owner from a worker's run (its core's `notifyOwner`, set by the facade once the core exists). */
   notify?:(id:string,args:Record<string,unknown>)=>unknown;
   /**
@@ -86,7 +90,9 @@ export class AgyAcpAdapter implements WorkerAdapter {
     return {engine:engine as 'agy'|'codex'};
   }
   start(record:Readonly<WorkerLedgerRecord>,words:string,handle:RunHandle){
-    const live:AgyRun={handle,approvals:new Map(),sawText:false,ended:false,offered:new Map()};
+    const workerEngine=record.engine==='codex'?'codex':'agy';
+    const chosen=agyWorkerModelEffort(this.config,workerEngine);
+    const live:AgyRun={handle,approvals:new Map(),sawText:false,ended:false,offered:new Map(),model:chosen.model,effort:chosen.effort};
     this.runs.set(record.id,live);
     const current=()=>this.runs.get(record.id)===live&&!live.ended;
     const end=(end:RunEnd)=>{if(!current())return;live.ended=true;live.approvals.clear();
@@ -95,9 +101,7 @@ export class AgyAcpAdapter implements WorkerAdapter {
       handle.emit({type:'end',end});};
     const carried=this.carried.get(record.id);this.carried.delete(record.id);
     if(carried?.length)words=`${CARRIED_NOTE}\n${carried.join('\n\n')}\n\n${words}`;
-    const workerEngine=record.engine==='codex'?'codex':'agy';
-    const chosen=agyWorkerModelEffort(this.config,workerEngine);
-    this.lastEffort=chosen.effort;
+    this.lastEffort=chosen.effort;this.lastModel=chosen.model;
     const notify=this.notify;
     const config:AgyConfig={...this.config,worker:true,workerEngine,model:chosen.model,effort:chosen.effort,
       // Its one app tool: a note to its owner, only from this run while it is under way.
@@ -138,6 +142,8 @@ export class AgyAcpAdapter implements WorkerAdapter {
         if(record.conversationId&&record.conversationId!==item.sessionId)return end({how:'error',finalText:null,error:'Worker changed its saved conversation identity.',detail:'init'});
         {const named=!record.conversationId;
         emit({type:'session',conversationId:item.sessionId});
+        // A run on Antigravity's default model ("Same as head", no head model): ACP named it just now.
+        if(item.model&&item.model!==live.model){live.model=item.model;this.sink?.({kind:'subagentRuntime',id:record.id,runtime:{engine:'agy',reasoningEffort:live.effort},model:item.model});}
         // Its row (and so the agent registry) learns the agy session its usage is in: agy-session handle.sessionId.
         if(named)this.sink?.({kind:'subagentExecution',id:record.id,execution:{run:record.run,ownerSessionId:this.config.sessionId||record.ownerSessionId||null,threadId:item.sessionId,turnId:null}});
         return;}
@@ -210,8 +216,12 @@ export class AgyAcpAdapter implements WorkerAdapter {
   }
   /** Whether it still holds a head of this worker that it could not end. */
   holds(id:string):boolean {return !!this.runs.get(id)?.head&&!!this.runs.get(id)?.ended;}
-  /** The effort its workers run with: the last one started, else what the next would start with. */
-  runtime(){return {reasoningEffort:this.lastEffort!==undefined?this.lastEffort:agyWorkerModelEffort(this.config).effort};}
+  /** The model and effort a worker runs with: its run's, else the last one started, else what the next would start with. */
+  runtime(record?:Readonly<WorkerLedgerRecord>){
+    const live=record&&this.runs.get(record.id);
+    const next=live?live:this.lastEffort!==undefined?{model:this.lastModel??null,effort:this.lastEffort}:agyWorkerModelEffort(this.config);
+    return {reasoningEffort:next.effort,model:next.model};
+  }
   async close(){
     const results=await Promise.allSettled([...this.runs.values()].map(async live=>{live.ended=true;await live.head?.terminate();live.head=undefined;}));
     if(results.some(r=>r.status==='rejected'))throw new Error(CLEANUP_INCOMPLETE);
