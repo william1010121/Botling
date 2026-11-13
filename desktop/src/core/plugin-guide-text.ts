@@ -11,7 +11,7 @@ export function pluginGuideIndex(builtIns = "(no built-in plugins this time)"): 
     "# Botling plugins",
     "",
     "This folder is Botling's plugin library (a git repo). One folder per plugin. Botling watches it; whenever a file changes it re-checks and hot-updates.",
-    "The sources of the plugins built into the app are in: " + builtIns + " (read-only; to change one, copy the whole folder here; a plugin with the same name overrides the built-in one).",
+    "The sources of the plugins built into the app are in: " + builtIns + " (read-only; to change one, copy the whole folder here; a plugin with the same name overrides the built-in one while its version is the same or newer: an older copy here is ignored once Botling ships a newer one, and the Plugins page says so. A built-in plugin's source of truth is Botling's repo (desktop/builtin-plugins): a change made here reaches other people only when it is brought into the repo).",
     "",
     "A plugin has up to three parts, all optional but package.json: `dist/web.js` (web part, in the chat view), `dist/host.mjs` (program part, Node, in the plugin host), `claude/` (a standard Claude Code plugin: skills, agents, .mcp.json), plus `components/<name>/` (template.html + about.md). Paths in package.json are relative to the plugin folder.",
     "",

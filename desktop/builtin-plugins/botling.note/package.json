@@ -1,0 +1,30 @@
+{
+  "name": "botling.note",
+  "displayName": "Note",
+  "version": "1.19.1",
+  "description": "A Note tab in each bot's header: edit the bot's own markdown note (.bot/note.md) in place; a line renders as markdown (images, KaTeX math, code, lists) once the cursor leaves it; follows the app's light/dark theme. One note can fork into routes (route tabs, a route overview, `<!-- branch / route -->` comments in the same note.md); a + button and the / menu insert headings, to-dos and images. A cell is a whole chunk of Markdown, cut by `<!-- cell -->` lines (a note without them is one cell per route); each cell is framed with a colored bar by type, can be dragged by its grip (into the route a branch shows, out of a branch, between routes, up/down; Cmd+Z undoes it) and has a toolbar to split at the cursor (Ctrl+Shift+-), merge with the next (Ctrl+Shift+M), insert, move (also into and out of branches), delete and change type (Markdown, code, math). Markdown (GFM pipe) tables render as real tables (header, borders, column alignment) and are edited cell by cell in place (Tab / Shift+Tab, Enter adds a row, a hover bar and right-click menu add or delete rows and columns, \"/表格\" inserts one); the file keeps tidy pipe-table text and untouched tables keep their bytes. Whole lines can be selected across lines, cells and tables (mouse drag, Shift+click, Shift+arrows; Cmd+A selects the cell, again the whole shown note); Cmd+C copies the Markdown (no cell, branch or route lines; only the shown routes), and typing or Delete replaces the selection (Cmd+Z undoes it). Each branch remembers its own shown route, nested branches per parent route (switching a branch away and back brings back the deeper routes chosen there), and the app keeps those choices and the cursor / scroll per note across tab switches and restarts (plugin storage, never note.md). A `<show name=\"…\">JSON</show>` (or `<show name=\"…\" command=\"…\"></show>`) on its own line(s), as the chat writes it, is drawn as a live card in a cell of its own (the note keeps the plain text): a card with a Command runs it once allowed (the chat's approval sheet), again on ↻ and on its refresh timer; \"/卡片\" inserts one of the bot's components; \"凍結成圖片\" saves a picture of the card into the note's assets and puts its image line in place of the <show> (Cmd+Z undoes insert and freeze). Links open: web links in the default browser, .md in the app's preview, other files with the system. A 白板 button at the top right (Esc back) shows the note as a read-only whiteboard: each cell a card top to bottom, branches as side-by-side route columns merging at end branch (nested too), collapsible per branch (kept in the view state, never in note.md), zoom/pan/minimap; double-click a card jumps to that cell, clicking a route title switches the route. Ships a Claude skill (note: skills/note/SKILL.md) with the note.md format (cells, branch/route markers, <show> cards, frozen images, the whiteboard), so bots read it instead of searching the app. A small 問 button (a speech-bubble icon with quote marks) in the left gutter right beside each cell's drag grip (shown on hover, also beside a branch bar) quotes that cell (or the branch as shown) as a Markdown quote into the bot's chat composer when the app lends one (ccb.composer.insertQuote), else copies the quote for pasting. Every blank line inside a cell takes a whole line as typed (only the one next to a cell boundary takes no room), so Enter always shows a new line; extra spaces after a list marker stay. Consecutive \"> \" lines draw as one blockquote (one unbroken bar per level, lists and headings inside drawn as such, also while a line is edited); typing > over a multi-line selection quotes every selected text line, Cmd/Ctrl+Shift+. toggles the quote (on a selection or the edited line), one undo step. With the app's note.db (Botling 2.x, notes.outline), the 問 quote starts with a line naming the cell by its fixed id and place, > 〔Note #id · Fork › Route〕 (a branch: its fork's id and the shown route), so the bot can read it with app_note_read; an older app or a note in file mode quotes as before. What a cell is follows the app: it bundles Botling's own desktop/src/core/note-cells.ts (built into the app since 2.7.0), so `<!-- cell: id -->` lines cut cells too, and when the app's notes.parse cuts the same text differently its cells are drawn. A move, split, merge or drag first saves what was typed, so note.db keeps each cell's id; a noteConflict (an edit in note.md the app set aside) shows a banner naming the kept file.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.6.0"
+  },
+  "ccb": {
+    "permissions": [
+      "files"
+    ],
+    "web": "dist/web.js",
+    "host": "dist/host.js",
+    "contributes": {
+      "views": [
+        {
+          "id": "botling.note.tab",
+          "title": "Note",
+          "icon": "note.text",
+          "where": "mainTab",
+          "forRole": "any"
+        }
+      ],
+      "skills": "skills"
+    }
+  }
+}

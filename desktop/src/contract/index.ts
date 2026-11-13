@@ -631,6 +631,10 @@ export const PluginView = z.strictObject({
   installedFrom: z.string().max(2_000).nullable(),
   /** Shipped with Botling (step M11): read-only, can only be turned off. */
   builtIn: z.boolean().optional(),
+  /** A library plugin running in place of the built-in one of the same name (its version is the same or newer): the built-in's version. */
+  replacesBuiltIn: z.string().max(100).optional(),
+  /** A built-in plugin running while the library holds an older copy (or one whose version is not a semver), which is ignored: that copy's version. */
+  ignoredLibraryVersion: z.string().max(100).optional(),
   permissions: z.array(z.string().max(40)).max(20),
   parts: z.array(z.enum(["web", "host", "claude", "components"])).max(4),
   settings: z.array(z.strictObject({

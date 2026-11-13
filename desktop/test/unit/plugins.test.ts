@@ -46,8 +46,9 @@ describe("the manifest check", () => {
   });
 
   it("reads engines ranges as npm does (PluginTests.enginesRanges)", () => {
-    for (const yes of ["^2.0.0", "~2.0.1", ">=1.5.0", "*", "<2.1.0", ">=1.0.0 <3.0.0", "^1.0.0 || ^2.0.0", "2.x", "1.5 - 2.0"]) expect(compatible(yes), yes).toBe(true);
-    for (const no of ["^3.0.0", "^2.4.0", "<2.0.0", ">=1.0.0 <2.0.0", ">2", "not a range"]) expect(compatible(no), no).toBe(false);
+    // The plugin API is 2.6 (API_VERSION).
+    for (const yes of ["^2.0.0", "^2.6.0", "~2.6.1", ">=1.5.0", "*", "<2.7.0", ">=1.0.0 <3.0.0", "^1.0.0 || ^2.0.0", "2.x", "1.5 - 2.6"]) expect(compatible(yes), yes).toBe(true);
+    for (const no of ["^3.0.0", "^2.7.0", "~2.0.1", "<2.6.0", "<2.0.0", ">=1.0.0 <2.0.0", ">2", "not a range"]) expect(compatible(no), no).toBe(false);
   });
 
   it("writes manifests as Swift's JSONEncoder does (pretty, sorted, ` : `)", () => {

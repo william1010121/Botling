@@ -103,7 +103,10 @@ function PluginItem({ plugin, onEnable, onSetting, onSecret, onCommand, onPanel 
       </div>
       {plugin.description && <div className="plugin-description">{plugin.description}</div>}
       {plugin.failure && <div className="plugins-problem">Turned off: {plugin.failure}</div>}
-      {plugin.builtIn && <div className="plugin-meta">Built into Botling</div>}
+      {plugin.builtIn && <div className="plugin-meta">Built into Botling{plugin.ignoredLibraryVersion !== undefined ? " (in use)" : ""}</div>}
+      {/* Which copy runs when the library has one too (core/plugins/versions.ts): the library's at the built-in's version or newer. */}
+      {plugin.ignoredLibraryVersion !== undefined && <div className="plugin-meta plugin-copy-ignored">Your plugin library's copy ({plugin.ignoredLibraryVersion}) is older and is ignored</div>}
+      {plugin.replacesBuiltIn !== undefined && <div className="plugin-meta plugin-copy-library">Your plugin library's copy (in use) replaces the built-in {plugin.replacesBuiltIn}</div>}
       {plugin.installedFrom && <div className="plugin-meta">from {plugin.installedFrom}</div>}
       {/* A built-in plugin's settings set on the Settings page (`hidden`) are not repeated here. */}
       {plugin.settings.filter((setting) => !setting.hidden).map((setting) => (

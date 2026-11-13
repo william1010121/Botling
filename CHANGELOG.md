@@ -4,6 +4,11 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+- **Note is now built in.** The Note tab (and the note skill bots load to read it) ships with Botling, so every download has it; until now it lived only in one plugin library. Dragging a cell across blank lines keeps its id, a 問 quote of a branch uses the app's own label for it, and the plugin API is 2.6 (a plugin may ask for `^2.6.0`).
+- **Built-in plugins update over old copies.** A plugin library copy of a built-in plugin runs only while its version is the same or newer; an older copy is ignored (the Plugins page says which copy runs and when one is ignored), so people with an old copy see the newer built-in one.
+
 ## 2.6.0
 
 Heads-up: bot prompts and tool lists changed, so every bot starts a new session once and Codex coordinator threads start anew once after the update.
