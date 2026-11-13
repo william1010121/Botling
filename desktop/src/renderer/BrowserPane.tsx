@@ -2,7 +2,7 @@
 // bubble). This page draws the tab strip, the toolbar and the site-tools sheet; the web page itself is a native
 // view main lays where `.bp-page` is (browser-host.ts), so nothing of this page may sit over that box: the toolbar
 // pushes the page down while it shows, the sheet narrows it, and the ⋯ menu is a native menu.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { hostOf, type BrowserBotState, type BrowserTabInfo } from "../browser-wire";
 import type { BotView } from "../contract";
 import { MAINTAINER_ID, faceURL } from "./avatars";
@@ -45,6 +45,13 @@ export function tabLabel(tab: Pick<BrowserTabInfo, "title" | "url">): string {
 function addressParts(url: string): { host: string; rest: string } {
   try { const u = new URL(url); return { host: u.host.replace(/^www\./, ""), rest: `${u.pathname === "/" ? "" : u.pathname}${u.search}${u.hash}` }; } catch { return { host: url, rest: "" }; }
 }
+
+/** The on-disk path of a dropped File (the preload's webUtils.getPathForFile); '' when it has none. */
+const pathForFile = (file: File): string => {
+  const bridge = (window as unknown as { botling?: { pathForFile?: (file: File) => string } }).botling;
+  try { return bridge?.pathForFile?.(file) ?? ""; } catch { return ""; }
+};
+const hasFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
 
 export interface BrowserPaneProps {
   bot: BotView;
@@ -147,11 +154,31 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, line
     url.current?.blur();
   };
 
+  // PDFs dropped onto the tab strip, the toolbar or an empty pane open in tabs (browser-pdf.ts); a drop onto the page
+  // itself goes to the page (main's native view), which takes it (an upload) or lets main open the PDF.
+  const [dropping, setDropping] = useState(false);
+  const onDragOver = (event: DragEvent) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setDropping(true);
+  };
+  const onDrop = (event: DragEvent) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDropping(false);
+    const paths = Array.from(event.dataTransfer.files).map(pathForFile).filter((path) => /\.pdf$/i.test(path));
+    if (paths.length) postBrowser({ type: "openFiles", botId, paths: paths.slice(0, 8) });
+  };
+
   const host = active ? hostOf(active.url) : "";
   const shown = addressParts(active?.url ?? "");
 
   return (
-    <section className={`browser-pane${full ? " full" : ""}`} aria-label="Browser">
+    <section className={`browser-pane${full ? " full" : ""}${dropping ? " dropping" : ""}`} aria-label="Browser"
+      onDragOver={onDragOver} onDrop={onDrop}
+      onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false); }}>
       <div className="bp-tabs drag" role="tablist" aria-label="Pages">
         {state.tabs.map((tab) => (
           <div key={tab.id} role="tab" aria-selected={tab.id === active?.id} className={`bp-tab${tab.id === active?.id ? " on" : ""}`} title={tab.url}
@@ -213,7 +240,7 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, line
         <div ref={page} className="bp-page">
           {/* Shown only while the page itself is hidden (a sheet of the app over the window). */}
           {active ? <span className="bp-page-hint">{host}</span> : (
-            <span className="bp-page-hint bp-page-empty">Type a web address or search above. To bring your sign-ins from Arc, use ⋯ › Import logins from Arc.</span>
+            <span className="bp-page-hint bp-page-empty">Type a web address or search above, or drop a PDF here to read it. To bring your sign-ins from Arc, use ⋯ › Import logins from Arc.</span>
           )}
         </div>
         {sheet && (

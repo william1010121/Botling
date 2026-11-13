@@ -45,6 +45,8 @@ export type BrowserUp =
   | { type: "mode"; fullscreen: boolean }
   /** Every bot's tabs again (a reloaded app page). */
   | { type: "hello" }
+  /** PDFs dropped onto the tab strip, the toolbar or an empty pane (their paths): each opens in a tab (browser-pdf.ts). */
+  | { type: "openFiles"; botId: string; paths: string[] }
   /** Site tools (browser-site-tools.ts): run a tool on a tab's page with the form's values. */
   | { type: "tool.run"; botId: string; tabId: string; toolId: string; options?: SiteToolOptions }
   /** A tool on or off for the tab's site (a toggle tool runs at once, on or off). */
@@ -136,6 +138,9 @@ export function parseBrowserUp(raw: unknown): BrowserUp | null {
       if (options === null) return null;
       return { type: "tool.run", ...base, ...(options ? { options } : {}) };
     }
+    case "openFiles":
+      if (!bot() || !Array.isArray(m.paths) || m.paths.length === 0 || m.paths.length > 32 || !m.paths.every((path) => str(path, 4_096))) return null;
+      return { type: "openFiles", botId: m.botId as string, paths: m.paths as string[] };
     case "menu":
       return bot() && num(m.x) && num(m.y) ? { type: "menu", botId: m.botId as string, x: m.x as number, y: m.y as number } : null;
     default: return null;
@@ -174,7 +179,11 @@ export function clickOpensOutside(event: { metaKey?: boolean; ctrlKey?: boolean 
   return platform === "darwin" ? event.metaKey === true : event.ctrlKey === true;
 }
 
-/** The host a tab shows (no www.). */
+/** The host a tab shows (no www.); a local file (a PDF the user dropped, browser-pdf.ts) shows its name. */
 export function hostOf(url: string): string {
-  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+  try {
+    const u = new URL(url);
+    if (u.protocol === "file:") { const name = u.pathname.slice(u.pathname.lastIndexOf("/") + 1); try { return decodeURIComponent(name); } catch { return name; } }
+    return u.hostname.replace(/^www\./, "");
+  } catch { return url; }
 }

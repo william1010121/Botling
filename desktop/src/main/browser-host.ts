@@ -11,12 +11,16 @@
 // Phase 2: every tab's network traffic is captured in the background (the DevTools protocol's Network domain on its
 // page, kept in a bounded NetCapture, browser-bot.ts) for the bot tools; no panel shows it. A bot's extraction runs
 // in an isolated world (EXTRACT_WORLD) and the page may not navigate while it runs.
+//
+// 2026-11-13: a local PDF the user dropped (or a chat's .pdf link) opens in a tab of its own, in Chromium's PDF viewer
+// (`plugins: true`); the drop rule and the checks are in browser-pdf.ts. Only file: URLs main granted that way load.
 import { BrowserWindow, Menu, WebContentsView, app, clipboard, dialog, session, shell, type Session, type WebContents } from "electron";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BROWSER_CHANNEL, isWebUrl, urlFromInput, type BrowserDown, type BrowserMenuPick, type BrowserRect, type BrowserToolRun, type BrowserUp } from "../browser-wire";
 import { runOptions, siteOf, toolIsOn, toolsFor, type RunFile, type SiteToolOptions } from "../browser-site-tools";
 import { NetCapture } from "../browser-bot";
+import { droppedPdfPaths, fileNavigation, isOpenablePdf, localPdfPath, pdfFileUrl } from "../browser-pdf";
 import { paneUserAgent, popupWay } from "../browser-auth";
 import { HintAsks, acceptLanguages, withHints, type HintFacts } from "../browser-hints";
 import type { BotBrowserWindow } from "./browser-bot-host";
@@ -39,6 +43,8 @@ const SECURE = {
   partition: BROWSER_PARTITION,
   sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false,
   webSecurity: true, allowRunningInsecureContent: false, navigateOnDragDrop: false, safeDialogs: true, spellcheck: true,
+  // Chromium's PDF viewer (a web PDF shows in the page, and a local one the user dropped, browser-pdf.ts).
+  plugins: true,
 } as const;
 
 let hardened = false;
@@ -83,6 +89,8 @@ export interface BrowserHostOptions {
 export interface BrowserHost {
   /** A link the user (or a plugin) opened for a bot: a tab, and the pane shows. */
   open(botId: string, url: string): void;
+  /** A local PDF the user opened (a chat link main authorized): a tab, and the pane shows; false when it is not one. */
+  openFile(botId: string, path: string): Promise<boolean>;
   receive(message: BrowserUp): void;
   closeBot(botId: string): void;
   tabs: BrowserTabs;
@@ -103,6 +111,19 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
   const captures = new Map<string, NetCapture>();
   /** Tabs a bot's extraction runs in now: their page may not navigate. */
   const extracting = new Set<string>();
+  /** The file: URLs of PDFs the user handed over (browser-pdf.ts): the only local pages a tab may load. */
+  const granted = new Set<string>();
+  const canLoad = (url: string) => isWebUrl(url) || granted.has(url);
+
+  /** A local PDF in a tab of its own (the same file again selects its tab); false when it may not open. */
+  async function openPdf(botId: string, path: string, reveal: boolean): Promise<boolean> {
+    if (!(await isOpenablePdf(path))) { options.note("browser: refused a file that is not a readable PDF"); return false; }
+    if (owner.isDestroyed()) return false;
+    const url = pdfFileUrl(path);
+    granted.add(url);
+    tabs.open(botId, url, { reveal });
+    return true;
+  }
 
   const tabs: BrowserTabs = new BrowserTabs({
     create: (botId, tabId) => makePage(botId, tabId),
@@ -111,7 +132,9 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
 
   function makePage(botId: string, tabId: string): TabPage {
     browserSession();
-    const view = new WebContentsView({ webPreferences: { ...SECURE } });
+    // A file dropped onto the page and not taken by it (no file input or upload area there) "opens": main sees that
+    // navigation (will-navigate) and opens a PDF in a new tab instead (browser-pdf.ts).
+    const view = new WebContentsView({ webPreferences: { ...SECURE, navigateOnDragDrop: true } });
     const contents = view.webContents;
     view.setBackgroundColor("#FFFFFF");
     view.setVisible(false);
@@ -125,7 +148,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
     wire(botId, tabId, view, contents);
     capture(tabId, contents);
     return {
-      load: (url) => { if (isWebUrl(url)) void contents.loadURL(url).catch(() => {}); },
+      load: (url) => { if (canLoad(url)) void contents.loadURL(url).catch(() => {}); },
       back: () => { if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack(); },
       forward: () => { if (contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward(); },
       reload: () => contents.reload(),
@@ -167,7 +190,18 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       popup.webContents.on("will-navigate", (event) => { if (!isWebUrl(event.url)) { event.preventDefault(); options.note(`browser: refused a navigation to ${event.url.slice(0, 200)}`); } });
     });
     contents.on("will-attach-webview", (event) => event.preventDefault());
-    contents.on("will-navigate", (event) => { if (extracting.has(tabId)) { event.preventDefault(); options.note("browser: refused a navigation during a bot's extraction"); return; } if (!isWebUrl(event.url)) { event.preventDefault(); options.note(`browser: refused a navigation to ${event.url.slice(0, 200)}`); } });
+    contents.on("will-navigate", (event) => {
+      // A file dropped onto the page that the page did not take: a PDF opens in a new tab; this page stays.
+      if (event.url.startsWith("file:")) {
+        event.preventDefault();
+        const path = localPdfPath(event.url);
+        if (path && fileNavigation(event.url, contents.getURL(), extracting.has(tabId)) === "open") void openPdf(botId, path, false);
+        else options.note("browser: refused a navigation to a local file");
+        return;
+      }
+      if (extracting.has(tabId)) { event.preventDefault(); options.note("browser: refused a navigation during a bot's extraction"); return; }
+      if (!isWebUrl(event.url)) { event.preventDefault(); options.note(`browser: refused a navigation to ${event.url.slice(0, 200)}`); }
+    });
     contents.on("did-start-loading", () => update({ loading: true }));
     contents.on("did-stop-loading", () => update({ loading: false, url: contents.getURL() || tabs.tab(botId, tabId)?.url, title: contents.getTitle() }));
     contents.on("did-navigate", (_event, url) => update({ url }));
@@ -327,7 +361,12 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
     if (tool.kind === "toggle") void runTool(botId, tabId, tool.id, undefined, on);
   }
 
-  const openOutside = (url: string) => { if (!options.noExternal && isWebUrl(url)) void shell.openExternal(url); };
+  const openOutside = (url: string) => {
+    if (options.noExternal) return;
+    if (isWebUrl(url)) void shell.openExternal(url);
+    // A PDF the user opened here: in the Mac's own app for PDFs.
+    else if (granted.has(url)) { const path = localPdfPath(url); if (path) void shell.openPath(path); }
+  };
 
   /** "Open in its own window": a plain window of its own on the same session, as safe as a tab. */
   function ownWindow(url: string) {
@@ -345,7 +384,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       case "reload": tabs.reload(botId); break;
       case "copy": if (tab) clipboard.writeText(tab.url); break;
       case "external": if (tab) openOutside(tab.url); break;
-      case "window": if (tab) { ownWindow(tab.url); tabs.close(botId, tab.id); } break;
+      case "window": if (tab && isWebUrl(tab.url)) { ownWindow(tab.url); tabs.close(botId, tab.id); } break;
       case "importArc": void importArc(botId); break;
       case "close": tabs.closeBot(botId); send({ type: "closePane", botId }); break;
     }
@@ -400,7 +439,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       item("Copy link", "copy", undefined, !!tab),
       { type: "separator" },
       item("Open in default browser", "external", undefined, !!tab),
-      item("Open in its own window", "window", undefined, !!tab),
+      item("Open in its own window", "window", undefined, !!tab && isWebUrl(tab.url)),
       { type: "separator" },
       ...(mac ? [item("Import logins from Arc\u2026", "importArc", undefined, !importing), { type: "separator" } as const] : []),
       item("Close browser", "close"),
@@ -438,6 +477,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       case "focus": tabs.focus(message.botId); break;
       case "copy": case "external": case "window": act(message.botId, message.type); break;
       case "menu": menu(message.botId, message.x, message.y); break;
+      case "openFiles": for (const path of droppedPdfPaths(message.paths)) void openPdf(message.botId, path, false); break;
     }
   }
 
@@ -448,6 +488,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
 
   return {
     open: (botId, url) => { if (isWebUrl(url)) tabs.open(botId, url); },
+    openFile: (botId, path) => openPdf(botId, path, true),
     receive,
     closeBot: (botId) => tabs.closeBot(botId),
     tabs,

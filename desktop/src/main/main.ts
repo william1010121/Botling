@@ -27,6 +27,7 @@ import { SITE_TOOLS_FOLDER } from "../core/site-tools-guard";
 import { BrowserBotHost } from "./browser-bot-host";
 import { parseBrowserBotRequest } from "../browser-bot";
 import { BROWSER_CHANNEL, isWebUrl, parseBrowserUp } from "../browser-wire";
+import { linkPdfPath } from "../browser-pdf";
 import { previewResponse } from "./preview-response";
 import { reportNeedsMark, resolveReportTheme, themeHtml, type ReportTheme } from "./report-theme";
 import { themeSourceFor, windowBackground, type AppTheme } from "./app-theme";
@@ -670,7 +671,14 @@ async function openOrdinaryLink(botId: string, url: string, source: "user" | "co
   if (!(source === "user" && /^(https?|mailto):/i.test(url)) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
   const pane = sender ? browserFor(sender) : null;
   const way = linkOpenWay({ url, source, preview, reveal, external, pane: !!pane });
-  if (way === "pane") { openedResults.push(url); pane!.open(botId, url); return { opened: true }; }
+  if (way === "pane") {
+    // A local PDF (browser-pdf.ts) the pane cannot show (not a readable PDF) opens as any other file does.
+    const pdf = linkPdfPath(url);
+    if (pdf && !(await pane!.openFile(botId, pdf))) return openLink(url, reveal);
+    openedResults.push(url);
+    if (!pdf) pane!.open(botId, url);
+    return { opened: true };
+  }
   if (way === "markdown") return markdownPreview(markdownLinkPath(url)!, url);
   if (way === "preview") return { opened: true, previewURL: reportPreviewURL(url) };
   return openLink(url, reveal);
