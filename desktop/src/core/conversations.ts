@@ -397,7 +397,7 @@ export class Conversations {
       try {
         // A card's answer does not wait for a busy bot: it goes into the bot's own chat instead (`delivery.busy`).
         answer = await bot.groupTurn(prompt, delivery ? 0 : this.timing.busyNamed, this.timing.answerNamed, {
-          callIn: chat.id, ...(caller ? { asked: caller.body } : {}), onBegin: () => { began = true; delivery?.began(); },
+          callIn: chat.id, ...(caller ? { asked: caller.body } : { asked: asked || `@${member.name}`, by: "user" as const }), onBegin: () => { began = true; delivery?.began(); },
         });
       } catch (error) {
         answer = { kind: "failed", why: (error as Error).message || "Its turn could not start." };
@@ -452,9 +452,10 @@ export class Conversations {
   /**
    * `callee`'s reply in its own chat on the news of a worker it started when called into `callerId`'s chat
    * (`callInFollowUp`): posted there as its line, and a bot that called it in is woken with it like its answer.
-   * Only when it was a bot's @ (`asked` set): a call-in you made shows its news in its own chat, where you go.
+   * The user's @ (`by: "user"`): posted there only, where the user asked; that chat's bot did not ask, so it is not woken,
+   * and the copy's card is the called bot's to hear (`callInBy`, Core.answerRelayedCopy).
    */
-  callInFollowUp(callerId: string, callee: Bot, asked: string, record: ChatRecord) {
+  callInFollowUp(callerId: string, callee: Bot, asked: string, record: ChatRecord, by?: "user") {
     const chat = this.deps.bot(callerId);
     if (!chat || chat === callee || !asked || !(record.text.trim() || record.choices?.length)) return;
     const member = { id: callee.id, name: this.speakerName(callee.id) ?? callee.profile.name };
@@ -465,7 +466,9 @@ export class Conversations {
     if (record.displays) line.displays = record.displays;
     // A question: the copy names its original, so an answer on either one shows on both (Core.closeRelayedCopies).
     if (record.choices?.length || record.questions?.length) line.sourceMessageID = record.id;
+    if (by) line.callInBy = by;
     chat.post(line);
+    if (by) return;
     this.followUps.set(chat.id, { depth: 1, until: Date.now() + 30 * 60_000 });
     chat.appMessage(botFollowUpNote({ callee: member.name, question: asked, news: record.text, choices: record.choices?.map((choice) => choice.label)
       ?? record.questions?.map((question) => `${question.question}: ${question.options.map((option) => option.label).join(" / ")}`) }));
@@ -475,11 +478,12 @@ export class Conversations {
    * `callee`'s turn on the report of a worker it started for `callerId`'s bot's @ ended without a reply (`why`):
    * the chat says so and its bot is woken with it, so it never waits on news that is not coming.
    */
-  callInFollowUpMissed(callerId: string, callee: Bot, asked: string, why: string) {
+  callInFollowUpMissed(callerId: string, callee: Bot, asked: string, why: string, by?: "user") {
     const chat = this.deps.bot(callerId);
     if (!chat || chat === callee || !asked) return;
     const name = this.speakerName(callee.id) ?? callee.profile.name;
     chat.appNotice(`${name}'s worker for your @ ended, but ${name} sent no answer on it (${why}).`);
+    if (by) return;
     this.followUps.set(chat.id, { depth: 1, until: Date.now() + 30 * 60_000 });
     chat.appMessage(botFollowUpMissedNote({ callee: name, question: asked, why }));
   }

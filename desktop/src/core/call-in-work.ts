@@ -1,10 +1,11 @@
 // The follow-up route of a worker a bot started in a call-in turn for another bot's @ (spec/models/worker: Link,
-// Expire, TurnEnd). The bot's turns on that worker's notes and reports go back to the asking bot's chat for three days,
+// Expire, TurnEnd), or for the user's @ (`by: "user"`, outside the model: its replies are only shown in that chat, no
+// bot is woken). The bot's turns on that worker's notes and reports go back to the asking chat for three days,
 // across restarts (kept in the bot's settings as `callInWork`); each such turn is told back there once when it ends:
 // its reply, or, for a turn on a report that failed or showed nothing, that it ended without one.
 
 /** A worker started in a call-in turn: the chat it was called into, what it was asked there, and until when its news goes back. */
-export interface CallInWork { caller: string; asked: string; until: number }
+export interface CallInWork { caller: string; asked: string; until: number; by?: "user" }
 /** How long a worker started for a bot's @ reports back there (its later runs too). */
 export const CALL_IN_WORK_MS = 3 * 24 * 60 * 60_000;
 
@@ -30,11 +31,11 @@ export class CallInWorkBook {
     return this.cache;
   }
 
-  /** Worker `workerId` was started in a call-in turn into `caller`'s chat, asked `asked`: its news goes back there. */
-  link(workerId: string, caller: string, asked: string) {
+  /** Worker `workerId` was started in a call-in turn into `caller`'s chat, asked `asked` (`by`: "user" for the user's @): its news goes back there. */
+  link(workerId: string, caller: string, asked: string, by?: "user") {
     const now = this.now();
     const work = Object.fromEntries(Object.entries(this.all()).filter(([, entry]) => entry.until > now));
-    work[workerId] = { caller, asked, until: now + CALL_IN_WORK_MS };
+    work[workerId] = { caller, asked, until: now + CALL_IN_WORK_MS, ...(by ? { by } : {}) };
     this.cache = work;
     this.store.save(work);
   }
