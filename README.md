@@ -208,6 +208,11 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
   anything else. Make bots of your own too.
 - **Bots that sleep.** Each bot is a long-lived `claude` process that naps after 50 idle minutes,
   writing down what matters first, and wakes when you or a routine need it.
+- **A Note for every bot.** Each bot's header has a **Note** tab beside the chat and Storage: your
+  own Markdown note for that bot (`.bot/note.md`), edited in place, with cells you drag, branches
+  and routes, tables, KaTeX math, live component cards and a whiteboard view. **問** quotes a cell
+  into the chat by its id, and bots read and change the note one cell at a time with their
+  `app_note_*` tools. Built in: every download has it.
 - **Decisions as buttons**, with a recommended option and what each one costs; tool permission
   asks (Allow once / Always / Don't allow) in the chat, with Claude Code's auto mode on by default.
 - **Results as claude.ai Artifacts.** Reports, comparisons and previews are published as a

@@ -338,6 +338,11 @@ function flattenModel(items: readonly ModelItem[], blocks: BlockRow[] = [], fork
 }
 
 /** Which ids the parts of a parsed note are: the ids its cell lines carry (once each), else the closest old cell, fork, route. */
+/** A cell's text without the blank (or whitespace-only) lines before its first line and after its last. */
+export function withoutBlankEdges(text: string): string {
+  return text.replace(/^(?:[ \t]*\n)+/, "").replace(/(?:\n[ \t]*)+$/, "").replace(/^[ \t]+$/, "");
+}
+
 function matchTree(model: Model, tree: readonly TreeItem[]): Taken {
   const fresh = flattenTree(tree);
   const old = flattenModel(model.tree());
@@ -355,7 +360,8 @@ function matchTree(model: Model, tree: readonly TreeItem[]): Taken {
   const newFree = fresh.blocks.filter((block) => !taken.blocks.has(block));
   // A text that carries ids says which cells it kept: one whose id is gone was removed, so a new cell never takes its
   // place by position (only the same text, a cell whose id line was lost, is the same cell).
-  align(oldFree, newFree, (o, n) => o.text === n.text, claimed.size === 0).forEach((index, j) => {
+  // Blank lines at a cell's edges do not count: the Note tab's drag leaves the blank lines around a cell line where they were.
+  align(oldFree, newFree, (o, n) => o.text === n.text || withoutBlankEdges(o.text) === withoutBlankEdges(n.text), claimed.size === 0).forEach((index, j) => {
     if (index !== null) { taken.blocks.set(newFree[j]!, oldFree[index]!.id); claimed.add(oldFree[index]!.id); }
   });
   align(old.forks, fresh.forks, (o, n) => o.name === n.name).forEach((index, j) => {
@@ -731,7 +737,7 @@ export class NoteDb {
         } else {
           const id = taken.forks.get(item) ?? null;
           forks.push({
-            id, name: item.name, start: item.start, end: item.endLine, path,
+            id, name: item.name, start: item.start, end: item.endLine, path, label: forkLabel(id, path, item.name),
             routes: item.routes.map((route) => ({ id: taken.routes.get(route) ?? null, name: route.name, implicit: route.implicit, start: route.marker >= 0 ? route.marker : route.start, end: route.end })),
           });
           for (const route of item.routes) walk(route.items, [...path, { fork: item.name, forkId: id ?? "", route: route.name, routeId: taken.routes.get(route) ?? "" }]);
@@ -746,6 +752,12 @@ export class NoteDb {
 /** "Note #b7k3f9 · Loading › Lazy load": how a quote names a cell. */
 export function label(id: string | null, path: readonly NotePathStep[]): string {
   const where = path.map((step) => `${step.fork} › ${step.route}`).join(" › ");
+  return `Note${id ? ` #${id}` : ""}${where ? ` · ${where}` : ""}`;
+}
+
+/** "Note #f4k2c1 · Loading": how a quote names a fork (the routes above it, then its own name; the quote adds the route it shows). */
+export function forkLabel(id: string | null, path: readonly NotePathStep[], name: string): string {
+  const where = [...path.map((step) => `${step.fork} › ${step.route}`), ...(name ? [name] : [])].join(" › ");
   return `Note${id ? ` #${id}` : ""}${where ? ` · ${where}` : ""}`;
 }
 

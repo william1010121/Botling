@@ -76,9 +76,14 @@ export const PERMISSIONS: Record<string, string> = {
 };
 const PERMISSION_NAMES = Object.keys(PERMISSIONS);
 
-/** The Botling plugin API version plugins are written against (`PluginRegistry.apiVersion`). */
-export const API_VERSION = { major: 2, minor: 0 } as const;
-export const ENGINE_RANGE = `^${API_VERSION.major}.${API_VERSION.minor}.0`;
+/**
+ * The Botling plugin API version plugins are written against (`PluginRegistry.apiVersion`): the minor is the Botling release
+ * that last added to the API (2.6: the notes API with note.db's cells and outline, the note events, composer.insertQuote), so a
+ * plugin that needs those says `"^2.6.0"` (botling.note) and one that does not keeps `"^2.0.0"`.
+ */
+export const API_VERSION = { major: 2, minor: 6 } as const;
+/** The range a plugin that needs nothing newer declares (what Maintainer's new plugins and the library's own manifests say). */
+export const ENGINE_RANGE = `^${API_VERSION.major}.0.0`;
 
 // ---------------------------------------------------------------------------------------------
 // Decoding as Swift's JSONDecoder would: wrong types fail with where.

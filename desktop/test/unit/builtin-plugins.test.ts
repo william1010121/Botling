@@ -16,6 +16,9 @@ import { commandSurfaces } from "../../src/core/plugins/commands";
 import { prepareLibrary } from "../../src/core/maintainer";
 import { moveSettingsToPlugins, readSettings, writeSettings } from "../../src/core/settings";
 import { pluginGuide } from "../../src/core/maintainer-text";
+import { checkReport } from "../../src/core/plugins/check-report";
+import { agentContributions } from "../../src/core/plugins/agent-contributions";
+import { claudePluginName } from "../../src/core/plugins/engine-skills";
 import { ComponentLibrary } from "../../src/core/components/library";
 import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "../../src/core/components/builtins";
 import { keybindingsOf, runsInHost, slashMenu } from "../../src/renderer/plugin-commands";
@@ -31,8 +34,8 @@ const registry = (library: string, builtIns: string | null = built) => new Plugi
 const card = (root: string) => join(root, "plugins", "ccb-components", "components", "網頁預覽卡片");
 
 describe("the built-in plugins as shipped", () => {
-  it("are ccb-latex, botling.board, botling.cards, botling.catchup, botling.chat-extras, botling.component-studio, botling.design, botling.dev, botling.git, botling.report, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
-    expect(readdirSync(built).sort()).toEqual(["botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.component-studio", "botling.design", "botling.dev", "botling.git", "botling.report", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
+  it("are ccb-latex, botling.board, botling.cards, botling.catchup, botling.chat-extras, botling.component-studio, botling.design, botling.dev, botling.git, botling.note, botling.report, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
+    expect(readdirSync(built).sort()).toEqual(["botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.component-studio", "botling.design", "botling.dev", "botling.git", "botling.note", "botling.report", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     for (const name of readdirSync(built)) {
       expect(checkPlugin(join(built, name)), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);
@@ -59,7 +62,7 @@ describe("the built-in plugins as shipped", () => {
 });
 
 describe("the registry with built-in plugins", () => {
-  it("lists them first and on, marked built in; off stays off; a library plugin of the same name replaces one", () => {
+  it("lists them first and on, marked built in; off stays off; a library plugin of the same name and version replaces one", () => {
     const dir = tempDir("builtin-registry");
     const library = join(dir, "plugins");
     mkdirSync(join(library, "aaa", "dist"), { recursive: true });
@@ -67,21 +70,21 @@ describe("the registry with built-in plugins", () => {
     writeFileSync(join(library, "aaa", "dist", "web.js"), "export function activate() {}");
     const plugins = registry(library);
     expect(plugins.plugins.map((plugin) => [plugin.manifest.name, plugin.builtIn, plugin.enabled])).toEqual([
-      ["botling.board", true, true], ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.component-studio", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.report", true, true], ["botling.routines", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
+      ["botling.board", true, true], ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.component-studio", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.note", true, true], ["botling.report", true, true], ["botling.routines", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);
-    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.board", "botling.catchup", "botling.chat-extras", "botling.component-studio", "botling.git", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "aaa"]);
+    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.board", "botling.catchup", "botling.chat-extras", "botling.component-studio", "botling.git", "botling.note", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "aaa"]);
     expect(registry(library).plugin("ccb-latex")!.enabled).toBe(false);
     // Only a plugin that ships with Botling is told so (the chat page lends it its own parts); a library plugin of the same name is not.
     expect(plugins.webSpecs().map((spec) => [spec.name, spec.builtIn === true])).toEqual([
-      ["botling.board", true], ["botling.catchup", true], ["botling.chat-extras", true], ["botling.component-studio", true], ["botling.git", true], ["botling.routines", true], ["botling.terminal", true], ["botling.usage", true], ["botling.whiteboard", true], ["aaa", false],
+      ["botling.board", true], ["botling.catchup", true], ["botling.chat-extras", true], ["botling.component-studio", true], ["botling.git", true], ["botling.note", true], ["botling.routines", true], ["botling.terminal", true], ["botling.usage", true], ["botling.whiteboard", true], ["aaa", false],
     ]);
     plugins.setEnabled("ccb-latex", true);
-    // Maintainer copies a built-in plugin into the library to change it: that copy is the one that runs.
+    // Maintainer copies a built-in plugin into the library to change it: that copy (the same version or newer, plugin-versions.test.ts) is the one that runs.
     cpSync(join(built, "ccb-latex"), join(library, "ccb-latex"), { recursive: true });
     const replaced = registry(library);
-    expect(replaced.plugin("ccb-latex")).toMatchObject({ builtIn: false, folder: join(library, "ccb-latex") });
+    expect(replaced.plugin("ccb-latex")).toMatchObject({ builtIn: false, folder: join(library, "ccb-latex"), replacesBuiltIn: "1.0.0" });
     expect(replaced.plugins.filter((plugin) => plugin.manifest.name === "ccb-latex")).toHaveLength(1);
     expect(replaced.webSpecs().find((spec) => spec.name === "ccb-latex")!.builtIn).toBeUndefined();
   });
@@ -260,5 +263,44 @@ describe("botling.git", () => {
     expect(surfaces.settingsSections).toContainEqual(expect.objectContaining({ plugin: "botling.git", id: "botling.git.settings", after: "developer" }));
     expect(plugins.setting("botling.git", "botling.git.enabled")).toBe(true);
     expect(plugins.setting("botling.git", "botling.git.root")).toBe("");
+  });
+});
+
+describe("botling.note (built in since 2.7.0: the Note tab every download has)", () => {
+  it("with an EMPTY plugin library: loads on, brings the Note tab (a mainTab for every bot), its program and web parts, and passes --check-plugin", async () => {
+    const { viewSurfaces } = await import("../../src/core/plugins/views");
+    const dir = tempDir("builtin-note");
+    mkdirSync(join(dir, "plugins"), { recursive: true });
+    expect(readdirSync(join(dir, "plugins"))).toEqual([]);
+    const plugins = registry(join(dir, "plugins"));
+    const note = plugins.plugin("botling.note")!;
+    expect(note).toMatchObject({ builtIn: true, enabled: true, failure: null, manifest: { version: "1.19.1", engines: { ccb: "^2.6.0" }, license: "GPL-3.0-or-later" } });
+    expect(note.manifest.ccb?.permissions).toEqual(["files"]);
+    expect(plugins.problems).toEqual({});
+    const surfaces = viewSurfaces(plugins.contributions(), (name) => !!plugins.webPart(name));
+    expect(surfaces.mainTabs.filter((tab) => tab.plugin === "botling.note")).toEqual([{ plugin: "botling.note", id: "botling.note.tab", title: "Note", icon: "note.text", forRole: "any" }]);
+    expect(plugins.hostSpecs(join(dir, "plugin-data")).find((spec) => spec.name === "botling.note")).toMatchObject({ main: join(built, "botling.note", "dist", "host.js") });
+    expect(plugins.webPart("botling.note")!.source).toContain("activate");
+    // What `Botling --check-plugin <folder>` prints for it (check-report.ts, the same code).
+    expect(checkReport(join(built, "botling.note"))).toEqual({ code: 0, stdout: `✓ ${join(built, "botling.note")} passes the checks.\n`, stderr: "" });
+    // Only what runs ships: the bundles, the manifest and the skill (src/, test/, build.json stay behind; no copy of note-cells.ts or a sync script).
+    const files = (folder: string, base = folder): string[] => readdirSync(folder, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? files(join(folder, entry.name), base) : [join(folder, entry.name).slice(base.length + 1)]));
+    expect(files(join(built, "botling.note")).sort()).toEqual(["dist/host.js", "dist/web.js", "package.json", "skills/note/SKILL.md"]);
+  });
+
+  it("brings the note skill to every engine (botling-note:note for Claude), as the prompt's \"note skill (botling.note)\" says", () => {
+    const plugins = registry(join(tempDir("builtin-note-skill"), "plugins"));
+    const contributions = agentContributions(plugins);
+    expect(contributions.skills.filter((skill) => skill.plugin === "botling.note")).toEqual([{ plugin: "botling.note", name: "note", dir: join(built, "botling.note", "skills", "note") }]);
+    expect(plugins.skillRoots().filter((root) => root.plugin === "botling.note")).toEqual([{ plugin: "botling.note", root: join(built, "botling.note", "skills"), claude: false }]);
+    expect(claudePluginName("botling.note")).toBe("botling-note");
+    expect(readFileSync(join(built, "botling.note", "skills", "note", "SKILL.md"), "utf8")).toMatch(/^---\nname: note\n/);
+  });
+
+  it("its editor follows the app's own cell rules: the bundle carries desktop/src/core/note-cells.ts, never a copy of it", () => {
+    const source = join(desktop, "builtin-plugins", "botling.note");
+    expect(existsSync(join(source, "src", "note-cells.ts"))).toBe(false);
+    expect(existsSync(join(source, "sync-note-cells.sh"))).toBe(false);
+    for (const file of ["cells.js", "branch.js", "table.js", "cardsrc.js", "ui.js"]) expect(readFileSync(join(source, "src", file), "utf8"), file).toContain('from "../../../src/core/note-cells.ts"');
   });
 });

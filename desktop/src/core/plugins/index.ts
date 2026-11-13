@@ -532,6 +532,8 @@ export class Plugins {
           failure: plugin.failure?.slice(0, 2_000) ?? null,
           installedFrom: plugin.installedFrom?.slice(0, 2_000) ?? null,
           ...(plugin.builtIn ? { builtIn: true } : {}),
+          ...(plugin.replacesBuiltIn ? { replacesBuiltIn: plugin.replacesBuiltIn.slice(0, 100) } : {}),
+          ...(plugin.ignoredLibraryCopy ? { ignoredLibraryVersion: plugin.ignoredLibraryCopy.version.slice(0, 100) } : {}),
           permissions: (ccb?.permissions ?? []).slice(0, 20).map((permission) => permission.slice(0, 40)),
           parts: [...parts, ...(ccb?.contributes?.components ? ["components" as const] : [])],
           settings: this.registry.settingsView(plugin).slice(0, 100).map((setting) => ({
