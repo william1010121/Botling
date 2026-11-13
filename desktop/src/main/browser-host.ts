@@ -29,6 +29,7 @@ import { editorBounds } from "./editor-host";
 import { arcKeychainPassword, importArcLogins, NOT_IMPORTED } from "./arc-import";
 import { actionForEvent, type Bindings } from "../contract/shortcuts";
 import { runSiteTool } from "./site-tool-runner";
+import { wirePageEditing } from "./browser-edit";
 import type { SiteToolStore } from "./site-tools";
 
 export const BROWSER_PARTITION = "persist:botling-web";
@@ -220,6 +221,16 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       if (input.type !== "mouseMove") return;
       const y = (input as { y?: number }).y;
       if (typeof y === "number" && y <= EDGE && Date.now() - lastEdge > 250) { lastEdge = Date.now(); send({ type: "edge", botId }); }
+    });
+    // ⌘C/⌘X/⌘V/⌘A/⌘Z and the right-click menu act on this page itself (the app menu's Edit roles do not reach it).
+    wirePageEditing(contents, {
+      platform: process.platform,
+      writeText: (text) => clipboard.writeText(text),
+      popup: (items) => {
+        if (owner.isDestroyed()) return;
+        Menu.buildFromTemplate(items.map((item) => item === "separator" ? { type: "separator" as const }
+          : { label: item.label, enabled: item.enabled, accelerator: item.accelerator, registerAccelerator: false, click: () => item.run() })).popup({ window: owner });
+      },
     });
     // Keys the app keeps while the page has the focus (before the page and the app menu see them).
     contents.on("before-input-event", (event, input) => {
