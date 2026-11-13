@@ -27,6 +27,8 @@ import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
 import { viewSurfaces } from "./views";
 import { MarkedTabs } from "./marked-tabs";
+import { tabMatches } from "../../browser-tab-menu";
+import { fileURLToPath } from "node:url";
 import { CORE_PROMPT_SECTIONS } from "../prompts";
 import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
@@ -637,6 +639,26 @@ export class Plugins {
     if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
     try {
       return await this.host.command(id, args);
+    } catch (error) {
+      this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
+      throw new ContractError("conflict", (error as Error).message);
+    }
+  }
+
+  /**
+   * A plugin's button in the browser pane's toolbar (menu "browser/tab") was clicked: its command runs in the program part with one
+   * argument, `{ botId, tabId, url, path }` (`botId` as plugins name bots, "main" for the main bot; `path`: the local file a file: URL
+   * names, else null). Only a command offered there, on a tab its `when` matches.
+   */
+  async tabCommand(id: string, tab: { botId: string; tabId: string; url: string }): Promise<unknown> {
+    const offered = ofKind(this.contributions(), "menu").some((entry) => entry.menu === "browser/tab" && entry.command === id && entry.plugin && id.startsWith(`${entry.plugin}.`) && tabMatches(entry.when, tab.url));
+    if (!offered) throw new ContractError("forbidden", `"${id}" is not offered for this browser tab.`);
+    if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
+    let path: string | null = null;
+    try { if (new URL(tab.url).protocol === "file:") path = fileURLToPath(tab.url); } catch { /* not a local file */ }
+    const botId = this.options.world.botId?.("main") === tab.botId ? "main" : tab.botId;
+    try {
+      return await this.host.command(id, [{ botId, tabId: tab.tabId, url: tab.url, path }]);
     } catch (error) {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
       throw new ContractError("conflict", (error as Error).message);

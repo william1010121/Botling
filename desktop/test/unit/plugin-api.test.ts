@@ -184,6 +184,24 @@ describe("Host API v3 in the core (plan M5)", () => {
     expect(again.plugins.view().mainTabs![0]!.bots).toEqual(["B2"]);
   });
 
+  it("a browser/tab button runs its command with the tab ({ botId, tabId, url, path }), only on a tab its when matches", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "coach", { contributes: { commands: [{ id: "coach.start", title: "Read" }, { id: "coach.web", title: "Web" }, { id: "coach.other", title: "Other" }],
+      menus: { "browser/tab": [{ command: "coach.start", when: { scheme: "file", ext: "pdf" } }, { command: "coach.web" }] } } });
+    const { plugins, tell, sent } = await setup(dir);
+    tell("registered", { beforeSend: 0, afterReply: 0, commands: ["coach.start", "coach.web", "coach.other"], exposed: {} });
+    await until(() => plugins.host.commands.includes("coach.start"));
+    const url = "file:///Users/me/Papers/Attention%20Is%20All.pdf";
+    expect(await plugins.tabCommand("coach.start", { botId: "MAIN-ID", tabId: "t1", url })).toBeNull();
+    const asked = sent.filter((m) => m.method === "command");
+    expect(asked.at(-1).params).toEqual({ id: "coach.start", args: [{ botId: "main", tabId: "t1", url, path: "/Users/me/Papers/Attention Is All.pdf" }] });
+    await expect(plugins.tabCommand("coach.start", { botId: "B1", tabId: "t2", url: "https://example.com/a.html" })).rejects.toThrow(/not offered/);
+    await expect(plugins.tabCommand("coach.other", { botId: "B1", tabId: "t2", url })).rejects.toThrow(/not offered/);
+    // A web page's tab: no path.
+    await plugins.tabCommand("coach.web", { botId: "B1", tabId: "t3", url: "https://example.com/a.html" });
+    expect(sent.filter((m) => m.method === "command").at(-1).params).toEqual({ id: "coach.web", args: [{ botId: "B1", tabId: "t3", url: "https://example.com/a.html", path: null }] });
+  });
+
   it("bots.wake sends its prompt as the plugin's; without one it is refused for now", async () => {
     const dir = tempDir("plugin-api");
     plugin(dir, "uptime");

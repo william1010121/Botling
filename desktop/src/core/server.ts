@@ -2794,6 +2794,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.setting": return this.plugins.setSetting(cmd.name, cmd.key, cmd.value);
       case "plugins.secret": return this.plugins.setSecret(cmd.name, cmd.key, cmd.value);
       case "plugins.command": return { result: await this.plugins.command(cmd.id, cmd.from, cmd.name, cmd.args) ?? null };
+      case "plugins.tabCommand": return { result: await this.plugins.tabCommand(cmd.id, { botId: cmd.botId, tabId: cmd.tabId, url: cmd.url }) ?? null };
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params, cmd.from) ?? null };
       case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card, cmd.component, cmd.detail, cmd.from);

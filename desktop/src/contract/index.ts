@@ -610,7 +610,9 @@ export const ChatDecoration = z.strictObject({
 export type ChatDecoration = z.infer<typeof ChatDecoration>;
 const PluginCommandId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/);
 /** The app's fixed places a plugin may add a command to (`contributes.menus`). */
-const PluginMenu = z.enum(["message/context", "bot/context", "composer/plus", "commandPalette", "message/preview"]);
+const PluginMenu = z.enum(["message/context", "bot/context", "composer/plus", "commandPalette", "message/preview", "browser/tab"]);
+/** A `browser/tab` menu entry's tabs (browser-tab-menu.ts `TabWhen`). */
+const TabWhenView = z.strictObject({ scheme: z.string().max(100).optional(), ext: z.array(z.string().max(20)).max(20).optional(), host: z.string().max(100).optional() });
 /** Who asks a plugin: one of its sandboxed frames (panel, tile, card) or the chat page (its web part). */
 const PluginCaller = z.enum(["frame", "chat"]);
 /** A bot as plugins name it ("main", or its id: `bots.list`). */
@@ -923,7 +925,7 @@ export const PluginsView = z.strictObject({
   keybindings: z.array(z.strictObject({ command: PluginCommandId, key: z.string().max(40), plugin: PluginName, title: z.string().max(200) })).max(500).optional(),
   /** Without `command` the name goes into the message as words, for the bot (botling.design's /design). */
   slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId.optional(), plugin: PluginName })).max(200).optional(),
-  menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200), icon: z.string().max(40).optional(), quick: z.boolean().optional(), alt: z.string().max(200).optional(), hint: z.string().max(400).optional(), locales: z.record(z.string().max(20), z.strictObject({ title: z.string().max(400).optional(), alt: z.string().max(400).optional(), hint: z.string().max(400).optional() })).optional() })).max(200).optional(),
+  menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200), icon: z.string().max(40).optional(), quick: z.boolean().optional(), alt: z.string().max(200).optional(), hint: z.string().max(400).optional(), locales: z.record(z.string().max(20), z.strictObject({ title: z.string().max(400).optional(), alt: z.string().max(400).optional(), hint: z.string().max(400).optional() })).optional(), when: TabWhenView.optional() })).max(200).optional(),
   /** Plugin views that are tabs beside Chat / Storage (`where: "mainTab"`), for the main bot, project bots or any (plan W2). */
   // forRole "marked": only the bots in `bots` (the plugin's `ui.showTab`); chat "float": the bot's chat floats over the tab (as the Note tab's).
   mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "bots", "any", "marked"]),
@@ -1120,6 +1122,8 @@ export const Command = z.discriminatedUnion("type", [
    * to) or the chat page (only commands of plugins whose web part runs there).
    */
   z.strictObject({ type: z.literal("plugins.command"), id: PluginCommandId, from: PluginCaller.optional(), name: PluginName.optional(), args: z.array(z.string().max(200)).max(4).optional() }),
+  /** A plugin's button in the browser pane's toolbar (menu "browser/tab"): its command, run with that bot's tab on screen. */
+  z.strictObject({ type: z.literal("plugins.tabCommand"), id: PluginCommandId, botId: BotId, tabId: z.string().min(1).max(200), url: z.string().min(1).max(8_000) }),
   /** A plugin panel's web part (module text) and its settings, for its sandboxed frame. */
   z.strictObject({ type: z.literal("plugins.panel"), name: PluginName, panel: z.string().min(1).max(100) }),
   /**
@@ -1239,7 +1243,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.output", "subagent.view", "chat.read", "chat.shown", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
-  "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
+  "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "link.drag", "worker.file",
@@ -1370,6 +1374,7 @@ export interface Results {
   "plugins.setting": PluginsView;
   "plugins.secret": PluginsView;
   "plugins.command": { result: unknown };
+  "plugins.tabCommand": { result: unknown };
   "plugins.panel": { title: string; source: string; settings: Record<string, boolean | number | string | null> };
   "plugins.call": { result: unknown };
   "plugins.approvalAsk": { needsApproval: ApprovalAskView | null };

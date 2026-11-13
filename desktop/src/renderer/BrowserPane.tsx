@@ -67,9 +67,12 @@ export interface BrowserPaneProps {
   layoutKey: string;
   /** Sends a message to this bot's chat ("Ask Botling to make a tool for this site"). */
   onAskTool(text: string): Promise<void>;
+  /** Plugins' buttons for the tab on screen (menu "browser/tab", `browserTabActions`), and what a click runs. */
+  tabActions?: { command: string; title: string; icon?: ReactNode }[];
+  onTabAction?(command: string, tab: BrowserTabInfo): void;
 }
 
-export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, line, layoutKey, onAskTool }: BrowserPaneProps) {
+export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, line, layoutKey, onAskTool, tabActions = [], onTabAction }: BrowserPaneProps) {
   const botId = bot.id;
   const active = state.tabs.find((tab) => tab.id === state.active) ?? state.tabs[0] ?? null;
   const [toolbar, setToolbar] = useState(false);
@@ -222,6 +225,10 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, line
                   }} />
                 {draft === null && <span className="bp-url-shown" aria-hidden="true"><b>{shown.host}</b>{shown.rest}</span>}
               </label>
+              {active && tabActions.map((action) => (
+                <button key={action.command} type="button" className="bp-round bp-plugin-action" data-command={action.command} aria-label={action.title} title={action.title}
+                  onClick={() => onTabAction?.(action.command, active)}>{action.icon ?? <span className="bp-plugin-letter" aria-hidden="true">{action.title.slice(0, 1)}</span>}</button>
+              ))}
               <button type="button" className={`bp-round${sheet ? " on" : ""}`} aria-label={toolCount ? `Site tools, ${toolCount} for this site` : "Site tools"} title="Site tools" aria-pressed={sheet} onClick={() => setSheet(!sheet)}>
                 {ICONS.puzzle()}
                 {toolCount > 0 && <span className="bp-round-badge" aria-hidden="true">{toolCount > 9 ? "9+" : toolCount}</span>}
