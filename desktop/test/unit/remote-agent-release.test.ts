@@ -49,6 +49,11 @@ describe("botling-agent release", () => {
     expect(spawnSync("sh", ["-n", join(out, "botling-agent-install.sh")]).status).toBe(0);
   });
 
+  it("the install script names no variable right before a non-ASCII character (bash 3.2 reads it as part of the name)", () => {
+    const script = readFileSync(join(root, "src/remote/agent/install.sh"), "utf8");
+    expect(script.split("\n").filter((line) => /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]/.test(line))).toEqual([]);
+  });
+
   it("the install script installs only the file whose SHA-256 it was given", async () => {
     const out = join(dir, "assets");
     for (const name of [`botling-agent-${version}.cjs`, "botling-agent-install.sh", "SHA256SUMS-agent.txt"]) served.set(`/v${version}/${name}`, readFileSync(join(out, name)));
