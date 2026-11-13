@@ -28,6 +28,8 @@ it("lists a Markdown file a bot reply links outside its artifacts folder, as a r
   const { items } = await c.call({ type: "storage.list", botId: MAIN });
   const row = items.find((item: { path: string }) => item.path === md);
   expect(row).toMatchObject({ source: "bot", name: "研究 總整理.md", kind: "doc", missing: false, size: 7, added: 1_760_000_000_000 });
+  // The core first: it may still be writing in the folder.
+  await c.kill(); running.splice(running.indexOf(c), 1);
   rmSync(data, { recursive: true, force: true });
 });
 
