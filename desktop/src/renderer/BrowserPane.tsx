@@ -218,7 +218,7 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, line
         </div>
         {sheet && (
           <SiteToolsSheet botId={botId} botName={bot.name} tab={active} catalog={catalog} runs={runs} onClose={() => setSheet(false)}
-            onAsk={onAskTool} askText={(page) => askForToolText(page, catalog?.folder ?? "the app's browser-tools folder", catalog?.guide ?? "its README.md", botId === MAINTAINER_ID)} closeIcon={ICONS.close()} />
+            onAsk={onAskTool} askText={(page, request) => askForToolText(page, catalog?.folder ?? "the app's browser-tools folder", catalog?.guide ?? "its README.md", botId === MAINTAINER_ID, request)} closeIcon={ICONS.close()} />
         )}
       </div>
     </section>

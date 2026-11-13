@@ -1,7 +1,7 @@
 // The browser pane's site-tools sheet (design v4, "V2 toolbar + side sheet"): the tools for the active tab's site
 // (browser-site-tools.ts), each with its Run button and form, or its switch; the last run's progress or result; and
-// a button that asks the bot to make a tool for this site. Main runs the tools (browser-host.ts).
-import { useEffect, useState, type ReactNode } from "react";
+// a box for what the tool should do and a button that asks the bot to make it for this site. Main runs the tools (browser-host.ts).
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { fieldDefault, siteOf, toolIsOn, toolsFor, type SiteToolOptions, type SiteToolView } from "../browser-site-tools";
 import type { BrowserTabInfo, BrowserToolCatalog, BrowserToolRun } from "../browser-wire";
 import { postBrowser, runKey } from "./browser-state";
@@ -55,6 +55,11 @@ function Field({ field, value, onChange }: { field: SiteToolView["fields"][numbe
   );
 }
 
+/** Whether a key in the "What should the tool do?" box sends it: Enter (⌘Enter too); Shift+Enter is a new line. */
+export function askKeySends(event: Pick<KeyboardEvent, "key" | "shiftKey"> & { nativeEvent?: { isComposing?: boolean } }): boolean {
+  return event.key === "Enter" && !event.shiftKey && !event.nativeEvent?.isComposing;
+}
+
 export interface SiteToolsSheetProps {
   botId: string;
   botName: string;
@@ -64,7 +69,8 @@ export interface SiteToolsSheetProps {
   onClose(): void;
   /** Sends a message to the bot's chat; resolves once sent. */
   onAsk(text: string): Promise<void>;
-  askText(url: string): string;
+  /** The message for this page; `request` is what the user typed (empty: the bot asks first). */
+  askText(url: string, request: string): string;
   closeIcon: ReactNode;
 }
 
@@ -75,6 +81,7 @@ export function SiteToolsSheet({ botId, botName, tab, catalog, runs, onClose, on
   const tools = catalog && site ? toolsFor(catalog.tools, url) : [];
   const [forms, setForms] = useState<Record<string, SiteToolOptions>>({});
   const [asked, setAsked] = useState<"no" | "sending" | "sent" | "failed">("no");
+  const [request, setRequest] = useState("");
   useEffect(() => { setAsked("no"); }, [url, botId]);
 
   const valueOf = (tool: SiteToolView, field: SiteToolView["fields"][number]) => forms[tool.id]?.[field.id] ?? fieldDefault(field);
@@ -89,7 +96,8 @@ export function SiteToolsSheet({ botId, botName, tab, catalog, runs, onClose, on
   const ask = () => {
     if (!url || asked === "sending") return;
     setAsked("sending");
-    onAsk(askText(url)).then(() => setAsked("sent"), () => setAsked("failed"));
+    const words = request.trim();
+    onAsk(askText(url, words)).then(() => { setAsked("sent"); if (words) setRequest((now) => (now.trim() === words ? "" : now)); }, () => setAsked("failed"));
   };
 
   return (
@@ -139,8 +147,15 @@ export function SiteToolsSheet({ botId, botName, tab, catalog, runs, onClose, on
           </div>
         )}
       </div>
+      <label className="bp-tool-request">
+        <span className="bp-field-label">What should the tool do?</span>
+        <textarea className="bp-field-text bp-tool-request-text" rows={3} value={request} disabled={!url} spellCheck={false}
+          placeholder={"e.g. Save every reply on this page as a Markdown file\nEnter sends · Shift+Enter new line · empty: let the bot ask"}
+          onChange={(event) => { setRequest(event.target.value); if (asked !== "sending") setAsked("no"); }}
+          onKeyDown={(event) => { if (askKeySends(event)) { event.preventDefault(); ask(); } }} />
+      </label>
       <button type="button" className="bp-tool-ask" disabled={!url || asked === "sending"} onClick={ask}>
-        {asked === "sent" ? `Asked ${botName} ✓` : asked === "failed" ? "Could not send. Try again" : `Ask ${botName} to make a tool for this site`}
+        {asked === "sent" ? `Asked ${botName} ✓` : asked === "failed" ? "Could not send. Try again" : request.trim() ? `Ask ${botName} to make this tool` : `Ask ${botName} to make a tool for this site`}
       </button>
     </aside>
   );
