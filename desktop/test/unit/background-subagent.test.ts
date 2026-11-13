@@ -51,7 +51,8 @@ createInterface({input:process.stdin}).on('line', () => {
 const summary = (tasks: any[]) => tasks.filter((task) => task.id !== "toolu_agent").map((task) => [task.id, task.kind, task.status, task.owner?.label ?? null]).sort();
 
 it("shows a subagent's background Bash, Monitor, auto-backgrounded command and wake-up, labeled with the subagent, and ends them with it", async () => {
-  const { tasks } = await run(`startAgent(); startWork(); out({type:'result',subtype:'success',is_error:false,result:'Launched.',session_id:'fake'}); setTimeout(end, 300);`);
+  const { tasks } = await run(`startAgent(); startWork(); out({type:'result',subtype:'success',is_error:false,result:'Launched.',session_id:'fake'}); setTimeout(end, 3000);`);
+  // The subagent ends 3 s after the turn (300 ms was too short for a slow CI runner to look first).
   expect(summary(await tasks())).toEqual([
     ["toolu_sbash", "command", "running", "Build the thing"], ["toolu_smon", "monitor", "running", "Build the thing"],
     ["toolu_sslow", "command", "running", "Build the thing"], ["toolu_swake", "wakeup", "running", "Build the thing"]]);
