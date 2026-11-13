@@ -21,7 +21,9 @@
  *   turn, and no per-request timing. Its generation time is the turn minus the time a tool (with its
  *   approval) was open: the model segments between tool rounds (AgyTurnClock). Each segment is held to
  *   MAX_REQUEST_SECONDS, not the turn, so a long worker turn of many tool rounds is still timed. The
- *   tokens are the turn's, so the value is marked `estimated`; there is never a live value mid-turn.
+ *   tokens are the turn's, so the value is marked `estimated`. When agy's conversation file has the turn's calls
+ *   (AgyTurnUsage), each segment that ends at a tool round is timed as it ends, with the calls written since: a
+ *   worker's whole run is one prompt turn, and without this its speed showed only when the run ended.
  */
 
 /**
@@ -276,11 +278,22 @@ export class AgyTurnClock {
   private open = new Set<string>();
   private since: number;
   private segments: number[] = [];
+  /** How many segments `drain` has handed out. */
+  private drained = 0;
   constructor(startMs: number) { this.since = startMs; }
-  toolOpened(id: string, atMs: number) {
-    if (!id || this.open.has(id)) return;
-    if (this.open.size === 0) this.segments.push(Math.max(0, atMs - this.since));
+  /** True when this ended a model segment (the first tool of a round). */
+  toolOpened(id: string, atMs: number): boolean {
+    if (!id || this.open.has(id)) return false;
+    const ended = this.open.size === 0;
+    if (ended) this.segments.push(Math.max(0, atMs - this.since));
     this.open.add(id);
+    return ended;
+  }
+  /** The segments ended since the last drain (timed live, as the turn goes). */
+  drain(): number[] {
+    const out = this.segments.slice(this.drained);
+    this.drained = this.segments.length;
+    return out;
   }
   toolClosed(id: string, atMs: number) {
     if (!this.open.delete(id)) return;
@@ -289,6 +302,10 @@ export class AgyTurnClock {
   /** The model segments of the turn that ended at `endMs` (a tool still open at the end adds none). */
   finish(endMs: number): number[] {
     return this.open.size === 0 ? [...this.segments, Math.max(0, endMs - this.since)] : [...this.segments];
+  }
+  /** What `finish` gives, without the segments `drain` already handed out. */
+  rest(endMs: number): number[] {
+    return this.finish(endMs).slice(this.drained);
   }
 }
 

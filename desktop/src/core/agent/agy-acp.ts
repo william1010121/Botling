@@ -1,7 +1,7 @@
 import { AgyTurnClock, agyPromptRequest } from "../token-speed";
 import { registerAntigravityQuotaReader } from "../antigravity-quota";
 import { agySignInEnv, readAgyQuota } from "../agy-quota-api";
-import { AgyTurnUsage, callTokens } from "../agy-usage-db";
+import { AgyTurnUsage, callTokens, type AgyCall } from "../agy-usage-db";
 import { recordAgyWindow } from "../agy-window";
 import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } from "./agy-permissions";
 // ACP is a separate transport. The legacy headless path in agy.ts stays blocked.
@@ -66,6 +66,8 @@ export class AgyAcpProtocol {
   private failedTools = new Set<string>();
   /** This turn's model time: the turn minus the time a tool (with its approval) was open. */
   private turnClock?: AgyTurnClock;
+  /** This turn, timed live from agy's conversation file: its calls read so far and what is not yet in a sample. */
+  private turnLive?: { id: string; startMs: number; calls: AgyCall[]; tokens: number; segments: number[]; sent: number };
   private confirmed = false;
   private submitting = false;
   private readonly mode: "default" | "yolo";
@@ -199,14 +201,17 @@ export class AgyAcpProtocol {
       this.dbUsage?.mark();
       const promptStart = Date.now();
       const clock = this.turnClock = new AgyTurnClock(promptStart);
+      const live = this.turnLive = { id: uuid, startMs: promptStart, calls: [] as AgyCall[], tokens: 0, segments: [] as number[], sent: 0 };
       const result = await this.call("session/prompt", { sessionId: this.sessionId, prompt }, 30 * 60_000);
       const promptEnd = Date.now();
-      this.turnClock = undefined;
+      this.turnClock = undefined; this.turnLive = undefined;
       this.cancelApprovals();
       const usage = obj(result.usage);
       const count = (key: string) => Number.isSafeInteger(usage[key]) && usage[key] >= 0 ? usage[key] as number : 0;
       // agy's own record of the turn's calls (retries included) when it has one; else the prompt's one usage block.
-      const recorded = callTokens(this.dbUsage?.take() ?? []);
+      const last = this.dbUsage?.take() ?? [];
+      live.calls.push(...last);
+      const recorded = callTokens(live.calls);
       if (recorded) this.emit({ kind: "usage", totalCost: 0, tokens: recorded });
       else if (result.usage) this.emit({kind:"usage",totalCost:0,tokens:{input:Math.max(0,count("inputTokens")-count("cachedReadTokens")),output:count("outputTokens")+count("thoughtTokens"),cacheRead:count("cachedReadTokens"),cacheWrite:count("cachedWriteTokens")}});
       const stop = epoch !== this.cancelEpoch ? "cancelled" : str(result.stopReason);
@@ -218,13 +223,16 @@ export class AgyAcpProtocol {
       // ACP gives one usage block per prompt and no per-request timing: the turn's tokens over its model time (tool runs
       // and approval waits taken out), an estimate. A turn that ended with its usage is timed whatever its verdict, as a
       // Claude or Codex request is; only a cancelled one is not.
-      const request = agyPromptRequest(uuid, recorded ? { outputTokens: recorded.output } : result.usage, promptStart, promptEnd, how !== "cancelled", clock.finish(promptEnd));
-      if (request) this.emit({ kind: "request", request });
+      // Timed live from the conversation file (liveSpeed): the rest of the turn, its calls not yet in a sample.
+      const request = recorded
+        ? agyPromptRequest(live.sent ? `${uuid}:${live.sent}` : uuid, { outputTokens: live.tokens + last.reduce((sum, call) => sum + call.output, 0) }, promptStart, promptEnd, how !== "cancelled", [...live.segments, ...clock.rest(promptEnd)])
+        : agyPromptRequest(uuid, result.usage, promptStart, promptEnd, how !== "cancelled", clock.finish(promptEnd));
+      if (request && (!live.sent || request.sample.outputTokens > 0)) this.emit({ kind: "request", request });
       this.emit({ kind: "result", ok, how, failedTools, text: this.text, error: ok ? "" : error, subtype: reason });
       return ok;
     } catch (error) {
       this.fail(error as Error);
-    } finally { this.turnClock = undefined; this.submitting = false; this.transport.revoke?.(); this.busy = false; if (!this.closed) this.transport.onPolicy?.("ready", this.confirmed ? `${this.mode === "yolo" ? "Full permission" : "Approval mode"} confirmed; no active turn.` : "Tools revoked. The next turn must confirm its permission mode again."); }
+    } finally { this.turnClock = undefined; this.turnLive = undefined; this.submitting = false; this.transport.revoke?.(); this.busy = false; if (!this.closed) this.transport.onPolicy?.("ready", this.confirmed ? `${this.mode === "yolo" ? "Full permission" : "Approval mode"} confirmed; no active turn.` : "Tools revoked. The next turn must confirm its permission mode again."); }
   }
   receive(value: unknown) {
     if (this.closed) return;
@@ -258,7 +266,7 @@ export class AgyAcpProtocol {
         const id = str(u.toolCallId); if (!id) throw new Error("ACP tool has no identity.");
         if (this.turnClock) {
           const at = Date.now();
-          this.turnClock.toolOpened(id, at);
+          if (this.turnClock.toolOpened(id, at)) this.liveSpeed(at);
           if (["completed", "failed"].includes(u.status)) this.turnClock.toolClosed(id, at);
         }
         if (this.transport.localToolEvents && AGY_LOCAL_TOOLS.some(tool => u.title === `botling_${tool.name}`)) this.bridgeTools.add(id);
@@ -290,6 +298,23 @@ export class AgyAcpProtocol {
     if (stop !== "end_turn") return "error";
     return this.turnFailure === "permission_denied" && !this.config.worker ? "error" : "normal";
   }
+  /**
+   * A model segment just ended at a tool round: timed now with the calls agy wrote since the last one, so a turn's
+   * speed (a worker's whole run) shows while it goes. A segment whose calls are not written yet waits for them; one
+   * left at the end of the turn goes into its last sample.
+   */
+  private liveSpeed(atMs: number) {
+    const live = this.turnLive, clock = this.turnClock;
+    if (!live || !clock || !this.dbUsage) return;
+    const calls = this.dbUsage.take();
+    live.calls.push(...calls);
+    live.tokens += calls.reduce((sum, call) => sum + call.output, 0);
+    live.segments.push(...clock.drain());
+    if (!live.tokens || !live.segments.length) return;
+    const request = agyPromptRequest(live.sent ? `${live.id}:${live.sent}` : live.id, { outputTokens: live.tokens }, live.startMs, atMs, true, live.segments);
+    live.sent += 1; live.tokens = 0; live.segments = [];
+    if (request) this.emit({ kind: "request", request });
+  }
   private permission(message: Obj) {
     const p = obj(message.params), options = Array.isArray(p.options) ? p.options : [];
     const allow = options.find((o: Obj) => o.kind === "allow_once" && o.optionId === "allow");
@@ -303,7 +328,7 @@ export class AgyAcpProtocol {
     if (this.approvals.has(requestId)) throw new Error("Duplicate ACP approval.");
     const tool = obj(p.toolCall);
     // The approval waits inside its tool's span; a tool announced only by its approval opens here.
-    if (str(tool.toolCallId)) this.turnClock?.toolOpened(str(tool.toolCallId), Date.now());
+    if (str(tool.toolCallId)) { const at = Date.now(); if (this.turnClock?.toolOpened(str(tool.toolCallId), at)) this.liveSpeed(at); }
     this.approvals.set(requestId, { id: message.id, allow: allow.optionId, deny: deny.optionId, title: str(tool.title), input: obj(tool.rawInput) });
     this.emit({ kind: "permission", requestId, tool: str(tool.kind) || "Antigravity tool", summary: str(tool.title) + "\n" + json(tool.rawInput), input: obj(tool.rawInput) });
   }
