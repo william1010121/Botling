@@ -43,7 +43,11 @@ async function turn(startMs: number) {
     expect(requests).toHaveLength(1);
     return { request: requests[0]!, items, speed: speedView(addSample(undefined, requests[0]!.sample, requests[0]!.estimated === true)) };
   };
-  return { update, ask, answer, end };
+  /** agy's conversation file, as the turn reads it: the calls written since the last read. */
+  const db = (calls: number[][]) => { (client as any).dbUsage = { mark() {}, take: () => (calls.shift() ?? []).map((output, i) => ({ at: null, model: "m", input: 0, output, cacheRead: 0, cacheWrite: 0, reasoning: 0, retry: false, key: `k${i}` })) }; };
+  const requests = () => items.filter((i) => i.kind === "request").map((i) => i.request as RequestEvent);
+  const finish = async (at: number, result: any) => { now = at; client.receive({ jsonrpc: "2.0", id: prompt.id, result }); await done; };
+  return { update, ask, answer, end, db, requests, items, finish };
 }
 
 const tool = (id: string, at: number, ms: number, t: Awaited<ReturnType<typeof turn>>) => {
@@ -119,5 +123,28 @@ describe("Antigravity token speed (ACP: one usage block per turn)", () => {
     const { speed, items } = await t.end(5_000, { stopReason: "max_tokens", usage: usage(400, 0) });
     expect(items.at(-1)).toMatchObject({ kind: "result", ok: false });
     expect(speed!.tokPerSec).toBe(100);
+  });
+
+  it("a worker's speed shows while its run is under way, not only when it ends (agy workers showed — tok/s all run)", async () => {
+    // A worker's run is ONE prompt turn: with only the turn's usage block, its row had no speed until the run ended,
+    // while a Claude or Codex worker's shows after its first request. agy's conversation file has each call as it is
+    // written, so every model segment that ends at a tool round is timed with the calls written in it.
+    const t = await turn(0);
+    t.db([[2_000], [], [1_000]]);
+    tool("a", 20_000, 60_000, t);                 // model 0 → 20 s (2000 tokens), tool 20 → 80 s
+    const live = t.requests();
+    expect(live).toHaveLength(1);
+    expect(live[0]!).toMatchObject({ scope: null, estimated: true, sample: { outputTokens: 2_000, segmentsMs: [20_000], complete: true } });
+    expect(speedView(addSample(undefined, live[0]!.sample, true))).toEqual({ tokPerSec: 100, estimated: true });
+    tool("b", 90_000, 10_000, t);                 // model 80 → 90 s, no call written yet: its time waits for its tokens
+    expect(t.requests()).toHaveLength(1);
+    await t.finish(110_000, { stopReason: "end_turn", usage: usage(1, 1) }); // model 100 → 110 s, 1000 tokens
+    const all = t.requests();
+    expect(all).toHaveLength(2);
+    expect(all[1]!.sample).toMatchObject({ outputTokens: 1_000, segmentsMs: [10_000, 10_000], complete: true });
+    // The turn's usage is every call it wrote, read live or at its end.
+    expect(t.items.find((i) => i.kind === "usage")).toMatchObject({ tokens: { output: 3_000 } });
+    const totals = all.reduce((sum, r) => addSample(sum, r.sample, true), undefined as any);
+    expect(speedView(totals)).toEqual({ tokPerSec: 3_000 / 40, estimated: true });
   });
 });

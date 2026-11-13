@@ -454,3 +454,11 @@ it('a steered message the run ended before reading goes into the worker\'s next 
  await h.m.tool('app_send_message',{task_id:a.task_id,run:2,message:'third'});
  expect(h.starts[2]!.sent[0][0]).not.toContain('also check the README');
 });
+
+it('a request timed while the worker runs reaches its row at once, scoped to the worker (its speed shows mid-run)',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
+ w.h.onItem({kind:'request',request:{scope:null,id:'turn',estimated:true,sample:{outputTokens:2000,startMs:0,endMs:20000,complete:true,segmentsMs:[20000]}}} as any);
+ expect(h.m.running).toEqual([a.task_id]);
+ expect(h.events.filter(e=>e.kind==='request')).toEqual([{kind:'request',request:{scope:a.task_id,id:'turn',estimated:true,sample:{outputTokens:2000,startMs:0,endMs:20000,complete:true,segmentsMs:[20000]}}}]);
+});
