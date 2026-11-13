@@ -11,9 +11,10 @@
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
 import { CODEX_NOTE } from "./prompts-codex-text";
-import { DELEGATION_CAPS, delegationPolicy, WORKER_NOTIFY_RULE } from "./prompts/delegation";
+import { DELEGATION_CAPS, delegationPolicy, VERBATIM_HANDOFF_RULE, WORKER_NOTIFY_RULE, workerNoteRule } from "./prompts/delegation";
 export { VERBATIM_HANDOFF_RULE } from "./prompts/delegation";
 import type { BotProfile } from "./store/workspace";
+import { progressFile } from "./sub-bots";
 import { displayName, otherHead, type Engine } from "./heads";
 
 /** `AppLanguage` raw values (Settings → General → Language). */
@@ -140,6 +141,22 @@ export const NATIVE_SUBAGENT_LINE = "- By default, hand real work (building, fix
 export const CLAUDE_WORKERS_RULE = delegationPolicy(DELEGATION_CAPS.claude, { engine: "claude", form: "line" });
 const CLAUDE_MAIN_WORKERS_LINE = "- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id. A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.";
 const NATIVE_SUB_BOT_AGENTS = "you may start your own subagents with the Agent tool.";
+const WORKERS_SUB_BOT_AGENTS = "you may start your own workers with app_handoff.";
+// A bot made with delegation "onRequest" (a plugin's `bots.create`, e.g. a reading coach the user works with directly): these
+// lines are swapped in for the default delegation line for those bots only. The shared texts above stay as they are.
+/** Instead of `NATIVE_SUBAGENT_LINE`, for a bot made with delegation "onRequest" (native subagents). */
+export const ON_REQUEST_SUBAGENT_LINE = "- Do the work yourself (reading, researching, building, running commands): the user works with you directly here. Start a subagent with the Agent tool only when the user explicitly asks for one; then give it a clear, self-contained task, say in one sentence what you handed off, and report its result when it comes back.";
+/** Instead of `CLAUDE_WORKERS_RULE`, for a bot made with delegation "onRequest" (app-managed workers, the default). */
+export const ON_REQUEST_WORKERS_RULE = `- Do the work yourself (reading, researching, building, running commands): the user works with you directly here. Start an app-managed worker with the app_handoff tool only when the user explicitly asks for a worker or subagent (a worker is a ${DELEGATION_CAPS.claude.name} subagent running as its own session in this folder; the Agent tool is off). Then give it a short name and a clear, self-contained task, say in one sentence what you handed off, and end your turn: do not wait or poll. Its report arrives later as an app message (<app_task_result task_id="…" run="…">); tell the user what came of it. To follow up, use app_send_message with its task_id; a follow-up on a worker's result goes to that same worker. Every handoff and follow-up quotes the user's own words of their question. ${VERBATIM_HANDOFF_RULE} To stop one, app_cancel_task. ${workerNoteRule(DELEGATION_CAPS.claude)}`;
+const ON_REQUEST_SUB_BOT_AGENTS = "you do the work yourself and start a subagent or worker only when the user explicitly asks.";
+/** What a sub bot a plugin made is told about its first message and progress file. */
+export function pluginSubBotLine(progress: string): string {
+  return `- You were made by a plugin, not moved out of a subagent: there is no handoff.md to read, and your first message may come from the plugin or the user. Your progress file is ${progress}.`;
+}
+/** What a bot whose plugin gave it instructions in a file (`bots.create`'s `instructions`) is told. */
+export function instructionsFileLine(file: string): string {
+  return `- Your full instructions are in ${file}, kept by the plugin that made you: read that file before your first reply in each conversation (and again when you are told it changed) and follow it; where it and your job above differ, the file wins.`;
+}
 
 export const APP_LEAD = "(App: ";
 /** The start of the note that wakes a bot, and of the one before it falls asleep. */
@@ -570,14 +587,23 @@ export function routinesRule(routines: string): string {
  * the <show> line, for every bot but the main bot; botling.report's report page line after the results rule, for every bot and
  * Codex worker).
  */
-export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS): BotPrompts {
+export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent" | "instructionsFile" | "plugin">> & { delegation?: string | null }, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS): BotPrompts {
   let system = prompts.system;
   // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
   const workers = engine === "claude" && claudeWorkers;
   if (workers) {
-    system = system.replace(NATIVE_SUBAGENT_LINE, CLAUDE_WORKERS_RULE).replace(NATIVE_SUB_BOT_AGENTS, "you may start your own workers with app_handoff.");
+    system = system.replace(NATIVE_SUBAGENT_LINE, CLAUDE_WORKERS_RULE).replace(NATIVE_SUB_BOT_AGENTS, WORKERS_SUB_BOT_AGENTS);
     if (profile.role === "main") system = `${system}\n${CLAUDE_MAIN_WORKERS_LINE}`;
   }
+  // A bot a plugin made with delegation "onRequest" (only those; never the main bot): it does the work itself. Claude only: a
+  // Codex or Antigravity coordinator has no tools of its own to do it with, so its policy stays (such a bot is made on Claude).
+  if (profile.delegation === "onRequest" && profile.role !== "main" && engine === "claude") {
+    system = system.replace(CLAUDE_WORKERS_RULE, () => ON_REQUEST_WORKERS_RULE).replace(NATIVE_SUBAGENT_LINE, () => ON_REQUEST_SUBAGENT_LINE)
+      .replace(WORKERS_SUB_BOT_AGENTS, ON_REQUEST_SUB_BOT_AGENTS).replace(NATIVE_SUB_BOT_AGENTS, ON_REQUEST_SUB_BOT_AGENTS);
+  }
+  // A sub bot a plugin made (`bots.create` with a parent) took over no subagent: its first message is the plugin's, not a handoff.
+  if (profile.parent && profile.plugin && profile.folder && profile.id) system = `${system}\n${pluginSubBotLine(progressFile(profile.folder, profile.id))}`;
+  if (profile.instructionsFile) system = `${system}\n${instructionsFileLine(profile.instructionsFile)}`;
   // Sub bots (desktop only; the Swift goldens stay as they are): a project's or bot's own bot may write handoff.md and
   // progress.md in .bot/subagents/<id>/, and it is told how to move a running subagent or worker out into a sub bot (Claude, Codex
   // and Antigravity alike; Antigravity's own prompt has no such line to extend, so its text is appended whole).

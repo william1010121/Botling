@@ -12,8 +12,14 @@ export type JSONValue = unknown;
 
 /** "bot" is a bot of its own (made with `bots.create`), not a project's manager. */
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean; created?: boolean }
-/** A new bot: its name in the left column, what it is for, and optionally its shape. */
-export interface NewBot { name: string; job: string; avatar?: string }
+/**
+ * A new bot: its name in the left column, what it is for, and optionally its shape. `parent`: make it a sub bot under that project
+ * bot (or bot of its own) instead, hidden from the left column and working in its folder. `instructions`: any length (up to 200,000
+ * characters), kept in a file the bot is told to read (asked again, the file is rewritten). `delegation: "onRequest"`: the bot does
+ * its work itself and starts subagents or workers only when the user explicitly asks (it runs on Claude); "default" (or none): it
+ * hands real work to them by default, as every other bot.
+ */
+export interface NewBot { name: string; job: string; avatar?: string; parent?: string; instructions?: string; delegation?: "default" | "onRequest" }
 export interface Outgoing { bot: BotInfo; text: string }
 export interface Incoming { bot: BotInfo; text: string }
 
@@ -750,7 +756,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       send: (botId, text, opts = {}) => quiet(ask("bots.send", { bot: botId, text, as: opts.as === "user" ? "user" : "plugin" }) as Promise<{ messageId: string }>),
       wake: async (botId, prompt) => { await ask("bots.wake", { bot: botId, ...(prompt === undefined ? {} : { prompt }) }); },
       interrupt: async (botId) => { await ask("bots.interrupt", { bot: botId }); },
-      create: async (bot) => (await ask("bots.create", { name: bot?.name, job: bot?.job, avatar: bot?.avatar })) as BotInfo,
+      create: async (bot) => (await ask("bots.create", { name: bot?.name, job: bot?.job, avatar: bot?.avatar, parent: bot?.parent, instructions: bot?.instructions, delegation: bot?.delegation })) as BotInfo,
       onReply: (fn) => {
         plugin.replyListeners.push(fn);
         return remove(plugin.replyListeners, fn);

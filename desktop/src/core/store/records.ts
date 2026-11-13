@@ -138,6 +138,10 @@ export interface ProjectRecord {
   createdAt?: number;
   /** A sub bot: the subagent id whose handoff.md it took over. */
   handoff?: string;
+  /** "onRequest": made by a plugin to do its work itself, starting subagents or workers only when the user asks (`BotProfile.delegation`). */
+  delegation?: string;
+  /** A file of instructions a plugin gave the bot, longer than a job (`BotProfile.instructionsFile`). */
+  instructionsFile?: string;
   [key: string]: unknown;
 }
 

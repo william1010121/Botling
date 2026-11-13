@@ -137,6 +137,22 @@ describe("Host API v3 in the core (plan M5)", () => {
     expect(log.sent).toEqual([{ botId: "main", text: "site is down", via: "Uptime" }, { botId: "main", text: "as me", via: null }]);
   });
 
+  it("bots.create hands a sub bot's parent, long instructions and its delegation to the core; a bad delegation is refused", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "coach", { permissions: ["bots"] });
+    const { ask, world } = await setup(dir);
+    const made: unknown[] = [];
+    world.createBot = (plugin, title, name, job, avatar, more) => { made.push({ plugin, title, name, job, avatar, more }); return { id: "S1", name, role: "bot", awake: false, created: true }; };
+    const long = "x".repeat(20_000);
+    expect(await ask("bots.create", { plugin: "coach", name: "Reader", job: "Read with me", parent: "P1", instructions: long, delegation: "onRequest" })).toMatchObject({ id: "S1", created: true });
+    expect(await ask("bots.create", { plugin: "coach", name: "Plain", job: "j" })).toMatchObject({ id: "S1" });
+    expect(made).toEqual([
+      { plugin: "coach", title: "Coach", name: "Reader", job: "Read with me", avatar: undefined, more: { parent: "P1", instructions: long, delegation: "onRequest" } },
+      { plugin: "coach", title: "Coach", name: "Plain", job: "j", avatar: undefined, more: {} },
+    ]);
+    await expect(ask("bots.create", { plugin: "coach", name: "R", job: "j", delegation: "never" })).rejects.toThrow(/delegation/);
+  });
+
   it("bots.wake sends its prompt as the plugin's; without one it is refused for now", async () => {
     const dir = tempDir("plugin-api");
     plugin(dir, "uptime");

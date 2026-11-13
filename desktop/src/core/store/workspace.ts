@@ -58,6 +58,13 @@ export interface BotProfile {
   handoff?: string;
   /** Tools it does not get at all, not even by asking (1.x's `BotProfile.disallowedTools`). */
   disallowedTools?: string[];
+  /**
+   * "onRequest": a bot a plugin made (`bots.create`) to do its work itself; its prompt says to start subagents or workers only
+   * when the user explicitly asks, instead of handing real work to them by default. Absent: the default, as every other bot.
+   */
+  delegation?: "onRequest";
+  /** A file of instructions the plugin that made it keeps (`bots.create`'s `instructions`): the bot is told to read it. */
+  instructionsFile?: string;
 }
 
 export function mainProfile(root: string): BotProfile {
@@ -95,6 +102,8 @@ export function projectProfile(root: string, project: ProjectRecord): BotProfile
     ...(parent ? { parent } : {}),
     ...(parent && typeof project.createdAt === "number" ? { createdAt: project.createdAt } : {}),
     ...(parent && typeof project.handoff === "string" ? { handoff: project.handoff } : {}),
+    ...(project.delegation === "onRequest" ? { delegation: "onRequest" as const } : {}),
+    ...(typeof project.instructionsFile === "string" && project.instructionsFile ? { instructionsFile: project.instructionsFile } : {}),
   };
 }
 

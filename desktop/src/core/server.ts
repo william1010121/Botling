@@ -40,7 +40,7 @@ import { fileURLToPath } from "node:url";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
 import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { claudeAutoCompactWindow, codexConfigFile } from "./engine-files";
-import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
+import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, updateProjectRow, type BriefingRow } from "./projects";
 import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
@@ -346,15 +346,7 @@ export class Core {
           return { language: settings.effectiveLanguage, botLook: settings.botLook, workerLimit: settings.claudeWorkerLimit };
         },
         shortcutOverrides: () => settingsView(readSettings(Layout.settings(this.options.dataDir))).shortcuts,
-        createBot: (plugin, title, name, job, avatar) => {
-          const made = this.makeBot(name, job, { avatar, by: `plugin "${title}"`, plugin });
-          if (made.kind === "empty") throw new Error("A bot needs a name and a job.");
-          if (made.kind === "taken") throw new Error(`The name "${name}" is taken (by another bot, a project, or the app).`);
-          if (made.kind === "removedByUser") throw new Error(`The user removed the bot "${name}"; it is not made again.`);
-          const bot = this.bots.get(made.botId);
-          if (!bot) throw new Error("The bot could not be started.");
-          return { ...this.botInfo(bot), created: made.kind === "made" };
-        },
+        createBot: (plugin, title, name, job, avatar, more) => this.createPluginBot(plugin, title, { name, job, ...(avatar ? { avatar } : {}), ...more }),
         commandApproval: (botId, command) => this.pluginBot(botId)?.commandApproval(command) ?? null,
         commandRun: (botId, key, command, run) => this.pluginBot(botId)?.pluginCommand(key, command, run) ?? null,
         component: (botId, name, data, command) => this.pluginBot(botId)?.libraryEntry(name, data, command) ?? null,
@@ -893,7 +885,7 @@ First write a test that shows this, then fix it.`;
    * back as it is; a plugin gets back only one it made itself, and never one you removed. `setUp` sends
    * it its job at once, so it introduces itself and writes its routines.
    */
-  makeBot(rawName: string, rawJob: string, options: { avatar?: string; setUp?: boolean; by?: string | null; plugin?: string | null } = {}): BotMaking {
+  makeBot(rawName: string, rawJob: string, options: { avatar?: string; setUp?: boolean; by?: string | null; plugin?: string | null; delegation?: "onRequest"; instructions?: string } = {}): BotMaking {
     const name = botName(rawName);
     const job = rawJob.trim();
     if (!name || !job) return { kind: "empty" };
@@ -910,8 +902,12 @@ First write a test that shows this, then fix it.`;
     const avatar = options.avatar && HANDED_OUT.includes(options.avatar) ? options.avatar : nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID).map((profile) => profile.avatar));
     prepareNotesFolder(folder);
     this.seedEngineDefaults(id);
-    saveProjectRow(this.options.dataDir, { id, name, folder, avatar, job, ...(options.plugin ? { plugin: options.plugin } : {}) });
-    const profile = projectProfile(this.options.dataDir, { id, name, folder: folderURLText(folder), avatar, job, ...(options.plugin ? { plugin: options.plugin } : {}) });
+    // A plugin's bot that does its work itself runs on Claude, the engine whose coordinator has tools of its own.
+    if (options.delegation) this.singleEngine(id, "claude");
+    const instructionsFile = this.writeInstructions(folder, id, false, options.instructions);
+    const extras = { ...(options.plugin ? { plugin: options.plugin } : {}), ...(options.delegation ? { delegation: options.delegation } : {}), ...(instructionsFile ? { instructionsFile } : {}) };
+    saveProjectRow(this.options.dataDir, { id, name, folder, avatar, job, ...extras });
+    const profile = projectProfile(this.options.dataDir, { id, name, folder: folderURLText(folder), avatar, job, ...extras });
     this.attach(profile);
     const main = this.bots.get(MAIN_BOT_ID)!;
     main.appNotice(`${options.by ? `New bot "${name}" (made by ${options.by})` : `New bot "${name}"`}: ${firstLine(job)}`, undefined, undefined, { sourceID: id });
@@ -923,6 +919,74 @@ First write a test that shows this, then fix it.`;
     }
     this.log(`made the bot ${name} (${folder})`);
     return { kind: "made", botId: id };
+  }
+
+  /**
+   * A plugin's `bots.create`: a bot of its own in the left column, or with `parent` a hidden sub bot under that project bot (or bot
+   * of its own), in its folder. `instructions` (any length) go to a file the bot is told to read; `delegation: "onRequest"` makes it
+   * do its work itself, starting subagents or workers only when the user asks (on Claude, the engine that can). Asked again by the
+   * same plugin with the same name, the same bot comes back, its instructions and delegation set anew when given. Throws why not.
+   */
+  createPluginBot(plugin: string, title: string, input: { name: string; job: string; avatar?: string; parent?: string; instructions?: string; delegation?: "default" | "onRequest" }): BotInfo & { created: boolean } {
+    const delegation = input.delegation === "onRequest" ? "onRequest" as const : undefined;
+    const info = (id: string, created: boolean) => {
+      const bot = this.bots.get(id);
+      if (!bot) throw new Error("The bot could not be started.");
+      return { ...this.botInfo(bot), created };
+    };
+    if (input.parent !== undefined) {
+      const parent = this.pluginBot(input.parent)?.profile;
+      if (!parent) throw new Error("No such bot.");
+      if (parent.role === "main" || parent.id === MAINTAINER_ID) throw new Error("A sub bot's parent is a project bot or a bot of its own, not the main bot or Maintainer.");
+      if (parent.parent) throw new Error("A sub bot cannot have a sub bot of its own; name its project bot as the parent.");
+      const name = botName(input.name);
+      if (!name || !input.job.trim()) throw new Error("A bot needs a name and a job.");
+      const existing = this.profiles.find((profile) => profile.parent === parent.id && !this.removed.has(profile.id) && profile.name.toLowerCase() === name.toLowerCase());
+      if (existing) {
+        if (existing.plugin !== plugin) throw new Error(`The name "${name}" is taken by another sub bot of "${parent.name}".`);
+        this.setPluginBotExtras(existing, input.instructions, input.delegation);
+        return info(existing.id, false);
+      }
+      const id = this.makeSubBot(parent, name, input.job.trim().slice(0, 1_000), undefined, delegation ? "claude" : undefined, { plugin, delegation, instructions: input.instructions });
+      const progress = progressFile(parent.folder, id);
+      mkdirSync(join(progress, ".."), { recursive: true });
+      writeFileAtomic(progress, "Status: working\n");
+      this.bots.get(parent.id)?.appNotice(`New sub bot "${name}" (made by plugin "${title}").`, undefined, undefined, { sourceID: id });
+      return info(id, true);
+    }
+    const made = this.makeBot(input.name, input.job, { avatar: input.avatar, by: `plugin "${title}"`, plugin, delegation, instructions: input.instructions });
+    if (made.kind === "empty") throw new Error("A bot needs a name and a job.");
+    if (made.kind === "taken") throw new Error(`The name "${input.name}" is taken (by another bot, a project, or the app).`);
+    if (made.kind === "removedByUser") throw new Error(`The user removed the bot "${input.name}"; it is not made again.`);
+    if (made.kind === "existing") {
+      const profile = this.profiles.find((candidate) => candidate.id === made.botId);
+      if (profile) this.setPluginBotExtras(profile, input.instructions, input.delegation);
+    }
+    return info(made.botId, made.kind === "made");
+  }
+
+  /** Where a plugin's instructions for a bot are kept: its own notes folder (a sub bot's under the shared .bot/sub-bots/<id>/). */
+  private instructionsPath(folder: string, id: string, parent: boolean): string {
+    return parent ? join(folder, ".bot", "sub-bots", id, "instructions.md") : join(folder, ".bot", "instructions.md");
+  }
+
+  /** Writes a plugin's instructions for a new bot; the path for its projects.json row (undefined: none given). */
+  private writeInstructions(folder: string, id: string, parent: boolean, instructions: string | undefined): string | undefined {
+    if (instructions === undefined || !instructions.trim()) return undefined;
+    const file = this.instructionsPath(folder, id, parent);
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileAtomic(file, instructions);
+    return file;
+  }
+
+  /** The same plugin asked again for a bot it made: new instructions and delegation, when given, in its file, row and profile. */
+  private setPluginBotExtras(profile: BotProfile, instructions: string | undefined, delegation: "default" | "onRequest" | undefined) {
+    const patch: Record<string, unknown> = {};
+    const file = this.writeInstructions(profile.folder, profile.id, Boolean(profile.parent), instructions);
+    if (file && profile.instructionsFile !== file) { profile.instructionsFile = file; patch.instructionsFile = file; }
+    if (delegation === "onRequest" && profile.delegation !== "onRequest") { profile.delegation = "onRequest"; patch.delegation = "onRequest"; }
+    if (delegation === "default" && profile.delegation) { delete profile.delegation; patch.delegation = undefined; }
+    if (Object.keys(patch).length) updateProjectRow(this.options.dataDir, profile.id, patch);
   }
 
   /** A sub bot (a hidden bot under a project bot) as opposed to a bot in the left column. */
@@ -1657,7 +1721,7 @@ First write a test that shows this, then fix it.`;
   private subBotsReported = new Set<string>();
 
   /** Makes the hidden sub bot: a Bot of its own (head, chat.json, subagents.json) under `parent`, in the same folder, no worktree. */
-  makeSubBot(parent: BotProfile, rawName: string, job: string, handoff: string | undefined, engine?: Engine): string {
+  makeSubBot(parent: BotProfile, rawName: string, job: string, handoff: string | undefined, engine?: Engine, extras: { plugin?: string; delegation?: "onRequest"; instructions?: string } = {}): string {
     const taken = new Set(this.profiles.filter((profile) => profile.parent === parent.id).map((profile) => profile.name.toLowerCase()));
     let name = botName(rawName) || "Sub bot";
     for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${botName(rawName) || "Sub bot"} ${n}`;
@@ -1665,12 +1729,10 @@ First write a test that shows this, then fix it.`;
     mkdirSync(join(parent.folder, ".bot", "sub-bots", id), { recursive: true });
     this.seedEngineDefaults(id);
     // It runs on the engine of the worker it took over (`subBotEngine`), as a single head: the app's defaults would otherwise decide.
-    if (engine) {
-      const store = new BotStore(Layout.bot(this.options.dataDir, id));
-      store.saveSetting("heads", headsJSON(singleHead(engine)));
-      store.saveSetting("engine", engine);
-    }
-    const row = { id, name, folder: parent.folder, avatar: parent.avatar, job, parent: parent.id, createdAt: Date.now(), ...(handoff ? { handoff } : {}) };
+    if (engine) this.singleEngine(id, engine);
+    const instructionsFile = this.writeInstructions(parent.folder, id, true, extras.instructions);
+    const row = { id, name, folder: parent.folder, avatar: parent.avatar, job, parent: parent.id, createdAt: Date.now(), ...(handoff ? { handoff } : {}),
+      ...(extras.plugin ? { plugin: extras.plugin } : {}), ...(extras.delegation ? { delegation: extras.delegation } : {}), ...(instructionsFile ? { instructionsFile } : {}) };
     saveProjectRow(this.options.dataDir, row);
     this.attach(projectProfile(this.options.dataDir, { ...row, folder: folderURLText(parent.folder) }));
     // The project bot's subagent list gains the row.
@@ -1692,6 +1754,13 @@ First write a test that shows this, then fix it.`;
     parent.appNotice(words, undefined, undefined, { sourceID: sub.id });
     parent.queueNote(`(App: ${words})`);
     parent.refresh();
+  }
+
+  /** A new bot runs on one engine, as a single head (saved before it is made). */
+  private singleEngine(id: string, engine: Engine) {
+    const store = new BotStore(Layout.bot(this.options.dataDir, id));
+    store.saveSetting("heads", headsJSON(singleHead(engine)));
+    store.saveSetting("engine", engine);
   }
 
   /** The app's engine defaults saved into a new bot's bot.json before it is made (`seedEngineDefaults`). */

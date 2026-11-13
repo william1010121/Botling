@@ -176,8 +176,12 @@ export interface PluginWorld {
   component(botId: string, name: string, data: string | undefined, command: string | undefined): { exists: boolean; command: string | null } | null;
   /** The card-page URLs of the pictures a component's data names for that bot (what a tile needs); null: no such bot. */
   imageUrls(botId: string, data: string): Record<string, string> | null;
-  /** `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. */
-  createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined): BotInfo & { created: boolean };
+  /**
+   * `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. `more`: a sub bot's
+   * project bot (`parent`), instructions of any length kept in a file the bot reads, and its delegation ("onRequest": it does the
+   * work itself, starting subagents or workers only when the user asks).
+   */
+  createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined, more?: PluginBotExtras): BotInfo & { created: boolean };
   /** A chat's newest `limit` lines (`chat.messages`; null: no such bot). Absent: a world without chats (tests, spec adapters). */
   chat?(botId: string, limit: number): PluginChat | null;
   /** The bot a plugin names ("main" too) as the core knows it (null: none). */
@@ -281,6 +285,10 @@ const RunParams = StateParams.extend({ minIntervalMs: z.number().int().min(0).ma
 const ComponentParams = BotParams.extend({ name: str(200).min(1), data: z.string().max(300_000).optional(), command: z.string().max(20_000).optional() });
 const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200), task: str(2_000) });
 const CreateParams = z.object({ plugin: str(214) }).passthrough();
+/** A plugin's instructions for a bot it makes: far longer than a job (they go to a file), within reason. */
+export const BOT_INSTRUCTIONS_LIMIT = 200_000;
+/** What `bots.create` takes beyond a name, a job and a face. */
+export interface PluginBotExtras { parent?: string; instructions?: string; delegation?: "default" | "onRequest" }
 const PluginOnly = z.object({ plugin: str(214) });
 const AgyUsageParams = z.object({ plugin: str(214), sessionId: str(200) });
 const AgyWorkerParams = z.object({ plugin: str(214), workerId: str(200) });
@@ -1264,7 +1272,17 @@ export class Plugins {
         if (!plugin?.manifest.ccb?.permissions?.includes("bots")) throw new Error("Creating bots needs the \"bots\" permission in package.json.");
         const raw = parsed.data as Record<string, unknown>;
         const text = (key: string) => (typeof raw[key] === "string" ? (raw[key] as string).slice(0, 4_000) : "");
-        return world.createBot(plugin.manifest.name, plugin.manifest.displayName ?? plugin.manifest.name, text("name"), text("job"), text("avatar") || undefined);
+        const more: PluginBotExtras = {};
+        if (typeof raw.parent === "string" && raw.parent) more.parent = raw.parent.slice(0, 200);
+        if (typeof raw.instructions === "string") {
+          if (raw.instructions.length > BOT_INSTRUCTIONS_LIMIT) throw new Error(`A bot's instructions are at most ${BOT_INSTRUCTIONS_LIMIT} characters.`);
+          more.instructions = raw.instructions;
+        }
+        if (raw.delegation !== undefined && raw.delegation !== null) {
+          if (raw.delegation !== "default" && raw.delegation !== "onRequest") throw new Error('delegation is "default" or "onRequest".');
+          more.delegation = raw.delegation;
+        }
+        return world.createBot(plugin.manifest.name, plugin.manifest.displayName ?? plugin.manifest.name, text("name"), text("job"), text("avatar") || undefined, more);
       }
       case "approvals.check": {
         // Whether the user allowed a command in a bot's folder (its frame asks with ccb.requestApproval).
