@@ -300,7 +300,8 @@ export interface SubagentHeaderView {
   waitingOn?: SubagentWaitingOn | null;
 }
 
-export interface SubagentWaitingOn { kind: "command" | "monitor" | "agent" | "process"; title: string; since: number; queued: number }
+/** "apiRetry": its turn waits to be tried again after an API error that passes; `title` is the whole line. */
+export interface SubagentWaitingOn { kind: "command" | "monitor" | "agent" | "process" | "apiRetry"; title: string; since: number; queued: number }
 
 export interface ChatState {
   /** The head's own token speed; absent or null: nothing timed yet. */

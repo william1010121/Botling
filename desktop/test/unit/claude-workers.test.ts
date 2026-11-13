@@ -8,6 +8,22 @@ import { join } from "node:path";
 import { ClaudeWorkers, CLAUDE_WORKER_POLICY, loadAgentDefinition } from "../../src/core/agent/claude-workers";
 import { claudeHarness } from "../claude-workers-fake";
 import { parseLine } from "../../src/core/agent/stream";
+import { API_RETRY_NOTE } from "../../src/core/api-retry";
+
+const CLOUDFLARE = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare";
+/** claude 2.1.323's lines for a turn the API turned away: its error message, then a result with is_error and the status. */
+function apiError(say: (item: any) => void, status: number, text: string) {
+  const lines = [
+    { type: "assistant", parent_tool_use_id: null, is_api_error_message: true, api_error_status: status, error: "authentication_failed", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text }] } },
+    { type: "result", subtype: "success", is_error: true, api_error_status: status, result: text, session_id: "s" },
+  ];
+  for (const line of lines) for (const item of parseLine(JSON.stringify(line))) say(item);
+}
+const withRetryDelays = async (ms: string, body: () => Promise<void>) => {
+  const before = process.env.BOTLING_API_RETRY_MS;
+  process.env.BOTLING_API_RETRY_MS = ms;
+  try { await body(); } finally { if (before === undefined) delete process.env.BOTLING_API_RETRY_MS; else process.env.BOTLING_API_RETRY_MS = before; }
+};
 
 const made: ClaudeWorkers[] = [];
 afterEach(async () => { for (const w of made.splice(0)) await w.close(); });
@@ -287,10 +303,75 @@ describe("through the shared worker core", () => {
   it("reports the engine's error for a failed result", async () => {
     const h = harness();
     const { task_id } = await h.workers.tool("app_handoff", { instructions: "Err" }) as any;
-    h.result(h.heads[0]!, "API Error: overloaded", false);
-    expect(h.items.at(-1)).toMatchObject({ kind: "subagentEnded", id: task_id, status: "failed", summary: "API Error: overloaded" });
+    h.result(h.heads[0]!, "API Error: 400 prompt is too long", false);
+    expect(h.items.at(-1)).toMatchObject({ kind: "subagentEnded", id: task_id, status: "failed", summary: "API Error: 400 prompt is too long" });
     expect(h.reports[0]!.text).toContain('status="failed"');
   });
+
+  it("tries its turn again in the same process after Cloudflare's 403, instead of failing with claude's words", () => withRetryDelays("30,30,30", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Draw the flowchart" }) as any;
+    const head = h.heads[0]!;
+    h.say(head, { kind: "init", sessionId: head.config.sessionId });
+    h.say(head, { kind: "toolUse", id: "tu1", tool: "Write", title: "Write a.md", detail: "a.md", parent: null, input: {} });
+    h.say(head, { kind: "toolResult", id: "tu1", output: "ok", failed: false, parent: null, launch: null });
+    apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+    // Not ended, not reported: it waits, and its row says so.
+    expect(h.items.some((i) => i.kind === "subagentEnded")).toBe(false);
+    expect(h.reports).toHaveLength(0);
+    expect(h.items).toContainEqual(expect.objectContaining({ kind: "subagentWaitingOn", id: task_id, on: expect.objectContaining({ kind: "apiRetry", title: "API 暫時擋住，1 秒後重試（1/3）" }) }));
+    expect(h.workers.listWorkers()[0]!.state).toBe("running");
+    await wait(60);
+    // The same process and session go on: told to carry on, not sent the task again (its Write stays done once).
+    expect(h.heads).toHaveLength(1);
+    expect(head.sent.map((m) => m.text)).toEqual(["Draw the flowchart", API_RETRY_NOTE]);
+    expect(h.items).toContainEqual({ kind: "subagentWaitingOn", id: task_id, on: null });
+    h.result(head, "Flowchart drawn.");
+    expect(h.items.at(-1)).toEqual({ kind: "subagentEnded", id: task_id, status: "completed", summary: "Flowchart drawn." });
+    expect(h.items.filter((i) => i.kind === "subagentText").map((i) => i.text).join("")).not.toContain("Cloudflare");
+    expect(h.reports[0]!.text).not.toContain("Cloudflare");
+  }));
+
+  it("does not try again after a 401 (a real sign-in problem): it fails with claude's words", () => withRetryDelays("10,10,10", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Job" }) as any;
+    const text = 'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}';
+    apiError((item) => h.say(h.heads[0]!, item), 401, text);
+    expect(h.items.at(-1)).toMatchObject({ kind: "subagentEnded", id: task_id, status: "failed", summary: expect.stringContaining(text) });
+    await wait(40);
+    expect(h.heads[0]!.sent).toHaveLength(1);
+  }));
+
+  it("gives up after its tries and fails in plain words, not claude's raw error", () => withRetryDelays("5,5,5", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Job" }) as any;
+    const head = h.heads[0]!;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+      expect(h.items.some((i) => i.kind === "subagentEnded")).toBe(false);
+      await wait(30);
+      expect(head.sent).toHaveLength(1 + attempt);
+    }
+    apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+    const ended = h.items.at(-1);
+    expect(ended).toMatchObject({ kind: "subagentEnded", id: task_id, status: "failed" });
+    expect(ended.summary).toMatch(/^Claude 的 API 暫時擋住了這次的請求，重試 3 次後仍然失敗/);
+    expect(h.reports[0]!.text).toContain('status="failed"');
+    // A next run starts counting again.
+    await h.workers.tool("app_send_message", { task_id, message: "Try once more" });
+    apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+    expect(h.items.filter((i) => i.kind === "subagentEnded")).toHaveLength(1);
+  }));
+
+  it("words sent while it waits to try again go on with the turn in place of the retry", () => withRetryDelays("40", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Job" }) as any;
+    const head = h.heads[0]!;
+    apiError((item) => h.say(head, item), 529, 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}');
+    expect(await h.workers.tool("app_send_message", { task_id, message: "Also do X" })).toMatchObject({ status: "steered" });
+    await wait(80);
+    expect(head.sent.map((m) => m.text)).toEqual(["Job", "Also do X"]);
+  }));
 
   it("keeps a kept-alive process's approvals between runs from reaching anyone", async () => {
     const h = harness();

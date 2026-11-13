@@ -9,6 +9,7 @@ import type { RunEnd, WaitingOn } from "../worker-core/events";
 import type { SubagentRuntime, SubagentExecution, PreviousRunEnd } from "../subagents";
 import { scheduleResult, type ScheduleResult } from "../session-schedules";
 import { isConnectionLoss } from "../network-resume";
+import { passingApiError } from "../api-retry";
 
 /** A queued message's states on claude's stdout (`command_lifecycle`): the last four are its end. */
 export const COMMAND_STATES = ["queued", "started", "completed", "cancelled", "discarded", "refused"] as const;
@@ -72,7 +73,9 @@ export type StreamItem =
    * The turn ended. `how`: how the engine says it ended (worker-core classifyRun reads it); `failedTools`: failed tool
    * results in the turn, for engines that count them. `ok` stays for callers not on classifyRun yet.
    */
-  | { kind: "result"; ok: boolean; text: string; error: string; subtype: string; how?: RunEnd["how"]; failedTools?: number }
+  | { kind: "result"; ok: boolean; text: string; error: string; subtype: string; how?: RunEnd["how"]; failedTools?: number;
+      /** A failed turn's API error that passes (api-retry.ts: a Cloudflare block, an overload, a 5xx): worth trying again. */
+      apiPassing?: boolean }
   /** The session's cost so far (dollars; Codex: 0) and this turn's tokens (Phase 5c, 1.x's `.usage`). */
   | { kind: "usage"; totalCost: number; tokens: TokenUsage }
   /** One finished model request (the shared token-speed definition): scope null is the head turn, a string a subagent. */
@@ -270,6 +273,8 @@ export function parseLine(line: string): StreamItem[] {
         }
       }
       const text = content.filter((part) => part?.type === "text").map((part) => String(part.text ?? "")).join("");
+      // claude's words for an API error that passes are no reply: the app says it its own way (api-retry.ts).
+      if (message.is_api_error_message === true && passingApiError(typeof message.api_error_status === "number" ? message.api_error_status : null, text)) return items;
       if (text && !parent) items.push({ kind: "assistantText", text });
       if (text.trim() && parent) items.push({ kind: "subagentText", parent, text });
       return items;
@@ -324,9 +329,11 @@ export function parseLine(line: string): StreamItem[] {
       const usage = claudeUsage(message);
       const failed = message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success");
       const text = typeof message.result === "string" ? message.result : "";
+      const error = failed ? String(message.result ?? message.subtype ?? "The agent reported an error.").slice(0, 2_000) : "";
+      const passing = failed && passingApiError(typeof message.api_error_status === "number" ? message.api_error_status : null, error);
       return [...(usage ? [{ kind: "usage" as const, ...usage }] : []), {
         kind: "result" as const, ok: !failed, how: failed ? "error" as const : "normal" as const, text, subtype: String(message.subtype ?? ""),
-        error: failed ? String(message.result ?? message.subtype ?? "The agent reported an error.").slice(0, 2_000) : "",
+        error, ...(passing ? { apiPassing: true } : {}),
       }];
     }
     default:

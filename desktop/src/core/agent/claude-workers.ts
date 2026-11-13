@@ -29,6 +29,7 @@ import { commandEnded, type StreamItem } from "./stream";
 import type { WaitingOn } from "../worker-core/events";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
 import { WORKER_NOTIFY_RULE } from "../prompts/delegation";
+import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "../api-retry";
 import { EFFORTS_BY_ENGINE, type EffortLevel } from "../../contract/efforts";
 import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
 
@@ -208,6 +209,15 @@ interface Proc {
   finishingSince?: number;
   /** A run whose words wait for the finishing process to end: then a new process (`--resume`) takes them all. */
   held?: { run: RunHandle; record: Readonly<WorkerLedgerRecord>; words: string[]; since: number };
+  /** How often the run under way was tried again after an API error that passes (api-retry.ts). */
+  apiRetries?: number;
+  /** The wait before the next try: the run stays at work, its row says so. */
+  apiRetry?: ReturnType<typeof setTimeout>;
+}
+
+/** No try waits any more (the run ended, was stopped, or other words go on with it). */
+function clearApiRetry(proc: Proc) {
+  if (proc.apiRetry) { clearTimeout(proc.apiRetry); proc.apiRetry = undefined; }
 }
 
 /** Background work started longer ago than this no longer keeps a worker's process past its keep-alive (the bots' rule). */
@@ -298,6 +308,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   start(r: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle) {
     const proc = this.procOf(r.id);
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
+    clearApiRetry(proc);
+    proc.apiRetries = 0;
     const sessionId = nonEmpty(r.engineData.sessionId) ?? r.conversationId ?? r.id;
     if (proc.head?.running && proc.finishing === proc.head) {
       // Its input is closed (it went to sleep) but it lives on until its background work ends: words written now are
@@ -376,6 +388,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       return true;
     }
     if (!proc?.run || !proc.head?.running || proc.finishing === proc.head) return false;
+    // Words while it waits to try again after an API error: they go on with the turn in its place.
+    if (proc.apiRetry) { clearApiRetry(proc); proc.run.emit({ type: "waitingOn", on: null }); }
     const uuid = randomUUID();
     proc.queued.add(uuid);
     proc.head.send(words, uuid);
@@ -458,13 +472,37 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   /** The run's turn is over: the core classifies it. The process stays a while for a quick follow-up, then sleeps. */
   private end(proc: Proc, run: RunHandle, result: Extract<StreamItem, { kind: "result" }>) {
     if (proc.run !== run) return;
+    const head = proc.head;
+    let error = result.ok ? null : result.error || result.text || null;
+    if (!result.ok && result.apiPassing) {
+      // An API error that passes (a Cloudflare block, an overload): the same session goes on after a wait, the run
+      // stays at work. Only once every try failed does it end, in plain words.
+      const delays = apiRetryDelays();
+      const attempt = (proc.apiRetries ?? 0) + 1;
+      if (attempt <= delays.length && head?.running && proc.finishing !== head) {
+        proc.apiRetries = attempt;
+        proc.queued.clear();
+        const delay = delays[attempt - 1]!;
+        run.emit({ type: "waitingOn", on: { kind: "apiRetry", title: apiRetryText(attempt, delays.length, delay), since: Date.now(), queued: 0 } });
+        clearApiRetry(proc);
+        proc.apiRetry = setTimeout(() => {
+          proc.apiRetry = undefined;
+          if (proc.run !== run || proc.head !== head || !head.running || this.closed) return;
+          run.emit({ type: "waitingOn", on: null });
+          head.send(API_RETRY_NOTE, randomUUID());
+        }, delay);
+        proc.apiRetry.unref?.();
+        return;
+      }
+      error = apiGaveUpText(delays.length, error ?? "");
+    }
     proc.run = undefined;
     proc.queued.clear();
-    const head = proc.head;
+    proc.apiRetries = 0;
+    clearApiRetry(proc);
     if (head?.running) this.keepAlive(proc, head);
     run.emit({ type: "end", end: {
-      how: result.how ?? (result.ok ? "normal" : "error"), finalText: result.ok ? result.text : null,
-      error: result.ok ? null : result.error || result.text || null, detail: result.subtype,
+      how: result.how ?? (result.ok ? "normal" : "error"), finalText: result.ok ? result.text : null, error, detail: result.subtype,
     } });
   }
 
@@ -491,6 +529,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       }
     });
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
+    clearApiRetry(proc);
     const run = proc.run;
     if (proc.settle) {
       clearTimeout(proc.settle);
@@ -514,6 +553,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     proc.run = undefined;
     proc.held = undefined;
     proc.queued.clear();
+    clearApiRetry(proc);
     if (proc.settle) { clearTimeout(proc.settle); proc.settle = undefined; proc.pendingResult = undefined; }
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
     const tree = proc.tree ?? proc.head;
@@ -563,6 +603,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     await Promise.allSettled([...this.procs.values()].map((proc) => {
       if (proc.settle) clearTimeout(proc.settle);
       if (proc.keepAlive) clearTimeout(proc.keepAlive);
+      clearApiRetry(proc);
       Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined, held: undefined });
       const tree = proc.tree ?? proc.head;
       proc.head = undefined;

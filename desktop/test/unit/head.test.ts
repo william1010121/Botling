@@ -201,6 +201,47 @@ describe("a bot's head", () => {
     }
   });
 
+  it("tries a turn again in the same session after Cloudflare's 403, with a short line instead of claude's words", async () => {
+    const dir = tempDir("head");
+    writeFileSync(join(dir, "blocked"), "1");
+    const c = core(dir, { FAKE_CLAUDE_BLOCKED: join(dir, "blocked"), BOTLING_API_RETRY_MS: "300,300,300", FAKE_CLAUDE_INPUT: join(dir, "input.log") });
+    const { event, messageId } = await turn(c, "draw the flowchart");
+    expect(event).toMatchObject({ status: "stopped", text: "API 暫時擋住，1 秒後重試（1/3）" });
+    const line = (await c.chat()).messages.find((m: { id: string }) => m.id === messageId);
+    expect(line.text).toBe("API 暫時擋住，1 秒後重試（1/3）");
+    expect(JSON.stringify((await c.chat()).messages)).not.toContain("Cloudflare");
+    // After the wait the same process and session are told to carry on (not sent the message again), and answer.
+    const told = await until(() => {
+      const lines = existsSync(join(dir, "input.log")) ? readFileSync(join(dir, "input.log"), "utf8").trim().split("\n").map((l) => JSON.parse(l).text as string) : [];
+      return lines.length >= 2 ? lines : null;
+    }, { what: "the retry" });
+    expect(told).toEqual([expect.stringMatching(/\n\ndraw the flowchart$/), expect.stringMatching(/^\(App: the Claude API turned the last request away for a moment/)]);
+    await until(() => c.of("turn.finished").some((e) => (e.event as { status: string }).status === "done"), { what: "the retried turn's end" });
+    expect(starts(dir)).toHaveLength(1);
+  });
+
+  it("does not try a turn again after a 401: claude's sign-in error shows as before", async () => {
+    const dir = tempDir("head");
+    writeFileSync(join(dir, "blocked"), "1");
+    const c = core(dir, { FAKE_CLAUDE_BLOCKED: join(dir, "blocked"), FAKE_CLAUDE_BLOCKED_AS: "401", BOTLING_API_RETRY_MS: "50", FAKE_CLAUDE_INPUT: join(dir, "input.log") });
+    const { event } = await turn(c, "hello");
+    expect(event.status).toBe("failed");
+    expect(event.text).toContain("API Error: 401");
+    await sleep(300);
+    expect(readFileSync(join(dir, "input.log"), "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
+  it("gives up after three tries with one plain failed line", async () => {
+    const dir = tempDir("head");
+    writeFileSync(join(dir, "blocked"), "10");
+    const c = core(dir, { FAKE_CLAUDE_BLOCKED: join(dir, "blocked"), BOTLING_API_RETRY_MS: "50,50,50" });
+    await turn(c, "hello");
+    const failed = await until(() => c.of("turn.finished").map((e) => e.event as { status: string; text: string }).find((e) => e.status === "failed"), { what: "the last try's end" });
+    expect(failed.text).toMatch(/^Claude 的 API 暫時擋住了這次的請求，重試 3 次後仍然失敗，所以先停下來了。/);
+    expect(c.of("turn.finished").map((e) => (e.event as { status: string }).status)).toEqual(["stopped", "stopped", "stopped", "failed"]);
+    expect(readFileSync(join(dir, "blocked"), "utf8")).toBe("6");
+  });
+
   it("an idle head tidies its notes, then sleeps; the next message wakes a new session, briefed", async () => {
     const dir = tempDir("head");
     const c = core(dir, { BOTLING_IDLE_MS: "300", FAKE_CLAUDE_INPUT: join(dir, "input.log") });
