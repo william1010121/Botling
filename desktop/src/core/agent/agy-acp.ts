@@ -78,6 +78,8 @@ export class AgyAcpProtocol {
   private sessionId = "";
   /** The models the conversation advertised when it started (`session.models.availableModels`). */
   private models: string[] = [];
+  /** The model its conversation started on (`config.model`, else ACP's `currentModelId`). */
+  private startedModel: string | null = null;
   /** A model/effort change being applied between turns: a prompt waits for it. */
   private settingsPending?: Promise<boolean>;
   private initialization: Promise<void> | null = null;
@@ -112,6 +114,8 @@ export class AgyAcpProtocol {
       if (!Array.isArray(options) || !options.some((o: Obj) => o.modelId === this.config.model)) throw new Error(`ACP model unavailable: ${this.config.model}. Choose a model advertised by this account.`);
       await this.call("session/set_model", { sessionId: this.sessionId, modelId: this.config.model });
     }
+    // The model it runs on: the one set, else Antigravity's default it started on (a worker's row shows it).
+    this.startedModel = this.config.model || str(session.models?.currentModelId) || null;
     if (this.config.effort) {
       if (!["low", "medium", "high"].includes(this.config.effort)) throw new Error("ACP supports low, medium or high reasoning effort.");
       const result = await this.call("session/set_config_option", { sessionId: this.sessionId, configId: "thinking_level", value: this.config.effort });
@@ -123,7 +127,7 @@ export class AgyAcpProtocol {
     const home = this.config.acpHome;
     if (home) this.dbUsage = new AgyTurnUsage(home, () => this.sessionId);
     if (home && !this.config.worker) this.releaseQuota = registerAntigravityQuotaReader(dirname(dirname(home)), () => readAgyQuota(home));
-    this.emit({ kind: "init", sessionId: this.sessionId });
+    this.emit({ kind: "init", sessionId: this.sessionId, ...(this.startedModel ? { model: this.startedModel } : {}) });
   }
   private async verifyMode() {
     this.confirmed = false;
