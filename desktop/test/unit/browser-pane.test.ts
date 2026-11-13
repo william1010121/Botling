@@ -193,7 +193,9 @@ describe("how a chat link opens", () => {
   it("other links keep their way: mailto and files outside, Markdown in the preview, no pane window outside", () => {
     expect(link("mailto:a@b.c")).toBe("open");
     expect(link("/Users/me/notes/plan.md")).toBe("markdown");
-    expect(link("/Users/me/report.pdf")).toBe("open");
+    // 2026-11-13: a local PDF opens in the pane too (browser-pdf.ts); another file still opens outside.
+    expect(link("/Users/me/report.pdf")).toBe("pane");
+    expect(link("/Users/me/photo.png")).toBe("open");
     expect(link("https://example.com/", { pane: false })).toBe("open");
     expect(link("https://example.com/report.html", { source: "component", preview: true })).toBe("preview");
   });

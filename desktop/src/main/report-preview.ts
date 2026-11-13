@@ -1,4 +1,5 @@
 import { isWebUrl } from "../browser-wire";
+import { linkPdfPath } from "../browser-pdf";
 import { fileURLToPath } from "node:url";
 import { previewFile, previewURL } from "../core/preview-url";
 
@@ -37,5 +38,6 @@ export function linkOpenWay(link: { url: string; source: "user" | "component"; p
   if (link.preview && link.source === "component") return "preview";
   // 2026-11-10: a web page opens in the app's browser pane beside the chat; ⌘-click (`external`) and the lightbox's
   // "open in browser" still use the default browser.
-  return link.pane && !link.external && isWebUrl(link.url) ? "pane" : "open";
+  // 2026-11-13: so does a local PDF (Chromium's PDF viewer, browser-pdf.ts).
+  return link.pane && !link.external && (isWebUrl(link.url) || !!linkPdfPath(link.url)) ? "pane" : "open";
 }
