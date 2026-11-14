@@ -178,6 +178,14 @@ export class SessionLink {
   }
 
   close(): void { this.end("closed", "closed by this side"); }
+
+  /**
+   * Resolves once every frame queued so far has been sealed and handed to the transport, or the session ended (a
+   * `bye` then leaves before `close`). Before the session opens nothing is sealed: it waits for the open or the end.
+   */
+  async drain(): Promise<void> {
+    while (!this.ended && (this.pumping || this.queue.length > 0 || this.urgent.length > 0)) await new Promise((resolve) => setTimeout(resolve, 1));
+  }
   /** The transport closed under the session. */
   transportClosed(): void { this.end("transport", "the transport closed"); }
 
