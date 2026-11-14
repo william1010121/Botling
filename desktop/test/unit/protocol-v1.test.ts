@@ -57,6 +57,8 @@ const samples: { [T in MessageType]: { message: Extract<Message, { t: T }>; send
   "cmd.retry": { sender: "server", message: { t: "cmd.retry", slot, inc: logB } },
   req: { sender: "fe", session: { local: true }, message: { t: "req", req: "r1", cmd: { type: "routines.list", botId: bot } } as never },
   res: { sender: "server", session: { local: true }, message: { t: "res", req: "r1", ok: true, result: { routines: [] } } },
+  "content.find": { sender: "fe", session: { local: true }, message: { t: "content.find", req: "c0", botId: bot, line: "m2", url: "file:///clip.mp4" } },
+  "content.found": { sender: "server", session: { local: true }, message: { t: "content.found", req: "c0", ref: { owner: "server-1", id: `pending:${"0f".repeat(16)}`, type: "video/mp4", state: "preparing", entry: { stream, seq: 7 } } } },
   "content.open": { sender: "fe", session: { local: true }, message: { t: "content.open", req: "c1", owner: "server-1", id: content, variant: "original", entry: { stream, seq: 7 } } },
   "content.file": { sender: "server", session: { local: true }, message: { t: "content.file", req: "c1", id: content, path: "/data/content/ab", type: "video/mp4", pin: "clone", sig: { size: 1_000, mtimeNs: "1763100000000000000", ino: "123456" } } },
   "content.gone": { sender: "server", message: { t: "content.gone", req: "c1", id: content, reason: "changed" } },
@@ -188,7 +190,7 @@ describe("protocol v1: wrong-role messages are refused", () => {
   });
 
   it("keeps local-socket messages off other sessions", () => {
-    for (const type of ["req", "res", "content.open", "content.file", "shell.screenshot", "shell.browser", "shell.install", "shell.quit", "shell.done"] as const) {
+    for (const type of ["req", "res", "content.find", "content.found", "content.open", "content.file", "shell.screenshot", "shell.browser", "shell.install", "shell.quit", "shell.done"] as const) {
       const { message, sender } = samples[type];
       expect(refused(json(message), sender, remote).reason, type).toBe("role");
       expect(refused(json(message), "peer", local).reason, type).toBe("role");
@@ -253,6 +255,8 @@ describe("protocol v1: malformed frames are refused", () => {
     ["a welcome with min above max", { ...samples.welcome.message, protocol: { min: 2, max: 1 } }],
     ["a content.open without the entry", { ...samples["content.open"].message, entry: undefined }],
     ["a content id that is not sha256", { ...samples["content.open"].message, id: "md5:00" }],
+    ["a pending id that is not 32 hex digits", { ...samples["content.open"].message, id: "pending:xyz" }],
+    ["chunk hashes that are not base64", { ...samples["content.file"].message, chunkHashes: "not base64!" }],
     ["a res that is ok and has an error", { t: "res", req: "r", ok: true, error: { code: "internal", message: "x" } }],
     ["an unknown bye reason", { t: "bye", reason: "because" }],
   ];
