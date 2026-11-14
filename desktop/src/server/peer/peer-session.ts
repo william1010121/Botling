@@ -26,6 +26,8 @@ import type { PeerTimers } from "./config";
 const PEER_KIND = { local: false } as const;
 /** Statements per `roster.revocations` frame (the message's own cap). */
 export const REVOCATIONS_PER_FRAME = 200;
+/** The most statements one `roster.revocations` set (chunks up to the short last one) may carry before the session ends. */
+export const MAX_REVOCATION_SET = 20_000;
 /** How long a `bye` may take to leave before the link is closed anyway. */
 const BYE_FLUSH_MS = 1_000;
 const encoder = new TextEncoder();
@@ -87,6 +89,8 @@ export interface PeerSessionEnd {
 export interface PeerSessionEvents {
   /** A full session opened (not called for an exchange-only one). */
   opened?(session: PeerSession): void;
+  /** An exchange-only session opened (D47). */
+  exchange?(session: PeerSession): void;
   closed?(session: PeerSession, end: PeerSessionEnd): void;
 }
 
@@ -106,6 +110,9 @@ export class PeerSession {
   private lastSent: number;
   /** Revocation ids this session sent or received (pushes send only the others). */
   private readonly known = new Set<string>();
+  /** The `roster.revocations` set being received: merged whole once its short last chunk is in (review P1). */
+  private pending: SignedStatement[] = [];
+  private deadline: ReturnType<typeof setTimeout> | null = null;
   private peerSynced = false;
   private exchangeDone = false;
   private peerBye: ByeReason | null = null;
@@ -153,6 +160,12 @@ export class PeerSession {
     }
     this.sendRevocations(this.host.roster.revocations());
     this.startTimers();
+    if (this.exchangeOnly) {
+      // An exchange is short: it ends within the dead time even if the peer keeps sending (review P2).
+      this.deadline = setTimeout(() => this.bye("dead", `the exchange did not finish in ${this.host.timers.deadMs} ms`), this.host.timers.deadMs);
+      this.deadline.unref?.();
+      this.events.exchange?.(this);
+    }
     if (this.state === "open") this.events.opened?.(this);
   }
 
@@ -232,13 +245,30 @@ export class PeerSession {
     if (!this.ignored.has(message.t)) { this.ignored.add(message.t); this.host.log(`peer ${this.peer}: ${message.t} is not handled yet; dropped`); }
   }
 
-  /** Merges one `roster.revocations` chunk; true when it was the last of its set. */
+  /**
+   * Takes one `roster.revocations` chunk; once the set's short last chunk is in, merges the whole set (a later root's
+   * Revoke counts only next to its Root, which may come in another chunk) and returns true. A set larger than
+   * MAX_REVOCATION_SET ends the session. Only ids the roster holds afterwards are remembered (pushes skip them).
+   */
   private async merge(statements: SignedStatement[]): Promise<boolean> {
-    for (const statement of statements) this.known.add(await statementId(statement.body));
-    const fresh = await this.host.roster.mergeRevocations(statements);
+    if (this.pending.length + statements.length > MAX_REVOCATION_SET) {
+      this.pending = [];
+      this.bye("too-large", `a roster.revocations set holds at most ${MAX_REVOCATION_SET} statements`);
+      return false;
+    }
+    this.pending.push(...statements);
+    if (statements.length >= REVOCATIONS_PER_FRAME) return false;
+    const set = this.pending;
+    this.pending = [];
+    const fresh = await this.host.roster.mergeRevocations(set);
+    const held = new Set(this.host.roster.revocations().map((item) => item.id));
+    for (const statement of set) {
+      const id = await statementId(statement.body);
+      if (held.has(id)) this.known.add(id);
+    }
     this.learned += fresh.length;
     if (fresh.length) this.host.log(`peer ${this.peer}: took ${fresh.length} revocation statement(s)`);
-    return statements.length < REVOCATIONS_PER_FRAME;
+    return true;
   }
 
   private startTimers(): void {
@@ -272,6 +302,8 @@ export class PeerSession {
     const opened = this.state !== "handshake";
     this.state = "closed";
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    if (this.deadline) { clearTimeout(this.deadline); this.deadline = null; }
+    this.pending = [];
     if (!this.flushing) this.link.close();
     this.events.closed?.(this, { reason, detail, exchangeOnly: this.exchangeOnly, peerBye: this.peerBye, opened, lastHeard: this.lastHeard });
   }

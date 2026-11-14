@@ -57,6 +57,8 @@ export class PeerSessions {
   private readonly entries = new Map<string, Entry>();
   private readonly live = new Map<string, PeerSession>();
   private readonly sessions = new Set<PeerSession>();
+  /** The exchange-only session each peer dialled in (one per peer: a newer one closes the older, review P2). */
+  private readonly inboundExchanges = new Map<string, PeerSession>();
   private readonly listeners = new Set<(state: PeerState) => void>();
   private readonly connector: PeerConnector;
   private readonly random: () => number;
@@ -213,6 +215,7 @@ export class PeerSessions {
   private sessionEvents(dialled?: Entry) {
     return {
       opened: (session: PeerSession) => this.opened(session),
+      exchange: (session: PeerSession) => this.exchangeOpened(session),
       closed: (session: PeerSession, end: PeerSessionEnd) => {
         if (dialled) dialled.dialing = false;
         this.closedSession(session, end);
@@ -245,8 +248,18 @@ export class PeerSessions {
     }
   }
 
+  /** A peer that is not valid here holds at most one connection: its newer exchange closes the older one. */
+  private exchangeOpened(session: PeerSession): void {
+    const peer = session.peer;
+    if (!peer || session.initiator === this.host.roster.memberId) return;
+    const older = this.inboundExchanges.get(peer);
+    this.inboundExchanges.set(peer, session);
+    if (older && older !== session) older.bye("closing", "one exchange per peer: a newer one opened");
+  }
+
   private closedSession(session: PeerSession, end: PeerSessionEnd): void {
     this.sessions.delete(session);
+    if (session.peer && this.inboundExchanges.get(session.peer) === session) this.inboundExchanges.delete(session.peer);
     const peer = session.peer;
     if (this.closed) return;
     if (end.opened) this.host.log(`peer ${peer}: session ended (${end.reason}: ${end.detail})`);

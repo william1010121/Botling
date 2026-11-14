@@ -22,7 +22,7 @@ import { bindServerIdentity, loadOrCreateServerIdentity, type ServerIdentity } f
 import { RosterStore } from "../../src/server/roster";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import {
-  addressesValue, DEFAULT_PEER_TIMERS, loopbackAddress, peerTimers, PeerSessions, SessionRouter, type AcceptedSession, type PeerConnection, type PeerConnector, type PeerTimers,
+  addressesValue, DEFAULT_PEER_TIMERS, MAX_REVOCATION_SET, loopbackAddress, peerTimers, PeerSessions, SessionRouter, type AcceptedSession, type PeerConnection, type PeerConnector, type PeerTimers,
 } from "../../src/server/peer";
 import { testRoot } from "../botlingd-harness";
 import { sleep, until } from "../helpers";
@@ -400,3 +400,101 @@ describe("M3 step 3: peer settings, the /v3/ws router and the KK rule", () => {
 });
 
 void sign;
+
+// ---------------------------------------------------------------------------------------------
+// Security review (before merge): what a peer — even one in exchange only — can make this server store or hold.
+
+describe("M3 step 3 review: what a peer can make this server store or hold", () => {
+  const badSig = (s: StoredStatement): StoredStatement["statement"] => ({ ...s.statement, sig: s.statement.sig.slice(0, -4) + (s.statement.sig.endsWith("AAAA") ? "BBBB" : "AAAA") });
+
+  it("P1: mergeRevocations stores only Revoke/Root that verify and count (junk signatures, foreign Roots, a non-root server's Revoke of a server)", async () => {
+    let extra!: Record<string, StoredStatement>;
+    const { net, peers: [a, b, c], clusterId, root: root1 } = await cluster(["A", "B", "C"], async ([ka, kb, kc], cl) => {
+      extra = { revokeC: await revokeServer(cl.clusterId, ka!, kc!), byB: await revokeServer(cl.clusterId, kb!, kc!) };
+      return {};
+    });
+    void a;
+    await run(net, b, false);
+    const before = b.roster!.statements().length;
+    const junk: unknown[] = [badSig(extra.revokeC), extra.byB.statement];
+    // Roots no recovery key of this cluster signed: each self-signed by its own fresh key, chained onto Root{1}.
+    for (let i = 0; i < 40; i++) {
+      const stranger = await strangerKeys();
+      const rec = { pub: stranger.sign, key: stranger.signKey, clusterId };
+      junk.push((await nextRoot(rec, root1, c.keys)).statement);
+    }
+    const taken = await b.roster!.mergeRevocations(junk);
+    expect(taken).toEqual([]);
+    expect(b.roster!.statements()).toHaveLength(before);
+    expect(b.roster!.view.valid.has(c.identity.memberId)).toBe(true);
+  }, 30_000);
+
+  it("P1: a copy with a bad signature does not block the genuine Revoke that follows", async () => {
+    let revokeC!: StoredStatement;
+    const { net, peers: [, b, c] } = await cluster(["A", "B", "C"], async ([ka, , kc], cl) => {
+      revokeC = await revokeServer(cl.clusterId, ka!, kc!);
+      return {};
+    });
+    await run(net, b, false);
+    await b.roster!.mergeRevocations([badSig(revokeC)]);
+    expect(await b.roster!.mergeRevocations([revokeC.statement])).toEqual([revokeC.id]);
+    expect(b.roster!.view.valid.has(c.identity.memberId)).toBe(false);
+  }, 30_000);
+
+  it("P1: a set split over chunks is merged whole (a later root's Revoke before its Root is still taken)", async () => {
+    let revokeC2!: StoredStatement, root2!: StoredStatement;
+    const { net, peers: [a, b, c], clusterId } = await cluster(["A", "B", "C"], async ([ka, , kc], cl) => {
+      root2 = await nextRoot(cl.recovery, cl.root, ka!, []);
+      revokeC2 = await revokeServer(cl.clusterId, ka!, kc!, 2);
+      return {};
+    });
+    await run(net, b);
+    const raw = await rawDial(net, b.port, { memberId: a.identity.memberId, dhPub: a.identity.dhPub, dhKey: a.identity.dhKey }, { memberId: b.identity.memberId, dhPub: b.identity.dhPub }, clusterId);
+    await raw.link.established;
+    // A full chunk (200) holding the gen-2 Revoke and duplicates, then the last chunk with Root{2}.
+    raw.send({ t: "roster.revocations", statements: [revokeC2.statement, ...Array(199).fill(root2.statement)] } as WireMessage);
+    raw.send({ t: "roster.revocations", statements: [root2.statement] } as WireMessage);
+    await until(() => b.roster!.statements().some((s) => s.id === revokeC2.id), { what: "B took the gen-2 Revoke" });
+    expect(b.roster!.view.valid.has(c.identity.memberId)).toBe(false);
+  }, 30_000);
+
+  it("P2: a revoked server cannot hold connections: one accepted exchange per peer, and an exchange ends within the dead time", async () => {
+    const { net, peers: [a, b], clusterId } = await cluster(["A", "B"], async ([ka, kb], c) => ({ A: [await revokeServer(c.clusterId, ka!, kb!)] }));
+    await run(net, a);
+    const bSelf = { memberId: b.identity.memberId, dhPub: b.identity.dhPub, dhKey: b.identity.dhKey };
+    const aStatic = { memberId: a.identity.memberId, dhPub: a.identity.dhPub };
+    // Keeps the exchange going with full chunks (never the last one).
+    const first = await rawDial(net, a.port, bSelf, aStatic, clusterId);
+    await first.link.established;
+    const filler = a.roster!.revocations()[0]!.statement;
+    const keepAlive = setInterval(() => { try { first.send({ t: "roster.revocations", statements: Array(200).fill(filler) } as WireMessage); } catch { /* ended */ } }, 50);
+    try {
+      const at = Date.now();
+      await until(() => first.ended, { timeout: 5_000, what: "A ends a never-finished exchange" });
+      expect(Date.now() - at).toBeLessThanOrEqual(TIMERS.deadMs * 2);
+    } finally { clearInterval(keepAlive); }
+    // Two accepted exchanges from the same peer: the older is closed when the newer opens.
+    const one = await rawDial(net, a.port, bSelf, aStatic, clusterId);
+    await one.link.established;
+    const two = await rawDial(net, a.port, bSelf, aStatic, clusterId);
+    await two.link.established;
+    const opened = Date.now();
+    await until(() => one.ended, { timeout: 2_000, what: "the older exchange closed" });
+    expect(Date.now() - opened).toBeLessThan(TIMERS.deadMs / 2); // closed by the newer one, not by the exchange deadline
+    expect(two.ended).toBe(false);
+  }, 30_000);
+
+  it("P3: a revocation set that never ends is refused past MAX_REVOCATION_SET (full session)", async () => {
+    const { net, peers: [a, b], clusterId } = await cluster(["A", "B"]);
+    await run(net, b);
+    const raw = await rawDial(net, b.port, { memberId: a.identity.memberId, dhPub: a.identity.dhPub, dhKey: a.identity.dhKey }, { memberId: b.identity.memberId, dhPub: b.identity.dhPub }, clusterId);
+    await raw.link.established;
+    const filler = b.roster!.revocations()[0]!.statement;
+    for (let i = 0; i <= MAX_REVOCATION_SET / 200 && !raw.ended; i++) {
+      raw.send({ t: "roster.revocations", statements: Array(200).fill(filler) } as WireMessage);
+      if (i % 10 === 9) await sleep(20);
+    }
+    await until(() => raw.ended, { timeout: 10_000, what: "B ends the session" });
+    expect(raw.received.filter((m) => m.t === "bye")).toEqual([expect.objectContaining({ reason: "too-large" })]);
+  }, 60_000);
+});

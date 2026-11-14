@@ -10,10 +10,10 @@
 //   in); `Add` of a device, `Revoke` of a device it has in its roster, and `Endorse` of a member it finds valid that it
 //   neither added nor endorsed yet ("Endorse (self)", §4.2). No server revocation (root only, M4), no gossip (M3).
 // - Listeners hear which members stopped being valid (sessions close, M2 step 4).
-import { DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
+import { clusterIdFromRecoveryKey, DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
 import type { Command, Db } from "../store";
 import { computeRoster, validDevice, type MemberInfo, type RosterView, type VerifiedStatement } from "./validity";
-import { parseStored, signStatement, storedBytes, verifyStatements, type StoredStatement } from "./verify";
+import { parseStored, signStatement, storedBytes, verifySignature, verifyStatements, type StoredStatement } from "./verify";
 
 export interface RosterBackend {
   submit<T>(command: Command<T>): Promise<T>;
@@ -231,22 +231,58 @@ export class RosterStore {
 
   /**
    * Merges Revoke and Root statements a peer server sent (§4.6, D47), also while this server finds itself revoked:
-   * that is how a `Root` that brings it back reaches it. Anything else in the list is ignored; whether a statement
-   * counts is validity's business (its own signatures, §4.2), so taking them from a peer that is not valid is safe.
-   * Returns the ids that were new.
+   * that is how a `Root` that brings it back reaches it. Anything else in the list is ignored. The peer may be invalid
+   * or hostile, so only what counts here is stored (security review of M3 step 3): a `Root` of this server's chain
+   * (each candidate Root is checked against the recovery key its `prev` names, or for gen 1 against its own key bound
+   * to the cluster id, before the set is verified, so foreign Roots cost one check each), and a `Revoke` that counts
+   * (§4.2) once the whole list is in. A statement whose stored copy does not verify gives way to one that does.
+   * Pass a whole `roster.revocations` set at once: a later root's Revoke counts only next to its Root.
+   * Returns the ids that were new (or replaced).
    */
   mergeRevocations(statements: readonly unknown[]): Promise<string[]> {
     return this.serial(async () => {
       const cluster = this.cluster;
       if (cluster === null) return [];
-      const fresh: StoredStatement[] = [];
+      const verifiedIds = new Set(this.verified.map((item) => item.id));
+      const candidates = new Map<string, StoredStatement>();
       for (const raw of statements) {
         const parsed = RevocationStatement.safeParse(raw);
         if (!parsed.success || parsed.data.body.cluster !== cluster) continue;
         const id = await statementId(parsed.data.body);
-        if (this.stored.has(id) || fresh.some((item) => item.id === id)) continue;
-        fresh.push({ id, statement: parsed.data });
+        if (verifiedIds.has(id) || candidates.has(id)) continue;
+        candidates.set(id, { id, statement: parsed.data });
       }
+      if (!candidates.size) return [];
+      // Roots: only those a recovery key of this chain signed (gen order, so a candidate can be another's prev).
+      const roots = new Map<string, Extract<StatementBody, { type: "root" }>>();
+      for (const { id, body } of this.verified) if (body.type === "root") roots.set(id, body);
+      const rootCandidates = [...candidates.values()].filter((item) => item.statement.body.type === "root")
+        .sort((x, y) => (x.statement.body as { gen: number }).gen - (y.statement.body as { gen: number }).gen);
+      for (const item of rootCandidates) {
+        candidates.delete(item.id);
+        const body = item.statement.body as Extract<StatementBody, { type: "root" }>;
+        let key: string | null = null;
+        if (body.gen === 1 && body.prev === null) {
+          const raw = fromBase64Url(body.recoveryPub);
+          if (raw && raw.length === 32 && (await clusterIdFromRecoveryKey(raw)) === cluster) key = body.recoveryPub;
+        } else if (body.prev !== null) {
+          const prev = roots.get(body.prev);
+          if (prev && prev.gen === body.gen - 1) key = prev.recoveryPub;
+        }
+        if (key === null || !(await verifySignature(item.statement, key))) continue;
+        roots.set(item.id, body);
+        candidates.set(item.id, item);
+      }
+      if (!candidates.size) return [];
+      const trial = new Map(this.stored);
+      for (const item of candidates.values()) trial.set(item.id, item);
+      const verified = await verifyStatements(trial.values(), this.self());
+      const view = computeRoster(this.identity.memberId, cluster, verified);
+      const chain = new Set<string>();
+      for (let at = view.root?.id ?? null; at !== null && !chain.has(at);) { chain.add(at); at = roots.get(at)?.prev ?? null; }
+      const counting = new Set(view.countingRevokes);
+      const verifiedNow = new Set(verified.map((item) => item.id));
+      const fresh = [...candidates.values()].filter((item) => verifiedNow.has(item.id) && (item.statement.body.type === "root" ? chain.has(item.id) : counting.has(item.id)));
       if (fresh.length) await this.apply(fresh, cluster, fresh.map((item) => ({ act: "statement.merge" as const, statement: item.id, by: item.statement.signer, member: memberOf(item.statement.body) })));
       return fresh.map((item) => item.id);
     });
