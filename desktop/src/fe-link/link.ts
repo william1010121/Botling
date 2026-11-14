@@ -257,7 +257,19 @@ export class FeLink {
     return view ? { view: { ...view }, stale: this.liveStale.has(stream) } : null;
   }
 
+  /**
+   * Sends a front-end message that is neither a command nor a stream request: the window's answer to a server request
+   * (`shell.done`). Returns false when no session is attached (the server's request died with its session).
+   */
+  post(message: MessageOf<"shell.done">): boolean {
+    const session = this.session;
+    return !!session?.welcomed && this.send(session, message);
+  }
+
   /** A read on the session (no slot, §11.1). Rejects when the session ends first. */
+  /** The id the server told in its last `welcome` (srv: targets need it); null before the first. */
+  get server(): string | null { return this.serverId; }
+
   request(cmd: Command): Promise<unknown> {
     return this.ask({ t: "req", req: this.nextReq(), cmd }, "res");
   }
