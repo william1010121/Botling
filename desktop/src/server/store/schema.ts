@@ -100,6 +100,18 @@ CREATE TABLE retired (
 ) WITHOUT ROWID;
 `;
 
+// v3 (M1 step 13, src/server/content): what each line names. `content_refs (id, stream, seq)` says an entry references
+// the bytes `id`; `content_names` says which file of the line (by its absolute path) that is, so Electron main can turn
+// the renderer's `botling-chat://chat/attachment/…?line=` URL into the reference (`content.find`). Written in the same
+// transaction as the entry; `id` is `pending:<hex>` until the hash is ready, then the `sha256:` id (both tables).
+const V3 = `
+CREATE TABLE content_names (
+  stream TEXT NOT NULL, seq INTEGER NOT NULL, line TEXT NOT NULL, path TEXT NOT NULL, id TEXT NOT NULL,
+  PRIMARY KEY (stream, line, path)
+) WITHOUT ROWID;
+CREATE INDEX content_names_by_id ON content_names (id);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -117,6 +129,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "log streams (src/server/log): each entry's logId, the evicted tail, retired logIds (D50)",
     up(db) {
       db.exec(V2);
+    },
+  },
+  {
+    version: 3,
+    description: "content path (src/server/content): the files each line names (content_names)",
+    up(db) {
+      db.exec(V3);
     },
   },
 ];

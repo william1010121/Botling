@@ -2,10 +2,10 @@
 // Design: protocol-v1.md §5.4 (roles), §8 (streams), §9.2 (live), §9A.4 (content.open), §11 (commands), §13.1 (attach).
 // Only the messages M1 uses have schemas; roster, pairing, fetch, prefs and the remote content path come in M2.
 import { z } from "zod";
-import { Command, MessageView, WireError } from "../contract";
+import { BotId, Command, MessageView, WireError } from "../contract";
 import { ContentRef, Entry } from "./entries";
 import {
-  ContentId, Cursor, EntryHash, Id, LogId, OriginEpoch, Outcome, PROTOCOL_VERSION, Scope, Seq, ServerId, ServerState, Slot, StreamId, Target,
+  ContentId, Cursor, EntryHash, LocalContentId, Id, LogId, OriginEpoch, Outcome, PROTOCOL_VERSION, Scope, Seq, ServerId, ServerState, Slot, StreamId, Target,
 } from "./ids";
 
 /** A request id chosen by the asker, echoed by the answer. */
@@ -134,16 +134,37 @@ export const Res = z.union([
 // ---------------------------------------------------------------------------------------------
 // Content, local part (§9A.4): Electron main asks the server for the pinned file of a reference
 
+/**
+ * The renderer names a line's file the 2.x way (`botling-chat://chat/attachment/<bot>/<file URL>?line=<id>`); main asks
+ * which reference that line holds for the file, then opens it. Local socket only (M1 step 13).
+ */
+export const ContentFind = msg("content.find", { req: ReqId, botId: BotId, line: Id, url: z.string().min(1).max(8_000) });
+/** The reference a line holds for a file, with the entry that proves it; null when the line names no such file. */
+export const ContentFound = msg("content.found", {
+  req: ReqId,
+  ref: z.strictObject({
+    owner: ServerId, id: LocalContentId, type: z.string().min(1).max(200), state: ContentRef.shape.state,
+    entry: z.strictObject({ stream: StreamId, seq: Seq.min(1) }),
+  }).nullable(),
+});
 /** `entry` names the entry that holds the reference: the proof of reference checked on every open (§9A.7). */
 export const ContentOpen = msg("content.open", {
-  req: ReqId, owner: ServerId, id: ContentId, variant: z.string().min(1).max(100), entry: z.strictObject({ stream: StreamId, seq: Seq.min(1) }),
+  req: ReqId, owner: ServerId, id: LocalContentId, variant: z.string().min(1).max(100), entry: z.strictObject({ stream: StreamId, seq: Seq.min(1) }),
 });
 /** The stat signature main re-checks before it streams a pinned file (§9A.3). Nanoseconds and inodes as decimal text. */
 export const StatSignature = z.strictObject({ size: z.number().int().nonnegative(), mtimeNs: z.string().regex(/^[0-9]{1,24}$/), ino: z.string().regex(/^[0-9]{1,24}$/) });
+/** One SHA-256 per 1 MiB of a file, as the raw digests one after another in base64 (≤ 5,625 chunks in one frame). */
+export const ChunkHashes = z.string().max(240_000).regex(/^[A-Za-z0-9+/]*={0,2}$/);
+export const CONTENT_CHUNK_BYTES = 1024 * 1024;
+/**
+ * The pinned file of a reference. For `pin: path`, `chunkHashes` (when the hash is ready and the list fits) lets main
+ * check every chunk it streams: a reference serves the bytes of its hash or nothing (§9A.3).
+ */
 export const ContentFile = msg("content.file", {
-  req: ReqId, id: ContentId, path: z.string().min(1).max(4_096), type: z.string().min(1).max(200), pin: ContentRef.shape.pin, sig: StatSignature,
+  req: ReqId, id: LocalContentId, path: z.string().min(1).max(4_096), type: z.string().min(1).max(200), pin: ContentRef.shape.pin, sig: StatSignature,
+  chunkHashes: ChunkHashes.optional(),
 });
-export const ContentGone = msg("content.gone", { req: ReqId, id: ContentId, reason: z.enum(["changed", "deleted", "denied", "offline", "too-large"]) });
+export const ContentGone = msg("content.gone", { req: ReqId, id: LocalContentId, reason: z.enum(["changed", "deleted", "denied", "offline", "too-large"]) });
 
 // ---------------------------------------------------------------------------------------------
 // The server's requests of the attached window (local socket; the 2.x core's app ops)
@@ -172,7 +193,7 @@ export const MESSAGES = {
   live: Live, "live.resync": LiveResync,
   cmd: Cmd, cancel: Cancel, held: Held, "cmd.result": CmdResult, "cmd.retry": CmdRetry,
   req: Req, res: Res,
-  "content.open": ContentOpen, "content.file": ContentFile, "content.gone": ContentGone,
+  "content.find": ContentFind, "content.found": ContentFound, "content.open": ContentOpen, "content.file": ContentFile, "content.gone": ContentGone,
   "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.done": ShellDone,
   ping: Ping, bye: Bye,
 } as const;
