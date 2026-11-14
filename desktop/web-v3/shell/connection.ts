@@ -25,9 +25,11 @@ export interface Diagnostics {
   media: MediaDiagnostics;
   /** The player's rate, choice and switches, and the content cache's hits and clears (step 11). */
   player: PlayerDiagnostics;
+  /** The page's uploads by key (step 12): state, bytes sent, puts and resume points. */
+  uploads: Record<string, unknown>;
 }
 
-export function newDiagnostics(): Diagnostics { return { live: [], states: {}, conn: [], frames: 0, ends: [], media: {}, player: newPlayerDiagnostics("tailnet") }; }
+export function newDiagnostics(): Diagnostics { return { live: [], states: {}, conn: [], frames: 0, ends: [], media: {}, player: newPlayerDiagnostics("tailnet"), uploads: {} }; }
 
 export interface Connection {
   link: FeLink;

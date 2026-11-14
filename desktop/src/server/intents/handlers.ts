@@ -4,6 +4,8 @@
 // applies synchronously (`applyNow`), whose events land in this same transaction through the event tap.
 //
 //   chat.send          the user's line (`message.added`, carrying the slot) + `turn.queued` + a queued turn row; result {messageId: the
+//                      (uploaded `files`, M2 step 12: each must be in and checked, else `invalid`; the turn hands them
+//                      to the engine, which copies them into the bot's attachments folder as 2.x does with a pasted file)
 //                      reply's line, turnId}. The line also goes into the engine's own chat now (`engine.userLine`: the
 //                      core's rows, chat.json, its history), as 2.x's send does, so a reaction on it works while its turn
 //                      waits; a crash before that write committed is mended by recovery (recovery.ts). The worker starts
@@ -28,12 +30,22 @@ import {
   type ApplyNowCommand, type DeferredTurnRequest, type EffectWorker, type TurnEngine, type TurnOrigin, type TxScope,
 } from "../effects";
 
+/** The server's uploads as the handlers read them (server/content/put.ts `Uploads`). */
+export interface UploadedFiles {
+  /** The finished, hash-checked file of a content id, or null. */
+  complete(id: string): { path: string; size: number } | null;
+  /** Whether this server refused the bytes sent for a content id (they did not hash to it). */
+  refused?(id: string): boolean;
+}
+
 export interface IntentDeps {
   scope: TxScope;
   engine: TurnEngine;
   worker: EffectWorker;
   now: () => number;
   log?: (line: string) => void;
+  /** M2 step 12: files a page uploaded, named by `chat.send.files` (none: such a command is refused). */
+  uploads?: UploadedFiles | null;
 }
 
 const newLineId = () => randomUUID().toUpperCase();
@@ -80,7 +92,16 @@ export function queueKeptTurn(deps: Pick<IntentDeps, "scope" | "worker" | "now" 
 function send(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<Command, { type: "chat.send" }>) {
   requireBot(deps.engine, cmd.botId);
   const text = cmd.text.trim();
-  if (!text && !deps.engine.pendingFiles(cmd.botId)) throw new SlotRefusal("invalid", "Nothing to send.");
+  // M2 step 12: uploaded files go with the line only once their bytes are in and checked (the session held the
+  // command until then; one that is still missing here never arrived, and the command is refused, never applied
+  // without its files).
+  for (const file of cmd.files ?? []) {
+    const kept = deps.uploads?.complete(file.id) ?? null;
+    if (!kept && deps.uploads?.refused?.(file.id)) throw new SlotRefusal("invalid", `The attachment ${file.name.slice(0, 200)} was refused: its bytes did not match their hash.`);
+    if (!kept) throw new SlotRefusal("invalid", `The attachment ${file.name.slice(0, 200)} did not arrive.`);
+    if (kept.size !== file.size) throw new SlotRefusal("invalid", `The attachment ${file.name.slice(0, 200)} is not the size it was sent as.`);
+  }
+  if (!text && !cmd.files?.length && !deps.engine.pendingFiles(cmd.botId)) throw new SlotRefusal("invalid", "Nothing to send.");
   const now = deps.now();
   const stream = ensureBot(tx, cmd.botId);
   const userId = newLineId();
@@ -107,7 +128,10 @@ function send(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<Command
     effectId, stream, botId: cmd.botId, turnId, kind: "turn",
     payload: {
       kind: "turn", origin: "chat", replyId, userId,
-      send: { text: cmd.text, ...(cmd.replyTo ? { replyTo: cmd.replyTo } : {}), ...(cmd.to ? { to: cmd.to } : {}) },
+      send: {
+        text: cmd.text, ...(cmd.replyTo ? { replyTo: cmd.replyTo } : {}), ...(cmd.to ? { to: cmd.to } : {}),
+        ...(cmd.files?.length ? { files: cmd.files.map((file) => ({ id: file.id, name: file.name })) } : {}),
+      },
     },
     state: "queued", seq: queued?.seq ?? 0, startedAt: null, endedAt: null,
   });

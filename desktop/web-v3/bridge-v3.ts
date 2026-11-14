@@ -24,6 +24,8 @@ import { App, type WebChrome } from "../src/renderer/App";
 import { Client, type Bridge } from "../src/renderer/client";
 import { WorkspaceStore } from "../src/renderer/store";
 import { phoneLayout } from "../mobile/layout";
+import type { PendingFileView } from "../src/contract";
+import type { PageUploadsPort } from "./shell/uploads";
 
 /** What the page offers the renderer (the future `needsShell` list). One plain object, given to `mountRenderer`. */
 export interface PageCapabilities {
@@ -35,6 +37,11 @@ export interface PageCapabilities {
   scopes: readonly DeviceScope[];
   /** The reads the server answers for a remote front end. Default: protocol REMOTE_READS. */
   remoteReads?: ReadonlySet<CommandType>;
+  /**
+   * This page's attachments (M2 step 12, web-v3/shell/uploads.ts): their chips are merged into the input box's pending
+   * files, `files.remove` of one is answered here, and a `chat.send` takes them as `files` (hash-named uploads).
+   */
+  uploads?: PageUploadsPort;
 }
 
 /** Layout settings this page keeps for itself. */
@@ -62,6 +69,8 @@ export class BridgeV3 implements Bridge {
   private readonly cancelled = new Set<string>();
   private readonly local: Partial<Record<LocalKey, unknown>> = {};
   private closed = false;
+  /** The server's own input-box files per bot (from the snapshot and `files.updated`). */
+  private readonly serverPending = new Map<string, PendingFileView[]>();
   /** Told when a layout setting changed here (the caller resyncs the store). */
   onLocalChange: () => void = () => undefined;
 
@@ -70,6 +79,13 @@ export class BridgeV3 implements Bridge {
   /** The adapter's event port. */
   emit(envelope: EventEnvelope | ResponseEnvelope): void {
     if (this.closed) return;
+    // The server's input-box files of a bot, with this page's chips after them (the event keeps its epoch and seq).
+    if ("event" in envelope && envelope.event.type === "files.updated") {
+      const event = envelope.event;
+      this.serverPending.set(event.botId, event.files);
+      const mine = this.capabilities.uploads?.pending(event.botId) ?? [];
+      if (mine.length) envelope = { ...envelope, event: { ...event, files: [...event.files, ...mine].slice(0, 50) } };
+    }
     for (const listener of [...this.listeners]) listener(envelope);
   }
 
@@ -112,15 +128,42 @@ export class BridgeV3 implements Bridge {
       if (!cmd.reveal && /^https?:\/\//i.test(cmd.url)) { this.capabilities.openLink(cmd.url); return okResponse(id, {}); }
       return errorResponse(id, { code: "forbidden", message: NOT_AVAILABLE });
     }
+    const uploads = this.capabilities.uploads;
+    if (cmd.type === "files.remove" && uploads?.owns(cmd.botId, cmd.id)) {
+      uploads.remove(cmd.botId, cmd.id);
+      return okResponse(id, { files: this.pendingOf(cmd.botId) });
+    }
     const refusal = pageRefusal(cmd, this.capabilities);
     if (refusal) return errorResponse(id, { code: "forbidden", message: refusal });
-    const answer = await this.adapter.request(cmd);
+    let taken: Awaited<ReturnType<PageUploadsPort["take"]>> = [];
+    if (cmd.type === "chat.send" && uploads && !cmd.files) {
+      // The command names the files by their hash; the bytes may still be on their way (the server holds it).
+      try { taken = await uploads.take(cmd.botId); } catch (error) {
+        return errorResponse(id, { code: "bad_request", message: String((error as Error)?.message ?? error) });
+      }
+      if (taken.length) cmd = { ...cmd, files: taken };
+    }
+    let answer: Awaited<ReturnType<AdapterPort["request"]>>;
+    try { answer = await this.adapter.request(cmd); } catch (error) {
+      if (taken.length && cmd.type === "chat.send") uploads?.untake(cmd.botId, taken);
+      throw error;
+    }
+    if (!answer.ok && taken.length && cmd.type === "chat.send") uploads?.untake(cmd.botId, taken);
     if (!answer.ok) return errorResponse(id, answer.error);
     return okResponse(id, cmd.type === "chat.snapshot" ? this.overlay(answer.result as Snapshot) : answer.result);
   }
 
-  /** The settings the renderer sees: the server's display settings with this page's layout on top. */
+  /** The input box's files of a bot: the server's, then this page's chips. */
+  private pendingOf(botId: string): PendingFileView[] {
+    return [...(this.serverPending.get(botId) ?? []), ...(this.capabilities.uploads?.pending(botId) ?? [])].slice(0, 50);
+  }
+
+  /** The settings the renderer sees: the server's display settings with this page's layout on top; this page's chips. */
   private overlay(snapshot: Snapshot): Snapshot {
+    if (snapshot.chat) {
+      this.serverPending.set(snapshot.chat.botId, snapshot.chat.pendingFiles ?? []);
+      if (this.capabilities.uploads) snapshot = { ...snapshot, chat: { ...snapshot.chat, pendingFiles: this.pendingOf(snapshot.chat.botId) } };
+    }
     if (!snapshot.settings) return snapshot;
     const settings = { ...snapshot.settings } as Record<string, unknown>;
     for (const key of LOCAL_SETTINGS) if (key in this.local) settings[key] = this.local[key];
@@ -154,6 +197,7 @@ export function mountRenderer(root: HTMLElement, options: MountOptions): Mounted
   const store = new WorkspaceStore((botId) => client.request({ type: "chat.snapshot", ...(botId ? { botId } : {}) }));
   client.onEvent((event) => store.receive(event));
   bridge.onLocalChange = () => { void store.resync().catch(() => undefined); };
+  const offChips = options.capabilities.uploads?.onChipsChanged(() => bridge?.onLocalChange()) ?? (() => undefined);
   adapter.start();
   const reactRoot: Root = createRoot(root);
   const render = (chrome: WebChrome) => reactRoot.render(createElement(App, { client, store, web: chrome }));
@@ -161,6 +205,6 @@ export function mountRenderer(root: HTMLElement, options: MountOptions): Mounted
   void store.resync().catch((error) => options.audit?.(`first snapshot: ${String((error as Error)?.message ?? error)}`));
   return {
     adapter, store, render,
-    unmount() { adapter.stop(); bridge?.close(); reactRoot.unmount(); },
+    unmount() { offChips(); adapter.stop(); bridge?.close(); reactRoot.unmount(); },
   };
 }

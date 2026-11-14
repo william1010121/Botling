@@ -12,7 +12,7 @@ export interface TurnStart {
   replyId: string;
   userId: string | null;
   /** chat.send: the user's text; the engine builds the head's message (plugins, call-ins, quoted line, files). */
-  send?: { text: string; replyTo?: string; to?: "both" | "claude" | "codex" | "agy" };
+  send?: { text: string; replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; files?: Array<{ id: string; name: string }> };
   /** A turn kept aside earlier (an answer's message, a routine's run): the head's message as it was made. */
   words?: string;
   engine?: Engine;

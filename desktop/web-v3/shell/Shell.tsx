@@ -12,6 +12,7 @@ import { mountRenderer, type MountedRenderer, type PageCapabilities } from "../b
 import { forgetDevice, loadDevice, loadPref, saveDevice, savePref, type DeviceRecord } from "./device-store";
 import { makePairKeys, pair, pairingSupported, PairingError, type PairAttempt, type PairKeys } from "./pairing";
 import { MediaBroker } from "./media";
+import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
 import { bannerText, FE_VERSION, newDiagnostics, openConnection, type Connection, type Diagnostics } from "./connection";
@@ -156,7 +157,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
   const [failure, setFailure] = useState<string | null>(null);
   const mounted = useRef<MountedRenderer | null>(null);
 
-  const capabilities = useMemo<PageCapabilities>(() => ({
+  const capabilities = useMemo<Omit<PageCapabilities, "uploads">>(() => ({
     openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer"); },
     narrow: phoneWidth,
     scopes: device.scope as DeviceScope[],
@@ -181,6 +182,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     let cancelled = false;
     let opened: Connection | null = null;
     let media: MediaBroker | null = null;
+    let uploads: PageUploads | null = null;
     // This device was removed from the roster (unpaired or revoked on the computer): the server says so with
     // `bye{revoked}` while connected, and what the page cached goes at once (§9A.6); pairing again is the user's
     // choice. A revocation made while the page was away is not told: the server refuses the handshake silently.
@@ -192,15 +194,19 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       const update = () => setBanner({ text: bannerText(conn.link.status, conn.link.pending()), state: conn.link.status.state });
       conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome") update(); });
       // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
-      media = new MediaBroker(conn.link, () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null, diagnostics.media,
+      const frame = () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null;
+      media = new MediaBroker(conn.link, frame, diagnostics.media,
         { cache: contentCache, path: diagnostics.player.path, player: diagnostics.player, storage: { load: loadPref, save: savePref } });
       media.start();
-      mounted.current = mountRenderer(rendererRoot.current!, { link: conn.port, capabilities, clock: { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) }, chrome });
+      // Attachments (step 12): the chat frame hands its files over, they are uploaded over the session.
+      uploads = new PageUploads(conn.link, frame, diagnostics.uploads);
+      uploads.start();
+      mounted.current = mountRenderer(rendererRoot.current!, { link: conn.port, capabilities: { ...capabilities, uploads }, clock: { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) }, chrome });
       conn.link.start();
       update();
       setConnection(conn);
     }, (error) => setFailure(`This page could not open its storage: ${String((error as Error)?.message ?? error)}`));
-    return () => { cancelled = true; media?.stop(); mounted.current?.unmount(); mounted.current = null; void opened?.close(); };
+    return () => { cancelled = true; media?.stop(); uploads?.stop(); mounted.current?.unmount(); mounted.current = null; void opened?.close(); };
     // The connection lives as long as this device's page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device]);

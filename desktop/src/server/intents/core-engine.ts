@@ -29,6 +29,10 @@ export class CoreEngine implements TurnEngine {
     this.core = core;
   }
 
+  /** M2 step 12: where an uploaded file is kept (server/content/put.ts `Uploads.complete`). */
+  private uploadPath: (id: string) => string | null = () => null;
+  useUploads(resolve: (id: string) => string | null): void { this.uploadPath = resolve; }
+
   attach(host: EngineHost): void {
     this.host = host;
     for (const event of this.early.splice(0)) host.event(event);
@@ -47,7 +51,10 @@ export class CoreEngine implements TurnEngine {
     const ids = { turnId: turn.turnId, messageId: turn.replyId, ...(turn.userId ? { userId: turn.userId } : {}) };
     try {
       if (turn.send) {
-        const sent = await core.serverSend(turn.botId, turn.send.text, { ...(turn.send.replyTo ? { replyTo: turn.send.replyTo } : {}), ...(turn.send.to ? { to: turn.send.to } : {}) }, ids);
+        // Uploaded files (M2 step 12): their kept bytes, under the names the page gave (checked at apply; a file gone
+        // since, which nothing deletes today, is left out rather than failing the turn).
+        const uploads = (turn.send.files ?? []).flatMap((file) => { const path = this.uploadPath(file.id); return path ? [{ path, name: file.name }] : []; });
+        const sent = await core.serverSend(turn.botId, turn.send.text, { ...(turn.send.replyTo ? { replyTo: turn.send.replyTo } : {}), ...(turn.send.to ? { to: turn.send.to } : {}) }, ids, uploads);
         if (!sent.turnId) return { turnId: null };
         const done = sent.turnId === turn.turnId ? this.dones.get(turn.turnId) : undefined;
         return { turnId: sent.turnId, ...(done ? { done } : {}) };

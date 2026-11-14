@@ -20,7 +20,7 @@ import {
   type DeferredTurnRequest, type RecoveryReport, type Submitter, type TurnEngine,
 } from "../effects";
 import { routeOf } from "./commands";
-import { applyIntent, effectBasisReader, queueKeptTurn, type IntentDeps } from "./handlers";
+import { applyIntent, effectBasisReader, queueKeptTurn, type IntentDeps, type UploadedFiles } from "./handlers";
 import { LegacyApply } from "./legacy";
 import { dbSlotLog } from "./slot-log";
 
@@ -40,6 +40,8 @@ export interface IntentRuntimeOptions {
   audit?: Audit;
   /** The content index (src/server/content): a finished line's files are noted in its entry's transaction. */
   content?: ContentService | null;
+  /** M2 step 12: files a page uploaded (server/content/put.ts), checked by `chat.send` with `files`. */
+  uploads?: UploadedFiles | null;
   /** Extra event tap hooks (M3: the server's summary rows, src/server/replica). */
   tapHooks?: Pick<TapHooks, "eventSeen" | "eventStored">;
 }
@@ -80,7 +82,7 @@ export class IntentRuntime {
       ...(options.serverEvents ? { serverEvents: options.serverEvents } : {}),
       ...(options.mirrorBotUpdates ? { mirrorBotUpdates: true } : {}),
     });
-    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log };
+    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null };
     const slotLog = dbSlotLog(this.scope, log);
     this.slots = new SlotEngine({
       submit: (command) => this.scope.submit(command),

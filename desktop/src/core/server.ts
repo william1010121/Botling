@@ -23,13 +23,13 @@ import type { RelayConnector } from '../mobile-relay/connector';
 // empty folder it imports a 1.x folder when one is given (read-only; store/importer.ts).
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { commandGuidePath } from "./plugins/app-command";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { writeFileAtomic } from "./durable/atomic";
 import { rmSync } from "node:fs";
-import { PendingFiles, servedType, writeIncoming } from "./attachments";
+import { linkIncoming, PendingFiles, servedType, writeIncoming } from "./attachments";
 import { safeName } from "./components/library";
 import { studioWorld } from "./studio-world";
 import type { StudioWorld } from "./plugins/studio-seam";
@@ -2462,8 +2462,8 @@ First write a test that shows this, then fix it.`;
    * Botling 3's server: `chat.send` whose intent the server already committed, with the ids it recorded (the user's
    * line, the turn, the reply's line). Everything else is 2.x's `chat.send`.
    */
-  serverSend(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }, ids: PresetTurnIds): Promise<ResultOf<"chat.send">> {
-    return this.send(botId, text, { ...options, ids });
+  serverSend(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }, ids: PresetTurnIds, uploads: Array<{ path: string; name: string }> = []): Promise<ResultOf<"chat.send">> {
+    return this.send(botId, text, { ...options, ids }, uploads);
   }
 
   /**
@@ -2540,22 +2540,27 @@ First write a test that shows this, then fix it.`;
   }
 
   /** Your message through the plugins' beforeSend hooks first; one can change it or stop it (`Workspace.send`). */
-  private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; ids?: PresetTurnIds }): Promise<ResultOf<"chat.send">> {
+  private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; ids?: PresetTurnIds }, uploads: Array<{ path: string; name: string }> = []): Promise<ResultOf<"chat.send">> {
     const bot = this.bot(botId);
     // A message to a bot in Idle brings it back to the list (the user is talking to it again).
     const idle = this.settingsNow().idleBots ?? [];
     if (idle.includes(botId.toUpperCase())) this.changeSetting({ key: "idleBots", value: idle.filter((id) => id !== botId.toUpperCase()) });
     // The files waiting in its input box go with the message (1.x sends them all).
     const files = this.pending.take(botId);
+    // Botling 3 uploads (M2 step 12): the server's checked file under the name the page gave, as an incoming copy, so
+    // it lands in the bot's attachments folder like a pasted file (`keep` copies it; the incoming name goes after).
+    const incoming = uploads.length ? linkIncoming(join(this.options.dataDir, "incoming"), uploads) : [];
     try {
       // Picked or dropped files on disk go by their own path; the incoming copies are copied (`keep`).
-      const result = await this.sendWith(bot, text, { ...options, files: files.map((file) => file.path), originals: files.filter((file) => !file.incoming).map((file) => file.path) });
+      const result = await this.sendWith(bot, text, { ...options, files: [...files.map((file) => file.path), ...incoming], originals: files.filter((file) => !file.incoming).map((file) => file.path) });
       if (result.stoppedBy) this.pending.restore(botId, files);
       else this.pending.done(files);
       return result;
     } catch (error) {
       this.pending.restore(botId, files);
       throw error;
+    } finally {
+      for (const path of incoming) rmSync(dirname(path), { recursive: true, force: true });
     }
   }
 
@@ -2908,7 +2913,10 @@ First write a test that shows this, then fix it.`;
         }
         return this.snapshot(cmd.botId);
       }
-      case "chat.send": return this.send(cmd.botId, cmd.text, { replyTo: cmd.replyTo, to: cmd.to });
+      case "chat.send":
+        // Files named by their hash are uploads to a Botling 3 server (M2 step 12); the 2.x app has none.
+        if (cmd.files) throw new ContractError("bad_request", "Files named by their hash are taken only by the Botling 3 server.");
+        return this.send(cmd.botId, cmd.text, { replyTo: cmd.replyTo, to: cmd.to });
       case "plugins.list": return this.plugins.view();
       case "plugins.enable": return this.plugins.setEnabled(cmd.name, cmd.enabled);
       case "plugins.store": return cmd.refresh ? await this.pluginStore.refresh() : this.pluginStore.view();
