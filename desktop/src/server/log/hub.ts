@@ -1,4 +1,4 @@
-// Readers of bot log streams (protocol v1 §8.3, §10.2, §10.4, D50): `sub` / `ack` / `unsub` / `history` from a
+// Readers of bot log streams, and of the server's own `srv:` stream with `serverStreams` (protocol v1 §8.3, §10.2, §10.4, D50): `sub` / `ack` / `unsub` / `history` from a
 // session, and `batch` / `snap` / `reset` pushed back through its `send`.
 //
 // A subscription is a cursor `(logId, sent)` plus what the reader acknowledged. The rules:
@@ -33,6 +33,11 @@ export interface LogHubOptions {
    * (new `originEpoch`s, `started` effects marked `interrupted`, the audit row), owned by other modules.
    */
   onRewind?: (db: Db) => void;
+  /**
+   * Also serve this server's `srv:` stream (botlingd, step 9): its snap is a small view (`{serverId, bots}`, snap.ts)
+   * and its logId is the `inc` front ends put on every command (D49). Off by default: only bot streams.
+   */
+  serverStreams?: boolean;
 }
 
 /** Room in a batch frame for its own fields around the entries. */
@@ -71,7 +76,7 @@ export class LogReader {
 
   async sub(stream: StreamId, cursor: Cursor | null): Promise<SubResult> {
     if (this.closed) return { ok: false, reason: "closed" };
-    if (!stream.startsWith("bot:")) return { ok: false, reason: "not a bot stream" };
+    if (!stream.startsWith("bot:") && !(this.hub.serverStreams && stream.startsWith("srv:"))) return { ok: false, reason: "not a bot stream" };
     this.subs.delete(stream);
     const db = this.hub.reader();
     let row = readStream(db, stream);
@@ -166,7 +171,9 @@ export class LogReader {
       listed.push({ logId: readerLogId, keptSeq: 0 });
     }
     const reason: RetiredLog["reason"] = retired.length ? retired[retired.length - 1].reason : "restored";
-    this.emit({ t: "reset", stream, logId: row.logId, retired: listed.slice(-1_000), reason });
+    // A restore (botlingd restore) notes when its backup was taken, so the window can say "restored to <time>".
+    const restoredTo = reason === "restored" ? Number(db.prepare("SELECT value FROM meta WHERE key = 'restoredTo'").get()?.value ?? NaN) : NaN;
+    this.emit({ t: "reset", stream, logId: row.logId, retired: listed.slice(-1_000), reason, ...(Number.isSafeInteger(restoredTo) && restoredTo >= 0 ? { restoredTo } : {}) });
     this.snap(stream);
   }
 
@@ -209,6 +216,7 @@ export class LogReader {
 export class LogHub {
   readonly pageEntries: number;
   readonly pageBytes: number;
+  readonly serverStreams: boolean;
   private readonly readers = new Set<LogReader>();
   private db: Db | null = null;
   private rewinding: Promise<void> | null = null;
@@ -216,6 +224,7 @@ export class LogHub {
   constructor(private readonly store: LogStore, private readonly options: LogHubOptions = {}) {
     this.pageEntries = Math.max(1, options.pageEntries ?? 500);
     this.pageBytes = Math.max(1024, options.pageBytes ?? 1024 * 1024);
+    this.serverStreams = options.serverStreams === true;
   }
 
   /** One reader connection for every read the hub does (sync reads: nothing interleaves with them). */

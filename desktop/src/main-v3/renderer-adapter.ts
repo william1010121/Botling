@@ -127,6 +127,12 @@ const hhmm = (ms: number | null) => {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 };
 
+/** A backup's time as the notice says it: the date (YYYY-MM-DD) and hh:mm, local time. */
+const stamp = (ms: number): string => {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${hhmm(ms)}`;
+};
+
 /** The words of the notice line for a connection state; null: no notice ("live"). */
 export function noticeText(status: ConnModel): string | null {
   switch (status.state) {
@@ -134,7 +140,9 @@ export function noticeText(status: ConnModel): string | null {
     case "connecting": return "Connecting to the Botling server…";
     case "offline": return `Offline${status.asOf !== null ? ` · as of ${hhmm(status.asOf)}` : ""}. New messages wait here and go when the Botling server is back.`;
     case "catching up": return "Catching up…";
-    case "history restored": return `This machine's history was restored from a backup${status.restoredAt !== null ? ` (noticed at ${hhmm(status.restoredAt)})` : ""}. Lines after the backup are gone.`;
+    case "history restored":
+      if (status.restoredTo != null) return `This machine's history was restored to ${stamp(status.restoredTo)} from a backup. Lines after that are gone.`;
+      return `This machine's history was restored from a backup${status.restoredAt !== null ? ` (noticed at ${hhmm(status.restoredAt)})` : ""}. Lines after the backup are gone.`;
     case "update required": return `This Botling window needs an update to use the server${status.minFeVersion ? ` (version ${status.minFeVersion} or later)` : ""}. What you write is kept until then.`;
     default: return `Botling server: ${status.state}.`;
   }

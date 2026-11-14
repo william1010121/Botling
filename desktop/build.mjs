@@ -6,7 +6,7 @@ import { packageAgyHelper } from './scripts/package-agy-helper.mjs';
 // Web/src is bundled from its sources here; its packages (markdown-it, KaTeX, CodeMirror) come
 // from desktop/node_modules at the versions Web/package.json pins, so Web/ needs no install.
 import { build } from "esbuild";
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRenderer, readCharacters } from "./build-renderer.mjs";
@@ -69,6 +69,8 @@ await Promise.all([
   // The shell's preload and the native chat editor's (build-preloads.mjs; also `npm run preload:build`).
   buildPreloads({ root: here, outdir: join(out, "preload") }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
+  // botlingd, Botling 3's server (src/server/main.ts): the 2.x core inside it, run under Node or Electron as Node.
+  build({ ...node, entryPoints: [join(here, "src/server/main.ts")], outfile: join(out, "server/main.cjs") }),
   // `botling run`: one task with no GUI under plain Node, driving the core above (src/cli/run.ts, docs/headless-run.md).
   build({ ...node, entryPoints: [join(here, "src/cli/run.ts")], outfile: join(out, "cli/run.cjs") }),
   // `botling-agent`: runs Claude workers on another machine (src/remote/agent/, docs/remote-workers.md). Plain Node 18+
@@ -90,6 +92,9 @@ await Promise.all([
 packageAgyHelper(here);
 // The bots' Cute pictures beside the core, for plugins' `workspace.face` (src/core/faces.ts).
 writeFileSync(join(out, "core", "characters.json"), JSON.stringify(readCharacters(here)));
+// botlingd runs the same core from out/server/: the files the core reads beside itself go there too.
+cpSync(join(out, "core", "characters.json"), join(out, "server", "characters.json"));
+if (existsSync(join(out, "core", "agy-file-helper.base64"))) cpSync(join(out, "core", "agy-file-helper.base64"), join(out, "server", "agy-file-helper.base64"));
 // The report command (reports/cli.ts), its guide and its licence notices are botling.report's (builtin-plugins/botling.report/build.json).
 console.log("built out/");
 }

@@ -496,7 +496,7 @@ export class FeLink {
       .catch((error) => this.emit({ type: "error", error }));
     void this.outbox.markLost(reset.stream as Target, reset.retired).then((changed) => { if (changed?.length) this.emit({ type: "pending" }); }, (error) => this.emit({ type: "error", error }));
     this.dropLive(reset.stream);
-    this.reduce({ type: "reset" });
+    this.reduce({ type: "reset", ...(reset.restoredTo !== undefined ? { restoredTo: reset.restoredTo } : {}) });
     this.emit({ type: "reset", reset });
     // The owner's srv: stream moved: items told to retry under this inc go out now (D49).
     if (reset.stream === this.srvStream()) this.sendOutbox(session);
@@ -678,7 +678,7 @@ export class FeLink {
   private reduce(event: ConnEvent): void {
     const next = connReduce(this.conn, event, this.clock.now());
     if (next === this.conn) return;
-    const changed = next.state !== this.conn.state || next.restoredAt !== this.conn.restoredAt;
+    const changed = next.state !== this.conn.state || next.restoredAt !== this.conn.restoredAt || next.restoredTo !== this.conn.restoredTo;
     this.conn = next;
     if (changed) this.emit({ type: "state", status: next });
   }
