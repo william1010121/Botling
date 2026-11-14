@@ -394,7 +394,7 @@ export class PluginKernel {
   }
 
   /** `promise`, or `onTimeout` and settled after the time limit, whichever is first. */
-  private bounded(promise: Promise<unknown>, onTimeout: () => void): Promise<unknown> {
+  protected bounded(promise: Promise<unknown>, onTimeout: () => void): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const timer = this.timers.set(() => { onTimeout(); resolve(undefined); }, this.timeoutMs);
       promise.then(

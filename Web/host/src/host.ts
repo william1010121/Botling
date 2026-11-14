@@ -48,6 +48,11 @@ class HostKernel extends Kernel {
   protected override unloadStarted(plugin: string, generation: number): void {
     this.started(plugin, generation);
   }
+
+  /** `promise`, or settled after the kernel's time limit (the one for undos), whichever is first; never rejects. */
+  within(promise: Promise<unknown>): Promise<unknown> {
+    return this.bounded(promise, () => {}).catch(() => {});
+  }
 }
 
 export class Host {
@@ -207,6 +212,9 @@ export class Host {
     const timings: Record<string, number> = {};
     // A plugin whose required services are not there yet waits for the ones that provide them (none in 2.x).
     let waiting: HostPluginSpec[] = [];
+    // Loads of older syncs already waited for: an `activate` has no time limit, so each is waited for once, within the
+    // kernel's time limit, not again in every round.
+    const waited = new Set<Promise<unknown>>();
     for (let round = [...specs], progress = true; round.length && progress;) {
       waiting = [];
       progress = false;
@@ -225,25 +233,36 @@ export class Host {
         if (depends && this.kernel.waitingFor(spec.name).length) { waiting.push(spec); continue; }
         progress = true;
         const started = performance.now();
-        const going = this.load(spec, ticket);
+        const instance: { generation?: number } = {};
+        const going = this.load(spec, ticket, instance);
         this.loading.set(spec.name, going);
         try {
           // What it depends on started going while its code was imported (D65): it waits.
           if ((await going) === "waiting") waiting.push(spec);
           else timings[spec.name] = Math.round(performance.now() - started);
         } catch (error) {
-          await this.unload(spec.name);
-          failed.push({ name: spec.name, message: errorText(error) });
+          // Only this load's own failure counts: once another instance replaced it (whose load undid what it left), or,
+          // before it started, once a newer sync took over, the failure is of code no longer asked for. Failing the
+          // plugin then would unload the newer instance and mark the newer code failed.
+          const own = instance.generation === undefined ? ticket === this.syncs : this.kernel.generation(spec.name) === instance.generation;
+          if (own) {
+            await this.unload(spec.name);
+            failed.push({ name: spec.name, message: errorText(error) });
+          }
         } finally {
           if (this.loading.get(spec.name) === going) this.loading.delete(spec.name);
         }
       }
       round = waiting;
       // Some wait for a plugin an older sync is still loading, or one still unloading (D65): wait for those, then try the
-      // whole list again (a provider asked for that was unloaded meanwhile loads again first).
+      // whole list again (a provider asked for that was unloaded meanwhile loads again first). A load is waited for once,
+      // at most the kernel's time limit (an `activate` that never settles must not hang this sync too); an unload is
+      // bounded already (each undo has the time limit).
       if (!progress && waiting.length && ticket === this.syncs) {
+        const loads = [...this.loading.values()].filter((load) => !waited.has(load));
+        for (const load of loads) waited.add(load);
         const going: Promise<unknown>[] = [
-          ...this.loading.values(),
+          ...loads.map((load) => this.kernel.within(load)),
           ...this.kernel.plugins().filter((name) => this.kernel.state(name) === "unloading").map((name) => this.kernel.requestUnload(name)),
         ];
         if (going.length) {
@@ -266,8 +285,11 @@ export class Host {
     return !!(declared?.requires?.services?.length || declared?.contributes?.slots?.length);
   }
 
-  /** Loads `spec`'s code; "waiting": what it depends on is not active now (it started going while the code was imported). */
-  private async load(spec: HostPluginSpec, ticket: number): Promise<"waiting" | void> {
+  /**
+   * Loads `spec`'s code; "waiting": what it depends on is not active now (it started going while the code was imported).
+   * `instance.generation` is the kernel generation it started, once it did (its caller tells its own failure by it).
+   */
+  private async load(spec: HostPluginSpec, ticket: number, instance: { generation?: number }): Promise<"waiting" | void> {
     const activate = await this.importer(spec);
     // Still unloading (an async disposer of the code it replaces), or loaded by a call that overlapped: gone first. Each
     // wait may end with another sync's instance there, so it is looked at again; once a newer sync started, it decides.
@@ -280,6 +302,7 @@ export class Host {
     if (this.kernel.waitingFor(spec.name).length) return "waiting";
     const plugin = newLoaded(spec);
     const generation = this.kernel.startLoad(spec.name);
+    instance.generation = generation;
     this.generations.set(plugin, generation);
     this.plugins.set(spec.name, plugin);
     this.current = spec.name;

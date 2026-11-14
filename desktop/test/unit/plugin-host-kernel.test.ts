@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { Host, type CcbHost, type HostOptions, type HostPluginSpec } from "../../../Web/host/src/host";
+import { PluginHostClient, type HostHandlers } from "../../src/core/plugins/host-client";
 import { deferred, flush, manualTimers } from "../kernel-driver";
 
 const scratch = mkdtempSync(join(tmpdir(), "host-kernel-"));
@@ -168,6 +169,41 @@ describe("the plugin host on the kernel", () => {
     expect(live.size).toBe(0);
   });
 
+  it("an older load whose activate rejects after a newer load replaced it leaves the newer code alone and reports nothing", async () => {
+    const reject = deferred();
+    const live = new Set<string>();
+    const { host } = makeHost({
+      x: async (ccb) => {
+        if (ccb.plugin.version === "2") { await reject.promise; throw new Error("f2 activate failed"); }
+        live.add(ccb.plugin.version);
+        return () => { live.delete(ccb.plugin.version); };
+      },
+    });
+    const older = host.sync([spec("x", { fingerprint: "2", version: "2" })]);
+    await flush();
+    const newer = await host.sync([spec("x", { fingerprint: "3", version: "3" })]);
+    expect([newer.loaded, newer.failed]).toEqual([["x"], []]);
+    reject.resolve();
+    const answer = await older;
+    expect(answer.failed).toEqual([]);
+    expect(host.isLoaded("x")).toBe(true);
+    expect([...live]).toEqual(["3"]);
+  });
+
+  it("an older load whose import fails after a newer load replaced it leaves the newer code alone and reports nothing", async () => {
+    const importFails = deferred();
+    const live = new Set<string>();
+    const x = (ccb: CcbHost) => { live.add(ccb.plugin.version); return () => { live.delete(ccb.plugin.version); }; };
+    const host = new Host(() => {}, async (s) => { if (s.fingerprint === "2") { await importFails.promise; throw new Error("f2 does not import"); } return x as any; });
+    const older = host.sync([spec("x", { fingerprint: "2", version: "2" })]);
+    await flush();
+    expect((await host.sync([spec("x", { fingerprint: "3", version: "3" })])).loaded).toEqual(["x"]);
+    importFails.resolve();
+    expect((await older).failed).toEqual([]);
+    expect(host.isLoaded("x")).toBe(true);
+    expect([...live]).toEqual(["3"]);
+  });
+
   it("a disposer taken back early runs once, not again at unload", async () => {
     let runs = 0;
     let off!: () => void;
@@ -204,6 +240,23 @@ describe("the plugin host on the kernel", () => {
     expect(order).toEqual(["activate chat 1.0.0", "dispose chat", "activate chat 1.0.0", "activate note"]);
   });
 
+  it("a newer sync whose plugin waits for one an older sync is still activating waits only the time limit for it", async () => {
+    const timers = manualTimers();
+    const declarations: HostOptions["declarations"] = (s) => (s.name === "chat" ? { provides: { services: ["quote"] } } : s.name === "note" ? { requires: { services: ["quote"] } } : null);
+    // chat's activate never settles (a bug in its code); note needs what chat provides.
+    const { host } = makeHost({ chat: () => new Promise(() => {}), note: () => {} }, { declarations, timers, undoTimeoutMs: 100 });
+    void host.sync([spec("chat")]);
+    await flush();
+    let done = false;
+    const newer = host.sync([spec("chat"), spec("note")]).then((result) => { done = true; return result; });
+    await flush();
+    expect(done).toBe(false);
+    timers.advance(100);
+    await flush();
+    expect(done).toBe(true);
+    expect((await newer).failed).toEqual([{ name: "note", message: 'It needs "quote", which no loaded plugin provides.' }]);
+  });
+
   it("a removed plugin's declaration goes with it: another plugin may provide the same service later", async () => {
     const declarations: HostOptions["declarations"] = (s) => (s.name === "old" || s.name === "new" ? { provides: { services: ["quote"] } } : null);
     const { host } = makeHost({ old: () => {}, new: () => {} }, { declarations });
@@ -232,5 +285,58 @@ describe("the plugin host on the kernel", () => {
     expect(order.splice(0)).toEqual(["dispose note", "dispose coach", "dispose chat"]);
     expect(without.loaded).toEqual(["other"]);
     expect(without.failed).toEqual([{ name: "note", message: 'It needs "quote", which no loaded plugin provides.' }]);
+  });
+});
+
+describe("the host client and an older load's answer", () => {
+  // A fake host (no process, no window): it says ready, keeps each load request, and the test answers them in any order.
+  function fakeHost() {
+    const requests: { id: number; method: string; params: any }[] = [];
+    let handlers!: HostHandlers;
+    const client = new PluginHostClient("unused", {
+      command: "",
+      launch: (_script, _cwd, _env, given) => {
+        handlers = given;
+        queueMicrotask(() => handlers.data(JSON.stringify({ method: "ready" }) + "\n"));
+        return { pid: 4242, write: (line) => { requests.push(JSON.parse(line)); }, terminate: async () => {} };
+      },
+    }, join(scratch, "client"));
+    const answer = (id: number, result: unknown) => handlers.data(JSON.stringify({ id, result }) + "\n");
+    return { client, requests, answer };
+  }
+  const x = (fingerprint: string) => ({ name: "x", version: fingerprint, main: "", fingerprint, settings: {}, storageDir: join(scratch, "x") });
+
+  it("a failure an older load reports for code no longer asked for is not recorded against the newer code", async () => {
+    const { client, requests, answer } = fakeHost();
+    const failures: string[] = [];
+    client.onPluginFailure = (plugin, message, fatal) => failures.push(`${plugin}:${fatal}:${message}`);
+    client.update([x("f1")]);
+    await flush();
+    answer(requests[0]!.id, { loaded: ["x"], failed: [], timings: {} });
+    await flush();
+    client.update([x("f2")]);
+    client.update([x("f3")]);
+    expect(requests.map((request) => request.params.plugins[0].fingerprint)).toEqual(["f1", "f2", "f3"]);
+    // The newer load answers first; then the older one, whose code (f2) failed after f3 replaced it.
+    answer(requests[2]!.id, { loaded: ["x"], failed: [], timings: {} });
+    await flush();
+    answer(requests[1]!.id, { loaded: [], failed: [{ name: "x", message: "f2 activate failed" }], timings: {} });
+    await flush();
+    expect(failures).toEqual([]);
+    expect([...(client as any).loaded]).toEqual(["x"]);
+    client.stop();
+  });
+
+  it("a failure of the code still asked for is recorded (fatal), whichever load reports it", async () => {
+    const { client, requests, answer } = fakeHost();
+    const failures: string[] = [];
+    client.onPluginFailure = (plugin, message, fatal) => failures.push(`${plugin}:${fatal}:${message}`);
+    client.update([x("f1")]);
+    await flush();
+    answer(requests[0]!.id, { loaded: [], failed: [{ name: "x", message: "broken" }], timings: {} });
+    await flush();
+    expect(failures).toEqual(["x:true:The program part failed to load: broken"]);
+    expect([...(client as any).loaded]).toEqual([]);
+    client.stop();
   });
 });
