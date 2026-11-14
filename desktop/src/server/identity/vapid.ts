@@ -49,11 +49,25 @@ export async function generateVapidKeys(): Promise<VapidKeys> {
   return VapidKeys.parse({ publicKey: toBase64Url(raw), privateKey: jwk.d });
 }
 
-/** The cluster's keys, made and written now when this data folder has none (the root at its first server pairing). */
+const making = new Map<string, Promise<{ keys: VapidKeys; created: boolean }>>();
+
+/**
+ * The cluster's keys, made and written now when this data folder has none (the root at its first server pairing). Two
+ * pairings at once share one making (review J3): otherwise each made its own pair, the second overwrote the first, and
+ * the first joining server kept a key the rest of the cluster no longer had.
+ */
 export async function ensureVapidKeys(dataDir: string): Promise<{ keys: VapidKeys; created: boolean }> {
   const known = readVapidKeys(dataDir);
   if (known) return { keys: known, created: false };
-  const keys = await generateVapidKeys();
-  writeVapidKeys(dataDir, keys);
-  return { keys, created: true };
+  const pending = making.get(dataDir);
+  if (pending) return { keys: (await pending).keys, created: false };
+  const run = (async () => {
+    const keys = await generateVapidKeys();
+    const raced = readVapidKeys(dataDir);
+    if (raced) return { keys: raced, created: false };
+    writeVapidKeys(dataDir, keys);
+    return { keys, created: true };
+  })();
+  making.set(dataDir, run);
+  try { return await run; } finally { making.delete(dataDir); }
 }

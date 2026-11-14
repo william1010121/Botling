@@ -239,7 +239,9 @@ export class ServerJoin {
       keys: { sign: this.options.identity.keys.sign, dh: this.options.identity.keys.dh }, secret: toBase64Url(secret), expiresAt, addresses,
     });
     const offer: Offer = { id, secret, code: JoinCode.parse(code), name: serverName, expiresAt, left: JOIN_CODE_TRIES, state: "open", session: null, timer: null };
-    offer.timer = setTimeout(() => { if (offer.state !== "busy") this.burn(offer, "expired"); }, Math.max(0, expiresAt - this.now()) + 5);
+    // The offer's time holds for an open session too (review J1): an intruder with the link's secret who keeps a session
+    // open must not keep the secret and the code alive past it. Only a welcome being taken is let finish.
+    offer.timer = setTimeout(() => { if (!offer.session?.joining) this.burn(offer, "expired"); }, Math.max(0, expiresAt - this.now()) + 5);
     offer.timer.unref?.();
     this.offers.set(id, offer);
     this.log(`server pairing: join offer ${id} made (until ${new Date(expiresAt).toISOString()})`);
@@ -304,6 +306,8 @@ export class ServerJoin {
     const offer = session.offer;
     const channel = session.channel;
     if (!offer || offer.session !== session || channel.ended) return;
+    // Review J1: nothing a session sends is taken once the offer's time is up (a code typed late costs no try).
+    if ((message.t === "join.code" || message.t === "join.welcome") && joinOfferExpired(offer, this.now())) { this.burn(offer, "expired"); return; }
     switch (message.t) {
       case "join.hello": {
         if (session.sponsor) { channel.finish(); return; }

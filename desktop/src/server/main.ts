@@ -22,8 +22,9 @@
 //                             code (5 min, single use), the 6-digit code to compare, and the device's ack
 //   botlingd join [--name <name>]
 //                             (M3 step 4) offers this server to join a cluster: prints its fingerprint, a code and a link
-//   botlingd add-machine <link>
-//                             (M3 step 4) pairs the server whose `join` printed that link into this server's cluster
+//   botlingd add-machine [<link>]
+//                             (M3 step 4) pairs the server whose `join` printed that link into this server's cluster;
+//                             with no argument it reads the link from stdin (keeps its secret out of the process list)
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
@@ -286,12 +287,12 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     case "add-machine": {
+      // With no argument the link is read from stdin (its secret then stays out of the process list).
       const link = rest.find((arg) => !arg.startsWith("--"));
-      if (!link) fail("add-machine needs the link botlingd join printed on the other machine: botlingd add-machine <link>", 2);
       const client = await adminSession(paths);
       const io = stdinIo();
       let code = 1;
-      try { code = await addMachineCommand(client, io, link!); } finally { io.close(); client.close(); }
+      try { code = await addMachineCommand(client, io, link); } finally { io.close(); client.close(); }
       process.exit(code);
       return;
     }
