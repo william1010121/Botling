@@ -26,8 +26,8 @@ export function freePort(): Promise<number> {
 
 export class Server {
   daemon: BotlingdProcess;
-  constructor(readonly dataDir: string, readonly port: number) { this.daemon = this.spawn(); }
-  private spawn(): BotlingdProcess { return new BotlingdProcess(this.dataDir, { BOTLING_SERVER_PORT: String(this.port) }); }
+  constructor(readonly dataDir: string, readonly port: number, readonly extra: Record<string, string> = {}) { this.daemon = this.spawn(); }
+  private spawn(): BotlingdProcess { return new BotlingdProcess(this.dataDir, { ...this.extra, BOTLING_SERVER_PORT: String(this.port) }); }
   get origin(): string { return `http://127.0.0.1:${this.port}`; }
   get page(): string { return `${this.origin}/v3/`; }
   async ready(): Promise<void> {
