@@ -10,7 +10,7 @@
 // Before you send, files wait in the input box (1.x's `ChatPayload.Pending`): picked ones by their
 // path (main's dialog chose them), pasted or dropped ones written to `<core>/incoming/` first (1.x:
 // the temp folder's `ccb-incoming`), which is emptied as they are sent or removed.
-import { copyFileSync, existsSync, mkdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, open, rm } from "node:fs/promises";
 import { ContractError } from "../contract";
 import { basename, extname, isAbsolute, join, resolve, sep } from "node:path";
@@ -168,6 +168,23 @@ export function writeIncoming(dir: string, name: string, base64: string): string
   const path = join(dir, `${randomUUID().slice(0, 6).toUpperCase()}-${safeName(name)}`);
   writeFileSync(path, data, { mode: 0o600 });
   return path;
+}
+
+/**
+ * Botling 3 uploads (M2 step 12): each server-kept file under the name the page gave it, as `<dir>/u-<uuid>/<name>` (a
+ * hard link when it can, else a copy), so `keep` copies it into the bot's attachments folder under that name. The
+ * caller removes each path's folder once the message was kept.
+ */
+export function linkIncoming(dir: string, files: Array<{ path: string; name: string }>): string[] {
+  const out: string[] = [];
+  for (const file of files) {
+    const folder = join(dir, `u-${randomUUID()}`);
+    mkdirSync(folder, { recursive: true, mode: 0o700 });
+    const target = join(folder, safeName(file.name));
+    try { linkSync(file.path, target); } catch { copyFileSync(file.path, target); }
+    out.push(target);
+  }
+  return out;
 }
 
 /** How an answer of only pictures shows (`Bot.answerLabel`). */

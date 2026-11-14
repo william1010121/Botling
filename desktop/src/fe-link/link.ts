@@ -9,7 +9,7 @@
 // Pure TypeScript: no Electron, no core, no Node built-ins; time comes from an injected clock.
 import type { Command } from "../contract";
 import {
-  decodeFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, REFUSE_REASON_TEXT, ResAssembler, slotKey,
+  decodeFrame, encodeChunkFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, REFUSE_REASON_TEXT, ResAssembler, slotKey,
   type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type Slot, type StreamId, type Target,
 } from "../protocol";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";
@@ -21,6 +21,8 @@ import { SerialWriter, type FeStorage, type OutboxItem, type RetiredLog, type St
 /** One transport connection. Frames are whole messages (a byte-stream transport packs them with `packFrame`). */
 export interface FeSocket {
   send(frame: string): void;
+  /** A binary frame (an upload's `content.chunk`, M2 step 12) on the bulk lane; absent: the transport carries none. */
+  sendBytes?(frame: Uint8Array): void;
   close(): void;
 }
 export interface SocketHandlers {
@@ -79,6 +81,8 @@ export type FeLinkEvent =
   | { type: "live"; stream: StreamId; view: LiveSegmentView | null; stale: boolean }
   /** Any other server message (stale, peer, shell.*, content.*). */
   | { type: "message"; message: Message }
+  /** A session was welcomed (true) or ended (false): uploads (M2 step 12) put again from what the server has. */
+  | { type: "attached"; attached: boolean }
   /** The server ended the session with `bye` (M2 step 11: `revoked` tells the page to drop what it cached). */
   | { type: "bye"; reason: string; detail?: string }
   | { type: "error"; error: unknown };
@@ -132,6 +136,8 @@ export class FeLink {
   private readonly receiver = new LiveReceiver();
   private readonly liveStale = new Set<string>();
   private readonly requests = new Map<string, PendingRequest>();
+  /** M2 step 12: the answers to uploads, by req. */
+  private readonly uploadListeners = new Map<string, (message: MessageOf<"content.stored"> | MessageOf<"content.credit"> | MessageOf<"content.gone">) => void>();
   /** `res` answers too large for one frame, joined from their `res.part`s. */
   private readonly resParts = new ResAssembler();
   private readonly visibleAt = new Map<string, number>();
@@ -307,6 +313,36 @@ export class FeLink {
     return this.ask({ ...message, req: this.nextReq() } as Message & { req: string }, "content") as Promise<RemoteContentAnswer>;
   }
 
+  /** Whether a session is attached (welcomed) now. */
+  get attached(): boolean { return !!this.session?.welcomed; }
+
+  /**
+   * An upload frame (M2 step 12, v1 §9A.9): a `content.put` (text) or one of its `content.chunk`s (binary, bulk lane).
+   * The answers (`content.stored`, `content.credit`, `content.gone`) come to `onUpload(req, …)`. False when no session
+   * is attached or the transport carries no binary frame.
+   */
+  postUpload(message: MessageOf<"content.put"> | MessageOf<"content.chunk">): boolean {
+    const session = this.session;
+    if (!session?.welcomed || session.closed || !session.socket) return false;
+    if (message.t === "content.put") return this.send(session, message);
+    const sendBytes = session.socket.sendBytes;
+    if (!sendBytes) return false;
+    const encoded = encodeChunkFrame(message, "fe", { local: this.local });
+    if (!encoded.ok) { this.emit({ type: "error", error: new Error(`fe-link: cannot send content.chunk: ${encoded.detail}`) }); return false; }
+    try { sendBytes.call(session.socket, encoded.bytes); } catch (error) { this.onClosed(session, String(error)); return false; }
+    this.armPing(session);
+    return true;
+  }
+
+  /** Hears the server's answers to the upload `req` until the returned function is called. */
+  onUpload(req: string, listener: (message: MessageOf<"content.stored"> | MessageOf<"content.credit"> | MessageOf<"content.gone">) => void): () => void {
+    this.uploadListeners.set(req, listener);
+    return () => { if (this.uploadListeners.get(req) === listener) this.uploadListeners.delete(req); };
+  }
+
+  /** A fresh request id (uploads name their own). */
+  newReq(): string { return this.nextReq(); }
+
   /** Older lines of a stream (§8.4). A page of a retired logId is refused. */
   history(stream: StreamId, before: string, bytes?: number): Promise<MessageOf<"history.page">> {
     return this.ask({ t: "history", req: this.nextReq(), stream, before, ...(bytes ? { bytes } : {}) }, "history.page", stream) as Promise<MessageOf<"history.page">>;
@@ -395,7 +431,9 @@ export class FeLink {
       case "cancel.noted": this.onCancelNoted(message); return;
       case "res": case "history.page": this.onAnswer(message); return;
       case "res.part": this.onResPart(message); return;
-      case "content.found": case "content.file": case "content.gone": case "content.located": case "content.granted": this.onContentAnswer(message); return;
+      case "content.stored": case "content.credit": this.uploadListeners.get(message.req)?.(message); return;
+      case "content.gone": { const upload = this.uploadListeners.get(message.req); if (upload) { upload(message); return; } this.onContentAnswer(message); return; }
+      case "content.found": case "content.file": case "content.located": case "content.granted": this.onContentAnswer(message); return;
       case "bye":
         if (message.reason === "version") this.updateRequired(session, "a newer version");
         else {
@@ -423,6 +461,7 @@ export class FeLink {
     for (const stream of this.streams()) this.send(session, { t: "sub", stream, cursor: this.cursors.subCursor(stream) });
     this.reduce({ type: "welcome", catching: this.cursors.catching(this.streams()) });
     this.sendOutbox(session);
+    this.emit({ type: "attached", attached: true });
   }
 
   private updateRequired(session: Session, minFeVersion: string): void {
@@ -674,6 +713,7 @@ export class FeLink {
   private onClosed(session: Session, _why: string): void {
     if (session.closed) return;
     session.closed = true;
+    if (session.welcomed) this.emit({ type: "attached", attached: false });
     if (this.session === session) this.session = null;
     this.clearTimer("ping");
     this.clearTimer("dead");

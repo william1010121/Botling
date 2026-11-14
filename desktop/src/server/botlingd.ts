@@ -26,6 +26,7 @@ import { ContentService } from "./content";
 import { ChunkCache, PeerCacheBudget } from "./content/chunk-cache";
 import { PeerContent, PeerContentOwner } from "./content/peer-content";
 import { RemoteContent } from "./content/remote";
+import { Uploads } from "./content/put";
 import { ContentTickets } from "./content/tickets";
 import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
@@ -248,8 +249,11 @@ export class Botlingd {
       const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
       // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
       let summary: SummaryRows | null = null;
+      // M2 step 12: uploads from pages (`content.put`), kept in <data>/uploads; a chat.send naming them waits for them.
+      const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
+      coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(roster), serverEvents: "all", mirrorBotUpdates: true, content,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(roster), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
         tapHooks: { eventSeen: (event) => summary?.seen(event), eventStored: (tx, event) => summary?.stored(tx, event) },
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
@@ -326,7 +330,7 @@ export class Botlingd {
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
-        hub, live, runtime, engine, content, shell,
+        hub, live, runtime, engine, content, shell, uploads,
         nextFor: (origin, originEpoch) => {
           const next: Record<string, number> = {};
           for (const row of hub.reader().prepare("SELECT target, next FROM slots WHERE origin = ? AND originEpoch = ?").all(origin, originEpoch)) next[String(row.target)] = Number(row.next);

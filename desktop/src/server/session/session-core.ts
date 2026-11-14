@@ -23,6 +23,9 @@
 //                                                              same way
 //   req                                                      → the reads the shell allows, answered by the engine (`res`)
 //   content.find / content.open, shell.done                  → local socket only (the role table refuses them elsewhere)
+//   content.put / content.chunk                              → uploads (M2 step 12, server/content/put.ts), in order;
+//                                                              a `chat.send` naming uploaded files is `held` until
+//                                                              their bytes are in and checked, then applied once
 //   admin                                                    → local socket only: pairing, the cluster's recovery code,
 //                                                              devices (M2 step 5, server/pairing); the session then
 //                                                              hears `admin.event`s. Requests and answers are never
@@ -96,6 +99,17 @@ export interface SessionHost {
   forward?: SessionForward;
   /** M3 step 8: subscriptions to bots a peer owns pass through to that peer (none on a lone server). */
   passThrough?: SessionPassThrough;
+  /** M2 step 12: uploads (`content.put` + chunks); a `chat.send` naming files waits for their bytes (held). */
+  uploads?: SessionUploads;
+}
+
+/** server/content/put.ts `Uploads` as a session uses it. */
+export interface SessionUploads {
+  complete(id: string): { path: string; size: number } | null;
+  whenComplete(ids: string[], closed: Promise<void>, idleMs?: number): Promise<"ready" | "closed" | "idle" | "refused">;
+  put(owner: string, message: MessageOf<"content.put">): Promise<Message[]>;
+  chunk(owner: string, message: MessageOf<"content.chunk">): Promise<Message[]>;
+  ended(owner: string): Promise<void>;
 }
 
 /**
@@ -144,6 +158,8 @@ export interface SessionOptions {
   maxBuffered?: number;
   liveIntervalMs?: number;
   liveClock?: LiveGateClock;
+  /** A held `chat.send` waits this long without a new byte of its files before its handler decides (UPLOAD_IDLE_MS). */
+  uploadIdleMs?: number;
 }
 
 /** §5.2: `ping` after 15 s of silence, dead after 45 s heard nothing (the session layer's constants, step 3). */
@@ -178,6 +194,10 @@ export abstract class SessionCore {
   private relayOff: (() => void) | null = null;
   /** Settles when the session closes (a cancel waiting on a running handler stops waiting for this session). */
   private readonly closedSignal: Promise<void>;
+  /** M2 step 12: this session's upload frames, handled one after another in the order they came (D58). */
+  private uploadChain: Promise<void> = Promise.resolve();
+  /** Who this session's uploads belong to (a session-unique key). */
+  private readonly uploadOwner = `s-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
 
   /** The session kind frames are encoded and decoded for (local socket or not). */
   protected abstract readonly kind: SessionKind;
@@ -295,6 +315,8 @@ export abstract class SessionCore {
     this.reader?.close();
     this.reader = null;
     this.closing();
+    const uploads = this.host.uploads;
+    if (uploads) void this.uploadChain.then(() => uploads.ended(this.uploadOwner)).catch(() => undefined);
     this.destroyTransport();
     for (const handler of this.closedHandlers.splice(0)) handler();
   }
@@ -329,6 +351,7 @@ export abstract class SessionCore {
       case "cancel": this.queueCancel(message); return;
       case "req": void this.req(message); return;
       case "content.find": case "content.open": void this.content(message); return;
+      case "content.put": case "content.chunk": this.queueUpload(message); return;
       case "admin": void this.admin(message); return;
       case "shell.done": this.host.shell.answer(this.shellWindow(), message); return;
       case "ping": return;
@@ -506,6 +529,11 @@ export abstract class SessionCore {
     const { scope } = stated;
     const reply = (message: Message) => { this.send(message, body.cmd.type); };
     const route = routeOf(body.cmd.type).kind;
+    // M2 step 12 (v1 §9A.9): a message with uploaded files is `held` until their bytes are in, then applied once. The
+    // wait keeps this queue's later slots behind it (they cannot apply before it anyway); other queues and the upload
+    // frames themselves go on. A session that ends meanwhile settles nothing: the front end re-sends the command and
+    // resumes the upload on its next session.
+    if (!(await this.awaitUploads(body))) return;
     try {
       // M3 step 9: a target a peer owns is committed into the forward queue, then `held` (never before the commit).
       const owner = this.peerOwner(body.slot.target);
@@ -528,6 +556,51 @@ export abstract class SessionCore {
       this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) was not settled: ${errorText(error)}`);
     }
   }
+
+  /** False when the session ended while the command waited for its files (nothing settled; the outbox re-sends). */
+  private async awaitUploads(body: CmdBody): Promise<boolean> {
+    const files = body.cmd.type === "chat.send" ? body.cmd.files ?? [] : [];
+    const uploads = this.host.uploads;
+    if (!files.length || !uploads) return true;
+    const ids = files.map((file) => file.id);
+    if (ids.every((id) => uploads.complete(id))) return true;
+    // A copy of a slot already decided gets its stored outcome without waiting (its files may never come again).
+    let next = 1;
+    try { next = this.host.nextFor(body.slot.origin, body.slot.originEpoch)[body.slot.target] ?? 1; } catch { next = 1; }
+    if (body.slot.n < next) return true;
+    if (this.peerOwner(body.slot.target) !== null) return true;
+    this.send({ t: "held", slot: body.slot, at: this.host.serverId } as MessageOf<"held">, body.cmd.type);
+    const outcome = await uploads.whenComplete(ids, this.closedSignal, this.options.uploadIdleMs);
+    return outcome !== "closed" && this.state === "open";
+  }
+
+  /** Upload frames in arrival order; a frame the store cannot take is answered `content.gone{offline}`. */
+  private queueUpload(message: MessageOf<"content.put"> | MessageOf<"content.chunk">): void {
+    this.uploadChain = this.uploadChain.then(() => this.upload(message)).catch((error) => this.host.log(`session: ${message.t} failed: ${errorText(error)}`));
+  }
+
+  private async upload(message: MessageOf<"content.put"> | MessageOf<"content.chunk">): Promise<void> {
+    if (this.state !== "open") return;
+    const uploads = this.host.uploads;
+    const refused = this.uploadRefusal();
+    if (!uploads || refused) {
+      if (message.t === "content.put") this.send({ t: "content.gone", req: message.req, id: message.id, reason: "denied" }, "content.put");
+      if (refused) this.host.log(`session: upload refused (${refused})`);
+      return;
+    }
+    let replies: Message[];
+    try {
+      replies = message.t === "content.put" ? await uploads.put(this.uploadOwner, message) : await uploads.chunk(this.uploadOwner, message);
+    } catch (error) {
+      this.host.log(`session: ${message.t} not kept: ${errorText(error)}`);
+      if (message.t === "content.put") replies = [{ t: "content.gone", req: message.req, id: message.id, reason: "offline" }];
+      else { replies = []; this.bye("unsettled", `an upload chunk could not be written: ${errorText(error)}`); }
+    }
+    for (const reply of replies) this.send(reply, message.t);
+  }
+
+  /** Why this session may not upload (remote: a device without the `reply` scope), or null. */
+  protected uploadRefusal(): string | null { return null; }
 
   private async cancel(message: MessageOf<"cancel">, checked = false): Promise<void> {
     if (!checked && this.cancelRefusal(message)) return;

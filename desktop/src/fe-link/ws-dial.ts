@@ -102,6 +102,11 @@ export function wsDial(options: WsDialOptions): Dial {
         if (closed || link.state === "ended") return;
         link.send("control", encoder.encode(frame));
       },
+      // M2 step 12: an upload's binary `content.chunk` on the bulk lane (control frames still go first, v1 §5.3).
+      sendBytes(frame: Uint8Array) {
+        if (closed || link.state === "ended") return;
+        link.send("bulk", frame);
+      },
       close() {
         if (closed) return;
         link.close();

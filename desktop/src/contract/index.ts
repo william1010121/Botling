@@ -225,6 +225,17 @@ export const WaitingView = z.strictObject({
 export type WaitingView = z.infer<typeof WaitingView>;
 export type PendingFileView = z.infer<typeof PendingFileView>;
 
+/** The largest file a page uploads (protocol v1 §9A.9, D40: 500 MB; protocol `CONTENT_PUT_LIMIT`). */
+export const UPLOAD_LIMIT = 500_000_000;
+/** A file a Botling 3 page uploaded, named by the SHA-256 of its bytes (`chat.send.files`, M2 step 12). */
+export const UploadedFile = z.strictObject({
+  id: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  name: z.string().min(1).max(255),
+  size: z.number().int().min(1).max(UPLOAD_LIMIT),
+  type: z.string().min(1).max(200),
+});
+export type UploadedFile = z.infer<typeof UploadedFile>;
+
 /** A component drawn in a line (`<show>`), with its command's run when its data comes from one (`ChatPayload.Display`). */
 export const DisplayView = z.strictObject({
   name: z.string().max(200),
@@ -1012,8 +1023,12 @@ export const Command = z.discriminatedUnion("type", [
   /** Read only the output of a stored background task (never a renderer-supplied path). */
   z.strictObject({ type: z.literal("task.output"), botId, messageId: id, taskId: z.string().min(1).max(200) }),
   /** A message; while a reply is being written it joins or follows that turn (as 1.x steers). `replyTo`: a line it answers. */
-  /** Your words and the files waiting in the input box (either may be empty, not both). */
-  z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().max(MESSAGE_TEXT_LIMIT), replyTo: id.optional(), to: AnswerTarget.optional() }),
+  /**
+   * Your words and the files waiting in the input box (either may be empty, not both). `files`: Botling 3 only (M2 step
+   * 12, protocol v1 §9A.9): files a phone or browser page uploaded to the server by their hash (`content.put`); the
+   * server holds the command until their bytes are in. The 2.x core refuses a `chat.send` that carries them.
+   */
+  z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().max(MESSAGE_TEXT_LIMIT), replyTo: id.optional(), to: AnswerTarget.optional(), files: z.array(UploadedFile).min(1).max(50).optional() }),
   /** Main only: the + button's file picker (main's dialog); what you pick waits in the input box. */
   z.strictObject({ type: z.literal("files.pick"), botId }),
   /** Main only (from its dialog): files to wait in the input box. Never from a page: a page names no paths. */

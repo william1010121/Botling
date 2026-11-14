@@ -20,6 +20,8 @@
 // - Content over the tailnet (step 9): `content.locate` (a line's reference, with a URL ticket once hashed) and
 //   `content.ticket` (a ticket, or its renewal) go to the host's `remoteContent` (server/content/remote.ts), which
 //   checks the `read` scope and the stream; without it they are answered as not found / `offline`.
+// - Uploads (step 12): `content.put` + binary `content.chunk` frames go to the host's `uploads` (session-core); they
+//   need the `reply` scope.
 // - Lanes: catch-up pages, snaps and read answers on the bulk lane when they fit a bulk frame; the rest on control.
 //   Back-pressure by the link's `queuedBytes` (the send queue itself is unbounded): live frames are skipped while more
 //   than LIVE_SOFT_BYTES wait (the front end asks for the whole segment again, as for any rev gap), and a session with
@@ -295,6 +297,12 @@ export class RemoteSession extends SessionCore {
     const device = this.member ? this.remote.roster.device(this.member) : null;
     const refusal = device ? remoteReadRefusal(cmd, device.scope ?? []) : "this device is no longer in the roster";
     return refusal ? { code: "forbidden", message: refusal.slice(0, 2_000) } : null;
+  }
+
+  /** An upload is for a message: it needs the `reply` scope (M2 step 12). */
+  protected uploadRefusal(): string | null {
+    const device = this.member ? this.remote.roster.device(this.member) : null;
+    return device && (device.scope ?? []).includes("reply") ? null : "needs the reply scope";
   }
 
   protected subRefusal(_stream: StreamId): string | null {

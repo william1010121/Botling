@@ -24,7 +24,7 @@ export interface TurnPayload {
   /** The user's line it answers (chat.send, an answer); null for the app's own turns. */
   userId: string | null;
   /** chat.send: what the user sent (the core builds the head's message from it, plugins first). */
-  send?: { text: string; replyTo?: string; to?: "both" | "claude" | "codex" | "agy" };
+  send?: { text: string; replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; files?: Array<{ id: string; name: string }> };
   /** A turn kept aside from the core (an answer's message, a routine's run): the head's message as the core made it. */
   words?: string;
   engine?: Engine;
