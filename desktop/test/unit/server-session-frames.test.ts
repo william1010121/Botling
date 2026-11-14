@@ -3,6 +3,8 @@
 // an answer that cannot be sent at all is answered with an error naming its command; any other frame over the limit is
 // refused before it reaches the socket, and the log names it, its reason and what it was for.
 import { EventEmitter } from "node:events";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   decodeFrame, encodeFrame, encodeResFrames, FRAME_LIMIT, FrameSplitter, packFrame, RES_PART_CHARS, ResAssembler,
@@ -45,11 +47,12 @@ class FakeSocket extends EventEmitter {
   }
 }
 
+let hubSend: ((message: Message) => void) | null = null;
 function open(run: (cmd: { type: string }) => Promise<unknown>): { socket: FakeSocket; session: Session; log: string[] } {
   const log: string[] = [];
   const host = {
     serverId: "server-1", serverName: "Mac", startedAt: 0, minFeVersion: "3.0.0", token: () => TOKEN,
-    hub: { attach: () => ({ close() {}, sub: async () => ({ ok: false, reason: "unknown stream" }), ack() {}, history: () => null }), reader: () => null },
+    hub: { attach: (send: (message: Message) => void) => { hubSend = send; return { close() {}, sub: async () => ({ ok: false, reason: "unknown stream" }), ack() {}, history: () => null }; }, reader: () => null },
     live: { subscribe: () => ({ close() {}, resync() {} }) },
     runtime: {}, engine: { run }, content: null,
     shell: { attach() {}, detach() {}, answer() {} },
@@ -111,6 +114,37 @@ describe("any other frame over the limit", () => {
     expect(socket.writes.length).toBe(before);
     expect(log).toEqual([expect.stringMatching(/^session: cannot send snap \(bot:6A0B[^)]*\): .*(at most 262144 bytes|malformed)/)]);
     session.close();
+  });
+});
+
+// M1 demo bug 3: no server → front end frame over the limit is ever attempted silently.
+describe("no frame over the limit is attempted silently", () => {
+  it("a log batch over the limit from the hub is not written; the log names it, its stream and why", async () => {
+    const { socket, session, log } = open(async () => null);
+    await settle();
+    const before = socket.writes.length;
+    const stream = "bot:6A0B0000-0000-4000-8000-000000000002";
+    const body = { botId: "6A0B0000-0000-4000-8000-000000000002", message: { id: "m1", role: "bot", text: "y".repeat(FRAME_LIMIT), time: new Date(0).toISOString() } };
+    const batch = { t: "batch", stream, logId: "logAAAAAAAAA", from: 1, to: 1, prevHash: "0".repeat(64), more: false,
+      entries: [{ logId: "logAAAAAAAAA", seq: 1, hash: "b".repeat(64), kind: "message.added", body, at: 0 }] } as unknown as Message;
+    expect(hubSend).not.toBeNull();
+    hubSend!(batch);
+    expect(socket.writes.length).toBe(before);
+    expect(log).toEqual([expect.stringMatching(new RegExp(`^session: cannot send batch \\(${stream}\\): .+`))]);
+    session.close();
+  });
+
+  it("only Session.write writes frames to a socket in botlingd (so every frame passes its checks)", () => {
+    const root = join(__dirname, "..", "..", "src", "server");
+    const files: string[] = [];
+    const walk = (dir: string) => { for (const name of readdirSync(dir)) { const path = join(dir, name); if (statSync(path).isDirectory()) walk(path); else if (path.endsWith(".ts")) files.push(path); } };
+    walk(root);
+    const uses = files.flatMap((file) => readFileSync(file, "utf8").split("\n").map((text, i) => ({ file: file.slice(root.length + 1), line: i + 1, text })))
+      .filter(({ text }) => /packFrame\(|socket\.(write|end)\([^)]/.test(text) && !text.trim().startsWith("//") && !text.includes("import "));
+    expect(uses.map(({ file, text }) => `${file}: ${text.trim()}`)).toEqual([
+      "session/session.ts: packed = texts.map((text) => packFrame(text));",
+      "session/session.ts: for (const frame of packed) this.socket.write(frame);",
+    ]);
   });
 });
 

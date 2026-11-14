@@ -126,18 +126,29 @@ export class Session implements ShellWindow {
       this.host.log(`session: cannot send ${message.t}${what ? ` (${what})` : ""}: ${encoded.detail}`);
       return false;
     }
-    return this.write([encoded.text]);
+    return this.write([encoded.text], message.t, what);
   }
 
-  /** Writes encoded frames in order; false when the front end does not read (it is dropped) or the session ended. */
-  private write(texts: string[]): boolean {
+  /**
+   * Writes encoded frames in order; false when the front end does not read (it is dropped) or the session ended. The
+   * only place that writes to the socket: every frame is packed (and its size checked) before any is written, so a set
+   * of frames goes whole or not at all, and one over the limit is logged and refused, never attempted.
+   */
+  private write(texts: string[], t: string, what?: string): boolean {
     if (this.state === "closed" || this.socket.destroyed) return false;
     if (this.socket.writableLength > (this.options.maxBuffered ?? 32 * 1024 * 1024)) {
       this.host.log(`session ${this.deviceId ?? "?"}: dropped, it does not read (${this.socket.writableLength} bytes waiting)`);
       this.close();
       return false;
     }
-    for (const text of texts) this.socket.write(packFrame(text));
+    let packed: Uint8Array[];
+    try {
+      packed = texts.map((text) => packFrame(text));
+    } catch (error) {
+      this.host.log(`session: cannot send ${t}${what ? ` (${what})` : ""}: ${(error as Error)?.message ?? String(error)}`);
+      return false;
+    }
+    for (const frame of packed) this.socket.write(frame);
     this.lastSent = Date.now();
     return true;
   }
@@ -149,7 +160,7 @@ export class Session implements ShellWindow {
   private sendRes(message: MessageOf<"res">, command: string): boolean {
     if (this.state === "closed" || this.socket.destroyed) return false;
     const encoded = encodeResFrames(message, "server", SESSION_KIND);
-    if (encoded.ok) return this.write(encoded.texts);
+    if (encoded.ok) return this.write(encoded.texts, encoded.texts.length > 1 ? "res.part" : "res", command);
     this.host.log(`session: cannot send res (${command}): ${encoded.detail}`);
     if (!message.ok) return false;
     return this.send({ t: "res", req: message.req, ok: false, error: { code: "internal", message: `The answer to ${command} is too large to send: ${encoded.detail}`.slice(0, 2_000) } }, command);
