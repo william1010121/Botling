@@ -7,7 +7,9 @@
 //                             from an inherited BOTLING_IMPORT_FROM / BOTLING_1X_DIR (inherited-env.ts)
 //   botlingd stop             asks the running server to stop (SIGTERM to the lock holder) and waits for it
 //   botlingd status [--json]  running or not, its pid and socket, the turns under way (from server.db), the Doctor notes
-//                             (external disk, backups missing or old, a restore) and the newest backup
+//                             (external disk, backups missing or old, a restore), the newest backup, the loopback
+//                             listener (127.0.0.1:BOTLING_SERVER_PORT, default 8744, "off" for none) and the
+//                             `tailscale serve` command that publishes it (printed only, never run)
 //   botlingd backup           an online backup of server.db into <data>/backups/ (the server may keep running); while
 //                             it runs, botlingd also takes a daily one (keeps 7)
 //   botlingd restore <file> [--stop]
@@ -21,11 +23,12 @@
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/store/data-dir-lock";
-import { Botlingd, BOTLINGD_VERSION, DataDirInUseError } from "./botlingd";
+import { Botlingd, BOTLINGD_VERSION, DataDirInUseError, PLACEHOLDER_TAILNET_ORIGIN, tailnetOrigin } from "./botlingd";
+import { LISTEN_FILE, LISTEN_HOST, listenPort, tailscaleServeCommand } from "./net";
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
@@ -109,6 +112,32 @@ interface Status {
   clusterId?: string | null;
   /** While a recovery code was shown and not typed back yet (the cluster is not made until it is). */
   recoveryNote?: string | null;
+  /** The loopback listener: running (port), configured (not running), its error, or off (null). */
+  listener: { address: string; port: number; listening: boolean; error?: string } | null;
+  /** The command that publishes the listener on the tailnet, and the page address it gives (a placeholder name until set). */
+  tailscaleServe: { command: string; page: string; placeholder: boolean } | null;
+}
+
+/** The listener as the running server wrote it, else as configured; and the `tailscale serve` line for its port. */
+function listenerStatus(dataDir: string, pid: number | null): Pick<Status, "listener" | "tailscaleServe"> {
+  let listener: Status["listener"] = null;
+  if (pid !== null) {
+    try {
+      const state = JSON.parse(readFileSync(join(dataDir, LISTEN_FILE), "utf8")) as { pid?: number; port?: number; error?: string };
+      if (state.pid === pid && typeof state.port === "number") {
+        listener = { address: LISTEN_HOST, port: state.port, listening: !state.error, ...(state.error ? { error: state.error } : {}) };
+      }
+    } catch { /* off, or an older server */ }
+  }
+  if (!listener) {
+    let port: number | null = null;
+    try { port = listenPort(process.env); } catch (error) { return { listener: { address: LISTEN_HOST, port: 0, listening: false, error: (error as Error).message }, tailscaleServe: null }; }
+    if (port === null) return { listener: null, tailscaleServe: null };
+    listener = { address: LISTEN_HOST, port, listening: false };
+  }
+  if (!listener.port) return { listener, tailscaleServe: null };
+  const origin = tailnetOrigin(process.env);
+  return { listener, tailscaleServe: { command: tailscaleServeCommand(listener.port), page: `${origin ?? PLACEHOLDER_TAILNET_ORIGIN}/v3/`, placeholder: !origin } };
 }
 
 async function status(dataDir: string, socket: string): Promise<Status> {
@@ -116,7 +145,7 @@ async function status(dataDir: string, socket: string): Promise<Status> {
   const answers = existsSync(socket) ? await socketAnswers(socket) : false;
   const result: Status = {
     version: BOTLINGD_VERSION, dataDir, running: pid !== null, pid, socket, answers, bots: 0, turns: [],
-    backup: newestAnyBackup(join(dataDir, "backups")), notes: [],
+    backup: newestAnyBackup(join(dataDir, "backups")), notes: [], ...listenerStatus(dataDir, pid),
   };
   const file = join(dataDir, "server.db");
   if (!existsSync(file)) { result.notes = serverNotes(dataDir, null); return result; }
@@ -209,6 +238,17 @@ async function main(argv: string[]): Promise<void> {
       for (const note of report.notes) out(`note: ${note.text}`);
       if (report.recoveryNote) out(`note: ${report.recoveryNote}`);
       if (report.answers && report.clusterId !== undefined) out(report.clusterId ? `cluster: ${report.clusterId}` : "cluster: none yet (made at the first pairing: botlingd pair)");
+      const listener = report.listener;
+      if (!listener) out("listener: off (BOTLING_SERVER_PORT=off)");
+      else if (listener.listening) out(`listener: http://${listener.address}:${listener.port} (loopback only)`);
+      else if (listener.error) out(`listener: not listening on ${listener.address}:${listener.port || "?"}: ${listener.error}`);
+      else out(`listener: ${listener.address}:${listener.port || "a free port"} once botlingd runs (loopback only)`);
+      if (report.tailscaleServe) {
+        out(`tailscale serve (run it yourself; botlingd never does): ${report.tailscaleServe.command}`);
+        out(report.tailscaleServe.placeholder
+          ? `  devices then open ${report.tailscaleServe.page}: replace tailnet-name.invalid with this machine's tailnet name and set BOTLING_SERVER_TAILNET_ORIGIN to that https origin`
+          : `  devices then open ${report.tailscaleServe.page}`);
+      }
       return;
     }
     case "pair": {

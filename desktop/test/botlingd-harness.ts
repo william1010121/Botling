@@ -28,7 +28,8 @@ export function botlingdEnv(dataDir: string, extra: Record<string, string> = {})
     env[key] = value;
   }
   return {
-    ...env, BOTLING_SERVER_DATA_DIR: dataDir, BOTLING_AGENT: "fake", BOTLING_FAKE_CLI: fakeCli, BOTLING_FAKE_CODEX: fakeCodex, BOTLING_PLUGIN_HOST: "node", ...extra,
+    // BOTLING_SERVER_PORT=0: botlingd's loopback listener (M2 step 6) on a free port, so test servers never take the default one.
+    ...env, BOTLING_SERVER_DATA_DIR: dataDir, BOTLING_AGENT: "fake", BOTLING_FAKE_CLI: fakeCli, BOTLING_FAKE_CODEX: fakeCodex, BOTLING_PLUGIN_HOST: "node", BOTLING_SERVER_PORT: "0", ...extra,
   };
 }
 

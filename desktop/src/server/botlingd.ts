@@ -6,11 +6,12 @@
 //     export files) → the 2.x Core on those stores (plugins through the Node plugin host, app ops to the attached
 //     window through the ShellBridge, turns kept aside through CoreEngine) → IntentRuntime (intents, legacy apply,
 //     effect worker, event tap, recovery at start) → content index (step 13: recover, then lines are indexed)
-//   → the 2.x exports brought up to date → a new local token → the Unix socket → daily backups (step 12).
+//   → the 2.x exports brought up to date → a new local token → the Unix socket → the loopback listener (M2 step 6:
+//     127.0.0.1 only, the page and the device WebSocket; `tailscale serve` publishes it) → daily backups (step 12).
 //
-// Not in botlingd (M1): the phone bridge and relay (no new network listener here), the restart checkpoint and core hot
-// swap (botlingd outlives windows), plugin secrets (risk 3: no safe storage without the window, see `noSafeStorage`).
-import { appendFileSync, chmodSync, mkdirSync } from "node:fs";
+// Not in botlingd (M1): the 2.x phone bridge and relay connector, the restart checkpoint and core hot swap (botlingd
+// outlives windows), plugin secrets (risk 3: no safe storage without the window, see `noSafeStorage`).
+import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
 import type { Sealer } from "../core/plugins/secrets";
@@ -31,6 +32,7 @@ import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type SessionHost, type SessionOptions } from "./session";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
 import { RosterStore } from "./roster";
+import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, LoopbackListener } from "./net";
 import { PairingService } from "./pairing";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
@@ -94,6 +96,8 @@ export class Botlingd {
   private lockTimer: NodeJS.Timeout | null = null;
   private tokenValue = "";
   private backups: DailyBackups | null = null;
+  /** M2 step 6: the loopback listener (page, `/v3/ws`), or null when it is off or its port was taken. */
+  listener: LoopbackListener | null = null;
 
   private constructor(
     readonly paths: BotlingdPaths,
@@ -124,6 +128,7 @@ export class Botlingd {
   static async start(options: BotlingdOptions): Promise<Botlingd> {
     const env = options.env;
     const paths = botlingdPaths(env);
+    const port = listenPort(env);
     refuse2xData(paths.dataDir);
     mkdirSync(paths.dataDir, { recursive: true, mode: 0o700 });
     chmodSync(paths.dataDir, 0o700);
@@ -227,6 +232,7 @@ export class Botlingd {
       daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing);
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
+      await daemon.listen(port, options.outDir, origin);
       daemon.watchLock();
       const schedule = backupCheckMs(env);
       if (schedule) {
@@ -241,6 +247,28 @@ export class Botlingd {
       lock.release();
       throw error;
     }
+  }
+
+  /**
+   * The loopback listener on 127.0.0.1:`port` (null = off). A port already taken does not stop the server: the local
+   * socket keeps working, the log and `botlingd status` say why devices cannot reach it.
+   */
+  private async listen(port: number | null, outDir: string, origin: string | null): Promise<void> {
+    const file = join(this.paths.dataDir, LISTEN_FILE);
+    rmSync(file, { force: true });
+    if (port === null) { this.log("listener: off (BOTLING_SERVER_PORT=off)"); return; }
+    let state: Record<string, unknown>;
+    try {
+      this.listener = await LoopbackListener.start({
+        port, remote: this.remote, pageDir: defaultPageDir(outDir), origins: () => (origin ? [origin] : []), log: this.log,
+      });
+      state = { pid: process.pid, address: LISTEN_HOST, port: this.listener.port };
+    } catch (error) {
+      const text = String((error as Error)?.message ?? error);
+      this.log(`listener: not listening on ${LISTEN_HOST}:${port}: ${text}`);
+      state = { pid: process.pid, address: LISTEN_HOST, port, error: text };
+    }
+    try { writeFileSync(file, `${JSON.stringify(state)}\n`, { mode: 0o600 }); } catch { /* status then says nothing about it */ }
   }
 
   /** Turns under way now (status): from the effect rows, with the live text length when the live channel has it. */
@@ -272,6 +300,8 @@ export class Botlingd {
     await step("sessions", () => this.server.close());
     await step("pairing", () => this.pairing.close());
     await step("remote sessions", () => this.remote.close());
+    await step("listener", () => this.listener?.close());
+    rmSync(join(this.paths.dataDir, LISTEN_FILE), { force: true });
     this.shell.close();
     await step("core", () => this.core.shutdown());
     // What the core emitted while stopping is written, then the worker stops.
