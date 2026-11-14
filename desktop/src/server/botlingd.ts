@@ -39,7 +39,7 @@ import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, PeerSessions, peerTimers, SessionRouter } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
-import { SummaryRows } from "./replica";
+import { PeerTables, SummaryRows, TableFeeds } from "./replica";
 import { release as osRelease } from "node:os";
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
@@ -134,6 +134,9 @@ export class Botlingd {
     readonly peers: PeerSessions,
     /** M3 step 4: server pairing (join offers on this server, add-machine attempts from it). */
     readonly join: ServerJoin,
+    /** M3 step 7: feeds of `srv:` tables (own to peers and front ends, copies to front ends) and the copies of peers' tables. */
+    readonly feeds: TableFeeds,
+    readonly peerTables: PeerTables,
   ) {}
 
   /**
@@ -219,6 +222,9 @@ export class Botlingd {
       const content = new ContentService({
         store, dataDir: paths.dataDir, serverId, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: (text) => log(`content: ${text}`),
       });
+      // M3 step 7: the own table's feed (to peers and front ends) and the copies of peers' tables.
+      const feeds = new TableFeeds({ reader: () => hub.reader(), ownStream: `srv:${serverId}`, log });
+      const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
       // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
       let summary: SummaryRows | null = null;
       const runtime = new IntentRuntime({
@@ -228,7 +234,7 @@ export class Botlingd {
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
       });
       summary = new SummaryRows({
-        scope: runtime.scope, engine, live, log,
+        scope: runtime.scope, engine, live, log, onWritten: () => feeds.notify(feeds.ownStream),
         machine: () => ({ name: SERVER_NAME, os: `${process.platform} ${osRelease()}`.slice(0, 100), versions: { botlingd: BOTLINGD_VERSION, node: process.versions.node }, addresses: [], pluginsDigest: null }),
       });
       const report = await runtime.start();
@@ -277,6 +283,15 @@ export class Botlingd {
           handle: (op) => (op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op) : pairing.admin(op)),
           onEvent: (listener) => { const a = pairing.onEvent(listener); const b = serverJoin.onEvent(listener); return () => { a(); b(); }; },
         },
+        // M3 step 7: peers' states (`welcome.servers`, `peer{…}`) and their tables, from this server's copies.
+        // (`peers` is made below; no session opens before the listeners start.)
+        tables: {
+          peers: () => peers.states().map((state) => ({ id: state.member, name: state.name.slice(0, 200) || state.member, state: state.state, since: state.since })),
+          onPeer: (listener) => peers.onState((state) => listener({ id: state.member, state: state.state, since: state.since })),
+          // Only a server this roster names as a peer (a lone server serves srv: streams from its log hub as before).
+          isPeerTable: (stream) => peerTables.isPeerTable(stream) && peers.states().some((state) => `srv:${state.member}` === stream),
+          subscribe: (stream, cursor, sink) => feeds.subscribe(stream, cursor, sink),
+        },
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
@@ -286,8 +301,16 @@ export class Botlingd {
       const remoteContent = new RemoteContent({ service: content, tickets, roster, log });
       const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent }, options.session);
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
-      const peers = new PeerSessions({ roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log }, { stateFile: join(paths.dataDir, PEERS_FILE) });
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin);
+      const peers = new PeerSessions({
+        roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log,
+        // M3 step 7: every peer's srv: table is subscribed while its session is open (§10.1).
+        onMessage: (session, message) => peerTables.onMessage(session, message),
+        sessionOpened: (session) => { void peerTables.opened(session); },
+        sessionClosed: (session) => peerTables.sessionClosed(session),
+      }, { stateFile: join(paths.dataDir, PEERS_FILE) });
+      peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); });
+      feeds.start();
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables);
       daemon.remoteContent = remoteContent;
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
@@ -364,6 +387,7 @@ export class Botlingd {
     await step("server pairing", () => this.join.close());
     await step("remote sessions", () => this.remote.close());
     await step("peer sessions", () => this.peers.close());
+    this.feeds.close();
     await step("listener", () => this.listener?.close());
     rmSync(join(this.paths.dataDir, LISTEN_FILE), { force: true });
     rmSync(join(this.paths.dataDir, PEERS_FILE), { force: true });

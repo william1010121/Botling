@@ -152,13 +152,15 @@ function inRead<T>(db: Db, read: () => T): T {
  * The catch-up of a reader at `after`: one atomic batch as `rows` frames (in order; apply once the last is in).
  * `after` above the table's rev or below the purge mark → the whole table with `after: 0`.
  */
-export function readCatchUp(db: Db, stream: string, after: number, options: { frameBytes?: number; rowsLimit?: number } = {}): Rows[] {
+export function readCatchUp(db: Db, stream: string, after: number, options: { frameBytes?: number; rowsLimit?: number; head?: (db: Db) => number } = {}): Rows[] {
   const frameBytes = (options.frameBytes ?? FRAME_LIMIT) - FRAME_SLACK;
   const rowsLimit = Math.min(options.rowsLimit ?? ROWS_LIMIT, ROWS_LIMIT);
   return inRead(db, () => {
     const logId = tableLogId(db, stream);
     if (!logId) throw new Error(`readCatchUp: no stream ${stream}`);
-    const to = tableRev(db, stream);
+    // A copy of a peer's table (step 7) is at the owner's `to`, which can be above its own top row (a whole-table
+    // batch carries no tombstones): its head is kept in `streams.head` and passed in here.
+    const to = options.head ? options.head(db) : tableRev(db, stream);
     const whole = after > to || after < purgedRev(db, stream);
     const from = whole ? 0 : after;
     const select = whole

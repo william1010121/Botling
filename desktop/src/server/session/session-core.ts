@@ -32,7 +32,7 @@
 // botlingd pings after 15 s of its own silence and drops a session it has not heard from for 45 s (§5.2; fe-link does
 // the same the other way).
 import { ContractError, type Command, type CommandType } from "../../contract";
-import { encodeFrame, encodeResFrames, PROTOCOL_VERSION, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type StreamId } from "../../protocol";
+import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, type Cursor, type ServerState, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type StreamId } from "../../protocol";
 import { DEAD_AFTER_MS, PING_AFTER_MS } from "../../session";
 import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
@@ -90,6 +90,19 @@ export interface SessionHost {
   log(text: string): void;
   /** Local `admin` requests (M2 step 5); without it they are answered with an error. */
   admin?: AdminHost;
+  /** M3 step 7: peer servers' states and their `srv:` tables from this server's copies (none on a lone server). */
+  tables?: SessionTables;
+}
+
+/** What a front end's session reads of peer servers and their tables (server/replica/peer-tables.ts, server/peer). */
+export interface SessionTables {
+  /** Every peer server as `welcome.servers` lists it. */
+  peers(): Array<{ id: string; name: string; state: ServerState; since: number | null }>;
+  /** A peer's state changed (`peer{serverId, state, since}` to front ends, §10.5). */
+  onPeer(listener: (peer: { id: string; state: ServerState; since: number | null }) => void): () => void;
+  /** A peer's `srv:` table, served from this server's copy (not the log hub). */
+  isPeerTable(stream: string): boolean;
+  subscribe(stream: string, cursor: Cursor | null, sink: (message: WireMessage) => boolean): { close(): void };
 }
 
 export interface SessionOptions {
@@ -125,6 +138,9 @@ export abstract class SessionCore {
   /** One promise chain per command queue (D58, `queueCmd`). */
   private readonly cmdChains = new Map<string, Promise<void>>();
   private adminEvents: (() => void) | null = null;
+  /** M3 step 7: feeds of peers' tables this front end subscribed to, and its listener of peer states. */
+  private readonly tableFeeds = new Map<string, { close(): void }>();
+  private peerEvents: (() => void) | null = null;
   /** Settles when the session closes (a cancel waiting on a running handler stops waiting for this session). */
   private readonly closedSignal: Promise<void>;
 
@@ -195,6 +211,14 @@ export abstract class SessionCore {
     return this.writeTexts([encoded.text], message.t, what);
   }
 
+  /** Sends a frame of the M3 wire set (a `rows` batch of a peer's table, §8.2); false when it was not sent. */
+  protected sendWire(message: WireMessage): boolean {
+    if (this.state === "closed" || !this.writable) return false;
+    const encoded = encodeWireFrame(message, "server", this.kind);
+    if (!encoded.ok) { this.host.log(`session: cannot send ${message.t}: ${encoded.detail}`); return false; }
+    return this.writeTexts([encoded.text], message.t);
+  }
+
   /**
    * Answers a `req`. A result over the frame limit goes as `res.part`s (the front end joins them); one too large even
    * for those is answered with an error naming the command, so the front end's request ends instead of waiting.
@@ -221,6 +245,10 @@ export abstract class SessionCore {
     this.state = "closed";
     this.adminEvents?.();
     this.adminEvents = null;
+    this.peerEvents?.();
+    this.peerEvents = null;
+    for (const feed of this.tableFeeds.values()) feed.close();
+    this.tableFeeds.clear();
     for (const timer of this.timers) { clearTimeout(timer); clearInterval(timer); }
     for (const sub of this.lives.values()) sub.close();
     this.lives.clear();
@@ -297,8 +325,10 @@ export abstract class SessionCore {
     try { next = this.host.nextFor(hello.deviceId, hello.originEpoch); } catch (error) { this.host.log(`session: next for ${hello.deviceId}: ${errorText(error)}`); }
     this.send({
       t: "welcome", serverId: this.host.serverId, protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION }, minFeVersion: this.host.minFeVersion,
-      rosterDigest: null, servers: [{ id: this.host.serverId, name: this.host.serverName, state: "live", since: this.host.startedAt }], next, views: {},
-    });
+      rosterDigest: null, servers: [{ id: this.host.serverId, name: this.host.serverName, state: "live", since: this.host.startedAt }, ...this.peerList()], next, views: {},
+    } as MessageOf<"welcome">);
+    const tables = this.host.tables;
+    if (tables) this.peerEvents = tables.onPeer((peer) => { this.send({ t: "peer", serverId: peer.id, state: peer.state, since: peer.since } as MessageOf<"peer">); });
     this.opened(hello);
     // `cursors` / `want`: fe-link sends a `sub` for each after the welcome (§13.1); taking both would send two snaps.
     for (const body of hello.outbox) this.queueCmd(body);
@@ -306,6 +336,10 @@ export abstract class SessionCore {
 
   // ---------------------------------------------------------------------------------------------
   // Streams
+
+  private peerList(): Array<{ id: string; name: string; state: ServerState; since: number | null }> {
+    try { return (this.host.tables?.peers() ?? []).slice(0, 63); } catch (error) { this.host.log(`session: peers: ${errorText(error)}`); return []; }
+  }
 
   private queueSub(stream: StreamId, cursor: MessageOf<"sub">["cursor"]): void {
     this.subChain = this.subChain.then(() => this.sub(stream, cursor)).catch((error) => this.host.log(`session: sub ${stream}: ${errorText(error)}`));
@@ -316,6 +350,13 @@ export abstract class SessionCore {
     if (!reader || this.state !== "open") return;
     const refused = this.subRefusal(stream);
     if (refused) { this.host.log(`session: sub ${stream} refused (${refused})`); return; }
+    const tables = this.host.tables;
+    if (tables?.isPeerTable(stream)) {
+      // M3 step 7: a peer's `srv:` table comes from this server's copy as `rows` batches, never from the log hub.
+      this.tableFeeds.get(stream)?.close();
+      this.tableFeeds.set(stream, tables.subscribe(stream, cursor, (frame) => this.sendWire(frame)));
+      return;
+    }
     let result = await reader.sub(stream, cursor);
     if (!result.ok && result.reason === "unknown stream" && stream.startsWith("bot:")) {
       // A bot the core has but whose stream was not made yet (made at start, or by its first event).
@@ -333,6 +374,8 @@ export abstract class SessionCore {
   }
 
   private unsub(stream: StreamId): void {
+    const feed = this.tableFeeds.get(stream);
+    if (feed) { feed.close(); this.tableFeeds.delete(stream); return; }
     this.reader?.unsub(stream);
     this.lives.get(stream)?.close();
     this.lives.delete(stream);
