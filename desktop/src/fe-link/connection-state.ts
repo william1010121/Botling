@@ -22,6 +22,8 @@ export interface ConnModel {
   catching: boolean;
   /** When the last `reset` came, while its notice is shown (`history restored`). */
   restoredAt: number | null;
+  /** When the backup the server went back to was taken (the reset's `restoredTo`), while the notice is shown. */
+  restoredTo?: number | null;
   /** When the link was last attached (the "as of <time>" of offline). */
   asOf: number | null;
   /** Set once `update required`: the version the server asks for. */
@@ -33,7 +35,7 @@ export type ConnEvent =
   | { type: "welcome"; catching: boolean }
   | { type: "update required"; minFeVersion: string }
   | { type: "catching"; catching: boolean }
-  | { type: "reset" }
+  | { type: "reset"; restoredTo?: number }
   | { type: "restore seen" }
   /** The session ended (closed, dead, refused). */
   | { type: "lost" }
@@ -59,8 +61,8 @@ export function connReduce(model: ConnModel, event: ConnEvent, now: number): Con
     case "welcome": next.attached = true; next.offline = false; next.catching = event.catching; break;
     case "update required": next.minFeVersion = event.minFeVersion; next.attached = false; next.catching = false; break;
     case "catching": if (next.attached) next.catching = event.catching; break;
-    case "reset": if (next.attached) next.restoredAt = now; break;
-    case "restore seen": next.restoredAt = null; break;
+    case "reset": if (next.attached) { next.restoredAt = now; next.restoredTo = event.restoredTo ?? next.restoredTo ?? null; } break;
+    case "restore seen": next.restoredAt = null; next.restoredTo = null; break;
     case "lost": if (next.attached) next.asOf = now; next.attached = false; next.catching = false; break;
     case "offline": if (!next.attached) next.offline = true; break;
   }

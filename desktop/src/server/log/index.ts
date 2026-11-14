@@ -7,5 +7,5 @@ export {
   type AppendItem, type ReadOptions, type RetiredLog, type StreamRow, type StreamState,
 } from "./log-store";
 export { applyReadModel, isCard, isOpenCard } from "./read-model";
-export { inRead, readHistory, readSnap, SnapTooLargeError, type Snap } from "./snap";
+export { inRead, readHistory, readSnap, SnapTooLargeError, type ServerSnapView, type Snap } from "./snap";
 export { LogHub, LogReader, type LogHubOptions, type LogStore, type SubResult } from "./hub";

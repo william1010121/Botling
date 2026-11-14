@@ -192,6 +192,11 @@ export interface CoreOptions {
   } | null;
   /** Botling 3's server only (2.x leaves it unset): turns it keeps aside in its effect outbox (bot.ts `deferTurn`). */
   deferTurn?: (turn: DeferredTurn) => boolean;
+  /**
+   * Botling 3's server only (2.x leaves it unset, so every bot keeps 2.x's files, `FileBotStore`): the store of the bot
+   * kept in `directory` (its folder, or a second head's partner-<engine>/ in it), on server.db rows.
+   */
+  botStore?: (directory: string) => BotStore;
 }
 
 /** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
@@ -561,6 +566,7 @@ export class Core {
         callInFollowUpMissed: (caller, asked, why, by) => this.conversations?.callInFollowUpMissed(caller, bot, asked, why, by),
         agents: this.agentPort(profile),
         ...(options.deferTurn ? { deferTurn: options.deferTurn } : {}),
+        ...(options.botStore ? { botStore: options.botStore } : {}),
       });
       return bot;
     };
@@ -1783,16 +1789,21 @@ First write a test that shows this, then fix it.`;
     parent.refresh();
   }
 
+  /** The store of the bot kept in `directory`: 2.x's files, or Botling 3's server store (`CoreOptions.botStore`). */
+  private storeOf(directory: string): BotStore {
+    return this.options.botStore ? this.options.botStore(directory) : new BotStore(directory);
+  }
+
   /** A new bot runs on one engine, as a single head (saved before it is made). */
   private singleEngine(id: string, engine: Engine) {
-    const store = new BotStore(Layout.bot(this.options.dataDir, id));
+    const store = this.storeOf(Layout.bot(this.options.dataDir, id));
     store.saveSetting("heads", headsJSON(singleHead(engine)));
     store.saveSetting("engine", engine);
   }
 
   /** The app's engine defaults saved into a new bot's bot.json before it is made (`seedEngineDefaults`). */
   private seedEngineDefaults(id: string) {
-    const store = new BotStore(Layout.bot(this.options.dataDir, id));
+    const store = this.storeOf(Layout.bot(this.options.dataDir, id));
     seedEngineDefaults(readSettings(Layout.settings(this.options.dataDir)), (key, value) => store.saveSetting(key, value));
   }
 

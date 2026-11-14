@@ -85,11 +85,29 @@ export interface Snap {
   row: StreamRow;
 }
 
-/** The snap of a bot stream at its head, or null when the stream does not exist. */
+/**
+ * The view of a server's `srv:` stream (botlingd): which server and which bots it has. Its entries (settings, plugins,
+ * bot updates…) are what a front end follows; the 2.x views of them come by `req` (`chat.snapshot`).
+ */
+export interface ServerSnapView {
+  serverId: string;
+  bots: string[];
+}
+
+function readServerView(db: Db, row: StreamRow): ServerSnapView {
+  const bots = db.prepare("SELECT botId FROM bots ORDER BY botId LIMIT 2000").all().map((bot) => String(bot.botId));
+  return { serverId: row.owner, bots };
+}
+
+/** The snap of a bot stream (or a `srv:` stream) at its head, or null when the stream does not exist. */
 export function readSnap(db: Db, stream: StreamId): Snap | null {
   return inRead(db, () => {
     const row = readStream(db, stream);
     if (!row) return null;
+    if (stream.startsWith("srv:")) {
+      const frame: MessageOf<"snap"> = { t: "snap", stream, logId: row.logId, seq: row.head, hash: row.headHash, view: { ...readServerView(db, row) } };
+      return { frame, row };
+    }
     const botId = botIdOf(stream);
     if (!botId) throw new Error(`readSnap: ${stream} is not a bot stream`);
     const bot = readBot(db, botId, row.head);
