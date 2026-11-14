@@ -364,6 +364,11 @@ async function hostRun(seed: number, maxActions = 25) {
   const gates: ((ok: boolean) => void)[] = [];
   const loadeds = new Set<Loaded>();
   let item = 0;
+  // acme-board's async activates still pending, by when each started; one pending for the time limit makes a newer sync
+  // give up waiting for it (an activate has no time limit, the wait for another sync's load does), so zed.tools fails.
+  const acmeStarting = new Map<number, number>();
+  let acmeOutlived = false;
+  const noteSlowAcme = () => { for (const started of acmeStarting.values()) if (timers.now - started >= timeout) acmeOutlived = true; };
   let host!: Host;
   const kernelOf = () => (host as unknown as { kernel: Kernel }).kernel;
   const activate = (ccb: CcbHost) => {
@@ -401,7 +406,9 @@ async function hostRun(seed: number, maxActions = 25) {
     if (!random.chance(0.3)) return disposer();
     // An async activate: what it registers after the await may come after its unload (undone at once, P5).
     const gate = deferred();
-    gates.push(() => gate.resolve());
+    const starting = ++item;
+    if (name === "acme-board") acmeStarting.set(starting, timers.now);
+    gates.push(() => { acmeStarting.delete(starting); gate.resolve(); });
     return gate.promise.then(() => { register(); return disposer(); });
   };
   const declarations: HostOptions["declarations"] = (spec) =>
@@ -413,6 +420,7 @@ async function hostRun(seed: number, maxActions = 25) {
   const versions = new Map(names.map((name) => [name, 1]));
   const on = new Set<string>();
   const syncs: Promise<unknown>[] = [];
+  let newestFailed: string[] = [];
   const check = (where: string) => {
     for (const name of names) {
       // P1/P5: an absent plugin's subscriptions and returned disposer have run.
@@ -428,15 +436,18 @@ async function hostRun(seed: number, maxActions = 25) {
       action = "sync";
       for (const name of names) if (random.chance(0.2)) { if (on.has(name)) on.delete(name); else on.add(name); }
       for (const name of on) if (random.chance(0.1)) versions.set(name, versions.get(name)! + 1);
-      // Its answer names no failure but zed.tools waiting for acme-board (which that sync did not ask for).
+      // Its answer names no failure but zed.tools waiting for acme-board: one that sync did not ask for, or one whose
+      // activate (begun by an older sync) outlived the time limit.
       const asked = names.filter((name) => on.has(name));
+      const number = syncs.length;
       syncs.push(host.sync(asked.map((name) => hostSpec(name, versions.get(name)!))).then((answer) => {
+        if (number === syncs.length - 1) newestFailed = answer.failed.map((failure) => failure.name);
         for (const failure of answer.failed) {
-          if (!(failure.name === "zed.tools" && !asked.includes("acme-board") && failure.message.startsWith("It needs"))) problems.push(`a sync answered ${failure.name} failed: ${failure.message}`);
+          if (!(failure.name === "zed.tools" && (!asked.includes("acme-board") || acmeOutlived) && failure.message.startsWith("It needs"))) problems.push(`a sync answered ${failure.name} failed: ${failure.message}`);
         }
       }));
     } else if (choice === 2 && gates.length) { action = "settle"; gates.splice(random.int(gates.length), 1)[0]!(random.chance(0.7)); }
-    else if (choice === 3) { action = "tick"; timers.advance(random.int(timeout + 5)); }
+    else if (choice === 3) { action = "tick"; timers.advance(random.int(timeout + 5)); noteSlowAcme(); }
     else if (choice === 4) { action = "beforeSend"; void host.receive({ id: 9000 + index, method: "beforeSend", params: { bot: "b", text: "t" } }); }
     else { action = "event"; void host.receive({ method: "event", params: { name: "chatRead", data: {} } }); }
     await flush();
@@ -450,13 +461,15 @@ async function hostRun(seed: number, maxActions = 25) {
     for (const gate of gates.splice(0)) gate(random.chance(0.5));
     await flush();
     timers.advance(timeout);
+    noteSlowAcme();
     await flush();
   }
   if (!drained) throw new Error(`seed ${seed}: the host's syncs did not finish within 50 rounds`);
   await draining;
-  // Then exactly what the newest sync asked for runs, each once, at its newest code (zed.tools only with acme-board).
+  // Then exactly what the newest sync asked for runs, each once, at its newest code (zed.tools only with acme-board), but
+  // what its answer named failed (checked above).
   for (const name of names) {
-    const expected = on.has(name) && (name !== "zed.tools" || on.has("acme-board"));
+    const expected = on.has(name) && (name !== "zed.tools" || on.has("acme-board")) && !newestFailed.includes(name);
     const loaded = (host as unknown as { plugins: Map<string, Loaded> }).plugins.get(name);
     const instances = [...world.entries()].filter(([thing, owner]) => owner === name && thing.includes("-sub-")).length;
     if (!!loaded !== expected) problems.push(`after the syncs ${name} is ${loaded ? "" : "not "}loaded`);

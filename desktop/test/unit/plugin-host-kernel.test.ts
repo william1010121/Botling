@@ -240,6 +240,23 @@ describe("the plugin host on the kernel", () => {
     expect(order).toEqual(["activate chat 1.0.0", "dispose chat", "activate chat 1.0.0", "activate note"]);
   });
 
+  it("a newer sync whose plugin waits for one an older sync is still activating waits only the time limit for it", async () => {
+    const timers = manualTimers();
+    const declarations: HostOptions["declarations"] = (s) => (s.name === "chat" ? { provides: { services: ["quote"] } } : s.name === "note" ? { requires: { services: ["quote"] } } : null);
+    // chat's activate never settles (a bug in its code); note needs what chat provides.
+    const { host } = makeHost({ chat: () => new Promise(() => {}), note: () => {} }, { declarations, timers, undoTimeoutMs: 100 });
+    void host.sync([spec("chat")]);
+    await flush();
+    let done = false;
+    const newer = host.sync([spec("chat"), spec("note")]).then((result) => { done = true; return result; });
+    await flush();
+    expect(done).toBe(false);
+    timers.advance(100);
+    await flush();
+    expect(done).toBe(true);
+    expect((await newer).failed).toEqual([{ name: "note", message: 'It needs "quote", which no loaded plugin provides.' }]);
+  });
+
   it("a removed plugin's declaration goes with it: another plugin may provide the same service later", async () => {
     const declarations: HostOptions["declarations"] = (s) => (s.name === "old" || s.name === "new" ? { provides: { services: ["quote"] } } : null);
     const { host } = makeHost({ old: () => {}, new: () => {} }, { declarations });

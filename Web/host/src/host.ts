@@ -48,6 +48,11 @@ class HostKernel extends Kernel {
   protected override unloadStarted(plugin: string, generation: number): void {
     this.started(plugin, generation);
   }
+
+  /** `promise`, or settled after the kernel's time limit (the one for undos), whichever is first; never rejects. */
+  within(promise: Promise<unknown>): Promise<unknown> {
+    return this.bounded(promise, () => {}).catch(() => {});
+  }
 }
 
 export class Host {
@@ -207,6 +212,9 @@ export class Host {
     const timings: Record<string, number> = {};
     // A plugin whose required services are not there yet waits for the ones that provide them (none in 2.x).
     let waiting: HostPluginSpec[] = [];
+    // Loads of older syncs already waited for: an `activate` has no time limit, so each is waited for once, within the
+    // kernel's time limit, not again in every round.
+    const waited = new Set<Promise<unknown>>();
     for (let round = [...specs], progress = true; round.length && progress;) {
       waiting = [];
       progress = false;
@@ -247,10 +255,14 @@ export class Host {
       }
       round = waiting;
       // Some wait for a plugin an older sync is still loading, or one still unloading (D65): wait for those, then try the
-      // whole list again (a provider asked for that was unloaded meanwhile loads again first).
+      // whole list again (a provider asked for that was unloaded meanwhile loads again first). A load is waited for once,
+      // at most the kernel's time limit (an `activate` that never settles must not hang this sync too); an unload is
+      // bounded already (each undo has the time limit).
       if (!progress && waiting.length && ticket === this.syncs) {
+        const loads = [...this.loading.values()].filter((load) => !waited.has(load));
+        for (const load of loads) waited.add(load);
         const going: Promise<unknown>[] = [
-          ...this.loading.values(),
+          ...loads.map((load) => this.kernel.within(load)),
           ...this.kernel.plugins().filter((name) => this.kernel.state(name) === "unloading").map((name) => this.kernel.requestUnload(name)),
         ];
         if (going.length) {
