@@ -139,6 +139,35 @@ describe("the plugin host on the kernel", () => {
     expect(order).toEqual(["activate 1.0.0", "cleanup starts", "cleanup done", "activate 2.0.0"]);
   });
 
+  it("overlapping loads while an async disposer runs: the newest code loads once, nothing fails, nothing older is left", async () => {
+    const cleanup = deferred();
+    const live = new Set<string>();
+    const activations: string[] = [];
+    const { host } = makeHost({
+      x: (ccb) => {
+        const id = `${ccb.plugin.version}#${activations.push(ccb.plugin.version)}`;
+        live.add(id);
+        return () => cleanup.promise.then(() => { live.delete(id); });
+      },
+    });
+    await host.sync([spec("x", { fingerprint: "1", version: "1" })]);
+    const answers = [
+      host.sync([spec("x", { fingerprint: "2", version: "2" })]),
+      host.sync([spec("x", { fingerprint: "2", version: "2" })]),
+      host.sync([spec("x", { fingerprint: "3", version: "3" })]),
+    ];
+    await flush();
+    cleanup.resolve();
+    const results = await Promise.all(answers);
+    expect(results.map((result) => result.failed)).toEqual([[], [], []]);
+    expect(host.isLoaded("x")).toBe(true);
+    expect([...live]).toEqual([`3#${activations.length}`]);
+    expect(activations.at(-1)).toBe("3");
+    // And it unloads cleanly: nothing of any instance is left.
+    await host.sync([]);
+    expect(live.size).toBe(0);
+  });
+
   it("a disposer taken back early runs once, not again at unload", async () => {
     let runs = 0;
     let off!: () => void;

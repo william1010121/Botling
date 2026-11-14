@@ -428,7 +428,13 @@ async function hostRun(seed: number, maxActions = 25) {
       action = "sync";
       for (const name of names) if (random.chance(0.2)) { if (on.has(name)) on.delete(name); else on.add(name); }
       for (const name of on) if (random.chance(0.1)) versions.set(name, versions.get(name)! + 1);
-      syncs.push(host.sync(names.filter((name) => on.has(name)).map((name) => hostSpec(name, versions.get(name)!))));
+      // Its answer names no failure but zed.tools waiting for acme-board (which that sync did not ask for).
+      const asked = names.filter((name) => on.has(name));
+      syncs.push(host.sync(asked.map((name) => hostSpec(name, versions.get(name)!))).then((answer) => {
+        for (const failure of answer.failed) {
+          if (!(failure.name === "zed.tools" && !asked.includes("acme-board") && failure.message.startsWith("It needs"))) problems.push(`a sync answered ${failure.name} failed: ${failure.message}`);
+        }
+      }));
     } else if (choice === 2 && gates.length) { action = "settle"; gates.splice(random.int(gates.length), 1)[0]!(random.chance(0.7)); }
     else if (choice === 3) { action = "tick"; timers.advance(random.int(timeout + 5)); }
     else if (choice === 4) { action = "beforeSend"; void host.receive({ id: 9000 + index, method: "beforeSend", params: { bot: "b", text: "t" } }); }
@@ -436,8 +442,8 @@ async function hostRun(seed: number, maxActions = 25) {
     await flush();
     check(action);
   }
-  // The syncs still going finish first (their activates and disposers settle or time out). An older sync that overlaps a
-  // newer one goes on loading its own list after it, as in 2.x (the host takes `load` calls as they come).
+  // The syncs still going finish first (their activates and disposers settle or time out). Each sync asks for the whole
+  // list; an older one that overlaps a newer one steps aside (nothing failed) and the newest decides.
   let drained = false;
   const draining = Promise.all(syncs.map((sync) => sync.catch(() => {}))).then(() => { drained = true; });
   for (let round = 0; round < 50 && !drained; round += 1) {
@@ -448,6 +454,16 @@ async function hostRun(seed: number, maxActions = 25) {
   }
   if (!drained) throw new Error(`seed ${seed}: the host's syncs did not finish within 50 rounds`);
   await draining;
+  // Then exactly what the newest sync asked for runs, each once, at its newest code (zed.tools only with acme-board).
+  for (const name of names) {
+    const expected = on.has(name) && (name !== "zed.tools" || on.has("acme-board"));
+    const loaded = (host as unknown as { plugins: Map<string, Loaded> }).plugins.get(name);
+    const instances = [...world.entries()].filter(([thing, owner]) => owner === name && thing.includes("-sub-")).length;
+    if (!!loaded !== expected) problems.push(`after the syncs ${name} is ${loaded ? "" : "not "}loaded`);
+    else if (loaded && loaded.spec.fingerprint !== String(versions.get(name))) problems.push(`after the syncs ${name} runs code ${loaded.spec.fingerprint}, not ${versions.get(name)}`);
+    if (instances !== (expected ? 1 : 0)) problems.push(`after the syncs ${name} has ${instances} live instance(s)`);
+  }
+  if (problems.length) throw new Error(`seed ${seed}: ${problems[0]}`);
   // Unload-all: Botling turns every plugin off (a sync with none); it ends within a bounded number of rounds.
   let rounds = 0;
   let finished = false;
