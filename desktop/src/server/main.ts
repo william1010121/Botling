@@ -5,14 +5,20 @@
 //   botlingd start            serve in the foreground until SIGTERM / SIGINT (prints "ready <socket>" once listening);
 //                             exits 75 when another server or core holds the data folder
 //   botlingd stop             asks the running server to stop (SIGTERM to the lock holder) and waits for it
-//   botlingd status [--json]  running or not, its pid and socket, the turns under way (from server.db)
-//   botlingd backup           an online backup of server.db into <data>/backups/ (the server may keep running)
-//   botlingd restore <file>   puts a backup back (the server must be stopped; minimal in M1, step 12 completes it)
+//   botlingd status [--json]  running or not, its pid and socket, the turns under way (from server.db), the Doctor notes
+//                             (external disk, backups missing or old, a restore) and the newest backup
+//   botlingd backup           an online backup of server.db into <data>/backups/ (the server may keep running); while
+//                             it runs, botlingd also takes a daily one (keeps 7)
+//   botlingd restore <file> [--stop]
+//                             puts a backup back with the server stopped (restore.ts says why); refused (exit 75) while
+//                             it runs, unless --stop, which stops it first. It is not started again here: a Botling 3
+//                             window starts it when it reconnects, or run botlingd start.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/store/data-dir-lock";
 import { Botlingd, BOTLINGD_VERSION, DataDirInUseError } from "./botlingd";
-import { restoreBackup } from "./restore";
+import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
+import { RestoreError, restoreBackup } from "./restore";
 import { botlingdPaths, PathsError, socketAnswers } from "./session";
 import { takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
@@ -63,9 +69,12 @@ async function stopCommand(dataDir: string): Promise<void> {
   const pid = holderPid(dataDir);
   if (pid === null) { out("botlingd is not running."); return; }
   process.kill(pid, "SIGTERM");
+  // Stopped = it let go of the data folder (its last step) or is gone. A process that exited but was not reaped yet by
+  // its parent still answers kill(pid, 0), so the lock is what counts.
+  const holds = () => alive(pid) && readLockHolder(dataDir)?.pid === pid;
   const until = Date.now() + 60_000;
-  while (alive(pid) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 100));
-  if (alive(pid)) fail(`pid ${pid} did not stop within 60 s`);
+  while (holds() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 100));
+  if (holds()) fail(`pid ${pid} did not stop within 60 s`);
   out(`botlingd (pid ${pid}) stopped.`);
 }
 
@@ -78,14 +87,20 @@ interface Status {
   answers: boolean;
   bots: number;
   turns: Array<{ botId: string; turnId: string; state: string; startedAt: number | null; liveChars: number }>;
+  /** The newest backup (any kind) and when it was taken, or null. */
+  backup: { path: string; at: number } | null;
+  notes: ServerNote[];
 }
 
 async function status(dataDir: string, socket: string): Promise<Status> {
   const pid = holderPid(dataDir);
   const answers = existsSync(socket) ? await socketAnswers(socket) : false;
-  const result: Status = { version: BOTLINGD_VERSION, dataDir, running: pid !== null, pid, socket, answers, bots: 0, turns: [] };
+  const result: Status = {
+    version: BOTLINGD_VERSION, dataDir, running: pid !== null, pid, socket, answers, bots: 0, turns: [],
+    backup: newestAnyBackup(join(dataDir, "backups")), notes: [],
+  };
   const file = join(dataDir, "server.db");
-  if (!existsSync(file)) return result;
+  if (!existsSync(file)) { result.notes = serverNotes(dataDir, null); return result; }
   const db = openReaderDb(file);
   try {
     result.bots = Number(db.prepare("SELECT count(*) AS n FROM bots").get()?.n ?? 0);
@@ -96,6 +111,7 @@ async function status(dataDir: string, socket: string): Promise<Status> {
         botId: String(row.botId ?? ""), turnId: String(row.turnId ?? ""), state: String(row.state),
         startedAt: row.startedAt == null ? null : Number(row.startedAt), liveChars: live.get(`${row.botId}\u0000${row.turnId}`) ?? 0,
       }));
+    result.notes = serverNotes(dataDir, db);
   } finally {
     db.close();
   }
@@ -119,6 +135,8 @@ async function main(argv: string[]): Promise<void> {
         const since = turn.startedAt ? ` since ${new Date(turn.startedAt).toISOString()}` : "";
         out(`turn ${turn.turnId} of ${turn.botId}: ${turn.state}${since}${turn.liveChars ? `, ${turn.liveChars} characters so far` : ""}`);
       }
+      out(report.backup ? `newest backup: ${report.backup.path} (${new Date(report.backup.at).toISOString()})` : "no backup yet");
+      for (const note of report.notes) out(`note: ${note.text}`);
       return;
     }
     case "backup": {
@@ -128,14 +146,21 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     case "restore": {
-      const backup = rest[0];
-      if (!backup) fail("restore needs the backup file: botlingd restore <file>", 2);
+      const stopFirst = rest.includes("--stop");
+      const backup = rest.find((arg) => !arg.startsWith("--"));
+      if (!backup) fail("restore needs the backup file: botlingd restore <file> [--stop]", 2);
+      if (stopFirst) await stopCommand(paths.dataDir);
       const lock = new DataDirLock(paths.dataDir, { version: BOTLINGD_VERSION, app: "botlingd restore" });
       const claim = lock.claim();
-      if (!claim.ok) fail(`botlingd (pid ${claim.holder.pid}) is running; stop it first (botlingd stop).`, CORE_EXIT_DATA_DIR_IN_USE);
+      if (!claim.ok) fail(`botlingd (pid ${claim.holder.pid}) is running; stop it first (botlingd stop, or botlingd restore <file> --stop).`, CORE_EXIT_DATA_DIR_IN_USE);
       try {
-        const result = await restoreBackup(paths.dataDir, backup);
-        out(`restored ${result.restoredFrom} (taken ${new Date(result.restoredTo).toISOString()}); ${result.streams} streams got a new logId${result.keptAs ? `; the replaced file is kept as ${result.keptAs}` : ""}.`);
+        const result = await restoreBackup(paths.dataDir, backup!);
+        const taken = `${new Date(result.restoredTo).toISOString()}${result.restoredToFrom === "metadata" ? "" : `, from its ${result.restoredToFrom}`}`;
+        out(`restored ${result.restoredFrom} (taken ${taken}); ${result.streams} streams got a new logId${result.keptAs ? `; the replaced file is kept as ${result.keptAs}` : ""}.`);
+        out("Start botlingd again (botlingd start; a Botling 3 window starts it by itself).");
+      } catch (error) {
+        if (error instanceof RestoreError) { lock.release(); fail(error.message, 2); }
+        throw error;
       } finally {
         lock.release();
       }

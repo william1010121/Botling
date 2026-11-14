@@ -8,7 +8,7 @@ import { LATEST_SCHEMA_VERSION, migrate, MIGRATIONS, schemaVersion, SchemaTooNew
 import type { Db } from "./sqlite";
 import { Writer, type Command, type WriterOptions } from "./writer";
 
-export { backupFile, listBackups, takeBackup, type BackupKind } from "./backup";
+export { BACKUP_AT_KEY, backupFile, listBackups, newestBackup, stampTime, takeBackup, type BackupKind } from "./backup";
 export { externalDiskNote, openReaderDb, openWriterDb, WRITER_PRAGMAS } from "./connection";
 export { LATEST_SCHEMA_VERSION, migrate, MIGRATIONS, schemaVersion, SchemaTooNewError, type Migration } from "./schema";
 export type { Db, SqlRow, SqlValue, Statement } from "./sqlite";
