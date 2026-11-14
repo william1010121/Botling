@@ -84,6 +84,22 @@ CREATE TABLE chunk_cache (
 ) WITHOUT ROWID;
 `;
 
+// v2 (M1 step 3, src/server/log):
+// - entries.logId: the incarnation an entry was appended in. seq numbering continues across a restore (§7.6), so one
+//   stream's table holds entries of several logIds; the hash covers the entry's own logId (§8.1).
+// - streams.tail / tailHash: the last evicted seq and its hash, so a batch from tail + 1 still carries its prevHash.
+// - retired: every earlier logId of a stream with the last seq the restore (or rewind) kept of it; `reset` lists them
+//   and readers never go back to one (D50). `n` orders them per stream.
+const V2 = `
+ALTER TABLE entries ADD COLUMN logId TEXT NOT NULL DEFAULT '';
+ALTER TABLE streams ADD COLUMN tail INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE streams ADD COLUMN tailHash TEXT;
+CREATE TABLE retired (
+  stream TEXT NOT NULL, logId TEXT NOT NULL, n INTEGER NOT NULL, keptSeq INTEGER NOT NULL, reason TEXT NOT NULL,
+  retiredAt INTEGER NOT NULL, PRIMARY KEY (stream, logId)
+) WITHOUT ROWID;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -94,6 +110,13 @@ export const MIGRATIONS: readonly Migration[] = [
       put.run("serverId", randomUUID());
       put.run("dbId", randomUUID());
       put.run("createdAt", String(Date.now()));
+    },
+  },
+  {
+    version: 2,
+    description: "log streams (src/server/log): each entry's logId, the evicted tail, retired logIds (D50)",
+    up(db) {
+      db.exec(V2);
     },
   },
 ];
