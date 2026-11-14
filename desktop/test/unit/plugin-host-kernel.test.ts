@@ -178,6 +178,42 @@ describe("the plugin host on the kernel", () => {
     expect(runs).toBe(1);
   });
 
+  it("D65 on the host: a provider that starts unloading while a dependent's code is imported makes it wait, not fail", async () => {
+    const order: string[] = [];
+    const cleanup = deferred();
+    const imported = deferred();
+    const declarations: HostOptions["declarations"] = (s) => (s.name === "chat" ? { provides: { services: ["quote"] } } : s.name === "note" ? { requires: { services: ["quote"] } } : null);
+    const activates: Record<string, (ccb: CcbHost) => unknown> = {
+      chat: (ccb) => { order.push(`activate chat ${ccb.plugin.version}`); return () => { order.push("dispose chat"); return cleanup.promise; }; },
+      note: () => { order.push("activate note"); },
+    };
+    const host = new Host(() => {}, async (s) => { if (s.name === "note") await imported.promise; return activates[s.name] as any; }, { declarations });
+    await host.sync([spec("chat")]);
+    const both = host.sync([spec("chat"), spec("note")]);
+    await flush();
+    // While note's code is being imported, chat starts unloading (as at shutdown) and takes a while.
+    const gone = host.unload("chat");
+    imported.resolve();
+    await flush();
+    expect(order).toEqual(["activate chat 1.0.0", "dispose chat"]);
+    cleanup.resolve();
+    await gone;
+    const result = await both;
+    expect(result.failed).toEqual([]);
+    expect(result.loaded.sort()).toEqual(["chat", "note"]);
+    expect(order).toEqual(["activate chat 1.0.0", "dispose chat", "activate chat 1.0.0", "activate note"]);
+  });
+
+  it("a removed plugin's declaration goes with it: another plugin may provide the same service later", async () => {
+    const declarations: HostOptions["declarations"] = (s) => (s.name === "old" || s.name === "new" ? { provides: { services: ["quote"] } } : null);
+    const { host } = makeHost({ old: () => {}, new: () => {} }, { declarations });
+    expect((await host.sync([spec("old")])).loaded).toEqual(["old"]);
+    expect((await host.sync([])).loaded).toEqual([]);
+    const result = await host.sync([spec("new")]);
+    expect(result.failed).toEqual([]);
+    expect(result.loaded).toEqual(["new"]);
+  });
+
   it("dependents load after what they require and unload before it (declarations for built-ins)", async () => {
     const order: string[] = [];
     const plugin = (name: string) => (ccb: CcbHost) => { order.push(`activate ${name} ${ccb.plugin.version}`); return () => { order.push(`dispose ${name}`); }; };

@@ -87,6 +87,11 @@ export class Kernel extends PluginKernel {
     this.wantedSet.delete(plugin);
   }
 
+  /** The plugins whose declarations are installed. */
+  installed(): string[] {
+    return [...this.declarations.keys()];
+  }
+
   declaration(plugin: string): PluginDeclaration | undefined {
     return this.declarations.get(plugin);
   }

@@ -62,7 +62,7 @@ export class Host {
   /** `sync` calls so far: each asks for the whole list, so the newest decides and an older one still going steps aside. */
   private syncs = 0;
   /** Loads in progress, by plugin (a newer sync whose plugins wait for one of them waits for it before giving up). */
-  private readonly loading = new Map<string, Promise<void>>();
+  private readonly loading = new Map<string, Promise<"waiting" | void>>();
   private readonly pending = new Map<number, { resolve: (value: JSONValue) => void; reject: (error: Error) => void }>();
   private nextID = 1;
   /** The plugin whose code is running, so a crash can be blamed on it. */
@@ -199,17 +199,21 @@ export class Host {
       }
     }
     if (unloading.length) await Promise.all(unloading);
+    // What is not asked for any more leaves the kernel with its declaration, so another plugin may declare what it provided.
+    if (ticket === this.syncs) {
+      for (const name of this.kernel.installed()) if (!wanted.has(name) && this.kernel.state(name) === "absent") this.kernel.uninstall(name);
+    }
     const failed: { name: string; message: string }[] = [];
     const timings: Record<string, number> = {};
     // A plugin whose required services are not there yet waits for the ones that provide them (none in 2.x).
     let waiting: HostPluginSpec[] = [];
-    for (let round = [...specs], progress = true; round.length && progress; round = waiting) {
+    for (let round = [...specs], progress = true; round.length && progress;) {
       waiting = [];
       progress = false;
       for (const spec of round) {
         // A newer sync started while this one waited: it decides what runs (this one loads nothing more, and fails nothing).
         if (ticket !== this.syncs) { waiting = []; break; }
-        if (this.plugins.has(spec.name)) continue;
+        if (this.plugins.has(spec.name) || failed.some((failure) => failure.name === spec.name)) continue;
         let depends: boolean;
         try {
           depends = this.declare(spec);
@@ -224,8 +228,9 @@ export class Host {
         const going = this.load(spec, ticket);
         this.loading.set(spec.name, going);
         try {
-          await going;
-          timings[spec.name] = Math.round(performance.now() - started);
+          // What it depends on started going while its code was imported (D65): it waits.
+          if ((await going) === "waiting") waiting.push(spec);
+          else timings[spec.name] = Math.round(performance.now() - started);
         } catch (error) {
           await this.unload(spec.name);
           failed.push({ name: spec.name, message: errorText(error) });
@@ -233,10 +238,19 @@ export class Host {
           if (this.loading.get(spec.name) === going) this.loading.delete(spec.name);
         }
       }
-      // Some wait for a plugin an older sync is still loading (it is in `plugins` already): wait for those, then try again.
-      if (!progress && waiting.length && ticket === this.syncs && this.loading.size) {
-        progress = true;
-        await Promise.all([...this.loading.values()].map((load) => load.catch(() => {})));
+      round = waiting;
+      // Some wait for a plugin an older sync is still loading, or one still unloading (D65): wait for those, then try the
+      // whole list again (a provider asked for that was unloaded meanwhile loads again first).
+      if (!progress && waiting.length && ticket === this.syncs) {
+        const going: Promise<unknown>[] = [
+          ...this.loading.values(),
+          ...this.kernel.plugins().filter((name) => this.kernel.state(name) === "unloading").map((name) => this.kernel.requestUnload(name)),
+        ];
+        if (going.length) {
+          progress = true;
+          await Promise.all(going.map((each) => each.catch(() => {})));
+          round = [...specs];
+        }
       }
     }
     for (const spec of waiting) failed.push({ name: spec.name, message: `It needs ${this.kernel.waitingFor(spec.name).join(", ")}, which no loaded plugin provides.` });
@@ -252,7 +266,8 @@ export class Host {
     return !!(declared?.requires?.services?.length || declared?.contributes?.slots?.length);
   }
 
-  private async load(spec: HostPluginSpec, ticket: number): Promise<void> {
+  /** Loads `spec`'s code; "waiting": what it depends on is not active now (it started going while the code was imported). */
+  private async load(spec: HostPluginSpec, ticket: number): Promise<"waiting" | void> {
     const activate = await this.importer(spec);
     // Still unloading (an async disposer of the code it replaces), or loaded by a call that overlapped: gone first. Each
     // wait may end with another sync's instance there, so it is looked at again; once a newer sync started, it decides.
@@ -262,6 +277,7 @@ export class Host {
       await this.unload(spec.name);
     }
     this.declare(spec);
+    if (this.kernel.waitingFor(spec.name).length) return "waiting";
     const plugin = newLoaded(spec);
     const generation = this.kernel.startLoad(spec.name);
     this.generations.set(plugin, generation);
