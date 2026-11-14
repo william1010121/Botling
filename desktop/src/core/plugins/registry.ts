@@ -14,6 +14,7 @@ import { dirname, extname, join, normalize, relative, resolve, sep } from "node:
 import { writeFileAtomic } from "../durable/atomic";
 import { checkPlugin, diskFolder, loadPlugin, readManifest, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
 import type { Contribution } from "./contributions";
+import { ContributionKernel } from "./kernel-list";
 import type { SecretStore } from "./secrets";
 import { swiftPrettyJSON } from "../swift-json";
 import { listInspectQueries, runInspect, type InspectContext, type InspectResult } from "./introspect";
@@ -141,6 +142,8 @@ export class PluginRegistry {
   private lastGood = new Map<string, WebSpec>();
   private lastSent = new Map<string, WebSpec>();
   private scanned = false;
+  /** The plugin kernel holding each enabled plugin's contributions (kernel step 1; kernel-list.ts). */
+  readonly contributionKernel = new ContributionKernel();
 
   /** `builtIns`: the folder of the plugins shipped with the app (none in some tests). */
   constructor(readonly library: string, private readonly stateFile: string, readonly secrets: SecretStore, readonly builtIns: string | null = null) {
@@ -529,6 +532,8 @@ export class PluginRegistry {
     this.plugins = sorted;
     this.problems = problems;
     this.scanned = true;
+    // A plugin turned off, failed, removed or changed: the kernel takes its contributions back now (newest first).
+    if (changed) this.contributions();
     if (changed) this.bump();
     return changed;
   }
@@ -545,13 +550,16 @@ export class PluginRegistry {
 
   /**
    * What enabled plugins contribute, read again from each package.json (`readManifest`: `botling`, or
-   * `ccb` as it works today). Nothing acts on it yet; it is the one source later steps move onto.
+   * `ccb` as it works today), held by the plugin kernel: each plugin's entries are registrations of its instance, and the
+   * list is read back from them (a copy, in the same order as before the kernel).
    */
   contributions(): Contribution[] {
-    return this.plugins.flatMap((plugin) => {
-      if (!plugin.enabled || plugin.failure) return [];
-      try { return readManifest(JSON.parse(readFileSync(join(plugin.folder, "package.json"), "utf8")), diskFolder(plugin.folder)).contributions; } catch { return []; }
+    const enabled = this.plugins.filter((plugin) => plugin.enabled && !plugin.failure).map((plugin) => {
+      let contributions: Contribution[] = [];
+      try { contributions = readManifest(JSON.parse(readFileSync(join(plugin.folder, "package.json"), "utf8")), diskFolder(plugin.folder)).contributions; } catch { /* none */ }
+      return { name: plugin.manifest.name, contributions, version: this.fingerprints[plugin.manifest.name] ?? "" };
     });
+    return structuredClone(this.contributionKernel.reconcile(enabled));
   }
 
   /**
