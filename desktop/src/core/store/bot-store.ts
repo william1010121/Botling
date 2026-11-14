@@ -41,7 +41,35 @@ export function readJSON(file: string): unknown {
   }
 }
 
-export class BotStore {
+export type ChatFile = (typeof CHAT_FILES)[number];
+
+/**
+ * What a bot keeps: its chat lines, settings, lists, subagents and head session. Synchronous on purpose: the core
+ * calls it from synchronous code and reads its own writes at once. 2.x uses `FileBotStore` (the files above) and
+ * nothing else; Botling 3 adds `DbBotStore` on server.db rows (`src/server/botstore/`).
+ */
+export interface BotStore {
+  /** The bot's data folder (other files of the bot, such as its worker ledger, live there). */
+  readonly directory: string;
+  loadMessages(): { records: ChatRecord[]; dropped: number };
+  saveMessages(records: ChatRecord[]): void;
+  loadSettings(): Record<string, unknown>;
+  saveSetting(key: string, value: unknown): void;
+  loadAlwaysAllowed(): string[];
+  loadUnread(): number;
+  loadModel(): string | null;
+  loadList(name: ChatFile): unknown[];
+  saveList(name: ChatFile, list: unknown[]): void;
+  stageSubagentLine(id: string, line: SubagentLine): void;
+  commitSubagents(list: unknown[], changedIds?: ReadonlySet<string>): void;
+  readSubagentSteps(id: string): SubagentHistory;
+  flushSubagents(): void;
+  loadHead(): HeadState | null;
+  saveHead(state: HeadState): void;
+}
+
+/** 2.x's store: one bot's files, in the layout described at the top of this file. */
+export class FileBotStore implements BotStore {
   constructor(readonly directory: string) {}
 
   private subagentStore?: SubagentStore;
@@ -105,7 +133,7 @@ export class BotStore {
   }
 
   /** A list file kept as it is (subagents.json, tasks.json, …): its entries, or [] when missing. */
-  loadList(name: (typeof CHAT_FILES)[number]): unknown[] {
+  loadList(name: ChatFile): unknown[] {
     if (name === "subagents.json") {
       try { return this.subagents.load(); }
       catch (error) { throw error instanceof StoreError ? error : new StoreError(this.path(name), (error as Error).message); }
@@ -118,7 +146,7 @@ export class BotStore {
   }
 
   /** Other lists replace their file; the subagents are the index (their staged steps are appended first). */
-  saveList(name: (typeof CHAT_FILES)[number], list: unknown[]) {
+  saveList(name: ChatFile, list: unknown[]) {
     if (name === "subagents.json") this.commitSubagents(list);
     else writeFileAtomic(this.path(name), JSON.stringify(list));
   }
@@ -146,3 +174,6 @@ export class BotStore {
     writeFileAtomic(this.path("head.json"), JSON.stringify(state));
   }
 }
+
+/** `new BotStore(folder)` keeps meaning the 2.x file store, so every 2.x caller stays as it was. */
+export const BotStore = FileBotStore;
