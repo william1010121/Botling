@@ -169,11 +169,16 @@ export class Kernel extends PluginKernel {
   }
 
   /**
-   * `plugin` adds `entry` to `slot`. Accepted only while the slot's owner has it and is active (or `plugin` owns it
-   * itself, K2); otherwise refused and `undo` (anything more to take back) runs at once. Returns null then.
+   * `plugin` adds `entry` to `slot`. Accepted only to a slot `plugin` declares it contributes to (or owns), and only while
+   * the slot's owner has it and is active (or `plugin` owns it itself, K2); otherwise refused and `undo` (anything more to
+   * take back) runs at once. Returns null then. The declaration rule keeps the live contributions inside the declared
+   * graph, which `install` keeps acyclic, so unloading dependents first always ends.
    */
   contribute<T>(plugin: string, slot: string, entry: T, undo?: Undo): Registration | null {
     const owner = this.slots.get(slot);
+    if ((owner?.plugin ?? this.declaredOwner(slot)) !== plugin && !this.declarations.get(plugin)?.contributes?.slots?.includes(slot)) {
+      return this.refuse(plugin, "contribution", slot, () => undo?.(), `"${plugin}" does not declare that it contributes to slot "${slot}"`);
+    }
     if (!owner || (owner.plugin !== plugin && this.state(owner.plugin) !== "active")) {
       const named = owner?.plugin ?? this.declaredOwner(slot);
       const state = named ? this.state(named) : "absent";

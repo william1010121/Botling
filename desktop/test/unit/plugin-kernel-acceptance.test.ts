@@ -256,8 +256,8 @@ async function kernelRun(seed: number, maxActions = 40) {
     else if (choice === 5 && loaderGates.length) { action = "settle loader"; loaderGates.splice(random.int(loaderGates.length), 1)[0]!(); }
     else if (choice === 6) { action = "tick"; timers.advance(random.int(timeout + 5)); }
     else if (random.chance(0.3)) {
-      // A contribution it did not declare, to any of the core's slots: refused unless the core is active (K2), whatever
-      // state the contributor or the core is in.
+      // A contribution to any of the core's slots, which it may not have declared: refused then (it would put an edge
+      // outside the declared graph), and otherwise refused unless the core is active (K2), whatever state either is in.
       const slot = random.pick(CORE_SLOTS);
       action = `contribute ${target} → ${slot}`;
       addContribution(target, slot);
