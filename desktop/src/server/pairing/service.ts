@@ -204,6 +204,7 @@ export class PairingService {
       case "pair.cancel": return this.cancel(op.offer);
       case "devices.list": return { devices: this.devices() };
       case "device.revoke": return this.revokeDevice(op.deviceId, op.reason);
+      default: throw new PairingError("bad-request", `${op.op} is not a device pairing request`);
     }
   }
 

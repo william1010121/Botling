@@ -18,12 +18,12 @@ export const addDevice: SignedStatement = {
   sig: sig(3),
 };
 export const addServer: SignedStatement = {
-  body: { type: "add", cluster, member: serverB, kind: "server", keys: { sign: key(4), dh: key(5) }, name: "Linux host", by: serverA, at: 1_763_100_000_000 },
+  body: { type: "add", cluster, member: serverB, kind: "server", keys: { sign: key(4), dh: key(5) }, name: "Linux host", by: serverA, at: 1_763_100_000_000, joined: true },
   signer: serverA,
   sig: sig(6),
 };
 export const endorse: SignedStatement = { body: { type: "endorse", cluster, member: device, addId: hex("a"), by: serverB }, signer: serverB, sig: sig(7) };
-export const revoke: SignedStatement = { body: { type: "revoke", cluster, member: serverB, reason: "stolen", by: serverA, gen: 1, cascade: [device] }, signer: serverA, sig: sig(8) };
+export const revoke: SignedStatement = { body: { type: "revoke", cluster, member: serverB, reason: "stolen", by: serverA, gen: 1, cascade: true }, signer: serverA, sig: sig(8) };
 export const root: SignedStatement = { body: { type: "root", cluster, gen: 1, root: serverA, recoveryPub: key(9), keep: [], prev: null }, signer: "recovery", sig: sig(10) };
 export const reroot: SignedStatement = { body: { type: "root", cluster, gen: 2, root: serverB, recoveryPub: key(9), keep: [hex("e")], prev: hex("f") }, signer: "recovery", sig: sig(11) };
 export const profile: SignedStatement = { body: { type: "profile", cluster, member: device, field: "name", value: "Phone 2", hlc: { ms: 1_763_100_000_000, c: 1 } }, signer: device, sig: sig(12) };

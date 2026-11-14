@@ -292,7 +292,7 @@ describe("roster store: devices (v1 §4.3, §4.4, §4.6)", () => {
       const phone = await memberKeys();
       const sign = (body: StatementBody, signer: string, fn: (bytes: Uint8Array) => Promise<Uint8Array>) => signStatement(body, signer, fn);
       // This server adds the other server (its own act would be the M3 server pairing; signed here directly).
-      const addOther = await sign({ type: "add", cluster, member: other.member, kind: "server", keys: other.keys, name: "Other", by: s.identity.memberId, at: 1 }, s.identity.memberId, (b) => s.identity.sign(b));
+      const addOther = await sign({ type: "add", cluster, member: other.member, kind: "server", keys: other.keys, name: "Other", by: s.identity.memberId, at: 1, joined: true }, s.identity.memberId, (b) => s.identity.sign(b));
       const addPhone = await sign({ type: "add", cluster, member: phone.member, kind: "device", keys: phone.keys, name: "Phone", scope: ["read"], by: other.member, at: 2 }, other.member, other.signer);
       const merged = await s.roster.merge([addPhone.statement, addOther.statement]);
       expect(merged.sort()).toEqual([addOther.id, addPhone.id].sort());
@@ -302,7 +302,7 @@ describe("roster store: devices (v1 §4.3, §4.4, §4.6)", () => {
       expect(endorses.map((item) => item.statement.body)).toEqual([{ type: "endorse", cluster, member: phone.member, addId: addPhone.id, by: s.identity.memberId }]);
 
       // The root (this server, gen 1) revokes the other server.
-      const revoke = await sign({ type: "revoke", cluster, member: other.member, reason: "retired", by: s.identity.memberId, gen: 1, cascade: cascade ? [phone.member] : [] }, s.identity.memberId, (b) => s.identity.sign(b));
+      const revoke = await sign({ type: "revoke", cluster, member: other.member, reason: "retired", by: s.identity.memberId, gen: 1, cascade }, s.identity.memberId, (b) => s.identity.sign(b));
       await s.roster.merge([revoke.statement]);
       expect(s.roster.isValid(other.member)).toBe(false);
       expect(s.roster.isValid(phone.member)).toBe(!cascade);

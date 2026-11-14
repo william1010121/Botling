@@ -11,6 +11,9 @@ import { fromBase64Url, toBase64Url, utf8Bytes } from "./encoding";
 import { ClusterId, MemberId, MemberKeys, RecoveryCode, StatementId } from "./roster";
 import { DeviceScope } from "./scopes";
 
+/** A server join offer's id (`JoinOffer.offer`, join.ts). */
+const JoinOfferId = z.string().regex(/^[A-Za-z0-9_-]{16,32}$/);
+
 export const PAIR_OFFER_TTL_MS = 5 * 60 * 1000;
 export const PAIR_PENDING_LIMIT = 5;
 /** The 6-digit code both screens show, derived from the handshake transcript (§4.4 step 3). */
@@ -83,6 +86,15 @@ export const AdminOp = z.discriminatedUnion("op", [
   z.strictObject({ op: z.literal("pair.cancel"), offer: PairOffer.shape.offer }),
   z.strictObject({ op: z.literal("devices.list") }),
   z.strictObject({ op: z.literal("device.revoke"), deviceId: MemberId, reason: z.string().max(500).optional() }),
+  // Server pairing (§4.5, M3 step 4). On the joining server N: a join offer (the answer carries the link, the code to
+  // read off this screen and this server's fingerprint) and its cancel. On the member S: the link opens a pairing
+  // session with N (the answer shows both fingerprints), then the code typed off N's screen (three tries).
+  z.strictObject({ op: z.literal("join.offer"), name: z.string().min(1).max(100).optional() }),
+  z.strictObject({ op: z.literal("join.cancel"), offer: JoinOfferId }),
+  z.strictObject({ op: z.literal("machine.add"), link: z.string().min(1).max(4_000) }),
+  /** The code as typed (read forgivingly by the server: `JoinCode`); a malformed one costs no try. */
+  z.strictObject({ op: z.literal("machine.code"), attempt: JoinOfferId, code: z.string().min(1).max(32) }),
+  z.strictObject({ op: z.literal("machine.cancel"), attempt: JoinOfferId }),
 ]);
 export type AdminOp = z.infer<typeof AdminOp>;
 
@@ -95,5 +107,11 @@ export const AdminEvent = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("pair.declined"), offer: PairOffer.shape.offer, reason: z.enum(["code", "expired", "cancelled", "ack lost"]) }),
   /** A device was revoked (here or by gossip later): its sessions were closed. */
   z.strictObject({ kind: z.literal("device.revoked"), deviceId: Id }),
+  // Server pairing on the joining server (M3 step 4): who opened the pairing session (show its fingerprint), a wrong
+  // code typed there, the join finished, or the offer ended. The code itself is never in an event.
+  z.strictObject({ kind: z.literal("join.hello"), offer: JoinOfferId, server: MemberId, name: z.string().min(1).max(100), fingerprint: z.string().max(64) }),
+  z.strictObject({ kind: z.literal("join.wrong"), offer: JoinOfferId, left: z.number().int().min(0).max(3) }),
+  z.strictObject({ kind: z.literal("join.done"), offer: JoinOfferId, server: MemberId, cluster: ClusterId }),
+  z.strictObject({ kind: z.literal("join.declined"), offer: JoinOfferId, reason: z.enum(["code", "expired", "cancelled", "member", "lost"]) }),
 ]);
 export type AdminEvent = z.infer<typeof AdminEvent>;

@@ -45,7 +45,14 @@ export const AddStatement = z.strictObject({
   scope: z.array(DeviceScope).min(1).max(4).refine(uniqueScopes, { message: "a scope is listed once" }).optional(),
   by: MemberId,
   at: z.number().int().nonnegative(),
+  /**
+   * D60: true on the Add that brought the member in (every device Add; S's `Add{N}` when N joins through S), false on
+   * N's write-back `Add{S}`. A cascade follows joining Adds only. Required on a server Add; left out of device Adds (so
+   * M2's stored Adds keep their ids), where absent reads as true (`addJoins`).
+   */
+  joined: z.boolean().optional(),
 }).superRefine((add, ctx) => {
+  if (add.kind === "server" && add.joined === undefined) ctx.addIssue({ code: "custom", path: ["joined"], message: "a server's Add states whether it joined the member (D60)" });
   if (add.kind === "device" && !add.scope) ctx.addIssue({ code: "custom", path: ["scope"], message: "a device's Add states its scope" });
   if (add.kind === "server" && add.scope) ctx.addIssue({ code: "custom", path: ["scope"], message: "a server's Add has no scope" });
   if (add.member === add.by) ctx.addIssue({ code: "custom", path: ["by"], message: "a member does not add itself" });
@@ -60,10 +67,12 @@ export const RevokeStatement = z.strictObject({
   reason: z.string().max(500),
   by: MemberId,
   gen: z.number().int().min(1),
-  cascade: z.array(MemberId).max(1_000),
-}).superRefine((revoke, ctx) => {
-  if (new Set(revoke.cascade).size !== revoke.cascade.length) ctx.addIssue({ code: "custom", path: ["cascade"], message: "a member is listed once" });
-  if (revoke.cascade.includes(revoke.member)) ctx.addIssue({ code: "custom", path: ["cascade"], message: "the revoked member is not in its own cascade" });
+  /**
+   * D61: whether a server revocation takes the members its joining Adds brought in with it (each server computes that
+   * cascade from its own set, validity.ts). A boolean; the empty array `[]` that M2 signed is still read, as false, so
+   * those statements keep their ids and signatures. Only `true` cascades. New revocations sign a boolean.
+   */
+  cascade: z.union([z.boolean(), z.array(MemberId).length(0)]),
 });
 /** `Root{cluster, gen, root, recoveryPub, keep, prev}` (§4.8): signed by the recovery key; gen 1 has no prev and keeps nothing. */
 export const RootStatement = z.strictObject({
@@ -88,6 +97,11 @@ export const ProfileStatement = z.strictObject({
   value: z.string().max(2_000),
   hlc: Hlc,
 });
+
+/** Whether an Add brought its member in (D60): `joined`, absent read as true (device Adds leave it out). */
+export function addJoins(add: { joined?: boolean }): boolean { return add.joined !== false; }
+/** Whether a Revoke cascades (D61): only `cascade: true`; M2's `[]` and `false` do not. */
+export function revokeCascades(revoke: { cascade: boolean | readonly string[] }): boolean { return revoke.cascade === true; }
 
 export const StatementBody = z.discriminatedUnion("type", [AddStatement, EndorseStatement, RevokeStatement, RootStatement, ProfileStatement]);
 export type StatementBody = z.infer<typeof StatementBody>;

@@ -56,7 +56,7 @@ export async function makeCluster(servers: MemberKeysInfo[], recovery?: Recovery
   for (const by of servers) {
     for (const member of servers) {
       if (member === by) continue;
-      statements.push(await sign({ type: "add", cluster: clusterId, member: member.memberId, kind: "server", keys: { sign: member.sign, dh: member.dh }, name: `server ${member.memberId.slice(0, 4)}`, by: by.memberId, at: 1_700_000_000_000 }, by));
+      statements.push(await sign({ type: "add", cluster: clusterId, member: member.memberId, kind: "server", keys: { sign: member.sign, dh: member.dh }, name: `server ${member.memberId.slice(0, 4)}`, by: by.memberId, at: 1_700_000_000_000, joined: true }, by));
     }
   }
   return { recovery: rec, clusterId, root, statements };

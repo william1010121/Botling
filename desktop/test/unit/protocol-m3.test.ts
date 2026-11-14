@@ -31,7 +31,7 @@ const machine = { name: "server B", os: "linux", versions: { botling: "3.0.0", n
 const m2Audit = { act: "device.add", at: 1_763_100_000_000, statement: hex("a"), by: serverA, member: "dddddddddddddddddddddddddd", name: "Phone" };
 const vapid = { publicKey: toBase64Url(new Uint8Array(65).fill(9).map((byte, index) => (index === 0 ? 4 : byte))), privateKey: key(21) };
 /** N's Add of S (`join.done`): by N, member S. */
-const addOfS: SignedStatement = { body: { type: "add", cluster, member: serverA, kind: "server", keys: { sign: key(31), dh: key(32) }, name: "server A", by: serverB, at: 1_763_100_000_000 }, signer: serverB, sig: sig(33) };
+const addOfS: SignedStatement = { body: { type: "add", cluster, member: serverA, kind: "server", keys: { sign: key(31), dh: key(32) }, name: "server A", by: serverB, at: 1_763_100_000_000, joined: false }, signer: serverB, sig: sig(33) };
 const prefRow: PrefRow = { key: "language", value: "zh-Hant", hlc: hlc(1_763_100_000_000, 1), writer: serverA };
 
 type Sample = { message: WireMessage; sender: Sender; session: SessionKind };
