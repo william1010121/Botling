@@ -461,6 +461,17 @@ describe("a scripted device pairs over the in-memory transport", () => {
     await eventOf(s, "pair.done", offer.offer, from);
   });
 
+  it("after the ack, the ack timer gives nothing back (no late 'ack lost' for a used offer) (step 8)", async () => {
+    const s = await server({ ackTimeoutMs: 150 });
+    await s.cluster();
+    const { device } = await pairDevice(s);
+    const offer = device.offer;
+    const from = s.events.length;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(s.events.slice(from).filter((e) => e.kind === "pair.declined")).toEqual([]);
+    expect(await s.pairing.confirm(offer.offer, true)).toMatchObject({ ok: false, reason: "used" });
+  });
+
   it("one handshake at a time per offer: a second device is told busy; the offer stays with the first", async () => {
     const s = await server();
     await s.cluster();

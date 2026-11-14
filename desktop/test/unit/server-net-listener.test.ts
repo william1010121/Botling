@@ -24,7 +24,7 @@ import { IntentRuntime } from "../../src/server/intents";
 import { LiveChannel } from "../../src/server/live";
 import { LogHub } from "../../src/server/log";
 import {
-  CSP, DEFAULT_LISTEN_PORT, LISTEN_HOST, listenPort, LoopbackListener, PLACEHOLDER_PAGE, SECURITY_HEADERS, tailscaleServeCommand, WS_MAX_PAYLOAD,
+  CHAT_CSP, CSP, DEFAULT_LISTEN_PORT, FRAME_HOST_CSP, LISTEN_HOST, listenPort, LoopbackListener, PLACEHOLDER_PAGE, SECURITY_HEADERS, tailscaleServeCommand, WS_MAX_PAYLOAD,
 } from "../../src/server/net";
 import { RosterStore } from "../../src/server/roster";
 import { RemoteSessions, slotAuthorize, type RemoteHost, type RemoteSession, type SessionHost } from "../../src/server/session";
@@ -371,6 +371,26 @@ describe("/v3/ over HTTP", () => {
     });
     expect(raw).toMatch(/^HTTP\/1\.1 404 /);
     expect(raw).not.toContain("secret");
+  });
+
+  it("gives the sandboxed chat page and the component frame host their own policies; the page's assets any-origin readable (step 8)", async () => {
+    const page = join(root, `page${++folders}`);
+    mkdirSync(page, { recursive: true });
+    for (const name of ["index.html", "chat.html", "frame-host.html"]) writeFileSync(join(page, name), "<!doctype html><title>x</title>");
+    writeFileSync(join(page, "chat.js"), "1");
+    const s = await server({ pageDir: page });
+    const head = async (path: string) => (await fetch(s.url(path))).headers;
+    const index = await head("/v3/");
+    expect([index.get("content-security-policy"), index.get("x-frame-options"), index.get("cross-origin-resource-policy")]).toEqual([CSP, "SAMEORIGIN", "same-origin"]);
+    const chat = await head("/v3/chat.html");
+    expect([chat.get("content-security-policy"), chat.get("x-frame-options"), chat.get("cross-origin-resource-policy")]).toEqual([CHAT_CSP, "SAMEORIGIN", "same-origin"]);
+    expect(CHAT_CSP.split("; ")).toEqual(expect.arrayContaining(["default-src 'none'", "script-src 'self' blob:", "connect-src 'none'", "frame-ancestors 'self'"]));
+    const host = await head("/v3/frame-host.html");
+    expect([host.get("content-security-policy"), host.get("x-frame-options")]).toEqual([FRAME_HOST_CSP, null]);
+    expect(FRAME_HOST_CSP.split("; ")).toEqual(expect.arrayContaining(["sandbox allow-scripts", "connect-src 'none'", "frame-src 'none'"]));
+    const js = await head("/v3/chat.js");
+    expect([js.get("content-security-policy"), js.get("cross-origin-resource-policy")]).toEqual([CSP, "cross-origin"]);
+    expect((await fetch(s.url("/v3/missing.js"))).headers.get("cross-origin-resource-policy")).toBe("same-origin");
   });
 
   it("serves a placeholder page (no script) until the page is built", async () => {

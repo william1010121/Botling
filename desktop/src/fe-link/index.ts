@@ -8,3 +8,4 @@ export * from "./cursors";
 export * from "./outbox";
 export * from "./link";
 export * from "./idb-storage";
+export * from "./ws-dial";

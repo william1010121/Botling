@@ -46,6 +46,7 @@
     "test",
     "spec-adapters",
     "builtin-plugins",
+    "web-v3",
     "../spec",
     "*.ts"
   ],

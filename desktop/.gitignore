@@ -6,3 +6,4 @@ test-results/
 playwright-report/
 .cache/
 dist
+web-v3/dist.inputs.json
