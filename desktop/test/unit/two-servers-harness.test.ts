@@ -52,8 +52,8 @@ describe("two-server harness: two botlingd on loopback", () => {
       const client = await server.client();
       serverIds.set(server.name, client.welcome!.serverId);
       client.close();
-      // Every socket it listens on is 127.0.0.1 (botlingd's TCP listener is M2 step 6; until then it has none).
-      const sockets = server.assertLoopbackOnly();
+      // Every socket it listens on is 127.0.0.1, and its loopback listener (M2 step 6) is on its own port.
+      const sockets = server.assertLoopbackOnly({ expectListener: true });
       for (const socket of sockets) expect(socket.address).toBe(LOOPBACK);
     }
     expect(serverIds.get("A")).not.toBe(serverIds.get("B"));
@@ -94,7 +94,7 @@ describe("two-server harness: two botlingd on loopback", () => {
       expect(server.alive).toBe(false);
       expect(other.alive).toBe(true);
       await server.start();
-      server.assertLoopbackOnly();
+      server.assertLoopbackOnly({ expectListener: true });
 
       const again = await server.client("script", client.originEpoch);
       expect(again.welcome!.serverId).toBe(serverIds.get(server.name));

@@ -8,9 +8,9 @@ Test-only support for every M3 step that needs a second server (`test/support/`)
 | `fault-proxy.ts` | `FaultProxy.start({ target, framing, seed })` on `127.0.0.1`: per frame `drop`, `duplicate`, `delay` (order kept), `cut`, `halfOpen`, `partition`/`heal`, `replay(conn)` (a whole session on a new connection), `schedule({ drop, duplicate, delay })` from a seeded PRNG; every decision in `events`. |
 | `framed.ts` | Framings (`length`, `websocket` = RFC 6455 messages, control frames never faulted), `framedServer` / `framedEcho` (far-side observers), `dialFramed`. |
 
-The port is handed to botlingd as `BOTLING_SERVER_PORT` (`LISTEN_PORT_ENV`); botlingd gets its TCP listener in M2 step 6,
-after which peer tests pass `expectListener: true` and point the proxy at the server's port (`websocket` framing for
-`/v3/ws`). If step 6 names the setting differently, change `LISTEN_PORT_ENV` in one place.
+The port is handed to botlingd as `BOTLING_SERVER_PORT` (`LISTEN_PORT_ENV`); botlingd's loopback listener (M2 step 6,
+`server/net/http.ts`) binds it on 127.0.0.1, so peer tests pass `expectListener: true` and point the proxy at the
+server's port (`websocket` framing for `/v3/ws`).
 
 ```sh
 cd desktop

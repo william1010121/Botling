@@ -14,9 +14,9 @@
 //
 // Environment: every server gets a fresh environment with none of this process's BOTLING_* / ELECTRON_* / CLAUDE*
 // variables (botlingdEnv), only its data folder, the fake engine and the harness's own settings. Its port is passed
-// as `BOTLING_SERVER_PORT` (LISTEN_PORT_ENV); botlingd has no TCP listener until M2 step 6 (`server/net/http.ts`), so
-// until then the port is reserved for it and `assertLoopbackOnly` checks that whatever it listens on is loopback;
-// `expectListener` makes the listener itself required once it exists.
+// as `BOTLING_SERVER_PORT` (LISTEN_PORT_ENV): botlingd's loopback listener (M2 step 6, `server/net/http.ts`: the page,
+// `/v3/ws`) binds it on 127.0.0.1; `assertLoopbackOnly` checks that whatever it listens on is loopback and, with
+// `expectListener`, that the listener itself is there.
 //
 // Temp data goes under the external work volume when it is mounted (testRoot), one root folder per harness, removed by
 // `cleanup` (afterAll). Built botlingd (out/server/main.cjs) is required: `npm run build` first.
@@ -30,7 +30,7 @@ import { until } from "../helpers";
 import { FaultProxy } from "./fault-proxy";
 import { LOOPBACK, type Framing } from "./framed";
 
-/** The variable that names botlingd's loopback port (read once M2 step 6's listener exists). */
+/** The variable that names botlingd's loopback port (server/net/http.ts reads the same name). */
 export const LISTEN_PORT_ENV = "BOTLING_SERVER_PORT";
 export const SERVER_NAMES = ["A", "B", "C", "D"] as const;
 
