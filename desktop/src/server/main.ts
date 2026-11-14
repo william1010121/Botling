@@ -14,14 +14,24 @@
 //                             puts a backup back with the server stopped (restore.ts says why); refused (exit 75) while
 //                             it runs, unless --stop, which stops it first. It is not started again here: a Botling 3
 //                             window starts it when it reconnects, or run botlingd start.
+//   botlingd pair [--name <device name>] [--scope read,reply,approve,manage] [--no-qr]
+//                             pairs a phone or browser with the running server (M2 step 5): the first pairing shows the
+//                             recovery code once and makes the cluster only after it is typed back; then a link and QR
+//                             code (5 min, single use), the 6-digit code to compare, and the device's ack
+//   botlingd devices [--json] the paired devices (valid and revoked)
+//   botlingd revoke-device <id> [--reason <text>]
+//                             revokes a device: its sessions end at once and it can never connect again
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/store/data-dir-lock";
 import { Botlingd, BOTLINGD_VERSION, DataDirInUseError } from "./botlingd";
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
-import { botlingdPaths, PathsError, socketAnswers } from "./session";
+import { AdminClient, devicesCommand, pairCommand, revokeDeviceCommand, type CliIo } from "./pairing";
+import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
+import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
 
@@ -95,6 +105,10 @@ interface Status {
   /** The newest backup (any kind) and when it was taken, or null. */
   backup: { path: string; at: number } | null;
   notes: ServerNote[];
+  /** The running server's cluster (null before the first pairing), when it answers. */
+  clusterId?: string | null;
+  /** While a recovery code was shown and not typed back yet (the cluster is not made until it is). */
+  recoveryNote?: string | null;
 }
 
 async function status(dataDir: string, socket: string): Promise<Status> {
@@ -120,7 +134,58 @@ async function status(dataDir: string, socket: string): Promise<Status> {
   } finally {
     db.close();
   }
+  // The pending cluster setup lives only in the running server's memory (the code is never written anywhere): ask it.
+  const token = answers ? readToken(join(dataDir, "botlingd.token")) : null;
+  if (answers && token) {
+    try {
+      const client = await AdminClient.connect(socket, token, 3_000);
+      try {
+        const cluster = await client.request({ op: "cluster.status" }, 3_000) as { clusterId: string | null; note: string | null };
+        result.clusterId = cluster.clusterId;
+        result.recoveryNote = cluster.note;
+      } finally {
+        client.close();
+      }
+    } catch { /* an older server or a busy one: the rest of the status stands */ }
+  }
   return result;
+}
+
+/** Line input for the CLI's questions (null once stdin ended). */
+function stdinIo(): CliIo & { close(): void } {
+  const lines: string[] = [];
+  const waiters: Array<(line: string | null) => void> = [];
+  let ended = false;
+  const reader = createInterface({ input: process.stdin, terminal: false });
+  reader.on("line", (line) => { const waiter = waiters.shift(); if (waiter) waiter(line); else lines.push(line); });
+  reader.on("close", () => { ended = true; for (const waiter of waiters.splice(0)) waiter(null); });
+  return {
+    out,
+    ask: (prompt) => {
+      process.stdout.write(prompt.endsWith("\n") ? prompt : `${prompt}\n`);
+      if (lines.length) return Promise.resolve(lines.shift()!);
+      if (ended) return Promise.resolve(null);
+      return new Promise((resolve) => waiters.push(resolve));
+    },
+    close: () => reader.close(),
+  };
+}
+
+/** A local admin session with the running server, or exit with why not. */
+async function adminSession(paths: BotlingdPaths): Promise<AdminClient> {
+  if (holderPid(paths.dataDir) === null || !existsSync(paths.socket)) fail("botlingd is not running (botlingd start).", 3);
+  const token = readToken(paths.token);
+  if (!token) fail(`no local token at ${paths.token}; is botlingd running?`, 3);
+  try {
+    return await AdminClient.connect(paths.socket, token!);
+  } catch (error) {
+    return fail(`cannot reach botlingd: ${(error as Error).message}`, 3);
+  }
+}
+
+function flag(args: string[], name: string): string | undefined {
+  const at = args.indexOf(name);
+  return at >= 0 ? args[at + 1] : undefined;
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -142,6 +207,41 @@ async function main(argv: string[]): Promise<void> {
       }
       out(report.backup ? `newest backup: ${report.backup.path} (${new Date(report.backup.at).toISOString()})` : "no backup yet");
       for (const note of report.notes) out(`note: ${note.text}`);
+      if (report.recoveryNote) out(`note: ${report.recoveryNote}`);
+      if (report.answers && report.clusterId !== undefined) out(report.clusterId ? `cluster: ${report.clusterId}` : "cluster: none yet (made at the first pairing: botlingd pair)");
+      return;
+    }
+    case "pair": {
+      const scopeText = flag(rest, "--scope");
+      let scope: DeviceScope[] | undefined;
+      if (scopeText !== undefined) {
+        const parsed = scopeText.split(/[,+]/).map((item) => DeviceScope.safeParse(item.trim()));
+        if (!parsed.length || parsed.some((item) => !item.success)) fail("--scope takes read, reply, approve, manage (comma-separated)", 2);
+        scope = parsed.map((item) => item.data!);
+      }
+      const client = await adminSession(paths);
+      const io = stdinIo();
+      const name = flag(rest, "--name");
+      let code = 1;
+      try {
+        code = await pairCommand(client, io, { ...(name ? { name } : {}), ...(scope ? { scope } : {}), qr: !rest.includes("--no-qr") });
+      } finally {
+        io.close();
+        client.close();
+      }
+      process.exit(code);
+      return;
+    }
+    case "devices": {
+      const client = await adminSession(paths);
+      try { process.exitCode = await devicesCommand(client, { out, ask: async () => null }, { json: rest.includes("--json") }); } finally { client.close(); }
+      return;
+    }
+    case "revoke-device": {
+      const id = rest.find((arg, index) => !arg.startsWith("--") && rest[index - 1] !== "--reason");
+      if (!id) fail("revoke-device needs the device id: botlingd revoke-device <id> [--reason <text>] (botlingd devices lists them)", 2);
+      const client = await adminSession(paths);
+      try { process.exitCode = await revokeDeviceCommand(client, { out, ask: async () => null }, id!, flag(rest, "--reason")); } finally { client.close(); }
       return;
     }
     case "backup": {
@@ -172,7 +272,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     default:
-      fail(`unknown command "${command}" (start, stop, status, backup, restore)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, backup, restore, pair, devices, revoke-device)`, 2);
   }
 }
 
