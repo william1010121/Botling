@@ -297,13 +297,16 @@ export class PluginKernel {
     return null;
   }
 
-  /** Runs the undo of a registration that came too late, now; a failure is reported, never thrown. */
+  /**
+   * Runs the undo of a registration that came too late, now; a failure is reported, never thrown. Nothing waits for it,
+   * but one that never settles is reported at the time limit, like any other undo.
+   */
   private runLate(plugin: string, generation: number, label: string, undo: Undo): void {
     this.record("RunUndo", plugin, generation, label, "undone at once");
     const failed = (error: unknown) => this.fail({ plugin, generation, registration: label, message: message(error) });
     try {
       const result = undo();
-      if (isThenable(result)) result.then(undefined, failed);
+      if (isThenable(result)) void this.bounded(Promise.resolve(result), () => failed(new Error(`its undo did not finish within ${this.timeoutMs} ms`))).then(undefined, failed);
     } catch (error) {
       failed(error);
     }
