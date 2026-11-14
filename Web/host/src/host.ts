@@ -1,9 +1,17 @@
 // Botling's plugin host: one Node process that runs every plugin's program part (`ccb.host`).
 // It talks to Botling over stdin/stdout, one JSON-RPC message per line (like LSP, without headers).
 // Plugins' own console output goes to stderr so it cannot break the protocol.
+//
+// Each plugin's registrations (every disposer its api calls return, and what `activate` returns) are kept by Botling's
+// plugin kernel (Web/src/plugin-kernel, kernel step 1): at unload they are undone newest first and may be async (each
+// within a time limit); one that throws, rejects or hangs does not stop the others and is reported once (`unloadFailed`
+// in the next `load` answer); a registration made after the unload started (an `activate` that settles late) is undone at
+// once; a plugin another one requires (built-in declarations, given by `declarations`) unloads after it. When every
+// disposer is synchronous an unload still completes inside the call, as before.
 
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
+import { Kernel, type KernelTimers, type PluginDeclaration } from "../../src/plugin-kernel";
 import { createApi, newLoaded, type BotlingApi, type HostPluginSpec, type Incoming, type JSONValue, type Loaded, type Outgoing, type PluginEventName, type WORKSPACE_EVENT } from "./api";
 
 export type {
@@ -23,8 +31,38 @@ interface Message {
 
 type Activate = (api: BotlingApi) => void | Dispose | Promise<void | Dispose>;
 
+export interface HostOptions {
+  /** How long one async disposer may take at unload before it counts as failed (default 5 s). */
+  undoTimeoutMs?: number;
+  timers?: KernelTimers;
+  /** What a plugin declares to the kernel (`requires` / `provides`); none: it needs nothing (every 2.x plugin). */
+  declarations?: (spec: HostPluginSpec) => Omit<PluginDeclaration, "name"> | null;
+}
+
+/** The kernel of the host's plugins: tells the host when an instance starts unloading, so nothing routes to it from then on. */
+class HostKernel extends Kernel {
+  constructor(private readonly started: (plugin: string, generation: number) => void, options: ConstructorParameters<typeof Kernel>[0]) {
+    super(options);
+  }
+
+  protected override unloadStarted(plugin: string, generation: number): void {
+    this.started(plugin, generation);
+  }
+}
+
 export class Host {
   private readonly plugins = new Map<string, Loaded>();
+  /** Each loaded plugin's kernel generation (which instance its registrations belong to). */
+  private readonly generations = new WeakMap<Loaded, number>();
+  private readonly kernel: HostKernel;
+  /** Disposers that failed since the last `load` answer, which reports them once. */
+  private unloadFailures: { name: string; message: string }[] = [];
+  /** Registrations made so far (their keys in the kernel's log). */
+  private registered = 0;
+  /** `sync` calls so far: each asks for the whole list, so the newest decides and an older one still going steps aside. */
+  private syncs = 0;
+  /** Loads in progress, by plugin (a newer sync whose plugins wait for one of them waits for it before giving up). */
+  private readonly loading = new Map<string, Promise<"waiting" | void>>();
   private readonly pending = new Map<number, { resolve: (value: JSONValue) => void; reject: (error: Error) => void }>();
   private nextID = 1;
   /** The plugin whose code is running, so a crash can be blamed on it. */
@@ -34,7 +72,16 @@ export class Host {
   /** What ends the host after the shutdown answer is written (`main` exits once stdout is flushed). */
   onShutdown: () => void = () => {};
 
-  constructor(private readonly write: (message: Message) => void, private readonly importer: (spec: HostPluginSpec) => Promise<Activate> = importPlugin) {}
+  constructor(private readonly write: (message: Message) => void, private readonly importer: (spec: HostPluginSpec) => Promise<Activate> = importPlugin, private readonly options: HostOptions = {}) {
+    this.kernel = new HostKernel((name, generation) => {
+      const plugin = this.plugins.get(name);
+      if (plugin && this.generations.get(plugin) === generation) this.plugins.delete(name);
+    }, {
+      ...(options.undoTimeoutMs !== undefined ? { undoTimeoutMs: options.undoTimeoutMs } : {}),
+      ...(options.timers ? { timers: options.timers } : {}),
+      onUndoFailure: (failure) => { this.unloadFailures.push({ name: failure.plugin, message: failure.message }); },
+    });
+  }
 
   // MARK: Protocol
 
@@ -113,7 +160,8 @@ export class Host {
         return this.runAsync(plugin.spec.name, () => handler(params.params));
       }
       case "shutdown":
-        for (const name of [...this.plugins.keys()]) this.unload(name);
+        // Started, not waited for: the process ends once the answer is written (as before the kernel).
+        for (const name of [...this.plugins.keys()]) void this.unload(name);
         this.shuttingDown = true;
         return null;
       default:
@@ -123,13 +171,23 @@ export class Host {
 
   // MARK: Plugins
 
-  /** Loads, reloads or unloads plugins so exactly `specs` run. */
-  async sync(specs: HostPluginSpec[]): Promise<{ loaded: string[]; failed: { name: string; message: string }[]; timings: Record<string, number> }> {
+  /**
+   * Loads, reloads or unloads plugins so exactly `specs` run. A plugin whose unload is async is waited for (within the
+   * kernel's time limit per disposer) before anything loads; `unloadFailed` (only when there are some) names the
+   * disposers that failed since the last answer.
+   */
+  async sync(specs: HostPluginSpec[]): Promise<{ loaded: string[]; failed: { name: string; message: string }[]; timings: Record<string, number>; unloadFailed?: { name: string; message: string }[] }> {
+    const ticket = ++this.syncs;
     const wanted = new Map(specs.map((spec) => [spec.name, spec]));
-    for (const [name, plugin] of this.plugins) {
+    const unloading: Promise<void>[] = [];
+    for (const [name, plugin] of [...this.plugins]) {
+      // Unloaded meanwhile as a dependent of one unloaded before it.
+      if (this.plugins.get(name) !== plugin) continue;
       const next = wanted.get(name);
       if (!next || next.fingerprint !== plugin.spec.fingerprint || next.main !== plugin.spec.main) {
-        this.unload(name);
+        const gone = this.unload(name);
+        // Only an unload still going is waited for: one that finished inside its call adds no wait (nor a tick).
+        if (this.kernel.state(name) === "unloading") unloading.push(gone);
       } else {
         // Same code: new settings (its own, or Botling's that it reads) are told, not reloaded.
         const before = plugin.spec.settings;
@@ -140,47 +198,126 @@ export class Host {
         }
       }
     }
+    if (unloading.length) await Promise.all(unloading);
+    // What is not asked for any more leaves the kernel with its declaration, so another plugin may declare what it provided.
+    if (ticket === this.syncs) {
+      for (const name of this.kernel.installed()) if (!wanted.has(name) && this.kernel.state(name) === "absent") this.kernel.uninstall(name);
+    }
     const failed: { name: string; message: string }[] = [];
     const timings: Record<string, number> = {};
-    for (const spec of specs) {
-      if (this.plugins.has(spec.name)) continue;
-      const started = performance.now();
-      try {
-        await this.load(spec);
-        timings[spec.name] = Math.round(performance.now() - started);
-      } catch (error) {
-        this.unload(spec.name);
-        failed.push({ name: spec.name, message: errorText(error) });
+    // A plugin whose required services are not there yet waits for the ones that provide them (none in 2.x).
+    let waiting: HostPluginSpec[] = [];
+    for (let round = [...specs], progress = true; round.length && progress;) {
+      waiting = [];
+      progress = false;
+      for (const spec of round) {
+        // A newer sync started while this one waited: it decides what runs (this one loads nothing more, and fails nothing).
+        if (ticket !== this.syncs) { waiting = []; break; }
+        if (this.plugins.has(spec.name) || failed.some((failure) => failure.name === spec.name)) continue;
+        let depends: boolean;
+        try {
+          depends = this.declare(spec);
+        } catch (error) {
+          // A declaration the kernel refuses (a requires cycle, a service another plugin provides).
+          failed.push({ name: spec.name, message: errorText(error) });
+          continue;
+        }
+        if (depends && this.kernel.waitingFor(spec.name).length) { waiting.push(spec); continue; }
+        progress = true;
+        const started = performance.now();
+        const going = this.load(spec, ticket);
+        this.loading.set(spec.name, going);
+        try {
+          // What it depends on started going while its code was imported (D65): it waits.
+          if ((await going) === "waiting") waiting.push(spec);
+          else timings[spec.name] = Math.round(performance.now() - started);
+        } catch (error) {
+          await this.unload(spec.name);
+          failed.push({ name: spec.name, message: errorText(error) });
+        } finally {
+          if (this.loading.get(spec.name) === going) this.loading.delete(spec.name);
+        }
+      }
+      round = waiting;
+      // Some wait for a plugin an older sync is still loading, or one still unloading (D65): wait for those, then try the
+      // whole list again (a provider asked for that was unloaded meanwhile loads again first).
+      if (!progress && waiting.length && ticket === this.syncs) {
+        const going: Promise<unknown>[] = [
+          ...this.loading.values(),
+          ...this.kernel.plugins().filter((name) => this.kernel.state(name) === "unloading").map((name) => this.kernel.requestUnload(name)),
+        ];
+        if (going.length) {
+          progress = true;
+          await Promise.all(going.map((each) => each.catch(() => {})));
+          round = [...specs];
+        }
       }
     }
+    for (const spec of waiting) failed.push({ name: spec.name, message: `It needs ${this.kernel.waitingFor(spec.name).join(", ")}, which no loaded plugin provides.` });
     this.announce();
-    return { loaded: [...this.plugins.keys()], failed, timings };
+    const unloadFailed = this.unloadFailures.splice(0);
+    return { loaded: [...this.plugins.keys()], failed, timings, ...(unloadFailed.length ? { unloadFailed } : {}) };
   }
 
-  private async load(spec: HostPluginSpec): Promise<void> {
+  /** Gives the kernel the plugin's declaration (once per load); whether it depends on another (requires, slot contributions). */
+  private declare(spec: HostPluginSpec): boolean {
+    const declared = this.options.declarations?.(spec) ?? null;
+    if (this.kernel.state(spec.name) === "absent") this.kernel.install({ name: spec.name, ...(declared ?? {}) });
+    return !!(declared?.requires?.services?.length || declared?.contributes?.slots?.length);
+  }
+
+  /** Loads `spec`'s code; "waiting": what it depends on is not active now (it started going while the code was imported). */
+  private async load(spec: HostPluginSpec, ticket: number): Promise<"waiting" | void> {
     const activate = await this.importer(spec);
+    // Still unloading (an async disposer of the code it replaces), or loaded by a call that overlapped: gone first. Each
+    // wait may end with another sync's instance there, so it is looked at again; once a newer sync started, it decides.
+    for (;;) {
+      if (ticket !== this.syncs) return;
+      if (this.kernel.state(spec.name) === "absent") break;
+      await this.unload(spec.name);
+    }
+    this.declare(spec);
+    if (this.kernel.waitingFor(spec.name).length) return "waiting";
     const plugin = newLoaded(spec);
+    const generation = this.kernel.startLoad(spec.name);
+    this.generations.set(plugin, generation);
     this.plugins.set(spec.name, plugin);
     this.current = spec.name;
     try {
       const result = await activate(createApi(this, plugin));
-      if (typeof result === "function") plugin.disposers.push(result);
+      if (typeof result === "function") this.own(plugin, result);
     } finally {
       this.current = null;
     }
+    // Unloaded while `activate` ran: it stays unloaded (what it registered late was undone at once).
+    if (this.kernel.state(spec.name) !== "loading" || this.kernel.generation(spec.name) !== generation) return;
+    // What it declares it provides is there once it is up (the host carries no calls between plugins yet).
+    for (const service of this.kernel.declaration(spec.name)?.provides?.services ?? []) this.kernel.provide(spec.name, service, spec.name);
+    for (const slot of this.kernel.declaration(spec.name)?.provides?.slots ?? []) this.kernel.provideSlot(spec.name, slot);
+    this.kernel.activate(spec.name);
   }
 
-  unload(name: string): void {
+  /**
+   * Unloads a plugin: nothing routes to it from now on (nor to the plugins that require it, which unload first), and its
+   * disposers run newest first. Settles when it is gone; when every disposer was synchronous it is gone already on return.
+   */
+  unload(name: string): Promise<void> {
     const plugin = this.plugins.get(name);
-    if (!plugin) return;
-    this.plugins.delete(name);
-    for (const dispose of plugin.disposers.reverse()) {
-      try { dispose(); } catch { /* one cleanup failing does not stop the rest */ }
-    }
+    if (plugin) this.plugins.delete(name);
+    if (this.kernel.state(name) === "absent") return Promise.resolve();
+    return this.kernel.requestUnload(name).then(() => undefined);
   }
 
   isLoaded(name: string): boolean {
     return this.plugins.has(name);
+  }
+
+  /** One of `plugin`'s registrations (api.ts `own`): kept by the kernel for that instance, or undone at once if it is unloading. */
+  own(plugin: Loaded, dispose: Dispose): Dispose {
+    const generation = this.generations.get(plugin);
+    if (generation === undefined) { plugin.disposers.push(dispose); return dispose; }
+    const registration = this.kernel.register(plugin.spec.name, "disposer", String(++this.registered), dispose, generation);
+    return registration ? () => { registration.dispose(); } : () => {};
   }
 
   /** Tells Botling which hooks, commands and exposed methods exist, so it only asks when someone is listening. */

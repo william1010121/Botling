@@ -701,6 +701,11 @@ export interface HostSide {
   announceLater(plugin: Loaded): void;
   /** The same now, before anything the plugin sends next (if it is still loaded). */
   announceNow(plugin: Loaded): void;
+  /**
+   * Keeps `dispose` as one of the plugin's registrations (the host's plugin kernel: undone in reverse order at unload, or
+   * at once when the plugin is already unloading); returns what takes it back early. Without it, `plugin.disposers` keeps it.
+   */
+  own?(plugin: Loaded, dispose: Dispose): Dispose;
 }
 
 /** A request whose promise a plugin may ignore (2.x `bots.send` returned nothing): no unhandled rejection then. */
@@ -712,6 +717,7 @@ function quiet<T>(promise: Promise<T>): Promise<T> {
 export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
   const name = plugin.spec.name;
   const own = (dispose: Dispose): Dispose => {
+    if (host.own) return host.own(plugin, dispose);
     plugin.disposers.push(dispose);
     return dispose;
   };

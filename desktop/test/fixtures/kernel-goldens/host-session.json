@@ -1,0 +1,479 @@
+{
+  "written": [
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 0,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ]
+        },
+        "events": [
+          "noteChanged"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 0,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ]
+        },
+        "events": [
+          "noteChanged"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 0,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ]
+        },
+        "events": [
+          "noteChanged"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 0,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ]
+        },
+        "events": [
+          "noteChanged"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 0,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ]
+        },
+        "events": [
+          "noteChanged"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 2,
+        "afterReply": 1,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ],
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "noteChanged"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 2,
+        "afterReply": 1,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ],
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "noteChanged"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 2,
+        "afterReply": 1,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ],
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "noteChanged"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 2,
+        "afterReply": 1,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ],
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "noteChanged",
+          "workspace.changed"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 2,
+        "afterReply": 1,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ],
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "noteChanged",
+          "workspace.changed",
+          "turnFinished"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 2,
+        "afterReply": 1,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ],
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "noteChanged",
+          "workspace.changed",
+          "turnFinished"
+        ]
+      }
+    },
+    {
+      "id": 1,
+      "result": {
+        "loaded": [
+          "acme-board",
+          "zed.tools"
+        ],
+        "failed": [
+          {
+            "name": "broken",
+            "message": "will not load"
+          }
+        ],
+        "timings": [
+          "acme-board",
+          "zed.tools"
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "result": "pong"
+    },
+    {
+      "id": 3,
+      "result": {
+        "text": "hi [acme]"
+      }
+    },
+    {
+      "id": 4,
+      "result": {
+        "cancel": true,
+        "by": "zed.tools"
+      }
+    },
+    {
+      "id": 5,
+      "result": {
+        "text": "DONE"
+      }
+    },
+    {
+      "id": 6,
+      "result": "opened"
+    },
+    {
+      "id": 7,
+      "error": {
+        "message": "No command \"nobody.cmd\"."
+      }
+    },
+    {
+      "id": 8,
+      "result": 3
+    },
+    {
+      "id": 9,
+      "result": {
+        "found": "q"
+      }
+    },
+    {
+      "id": 10,
+      "error": {
+        "message": "Plugin \"zed.tools\" does not handle \"hidden\"."
+      }
+    },
+    {
+      "id": 11,
+      "result": null
+    },
+    {
+      "id": 12,
+      "result": null
+    },
+    {
+      "id": 13,
+      "result": null
+    },
+    {
+      "id": 14,
+      "result": null
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 2,
+        "afterReply": 1,
+        "commands": [
+          "acme-board.open",
+          "acme-board.refresh"
+        ],
+        "exposed": {
+          "acme-board": [
+            "columns"
+          ],
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "noteChanged",
+          "workspace.changed",
+          "turnFinished"
+        ]
+      }
+    },
+    {
+      "id": 15,
+      "result": {
+        "loaded": [
+          "acme-board",
+          "zed.tools"
+        ],
+        "failed": [],
+        "timings": []
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 1,
+        "commands": [],
+        "exposed": {
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": []
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 1,
+        "commands": [],
+        "exposed": {
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": []
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 1,
+        "commands": [],
+        "exposed": {
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": []
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 1,
+        "commands": [],
+        "exposed": {
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "workspace.changed"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 1,
+        "commands": [],
+        "exposed": {
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "workspace.changed",
+          "turnFinished"
+        ]
+      }
+    },
+    {
+      "method": "registered",
+      "params": {
+        "beforeSend": 1,
+        "afterReply": 1,
+        "commands": [],
+        "exposed": {
+          "zed.tools": [
+            "search"
+          ]
+        },
+        "events": [
+          "workspace.changed",
+          "turnFinished"
+        ]
+      }
+    },
+    {
+      "id": 16,
+      "result": {
+        "loaded": [
+          "zed.tools"
+        ],
+        "failed": [],
+        "timings": [
+          "zed.tools"
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "error": {
+        "message": "No command \"acme-board.open\"."
+      }
+    },
+    {
+      "id": 18,
+      "result": null
+    }
+  ],
+  "disposed": [
+    "acme heard noteChanged",
+    "zed heard the workspace",
+    "zed heard a reply",
+    "zed tag green",
+    "columns=4",
+    "acme-board",
+    "zed subscription",
+    "zed subscription"
+  ]
+}

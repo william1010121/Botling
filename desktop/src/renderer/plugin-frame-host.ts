@@ -85,10 +85,11 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       if (result.previewURL && !openReport(bot.id, result.previewURL)) throw new Error("This page shows no report preview.");
       return { opened: result.opened };
     },
-    async composerQuote(_plugin, { botId, text, focus }) {
-      // The broker has checked it is the frame's own bot; App writes into that bot's input box (composer-quote.ts).
+    async composerQuote(plugin, { botId, text, focus }) {
+      // The broker has checked it is the frame's own bot; the chat surface's service writes into that bot's input box
+      // (composer-quote.ts), called through the renderer's plugin kernel for the frame's plugin.
       if (!bots().some((each) => each.id === botId)) return { inserted: false };
-      return { inserted: await quoteIntoComposer(botId, text, focus).catch(() => false) };
+      return { inserted: await quoteIntoComposer(botId, text, focus, plugin).catch(() => false) };
     },
     async requestApproval(plugin, { botId, command, folder, card, detail }) {
       const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}), ...(detail ? { detail } : {}) }).catch(failed);

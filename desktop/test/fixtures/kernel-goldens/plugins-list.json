@@ -1,0 +1,831 @@
+{
+  "plugins": [
+    {
+      "name": "botling.board",
+      "title": "Pins",
+      "version": "1.0.0",
+      "description": "Pin a component to a bot: a chip above the input box (and the sheet it raises) or a small card floating in a corner of the window. It keeps the pins and runs their commands once you allowed them.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "messages",
+        "cards"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.cards",
+      "title": "Cards",
+      "version": "1.0.0",
+      "description": "The app's own cards in the chat: the web preview card (網頁預覽卡片) shows a one-page HTML result small, with a button to open it full size. A component of the same name in the library replaces it.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [],
+      "parts": [
+        "components"
+      ],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.catchup",
+      "title": "Chat summaries",
+      "version": "1.0.0",
+      "description": "Coming back to a chat with many unread replies folds them into one card with a short summary; stretches between your messages can be summarized too. Each point links back to the messages it comes from. Settings → General → Chat summaries.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "messages"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [
+        {
+          "key": "botling.catchup.unread",
+          "type": "boolean",
+          "title": "Summarize unread messages",
+          "options": [],
+          "secret": false,
+          "value": true,
+          "set": true,
+          "hidden": true,
+          "default": true
+        },
+        {
+          "key": "botling.catchup.interval",
+          "type": "boolean",
+          "title": "Summarize between your messages",
+          "options": [],
+          "secret": false,
+          "value": false,
+          "set": true,
+          "hidden": true,
+          "default": false
+        },
+        {
+          "key": "botling.catchup.customThresholds",
+          "type": "boolean",
+          "title": "Adjust thresholds individually",
+          "options": [],
+          "secret": false,
+          "value": false,
+          "set": true,
+          "hidden": true,
+          "default": false
+        },
+        {
+          "key": "botling.catchup.unreadThreshold",
+          "type": "number",
+          "title": "Unread threshold",
+          "options": [],
+          "secret": false,
+          "value": 3,
+          "set": true,
+          "hidden": true,
+          "default": 3
+        },
+        {
+          "key": "botling.catchup.intervalThreshold",
+          "type": "number",
+          "title": "Interval threshold",
+          "options": [],
+          "secret": false,
+          "value": 3,
+          "set": true,
+          "hidden": true,
+          "default": 3
+        },
+        {
+          "key": "botling.catchup.engine",
+          "type": "enum",
+          "title": "Summary model engine",
+          "options": [
+            "codex",
+            "claude",
+            "agy"
+          ],
+          "secret": false,
+          "value": "codex",
+          "set": true,
+          "hidden": true,
+          "default": "codex"
+        },
+        {
+          "key": "botling.catchup.model",
+          "type": "string",
+          "title": "Summary model",
+          "options": [],
+          "secret": false,
+          "value": "gpt-6-luna",
+          "set": true,
+          "hidden": true,
+          "default": "gpt-6-luna"
+        },
+        {
+          "key": "botling.catchup.prompt",
+          "type": "string",
+          "title": "Summary prompt",
+          "options": [],
+          "secret": false,
+          "value": "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written.",
+          "set": true,
+          "hidden": true,
+          "default": "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written."
+        }
+      ],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.chat-extras",
+      "title": "Chat extras",
+      "version": "1.0.0",
+      "description": "Pictures in a row become one gallery, a long message of yours folds to its first lines, and a long paste waits as a chip above the input box.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "composer",
+        "messages"
+      ],
+      "parts": [
+        "web"
+      ],
+      "settings": [
+        {
+          "key": "botling.chat-extras.pasteCollapseChars",
+          "type": "number",
+          "title": "Collapse pastes over (characters; 0 turns it off)",
+          "options": [],
+          "secret": false,
+          "value": 1000,
+          "set": true,
+          "default": 1000
+        },
+        {
+          "key": "botling.chat-extras.pasteCollapseLines",
+          "type": "number",
+          "title": "Collapse pastes over (lines; 0 turns it off)",
+          "options": [],
+          "secret": false,
+          "value": 15,
+          "set": true,
+          "default": 15
+        }
+      ],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.component-studio",
+      "title": "Component studio",
+      "version": "1.0.0",
+      "description": "Turns a reply into a component: \"Make into component\" under a reply (or on a result page's preview card), a bot's own <suggest-component> chip, and the spec workspace in the right panel where you and Maintainer shape it.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "studio"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [],
+      "commands": [
+        {
+          "id": "botling.component-studio.make",
+          "title": "Make into component",
+          "registered": false
+        }
+      ],
+      "panels": []
+    },
+    {
+      "name": "botling.design",
+      "title": "Claude Design",
+      "version": "1.0.0",
+      "description": "/design in the input box: the bot makes a Claude Design on claude.ai and replies with its link.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [],
+      "parts": [],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.dev",
+      "title": "Developer tools",
+      "version": "1.0.0",
+      "description": "For the project that is Botling's own source (Settings → Developer): its manager may install a build it made (<install-build>, you confirm on a card, a build that does not come up is rolled back by itself) and see the app's window (<app-screenshot/>), and hears how in its instructions.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "app",
+        "files"
+      ],
+      "parts": [
+        "host"
+      ],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.git",
+      "title": "Git",
+      "version": "1.0.0",
+      "description": "App-managed git worktrees for a project's work (a branch and folder the agent works in, merged or discarded when you say so), the Review of their changes (diffs, comments sent to the agent, per-turn changes) and committing and opening a pull request from it.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "exec",
+        "files",
+        "bots",
+        "sessions"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [
+        {
+          "key": "botling.git.enabled",
+          "type": "boolean",
+          "title": "App-managed worktrees",
+          "options": [],
+          "secret": false,
+          "value": true,
+          "set": true,
+          "hidden": true,
+          "default": true
+        },
+        {
+          "key": "botling.git.root",
+          "type": "string",
+          "title": "Worktree folder",
+          "options": [],
+          "secret": false,
+          "value": "",
+          "set": true,
+          "hidden": true,
+          "default": ""
+        }
+      ],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.note",
+      "title": "Note",
+      "version": "1.19.1",
+      "description": "A Note tab in each bot's header: edit the bot's own markdown note (.bot/note.md) in place; a line renders as markdown (images, KaTeX math, code, lists) once the cursor leaves it; follows the app's light/dark theme. One note can fork into routes (route tabs, a route overview, `<!-- branch / route -->` comments in the same note.md); a + button and the / menu insert headings, to-dos and images. A cell is a whole chunk of Markdown, cut by `<!-- cell -->` lines (a note without them is one cell per route); each cell is framed with a colored bar by type, can be dragged by its grip (into the route a branch shows, out of a branch, between routes, up/down; Cmd+Z undoes it) and has a toolbar to split at the cursor (Ctrl+Shift+-), merge with the next (Ctrl+Shift+M), insert, move (also into and out of branches), delete and change type (Markdown, code, math). Markdown (GFM pipe) tables render as real tables (header, borders, column alignment) and are edited cell by cell in place (Tab / Shift+Tab, Enter adds a row, a hover bar and right-click menu add or delete rows and columns, \"/表格\" inserts one); the file keeps tidy pipe-table text and untouched tables keep their bytes. Whole lines can be selected across lines, cells and tables (mouse drag, Shift+click, Shift+arrows; Cmd+A selects the cell, again the whole shown note); Cmd+C copies the Markdown (no cell, branch or route lines; only the shown routes), and typing or Delete replaces the selection (Cmd+Z undoes it). Each branch remembers its own shown route, nested branches per parent route (switching a branch away and back brings back the deeper routes chosen there), and the app keeps those choices and the cursor / scroll per note across tab switches and restarts (plugin storage, never note.md). A `<show name=\"…\">JSON</show>` (or `<show name=\"…\" command=\"…\"></show>`) on its own line(s), as the chat writes it, is drawn as a live card in a cell of its own (the note keeps the plain text): a card with a Command runs it once allowed (th",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "files"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.report",
+      "title": "Reports",
+      "version": "1.0.0",
+      "description": "Report pages for the bots: a skill (the ReportSpec v2 guide) and a command (Botling 2 --render-report spec.json page.html) that renders one, with the rule that tells every bot to use them.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [],
+      "parts": [],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.routines",
+      "title": "Routines",
+      "version": "1.0.0",
+      "description": "The Routines button in the chat header: a bot's schedules (its routines.cron lines and the app's own one-time and recurring ones), with Pause, Resume and Cancel. Botling still keeps and runs the schedules; this plugin only lists them and asks for the change.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "routines"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.terminal",
+      "title": "Terminal",
+      "version": "1.0.0",
+      "description": "A shell in the bot's project folder under the chat: the Terminal button in the chat header (Mod+J) shows tabs of real shells, one list per bot, kept running while the panel is hidden.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "exec"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [],
+      "commands": [
+        {
+          "id": "botling.terminal.toggle",
+          "title": "Toggle terminal",
+          "registered": false
+        }
+      ],
+      "panels": []
+    },
+    {
+      "name": "botling.usage",
+      "title": "Usage",
+      "version": "1.0.0",
+      "description": "What the bots used: the subscription quota rings in the sidebar gear's popover (Claude, Codex, Antigravity) and Settings → Usage (cost and tokens today, limits, by bot, earlier days). The numbers are read by Botling; this plugin only shows them.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.whiteboard",
+      "title": "Whiteboard",
+      "version": "1.0.0",
+      "description": "The main bot's whiteboard: every bot's card (what waits on you, what runs, what is idle), numbers, charts and each bot's report, in a tab beside Chat and Board. A bot may give its card a small picture with <whiteboard>.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "bots"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "ccb-latex",
+      "title": "LaTeX",
+      "version": "1.0.0",
+      "description": "Typesets $…$, $$…$$, \\(…\\) and \\[…\\] in messages with KaTeX, previews formulas while you type, and copies formulas as TeX.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "composer",
+        "messages"
+      ],
+      "parts": [
+        "web"
+      ],
+      "settings": [
+        {
+          "key": "ccb-latex.preview",
+          "type": "boolean",
+          "title": "Preview formulas while typing",
+          "options": [],
+          "secret": false,
+          "value": true,
+          "set": true,
+          "default": true
+        },
+        {
+          "key": "ccb-latex.copyTeX",
+          "type": "boolean",
+          "title": "Copy formulas as TeX",
+          "options": [],
+          "secret": false,
+          "value": true,
+          "set": true,
+          "default": true
+        }
+      ],
+      "commands": [
+        {
+          "id": "ccb-latex.insert",
+          "title": "Insert inline formula",
+          "registered": false
+        }
+      ],
+      "panels": []
+    },
+    {
+      "name": "acme-board",
+      "title": "Acme Board",
+      "version": "1.2.0",
+      "description": "A fixture in the old ccb shape.",
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "permissions": [
+        "composer"
+      ],
+      "parts": [
+        "web",
+        "host",
+        "components"
+      ],
+      "settings": [
+        {
+          "key": "acme-board.columns",
+          "type": "number",
+          "title": "Columns",
+          "options": [],
+          "secret": false,
+          "value": 3,
+          "set": true,
+          "default": 3
+        },
+        {
+          "key": "acme-board.mode",
+          "type": "enum",
+          "title": "Mode",
+          "options": [
+            "grid",
+            "list"
+          ],
+          "secret": false,
+          "value": "grid",
+          "set": true,
+          "default": "grid"
+        },
+        {
+          "key": "acme-board.token",
+          "type": "string",
+          "title": "Token",
+          "options": [],
+          "secret": true,
+          "value": null,
+          "set": false
+        }
+      ],
+      "commands": [
+        {
+          "id": "acme-board.open",
+          "title": "Open the board",
+          "registered": false
+        },
+        {
+          "id": "acme-board.refresh",
+          "title": "Refresh",
+          "registered": false
+        }
+      ],
+      "panels": [
+        {
+          "id": "acme-board.panel",
+          "title": "Acme panel"
+        }
+      ]
+    },
+    {
+      "name": "zed.tools",
+      "title": "Zed Tools",
+      "version": "0.9.1",
+      "description": null,
+      "enabled": true,
+      "failure": null,
+      "installedFrom": null,
+      "skipped": [
+        "View \"zed.tools.nowhere\": where \"ceiling\" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section, bottomPanel, chatHeader, rightPanel.takeover or composerBar.",
+        "Menu \"not/a-menu\" is not one of message/context, bot/context, composer/plus, commandPalette, message/preview, browser/tab, chat/link (skipped; the rest of the plugin loads)."
+      ],
+      "permissions": [
+        "messages"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    }
+  ],
+  "broken": [],
+  "host": {
+    "running": false,
+    "problem": null
+  },
+  "secretsProblem": null,
+  "keybindings": [
+    {
+      "command": "botling.terminal.toggle",
+      "key": "Mod+J",
+      "plugin": "botling.terminal",
+      "title": "Toggle terminal"
+    },
+    {
+      "command": "ccb-latex.insert",
+      "key": "Mod+Shift+M",
+      "plugin": "ccb-latex",
+      "title": "Insert inline formula"
+    },
+    {
+      "command": "acme-board.open",
+      "key": "Mod+Shift+B",
+      "plugin": "acme-board",
+      "title": "Open the board"
+    },
+    {
+      "command": "zed.tools.run",
+      "key": "Mod+Alt+R",
+      "plugin": "zed.tools",
+      "title": "Run"
+    }
+  ],
+  "slash": [
+    {
+      "name": "design",
+      "about": "Make a Claude Design and get its claude.ai link",
+      "plugin": "botling.design"
+    },
+    {
+      "name": "zed",
+      "about": "Ask Zed",
+      "command": "zed.tools.run",
+      "plugin": "zed.tools"
+    },
+    {
+      "name": "zedwords",
+      "about": "Words only",
+      "plugin": "zed.tools"
+    }
+  ],
+  "menus": [
+    {
+      "menu": "message/context",
+      "command": "botling.component-studio.make",
+      "plugin": "botling.component-studio",
+      "title": "Make into component",
+      "icon": "cube",
+      "quick": true,
+      "alt": "Add to another bot…",
+      "hint": "Maintainer builds it from this reply right away",
+      "locales": {
+        "zh-Hant": {
+          "title": "做成元件",
+          "alt": "加到其他 Bot…",
+          "hint": "Maintainer 會馬上用這則回覆做出來"
+        }
+      }
+    },
+    {
+      "menu": "message/preview",
+      "command": "botling.component-studio.make",
+      "plugin": "botling.component-studio",
+      "title": "Make into component",
+      "icon": "cube",
+      "quick": true,
+      "locales": {
+        "zh-Hant": {
+          "title": "做成元件"
+        }
+      }
+    },
+    {
+      "menu": "message/context",
+      "command": "zed.tools.clip",
+      "plugin": "zed.tools",
+      "title": "Clip it",
+      "icon": "scissors",
+      "quick": true,
+      "alt": "Clip again",
+      "hint": "Keeps it",
+      "locales": {
+        "zh-Hant": {
+          "title": "剪下",
+          "hint": "保留"
+        }
+      }
+    },
+    {
+      "menu": "bot/context",
+      "command": "zed.tools.run",
+      "plugin": "zed.tools",
+      "title": "Run"
+    },
+    {
+      "menu": "composer/plus",
+      "command": "zed.tools.run",
+      "plugin": "zed.tools",
+      "title": "Zed"
+    },
+    {
+      "menu": "commandPalette",
+      "command": "zed.tools.toggle",
+      "plugin": "zed.tools",
+      "title": "Toggle panel"
+    },
+    {
+      "menu": "message/preview",
+      "command": "zed.tools.clip",
+      "plugin": "zed.tools",
+      "title": "Clip",
+      "icon": "doc",
+      "quick": true
+    },
+    {
+      "menu": "browser/tab",
+      "command": "zed.tools.run",
+      "plugin": "zed.tools",
+      "title": "Run",
+      "when": {
+        "scheme": "https",
+        "host": "*.example.org"
+      }
+    },
+    {
+      "menu": "chat/link",
+      "command": "zed.tools.run",
+      "plugin": "zed.tools",
+      "title": "Read with Zed",
+      "when": {
+        "ext": [
+          "pdf",
+          "md"
+        ]
+      }
+    }
+  ],
+  "mainTabs": [
+    {
+      "plugin": "botling.note",
+      "id": "botling.note.tab",
+      "title": "Note",
+      "icon": "note.text",
+      "forRole": "any"
+    },
+    {
+      "plugin": "botling.whiteboard",
+      "id": "botling.whiteboard",
+      "title": "Whiteboard",
+      "icon": "people",
+      "forRole": "main"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.tab",
+      "title": "Zed",
+      "icon": "bolt",
+      "forRole": "marked",
+      "chat": "float",
+      "bots": []
+    }
+  ],
+  "settingsSections": [
+    {
+      "plugin": "botling.git",
+      "id": "botling.git.settings",
+      "title": "Worktrees",
+      "terms": "worktree worktrees git branch folder app-managed developer",
+      "after": "developer"
+    },
+    {
+      "plugin": "botling.usage",
+      "id": "botling.usage.settings",
+      "title": "Usage",
+      "terms": "usage cost tokens spending today by bot earlier days subscription limits rate quota 5 hours week claude codex antigravity",
+      "after": "engines",
+      "link": "Usage by bot"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.settings",
+      "title": "Zed settings",
+      "terms": "zed tools",
+      "after": "engines",
+      "link": "Zed by bot"
+    }
+  ],
+  "quickSettings": [
+    {
+      "plugin": "botling.usage",
+      "id": "botling.usage.quota",
+      "title": "Subscription usage"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.quick",
+      "title": "Zed quick"
+    }
+  ],
+  "rightPanelSections": [
+    {
+      "plugin": "botling.git",
+      "id": "botling.git.worktrees",
+      "title": "Worktrees",
+      "forRole": "bots"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.section",
+      "title": "Zed section",
+      "forRole": "bots"
+    }
+  ],
+  "bottomPanels": [
+    {
+      "plugin": "botling.terminal",
+      "id": "botling.terminal.panel",
+      "title": "Terminal",
+      "toggle": "botling.terminal.toggle"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.bottom",
+      "title": "Zed bottom",
+      "toggle": "zed.tools.toggle"
+    }
+  ],
+  "chatHeaderViews": [
+    {
+      "plugin": "botling.routines",
+      "id": "botling.routines.panel",
+      "title": "Routines"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.header",
+      "title": "Zed header"
+    }
+  ],
+  "takeovers": [
+    {
+      "plugin": "botling.component-studio",
+      "id": "botling.component-studio.spec",
+      "title": "Component spec"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.takeover",
+      "title": "Zed takeover"
+    }
+  ],
+  "composerBarViews": [
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.bar",
+      "title": "Zed bar",
+      "width": 300,
+      "forRole": "main"
+    }
+  ],
+  "takeover": null
+}

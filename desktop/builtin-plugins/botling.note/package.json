@@ -9,6 +9,12 @@
     "ccb": "^2.6.0"
   },
   "ccb": {
+    "kernel": 1,
+    "uses": {
+      "services": [
+        "composer.insertQuote"
+      ]
+    },
     "permissions": [
       "files"
     ],

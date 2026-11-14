@@ -410,6 +410,12 @@ export class PluginHostClient {
       if (typeof name === "string") loaded.delete(name);
       if (typeof name === "string") this.onPluginFailure(name, `The program part failed to load: ${typeof why === "string" ? why.slice(0, 2_000) : ""}`, true);
     }
+    // Cleanups of unloaded plugins that threw, rejected or hung (the host's plugin kernel); logged, never counted as crashes.
+    const unloadFailed = (result as { unloadFailed?: unknown })?.unloadFailed;
+    for (const failure of Array.isArray(unloadFailed) ? unloadFailed : []) {
+      const { name, message } = (failure ?? {}) as { name?: unknown; message?: unknown };
+      this.log(`plugin host: a cleanup of ${typeof name === "string" ? name : "?"} failed: ${typeof message === "string" ? message.slice(0, 500) : ""}`);
+    }
     this.loaded = loaded;
     this.running = true;
     const early = this.early.splice(0).filter((event) => Date.now() - event.at < 30_000);
