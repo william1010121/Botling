@@ -40,7 +40,7 @@ import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter, type PeerSession } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
-import { PeerTables, SummaryRows, TableFeeds } from "./replica";
+import { followedStreams, PassThrough, PassThroughOwner, passThroughSettings, PeerLogCache, PeerTables, SummaryRows, TableFeeds } from "./replica";
 import { Directory, Forwarder, OwnerInbox } from "./forward";
 import { release as osRelease } from "node:os";
 
@@ -139,6 +139,10 @@ export class Botlingd {
     /** M3 step 7: feeds of `srv:` tables (own to peers and front ends, copies to front ends) and the copies of peers' tables. */
     readonly feeds: TableFeeds,
     readonly peerTables: PeerTables,
+    /** M3 step 8: front ends' subscriptions to peers' bots (attached side), its cache, and peers' subscriptions here (owner side). */
+    readonly passThrough: PassThrough,
+    readonly peerLogs: PeerLogCache,
+    readonly passOwner: PassThroughOwner,
   ) {}
 
   /**
@@ -289,6 +293,29 @@ export class Botlingd {
         session: (peer): PeerSession | null => peers.session(peer),
       });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
+      // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
+      const passSettings = passThroughSettings(env);
+      const followed = () => new Set(followedStreams(prefs.get("followedBots")?.value));
+      const peerLogs: PeerLogCache = new PeerLogCache({
+        store, reader: () => hub.reader(), log, priority: (stream) => passThrough.priority(stream),
+        ...(passSettings.capBytes !== undefined ? { capBytes: passSettings.capBytes } : {}),
+      });
+      const passThrough: PassThrough = new PassThrough({
+        cache: peerLogs, log, followed: (stream) => followed().has(stream),
+        ownerOf: (stream) => directory.peerOwner(stream),
+        session: (peer) => peers.session(peer),
+        peerState: (peer) => { const state = peers.states().find((item) => item.member === peer); return state ? { state: state.state, since: state.since } : null; },
+        ...(passSettings.keepMs !== undefined ? { keepMs: passSettings.keepMs } : {}),
+      });
+      prefs.onChange(() => passThrough.ensureFollowed([...followed()]));
+      const passOwner = new PassThroughOwner({
+        hub, log,
+        ensureBotStream: async (botId) => {
+          if (!engine.hasBot(botId)) return false;
+          await openStore.submit((tx) => { ensureBot(tx, botId); });
+          return true;
+        },
+      });
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
@@ -327,6 +354,11 @@ export class Botlingd {
           cancel: (slot, owner) => forwarder.cancel(slot, owner),
           attach: (origin, sink) => forwarder.attach(origin, sink),
         },
+        passThrough: {
+          isPeerStream: (stream) => passThrough.isPeerStream(stream),
+          open: (stream, cursor, sink) => passThrough.open(stream, cursor, sink),
+          history: (request, sink) => passThrough.history(request, sink),
+        },
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
@@ -341,14 +373,16 @@ export class Botlingd {
         // M3 step 7: every peer's srv: table is subscribed while its session is open (§10.1).
         // M3 step 5: gossip frames first (roster sync is the first exchange, §4.6), then the tables.
         // M3 step 9: forwarded commands (owner side) and the owners' answers (forwarding side).
-        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || inbox.onMessage(session, message) || (await forwarder.onMessage(session, message)) || peerTables.onMessage(session, message),
-        sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); },
-        sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); },
+        // M3 step 8: forwarded front-end subscriptions (owner side) and the frames that answer them (attached side).
+        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || inbox.onMessage(session, message) || (await forwarder.onMessage(session, message))
+          || passThrough.onMessage(session, message) || (await passOwner.onMessage(session, message)) || peerTables.onMessage(session, message),
+        sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
+        sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
-      peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); });
+      peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
       feeds.start();
       gossip.start();
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
       daemon.remoteContent = remoteContent;
       daemon.media = media;
       daemon.tokenValue = writeToken(paths.token);
@@ -426,6 +460,9 @@ export class Botlingd {
     await step("server pairing", () => this.join.close());
     await step("remote sessions", () => this.remote.close());
     await step("peer sessions", () => this.peers.close());
+    this.passThrough.close();
+    this.passOwner.close();
+    await step("peer log cache", () => this.peerLogs.idle());
     this.feeds.close();
     await step("listener", () => this.listener?.close());
     rmSync(join(this.paths.dataDir, LISTEN_FILE), { force: true });

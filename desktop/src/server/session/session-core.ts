@@ -94,6 +94,19 @@ export interface SessionHost {
   tables?: SessionTables;
   /** M3 step 9: commands and cancels for targets a peer owns go to the forward queue (none on a lone server). */
   forward?: SessionForward;
+  /** M3 step 8: subscriptions to bots a peer owns pass through to that peer (none on a lone server). */
+  passThrough?: SessionPassThrough;
+}
+
+/**
+ * Pass-through as a front end's session uses it (server/replica/pass-through.ts, v1 §10.3): a `sub` of a bot a peer owns
+ * becomes a leg forwarded to that owner; its frames come back unchanged (no `via`) through `sink`; `ack` and `unsub` go to
+ * the leg; `history` is asked of the owner. Never the log hub: this server builds no state of a peer's bot.
+ */
+export interface SessionPassThrough {
+  isPeerStream(stream: string): boolean;
+  open(stream: string, cursor: Cursor | null, sink: (message: Message) => boolean): { ack(cursor: Cursor): void; close(): void };
+  history(request: MessageOf<"history">, sink: (message: Message) => boolean): void;
 }
 
 /**
@@ -157,6 +170,8 @@ export abstract class SessionCore {
   private adminEvents: (() => void) | null = null;
   /** M3 step 7: feeds of peers' tables this front end subscribed to, and its listener of peer states. */
   private readonly tableFeeds = new Map<string, { close(): void }>();
+  /** M3 step 8: this front end's pass-through legs, by stream. */
+  private readonly legs = new Map<string, { ack(cursor: Cursor): void; close(): void }>();
   private peerEvents: (() => void) | null = null;
   /** M3 step 9: this session hears the owners' answers to its forwarded slots. */
   private relayOff: (() => void) | null = null;
@@ -270,6 +285,8 @@ export abstract class SessionCore {
     this.relayOff = null;
     for (const feed of this.tableFeeds.values()) feed.close();
     this.tableFeeds.clear();
+    for (const leg of this.legs.values()) leg.close();
+    this.legs.clear();
     for (const timer of this.timers) { clearTimeout(timer); clearInterval(timer); }
     for (const sub of this.lives.values()) sub.close();
     this.lives.clear();
@@ -304,7 +321,7 @@ export abstract class SessionCore {
       case "hello": this.bye("role", "one hello per session"); return;
       case "sub": this.queueSub(message.stream, message.cursor); return;
       case "unsub": this.unsub(message.stream); return;
-      case "ack": this.reader?.ack(message.stream, message.cursor); return;
+      case "ack": { const leg = this.legs.get(message.stream); if (leg) leg.ack(message.cursor); else this.reader?.ack(message.stream, message.cursor); return; }
       case "history": this.history(message); return;
       case "live.resync": this.gate.resync(message.stream); return;
       case "cmd": { const { t: _t, ...body } = message; this.queueCmd(body as CmdBody); return; }
@@ -379,6 +396,13 @@ export abstract class SessionCore {
       this.tableFeeds.set(stream, tables.subscribe(stream, cursor, (frame) => this.sendWire(frame)));
       return;
     }
+    const pass = this.host.passThrough;
+    if (pass?.isPeerStream(stream)) {
+      // M3 step 8: a bot a peer owns: the sub passes through to its owner; frames come back unchanged.
+      this.legs.get(stream)?.close();
+      this.legs.set(stream, pass.open(stream, cursor, (frame) => this.send(frame, stream)));
+      return;
+    }
     let result = await reader.sub(stream, cursor);
     if (!result.ok && result.reason === "unknown stream" && stream.startsWith("bot:")) {
       // A bot the core has but whose stream was not made yet (made at start, or by its first event).
@@ -396,6 +420,8 @@ export abstract class SessionCore {
   }
 
   private unsub(stream: StreamId): void {
+    const leg = this.legs.get(stream);
+    if (leg) { leg.close(); this.legs.delete(stream); return; }
     const feed = this.tableFeeds.get(stream);
     if (feed) { feed.close(); this.tableFeeds.delete(stream); return; }
     this.reader?.unsub(stream);
@@ -411,6 +437,8 @@ export abstract class SessionCore {
 
   private history(request: MessageOf<"history">): void {
     if (this.subRefusal(request.stream)) return;
+    const pass = this.host.passThrough;
+    if (pass?.isPeerStream(request.stream)) { pass.history(request, (page) => this.send(page, `history of ${request.stream}`)); return; }
     const page = this.reader?.history(request);
     if (page) { this.send(page, `history of ${request.stream}`); return; }
     // An unknown line (2.x answers not_found): an empty page of the current incarnation ends the paging.
