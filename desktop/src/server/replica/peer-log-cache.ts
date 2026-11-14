@@ -20,6 +20,7 @@
 // over it, whole streams are evicted least recently used first, streams in use and followed bots last. Kept in
 // server.db (`peerlogs`, `peerlog_entries`, schema v9): it survives this server's restart (shown stale until the next
 // session with the owner).
+import type { BudgetItem, BudgetSource, PeerCacheBudget } from "../content/chunk-cache";
 import { BATCH_ENTRIES_LIMIT, type Cursor, type Entry, type LogId, type Message, type MessageOf, type StreamId } from "../../protocol";
 import { FRAME_LIMIT } from "../../protocol/frame";
 import { verifyChain } from "../log/chain";
@@ -67,11 +68,19 @@ export interface PeerLogCacheOptions {
   log?: (line: string) => void;
   /** Eviction order: lower goes first (0 = idle, 1 = in use, 2 = followed). */
   priority?: (stream: string) => number;
+  /**
+   * M3 step 10 (Q5): the one budget shared with the peer chunk cache. When given, `capBytes` is the budget's and
+   * eviction runs across both caches (content/chunk-cache.ts `PeerCacheBudget`).
+   */
+  budget?: PeerCacheBudget;
 }
 
 const RETIRED_KEEP = 1_000;
 
-export class PeerLogCache {
+export class PeerLogCache implements BudgetSource {
+  readonly name = "logs";
+  /** The stream written last (it goes after others of its priority). */
+  private just: string | null = null;
   private readonly logs = new Map<string, CachedLog>();
   private writes: Promise<unknown> = Promise.resolve();
   private readonly now: () => number;
@@ -83,8 +92,9 @@ export class PeerLogCache {
   constructor(private readonly options: PeerLogCacheOptions) {
     this.now = options.now ?? Date.now;
     this.log = options.log ?? (() => undefined);
-    this.capBytes = Math.max(64 * 1024, options.capBytes ?? PEER_CACHE_BYTES);
+    this.capBytes = options.budget ? options.budget.capBytes : Math.max(64 * 1024, options.capBytes ?? PEER_CACHE_BYTES);
     this.load();
+    options.budget?.register(this);
   }
 
   private load(): void {
@@ -104,6 +114,21 @@ export class PeerLogCache {
   /** Every stream the cache holds something of. */
   streams(): CachedLog[] { return [...this.logs.values()].map((log) => ({ ...log, retired: { ...log.retired, list: [...log.retired.list] } })); }
   get(stream: string): CachedLog | null { const log = this.logs.get(stream); return log ? { ...log } : null; }
+  bytes(): number { return this.totalBytes; }
+
+  /** Budget items (Q5): whole streams, in-use and followed ones later, the stream just written after its peers. */
+  items(): BudgetItem[] {
+    const priority = this.options.priority ?? (() => 0);
+    return [...this.logs.values()].map((log) => ({
+      priority: priority(log.stream) + (log.stream === this.just ? 0.5 : 0), usedAt: log.usedAt, bytes: log.bytes,
+      evict: () => {
+        this.counts.evicted++;
+        this.log(`pass-through: cache of ${log.stream} evicted (${log.bytes} bytes; the peer cache holds at most ${this.capBytes})`);
+        this.drop(log.stream);
+      },
+    }));
+  }
+
   get totalBytes(): number { let total = 0; for (const log of this.logs.values()) total += log.bytes; return total; }
 
   /** True when `logId` is one the owner retired for `stream` (as far as this cache heard). */
@@ -304,6 +329,7 @@ export class PeerLogCache {
 
   /** Over the cap: whole streams go, least recently used first, in-use and followed ones last. */
   private evict(just: string): void {
+    if (this.options.budget) { this.just = just; this.options.budget.enforce(); return; }
     let total = this.totalBytes;
     if (total <= this.capBytes) return;
     const priority = this.options.priority ?? (() => 0);

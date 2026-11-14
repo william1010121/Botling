@@ -68,8 +68,9 @@ const ROLE_ROWS = {
   "content.cancel": rule(true, false, true),
   "content.ticket": rule(true, false, false),
   "content.granted": rule(false, true, false),
-  "content.locate": rule(true, false, false),
-  "content.located": rule(false, true, false),
+  // M3 step 10: also between servers (the attached server asks the owner which reference a line holds).
+  "content.locate": rule(true, false, true),
+  "content.located": rule(false, true, true),
   "content.put": rule(true, false, false),
   "content.stored": rule(false, true, false),
   "content.meta": rule(false, true, true),

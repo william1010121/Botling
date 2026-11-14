@@ -7,7 +7,7 @@ import { BotId, Command, MessageView, WireError } from "../contract";
 import { ContentRef, ContentVariant, Entry } from "./entries";
 import { ContentTicket, EntryRef, VariantName } from "./content-url";
 import { AdminEvent, AdminOp } from "./pairing";
-import { PublicKey, RevocationStatement, Signature, SignedStatement, StatementId } from "./roster";
+import { MemberId, PublicKey, RevocationStatement, Signature, SignedStatement, StatementId } from "./roster";
 import {
   ContentId, Cursor, EntryHash, LocalContentId, Id, LogId, OriginEpoch, Outcome, PROTOCOL_VERSION, Scope, Seq, ServerId, ServerState, Slot, StreamId, Target,
 } from "./ids";
@@ -224,6 +224,12 @@ export const CONTENT_PUT_LIMIT = 500_000_000;
 /** Read `length` bytes of a variant from `offset`; `entry` is the proof of reference checked on every get (§9A.7). */
 export const ContentGet = msg("content.get", {
   req: ReqId, owner: ServerId, id: ContentId, variant: VariantName, offset: Seq, length: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), entry: EntryRef,
+  /**
+   * M3 step 10 (a v1 addition): between servers, the device the attached server reads for, so that the owner checks
+   * that device's validity and `read` scope too (§9A.7 "checked by the attached server and by the owner"). Only a peer
+   * server states it (frame.ts).
+   */
+  device: MemberId.optional(),
 });
 /** The first answer to a get: what the bytes are, their chunk hashes (when the list fits) and the variants. */
 export const ContentMeta = msg("content.meta", {
@@ -252,7 +258,11 @@ export const ContentGranted = msg("content.granted", { req: ReqId, ticket: Conte
  * `content.find` (local socket only; it may answer a `pending:` id). Needs the `read` scope and a stream the device may
  * read. Answered by `content.located`.
  */
-export const ContentLocate = msg("content.locate", { req: ReqId, botId: BotId, line: Id, url: z.string().min(1).max(8_000) });
+export const ContentLocate = msg("content.locate", {
+  req: ReqId, botId: BotId, line: Id, url: z.string().min(1).max(8_000),
+  /** M3 step 10: a peer server's lookup for one of its devices (the owner checks it; only a peer states it). */
+  device: MemberId.optional(),
+});
 /**
  * The line's reference (null: the line names no such indexed file, or the stream may not be read) and, once its bytes
  * are hashed (`state: ready`), a URL ticket for it (as `content.granted`). A `preparing` reference has no ticket yet: the

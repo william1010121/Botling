@@ -186,6 +186,31 @@ CREATE TABLE peerlogs (
 CREATE TABLE peerlog_entries (stream TEXT NOT NULL, seq INTEGER NOT NULL, entry TEXT NOT NULL, PRIMARY KEY (stream, seq)) WITHOUT ROWID;
 `;
 
+// v10 (M3 step 10, src/server/content/peer-content.ts, chunk-cache.ts): content owned by a peer, read through this
+// server (v1 §9A.4 last row, §9A.6, §9A.7). `peer_content`: what the owner said a reference's bytes are (size, type,
+// one SHA-256 per MiB; a hash names one content forever, so a later answer that differs is refused). `peer_content_refs`:
+// entries the owner confirmed as referencing an id (its `content_refs` check, made again on every `content.get`).
+// `peer_content_lines`: which reference a line of a peer's bot holds for a file (the owner's `content.located`), so a page
+// can still find it while the owner is unreachable. `chunk_cache`: the verified 1 MiB chunks kept on disk
+// (`peer-chunks/`), sparse, LRU inside the one peer cache budget shared with `peerlogs` (m3-brief Q5). v1's placeholder
+// `chunk_cache (id, idx, verified, lastUsed)` was never written by any version, so it is replaced.
+const V10 = `
+DROP TABLE IF EXISTS chunk_cache;
+CREATE TABLE peer_content (
+  owner TEXT NOT NULL, id TEXT NOT NULL, variant TEXT NOT NULL, size INTEGER NOT NULL, type TEXT NOT NULL,
+  chunkHashes TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY (owner, id, variant)
+) WITHOUT ROWID;
+CREATE TABLE peer_content_refs (owner TEXT NOT NULL, id TEXT NOT NULL, stream TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (owner, id, stream, seq)) WITHOUT ROWID;
+CREATE TABLE peer_content_lines (
+  botId TEXT NOT NULL, line TEXT NOT NULL, url TEXT NOT NULL, owner TEXT NOT NULL, id TEXT NOT NULL, type TEXT NOT NULL,
+  state TEXT NOT NULL, stream TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (botId, line, url)
+) WITHOUT ROWID;
+CREATE TABLE chunk_cache (
+  owner TEXT NOT NULL, id TEXT NOT NULL, variant TEXT NOT NULL, idx INTEGER NOT NULL, bytes INTEGER NOT NULL, usedAt INTEGER NOT NULL,
+  stream TEXT, PRIMARY KEY (owner, id, variant, idx)
+) WITHOUT ROWID;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -252,6 +277,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "pass-through (src/server/replica): the cache of peers' bot logs (peerlogs, peerlog_entries)",
     up(db) {
       db.exec(V9);
+    },
+  },
+  {
+    version: 10,
+    description: "peer content (src/server/content): peers' content metadata, confirmed references, line lookups and the chunk cache",
+    up(db) {
+      db.exec(V10);
     },
   },
 ];

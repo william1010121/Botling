@@ -23,6 +23,8 @@ import { backupCheckMs, DailyBackups } from "./backup-schedule";
 import { BotlingdEngine } from "./botlingd-engine";
 import { DbBotStores } from "./botstore";
 import { ContentService } from "./content";
+import { ChunkCache, PeerCacheBudget } from "./content/chunk-cache";
+import { PeerContent, PeerContentOwner } from "./content/peer-content";
 import { RemoteContent } from "./content/remote";
 import { ContentTickets } from "./content/tickets";
 import { MediaJobs } from "./media";
@@ -40,7 +42,7 @@ import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter, type PeerSession } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
-import { followedStreams, PassThrough, PassThroughOwner, passThroughSettings, PeerLogCache, PeerTables, SummaryRows, TableFeeds } from "./replica";
+import { followedStreams, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, SummaryRows, TableFeeds } from "./replica";
 import { Directory, Forwarder, OwnerInbox } from "./forward";
 import { release as osRelease } from "node:os";
 
@@ -164,6 +166,10 @@ export class Botlingd {
   remoteContent: RemoteContent | null = null;
   /** M2 step 10: the media jobs (variants). */
   media: MediaJobs | null = null;
+  /** M3 step 10: peers' content read through this server (attached side), and this server's content read by peers. */
+  peerContent: PeerContent | null = null;
+  peerContentOwner: PeerContentOwner | null = null;
+  chunkCache: ChunkCache | null = null;
 
   get token(): string { return this.tokenValue; }
 
@@ -296,9 +302,10 @@ export class Botlingd {
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);
       const followed = () => new Set(followedStreams(prefs.get("followedBots")?.value));
+      // M3 step 10 (Q5): one budget for peers' logs and peers' content chunks, followed bots evicted last.
+      const peerBudget = new PeerCacheBudget(Math.max(64 * 1024, passSettings.capBytes ?? PEER_CACHE_BYTES), log);
       const peerLogs: PeerLogCache = new PeerLogCache({
-        store, reader: () => hub.reader(), log, priority: (stream) => passThrough.priority(stream),
-        ...(passSettings.capBytes !== undefined ? { capBytes: passSettings.capBytes } : {}),
+        store, reader: () => hub.reader(), log, priority: (stream) => passThrough.priority(stream), budget: peerBudget,
       });
       const passThrough: PassThrough = new PassThrough({
         cache: peerLogs, log, followed: (stream) => followed().has(stream),
@@ -365,7 +372,22 @@ export class Botlingd {
       // M2 step 9: content over the tailnet (URL tickets in memory; a device that leaves the roster loses its tickets).
       const tickets = new ContentTickets();
       roster.onChange((change) => { for (const member of change.invalidated) tickets.dropDevice(member); });
-      const remoteContent = new RemoteContent({ service: content, tickets, roster, log });
+      // M3 step 10: content owned by a peer, passed through and verified per chunk; this server's content read by peers.
+      const deviceReadable = (member: string) => { const device = roster.device(member); return !!device && (device.scope ?? []).includes("read"); };
+      const chunkCache: ChunkCache = new ChunkCache({
+        store, reader: () => hub.reader(), dataDir: paths.dataDir, budget: peerBudget, log,
+        priority: (key, stream) => peerContent.priority(key, stream),
+      });
+      const peerContent: PeerContent = new PeerContent({
+        self: serverId, store, reader: () => hub.reader(), cache: chunkCache, log,
+        session: (owner) => peers.session(owner),
+        ownerOf: (stream) => directory.peerOwner(stream),
+        readable: deviceReadable,
+        followed: (stream) => followed().has(stream),
+      });
+      const peerContentOwner = new PeerContentOwner({ service: content, roster, log, corruptId: testCorruptContent(env) });
+      roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
+      const remoteContent = new RemoteContent({ service: content, tickets, roster, log, peer: peerContent });
       const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent }, options.session);
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
       const peers: PeerSessions = new PeerSessions({
@@ -374,16 +396,21 @@ export class Botlingd {
         // M3 step 5: gossip frames first (roster sync is the first exchange, §4.6), then the tables.
         // M3 step 9: forwarded commands (owner side) and the owners' answers (forwarding side).
         // M3 step 8: forwarded front-end subscriptions (owner side) and the frames that answer them (attached side).
-        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || inbox.onMessage(session, message) || (await forwarder.onMessage(session, message))
+        // M3 step 10: content gets and their answers (bulk lane), both sides.
+        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || peerContent.onMessage(session, message) || peerContentOwner.onMessage(session, message)
+          || inbox.onMessage(session, message) || (await forwarder.onMessage(session, message))
           || passThrough.onMessage(session, message) || (await passOwner.onMessage(session, message)) || peerTables.onMessage(session, message),
         sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
-        sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); },
+        sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); peerContent.sessionClosed(session); peerContentOwner.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
       feeds.start();
       gossip.start();
       daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
       daemon.remoteContent = remoteContent;
+      daemon.peerContent = peerContent;
+      daemon.peerContentOwner = peerContentOwner;
+      daemon.chunkCache = chunkCache;
       daemon.media = media;
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
@@ -462,7 +489,9 @@ export class Botlingd {
     await step("peer sessions", () => this.peers.close());
     this.passThrough.close();
     this.passOwner.close();
+    this.peerContent?.close();
     await step("peer log cache", () => this.peerLogs.idle());
+    await step("peer content", () => this.peerContent?.flushed());
     this.feeds.close();
     await step("listener", () => this.listener?.close());
     rmSync(join(this.paths.dataDir, LISTEN_FILE), { force: true });
@@ -496,6 +525,16 @@ export class Botlingd {
     }, LOCK_CHECK_MS);
     this.lockTimer.unref();
   }
+}
+
+/**
+ * Test hook (M3 step 10): `BOTLING_SERVER_TEST_CORRUPT_CONTENT=sha256:<hex>` makes this server flip one byte in every
+ * chunk of that content it sends to a peer, so a test can show the attached server refuses it. Unset in real use.
+ */
+export const TEST_CORRUPT_CONTENT_ENV = "BOTLING_SERVER_TEST_CORRUPT_CONTENT";
+export function testCorruptContent(env: Record<string, string | undefined>): string | null {
+  const value = (env[TEST_CORRUPT_CONTENT_ENV] ?? "").trim();
+  return /^sha256:[0-9a-f]{64}$/.test(value) ? value : null;
 }
 
 /** Where the built server's out/ folder is: `<out>/server/main.cjs` → `<out>`. */

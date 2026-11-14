@@ -434,6 +434,15 @@ export class ContentService {
   }
 
   /**
+   * The chunk hashes (base64, one SHA-256 per MiB) of a ready content id, whatever its pin (M3 step 10: a peer server
+   * verifies every chunk it passes on against them); null when not known.
+   */
+  chunkHashesOf(id: string): string | null {
+    const row = readRow(this.db(), this.resolve(this.db(), id));
+    return row && row.state === "ready" && row.chunkHashes != null ? row.chunkHashes : null;
+  }
+
+  /**
    * The id a request names, as stored now: a `pending:` id whose hash is ready (its row moved to the content id, in the
    * same transaction as `content_aliases`) is its content id; any other id is itself. Opening the pending id then serves
    * the content id's file, with the proof of reference the content id holds for the same entry.
