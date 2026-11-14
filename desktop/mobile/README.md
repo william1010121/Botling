@@ -52,7 +52,7 @@ The application is not deployed, and this directory does not start any productio
 The desktop `npm run dist:dir`, `dist:mac`, `dist:win` and `dist:linux` routes run
 `mobile/build.mjs` after the desktop build and stop if either build fails. electron-builder
 copies only the built pages, scripts and styles (`index.html`, `web.js`, `chat.html`, `chat.js`, the CSS files,
-KaTeX CSS/fonts), `manifest.webmanifest` and `icon.svg`
+KaTeX CSS/fonts), `manifest.webmanifest`, `version.json`, `icon.svg` and the PNG icons
 from `mobile/dist/` into `mobile/` under the packaged resources directory, outside `app.asar`.
 No frontend source, fixtures or source maps are included by this resource rule.
 
@@ -78,6 +78,18 @@ the home-screen app, a tab the system discarded) signs in without a new code: on
 under a non-extractable AES-GCM key (`relay-session.ts`), for this origin. A 401 or Sign out forgets it;
 revoking the phone on the desktop ends it. Each token keeps its explicit bot list. Chat snapshots never go into
 storage; the layout toggles above use localStorage. The page is installable (manifest, PNG and Apple touch icons).
+
+## Home-screen icon and updates
+
+The icons are made from the desktop app's own icon (`Assets/AppIcon.png`): `icon-180.png` (apple-touch-icon) and
+`icon-maskable-512.png` are opaque full squares (iOS paints transparency black and rounds the corners itself; Android
+masks the maskable one, and the face sits inside its safe circle), `icon-192.png`/`icon-512.png` are the desktop icon as
+it is (manifest `any`, the favicon and the sign-in picture), and `icon.svg` embeds the same picture.
+
+Nothing caches the page (no service worker; the relay and the bridge send `Cache-Control: no-store`), so a cold start of
+the home-screen app loads the deployed build. iOS often only resumes a suspended home-screen app, with its old code: the
+build stamps its id in `index.html` (`<meta name="botling-build">`) and in `version.json`, and the sign-in page, shown
+again, reloads when the server has another build (`build-check.ts`). A signed-in page picks it up the next time it opens.
 
 ## Isolated responsive acceptance
 

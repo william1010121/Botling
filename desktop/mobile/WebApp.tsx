@@ -13,6 +13,7 @@ import { loadRouteBook, type RouteBook } from './routes';
 import { betterRoute, deviceId, deviceName, redeemPairing, takePairingLink, type PairingLink } from './pair';
 import { readPairingInput } from './pair-input';
 import { QrScanner, cameraError, openCamera } from './QrScanner';
+import { watchBuild } from './build-check';
 import { PHONE_QUERY, phoneWidth } from './layout';
 import { WebBridge, forgetLocal } from './web-bridge';
 import { RelayClient, type RelaySession } from './relay-client';
@@ -266,6 +267,9 @@ export function WebApp() {
   }, [pairRelay, pairBridge, resumeSaved]);
 
   useEffect(() => connected ? startSync(connected) : undefined, [connected]);
+  // A new deploy reaches a home-screen app resumed on the sign-in page (iOS keeps a suspended page's old code):
+  // reloaded there, where nothing typed is lost. A signed-in page picks it up the next time it opens.
+  useEffect(() => connected ? undefined : watchBuild(() => location.reload()), [connected]);
   // Across the phone width (a rotation, a resized window): the drawer closes and the left column is shown as that width
   // shows it (folded only on the desktop's own setting, never in the phone's drawer).
   useEffect(() => {
@@ -294,7 +298,7 @@ export function WebApp() {
   const busy = auth === 'checking';
   if (!connected) return <main className="web-signin" aria-busy={busy}>
     <form className="web-signin-card" onSubmit={event => { event.preventDefault(); takeInput(tokenText); }}>
-      <img className="web-signin-icon" src="./icon.svg" alt="" />
+      <img className="web-signin-icon" src="./icon-192.png" alt="" />
       <h1>Botling</h1>
       <p className="web-signin-lead">Your bots, from anywhere. On your computer, open Botling › Settings › Phone, create a pairing code and scan it here.</p>
       {message && <p className="web-signin-message" role="alert">{message}</p>}
