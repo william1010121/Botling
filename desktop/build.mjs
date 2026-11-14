@@ -26,6 +26,26 @@ export function buildMain({ root = here, outfile = join(root, "out/main/main.cjs
   });
 }
 
+// Botling 3's main (src/main-v3/, M1 step 11): the same 2.x main with `./core-client` resolved to the server client.
+// buildMain above is untouched, so 2.x built from main does not change.
+const MAIN_2X = /[\\/]src[\\/]main[\\/]main\.ts$/;
+export const coreClientToServerClient = (root) => ({
+  name: "main-v3-server-client",
+  setup(b) {
+    b.onResolve({ filter: /^\.\/core-client$/ }, (args) => (MAIN_2X.test(args.importer) ? { path: join(root, "src/main-v3/server-client.ts") } : undefined));
+  },
+});
+export function buildMainV3({ root = here, outfile = join(root, "out/main-v3/main.cjs"), write = true, metafile = false } = {}) {
+  root = resolve(root);
+  outfile = resolve(outfile);
+  return build({
+    absWorkingDir: root, preserveSymlinks: true,
+    bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof",
+    entryPoints: [join(root, "src/main-v3/main.ts")], outfile, external: ["electron", "original-fs"],
+    plugins: [coreClientToServerClient(root)], write, metafile,
+  });
+}
+
 async function buildAll() {
 const out = join(here, "out");
 if (process.argv.includes("--watch")) throw new Error("Use npm run renderer:watch; the full build is not a process watcher");
@@ -36,6 +56,7 @@ const web = join(here, "..", "Web");
 const node = { bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof" };
 await Promise.all([
   buildMain(),
+  buildMainV3(),
   // The shell's preload and the native chat editor's (build-preloads.mjs; also `npm run preload:build`).
   buildPreloads({ root: here, outdir: join(out, "preload") }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),

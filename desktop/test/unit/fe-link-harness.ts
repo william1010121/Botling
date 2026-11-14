@@ -6,7 +6,7 @@ import {
   decodeFrame, encodeFrame, GENESIS_HASH,
   type CmdBody, type Cursor, type Entry, type Message, type MessageOf, type Slot, type StreamId,
 } from "../../src/protocol";
-import { SlotEngine, type SlotLog } from "../../src/server/slots";
+import { SlotEngine, type ApplyContext, type SlotLog } from "../../src/server/slots";
 import type { Db } from "../../src/server/store";
 import type { Clock, Dial, FeSocket, SocketHandlers } from "../../src/fe-link";
 import { FakeLog, memoryStore } from "./server-slots-harness";
@@ -111,6 +111,12 @@ export class FakeServer {
   /** Do not send resets yet (a restore the front end has not heard of). */
   holdResets = false;
   refuse = false;
+  /** The `view` of a snap (default `{}`). */
+  snapView: (stream: string) => Record<string, unknown> = () => ({});
+  /** The apply step (default: records the command and answers `{ n }`). */
+  applyHook: ((context: ApplyContext) => { result?: unknown } | void) | null = null;
+  /** Messages the fake does not handle itself (req, history, shell.done…). */
+  onMessage: ((message: Message) => void) | null = null;
   private conn: ServerConn | null = null;
   private readonly heldResets: Array<() => void> = [];
 
@@ -120,7 +126,10 @@ export class FakeServer {
     this.engine = new SlotEngine({
       submit: (command) => writer.submit(command),
       log: this.log as SlotLog,
-      apply: ({ slot, cmd }) => { this.applied.push({ slot, cmd }); return { result: { n: slot.n } }; },
+      apply: (context) => {
+        this.applied.push({ slot: context.slot, cmd: context.cmd });
+        return this.applyHook ? this.applyHook(context) : { result: { n: context.slot.n } };
+      },
     });
   }
 
@@ -177,6 +186,12 @@ export class FakeServer {
     for (const deliver of this.heldResets.splice(0)) deliver();
   }
 
+  /** Appends an entry outside any command (a bot's reply, a turn) and sends it to followers. */
+  append(stream: string, kind: string, body: Record<string, unknown>, slot?: Slot): void {
+    this.log.appendEntry(this.db, stream as StreamId, kind, body, slot);
+    this.push();
+  }
+
   /** Entries of a stream as the server holds them. */
   entries(stream: string): Entry[] { return this.log.entries.get(stream) ?? []; }
 
@@ -203,7 +218,7 @@ export class FakeServer {
         return;
       }
       case "cancel": await this.engine.cancel(message.slot); this.push(); return;
-      default: return;
+      default: this.onMessage?.(message); return;
     }
   }
 
@@ -219,7 +234,7 @@ export class FakeServer {
   private snap(conn: ServerConn, stream: string): void {
     const head = this.log.head(stream);
     conn.subs.set(stream, { sent: head.seq });
-    this.send({ t: "snap", stream: stream as StreamId, logId: this.log.current(stream), seq: head.seq, hash: head.hash, view: {} });
+    this.send({ t: "snap", stream: stream as StreamId, logId: this.log.current(stream), seq: head.seq, hash: head.hash, view: this.snapView(stream) });
   }
 
   private resetAndSnap(conn: ServerConn, stream: string): void {
