@@ -19,7 +19,10 @@ export const APP_ORIGIN = WEB ? served : "app://botling";
 export const CHAT_ORIGIN = WEB ? "null" : "botling-chat://chat";
 /** The target origin the shell posts to the chat page with (an opaque origin can only be named "*"). */
 export const CHAT_TARGET = WEB ? "*" : CHAT_ORIGIN;
-export const CHAT_PAGE = WEB ? `${served}/mobile/chat.html` : `${CHAT_ORIGIN}/chat.html`;
+/** The web page's base path (desktop/mobile/build.mjs: "/mobile/"; Botling 3's web-v3/build.mjs: "/v3/"). */
+declare const __BOTLING_WEB_BASE__: string | undefined;
+const WEB_BASE = typeof __BOTLING_WEB_BASE__ === "string" ? __BOTLING_WEB_BASE__ : "/mobile/";
+export const CHAT_PAGE = WEB ? `${served}${WEB_BASE}chat.html` : `${CHAT_ORIGIN}/chat.html`;
 /** The chat frame's sandbox on the web (none on the desktop, whose scheme already isolates it). */
 export const CHAT_SANDBOX: string | undefined = WEB ? "allow-scripts" : undefined;
 /** The chat frame's permissions policy (`allow`): fullscreen lets a video in a message use its fullscreen button. */
