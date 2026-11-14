@@ -10,7 +10,8 @@
 //   join [--name <name>]              (on the joining server N, §4.5) prints this server's name, fingerprint, the code to
 //                                     type into the member S and the link for S; shows S's fingerprint once it dials;
 //                                     ends when S finished the join, or when the offer is declined or expires
-//   add-machine <link>                (on the member S) shows both fingerprints, asks for the code shown on N (three
+//   add-machine [<link>]              (on the member S; with no argument the link is read from stdin, which keeps its
+//                                     secret out of the process list) shows both fingerprints, asks for the code shown on N (three
 //                                     tries), then adds N; the first pairing creates the cluster first (recovery code)
 //   devices [--json]                  the devices in the roster, valid and revoked
 //   revoke-device <id> [--reason …]   revokes a device; its sessions end at once
@@ -144,7 +145,7 @@ export async function joinCommand(client: AdminClient, io: CliIo, options: { nam
   io.out(`This machine: ${offer.name}`);
   io.out(`Fingerprint:  ${offer.fingerprint}`);
   io.out(`Code:         ${offer.code}`);
-  io.out("On a machine of your cluster, run botlingd add-machine with this link and type the code above when it asks.");
+  io.out("On a machine of your cluster, run botlingd add-machine, paste this link when it asks, then type the code above.");
   io.out(`It works once, for 5 minutes (until ${new Date(offer.expiresAt).toLocaleTimeString()}):`);
   io.out(offer.link);
   for (;;) {
@@ -167,8 +168,18 @@ export async function joinCommand(client: AdminClient, io: CliIo, options: { nam
   }
 }
 
-/** `botlingd add-machine <link>` on a member (S); resolves with the exit code. */
-export async function addMachineCommand(client: AdminClient, io: CliIo, link: string): Promise<number> {
+/**
+ * `botlingd add-machine [<link>]` on a member (S); resolves with the exit code. With no link argument the link is read
+ * from stdin, so its one-time secret is not on the command line, where other local users see it in the process list
+ * and the shell keeps it in its history (review J2).
+ */
+export async function addMachineCommand(client: AdminClient, io: CliIo, linkArg: string | undefined): Promise<number> {
+  let link = linkArg?.trim() ?? "";
+  if (!link) {
+    const typed = await io.ask("Paste the link botlingd join printed on the other machine: ");
+    link = typed?.trim() ?? "";
+    if (!link) { io.out("No link given; nothing was done."); return 1; }
+  }
   const status = await client.request({ op: "cluster.status" }) as { clusterId: string | null };
   if (status.clusterId === null) {
     const made = await createCluster(client, io);
