@@ -192,6 +192,9 @@ export class PeerSession {
     this.bye("revoked", detail);
   }
 
+  /** Bytes queued to the peer and not yet sealed and handed to the transport (live frames back off on it). */
+  get queuedBytes(): number { return this.link.queuedBytes; }
+
   /** Sends a frame of a later step's protocol on a full session (false: not open, or not sent). */
   sendWire(message: WireMessage): boolean {
     if (this.state !== "open" || this.flushing) return false;
