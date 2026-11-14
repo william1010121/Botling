@@ -1,8 +1,9 @@
 // The subagent index + append-only step files, and the one-time split of the old whole-file format.
-import { afterEach, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../helpers";
+import { BOT_STORES, useBotStores } from "../bot-store-impls";
 import { BotStore } from "../../src/core/store/bot-store";
 import { INDEX_FORMAT, SubagentStore, foldLines, subagentFileName } from "../../src/core/store/subagent-store";
 import { SubagentBook } from "../../src/core/subagents";
@@ -132,20 +133,23 @@ it("appends steps, patches and run boundaries to the end of the file: the earlie
   expect(new Set(history.runs[0]!.steps.map(s => s.id)).size).toBe(301);
 });
 
+describe.each(BOT_STORES)("$name store", (impl) => {
+useBotStores();
 it("a step that is not in memory any more is still found by its result, loaded from its file", () => {
-  const dir = folder(), store = new BotStore(dir);
+  const dir = folder(), store = impl.open(dir);
   const first = new SubagentBook();
   first.sink = (id, line) => store.stageSubagentLine(id, line);
   first.started({ id: "w", description: "Worker", type: null, prompt: "p", background: true }, 1);
   first.toolUse({ id: "c1", tool: "Bash", title: "ls", detail: "", parent: "w", input: {} } as any);
   store.commitSubagents(first.list);
-  const reopened = new BotStore(dir), book = new SubagentBook((reopened.loadList("subagents.json") as any[]).map(row => ({ ...row, steps: [] })));
+  const reopened = impl.open(dir), book = new SubagentBook((reopened.loadList("subagents.json") as any[]).map(row => ({ ...row, steps: [] })));
   book.sink = (id, line) => reopened.stageSubagentLine(id, line);
   book.loadSteps = id => reopened.readSubagentSteps(id).steps;
   expect(book.get("w")!.steps).toEqual([]);
   expect(book.toolResult({ id: "c1", output: "files", failed: false, parent: "w", launch: null })).toBe(true);
   reopened.commitSubagents(book.list);
   expect(reopened.readSubagentSteps("w").steps[0]).toMatchObject({ id: "c1", output: "files", done: true });
+});
 });
 
 it("a missing, empty or corrupt step file shows what can be read and is never fatal", () => {
