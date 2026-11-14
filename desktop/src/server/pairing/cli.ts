@@ -10,12 +10,14 @@
 //   join [--name <name>]              (on the joining server N, §4.5) prints this server's name, fingerprint, the code to
 //                                     type into the member S and the link for S; shows S's fingerprint once it dials;
 //                                     ends when S finished the join, or when the offer is declined or expires
-//   add-machine [<link>]              (on the member S; with no argument the link is read from stdin, which keeps its
-//                                     secret out of the process list) shows both fingerprints, asks for the code shown on N (three
+//   add-machine [<link>] [--expect-fingerprint <fp>]
+//                                     (on the member S; with no argument the link is read from stdin, which keeps its
+//                                     secret out of the process list) shows N's fingerprint and needs "yes" that N shows
+//                                     the same before it asks for the code; unattended, --expect-fingerprint names it shows both fingerprints, asks for the code shown on N (three
 //                                     tries), then adds N; the first pairing creates the cluster first (recovery code)
 //   devices [--json]                  the devices in the roster, valid and revoked
 //   revoke-device <id> [--reason …]   revokes a device; its sessions end at once
-import type { AdminEvent, DeviceScope } from "../../protocol";
+import { memberFingerprint, parseJoinLink, type AdminEvent, type DeviceScope } from "../../protocol";
 import { AdminRefused, type AdminClient } from "./admin-client";
 import { qrTerminal } from "./qr";
 import type { DeviceRow, PairOfferResult } from "./service";
@@ -133,6 +135,12 @@ export async function revokeDeviceCommand(client: AdminClient, io: CliIo, device
 
 const JOIN_TRIES = 3;
 
+/** A fingerprint as typed or shown (`ABCD EFGH …`, any case or spacing) to the member id it spells, or null. */
+function fingerprintKey(text: string): string | null {
+  const key = text.replace(/[\s-]/g, "").toLowerCase();
+  return /^[a-z2-7]{26}$/.test(key) ? key : null;
+}
+
 /** `botlingd join` on the server that joins (N); resolves with the exit code. */
 export async function joinCommand(client: AdminClient, io: CliIo, options: { name?: string } = {}): Promise<number> {
   let offer: JoinOfferResult;
@@ -145,7 +153,8 @@ export async function joinCommand(client: AdminClient, io: CliIo, options: { nam
   io.out(`This machine: ${offer.name}`);
   io.out(`Fingerprint:  ${offer.fingerprint}`);
   io.out(`Code:         ${offer.code}`);
-  io.out("On a machine of your cluster, run botlingd add-machine, paste this link when it asks, then type the code above.");
+  io.out("On a machine of your cluster, run botlingd add-machine and paste this link when it asks. Say yes there only if it");
+  io.out("shows the fingerprint above, then type the code above.");
   io.out(`It works once, for 5 minutes (until ${new Date(offer.expiresAt).toLocaleTimeString()}):`);
   io.out(offer.link);
   for (;;) {
@@ -173,12 +182,26 @@ export async function joinCommand(client: AdminClient, io: CliIo, options: { nam
  * from stdin, so its one-time secret is not on the command line, where other local users see it in the process list
  * and the shell keeps it in its history (review J2).
  */
-export async function addMachineCommand(client: AdminClient, io: CliIo, linkArg: string | undefined): Promise<number> {
+export async function addMachineCommand(client: AdminClient, io: CliIo, linkArg: string | undefined, options: { expectFingerprint?: string } = {}): Promise<number> {
   let link = linkArg?.trim() ?? "";
   if (!link) {
     const typed = await io.ask("Paste the link botlingd join printed on the other machine: ");
     link = typed?.trim() ?? "";
     if (!link) { io.out("No link given; nothing was done."); return 1; }
+  }
+  // Review R1 (interim): the typed code proves this server to the other one, never the other way round; a link swapped on
+  // its way here would get an Add, the roster and the cluster's VAPID key for any code. So N's fingerprint is confirmed
+  // first: with `--expect-fingerprint` against the link before anything is dialled (and again against the server's
+  // answer), else by the user typing "yes".
+  let expected: string | null = null;
+  if (options.expectFingerprint !== undefined) {
+    expected = fingerprintKey(options.expectFingerprint);
+    if (!expected) { io.out("--expect-fingerprint is not a fingerprint (26 letters and digits, as botlingd join prints it); nothing was done."); return 1; }
+    const offer = parseJoinLink(link);
+    if (offer && fingerprintKey(memberFingerprint(offer.server)) !== expected) {
+      io.out(`The link is for fingerprint ${memberFingerprint(offer.server)}, not the expected one; nothing was dialled.`);
+      return 1;
+    }
   }
   const status = await client.request({ op: "cluster.status" }) as { clusterId: string | null };
   if (status.clusterId === null) {
@@ -194,7 +217,22 @@ export async function addMachineCommand(client: AdminClient, io: CliIo, linkArg:
   }
   io.out(`This machine's fingerprint:  ${added.self.fingerprint}`);
   io.out(`"${added.name}" fingerprint: ${added.fingerprint}`);
-  io.out(`Check that "${added.name}" shows the same fingerprint for itself and this machine's fingerprint above.`);
+  if (expected) {
+    if (fingerprintKey(added.fingerprint) !== expected) {
+      await client.request({ op: "machine.cancel", attempt: added.attempt }).catch(() => undefined);
+      io.out(`"${added.name}" has fingerprint ${added.fingerprint}, not the expected one; cancelled, nothing was added.`);
+      return 1;
+    }
+    io.out(`"${added.name}" has the expected fingerprint.`);
+  } else {
+    const answer = await io.ask(`Does "${added.name}" show exactly this fingerprint for itself: ${added.fingerprint}? Type yes if it does: `);
+    if (answer?.trim().toLowerCase() !== "yes") {
+      await client.request({ op: "machine.cancel", attempt: added.attempt }).catch(() => undefined);
+      io.out(`Not confirmed; cancelled, nothing was added. If "${added.name}" shows another fingerprint, the link is not the one it printed.`);
+      return 1;
+    }
+  }
+  io.out(`"${added.name}" should show this machine's fingerprint above as the one that opened the pairing.`);
   for (let typedCount = 0; typedCount < JOIN_TRIES * 2;) {
     const typed = await io.ask(`Code shown on "${added.name}": `);
     if (typed === null) { await client.request({ op: "machine.cancel", attempt: added.attempt }).catch(() => undefined); io.out("No code typed; cancelled."); return 1; }
