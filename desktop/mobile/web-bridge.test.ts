@@ -195,3 +195,44 @@ describe('WebBridge settles what was pending when it closes', () => {
     await expect(pending).rejects.toBeInstanceOf(RequestFailed);
   });
 });
+
+describe('a message whose answer never came is checked against the chat', () => {
+  const line = (id: string, role: string, text: string) => ({ id, role, text, time: '2026-11-14T02:02:27Z' });
+  function chatSetup(after: { id: string; role: string; text: string }[] | 'unreadable') {
+    let sent = false;
+    const before = [line('u1', 'user', 'earlier'), line('b1', 'bot', 'reply')];
+    const transport: CommandTransport = { request: vi.fn(async (cmd: any) => {
+      if (cmd.type === 'chat.snapshot') {
+        if (sent && after === 'unreadable') throw new MobileError('Could not refresh. Your computer is not answering yet.');
+        const shot = snapshot(sent ? 2 : 1, cmd.botId);
+        shot.chat.messages = (sent ? [...before, ...(after as any[])] : before) as never[];
+        return shot;
+      }
+      sent = true;
+      throw new MobileError('Your computer has not confirmed this message. It may still arrive: check the chat before sending it again.', false, true);
+    }) };
+    const bridge = new WebBridge({ transport });
+    return { client: new Client(bridge), transport };
+  }
+
+  it('it is in the chat: the message is sent (no error at all)', async () => {
+    const { client } = chatSetup([line('u2', 'user', 'line one\nline two'), line('b2', 'bot', '')]);
+    await client.request({ type: 'chat.snapshot', botId: 'project' });
+    expect(await client.request({ type: 'chat.send', botId: 'project', text: 'line one\nline two' })).toMatchObject({ messageId: 'u2' });
+  });
+
+  it('the chat has no new line of yours: it was not delivered, and the error says so without "core unavailable"', async () => {
+    const { client } = chatSetup([]);
+    await client.request({ type: 'chat.snapshot', botId: 'project' });
+    const failure = await client.request({ type: 'chat.send', botId: 'project', text: 'hello' }).catch(error => error as RequestFailed);
+    expect(failure).toBeInstanceOf(RequestFailed);
+    expect((failure as RequestFailed).error.message).toMatch(/did not receive/);
+  });
+
+  it('the chat cannot be read either: it stays unconfirmed (never "not sent")', async () => {
+    const { client } = chatSetup('unreadable');
+    await client.request({ type: 'chat.snapshot', botId: 'project' });
+    const failure = await client.request({ type: 'chat.send', botId: 'project', text: 'hello' }).catch(error => error as RequestFailed);
+    expect((failure as RequestFailed).error.message).toMatch(/has not confirmed/);
+  });
+});

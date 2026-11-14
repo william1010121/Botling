@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { RouteBook } from './routes';
 import { requestTicket } from './events';
+import { DELIVERY_UNCONFIRMED } from '../src/renderer/delivery';
 import { BotView, MessageView, Command, PROTOCOL_VERSION, ResponseEnvelope, RequestId } from '../src/contract';
 
 // Validate just the fields rendered here; the core remains the authority for commands.
@@ -105,7 +106,7 @@ export class MobileTransport {
       return envelope.result;
     } catch (error) {
       if (error instanceof MobileError) throw error;
-      const failure = new MobileError(mutating ? 'Delivery is unconfirmed. Refresh the chat before sending again; your draft is retained.' : 'Could not refresh. Check the connection and server endpoint.', false, mutating);
+      const failure = new MobileError(mutating ? DELIVERY_UNCONFIRMED : 'Could not refresh. Check the connection and server endpoint.', false, mutating);
       failure.network = !reached && !(error instanceof DOMException && error.name === 'AbortError' && this.closed);
       throw failure;
     } finally { clearTimeout(timer); this.requests.delete(controller); }

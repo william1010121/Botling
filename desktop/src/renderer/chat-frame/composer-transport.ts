@@ -112,7 +112,7 @@ function render(): void {
 }
 fromShell(message => {
   if (message.botling === 'composerResult') {
-    requests.response(message.requestID, { ok: message.ok, ...(message.error ? { error: message.error } : {}) });
+    requests.response(message.requestID, { ok: message.ok, ...(message.error ? { error: message.error } : {}), ...(message.uncertain ? { uncertain: true } : {}) });
   } else if (message.botling === 'state') {
     selected = message.state.botID; queueMicrotask(render);
   }

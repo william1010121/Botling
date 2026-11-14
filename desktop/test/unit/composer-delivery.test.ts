@@ -57,3 +57,12 @@ it('releases picker busy state after disconnect while keeping an explicit attach
   pickAttachments(); expect(port.sent).toHaveLength(1); reply(0, true); await vi.advanceTimersByTimeAsync(0);
   expect(uploadStatus()).toBe(''); pickAttachments(); expect(port.sent).toHaveLength(2); reply(1, true); await flush();
 });
+it('a shell answer that delivery could not be confirmed (the phone) shows unconfirmed, never "Not sent", and a later answer still settles it', async () => {
+  button().click();
+  port.receive({ botling: 'composerResult', requestID: port.sent[0].action.requestID, ok: false, uncertain: true });
+  await flush();
+  expect(status()).toContain('Delivery unconfirmed'); expect(status()).not.toContain('Not sent');
+  expect(composer.text).toBe('recoverable draft');
+  reply(0, true); await vi.advanceTimersByTimeAsync(10);
+  expect(status()).toBe(''); expect(composer.text).toBe('');
+});

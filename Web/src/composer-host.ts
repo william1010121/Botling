@@ -1,5 +1,6 @@
 /** Optional acknowledged desktop transport; the native 1.x bridge stays unchanged. */
-export interface DeliveryResult { ok: boolean; error?: string }
+/** `uncertain`: no answer came and it could not be told whether it arrived (shown as unconfirmed, never as not sent). */
+export interface DeliveryResult { ok: boolean; error?: string; uncertain?: boolean }
 /** A lost acknowledgement is not evidence that the core rejected the operation. */
 export class DeliveryUncertain extends Error {
   constructor(readonly requestID: string) {

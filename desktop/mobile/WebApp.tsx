@@ -27,6 +27,10 @@ const LIVE_POLL_MS = 30_000;
 const STALE_MS = 10_000;
 /** Signed out by a network failure with a kept sign-in: try again this often (and whenever the page comes back). */
 const RETRY_MS = 15_000;
+/** Paired just now, but the first read did not come back: try again with the saved pairing this soon. */
+const PAIRED_RETRY_MS = 2_000;
+const PAIRED_CONNECTING = 'Paired. Connecting to your computer…';
+const PAIRED_WAITING = 'Paired with your computer. It is not answering yet (Botling may still be starting, or the network is slow); still connecting…';
 type Auth = 'checking' | 'signedOut' | 'denied' | 'unavailable';
 const TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 /** The bridge over HTTPS (a token), or the end-to-end encrypted relay (a paired phone). */
@@ -151,7 +155,7 @@ export function WebApp() {
     try { await showRelay(await RelayClient.connect(saved, { onRevoked: relayLost, onSession: keepRelay })); }
     catch (cause) {
       if (cause instanceof MobileError && cause.auth) { setRelaySaved(false); await forgetRelaySession(); }
-      failed(cause, 'Could not reach Botling through the relay. Try again.');
+      failed(cause, 'Your computer is not answering yet (Botling may still be starting, or the network is slow). Trying again…');
     } finally { connecting.current = false; }
   }, [showRelay, relayLost, failed, keepRelay]);
 
@@ -201,17 +205,35 @@ export function WebApp() {
     return () => { document.removeEventListener('visibilitychange', again); window.removeEventListener('online', again); window.removeEventListener('pageshow', again); clearInterval(timer); };
   }, [canRetry, resumeSaved]);
 
-  /** Pairs through the relay this page came from (end-to-end encrypted): the secret stays in this function. */
+  /** Paired just now and the first read failed: the pairing stands (the desktop keeps this phone), so it connects again
+   * with it, soon and then as any kept sign-in does. */
+  const [pairedRetry, setPairedRetry] = useState(0);
+  useEffect(() => {
+    if (!pairedRetry) return;
+    const timer = setTimeout(() => { void resumeSaved(); }, PAIRED_RETRY_MS);
+    return () => clearTimeout(timer);
+  }, [pairedRetry, resumeSaved]);
+
+  /** Pairs through the relay this page came from (end-to-end encrypted): the secret stays in this function. Only the
+   * pairing itself can fail as a pairing (asking for a new code); once the desktop has paired this phone, a first read
+   * that is slow or fails is a connection still coming up, tried again with the saved pairing. */
   const pairRelay = useCallback(async (relayLink: RelayLink) => {
     if (connecting.current) return;
     setRelayPage(true);
     connecting.current = true; setAuth('checking'); setMessage('Pairing…');
+    let paired: { client: RelayClient; session: RelaySession };
+    try { paired = await RelayClient.pair(relayLink, location.origin, deviceName(), { onRevoked: relayLost, onSession: keepRelay }); }
+    catch (cause) { failed(cause, 'Pairing failed. Show a new code on your computer.'); connecting.current = false; return; }
     try {
-      const { client, session } = await RelayClient.pair(relayLink, location.origin, deviceName(), { onRevoked: relayLost, onSession: keepRelay });
-      setRelaySaved(await saveRelaySession(session));
-      await showRelay(client);
-    } catch (cause) { failed(cause, 'Pairing failed. Show a new code on your computer.'); }
-    finally { connecting.current = false; }
+      // Kept in this browser (in memory at least: a private window) so a retry needs no new code.
+      await saveRelaySession(paired.session);
+      setRelaySaved(true);
+      setMessage(PAIRED_CONNECTING);
+      await showRelay(paired.client);
+    } catch (cause) {
+      if (cause instanceof MobileError && cause.auth) { setRelaySaved(false); await forgetRelaySession(); failed(cause, cause.message); }
+      else { setAuth('unavailable'); setMessage(PAIRED_WAITING); setPairedRetry(n => n + 1); }
+    } finally { connecting.current = false; }
   }, [showRelay, relayLost, failed, keepRelay]);
 
   /** A bridge pairing link: redeem it once for a token, then sign in exactly as a pasted token does. */
