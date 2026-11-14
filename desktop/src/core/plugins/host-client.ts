@@ -85,6 +85,8 @@ export class PluginHostClient {
   private specs: HostSpec[] = [];
   /** The plugins the host's last load ran (not the ones that failed). */
   private loaded = new Set<string>();
+  /** Loads asked of the host so far (the newest one's answer says what runs). */
+  private loads = 0;
   private process: HostProcess | null = null;
   private buffer = "";
   private stderr = "";
@@ -394,6 +396,7 @@ export class PluginHostClient {
   private async load() {
     let result: unknown;
     const asked = this.specs;
+    const load = ++this.loads;
     const loadStarted = Date.now();
     try {
       result = await this.request("load", { plugins: asked }, null, this.timing.load);
@@ -403,12 +406,23 @@ export class PluginHostClient {
     }
     const failed = (result as { failed?: unknown })?.failed;
     this.log(`plugin host: loaded in ${Date.now() - loadStarted} ms; per plugin ${JSON.stringify((result as { timings?: unknown })?.timings ?? {})}`);
-    const loaded = new Set(asked.map((spec) => spec.name));
+    // An older load's answer can arrive after a newer one's: it does not say what runs now (the newer one did), and a
+    // failure it reports of code it asked for counts only while that code is still asked for (a failure is recorded
+    // against the plugin's current files, so the older code's failure would turn off the newer code).
+    const latest = load === this.loads;
+    const loaded = latest ? new Set(asked.map((spec) => spec.name)) : this.loaded;
     for (const failure of Array.isArray(failed) ? failed : []) {
       const name = (failure as { name?: unknown })?.name;
       const why = (failure as { message?: unknown })?.message;
-      if (typeof name === "string") loaded.delete(name);
-      if (typeof name === "string") this.onPluginFailure(name, `The program part failed to load: ${typeof why === "string" ? why.slice(0, 2_000) : ""}`, true);
+      if (typeof name !== "string") continue;
+      const tried = asked.find((spec) => spec.name === name);
+      const now = this.specs.find((spec) => spec.name === name);
+      if (tried && (!now || tried.fingerprint !== now.fingerprint || tried.main !== now.main)) {
+        this.log(`plugin host: ${name}'s older code failed after newer code was asked for (not recorded): ${typeof why === "string" ? why.slice(0, 500) : ""}`);
+        continue;
+      }
+      loaded.delete(name);
+      this.onPluginFailure(name, `The program part failed to load: ${typeof why === "string" ? why.slice(0, 2_000) : ""}`, true);
     }
     // Cleanups of unloaded plugins that threw, rejected or hung (the host's plugin kernel); logged, never counted as crashes.
     const unloadFailed = (result as { unloadFailed?: unknown })?.unloadFailed;
