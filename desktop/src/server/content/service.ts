@@ -352,15 +352,43 @@ export class ContentService {
     };
   }
 
-  /** The pinned file of a reference, for an entry that references it (§9A.7); otherwise `content.gone`. */
-  async open(message: MessageOf<"content.open">): Promise<MessageOf<"content.file"> | MessageOf<"content.gone">> {
+  /**
+   * Whether a remote front end may read `stream` now (§9A.7 "a stream the requester may read"): a bot's chat stream
+   * that is active or archived. Table streams, retired, stale or gone streams hold no reference a device may open.
+   */
+  readableStream(stream: string, db: Db = this.db()): boolean {
+    if (!stream.startsWith("bot:")) return false;
+    const state = readStream(db, stream)?.state;
+    return state === "active" || state === "archived";
+  }
+
+  /**
+   * A remote front end's lookup (`content.locate`, M2 step 9): `find`, but only in a stream the device may read; a
+   * pending id is answered as `preparing` with its content id only once hashed (a remote page never opens a pending id).
+   */
+  locate(message: { botId: string; line: string; url: string }): MessageOf<"content.found">["ref"] {
+    const stream = `bot:${message.botId}`;
+    const db = this.db();
+    return inRead(db, () => {
+      if (!this.readableStream(stream, db)) return null;
+      return this.find({ t: "content.find", req: "locate", botId: message.botId, line: message.line, url: message.url }).ref;
+    });
+  }
+
+  /**
+   * The pinned file of a reference, for an entry that references it (§9A.7); otherwise `content.gone`.
+   * `remote`: a device's request (the tailnet path): only a content id (never a pending one), only in a readable stream.
+   */
+  async open(message: MessageOf<"content.open">, options: { remote?: boolean } = {}): Promise<MessageOf<"content.file"> | MessageOf<"content.gone">> {
     const gone = (reason: MessageOf<"content.gone">["reason"]): MessageOf<"content.gone"> => ({ t: "content.gone", req: message.req, id: message.id, reason });
     if (message.owner !== this.serverId) return gone("offline"); // M1: one server; another owner's content is M3
+    if (options.remote && !message.id.startsWith("sha256:")) return gone("denied");
     const db = this.db();
     // One read: the hash's command may move a pending id's rows to its content id between two statements.
     const read = inRead(db, () => {
       const id = this.resolve(db, message.id);
-      const referenced = !!db.prepare("SELECT 1 FROM content_refs WHERE id = ? AND stream = ? AND seq = ?").get(id, message.entry.stream, message.entry.seq);
+      const referenced = !!db.prepare("SELECT 1 FROM content_refs WHERE id = ? AND stream = ? AND seq = ?").get(id, message.entry.stream, message.entry.seq)
+        && (!options.remote || this.readableStream(message.entry.stream, db));
       return { referenced, row: referenced ? readRow(db, id) : null };
     });
     if (!read.referenced) return gone("denied");

@@ -23,6 +23,8 @@ import { backupCheckMs, DailyBackups } from "./backup-schedule";
 import { BotlingdEngine } from "./botlingd-engine";
 import { DbBotStores } from "./botstore";
 import { ContentService } from "./content";
+import { RemoteContent } from "./content/remote";
+import { ContentTickets } from "./content/tickets";
 import { effectCheckpointSink, ensureBot } from "./effects";
 import { BotExports } from "./exports";
 import { CoreEngine, IntentRuntime } from "./intents";
@@ -126,6 +128,9 @@ export class Botlingd {
     /** M3 step 6: this server's summary rows (`srv:` table). */
     readonly summary: SummaryRows,
   ) {}
+
+  /** M2 step 9: `/v3/c/…` and the sessions' content lookups and tickets. */
+  remoteContent: RemoteContent | null = null;
 
   get token(): string { return this.tokenValue; }
 
@@ -243,8 +248,13 @@ export class Botlingd {
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
-      const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing }, options.session);
+      // M2 step 9: content over the tailnet (URL tickets in memory; a device that leaves the roster loses its tickets).
+      const tickets = new ContentTickets();
+      roster.onChange((change) => { for (const member of change.invalidated) tickets.dropDevice(member); });
+      const remoteContent = new RemoteContent({ service: content, tickets, roster, log });
+      const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent }, options.session);
       daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries);
+      daemon.remoteContent = remoteContent;
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       await daemon.listen(port, options.outDir, origin);
@@ -276,6 +286,7 @@ export class Botlingd {
     try {
       this.listener = await LoopbackListener.start({
         port, remote: this.remote, pageDir: defaultPageDir(outDir), origins: () => (origin ? [origin] : []), log: this.log,
+        ...(this.remoteContent ? { content: this.remoteContent } : {}),
       });
       state = { pid: process.pid, address: LISTEN_HOST, port: this.listener.port };
     } catch (error) {

@@ -117,6 +117,8 @@ interface Session {
 interface PendingRequest { resolve(value: never): void; reject(error: Error): void; kind: "res" | "history.page" | "content"; stream?: string }
 /** What a content request is answered with (§9A.4, local part). */
 export type ContentAnswer = MessageOf<"content.found"> | MessageOf<"content.file"> | MessageOf<"content.gone">;
+/** What a remote page's content request is answered with (§9A.4 tailnet part, M2 step 9). */
+export type RemoteContentAnswer = MessageOf<"content.located"> | MessageOf<"content.granted"> | MessageOf<"content.gone">;
 
 export class FeLink {
   private readonly clock: Clock;
@@ -294,6 +296,15 @@ export class FeLink {
     return this.ask({ ...message, req: this.nextReq() } as Message & { req: string }, "content") as Promise<ContentAnswer>;
   }
 
+  /**
+   * The content path's tailnet part (M2 step 9): which reference a line holds for a file, with a URL ticket once hashed
+   * (`content.locate` → `content.located`), or a ticket for a known reference, renewed under the same text
+   * (`content.ticket` → `content.granted` | `content.gone`). Rejects when no session is attached or it ends first.
+   */
+  remoteContent(message: Omit<MessageOf<"content.locate">, "req"> | Omit<MessageOf<"content.ticket">, "req">): Promise<RemoteContentAnswer> {
+    return this.ask({ ...message, req: this.nextReq() } as Message & { req: string }, "content") as Promise<RemoteContentAnswer>;
+  }
+
   /** Older lines of a stream (§8.4). A page of a retired logId is refused. */
   history(stream: StreamId, before: string, bytes?: number): Promise<MessageOf<"history.page">> {
     return this.ask({ t: "history", req: this.nextReq(), stream, before, ...(bytes ? { bytes } : {}) }, "history.page", stream) as Promise<MessageOf<"history.page">>;
@@ -382,7 +393,7 @@ export class FeLink {
       case "cancel.noted": this.onCancelNoted(message); return;
       case "res": case "history.page": this.onAnswer(message); return;
       case "res.part": this.onResPart(message); return;
-      case "content.found": case "content.file": case "content.gone": this.onContentAnswer(message); return;
+      case "content.found": case "content.file": case "content.gone": case "content.located": case "content.granted": this.onContentAnswer(message); return;
       case "bye":
         if (message.reason === "version") this.updateRequired(session, "a newer version");
         else this.endSession(session, `bye: ${message.reason}`);
@@ -612,7 +623,7 @@ export class FeLink {
     });
   }
 
-  private onContentAnswer(message: ContentAnswer): void {
+  private onContentAnswer(message: ContentAnswer | RemoteContentAnswer): void {
     const pending = this.requests.get(message.req);
     if (!pending || pending.kind !== "content") return;
     this.requests.delete(message.req);

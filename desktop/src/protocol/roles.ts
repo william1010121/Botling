@@ -32,7 +32,8 @@ const isJoin = (type: string) => type.startsWith("join.");
  * - M2: `req`/`res` opened to remote front ends (a v1 addition, M2 brief Q2: what a remote `req` may name is the
  *   read allowlist in scopes.ts, checked by the remote session); uploads, so `content.chunk` also goes FE → server and
  *   `content.credit` server → FE; the URL ticket answer `content.granted` and the upload answer `content.stored`
- *   (server → FE); the device pairing messages; and the local-only `admin` requests and `admin.event`.
+ *   (server → FE); M2 step 9's `content.locate` / `content.located` (a remote page's lookup of a line's reference, with its
+ *   ticket); the device pairing messages; and the local-only `admin` requests and `admin.event`.
  * - M3 (a second server): the table-stream batch `rows` (server → FE and server ↔ server), `prefs.ids` / `prefs.want`
  *   beside `prefs.have` / `prefs.rows` (server ↔ server), and server pairing `join.*` (peer servers, pairing session only).
  *   The forwarded rows (`sub`/`ack`/`history`/`cmd`/`cancel`, `batch`/`snap`/`reset`/`stale`, `held`/`cmd.result`/
@@ -67,6 +68,8 @@ const ROLE_ROWS = {
   "content.cancel": rule(true, false, true),
   "content.ticket": rule(true, false, false),
   "content.granted": rule(false, true, false),
+  "content.locate": rule(true, false, false),
+  "content.located": rule(false, true, false),
   "content.put": rule(true, false, false),
   "content.stored": rule(false, true, false),
   "content.meta": rule(false, true, true),

@@ -4,6 +4,7 @@
 import { DEFAULT_IDB_NAME, FeLink, IdbFeStorage, systemClock, wsDial, wsUrlFor, type ConnModel, type PendingView } from "../../src/fe-link";
 import type { LinkPort } from "../../src/main-v3/renderer-adapter";
 import type { DeviceRecord } from "./device-store";
+import type { MediaDiagnostics } from "./media";
 
 export const FE_VERSION = "3.0.0-m2";
 /** v1 §13.3 with §5.2's dead rule: without a session for 45 s, "connecting…" turns "offline · as of <time>". */
@@ -20,9 +21,11 @@ export interface Diagnostics {
   frames: number;
   /** Session ends (reason: detail). */
   ends: string[];
+  /** A line's media as the shell answered the chat frame, by key (step 9). */
+  media: MediaDiagnostics;
 }
 
-export function newDiagnostics(): Diagnostics { return { live: [], states: {}, conn: [], frames: 0, ends: [] }; }
+export function newDiagnostics(): Diagnostics { return { live: [], states: {}, conn: [], frames: 0, ends: [], media: {} }; }
 
 export interface Connection {
   link: FeLink;
