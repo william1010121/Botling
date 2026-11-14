@@ -71,7 +71,7 @@ import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
-import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
+import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, toSwiftDate } from "./store/records";
 import { botFace } from "./faces";
 import { status, statusText } from "../contract/bot-status";
 import { currentChat, WorkspaceWatch, type BotSummary, type CurrentChat, type ShownChat, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
@@ -2466,6 +2466,18 @@ First write a test that shows this, then fix it.`;
     return this.send(botId, text, { ...options, ids });
   }
 
+  /**
+   * Botling 3's server: the user's line of a `chat.send` it is committing (or committed before a crash), in the bot's
+   * chat now (`Bot.presetUserLine`); its turn's `serverSend` later finds it by id. `time`: the line's ISO time in the log.
+   */
+  serverUserLine(botId: string, line: { id: string; text: string; time: string; replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }): boolean {
+    const ms = Date.parse(line.time);
+    return this.bot(botId).presetUserLine({
+      id: line.id, text: line.text, date: toSwiftDate(Number.isFinite(ms) ? ms : Date.now()),
+      ...(line.replyTo ? { replyTo: line.replyTo } : {}), ...(line.to ? { to: line.to } : {}),
+    });
+  }
+
   /** Botling 3's server: a turn it recorded before a restart (a routine's run, an answer's message), started now. */
   serverTurn(botId: string, spec: Parameters<Bot["startPresetTurn"]>[0]): { turnId: string; done: Promise<TurnStatus> } {
     return this.bot(botId).startPresetTurn(spec);
@@ -2557,7 +2569,9 @@ First write a test that shows this, then fix it.`;
     const appNote = this.conversations.notes(bot, called, words);
     const sent = bot.send(words, { ...options, ...(appNote ? { appNote } : {}) });
     if (called.length) {
-      const newest = bot.lines().findLast((line) => line.role === "user");
+      // The line this message made (Botling 3's server: by its id, since lines sent after it may be in the chat already).
+      const userId = options.ids?.userId;
+      const newest = (userId ? bot.lines().find((line) => line.id === userId) : undefined) ?? bot.lines().findLast((line) => line.role === "user");
       if (newest) this.conversations.startCallIn(bot, called, newest.id, null);
     }
     specTrace("callin", "UserLine", { chat: bot.id, to: called[0]?.id ?? null, pending: this.conversations.callIns(bot.id) });

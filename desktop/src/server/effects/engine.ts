@@ -43,6 +43,16 @@ export interface DeferredTurnRequest {
   release(): TurnRunning;
 }
 
+/** The user's line of a `chat.send`, as its intent stored it in the log (`TurnEngine.userLine`). */
+export interface UserLine {
+  id: string;
+  text: string;
+  /** ISO time of the line in the log. */
+  time: string;
+  replyTo?: string;
+  to?: "both" | "claude" | "codex" | "agy";
+}
+
 /** What the server gives the engine. */
 export interface EngineHost {
   /** Everything the engine emits (contract events: turn text, lines, steps, cards…). */
@@ -69,6 +79,14 @@ export interface TurnEngine {
    * land in the command's transaction); a turn it would start goes to `host.deferTurn`. Throws for a command it refuses.
    */
   applyNow(cmd: ApplyNowCommand): unknown;
+  /**
+   * Puts the user's line of a `chat.send` into the engine's own chat now, synchronously (a line it has already is left
+   * alone): called in the intent's transaction, and again at recovery for a turn whose row was not ended, so the line
+   * is in the chat the engine keeps (the 2.x core's rows, chat.json, the history) as soon as the log has it, and a
+   * command naming it (a reaction) finds it while its turn waits. Its turn's `startTurn` finds it there by id. An engine
+   * with no chat of its own leaves it out. Throws a ContractError to refuse the send.
+   */
+  userLine?(botId: string, line: UserLine): void;
   /** Starts a turn (after its `started` row committed). Rejects when the engine refused it. */
   startTurn(turn: TurnStart): Promise<TurnRunning>;
   /** Stops a running turn (its `turn.finished{stopped}` comes as an event). */
