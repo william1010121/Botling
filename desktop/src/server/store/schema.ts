@@ -164,6 +164,17 @@ CREATE INDEX media_jobs_by_state ON media_jobs (state, updatedAt);
 CREATE TABLE content_meta (id TEXT PRIMARY KEY, meta TEXT NOT NULL) WITHOUT ROWID;
 `;
 
+// v8 (M3 step 9, src/server/forward): cancels a forwarding server keeps until the owner answers them (D59, v1 §7.3
+// `fwdcancels (origin, originEpoch, target, n, owner, at)`), and the forward queue read per owner in slot order.
+const V8 = `
+CREATE TABLE fwdcancels (
+  origin TEXT NOT NULL, originEpoch TEXT NOT NULL, target TEXT NOT NULL, n INTEGER NOT NULL, owner TEXT NOT NULL,
+  at INTEGER NOT NULL, PRIMARY KEY (origin, originEpoch, target, n)
+) WITHOUT ROWID;
+CREATE INDEX fwdcancels_by_owner ON fwdcancels (owner, origin, originEpoch, target, n);
+CREATE INDEX forwardq_by_owner ON forwardq (owner, origin, originEpoch, target, n);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -216,6 +227,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "media jobs (src/server/media): variant files, job notes, content meta",
     up(db) {
       db.exec(V7);
+    },
+  },
+  {
+    version: 8,
+    description: "forwarding (src/server/forward): cancels kept until the owner answers (fwdcancels), forwardq by owner",
+    up(db) {
+      db.exec(V8);
     },
   },
 ];

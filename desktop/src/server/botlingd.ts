@@ -37,10 +37,11 @@ import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./
 import { Gossip, PrefsStore, RosterStore } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, LoopbackListener } from "./net";
 import { PairingService, ServerJoin } from "./pairing";
-import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter } from "./peer";
+import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter, type PeerSession } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
 import { PeerTables, SummaryRows, TableFeeds } from "./replica";
+import { Directory, Forwarder, OwnerInbox } from "./forward";
 import { release as osRelease } from "node:os";
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
@@ -278,6 +279,16 @@ export class Botlingd {
         joinAddresses: () => { const at = listenerPort(); return at === null ? [] : [`ws://${LISTEN_HOST}:${at}/v3/ws`]; },
         prefs,
       });
+      // M3 step 9: commands for targets a peer owns are queued and forwarded; a peer's forwarded commands for targets
+      // this server owns go to the slot engine. A lone server has no peers: every target is its own, as before.
+      // (`peers` is made below; these run only once sessions exist.)
+      const peerIds = (): string[] => peers.states().map((state) => state.member);
+      const directory: Directory = new Directory({ self: serverId, reader: () => hub.reader(), peers: peerIds, hasBot: (botId) => engine.hasBot(botId) });
+      const forwarder: Forwarder = new Forwarder({
+        self: serverId, submit: (command) => openStore.submit(command), reader: () => hub.reader(), directory, log,
+        session: (peer): PeerSession | null => peers.session(peer),
+      });
+      const inbox = new OwnerInbox({ self: serverId, runtime, log });
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
@@ -310,6 +321,12 @@ export class Botlingd {
           isPeerTable: (stream) => peerTables.isPeerTable(stream) && peers.states().some((state) => `srv:${state.member}` === stream),
           subscribe: (stream, cursor, sink) => feeds.subscribe(stream, cursor, sink),
         },
+        forward: {
+          ownerOf: (target) => forwarder.ownerOf(target),
+          commit: (envelope, owner) => forwarder.commit(envelope, owner),
+          cancel: (slot, owner) => forwarder.cancel(slot, owner),
+          attach: (origin, sink) => forwarder.attach(origin, sink),
+        },
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
@@ -319,13 +336,14 @@ export class Botlingd {
       const remoteContent = new RemoteContent({ service: content, tickets, roster, log });
       const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent }, options.session);
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
-      const peers = new PeerSessions({
+      const peers: PeerSessions = new PeerSessions({
         roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log,
         // M3 step 7: every peer's srv: table is subscribed while its session is open (§10.1).
         // M3 step 5: gossip frames first (roster sync is the first exchange, §4.6), then the tables.
-        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || peerTables.onMessage(session, message),
-        sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); },
-        sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); },
+        // M3 step 9: forwarded commands (owner side) and the owners' answers (forwarding side).
+        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || inbox.onMessage(session, message) || (await forwarder.onMessage(session, message)) || peerTables.onMessage(session, message),
+        sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); },
+        sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); });
       feeds.start();
