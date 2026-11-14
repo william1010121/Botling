@@ -7,5 +7,5 @@ export { cloneFile, COPY_MAX_BYTES, pinFile, pinsDir, sameSig, statSig, sweepPin
 export { contentLineHook } from "./tap";
 export {
   ContentService, finishedLine,
-  type ContentAnswer, type ContentRequest, type ContentServiceOptions, type ContentStore, type NotedFile, type NotedLine,
+  type ContentAnswer, type ContentMedia, type ContentRequest, type ContentServiceOptions, type ContentStore, type NotedFile, type NotedLine,
 } from "./service";

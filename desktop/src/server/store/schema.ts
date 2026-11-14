@@ -144,6 +144,26 @@ CREATE TABLE content_aliases (pending TEXT PRIMARY KEY, id TEXT NOT NULL) WITHOU
 CREATE INDEX content_aliases_by_id ON content_aliases (id);
 `;
 
+// v7 (M2 step 10, src/server/media): the owner's media jobs and variants (§9A.5, §9A.8). v1's `variants (srcId, variant,
+// id, state, lastUsed)` gains the variant file (`path`, its `statSig`, `size`, `type`), `info` (JSON: bitrate, width,
+// height, the tool) and `createdAt`; the primary key (srcId, variant) keeps one row per variant, also after a job runs
+// again. state: `ready` | `evicted` (removed by the 5 GB LRU; made again when asked for). v1's `media_jobs (srcId, kind,
+// state, tries)` gains `note` (why a variant was not made, e.g. no ffmpeg) and `updatedAt`. `content_meta`: what the job
+// learned of a source (JSON: duration, width, height, bitrate, codecs, pages).
+const V7 = `
+ALTER TABLE variants ADD COLUMN path TEXT;
+ALTER TABLE variants ADD COLUMN statSig TEXT;
+ALTER TABLE variants ADD COLUMN size INTEGER;
+ALTER TABLE variants ADD COLUMN type TEXT;
+ALTER TABLE variants ADD COLUMN info TEXT;
+ALTER TABLE variants ADD COLUMN createdAt INTEGER;
+CREATE INDEX variants_by_use ON variants (state, lastUsed);
+ALTER TABLE media_jobs ADD COLUMN note TEXT;
+ALTER TABLE media_jobs ADD COLUMN updatedAt INTEGER;
+CREATE INDEX media_jobs_by_state ON media_jobs (state, updatedAt);
+CREATE TABLE content_meta (id TEXT PRIMARY KEY, meta TEXT NOT NULL) WITHOUT ROWID;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -189,6 +209,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "content path (src/server/content): pending ids resolve to the content id once hashed (content_aliases)",
     up(db) {
       db.exec(V6);
+    },
+  },
+  {
+    version: 7,
+    description: "media jobs (src/server/media): variant files, job notes, content meta",
+    up(db) {
+      db.exec(V7);
     },
   },
 ];

@@ -4,12 +4,14 @@
 //
 // - D43: the data folder is on an external disk, so "durable" depends on the enclosure honouring F_FULLFSYNC;
 // - backups: none yet, or the newest is older than two days (the daily backup did not run: the server was not up);
-// - a restore: when, from which file, to when, and what that means for commands applied after the backup.
+// - a restore: when, from which file, to when, and what that means for commands applied after the backup;
+// - media tools (M2 step 10, D42): what the running server did not find on its PATH (no ffmpeg: no previews, the
+//   original plays), as it recorded in `meta.mediaTools` at start.
 import { join } from "node:path";
 import { externalDiskNote, listBackups, newestBackup, type Db } from "./store";
 
 export interface ServerNote {
-  id: "external-disk" | "no-backup" | "old-backup" | "restored";
+  id: "external-disk" | "no-backup" | "old-backup" | "restored" | "media-tools";
   level: "info" | "warning";
   text: string;
 }
@@ -53,6 +55,15 @@ export function serverNotes(dataDir: string, db: Db | null, now = Date.now(), pl
         id: "restored", level: "info",
         text: `History was restored on ${iso(restoredAt)} to ${iso(restoredTo)}${from ? ` from ${String(from)}` : ""}. Lines after that are gone; a command applied after the backup whose outcome its sender had not seen may have run again.`,
       });
+    }
+    const tools = meta("mediaTools");
+    if (tools) {
+      try {
+        const parsed = JSON.parse(String(tools)) as { notes?: unknown };
+        if (Array.isArray(parsed.notes)) {
+          for (const text of parsed.notes) if (typeof text === "string") notes.push({ id: "media-tools", level: text.startsWith("qpdf") ? "info" : "warning", text });
+        }
+      } catch { /* an unreadable value says nothing */ }
     }
   }
   return notes;
