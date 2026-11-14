@@ -1,0 +1,66 @@
+{
+  "mainTabs": [
+    {
+      "plugin": "botling.whiteboard",
+      "id": "botling.whiteboard",
+      "title": "Whiteboard",
+      "icon": "people",
+      "forRole": "main"
+    }
+  ],
+  "settingsSections": [
+    {
+      "plugin": "botling.git",
+      "id": "botling.git.settings",
+      "title": "Worktrees",
+      "terms": "worktree worktrees git branch folder app-managed developer",
+      "after": "developer"
+    },
+    {
+      "plugin": "botling.usage",
+      "id": "botling.usage.settings",
+      "title": "Usage",
+      "terms": "usage cost tokens spending today by bot earlier days subscription limits rate quota 5 hours week claude codex antigravity",
+      "after": "engines",
+      "link": "Usage by bot"
+    }
+  ],
+  "quickSettings": [
+    {
+      "plugin": "botling.usage",
+      "id": "botling.usage.quota",
+      "title": "Subscription usage"
+    }
+  ],
+  "rightPanelSections": [
+    {
+      "plugin": "botling.git",
+      "id": "botling.git.worktrees",
+      "title": "Worktrees",
+      "forRole": "bots"
+    }
+  ],
+  "bottomPanels": [
+    {
+      "plugin": "botling.terminal",
+      "id": "botling.terminal.panel",
+      "title": "Terminal",
+      "toggle": "botling.terminal.toggle"
+    }
+  ],
+  "chatHeaderViews": [
+    {
+      "plugin": "botling.routines",
+      "id": "botling.routines.panel",
+      "title": "Routines"
+    }
+  ],
+  "takeovers": [
+    {
+      "plugin": "botling.component-studio",
+      "id": "botling.component-studio.spec",
+      "title": "Component spec"
+    }
+  ],
+  "composerBarViews": []
+}

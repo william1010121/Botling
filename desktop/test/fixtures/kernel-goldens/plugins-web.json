@@ -1,0 +1,176 @@
+[
+  {
+    "name": "botling.board",
+    "version": "1.0.0",
+    "source": "<source of botling.board>",
+    "styles": [
+      "botling-chat://chat/plugin-files/botling.board/dist/board.css"
+    ],
+    "settings": {},
+    "builtIn": true,
+    "commands": []
+  },
+  {
+    "name": "botling.catchup",
+    "version": "1.0.0",
+    "source": "<source of botling.catchup>",
+    "styles": [
+      "botling-chat://chat/plugin-files/botling.catchup/catchup.css"
+    ],
+    "settings": {
+      "botling.catchup.unread": true,
+      "botling.catchup.interval": false,
+      "botling.catchup.customThresholds": false,
+      "botling.catchup.unreadThreshold": 3,
+      "botling.catchup.intervalThreshold": 3,
+      "botling.catchup.engine": "codex",
+      "botling.catchup.model": "gpt-6-luna",
+      "botling.catchup.prompt": "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written."
+    },
+    "builtIn": true,
+    "commands": []
+  },
+  {
+    "name": "botling.chat-extras",
+    "version": "1.0.0",
+    "source": "<source of botling.chat-extras>",
+    "styles": [
+      "botling-chat://chat/plugin-files/botling.chat-extras/dist/chat-extras.css"
+    ],
+    "settings": {
+      "botling.chat-extras.pasteCollapseChars": 1000,
+      "botling.chat-extras.pasteCollapseLines": 15
+    },
+    "builtIn": true,
+    "commands": []
+  },
+  {
+    "name": "botling.component-studio",
+    "version": "1.0.0",
+    "source": "<source of botling.component-studio>",
+    "styles": [
+      "botling-chat://chat/plugin-files/botling.component-studio/studio.css"
+    ],
+    "settings": {},
+    "builtIn": true,
+    "commands": [
+      {
+        "id": "botling.component-studio.make",
+        "title": "Make into component"
+      }
+    ]
+  },
+  {
+    "name": "botling.git",
+    "version": "1.0.0",
+    "source": "<source of botling.git>",
+    "styles": [],
+    "settings": {
+      "botling.git.enabled": true,
+      "botling.git.root": ""
+    },
+    "builtIn": true,
+    "commands": []
+  },
+  {
+    "name": "botling.note",
+    "version": "1.19.1",
+    "source": "<source of botling.note>",
+    "styles": [],
+    "settings": {},
+    "builtIn": true,
+    "commands": []
+  },
+  {
+    "name": "botling.routines",
+    "version": "1.0.0",
+    "source": "<source of botling.routines>",
+    "styles": [],
+    "settings": {},
+    "builtIn": true,
+    "commands": []
+  },
+  {
+    "name": "botling.terminal",
+    "version": "1.0.0",
+    "source": "<source of botling.terminal>",
+    "styles": [],
+    "settings": {},
+    "builtIn": true,
+    "commands": [
+      {
+        "id": "botling.terminal.toggle",
+        "title": "Toggle terminal"
+      }
+    ]
+  },
+  {
+    "name": "botling.usage",
+    "version": "1.0.0",
+    "source": "<source of botling.usage>",
+    "styles": [],
+    "settings": {},
+    "builtIn": true,
+    "commands": []
+  },
+  {
+    "name": "botling.whiteboard",
+    "version": "1.0.0",
+    "source": "<source of botling.whiteboard>",
+    "styles": [],
+    "settings": {},
+    "builtIn": true,
+    "commands": []
+  },
+  {
+    "name": "ccb-latex",
+    "version": "1.0.0",
+    "source": "<source of ccb-latex>",
+    "styles": [
+      "botling-chat://chat/plugin-files/ccb-latex/dist/katex.min.css"
+    ],
+    "settings": {
+      "ccb-latex.preview": true,
+      "ccb-latex.copyTeX": true
+    },
+    "builtIn": true,
+    "commands": [
+      {
+        "id": "ccb-latex.insert",
+        "title": "Insert inline formula",
+        "key": "cmd+shift+m"
+      }
+    ]
+  },
+  {
+    "name": "acme-board",
+    "version": "1.2.0",
+    "source": "<source of acme-board>",
+    "styles": [
+      "botling-chat://chat/plugin-files/acme-board/dist/acme.css"
+    ],
+    "settings": {
+      "acme-board.columns": 3,
+      "acme-board.mode": "grid"
+    },
+    "commands": [
+      {
+        "id": "acme-board.open",
+        "title": "Open the board",
+        "key": "cmd+shift+b"
+      },
+      {
+        "id": "acme-board.refresh",
+        "title": "Refresh"
+      }
+    ]
+  },
+  {
+    "name": "zed.tools",
+    "version": "0.9.1",
+    "source": "<source of zed.tools>",
+    "styles": [],
+    "settings": {},
+    "commands": []
+  }
+]

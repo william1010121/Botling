@@ -1,0 +1,124 @@
+[
+  {
+    "name": "botling.board",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.board",
+    "skipped": []
+  },
+  {
+    "name": "botling.cards",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.cards",
+    "skipped": []
+  },
+  {
+    "name": "botling.catchup",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.catchup",
+    "skipped": []
+  },
+  {
+    "name": "botling.chat-extras",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.chat-extras",
+    "skipped": []
+  },
+  {
+    "name": "botling.component-studio",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.component-studio",
+    "skipped": []
+  },
+  {
+    "name": "botling.design",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.design",
+    "skipped": []
+  },
+  {
+    "name": "botling.dev",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.dev",
+    "skipped": []
+  },
+  {
+    "name": "botling.git",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.git",
+    "skipped": []
+  },
+  {
+    "name": "botling.note",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.note",
+    "skipped": []
+  },
+  {
+    "name": "botling.report",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.report",
+    "skipped": []
+  },
+  {
+    "name": "botling.routines",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.routines",
+    "skipped": []
+  },
+  {
+    "name": "botling.terminal",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.terminal",
+    "skipped": []
+  },
+  {
+    "name": "botling.usage",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.usage",
+    "skipped": []
+  },
+  {
+    "name": "botling.whiteboard",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.whiteboard",
+    "skipped": []
+  },
+  {
+    "name": "ccb-latex",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/ccb-latex",
+    "skipped": []
+  },
+  {
+    "name": "acme-board",
+    "builtIn": false,
+    "enabled": true,
+    "folder": "<tmp>/plugins/acme-board",
+    "skipped": []
+  },
+  {
+    "name": "zed.tools",
+    "builtIn": false,
+    "enabled": true,
+    "folder": "<tmp>/plugins/zed.tools",
+    "skipped": [
+      "View \"zed.tools.nowhere\": where \"ceiling\" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section, bottomPanel, chatHeader, rightPanel.takeover or composerBar.",
+      "Menu \"not/a-menu\" is not one of message/context, bot/context, composer/plus, commandPalette, message/preview, browser/tab, chat/link (skipped; the rest of the plugin loads)."
+    ]
+  }
+]

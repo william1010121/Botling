@@ -1,0 +1,414 @@
+{
+  "note": [
+    {
+      "ccb": "reply",
+      "id": 1,
+      "ok": true,
+      "value": "botling.note:count"
+    },
+    {
+      "ccb": "reply",
+      "id": 2,
+      "ok": false,
+      "value": "it failed"
+    },
+    {
+      "ccb": "reply",
+      "id": 4,
+      "ok": false,
+      "value": "No component \"missing\" in the library."
+    },
+    {
+      "ccb": "reply",
+      "id": 5,
+      "ok": false,
+      "value": "no core for plugins.approvalAsk"
+    },
+    {
+      "ccb": "reply",
+      "id": 6,
+      "ok": true,
+      "value": {
+        "inserted": false
+      }
+    },
+    {
+      "ccb": "reply",
+      "id": 7,
+      "ok": true,
+      "value": {
+        "inserted": true
+      }
+    },
+    {
+      "ccb": "reply",
+      "id": 8,
+      "ok": true,
+      "value": {
+        "inserted": false
+      }
+    },
+    {
+      "ccb": "reply",
+      "id": 110,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 111,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 112,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 113,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 114,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 115,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 116,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 117,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 118,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 119,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 120,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 121,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 122,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 123,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 124,
+      "ok": false,
+      "value": "Too many calls; wait a moment."
+    },
+    {
+      "ccb": "reply",
+      "id": 100,
+      "ok": true,
+      "value": "botling.note:burst"
+    },
+    {
+      "ccb": "reply",
+      "id": 101,
+      "ok": true,
+      "value": "botling.note:burst"
+    },
+    {
+      "ccb": "reply",
+      "id": 102,
+      "ok": true,
+      "value": "botling.note:burst"
+    },
+    {
+      "ccb": "reply",
+      "id": 103,
+      "ok": true,
+      "value": "botling.note:burst"
+    },
+    {
+      "ccb": "reply",
+      "id": 104,
+      "ok": true,
+      "value": "botling.note:burst"
+    },
+    {
+      "ccb": "reply",
+      "id": 105,
+      "ok": true,
+      "value": "botling.note:burst"
+    },
+    {
+      "ccb": "reply",
+      "id": 106,
+      "ok": true,
+      "value": "botling.note:burst"
+    },
+    {
+      "ccb": "reply",
+      "id": 107,
+      "ok": true,
+      "value": "botling.note:burst"
+    },
+    {
+      "ccb": "reply",
+      "id": 108,
+      "ok": true,
+      "value": "botling.note:burst"
+    },
+    {
+      "ccb": "reply",
+      "id": 109,
+      "ok": true,
+      "value": "botling.note:burst"
+    }
+  ],
+  "zed": [
+    {
+      "ccb": "reply",
+      "id": 9,
+      "ok": true,
+      "value": {
+        "inserted": false
+      }
+    }
+  ],
+  "lone": [
+    {
+      "ccb": "reply",
+      "id": 12,
+      "ok": false,
+      "value": "This page does not answer ccb.card."
+    }
+  ],
+  "stranger": [],
+  "events": [
+    [
+      "ready",
+      "note"
+    ],
+    [
+      "notice",
+      "note",
+      "bad command"
+    ],
+    [
+      "notice",
+      "zed",
+      "hello"
+    ],
+    [
+      "resize",
+      120
+    ],
+    [
+      "panel",
+      true
+    ],
+    [
+      "error",
+      "zed",
+      "zed broke"
+    ]
+  ],
+  "log": [
+    [
+      "call",
+      "botling.note",
+      "count",
+      {
+        "n": 2
+      }
+    ],
+    [
+      "call",
+      "botling.note",
+      "fail",
+      null
+    ],
+    [
+      "command",
+      "botling.note",
+      "botling.note.open",
+      [
+        "a"
+      ]
+    ],
+    [
+      "command",
+      "botling.note",
+      "botling.note.bad",
+      null
+    ],
+    [
+      "builtin",
+      "botling.note",
+      {
+        "id": "botling.openChat",
+        "botId": "B1"
+      }
+    ],
+    [
+      "client",
+      {
+        "type": "plugins.approvalAsk",
+        "name": "botling.note",
+        "botId": "B1",
+        "command": "ls",
+        "folder": "/x"
+      }
+    ],
+    [
+      "quote",
+      "B1",
+      "> quoted again",
+      false
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ],
+    [
+      "call",
+      "botling.note",
+      "burst",
+      null
+    ]
+  ],
+  "refusals": [
+    [
+      "a message that is not a valid ccb call (call)",
+      "botling.note"
+    ],
+    [
+      "a command of another plugin (\"zed.tools.run\")",
+      "botling.note"
+    ],
+    [
+      "Botling's command \"botling.openChat\" with the wrong arguments",
+      "botling.note"
+    ],
+    [
+      "a quote into another bot's input box",
+      "botling.note"
+    ],
+    [
+      "a quote from a frame opened for no bot",
+      "zed.tools"
+    ],
+    [
+      "a message that is not a valid ccb call (key)",
+      "zed.tools"
+    ],
+    [
+      "a message that is not a valid ccb call (nonsense)",
+      "zed.tools"
+    ],
+    [
+      "a message that is not a valid ccb call (string)",
+      "zed.tools"
+    ],
+    [
+      "a frame with origin https://evil.example (expected an opaque, sandboxed origin)",
+      "zed.tools"
+    ],
+    [
+      "a message from a frame that is not a registered plugin frame",
+      null
+    ],
+    [
+      "Botling's command \"botling.openResult\" (this page runs none)",
+      "lone"
+    ],
+    [
+      "a message from a frame that is not a registered plugin frame",
+      null
+    ]
+  ]
+}

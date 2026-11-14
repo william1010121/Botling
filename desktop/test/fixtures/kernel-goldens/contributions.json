@@ -1,0 +1,762 @@
+[
+  {
+    "kind": "card",
+    "plugin": "botling.cards",
+    "id": "botling.cards.網頁預覽卡片",
+    "title": "網頁預覽卡片",
+    "component": {
+      "name": "網頁預覽卡片",
+      "dir": "components/網頁預覽卡片"
+    }
+  },
+  {
+    "kind": "tile",
+    "plugin": "botling.cards",
+    "id": "botling.cards.網頁預覽卡片",
+    "title": "網頁預覽卡片",
+    "sizes": [
+      "2x2"
+    ],
+    "surfaces": [
+      "board",
+      "whiteboard",
+      "pin"
+    ],
+    "component": {
+      "name": "網頁預覽卡片",
+      "dir": "components/網頁預覽卡片"
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.catchup",
+    "key": "botling.catchup.unread",
+    "setting": {
+      "type": "boolean",
+      "default": true,
+      "title": "Summarize unread messages",
+      "hidden": true
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.catchup",
+    "key": "botling.catchup.interval",
+    "setting": {
+      "type": "boolean",
+      "default": false,
+      "title": "Summarize between your messages",
+      "hidden": true
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.catchup",
+    "key": "botling.catchup.customThresholds",
+    "setting": {
+      "type": "boolean",
+      "default": false,
+      "title": "Adjust thresholds individually",
+      "hidden": true
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.catchup",
+    "key": "botling.catchup.unreadThreshold",
+    "setting": {
+      "type": "number",
+      "default": 3,
+      "title": "Unread threshold",
+      "hidden": true
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.catchup",
+    "key": "botling.catchup.intervalThreshold",
+    "setting": {
+      "type": "number",
+      "default": 3,
+      "title": "Interval threshold",
+      "hidden": true
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.catchup",
+    "key": "botling.catchup.engine",
+    "setting": {
+      "type": "enum",
+      "default": "codex",
+      "title": "Summary model engine",
+      "options": [
+        "codex",
+        "claude",
+        "agy"
+      ],
+      "hidden": true
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.catchup",
+    "key": "botling.catchup.model",
+    "setting": {
+      "type": "string",
+      "default": "gpt-6-luna",
+      "title": "Summary model",
+      "hidden": true
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.catchup",
+    "key": "botling.catchup.prompt",
+    "setting": {
+      "type": "string",
+      "default": "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written.",
+      "title": "Summary prompt",
+      "hidden": true
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.chat-extras",
+    "key": "botling.chat-extras.pasteCollapseChars",
+    "setting": {
+      "type": "number",
+      "default": 1000,
+      "title": "Collapse pastes over (characters; 0 turns it off)"
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.chat-extras",
+    "key": "botling.chat-extras.pasteCollapseLines",
+    "setting": {
+      "type": "number",
+      "default": 15,
+      "title": "Collapse pastes over (lines; 0 turns it off)"
+    }
+  },
+  {
+    "kind": "command",
+    "plugin": "botling.component-studio",
+    "id": "botling.component-studio.make",
+    "title": "Make into component"
+  },
+  {
+    "kind": "view",
+    "plugin": "botling.component-studio",
+    "id": "botling.component-studio.spec",
+    "title": "Component spec",
+    "where": "rightPanel.takeover"
+  },
+  {
+    "kind": "menu",
+    "plugin": "botling.component-studio",
+    "menu": "message/context",
+    "command": "botling.component-studio.make",
+    "locales": {
+      "zh-Hant": {
+        "title": "做成元件",
+        "alt": "加到其他 Bot…",
+        "hint": "Maintainer 會馬上用這則回覆做出來"
+      }
+    },
+    "icon": "cube",
+    "quick": true,
+    "alt": "Add to another bot…",
+    "hint": "Maintainer builds it from this reply right away"
+  },
+  {
+    "kind": "menu",
+    "plugin": "botling.component-studio",
+    "menu": "message/preview",
+    "command": "botling.component-studio.make",
+    "locales": {
+      "zh-Hant": {
+        "title": "做成元件"
+      }
+    },
+    "icon": "cube",
+    "quick": true
+  },
+  {
+    "kind": "replyTag",
+    "plugin": "botling.component-studio",
+    "tag": "suggest-component"
+  },
+  {
+    "kind": "replyTag",
+    "plugin": "botling.component-studio",
+    "tag": "component-spec"
+  },
+  {
+    "kind": "slash",
+    "plugin": "botling.design",
+    "name": "design",
+    "about": "Make a Claude Design and get its claude.ai link"
+  },
+  {
+    "kind": "replyTag",
+    "plugin": "botling.dev",
+    "tag": "install-build"
+  },
+  {
+    "kind": "replyTag",
+    "plugin": "botling.dev",
+    "tag": "app-screenshot"
+  },
+  {
+    "kind": "view",
+    "plugin": "botling.git",
+    "id": "botling.git.worktrees",
+    "title": "Worktrees",
+    "where": "rightPanel.section",
+    "forRole": "bots"
+  },
+  {
+    "kind": "view",
+    "plugin": "botling.git",
+    "id": "botling.git.settings",
+    "title": "Worktrees",
+    "where": "settings.section",
+    "terms": "worktree worktrees git branch folder app-managed developer",
+    "after": "developer"
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.git",
+    "key": "botling.git.enabled",
+    "setting": {
+      "type": "boolean",
+      "default": true,
+      "title": "App-managed worktrees",
+      "hidden": true
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "botling.git",
+    "key": "botling.git.root",
+    "setting": {
+      "type": "string",
+      "default": "",
+      "title": "Worktree folder",
+      "hidden": true
+    }
+  },
+  {
+    "kind": "view",
+    "plugin": "botling.note",
+    "id": "botling.note.tab",
+    "title": "Note",
+    "icon": "note.text",
+    "where": "mainTab",
+    "forRole": "any"
+  },
+  {
+    "kind": "agent",
+    "plugin": "botling.note",
+    "claude": null,
+    "mcp": null,
+    "skills": [
+      {
+        "name": "note",
+        "dir": "skills/note"
+      }
+    ],
+    "agents": []
+  },
+  {
+    "kind": "promptSection",
+    "plugin": "botling.report",
+    "id": "botling.report.page",
+    "text": "- A settled result that needs visuals or comparison (status, decision, comparison, results to share) goes into one report page, never into chat: the chat reply carries only a brief conclusion and the link to the page; never paste the report body into chat. Text still being discussed or explained (explanations, how to read a figure, research reasoning, drafts, translations) stays short in chat. The page opens with one sentence that answers the user's question (\"You asked X; the answer is Y\"); if it cannot, do not publish it: answer in chat. Build every report page (status, decision, investigation, comparison, plan, results, explainer) from a ReportSpec v2 JSON, never hand-written HTML. Each time, before you write a spec, read {{docs}}: it holds the format, the blocks, the templates per report kind and all writing and chart rules, and it can change between reports. Write the spec; run {{command}} spec.json {{artifacts:<english-name>.html}} exactly as quoted (add --slides for a 16:9 deck, --force to replace). It prints one JSON line {ok, errors, warnings, htmlPath, link}: fix each error (it gives a path and a valid example) and the warnings you can, run it again (at most twice), then deliver the page at htmlPath as the results rule says.",
+    "after": "results",
+    "roles": [
+      "main",
+      "manager",
+      "bot"
+    ],
+    "command": "botling.report.render"
+  },
+  {
+    "kind": "agentCommand",
+    "plugin": "botling.report",
+    "id": "botling.report.render",
+    "script": "report.cjs",
+    "flag": "--render-report",
+    "docs": "skills/report/report-blocks.md"
+  },
+  {
+    "kind": "agent",
+    "plugin": "botling.report",
+    "claude": null,
+    "mcp": null,
+    "skills": [
+      {
+        "name": "report",
+        "dir": "skills/report"
+      }
+    ],
+    "agents": []
+  },
+  {
+    "kind": "view",
+    "plugin": "botling.routines",
+    "id": "botling.routines.panel",
+    "title": "Routines",
+    "where": "chatHeader"
+  },
+  {
+    "kind": "command",
+    "plugin": "botling.terminal",
+    "id": "botling.terminal.toggle",
+    "title": "Toggle terminal"
+  },
+  {
+    "kind": "keybinding",
+    "plugin": "botling.terminal",
+    "command": "botling.terminal.toggle",
+    "key": "Mod+J"
+  },
+  {
+    "kind": "view",
+    "plugin": "botling.terminal",
+    "id": "botling.terminal.panel",
+    "title": "Terminal",
+    "where": "bottomPanel",
+    "toggle": "botling.terminal.toggle"
+  },
+  {
+    "kind": "view",
+    "plugin": "botling.usage",
+    "id": "botling.usage.quota",
+    "title": "Subscription usage",
+    "where": "quickSettings"
+  },
+  {
+    "kind": "view",
+    "plugin": "botling.usage",
+    "id": "botling.usage.settings",
+    "title": "Usage",
+    "where": "settings.section",
+    "terms": "usage cost tokens spending today by bot earlier days subscription limits rate quota 5 hours week claude codex antigravity",
+    "after": "engines",
+    "link": "Usage by bot"
+  },
+  {
+    "kind": "view",
+    "plugin": "botling.whiteboard",
+    "id": "botling.whiteboard",
+    "title": "Whiteboard",
+    "icon": "people",
+    "where": "mainTab",
+    "forRole": "main"
+  },
+  {
+    "kind": "replyTag",
+    "plugin": "botling.whiteboard",
+    "tag": "whiteboard"
+  },
+  {
+    "kind": "promptSection",
+    "plugin": "botling.whiteboard",
+    "id": "botling.whiteboard.picture",
+    "text": "  To give your card on the main bot's whiteboard a small picture: add <whiteboard name=\"component name\" size=\"1x1\">JSON</whiteboard> to a reply (or command=\"…\" instead of JSON; size 1x1 or 2x1). The app draws it on your card and shows nothing in the chat; a later one replaces it and <whiteboard clear/> removes it. Pick a component that reads well tiny (a key number, a trend) and send a new one when it changes.",
+    "after": "show",
+    "roles": [
+      "manager",
+      "bot"
+    ]
+  },
+  {
+    "kind": "command",
+    "plugin": "ccb-latex",
+    "id": "ccb-latex.insert",
+    "title": "Insert inline formula"
+  },
+  {
+    "kind": "keybinding",
+    "plugin": "ccb-latex",
+    "command": "ccb-latex.insert",
+    "key": "cmd+shift+m"
+  },
+  {
+    "kind": "setting",
+    "plugin": "ccb-latex",
+    "key": "ccb-latex.preview",
+    "setting": {
+      "type": "boolean",
+      "default": true,
+      "title": "Preview formulas while typing"
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "ccb-latex",
+    "key": "ccb-latex.copyTeX",
+    "setting": {
+      "type": "boolean",
+      "default": true,
+      "title": "Copy formulas as TeX"
+    }
+  },
+  {
+    "kind": "command",
+    "plugin": "acme-board",
+    "id": "acme-board.open",
+    "title": "Open the board"
+  },
+  {
+    "kind": "command",
+    "plugin": "acme-board",
+    "id": "acme-board.refresh",
+    "title": "Refresh"
+  },
+  {
+    "kind": "keybinding",
+    "plugin": "acme-board",
+    "command": "acme-board.open",
+    "key": "cmd+shift+b"
+  },
+  {
+    "kind": "view",
+    "plugin": "acme-board",
+    "id": "acme-board.panel",
+    "title": "Acme panel",
+    "icon": "square.grid.2x2",
+    "where": "rightPanel"
+  },
+  {
+    "kind": "card",
+    "plugin": "acme-board",
+    "id": "acme-board.acme-card",
+    "title": "acme-card",
+    "component": {
+      "name": "acme-card",
+      "dir": "components/acme-card"
+    }
+  },
+  {
+    "kind": "tile",
+    "plugin": "acme-board",
+    "id": "acme-board.acme-card",
+    "title": "acme-card",
+    "sizes": [
+      "2x2"
+    ],
+    "surfaces": [
+      "board",
+      "whiteboard",
+      "pin"
+    ],
+    "component": {
+      "name": "acme-card",
+      "dir": "components/acme-card"
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "acme-board",
+    "key": "acme-board.columns",
+    "setting": {
+      "type": "number",
+      "default": 3,
+      "title": "Columns"
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "acme-board",
+    "key": "acme-board.mode",
+    "setting": {
+      "type": "enum",
+      "default": "grid",
+      "title": "Mode",
+      "options": [
+        "grid",
+        "list"
+      ]
+    }
+  },
+  {
+    "kind": "setting",
+    "plugin": "acme-board",
+    "key": "acme-board.token",
+    "setting": {
+      "type": "string",
+      "title": "Token",
+      "secret": true,
+      "env": "ACME_TOKEN"
+    }
+  },
+  {
+    "kind": "command",
+    "plugin": "zed.tools",
+    "id": "zed.tools.run",
+    "title": "Run"
+  },
+  {
+    "kind": "command",
+    "plugin": "zed.tools",
+    "id": "zed.tools.toggle",
+    "title": "Toggle panel"
+  },
+  {
+    "kind": "command",
+    "plugin": "zed.tools",
+    "id": "zed.tools.clip",
+    "title": "Clip"
+  },
+  {
+    "kind": "keybinding",
+    "plugin": "zed.tools",
+    "command": "zed.tools.run",
+    "key": "cmd+alt+r"
+  },
+  {
+    "kind": "slash",
+    "plugin": "zed.tools",
+    "name": "zed",
+    "about": "Ask Zed",
+    "command": "zed.tools.run"
+  },
+  {
+    "kind": "slash",
+    "plugin": "zed.tools",
+    "name": "zedwords",
+    "about": "Words only"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.tab",
+    "title": "Zed",
+    "icon": "bolt",
+    "where": "mainTab",
+    "forRole": "marked",
+    "chat": "float"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.settings",
+    "title": "Zed settings",
+    "where": "settings.section",
+    "terms": "zed tools",
+    "after": "engines",
+    "link": "Zed by bot"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.quick",
+    "title": "Zed quick",
+    "where": "quickSettings"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.section",
+    "title": "Zed section",
+    "where": "rightPanel.section",
+    "forRole": "bots"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.bottom",
+    "title": "Zed bottom",
+    "where": "bottomPanel",
+    "toggle": "zed.tools.toggle"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.header",
+    "title": "Zed header",
+    "where": "chatHeader"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.takeover",
+    "title": "Zed takeover",
+    "where": "rightPanel.takeover"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.bar",
+    "title": "Zed bar",
+    "where": "composerBar",
+    "forRole": "main",
+    "width": 300
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.side",
+    "title": "Zed side",
+    "where": "rightPanel"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.main",
+    "title": "Zed main",
+    "where": "main"
+  },
+  {
+    "kind": "view",
+    "plugin": "zed.tools",
+    "id": "zed.tools.window",
+    "title": "Zed window",
+    "where": "window"
+  },
+  {
+    "kind": "tile",
+    "plugin": "zed.tools",
+    "id": "zed.tools.tile",
+    "title": "Zed tile",
+    "sizes": [
+      "2x1",
+      "4x2"
+    ],
+    "surfaces": [
+      "board",
+      "pin"
+    ]
+  },
+  {
+    "kind": "card",
+    "plugin": "zed.tools",
+    "id": "zed.tools.card",
+    "title": "Zed card"
+  },
+  {
+    "kind": "statusItem",
+    "plugin": "zed.tools",
+    "id": "zed.tools.status",
+    "where": "botRow"
+  },
+  {
+    "kind": "setting",
+    "plugin": "zed.tools",
+    "key": "zed.tools.on",
+    "setting": {
+      "type": "boolean",
+      "default": true,
+      "title": "On"
+    }
+  },
+  {
+    "kind": "menu",
+    "plugin": "zed.tools",
+    "menu": "message/context",
+    "command": "zed.tools.clip",
+    "title": "Clip it",
+    "locales": {
+      "zh-Hant": {
+        "title": "剪下",
+        "hint": "保留"
+      }
+    },
+    "icon": "scissors",
+    "quick": true,
+    "alt": "Clip again",
+    "hint": "Keeps it"
+  },
+  {
+    "kind": "menu",
+    "plugin": "zed.tools",
+    "menu": "bot/context",
+    "command": "zed.tools.run"
+  },
+  {
+    "kind": "menu",
+    "plugin": "zed.tools",
+    "menu": "composer/plus",
+    "command": "zed.tools.run",
+    "title": "Zed"
+  },
+  {
+    "kind": "menu",
+    "plugin": "zed.tools",
+    "menu": "commandPalette",
+    "command": "zed.tools.toggle"
+  },
+  {
+    "kind": "menu",
+    "plugin": "zed.tools",
+    "menu": "message/preview",
+    "command": "zed.tools.clip",
+    "icon": "doc",
+    "quick": true
+  },
+  {
+    "kind": "menu",
+    "plugin": "zed.tools",
+    "menu": "browser/tab",
+    "command": "zed.tools.run",
+    "when": {
+      "scheme": "https",
+      "host": "*.example.org"
+    }
+  },
+  {
+    "kind": "menu",
+    "plugin": "zed.tools",
+    "menu": "chat/link",
+    "command": "zed.tools.run",
+    "title": "Read with Zed",
+    "when": {
+      "ext": [
+        "pdf",
+        "md"
+      ]
+    }
+  },
+  {
+    "kind": "hook",
+    "plugin": "zed.tools",
+    "hook": "beforeSend"
+  },
+  {
+    "kind": "hook",
+    "plugin": "zed.tools",
+    "hook": "afterReply"
+  },
+  {
+    "kind": "hook",
+    "plugin": "zed.tools",
+    "hook": "toolCall"
+  },
+  {
+    "kind": "routine",
+    "plugin": "zed.tools",
+    "id": "zed.tools.daily",
+    "cron": "0 9 * * *",
+    "command": "zed.tools.run"
+  },
+  {
+    "kind": "replyTag",
+    "plugin": "zed.tools",
+    "tag": "zed-status"
+  },
+  {
+    "kind": "promptSection",
+    "plugin": "zed.tools",
+    "id": "zed.tools.rules",
+    "text": "Use Zed for searches.",
+    "after": "results",
+    "roles": [
+      "main",
+      "bot"
+    ]
+  }
+]

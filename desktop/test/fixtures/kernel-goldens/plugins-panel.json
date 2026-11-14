@@ -1,0 +1,168 @@
+[
+  {
+    "name": "acme-board",
+    "id": "acme-board.panel",
+    "title": "Acme panel",
+    "source": "<source of acme-board>",
+    "settings": {
+      "acme-board.columns": 3,
+      "acme-board.mode": "grid"
+    }
+  },
+  {
+    "name": "botling.note",
+    "id": "botling.note.tab",
+    "title": "Note",
+    "source": "<source of botling.note>",
+    "settings": {}
+  },
+  {
+    "name": "botling.whiteboard",
+    "id": "botling.whiteboard",
+    "title": "Whiteboard",
+    "source": "<source of botling.whiteboard>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.tab",
+    "title": "Zed",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "botling.git",
+    "id": "botling.git.settings",
+    "title": "Worktrees",
+    "source": "<source of botling.git>",
+    "settings": {
+      "botling.git.enabled": true,
+      "botling.git.root": ""
+    }
+  },
+  {
+    "name": "botling.usage",
+    "id": "botling.usage.settings",
+    "title": "Usage",
+    "source": "<source of botling.usage>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.settings",
+    "title": "Zed settings",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "botling.usage",
+    "id": "botling.usage.quota",
+    "title": "Subscription usage",
+    "source": "<source of botling.usage>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.quick",
+    "title": "Zed quick",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "botling.git",
+    "id": "botling.git.worktrees",
+    "title": "Worktrees",
+    "source": "<source of botling.git>",
+    "settings": {
+      "botling.git.enabled": true,
+      "botling.git.root": ""
+    }
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.section",
+    "title": "Zed section",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "botling.terminal",
+    "id": "botling.terminal.panel",
+    "title": "Terminal",
+    "source": "<source of botling.terminal>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.bottom",
+    "title": "Zed bottom",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "botling.routines",
+    "id": "botling.routines.panel",
+    "title": "Routines",
+    "source": "<source of botling.routines>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.header",
+    "title": "Zed header",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "botling.component-studio",
+    "id": "botling.component-studio.spec",
+    "title": "Component spec",
+    "source": "<source of botling.component-studio>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.takeover",
+    "title": "Zed takeover",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.bar",
+    "title": "Zed bar",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.side",
+    "title": "Zed side",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.main",
+    "title": "Zed main",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.window",
+    "title": "Zed window",
+    "source": "<source of zed.tools>",
+    "settings": {}
+  },
+  {
+    "name": "zed.tools",
+    "id": "zed.tools.nowhere",
+    "error": "No panel \"zed.tools.nowhere\" of plugin \"zed.tools\"."
+  },
+  {
+    "name": "nobody",
+    "id": "x",
+    "error": "No panel \"x\" of plugin \"nobody\"."
+  }
+]

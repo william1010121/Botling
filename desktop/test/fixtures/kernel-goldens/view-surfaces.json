@@ -1,0 +1,128 @@
+{
+  "mainTabs": [
+    {
+      "plugin": "botling.note",
+      "id": "botling.note.tab",
+      "title": "Note",
+      "icon": "note.text",
+      "forRole": "any"
+    },
+    {
+      "plugin": "botling.whiteboard",
+      "id": "botling.whiteboard",
+      "title": "Whiteboard",
+      "icon": "people",
+      "forRole": "main"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.tab",
+      "title": "Zed",
+      "icon": "bolt",
+      "forRole": "marked",
+      "chat": "float",
+      "bots": [
+        "B1",
+        "B2"
+      ]
+    }
+  ],
+  "settingsSections": [
+    {
+      "plugin": "botling.git",
+      "id": "botling.git.settings",
+      "title": "Worktrees",
+      "terms": "worktree worktrees git branch folder app-managed developer",
+      "after": "developer"
+    },
+    {
+      "plugin": "botling.usage",
+      "id": "botling.usage.settings",
+      "title": "Usage",
+      "terms": "usage cost tokens spending today by bot earlier days subscription limits rate quota 5 hours week claude codex antigravity",
+      "after": "engines",
+      "link": "Usage by bot"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.settings",
+      "title": "Zed settings",
+      "terms": "zed tools",
+      "after": "engines",
+      "link": "Zed by bot"
+    }
+  ],
+  "quickSettings": [
+    {
+      "plugin": "botling.usage",
+      "id": "botling.usage.quota",
+      "title": "Subscription usage"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.quick",
+      "title": "Zed quick"
+    }
+  ],
+  "rightPanelSections": [
+    {
+      "plugin": "botling.git",
+      "id": "botling.git.worktrees",
+      "title": "Worktrees",
+      "forRole": "bots"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.section",
+      "title": "Zed section",
+      "forRole": "bots"
+    }
+  ],
+  "bottomPanels": [
+    {
+      "plugin": "botling.terminal",
+      "id": "botling.terminal.panel",
+      "title": "Terminal",
+      "toggle": "botling.terminal.toggle"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.bottom",
+      "title": "Zed bottom",
+      "toggle": "zed.tools.toggle"
+    }
+  ],
+  "chatHeaderViews": [
+    {
+      "plugin": "botling.routines",
+      "id": "botling.routines.panel",
+      "title": "Routines"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.header",
+      "title": "Zed header"
+    }
+  ],
+  "takeovers": [
+    {
+      "plugin": "botling.component-studio",
+      "id": "botling.component-studio.spec",
+      "title": "Component spec"
+    },
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.takeover",
+      "title": "Zed takeover"
+    }
+  ],
+  "composerBarViews": [
+    {
+      "plugin": "zed.tools",
+      "id": "zed.tools.bar",
+      "title": "Zed bar",
+      "width": 300,
+      "forRole": "main"
+    }
+  ]
+}
