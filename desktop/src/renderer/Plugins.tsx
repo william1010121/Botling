@@ -146,6 +146,7 @@ function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEna
       </div>
       {plugin.description && <div className="plugin-description">{plugin.description}</div>}
       {plugin.failure && <div className="plugins-problem">Turned off: {plugin.failure}</div>}
+      {plugin.skipped?.length ? <div className="plugins-problem plugins-skipped">Skipped (this Botling does not know or cannot read these; the rest loads): {plugin.skipped.join("; ")}</div> : null}
       {plugin.builtIn && <div className="plugin-meta">Built into Botling{plugin.ignoredLibraryVersion !== undefined ? " (in use)" : ""}</div>}
       {/* Which copy runs when the library has one too (core/plugins/versions.ts): the library's at the built-in's version or newer. */}
       {plugin.ignoredLibraryVersion !== undefined && <div className="plugin-meta plugin-copy-ignored">Your plugin library's copy ({plugin.ignoredLibraryVersion}) is older and is ignored</div>}

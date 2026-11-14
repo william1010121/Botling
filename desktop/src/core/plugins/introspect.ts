@@ -10,7 +10,7 @@ import { z } from "zod";
 import { pluginBindings } from "../../contract/shortcuts";
 import { commandSurfaces } from "./commands";
 import { MENU_SLOTS, STATUS_SLOTS, VIEW_ROLES, VIEW_SLOTS, ofKind, type Contribution } from "./contributions";
-import { checkPluginIssues, title } from "./manifest";
+import { checkPluginIssues, contributionIssues, title } from "./manifest";
 import type { PluginRegistry } from "./registry";
 
 /** What a query may look at beyond the registry: the app's stylesheet text (the theme variables) and saved shortcut overrides. */
@@ -94,7 +94,7 @@ export const INSPECT_QUERIES = {
       const issues: { folder: string; code: string; message: string; nextStep: string }[] = [];
       for (const plugin of registry.plugins) {
         if (input.plugin !== undefined && plugin.manifest.name !== input.plugin) continue;
-        for (const issue of checkPluginIssues(plugin.folder)) issues.push({ folder: plugin.manifest.name, ...issue });
+        for (const issue of [...checkPluginIssues(plugin.folder), ...contributionIssues(plugin.folder).issues]) issues.push({ folder: plugin.manifest.name, ...issue });
       }
       // Folders that could not be loaded at all are not in `plugins`; the registry kept their problems as text.
       for (const [folder, problems] of Object.entries(registry.problems)) {

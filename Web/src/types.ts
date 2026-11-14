@@ -170,6 +170,8 @@ export interface TaskChipView {
  */
 /** A plugin's entry in a reply's menu: a row of "⋯", or (`quick`) a button of its own with the page's icon `icon`; `alt`: its words for a reply that already is a library component. */
 export interface MessageMenuItem { command: string; title: string; icon?: string; quick?: boolean; alt?: string; hint?: string }
+/** A `chat/link` entry: `when` names the links by their parsed address (scheme, extensions, host), never a pattern over text. */
+export interface LinkMenuItem { command: string; title: string; icon?: string; when?: { scheme?: string; ext?: string[]; host?: string } }
 
 export interface SpecChipView {
   id: string;
@@ -339,6 +341,8 @@ export interface ChatState {
   messageMenu?: MessageMenuItem[] | null;
   /** Plugins' buttons on a result page's preview card (`message/preview`: all `quick`). */
   previewMenu?: MessageMenuItem[] | null;
+  /** Plugins' buttons beside a link in a message (`chat/link`), each with the links it is for (link-menu.ts). None: no button. */
+  linkMenu?: LinkMenuItem[] | null;
   /** Components you can / (picked, the bot is told you mean that component). */
   slashComponents?: string[];
   /** The shared library's other components (not this bot's yet), offered after its own, marked faintly. */
@@ -447,6 +451,8 @@ export type Action =
   | { type: "command"; id: string }
   /** A plugin command offered by the / menu or a reply's menu (the app page checks it is offered so now). */
   | { type: "runCommand"; id: string; via: "slash" | "menu" | "key"; menu?: "message/context" | "message/preview"; messageID?: string; preview?: number }
+  /** A plugin's button beside a link in a message (`chat/link`): the app page checks it is offered and the core that the link is in it. */
+  | { type: "linkCommand"; id: string; messageID: string; url: string }
   | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number }
   /** A built-in plugin's page kit asks the user to allow a command of a component's card in a bot's folder (the app page answers with `approvalReply`). */
   | { type: "approvalRequest"; plugin: string; requestId: number; botId: string; command: string; folder: string; component: string; card?: string }

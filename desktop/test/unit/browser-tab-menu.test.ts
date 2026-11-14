@@ -34,7 +34,7 @@ describe("a browser tab's when", () => {
 });
 
 describe("the browser/tab menu", () => {
-  it("takes a command with a when; when is only for browser/tab", () => {
+  it("takes a command with a when; when is only for browser/tab and chat/link", () => {
     const read = readManifest({ name: "coach", version: "1.0.0", botling: { contributes: {
       commands: [{ id: "coach.start", title: "Read with me" }],
       menus: {
@@ -47,7 +47,7 @@ describe("the browser/tab menu", () => {
     ]);
     expect(read.problems).toEqual([
       expect.stringMatching(/contributes\.menus\.browser\/tab\.1: when .*scheme, ext or host/),
-      'contributes.menus.bot/context.0: when is only for the "browser/tab" menu.',
+      'contributes.menus.bot/context.0: when is only for the "browser/tab" and "chat/link" menus.',
     ]);
     const surfaces = commandSurfaces(read.contributions);
     expect(surfaces.menus).toEqual([{ menu: "browser/tab", command: "coach.start", plugin: "coach", title: "Read with me", icon: "book", when: { scheme: "file", ext: ["pdf"] } }]);

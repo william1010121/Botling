@@ -84,8 +84,9 @@ const running: Plugins[] = [];
 afterEach(async () => { for (const plugins of running.splice(0)) await plugins.shutdown(); });
 
 /** Plugins over a fake host; `ask` and `tell` speak as the host would. */
-async function setup(dir: string) {
+async function setup(dir: string, adjust?: (world: PluginWorld) => void) {
   const fake = fakeWorld();
+  adjust?.(fake.world);
   const sent: any[] = [];
   let handlers!: HostHandlers;
   const line = (message: unknown) => handlers.data(JSON.stringify(message) + "\n");
@@ -200,6 +201,61 @@ describe("Host API v3 in the core (plan M5)", () => {
     // A web page's tab: no path.
     await plugins.tabCommand("coach.web", { botId: "B1", tabId: "t3", url: "https://example.com/a.html" });
     expect(sent.filter((m) => m.method === "command").at(-1).params).toEqual({ id: "coach.web", args: [{ botId: "B1", tabId: "t3", url: "https://example.com/a.html", path: null }] });
+  });
+
+  it("a chat/link button runs its command with exactly { botId, messageId, url, path }, only for a link its when matches", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "coach", { contributes: { commands: [{ id: "coach.start", title: "Start" }, { id: "coach.web", title: "Web" }, { id: "coach.other", title: "Other" }],
+      menus: { "chat/link": [{ command: "coach.start", title: "開始陪讀", icon: "book", when: { ext: "pdf" } }, { command: "coach.web", when: { scheme: "https", host: "*.arxiv.org" } }] } } });
+    const { plugins, tell, sent } = await setup(dir);
+    tell("registered", { beforeSend: 0, afterReply: 0, commands: ["coach.start", "coach.web", "coach.other"], exposed: {} });
+    await until(() => plugins.host.commands.includes("coach.start"));
+    expect(plugins.view().menus).toEqual([
+      { menu: "chat/link", command: "coach.start", plugin: "coach", title: "開始陪讀", icon: "book", when: { ext: ["pdf"] } },
+      { menu: "chat/link", command: "coach.web", plugin: "coach", title: "Web", when: { scheme: "https", host: "*.arxiv.org" } },
+    ]);
+    const last = () => sent.filter((m) => m.method === "command").at(-1).params;
+    // A file: link (percent-encoded, upper-case extension): its local path.
+    const file = "file:///Users/me/Papers/Attention%20Is%20All.PDF";
+    expect(await plugins.linkCommand("coach.start", { botId: "MAIN-ID", messageId: "L7", url: file })).toBeNull();
+    expect(last()).toEqual({ id: "coach.start", args: [{ botId: "main", messageId: "L7", url: file, path: "/Users/me/Papers/Attention Is All.PDF" }] });
+    // An absolute path the chat opens as a file: that path.
+    await plugins.linkCommand("coach.start", { botId: "B1", messageId: "L8", url: "/Users/me/paper.pdf" });
+    expect(last()).toEqual({ id: "coach.start", args: [{ botId: "B1", messageId: "L8", url: "/Users/me/paper.pdf", path: "/Users/me/paper.pdf" }] });
+    // A web PDF with a query: matched by its path's extension; no path.
+    await plugins.linkCommand("coach.start", { botId: "B1", messageId: "L9", url: "https://arxiv.org/pdf/1706.03762v7.pdf?download=1#page=2" });
+    expect(last()).toEqual({ id: "coach.start", args: [{ botId: "B1", messageId: "L9", url: "https://arxiv.org/pdf/1706.03762v7.pdf?download=1#page=2" }] });
+    expect(Object.keys(last().args[0])).toEqual(["botId", "messageId", "url"]);
+    await plugins.linkCommand("coach.web", { botId: "B1", messageId: "L9", url: "https://export.arxiv.org/abs/1706.03762" });
+    // Not matched, not this menu's, or not a link the chat opens: refused, nothing run.
+    const count = sent.filter((m) => m.method === "command").length;
+    await expect(plugins.linkCommand("coach.start", { botId: "B1", messageId: "L9", url: "https://example.com/a.html" })).rejects.toThrow(/not offered/);
+    await expect(plugins.linkCommand("coach.start", { botId: "B1", messageId: "L9", url: "https://example.com/pdf?file=a.pdf" })).rejects.toThrow(/not offered/);
+    await expect(plugins.linkCommand("coach.start", { botId: "B1", messageId: "L9", url: "papers/a.pdf" })).rejects.toThrow(/not offered/);
+    await expect(plugins.linkCommand("coach.web", { botId: "B1", messageId: "L9", url: "http://arxiv.org/abs/1" })).rejects.toThrow(/not offered/);
+    await expect(plugins.linkCommand("coach.other", { botId: "B1", messageId: "L9", url: file })).rejects.toThrow(/not offered/);
+    expect(sent.filter((m) => m.method === "command").length).toBe(count);
+  });
+
+  it("an entry of contributes this Botling does not know is skipped with a warning; the plugin still loads", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "future", { permissions: ["bots"], contributes: {
+      commands: [{ id: "future.go", title: "Go" }],
+      menus: { "someday/slot": [{ command: "future.go" }], "message/context": [{ command: "future.go" }] },
+      views: [{ id: "future.tab", title: "T", where: "mainTab", forRole: "someone-new" }, { id: "future.pane", title: "P", where: "floating-island" }, { id: "future.ok", title: "OK", where: "mainTab" }],
+    } });
+    const lines: string[] = [];
+    const { plugins } = await setup(dir, (w) => { w.log = (line) => lines.push(line); });
+    const entry = plugins.view().plugins.find((candidate) => candidate.name === "future")!;
+    expect(entry).toMatchObject({ enabled: true, failure: null });
+    expect(entry.skipped).toEqual([
+      'View "future.tab": forRole "someone-new" must be main, project, bots, any or marked.',
+      'View "future.pane": where "floating-island" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section, bottomPanel, chatHeader, rightPanel.takeover or composerBar.',
+      'Menu "someday/slot" is not one of message/context, bot/context, composer/plus, commandPalette, message/preview, browser/tab, chat/link (skipped; the rest of the plugin loads).',
+    ]);
+    expect(plugins.view().broken).toEqual([]);
+    expect(plugins.view().menus).toEqual([{ menu: "message/context", command: "future.go", plugin: "future", title: "Go" }]);
+    expect(lines.filter((line) => line.startsWith("plugin future: skipped 3 contribution(s)"))).toHaveLength(1);
   });
 
   it("bots.wake sends its prompt as the plugin's; without one it is refused for now", async () => {

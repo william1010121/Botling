@@ -46,9 +46,9 @@ describe("the manifest check", () => {
   });
 
   it("reads engines ranges as npm does (PluginTests.enginesRanges)", () => {
-    // The plugin API is 2.6 (API_VERSION).
-    for (const yes of ["^2.0.0", "^2.6.0", "~2.6.1", ">=1.5.0", "*", "<2.7.0", ">=1.0.0 <3.0.0", "^1.0.0 || ^2.0.0", "2.x", "1.5 - 2.6"]) expect(compatible(yes), yes).toBe(true);
-    for (const no of ["^3.0.0", "^2.7.0", "~2.0.1", "<2.6.0", "<2.0.0", ">=1.0.0 <2.0.0", ">2", "not a range"]) expect(compatible(no), no).toBe(false);
+    // The plugin API is 2.7 (API_VERSION).
+    for (const yes of ["^2.0.0", "^2.6.0", "^2.7.0", "~2.7.1", ">=1.5.0", "*", "<2.8.0", ">=1.0.0 <3.0.0", "^1.0.0 || ^2.0.0", "2.x", "1.5 - 2.7"]) expect(compatible(yes), yes).toBe(true);
+    for (const no of ["^3.0.0", "^2.8.0", "~2.6.1", "<2.7.0", "<2.0.0", ">=1.0.0 <2.0.0", ">2", "not a range"]) expect(compatible(no), no).toBe(false);
   });
 
   it("writes manifests as Swift's JSONEncoder does (pretty, sorted, ` : `)", () => {
@@ -337,7 +337,7 @@ describe("the check's stable codes and nextStep (ADR-006 M3)", () => {
       "MANIFEST_NOT_FOUND", "MANIFEST_MALFORMED", "NAME_INVALID", "VERSION_INVALID", "ENGINE_MISSING", "ENGINE_INCOMPATIBLE",
       "CCB_MISSING", "PATH_OUTSIDE_FOLDER", "PATH_MISSING", "CLAUDE_PLUGIN_JSON_MISSING", "STYLE_MISSING", "PERMISSION_UNKNOWN",
       "COMMAND_DUPLICATE", "SHORTCUT_UNREADABLE", "PANEL_NEEDS_WEB", "SETTING_ENV_INVALID", "SETTING_ENUM_NO_OPTIONS",
-      "SETTING_DEFAULT_INVALID", "SETTING_TYPE_INVALID", "LINK_OUTSIDE_FOLDER", "ICON_TOO_LARGE",
+      "SETTING_DEFAULT_INVALID", "SETTING_TYPE_INVALID", "LINK_OUTSIDE_FOLDER", "ICON_TOO_LARGE", "ENGINE_TOO_LOW", "CONTRIBUTION_SKIPPED",
     ]);
     for (const [code, step] of Object.entries(CHECK_NEXT_STEPS)) expect(step.length, code).toBeGreaterThan(20);
   });

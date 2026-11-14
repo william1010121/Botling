@@ -680,7 +680,7 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 }
 .task-output[hidden] { display: none; }
 .preview-holder { position: relative; }
-.preview-bar {
+.preview-bar, .link-bar {
   position: absolute; top: 18px; right: 8px; z-index: 3; display: flex; gap: 2px; padding: 2px;
   background: var(--user-bubble); border: 1px solid var(--strong-line); border-radius: 9px; box-shadow: 0 6px 16px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
   opacity: 0; pointer-events: none; transition: opacity 0.12s;
@@ -690,7 +690,10 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
   display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border: none; border-radius: 7px;
   background: transparent; color: var(--soft-text); font-size: 12px; cursor: pointer;
 }
-.preview-make:hover { background: var(--strong-line); color: var(--text); }
+.preview-make:hover, .link-bar .preview-make:focus-visible { background: var(--strong-line); color: var(--text); }
+/* Plugins' buttons beside a link in a message (chat/link, link-menu.ts): the preview card's hover bar, floating over the chat by
+   the link (fixed, out of the flow: no line moves), shown while the pointer rests on the link or it has keyboard focus. */
+.link-bar { position: fixed; top: auto; right: auto; z-index: 19; opacity: 1; pointer-events: auto; }
 
 /* In the chat a component is drawn wide and frameless, like a Board tile. A reply that shows one
    takes the whole message column (to the input box's right edge: its hover actions float over the

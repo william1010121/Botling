@@ -6,7 +6,7 @@ import type { ComponentInfo, DisplayView as WebDisplay, PinSize, DecorationView,
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
 import { characterURL, faceURL, type Look } from "./avatars";
-import { menuItems, slashMenu } from "./plugin-commands";
+import { chatLinkMenu, menuItems, slashMenu } from "./plugin-commands";
 
 /** What the chat frame needs besides the page's own state: turn states. */
 export interface FrameExtras {
@@ -285,6 +285,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     slashCommands: slashMenu(plugins),
     messageMenu: menuItems(plugins, "message/context", lang),
     previewMenu: menuItems(plugins, "message/preview", lang),
+    linkMenu: chatLinkMenu(plugins, lang),
     ...slashLists(bot, Object.keys(components).sort()),
     ...headsParts(chat.heads),
     // Look Cute with two heads: the seen marks show each head's tiny character, not its letter (1.x `seenHeads`).

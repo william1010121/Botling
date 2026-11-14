@@ -24,7 +24,7 @@ import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, typ
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
-import { browserTabActions, commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
+import { browserTabActions, chatLinkOffered, commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL, sameHeldColors, setBotColors } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
@@ -1554,6 +1554,15 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
             ? [chat.botId, action.messageID.slice(0, 200), ...(menu === "message/preview" && typeof action.preview === "number" && Number.isInteger(action.preview) && action.preview >= 0 && action.preview <= 2 ? [String(action.preview)] : [])]
             : [];
           runPluginCommand(client, current, action.id, args, onError);
+          return;
+        }
+        // A plugin's button beside a link in a message (chat/link): only an entry that is offered now and matches the link; the core
+        // checks again, and that the link is in that line, then runs it with { botId, messageId, url, path }.
+        case "linkCommand": {
+          const current = store.getView().plugins;
+          if (!chat || typeof action.id !== "string" || typeof action.messageID !== "string" || typeof action.url !== "string" || !action.url) return;
+          if (!chatLinkOffered(current, action.id, action.url)) return;
+          void client.request({ type: "plugins.linkCommand", id: action.id, botId: chat.botId, messageId: action.messageID.slice(0, 200), url: action.url.slice(0, 8_000) }).catch(onError);
           return;
         }
         // A web part's command or call: the core takes it only for plugins whose web part runs in the page.
