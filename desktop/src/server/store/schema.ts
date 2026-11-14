@@ -126,6 +126,15 @@ CREATE TABLE content_names (
 CREATE INDEX content_names_by_id ON content_names (id);
 `;
 
+// v5 (M2 step 2, src/server/roster): roster statements are looked up by member (a device's Add and Revoke, a server's
+// Endorse). `roster (id, kind, member, bytes, receivedAt)` is v1's table: `kind` is the statement type, `member` its
+// member (a Root's `root`), `bytes` the canonical JSON of the signed statement. Audit rows of pairing and revocation go
+// to the server's `srv:` table stream (`rows`, key `audit:<statement id>`, §8.2). meta gains `memberId`, `signPub`,
+// `dhPub` (public keys only; the private keys are in server-keys.json, 0600) and `clusterId` once the cluster exists.
+const V5 = `
+CREATE INDEX roster_by_member ON roster (member, kind);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -157,6 +166,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "content path (src/server/content): the files each line names (content_names)",
     up(db) {
       db.exec(V4);
+    },
+  },
+  {
+    version: 5,
+    description: "roster (src/server/roster): statements by member",
+    up(db) {
+      db.exec(V5);
     },
   },
 ];
