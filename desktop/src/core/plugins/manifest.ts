@@ -440,6 +440,65 @@ export function readManifest(value: unknown, folder: FolderView): ManifestRead {
   return read;
 }
 
+// ---------------------------------------------------------------------------------------------
+// The plugin kernel's fields (kernel step 1; Web/src/plugin-kernel): `kernel`, `provides`, `requires`, `uses` in the
+// `botling` field (or the older `ccb` one, as readManifest picks it). Read for built-in plugins only: a third-party
+// manifest may carry them and loads as before with them ignored (the public Plugin API stays 2.7). Nothing here adds to
+// readManifest's problems, so `--check-plugin` says the same as before.
+
+/** What a built-in plugin declares to the kernel: the services and slots it provides, the services it needs (hard) or may use. */
+export interface KernelFields {
+  kernel: 1;
+  provides: { services: string[]; slots: string[] };
+  requires: { services: string[] };
+  uses: { services: string[] };
+}
+
+/** The highest kernel field version this Botling reads. */
+export const KERNEL_FIELDS_VERSION = 1;
+
+const KERNEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+
+/**
+ * The kernel fields of a package.json: null for a third-party plugin (ignored), for a built-in without `kernel`, or for
+ * one whose `kernel` this Botling does not read; never throws. A wrong entry is left out and named in `problems`
+ * (for tests and logs; the plugin still loads).
+ */
+export function readKernelFields(value: unknown, builtIn: boolean): { fields: KernelFields | null; problems: string[] } {
+  const problems: string[] = [];
+  if (!builtIn || !isObject(value)) return { fields: null, problems };
+  const format = value.botling != null ? "botling" : value.ccb != null ? "ccb" : null;
+  const field = format ? value[format] : null;
+  if (!format || !isObject(field) || field.kernel == null) return { fields: null, problems };
+  if (field.kernel !== KERNEL_FIELDS_VERSION) {
+    problems.push(`${format}.kernel must be ${KERNEL_FIELDS_VERSION}.`);
+    return { fields: null, problems };
+  }
+  const names = (group: string, key: string): string[] => {
+    const object = field[group];
+    if (object == null) return [];
+    if (!isObject(object)) { problems.push(`${format}.${group} has the wrong type.`); return []; }
+    const list = object[key];
+    if (list == null) return [];
+    if (!Array.isArray(list)) { problems.push(`${format}.${group}.${key} has the wrong type.`); return []; }
+    const out: string[] = [];
+    for (const name of list) {
+      if (typeof name !== "string" || !KERNEL_NAME.test(name)) problems.push(`${format}.${group}.${key} has a name that is not one: ${JSON.stringify(name)}.`);
+      else if (!out.includes(name)) out.push(name);
+    }
+    return out;
+  };
+  const fields: KernelFields = {
+    kernel: 1,
+    provides: { services: names("provides", "services"), slots: names("provides", "slots") },
+    requires: { services: names("requires", "services") },
+    uses: { services: names("uses", "services") },
+  };
+  for (const service of fields.requires.services) if (fields.uses.services.includes(service)) problems.push(`${format}: "${service}" is in both requires and uses (requires wins).`);
+  fields.uses.services = fields.uses.services.filter((service) => !fields.requires.services.includes(service));
+  return { fields, problems };
+}
+
 /** A plugin folder on disk, for `readManifest`. */
 export function diskFolder(root: string): FolderView {
   return {
