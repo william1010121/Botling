@@ -33,6 +33,8 @@ const HEADER_BYTES = 13;
 const TAG_BYTES = 16;
 /** Frames that may wait unopened while a handshake step runs (HS3 and the first data frames follow at once). */
 const HANDSHAKE_INBOX_LIMIT = 64;
+/** The largest frame the wire can carry: header, the largest plaintext, tag (bigger than every handshake message). */
+const WIRE_FRAME_LIMIT = HEADER_BYTES + SESSION_FRAME_LIMIT + TAG_BYTES;
 
 /** A transport that carries whole binary frames, in order (WebSocket, relay `d` frames, an in-memory pair). */
 export interface SessionTransport {
@@ -48,6 +50,12 @@ export interface SessionLimits {
   /** Time past `rekeyAfterMs` an epoch may last while a rekey is under way. */
   hardAgeMarginMs: number;
   handshakeTimeoutMs: number;
+  /**
+   * Bytes received but not yet handled (opened and passed through `onFrame`). Frames come in faster than they are
+   * opened when `onFrame` is slow, or when the transport (a relay) pushes junk: past this the session ends (`limit`),
+   * so neither the peer nor the path in between can grow memory without bound.
+   */
+  inboxBytes: number;
 }
 export const DEFAULT_LIMITS: SessionLimits = {
   rekeyAfterFrames: REKEY_AFTER_FRAMES,
@@ -55,6 +63,7 @@ export const DEFAULT_LIMITS: SessionLimits = {
   hardFrameMargin: 2 ** 16,
   hardAgeMarginMs: 60 * 60 * 1000,
   handshakeTimeoutMs: 15_000,
+  inboxBytes: 32 * 1024 * 1024,
 };
 
 export interface SessionLinkOptions {
@@ -92,7 +101,7 @@ export class SessionLink {
   static initiate(transport: SessionTransport, options: InitiatorOptions & SessionLinkOptions, events: SessionEvents): SessionLink {
     const link = new SessionLink("initiator", transport, options, events);
     link.initiator = new Initiator(options);
-    link.initiator.start().then((hs1) => { if (!link.ended) transport.send(hs1); }, (error) => link.fail(error));
+    link.initiator.start().then((hs1) => { if (!link.ended) transport.send(hs1); }).catch((error) => link.fail(error));
     return link;
   }
 
@@ -122,6 +131,7 @@ export class SessionLink {
   private pumping = false;
   private inbox: Promise<void> = Promise.resolve();
   private inboxDepth = 0;
+  private inboxBytes = 0;
   private ended = false;
   private endInfo: SessionEnd | null = null;
   private resolveOpen!: (info: SessionInfo) => void;
@@ -157,9 +167,14 @@ export class SessionLink {
   /** One frame from the transport. */
   receive(frame: Uint8Array): void {
     if (this.ended) return;
+    if (frame.length > WIRE_FRAME_LIMIT) { this.end("malformed", "a frame is larger than any session frame"); return; }
     if (!this.secrets && ++this.inboxDepth > HANDSHAKE_INBOX_LIMIT) { this.end("handshake", "too many frames during the handshake"); return; }
+    this.inboxBytes += frame.length;
+    if (this.inboxBytes > this.limits.inboxBytes) { this.end("limit", "too many received bytes waiting to be handled"); return; }
     const copy = new Uint8Array(frame);
-    this.inbox = this.inbox.then(() => this.handle(copy)).catch((error) => this.fail(error));
+    this.inbox = this.inbox
+      .then(async () => { try { await this.handle(copy); } finally { this.inboxBytes -= copy.length; } })
+      .catch((error) => this.fail(error));
   }
 
   close(): void { this.end("closed", "closed by this side"); }
@@ -236,7 +251,7 @@ export class SessionLink {
   private async openFrame(frame: Uint8Array): Promise<void> {
     const recv = this.recv!;
     const secrets = this.secrets!;
-    if (frame.length < HEADER_BYTES + TAG_BYTES || frame.length > HEADER_BYTES + SESSION_FRAME_LIMIT + TAG_BYTES) throw new SessionError("malformed", "a frame has the wrong size");
+    if (frame.length < HEADER_BYTES + TAG_BYTES || frame.length > WIRE_FRAME_LIMIT) throw new SessionError("malformed", "a frame has the wrong size");
     const kind = frame[0]!;
     const allowed = this.role === "responder"
       ? kind === FRAME_KIND.DATA || kind === FRAME_KIND.REKEY || kind === FRAME_KIND.SWITCH

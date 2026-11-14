@@ -111,7 +111,10 @@ export interface ResponderOptions {
   self: LocalStatic;
   /** Which modes this responder takes (a server takes IK and pair from devices; KK between servers). */
   modes: readonly HandshakeMode[];
-  /** KK: the member the responder expects; another id is refused. */
+  /**
+   * The member the responder expects; another id is refused. Required for KK; when set it holds in IK too, so a
+   * different member cannot get past it by dialling in IK instead of KK. (Pair mode names a new member: not checked.)
+   */
   expectInitiator?: string;
   /** The roster check of the initiator's decrypted id and static key; nothing is answered before it says ok. */
   checkPeer(claim: PeerClaim): Promise<PeerDecision> | PeerDecision;
@@ -299,7 +302,7 @@ export class Responder {
     const si = payload!.slice(26);
     checkPublicKey(si, "the initiator's static key");
     if (memberId === self.memberId) fail("roster", "a member does not open a session with itself");
-    if (mode === "kk" && this.options.expectInitiator !== undefined && this.options.expectInitiator !== memberId) fail("roster", "KK: not the member this side expected");
+    if (mode !== "pair" && this.options.expectInitiator !== undefined && this.options.expectInitiator !== memberId) fail("roster", `${mode!.toUpperCase()}: not the member this side expected`);
     if (mode === "kk" && this.options.expectInitiator === undefined) fail("handshake", "KK needs the expected initiator");
     const claim: PeerClaim = mode === "pair" ? { mode: mode!, memberId, dhPub: si, offer } : { mode: mode!, memberId, dhPub: si };
     let decision: PeerDecision;
