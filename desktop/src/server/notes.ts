@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { externalDiskNote, listBackups, newestBackup, type Db } from "./store";
 
 export interface ServerNote {
-  id: "external-disk" | "no-backup" | "old-backup" | "restored" | "media-tools";
+  /** `peer-stale` and `forward-queue-old` come from machines.ts (M3 step 13). */
+  id: "external-disk" | "no-backup" | "old-backup" | "restored" | "media-tools" | "peer-stale" | "forward-queue-old";
   level: "info" | "warning";
   text: string;
 }
