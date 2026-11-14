@@ -93,7 +93,7 @@ export class Session extends SessionCore implements ShellWindow {
       try {
         this.onMessage(decoded.message);
       } catch (error) {
-        this.host.log(`session: ${decoded.message.t} failed: ${errorText(error)}`);
+        this.frameFailed(decoded.message, error);
       }
     }
   }

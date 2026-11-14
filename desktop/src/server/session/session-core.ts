@@ -12,10 +12,15 @@
 //                                                              cmd.result / cmd.retry come back through the reply sink.
 //                                                              One queue's commands run one after another, in the
 //                                                              order the session carried them (D58); a copy the owner
-//                                                              could not keep (a gap it would wait on forever) ends
-//                                                              the session, so the front end re-sends from its outbox
+//                                                              could not keep (a gap it would wait on forever), or
+//                                                              could not settle (the store failed, a handler threw),
+//                                                              ends the session with bye{unsettled}, so the front end
+//                                                              re-sends from its outbox
 //   cancel                                                   → SlotEngine.cancel, always answered (D59): the stored
-//                                                              cmd.result when too late, else cancel.noted
+//                                                              cmd.result when too late (also once the slot's handler
+//                                                              began: it waits for that outcome), else cancel.noted;
+//                                                              a cancel that cannot be committed ends the session the
+//                                                              same way
 //   req                                                      → the reads the shell allows, answered by the engine (`res`)
 //   content.find / content.open, shell.done                  → local socket only (the role table refuses them elsewhere)
 //   admin                                                    → local socket only: pairing, the cluster's recovery code,
@@ -120,12 +125,15 @@ export abstract class SessionCore {
   /** One promise chain per command queue (D58, `queueCmd`). */
   private readonly cmdChains = new Map<string, Promise<void>>();
   private adminEvents: (() => void) | null = null;
+  /** Settles when the session closes (a cancel waiting on a running handler stops waiting for this session). */
+  private readonly closedSignal: Promise<void>;
 
   /** The session kind frames are encoded and decoded for (local socket or not). */
   protected abstract readonly kind: SessionKind;
 
   protected constructor(protected readonly host: SessionHost, protected readonly options: SessionOptions = {}) {
     this.gate = new LiveGate((frame) => this.send(frame, streamOf(frame)), { intervalMs: options.liveIntervalMs ?? 100, ...(options.liveClock ? { clock: options.liveClock } : {}) });
+    this.closedSignal = new Promise<void>((resolve) => this.closedHandlers.push(resolve));
   }
 
   get device(): string | null { return this.deviceId; }
@@ -262,6 +270,20 @@ export abstract class SessionCore {
     }
   }
 
+  /**
+   * A shell's handling of one decoded frame threw. A `cmd` or `cancel` that was not settled ends the session (D58): the
+   * front end re-sends from its outbox; anything else is logged and the session goes on.
+   */
+  protected frameFailed(message: Message, error: unknown): void {
+    this.host.log(`session: ${message.t} failed: ${errorText(error)}`);
+    if (message.t === "cmd" || message.t === "cancel") this.unsettled(`${message.t} for slot ${message.slot.n} failed: ${errorText(error)}`);
+  }
+
+  /** D58: a `cmd` or `cancel` this session carried could not be settled: end the session, the outbox re-sends. */
+  private unsettled(detail: string): void {
+    if (this.state === "open") this.bye("unsettled", detail);
+  }
+
   /** The window the shell bridge knows this session as (the local session itself). */
   protected shellWindow(): { send(message: Message): boolean } { return this; }
 
@@ -344,7 +366,10 @@ export abstract class SessionCore {
     const key = queueKey(body.slot);
     const run = (this.cmdChains.get(key) ?? Promise.resolve())
       .then(() => this.cmd(body))
-      .catch((error) => this.host.log(`session: cmd ${body.cmd.type} (slot ${body.slot.n}): ${errorText(error)}`));
+      .catch((error) => {
+        this.host.log(`session: cmd ${body.cmd.type} (slot ${body.slot.n}) not settled: ${errorText(error)}`);
+        this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) was not settled: ${errorText(error)}`);
+      });
     this.cmdChains.set(key, run);
     void run.then(() => { if (this.cmdChains.get(key) === run) this.cmdChains.delete(key); });
   }
@@ -363,21 +388,26 @@ export abstract class SessionCore {
         : await this.host.runtime.legacy.receive(body, { scope, reply });
       // D58: the copy waits on a slot this session did not send before it, and the owner kept no copy: the session
       // broke FIFO. End it; the front end re-attaches and re-sends its outbox in slot order.
-      if (status.status === "dropped" && this.state === "open") this.bye("malformed", `cmd ${body.cmd.type} (slot ${body.slot.n}) came before an earlier slot of its queue (D58)`);
+      if (status.status === "dropped") this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) came before an earlier slot of its queue (D58)`);
     } catch (error) {
-      // Nothing was stored (the store failed, or the handler threw before its result was kept): the outbox re-sends.
+      // Nothing was stored (the store failed, or the handler threw before its result was kept). Going on would let the
+      // next slot of this queue be checked without its predecessor (D58): end the session; the outbox re-sends both.
       this.host.log(`session: cmd ${body.cmd.type} (slot ${body.slot.n}) not settled: ${errorText(error)}`);
+      this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) was not settled: ${errorText(error)}`);
     }
   }
 
   private async cancel(message: MessageOf<"cancel">): Promise<void> {
     if (this.cancelRefusal(message)) return;
     try {
-      const status = await this.host.runtime.slots.cancel(message.slot);
+      // A cancel for a slot whose handler already began waits for that outcome (SlotEngine.cancel); a session that
+      // closes meanwhile stops waiting (its front end sends the cancel again on its next session).
+      const status = await Promise.race([this.host.runtime.slots.cancel(message.slot), this.closedSignal.then(() => null)]);
       // D59: every cancel is answered, the stored outcome or `cancel.noted` (after the cancel committed).
-      if (this.state !== "closed") this.send(cancelAnswer(message.slot, status));
+      if (status && this.state !== "closed") this.send(cancelAnswer(message.slot, status));
     } catch (error) {
-      this.host.log(`session: cancel of slot ${message.slot.n}: ${errorText(error)}`);
+      this.host.log(`session: cancel of slot ${message.slot.n} not settled: ${errorText(error)}`);
+      this.unsettled(`cancel of slot ${message.slot.n} was not settled: ${errorText(error)}`);
     }
   }
 

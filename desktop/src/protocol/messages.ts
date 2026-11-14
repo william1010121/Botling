@@ -306,8 +306,12 @@ export const ShellDone = msg("shell.done", { req: ReqId, ok: z.boolean(), file: 
 // Session (§5.2)
 
 export const Ping = msg("ping", { at: z.number().int().nonnegative().optional() });
-/** `revoked`: the peer is not (or no longer) valid in the roster (§4.6). */
-export const Bye = msg("bye", { reason: z.enum(["role", "malformed", "too-large", "version", "token", "closing", "dead", "revoked"]), detail: z.string().max(500).optional() });
+/**
+ * `revoked`: the peer is not (or no longer) valid in the roster (§4.6). `unsettled` (D58): the server could not settle a
+ * `cmd` or `cancel` of this session (the store failed, its handler threw, or a copy came before an earlier slot of its
+ * queue); the front end re-attaches and re-sends its outbox in slot order.
+ */
+export const Bye = msg("bye", { reason: z.enum(["role", "malformed", "too-large", "version", "token", "closing", "dead", "revoked", "unsettled"]), detail: z.string().max(500).optional() });
 
 /** Every v1 message schema, by its `t`. */
 export const MESSAGES = {
