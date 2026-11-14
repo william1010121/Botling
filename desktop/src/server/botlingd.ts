@@ -25,6 +25,7 @@ import { DbBotStores } from "./botstore";
 import { ContentService } from "./content";
 import { RemoteContent } from "./content/remote";
 import { ContentTickets } from "./content/tickets";
+import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
 import { BotExports } from "./exports";
 import { CoreEngine, IntentRuntime } from "./intents";
@@ -155,6 +156,8 @@ export class Botlingd {
 
   /** M2 step 9: `/v3/c/…` and the sessions' content lookups and tickets. */
   remoteContent: RemoteContent | null = null;
+  /** M2 step 10: the media jobs (variants). */
+  media: MediaJobs | null = null;
 
   get token(): string { return this.tokenValue; }
 
@@ -222,6 +225,9 @@ export class Botlingd {
       const content = new ContentService({
         store, dataDir: paths.dataDir, serverId, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: (text) => log(`content: ${text}`),
       });
+      // M2 step 10: media jobs (posters, previews, thumbnails) for every content made ready; tools found on PATH.
+      const media = new MediaJobs({ store, dataDir: paths.dataDir, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: log });
+      content.attachMedia(media);
       // M3 step 7: the own table's feed (to peers and front ends) and the copies of peers' tables.
       const feeds = new TableFeeds({ reader: () => hub.reader(), ownStream: `srv:${serverId}`, log });
       const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
@@ -246,6 +252,9 @@ export class Botlingd {
       // Step 13: pins left by a crash are swept and every file still preparing is hashed before front ends attach.
       const recovered = await content.recover();
       log(`content recovery: ${JSON.stringify(recovered)}`);
+      const mediaStart = await media.start();
+      log(`media jobs: ${JSON.stringify({ ...mediaStart, h264: media.tools.h264, found: Object.entries(media.tools.paths).filter(([, at]) => at).map(([name]) => name) })}`);
+      for (const note of media.notes()) log(`media note: ${note}`);
       exports.start([...opened.entries()].map(([botId, directory]) => ({ botId, directory })));
 
       const startedAt = Date.now();
@@ -312,6 +321,7 @@ export class Botlingd {
       feeds.start();
       daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables);
       daemon.remoteContent = remoteContent;
+      daemon.media = media;
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       await daemon.listen(port, options.outDir, origin);
@@ -398,6 +408,7 @@ export class Botlingd {
     await step("summary rows", () => this.summary.flush());
     this.summary.close();
     await step("runtime", () => this.runtime.close());
+    await step("media jobs", () => this.media?.close());
     await step("content", () => this.content.close());
     await step("bot stores", () => this.stores.durable());
     await step("bot stores", () => this.stores.close());

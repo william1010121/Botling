@@ -47,6 +47,16 @@ export interface ContentServiceOptions {
   now?: () => number;
 }
 
+/** What the content service needs of the media jobs (src/server/media `MediaJobs`, M2 step 10). */
+export interface ContentMedia {
+  /** Inside the command that made `id` ready: queue its job. */
+  enqueue(db: Db, id: string, type: string): void;
+  /** After that command committed: run the queue. */
+  kick(): void;
+  /** A ready variant's file, or null (not made, evicted: the FE falls back to the original). */
+  openVariant(srcId: string, name: string): Promise<{ path: string; type: string; sig: StatSig } | null>;
+}
+
 export interface NotedFile {
   /** `pending:<hex>` until hashed. */
   id: string;
@@ -118,6 +128,7 @@ export class ContentService {
   private reader: Db | null = null;
   private readonly inflight = new Set<Promise<unknown>>();
   private closed = false;
+  private media: ContentMedia | null = null;
 
   constructor(private readonly options: ContentServiceOptions) {
     this.ownHasher = !options.hasher;
@@ -125,6 +136,8 @@ export class ContentService {
   }
 
   get serverId(): string { return this.options.serverId; }
+  /** M2 step 10: the media jobs (variants). Before `recover`, so every content made ready has its job. */
+  attachMedia(media: ContentMedia | null): void { this.media = media; }
   get pinsDir(): string { return pinsDir(this.options.dataDir); }
   private now(): number { return this.options.now?.() ?? Date.now(); }
   private audit(text: string): void { this.options.audit?.(text); }
@@ -261,6 +274,7 @@ export class ContentService {
       try { rmSync(done.drop, { force: true }); } catch { /* the next start sweeps it */ }
     }
     if (done.entries.length) this.options.onCommitted?.([...new Set(done.entries.map((entry) => entry.stream))]);
+    this.media?.kick();
     return done.entries;
   }
 
@@ -295,6 +309,7 @@ export class ContentService {
     // A front end may still hold the pending id (`content.find` answered it a moment ago): it keeps resolving.
     db.prepare("INSERT OR REPLACE INTO content_aliases (pending, id) VALUES (?, ?)").run(pendingId, id);
     const kept = readRow(db, id)!;
+    this.media?.enqueue(db, id, kept.type);
     const entries: Entry[] = [];
     const insertRef = db.prepare("INSERT OR IGNORE INTO content_refs (id, stream, seq) VALUES (?, ?, ?)");
     for (const name of names) {
@@ -392,11 +407,18 @@ export class ContentService {
       return { referenced, row: referenced ? readRow(db, id) : null };
     });
     if (!read.referenced) return gone("denied");
-    if (message.variant !== "original") return gone("deleted"); // variants (posters, previews) come in M2
     const row = read.row;
     if (!row) return gone("deleted");
     if (row.state === "changed") return gone("changed");
     if (row.state === "gone") return gone("deleted");
+    if (message.variant !== "original") {
+      // A variant (poster, preview, thumbnail; M2 step 10) under the source's proof of reference: a file the owner made
+      // from the hashed bytes, kept in its variants folder (served as a copy, after its own signature check).
+      if (row.state !== "ready" || !row.id.startsWith("sha256:")) return gone("deleted");
+      const variant = await this.media?.openVariant(row.id, message.variant);
+      if (!variant) return gone("deleted");
+      return { t: "content.file", req: message.req, id: message.id, path: variant.path, type: variant.type, pin: "copy", sig: variant.sig };
+    }
     let now: StatSig | null = null;
     try { now = statSig(row.path); } catch { now = null; }
     if (!sameSig(now, row.sig)) {
