@@ -84,6 +84,30 @@ export async function saveDevice(record: DeviceRecord, dhPkcs8: Uint8Array): Pro
   } finally { db.close(); }
 }
 
+/** A small setting of this device (the player's choice, step 11), kept beside the record; gone with the device. */
+export async function loadPref(name: string): Promise<string | null> {
+  const db = await open();
+  try {
+    return await new Promise<string | null>((resolve, reject) => {
+      const req = db.transaction(STORE, "readonly").objectStore(STORE).get(`pref:${name}`);
+      req.onsuccess = () => resolve(typeof req.result === "string" ? req.result : null);
+      req.onerror = () => reject(req.error);
+    });
+  } finally { db.close(); }
+}
+
+export async function savePref(name: string, value: string): Promise<void> {
+  const db = await open();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(value, `pref:${name}`);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("device store: write failed"));
+    });
+  } finally { db.close(); }
+}
+
 /** Forgets this device (sign-out / "pair again"): the membership and the front-end storage. */
 export async function forgetDevice(other: string[] = []): Promise<void> {
   for (const name of [DEVICE_DB, ...other]) {

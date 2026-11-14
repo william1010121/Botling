@@ -23,7 +23,7 @@ import type { ContentService } from "./service";
 import type { ContentTickets } from "./tickets";
 
 export interface RemoteContentOptions {
-  service: Pick<ContentService, "serverId" | "locate" | "open" | "markChanged">;
+  service: Pick<ContentService, "serverId" | "locate" | "open" | "markChanged"> & Partial<Pick<ContentService, "describe">>;
   tickets: ContentTickets;
   roster: Pick<DeviceRoster, "device">;
   log?: (text: string) => void;
@@ -57,7 +57,9 @@ export class RemoteContent {
     const ref = { owner: found.owner, id: found.id, type: found.type, state: found.state, entry: found.entry };
     if (found.state !== "ready" || !found.id.startsWith("sha256:")) return { ...none, ref };
     const { ticket, expiresAt } = this.options.tickets.issue({ deviceId, owner: found.owner, id: found.id, entry: found.entry });
-    return { ...none, ref, ticket, expiresAt };
+    const described = this.options.service.describe?.(found.id) ?? null;
+    const variants = described?.variants ?? [];
+    return { ...none, ref: { ...ref, ...(described ? { size: described.size } : {}) }, ticket, expiresAt, ...(variants.length ? { variants } : {}) };
   }
 
   /** `content.ticket` from a device's session: a ticket (new or renewed) for an entry that references the id. */
@@ -109,8 +111,25 @@ export class RemoteContent {
     }
     const why = answer.headers.get("X-Botling-Content");
     if (why && answer.status !== 404) this.options.log?.(`content: ${contentUrlForLog(pathAndQuery)} answered ${answer.status} (${why})`);
-    await writeResponse(answer, request, response);
+    await writeResponse(mediaLoaderRefusal(answer, request.headers), request, response);
   }
+}
+
+/**
+ * WebKit's media loader (its range requests carry `X-Playback-Session-Id`) retries a refused range read of a playing
+ * element in a tight loop and never fires the element's `error`: about 3,400 requests in 3 s for a 410, and the same for
+ * 403, 404, 416 and 500 (M2 step 11 spike, headless WebKit). An empty `200` ends it after one or two requests; the
+ * element then waits, and the page's stall watch asks the server once (`content.ticket`) and hides it. So a refusal of
+ * such a request keeps its reason (`X-Botling-Content`, and the status in `X-Botling-Status`) but is sent as an empty
+ * 200 with no `Content-Range` (never bytes). Everyone else, Chromium's loader included, gets the status itself.
+ */
+export function mediaLoaderRefusal(answer: Response, headers: { [name: string]: string | string[] | undefined }): Response {
+  if (answer.status < 400 || !headers["x-playback-session-id"] || !headers.range) return answer;
+  const out = new Headers({ "Content-Type": "text/plain; charset=utf-8", "Content-Length": "0", "Cache-Control": "no-store", "X-Botling-Status": String(answer.status) });
+  const why = answer.headers.get("X-Botling-Content");
+  if (why) out.set("X-Botling-Content", why);
+  void answer.body?.cancel().catch(() => undefined);
+  return new Response(null, { status: 200, headers: out });
 }
 
 function refused(why: Refusal): Response {

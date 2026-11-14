@@ -9,15 +9,35 @@ import { Icon } from "../../src/renderer/icons";
 import { QrScanner, cameraError, openCamera } from "../../mobile/QrScanner";
 import { PHONE_QUERY, phoneWidth } from "../../mobile/layout";
 import { mountRenderer, type MountedRenderer, type PageCapabilities } from "../bridge-v3";
-import { forgetDevice, loadDevice, saveDevice, type DeviceRecord } from "./device-store";
+import { forgetDevice, loadDevice, loadPref, saveDevice, savePref, type DeviceRecord } from "./device-store";
 import { makePairKeys, pair, pairingSupported, PairingError, type PairAttempt, type PairKeys } from "./pairing";
 import { MediaBroker } from "./media";
+import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
+import { pathOfPage } from "../player";
 import { bannerText, FE_VERSION, newDiagnostics, openConnection, type Connection, type Diagnostics } from "./connection";
 import type { DeviceScope } from "../../src/protocol";
 
 /** Diagnostics for the headless harness and support (not a capability; the renderer never sees it). */
 export const diagnostics: Diagnostics = newDiagnostics();
 (globalThis as { botling3Diagnostics?: Diagnostics }).botling3Diagnostics = diagnostics;
+diagnostics.player.path = pathOfPage(location.hostname);
+
+/**
+ * The page's content cache (step 11, §9A.6): 200 MB. `botling3ContentCapBytes` on the page's global lowers the cap
+ * (the headless harness sets it before the page loads; support can too); it is never raised above 200 MB.
+ */
+function contentCap(): number {
+  const asked = Number((globalThis as { botling3ContentCapBytes?: unknown }).botling3ContentCapBytes);
+  return Number.isFinite(asked) && asked > 0 ? Math.min(asked, CONTENT_CACHE_CAP) : CONTENT_CACHE_CAP;
+}
+export const contentCache = new ContentCache({ cap: contentCap() });
+
+/** Deletes everything the page cached (sign-out, unpairing, revocation), and says why in the diagnostics. */
+export async function clearCachedContent(why: string): Promise<void> {
+  await contentCache.clear();
+  await clearContentCache();
+  diagnostics.player.cache.cleared.push(why);
+}
 
 type Phase =
   | { kind: "loading" }
@@ -147,6 +167,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     mounted.current = null;
     await connection?.close().catch(() => undefined);
     await forgetDevice([DEFAULT_IDB_NAME]);
+    await clearCachedContent("sign-out");
     onForget();
   }, [connection, onForget]);
 
@@ -160,13 +181,19 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     let cancelled = false;
     let opened: Connection | null = null;
     let media: MediaBroker | null = null;
+    // This device was removed from the roster (unpaired or revoked on the computer): the server says so with
+    // `bye{revoked}` while connected, and what the page cached goes at once (§9A.6); pairing again is the user's
+    // choice. A revocation made while the page was away is not told: the server refuses the handshake silently.
+    const revoked = (why: string) => { media?.dropCached(); void clearCachedContent(why); };
     void openConnection(device, diagnostics, location.href).then((conn) => {
       if (cancelled) { void conn.close(); return; }
       opened = conn;
+      conn.link.on((event) => { if (event.type === "bye" && event.reason === "revoked") revoked("revoked (bye)"); });
       const update = () => setBanner({ text: bannerText(conn.link.status, conn.link.pending()), state: conn.link.status.state });
       conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome") update(); });
       // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
-      media = new MediaBroker(conn.link, () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null, diagnostics.media);
+      media = new MediaBroker(conn.link, () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null, diagnostics.media,
+        { cache: contentCache, path: diagnostics.player.path, player: diagnostics.player, storage: { load: loadPref, save: savePref } });
       media.start();
       mounted.current = mountRenderer(rendererRoot.current!, { link: conn.port, capabilities, clock: { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) }, chrome });
       conn.link.start();

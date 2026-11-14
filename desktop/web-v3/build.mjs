@@ -2,10 +2,9 @@
 // renderer and chat page, unchanged, in web mode (__BOTLING_WEB__), with this folder's shell as the entry. The 2.x
 // files are imported and copied, never edited.
 //
-// One build-time substitution (no 2.x source changes): the 2.x renderer names the 2.x page's path for its chat frame
-// (`${origin}/mobile/chat.html`, src/renderer/chat-frame/protocol.ts). Here that path is `/v3/chat.html`; the plugin
-// below rewrites exactly that literal while bundling and fails the build if it is not found once. The proposed 2.x
-// change that would make this unnecessary is in .bot/artifacts/v3-m2/step-8-page.md (patch).
+// The 2.x renderer names the web page's base path for its chat frame from `__BOTLING_WEB_BASE__`
+// (src/renderer/chat-frame/protocol.ts, default "/mobile/"); this build defines it as "/v3/" (the step 8 patch, applied
+// to 2.x in c346f7c4, replaced the literal rewrite this file used to do).
 //
 // chat.js starts at web-v3/chat-entry.ts: the 2.x chat page's entry, then this page's media mapping (step 9,
 // chat-media.ts: a line's local file → its ticketed /v3/c/ URL, asked of the shell).
@@ -25,20 +24,7 @@ const web = resolve(root, "../Web");
 const outdir = resolve(process.argv[2] ?? join(here, "dist"));
 const nodePaths = [join(root, "node_modules")];
 
-const CHAT_PAGE_FROM = "${served}/mobile/chat.html";
-const CHAT_PAGE_TO = "${served}/v3/chat.html";
-/** Rewrites the 2.x page's chat-frame path to this page's, in the bundle only. */
-const v3Paths = {
-  name: "botling3-paths",
-  setup(b) {
-    b.onLoad({ filter: /src[\\/]renderer[\\/]chat-frame[\\/]protocol\.ts$/ }, (args) => {
-      const text = readFileSync(args.path, "utf8");
-      const count = text.split(CHAT_PAGE_FROM).length - 1;
-      if (count !== 1) throw new Error(`web-v3 build: expected the chat page path once in ${args.path}, found ${count}`);
-      return { contents: text.replace(CHAT_PAGE_FROM, CHAT_PAGE_TO), loader: "ts" };
-    });
-  },
-};
+const WEB_BASE = JSON.stringify("/v3/");
 
 async function webPart(name) {
   const result = await build({ entryPoints: [join(root, `builtin-plugins/${name}/src/web.ts`)], bundle: true, format: "esm", target: "chrome130",
@@ -50,10 +36,10 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   const [latex, chatExtras, catchup, boardPart] = await Promise.all(["ccb-latex", "botling.chat-extras", "botling.catchup", "botling.board"].map(webPart));
   const browser = { bundle: true, format: "iife", target: ["chrome130", "safari17"], minify: !development, sourcemap: "linked", legalComments: "eof", write: false, nodePaths, metafile: true };
   const [shell, chat] = await Promise.all([
-    build({ ...browser, entryPoints: [join(here, "shell/main.tsx")], outfile: join(out, "web.js"), jsx: "automatic", plugins: [v3Paths],
-      define: { "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(readCharacters(root)), __BOTLING_WEB__: "true" } }),
-    build({ ...browser, entryPoints: [join(here, "chat-entry.ts")], outfile: join(out, "chat.js"), plugins: [v3Paths],
-      define: { __LATEX_SOURCE__: JSON.stringify(latex), __CHAT_EXTRAS_SOURCE__: JSON.stringify(chatExtras), __CATCHUP_SOURCE__: JSON.stringify(catchup), __BOARD_SOURCE__: JSON.stringify(boardPart), __BOTLING_WEB__: "true" } }),
+    build({ ...browser, entryPoints: [join(here, "shell/main.tsx")], outfile: join(out, "web.js"), jsx: "automatic",
+      define: { __BOTLING_WEB_BASE__: WEB_BASE, "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(readCharacters(root)), __BOTLING_WEB__: "true" } }),
+    build({ ...browser, entryPoints: [join(here, "chat-entry.ts")], outfile: join(out, "chat.js"),
+      define: { __BOTLING_WEB_BASE__: WEB_BASE, __LATEX_SOURCE__: JSON.stringify(latex), __CHAT_EXTRAS_SOURCE__: JSON.stringify(chatExtras), __CATCHUP_SOURCE__: JSON.stringify(catchup), __BOARD_SOURCE__: JSON.stringify(boardPart), __BOTLING_WEB__: "true" } }),
   ]);
   const files = new Map([shell, chat].flatMap((result) => result.outputFiles.map((file) => [file.path, file.contents])));
   const asset = (from, to, tokens = false) => files.set(join(out, to), tokens ? Buffer.from(inlineTokens(readFileSync(from, "utf8"), from)) : readFileSync(from));

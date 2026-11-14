@@ -186,6 +186,8 @@ export class SessionLink {
   async drain(): Promise<void> {
     while (!this.ended && (this.pumping || this.queue.length > 0 || this.urgent.length > 0)) await new Promise((resolve) => setTimeout(resolve, 1));
   }
+  /** Resolves once the frames received so far were handled (opened and delivered, or the session ended on one). */
+  received(): Promise<void> { return this.inbox.then(() => undefined, () => undefined); }
   /** The transport closed under the session. */
   transportClosed(): void { this.end("transport", "the transport closed"); }
 

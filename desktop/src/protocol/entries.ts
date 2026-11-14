@@ -8,6 +8,8 @@ import { ContentId, Cursor, EntryHash, Hlc, Id, LogId, Origin, OriginEpoch, Outc
 export const ContentVariant = z.strictObject({
   name: z.string().min(1).max(100), id: ContentId, size: z.number().int().nonnegative(), type: z.string().min(1).max(200),
   bitrate: z.number().nonnegative().optional(), height: z.number().int().positive().optional(),
+  /** M2 step 11 (additive): a video's length in ms, on the `original` variant, so the FE shows it with the poster. */
+  durationMs: z.number().int().nonnegative().optional(),
 });
 export type ContentVariant = z.infer<typeof ContentVariant>;
 

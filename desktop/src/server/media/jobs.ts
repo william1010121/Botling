@@ -342,6 +342,7 @@ export class MediaJobs {
       const variant: ContentVariant = {
         name: "original", id: source.id, size: source.size, type: source.type,
         ...(video.bitrate ? { bitrate: video.bitrate } : {}), ...(video.height ? { height: Math.round(video.height) } : {}),
+        ...(video.duration ? { durationMs: Math.round(video.duration * 1000) } : {}),
       };
       return this.announce(db, source.id, variant);
     });
@@ -412,6 +413,33 @@ export class MediaJobs {
     for (const file of removed) rmSync(file, { force: true });
     if (removed.length) this.audit(`media: evicted ${removed.length} variant file(s) above the ${cap}-byte cap`);
     return removed.length;
+  }
+
+  /**
+   * What a front end may pick from for `srcId` now (M2 step 11): the `original` (a video's bitrate, height, duration
+   * from its meta) and every ready variant. Sync read; the source row's size and type come from the caller.
+   */
+  variantsOf(source: { id: string; size: number; type: string }): ContentVariant[] {
+    const db = this.db();
+    const out: ContentVariant[] = [];
+    const meta = this.storedMeta(source.id) as VideoMeta | null;
+    if (meta && source.type.startsWith("video/")) {
+      out.push({
+        name: "original", id: source.id, size: source.size, type: source.type,
+        ...(meta.bitrate ? { bitrate: meta.bitrate } : {}), ...(meta.height ? { height: Math.round(meta.height) } : {}),
+        ...(meta.duration ? { durationMs: Math.round(meta.duration * 1000) } : {}),
+      });
+    }
+    for (const row of db.prepare("SELECT variant, id, size, type, info FROM variants WHERE srcId = ? AND state = 'ready' ORDER BY variant").all(source.id)) {
+      if (out.length >= 20 || row.id == null || row.type == null) continue;
+      let info: Record<string, unknown> = {};
+      try { info = JSON.parse(String(row.info ?? "{}")) as Record<string, unknown>; } catch { /* no info */ }
+      out.push({
+        name: String(row.variant), id: String(row.id), size: Number(row.size ?? 0), type: String(row.type),
+        ...(typeof info.bitrate === "number" ? { bitrate: info.bitrate } : {}), ...(typeof info.height === "number" ? { height: Math.round(info.height) } : {}),
+      });
+    }
+    return out;
   }
 
   /**

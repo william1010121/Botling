@@ -35,6 +35,8 @@ export interface WsDialOptions {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+/** How long a closed socket waits for the frames it already received to be opened (see `onclose`). */
+const CLOSE_DRAIN_MS = 2_000;
 
 /** A dial that opens one encrypted session per connection. */
 export function wsDial(options: WsDialOptions): Dial {
@@ -88,7 +90,12 @@ export function wsDial(options: WsDialOptions): Dial {
       options.onFrame?.(event.data.byteLength);
       link.receive(new Uint8Array(event.data));
     };
-    ws.onclose = () => { link.transportClosed(); finish("closed"); };
+    // Frames that arrived before the close are still being opened (WebCrypto is asynchronous): the last one is often
+    // the server's `bye` (why it closes). Let them through first, for at most CLOSE_DRAIN_MS.
+    ws.onclose = () => {
+      const settled = () => { link.transportClosed(); finish("closed"); };
+      void Promise.race([link.received(), new Promise<void>((resolve) => setTimeout(resolve, CLOSE_DRAIN_MS))]).then(settled);
+    };
     ws.onerror = () => undefined;
     return {
       send(frame: string) {
