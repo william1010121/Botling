@@ -6,3 +6,4 @@ export * from "./entries";
 export * from "./messages";
 export * from "./roles";
 export * from "./frame";
+export * from "./snap-view";
