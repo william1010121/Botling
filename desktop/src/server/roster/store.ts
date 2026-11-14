@@ -10,7 +10,7 @@
 //   in); `Add` of a device, `Revoke` of a device it has in its roster, and `Endorse` of a member it finds valid that it
 //   neither added nor endorsed yet ("Endorse (self)", §4.2). No server revocation (root only, M4), no gossip (M3).
 // - Listeners hear which members stopped being valid (sessions close, M2 step 4).
-import { DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
+import { DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
 import type { Command, Db } from "../store";
 import { computeRoster, validDevice, type MemberInfo, type RosterView, type VerifiedStatement } from "./validity";
 import { parseStored, signStatement, storedBytes, verifyStatements, type StoredStatement } from "./verify";
@@ -219,6 +219,52 @@ export class RosterStore {
       if (changed.length) await this.apply(changed, cluster, changed.map((item) => ({ act: "statement.merge" as const, statement: item.id, by: item.statement.signer, member: memberOf(item.statement.body) })));
       return changed.map((item) => item.id);
     });
+  }
+
+  /**
+   * Every Revoke and Root this server holds, as sent across a refused server handshake and at the start of every peer
+   * session (§4.6, D47). Sorted by id.
+   */
+  revocations(): Array<{ id: string; statement: SignedStatement }> {
+    return this.statements().filter((item) => item.statement.body.type === "revoke" || item.statement.body.type === "root");
+  }
+
+  /**
+   * Merges Revoke and Root statements a peer server sent (§4.6, D47), also while this server finds itself revoked:
+   * that is how a `Root` that brings it back reaches it. Anything else in the list is ignored; whether a statement
+   * counts is validity's business (its own signatures, §4.2), so taking them from a peer that is not valid is safe.
+   * Returns the ids that were new.
+   */
+  mergeRevocations(statements: readonly unknown[]): Promise<string[]> {
+    return this.serial(async () => {
+      const cluster = this.cluster;
+      if (cluster === null) return [];
+      const fresh: StoredStatement[] = [];
+      for (const raw of statements) {
+        const parsed = RevocationStatement.safeParse(raw);
+        if (!parsed.success || parsed.data.body.cluster !== cluster) continue;
+        const id = await statementId(parsed.data.body);
+        if (this.stored.has(id) || fresh.some((item) => item.id === id)) continue;
+        fresh.push({ id, statement: parsed.data });
+      }
+      if (fresh.length) await this.apply(fresh, cluster, fresh.map((item) => ({ act: "statement.merge" as const, statement: item.id, by: item.statement.signer, member: memberOf(item.statement.body) })));
+      return fresh.map((item) => item.id);
+    });
+  }
+
+  /**
+   * A member's newest verified `Profile` value for `field` (by hlc, then the smaller id), signed by the member itself or
+   * by a server this roster knows; null when there is none (§4.1, §6.2: peers' addresses).
+   */
+  profile(member: string, field: "name" | "icon" | "addresses"): string | null {
+    let best: { value: string; ms: number; c: number; id: string } | null = null;
+    for (const { id, body, signer } of this.verified) {
+      if (body.type !== "profile" || body.member !== member || body.field !== field || body.cluster !== this.cluster) continue;
+      if (signer !== member && !this.current.servers.has(signer)) continue;
+      const { ms, c } = body.hlc;
+      if (!best || ms > best.ms || (ms === best.ms && (c > best.c || (c === best.c && id < best.id)))) best = { value: body.value, ms, c, id };
+    }
+    return best?.value ?? null;
   }
 
   private self() {

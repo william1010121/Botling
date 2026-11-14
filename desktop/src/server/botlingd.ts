@@ -34,6 +34,7 @@ import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./
 import { RosterStore } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, LoopbackListener } from "./net";
 import { PairingService } from "./pairing";
+import { PeerSessions, peerTimers, SessionRouter } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
 import { SummaryRows } from "./replica";
@@ -53,6 +54,8 @@ export const MIN_FE_VERSION = "3.0.0-m1";
 /** How `welcome.servers` names this server (M1: one server, this Mac). */
 export const SERVER_NAME = "This Mac";
 export const BOTLINGD_VERSION = "3.0.0-m1";
+/** Each peer server's state (`botlingd.peers.json`, 0600), rewritten on every change, removed on stop (M3 step 3). */
+export const PEERS_FILE = "botlingd.peers.json";
 
 /**
  * Risk 3: plugin secrets were sealed with Electron's safeStorage (the Keychain key of the app), which a plain Node
@@ -125,6 +128,8 @@ export class Botlingd {
     readonly pairing: PairingService,
     /** M3 step 6: this server's summary rows (`srv:` table). */
     readonly summary: SummaryRows,
+    /** M3 step 3: peer servers (KK sessions over `/v3/ws`, one per pair, the D47 exchange). */
+    readonly peers: PeerSessions,
   ) {}
 
   get token(): string { return this.tokenValue; }
@@ -133,6 +138,7 @@ export class Botlingd {
     const env = options.env;
     const paths = botlingdPaths(env);
     const port = listenPort(env);
+    const timers = peerTimers(env);
     refuse2xData(paths.dataDir);
     mkdirSync(paths.dataDir, { recursive: true, mode: 0o700 });
     chmodSync(paths.dataDir, 0o700);
@@ -244,10 +250,13 @@ export class Botlingd {
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
       const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing }, options.session);
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries);
+      // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
+      const peers = new PeerSessions({ roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log }, { stateFile: join(paths.dataDir, PEERS_FILE) });
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers);
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       await daemon.listen(port, options.outDir, origin);
+      peers.start();
       daemon.watchLock();
       const schedule = backupCheckMs(env);
       if (schedule) {
@@ -275,7 +284,7 @@ export class Botlingd {
     let state: Record<string, unknown>;
     try {
       this.listener = await LoopbackListener.start({
-        port, remote: this.remote, pageDir: defaultPageDir(outDir), origins: () => (origin ? [origin] : []), log: this.log,
+        port, remote: new SessionRouter(this.remote, this.peers), pageDir: defaultPageDir(outDir), origins: () => (origin ? [origin] : []), log: this.log,
       });
       state = { pid: process.pid, address: LISTEN_HOST, port: this.listener.port };
     } catch (error) {
@@ -315,8 +324,10 @@ export class Botlingd {
     await step("sessions", () => this.server.close());
     await step("pairing", () => this.pairing.close());
     await step("remote sessions", () => this.remote.close());
+    await step("peer sessions", () => this.peers.close());
     await step("listener", () => this.listener?.close());
     rmSync(join(this.paths.dataDir, LISTEN_FILE), { force: true });
+    rmSync(join(this.paths.dataDir, PEERS_FILE), { force: true });
     this.shell.close();
     await step("core", () => this.core.shutdown());
     // What the core emitted while stopping is written (with the summary rows still waiting), then the worker stops.

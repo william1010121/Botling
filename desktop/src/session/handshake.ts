@@ -116,6 +116,12 @@ export interface ResponderOptions {
    * different member cannot get past it by dialling in IK instead of KK. (Pair mode names a new member: not checked.)
    */
   expectInitiator?: string;
+  /**
+   * KK without a fixed expected initiator: `checkPeer` alone decides who may dial, and it must compare the decrypted
+   * static key with the one its roster names for that member (a server's peer acceptor takes any server of its roster,
+   * M3). Without this (or `expectInitiator`) KK is refused.
+   */
+  kkFromRoster?: boolean;
   /** The roster check of the initiator's decrypted id and static key; nothing is answered before it says ok. */
   checkPeer(claim: PeerClaim): Promise<PeerDecision> | PeerDecision;
   /** Pair mode: the pending offer's secret, or null when it is unknown, expired or used. */
@@ -147,6 +153,16 @@ export function frameNonce(direction: Direction, epoch: number, counter: number)
 /** A frame's AAD: protocol, version, session id, frame kind, direction, epoch, counter (v1 §5.1 plus kind and epoch). */
 export function frameAad(sessionIdBytes: Uint8Array, kind: number, direction: Direction, epoch: number, counter: number): Uint8Array {
   return concat(utf8.encode(SESSION_PROTOCOL), Uint8Array.of(SESSION_VERSION), sessionIdBytes, Uint8Array.of(kind, DIRECTION_TAG[direction]), u32(epoch), u64(counter));
+}
+
+/**
+ * The mode an HS1 names in its clear header (byte 2), or null when the frame is not an HS1. Reads no secret and decides
+ * nothing about trust: botlingd's `/v3/ws` uses it only to hand a KK dial to the peer acceptor and the rest to the
+ * device acceptor, where the real roster check runs.
+ */
+export function hs1Mode(frame: Uint8Array): HandshakeMode | null {
+  if (frame.length < 4 || frame[0] !== FRAME_KIND.HS1) return null;
+  return (Object.keys(MODE_BYTE) as HandshakeMode[]).find((name) => MODE_BYTE[name] === frame[2]) ?? null;
 }
 
 /** The 6-digit code from 8 bytes of the key schedule. */
@@ -303,7 +319,7 @@ export class Responder {
     checkPublicKey(si, "the initiator's static key");
     if (memberId === self.memberId) fail("roster", "a member does not open a session with itself");
     if (mode !== "pair" && this.options.expectInitiator !== undefined && this.options.expectInitiator !== memberId) fail("roster", `${mode!.toUpperCase()}: not the member this side expected`);
-    if (mode === "kk" && this.options.expectInitiator === undefined) fail("handshake", "KK needs the expected initiator");
+    if (mode === "kk" && this.options.expectInitiator === undefined && !this.options.kkFromRoster) fail("handshake", "KK needs the expected initiator");
     const claim: PeerClaim = mode === "pair" ? { mode: mode!, memberId, dhPub: si, offer } : { mode: mode!, memberId, dhPub: si };
     let decision: PeerDecision;
     try { decision = await this.options.checkPeer(claim); }
