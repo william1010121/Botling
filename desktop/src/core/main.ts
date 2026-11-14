@@ -258,6 +258,8 @@ const core = new Core({
   ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { quotaRetriever: retrieveQuota } : {}),
   // A swap's self-check (BOTLING_CORE_PROBE) runs on a scratch folder and checks no CLI.
   ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { doctor: new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(dataDir)), dataDir) }) } : {}),
+  // The plugin catalog's index, once a day, only in the real app (never with the fake agent tests use).
+  ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" && process.env.BOTLING_APP_VERSION ? { pluginCatalog: { autoRefresh: true } } : {}),
   dataDir,
   deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
   // Workers on other machines (multi-machine phase 1): the real agent only (the fake agent's tests keep them off).

@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "repo": "botling-plugins",
+  "plugins": [
+    {
+      "name": "botling-components-basic",
+      "displayName": "Basic components",
+      "description": "Generic cards for chats and the Board: commit log, git diff, GitHub CI, changelog, CPU, memory and disk usage, contribution board, architecture diagram, multi-select and more. Each card is a folder in components/ (template.html + about.md).",
+      "version": "1.0.0",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "permissions": [],
+      "engines": {
+        "ccb": "^2.0.0"
+      },
+      "minAppVersion": "2.0.0",
+      "parts": [
+        "components"
+      ],
+      "path": "botling-components-basic",
+      "files": 47,
+      "size": 346703,
+      "sha256": "fded7a4eac6e0790ed0121f14410952ea46e41e54e96c653bac3fb532d537123",
+      "commit": "a93fc02ea058e9c9e3445bff2e10ad01c28cfa8a",
+      "components": [
+        "architecture-topology",
+        "changelog",
+        "commit-log",
+        "component-kit",
+        "contribution-board",
+        "cpu-load",
+        "disk-usage-breakdown",
+        "engine-skills",
+        "git-diff",
+        "github-ci",
+        "memory-usage-analysis",
+        "multi-select",
+        "release-progress",
+        "script-image-card",
+        "versions-summary",
+        "weather-card",
+        "web-preview"
+      ]
+    },
+    {
+      "name": "ccb-laas",
+      "displayName": "LaTeX 快打",
+      "description": "在輸入框打 ;a 自動變成 \\alpha（移植自 web-laas / Emacs laas）；離開輸入框時 $…$ 顯示成 SVG 公式（內含 MathJax，Apache-2.0）。",
+      "version": "1.1.1",
+      "license": "GPL-3.0-or-later",
+      "licenseFile": "LICENSE",
+      "permissions": [
+        "composer"
+      ],
+      "engines": {
+        "ccb": "^2.0.0"
+      },
+      "minAppVersion": "2.0.0",
+      "parts": [
+        "web"
+      ],
+      "path": "ccb-laas",
+      "files": 16,
+      "size": 2767783,
+      "sha256": "b242b22055ca92c531a2b6380eef0d7c62c7d28dd351f1218dd98e8d8946f2cf",
+      "commit": "a93fc02ea058e9c9e3445bff2e10ad01c28cfa8a"
+    },
+    {
+      "name": "ccb-session-usage",
+      "displayName": "Session usage",
+      "description": "A usage bar above the composer (Claude / Codex / Antigravity: context %, tokens and API-equivalent cost incl. subagents; click for a dense card). Cost is an estimate, not real billing.",
+      "version": "1.8.0",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "permissions": [
+        "files"
+      ],
+      "engines": {
+        "ccb": "^2.0.0"
+      },
+      "minAppVersion": "2.0.0",
+      "parts": [
+        "web",
+        "host"
+      ],
+      "path": "ccb-session-usage",
+      "files": 20,
+      "size": 122399,
+      "sha256": "8d81bc1059c268e16bc9f6382390d2959767ec96d72d3b17253a12daf247ce6c",
+      "commit": "a93fc02ea058e9c9e3445bff2e10ad01c28cfa8a"
+    },
+    {
+      "name": "ccb-teams",
+      "displayName": "臨時團隊",
+      "description": "主 bot 可以拉起的臨時團隊。每個團隊是 claude/agents/ 裡的一個 agent 檔。",
+      "version": "1.0.0",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "permissions": [
+        "claude"
+      ],
+      "engines": {
+        "ccb": "^2.0.0"
+      },
+      "minAppVersion": "2.0.0",
+      "parts": [
+        "claude"
+      ],
+      "path": "ccb-teams",
+      "files": 5,
+      "size": 2192,
+      "sha256": "86a4294ab05fd13387adf7497c60cbd09fdbc70350ef5c0820b3fd97c6e070c6",
+      "commit": "a93fc02ea058e9c9e3445bff2e10ad01c28cfa8a"
+    },
+    {
+      "name": "ccb-web-extractors",
+      "displayName": "Web page readers",
+      "description": "Reads the conversation on a web AI's page (Gemini) into text for the main bot. One script per site; README.md has the contract.",
+      "version": "1.0.0",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "permissions": [],
+      "engines": {
+        "ccb": "^2.0.0"
+      },
+      "minAppVersion": "2.0.0",
+      "parts": [],
+      "path": "ccb-web-extractors",
+      "files": 7,
+      "size": 43119,
+      "sha256": "b7b43663c6189915b2b52dd4c6b3f9495a8d6b4ff1cf1dde12aab5c2c55d5567",
+      "commit": "a93fc02ea058e9c9e3445bff2e10ad01c28cfa8a"
+    }
+  ]
+}

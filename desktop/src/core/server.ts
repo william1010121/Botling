@@ -90,6 +90,8 @@ import { Plugins, type BotInfo, type EngineCli } from "./plugins";
 import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
+import { PluginStore } from "./plugin-store";
+import { INDEX_URL_SETTING } from "./plugins/catalog";
 import { maintainerInstructions, maintainerVisualToolRules } from "./maintainer-text";
 import { siteToolsFolder } from "./site-tools-guard";
 import type { ChatRecord } from "./store/records";
@@ -108,6 +110,8 @@ export interface CoreOptions {
   quotaRetriever?: import("./quota").QuotaRetriever;
   /** Read-only CLI self-check; production starts it offline after activation. */
   doctor?: Doctor;
+  /** The public plugin catalog: production checks its index once a day after activation (`autoRefresh`); tests give a fake fetch or none. */
+  pluginCatalog?: { autoRefresh?: boolean; fetcher?: import("./plugins/catalog").Fetch };
   dataDir: string;
   /** Update candidate: startup writes are snapshotted; external work waits for commit. */
   deferStartup?: boolean;
@@ -235,6 +239,8 @@ export class Core {
   /** The Storage tab's dragged-in files, by bot (references only; storage.ts). */
   readonly storage: StorageBook;
   readonly maintainer: MaintainerDesk;
+  /** The public plugin catalog (Explore, Updates on the Plugins page). */
+  readonly pluginStore: PluginStore;
   private lastPlugins = "";
   /** The plugins' Claude parts as bots last heard of them (`followClaudeParts`). */
   private loadedClaudeParts = "[]";
@@ -588,6 +594,17 @@ export class Core {
       rescan: () => this.scanComponents(),
       log: (line) => this.log(`maintainer: ${line}`),
     });
+    this.plugins.previousVersion = (name) => this.maintainer.previousOf(name)?.version ?? null;
+    this.pluginStore = new PluginStore({
+      root: options.dataDir,
+      desk: this.maintainer,
+      registry: () => this.plugins.registry,
+      indexOverride: () => readSettings(Layout.settings(options.dataDir))[INDEX_URL_SETTING],
+      appVersion: process.env.BOTLING_APP_VERSION?.trim() || null,
+      ...(options.pluginCatalog?.fetcher ? { fetcher: options.pluginCatalog.fetcher } : {}),
+      changed: (store) => this.event({ type: "plugins.store", store }),
+      log: (line) => this.log(line),
+    });
     const app = options.app ?? null;
     // The bots' tools on the in-app browser pane (browser-tools.ts) ask main through this.
     setBrowserBridge(app ? (request) => app.request("browser", { request }) : null);
@@ -638,6 +655,7 @@ export class Core {
     // The new build says it came up (the install script waits for that); botling.dev tells the bot that asked.
     try { confirmHealthy(options.dataDir); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
     void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
+    if (options.pluginCatalog?.autoRefresh) this.pluginStore.startup();
     // Checking a wall-clock time every 15 s (rather than sleeping until it) survives the computer
     // sleeping; a time missed while the app was closed runs once later that day (1.x).
     // The library on disk (a template edited by hand, a plugin dropped in) is watched rather than polled;
@@ -2791,6 +2809,11 @@ First write a test that shows this, then fix it.`;
       case "chat.send": return this.send(cmd.botId, cmd.text, { replyTo: cmd.replyTo, to: cmd.to });
       case "plugins.list": return this.plugins.view();
       case "plugins.enable": return this.plugins.setEnabled(cmd.name, cmd.enabled);
+      case "plugins.store": return cmd.refresh ? await this.pluginStore.refresh() : this.pluginStore.view();
+      case "plugins.storeInstall": return await this.pluginStore.install(cmd.name);
+      case "plugins.storeDismiss": return this.pluginStore.dismiss(cmd.name);
+      case "plugins.revert": { const problem = this.maintainer.revertPlugin(cmd.name); if (problem) throw new ContractError("conflict", problem); return this.plugins.view(); }
+      case "plugins.remove": { const problem = this.maintainer.removePlugin(cmd.name); if (problem) throw new ContractError("conflict", problem); return this.plugins.view(); }
       case "plugins.setting": return this.plugins.setSetting(cmd.name, cmd.key, cmd.value);
       case "plugins.secret": return this.plugins.setSecret(cmd.name, cmd.key, cmd.value);
       case "plugins.command": return { result: await this.plugins.command(cmd.id, cmd.from, cmd.name, cmd.args) ?? null };

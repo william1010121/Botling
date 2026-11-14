@@ -288,6 +288,19 @@ export class PluginRegistry {
     this.rescan(true);
   }
 
+  /** Where a library plugin was installed from (the catalog, git, a folder), whichever copy runs; null: the library's own. */
+  installedSource(name: string): string | null {
+    return this.state.installed?.[name] ?? null;
+  }
+
+  /** An installed plugin was removed from the library: its record goes (its settings stay, for a later install). */
+  noteRemoved(name: string) {
+    if (this.state.installed) delete this.state.installed[name];
+    delete this.state.failures[name];
+    this.saveState();
+    this.rescan(true);
+  }
+
   // ------------------------------------------------------------------------------------------
   // Reading
 

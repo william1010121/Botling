@@ -24,7 +24,7 @@
 // a git URL (npm packages and archives: not yet).
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { Bot } from "./bot";
@@ -262,14 +262,19 @@ export interface InstallProposal {
   author: string | null;
   mcpServers: string[];
   problems: string[];
+  /** What was checked about where it came from (a catalog install: the commit and the files' hash). */
+  verified?: string;
+  /** The version it replaces in the library (an update). */
+  replacing?: string;
 }
 
 /** The text of the question (`InstallProposal.summary`). */
 export function installSummary(proposal: InstallProposal): string {
   const { manifest } = proposal;
-  const lines = [`Install the plugin "${title(manifest)}" ${manifest.version}?`];
+  const lines = [proposal.replacing ? `Update the plugin "${title(manifest)}" from ${proposal.replacing} to ${manifest.version}?` : `Install the plugin "${title(manifest)}" ${manifest.version}?`];
   if (manifest.description) lines.push(manifest.description);
   lines.push(`Source: ${proposal.source}`);
+  if (proposal.verified) lines.push(`Checked: ${proposal.verified}`);
   lines.push(`Author: ${proposal.author ?? "not given"}; license: ${manifest.license ?? "not given"}`);
   const permissions = (manifest.ccb?.permissions ?? []).map((permission) => PERMISSIONS[permission] ?? `"${permission}"`);
   lines.push(permissions.length ? `It will: ${permissions.join(", ")}` : "It asks for no permissions.");
@@ -302,6 +307,11 @@ export function fetchPlugin(source: string, staging: string, git: string | null)
     }
     rmSync(join(fetched, ".git"), { recursive: true, force: true });
   }
+  return readProposal(fetched, work, source);
+}
+
+/** Reads a fetched plugin folder for the install card: its manifest, author, MCP servers and the check's problems. */
+export function readProposal(fetched: string, work: string, source: string): InstallProposal {
   const problems = checkPlugin(fetched);
   let raw: Record<string, unknown> = {};
   try { raw = JSON.parse(readFileSync(join(fetched, "package.json"), "utf8")); } catch { /* checked above */ }
@@ -702,14 +712,44 @@ export class MaintainerDesk {
       rmSync(proposal.work, { recursive: true, force: true });
       return;
     }
+    this.offerInstall(proposal);
+  }
+
+  /**
+   * The install card (`proposeInstall`'s question) in the main bot's chat: only "Install" puts the plugin into the library;
+   * the staging folder goes whatever the answer. `answered` hears how it ended (installed, or why not; declined: null problem, false).
+   */
+  offerInstall(proposal: InstallProposal, answered?: (installed: boolean, problem: string | null) => void) {
+    const main = this.deps.mainBot();
     main.appNotice(installSummary(proposal), [{ label: "Install" }, { label: "Don't install" }], (index) => {
-      if (index === 0) this.finishInstall(proposal);
-      else rmSync(proposal.work, { recursive: true, force: true });
+      if (index === 0) {
+        const problem = this.finishInstall(proposal);
+        answered?.(problem === null, problem);
+      } else {
+        rmSync(proposal.work, { recursive: true, force: true });
+        answered?.(false, null);
+      }
     });
   }
 
-  /** "Install": into the library (replacing one it installed before), committed (`finishInstall`, `PluginRegistry.install`). */
-  private finishInstall(proposal: InstallProposal) {
+  private get libraryFolder() { return join(this.deps.root, "plugins"); }
+  /** Where the version an install replaced is kept (one per plugin), for Revert. */
+  private previousFolder(name: string) { return join(this.deps.root, "plugin-previous", name); }
+  private previousRecord(name: string) { return join(this.deps.root, "plugin-previous", `${name}.json`); }
+
+  /** The version an install or update replaced, kept for Revert: its version and where it came from; null: none. */
+  previousOf(name: string): { version: string; source: string | null } | null {
+    if (!existsSync(join(this.previousFolder(name), "package.json"))) return null;
+    try {
+      const record = JSON.parse(readFileSync(this.previousRecord(name), "utf8")) as { version?: unknown; source?: unknown };
+      return { version: typeof record.version === "string" ? record.version : "?", source: typeof record.source === "string" ? record.source : null };
+    } catch {
+      return { version: "?", source: null };
+    }
+  }
+
+  /** "Install": into the library (replacing one it installed before, which is kept for Revert), committed (`finishInstall`, `PluginRegistry.install`). Null when done, else why not. */
+  private finishInstall(proposal: InstallProposal): string | null {
     const main = this.deps.mainBot();
     const plugins = this.deps.plugins();
     const name = proposal.manifest.name;
@@ -718,21 +758,91 @@ export class MaintainerDesk {
       const existing = plugins?.registry.plugin(name);
       // A built-in plugin may be replaced by one of the same name, as 1.x.
       if (existing && !existing.builtIn && !existing.installedFrom) {
-        main.appNotice(`"${shown}" could not be installed: The plugin library already has its own "${name}"; it won't be replaced by an outside one.`);
-        return;
+        const problem = `The plugin library already has its own "${name}"; it won't be replaced by an outside one.`;
+        main.appNotice(`"${shown}" could not be installed: ${problem}`);
+        return problem;
       }
       this.git.prepare();
-      const target = join(this.deps.root, "plugins", name);
+      const target = join(this.libraryFolder, name);
+      if (existsSync(join(target, "package.json"))) {
+        // The version it replaces is kept (one), so Revert can put it back.
+        let version = "?";
+        try { version = String(JSON.parse(readFileSync(join(target, "package.json"), "utf8")).version ?? "?"); } catch { /* unreadable */ }
+        rmSync(this.previousFolder(name), { recursive: true, force: true });
+        mkdirSync(dirname(this.previousFolder(name)), { recursive: true });
+        renameSync(target, this.previousFolder(name));
+        writeFileAtomic(this.previousRecord(name), JSON.stringify({ version, source: plugins?.registry.installedSource(name) ?? null }));
+      }
       rmSync(target, { recursive: true, force: true });
       cpSync(proposal.folder, target, { recursive: true });
       this.git.run(["add", "-A", "--", name]);
       this.git.run(["commit", "-q", "-m", `Install ${name} ${proposal.manifest.version} (${proposal.source})`, "--", name]);
       plugins?.registry.noteInstalled(name, proposal.source);
       main.appNotice(`Installed: ${shown} ${proposal.manifest.version}. You can turn it off under Plugins (the header's Plugins button).`);
+      return null;
     } catch (error) {
-      main.appNotice(`"${shown}" could not be installed: Couldn't put it into the plugin library: ${(error as Error).message}`);
+      const problem = `Couldn't put it into the plugin library: ${(error as Error).message}`;
+      main.appNotice(`"${shown}" could not be installed: ${problem}`);
+      return problem;
     } finally {
       rmSync(proposal.work, { recursive: true, force: true });
+    }
+  }
+
+  /** Revert: the kept previous version goes back in, and the one it replaces is kept in its place (Revert again undoes it). Null when done, else why not. */
+  revertPlugin(name: string): string | null {
+    const plugins = this.deps.plugins();
+    const plugin = plugins?.registry.plugin(name);
+    const previous = this.previousOf(name);
+    if (!previous) return `"${name}" has no previous version to go back to.`;
+    if (plugin && !plugin.builtIn && !plugin.installedFrom) return `The plugin library has its own "${name}" now; it won't be replaced.`;
+    const target = join(this.libraryFolder, name);
+    let currentVersion = "?";
+    try { currentVersion = String(JSON.parse(readFileSync(join(target, "package.json"), "utf8")).version ?? "?"); } catch { /* none */ }
+    const currentSource = plugins?.registry.installedSource(name) ?? null;
+    const swap = join(this.deps.root, "plugin-previous", `.${name}-swap`);
+    try {
+      this.git.prepare();
+      rmSync(swap, { recursive: true, force: true });
+      const hadCurrent = existsSync(target);
+      if (hadCurrent) renameSync(target, swap);
+      renameSync(this.previousFolder(name), target);
+      if (hadCurrent) {
+        renameSync(swap, this.previousFolder(name));
+        writeFileAtomic(this.previousRecord(name), JSON.stringify({ version: currentVersion, source: currentSource }));
+      } else {
+        rmSync(this.previousRecord(name), { force: true });
+      }
+      this.git.run(["add", "-A", "--", name]);
+      this.git.run(["commit", "-q", "-m", `Revert ${name} to ${previous.version}`, "--", name]);
+      if (previous.source) plugins?.registry.noteInstalled(name, previous.source);
+      else plugins?.registry.rescan(true);
+      return null;
+    } catch (error) {
+      return `Couldn't revert "${name}": ${(error as Error).message}`;
+    }
+  }
+
+  /**
+   * Remove: deletes an installed plugin's copy from the library (and the previous version kept for Revert). Only a plugin
+   * installed from outside (the catalog, <install>); the library's own and built-in ones stay. Its data folder
+   * (<data>/plugin-data/<name>) and settings are kept. Null when done, else why not.
+   */
+  removePlugin(name: string): string | null {
+    const plugins = this.deps.plugins();
+    const plugin = plugins?.registry.plugin(name);
+    if (!plugin || plugin.builtIn || !plugin.installedFrom) return `"${name}" is not a plugin installed from outside, so it can't be removed here.`;
+    try {
+      this.git.prepare();
+      rmSync(join(this.libraryFolder, name), { recursive: true, force: true });
+      rmSync(this.previousFolder(name), { recursive: true, force: true });
+      rmSync(this.previousRecord(name), { force: true });
+      this.git.run(["add", "-A", "--", name]);
+      this.git.run(["commit", "-q", "-m", `Remove ${name}`, "--", name]);
+      plugins?.registry.noteRemoved(name);
+      return null;
+    } catch (error) {
+      return `Couldn't remove "${name}": ${(error as Error).message}`;
     }
   }
 
