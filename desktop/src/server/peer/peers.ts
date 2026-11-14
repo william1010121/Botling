@@ -243,6 +243,7 @@ export class PeerSessions {
     entry.holdUntil = 0;
     if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
     if (keep === session) {
+      try { this.host.sessionOpened?.(session); } catch (error) { this.host.log(`peer ${peer}: ${String((error as Error)?.message ?? error)}`); }
       this.host.log(`peer ${peer}: live (session ${session.link.info?.sessionId ?? "?"}, dialled by ${session.initiator})`);
       this.setState(entry, "live", this.now(), true);
     }
@@ -259,6 +260,7 @@ export class PeerSessions {
 
   private closedSession(session: PeerSession, end: PeerSessionEnd): void {
     this.sessions.delete(session);
+    try { this.host.sessionClosed?.(session); } catch { /* a listener never stops the registry */ }
     if (session.peer && this.inboundExchanges.get(session.peer) === session) this.inboundExchanges.delete(session.peer);
     const peer = session.peer;
     if (this.closed) return;

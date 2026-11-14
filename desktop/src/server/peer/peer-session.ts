@@ -51,8 +51,14 @@ export interface PeerSessionHost {
   timers: PeerTimers;
   log(line: string): void;
   now?: () => number;
-  /** Later steps' handler for peer frames past the roster sync (gossip, replication, forwarding). */
-  onMessage?(session: PeerSession, message: WireMessage): void | Promise<void>;
+  /**
+   * Later steps' handler for peer frames past the roster sync (gossip, replication, forwarding). Returning false means
+   * "not mine": the frame is dropped with one log line per type.
+   */
+  onMessage?(session: PeerSession, message: WireMessage): void | boolean | Promise<void | boolean>;
+  /** The registry kept this full session as the pair's one session (peers.ts), and when any session ended. */
+  sessionOpened?(session: PeerSession): void;
+  sessionClosed?(session: PeerSession): void;
 }
 
 /** A server member's keys in this roster (valid or not), or null when no Add names `member` as a server. */
@@ -186,6 +192,12 @@ export class PeerSession {
     this.bye("revoked", detail);
   }
 
+  /** Sends a frame of a later step's protocol on a full session (false: not open, or not sent). */
+  sendWire(message: WireMessage): boolean {
+    if (this.state !== "open" || this.flushing) return false;
+    return this.send(message);
+  }
+
   /** Sends `bye` and closes once it left (or after a short wait). */
   bye(reason: ByeReason, detail: string): void {
     if (this.state === "closed" || this.flushing) return;
@@ -241,7 +253,7 @@ export class PeerSession {
     }
     if (!this.peerSynced) { this.bye("role", "the roster sync comes first in a peer session (§4.6)"); return; }
     if (message.t === "ping") return;
-    if (this.host.onMessage) { await this.host.onMessage(this, message); return; }
+    if (this.host.onMessage && (await this.host.onMessage(this, message)) !== false) return;
     if (!this.ignored.has(message.t)) { this.ignored.add(message.t); this.host.log(`peer ${this.peer}: ${message.t} is not handled yet; dropped`); }
   }
 
