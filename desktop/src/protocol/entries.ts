@@ -4,6 +4,13 @@ import { z } from "zod";
 import { Event as ContractEvent, BotId, MESSAGE_TEXT_LIMIT } from "../contract";
 import { ContentId, Cursor, EntryHash, Hlc, Id, LogId, Origin, OriginEpoch, Outcome, RefuseReason, Seq, ServerId, Slot, StreamId, Target } from "./ids";
 
+/** A variant the owner made of a content (a poster, a preview, a thumbnail, PDF text; §9A.5, §9A.8), named by its own hash. */
+export const ContentVariant = z.strictObject({
+  name: z.string().min(1).max(100), id: ContentId, size: z.number().int().nonnegative(), type: z.string().min(1).max(200),
+  bitrate: z.number().nonnegative().optional(), height: z.number().int().positive().optional(),
+});
+export type ContentVariant = z.infer<typeof ContentVariant>;
+
 /** A reference to file bytes: names them by hash, carries no token and no permission (§9A.2). */
 export const ContentRef = z.strictObject({
   owner: ServerId,
@@ -21,10 +28,7 @@ export const ContentRef = z.strictObject({
     bitrate: z.number().nonnegative().optional(),
     pages: z.number().int().positive().optional(),
     poster: ContentId.optional(),
-    variants: z.array(z.strictObject({
-      name: z.string().min(1).max(100), id: ContentId, size: z.number().int().nonnegative(), type: z.string().min(1).max(200),
-      bitrate: z.number().nonnegative().optional(), height: z.number().int().positive().optional(),
-    })).max(20).optional(),
+    variants: z.array(ContentVariant).max(20).optional(),
   }).optional(),
 });
 export type ContentRef = z.infer<typeof ContentRef>;
@@ -51,6 +55,13 @@ export const ProtocolEntryEvent = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("content.ready"), botId: BotId, lineId: Id, url: z.string().min(1).max(8_000), ref: ContentRef }),
   /** A `pin: path` file no longer matches its hash (§9A.3). */
   z.strictObject({ type: z.literal("content.changed"), id: ContentId }),
+  /** The owner made a variant of a content (M2, §9A.2): FEs add it to the reference's `meta.variants`. */
+  z.strictObject({ type: z.literal("content.variant"), id: ContentId, variant: ContentVariant }),
+  /**
+   * The owner prepared a PDF's text (M2, §9A.8): its page count and the content id of the text variant (page text and
+   * outline as JSON, read by range like any content: the text never enters the log).
+   */
+  z.strictObject({ type: z.literal("content.text"), id: ContentId, pages: z.number().int().nonnegative(), textId: ContentId }),
 ]);
 export type ProtocolEntryEvent = z.infer<typeof ProtocolEntryEvent>;
 

@@ -7,3 +7,8 @@ export * from "./messages";
 export * from "./roles";
 export * from "./frame";
 export * from "./snap-view";
+export * from "./encoding";
+export * from "./scopes";
+export * from "./roster";
+export * from "./content-url";
+export * from "./pairing";
