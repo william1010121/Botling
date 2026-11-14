@@ -9,6 +9,10 @@
 // chat.js starts at web-v3/chat-entry.ts: the 2.x chat page's entry, then this page's media mapping (step 9,
 // chat-media.ts: a line's local file → its ticketed /v3/c/ URL, asked of the shell).
 //
+// pdf.html is the PDF viewer (step 15, pdf-viewer/): pdf.js (pdfjs-dist, Apache-2.0) bundled as pdf-viewer.js, its
+// worker copied as pdf.worker.mjs, its packed CMaps and standard fonts under pdfjs/ — all files of /v3/, so the viewer
+// runs under the page's CSP (`script-src 'self'`) with nothing fetched from elsewhere.
+//
 //   node web-v3/build.mjs
 import { build } from "esbuild";
 import { createHash } from "node:crypto";
@@ -35,16 +39,24 @@ async function webPart(name) {
 export async function buildPage({ out = outdir, development = false } = {}) {
   const [latex, chatExtras, catchup, boardPart] = await Promise.all(["ccb-latex", "botling.chat-extras", "botling.catchup", "botling.board"].map(webPart));
   const browser = { bundle: true, format: "iife", target: ["chrome130", "safari17"], minify: !development, sourcemap: "linked", legalComments: "eof", write: false, nodePaths, metafile: true };
-  const [shell, chat] = await Promise.all([
+  const [shell, chat, pdfViewer] = await Promise.all([
     build({ ...browser, entryPoints: [join(here, "shell/main.tsx")], outfile: join(out, "web.js"), jsx: "automatic",
       define: { __BOTLING_WEB_BASE__: WEB_BASE, "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(readCharacters(root)), __BOTLING_WEB__: "true" } }),
     build({ ...browser, entryPoints: [join(here, "chat-entry.ts")], outfile: join(out, "chat.js"),
       define: { __BOTLING_WEB_BASE__: WEB_BASE, __LATEX_SOURCE__: JSON.stringify(latex), __CHAT_EXTRAS_SOURCE__: JSON.stringify(chatExtras), __CATCHUP_SOURCE__: JSON.stringify(catchup), __BOARD_SOURCE__: JSON.stringify(boardPart), __BOTLING_WEB__: "true" } }),
+    // An ES module (pdf.js is one); its Node-only branches never run in a browser.
+    build({ ...browser, format: "esm", entryPoints: [join(here, "pdf-viewer/viewer.ts")], outfile: join(out, "pdf-viewer.js"), logOverride: { "empty-import-meta": "silent" } }),
   ]);
-  const files = new Map([shell, chat].flatMap((result) => result.outputFiles.map((file) => [file.path, file.contents])));
+  const files = new Map([shell, chat, pdfViewer].flatMap((result) => result.outputFiles.map((file) => [file.path, file.contents])));
   const asset = (from, to, tokens = false) => files.set(join(out, to), tokens ? Buffer.from(inlineTokens(readFileSync(from, "utf8"), from)) : readFileSync(from));
   for (const name of ["index.html", "manifest.webmanifest"]) asset(join(here, name), name);
   asset(join(here, "shell/shell.css"), "shell.css");
+  asset(join(here, "pdf-viewer/pdf.html"), "pdf.html");
+  asset(join(here, "pdf-viewer/viewer.css"), "pdf-viewer.css");
+  const pdfjs = join(root, "node_modules/pdfjs-dist");
+  asset(join(pdfjs, "legacy/build/pdf.worker.min.mjs"), "pdf.worker.mjs");
+  asset(join(pdfjs, "LICENSE"), "pdfjs/LICENSE.txt");
+  for (const dir of ["cmaps", "standard_fonts"]) for (const name of readdirSync(join(pdfjs, dir))) asset(join(pdfjs, dir, name), `pdfjs/${dir}/${name}${name.startsWith("LICENSE") ? ".txt" : ""}`);
   // The 2.x page's look and icons (read, never edited).
   for (const name of ["web.css", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "frame-host.html", "frame-host.js"]) asset(join(root, "mobile", name), name);
   asset(join(root, "src/renderer/styles.css"), "styles.css", true);
@@ -75,7 +87,7 @@ export async function buildPage({ out = outdir, development = false } = {}) {
     try { writeFileSync(temporary, contents); renameSync(temporary, file); } finally { rmSync(temporary, { force: true }); }
   }
   // Inputs of the two bundles, for the build checks (no node: import, no 2.x HTTPS bridge module); beside dist, not served.
-  writeFileSync(`${out}.inputs.json`, `${JSON.stringify({ build: id, inputs: [...new Set([shell, chat].flatMap((r) => Object.keys(r.metafile.inputs)))].sort() })}\n`);
+  writeFileSync(`${out}.inputs.json`, `${JSON.stringify({ build: id, inputs: [...new Set([shell, chat, pdfViewer].flatMap((r) => Object.keys(r.metafile.inputs)))].sort() })}\n`);
   return { out, id };
 }
 

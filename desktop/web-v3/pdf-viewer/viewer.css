@@ -1,0 +1,43 @@
+/* Botling 3's PDF viewer (M2 step 15): the page's dark look, pages on a grey desk, pdf.js's text layer. */
+:root { color-scheme: dark; --bg: #0e0e10; --side: #17171a; --line: #2a2a2f; --text: #e8e8ea; --muted: #8b8f98; --desk: #222226; --hit: rgb(255 196 0 / 0.45); }
+@media (prefers-color-scheme: light) { :root { color-scheme: light; --bg: #ffffff; --side: #f6f6f7; --line: #e3e3e6; --text: #1d1d1f; --muted: #6b6f78; --desk: #e9e9ec; } }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { display: flex; flex-direction: column; background: var(--bg); color: var(--text); font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+.bar { display: flex; align-items: center; gap: 2px; padding: calc(env(safe-area-inset-top) + 6px) 8px 6px; border-bottom: 1px solid var(--line); background: var(--side); }
+.title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; }
+.page-no { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.icon { min-width: 36px; height: 36px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font-size: 18px; cursor: pointer; }
+.icon:hover, .icon:focus-visible { background: rgb(127 127 127 / 0.16); }
+.icon:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.find { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--side); }
+.find[hidden], .outline[hidden] { display: none; }
+.find input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 16px; }
+.find-count { min-width: 64px; color: var(--muted); font-size: 12.5px; text-align: right; font-variant-numeric: tabular-nums; }
+.outline { max-height: 50vh; overflow: auto; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--side); }
+.outline ul { margin: 0; padding-left: 14px; list-style: none; }
+.outline > ul { padding-left: 0; }
+.outline button { width: 100%; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: 14px; text-align: left; cursor: pointer; }
+.outline button:hover { background: rgb(127 127 127 / 0.16); }
+.status { padding: 0 12px; color: var(--muted); font-size: 13px; }
+.status:empty { display: none; }
+.status:not(:empty) { padding: 12px; }
+.pages { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; background: var(--desk); padding: 8px 8px max(8px, env(safe-area-inset-bottom)); }
+.page { position: relative; margin: 0 auto 8px; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 0.35); }
+.page canvas { display: block; }
+mark.hit { background: var(--hit); color: transparent; border-radius: 2px; }
+
+/* pdf.js's text layer (from pdfjs-dist web/pdf_viewer.css, written flat for older engines). */
+.textLayer { color-scheme: only light; position: absolute; text-align: initial; inset: 0; overflow: clip; opacity: 1; line-height: 1; letter-spacing: normal; word-spacing: normal;
+  -webkit-text-size-adjust: none; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; caret-color: CanvasText; z-index: 0;
+  --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.textLayer span, .textLayer br { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; -webkit-user-select: text; user-select: text; }
+.textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.textLayer .markedContent { display: contents; }
+.textLayer span[role="img"] { -webkit-user-select: none; user-select: none; cursor: default; }
+.textLayer ::selection { background: rgb(0 90 255 / 0.3); color: transparent; }
+.textLayer br::selection { background: transparent; }
+.textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; -webkit-user-select: none; user-select: none; }
+.textLayer.selecting .endOfContent { top: 0; }
+.textLayer mark.hit { position: static; }

@@ -11,21 +11,24 @@
 //   (a crash between the move and the command) is swept at start.
 // - Video: meta (ffprobe; recorded in `content_meta` and announced as the `original` variant with its bitrate and
 //   height, which the FE's 1.5 × rule needs), a poster (≤ 640 px) and, only when `previewReason` says so, a preview.
-//   Image: a thumbnail ≤ 512 px unless it is small already. PDF: page count (qpdf), page-1 thumbnail, and a linearized
-//   copy above 5 MB when qpdf is there and the file is not linearized.
+//   Image: a thumbnail ≤ 512 px unless it is small already. PDF: page count (qpdf), page-1 thumbnail, the text (step 15:
+//   page count, outline and page text as the JSON `text` variant, made by pdf.js in a child process, pdf-text.ts, and
+//   announced by a `content.text{id, pages, textId}` entry besides its `content.variant`), and a linearized copy above
+//   5 MB when qpdf is there and the file is not linearized.
 // - A variant that could not be made says why in `media_jobs.note` (e.g. no ffmpeg: the original plays); the tools
 //   missing are recorded in `meta.mediaTools` for `botlingd status` (notes.ts).
 // - Variants are a cache that can be made again: above the cap (5 GB) the least recently used are evicted (row
 //   `evicted`, file deleted); asking for an evicted variant queues its job again.
 import { createHash } from "node:crypto";
-import { createReadStream, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { ContentVariant, Entry, StreamId } from "../../protocol";
 import { appendEntries, readStream } from "../log";
 import type { Command, Db, SqlRow } from "../store";
 import { sameSig, statSig, type StatSig } from "../content/pin";
 import { mp4Meta } from "./mp4";
-import { killLeftoverTool, type RunOptions } from "./run";
+import { PDF_TEXT_MAX_BYTES, type PdfText } from "./pdf-text";
+import { killLeftoverTool, PDF_TEXT_SCRIPT, runTool, ToolError, type RunOptions } from "./run";
 import { imageSize, isLinearized, linearize, LINEARIZE_ABOVE_BYTES, makeImageThumb, makePdfThumb, pdfPages, SMALL_IMAGE_BYTES, THUMB_MAX_PX } from "./still";
 import { findTools, toolNotes, toolsSummary, type MediaTools } from "./tools";
 import { makePoster, makePreview, previewReason, probeVideo, type VideoMeta } from "./video";
@@ -45,6 +48,17 @@ const MAX_TRIES = 3;
 /** A tool runs at most this long (a 10 min video's preview takes ≈ 1.5–3 min on a busy Mac with VideoToolbox). */
 const TOOL_TIMEOUT_MS = 30 * 60 * 1000;
 const PROBE_TIMEOUT_MS = 60 * 1000;
+/** The PDF text job's limit (a 100-page text PDF takes ≈ 0.2 s; a 2,000-page one some seconds). */
+const PDF_TEXT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * The PDF text job's script: beside the bundled botlingd (out/server/pdf-text.cjs), else the built one of this checkout
+ * (tests run the source), else null (no text; the viewer still reads every page itself).
+ */
+export function defaultPdfTextScript(): string | null {
+  const here = typeof __dirname === "string" ? __dirname : process.cwd();
+  return [join(here, PDF_TEXT_SCRIPT), resolve(here, "../../../out/server", PDF_TEXT_SCRIPT)].find((file) => existsSync(file)) ?? null;
+}
 /** `lastUsed` is written at most once a minute per variant. */
 const TOUCH_EVERY_MS = 60 * 1000;
 
@@ -66,6 +80,8 @@ export interface MediaJobsOptions {
   now?: () => number;
   /** Tests: called as a job reaches each step (`<kind>:<variant>`), before the step's tool runs. */
   onStep?: (srcId: string, step: string) => void;
+  /** The PDF text script (default `defaultPdfTextScript()`); null: PDFs get no text variant. */
+  pdfTextScript?: string | null;
   /** false: jobs are queued but run only on `kick()` from the caller (tests). Default true. */
   autoRun?: boolean;
 }
@@ -95,7 +111,7 @@ function sha256File(file: string): Promise<string> {
   });
 }
 
-const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "video/mp4": "mp4", "application/pdf": "pdf" };
+const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "video/mp4": "mp4", "application/pdf": "pdf", "application/json": "json" };
 
 /** The extension Quick Look needs to recognize a pinned (extension-less) video. */
 const VIDEO_EXT: Record<string, string> = { "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm" };
@@ -316,6 +332,7 @@ export class MediaJobs {
         return made ? { type: made.type, info: { tool: made.tool } } : { skip: "no sips, pdftoppm or Quick Look: the viewer draws page 1 itself" };
       },
     }];
+    plans.push({ name: "text", make: (out, options) => this.makePdfText(source, out, options) });
     if (source.size > (this.options.linearizeAboveBytes ?? LINEARIZE_ABOVE_BYTES)) {
       plans.push({
         name: "linearized",
@@ -327,6 +344,23 @@ export class MediaJobs {
       });
     }
     return plans;
+  }
+
+  /** The `text` variant (step 15): pdf.js in a child process of botlingd's own runtime, under nice and a time limit. */
+  private async makePdfText(source: SourceRow, out: string, run: RunOptions): Promise<{ type: string; info: Record<string, unknown> } | { skip: string }> {
+    const script = this.options.pdfTextScript === undefined ? defaultPdfTextScript() : this.options.pdfTextScript;
+    if (!script) return { skip: "no PDF text: the text script is not built (out/server/pdf-text.cjs)" };
+    if (source.size > PDF_TEXT_MAX_BYTES) return { skip: `no PDF text: the file is above ${PDF_TEXT_MAX_BYTES} bytes` };
+    try {
+      await runTool(this.tools, process.execPath, [script, source.path, out], { ...run, timeoutMs: PDF_TEXT_TIMEOUT_MS, env: { ELECTRON_RUN_AS_NODE: "1" } });
+    } catch (error) {
+      // A file pdf.js cannot read (or one that ran out of time) fails the same way again: noted, not retried.
+      if (error instanceof ToolError && !this.closed) return { skip: `no PDF text: ${error.message}`.slice(0, 500) };
+      throw error;
+    }
+    const text = JSON.parse(readFileSync(out, "utf8")) as PdfText;
+    if (text?.v !== 1 || !Number.isInteger(text.pages) || !Array.isArray(text.text)) throw new Error("pdf-text wrote no text");
+    return { type: "application/json", info: { pages: text.pages, outline: text.outline?.length ?? 0, ...(text.truncated ? { truncated: true } : {}) } };
   }
 
   private storedMeta(id: string): Record<string, unknown> | null {
@@ -351,12 +385,17 @@ export class MediaJobs {
 
   /** `content.variant{id, variant}` on every active chat stream that references `srcId`. */
   private announce(db: Db, srcId: string, variant: ContentVariant): StreamId[] {
+    return this.announceEntry(db, srcId, { kind: "content.variant", body: { id: srcId, variant: variant as unknown as Record<string, unknown> } });
+  }
+
+  /** One entry about `srcId` on every active chat stream that references it (the entry references it too). */
+  private announceEntry(db: Db, srcId: string, event: { kind: string; body: Record<string, unknown> }): StreamId[] {
     const touched: StreamId[] = [];
     const insertRef = db.prepare("INSERT OR IGNORE INTO content_refs (id, stream, seq) VALUES (?, ?, ?)");
     for (const row of db.prepare("SELECT DISTINCT stream FROM content_refs WHERE id = ? ORDER BY stream").all(srcId)) {
       const stream = String(row.stream) as StreamId;
       if (!stream.startsWith("bot:") || readStream(db, stream)?.state !== "active") continue;
-      const [entry] = appendEntries(db, stream, [{ kind: "content.variant", body: { id: srcId, variant } }], { now: this.now() }) as Entry[];
+      const [entry] = appendEntries(db, stream, [event], { now: this.now() }) as Entry[];
       // The entry references the source too: a front end that learns of the variant from it may open it with it.
       insertRef.run(srcId, stream, entry!.seq);
       touched.push(stream);
@@ -386,7 +425,13 @@ export class MediaJobs {
         name, id, size: sig.size, type,
         ...(typeof info.bitrate === "number" ? { bitrate: info.bitrate } : {}), ...(typeof info.height === "number" ? { height: Math.round(info.height) } : {}),
       };
-      return { kept: true, streams: this.announce(db, source.id, variant) };
+      const streams = this.announce(db, source.id, variant);
+      if (name === "text" && typeof info.pages === "number") {
+        // The page count is the source's meta when qpdf did not give it, and `content.text` names the text (§9A.8).
+        db.prepare("INSERT OR IGNORE INTO content_meta (id, meta) VALUES (?, ?)").run(source.id, JSON.stringify({ pages: info.pages }));
+        for (const stream of this.announceEntry(db, source.id, { kind: "content.text", body: { id: source.id, pages: info.pages, textId: id } })) if (!streams.includes(stream)) streams.push(stream);
+      }
+      return { kept: true, streams };
     });
     if (!result.kept) { rmSync(file, { force: true }); return; }
     if (result.streams.length) this.options.onCommitted?.(result.streams);

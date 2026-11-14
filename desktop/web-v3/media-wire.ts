@@ -26,6 +26,8 @@ export interface MediaAnswer {
   src?: string;
   /** The file's own ticketed `/v3/c/` URL (its original bytes, ranges served): what opens or reads it (a PDF's viewer). */
   url?: string;
+  /** A PDF's prepared text (the owner's `text` variant, step 15): what the viewer's find and contents read. */
+  textUrl?: string;
   kind?: MediaKind;
   /** A video's poster (cached by hash, as a `data:` URL). */
   poster?: string;
@@ -56,7 +58,9 @@ export type FrameMediaMessage =
   /** The frame switched `key` to the preview: the playing original stalled twice in 30 s, or did not start (WebKit). */
   | { botling3: "media.switched"; key: string; why?: "stalls" | "slow-start" }
   /** The device's choice in the player menu (kept per device by the shell). */
-  | { botling3: "media.choice"; choice: Choice };
+  | { botling3: "media.choice"; choice: Choice }
+  /** The person tapped a ready PDF (its page-1 thumbnail or its card): the shell opens the viewer (step 15). */
+  | { botling3: "media.open"; key: string };
 
 export type ShellMediaMessage = { botling3: "media"; items: MediaAnswer[] };
 

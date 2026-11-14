@@ -15,12 +15,15 @@
 // - A failure the frame reports is asked about again at most once (after a back-off); a second failure is `failed`.
 // - Tickets live 10 minutes on the server; while the session lives the shell asks `content.ticket` for each ready file
 //   every RENEW_MS, which renews the same ticket (the URL a playing `<video>` holds stays valid).
+// - A ready PDF (step 15) carries its prepared text's URL (the owner's `text` variant) besides its own; a tap in the
+//   frame (`media.open`) opens the viewer (pdf-overlay.ts) over the page with both.
 // - Nothing about permissions is stored: tickets live in memory only, and a new page asks again.
 import type { FeLink, RemoteContentAnswer } from "../../src/fe-link";
 import { contentUrlPath, type ContentVariant, type EntryRef } from "../../src/protocol";
 import { kindOfType, type FrameMediaMessage, type MediaAnswer, type MediaKind, type MediaState, type MediaWant, type ShellMediaMessage } from "../media-wire";
 import { chooseVariant, PATH_LABEL, RateMeter, type Choice, type PathKind, type VariantName } from "../player";
 import { CONTENT_ITEM_MAX, type ContentCache } from "./content-cache";
+import { openPdfViewer } from "./pdf-overlay";
 
 /** How often a ready file's ticket is renewed (the server keeps one 10 minutes). */
 export const RENEW_MS = 4 * 60 * 1000;
@@ -55,7 +58,7 @@ interface Known {
 }
 
 export interface MediaDiagnostics {
-  [key: string]: { state: MediaState; src?: string; url?: string; variant?: VariantName; badge?: string; reason?: string; poster?: "cache" | "fetched" | "memory"; durationMs?: number };
+  [key: string]: { state: MediaState; src?: string; url?: string; textUrl?: string; opened?: number; variant?: VariantName; badge?: string; reason?: string; poster?: "cache" | "fetched" | "memory"; durationMs?: number };
 }
 
 export interface PlayerDiagnostics {
@@ -75,6 +78,13 @@ export interface MediaBrokerOptions {
 
 export function newPlayerDiagnostics(path: PathKind): PlayerDiagnostics {
   return { path, rateBps: 0, measured: false, samples: 0, switches: 0, choice: "auto", switchedBy: [], cache: { hits: 0, fetched: 0, kept: 0, cleared: [] } };
+}
+
+/** A file URL's last path part, decoded ("report.pdf"). */
+function nameOf(url: string): string {
+  const path = url.replace(/^file:\/\//i, "").split(/[?#]/)[0] ?? "";
+  const last = path.split("/").pop() || "document.pdf";
+  try { return decodeURIComponent(last); } catch { return last; }
 }
 
 const toDataUrl = (bytes: ArrayBuffer, type: string): Promise<string> => new Promise((resolve, reject) => {
@@ -174,6 +184,12 @@ export class MediaBroker {
       if (this.player.switchedBy.length > 20) this.player.switchedBy.shift();
       this.syncPlayer();
       void this.answerReady(known);
+    } else if (data.botling3 === "media.open" && typeof data.key === "string") {
+      const known = this.known.get(data.key);
+      if (!known || known.answer.state !== "ready" || known.answer.kind !== "pdf" || !known.answer.url) return;
+      const answer = known.answer;
+      openPdfViewer({ src: answer.url!, ...(answer.textUrl ? { text: answer.textUrl } : {}), name: nameOf(known.want.url), ...(answer.size !== undefined ? { size: answer.size } : {}), relay: this.meter.path === "relay" });
+      if (this.diag?.[data.key]) this.diag[data.key]!.opened = (this.diag[data.key]!.opened ?? 0) + 1;
     } else if (data.botling3 === "media.choice" && (data.choice === "auto" || data.choice === "original" || data.choice === "preview")) {
       void this.storage?.save(CHOICE_KEY, data.choice).catch(() => undefined);
       this.applyChoice(data.choice);
@@ -284,6 +300,7 @@ export class MediaBroker {
       const thumb = byName.get("thumb");
       const cached = thumb ? await this.cachedDataUrl(thumb.id, () => this.url(known, "thumb"), thumb.size, extra) : null;
       if (cached) base.src = cached;
+      if (byName.has("text")) base.textUrl = this.url(known, "text");
     } else {
       base.src = this.url(known, "original");
     }
@@ -375,7 +392,7 @@ export class MediaBroker {
 
   private set(known: Known, answer: MediaAnswer, extra?: MediaDiagnostics[string]): void {
     known.answer = answer;
-    if (this.diag) this.diag[answer.key] = { ...(extra ?? {}), state: answer.state, ...(answer.src ? { src: answer.src.startsWith("data:") ? "data:" : answer.src } : {}), ...(answer.url ? { url: answer.url } : {}) };
+    if (this.diag) this.diag[answer.key] = { ...(extra ?? {}), state: answer.state, ...(answer.src ? { src: answer.src.startsWith("data:") ? "data:" : answer.src } : {}), ...(answer.url ? { url: answer.url } : {}), ...(answer.textUrl ? { textUrl: answer.textUrl } : {}), ...(this.diag[answer.key]?.opened ? { opened: this.diag[answer.key]!.opened } : {}) };
   }
 
   private post(items: MediaAnswer[]): void {

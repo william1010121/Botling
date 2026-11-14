@@ -14,6 +14,8 @@
 //   file again after a back-off; WebKit never fires `error` for a refused range of a playing element, so an element
 //   that waits STALL_WATCHDOG_MS without a byte asks the shell to check instead.
 // - A file that changed after its line (or is gone, or failed twice): the element is hidden and a short note says so.
+// - A ready PDF (step 15): its page-1 thumbnail or its card opens the viewer on a tap (`media.open` to the shell, which
+//   shows pdf.html over the page); the 2.x lightbox is not opened for it.
 // - Anything else (a web URL, a component card's picture) goes through the 2.x mapping as before.
 // The line is the one the page names (Markdown media) or, for an attachment strip or the lightbox, the row's id.
 import { localMediaSource } from "../src/contract/attachment-url";
@@ -175,6 +177,33 @@ function waiting(element: Element, url: string | undefined, text: string, testid
   const name = url ? nameOf(url) : host.getAttribute("aria-label") || host.getAttribute("alt") || "file";
   const shown = `${name} · ${text}`;
   if (div.textContent !== shown) div.textContent = shown;
+  openable(div, null);
+}
+
+/** Makes `element` open the viewer of `key` on a tap (a ready PDF), or nothing (null). */
+function openable(element: HTMLElement, key: string | null): void {
+  if (key === null) {
+    if (!element.dataset.botling3Open) return;
+    delete element.dataset.botling3Open;
+    element.removeAttribute("role");
+    element.removeAttribute("tabindex");
+    element.style.removeProperty("cursor");
+    return;
+  }
+  element.dataset.botling3Open = key;
+  element.setAttribute("role", "button");
+  element.tabIndex = 0;
+  element.style.cursor = "pointer";
+}
+
+function onOpen(event: Event): void {
+  if (event instanceof KeyboardEvent && event.key !== "Enter" && event.key !== " ") return;
+  const target = (event.target as Element | null)?.closest?.("[data-botling3-open]") as HTMLElement | null;
+  const key = target?.dataset.botling3Open;
+  if (!key || answers.get(key)?.kind !== "pdf" || answers.get(key)?.state !== "ready") return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  post({ botling3: "media.open", key });
 }
 
 function chip(video: HTMLVideoElement, answer: MediaAnswer): void {
@@ -259,8 +288,11 @@ function apply(element: Element): void {
   }
   if (answer.state === "ready") {
     if (!answer.src) {
-      // A file the element cannot show (a PDF without its page-1 thumbnail yet): a card with its name and size.
+      // A file the element cannot show (a PDF without its page-1 thumbnail yet): a card with its name and size; a PDF's
+      // card opens the viewer.
       waiting(element, url, [answer.kind === "pdf" ? "PDF" : "file", answer.size ? formatSize(answer.size) : ""].filter(Boolean).join(" · "), "media-card");
+      const card = sibling(host, "wait", "before");
+      if (card && answer.kind === "pdf") openable(card, key);
       return;
     }
     // This element failed on the answer it has: it waits (no retry loop) until the shell answers again.
@@ -283,8 +315,10 @@ function apply(element: Element): void {
       chip(element, answer);
       quality(element, answer);
     } else if (element.getAttribute("src") !== answer.src) element.setAttribute("src", answer.src);
+    openable(html, answer.kind === "pdf" ? key : null);
     return;
   }
+  openable(html, null);
   if (answer.state === "changed" || answer.state === "gone" || answer.state === "failed") {
     if (element.hasAttribute("src")) {
       element.removeAttribute("src");
@@ -493,6 +527,9 @@ export function installChatMedia(): void {
     waiting(element, (element as HTMLElement).dataset.botling3Url, "loading again…", "media-retry");
     post({ botling3: "media.failed", key, reason: "error", src });
   }, true);
+  // A tap on a ready PDF opens the viewer (before the 2.x page's own click handlers, which would open the lightbox).
+  document.addEventListener("click", onOpen, true);
+  document.addEventListener("keydown", onOpen, true);
   installPlayback();
   scan();
 }
