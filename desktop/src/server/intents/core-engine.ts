@@ -5,10 +5,10 @@ import { randomUUID } from "node:crypto";
 import { ContractError, PROTOCOL_VERSION, type Command, type Event as ContractEvent, type Outbound } from "../../contract";
 import type { Core } from "../../core/server";
 import type { DeferredTurn } from "../../core/bot";
-import type { ApplyNowCommand, EngineHost, TurnEngine, TurnRunning, TurnStart, TurnStatus } from "../effects";
+import type { ApplyNowCommand, EngineHost, TurnEngine, TurnRunning, TurnStart, TurnStatus, UserLine } from "../effects";
 
 /** What the binding uses of the core. */
-export type CoreLike = Pick<Core, "serverSend" | "serverTurn" | "applyNow" | "receive" | "hasBot" | "botIds" | "pendingFiles" | "checkRemoveBot" | "removeBot">;
+export type CoreLike = Pick<Core, "serverSend" | "serverTurn" | "serverUserLine" | "applyNow" | "receive" | "hasBot" | "botIds" | "pendingFiles" | "checkRemoveBot" | "removeBot">;
 
 interface Waiting { resolve(value: unknown): void; reject(error: unknown): void }
 
@@ -39,6 +39,7 @@ export class CoreEngine implements TurnEngine {
   pendingFiles(botId: string): number { return this.need().pendingFiles(botId); }
   checkRemove(botId: string): void { this.need().checkRemoveBot(botId); }
   applyNow(cmd: ApplyNowCommand): unknown { return this.need().applyNow(cmd); }
+  userLine(botId: string, line: UserLine): void { this.need().serverUserLine(botId, line); }
 
   async startTurn(turn: TurnStart): Promise<TurnRunning> {
     const core = this.need();

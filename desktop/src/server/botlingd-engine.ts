@@ -7,7 +7,7 @@
 //   itself, not only in the live checkpoint. The line is the one the core last told (its `message.added` /
 //   `message.updated`); no line told yet: nothing is added.
 import type { Command, Event as ContractEvent, MessageView } from "../contract";
-import type { ApplyNowCommand, EngineHost, TurnEngine, TurnRunning, TurnStart } from "./effects";
+import type { ApplyNowCommand, EngineHost, TurnEngine, TurnRunning, TurnStart, UserLine } from "./effects";
 import type { LiveChannel } from "./live";
 
 interface RunningLine {
@@ -46,6 +46,7 @@ export class BotlingdEngine implements TurnEngine {
   pendingFiles(botId: string): number { return this.inner.pendingFiles(botId); }
   checkRemove(botId: string): void { this.inner.checkRemove(botId); }
   applyNow(cmd: ApplyNowCommand): unknown { return this.inner.applyNow(cmd); }
+  userLine(botId: string, line: UserLine): void { this.inner.userLine?.(botId, line); }
   startTurn(turn: TurnStart): Promise<TurnRunning> { return this.inner.startTurn(turn); }
   stopTurn(botId: string, turnId: string): void { this.inner.stopTurn(botId, turnId); }
   discardTurn(botId: string, turnId: string): void { this.inner.discardTurn(botId, turnId); }

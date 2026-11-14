@@ -2092,19 +2092,15 @@ export class Bot {
     const own = new Set(originals ?? []);
     const kept = (files ?? []).flatMap((file) => keep(file, attachmentsFolder(this.profile), new Date(), { original: own.has(file) }) ?? []);
     if (!words && !kept.length) throw new ContractError("bad_request", "The files could not be read.");
-    const heads = this.headsSettings;
-    const two = hasTwo(heads);
-    const target = fitted(heads, decisionOwner ?? to ?? resolvePrimary(heads, this.appPrimary()), this.appPrimary());
-    const user: ChatRecord = { id: ids?.userId ?? newId(), role: "user", text: words, date: toSwiftDate() };
-    if (two) user.to = target;
-    if (via) user.via = via;
-    if (kept.length) user.attachments = kept.map((file) => ({ url: file.url, kind: file.kind }));
-    const quoted = replyTo ? this.records.find((record) => record.id === replyTo) : undefined;
-    if (quoted) {
-      user.replyTo = quoted.id;
-      user.replyPreview = preview(quoted);
-    }
-    this.add(user);
+    const two = hasTwo(this.headsSettings);
+    const { record: made, target, quoted } = this.userRecord(ids?.userId ?? newId(), words, toSwiftDate(), { replyTo, to: decisionOwner ?? to, via });
+    if (kept.length) made.attachments = kept.map((file) => ({ url: file.url, kind: file.kind }));
+    // Botling 3's server put the line in the chat already, with its intent (`presetUserLine`): it is that line, brought
+    // up to date (a plugin's words, the files that went with it), never a second one. 2.x never passes such an id.
+    const preset = ids?.userId ? this.records.find((record) => record.id === ids.userId && record.role === "user") : undefined;
+    const user = preset ?? made;
+    if (preset) this.updateUserLine(preset, made);
+    else this.add(user);
     const lines: string[] = [];
     if (appNote) lines.push(appNote);
     // What its components kept since your last message, and cards it drew empty (`componentStateNote`, `emptyShowNote`).
@@ -2129,6 +2125,45 @@ export class Bot {
     }
     const turn = this.deliverTo(target, message, user.id, { delivery: onDelivery, ids });
     return { messageId: turn.messageId, turnId: turn.id };
+  }
+
+  /** Your line as `send` makes it (who it goes to with two heads, the line it answers); `to`: the head asked for. */
+  private userRecord(id: string, words: string, date: number, { replyTo, to, via }: { replyTo?: string; to?: AnswerTarget; via?: string }): { record: ChatRecord; target: Engine; quoted: ChatRecord | undefined } {
+    const heads = this.headsSettings;
+    const target = fitted(heads, to ?? resolvePrimary(heads, this.appPrimary()), this.appPrimary());
+    const record: ChatRecord = { id, role: "user", text: words, date };
+    if (hasTwo(heads)) record.to = target;
+    if (via) record.via = via;
+    const quoted = replyTo ? this.records.find((candidate) => candidate.id === replyTo) : undefined;
+    if (quoted) {
+      record.replyTo = quoted.id;
+      record.replyPreview = preview(quoted);
+    }
+    return { record, target, quoted };
+  }
+
+  /** `line` (already in the chat) takes what `made` says of it now, keeping its id and date; drawn again if it changed. */
+  private updateUserLine(line: ChatRecord, made: ChatRecord) {
+    const before = JSON.stringify(line);
+    for (const key of ["text", "to", "via", "attachments", "replyTo", "replyPreview"] as const) {
+      if (made[key] === undefined) delete line[key];
+      else (line as Record<string, unknown>)[key] = made[key];
+    }
+    if (JSON.stringify(line) !== before) this.changed(line);
+  }
+
+  /**
+   * Botling 3's server: the user's line of a `chat.send` whose intent it is committing now (or committed before a
+   * crash), put in the chat at once as 2.x's `send` does, so chat.json, the history and commands that name the line
+   * (a reaction) see it while its turn waits. The turn's `send` later finds it by id and does not add it again. A line
+   * already in the chat is left as it is. False: it was there.
+   */
+  presetUserLine(line: { id: string; text: string; date: number; replyTo?: string; to?: AnswerTarget }): boolean {
+    if (this.options.primary) return this.options.primary.presetUserLine(line);
+    if (this.records.some((record) => record.id === line.id)) return false;
+    this.refuseIfClosed();
+    this.add(this.userRecord(line.id, line.text.trim(), line.date, { ...(line.replyTo ? { replyTo: line.replyTo } : {}), ...(line.to ? { to: line.to } : {}) }).record);
+    return true;
   }
 
   /** A turn for `head` (this bot's or its partner's), routed there now. */
@@ -5196,7 +5231,9 @@ export class Bot {
   private componentNotes(user: ChatRecord): string[] {
     const context = this.context;
     if (!context) return [];
-    const before = this.records.slice(0, -1).findLast((record) => record.role === "user" && record !== user)?.date ?? -Infinity;
+    // Your line before this one (with Botling 3's server, lines sent after it may be in the chat already).
+    const at = this.records.indexOf(user);
+    const before = this.records.slice(0, at >= 0 ? at : -1).findLast((record) => record.role === "user" && record !== user)?.date ?? -Infinity;
     const changed: { date: number; line: string }[] = [];
     const quote = (json: string) => ([...json].length <= 1_500 ? json : `${[...json].slice(0, 1_500).join("")}…`);
     const when = (date: number) => new Date(Date.UTC(2001, 0, 1) + date * 1000).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });

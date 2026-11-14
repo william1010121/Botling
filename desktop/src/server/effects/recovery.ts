@@ -4,13 +4,18 @@
 // - a turn's checkpoint left without a started row (a turn whose row the crash lost with its batch) is interrupted too;
 // - `started` remove rows go back to `queued` (removing a bot is idempotent; the worker runs them again);
 // - `queued` rows stay: their intent committed, nothing began them, the worker runs them now.
+// - first, the user's line of every `chat.send` turn row still queued or started goes into the engine's own chat
+//   (`engine.userLine`, which leaves a line it has alone): the intent put it there, but the core's rows commit in the
+//   next transaction, so a crash in between would leave the log with a line the core's chat (chat.json, the history)
+//   never gets once the turn is interrupted.
 // The entry and the row's state commit together, so a second recovery finds nothing to do.
 import type { StreamId } from "../../protocol";
 import { listCheckpoints } from "../live";
 import type { Db } from "../store";
 import { appendFitted, clearLive, ensureBot } from "./log-ops";
+import type { TurnEngine } from "./engine";
 import type { TxScope } from "./scope";
-import { effectsIn, findTurnEffect, moveEffect, type TurnPayload } from "./table";
+import { effectsIn, findTurnEffect, moveEffect, type EffectRow, type TurnPayload } from "./table";
 
 export interface RecoveryReport {
   /** The turns interrupted, as "<botId>/<turnId>". */
@@ -19,8 +24,26 @@ export interface RecoveryReport {
   requeued: number;
 }
 
-export function recoverEffects(scope: TxScope, tx: Db, now: number, log?: (line: string) => void): RecoveryReport {
+/** The user's line of a `chat.send` row, back into the engine's chat if it is missing there (see the header). */
+function restoreUserLine(tx: Db, row: EffectRow, engine: Pick<TurnEngine, "userLine">, log?: (line: string) => void): void {
+  const payload = row.payload as TurnPayload;
+  if (row.kind !== "turn" || payload.origin !== "chat" || !payload.userId || !payload.send || !engine.userLine) return;
+  const stored = tx.prepare("SELECT body FROM messages WHERE botId = ? AND msgId = ?").get(row.botId, payload.userId);
+  let time: string | null = null;
+  try { time = stored ? (JSON.parse(String(stored.body)) as { time?: unknown }).time as string ?? null : null; } catch { /* the row's own time below */ }
+  try {
+    engine.userLine(row.botId, {
+      id: payload.userId, text: payload.send.text.trim(), time: typeof time === "string" ? time : new Date(row.startedAt ?? Date.now()).toISOString(),
+      ...(payload.send.replyTo ? { replyTo: payload.send.replyTo } : {}), ...(payload.send.to ? { to: payload.send.to } : {}),
+    });
+  } catch (error) {
+    log?.(`effects: recovery could not put line ${payload.userId} back into ${row.botId}'s chat (${error instanceof Error ? error.message : String(error)})`);
+  }
+}
+
+export function recoverEffects(scope: TxScope, tx: Db, now: number, log?: (line: string) => void, engine?: Pick<TurnEngine, "userLine">): RecoveryReport {
   const report: RecoveryReport = { interrupted: [], requeued: 0 };
+  if (engine?.userLine) for (const row of [...effectsIn(tx, "queued"), ...effectsIn(tx, "started")]) restoreUserLine(tx, row, engine, log);
   for (const row of effectsIn(tx, "started")) {
     if (row.kind === "remove") {
       if (moveEffect(tx, row.effectId, ["started"], "queued", now)) report.requeued += 1;

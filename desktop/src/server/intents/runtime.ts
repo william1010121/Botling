@@ -94,7 +94,7 @@ export class IntentRuntime {
     const report = await this.scope.submit((tx) => {
       ensureStream(tx, serverStreamOf(tx));
       for (const botId of this.options.engine.bots()) ensureBot(tx, botId);
-      return recoverEffects(this.scope, tx, this.now(), this.options.log);
+      return recoverEffects(this.scope, tx, this.now(), this.options.log, this.options.engine);
     });
     this.worker.kick();
     return report;

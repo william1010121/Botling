@@ -4,7 +4,10 @@
 // applies synchronously (`applyNow`), whose events land in this same transaction through the event tap.
 //
 //   chat.send          the user's line (`message.added`, carrying the slot) + `turn.queued` + a queued turn row; result {messageId: the
-//                      reply's line, turnId}. The worker starts the turn after the commit (row `started` first).
+//                      reply's line, turnId}. The line also goes into the engine's own chat now (`engine.userLine`: the
+//                      core's rows, chat.json, its history), as 2.x's send does, so a reaction on it works while its turn
+//                      waits; a crash before that write committed is mended by recovery (recovery.ts). The worker starts
+//                      the turn after the commit (row `started` first); the core finds the line by id, never adds it twice.
 //   turn.stop{turnId}  the basis check refused an ended or unknown turn (`changed`, so an old turnId never stops a newer
 //                      turn). Queued: the row is `cancelled` + `turn.cancelled`, the engine forgets the kept turn.
 //                      Started: the engine stops it after the commit; its `turn.finished{stopped}` ends the row.
@@ -84,11 +87,21 @@ function send(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<Command
   const replyId = newLineId();
   const turnId = `t-${randomUUID()}`;
   const effectId = randomUUID();
+  const time = new Date(now).toISOString();
   appendFitted(deps.scope, tx, stream, "message.added", {
     botId: cmd.botId,
-    message: { id: userId, role: "user", text, time: new Date(now).toISOString(), ...(cmd.replyTo ? { replyTo: cmd.replyTo } : {}) },
+    message: { id: userId, role: "user", text, time, ...(cmd.replyTo ? { replyTo: cmd.replyTo } : {}) },
   // The slot rides on the line, so a front end swaps its pending bubble for this line by slot (§13.4).
   }, { log: deps.log, slot });
+  // After the log's entry: the core's own `message.added` of the same line is then stored only if it differs (tap.ts).
+  try {
+    deps.engine.userLine?.(cmd.botId, { id: userId, text, time, ...(cmd.replyTo ? { replyTo: cmd.replyTo } : {}), ...(cmd.to ? { to: cmd.to } : {}) });
+  } catch (error) {
+    // The core refused the line (a closed bot): the send is refused. Anything else (its store failed) does not undo an
+    // acknowledged send: the line is in the log, and its turn's send adds it to the core's chat if it can.
+    if (error instanceof ContractError) refuseFrom(error);
+    deps.log?.(`intents: line ${userId} did not go into ${cmd.botId}'s chat now (${error instanceof Error ? error.message : String(error)})`);
+  }
   const queued = appendFitted(deps.scope, tx, stream, "turn.queued", { botId: cmd.botId, turnId, effectId, messageId: replyId }, { log: deps.log });
   insertEffect(tx, {
     effectId, stream, botId: cmd.botId, turnId, kind: "turn",
