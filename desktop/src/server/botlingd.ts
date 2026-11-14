@@ -6,7 +6,7 @@
 //     export files) → the 2.x Core on those stores (plugins through the Node plugin host, app ops to the attached
 //     window through the ShellBridge, turns kept aside through CoreEngine) → IntentRuntime (intents, legacy apply,
 //     effect worker, event tap, recovery at start) → content index (step 13: recover, then lines are indexed)
-//   → the 2.x exports brought up to date → a new local token → the Unix socket.
+//   → the 2.x exports brought up to date → a new local token → the Unix socket → daily backups (step 12).
 //
 // Not in botlingd (M1): the phone bridge and relay (no new network listener here), the restart checkpoint and core hot
 // swap (botlingd outlives windows), plugin secrets (risk 3: no safe storage without the window, see `noSafeStorage`).
@@ -18,6 +18,7 @@ import { Core } from "../core/server";
 import { MAIN_BOT_ID } from "../core/store/records";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "../core/store/data-dir-lock";
 import type { StreamId } from "../protocol";
+import { backupCheckMs, DailyBackups } from "./backup-schedule";
 import { BotlingdEngine } from "./botlingd-engine";
 import { DbBotStores } from "./botstore";
 import { ContentService } from "./content";
@@ -26,6 +27,7 @@ import { BotExports } from "./exports";
 import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
+import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, SessionServer, writeToken, type BotlingdPaths, type SessionOptions } from "./session";
 import { ShellBridge } from "./shell-bridge";
 import { localOnly } from "./slots";
@@ -80,6 +82,7 @@ export class Botlingd {
   private stopping: Promise<void> | null = null;
   private lockTimer: NodeJS.Timeout | null = null;
   private tokenValue = "";
+  private backups: DailyBackups | null = null;
 
   private constructor(
     readonly paths: BotlingdPaths,
@@ -159,6 +162,8 @@ export class Botlingd {
       });
       const runtime = new IntentRuntime({
         store, engine, hub, live, log: (line) => log(line), authorize: localOnly, serverEvents: "all", mirrorBotUpdates: true, content,
+        // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
+        audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
       });
       const report = await runtime.start();
       log(`recovery: ${JSON.stringify(report)}`);
@@ -189,6 +194,12 @@ export class Botlingd {
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       daemon.watchLock();
+      const schedule = backupCheckMs(env);
+      if (schedule) {
+        daemon.backups = new DailyBackups({ backupsDir: openStore.backupsDir, take: () => openStore.backup("daily"), log, ...schedule });
+        daemon.backups.start();
+      } else log("daily backups are off (BOTLING_SERVER_BACKUP_CHECK_MS=0)");
+      for (const note of serverNotes(paths.dataDir, hub.reader())) log(`note (${note.id}): ${note.text}`);
       log(`started: server ${serverId}, data ${paths.dataDir}, ${core.botIds().length} bots, pid ${process.pid}`);
       return daemon;
     } catch (error) {
@@ -223,6 +234,7 @@ export class Botlingd {
     const step = async (what: string, run: () => unknown) => {
       try { await run(); } catch (error) { failures.push(error); this.log(`stop: ${what}: ${String((error as Error)?.message ?? error)}`); }
     };
+    await step("daily backups", () => this.backups?.stop());
     await step("sessions", () => this.server.close());
     this.shell.close();
     await step("core", () => this.core.shutdown());
