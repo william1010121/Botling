@@ -90,6 +90,8 @@ export const Snap = msg("snap", { stream: StreamId, logId: LogId, seq: Seq, hash
  */
 export const Reset = msg("reset", {
   stream: StreamId, logId: LogId, retired: z.array(z.strictObject({ logId: LogId, keptSeq: Seq })).min(1).max(1_000), reason: z.enum(["restored", "rewind"]),
+  /** A restore from a backup: when that backup was taken (ms), so the window can say "restored to <time>". */
+  restoredTo: z.number().int().nonnegative().optional(),
 }).refine((reset) => !reset.retired.some((old) => old.logId === reset.logId), { message: "the new logId cannot be retired", path: ["retired"] });
 /** The serving server lost the stream's owner (§10.2). */
 export const Stale = msg("stale", { stream: StreamId, since: z.number().int().nonnegative() });

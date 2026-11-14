@@ -257,6 +257,8 @@ export interface BotOptions {
    * aside (not routed); the server records it in its effect outbox and routes it later with `release()`.
    */
   deferTurn?: (turn: DeferredTurn) => boolean;
+  /** Botling 3's server only (2.x leaves it unset: the files, `FileBotStore`): the store of the bot kept in `directory`. */
+  botStore?: (directory: string) => BotStore;
 }
 
 /** The ids a Botling 3 server chose for a turn before the core makes it (its intent was committed first). */
@@ -586,7 +588,8 @@ export class Bot {
   constructor(private options: BotOptions) {
     const primary = options.primary;
     this.engine = options.engine ?? "claude";
-    this.store = new BotStore(primary ? join(primary.profile.storeDir, `partner-${this.engine}`) : options.profile.storeDir);
+    const storeDir = primary ? join(primary.profile.storeDir, `partner-${this.engine}`) : options.profile.storeDir;
+    this.store = options.botStore ? options.botStore(storeDir) : new BotStore(storeDir);
     // A new session at every start: the app starting is a wake (1.x).
     this.session = { sessionId: randomUUID(), started: false };
     this.alwaysAllowed = (primary ?? this).storeAlwaysAllowed();

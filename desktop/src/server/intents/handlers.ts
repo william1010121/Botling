@@ -3,7 +3,7 @@
 // engine is asked only after the commit (TxScope.afterCommit → the effect worker), except for the commands the core
 // applies synchronously (`applyNow`), whose events land in this same transaction through the event tap.
 //
-//   chat.send          the user's line (`message.added`) + `turn.queued` + a queued turn row; result {messageId: the
+//   chat.send          the user's line (`message.added`, carrying the slot) + `turn.queued` + a queued turn row; result {messageId: the
 //                      reply's line, turnId}. The worker starts the turn after the commit (row `started` first).
 //   turn.stop{turnId}  the basis check refused an ended or unknown turn (`changed`, so an old turnId never stops a newer
 //                      turn). Queued: the row is `cancelled` + `turn.cancelled`, the engine forgets the kept turn.
@@ -74,7 +74,7 @@ export function queueKeptTurn(deps: Pick<IntentDeps, "scope" | "worker" | "now" 
   deps.scope.afterCommit(() => deps.worker.kick());
 }
 
-function send(deps: IntentDeps, { tx }: ApplyContext, cmd: Extract<Command, { type: "chat.send" }>) {
+function send(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<Command, { type: "chat.send" }>) {
   requireBot(deps.engine, cmd.botId);
   const text = cmd.text.trim();
   if (!text && !deps.engine.pendingFiles(cmd.botId)) throw new SlotRefusal("invalid", "Nothing to send.");
@@ -87,7 +87,8 @@ function send(deps: IntentDeps, { tx }: ApplyContext, cmd: Extract<Command, { ty
   appendFitted(deps.scope, tx, stream, "message.added", {
     botId: cmd.botId,
     message: { id: userId, role: "user", text, time: new Date(now).toISOString(), ...(cmd.replyTo ? { replyTo: cmd.replyTo } : {}) },
-  }, { log: deps.log });
+  // The slot rides on the line, so a front end swaps its pending bubble for this line by slot (§13.4).
+  }, { log: deps.log, slot });
   const queued = appendFitted(deps.scope, tx, stream, "turn.queued", { botId: cmd.botId, turnId, effectId, messageId: replyId }, { log: deps.log });
   insertEffect(tx, {
     effectId, stream, botId: cmd.botId, turnId, kind: "turn",

@@ -31,6 +31,9 @@ export interface IntentRuntimeOptions {
   now?: () => number;
   log?: (line: string) => void;
   onServerEvent?: (event: ContractEvent) => void;
+  /** EventTapOptions `serverEvents` / `mirrorBotUpdates` (botlingd: every server event and bot update in `srv:`). */
+  serverEvents?: "settings" | "all";
+  mirrorBotUpdates?: boolean;
   authorize?: Authorize;
   audit?: Audit;
 }
@@ -63,6 +66,8 @@ export class IntentRuntime {
       now: this.now,
       log,
       onServerEvent: options.onServerEvent,
+      ...(options.serverEvents ? { serverEvents: options.serverEvents } : {}),
+      ...(options.mirrorBotUpdates ? { mirrorBotUpdates: true } : {}),
     });
     this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log };
     const slotLog = dbSlotLog(this.scope, log);

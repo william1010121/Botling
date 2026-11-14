@@ -7,7 +7,8 @@
 // - `message.added` of a line the log already has (the user's line `chat.send` stored with its intent) is stored only
 //   when it differs, as `message.updated`;
 // - `bot.updated` mirrors `unread` into the bot row; `bot.removed` drops the bot row (the snap shows no bot).
-// Server events (no bot): `settings.updated` goes into the server's `srv:` stream; the rest go to `onServerEvent`.
+// Server events (no bot): `settings.updated` goes into the server's `srv:` stream; the rest go to `onServerEvent`, or
+// also into `srv:` with `serverEvents: "all"` (botlingd), which can mirror `bot.updated` there too.
 //
 // Order: an event emitted while a writer command runs (the core's synchronous handlers in `applyNow`) is written into
 // that command's transaction; one emitted outside waits in `pending` and is written at the start of the next command
@@ -36,6 +37,13 @@ export interface EventTapOptions {
   log?: (line: string) => void;
   /** Server events that are no entry of any stream (plugins, Doctor, waiting list, core swap). */
   onServerEvent?: (event: ContractEvent) => void;
+  /**
+   * Which server events (no bot) become entries of the `srv:` stream: only `settings.updated` (default), or every one
+   * (botlingd: the window's renderer needs plugins, Doctor, the waiting list… as they change, from the srv: stream).
+   */
+  serverEvents?: "settings" | "all";
+  /** `bot.updated` also goes into the `srv:` stream (botlingd: the window's bot list follows every bot, not only open ones). */
+  mirrorBotUpdates?: boolean;
 }
 
 /** The bot a contract event belongs to, or null for a server event. */
@@ -71,7 +79,7 @@ export class EventTap {
     const liveOnly = this.options.live ? this.options.live.feed(event) : event.type === "turn.delta";
     if (liveOnly || event.type === "turn.delta") return;
     const botId = botOfEvent(event);
-    if (!botId && event.type !== "settings.updated") {
+    if (!botId && event.type !== "settings.updated" && this.options.serverEvents !== "all") {
       this.options.onServerEvent?.(event);
       return;
     }
@@ -185,6 +193,7 @@ export class EventTap {
       }
       case "bot.updated":
         appendFitted(scope, tx, stream, event.type, bodyOf(event), { log });
+        if (this.options.mirrorBotUpdates) appendFitted(scope, tx, serverStreamOf(tx), event.type, bodyOf(event), { log });
         tx.prepare("UPDATE bots SET unread = ? WHERE botId = ?").run(event.bot.unread, botId);
         return;
       case "bot.removed":
