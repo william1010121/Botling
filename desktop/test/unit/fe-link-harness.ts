@@ -3,7 +3,7 @@
 // Every frame crosses the fake network as text and is checked with the protocol's frame codec in both directions.
 import { createHash } from "node:crypto";
 import {
-  decodeFrame, encodeFrame, GENESIS_HASH,
+  decodeFrame, encodeFrame, encodeWireFrame, GENESIS_HASH,
   type CmdBody, type Cursor, type Entry, type Message, type MessageOf, type Slot, type StreamId,
 } from "../../src/protocol";
 import { cancelAnswer, SlotEngine, type ApplyContext, type SlotLog } from "../../src/server/slots";
@@ -117,6 +117,20 @@ export class FakeServer {
   applyHook: ((context: ApplyContext) => { result?: unknown } | void) | null = null;
   /** Messages the fake does not handle itself (req, history, shell.done…). */
   onMessage: ((message: Message) => void) | null = null;
+  /**
+   * M3 step 11: the fake as server A of two. `servers` goes into `welcome.servers`; `tables` are peers' `srv:` tables it
+   * serves as `rows`; a command whose target `peerTargets` names is "forwarded": with `partitioned`, answered
+   * `held{at: SERVER_ID}` and kept until `heal()`, then applied (the fake's own engine stands in for the owner). Copies
+   * keep the inc the front end stamped (`copies`); the engine sees its own inc.
+   */
+  servers: MessageOf<"welcome">["servers"] = [];
+  readonly tables = new Map<string, { logId: string; rev: number; rows: Map<string, { rev: number; body?: unknown; deleted?: true }>; retired: Array<{ logId: string; keptSeq: number }> }>();
+  readonly peerTargets = new Set<string>();
+  partitioned = false;
+  /** Hold `rows` for tables until released (a slow catch-up). */
+  holdRows = false;
+  private readonly heldRows: Array<() => void> = [];
+  private readonly forwardQueue: CmdBody[] = [];
   private conn: ServerConn | null = null;
   private readonly heldResets: Array<() => void> = [];
 
@@ -203,13 +217,18 @@ export class FakeServer {
     switch (message.t) {
       case "hello":
         conn.welcomed = true;
-        this.send({ t: "welcome", serverId: SERVER_ID, protocol: { min: 1, max: 1 }, minFeVersion: this.minFeVersion, rosterDigest: null, servers: [], next: {}, views: {} });
+        this.send({ t: "welcome", serverId: SERVER_ID, protocol: { min: 1, max: 1 }, minFeVersion: this.minFeVersion, rosterDigest: null, servers: this.servers, next: {}, views: {} });
         return;
       case "sub": this.onSub(conn, message.stream, message.cursor); return;
       case "unsub": conn.subs.delete(message.stream); return;
       case "cmd": {
         const { t: _t, ...body } = message;
         this.copies.push(body as CmdBody);
+        if (this.peerTargets.has((body as CmdBody).slot.target)) {
+          if (this.partitioned) { this.forwardQueue.push(body as CmdBody); this.send({ t: "held", slot: (body as CmdBody).slot, at: SERVER_ID }); return; }
+          await this.forward(body as CmdBody);
+          return;
+        }
         await this.engine.receive(body as CmdBody, {
           scope: "local",
           reply: (reply) => { if (this.dropReplies > 0) { this.dropReplies -= 1; return; } this.send(reply); },
@@ -223,7 +242,72 @@ export class FakeServer {
     }
   }
 
+  /** A forwarded command reaches the "owner" (the fake's engine, under its own inc). */
+  private async forward(body: CmdBody): Promise<void> {
+    await this.engine.receive({ ...body, inc: this.log.inc } as CmdBody, { scope: "local", reply: (reply) => this.send(reply) });
+    this.push();
+  }
+
+  /** The partition heals: what was held is forwarded, in order. */
+  async heal(): Promise<void> {
+    this.partitioned = false;
+    for (const body of this.forwardQueue.splice(0)) await this.forward(body);
+  }
+
+  /** A raw wire message (M3: `rows`, which the M1/M2 codec does not take). */
+  sendWire(message: Record<string, unknown>): void {
+    const conn = this.conn;
+    if (!conn?.open) return;
+    const encoded = encodeWireFrame(message as never, "server", { local: true });
+    if (!encoded.ok) throw new Error(`fake server: cannot send ${String(message.t)}: ${encoded.detail}`);
+    setImmediate(() => { if (this.conn === conn && conn.open) conn.handlers.frame(encoded.text); });
+  }
+
+  /** Writes a row into a peer's table and pushes it to a follower. */
+  setRow(stream: string, key: string, body: unknown | null): void {
+    const table = this.tables.get(stream)!;
+    table.rev += 1;
+    table.rows.set(key, body === null ? { rev: table.rev, deleted: true } : { rev: table.rev, body });
+    const conn = this.conn;
+    const sub = conn?.subs.get(stream);
+    if (!conn || !sub) return;
+    this.sendRows(conn, stream, sub.sent);
+  }
+
+  /** A restore of a peer: its table gets a new logId; a follower hears `reset` then the whole table. */
+  restoreTable(stream: string, newLogId: string): void {
+    const table = this.tables.get(stream)!;
+    table.retired.push({ logId: table.logId, keptSeq: table.rev });
+    table.logId = newLogId;
+    const conn = this.conn;
+    if (!conn?.subs.has(stream)) return;
+    this.send({ t: "reset", stream: stream as StreamId, logId: newLogId, retired: table.retired, reason: "restored" });
+    this.sendRows(conn, stream, 0);
+  }
+
+  releaseRows(): void { this.holdRows = false; for (const deliver of this.heldRows.splice(0)) deliver(); }
+
+  private sendRows(conn: ServerConn, stream: string, after: number): void {
+    const table = this.tables.get(stream)!;
+    const deliver = () => {
+      if (this.conn !== conn) return;
+      const rows = [...table.rows].filter(([, row]) => row.rev > after && (after > 0 || !row.deleted)).sort((x, y) => x[1].rev - y[1].rev)
+        .map(([key, row]) => ({ key, rev: row.rev, ...(row.deleted ? { deleted: true as const } : { body: row.body }) }));
+      conn.subs.set(stream, { sent: table.rev });
+      this.sendWire({ t: "rows", stream, logId: table.logId, after, to: table.rev, rows, more: false });
+    };
+    if (this.holdRows) this.heldRows.push(deliver); else deliver();
+  }
+
   private onSub(conn: ServerConn, stream: string, cursor: Cursor | null): void {
+    const table = this.tables.get(stream);
+    if (table) {
+      if (cursor && cursor.logId !== table.logId) {
+        this.send({ t: "reset", stream: stream as StreamId, logId: table.logId, retired: table.retired.length ? table.retired : [{ logId: cursor.logId, keptSeq: 0 }], reason: "restored" });
+        return this.sendRows(conn, stream, 0);
+      }
+      return this.sendRows(conn, stream, cursor ? cursor.seq : 0);
+    }
     const current = this.log.current(stream);
     const head = this.log.head(stream);
     if (cursor === null) return this.snap(conn, stream);
