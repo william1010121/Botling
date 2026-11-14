@@ -37,8 +37,13 @@ const fitsIn = (limit: number) => (value: unknown) => {
 /** A table stream: `srv:<serverId>`. */
 export const TableStreamId = z.string().max(80).regex(/^srv:[A-Za-z0-9_.:-]{1,64}$/);
 
-/** A row key: `bot:<botId>`, `machine`, `settings` or `audit:<id>` (§8.2). */
-export const RowKey = z.string().max(80).regex(/^(bot:[A-Za-z0-9_.:-]{1,64}|machine|settings|audit:[A-Za-z0-9_.:-]{1,64})$/);
+/**
+ * A row key: `bot:<botId>`, `machine`, `settings`, `audit:<id>` (§8.2), or a kind this version does not know yet
+ * (`plugin:<name>` from D52 in M5, or later ones): `<kind>` or `<kind>:<id>`, kind in lower case. Plan change N4:
+ * readers keep and pass on rows of a kind they do not know, and ignore them; they never refuse or drop them, so servers
+ * of different versions can share one cluster.
+ */
+export const RowKey = z.string().max(100).regex(/^[a-z][a-z0-9_-]{0,31}(:[A-Za-z0-9_.:-]{1,64})?$/);
 export type RowKey = z.infer<typeof RowKey>;
 
 /** What a bot is doing, as its summary says (§8.2). */
@@ -108,7 +113,7 @@ export const AuditRow = z.strictObject({
 }).refine(fitsIn(TABLE_ROW_CHARS), { message: "an audit row is too large" });
 export type AuditRow = z.infer<typeof AuditRow>;
 
-/** The body schema a row key takes. */
+/** The body schema a row key takes; null for a kind this version does not know (kept as it is, N4). */
 export function rowBodySchema(key: string): z.ZodType | null {
   if (key.startsWith("bot:")) return SummaryRow;
   if (key === "machine") return MachineRow;
@@ -116,6 +121,14 @@ export function rowBodySchema(key: string): z.ZodType | null {
   if (key.startsWith("audit:")) return AuditRow;
   return null;
 }
+
+/** Whether this version knows the row's kind (and so checks its body); a reader ignores the others (N4). */
+export function knownRowKey(key: string): boolean {
+  return rowBodySchema(key) !== null;
+}
+
+/** The body of a row of an unknown kind: any JSON value up to the size of a table row, kept and passed on verbatim. */
+export const UnknownRowBody = z.unknown().refine((body) => body !== undefined && fitsIn(TABLE_ROW_CHARS)(body), { message: "a row of an unknown kind is at most a table row of JSON" });
 
 /** One row of a table stream: a body checked against its key, or a tombstone. */
 export const TableRow = z.strictObject({
@@ -129,8 +142,8 @@ export const TableRow = z.strictObject({
     return;
   }
   if (row.body === undefined) { ctx.addIssue({ code: "custom", path: ["body"], message: "a row has a body or is deleted" }); return; }
-  const schema = rowBodySchema(row.key);
-  if (!schema) { ctx.addIssue({ code: "custom", path: ["key"], message: "unknown row key" }); return; }
+  // A kind this version does not know: kept and passed on, never refused (N4); only its size is checked.
+  const schema = rowBodySchema(row.key) ?? UnknownRowBody;
   const parsed = schema.safeParse(row.body);
   if (!parsed.success) for (const issue of parsed.error.issues.slice(0, 5)) ctx.addIssue({ code: "custom", path: ["body", ...issue.path.map(String)], message: issue.message });
 });

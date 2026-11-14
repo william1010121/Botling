@@ -33,6 +33,13 @@ export interface TapHooks {
    * entry's text was cut to fit a frame.
    */
   lineStored?(tx: Db, event: ContractEvent, entry: Entry): void;
+  /** Every event the engine emits, before anything else (turn text included); a throw is logged and ignored (M3 summary rows). */
+  eventSeen?(event: ContractEvent): void;
+  /**
+   * An event was stored in `tx` (after its entries): M3's summary rows are written in the same transaction. Runs in a
+   * savepoint of its own: a throw is logged and undoes only what the hook wrote.
+   */
+  eventStored?(tx: Db, event: ContractEvent): void;
 }
 
 export interface EventTapOptions {
@@ -81,6 +88,10 @@ export class EventTap {
   }
 
   event(event: ContractEvent): void {
+    const seen = this.options.hooks?.eventSeen;
+    if (seen) {
+      try { seen(event); } catch (error) { this.options.log?.(`event tap: eventSeen failed (${error instanceof Error ? error.message : String(error)})`); }
+    }
     // The live channel sees every turn event at once (start, steps, end); `turn.delta` is its alone.
     const liveOnly = this.options.live ? this.options.live.feed(event) : event.type === "turn.delta";
     if (liveOnly || event.type === "turn.delta") return;
@@ -151,6 +162,19 @@ export class EventTap {
       tx.exec("ROLLBACK TO tap_event");
       tx.exec("RELEASE tap_event");
       this.options.log?.(`event tap: a ${event.type} event was not stored (${error instanceof Error ? error.message : String(error)})`);
+      return;
+    }
+    const stored = this.options.hooks?.eventStored;
+    if (!stored) return;
+    tx.exec("SAVEPOINT tap_stored");
+    try {
+      stored(tx, event);
+      tx.exec("RELEASE tap_stored");
+    } catch (error) {
+      if (!tx.inTransaction) throw error;
+      tx.exec("ROLLBACK TO tap_stored");
+      tx.exec("RELEASE tap_stored");
+      this.options.log?.(`event tap: eventStored of a ${event.type} event failed (${error instanceof Error ? error.message : String(error)})`);
     }
   }
 

@@ -34,6 +34,8 @@ import { RosterStore } from "./roster";
 import { PairingService } from "./pairing";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
+import { SummaryRows } from "./replica";
+import { release as osRelease } from "node:os";
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
 export const PLACEHOLDER_TAILNET_ORIGIN = "https://tailnet-name.invalid";
@@ -117,6 +119,8 @@ export class Botlingd {
     readonly remote: RemoteSessions,
     /** M2 step 5: device pairing (offers, the pairing sessions, local admin requests). */
     readonly pairing: PairingService,
+    /** M3 step 6: this server's summary rows (`srv:` table). */
+    readonly summary: SummaryRows,
   ) {}
 
   get token(): string { return this.tokenValue; }
@@ -183,13 +187,24 @@ export class Botlingd {
       const content = new ContentService({
         store, dataDir: paths.dataDir, serverId, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: (text) => log(`content: ${text}`),
       });
+      // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
+      let summary: SummaryRows | null = null;
       const runtime = new IntentRuntime({
         store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(roster), serverEvents: "all", mirrorBotUpdates: true, content,
+        tapHooks: { eventSeen: (event) => summary?.seen(event), eventStored: (tx, event) => summary?.stored(tx, event) },
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
       });
+      summary = new SummaryRows({
+        scope: runtime.scope, engine, live, log,
+        machine: () => ({ name: SERVER_NAME, os: `${process.platform} ${osRelease()}`.slice(0, 100), versions: { botlingd: BOTLINGD_VERSION, node: process.versions.node }, addresses: [], pluginsDigest: null }),
+      });
       const report = await runtime.start();
       log(`recovery: ${JSON.stringify(report)}`);
+      const summaries = summary;
+      const reconciled = await runtime.scope.submit((tx) => summaries.reconcile(tx));
+      log(`summary rows: ${JSON.stringify({ ...reconciled, unknown: reconciled.unknown.length })}`);
+      summaries.startPurging();
       // Step 13: pins left by a crash are swept and every file still preparing is hashed before front ends attach.
       const recovered = await content.recover();
       log(`content recovery: ${JSON.stringify(recovered)}`);
@@ -224,7 +239,7 @@ export class Botlingd {
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
       const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing }, options.session);
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries);
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       daemon.watchLock();
@@ -274,8 +289,10 @@ export class Botlingd {
     await step("remote sessions", () => this.remote.close());
     this.shell.close();
     await step("core", () => this.core.shutdown());
-    // What the core emitted while stopping is written, then the worker stops.
+    // What the core emitted while stopping is written (with the summary rows still waiting), then the worker stops.
     await step("events", () => this.runtime.scope.submit(() => undefined));
+    await step("summary rows", () => this.summary.flush());
+    this.summary.close();
     await step("runtime", () => this.runtime.close());
     await step("content", () => this.content.close());
     await step("bot stores", () => this.stores.durable());

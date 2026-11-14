@@ -292,7 +292,9 @@ describe("protocol M3: summary rows and rows batches", () => {
     expect(AuditRow.safeParse({ act: "server.join", at: 1, by: serverA, member: serverB }).success).toBe(true);
     expect(AuditRow.safeParse({ act: "Server Join", at: 1 }).success).toBe(false);
     expect(TableRow.safeParse({ key: "bot:b1", rev: 1, body: machine }).success).toBe(false);
-    expect(TableRow.safeParse({ key: "other", rev: 1, body: {} }).success).toBe(false);
+    // Plan change N4: a row of a kind this version does not know is kept (only its key's form and size are checked).
+    expect(TableRow.safeParse({ key: "other", rev: 1, body: {} }).success).toBe(true);
+    expect(TableRow.safeParse({ key: "Other", rev: 1, body: {} }).success).toBe(false);
     expect(TableRow.safeParse({ key: "bot:b1", rev: 0, body: summary }).success).toBe(false);
     expect(TableRow.safeParse({ key: "bot:b1", rev: 1, deleted: true }).success).toBe(true);
     expect(TableRow.safeParse({ key: "bot:b1", rev: 1, deleted: true, body: summary }).success).toBe(false);

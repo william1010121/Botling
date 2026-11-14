@@ -13,6 +13,7 @@ import type { CmdBody, Scope } from "../../protocol";
 import { contentLineHook, type ContentService } from "../content";
 import { ensureStream, type LogHub } from "../log";
 import { ContractLiveFeed, type LiveChannel } from "../live";
+import type { TapHooks } from "../effects/tap";
 import { SlotEngine, type Audit, type Authorize, type ReceiveStatus, type ReplySink } from "../slots";
 import {
   ensureBot, EffectWorker, EventTap, recoverEffects, serverStreamOf, TxScope,
@@ -39,6 +40,8 @@ export interface IntentRuntimeOptions {
   audit?: Audit;
   /** The content index (src/server/content): a finished line's files are noted in its entry's transaction. */
   content?: ContentService | null;
+  /** Extra event tap hooks (M3: the server's summary rows, src/server/replica). */
+  tapHooks?: Pick<TapHooks, "eventSeen" | "eventStored">;
 }
 
 export class NotASlotCommandError extends Error {
@@ -68,6 +71,8 @@ export class IntentRuntime {
       hooks: {
         turnEnded: (tx, botId, turnId, status) => this.worker.turnEnded(tx, botId, turnId, status),
         ...(options.content ? { lineStored: contentLineHook(options.content, this.scope) } : {}),
+        ...(options.tapHooks?.eventSeen ? { eventSeen: options.tapHooks.eventSeen } : {}),
+        ...(options.tapHooks?.eventStored ? { eventStored: options.tapHooks.eventStored } : {}),
       },
       now: this.now,
       log,

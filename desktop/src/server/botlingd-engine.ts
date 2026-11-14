@@ -6,7 +6,7 @@
 //   segment is closed at that boundary, so a window that attaches later sees the earlier segments' text in the line
 //   itself, not only in the live checkpoint. The line is the one the core last told (its `message.added` /
 //   `message.updated`); no line told yet: nothing is added.
-import type { Command, Event as ContractEvent, MessageView } from "../contract";
+import type { BotView, Command, Event as ContractEvent, MessageView } from "../contract";
 import type { ApplyNowCommand, EngineHost, TurnEngine, TurnRunning, TurnStart, UserLine } from "./effects";
 import type { LiveChannel } from "./live";
 
@@ -43,6 +43,7 @@ export class BotlingdEngine implements TurnEngine {
 
   bots(): string[] { return this.inner.bots(); }
   hasBot(botId: string): boolean { return this.inner.hasBot(botId); }
+  botView(botId: string): BotView | null { return this.inner.botView?.(botId) ?? null; }
   pendingFiles(botId: string): number { return this.inner.pendingFiles(botId); }
   checkRemove(botId: string): void { this.inner.checkRemove(botId); }
   applyNow(cmd: ApplyNowCommand): unknown { return this.inner.applyNow(cmd); }
