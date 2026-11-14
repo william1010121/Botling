@@ -26,6 +26,8 @@ export interface DeviceRecord {
   addId: string;
   scope: string[];
   pairedAt: number;
+  /** The server's room on the relay, from the pairing offer (M2 step 13), when it named one. */
+  relay?: { url: string; room: string };
 }
 
 /** The record as stored: the X25519 key sealed (see above). */

@@ -38,8 +38,15 @@ const WIRE_FRAME_LIMIT = HEADER_BYTES + SESSION_FRAME_LIMIT + TAG_BYTES;
 
 /** A transport that carries whole binary frames, in order (WebSocket, relay `d` frames, an in-memory pair). */
 export interface SessionTransport {
-  send(frame: Uint8Array): void;
+  /** One frame. `lane` names the lane a sealed frame left (handshake frames: none); a transport may ignore it. */
+  send(frame: Uint8Array, lane?: Lane): void;
   close(): void;
+  /**
+   * Optional back-pressure (the relay's paced connection, M2 step 13): while it answers false the link seals nothing
+   * more and keeps its frames in the lane queues (so a control frame queued later still goes before waiting bulk
+   * frames); the transport calls the link's `resume()` once it takes frames again.
+   */
+  writable?(): boolean;
 }
 
 export interface SessionLimits {
@@ -156,6 +163,8 @@ export class SessionLink {
   get epochs(): { send: number; receive: number } { return { send: this.send_?.epoch ?? 0, receive: this.recv?.epoch ?? 0 }; }
   get ending(): SessionEnd | null { return this.endInfo; }
   get queuedBytes(): number { return this.queue.queuedBytes; }
+  /** Of those, the control lane's (they leave before any waiting bulk frame). */
+  get queuedControlBytes(): number { return this.queue.queuedControlBytes; }
 
   /** Queues a plaintext frame on a lane. Frames queued before the session opens leave right after it does. */
   send(lane: Lane, plaintext: Uint8Array): void {
@@ -163,6 +172,9 @@ export class SessionLink {
     this.queue.push(lane, plaintext);
     void this.pump();
   }
+
+  /** The transport takes frames again (after its `writable()` said false). */
+  resume(): void { void this.pump(); }
 
   /** One frame from the transport. */
   receive(frame: Uint8Array): void {
@@ -354,12 +366,14 @@ export class SessionLink {
           this.rekeyOwn = own;
           this.urgent.unshift({ kind: FRAME_KIND.REKEY, plaintext: own.publicKey });
         }
+        if (this.transport.writable && !this.transport.writable()) break;
         const urgent = this.urgent.shift();
-        const item: Urgent | undefined = urgent ?? (() => { const next = this.queue.shift(); return next && { kind: FRAME_KIND.DATA, plaintext: next.plaintext }; })();
+        let lane: Lane = "control";
+        const item: Urgent | undefined = urgent ?? (() => { const next = this.queue.shift(); if (next) lane = next.lane; return next && { kind: FRAME_KIND.DATA, plaintext: next.plaintext }; })();
         if (!item) break;
         const frame = await this.seal(item.kind, item.plaintext);
         if (this.ended) break;
-        this.transport.send(frame);
+        this.transport.send(frame, lane);
         item.after?.();
       }
     } catch (error) {

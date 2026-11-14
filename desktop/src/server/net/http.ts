@@ -58,6 +58,13 @@ export const FRAME_HOST_CSP = [
   "font-src data:", "media-src data: blob:", "connect-src 'none'", "frame-src 'none'", "child-src 'none'", "worker-src 'none'", "form-action 'none'", "base-uri 'none'",
 ].join("; ");
 
+/** The page's policy with extra `connect-src` origins (the relay's WebSocket origin, M2 step 13); CSP itself without. */
+export function cspWith(connect: readonly string[]): string {
+  const extra = connect.filter((origin) => /^wss?:\/\/[A-Za-z0-9.\[\]:-]+$/.test(origin));
+  if (!extra.length) return CSP;
+  return CSP.replace("connect-src 'self'", `connect-src 'self' ${[...new Set(extra)].join(" ")}`);
+}
+
 /** Headers on every answer of the listener. */
 export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Content-Security-Policy": CSP,
@@ -120,6 +127,8 @@ export interface LoopbackListenerOptions {
   maxConnections?: number;
   /** `/v3/c/…` (step 9): GET/HEAD byte ranges of a chat line's file; without it those answer 501. */
   content?: ContentEndpoint;
+  /** Origins the page may open WebSockets to besides its own (the relay, M2 step 13), added to `connect-src`. */
+  connectOrigins?: () => string[];
 }
 
 /** What answers `/v3/c/…` (server/content/remote.ts `RemoteContent`). */
@@ -181,6 +190,8 @@ export class LoopbackListener {
 
   private request(request: IncomingMessage, response: ServerResponse): void {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) response.setHeader(name, value);
+    const connect = this.options.connectOrigins?.() ?? [];
+    if (connect.length) response.setHeader("Content-Security-Policy", cspWith(connect));
     const path = pathOf(request.url);
     if (path === null) { plain(response, 400, "Bad Request"); return; }
     if (request.method !== "GET" && request.method !== "HEAD") { response.setHeader("Allow", "GET, HEAD"); plain(response, 405, "Method Not Allowed"); return; }

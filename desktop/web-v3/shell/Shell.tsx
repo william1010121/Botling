@@ -4,7 +4,9 @@
 // Looks: the 2.x page's own sign-in card and phone drawer (desktop/mobile/web.css), nothing new.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parsePairLink, type PairOffer } from "../../src/protocol";
-import { DEFAULT_IDB_NAME, wsUrlFor } from "../../src/fe-link";
+import { DEFAULT_IDB_NAME, relaySocketImpl, wsUrlFor } from "../../src/fe-link";
+import { fromBase64Url } from "../../src/protocol";
+import { relayPairToken } from "../../src/session";
 import { Icon } from "../../src/renderer/icons";
 import { QrScanner, cameraError, openCamera } from "../../mobile/QrScanner";
 import { PHONE_QUERY, phoneWidth } from "../../mobile/layout";
@@ -15,13 +17,15 @@ import { MediaBroker } from "./media";
 import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
-import { bannerText, FE_VERSION, newDiagnostics, openConnection, type Connection, type Diagnostics } from "./connection";
+import { askedPath, bannerText, FE_VERSION, newDiagnostics, openConnection, type Connection, type Diagnostics, type DialPath } from "./connection";
 import type { DeviceScope } from "../../src/protocol";
 
 /** Diagnostics for the headless harness and support (not a capability; the renderer never sees it). */
 export const diagnostics: Diagnostics = newDiagnostics();
 (globalThis as { botling3Diagnostics?: Diagnostics }).botling3Diagnostics = diagnostics;
 diagnostics.player.path = pathOfPage(location.hostname);
+/** The path this page load was asked for in its address (`?via=relay`, M2 step 13), else the device's saved choice. */
+const ASKED_PATH = askedPath(location.search);
 
 /**
  * The page's content cache (step 11, §9A.6): 200 MB. `botling3ContentCapBytes` on the page's global lowers the cap
@@ -81,7 +85,12 @@ export function Shell() {
     const k = keys ?? await makePairKeys();
     setRetry(null);
     setPhase({ kind: "pairing", code: null });
-    const run = pair({ offer, keys: k, name: defaultName(), wsUrl: wsUrlFor(location.href), feVersion: FE_VERSION, save: saveDevice });
+    // Through the relay when the page was asked to (`?via=relay`) and the offer names the server's room (M2 step 13).
+    const relay = ASKED_PATH === "relay" ? offer.addresses.relay : undefined;
+    const run = pair({
+      offer, keys: k, name: defaultName(), wsUrl: wsUrlFor(location.href), feVersion: FE_VERSION, save: saveDevice,
+      ...(relay ? { transport: "relay" as const, WebSocketImpl: relaySocketImpl(() => ({ url: relay.url, room: relay.room, token: relayPairToken(offer.offer, fromBase64Url(offer.secret)!) })) } : {}),
+    });
     attempt.current = run;
     run.code.then((code) => { if (attempt.current === run) setPhase({ kind: "pairing", code }); }, () => undefined);
     try {
@@ -155,6 +164,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
   const [navOpen, setNavOpen] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [path, setPath] = useState<DialPath>("direct");
   const mounted = useRef<MountedRenderer | null>(null);
 
   const capabilities = useMemo<Omit<PageCapabilities, "uploads">>(() => ({
@@ -187,7 +197,16 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     // `bye{revoked}` while connected, and what the page cached goes at once (§9A.6); pairing again is the user's
     // choice. A revocation made while the page was away is not told: the server refuses the handshake silently.
     const revoked = (why: string) => { media?.dropCached(); void clearCachedContent(why); };
-    void openConnection(device, diagnostics, location.href).then((conn) => {
+    void (async () => {
+      // The path: asked in the address (and then kept as this device's choice), else the saved choice; the relay only
+      // when the pairing offer named the server's room.
+      if (ASKED_PATH) await savePref("path", ASKED_PATH).catch(() => undefined);
+      const wanted = ASKED_PATH ?? await loadPref("path").catch(() => null);
+      const chosen: DialPath = wanted === "relay" && device.relay ? "relay" : "direct";
+      if (chosen === "relay") diagnostics.player.path = "relay";
+      if (!cancelled) setPath(chosen);
+      return openConnection(device, diagnostics, location.href, chosen);
+    })().then((conn) => {
       if (cancelled) { void conn.close(); return; }
       opened = conn;
       conn.link.on((event) => { if (event.type === "bye" && event.reason === "revoked") revoked("revoked (bye)"); });
@@ -229,16 +248,16 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       if (target.closest?.(".rail .rail-toggle")) { event.preventDefault(); event.stopPropagation(); setNavOpen(false); return; }
       if (target.closest?.(".bot-row, .strip-bot, .subagent-open")) setNavOpen(false);
     }}>
-    {banner.text && <div className="v3-conn" role="status" data-state={banner.state} data-testid="conn-banner">{banner.text}</div>}
+    {banner.text && <div className="v3-conn" role="status" data-state={banner.state} data-path={path} data-testid="conn-banner">{banner.text}{path === "relay" ? " · via relay" : ""}</div>}
     <div id="v3-renderer" className="v3-renderer" ref={rendererRoot} />
     {failure && <div className="banner bottom web-banner" role="alert">{failure}</div>}
     <div className="web-scrim" aria-hidden="true" onClick={() => setNavOpen(false)} />
-    {sheet && <ThisDevice device={device} connection={connection} onClose={() => setSheet(false)} onForget={() => void forget()} />}
+    {sheet && <ThisDevice device={device} connection={connection} path={path} onClose={() => setSheet(false)} onForget={() => void forget()} />}
   </div>;
 }
 
 /** Settings › This device: who this device is, which server it is paired with, and forgetting it. */
-function ThisDevice({ device, connection, onClose, onForget }: { device: DeviceRecord; connection: Connection | null; onClose: () => void; onForget: () => void }) {
+function ThisDevice({ device, connection, path, onClose, onForget }: { device: DeviceRecord; connection: Connection | null; path: DialPath; onClose: () => void; onForget: () => void }) {
   const [confirm, setConfirm] = useState(false);
   const pending = connection?.link.pending().length ?? 0;
   return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
@@ -251,7 +270,12 @@ function ThisDevice({ device, connection, onClose, onForget }: { device: DeviceR
         <dt>Allowed</dt><dd>{device.scope.join(", ")}</dd>
         <dt>Paired</dt><dd>{new Date(device.pairedAt).toLocaleString()}</dd>
         <dt>Waiting to send</dt><dd>{pending}</dd>
+        <dt>Connected</dt><dd data-testid="dial-path">{path === "relay" ? "via relay" : diagnostics.player.path === "local" ? "on this computer" : "via tailnet"}</dd>
       </dl>
+      {device.relay && <div className="v3-sheet-actions">
+        <button type="button" className="web-secondary" data-testid="switch-path" onClick={() => void savePref("path", path === "relay" ? "tailnet" : "relay").then(() => location.reload())}>
+          {path === "relay" ? "Connect directly" : "Connect via relay"}</button>
+      </div>}
       {confirm
         ? <><p className="v3-sheet-warn">Forget this device? Messages still waiting here are dropped, and you pair again with a new link. To stop it everywhere, revoke it on the computer (botlingd revoke-device).</p>
           <div className="v3-sheet-actions"><button type="button" className="web-secondary" onClick={() => setConfirm(false)}>Keep</button><button type="button" className="web-primary" onClick={onForget}>Forget</button></div></>

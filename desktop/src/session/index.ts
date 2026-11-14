@@ -7,3 +7,4 @@ export * from "./handshake";
 export * from "./lanes";
 export * from "./link";
 export * from "./pair-proof";
+export * from "./relay-wire";
