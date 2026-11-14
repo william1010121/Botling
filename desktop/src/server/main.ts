@@ -3,7 +3,8 @@
 // BOTLING_DATA_DIR (session/paths.ts).
 //
 //   botlingd start            serve in the foreground until SIGTERM / SIGINT (prints "ready <socket>" once listening);
-//                             exits 75 when another server or core holds the data folder
+//                             exits 75 when another server or core holds the data folder; never imports 1.x/2.x data
+//                             from an inherited BOTLING_IMPORT_FROM / BOTLING_1X_DIR (inherited-env.ts)
 //   botlingd stop             asks the running server to stop (SIGTERM to the lock holder) and waits for it
 //   botlingd status [--json]  running or not, its pid and socket, the turns under way (from server.db), the Doctor notes
 //                             (external disk, backups missing or old, a restore) and the newest backup
@@ -18,6 +19,7 @@ import { join } from "node:path";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/store/data-dir-lock";
 import { Botlingd, BOTLINGD_VERSION, DataDirInUseError } from "./botlingd";
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
+import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
 import { botlingdPaths, PathsError, socketAnswers } from "./session";
 import { takeBackup } from "./store";
@@ -37,6 +39,9 @@ function holderPid(dataDir: string): number | null {
 }
 
 async function start(): Promise<void> {
+  // Importing 1.x/2.x data is M6's explicit step: an inherited BOTLING_IMPORT_FROM / BOTLING_1X_DIR is not acted on.
+  const ignored = dropInheritedImport(process.env);
+  if (ignored.length) process.stderr.write(`botlingd: ignoring ${ignored.join(" and ")} from the environment (Botling 3 does not import 1.x/2.x data yet)\n`);
   let daemon: Botlingd;
   try {
     daemon = await Botlingd.start({ env: process.env, outDir: join(__dirname, "..") });
