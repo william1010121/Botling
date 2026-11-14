@@ -74,6 +74,8 @@ export const AdminOp = z.discriminatedUnion("op", [
   z.strictObject({ op: z.literal("cluster.create") }),
   /** The recovery code typed back; the cluster exists only after this (M2 step 5). */
   z.strictObject({ op: z.literal("cluster.confirm"), code: RecoveryCode }),
+  /** Whether a cluster exists, and the status note while a shown recovery code waits to be typed back (M2 step 5). */
+  z.strictObject({ op: z.literal("cluster.status") }),
   /** A new pairing offer; the answer carries the link and its expiry. */
   z.strictObject({ op: z.literal("pair.offer"), name: z.string().min(1).max(100).optional(), scope: z.array(DeviceScope).min(1).max(4).optional() }),
   /** The user compared the 6-digit codes: accept (commit `Add`) or decline. */

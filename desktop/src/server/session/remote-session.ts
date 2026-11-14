@@ -2,9 +2,12 @@
 // talks to the session core through an encrypted SessionLink (src/session) over any transport that carries whole
 // binary frames in order (the loopback WebSocket of step 6, the relay of step 13, an in-memory pair in tests).
 //
-// - Handshake: botlingd is the responder, IK only here (pair mode comes with pairing, step 5). `checkPeer` only reads
-//   the roster: the claim it sees is not proven yet (anyone with the server's public key can make one), so it has no
-//   side effect; the session is registered, and its device known, only once `established` resolved.
+// - Handshake: botlingd is the responder, IK for paired devices, and `pair` mode when the host has pairing (step 5,
+//   server/pairing). `checkPeer` and `offerSecret` only read: the claim they see is not proven yet (anyone with the
+//   server's public key can make one, a replayed HS1 reaches them too), so they have no side effect; the session is
+//   registered, its device known, or its pairing offer claimed, only once `established` resolved.
+// - A `pair` session is not a front-end session: once established its frames (pair.*, ping, bye; decoded as a pairing
+//   session) go to the pairing service, which claims the offer; the session core (hello, streams, commands) never runs.
 // - Origin = the device's member id from the handshake: the hello's `deviceId` and every command's `slot.origin` must be
 //   it (anything else ends the session, `role`). No local token.
 // - Validity is checked before every frame after the handshake (a revoked device's next frame ends the session with
@@ -20,7 +23,7 @@
 //   more than `maxBuffered` waiting is dropped like a local front end that does not read; it re-attaches from cursors.
 // - Keepalive as the core does it: `ping` after 15 s of our silence, `bye{dead}` after 45 s heard nothing.
 import type { Command } from "../../contract";
-import { decodeFrame, fromBase64Url, type CmdBody, type MessageOf, type Scope, type StreamId } from "../../protocol";
+import { decodeFrame, encodeFrame, fromBase64Url, type CmdBody, type Message, type MessageOf, type Scope, type StreamId } from "../../protocol";
 import {
   BULK_FRAME_LIMIT, RELAY_BULK_FRAME_LIMIT, SessionLink,
   type Lane, type LocalStatic, type PeerClaim, type PeerDecision, type SessionEnd, type SessionInfo, type SessionLinkOptions, type SessionTransport, type TransportKind,
@@ -29,6 +32,7 @@ import { remoteReadRefusal, statedScope, type DeviceRoster } from "./remote-read
 import { errorText, MAX_BUFFERED, SessionCore, type SessionHost, type SessionOptions, type ShellRefusal } from "./session-core";
 
 const REMOTE_KIND = { local: false } as const;
+const PAIRING_KIND = { local: false, pairing: true } as const;
 /** Live frames are skipped while more than this waits in the send queue (the receiver resyncs the segment). */
 export const LIVE_SOFT_BYTES = 256 * 1024;
 const BULK_TYPES: ReadonlySet<string> = new Set(["snap", "history.page", "res", "res.part"]);
@@ -43,10 +47,22 @@ export interface RemoteRoster extends DeviceRoster {
   onChange(listener: (change: { invalidated: string[] }) => void): () => void;
 }
 
+/** The pairing service as remote sessions use it (server/pairing/service.ts). */
+export interface PairingHook {
+  /** The pending offer's secret, or null (unknown, expired, used). Read only. */
+  offerSecret(offer: string): Uint8Array | null;
+  /** The roster side of a pairing claim. Read only. */
+  checkClaim(claim: PeerClaim): PeerDecision;
+  /** An established pairing session: the service claims the offer and drives the session. */
+  open(info: SessionInfo, link: { send(message: Message): boolean; end(): void }): { onMessage(message: Message): void; closed(): void };
+}
+
 export interface RemoteHost extends SessionHost {
   roster: RemoteRoster;
   /** This server's static X25519 identity (its member id and key). */
   self: LocalStatic;
+  /** Device pairing (`pair` mode); without it only IK is taken. */
+  pairing?: PairingHook;
 }
 
 export interface RemoteSessionOptions extends SessionOptions {
@@ -71,6 +87,7 @@ export class RemoteSession extends SessionCore {
   private peerDh: Uint8Array | null = null;
   private flushing = false;
   private readonly bulkLimit: number;
+  private pair: { onMessage(message: Message): void; closed(): void } | null = null;
 
   constructor(transport: SessionTransport, transportKind: TransportKind, private readonly remote: RemoteHost, options: RemoteSessionOptions = {}) {
     super(remote, options);
@@ -82,8 +99,10 @@ export class RemoteSession extends SessionCore {
       // Before the first pairing there is no cluster and no device: any handshake fails the roster check.
       cluster: cluster ?? "0".repeat(32),
       self: remote.self,
-      modes: ["ik"],
-      checkPeer: (claim) => (cluster === null ? { ok: false, detail: "no cluster yet" } : devicePeerCheck(remote.roster, claim)),
+      modes: remote.pairing ? ["ik", "pair"] : ["ik"],
+      checkPeer: (claim) => (cluster === null ? { ok: false, detail: "no cluster yet" }
+        : claim.mode === "pair" ? remote.pairing!.checkClaim(claim) : devicePeerCheck(remote.roster, claim)),
+      ...(remote.pairing ? { offerSecret: (offer: string) => remote.pairing!.offerSecret(offer) } : {}),
     }, {
       onFrame: (plaintext) => this.onFrame(plaintext),
       onEnd: (end) => this.onLinkEnd(end),
@@ -91,8 +110,10 @@ export class RemoteSession extends SessionCore {
     this.link.established.then((info) => this.onEstablished(info), () => undefined);
   }
 
-  /** The device's member id, once the handshake proved it. */
+  /** The device's member id, once the handshake proved it (null on a pairing session). */
   get memberId(): string | null { return this.member; }
+  /** A `pair`-mode session (handled by the pairing service). */
+  get pairing(): boolean { return this.link.info?.mode === "pair"; }
   /** Plaintext bytes waiting in the link's send queue. */
   get queuedBytes(): number { return this.link.queuedBytes; }
 
@@ -102,6 +123,7 @@ export class RemoteSession extends SessionCore {
   transportClosed(): void { this.link.transportClosed(); }
 
   private onEstablished(info: SessionInfo): void {
+    if (info.mode === "pair") { this.adoptPair(info); return; }
     this.adopt(info);
     if (this.state !== "closed") this.startTimers();
   }
@@ -113,6 +135,39 @@ export class RemoteSession extends SessionCore {
     this.lastHeard = Date.now();
   }
 
+  /** A pairing session: the pairing service takes it (once). */
+  private adoptPair(info: SessionInfo): void {
+    if (this.pair || this.state === "closed" || !this.remote.pairing) return;
+    this.pair = this.remote.pairing.open(info, {
+      send: (message) => {
+        if (this.state === "closed" || !this.writable) return false;
+        const encoded = encodeFrame(message, "server", PAIRING_KIND);
+        if (!encoded.ok) { this.host.log(`pairing: cannot send ${message.t}: ${encoded.detail}`); return false; }
+        try { this.link.send("control", encoder.encode(encoded.text)); } catch { return false; }
+        this.lastSent = Date.now();
+        return true;
+      },
+      end: () => { this.endTransport(); this.close(); },
+    });
+  }
+
+  private onPairFrame(plaintext: Uint8Array): void {
+    if (!this.pair && this.link.info) this.adoptPair(this.link.info);
+    const decoded = decodeFrame(plaintext, "fe", PAIRING_KIND);
+    if (!decoded.ok) { this.send(decoded.bye); this.endTransport(); this.close(); return; }
+    try {
+      this.pair?.onMessage(decoded.message);
+    } catch (error) {
+      this.host.log(`pairing: ${decoded.message.t} failed: ${errorText(error)}`);
+    }
+  }
+
+  protected closing(): void {
+    const pair = this.pair;
+    this.pair = null;
+    pair?.closed();
+  }
+
   private onLinkEnd(end: SessionEnd): void {
     if (this.state !== "closed" && end.reason !== "closed") this.host.log(`remote session ${this.member ?? "?"}: ended (${end.reason}: ${end.detail})`);
     this.close();
@@ -120,6 +175,7 @@ export class RemoteSession extends SessionCore {
 
   private onFrame(plaintext: Uint8Array): void {
     if (this.state === "closed") return;
+    if (this.link.info?.mode === "pair") { this.lastHeard = Date.now(); this.onPairFrame(plaintext); return; }
     // The link opens frames only after the handshake: its info is set by then, even before `established` is handled.
     if (!this.member && this.link.info) this.adopt(this.link.info);
     this.lastHeard = Date.now();
@@ -217,6 +273,7 @@ export class RemoteSession extends SessionCore {
 export class RemoteSessions {
   private readonly sessions = new Set<RemoteSession>();
   private readonly pending = new Set<RemoteSession>();
+  private readonly pairs = new Set<RemoteSession>();
   private readonly unlisten: () => void;
   private closed = false;
 
@@ -226,6 +283,9 @@ export class RemoteSessions {
       for (const session of [...this.sessions]) if (session.memberId && gone.has(session.memberId)) session.bye("revoked", "this device was removed from the roster");
     });
   }
+
+  /** Pairing sessions under way (handshake finished). */
+  get pairingSessions(): RemoteSession[] { return [...this.pairs]; }
 
   /** Open sessions (handshake finished). */
   get open(): RemoteSession[] { return [...this.sessions]; }
@@ -239,8 +299,9 @@ export class RemoteSessions {
     if (this.closed) { session.close(); return session; }
     this.pending.add(session);
     session.onClosed(() => { this.pending.delete(session); this.sessions.delete(session); });
-    session.link.established.then(() => {
+    session.link.established.then((info) => {
       if (!this.pending.delete(session)) return;
+      if (info.mode === "pair") { this.pairs.add(session); session.onClosed(() => this.pairs.delete(session)); return; }
       this.sessions.add(session);
     }, () => undefined);
     return session;
@@ -253,5 +314,6 @@ export class RemoteSessions {
     this.unlisten();
     for (const session of [...this.sessions]) session.bye("closing", "botlingd is stopping");
     for (const session of [...this.pending]) session.close();
+    for (const session of [...this.pairs]) session.close();
   }
 }

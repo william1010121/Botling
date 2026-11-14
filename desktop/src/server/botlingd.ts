@@ -31,8 +31,18 @@ import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type SessionHost, type SessionOptions } from "./session";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
 import { RosterStore } from "./roster";
+import { PairingService } from "./pairing";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
+
+/** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
+export const PLACEHOLDER_TAILNET_ORIGIN = "https://tailnet-name.invalid";
+
+/** The https origin a device reaches this server at over the tailnet (set by the user once `tailscale serve` runs), or null. */
+export function tailnetOrigin(env: Record<string, string | undefined>): string | null {
+  const value = (env.BOTLING_SERVER_TAILNET_ORIGIN ?? "").trim().replace(/\/+$/, "");
+  return /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?$/.test(value) ? value : null;
+}
 
 /** The oldest Botling 3 window this server serves (fe-link compares it without the -suffix). */
 export const MIN_FE_VERSION = "3.0.0-m1";
@@ -105,6 +115,8 @@ export class Botlingd {
     readonly cluster: ClusterSetup,
     /** M2: remote device sessions (accept a transport; a revoked device's sessions end at once). */
     readonly remote: RemoteSessions,
+    /** M2 step 5: device pairing (offers, the pairing sessions, local admin requests). */
+    readonly pairing: PairingService,
   ) {}
 
   get token(): string { return this.tokenValue; }
@@ -185,6 +197,13 @@ export class Botlingd {
 
       const startedAt = Date.now();
       let daemon: Botlingd | null = null;
+      const origin = tailnetOrigin(env);
+      const pairing = new PairingService({
+        roster, cluster: clusterSetup, identity, serverName: SERVER_NAME, log,
+        addresses: () => ({ tailnet: origin ?? PLACEHOLDER_TAILNET_ORIGIN }),
+        pageUrl: () => `${origin ?? PLACEHOLDER_TAILNET_ORIGIN}/v3/`,
+        addressNote: () => (origin ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), so the link names a placeholder."),
+      });
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
@@ -200,11 +219,12 @@ export class Botlingd {
           return true;
         },
         log,
+        admin: { handle: (op) => pairing.admin(op), onEvent: (listener) => pairing.onEvent(listener) },
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
-      const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey } }, options.session);
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote);
+      const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing }, options.session);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing);
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       daemon.watchLock();
@@ -250,6 +270,7 @@ export class Botlingd {
     };
     await step("daily backups", () => this.backups?.stop());
     await step("sessions", () => this.server.close());
+    await step("pairing", () => this.pairing.close());
     await step("remote sessions", () => this.remote.close());
     this.shell.close();
     await step("core", () => this.core.shutdown());

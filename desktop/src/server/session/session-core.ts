@@ -13,12 +13,16 @@
 //   cancel                                                   → SlotEngine.cancel ("too late": the stored outcome)
 //   req                                                      → the reads the shell allows, answered by the engine (`res`)
 //   content.find / content.open, shell.done                  → local socket only (the role table refuses them elsewhere)
+//   admin                                                    → local socket only: pairing, the cluster's recovery code,
+//                                                              devices (M2 step 5, server/pairing); the session then
+//                                                              hears `admin.event`s. Requests and answers are never
+//                                                              logged (they carry the recovery code and pairing links).
 //   ping                                                     → nothing (any frame counts as heard)
 //
 // botlingd pings after 15 s of its own silence and drops a session it has not heard from for 45 s (§5.2; fe-link does
 // the same the other way).
 import { ContractError, type Command, type CommandType } from "../../contract";
-import { encodeFrame, encodeResFrames, PROTOCOL_VERSION, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type StreamId } from "../../protocol";
+import { encodeFrame, encodeResFrames, PROTOCOL_VERSION, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type StreamId } from "../../protocol";
 import { DEAD_AFTER_MS, PING_AFTER_MS } from "../../session";
 import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
@@ -46,6 +50,13 @@ export interface ContentHandler {
   handle(message: MessageOf<"content.find"> | MessageOf<"content.open">): Promise<MessageOf<"content.found"> | MessageOf<"content.file"> | MessageOf<"content.gone">>;
 }
 
+/** Pairing and devices for the local socket's `admin` requests (server/pairing). */
+export interface AdminHost {
+  /** The `res` result of one request; throws (with an optional `code`) to refuse it. */
+  handle(op: AdminOp): Promise<unknown>;
+  onEvent(listener: (event: AdminEvent) => void): () => void;
+}
+
 /** What every session shares: botlingd's parts. */
 export interface SessionHost {
   serverId: string;
@@ -66,6 +77,8 @@ export interface SessionHost {
   /** A bot the engine has whose stream is not made yet: make it (true: the stream exists now). */
   ensureBotStream(botId: string): Promise<boolean>;
   log(text: string): void;
+  /** Local `admin` requests (M2 step 5); without it they are answered with an error. */
+  admin?: AdminHost;
 }
 
 export interface SessionOptions {
@@ -98,6 +111,7 @@ export abstract class SessionCore {
   private readonly closedHandlers: Array<() => void> = [];
   /** Serializes `sub`s, so a slow one (a rewind, a new bot stream) never lets a later frame on the same stream pass it. */
   private subChain: Promise<void> = Promise.resolve();
+  private adminEvents: (() => void) | null = null;
 
   /** The session kind frames are encoded and decoded for (local socket or not). */
   protected abstract readonly kind: SessionKind;
@@ -189,6 +203,8 @@ export abstract class SessionCore {
   close(): void {
     if (this.state === "closed") return;
     this.state = "closed";
+    this.adminEvents?.();
+    this.adminEvents = null;
     for (const timer of this.timers) { clearTimeout(timer); clearInterval(timer); }
     for (const sub of this.lives.values()) sub.close();
     this.lives.clear();
@@ -230,6 +246,7 @@ export abstract class SessionCore {
       case "cancel": void this.cancel(message); return;
       case "req": void this.req(message); return;
       case "content.find": case "content.open": void this.content(message); return;
+      case "admin": void this.admin(message); return;
       case "shell.done": this.host.shell.answer(this.shellWindow(), message); return;
       case "ping": return;
       case "bye": this.close(); return;
@@ -338,6 +355,24 @@ export abstract class SessionCore {
 
   /** True when this cancel is not this session's to send (it was answered with a `bye`). */
   protected cancelRefusal(_message: MessageOf<"cancel">): boolean { return false; }
+
+  /** A local admin request (the role table keeps `admin` off every other session; checked here again). */
+  private async admin(message: MessageOf<"admin">): Promise<void> {
+    const admin = this.host.admin;
+    if (!this.kind.local || !admin) {
+      this.send({ t: "res", req: message.req, ok: false, error: { code: "forbidden", message: "admin requests are taken only on the local socket of a server that pairs" } }, "admin");
+      return;
+    }
+    this.adminEvents ??= admin.onEvent((event) => { this.send({ t: "admin.event", event }, "admin.event"); });
+    try {
+      const result = await admin.handle(message.op);
+      this.send({ t: "res", req: message.req, ok: true, result: result ?? null }, `admin ${message.op.op}`);
+    } catch (error) {
+      const code = (error as { code?: unknown })?.code;
+      const text = `${typeof code === "string" ? `${code}: ` : ""}${errorText(error)}`;
+      this.send({ t: "res", req: message.req, ok: false, error: { code: "conflict", message: text.slice(0, 2_000) } }, `admin ${message.op.op}`);
+    }
+  }
 
   private async req(message: MessageOf<"req">): Promise<void> {
     const cmd = message.cmd as Command;
