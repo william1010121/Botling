@@ -123,6 +123,10 @@ describe("M3 step 4: server pairing between two botlingd", () => {
     // N shows S's fingerprint once S dials.
     expect((await join1.line(/Its fingerprint: (\S.*)$/m))[1]).toBe(sFingerprint);
     expect(nFingerprint).not.toBe(sFingerprint);
+    // Review R1 (interim): N's fingerprint is confirmed with "yes" before the code is asked for.
+    expect((await add.line(/^Does "B" show exactly this fingerprint for itself: (\S.*)\? Type yes/m))[1]).toBe(nFingerprint);
+    expect(add.out).not.toMatch(/^Code shown on "B":/m);
+    add.type("yes");
 
     // A malformed code uses no try; three wrong ones decline.
     let mark = add.out.length;
@@ -161,6 +165,12 @@ describe("M3 step 4: server pairing between two botlingd", () => {
     expect(await late.exit()).toBe(1);
     expect(late.out).toMatch(/Cannot pair that machine: .*expired/i);
     expect(pb.count("open")).toBe(opened);
+    // Review R1 (interim): --expect-fingerprint naming another server refuses before anything is dialled.
+    const viaProxy = joinLink({ ...offer, addresses: [`ws://127.0.0.1:${pb.port}/v3/ws`] });
+    const wrongFp = new CliRun(a, ["add-machine", viaProxy, "--expect-fingerprint", "AAAA AAAA AAAA AAAA AAAA AAAA AA"]);
+    expect(await wrongFp.exit()).toBe(1);
+    expect(wrongFp.out).toMatch(/not the expected one; nothing was dialled/);
+    expect(pb.count("open")).toBe(opened);
     join2.child.kill("SIGTERM");
     await join2.exit();
 
@@ -189,7 +199,9 @@ describe("M3 step 4: server pairing between two botlingd", () => {
 
     // The welcome (the roster and the VAPID key: the one big frame S sends) is dropped; then the connection is cut.
     pb.drop("up", 1, (payload) => payload.length > 1_500);
-    const first = new CliRun(a, ["add-machine", usedLink]);
+    // Unattended form (review R1 interim): the expected fingerprint on the command line instead of "yes".
+    const first = new CliRun(a, ["add-machine", usedLink, "--expect-fingerprint", (await join3.line(/^Fingerprint:\s+(\S.*)$/m))[1]]);
+    await first.line(/^"B" has the expected fingerprint\./m);
     await first.line(/^Code shown on "B":/m);
     first.type(code);
     await until(() => pb.count("drop", "up") > 0, { timeout: 20_000, what: "welcome dropped" });
@@ -203,6 +215,8 @@ describe("M3 step 4: server pairing between two botlingd", () => {
     expect(join3.child.exitCode).toBeNull(); // N still waits: the offer was given back
 
     const retry = new CliRun(a, ["add-machine", usedLink]);
+    await retry.line(/^Does "B" show exactly this fingerprint/m);
+    retry.type("yes");
     await retry.line(/^Code shown on "B":/m);
     retry.type(code);
     await retry.line(/^Added "B" \(\S+\) to cluster \S+\./m, 0, 30_000);

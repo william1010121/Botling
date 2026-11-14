@@ -22,9 +22,10 @@
 //                             code (5 min, single use), the 6-digit code to compare, and the device's ack
 //   botlingd join [--name <name>]
 //                             (M3 step 4) offers this server to join a cluster: prints its fingerprint, a code and a link
-//   botlingd add-machine [<link>]
+//   botlingd add-machine [<link>] [--expect-fingerprint <fp>]
 //                             (M3 step 4) pairs the server whose `join` printed that link into this server's cluster;
-//                             with no argument it reads the link from stdin (keeps its secret out of the process list)
+//                             with no argument it reads the link from stdin (keeps its secret out of the process list);
+//                             asks "yes" that N shows the fingerprint it prints, or checks --expect-fingerprint
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
@@ -288,11 +289,13 @@ async function main(argv: string[]): Promise<void> {
     }
     case "add-machine": {
       // With no argument the link is read from stdin (its secret then stays out of the process list).
-      const link = rest.find((arg) => !arg.startsWith("--"));
+      const expectFingerprint = flag(rest, "--expect-fingerprint");
+      if (rest.includes("--expect-fingerprint") && expectFingerprint === undefined) fail("--expect-fingerprint needs the fingerprint botlingd join printed on the other machine", 2);
+      const link = rest.find((arg, at) => !arg.startsWith("--") && rest[at - 1] !== "--expect-fingerprint");
       const client = await adminSession(paths);
       const io = stdinIo();
       let code = 1;
-      try { code = await addMachineCommand(client, io, link); } finally { io.close(); client.close(); }
+      try { code = await addMachineCommand(client, io, link, expectFingerprint !== undefined ? { expectFingerprint } : {}); } finally { io.close(); client.close(); }
       process.exit(code);
       return;
     }
