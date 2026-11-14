@@ -9,7 +9,7 @@
 // Pure TypeScript: no Electron, no core, no Node built-ins; time comes from an injected clock.
 import type { Command } from "../contract";
 import {
-  decodeFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, slotKey,
+  decodeFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, ResAssembler, slotKey,
   type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type Slot, type StreamId, type Target,
 } from "../protocol";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";
@@ -124,6 +124,8 @@ export class FeLink {
   private readonly receiver = new LiveReceiver();
   private readonly liveStale = new Set<string>();
   private readonly requests = new Map<string, PendingRequest>();
+  /** `res` answers too large for one frame, joined from their `res.part`s. */
+  private readonly resParts = new ResAssembler();
   private readonly visibleAt = new Map<string, number>();
   private reqCounter = 0;
   private started = false;
@@ -370,6 +372,7 @@ export class FeLink {
       case "cmd.result": this.onResult(message); return;
       case "cmd.retry": this.onRetry(session, message); return;
       case "res": case "history.page": this.onAnswer(message); return;
+      case "res.part": this.onResPart(message); return;
       case "content.found": case "content.file": case "content.gone": this.onContentAnswer(message); return;
       case "bye":
         if (message.reason === "version") this.updateRequired(session, "a newer version");
@@ -597,6 +600,19 @@ export class FeLink {
     pending.resolve(message as never);
   }
 
+  /** A part of a `res` over the frame limit: the answer once its last part is in; parts no request waits for are dropped. */
+  private onResPart(part: MessageOf<"res.part">): void {
+    const pending = this.requests.get(part.req);
+    if (!pending || pending.kind !== "res") { this.resParts.drop(part.req); return; }
+    const joined = this.resParts.push(part, { local: this.local });
+    if (!joined.ok) {
+      this.requests.delete(part.req);
+      pending.reject(Object.assign(new Error(`fe-link: ${joined.detail}`), { wire: { code: "internal", message: joined.detail.slice(0, 2_000) } }));
+      return;
+    }
+    if (joined.message) this.onAnswer(joined.message);
+  }
+
   private onAnswer(message: MessageOf<"res"> | MessageOf<"history.page">): void {
     const pending = this.requests.get(message.req);
     if (!pending || pending.kind !== message.t) return;
@@ -627,6 +643,7 @@ export class FeLink {
     this.clearTimer("ping");
     this.clearTimer("dead");
     for (const [req, pending] of this.requests) { this.requests.delete(req); pending.reject(new Error("fe-link: the session ended")); }
+    this.resParts.drop();
     this.cursors.detach();
     for (const stream of this.subs) {
       const view = this.receiver.view(stream);

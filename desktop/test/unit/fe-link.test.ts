@@ -466,3 +466,30 @@ describe("live buffer (§9.4)", () => {
 function outcomesOf(events: FeLinkEvent[], slot: Parameters<typeof slotKey>[0]) {
   return events.filter((e): e is Extract<FeLinkEvent, { type: "outcome" }> => e.type === "outcome" && slotKey(e.item.slot) === slotKey(slot)).map((e) => e.item.outcome);
 }
+
+describe("a req answer too large for one frame (M1 demo bug 1: plugins.web)", () => {
+  it("is joined from its res.parts into the request's result; parts out of order fail the request instead of hanging it", async () => {
+    const { encodeResFrames } = await import("../../src/protocol");
+    const server = new FakeServer();
+    const clock = new FakeClock();
+    const { link } = await openLink(server, new MemoryFeStorage(), clock);
+    await flush();
+    const result = { specs: [{ name: "botling.note", source: "x".repeat(700_000) }, { name: "ccb-latex", source: "é\"".repeat(150_000) }] };
+    let reorder = false;
+    server.onMessage = (message) => {
+      if (message.t !== "req") return;
+      const frames = encodeResFrames({ t: "res", req: message.req, ok: true, result }, "server", { local: true });
+      if (!frames.ok) throw new Error(frames.detail);
+      const parts = frames.texts.map((text) => JSON.parse(text));
+      if (reorder) parts.reverse();
+      for (const part of parts) server.send(part);
+    };
+    const answer = link.request({ type: "plugins.web" });
+    await flush();
+    await expect(answer).resolves.toEqual(result);
+    reorder = true;
+    const broken = link.request({ type: "plugins.web" }).then(() => null, (error: Error) => error);
+    await flush();
+    expect((await broken)?.message).toMatch(/out of order/);
+  });
+});

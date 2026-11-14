@@ -136,6 +136,17 @@ export const Res = z.union([
   msg("res", { req: ReqId, ok: z.literal(true), result: z.unknown() }),
   msg("res", { req: ReqId, ok: z.literal(false), error: WireError }),
 ]);
+/** The most UTF-16 units of a `res` one `res.part` carries: even all escaped (6 bytes each) it fits a frame. */
+export const RES_PART_CHARS = 32 * 1024;
+/** The most parts one answer is cut into (a `res` of at most 64 Mi characters of JSON). */
+export const RES_PARTS_MAX = 2048;
+/**
+ * A `res` too large for one frame (a v1 addition, demo fix): its JSON text cut into `n` parts, sent in order (`i` from
+ * 0). The front end joins the texts and reads them as the `res` frame they are (same `req`); nothing else is in them.
+ */
+export const ResPart = msg("res.part", {
+  req: ReqId, i: z.number().int().min(0).max(RES_PARTS_MAX - 1), n: z.number().int().min(2).max(RES_PARTS_MAX), text: z.string().min(1).max(RES_PART_CHARS),
+}).refine((part) => part.i < part.n, { message: "i is below n", path: ["i"] });
 
 // ---------------------------------------------------------------------------------------------
 // Content, local part (§9A.4): Electron main asks the server for the pinned file of a reference
@@ -278,7 +289,7 @@ export const MESSAGES = {
   batch: Batch, snap: Snap, reset: Reset, stale: Stale, peer: Peer,
   live: Live, "live.resync": LiveResync,
   cmd: Cmd, cancel: Cancel, held: Held, "cmd.result": CmdResult, "cmd.retry": CmdRetry,
-  req: Req, res: Res,
+  req: Req, res: Res, "res.part": ResPart,
   "content.find": ContentFind, "content.found": ContentFound, "content.open": ContentOpen, "content.file": ContentFile, "content.gone": ContentGone,
   "content.get": ContentGet, "content.meta": ContentMeta, "content.chunk": ContentChunk, "content.credit": ContentCredit, "content.cancel": ContentCancel,
   "content.ticket": ContentTicketReq, "content.granted": ContentGranted, "content.put": ContentPut, "content.stored": ContentStored,

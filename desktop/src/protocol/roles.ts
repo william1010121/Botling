@@ -85,6 +85,8 @@ export const ROLE_TABLE: Readonly<Record<string, RoleRule>> = {
   // Reads with no slot (§11.1): the local socket, and remote front ends within the read allowlist (M2).
   req: rule(true, false, false),
   res: rule(false, true, false),
+  // A `res` over the frame limit, cut into parts (demo fix): wherever a `res` may go.
+  "res.part": rule(false, true, false),
   // Local socket only (M2): pairing and revoking from the desktop window or the CLI (§4.3).
   admin: rule(true, false, false, { localOnly: true }),
   "admin.event": rule(false, true, false, { localOnly: true }),
