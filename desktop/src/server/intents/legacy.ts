@@ -43,9 +43,14 @@ export class LegacyApply {
     const scope = options.scope ?? body.scope;
     if (!scope) throw new TypeError("legacy: a command needs the scope its accepting server stated");
     const hash = cmdHash({ cmd: body.cmd, scope, basis: body.basis });
-    const admission = await this.scope.submit((tx) => admit(tx, this.log, { slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, hash }));
+    const admission = await this.scope.submit((tx) => {
+      const admitted = admit(tx, this.log, { slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, hash });
+      // A command the owner refuses (a device without the scope, or no longer valid) never runs its handler (M2).
+      const denied = admitted.kind === "ready" && !admitted.cancelled && this.slots().denies(tx, { slot: body.slot, cmd: body.cmd, scope }) !== null;
+      return { ...admitted, denied };
+    });
     if (admission.kind === "hold") return { status: "dropped" };
-    if (admission.kind !== "ready" || admission.cancelled) return this.slots().receive(body, options);
+    if (admission.kind !== "ready" || admission.cancelled || admission.denied) return this.slots().receive(body, options);
     const key = keyOf(body.slot, hash);
     let run = this.running.get(key);
     // What the handler emits waits for the command that stores the receipt (TxScope.onEnter writes it first).

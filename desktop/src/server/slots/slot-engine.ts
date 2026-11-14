@@ -127,6 +127,14 @@ export class SlotEngine {
     return total;
   }
 
+  /**
+   * The scope and origin check alone (§11.3 "origin invalid or scope forbids"), read-only. Legacy apply runs it before a
+   * command's handler, so a command the owner would refuse never runs its handler (the slot is then decided as usual).
+   */
+  denies(tx: Db, input: { slot: Slot; cmd: Command; scope: Scope }): { reason: "scope" | "origin"; detail?: string } | null {
+    return this.authorize(tx, input);
+  }
+
   /** The owner's `next` for a queue (`welcome.next`, §11.4). */
   next(tx: Db, queue: QueueRef): number {
     return readNext(tx, queue);

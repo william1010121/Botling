@@ -28,11 +28,10 @@ import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
-import { botlingdPaths, refuse2xData, SessionServer, writeToken, type BotlingdPaths, type SessionOptions } from "./session";
+import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type SessionHost, type SessionOptions } from "./session";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
 import { RosterStore } from "./roster";
 import { ShellBridge } from "./shell-bridge";
-import { localOnly } from "./slots";
 import { openServerStore, type ServerStore } from "./store";
 
 /** The oldest Botling 3 window this server serves (fe-link compares it without the -suffix). */
@@ -104,6 +103,8 @@ export class Botlingd {
     /** M2: the roster (validity of devices and servers) and the cluster setup of the first pairing. */
     readonly roster: RosterStore,
     readonly cluster: ClusterSetup,
+    /** M2: remote device sessions (accept a transport; a revoked device's sessions end at once). */
+    readonly remote: RemoteSessions,
   ) {}
 
   get token(): string { return this.tokenValue; }
@@ -171,7 +172,7 @@ export class Botlingd {
         store, dataDir: paths.dataDir, serverId, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: (text) => log(`content: ${text}`),
       });
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: localOnly, serverEvents: "all", mirrorBotUpdates: true, content,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(roster), serverEvents: "all", mirrorBotUpdates: true, content,
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
       });
@@ -184,7 +185,7 @@ export class Botlingd {
 
       const startedAt = Date.now();
       let daemon: Botlingd | null = null;
-      const server = new SessionServer(paths.socket, {
+      const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
         hub, live, runtime, engine, content, shell,
@@ -199,8 +200,11 @@ export class Botlingd {
           return true;
         },
         log,
-      }, options.session);
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup);
+      };
+      const server = new SessionServer(paths.socket, sessionHost, options.session);
+      // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
+      const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey } }, options.session);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote);
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       daemon.watchLock();
@@ -246,6 +250,7 @@ export class Botlingd {
     };
     await step("daily backups", () => this.backups?.stop());
     await step("sessions", () => this.server.close());
+    await step("remote sessions", () => this.remote.close());
     this.shell.close();
     await step("core", () => this.core.shutdown());
     // What the core emitted while stopping is written, then the worker stops.
