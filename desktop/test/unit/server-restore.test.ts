@@ -32,6 +32,7 @@ import { unixDial } from "../../src/main-v3/unix-dial";
 import { NOTICE_ID } from "../../src/main-v3/renderer-adapter";
 import { decodeFrame, encodeFrame, type Entry, type Message, type MessageOf, type Slot } from "../../src/protocol";
 import { WorkspaceStore } from "../../src/renderer/store";
+import { readEntries } from "../../src/server/log";
 import { openReaderDb } from "../../src/server/store/connection";
 import { BotlingdProcess, botlingdEnv, botlingdScript, MAIN, ScriptClient, testRoot } from "../botlingd-harness";
 import { desktop, until } from "../helpers";
@@ -261,19 +262,32 @@ describe("backup / restore end to end (plain Node, no window, fake engine)", () 
     expect((await again.wait(isResult(slot(4)), "slot 4")).outcome.kind).toBe("applied");
     await until(() => finishedWith(again.entriesOf(BOT), "delta"), { timeout: 60_000, what: "delta reply" });
 
+    // The whole log of the new incarnation, read from server.db: the window reattaches by itself and may apply its line
+    // (and the floor's skip) before this script's bot snap, which then holds them inside the snap, not in a batch.
+    const logAfter = (): Entry[] => {
+      const db = openReaderDb(join(dataDir, "server.db"));
+      try {
+        return readEntries(db, BOT, keptSeq + 1, { maxEntries: 10_000, maxBytes: Number.MAX_SAFE_INTEGER }).entries;
+      } finally {
+        db.close();
+      }
+    };
     // The window reattached by itself: its waiting line applied exactly once; the stale frames were dropped.
     await until(() => (resetSeen && newSnapSeen) || null, { timeout: 30_000, what: "window: reset and new snap" });
     await until(() => w.link().pending().every((item) => item.state !== "waiting" && item.state !== "held") || null, { timeout: 30_000, what: "window: nothing waiting" });
-    await until(() => finishedWith(again.entriesOf(BOT), "wthree"), { timeout: 60_000, what: "wthree reply" });
+    await until(() => finishedWith(logAfter(), "wthree"), { timeout: 60_000, what: "wthree reply" });
     expect(w.injected.map((m) => m.t)).toEqual(["batch", "cmd.result", "batch", "cmd.result"]);
     expect(w.received.some(isRetry(windowSlot))).toBe(true);
-    const entriesAfter0 = () => again.entriesOf(BOT);
+    const scriptSeen = again.entriesOf(BOT);
+    const entriesAfter = logAfter();
+    expect(entriesAfter.every((entry) => entry.logId === botReset.logId)).toBe(true);
+    // What the script took from its snap on is the same log: no entry it holds differs from server.db.
+    for (const entry of scriptSeen) expect(entriesAfter.find((e) => e.seq === entry.seq)?.hash).toBe(entry.hash);
     const windowResults = w.received.filter(isResult(windowSlot));
     expect(windowResults.length).toBeGreaterThan(0);
     expect(windowResults.every((m) => m.logId === botReset.logId && m.outcome.kind === "applied")).toBe(true);
     // The window's floor skipped its own lost second slot.
-    expect(entriesAfter0().some((e) => e.kind === "cmd.skipped" && (e.body as { origin: string }).origin === "desktop")).toBe(true);
-    const entriesAfter = again.entriesOf(BOT);
+    expect(entriesAfter.some((e) => e.kind === "cmd.skipped" && (e.body as { origin: string }).origin === "desktop")).toBe(true);
     expect(userLines(entriesAfter, "wthree")).toHaveLength(1);
     expect(userLines(entriesAfter, "charlie")).toHaveLength(1);
     expect(userLines(entriesAfter, "bravo")).toHaveLength(0); // gone with the restore, never applied again

@@ -139,6 +139,21 @@ describe("a finished line naming a video, a picture and a PDF", () => {
     expect(after.filter((row) => Number(row.seq) === entry.seq).map((row) => row.id).sort()).toEqual([sha(data.pdf), sha(data.picture), sha(data.video)].sort());
     for (const e of readyEntries) expect(after.some((row) => Number(row.seq) === e.seq && row.id === (e.body as { ref: { id: string } }).ref.id)).toBe(true);
     expect(rows("SELECT count(*) AS n FROM content WHERE id LIKE 'pending:%'")[0]!.n).toBe(0);
+    // A front end that got the pending id from content.find just before the hash was ready still opens it: the same
+    // bytes, now as the content id, with the proof of reference the content id holds for the line's entry.
+    const late = await svc.open({ t: "content.open", req: "o2", owner: svc.serverId, id: found.ref!.id, variant: "original", entry: found.ref!.entry });
+    expect(late).toMatchObject({ t: "content.file", req: "o2", id: found.ref!.id, type: "video/mp4" });
+    if (late.t === "content.file") {
+      expect(readFileSync(late.path).equals(data.video)).toBe(true);
+      expect(late.sig.size).toBe(data.video.length);
+    }
+    expect(rows("SELECT id FROM content_aliases WHERE pending = ?", found.ref!.id).map((row) => row.id)).toEqual([sha(data.video)]);
+    // The alias carries no proof of its own: another entry, or another line's pending id, is still refused.
+    expect(await svc.open({ t: "content.open", req: "o3", owner: svc.serverId, id: found.ref!.id, variant: "original", entry: { stream: STREAM, seq: readyEntries[0]!.seq + 100 } }))
+      .toMatchObject({ t: "content.gone", reason: "denied" });
+    expect(await svc.open({ t: "content.open", req: "o4", owner: svc.serverId, id: "pending:0000", variant: "original", entry: found.ref!.entry }))
+      .toMatchObject({ t: "content.gone", reason: "denied" });
+    expect(svc.find({ t: "content.find", req: "f2", botId: BOT, line: "m1", url: `file://${files.video}` }).ref).toMatchObject({ id: sha(data.video), state: "ready", entry: found.ref!.entry });
     const chunkCount = rows("SELECT chunkHashes FROM content WHERE id = ?", sha(data.video)).map((row) => Buffer.from(String(row.chunkHashes), "base64").length / 32);
     expect(chunkCount).toEqual([4]);
     await svc.close();

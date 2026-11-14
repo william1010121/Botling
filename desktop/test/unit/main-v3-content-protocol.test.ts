@@ -283,7 +283,8 @@ describe("chat media through the server's references (ContentProtocol + ContentS
     expect((await protocol.handle(new Request(contentUrl(owner, id, one.entry)), "pane")).status).toBe(404);
   });
 
-  it("asks again when the hash became ready between find and open", async () => {
+  /** A line whose hash waits for `release`, and a link that delivers the first open of its pending id just after the hash moved it. */
+  async function racingLine(name: string, refusePending: boolean) {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     class SlowHasher extends Hasher {
@@ -291,21 +292,38 @@ describe("chat media through the server's references (ContentProtocol + ContentS
     }
     const hasher = new SlowHasher();
     await open({ hasher });
-    const v = join(scratch, "v.mp4");
-    writeFileSync(v, bytes("v", 100_000));
-    const { ready } = await post({ id: "m1", text: `![v](${v})` });
+    const file = join(scratch, name);
+    writeFileSync(file, bytes(name, 100_000));
+    const { ready } = await post({ id: "m1", text: `![v](${file})` });
     const racing: ContentLink = {
       content: async (message) => {
-        // The first open arrives just after the line's rows moved from the pending id to the content id.
-        if (message.t === "content.open" && message.id.startsWith("pending:")) { release(); await ready; }
+        if (message.t === "content.open" && message.id.startsWith("pending:")) {
+          release(); await ready;
+          // A server without the pending → content id alias (an older one, another owner) refuses the old pending id.
+          if (refusePending) { asked.push(message.t); return { t: "content.gone", req: "r0", id: message.id, reason: "denied" }; }
+        }
         return link.content(message);
       },
     };
-    const protocol = new ContentProtocol({ link: () => racing, grants: new FileGrants() });
-    const r = chatRequest(`file://${v}`, "m1");
+    return { file, hasher, protocol: new ContentProtocol({ link: () => racing, grants: new FileGrants() }) };
+  }
+
+  it("the hash became ready between find and open: the server still opens the pending id", async () => {
+    const { file, hasher, protocol } = await racingLine("v.mp4", false);
+    const r = chatRequest(`file://${file}`, "m1");
     const response = (await protocol.chatAttachment(r.url, r.request))!;
     expect(response.status).toBe(200);
-    expect(Buffer.from(await response.arrayBuffer()).equals(readFileSync(v))).toBe(true);
+    expect(Buffer.from(await response.arrayBuffer()).equals(readFileSync(file))).toBe(true);
+    expect(asked).toEqual(["content.find", "content.open"]);
+    await hasher.close();
+  });
+
+  it("asks again when a server refuses the pending id the hash replaced between find and open", async () => {
+    const { file, hasher, protocol } = await racingLine("w.mp4", true);
+    const r = chatRequest(`file://${file}`, "m1");
+    const response = (await protocol.chatAttachment(r.url, r.request))!;
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer()).equals(readFileSync(file))).toBe(true);
     expect(asked).toEqual(["content.find", "content.open", "content.find", "content.open"]);
     await hasher.close();
   });

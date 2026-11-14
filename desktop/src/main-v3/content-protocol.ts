@@ -240,7 +240,8 @@ export class ContentProtocol {
     }
     if (opened.t === "content.file") return serveContentFile(opened, request, { csp: CHAT_MEDIA_CSP });
     if (opened.t !== "content.gone") return goneResponse("deleted");
-    // The hash became ready between find and open: the line's rows moved to the content id. Ask once more.
+    // The hash became ready between find and open and the server refused the old pending id (botlingd resolves it
+    // through content_aliases; a server without them does not): the line's rows moved to the content id. Ask once more.
     if (again && ref.id.startsWith("pending:") && (opened.reason === "denied" || opened.reason === "deleted")) {
       try {
         const found = await this.ask(link, { t: "content.find", ...again });

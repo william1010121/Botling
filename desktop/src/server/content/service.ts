@@ -11,7 +11,9 @@
 //      line never shows bytes other than those it finished with). Then the pin is hashed in the worker thread
 //      (hasher.ts) and one command moves the line's rows from the pending id to the `sha256:` id and appends
 //      `content.ready{botId, lineId, url, ref}` (with its own `content_refs` row). The window may open the pending row
-//      meanwhile: served with the signature check of a `pin: path` file.
+//      meanwhile: served with the signature check of a `pin: path` file. The same command records
+//      `content_aliases (pending, id)`, so a pending id a front end got from `content.find` just before still opens
+//      (as the content id, whose `content_refs` now hold the line's entry).
 // `content.find` / `content.open` (local socket) are answered by `handle`. `recover` runs once at start.
 //
 // A reference serves the bytes of its hash or nothing (§9A.3): a `pin: path` file whose stat signature no longer matches
@@ -20,7 +22,7 @@ import { realpathSync, rmSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CONTENT_CHUNK_BYTES, type ContentRef, type Entry, type MessageOf, type StreamId } from "../../protocol";
-import { appendEntries, readStream } from "../log";
+import { appendEntries, inRead, readStream } from "../log";
 import type { Command, Db, SqlRow } from "../store";
 import { contentTypeOf, namedFiles, pathOfFileRef, type LineLike, type NamedFile } from "./files";
 import { CHUNK_BYTES, Hasher, type HashResult } from "./hasher";
@@ -290,6 +292,8 @@ export class ContentService {
     db.prepare("DELETE FROM content_refs WHERE id = ?").run(pendingId);
     const names = db.prepare("SELECT stream, seq, line, path FROM content_names WHERE id = ? ORDER BY stream, seq").all(pendingId);
     db.prepare("UPDATE content_names SET id = ? WHERE id = ?").run(id, pendingId);
+    // A front end may still hold the pending id (`content.find` answered it a moment ago): it keeps resolving.
+    db.prepare("INSERT OR REPLACE INTO content_aliases (pending, id) VALUES (?, ?)").run(pendingId, id);
     const kept = readRow(db, id)!;
     const entries: Entry[] = [];
     const insertRef = db.prepare("INSERT OR IGNORE INTO content_refs (id, stream, seq) VALUES (?, ?, ?)");
@@ -336,8 +340,11 @@ export class ContentService {
   find(message: MessageOf<"content.find">): MessageOf<"content.found"> {
     const path = pathOfFileRef(message.url);
     const stream = `bot:${message.botId}`;
-    const name = path ? this.db().prepare("SELECT seq, id FROM content_names WHERE stream = ? AND line = ? AND path = ?").get(stream, message.line, path) : undefined;
-    const row = name ? readRow(this.db(), String(name.id)) : null;
+    const db = this.db();
+    const { name, row } = inRead(db, () => {
+      const name = path ? db.prepare("SELECT seq, id FROM content_names WHERE stream = ? AND line = ? AND path = ?").get(stream, message.line, path) : undefined;
+      return { name, row: name ? readRow(db, String(name.id)) : null };
+    });
     if (!name || !row) return { t: "content.found", req: message.req, ref: null };
     return {
       t: "content.found", req: message.req,
@@ -350,10 +357,15 @@ export class ContentService {
     const gone = (reason: MessageOf<"content.gone">["reason"]): MessageOf<"content.gone"> => ({ t: "content.gone", req: message.req, id: message.id, reason });
     if (message.owner !== this.serverId) return gone("offline"); // M1: one server; another owner's content is M3
     const db = this.db();
-    const referenced = db.prepare("SELECT 1 FROM content_refs WHERE id = ? AND stream = ? AND seq = ?").get(message.id, message.entry.stream, message.entry.seq);
-    if (!referenced) return gone("denied");
+    // One read: the hash's command may move a pending id's rows to its content id between two statements.
+    const read = inRead(db, () => {
+      const id = this.resolve(db, message.id);
+      const referenced = !!db.prepare("SELECT 1 FROM content_refs WHERE id = ? AND stream = ? AND seq = ?").get(id, message.entry.stream, message.entry.seq);
+      return { referenced, row: referenced ? readRow(db, id) : null };
+    });
+    if (!read.referenced) return gone("denied");
     if (message.variant !== "original") return gone("deleted"); // variants (posters, previews) come in M2
-    const row = readRow(db, message.id);
+    const row = read.row;
     if (!row) return gone("deleted");
     if (row.state === "changed") return gone("changed");
     if (row.state === "gone") return gone("deleted");
@@ -367,7 +379,19 @@ export class ContentService {
       return gone("deleted");
     }
     const chunks = row.pin === "path" && row.chunkHashes && row.chunkHashes.length <= CHUNK_HASHES_TEXT_LIMIT && CHUNK_BYTES === CONTENT_CHUNK_BYTES ? row.chunkHashes : undefined;
-    return { t: "content.file", req: message.req, id: row.id, path: row.path, type: row.type, pin: row.pin, sig: row.sig!, ...(chunks ? { chunkHashes: chunks } : {}) };
+    // `id` is the one asked for (as in `content.gone`), also when a pending id resolved to its content id.
+    return { t: "content.file", req: message.req, id: message.id, path: row.path, type: row.type, pin: row.pin, sig: row.sig!, ...(chunks ? { chunkHashes: chunks } : {}) };
+  }
+
+  /**
+   * The id a request names, as stored now: a `pending:` id whose hash is ready (its row moved to the content id, in the
+   * same transaction as `content_aliases`) is its content id; any other id is itself. Opening the pending id then serves
+   * the content id's file, with the proof of reference the content id holds for the same entry.
+   */
+  private resolve(db: Db, id: string): string {
+    if (!id.startsWith("pending:")) return id;
+    const alias = db.prepare("SELECT id FROM content_aliases WHERE pending = ?").get(id);
+    return alias ? String(alias.id) : id;
   }
 
   // -------------------------------------------------------------------------------------------
