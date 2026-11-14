@@ -109,7 +109,7 @@ describe("schema and migrations (v1 §7.3)", () => {
     try {
       const tables = reader.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
       expect(tables).toEqual([
-        "bots", "cancels", "cards", "chunk_cache", "content", "content_names", "content_refs", "effects", "entries", "forwardq", "fulltext", "grants",
+        "bots", "cancels", "cards", "chunk_cache", "content", "content_aliases", "content_names", "content_refs", "effects", "entries", "forwardq", "fulltext", "grants",
         "lists", "media_jobs", "messages", "meta", "myorigins", "prefs", "receipts", "retired", "roster", "rows", "slots", "streams",
         "variants",
       ]);

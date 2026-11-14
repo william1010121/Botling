@@ -135,6 +135,15 @@ const V5 = `
 CREATE INDEX roster_by_member ON roster (member, kind);
 `;
 
+// v6 (src/server/content): a `pending:<hex>` id stays resolvable after its hash is ready. `content.find` may hand a
+// front end the pending id a moment before the hash's command moves the line's rows to the `sha256:` id; that command
+// records `content_aliases (pending, id)` in the same transaction, and `content.open` of the pending id answers for the
+// content id (with the same proof of reference, now held by the content id).
+const V6 = `
+CREATE TABLE content_aliases (pending TEXT PRIMARY KEY, id TEXT NOT NULL) WITHOUT ROWID;
+CREATE INDEX content_aliases_by_id ON content_aliases (id);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -173,6 +182,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "roster (src/server/roster): statements by member",
     up(db) {
       db.exec(V5);
+    },
+  },
+  {
+    version: 6,
+    description: "content path (src/server/content): pending ids resolve to the content id once hashed (content_aliases)",
+    up(db) {
+      db.exec(V6);
     },
   },
 ];
