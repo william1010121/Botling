@@ -67,6 +67,8 @@ export interface PairOptions {
   /** Called with the membership before the ack is sent; must resolve once it is durable. */
   save: (record: DeviceRecord, dhPkcs8: Uint8Array) => Promise<void>;
   WebSocketImpl?: typeof WebSocket;
+  /** The transport the handshake names: `relay` when WebSocketImpl is the relay socket (M2 step 13). */
+  transport?: "tailnet" | "relay";
 }
 
 const DECLINED: Record<string, string> = {
@@ -120,7 +122,7 @@ export function pair(options: PairOptions): PairAttempt {
     if (link.state === "open") link.send("control", encoder.encode(encoded.text));
   };
   const link: SessionLink = SessionLink.initiate(transport, {
-    mode: "pair", transport: "tailnet", cluster: offer.cluster,
+    mode: "pair", transport: options.transport ?? "tailnet", cluster: offer.cluster,
     self: { memberId: keys.memberId, dhPub: keys.dh.publicKey, dhKey: keys.dh.privateKey },
     responder: { memberId: offer.server, dhPub: fromBase64Url(offer.keys.dh)! },
     pair: { offer: offer.offer, secret: fromBase64Url(offer.secret)! },
@@ -142,6 +144,7 @@ export function pair(options: PairOptions): PairAttempt {
         dhKey: keys.dh.privateKey, dhPub: keys.dh.publicKey, cluster: offer.cluster,
         server: { memberId: offer.server, name: offer.name, dhPub: fromBase64Url(offer.keys.dh)! },
         addId, scope: [...(add.scope ?? [])], pairedAt: Date.now(),
+        ...(offer.addresses.relay ? { relay: { url: offer.addresses.relay.url, room: offer.addresses.relay.room } } : {}),
       };
       // Durable first: an ack the server hears means this page can dial with these keys after any crash.
       await options.save(record, keys.dhPkcs8);

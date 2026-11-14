@@ -28,7 +28,7 @@
 //   more than `maxBuffered` waiting is dropped like a local front end that does not read; it re-attaches from cursors.
 // - Keepalive as the core does it: `ping` after 15 s of our silence, `bye{dead}` after 45 s heard nothing.
 import type { Command } from "../../contract";
-import { decodeFrame, encodeFrame, fromBase64Url, type CmdBody, type Message, type MessageOf, type Scope, type StreamId } from "../../protocol";
+import { decodeFrame, encodeChunkFrame, encodeFrame, fromBase64Url, type CmdBody, type Message, type MessageOf, type Scope, type StreamId, type WireMessage } from "../../protocol";
 import {
   BULK_FRAME_LIMIT, RELAY_BULK_FRAME_LIMIT, SessionLink,
   type Lane, type LocalStatic, type PeerClaim, type PeerDecision, type SessionEnd, type SessionInfo, type SessionLinkOptions, type SessionTransport, type TransportKind,
@@ -70,7 +70,35 @@ export interface RemoteHost extends SessionHost {
   pairing?: PairingHook;
   /** Content over the tailnet (step 9): lookups and URL tickets. */
   remoteContent?: RemoteContentHook;
+  /**
+   * Content read over the session itself (M2 step 13: the relay path, where the page cannot reach `/v3/c/`): the owner
+   * side of server/content/peer-content.ts, which checks the entry's reference and the device (named by the session,
+   * never by the frame) on every get and at every chunk, with credit windows.
+   */
+  deviceContent?: DeviceContentHook;
 }
+
+/** server/content/peer-content.ts `PeerContentOwner` as a device session uses it. */
+export interface DeviceContentHook {
+  onMessage(sink: DeviceContentSink, message: WireMessage): boolean;
+  sessionClosed(sink: DeviceContentSink): void;
+}
+
+/** One device session as the content owner sees it (peer-content.ts `ContentSink`). */
+export interface DeviceContentSink {
+  readonly peer: string | null;
+  readonly state: string;
+  sendWire(message: WireMessage): boolean;
+  sendChunk(message: MessageOf<"content.chunk">): boolean;
+  readonly contentFrame: number;
+  readonly contentWindow: number;
+}
+
+/** Content chunk and window per transport (v1 §9A.4, §20): 64 KiB / 4 MiB direct, 128 KiB / 1 MiB on the relay. */
+export const DEVICE_CONTENT = {
+  direct: { frame: 64 * 1024, window: 4 * 1024 * 1024 },
+  relay: { frame: 128 * 1024, window: 1024 * 1024 },
+} as const;
 
 /** server/content/remote.ts `RemoteContent` as the session uses it. */
 export interface RemoteContentHook {
@@ -101,11 +129,14 @@ export class RemoteSession extends SessionCore {
   private flushing = false;
   private readonly bulkLimit: number;
   private pair: { onMessage(message: Message): void; closed(): void } | null = null;
+  private contentSink: DeviceContentSink | null = null;
+  private readonly contentSizes: { frame: number; window: number };
 
   constructor(transport: SessionTransport, transportKind: TransportKind, private readonly remote: RemoteHost, options: RemoteSessionOptions = {}) {
     super(remote, options);
     const cluster = remote.roster.clusterId;
     this.bulkLimit = options.link?.bulkFrameLimit ?? (transportKind === "relay" ? RELAY_BULK_FRAME_LIMIT : BULK_FRAME_LIMIT);
+    this.contentSizes = transportKind === "relay" ? DEVICE_CONTENT.relay : DEVICE_CONTENT.direct;
     this.link = SessionLink.respond(transport, {
       ...options.link,
       transport: transportKind,
@@ -179,6 +210,30 @@ export class RemoteSession extends SessionCore {
     const pair = this.pair;
     this.pair = null;
     pair?.closed();
+    if (this.contentSink) this.remote.deviceContent?.sessionClosed(this.contentSink);
+  }
+
+  /** This session as the content owner's sink (made once). */
+  private sink(): DeviceContentSink {
+    if (this.contentSink) return this.contentSink;
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const session = this;
+    this.contentSink = {
+      get peer() { return session.member; },
+      get state() { return session.state === "open" && session.link.state === "open" && session.writable ? "open" : "closed"; },
+      sendWire: (message) => this.sendWire(message),
+      sendChunk: (message) => {
+        if (this.state !== "open" || !this.writable) return false;
+        const encoded = encodeChunkFrame(message, "server", REMOTE_KIND);
+        if (!encoded.ok) { this.host.log(`session: cannot send content.chunk: ${encoded.detail}`); return false; }
+        try { this.link.send("bulk", encoded.bytes); } catch { return false; }
+        this.lastSent = Date.now();
+        return true;
+      },
+      contentFrame: this.contentSizes.frame,
+      contentWindow: this.contentSizes.window,
+    };
+    return this.contentSink;
   }
 
   private onLinkEnd(end: SessionEnd): void {
@@ -206,6 +261,20 @@ export class RemoteSession extends SessionCore {
       const refused = this.frameRefusal();
       if (refused) { this.bye(refused.reason, refused.detail); return; }
       void this.remoteContent(message);
+      return;
+    }
+    if (this.state === "open" && (message.t === "content.get" || message.t === "content.credit" || message.t === "content.cancel")) {
+      const refused = this.frameRefusal();
+      if (refused) { this.bye(refused.reason, refused.detail); return; }
+      const hook = this.remote.deviceContent;
+      const member = this.member;
+      if (!hook || !member) {
+        if (message.t === "content.get") this.send({ t: "content.gone", req: message.req, id: message.id, reason: "offline" } as Message);
+        return;
+      }
+      // The device a get reads for is this session's, whatever the frame says (a device never states `device`).
+      const wire = (message.t === "content.get" ? { ...message, device: member } : message) as WireMessage;
+      hook.onMessage(this.sink(), wire);
       return;
     }
     super.onMessage(message);
@@ -240,7 +309,9 @@ export class RemoteSession extends SessionCore {
       this.close();
       return false;
     }
-    if (t === "live" && queued > LIVE_SOFT_BYTES) return false;
+    // Live frames go on the control lane, ahead of waiting bulk frames (content chunks on a paced relay path): they back
+    // off on what waits ahead of them, not on content queued behind them.
+    if (t === "live" && this.link.queuedControlBytes > LIVE_SOFT_BYTES) return false;
     const frames = texts.map((text) => encoder.encode(text));
     const lane: Lane = BULK_TYPES.has(t) && frames.every((frame) => frame.length <= this.bulkLimit) ? "bulk" : "control";
     try {

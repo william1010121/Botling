@@ -19,6 +19,7 @@ export class LaneQueue {
   private readonly control: Uint8Array[] = [];
   private readonly bulk: Uint8Array[] = [];
   private bytes = 0;
+  private controlBytes_ = 0;
 
   constructor(readonly bulkFrameLimit = BULK_FRAME_LIMIT) {}
 
@@ -28,12 +29,13 @@ export class LaneQueue {
     if (lane === "bulk" && plaintext.length > this.bulkFrameLimit) throw new SessionError("malformed", `a bulk frame is at most ${this.bulkFrameLimit} bytes`);
     (lane === "control" ? this.control : this.bulk).push(plaintext);
     this.bytes += plaintext.length;
+    if (lane === "control") this.controlBytes_ += plaintext.length;
   }
 
   /** The next frame to seal: control first. */
   shift(): { lane: Lane; plaintext: Uint8Array } | undefined {
     const control = this.control.shift();
-    if (control) { this.bytes -= control.length; return { lane: "control", plaintext: control }; }
+    if (control) { this.bytes -= control.length; this.controlBytes_ -= control.length; return { lane: "control", plaintext: control }; }
     const bulk = this.bulk.shift();
     if (bulk) { this.bytes -= bulk.length; return { lane: "bulk", plaintext: bulk }; }
     return undefined;
@@ -42,10 +44,13 @@ export class LaneQueue {
   get length(): number { return this.control.length + this.bulk.length; }
   /** Plaintext bytes waiting (for back-pressure). */
   get queuedBytes(): number { return this.bytes; }
+  /** Plaintext bytes waiting on the control lane (they leave before any bulk frame). */
+  get queuedControlBytes(): number { return this.controlBytes_; }
 
   clear(): void {
     this.control.length = 0;
     this.bulk.length = 0;
     this.bytes = 0;
+    this.controlBytes_ = 0;
   }
 }

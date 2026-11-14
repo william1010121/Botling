@@ -18,7 +18,7 @@ import type { Sealer } from "../core/plugins/secrets";
 import { Core } from "../core/server";
 import { MAIN_BOT_ID } from "../core/store/records";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "../core/store/data-dir-lock";
-import type { StreamId } from "../protocol";
+import { fromBase64Url, type StreamId } from "../protocol";
 import { backupCheckMs, DailyBackups } from "./backup-schedule";
 import { BotlingdEngine } from "./botlingd-engine";
 import { DbBotStores } from "./botstore";
@@ -38,7 +38,8 @@ import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type SessionHost, type SessionOptions } from "./session";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
 import { Gossip, PrefsStore, RosterStore } from "./roster";
-import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, LoopbackListener } from "./net";
+import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
+import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter, type PeerSession } from "./peer";
 import { ShellBridge } from "./shell-bridge";
@@ -165,6 +166,8 @@ export class Botlingd {
 
   /** M2 step 9: `/v3/c/…` and the sessions' content lookups and tickets. */
   remoteContent: RemoteContent | null = null;
+  /** M2 step 13: this server's room on the relay (null: the relay path is off). */
+  relay: RelayConnector | null = null;
   /** M2 step 10: the media jobs (variants). */
   media: MediaJobs | null = null;
   /** M3 step 10: peers' content read through this server (attached side), and this server's content read by peers. */
@@ -279,9 +282,12 @@ export class Botlingd {
       const startedAt = Date.now();
       let daemon: Botlingd | null = null;
       const origin = tailnetOrigin(env);
+      // M2 step 13: the relay path (off unless BOTLING_SERVER_RELAY_URL names a relay): botlingd's own room, named in offers.
+      const relayAt = relayUrl(env);
+      const relayRoom = relayAt ? await (async () => { const key = loadRelayRoomKey(join(paths.dataDir, RELAY_KEY_FILE)); return { url: relayAt, key, room: await relayRoomOf(key) }; })() : null;
       const pairing = new PairingService({
         roster, cluster: clusterSetup, identity, serverName: SERVER_NAME, log,
-        addresses: () => ({ tailnet: origin ?? PLACEHOLDER_TAILNET_ORIGIN }),
+        addresses: () => ({ tailnet: origin ?? PLACEHOLDER_TAILNET_ORIGIN, ...(relayRoom ? { relay: { url: relayRoom.url, room: relayRoom.room } } : {}) }),
         pageUrl: () => `${origin ?? PLACEHOLDER_TAILNET_ORIGIN}/v3/`,
         addressNote: () => (origin ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), so the link names a placeholder."),
       });
@@ -392,7 +398,7 @@ export class Botlingd {
       const peerContentOwner = new PeerContentOwner({ service: content, roster, log, corruptId: testCorruptContent(env) });
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
       const remoteContent = new RemoteContent({ service: content, tickets, roster, log, peer: peerContent });
-      const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent }, options.session);
+      const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner }, options.session);
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
       const peers: PeerSessions = new PeerSessions({
         roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log,
@@ -417,8 +423,36 @@ export class Botlingd {
       daemon.chunkCache = chunkCache;
       daemon.media = media;
       daemon.tokenValue = writeToken(paths.token);
+      if (relayRoom) {
+        // Join tokens of the valid devices (derived from the static DH with each, cached by key) and of pending offers.
+        const deviceTokens = new Map<string, string>();
+        const allowList = async () => {
+          const offers = pairing.relayOffers().map((offer) => ({ ...offer, secret: new Uint8Array(offer.secret) }));
+          const tokens: Array<{ h: string; exp?: number }> = [];
+          for (const offer of offers) { tokens.push({ h: await relayTokenHash(await relayPairToken(offer.offer, offer.secret)), exp: offer.expiresAt }); offer.secret.fill(0); }
+          const view = roster.view;
+          for (const member of view.valid) {
+            const device = roster.device(member);
+            const dhPub = device ? fromBase64Url(device.keys.dh) : null;
+            if (!device || !dhPub) continue;
+            const key = `${member} ${device.keys.dh}`;
+            let hash = deviceTokens.get(key);
+            if (!hash) {
+              try { hash = await relayTokenHash(await relayDeviceToken(member, identity.dhKey, dhPub)); } catch { continue; }
+              deviceTokens.set(key, hash);
+            }
+            tokens.push({ h: hash });
+          }
+          return tokens;
+        };
+        const relay = new RelayConnector({ url: relayRoom.url, roomKey: relayRoom.key, sessions: remote, allowList, log, ...relayTestOptions(env) });
+        roster.onChange(() => { void relay.refreshAllow(); });
+        pairing.onOffersChanged(() => { void relay.refreshAllow(); });
+        daemon.relay = relay;
+      }
       await server.listen();
-      await daemon.listen(port, options.outDir, origin);
+      await daemon.listen(port, options.outDir, origin, relayRoom ? [relayConnectOrigin(relayRoom.url)] : []);
+      await daemon.relay?.start();
       await daemon.writeOwnProfile((at) => advertisedPort(env, at));
       peers.start();
       daemon.watchLock();
@@ -441,7 +475,7 @@ export class Botlingd {
    * The loopback listener on 127.0.0.1:`port` (null = off). A port already taken does not stop the server: the local
    * socket keeps working, the log and `botlingd status` say why devices cannot reach it.
    */
-  private async listen(port: number | null, outDir: string, origin: string | null): Promise<void> {
+  private async listen(port: number | null, outDir: string, origin: string | null, connectOrigins: string[] = []): Promise<void> {
     const file = join(this.paths.dataDir, LISTEN_FILE);
     rmSync(file, { force: true });
     if (port === null) { this.log("listener: off (BOTLING_SERVER_PORT=off)"); return; }
@@ -450,6 +484,7 @@ export class Botlingd {
       this.listener = await LoopbackListener.start({
         port, remote: new SessionRouter(this.remote, this.peers, undefined, this.join), pageDir: defaultPageDir(outDir), origins: () => (origin ? [origin] : []), log: this.log,
         ...(this.remoteContent ? { content: this.remoteContent } : {}),
+        ...(connectOrigins.length ? { connectOrigins: () => connectOrigins } : {}),
       });
       state = { pid: process.pid, address: LISTEN_HOST, port: this.listener.port };
     } catch (error) {
@@ -490,6 +525,7 @@ export class Botlingd {
     await step("pairing", () => this.pairing.close());
     await step("server pairing", () => this.join.close());
     await step("remote sessions", () => this.remote.close());
+    await step("relay", () => this.relay?.closeAfterDrain(1_000));
     await step("peer sessions", () => this.peers.close());
     this.passThrough.close();
     this.passOwner.close();

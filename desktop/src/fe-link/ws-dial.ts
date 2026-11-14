@@ -21,8 +21,10 @@ export interface WsDialOptions {
   /** The `/v3/ws` URL (ws: or wss:), read at each dial. */
   url: () => string;
   identity: DeviceIdentity;
-  /** Default: the global WebSocket. */
+  /** Default: the global WebSocket. A relay path passes `relaySocketImpl(...)` (relay-socket.ts) here. */
   WebSocketImpl?: typeof WebSocket;
+  /** The transport the handshake names (bound into the transcript): `relay` through the relay, else `tailnet`. */
+  transport?: "tailnet" | "relay";
   /** Told how each session ended (a `roster` end after a revoke means "pair this device again"). */
   onEnd?: (end: SessionEnd) => void;
   /** Told of every session frame received (diagnostics: frame rates). */
@@ -75,7 +77,7 @@ export function wsDial(options: WsDialOptions): Dial {
     };
     const identity = options.identity;
     const link = SessionLink.initiate(transport, {
-      mode: "ik", transport: "tailnet", cluster: identity.cluster,
+      mode: "ik", transport: options.transport ?? "tailnet", cluster: identity.cluster,
       self: { memberId: identity.memberId, dhPub: identity.dh.publicKey, dhKey: identity.dh.privateKey },
       responder: { memberId: identity.server.memberId, dhPub: identity.server.dhPub },
     }, {

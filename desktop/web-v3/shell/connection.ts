@@ -1,7 +1,8 @@
 // The shell's outbox wiring: the front-end link (src/fe-link) over IndexedDB (`botling3-fe`, D45) and an encrypted
 // WebSocket to this page's own server (`/v3/ws`), with the connection words the shell shows (protocol v1 §13.3) and a
 // small diagnostics record the headless harness reads (live frame times, every delivery state an item went through).
-import { DEFAULT_IDB_NAME, FeLink, IdbFeStorage, systemClock, wsDial, wsUrlFor, type ConnModel, type PendingView } from "../../src/fe-link";
+import { DEFAULT_IDB_NAME, FeLink, IdbFeStorage, relaySocketImpl, systemClock, wsDial, wsUrlFor, type ConnModel, type PendingView } from "../../src/fe-link";
+import { relayDeviceToken } from "../../src/session";
 import type { LinkPort } from "../../src/main-v3/renderer-adapter";
 import type { DeviceRecord } from "./device-store";
 import { newPlayerDiagnostics, type MediaDiagnostics, type PlayerDiagnostics } from "./media";
@@ -37,11 +38,27 @@ export interface Connection {
   close(): Promise<void>;
 }
 
+/** How the page reaches its server: its own origin's `/v3/ws`, or the server's room on the relay (M2 step 13). */
+export type DialPath = "direct" | "relay";
+
+/** The path the page was asked for (`?via=relay` / `?via=tailnet` in its address), or null. */
+export function askedPath(search: string): "relay" | "tailnet" | null {
+  const via = new URLSearchParams(search).get("via");
+  return via === "relay" || via === "tailnet" ? via : null;
+}
+
 /** Opens the link for a paired device (not started: the renderer mounts first, then `link.start()`). */
-export async function openConnection(device: DeviceRecord, diag: Diagnostics, pageUrl: string): Promise<Connection> {
+export async function openConnection(device: DeviceRecord, diag: Diagnostics, pageUrl: string, path: DialPath = "direct"): Promise<Connection> {
   const storage = await IdbFeStorage.open({ name: DEFAULT_IDB_NAME });
+  const relay = path === "relay" ? device.relay : undefined;
+  // The relay join token: from the static DH with the server's roster key (src/session/relay-wire.ts), computed once.
+  let token: Promise<string> | null = null;
   const dial = wsDial({
     url: () => wsUrlFor(pageUrl),
+    ...(relay ? {
+      transport: "relay" as const,
+      WebSocketImpl: relaySocketImpl(() => ({ url: relay.url, room: relay.room, token: (token ??= relayDeviceToken(device.memberId, device.dhKey, device.server.dhPub)) })),
+    } : {}),
     identity: { cluster: device.cluster, memberId: device.memberId, dh: { privateKey: device.dhKey, publicKey: device.dhPub }, server: { memberId: device.server.memberId, dhPub: device.server.dhPub } },
     onEnd: (end) => { diag.ends.push(`${end.reason}: ${end.detail}`.slice(0, 200)); if (diag.ends.length > 200) diag.ends.shift(); },
     onFrame: () => { diag.frames += 1; },

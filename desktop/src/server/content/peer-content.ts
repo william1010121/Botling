@@ -683,6 +683,22 @@ export interface PeerContentOwnerOptions {
   corruptId?: string | null;
 }
 
+/**
+ * Who the owner side serves: a peer server's session, or (M2 step 13) a device's own session through a `DeviceContentSink`
+ * (remote-session.ts), which names its device on every get and its transport's frame size and window (relay: 128 KiB
+ * chunks, a 1 MiB window; v1 §9A.4).
+ */
+export interface ContentSink {
+  readonly peer: string | null;
+  readonly state: string;
+  sendWire(message: WireMessage): boolean;
+  sendChunk(message: MessageOf<"content.chunk">): boolean;
+  /** Bytes per `content.chunk` (default PEER_CONTENT_FRAME). */
+  readonly contentFrame?: number;
+  /** Bytes a get may send before any credit (default PEER_CONTENT_WINDOW). */
+  readonly contentWindow?: number;
+}
+
 interface Serving {
   req: string;
   credit: number;
@@ -691,7 +707,7 @@ interface Serving {
 }
 
 export class PeerContentOwner {
-  private readonly serving = new Map<PeerSession, Map<string, Serving>>();
+  private readonly serving = new Map<ContentSink, Map<string, Serving>>();
   private readonly variantHashes = new Map<string, Promise<string | null>>();
   private readonly log: (line: string) => void;
   /** Counters (tests, status). */
@@ -707,7 +723,7 @@ export class PeerContentOwner {
     return !!found && (found.scope ?? []).includes("read");
   }
 
-  onMessage(session: PeerSession, message: WireMessage): boolean {
+  onMessage(session: ContentSink, message: WireMessage): boolean {
     switch (message.t) {
       case "content.locate": {
         const m = message as MessageOf<"content.locate">;
@@ -722,7 +738,7 @@ export class PeerContentOwner {
         if (!map) { map = new Map(); this.serving.set(session, map); }
         const prior = map.get(m.req);
         if (prior) { prior.cancelled = true; prior.wake?.(); }
-        const serving: Serving = { req: m.req, credit: PEER_CONTENT_WINDOW, cancelled: false, wake: null };
+        const serving: Serving = { req: m.req, credit: session.contentWindow ?? PEER_CONTENT_WINDOW, cancelled: false, wake: null };
         map.set(m.req, serving);
         this.counts.gets++;
         void this.serve(session, m, serving).catch((error) => {
@@ -748,7 +764,7 @@ export class PeerContentOwner {
     }
   }
 
-  sessionClosed(session: PeerSession): void {
+  sessionClosed(session: ContentSink): void {
     const map = this.serving.get(session);
     if (!map) return;
     for (const serving of map.values()) { serving.cancelled = true; serving.wake?.(); }
@@ -769,7 +785,7 @@ export class PeerContentOwner {
     return hashes;
   }
 
-  private async serve(session: PeerSession, m: MessageOf<"content.get">, serving: Serving): Promise<void> {
+  private async serve(session: ContentSink, m: MessageOf<"content.get">, serving: Serving): Promise<void> {
     const gone = (reason: GoneReason) => { this.counts.refused++; session.sendWire({ t: "content.gone", req: m.req, id: m.id, reason } as WireMessage); };
     if (!this.readable(m.device)) { gone("denied"); return; }
     const opened = await this.options.service.open({ t: "content.open", req: m.req, owner: m.owner, id: m.id, variant: m.variant, entry: m.entry }, { remote: true });
@@ -810,7 +826,7 @@ export class PeerContentOwner {
         }
         const stop = Math.min(end, chunkStart + length);
         while (pos < stop) {
-          const piece = Math.min(PEER_CONTENT_FRAME, stop - pos);
+          const piece = Math.min(session.contentFrame ?? PEER_CONTENT_FRAME, stop - pos);
           while (!serving.cancelled && serving.credit < piece && session.state === "open") await new Promise<void>((resolve) => { serving.wake = resolve; });
           serving.wake = null;
           if (serving.cancelled || session.state !== "open") return;

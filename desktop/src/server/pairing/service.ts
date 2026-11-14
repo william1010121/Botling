@@ -128,6 +128,7 @@ export class PairingService {
   private readonly listeners = new Set<(event: AdminEvent) => void>();
   private readonly now: () => number;
   private closedAll = false;
+  private readonly offerListeners = new Set<() => void>();
 
   constructor(private readonly options: PairingOptions) {
     this.now = options.now ?? Date.now;
@@ -141,6 +142,24 @@ export class PairingService {
     const offer = this.offers.get(offerId);
     if (!offer || this.expired(offer)) return null;
     return offer.secret;
+  }
+
+  /**
+   * The pending offers' ids, secrets and expiry (M2 step 13): botlingd's relay connector derives each offer's join token
+   * from them (src/session/relay-wire.ts) so a device holding the link can reach the room. Memory only, like the offers.
+   */
+  relayOffers(): Array<{ offer: string; secret: Uint8Array; expiresAt: number }> {
+    return [...this.offers.values()].filter((offer) => !this.expired(offer)).map((offer) => ({ offer: offer.id, secret: offer.secret, expiresAt: offer.expiresAt }));
+  }
+
+  /** Told whenever an offer is made or retired. */
+  onOffersChanged(listener: () => void): () => void {
+    this.offerListeners.add(listener);
+    return () => this.offerListeners.delete(listener);
+  }
+
+  private offersChanged(): void {
+    for (const listener of this.offerListeners) { try { listener(); } catch { /* a listener's problem */ } }
   }
 
   /** The roster side of a pairing claim: a cluster exists, and the key is not a revoked device's or a server's. */
@@ -230,6 +249,7 @@ export class PairingService {
     entry.timer = setTimeout(() => this.expire(entry), Math.max(0, expiresAt - this.now()) + 5);
     entry.timer.unref?.();
     this.offers.set(id, entry);
+    this.offersChanged();
     this.options.log?.(`pairing: offer ${id} made (until ${new Date(expiresAt).toISOString()})`);
     const note = this.options.addressNote?.() ?? null;
     return { offer: id, link, expiresAt, clusterId, ...(note ? { note } : {}) };
@@ -414,8 +434,9 @@ export class PairingService {
   private retire(offer: Offer): void {
     if (offer.timer) clearTimeout(offer.timer);
     offer.timer = null;
-    offer.secret.fill(0);
     this.offers.delete(offer.id);
+    this.offersChanged();
+    offer.secret.fill(0);
   }
 
   private expire(offer: Offer): void {
