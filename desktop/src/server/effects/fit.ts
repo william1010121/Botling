@@ -7,8 +7,8 @@
 // `message.added`/`message.updated` (§8.1) and every reader (snap, history, the renderer) shows one line per id; a split
 // would need a new entry kind and reassembly on every front end. The cut text is what the log, snap and history show;
 // the engine always got the whole text (a user's message goes to the core from the effect row, never from the entry),
-// the core keeps the whole line in its own store, and the 2.x exports (`chat.json`) are written from the core's lines,
-// so bots read the whole text. A later step can offer the whole text on demand through the content path (§9A).
+// the core keeps the whole line in its own store, and the 2.x exports (`chat.json`, src/server/exports) are written
+// from the core's own records (the bot store's `rows`, never these entries), so bots read the whole text. A later step can offer the whole text on demand through the content path (§9A).
 //
 // Steps (`turn.steps`, a line's `steps`) are cut from the oldest end: the newest steps are what a reader needs.
 import { canonicalJson } from "../../protocol";
