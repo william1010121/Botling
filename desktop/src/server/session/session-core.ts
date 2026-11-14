@@ -92,6 +92,23 @@ export interface SessionHost {
   admin?: AdminHost;
   /** M3 step 7: peer servers' states and their `srv:` tables from this server's copies (none on a lone server). */
   tables?: SessionTables;
+  /** M3 step 9: commands and cancels for targets a peer owns go to the forward queue (none on a lone server). */
+  forward?: SessionForward;
+}
+
+/**
+ * Forwarding as a front end's session uses it (server/forward). A target a peer owns is committed into `forwardq` and
+ * answered `held{slot, at: this server}`; this server never answers it with an outcome of its own (D58, F3). The
+ * owner's `cmd.result` / `cmd.retry` / `cancel.noted` come back through `attach` to every open session of the origin.
+ */
+export interface SessionForward {
+  /** The peer that owns `target`, or null when this server decides it (also every target on a lone server). */
+  ownerOf(target: string): string | null;
+  /** Commits the command (scope stated) for `owner`; resolves after the commit. */
+  commit(envelope: CmdBody, owner: string): Promise<void>;
+  /** Commits the cancel for `owner`; resolves after the commit. */
+  cancel(slot: MessageOf<"cancel">["slot"], owner: string): Promise<void>;
+  attach(origin: string, sink: (message: Message) => boolean): () => void;
 }
 
 /** What a front end's session reads of peer servers and their tables (server/replica/peer-tables.ts, server/peer). */
@@ -141,6 +158,8 @@ export abstract class SessionCore {
   /** M3 step 7: feeds of peers' tables this front end subscribed to, and its listener of peer states. */
   private readonly tableFeeds = new Map<string, { close(): void }>();
   private peerEvents: (() => void) | null = null;
+  /** M3 step 9: this session hears the owners' answers to its forwarded slots. */
+  private relayOff: (() => void) | null = null;
   /** Settles when the session closes (a cancel waiting on a running handler stops waiting for this session). */
   private readonly closedSignal: Promise<void>;
 
@@ -247,6 +266,8 @@ export abstract class SessionCore {
     this.adminEvents = null;
     this.peerEvents?.();
     this.peerEvents = null;
+    this.relayOff?.();
+    this.relayOff = null;
     for (const feed of this.tableFeeds.values()) feed.close();
     this.tableFeeds.clear();
     for (const timer of this.timers) { clearTimeout(timer); clearInterval(timer); }
@@ -287,7 +308,7 @@ export abstract class SessionCore {
       case "history": this.history(message); return;
       case "live.resync": this.gate.resync(message.stream); return;
       case "cmd": { const { t: _t, ...body } = message; this.queueCmd(body as CmdBody); return; }
-      case "cancel": void this.cancel(message); return;
+      case "cancel": this.queueCancel(message); return;
       case "req": void this.req(message); return;
       case "content.find": case "content.open": void this.content(message); return;
       case "admin": void this.admin(message); return;
@@ -329,6 +350,7 @@ export abstract class SessionCore {
     } as MessageOf<"welcome">);
     const tables = this.host.tables;
     if (tables) this.peerEvents = tables.onPeer((peer) => { this.send({ t: "peer", serverId: peer.id, state: peer.state, since: peer.since } as MessageOf<"peer">); });
+    if (this.host.forward) this.relayOff = this.host.forward.attach(hello.deviceId, (message) => this.send(message));
     this.opened(hello);
     // `cursors` / `want`: fe-link sends a `sub` for each after the welcome (§13.1); taking both would send two snaps.
     for (const body of hello.outbox) this.queueCmd(body);
@@ -406,15 +428,38 @@ export abstract class SessionCore {
    * it. Different queues do not wait for each other (a slow legacy handler holds up only its own queue).
    */
   private queueCmd(body: CmdBody): void {
-    const key = queueKey(body.slot);
+    this.chain(body.slot, () => this.cmd(body), `cmd ${body.cmd.type} (slot ${body.slot.n})`);
+  }
+
+  /** Runs `work` after everything queued before it for the same (origin, originEpoch, target); unsettled ends the session. */
+  private chain(slot: CmdBody["slot"], work: () => Promise<void>, what: string): void {
+    const key = queueKey(slot);
     const run = (this.cmdChains.get(key) ?? Promise.resolve())
-      .then(() => this.cmd(body))
+      .then(work)
       .catch((error) => {
-        this.host.log(`session: cmd ${body.cmd.type} (slot ${body.slot.n}) not settled: ${errorText(error)}`);
-        this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) was not settled: ${errorText(error)}`);
+        this.host.log(`session: ${what} not settled: ${errorText(error)}`);
+        this.unsettled(`${what} was not settled: ${errorText(error)}`);
       });
     this.cmdChains.set(key, run);
     void run.then(() => { if (this.cmdChains.get(key) === run) this.cmdChains.delete(key); });
+  }
+
+  /** The peer that owns a target (M3 step 9), or null: this server decides it (always on a lone server). */
+  private peerOwner(target: string): string | null {
+    return this.host.forward?.ownerOf(target) ?? null;
+  }
+
+  /**
+   * A cancel. For a target a peer owns it is committed into `fwdcancels` after the queue's earlier commands, so the
+   * forwarder sends it after its row (D59); the owner's answer comes back through the relay. Otherwise as M2.
+   */
+  private queueCancel(message: MessageOf<"cancel">): void {
+    if (this.cancelRefusal(message)) return;
+    const forward = this.host.forward;
+    let owner: string | null;
+    try { owner = this.peerOwner(message.slot.target); } catch (error) { this.unsettled(`cancel of slot ${message.slot.n}: no owner (${errorText(error)})`); return; }
+    if (!forward || owner === null) { void this.cancel(message, true); return; }
+    this.chain(message.slot, async () => { if (this.state !== "closed") await forward.cancel(message.slot, owner); }, `cancel of slot ${message.slot.n}`);
   }
 
   protected async cmd(body: CmdBody): Promise<void> {
@@ -425,6 +470,13 @@ export abstract class SessionCore {
     const reply = (message: Message) => { this.send(message, body.cmd.type); };
     const route = routeOf(body.cmd.type).kind;
     try {
+      // M3 step 9: a target a peer owns is committed into the forward queue, then `held` (never before the commit).
+      const owner = this.peerOwner(body.slot.target);
+      if (owner !== null) {
+        await this.host.forward!.commit({ ...body, scope }, owner);
+        if (this.state === "open") this.send({ t: "held", slot: body.slot, at: this.host.serverId } as MessageOf<"held">, body.cmd.type);
+        return;
+      }
       const status = route === "intent" || route === "legacy"
         ? await this.host.runtime.receive(body, { scope, reply })
         // A read or app command sent as a command: the core's own handler, under a slot like any legacy command.
@@ -440,8 +492,8 @@ export abstract class SessionCore {
     }
   }
 
-  private async cancel(message: MessageOf<"cancel">): Promise<void> {
-    if (this.cancelRefusal(message)) return;
+  private async cancel(message: MessageOf<"cancel">, checked = false): Promise<void> {
+    if (!checked && this.cancelRefusal(message)) return;
     try {
       // A cancel for a slot whose handler already began waits for that outcome (SlotEngine.cancel); a session that
       // closes meanwhile stops waiting (its front end sends the cancel again on its next session).
