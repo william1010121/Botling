@@ -27,7 +27,7 @@
 import {
   decodeWireFrame, encodeWireFrame, fromBase64Url, JOIN_CODE_TRIES, JOIN_OFFER_TTL_MS, JOIN_ROSTER_LIMIT, JoinCode, joinCodeFromBytes,
   joinLink, joinOfferExpired, memberFingerprint, memberIdFromKey, parseJoinLink, PROTOCOL_VERSION, toBase64Url,
-  type AdminEvent, type AdminOp, type JoinOffer, type SignedStatement, type WireMessage, type WireMessageOf,
+  type AdminEvent, type AdminOp, type JoinOffer, type PrefRow, type SignedStatement, type WireMessage, type WireMessageOf,
 } from "../../protocol";
 import { signPairProof, verifyPairProof, SessionLink, type LocalStatic, type PeerClaim, type PeerDecision, type SessionEnd, type SessionInfo, type SessionTransport } from "../../session";
 import { ensureVapidKeys, readVapidKeys, vapidFilePath, writeVapidKeys } from "../identity/vapid";
@@ -64,6 +64,8 @@ export interface ServerJoinOptions {
   /** The WebSocket URLs a join offer names (this server's loopback `/v3/ws`); empty while there is no listener. */
   joinAddresses: () => string[];
   connector?: PeerConnector;
+  /** M3 step 5: the cluster preferences, handed to N in the welcome (§4.5 step 3) and merged there after the join. */
+  prefs?: { rows(): PrefRow[]; merge(rows: readonly unknown[]): Promise<PrefRow[]> };
   now?: () => number;
   log?: (line: string) => void;
   helloTimeoutMs?: number;
@@ -373,6 +375,9 @@ export class ServerJoin {
     }
     offer.state = "used";
     this.retire(offer);
+    if (welcome.prefs.length && this.options.prefs) {
+      try { await this.options.prefs.merge(welcome.prefs); } catch (error) { this.log(`server pairing: the welcome's preferences were not kept (${String((error as Error)?.message ?? error)}); gossip brings them`); }
+    }
     this.log(`server pairing: joined cluster ${joined.clusterId} through server ${sponsor.member} (Add ${joined.addId})`);
     channel.send({ t: "join.done", add: joined.add });
     channel.finish();
@@ -527,7 +532,7 @@ export class ServerJoin {
       return { ok: false, reason: "refused", detail: `the roster holds more than ${JOIN_ROSTER_LIMIT} statements (gossip carries the rest from M3 step 5)` };
     }
     const add = statements.find((item) => item.id === added.addId)!.statement;
-    attempt.channel.send({ t: "join.welcome", add, roster: statements.map((item) => item.statement), vapid, prefs: [] });
+    attempt.channel.send({ t: "join.welcome", add, roster: statements.map((item) => item.statement), vapid, prefs: (this.options.prefs?.rows() ?? []).slice(0, 500) });
     const done = await this.expect(attempt, this.options.replyTimeoutMs ?? JOIN_REPLY_TIMEOUT_MS);
     if (!done || done.t !== "join.done") {
       this.dropAttempt(attempt, done ? `${done.t} instead of join.done` : "no join.done");

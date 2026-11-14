@@ -112,6 +112,11 @@ export class TestServer {
   stderr = "";
   /** How many times it was started. */
   starts = 0;
+  /**
+   * The port it names in its own address Profile (BOTLING_SERVER_ADVERTISE_PORT, M3 step 5): set by `cluster.proxy`
+   * to the first proxy in front of it, so peers that learn its address by gossip dial through that proxy. Read at start.
+   */
+  advertisePort: number | null = null;
   private closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }> = Promise.resolve({ code: null, signal: null });
   private readonly clients: ScriptClient[] = [];
 
@@ -123,7 +128,7 @@ export class TestServer {
   get pid(): number | null { return this.child?.pid ?? null; }
   get alive(): boolean { return !!this.child && this.child.exitCode === null && this.child.signalCode === null; }
   /** The environment it is started with (tests check that nothing of this process leaks in). */
-  get environment(): Record<string, string> { return botlingdEnv(this.dataDir, { [LISTEN_PORT_ENV]: String(this.port), BOTLING_SERVER_BACKUP_CHECK_MS: "0", ...this.env }); }
+  get environment(): Record<string, string> { return botlingdEnv(this.dataDir, { [LISTEN_PORT_ENV]: String(this.port), BOTLING_SERVER_BACKUP_CHECK_MS: "0", ...(this.advertisePort !== null ? { BOTLING_SERVER_ADVERTISE_PORT: String(this.advertisePort) } : {}), ...this.env }); }
 
   /** Starts botlingd and waits for "ready". */
   async start(timeout = 60_000): Promise<void> {
@@ -239,6 +244,7 @@ export class TestCluster {
   async proxy(target: TestServer | number, framing: Framing = "websocket", seed?: number): Promise<FaultProxy> {
     const proxy = await FaultProxy.start({ target: typeof target === "number" ? target : target.port, framing, seed });
     this.proxies.push(proxy);
+    if (typeof target !== "number") target.advertisePort ??= proxy.port;
     return proxy;
   }
 

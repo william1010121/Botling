@@ -60,6 +60,27 @@ export interface RosterStoreOptions {
 
 const memberOf = (body: StatementBody) => (body.type === "root" ? body.root : body.member);
 
+/** The most statements one gossip set (`roster.statements` chunks up to the short last one) may carry. */
+export const MAX_GOSSIP_SET = 20_000;
+
+/**
+ * Whether gossip stores a verified statement (§4.7, M3 step 5): see `RosterStore.mergeGossip`. A Root reaching here
+ * already passed the chain-key check. Every clause only grows with the set.
+ */
+export function gossipKeeps(statement: VerifiedStatement, view: RosterView): boolean {
+  const body = statement.body;
+  switch (body.type) {
+    case "root": return true;
+    case "add": case "endorse": case "revoke": return view.servers.has(body.by) && statement.signer === body.by;
+    case "profile": {
+      const signer = statement.signer;
+      if (view.servers.has(signer)) return true;
+      return signer === body.member && (signer === view.self || view.members.has(signer));
+    }
+    default: return false;
+  }
+}
+
 export class RosterStore {
   private stored = new Map<string, StoredStatement>();
   private verified: VerifiedStatement[] = [];
@@ -68,6 +89,7 @@ export class RosterStore {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly listeners = new Set<(change: RosterChange) => void>();
   private readonly now: () => number;
+  private gossipCache: { view: RosterView; items: StoredStatement[] } | null = null;
 
   private constructor(private readonly backend: RosterBackend, private readonly identity: RosterIdentity, private readonly options: RosterStoreOptions, cluster: string | null) {
     this.now = options.now ?? Date.now;
@@ -351,39 +373,129 @@ export class RosterStore {
         candidates.set(id, { id, statement: parsed.data });
       }
       if (!candidates.size) return [];
-      // Roots: only those a recovery key of this chain signed (gen order, so a candidate can be another's prev).
-      const roots = new Map<string, Extract<StatementBody, { type: "root" }>>();
-      for (const { id, body } of this.verified) if (body.type === "root") roots.set(id, body);
-      const rootCandidates = [...candidates.values()].filter((item) => item.statement.body.type === "root")
-        .sort((x, y) => (x.statement.body as { gen: number }).gen - (y.statement.body as { gen: number }).gen);
-      for (const item of rootCandidates) {
-        candidates.delete(item.id);
-        const body = item.statement.body as Extract<StatementBody, { type: "root" }>;
-        let key: string | null = null;
-        if (body.gen === 1 && body.prev === null) {
-          const raw = fromBase64Url(body.recoveryPub);
-          if (raw && raw.length === 32 && (await clusterIdFromRecoveryKey(raw)) === cluster) key = body.recoveryPub;
-        } else if (body.prev !== null) {
-          const prev = roots.get(body.prev);
-          if (prev && prev.gen === body.gen - 1) key = prev.recoveryPub;
-        }
-        if (key === null || !(await verifySignature(item.statement, key))) continue;
-        roots.set(item.id, body);
-        candidates.set(item.id, item);
-      }
+      await this.keepChainRoots(candidates);
       if (!candidates.size) return [];
       const trial = new Map(this.stored);
       for (const item of candidates.values()) trial.set(item.id, item);
       const verified = await verifyStatements(trial.values(), this.self());
       const view = computeRoster(this.identity.memberId, cluster, verified);
+      const roots = new Map<string, string | null>();
+      for (const { id, body } of verified) if (body.type === "root") roots.set(id, body.prev);
       const chain = new Set<string>();
-      for (let at = view.root?.id ?? null; at !== null && !chain.has(at);) { chain.add(at); at = roots.get(at)?.prev ?? null; }
+      for (let at = view.root?.id ?? null; at !== null && !chain.has(at);) { chain.add(at); at = roots.get(at) ?? null; }
       const counting = new Set(view.countingRevokes);
       const verifiedNow = new Set(verified.map((item) => item.id));
       const fresh = [...candidates.values()].filter((item) => verifiedNow.has(item.id) && (item.statement.body.type === "root" ? chain.has(item.id) : counting.has(item.id)));
       if (fresh.length) await this.apply(fresh, cluster, fresh.map((item) => ({ act: "statement.merge" as const, statement: item.id, by: item.statement.signer, member: memberOf(item.statement.body) })));
       return fresh.map((item) => item.id);
     });
+  }
+
+  /**
+   * Merges statements a valid peer sent by gossip (§4.7, M3 step 5): set union, but only what verifies and what a
+   * party this set knows signed is stored, so a peer cannot grow this server's store with junk (step 3 review P1):
+   *   - Root: signed by the recovery key its `prev` names (gen 1: its own key, bound to the cluster id);
+   *   - Add, Endorse, Revoke: signed (and verified) by a known server (R3; revoked or not: a dropped revocation, D63,
+   *     is still listed, and a revoked server's device revocations still count, D66 part 4);
+   *   - Profile: signed by its member (a member some known server's Add names, or this server) or by a known server
+   *     (whether it counts is `profile()`'s business, K12).
+   * Each rule only grows with the set, so two servers that end with the same input keep the same set (the digest
+   * converges). What fails now is returned as `refused`; it is asked for again after a later change (an Endorse
+   * whose Add comes later). Pass a whole set at once: a statement counts only next to the ones that vouch for it.
+   * D66 (proposed, not adopted) would narrow these rules inside `gossipKeeps`; nothing else changes then.
+   */
+  mergeGossip(statements: readonly unknown[], limit = MAX_GOSSIP_SET): Promise<{ fresh: string[]; refused: string[] }> {
+    return this.serial(async () => {
+      const cluster = this.cluster;
+      if (cluster === null || this.current.revoked.has(this.identity.memberId)) return { fresh: [], refused: [] };
+      const verifiedIds = new Set(this.verified.map((item) => item.id));
+      const candidates = new Map<string, StoredStatement>();
+      const refused = new Set<string>();
+      for (const raw of statements.slice(0, limit)) {
+        const parsed = SignedStatement.safeParse(raw);
+        if (!parsed.success || parsed.data.body.cluster !== cluster) continue;
+        const id = await statementId(parsed.data.body);
+        if (verifiedIds.has(id) || candidates.has(id)) continue;
+        candidates.set(id, { id, statement: parsed.data });
+      }
+      if (!candidates.size) return { fresh: [], refused: [] };
+      const all = new Set(candidates.keys());
+      await this.keepChainRoots(candidates);
+      const trial = new Map(this.stored);
+      for (const item of candidates.values()) trial.set(item.id, item);
+      const verified = await verifyStatements(trial.values(), this.self());
+      const view = computeRoster(this.identity.memberId, cluster, verified);
+      const ok = new Map(verified.map((item) => [item.id, item]));
+      const fresh = [...candidates.values()].filter((item) => {
+        const checked = ok.get(item.id);
+        return !!checked && gossipKeeps(checked, view);
+      });
+      const kept = new Set(fresh.map((item) => item.id));
+      for (const id of all) if (!kept.has(id)) refused.add(id);
+      if (fresh.length) await this.apply(fresh, cluster, fresh.map((item) => ({ act: "statement.merge" as const, statement: item.id, by: item.statement.signer, member: memberOf(item.statement.body) })));
+      return { fresh: fresh.map((item) => item.id), refused: [...refused] };
+    });
+  }
+
+  /**
+   * The statements gossip carries and digests (§4.7): the stored ones that verify and that `gossipKeeps` would take
+   * now (Roots only of this cluster's recovery-key chain). A statement stored without that (written directly, or by
+   * M2's `merge`) stays stored but is neither counted in the digest nor sent, so it cannot keep two servers' digests
+   * apart. Sorted by id; cached per view.
+   */
+  gossipStatements(): StoredStatement[] {
+    if (this.gossipCache?.view === this.current) return this.gossipCache.items;
+    const view = this.current;
+    const rootOk = new Map<string, Extract<StatementBody, { type: "root" }>>();
+    const roots = this.verified.filter((item) => item.body.type === "root").sort((x, y) => (x.body as { gen: number }).gen - (y.body as { gen: number }).gen);
+    for (const item of roots) {
+      const body = item.body as Extract<StatementBody, { type: "root" }>;
+      const first = body.gen === 1 && body.prev === null && item.recoveryKey === body.recoveryPub && item.recoveryKeyCluster === this.cluster;
+      const prev = body.prev !== null ? rootOk.get(body.prev) : undefined;
+      if (first || (prev && prev.gen === body.gen - 1 && item.recoveryKey === prev.recoveryPub)) rootOk.set(item.id, body);
+    }
+    const keep = new Set<string>();
+    for (const item of this.verified) {
+      if (item.body.cluster !== this.cluster) continue;
+      if (item.body.type === "root" ? rootOk.has(item.id) : gossipKeeps(item, view)) keep.add(item.id);
+    }
+    const items = this.statements().filter((item) => keep.has(item.id));
+    this.gossipCache = { view, items };
+    return items;
+  }
+
+  /** The stored statements with these ids (answers to `roster.want`). */
+  statementsById(ids: Iterable<string>): StoredStatement[] {
+    const out: StoredStatement[] = [];
+    for (const id of new Set(ids)) { const item = this.stored.get(id); if (item) out.push(item); }
+    return out;
+  }
+
+  /**
+   * Leaves in `candidates` only the Roots a recovery key of this chain signed, checked one each (gen order, so a
+   * candidate can be another's prev): foreign Roots cost one check each (step 3 review P1). Other kinds are untouched.
+   */
+  private async keepChainRoots(candidates: Map<string, StoredStatement>): Promise<void> {
+    const cluster = this.cluster;
+    const roots = new Map<string, Extract<StatementBody, { type: "root" }>>();
+    for (const { id, body } of this.verified) if (body.type === "root") roots.set(id, body);
+    const rootCandidates = [...candidates.values()].filter((item) => item.statement.body.type === "root")
+      .sort((x, y) => (x.statement.body as { gen: number }).gen - (y.statement.body as { gen: number }).gen);
+    for (const item of rootCandidates) {
+      candidates.delete(item.id);
+      const body = item.statement.body as Extract<StatementBody, { type: "root" }>;
+      let key: string | null = null;
+      if (body.gen === 1 && body.prev === null) {
+        const raw = fromBase64Url(body.recoveryPub);
+        if (raw && raw.length === 32 && (await clusterIdFromRecoveryKey(raw)) === cluster) key = body.recoveryPub;
+      } else if (body.prev !== null) {
+        const prev = roots.get(body.prev);
+        if (prev && prev.gen === body.gen - 1) key = prev.recoveryPub;
+      }
+      if (key === null || !(await verifySignature(item.statement, key))) continue;
+      roots.set(item.id, body);
+      candidates.set(item.id, item);
+    }
   }
 
   /**

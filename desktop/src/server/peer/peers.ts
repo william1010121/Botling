@@ -166,6 +166,12 @@ export class PeerSessions {
         continue;
       }
       if (entry.state === "gone" && !this.live.has(member)) this.setState(entry, "stale", entry.since);
+      // A peer that had no keys or address when last dialled (a server learned through gossip, M3 step 5): dial now
+      // that the roster names them, instead of waiting out the backoff.
+      if (entry.noAddressLogged && entry.timer && serverKeys(this.host.roster.view, member) && loopbackAddress(this.host.roster.profile(member, "addresses"))) {
+        clearTimeout(entry.timer);
+        entry.timer = null;
+      }
       this.schedule(entry, policy);
     }
   }
@@ -190,6 +196,9 @@ export class PeerSessions {
     entry.attempts++;
     if (policy === "revoked") entry.holdUntil = this.now() + this.host.timers.revokedRedialMs;
     if (!keys || !url) {
+      // Not a try: the peer's Add or Profile may still be on its way (gossip, M3 step 5); a roster change that brings
+      // them redials at once (reconcile).
+      entry.attempts = Math.max(0, entry.attempts - 1);
       if (!entry.noAddressLogged) { entry.noAddressLogged = true; this.host.log(`peer ${member}: no ${keys ? "loopback address in its profile" : "server keys in the roster"}; not dialled yet`); }
       this.schedule(entry, policy);
       return;
