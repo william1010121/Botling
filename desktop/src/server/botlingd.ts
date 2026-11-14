@@ -29,6 +29,8 @@ import { LogHub } from "./log";
 import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, SessionServer, writeToken, type BotlingdPaths, type SessionOptions } from "./session";
+import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
+import { RosterStore } from "./roster";
 import { ShellBridge } from "./shell-bridge";
 import { localOnly } from "./slots";
 import { openServerStore, type ServerStore } from "./store";
@@ -99,6 +101,9 @@ export class Botlingd {
     readonly shell: ShellBridge,
     readonly server: SessionServer,
     private readonly log: (line: string) => void,
+    /** M2: the roster (validity of devices and servers) and the cluster setup of the first pairing. */
+    readonly roster: RosterStore,
+    readonly cluster: ClusterSetup,
   ) {}
 
   get token(): string { return this.tokenValue; }
@@ -128,8 +133,13 @@ export class Botlingd {
     let store: ServerStore | null = null;
     try {
       store = await openServerStore(paths.dataDir);
-      const serverId = store.meta("serverId");
-      if (!serverId) throw new Error("server.db has no serverId");
+      // M2: the server's keys (made on the first start, server-keys.json 0600) and server.db bound to them before
+      // anything reads meta.serverId (a fresh data folder is named by its member id, v1 §3).
+      const identity = await loadOrCreateServerIdentity(paths.dataDir, { create: store.meta("memberId") === undefined });
+      const { serverId, memberId } = await store.submit((tx) => bindServerIdentity(tx, identity));
+      const roster = await RosterStore.open(store, identity, { log });
+      const clusterSetup = new ClusterSetup(roster);
+      log(`identity: member ${memberId}${identity.created ? " (new keys)" : ""}, cluster ${roster.clusterId ?? "none yet"}`);
       const hub = new LogHub(store, { serverStreams: true });
       const live = new LiveChannel({ sink: effectCheckpointSink(store), onError: (error) => log(`live: ${String((error as Error)?.message ?? error)}`) });
       const openStore = store;
@@ -190,7 +200,7 @@ export class Botlingd {
         },
         log,
       }, options.session);
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup);
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       daemon.watchLock();
