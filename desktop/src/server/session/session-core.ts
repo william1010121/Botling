@@ -9,8 +9,13 @@
 //                                                              through the connection's LiveGate (≤ 10 frames/s)
 //   live.resync                                              → a whole-segment frame (through the gate)
 //   cmd                                                      → IntentRuntime, under the scope the shell states;
-//                                                              cmd.result / cmd.retry come back through the reply sink
-//   cancel                                                   → SlotEngine.cancel ("too late": the stored outcome)
+//                                                              cmd.result / cmd.retry come back through the reply sink.
+//                                                              One queue's commands run one after another, in the
+//                                                              order the session carried them (D58); a copy the owner
+//                                                              could not keep (a gap it would wait on forever) ends
+//                                                              the session, so the front end re-sends from its outbox
+//   cancel                                                   → SlotEngine.cancel, always answered (D59): the stored
+//                                                              cmd.result when too late, else cancel.noted
 //   req                                                      → the reads the shell allows, answered by the engine (`res`)
 //   content.find / content.open, shell.done                  → local socket only (the role table refuses them elsewhere)
 //   admin                                                    → local socket only: pairing, the cluster's recovery code,
@@ -22,10 +27,11 @@
 // botlingd pings after 15 s of its own silence and drops a session it has not heard from for 45 s (§5.2; fe-link does
 // the same the other way).
 import { ContractError, type Command, type CommandType } from "../../contract";
-import { encodeFrame, encodeResFrames, PROTOCOL_VERSION, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type StreamId } from "../../protocol";
+import { encodeFrame, encodeResFrames, PROTOCOL_VERSION, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type StreamId } from "../../protocol";
 import { DEAD_AFTER_MS, PING_AFTER_MS } from "../../session";
 import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
+import { cancelAnswer } from "../slots";
 import { readStream, type LogHub, type LogReader } from "../log";
 import type { LiveChannel, LiveSubscription } from "../live";
 import type { ShellBridge } from "../shell-bridge";
@@ -111,6 +117,8 @@ export abstract class SessionCore {
   private readonly closedHandlers: Array<() => void> = [];
   /** Serializes `sub`s, so a slow one (a rewind, a new bot stream) never lets a later frame on the same stream pass it. */
   private subChain: Promise<void> = Promise.resolve();
+  /** One promise chain per command queue (D58, `queueCmd`). */
+  private readonly cmdChains = new Map<string, Promise<void>>();
   private adminEvents: (() => void) | null = null;
 
   /** The session kind frames are encoded and decoded for (local socket or not). */
@@ -242,7 +250,7 @@ export abstract class SessionCore {
       case "ack": this.reader?.ack(message.stream, message.cursor); return;
       case "history": this.history(message); return;
       case "live.resync": this.gate.resync(message.stream); return;
-      case "cmd": { const { t: _t, ...body } = message; void this.cmd(body as CmdBody); return; }
+      case "cmd": { const { t: _t, ...body } = message; this.queueCmd(body as CmdBody); return; }
       case "cancel": void this.cancel(message); return;
       case "req": void this.req(message); return;
       case "content.find": case "content.open": void this.content(message); return;
@@ -271,7 +279,7 @@ export abstract class SessionCore {
     });
     this.opened(hello);
     // `cursors` / `want`: fe-link sends a `sub` for each after the welcome (§13.1); taking both would send two snaps.
-    for (const body of hello.outbox) void this.cmd(body);
+    for (const body of hello.outbox) this.queueCmd(body);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -326,6 +334,21 @@ export abstract class SessionCore {
   // ---------------------------------------------------------------------------------------------
   // Commands and requests
 
+  /**
+   * D58: one session is a FIFO stream, and its commands for one queue (origin, originEpoch, target) reach the slot
+   * engine in that order, each after the one before it settled. Without this a later copy could be checked before its
+   * predecessor committed: a legacy copy is then dropped and an intent copy held, and nothing in the session re-sends
+   * it. Different queues do not wait for each other (a slow legacy handler holds up only its own queue).
+   */
+  private queueCmd(body: CmdBody): void {
+    const key = queueKey(body.slot);
+    const run = (this.cmdChains.get(key) ?? Promise.resolve())
+      .then(() => this.cmd(body))
+      .catch((error) => this.host.log(`session: cmd ${body.cmd.type} (slot ${body.slot.n}): ${errorText(error)}`));
+    this.cmdChains.set(key, run);
+    void run.then(() => { if (this.cmdChains.get(key) === run) this.cmdChains.delete(key); });
+  }
+
   protected async cmd(body: CmdBody): Promise<void> {
     if (this.state === "closed") return;
     const stated = this.cmdScope(body);
@@ -334,9 +357,13 @@ export abstract class SessionCore {
     const reply = (message: Message) => { this.send(message, body.cmd.type); };
     const route = routeOf(body.cmd.type).kind;
     try {
-      if (route === "intent" || route === "legacy") await this.host.runtime.receive(body, { scope, reply });
-      // A read or app command sent as a command: the core's own handler, under a slot like any legacy command.
-      else await this.host.runtime.legacy.receive(body, { scope, reply });
+      const status = route === "intent" || route === "legacy"
+        ? await this.host.runtime.receive(body, { scope, reply })
+        // A read or app command sent as a command: the core's own handler, under a slot like any legacy command.
+        : await this.host.runtime.legacy.receive(body, { scope, reply });
+      // D58: the copy waits on a slot this session did not send before it, and the owner kept no copy: the session
+      // broke FIFO. End it; the front end re-attaches and re-sends its outbox in slot order.
+      if (status.status === "dropped" && this.state === "open") this.bye("malformed", `cmd ${body.cmd.type} (slot ${body.slot.n}) came before an earlier slot of its queue (D58)`);
     } catch (error) {
       // Nothing was stored (the store failed, or the handler threw before its result was kept): the outbox re-sends.
       this.host.log(`session: cmd ${body.cmd.type} (slot ${body.slot.n}) not settled: ${errorText(error)}`);
@@ -347,7 +374,8 @@ export abstract class SessionCore {
     if (this.cancelRefusal(message)) return;
     try {
       const status = await this.host.runtime.slots.cancel(message.slot);
-      if (status.status === "too late") this.send(status.message);
+      // D59: every cancel is answered, the stored outcome or `cancel.noted` (after the cancel committed).
+      if (this.state !== "closed") this.send(cancelAnswer(message.slot, status));
     } catch (error) {
       this.host.log(`session: cancel of slot ${message.slot.n}: ${errorText(error)}`);
     }

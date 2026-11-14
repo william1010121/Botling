@@ -6,7 +6,7 @@ import {
   decodeFrame, encodeFrame, GENESIS_HASH,
   type CmdBody, type Cursor, type Entry, type Message, type MessageOf, type Slot, type StreamId,
 } from "../../src/protocol";
-import { SlotEngine, type ApplyContext, type SlotLog } from "../../src/server/slots";
+import { cancelAnswer, SlotEngine, type ApplyContext, type SlotLog } from "../../src/server/slots";
 import type { Db } from "../../src/server/store";
 import type { Clock, Dial, FeSocket, SocketHandlers } from "../../src/fe-link";
 import { FakeLog, memoryStore } from "./server-slots-harness";
@@ -217,7 +217,8 @@ export class FakeServer {
         this.push();
         return;
       }
-      case "cancel": await this.engine.cancel(message.slot); this.push(); return;
+      // D59: every cancel is answered (the stored cmd.result when too late, else cancel.noted), as botlingd does.
+      case "cancel": this.send(cancelAnswer(message.slot, await this.engine.cancel(message.slot))); this.push(); return;
       default: this.onMessage?.(message); return;
     }
   }

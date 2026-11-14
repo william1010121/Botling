@@ -56,6 +56,7 @@ const samples: { [T in Exclude<MessageType, M2Type>]: { message: Extract<Message
   held: { sender: "peer", message: { t: "held", slot, at: "server-1" } },
   "cmd.result": { sender: "server", message: { t: "cmd.result", slot, outcome: { kind: "applied", result: { messageId: "m1" } }, logId: logA, seq: 3 } },
   "cmd.retry": { sender: "server", message: { t: "cmd.retry", slot, inc: logB } },
+  "cancel.noted": { sender: "server", message: { t: "cancel.noted", slot } },
   req: { sender: "fe", session: { local: true }, message: { t: "req", req: "r1", cmd: { type: "routines.list", botId: bot } } as never },
   res: { sender: "server", session: { local: true }, message: { t: "res", req: "r1", ok: true, result: { routines: [] } } },
   "res.part": { sender: "server", session: { local: true }, message: { t: "res.part", req: "r1", i: 0, n: 2, text: "{\"t\":\"res\"" } },
