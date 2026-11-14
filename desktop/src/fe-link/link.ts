@@ -342,7 +342,8 @@ export class FeLink {
     if (owner) {
       words.owner = owner;
       const view = this.serverViews.get(owner);
-      if (view) {
+      // Another server's name only: this machine's own items keep this machine's words ("this machine's history").
+      if (view && !view.self) {
         words.ownerName = view.name;
         if ((item.state === "waiting" || item.state === "held") && !view.self && view.state !== "live") words.waitingFor = view.name;
       }
