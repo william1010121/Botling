@@ -10,6 +10,7 @@
 // command's transaction and LogHub hears about every stream a commit touched.
 import type { Event as ContractEvent } from "../../contract";
 import type { CmdBody, Scope } from "../../protocol";
+import { contentLineHook, type ContentService } from "../content";
 import { ensureStream, type LogHub } from "../log";
 import { ContractLiveFeed, type LiveChannel } from "../live";
 import { SlotEngine, type Audit, type Authorize, type ReceiveStatus, type ReplySink } from "../slots";
@@ -36,6 +37,8 @@ export interface IntentRuntimeOptions {
   mirrorBotUpdates?: boolean;
   authorize?: Authorize;
   audit?: Audit;
+  /** The content index (src/server/content): a finished line's files are noted in its entry's transaction. */
+  content?: ContentService | null;
 }
 
 export class NotASlotCommandError extends Error {
@@ -62,7 +65,10 @@ export class IntentRuntime {
     this.tap = new EventTap({
       scope: this.scope,
       live: options.live ? new ContractLiveFeed(options.live) : null,
-      hooks: { turnEnded: (tx, botId, turnId, status) => this.worker.turnEnded(tx, botId, turnId, status) },
+      hooks: {
+        turnEnded: (tx, botId, turnId, status) => this.worker.turnEnded(tx, botId, turnId, status),
+        ...(options.content ? { lineStored: contentLineHook(options.content, this.scope) } : {}),
+      },
       now: this.now,
       log,
       onServerEvent: options.onServerEvent,

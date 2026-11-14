@@ -113,6 +113,19 @@ CREATE INDEX effects_by_queue ON effects (state, stream, seq);
 CREATE TABLE fulltext (stream TEXT NOT NULL, key TEXT NOT NULL, seq INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (stream, key)) WITHOUT ROWID;
 `;
 
+// v4 (M1 step 13, src/server/content): what each line names. `content_refs (id, stream, seq)` says an entry references
+// the bytes `id`; `content_names` says which file of the line (by its absolute path) that is, so Electron main can turn
+// the renderer's `botling-chat://chat/attachment/…?line=` URL into the reference (`content.find`). Written in the same
+// transaction as the entry; `id` is `pending:<hex>` until the hash is ready, then the `sha256:` id (both tables). `sig`:
+// the source's stat signature when the line finished (a later update of the line naming the same version reuses `id`).
+const V4 = `
+CREATE TABLE content_names (
+  stream TEXT NOT NULL, seq INTEGER NOT NULL, line TEXT NOT NULL, path TEXT NOT NULL, id TEXT NOT NULL, sig TEXT,
+  PRIMARY KEY (stream, line, path)
+) WITHOUT ROWID;
+CREATE INDEX content_names_by_id ON content_names (id);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -137,6 +150,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "effect outbox by turn (src/server/effects), full text of cut entries",
     up(db) {
       db.exec(V3);
+    },
+  },
+  {
+    version: 4,
+    description: "content path (src/server/content): the files each line names (content_names)",
+    up(db) {
+      db.exec(V4);
     },
   },
 ];

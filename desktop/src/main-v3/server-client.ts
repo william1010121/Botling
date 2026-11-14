@@ -70,6 +70,10 @@ const SHELL_OPS: Record<string, AppOp> = {
 };
 const LAUNCH_EVERY_MS = 10_000;
 
+/** The client main.ts made (one per window process): content-install.ts asks the server through it. */
+let active: ServerClient | null = null;
+export function activeServerClient(): ServerClient | null { return active; }
+
 export class ServerClient {
   private link: FeLink | null = null;
   private adapter: RendererAdapter | null = null;
@@ -85,6 +89,13 @@ export class ServerClient {
 
   constructor(private readonly options: CoreClientOptions, private readonly deps: ServerClientDeps = {}) {
     this.paths = serverPaths(options.env);
+    active = this;
+  }
+
+  /** The content path's local part (§9A.4): `content.find` / `content.open` on the link. Rejects while detached. */
+  content(message: Parameters<FeLink["content"]>[0]): ReturnType<FeLink["content"]> {
+    if (!this.link) return Promise.reject(new Error("The Botling server link is not open."));
+    return this.link.content(message);
   }
 
   get script(): string { return this.options.script; }

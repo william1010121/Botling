@@ -35,6 +35,15 @@ export const coreClientToServerClient = (root) => ({
     b.onResolve({ filter: /^\.\/core-client$/ }, (args) => (MAIN_2X.test(args.importer) ? { path: join(root, "src/main-v3/server-client.ts") } : undefined));
   },
 });
+// Step 13: the 2.x main's `../browser-pdf` (src/main/*.ts) resolves to the v3 module whose PDF tabs load
+// `botling-content:` instead of `file:`. The v3 module itself imports the 2.x one (its importer is not in src/main/).
+const MAIN_2X_DIR = /[\\/]src[\\/]main[\\/][^\\/]+\.ts$/;
+export const browserPdfToContent = (root) => ({
+  name: "main-v3-browser-pdf",
+  setup(b) {
+    b.onResolve({ filter: /^\.\.\/browser-pdf$/ }, (args) => (MAIN_2X_DIR.test(args.importer) ? { path: join(root, "src/main-v3/browser-pdf-v3.ts") } : undefined));
+  },
+});
 export function buildMainV3({ root = here, outfile = join(root, "out/main-v3/main.cjs"), write = true, metafile = false } = {}) {
   root = resolve(root);
   outfile = resolve(outfile);
@@ -42,7 +51,7 @@ export function buildMainV3({ root = here, outfile = join(root, "out/main-v3/mai
     absWorkingDir: root, preserveSymlinks: true,
     bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof",
     entryPoints: [join(root, "src/main-v3/main.ts")], outfile, external: ["electron", "original-fs"],
-    plugins: [coreClientToServerClient(root)], write, metafile,
+    plugins: [coreClientToServerClient(root), browserPdfToContent(root)], write, metafile,
   });
 }
 

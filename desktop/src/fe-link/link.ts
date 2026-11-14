@@ -110,7 +110,9 @@ interface Session {
   sent: Set<string>;
 }
 
-interface PendingRequest { resolve(value: never): void; reject(error: Error): void; kind: "res" | "history.page"; stream?: string }
+interface PendingRequest { resolve(value: never): void; reject(error: Error): void; kind: "res" | "history.page" | "content"; stream?: string }
+/** What a content request is answered with (§9A.4, local part). */
+export type ContentAnswer = MessageOf<"content.found"> | MessageOf<"content.file"> | MessageOf<"content.gone">;
 
 export class FeLink {
   private readonly clock: Clock;
@@ -274,6 +276,14 @@ export class FeLink {
     return this.ask({ t: "req", req: this.nextReq(), cmd }, "res");
   }
 
+  /**
+   * The content path's local part (§9A.4): which reference a line holds for a file (`content.find`), or the pinned file
+   * of a reference (`content.open`). `req` is filled in here. Rejects when no session is attached or it ends first.
+   */
+  content(message: Omit<MessageOf<"content.find">, "req"> | Omit<MessageOf<"content.open">, "req">): Promise<ContentAnswer> {
+    return this.ask({ ...message, req: this.nextReq() } as Message & { req: string }, "content") as Promise<ContentAnswer>;
+  }
+
   /** Older lines of a stream (§8.4). A page of a retired logId is refused. */
   history(stream: StreamId, before: string, bytes?: number): Promise<MessageOf<"history.page">> {
     return this.ask({ t: "history", req: this.nextReq(), stream, before, ...(bytes ? { bytes } : {}) }, "history.page", stream) as Promise<MessageOf<"history.page">>;
@@ -360,6 +370,7 @@ export class FeLink {
       case "cmd.result": this.onResult(message); return;
       case "cmd.retry": this.onRetry(session, message); return;
       case "res": case "history.page": this.onAnswer(message); return;
+      case "content.found": case "content.file": case "content.gone": this.onContentAnswer(message); return;
       case "bye":
         if (message.reason === "version") this.updateRequired(session, "a newer version");
         else this.endSession(session, `bye: ${message.reason}`);
@@ -577,6 +588,13 @@ export class FeLink {
       this.requests.set(message.req, { resolve: resolve as (value: never) => void, reject, kind, stream });
       if (!this.send(session, message)) { this.requests.delete(message.req); reject(new Error("fe-link: not sent")); }
     });
+  }
+
+  private onContentAnswer(message: ContentAnswer): void {
+    const pending = this.requests.get(message.req);
+    if (!pending || pending.kind !== "content") return;
+    this.requests.delete(message.req);
+    pending.resolve(message as never);
   }
 
   private onAnswer(message: MessageOf<"res"> | MessageOf<"history.page">): void {

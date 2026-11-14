@@ -25,7 +25,7 @@ const isPair = (type: string) => /^pair\.[a-z]{1,40}$/.test(type);
 
 /**
  * The role table, one row per message type. §5.4's rows as written, plus the local-socket messages M1 adds
- * (`history.page`, `req`/`res`, `content.open`/`content.file`, `shell.*`). Rows for M2 messages (roster, fetch,
+ * (`history.page`, `req`/`res`, `content.find`/`content.found`, `content.open`/`content.file`, `shell.*`). Rows for M2 messages (roster, fetch,
  * prefs, the remote content path) are here so the table is whole; M1 has no schema for them, so a frame
  * naming one is refused as unsupported.
  */
@@ -74,6 +74,8 @@ export const ROLE_TABLE: Readonly<Record<string, RoleRule>> = {
   // Local socket only (M1).
   req: rule(true, false, false, { localOnly: true }),
   res: rule(false, true, false, { localOnly: true }),
+  "content.find": rule(true, false, false, { localOnly: true }),
+  "content.found": rule(false, true, false, { localOnly: true }),
   "content.open": rule(true, false, false, { localOnly: true }),
   "content.file": rule(false, true, false, { localOnly: true }),
   "shell.screenshot": rule(false, true, false, { localOnly: true }),

@@ -46,6 +46,14 @@ export const GENESIS_HASH = "0".repeat(64);
 
 /** A content id: the SHA-256 of the exact bytes (§9A.2). */
 export const ContentId = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+/**
+ * The id of a pinned version whose hash is not ready yet (local socket only, M1 step 13). A line's `content_refs` are
+ * written with its entry, before hashing ends (D44); `content.ready` later moves them to the `sha256:` id. Main may open
+ * a pending pin meanwhile: its bytes were fixed when the line finished (a clone or copy), or it is a checked path.
+ */
+export const PendingContentId = z.string().regex(/^pending:[0-9a-f]{32}$/);
+/** What a local `content.open` may name: a content id, or a pin whose hash is still being taken. */
+export const LocalContentId = z.union([ContentId, PendingContentId]);
 
 /** A hybrid logical clock for display order only; no safety rule reads it (§8.1). */
 export const Hlc = z.strictObject({ ms: z.number().int().nonnegative(), c: z.number().int().nonnegative().max(0xffff) });
