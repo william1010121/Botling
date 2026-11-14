@@ -317,7 +317,7 @@ export interface BotPrompts {
 }
 
 /** Approved 2026-11-14 (the user): a file or folder a reply points to is a link that opens, never a relative path in code (Math's storyboard.md). */
-export const FILE_LINK_RULE = "- When you point the user to a file or folder to look at (a result, a document, a storyboard, an output folder), write it as a link with its full path, [short name](file://full absolute path), never as a bare or relative path in code or plain text. file_path:line references, commands and identifiers in an explanation of code stay as they are.";
+export const FILE_LINK_RULE = "- When you point the user to a file or folder to look at (a result, a document, a storyboard, an output folder), write it as a link with its full path, [short name](file://full absolute path), with any space in the path written %20, never as a bare or relative path in code or plain text. file_path:line references, commands and identifiers in an explanation of code stay as they are.";
 /** Approved 2026-11-10 (the user): browser site tools are Maintainer's alone, so they are shared and reused; a bot asks with <plugin>. */
 export const SITE_TOOLS_RULE = "Browser site tools (the puzzle tools in Botling's browser pane, kept in the browser-tools folder of Botling's data folder) are made and kept only by Maintainer, so every bot can reuse them: never write or change a site tool yourself or have a worker do it; end your reply with <plugin>site tool: what it should do, on which page (its URL)</plugin>.";
 /** `BotPrompts.init(profile:results:language:engine:heads:)`. */
@@ -346,6 +346,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
         noteRule(paths.note),
         resultsRule("localOnly", paths.artifacts),
         "Use markdown links for results. Ask the user when required information is missing. Do not claim a tool action succeeded when it was refused.",
+        FILE_LINK_RULE.slice(2),
       ].filter(Boolean).join("\n"),
       codexWorkerSystem: codexWorkerInstructions(profile, language, tree).replace("independent Codex session", "independent execution session"), headsRule: heads ? headsRule(heads, "agy") : "",
       wake: `${WAKE_LEAD} Use the supplied saved memory and recent chat as context.)`,
