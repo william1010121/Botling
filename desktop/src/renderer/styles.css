@@ -129,6 +129,17 @@ button { font: inherit; color: inherit; }
 .plugins-starters { display: flex; flex-wrap: wrap; gap: 6px; }
 .plugins-starter, .plugins-ask-send { font: inherit; cursor: pointer; }
 .plugins-ask-text { font: inherit; resize: vertical; }
+/* The page's three parts (Installed / Explore / Updates) use Models & workers' tab strip; catalog plugins use the .plugin card. */
+.plugins-tabs { margin: 0 0 10px; }
+.plugins-tabs button { flex: 1; padding: 5px 10px; }
+.rail-button .plugins-updates-badge { margin-left: auto; }
+.plugin-row > .plugin-buttons { margin-top: 0; flex-shrink: 0; }
+.plugin-store-state { white-space: nowrap; }
+.plugins-catalog { margin-bottom: 8px; }
+.plugins-catalog .plugins-problem { margin: 4px 0 0; }
+.plugins-store-note { margin: 0 0 8px; }
+.plugin-store-status, .plugin-remove-ask { margin-top: 6px; }
+.plugin-store-status .plugins-problem, .plugin-store-status .plugins-result, .plugin-remove-ask .plugins-problem { margin: 0; }
 
 /* Settings (SettingsWindow.swift): a sheet with the sections on the left, 1.x's 900×640. */
 .rail-settings { padding: 0 10px 8px; }

@@ -3,7 +3,10 @@ import { ShellOverlay } from "./ShellOverlay";
 // ever sent, never shown back: the page knows whether it is set), its commands, and its panels, which
 // open in a sandboxed frame (panel-page.ts). A small stand-in until 2.0 has 1.x's Settings window.
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
-import { MAINTAINER_BOT_ID, type BotView, type ComponentInfoView, type PluginView, type PluginsView } from "../contract";
+import { MAINTAINER_BOT_ID, type BotView, type ComponentInfoView, type PluginStoreEntryView, type PluginStoreView, type PluginView, type PluginsView } from "../contract";
+import { StoreList, usePluginStore } from "./PluginStore";
+import { say } from "./shortcut-labels";
+import type { Lang } from "../../../Web/src/i18n";
 import { buildRequest, PLUGIN_STARTERS } from "./plugin-starters";
 import { Client, RequestFailed } from "./client";
 import { FrameBroker, registerPluginFrame } from "./frame-broker";
@@ -13,25 +16,44 @@ import { pluginFrameHost, type PluginFrameHostDeps } from "./plugin-frame-host";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-export function PluginsButton({ client, plugins, onAsked }: { client: Client; plugins: PluginsView | null; onAsked?: () => void }) {
+export function PluginsButton({ client, plugins, onAsked, lang = null, onShowMain, initialStore = null }: { client: Client; plugins: PluginsView | null; onAsked?: () => void; lang?: Lang | null;
+  /** Shows the main bot's chat (where the install card is). */
+  onShowMain?: () => void;
+  /** The catalog's view before the core's answer (tests). */
+  initialStore?: PluginStoreView | null }) {
   const [open, setOpen] = useState(false);
   const [panel, setPanel] = useState<{ plugin: string; id: string; title: string } | null>(null);
+  const [store] = usePluginStore(client, initialStore);
   const broken = (plugins?.plugins.some((plugin) => plugin.failure) ?? false) || (plugins?.broken.length ?? 0) > 0;
+  const updates = store?.updates ?? 0;
   return (
     <div className="rail-plugins">
       <button type="button" className={`rail-button${open ? " on" : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>
         Plugins{broken && <span className="rail-dot" aria-label="a plugin needs attention" />}
+        {updates > 0 && <span className="badge plugins-updates-badge" title={say(lang, "plugins.updatesCount", { n: updates })} aria-label={say(lang, "plugins.updatesCount", { n: updates })}>{updates}</span>}
       </button>
-      {open && <ShellOverlay><PluginsPanel client={client} plugins={plugins} onPanel={(next) => { setPanel(next); setOpen(false); }} onClose={() => setOpen(false)} onAsked={() => { setOpen(false); onAsked?.(); }} /></ShellOverlay>}
+      {open && <ShellOverlay><PluginsPanel client={client} plugins={plugins} lang={lang} onPanel={(next) => { setPanel(next); setOpen(false); }} onClose={() => setOpen(false)} onAsked={() => { setOpen(false); onAsked?.(); }}
+        {...(onShowMain ? { onShowMain: () => { setOpen(false); onShowMain(); } } : {})} /></ShellOverlay>}
       {panel && <ShellOverlay><PanelFrame client={client} plugin={panel.plugin} panel={panel.id} title={panel.title} onClose={() => setPanel(null)} /></ShellOverlay>}
     </div>
   );
 }
 
-export function PluginsPanel({ client, plugins, onPanel, onClose, onAsked, embedded = false }: { client: Client; plugins: PluginsView | null; onPanel: (panel: { plugin: string; id: string; title: string }) => void; onClose: () => void; onAsked?: () => void; embedded?: boolean }) {
+export type PluginsTab = "installed" | "explore" | "updates";
+
+export function PluginsPanel({ client, plugins, onPanel, onClose, onAsked, onShowMain, embedded = false, lang = null, initialTab = "installed", initialStore = null }: { client: Client; plugins: PluginsView | null; onPanel: (panel: { plugin: string; id: string; title: string }) => void; onClose: () => void; onAsked?: () => void; onShowMain?: () => void; embedded?: boolean; lang?: Lang | null; initialTab?: PluginsTab; initialStore?: PluginStoreView | null }) {
   const [problem, setProblem] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
+  const [tab, setTab] = useState<PluginsTab>(initialTab);
+  const [store, setStore] = usePluginStore(client, initialStore);
   const run = (promise: Promise<unknown>) => { setProblem(null); void promise.catch((failure) => setProblem(why(failure))); };
+  const catalog = new Map((store?.entries ?? []).map((entry) => [entry.name, entry]));
+  const updates = store?.updates ?? 0;
+  const tabs: { id: PluginsTab; label: string }[] = [
+    { id: "installed", label: say(lang, "plugins.tab.installed") },
+    { id: "explore", label: say(lang, "plugins.tab.explore") },
+    { id: "updates", label: updates ? `${say(lang, "plugins.tab.updates")} (${updates})` : say(lang, "plugins.tab.updates") },
+  ];
   return (
     <div className={embedded ? "plugins-list" : "plugins-panel"} role={embedded ? "region" : "dialog"} aria-label="Plugins">
       {!embedded && (
@@ -40,6 +62,14 @@ export function PluginsPanel({ client, plugins, onPanel, onClose, onAsked, embed
           <button type="button" className="plugins-close" aria-label="Close" onClick={onClose}>×</button>
         </div>
       )}
+      <div className="mw-tabs plugins-tabs" role="tablist" aria-label="Plugins">
+        {tabs.map((one) => (
+          <button key={one.id} type="button" role="tab" data-tab={one.id} aria-selected={tab === one.id} className={tab === one.id ? "on" : ""} onClick={() => { setProblem(null); setResult(null); setTab(one.id); }}>{one.label}</button>
+        ))}
+      </div>
+      {problem && tab !== "installed" && <p className="plugins-problem" role="alert">{problem}</p>}
+      {tab !== "installed" && <StoreList key={tab} client={client} store={store} setStore={setStore} lang={lang} only={tab === "updates" ? "updates" : "all"} onProblem={setProblem} {...(onShowMain ? { onShowCard: onShowMain } : {})} />}
+      {tab === "installed" && <>
       {plugins?.host.problem && <p className="plugins-problem">{plugins.host.problem}</p>}
       {plugins?.secretsProblem && <p className="plugins-problem">{plugins.secretsProblem}</p>}
       {problem && <p className="plugins-problem" role="alert">{problem}</p>}
@@ -48,7 +78,10 @@ export function PluginsPanel({ client, plugins, onPanel, onClose, onAsked, embed
       <AskMaintainer onSend={(text) => run(client.request({ type: "chat.send", botId: MAINTAINER_BOT_ID, text }).then(() => { setResult("Sent to Maintainer. It builds the plugin and checks it; you approve anything it needs."); onAsked?.(); }))} />
       <ul>
         {plugins?.plugins.map((plugin) => (
-          <PluginItem key={plugin.name} plugin={plugin}
+          <PluginItem key={plugin.name} plugin={plugin} lang={lang} catalog={catalog.get(plugin.name) ?? null}
+            onUpdate={() => { setProblem(null); void client.request({ type: "plugins.storeInstall", name: plugin.name }).then((view) => { setStore(view); const status = view.entries.find((entry) => entry.name === plugin.name)?.status; if (status?.kind === "failed") setProblem(status.message); else if (status?.kind === "asking") setResult(say(lang, "plugins.asking")); }, (failure) => setProblem(why(failure))); }}
+            onRevert={() => run(client.request({ type: "plugins.revert", name: plugin.name }))}
+            onRemove={() => run(client.request({ type: "plugins.remove", name: plugin.name }))}
             onEnable={(enabled) => run(client.request({ type: "plugins.enable", name: plugin.name, enabled }))}
             onSetting={(key, value) => run(client.request({ type: "plugins.setting", name: plugin.name, key, value }))}
             onSecret={(key, value) => run(client.request({ type: "plugins.secret", name: plugin.name, key, value }))}
@@ -62,6 +95,7 @@ export function PluginsPanel({ client, plugins, onPanel, onClose, onAsked, embed
           <div className="plugins-problem">Not loaded: {entry.problems.join("; ")}</div>
         </div>
       ))}
+      </>}
     </div>
   );
 }
@@ -84,14 +118,23 @@ function AskMaintainer({ onSend }: { onSend: (text: string) => void }) {
   );
 }
 
-function PluginItem({ plugin, onEnable, onSetting, onSecret, onCommand, onPanel }: {
+function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEnable, onSetting, onSecret, onCommand, onPanel }: {
   plugin: PluginView;
+  lang: Lang | null;
+  /** The same plugin in the public catalog, if it is there. */
+  catalog: PluginStoreEntryView | null;
+  onUpdate: () => void;
+  onRevert: () => void;
+  onRemove: () => void;
   onEnable: (enabled: boolean) => void;
   onSetting: (key: string, value: boolean | number | string | null) => void;
   onSecret: (key: string, value: string | null) => void;
   onCommand: (id: string, title: string) => void;
   onPanel: (id: string, title: string) => void;
 }) {
+  const [asking, setAsking] = useState(false);
+  const busy = catalog?.status?.kind === "checking" || catalog?.status?.kind === "asking";
+  const update = catalog?.state === "update" && catalog.installedVersion === plugin.version;
   return (
     <li className="plugin" data-plugin={plugin.name} data-enabled={plugin.enabled ? "1" : "0"}>
       <div className="plugin-row">
@@ -108,6 +151,23 @@ function PluginItem({ plugin, onEnable, onSetting, onSecret, onCommand, onPanel 
       {plugin.ignoredLibraryVersion !== undefined && <div className="plugin-meta plugin-copy-ignored">Your plugin library's copy ({plugin.ignoredLibraryVersion}) is older and is ignored</div>}
       {plugin.replacesBuiltIn !== undefined && <div className="plugin-meta plugin-copy-library">Your plugin library's copy (in use) replaces the built-in {plugin.replacesBuiltIn}</div>}
       {plugin.installedFrom && <div className="plugin-meta">from {plugin.installedFrom}</div>}
+      {catalog?.state === "devCopy" && <div className="plugin-meta plugin-dev-copy">{say(lang, "plugins.devCopy", { version: catalog.version })}</div>}
+      {(update || plugin.revertTo !== undefined || plugin.removable) && !asking && (
+        <div className="plugin-buttons plugin-manage">
+          {update && <button type="button" className="plugin-update" disabled={busy} onClick={onUpdate}>{catalog.status?.kind === "checking" ? say(lang, "plugins.checking") : say(lang, "plugins.update", { version: catalog.version })}</button>}
+          {plugin.revertTo !== undefined && <button type="button" className="plugin-revert" disabled={busy} onClick={onRevert}>{say(lang, "plugins.revert", { version: plugin.revertTo })}</button>}
+          {plugin.removable && <button type="button" className="plugin-remove" disabled={busy} onClick={() => setAsking(true)}>{say(lang, "plugins.remove")}</button>}
+        </div>
+      )}
+      {asking && (
+        <div className="plugin-row plugin-remove-ask" role="alertdialog" aria-label={say(lang, "plugins.removeAsk", { name: plugin.title })}>
+          <span className="plugins-problem">{say(lang, "plugins.removeAsk", { name: plugin.title })}</span>
+          <span className="plugin-buttons">
+            <button type="button" className="plugin-remove-yes" onClick={() => { setAsking(false); onRemove(); }}>{say(lang, "plugins.removeYes")}</button>
+            <button type="button" onClick={() => setAsking(false)}>{say(lang, "plugins.cancel")}</button>
+          </span>
+        </div>
+      )}
       {/* A built-in plugin's settings set on the Settings page (`hidden`) are not repeated here. */}
       {plugin.settings.filter((setting) => !setting.hidden).map((setting) => (
         <div key={setting.key} className="plugin-setting" data-setting={setting.key}>

@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { DoctorView, WaitingView, PendingFileView, PluginsView, PluginStoreView, SettingsView, BotView, ChatDecoration, ComponentInfoView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RoutineView, RunningView, StepView, SubagentView } from "../contract";
+import type { DoctorView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, ChatDecoration, ComponentInfoView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RoutineView, RunningView, StepView, SubagentView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; head?: "claude" | "codex" | "agy"; live: StepView[] }
@@ -44,8 +44,6 @@ export interface WorkspaceView {
   components: Record<string, ComponentInfoView>;
   /** The plugin library, once asked for (`plugins.list`) or changed (`plugins.updated`). */
   plugins: PluginsView | null;
-  /** The public plugin catalog (the Plugins page's Explore and Updates), once asked for (`plugins.store`) or changed. */
-  pluginStore?: PluginStoreView | null;
   /** The app's settings (language, avatar size, look…). */
   settings: SettingsView | null;
   doctor?: DoctorView | null;
@@ -249,10 +247,10 @@ export class WorkspaceStore {
 }
 
 export function apply(view: WorkspaceView, event: Event): WorkspaceView {
-  if (event.type === "plugins.emit") return view;
+  // The plugin catalog's view goes to the Plugins page itself (PluginStore.tsx `usePluginStore`).
+  if (event.type === "plugins.emit" || event.type === "plugins.store") return view;
   if (event.type === "components.updated") return { ...view, components: event.components };
   if (event.type === "plugins.updated") return { ...view, plugins: event.plugins };
-  if (event.type === "plugins.store") return { ...view, pluginStore: event.store };
   if (event.type === "plugins.open") return { ...view, pluginPanel: { plugin: event.plugin, panel: event.panel, title: event.title } };
   if (event.type === "plugins.openTab") return { ...view, openTab: { plugin: event.plugin, view: event.view, botId: event.botId, seq: (view.openTab?.seq ?? 0) + 1 } };
   if (event.type === "doctor.updated") return { ...view, doctor: event.doctor };
