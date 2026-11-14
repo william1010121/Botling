@@ -44,6 +44,8 @@ function sockets(relay: RelayLike) {
   };
 }
 
+/** How long the fake core takes to take a message (a slow plugin hook, a busy core). */
+let sendDelay = 0;
 function fakeCore() {
   const calls: any[] = [];
   let listener: ((change: { botId?: string }) => void) | undefined;
@@ -51,7 +53,7 @@ function fakeCore() {
     async mobileCommand(raw: any, allowed): Promise<ResponseEnvelope> {
       calls.push({ cmd: raw.cmd, allowed });
       if (raw.cmd.type === "chat.snapshot") return okResponse(raw.id, { epoch: "e", seq: calls.length, bots: [], chat: { botId: raw.cmd.botId, messages: [], tasks: [] } });
-      if (raw.cmd.type === "chat.send") return okResponse(raw.id, { messageId: "m1", turnId: null });
+      if (raw.cmd.type === "chat.send") { if (sendDelay) await new Promise(r => setTimeout(r, sendDelay)); return okResponse(raw.id, { messageId: "m1", turnId: null }); }
       if (raw.cmd.type === "turn.stop") return okResponse(raw.id, { stopped: true, killed: [], forced: false });
       return errorResponse(raw.id, { code: "bad_request", message: "no" });
     },
@@ -62,7 +64,7 @@ function fakeCore() {
 
 const until = async (check: () => boolean, ms = 3_000) => { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) throw new Error("timed out"); await new Promise(r => setTimeout(r, 5)); } };
 const cleanup: (() => void)[] = [];
-afterEach(() => { while (cleanup.length) cleanup.pop()!(); wire.length = 0; });
+afterEach(() => { while (cleanup.length) cleanup.pop()!(); wire.length = 0; sendDelay = 0; });
 
 /** A phone's socket factory whose first socket loses the phone's third encrypted frame (after {h:'pair'} and
  * {t:'pair'}: the ack of `paired`): swallowed (the connection stays up), or the connection drops in its place. */
@@ -125,16 +127,62 @@ function refusedJoins(connect: (url: string) => SocketLike, times: number) {
   };
 }
 /** Sockets that can go silent while still looking open (a phone that slept: iOS keeps the socket object, nothing passes). */
-function sleepySockets(connect: (url: string) => SocketLike) {
+function sleepySockets(connect: (url: string) => SocketLike, { forGood = false } = {}) {
   const made: { asleep: boolean }[] = [];
+  let slept = false;
   const factory = (url: string): SocketLike => {
-    const sock = connect(url), state = { asleep: false };
+    // forGood: the link stays dead, so connections made after the sleep carry nothing either.
+    const sock = connect(url), state = { asleep: forGood && slept };
     made.push(state);
     const send = sock.send.bind(sock);
     sock.send = (text: string) => { if (!state.asleep) send(text); };
     return sock;
   };
-  return { factory, sleep: () => { for (const s of made) s.asleep = true; } };
+  return { factory, sleep: () => { slept = true; for (const s of made) s.asleep = true; } };
+}
+
+/** A slow phone link: what the relay sends the phone arrives one frame at a time, `ms` apart (a large chat read
+ * ahead of a small answer on a phone network). */
+function slowLink(connect: (url: string) => SocketLike, ms: number) {
+  return (url: string): SocketLike => {
+    const sock = connect(url);
+    let queue = Promise.resolve();
+    let wrapped = false;
+    const wrap = () => {
+      const deliver = sock.onmessage;
+      if (!deliver || wrapped) return;
+      wrapped = true;
+      sock.onmessage = event => { queue = queue.then(() => new Promise<void>(r => setTimeout(() => { deliver(event); r(); }, ms))); };
+    };
+    const open = sock.send.bind(sock);
+    sock.send = (text: string) => { wrap(); open(text); };
+    return sock;
+  };
+}
+/** The first connection goes deaf once the channel is up: what the phone sends still reaches the desktop, nothing
+ * comes back (a socket that went half dead on a phone network). Later connections work. */
+function deafFirst(connect: (url: string) => SocketLike) {
+  let first = true;
+  return (url: string): SocketLike => {
+    const sock = connect(url);
+    if (!first) return sock;
+    first = false;
+    let deaf = false;
+    const open = sock.send.bind(sock);
+    sock.send = (text: string) => {
+      const deliver = sock.onmessage;
+      if (deliver && !(deliver as any).wrapped) {
+        const wrapped = (event: { data: unknown }) => { if (!deaf) deliver(event); };
+        (wrapped as any).wrapped = true;
+        sock.onmessage = wrapped;
+      }
+      // Deaf from the first request on.
+      const msg = JSON.parse(text);
+      if (msg.t === "d" && /^\d+\./.test(msg.d) && Number(msg.d.split(".")[0]) >= 1) deaf = true;
+      open(text);
+    };
+    return sock;
+  };
 }
 
 describe("relay connector + phone client", () => {
@@ -256,6 +304,83 @@ describe("relay connector + phone client", () => {
     phone.resume(true);
     expect(await asked).toMatchObject({ messageId: "m1" });
     expect(calls.filter(c => c.cmd.type === "chat.send")).toHaveLength(1);
+  });
+
+  it("an answer held up behind slower frames is still taken: the link is alive, so the phone keeps waiting", async () => {
+    const { calls, connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    const phone = await RelayClient.connect(session, { socket: slowLink(connect, 120), waits: [20], timeoutMs: 300 });
+    cleanup.push(() => phone.close());
+    // Four reads ahead of the message: its answer comes ~600 ms after it was asked, each frame within 300 ms of the last.
+    const reads = [1, 2, 3, 4].map(() => phone.request({ type: "chat.snapshot", botId: "main" }));
+    const sent = phone.request({ type: "chat.send", botId: "main", text: "hi" } as any);
+    await Promise.all(reads);
+    expect(await sent).toEqual({ messageId: "m1", turnId: null });
+    expect(calls.filter(c => c.cmd.type === "chat.send")).toHaveLength(1);
+  });
+
+  it("an answer lost on a connection that went deaf: the phone asks again on a new one and gets the first answer (sent once)", async () => {
+    const { calls, connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    const phone = await RelayClient.connect(session, { socket: deafFirst(connect), waits: [20], timeoutMs: 200 });
+    cleanup.push(() => phone.close());
+    expect(await phone.request({ type: "chat.send", botId: "main", text: "hi" } as any)).toEqual({ messageId: "m1", turnId: null });
+    expect(calls.filter(c => c.cmd.type === "chat.send")).toHaveLength(1);
+  });
+
+  it("asked again while the desktop is still taking the first one: the phone waits for that answer instead of failing", async () => {
+    const { calls, connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    sendDelay = 600;
+    const phone = await RelayClient.connect(session, { socket: deafFirst(connect), waits: [20], timeoutMs: 200 });
+    cleanup.push(() => phone.close());
+    expect(await phone.request({ type: "chat.send", botId: "main", text: "hi" } as any)).toEqual({ messageId: "m1", turnId: null });
+    expect(calls.filter(c => c.cmd.type === "chat.send")).toHaveLength(1);
+  });
+
+  it("a message no answer ever comes for ends unconfirmed (never 'not sent'), after the phone has stopped trying", async () => {
+    const { connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    const sleepy = sleepySockets(connect, { forGood: true });
+    const phone = await RelayClient.connect(session, { socket: sleepy.factory, waits: [20], timeoutMs: 100, giveUpMs: 500 });
+    cleanup.push(() => phone.close());
+    sleepy.sleep();
+    await expect(phone.request({ type: "chat.send", botId: "main", text: "hi" } as any)).rejects.toMatchObject({ uncertain: true });
+  });
+
+  it("a message asked while the desktop is away waits for it and goes once it is back (with its id)", async () => {
+    const { connector, calls, connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    const phone = await RelayClient.connect(session, { socket: connect, waits: [20] });
+    cleanup.push(() => phone.close());
+    let live = true;
+    phone.watch(() => {}, value => { live = value; });
+    connector.stop();
+    await until(() => !live);
+    const sent = phone.request({ type: "chat.send", botId: "main", text: "hi" } as any);
+    await new Promise(r => setTimeout(r, 300));
+    connector.start();
+    expect(await sent).toEqual({ messageId: "m1", turnId: null });
+    expect(calls.filter(c => c.cmd.type === "chat.send")).toHaveLength(1);
+  });
+
+  it("a message that could never be sent (no connection all along) says it was not sent, not unconfirmed", async () => {
+    const { connector, calls, connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    const phone = await RelayClient.connect(session, { socket: connect, waits: [20], giveUpMs: 300 });
+    cleanup.push(() => phone.close());
+    let live = true;
+    phone.watch(() => {}, value => { live = value; });
+    connector.stop();
+    await until(() => !live);
+    await expect(phone.request({ type: "chat.send", botId: "main", text: "hi" } as any)).rejects.toMatchObject({ uncertain: false, message: expect.stringContaining("not sent") });
+    expect(calls.filter(c => c.cmd.type === "chat.send")).toHaveLength(0);
   });
 
   it("resume does not wait out the reconnect backoff once the desktop is back", async () => {

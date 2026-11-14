@@ -2,11 +2,19 @@
 // it. Pairing (from the QR code) and every later connection use the same handshake (src/mobile-relay/e2e.ts); the
 // relay only carries ciphertext. Requests are the bridge's own commands; a mutation keeps its request id across a
 // reconnect, so the desktop's journal answers a resend with the first outcome instead of running it twice.
+//
+// Waiting for an answer: answers come back in order, behind whatever the desktop sent first (a chat read is about a
+// megabyte; on a phone network one can take many seconds). So a request is not given up while frames keep coming:
+// only a connection that carries nothing back for `timeoutMs` counts as stalled, and then the phone connects again and
+// asks again with the same id (the desktop's journal answers a message it already took with its first answer, and
+// says "pending" while it is still taking it: the phone then waits for that). Only after `giveUpMs` with no answer is
+// a request given up: a message then ends "unconfirmed", never "not sent".
 import { z } from 'zod';
 import { Command, RequestId, ResponseEnvelope } from '../src/contract';
 import { b64u, deriveChannel, deviceIdOf, generateKeyPair, offerIdOf, pairTokenOf, type Channel, type KeyPair } from '../src/mobile-relay/e2e';
 import { DeskHandshake, DeskMessage, RELAY_PAIR_ACK, type RelayLink } from '../src/mobile-relay/protocol';
 import { MobileError, type MobileCommand } from './transport';
+import { DELIVERY_UNCONFIRMED } from '../src/renderer/delivery';
 
 /** What the phone keeps after pairing (relay-session.ts stores it; the private key is never exportable). */
 export interface RelaySession {
@@ -29,7 +37,11 @@ export interface RelayClientOptions {
   onRevoked?: (error: MobileError) => void;
   /** The desktop confirmed the channel and said how long the pairing lasts now (it renews a phone in use): keep it. */
   onSession?: (session: RelaySession) => void;
+  /** How long a connection may carry nothing back while an answer is awaited before it counts as stalled (and the
+   * phone connects again and asks again). */
   timeoutMs?: number;
+  /** How long a request is tried before it is given up (default: a message 120 s, a read 60 s). */
+  giveUpMs?: number;
   waits?: number[];
 }
 
@@ -41,11 +53,29 @@ export function relaySocketURL(link: Pick<RelayLink, 'ws'>, origin: string): str
 }
 
 const WAITS = [1_000, 3_000, 10_000, 30_000];
+const QUIET_MS = 30_000;
+const GIVE_UP_SEND_MS = 120_000, GIVE_UP_READ_MS = 60_000;
+/** A resent message the desktop is still taking (its journal has it, without an answer yet): ask again this often. */
+const STILL_TAKING_MS = 1_000;
+/** The desktop journal's answer to a resend whose first copy it is still taking (mobile-bridge/ledger.ts). */
+const stillTaking = (env: unknown) => {
+  const e = env as { ok?: unknown; error?: { code?: unknown; message?: unknown } } | null;
+  return e?.ok === false && e.error?.code === 'conflict' && typeof e.error.message === 'string' && e.error.message.startsWith('Delivery is pending or uncertain');
+};
 /** The relay refusing a saved token is not proof of a sign-out on its own: just after the desktop (re)opens its room,
  * before its allow list arrives, every phone is refused. Only this many refusals in a row (with the usual waits
  * between) count as one. The desktop's own word (`revoked`, or a handshake refusal) counts at once. */
 const DENIED_LIMIT = 3;
-interface Pending { id: string; cmd: Command; resolve: (value: unknown) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout>; sent: boolean }
+interface Pending {
+  id: string; cmd: Command; resolve: (value: unknown) => void; reject: (error: unknown) => void;
+  /** Gives the request up (giveUpMs). */
+  timer: ReturnType<typeof setTimeout>;
+  /** Sent on the connection there is now (cleared when it is replaced). */
+  sent: boolean;
+  /** Sent at all (on any connection): a resend may meet the journal's "still taking it". */
+  asked: number;
+  again?: ReturnType<typeof setTimeout>;
+}
 type Hello = { kind: 'pair'; link: RelayLink; secret: Uint8Array; name: string; done: (session: RelaySession) => void; fail: (error: MobileError) => void } | { kind: 'session' };
 
 export class RelayClient {
@@ -67,6 +97,9 @@ export class RelayClient {
   private denials = 0;
   /** The last connection ended with a relay refusal that is tried again. */
   private refused = false;
+  /** When the connection last carried something back (or, waiting for nothing, when a request was sent on it). */
+  private heard = 0;
+  private watchdog: ReturnType<typeof setTimeout> | undefined;
 
   private constructor(private session: RelaySession | null, private options: RelayClientOptions) {}
 
@@ -101,11 +134,11 @@ export class RelayClient {
   close() {
     if (this.stage === 'closed') return;
     this.stage = 'closed';
-    clearTimeout(this.timer);
+    clearTimeout(this.timer); clearTimeout(this.watchdog);
     this.channel?.close();
     try { this.socket?.close(1000, 'bye'); } catch { /* gone */ }
     this.socket = null;
-    for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new MobileError('Disconnected. Connect again.')); }
+    for (const p of this.pending.values()) { clearTimeout(p.timer); clearTimeout(p.again); p.reject(new MobileError('Disconnected. Connect again.')); }
     this.pending.clear();
     this.setLive(false);
   }
@@ -117,10 +150,13 @@ export class RelayClient {
     const mutating = command.type !== 'chat.snapshot' && command.type !== 'chat.history';
     const envelope = await new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
+        clearTimeout(pending.again);
         this.pending.delete(id);
-        reject(new MobileError(mutating ? 'Delivery is unconfirmed. Refresh the chat before sending again; your draft is retained.' : 'Could not refresh. Check the connection.', false, mutating));
-      }, this.options.timeoutMs ?? 15_000);
-      const pending: Pending = { id, cmd: command, resolve, reject, timer, sent: false };
+        // Never sent (no channel all along): certainly not delivered. Sent and never answered: unconfirmed.
+        if (mutating && !pending.asked) reject(new MobileError('No connection to your computer, so this was not sent. Send it again once it is back.'));
+        else reject(new MobileError(mutating ? DELIVERY_UNCONFIRMED : 'Could not refresh. Your computer is not answering yet.', false, mutating));
+      }, this.options.giveUpMs ?? (mutating ? GIVE_UP_SEND_MS : GIVE_UP_READ_MS));
+      const pending: Pending = { id, cmd: command, resolve, reject, timer, sent: false, asked: 0 };
       this.pending.set(id, pending);
       if (this.stage === 'ready') void this.transmit(pending);
     });
@@ -151,6 +187,7 @@ export class RelayClient {
     socket.onopen = () => { if (this.socket === socket) socket.send(JSON.stringify({ t: 'join', v: 1, room, token })); };
     socket.onmessage = event => {
       if (this.socket !== socket || typeof event.data !== 'string') return;
+      this.heard = Date.now();
       const data = event.data;
       this.inbox = this.inbox.then(() => this.fromRelay(data)).catch(error => this.fail(error instanceof MobileError ? error : new MobileError('The connection to Botling failed a security check.')));
     };
@@ -225,7 +262,14 @@ export class RelayClient {
         const id = (message.env as { id?: unknown })?.id;
         const pending = typeof id === 'string' ? this.pending.get(id) : undefined;
         if (!pending) return;
-        clearTimeout(pending.timer); this.pending.delete(pending.id);
+        // Asked again (a stalled or replaced connection) while the desktop is still taking the first copy: its answer
+        // is coming; ask again shortly (it is never run twice).
+        if (pending.asked > 1 && stillTaking(message.env)) {
+          clearTimeout(pending.again);
+          pending.again = setTimeout(() => { if (this.pending.get(pending.id) === pending) void this.transmit(pending); }, STILL_TAKING_MS);
+          return;
+        }
+        clearTimeout(pending.timer); clearTimeout(pending.again); this.pending.delete(pending.id);
         pending.resolve(message.env);
         return;
       }
@@ -248,14 +292,30 @@ export class RelayClient {
 
   private async transmit(pending: Pending) {
     if (this.stage !== 'ready' || !this.channel) return;
-    pending.sent = true;
+    // Nothing else awaited on this connection: its quiet time starts now.
+    if (![...this.pending.values()].some(p => p.sent)) this.heard = Date.now();
+    pending.sent = true; pending.asked++;
+    this.checkQuiet();
     try { this.send({ t: 'd', d: await this.channel.seal({ t: 'req', id: pending.id, cmd: pending.cmd }) }); } catch { /* the close follows */ }
+  }
+
+  /** While an answer is awaited: a connection that carries nothing back for `timeoutMs` is stalled. */
+  private checkQuiet() {
+    clearTimeout(this.watchdog);
+    if (this.stage !== 'ready' || ![...this.pending.values()].some(p => p.sent)) return;
+    const quiet = this.options.timeoutMs ?? QUIET_MS;
+    const left = this.heard + quiet - Date.now();
+    if (left > 0) { this.watchdog = setTimeout(() => this.checkQuiet(), left); return; }
+    // Stalled (a socket gone half dead, a relay that lost the way back): connect again and ask again with the same ids.
+    this.restart();
   }
 
   private setLive(value: boolean) { if (this.live !== value) { this.live = value; this.options.onLive?.(value); } }
 
   /** The connection dropped: try again with growing waits, unless closed. Pending requests wait (or time out). */
   private lost() {
+    clearTimeout(this.watchdog);
+    for (const pending of this.pending.values()) pending.sent = false;
     this.channel?.close(); this.channel = null;
     this.setLive(false);
     if (this.stage === 'closed') return;
@@ -276,7 +336,14 @@ export class RelayClient {
   resume(restart = false) {
     if (this.stage === 'closed' || this.hello.kind === 'pair') return;
     if (this.stage === 'idle') { clearTimeout(this.timer); this.failures = 0; void this.open(); return; }
-    if (!restart) return;
+    if (restart) this.restart();
+  }
+
+  /** Drops the connection held (it may look open and carry nothing) and connects again now; requests still waiting are
+   * sent again with their ids once the channel is back. */
+  private restart() {
+    if (this.stage === 'closed' || this.hello.kind === 'pair') return;
+    clearTimeout(this.watchdog);
     const socket = this.socket;
     this.socket = null;
     if (socket) {
@@ -295,7 +362,7 @@ export class RelayClient {
     if (this.stage === 'closed') return;
     const hello = this.hello, first = this.firstReady;
     this.firstReady = null;
-    for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
+    for (const p of this.pending.values()) { clearTimeout(p.timer); clearTimeout(p.again); p.reject(error); }
     this.pending.clear();
     this.close();
     if (hello.kind === 'pair') hello.fail(error);

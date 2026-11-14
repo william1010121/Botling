@@ -116,8 +116,11 @@ Chats opens a full-width drawer; selection or Escape closes it. The conversation
 the drawer is open. Resizing resets the drawer without clearing drafts. Desktop messages and
 composer share a bounded reading width. Phone controls retain 44px minimum touch targets.
 
-Enter inserts a newline. Ctrl+Enter or Command+Enter submits through the same guarded send
-path as the Send button; IME composition does not submit. Loading earlier messages retains
+Return in the chat box (`Web/src/enter-mode.ts`): on a phone's on-screen keyboard (a touch-only device: no hover, a
+coarse pointer, no fine pointer) Return is a new line and only the Send button sends; with a physical keyboard (a
+desktop, a tablet with a trackpad, or once a key only a physical keyboard sends is seen, such as an iPad keyboard's
+letters) Return sends and Shift+Return is a new line. An input method's Return (choosing a Zhuyin or Pinyin candidate)
+never sends. Loading earlier messages retains
 the current reading position. History is limited to messages returned by the existing snapshot;
 this does not introduce server-side history pagination.
 

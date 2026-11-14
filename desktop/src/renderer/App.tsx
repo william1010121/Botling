@@ -22,6 +22,7 @@ import { actionForEvent, bindingsFor, commandBindings, commandForEvent, formatCo
 import { say, setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
 import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultView, type RoutineView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
+import { DELIVERY_UNCONFIRMED } from "./delivery";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
 import { browserTabActions, commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
@@ -1300,7 +1301,16 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
       const composerReply = (ok: boolean, error?: string) => {
         if (typeof action.requestID === "string") postToChat({ botling: "composerResult", requestID: action.requestID, ok, ...(error ? { error: error.slice(0, 4096) } : {}) });
       };
-      const composerFailure = (error: unknown) => { composerReply(false, error instanceof Error ? error.message : String(error)); onError(error); };
+      // The words alone (not the wire code: "Not sent: core_unavailable: …" told nothing). A message whose delivery could
+      // not be confirmed (the phone) is the composer's unconfirmed state, not a failure.
+      const composerFailure = (error: unknown) => {
+        const wire = error instanceof RequestFailed ? error.error : null;
+        if (wire?.message === DELIVERY_UNCONFIRMED) {
+          if (typeof action.requestID === "string") postToChat({ botling: "composerResult", requestID: action.requestID, ok: false, uncertain: true });
+          return;
+        }
+        composerReply(false, wire ? wire.message : error instanceof Error ? error.message : String(error)); onError(error);
+      };
       switch (action?.type) {
         case "composerQuoteResult":
           chatQuoteAnswered(action.requestID, action.inserted);

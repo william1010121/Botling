@@ -50,6 +50,8 @@ export class ComposerRequests {
     this.persist(); pending.reject(new DeliveryUncertain(requestID)); this.changed();
   }
   response(requestID: string, result: DeliveryResult): void {
+    // No answer came and it cannot be told whether it arrived: unconfirmed (as a timeout is), never "not sent".
+    if (!result.ok && result.uncertain) { this.uncertain(requestID); return; }
     const pending = this.pending.get(requestID), late = this.late.get(requestID);
     if (!pending && !this.journal.has(requestID)) return;
     if (pending) { clearTimeout(pending.timer); this.pending.delete(requestID); }

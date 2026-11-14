@@ -12,8 +12,10 @@ export function detailsFixture() {
     settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, rightPanelCollapsed: collapsed, railCollapsed: false, pinnedBots: [],
       subagentModel: null, subagentHourCache: false, claudeBypassPermissions: false, codexBypassPermissions: false, codexWorkersFollow: true,
       codexWorkers: { model: null, effort: null, fast: null }, componentEditorModel: 'sonnet', resultPublishing: 'localOnly', stallReminderMinutes: 15,
-      developerMode: false, developerProject: null, updateCheck: false },
-    bots: [primary], chat: { botId, messages: [], running: null, live: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [], pendingFiles: [] },
+      developerMode: false, developerProject: null, updateCheck: false,
+      engineDefaults: { engines: ['claude'], primary: 'claude', models: { claude: null, codex: null, agy: null }, efforts: { claude: null, codex: null, agy: null } } } as unknown as ResultOf<'chat.snapshot'>['settings'],
+    // Older chat fields the renderer still tolerates; the fixture keeps them as it was written.
+    bots: [primary], chat: { botId, messages: [], running: null, live: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [], pendingFiles: [] } as unknown as ResultOf<'chat.snapshot'>['chat'],
   });
   const store = new WorkspaceStore(async botId => snapshot(botId));
   const client = { request: async (cmd: Command) => {
