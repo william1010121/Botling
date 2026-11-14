@@ -43,6 +43,20 @@ export const CSP = [
   "form-action 'none'",
 ].join("; ");
 
+/** The 2.x chat page's own policy (src/mobile-bridge/bridge.ts webChatCSP, desktop CHAT_CSP) for `/v3/chat.html`: it runs
+ * in a sandboxed, opaque-origin frame and loads its built-in web parts as blob: scripts; no network, forms or plugins. */
+export const CHAT_CSP = [
+  "default-src 'none'", "script-src 'self' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:",
+  "media-src 'self' data: blob:", "frame-src 'self'", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'", "frame-ancestors 'self'",
+].join("; ");
+/** The component frame host's policy (bridge.ts frameHostCSP) for `/v3/frame-host.html`: a sandbox, scripts only from
+ * itself and the blob: it is handed, no network, frames or forms. Its parent is the opaque chat frame, so it carries no
+ * frame-ancestors / X-Frame-Options (as on 2.x). */
+export const FRAME_HOST_CSP = [
+  "sandbox allow-scripts", "default-src 'none'", "script-src 'self' 'unsafe-inline' blob:", "style-src 'unsafe-inline'", "img-src data: blob:",
+  "font-src data:", "media-src data: blob:", "connect-src 'none'", "frame-src 'none'", "child-src 'none'", "worker-src 'none'", "form-action 'none'", "base-uri 'none'",
+].join("; ");
+
 /** Headers on every answer of the listener. */
 export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Content-Security-Policy": CSP,
@@ -178,6 +192,13 @@ export class LoopbackListener {
       return;
     }
     const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
+    // The 2.x renderer's chat page runs in a sandboxed frame with an opaque origin ("null", src/renderer/chat-frame/
+    // protocol.ts CHAT_SANDBOX): its scripts, styles and fonts are cross-origin requests from there, which `same-origin`
+    // would block. The page's own files are the public app shell (no conversation content, nothing private), so the
+    // non-HTML ones may be read from any origin; documents, errors and everything outside the page keep `same-origin`.
+    if (!type.startsWith("text/html")) response.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    if (name === "chat.html") response.setHeader("Content-Security-Policy", CHAT_CSP);
+    if (name === "frame-host.html") { response.setHeader("Content-Security-Policy", FRAME_HOST_CSP); response.removeHeader("X-Frame-Options"); }
     // The app shell is checked each time (the service worker caches it); nothing here is private.
     send(request, response, 200, type, readFileSync(file), type.startsWith("text/html") || name === "sw.js" ? "no-store" : "no-cache");
   }

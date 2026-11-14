@@ -380,7 +380,8 @@ export class PairingService {
 
   private armAck(offer: Offer, session: PairSession): void {
     const timer = setTimeout(() => {
-      if (offer.state.kind === "held" && offer.state.session === session) { this.giveBack(offer, "ack lost"); session.link.end(); }
+      // Only while the offer is still pending: after the ack it was retired (used), and nothing is given back.
+      if (this.offers.get(offer.id) === offer && offer.state.kind === "held" && offer.state.session === session) { this.giveBack(offer, "ack lost"); session.link.end(); }
     }, this.options.ackTimeoutMs ?? PAIR_ACK_TIMEOUT_MS);
     timer.unref?.();
   }
