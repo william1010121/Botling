@@ -381,15 +381,19 @@ describe("checkpoint", () => {
     return { sink, writes, clears, gates, setHold: (value: boolean) => { hold = value; } };
   }
 
-  it("writes the whole turn text at start and every 5 s when it changed; a stalled writer makes ticks wait", async () => {
+  it("writes the whole turn text at start, its first text 1 s after it came, then every 5 s when it changed; a stalled writer makes ticks wait", async () => {
     const clock = new FakeClock();
     const { sink, writes, clears, gates, setHold } = fakeSink();
     const live = new LiveChannel({ clock, sink });
     live.start("alpha", "t1");
     expect(writes).toEqual([{ botId: "alpha", turnId: "t1", text: "", at: clock.now() }]);
     live.delta("alpha", "t1", "one ");
-    clock.advance(5_000);
-    expect(writes.at(-1)!.text).toBe("one ");
+    clock.advance(999);
+    expect(writes).toHaveLength(1);
+    clock.advance(1); // M1 demo bug 5b: the first text does not wait for the 5 s tick
+    expect(writes.at(-1)).toMatchObject({ text: "one ", at: clock.now() });
+    clock.advance(4_000); // the 5 s tick: unchanged since, no write
+    expect(writes).toHaveLength(2);
     clock.advance(5_000); // unchanged: no write
     expect(writes).toHaveLength(2);
     await flush();
@@ -414,6 +418,34 @@ describe("checkpoint", () => {
     await flush();
     clock.advance(20_000);
     expect(writes).toHaveLength(5);
+    expect(clock.pending).toBe(0);
+  });
+
+  it("the first text is checkpointed at the first step boundary when that comes sooner, and only once early", async () => {
+    const clock = new FakeClock();
+    const { sink, writes } = fakeSink();
+    const live = new LiveChannel({ clock, sink });
+    live.start("alpha", "t1");
+    live.delta("alpha", "t1", "Let me look.");
+    clock.advance(300);
+    live.step("alpha", "t1"); // a tool call: the words so far are a finished segment
+    expect(writes.map((write) => [write.text, write.at - writes[0].at])).toEqual([["", 0], ["Let me look.", 300]]);
+    await flush(); // both writes settle (at most two are in flight)
+    clock.advance(700); // the 1 s timer is gone: nothing more early
+    live.delta("alpha", "t1", " Found it.");
+    clock.advance(1_000);
+    expect(writes).toHaveLength(2);
+    clock.advance(3_000); // the 5 s tick from the start takes the rest
+    expect(writes.at(-1)).toMatchObject({ text: "Let me look. Found it." });
+    expect(writes).toHaveLength(3);
+    // An empty step boundary (no words yet) writes nothing early; a turn that ends before 1 s writes no first text.
+    live.start("alpha", "t2");
+    live.step("alpha", "t2");
+    live.delta("alpha", "t2", "x");
+    clock.advance(500);
+    live.end("alpha", "t2");
+    clock.advance(10_000);
+    expect(writes.filter((write) => write.turnId === "t2").map((write) => write.text)).toEqual([""]);
     expect(clock.pending).toBe(0);
   });
 

@@ -22,7 +22,10 @@
 //   the subscription's first frame is the whole current segment (`at = 0`), then appends follow.
 // - Checkpoint (§9.3): at turn start (empty text, so recovery knows the turn) and then every `checkpointIntervalMs`
 //   (5 s) when the text changed, the whole turn text (finished segments + current) goes to the sink, which must apply
-//   writes in order; at most two writes per turn are in flight. `end()` clears it; `close()` (shutdown or crash) leaves it for recovery.
+//   writes in order; at most two writes per turn are in flight. The first text is checkpointed sooner (M1 demo bug 5b):
+//   at the first step boundary, or `firstCheckpointMs` (1 s) after the first text, whichever comes first, so a crash
+//   early in a reply keeps its first words; the 5 s ticks go on as before (never more than ~5 s of text missing).
+//   `end()` clears it; `close()` (shutdown or crash) leaves it for recovery.
 import type { StreamId } from "../../protocol";
 import type { CheckpointSink, LiveCheckpoint } from "./checkpoint";
 import { systemClock, type Clock, type TimerHandle } from "./clock";
@@ -30,6 +33,8 @@ import type { LiveFrame } from "./receiver";
 
 export const MIN_FRAME_INTERVAL_MS = 100;
 export const CHECKPOINT_INTERVAL_MS = 5_000;
+/** How long after a turn's first text its first text checkpoint is written (unless a step boundary comes first). */
+export const FIRST_CHECKPOINT_MS = 1_000;
 /** UTF-16 code units per frame: ≤ 4 bytes per 2 units in UTF-8, so 60,000 units stay far below the 256 KiB frame (§5.2). */
 export const MAX_FRAME_UNITS = 60_000;
 const MAX_CHECKPOINTS_IN_FLIGHT = 2;
@@ -40,6 +45,7 @@ export interface LiveChannelOptions {
   sink?: CheckpointSink | null;
   minFrameIntervalMs?: number;
   checkpointIntervalMs?: number;
+  firstCheckpointMs?: number;
   maxFrameUnits?: number;
   /** A subscriber's send or a checkpoint write failed; the channel goes on. */
   onError?: (error: unknown) => void;
@@ -77,6 +83,10 @@ interface Turn {
   version: number;
   checkpointTimer: TimerHandle | null;
   checkpointed: number;
+  /** A checkpoint with text was written (the start one is empty). */
+  hasTextCheckpoint: boolean;
+  /** The early first text checkpoint, while it waits. */
+  firstTimer: TimerHandle | null;
   /** Checkpoint writes not settled yet. */
   writing: number;
   /** A tick found too many writes in flight: write again once one settles. */
@@ -108,6 +118,7 @@ export class LiveChannel {
   private readonly sink: CheckpointSink | null;
   private readonly interval: number;
   private readonly checkpointInterval: number;
+  private readonly firstCheckpoint: number;
   private readonly maxUnits: number;
   private readonly turns = new Map<StreamId, Turn>();
   private readonly subs = new Map<StreamId, Set<Sub>>();
@@ -118,6 +129,7 @@ export class LiveChannel {
     this.sink = options.sink ?? null;
     this.interval = Math.max(1, options.minFrameIntervalMs ?? MIN_FRAME_INTERVAL_MS);
     this.checkpointInterval = Math.max(1, options.checkpointIntervalMs ?? CHECKPOINT_INTERVAL_MS);
+    this.firstCheckpoint = Math.max(1, Math.min(options.firstCheckpointMs ?? FIRST_CHECKPOINT_MS, this.checkpointInterval));
     this.maxUnits = Math.max(2, options.maxFrameUnits ?? MAX_FRAME_UNITS);
   }
 
@@ -131,7 +143,8 @@ export class LiveChannel {
     const previous = this.turns.get(stream);
     if (previous) this.end(botId, previous.turnId);
     const turn: Turn = {
-      botId, stream, turnId, seg: 0, prior: "", text: "", version: 0, checkpointTimer: null, checkpointed: -1, writing: 0, tickWaiting: false, ended: false,
+      botId, stream, turnId, seg: 0, prior: "", text: "", version: 0, checkpointTimer: null, checkpointed: -1, hasTextCheckpoint: false, firstTimer: null,
+      writing: 0, tickWaiting: false, ended: false,
     };
     this.turns.set(stream, turn);
     this.writeCheckpoint(turn);
@@ -179,6 +192,8 @@ export class LiveChannel {
     turn.text = "";
     turn.seg += 1;
     turn.version += 1;
+    // The first step boundary with text: its words are checkpointed now, not at the next tick.
+    if (!turn.hasTextCheckpoint && turn.prior) this.writeCheckpoint(turn);
     // Nothing to send for an empty segment; subscribers' pending timers find nothing new and stay quiet.
     return true;
   }
@@ -191,8 +206,7 @@ export class LiveChannel {
     const turn = this.turn(botId, turnId);
     if (!turn) return false;
     turn.ended = true;
-    if (turn.checkpointTimer) this.clock.clearTimeout(turn.checkpointTimer);
-    turn.checkpointTimer = null;
+    this.stopCheckpoints(turn);
     this.turns.delete(turn.stream);
     for (const sub of this.subs.get(turn.stream) ?? []) this.cancel(sub);
     if (options.clear !== false && this.sink) {
@@ -247,8 +261,7 @@ export class LiveChannel {
     this.closed = true;
     for (const turn of this.turns.values()) {
       turn.ended = true;
-      if (turn.checkpointTimer) this.clock.clearTimeout(turn.checkpointTimer);
-      turn.checkpointTimer = null;
+      this.stopCheckpoints(turn);
     }
     this.turns.clear();
     for (const set of this.subs.values()) for (const sub of set) { this.cancel(sub); sub.isClosed = true; }
@@ -264,7 +277,20 @@ export class LiveChannel {
 
   private changed(turn: Turn): void {
     turn.version += 1;
+    if (!turn.hasTextCheckpoint && !turn.firstTimer && this.sink && (turn.prior || turn.text)) {
+      turn.firstTimer = this.clock.setTimeout(() => {
+        turn.firstTimer = null;
+        if (!turn.ended && !turn.hasTextCheckpoint && turn.version !== turn.checkpointed) this.writeCheckpoint(turn);
+      }, this.firstCheckpoint);
+    }
     for (const sub of this.subs.get(turn.stream) ?? []) this.schedule(sub);
+  }
+
+  private stopCheckpoints(turn: Turn): void {
+    if (turn.checkpointTimer) this.clock.clearTimeout(turn.checkpointTimer);
+    turn.checkpointTimer = null;
+    if (turn.firstTimer) this.clock.clearTimeout(turn.firstTimer);
+    turn.firstTimer = null;
   }
 
   private schedule(sub: Sub): void {
@@ -331,6 +357,10 @@ export class LiveChannel {
     if (turn.writing >= MAX_CHECKPOINTS_IN_FLIGHT) { turn.tickWaiting = true; return; }
     const checkpoint: LiveCheckpoint = { botId: turn.botId, turnId: turn.turnId, text: turn.prior + turn.text, at: this.clock.now() };
     turn.checkpointed = turn.version;
+    if (checkpoint.text) {
+      turn.hasTextCheckpoint = true;
+      if (turn.firstTimer) { this.clock.clearTimeout(turn.firstTimer); turn.firstTimer = null; }
+    }
     turn.writing += 1;
     this.sink.write(checkpoint).catch((error) => {
       turn.checkpointed = -1; // try again at the next tick
