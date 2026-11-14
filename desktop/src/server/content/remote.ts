@@ -18,6 +18,7 @@ import { Readable } from "node:stream";
 import { CHAT_MEDIA_CSP, goneResponse, serveContentFile } from "../../main-v3/content-protocol";
 import { contentUrlForLog, parseContentUrl, type MessageOf } from "../../protocol";
 import type { DeviceRoster } from "../session/remote-reads";
+import type { PeerContent } from "./peer-content";
 import type { ContentService } from "./service";
 import type { ContentTickets } from "./tickets";
 
@@ -26,6 +27,11 @@ export interface RemoteContentOptions {
   tickets: ContentTickets;
   roster: Pick<DeviceRoster, "device">;
   log?: (text: string) => void;
+  /**
+   * M3 step 10: content owned by a peer server (peer-content.ts). Lookups of a peer's bot's lines, tickets for a
+   * peer's reference and `/v3/c/<peer>/…` requests go there, after the same ticket and device checks.
+   */
+  peer?: Pick<PeerContent, "ownerOfBot" | "locate" | "check" | "respond"> | null;
 }
 
 /** Why an HTTP request was refused before any file was looked at (the `X-Botling-Content` header names it). */
@@ -45,7 +51,8 @@ export class RemoteContent {
   async locate(deviceId: string, message: MessageOf<"content.locate">): Promise<MessageOf<"content.located">> {
     const none: MessageOf<"content.located"> = { t: "content.located", req: message.req, ref: null };
     if (!this.readable(deviceId)) return none;
-    const found = this.options.service.locate(message);
+    const peer = this.options.peer && this.options.peer.ownerOfBot(message.botId) ? this.options.peer : null;
+    const found = peer ? await peer.locate(deviceId, message) : this.options.service.locate(message);
     if (!found) return none;
     const ref = { owner: found.owner, id: found.id, type: found.type, state: found.state, entry: found.entry };
     if (found.state !== "ready" || !found.id.startsWith("sha256:")) return { ...none, ref };
@@ -57,6 +64,12 @@ export class RemoteContent {
   async ticket(deviceId: string, message: MessageOf<"content.ticket">): Promise<MessageOf<"content.granted"> | MessageOf<"content.gone">> {
     const gone = (reason: MessageOf<"content.gone">["reason"]): MessageOf<"content.gone"> => ({ t: "content.gone", req: message.req, id: message.id, reason });
     if (!this.readable(deviceId)) return gone("denied");
+    if (message.owner !== this.options.service.serverId && this.options.peer) {
+      const checked = await this.options.peer.check(deviceId, message.owner, message.id, message.entry);
+      if (checked !== "ok") return gone(checked === "corrupt" || checked === "cancelled" ? "offline" : checked);
+      const { ticket, expiresAt } = this.options.tickets.issue({ deviceId, owner: message.owner, id: message.id, entry: message.entry });
+      return { t: "content.granted", req: message.req, ticket, expiresAt };
+    }
     const opened = await this.options.service.open({ t: "content.open", req: message.req, owner: message.owner, id: message.id, variant: "original", entry: message.entry }, { remote: true });
     if (opened.t === "content.gone") return gone(opened.reason);
     const { ticket, expiresAt } = this.options.tickets.issue({ deviceId, owner: message.owner, id: message.id, entry: message.entry });
@@ -72,6 +85,8 @@ export class RemoteContent {
     if (!grant) return refused("ticket");
     if (grant.owner !== url.owner || grant.id !== url.id || grant.entry.stream !== url.entry.stream || grant.entry.seq !== url.entry.seq) return refused("binding");
     if (!this.readable(grant.deviceId)) { this.options.tickets.dropDevice(grant.deviceId); return refused("device"); }
+    // M3 step 10: another server's content passes through this one (checked there and at the owner).
+    if (url.owner !== this.options.service.serverId && this.options.peer) return this.options.peer.respond(url, request, grant.deviceId);
     const opened = await this.options.service.open({ t: "content.open", req: "http", owner: url.owner, id: url.id, variant: url.variant, entry: url.entry }, { remote: true });
     if (opened.t === "content.gone") return goneResponse(opened.reason);
     return serveContentFile(opened, request, {

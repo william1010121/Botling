@@ -17,7 +17,7 @@
 //   are handled one at a time in order (the link awaits onFrame: D58).
 // - Keepalive: `ping` after `pingMs` of this side's silence, `bye{dead}` after `deadMs` heard nothing.
 import {
-  decodeWireFrame, encodeWireFrame, fromBase64Url, statementId, type MessageOf, type SignedStatement, type WireMessage,
+  decodeWireFrame, encodeChunkFrame, encodeWireFrame, fromBase64Url, statementId, type MessageOf, type SignedStatement, type WireMessage,
 } from "../../protocol";
 import { SessionLink, type LocalStatic, type PeerClaim, type PeerDecision, type PeerStatic, type SessionEnd, type SessionInfo, type SessionTransport } from "../../session";
 import type { RosterChange, RosterView } from "../roster";
@@ -196,6 +196,19 @@ export class PeerSession {
   sendWire(message: WireMessage): boolean {
     if (this.state !== "open" || this.flushing) return false;
     return this.send(message);
+  }
+
+  /**
+   * Sends a `content.chunk` as a binary frame on the bulk lane (M3 step 10, §5.3: control frames still go first, so an
+   * approval waits at most one chunk). False: not open, or not sent.
+   */
+  sendChunk(message: MessageOf<"content.chunk">): boolean {
+    if (this.state !== "open" || this.flushing || this.link.state === "ended") return false;
+    const encoded = encodeChunkFrame(message, "peer", PEER_KIND);
+    if (!encoded.ok) { this.host.log(`peer ${this.peer ?? "?"}: cannot send content.chunk: ${encoded.detail}`); return false; }
+    try { this.link.send("bulk", encoded.bytes); } catch { return false; }
+    this.lastSent = this.now();
+    return true;
   }
 
   /** Sends `bye` and closes once it left (or after a short wait). */

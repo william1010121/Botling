@@ -110,7 +110,7 @@ describe("schema and migrations (v1 §7.3)", () => {
       const tables = reader.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
       expect(tables).toEqual([
         "bots", "cancels", "cards", "chunk_cache", "content", "content_aliases", "content_meta", "content_names", "content_refs", "effects", "entries", "forwardq", "fulltext", "fwdcancels", "grants",
-        "lists", "media_jobs", "messages", "meta", "myorigins", "peerlog_entries", "peerlogs", "prefs", "receipts", "retired", "roster", "rows", "slots", "streams",
+        "lists", "media_jobs", "messages", "meta", "myorigins", "peer_content", "peer_content_lines", "peer_content_refs", "peerlog_entries", "peerlogs", "prefs", "receipts", "retired", "roster", "rows", "slots", "streams",
         "variants",
       ]);
       expect(schemaVersion(reader)).toBe(LATEST_SCHEMA_VERSION);
