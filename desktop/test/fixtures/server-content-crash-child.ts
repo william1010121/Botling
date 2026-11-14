@@ -1,8 +1,8 @@
 // Child process of test/unit/server-content-crash.test.ts (bundled by the test; no window). It opens server.db in
 // <dataDir>, then posts finished lines until it is killed: line i names a video, a picture and a PDF in <mediaDir>,
-// rewritten before each line (a bot that renders again), so every line pins its own version. The line's entry, its
-// content rows, content_refs and content_names commit together; hashing then runs in the worker thread and records
-// content.ready. It writes "ack <seq>" once a line's entry committed and "hashed <seq>" once its content.ready entries
+// rewritten before each line (a bot that renders again at once), so a line's pin either keeps its own version or, when
+// the next rewrite came first, is `changed`. The line's entry, its content rows, content_refs and content_names commit
+// together; pinning and hashing (worker thread) then run after the commit and record content.ready. It writes "ack <seq>" once a line's entry committed and "hashed <seq>" once its content.ready entries
 // did (synchronous writes, so the parent hears them no later than they happened).
 import { writeFileSync, writeSync } from "node:fs";
 import { randomBytes } from "node:crypto";

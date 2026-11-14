@@ -7,8 +7,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { StreamId } from "../../src/protocol";
-import { ContentService, finishedLine, Hasher, namedFiles, pathOfFileRef, pinFile, type LineLike } from "../../src/server/content";
-import { ensureStream, readEntries } from "../../src/server/log";
+import { ContentService, contentLineHook, finishedLine, Hasher, namedFiles, pathOfFileRef, pinFile, type LineLike } from "../../src/server/content";
+import { EventTap, TxScope } from "../../src/server/effects";
+import { appendEntries, ensureStream, readEntries } from "../../src/server/log";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 
 const BOT = "bot-a";
@@ -277,6 +278,9 @@ describe("recovery at start", () => {
     writeFileSync(file, bytes("p", 5000));
     const posted = await postLine(line("m1", `![p](${file})`), svc);
     void posted.ready;
+    // The pin is recorded right after the entry's commit; then hashing stalls.
+    for (let i = 0; i < 200 && rows("SELECT pin FROM content")[0]?.pin === "path"; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(rows("SELECT pin, state FROM content").map((row) => [row.pin, row.state])).toEqual([[process.platform === "darwin" ? "clone" : expect.any(String), "preparing"]]);
     writeFileSync(join(svc.pinsDir, "0123456789abcdef0123456789abcdef"), "orphan");
     writeFileSync(join(svc.pinsDir, "feedfeedfeedfeedfeedfeedfeedfeed.partial"), "partial");
     // The server stopped here (the hash never came back).
@@ -287,5 +291,71 @@ describe("recovery at start", () => {
     expect(existsSync(join(service.pinsDir, "0123456789abcdef0123456789abcdef"))).toBe(false);
     const ready = readEntries(store.openReader(), STREAM, 1, { maxEntries: 100, maxBytes: 1e9 }).entries.filter((e) => e.kind === "content.ready");
     expect(ready.length).toBe(1);
+  });
+});
+
+describe("on the event tap (step 6), and the line's later updates", () => {
+  const waitFor = async (check: () => boolean) => {
+    for (let i = 0; i < 300 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(check()).toBe(true);
+  };
+
+  it("a finished line the engine emits gets its references in the entry's transaction, then content.ready", async () => {
+    const scope = new TxScope(store);
+    const tap = new EventTap({ scope, hooks: { lineStored: contentLineHook(service, scope) } });
+    const video = join(media, "out.mp4");
+    const data = bytes("tap", 2 * 1024 * 1024 + 5);
+    writeFileSync(video, data);
+    const message = (state: string) => ({ id: "m7", role: "bot", text: `done ![v](${pathToFileURL(video).href})`, time: "2026-11-14T00:00:00.000Z", state });
+    // While it streams: no reference. Its finishing update: references in the same transaction as that entry.
+    tap.event({ type: "message.added", botId: BOT, message: message("streaming") } as never);
+    await waitFor(() => tap.waiting === 0 && rows("SELECT count(*) AS n FROM entries WHERE stream = ? AND kind = 'message.added'", STREAM)[0]!.n === 1);
+    expect(rows("SELECT count(*) AS n FROM content_refs")[0]!.n).toBe(0);
+    tap.event({ type: "message.updated", botId: BOT, message: message("done") } as never);
+    await waitFor(() => rows("SELECT count(*) AS n FROM entries WHERE stream = ? AND kind = 'message.updated'", STREAM)[0]!.n === 1);
+    const updated = rows("SELECT seq FROM entries WHERE stream = ? AND kind = 'message.updated'", STREAM)[0]!;
+    expect(rows("SELECT seq FROM content_names WHERE stream = ? AND line = 'm7'", STREAM).map((row) => Number(row.seq))).toEqual([Number(updated.seq)]);
+    await waitFor(() => rows("SELECT count(*) AS n FROM entries WHERE stream = ? AND kind = 'content.ready'", STREAM)[0]!.n === 1);
+    await service.idle();
+    expect(rows("SELECT id FROM content_names WHERE line = 'm7'")[0]!.id).toBe(sha(data));
+    const found = service.find({ t: "content.find", req: "f", botId: BOT, line: "m7", url: pathToFileURL(video).href });
+    expect(found.ref?.state).toBe("ready");
+    expect((await service.open({ t: "content.open", req: "o", owner: service.serverId, id: found.ref!.id, variant: "original", entry: found.ref!.entry })).t).toBe("content.file");
+  });
+
+  it("a later update naming the same version references the same id; a rewritten file gets a new one", async () => {
+    const picture = join(media, "plot.png");
+    writeFileSync(picture, bytes("one", 9000));
+    const l = line("m1", `![p](${picture})`);
+    const first = await postLine(l);
+    await first.ready;
+    const again = await postLine(l); // e.g. a reaction updated the line
+    expect(await again.ready).toEqual([]);
+    expect(rows("SELECT id, seq FROM content_refs WHERE seq IN (?, ?) ORDER BY seq", first.entry.seq, again.entry.seq).map((row) => row.id)).toEqual([sha(bytes("one", 9000)), sha(bytes("one", 9000))]);
+    writeFileSync(picture, bytes("two", 9001));
+    const third = await postLine(l);
+    await third.ready;
+    expect(rows("SELECT id FROM content_names WHERE line = 'm1'").map((row) => row.id)).toEqual([sha(bytes("two", 9001))]);
+    // The first entry still proves its own version.
+    const opened = await service.open({ t: "content.open", req: "o", owner: service.serverId, id: sha(bytes("one", 9000)), variant: "original", entry: { stream: STREAM, seq: first.entry.seq } });
+    expect(opened.t).toBe("content.file");
+    if (opened.t === "content.file") expect(readFileSync(opened.path).equals(bytes("one", 9000))).toBe(true);
+  });
+
+  it("a file rewritten between the line's commit and its pin is `changed`, never pinned", async () => {
+    const video = join(media, "fast.mp4");
+    writeFileSync(video, bytes("before", 300_000));
+    const l = line("m1", `![v](${video})`);
+    const noted = await store.submit((db) => {
+      const [entry] = appendEntries(db, STREAM, [{ kind: "message.added", body: messageBody(l) }], { now: Date.now() });
+      return service.noteLine(db, BOT, l, entry!);
+    });
+    writeFileSync(video, bytes("after", 300_000));
+    expect(await service.afterCommit(noted!)).toEqual([]);
+    expect(rows("SELECT state, pin FROM content").map((row) => [row.state, row.pin])).toEqual([["changed", "path"]]);
+    expect(existsSync(service.pinsDir) ? readdirSync(service.pinsDir) : []).toEqual([]);
+    const found = service.find({ t: "content.find", req: "f", botId: BOT, line: "m1", url: `file://${video}` });
+    const opened = await service.open({ t: "content.open", req: "o", owner: service.serverId, id: found.ref!.id, variant: "original", entry: found.ref!.entry });
+    expect(opened).toMatchObject({ t: "content.gone", reason: "changed" });
   });
 });

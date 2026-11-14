@@ -6,9 +6,10 @@
 // | > 64 MiB, elsewhere        | `pin: path`: the path and its stat signature (size, mtime |
 // |                            | in ns, inode); chunk hashes once hashed                   |
 //
-// Pins are made when the line finishes, before its entry commits, as `<data>/content/pins/<hex>` (a new random name per
-// pin, never renamed and never rewritten). A pin file that no content row names (a crash between the pin and the
-// commit, or a pin whose bytes were already stored) is removed by `sweepPins` at start.
+// Pins are made right after the line's entry committed (service.ts `afterCommit`), as `<data>/content/pins/<hex>` (a new
+// random name per pin, never renamed and never rewritten), and kept only if the source still has the stat signature it
+// had when the line finished. A pin file that no content row names (a crash between the pin and the command that
+// records it, or a pin whose bytes were already stored) is removed by `sweepPins` at start.
 import { execFile } from "node:child_process";
 import { constants, copyFileSync, mkdirSync, readdirSync, realpathSync, rmSync, statfsSync, statSync } from "node:fs";
 import { copyFile, rename, rm } from "node:fs/promises";

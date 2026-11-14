@@ -16,7 +16,7 @@
 // not validate) is logged and skipped, never failing the command it rode in.
 import { randomUUID } from "node:crypto";
 import type { Event as ContractEvent } from "../../contract";
-import { canonicalJson } from "../../protocol";
+import { canonicalJson, type Entry } from "../../protocol";
 import type { ContractLiveFeed } from "../live";
 import type { Db } from "../store";
 import { appendFitted, clearLive, ensureBot, markLive, serverStreamOf } from "./log-ops";
@@ -26,6 +26,12 @@ import { findTurnEffect, insertEffect, moveEffect } from "./table";
 export interface TapHooks {
   /** A turn ended (its `turn.finished` is in `tx`): turns another turn read in end with it (worker.ts). */
   turnEnded?(tx: Db, botId: string, turnId: string, status: "done" | "stopped" | "failed"): void;
+  /**
+   * A chat line's entry (`message.added`, or `message.updated`) is in `tx`: the content index notes the files the line
+   * names in the same transaction (src/server/content `contentLineHook`). `event` is the whole event, even when the
+   * entry's text was cut to fit a frame.
+   */
+  lineStored?(tx: Db, event: ContractEvent, entry: Entry): void;
 }
 
 export interface EventTapOptions {
@@ -175,12 +181,15 @@ export class EventTap {
       }
       case "message.added": {
         const known = tx.prepare("SELECT body FROM messages WHERE botId = ? AND msgId = ?").get(botId, event.message.id);
-        if (known) {
-          if (String(known.body) === canonicalJson(event.message)) return;
-          appendFitted(scope, tx, stream, "message.updated", bodyOf(event), { log });
-          return;
-        }
-        appendFitted(scope, tx, stream, event.type, bodyOf(event), { log });
+        const entry = known
+          ? (String(known.body) === canonicalJson(event.message) ? null : appendFitted(scope, tx, stream, "message.updated", bodyOf(event), { log }))
+          : appendFitted(scope, tx, stream, event.type, bodyOf(event), { log });
+        if (entry) this.options.hooks?.lineStored?.(tx, event, entry);
+        return;
+      }
+      case "message.updated": {
+        const entry = appendFitted(scope, tx, stream, event.type, bodyOf(event), { log });
+        if (entry) this.options.hooks?.lineStored?.(tx, event, entry);
         return;
       }
       case "bot.updated":

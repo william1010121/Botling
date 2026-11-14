@@ -4,7 +4,8 @@
 export { contentTypeOf, FILES_PER_LINE_LIMIT, isProtectedPath, namedFiles, pathOfFileRef, type ContentKind, type LineLike, type NamedFile } from "./files";
 export { CHUNK_BYTES, Hasher, type HashResult } from "./hasher";
 export { cloneFile, COPY_MAX_BYTES, pinFile, pinsDir, sameSig, statSig, sweepPins, type Pin, type PinKind, type PinOptions, type StatSig } from "./pin";
+export { contentLineHook } from "./tap";
 export {
   ContentService, finishedLine,
-  type ContentAnswer, type ContentRequest, type ContentServiceOptions, type ContentStore, type PreparedFile, type PreparedLine,
+  type ContentAnswer, type ContentRequest, type ContentServiceOptions, type ContentStore, type NotedFile, type NotedLine,
 } from "./service";
