@@ -42,11 +42,11 @@ export class LegacyApply {
   async receive(body: CmdBody, options: { scope?: Scope; reply?: ReplySink } = {}): Promise<ReceiveStatus> {
     const scope = options.scope ?? body.scope;
     if (!scope) throw new TypeError("legacy: a command needs the scope its accepting server stated");
-    const hash = cmdHash({ cmd: body.cmd, scope, basis: body.basis });
+    const hash = cmdHash({ cmd: body.cmd, scope, basis: body.basis, via: body.via });
     const admission = await this.scope.submit((tx) => {
-      const admitted = admit(tx, this.log, { slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, hash });
-      // A command the owner refuses (a device without the scope, or no longer valid) never runs its handler (M2).
-      const denied = admitted.kind === "ready" && !admitted.cancelled && this.slots().denies(tx, { slot: body.slot, cmd: body.cmd, scope }) !== null;
+      const admitted = admit(tx, this.log, { slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, ...(body.via ? { via: body.via } : {}), hash });
+      // A command the owner refuses (a device without the scope, or no longer valid; a plugin's, N1) never runs its handler (M2).
+      const denied = admitted.kind === "ready" && !admitted.cancelled && this.slots().denies(tx, { slot: body.slot, cmd: body.cmd, scope, via: body.via }) !== null;
       return { ...admitted, denied };
     });
     if (admission.kind === "hold") return { status: "dropped" };

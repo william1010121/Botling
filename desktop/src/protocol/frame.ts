@@ -4,7 +4,8 @@
 // with the `bye` it is given.
 // M3's messages (messages-m3.ts) are read by the `*Wire*` functions (`decodeWireFrame`, `encodeWireFrame`); the M1/M2
 // ones (`decodeFrame`, `encodeFrame`) refuse them as unsupported, so their callers only ever see `Message`. The
-// forwarded-subscription tag `via` (M3, §10.3) may be stated by a peer server only.
+// forwarded-subscription tag `via` (M3, §10.3) may be stated by a peer server only. A `cmd`'s `via` is something else:
+// the plugin the command came from (D53, plan change N1), written by the front end's shell, so any sender may carry it.
 // One message is binary: `content.chunk` (§9A.4). Its frame is the byte 0x01, the header's length as 2 bytes big-endian,
 // the header `{t, req, offset}` as JSON, then the raw bytes. A text frame is JSON and never starts with 0x01.
 import type { z } from "zod";
@@ -46,7 +47,7 @@ function check(value: unknown, sender: Sender, session: SessionKind, registry: R
   const known = registry === "wire" ? Object.hasOwn(WIRE_MESSAGES, t) : Object.hasOwn(MESSAGES, t);
   if (!known) return refuse("unsupported", Object.hasOwn(M3_MESSAGES, t) ? `"${t}" is an M3 message (decodeWireFrame)` : `"${t}" is not supported by this version`);
   if (t === "cmd" && sender === "fe" && (value as { scope?: unknown }).scope !== undefined) return refuse("role", "a front end does not state a command's scope");
-  if (sender !== "peer" && (value as { via?: unknown }).via !== undefined) return refuse("role", "only a peer server tags a forwarded subscription (via)");
+  if (t !== "cmd" && sender !== "peer" && (value as { via?: unknown }).via !== undefined) return refuse("role", "only a peer server tags a forwarded subscription (via)");
   const parsed = (WIRE_MESSAGES as Record<string, z.ZodType>)[t]!.safeParse(value);
   if (!parsed.success) return refuse("malformed", `${t}: ${describeIssues(parsed.error)}`);
   return { ok: true, message: parsed.data as WireMessage };

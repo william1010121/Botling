@@ -13,6 +13,7 @@
 //     n < next, otherwise               → refused{slot conflict}, seq null, nothing stored; audit
 //     n > next                          → hold (≤ 64 per queue) and wait
 //     n ∈ cancels                       → cmd.cancelled
+//     carries `via` (a plugin's)        → cmd.refused{grant} until M5's grants (N1, fail closed)
 //     origin invalid / scope forbids    → cmd.refused{scope | origin}
 //     target or basis check fails       → cmd.refused{invalid | changed} (§11.5)
 //     apply throws SlotRefusal          → cmd.refused{reason} (the apply's writes rolled back)
@@ -20,7 +21,7 @@
 //   then receipt(n, h, outcome), next = n + 1, commit, cmd.result{slot, outcome, logId, seq}, held slots in turn.
 //   on cancel(n): n < next → "too late" with the stored outcome; else n joins cancels (committed).
 import type { Command } from "../../contract";
-import { queueKey, type CmdBody, type Cursor, type LogId, type MessageOf, type Outcome, type Scope, type Slot } from "../../protocol";
+import { GRANT_REFUSAL_DETAIL, queueKey, type CmdBody, type Cursor, type LogId, type MessageOf, type Outcome, type Scope, type Slot, type Via } from "../../protocol";
 import type { Command as StoreCommand, Db } from "../store";
 import { checkBasis, checkTarget, dbBasisReader, localOnly } from "./basis";
 import { cmdHash } from "./hash";
@@ -45,7 +46,9 @@ export interface SlotInput {
   cmd: Command;
   scope: Scope;
   basis?: Cursor;
-  /** cmdHash over cmd, scope and basis (never floor or inc). */
+  /** The plugin the command came from (N1): refused with `grant` until M5. */
+  via?: Via;
+  /** cmdHash over cmd, scope, basis and via when present (never floor or inc). */
   hash: string;
 }
 
@@ -131,8 +134,9 @@ export class SlotEngine {
    * The scope and origin check alone (§11.3 "origin invalid or scope forbids"), read-only. Legacy apply runs it before a
    * command's handler, so a command the owner would refuse never runs its handler (the slot is then decided as usual).
    */
-  denies(tx: Db, input: { slot: Slot; cmd: Command; scope: Scope }): { reason: "scope" | "origin"; detail?: string } | null {
-    return this.authorize(tx, input);
+  denies(tx: Db, input: { slot: Slot; cmd: Command; scope: Scope; via?: Via }): { reason: "scope" | "origin" | "grant"; detail?: string } | null {
+    // §11.3 / D53: the device's scope first, then the plugin's grant (none exist before M5: fail closed).
+    return this.authorize(tx, input) ?? (input.via ? { reason: "grant", detail: GRANT_REFUSAL_DETAIL } : null);
   }
 
   /** The owner's `next` for a queue (`welcome.next`, §11.4). */
@@ -148,7 +152,10 @@ export class SlotEngine {
   async receive(body: CmdBody, options: { scope?: Scope; reply?: ReplySink } = {}): Promise<ReceiveStatus> {
     const scope = options.scope ?? body.scope;
     if (!scope) throw new TypeError("slots: a command needs the scope its accepting server stated");
-    const input: SlotInput = { slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, hash: cmdHash({ cmd: body.cmd, scope, basis: body.basis }) };
+    const input: SlotInput = {
+      slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, ...(body.via ? { via: body.via } : {}),
+      hash: cmdHash({ cmd: body.cmd, scope, basis: body.basis, via: body.via }),
+    };
     let holdResult: ReceiveStatus = { status: "held" };
     const step = await this.options.submit((tx) => {
       const decided = this.step(tx, input);
@@ -222,7 +229,7 @@ export class SlotEngine {
   private decide(tx: Db, input: SlotInput): { outcome: Outcome; seq: number } {
     const { log } = this.options;
     let outcome: Outcome;
-    const denied = this.authorize(tx, { slot: input.slot, cmd: input.cmd, scope: input.scope });
+    const denied = this.denies(tx, { slot: input.slot, cmd: input.cmd, scope: input.scope, via: input.via });
     if (denied) {
       outcome = { kind: "refused", reason: denied.reason, ...(denied.detail ? { detail: truncate(denied.detail) } : {}) };
     } else {

@@ -25,6 +25,18 @@ const Version = z.string().min(1).max(40).regex(/^[0-9A-Za-z.+-]+$/);
 /** At most this many entries in one batch (catch-up page, §20). */
 export const BATCH_ENTRIES_LIMIT = 500;
 
+/**
+ * Which plugin's code a command came from (D53, plan change N1): the plugin's name and the hash of its installed code
+ * (the whole plugin folder's hash). Written by the front end's shell from the frame broker's attribution when the item
+ * goes into the outbox (M5), never by a plugin and never added at send time. It counts in the command hash only when
+ * present, and until M5 an owner refuses a command that carries it with `refused{grant}` (after the scope check).
+ */
+export const Via = z.strictObject({
+  plugin: z.string().min(1).max(214).regex(/^[a-z0-9][a-z0-9._-]*$/),
+  codeHash: z.string().min(1).max(100).regex(/^[A-Za-z0-9:_.-]+$/),
+});
+export type Via = z.infer<typeof Via>;
+
 /** The `cmd` envelope without its `t` (also what `hello.outbox` lists). */
 export const CmdBody = z.strictObject({
   slot: Slot,
@@ -37,6 +49,8 @@ export const CmdBody = z.strictObject({
   scope: Scope.optional(),
   /** The bot cursor the front end showed, for acts on visible things (§11.5). */
   basis: Cursor.optional(),
+  /** The plugin the command came from (N1); absent for a command the user gave. */
+  via: Via.optional(),
 }).refine((body) => body.floor <= body.slot.n, { message: "floor must not be above the slot's n", path: ["floor"] });
 export type CmdBody = z.infer<typeof CmdBody>;
 
