@@ -19,8 +19,16 @@
 //     apply throws SlotRefusal          → cmd.refused{reason} (the apply's writes rolled back)
 //     else                              → the apply's intent entries + cmd.applied{slot, result}
 //   then receipt(n, h, outcome), next = n + 1, commit, cmd.result{slot, outcome, logId, seq}, held slots in turn.
-//   on cancel(n): n < next → "too late" with the stored outcome; else n joins cancels (committed). Either way the
-//   canceller gets one answer (D59, `cancelAnswer`): the stored `cmd.result`, or `cancel.noted` once committed.
+//   on cancel(n): n < next → "too late" with the stored outcome; n's legacy handler began → wait for its outcome, then
+//   "too late" with it; else n joins cancels (committed). Either way the canceller gets one answer (D59,
+//   `cancelAnswer`): the stored `cmd.result`, or `cancel.noted` once committed.
+//
+// Begun (legacy apply): a legacy command's handler runs before the transaction that stores its outcome, so the slot is
+// marked begun (in memory) in the same transaction that admits it. While it is marked, a cancel never joins `cancels`:
+// the handler's effect may already have happened, so the cancel is too late and waits for the real outcome. The mark
+// stays until the slot's outcome is committed, also when the handler ran and the store then failed (the session ends,
+// the front end re-sends, the re-send decides it). A restart forgets marks: that is the crash case legacy.ts states (the
+// re-send runs the handler again).
 //
 // Order (D58): a slot is decided only when it is exactly `next`, so within a queue outcomes commit in slot order; a
 // held copy is re-run only by `pump`, in slot order, after its predecessor moved `next`. The only way past a slot that
@@ -78,6 +86,10 @@ export type ReceiveStatus =
   | { status: "dropped" };
 
 export type CancelStatus = { status: "too late"; message: CmdResultMessage } | { status: "cancelled ahead" };
+/** How a begun slot's handler run ended (`SlotEngine.begin`). */
+export type BegunEnd = "stored" | "ran" | "not run";
+
+interface Begun { copies: number; ran: boolean; settled: Promise<void>; settle: () => void }
 export type CancelNotedMessage = MessageOf<"cancel.noted">;
 /** What a `cancel` is answered with (D59): exactly one per cancel the owner committed or found too late. */
 export type CancelAnswer = CmdResultMessage | CancelNotedMessage;
@@ -137,6 +149,8 @@ type Step =
 
 export class SlotEngine {
   private readonly held = new Map<string, Map<number, HeldCopy>>();
+  /** Slots whose legacy handler began and whose outcome is not committed yet, by queue key, then n. */
+  private readonly begun = new Map<string, Map<number, Begun>>();
   private readonly heldLimit: number;
   private readonly basis: BasisReader;
   private readonly authorize: Authorize;
@@ -193,22 +207,86 @@ export class SlotEngine {
       return { status: "retry", message: step.message };
     }
     if (step.kind === "result") options.reply?.(step.message);
+    this.settleBelow(queueOf(input.slot), step.next);
     await this.pump(queueOf(input.slot), step.next);
     return step.kind === "result" ? { status: "result", message: step.message, fresh: step.fresh } : holdResult;
   }
 
-  /** The origin no longer wants slot `n` (§11.3). */
+  /**
+   * Marks slot `n` begun: its legacy handler is about to run. Call it inside the writer transaction that admitted the
+   * copy (ready, not cancelled), so no cancel can commit between that check and the mark. The returned function ends
+   * this copy's part: `stored` once the slot's outcome is committed, `ran` when the handler ran but nothing was stored,
+   * `not run` when the admission did not commit (the handler never ran).
+   */
+  begin(slot: Slot): (end: BegunEnd) => void {
+    const key = queueKey(slot);
+    let queue = this.begun.get(key);
+    if (!queue) this.begun.set(key, (queue = new Map()));
+    let entry = queue.get(slot.n);
+    if (!entry) {
+      let settle!: () => void;
+      const settled = new Promise<void>((resolve) => { settle = resolve; });
+      entry = { copies: 0, ran: false, settled, settle };
+      queue.set(slot.n, entry);
+    }
+    entry.copies += 1;
+    const mine = entry;
+    let done = false;
+    return (end) => {
+      if (done) return;
+      done = true;
+      mine.copies -= 1;
+      if (end === "ran") mine.ran = true;
+      if (end === "stored" || (mine.copies === 0 && !mine.ran)) this.unbegin(slot, mine);
+    };
+  }
+
+  /** Slots marked begun (for a queue, or in all): a legacy handler ran or runs and the outcome is not committed. */
+  begunCount(queue?: QueueRef): number {
+    if (queue) return this.begun.get(queueKey(queue))?.size ?? 0;
+    let total = 0;
+    for (const slots of this.begun.values()) total += slots.size;
+    return total;
+  }
+
+  private unbegin(slot: Slot, entry: Begun): void {
+    const key = queueKey(slot);
+    const queue = this.begun.get(key);
+    if (queue?.get(slot.n) === entry) {
+      queue.delete(slot.n);
+      if (queue.size === 0) this.begun.delete(key);
+    }
+    entry.settle();
+  }
+
+  /** Drops the marks of slots below `next` (decided, or skipped past): their outcome is committed. */
+  private settleBelow(queue: QueueRef, next: number): void {
+    const slots = this.begun.get(queueKey(queue));
+    if (!slots) return;
+    for (const [n, entry] of [...slots]) if (n < next) this.unbegin({ ...queue, n } as Slot, entry);
+  }
+
+  /**
+   * The origin no longer wants slot `n` (§11.3). Once n's legacy handler began, the cancel is too late: it waits until
+   * n's outcome is committed and answers with it (D59: the answer is the real outcome, never a cancel after the effect).
+   */
   async cancel(slot: Slot): Promise<CancelStatus> {
-    return this.options.submit((tx): CancelStatus => {
-      if (slot.n < readNext(tx, queueOf(slot))) {
-        const receipt = findReceipt(tx, slot);
-        if (receipt) return { status: "too late", message: this.result(tx, slot, receipt.outcome, receipt.seq) };
-        // Below next with no receipt cannot happen (every slot below next has one, or a skip row covers it).
-        throw new Error("slots: a slot below next has no receipt");
-      }
-      addCancel(tx, slot);
-      return { status: "cancelled ahead" };
-    });
+    for (;;) {
+      const decided = await this.options.submit((tx): CancelStatus | { status: "begun"; settled: Promise<void> } => {
+        if (slot.n < readNext(tx, queueOf(slot))) {
+          const receipt = findReceipt(tx, slot);
+          if (receipt) return { status: "too late", message: this.result(tx, slot, receipt.outcome, receipt.seq) };
+          // Below next with no receipt cannot happen (every slot below next has one, or a skip row covers it).
+          throw new Error("slots: a slot below next has no receipt");
+        }
+        const begun = this.begun.get(queueKey(slot))?.get(slot.n);
+        if (begun) return { status: "begun", settled: begun.settled };
+        addCancel(tx, slot);
+        return { status: "cancelled ahead" };
+      });
+      if (decided.status !== "begun") return decided;
+      await decided.settled;
+    }
   }
 
   /** The §11.3 checks and writes for one copy, inside the writer transaction. */

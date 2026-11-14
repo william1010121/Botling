@@ -547,7 +547,7 @@ describe("D58: one session's commands commit in send order; a broken stream ends
     const { device } = await paired(s);
     // Slot 2 with slot 1 never sent: the session broke FIFO (a front end bug or a lost frame the link did not see).
     device.cmd(device.slot(bot, 2), { type: "waiting.ignore", botId: BOT, text: "second" });
-    expect(await device.bye()).toMatchObject({ reason: "malformed", detail: expect.stringMatching(/D58/) });
+    expect(await device.bye()).toMatchObject({ reason: "unsettled", detail: expect.stringMatching(/D58/) });
     await s.runtime.scope.submit(() => undefined);
     expect(cmdKinds(s)).toEqual([]);
   });
@@ -574,5 +574,130 @@ describe("D59: every cancel is answered", () => {
     expect(answers.map((m) => m.t)).toEqual(["cmd.result", "cmd.result"]);
     expect(answers[1]).toMatchObject({ outcome: { kind: "applied" } });
     expect(device.got.filter((m) => m.t === "cancel.noted")).toHaveLength(1);
+  });
+});
+
+describe("F2 (D58): a command or cancel the server cannot settle ends the session (bye unsettled)", () => {
+  const cmdKinds = (s: Server) => s.entries(bot).filter((e) => e.kind.startsWith("cmd.")).map((e) => `${e.kind}#${e.slot?.n}`);
+
+  it("a store that fails on slot 1 ends the session; slot 2 of the same session is not processed there; the next session applies both once, in order", async () => {
+    const s = await server();
+    const { device, keys } = await paired(s);
+    const receive = s.runtime.receive.bind(s.runtime);
+    let fail = true;
+    s.runtime.receive = async (body, options) => {
+      if (fail && body.slot.n === 1) { fail = false; throw new Error("the store refused the transaction (test)"); }
+      return receive(body, options);
+    };
+    const first = device.slot(bot), second = device.slot(bot);
+    device.cmd(first, { type: "chat.send", botId: BOT, text: "one" });
+    device.cmd(second, { type: "chat.send", botId: BOT, text: "two" });
+    expect(await device.bye()).toMatchObject({ reason: "unsettled" });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await s.runtime.scope.submit(() => undefined);
+    expect(cmdKinds(s)).toEqual([]);
+    expect(s.runtime.slots.heldCount()).toBe(0);
+    expect(device.got.some((m) => m.t === "cmd.result")).toBe(false);
+
+    const again = new Device(s, device.member).dial(keys);
+    await again.hello();
+    again.cmd(first, { type: "chat.send", botId: BOT, text: "one" });
+    again.cmd(second, { type: "chat.send", botId: BOT, text: "two" });
+    expect((await again.result(first)).outcome.kind).toBe("applied");
+    expect((await again.result(second)).outcome.kind).toBe("applied");
+    expect(cmdKinds(s)).toEqual(["cmd.applied#1", "cmd.applied#2"]);
+  });
+
+  it("a cmd handler that throws (before the runtime) ends the session with bye unsettled", async () => {
+    const s = await server();
+    const { device } = await paired(s);
+    (device.session as unknown as { cmdScope: () => never }).cmdScope = () => { throw new Error("scope lookup failed (test)"); };
+    device.cmd(device.slot(bot), { type: "chat.send", botId: BOT, text: "one" });
+    expect(await device.bye()).toMatchObject({ reason: "unsettled" });
+    await s.runtime.scope.submit(() => undefined);
+    expect(cmdKinds(s)).toEqual([]);
+  });
+
+  it("a cancel the store cannot commit ends the session with bye unsettled (no answer is made up)", async () => {
+    const s = await server();
+    const { device } = await paired(s);
+    s.runtime.slots.cancel = async () => { throw new Error("the store refused the transaction (test)"); };
+    device.send({ t: "cancel", slot: device.slot(bot) } as Message);
+    expect(await device.bye()).toMatchObject({ reason: "unsettled" });
+    expect(device.got.some((m) => m.t === "cancel.noted" || m.t === "cmd.result")).toBe(false);
+  });
+});
+
+describe("D59: a cancel after the slot's handler began is too late", () => {
+  const cmdKinds = (s: Server) => s.entries(bot).filter((e) => e.kind.startsWith("cmd.")).map((e) => `${e.kind}#${e.slot?.n}`);
+  const cancelRows = (s: Server) => s.store.submit((tx) => Number(tx.prepare("SELECT count(*) AS n FROM cancels").get()!.n));
+
+  it("a cancel that arrives while a legacy handler runs waits for it and gets the stored cmd.result{applied}; the slot is never cancelled", async () => {
+    const s = await server();
+    const { device } = await paired(s);
+    const run = s.engine.run.bind(s.engine);
+    let started = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    s.engine.run = async (cmd: Command) => { if (cmd.type === "waiting.ignore") { started = true; await gate; } return run(cmd); };
+    const first = device.slot(bot);
+    device.cmd(first, { type: "waiting.ignore", botId: BOT, text: "slow" });
+    await waitFor(() => started, "the handler started");
+    device.send({ t: "cancel", slot: first } as Message);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    // Not answered yet (the outcome is not decided), and nothing was committed into `cancels`.
+    expect(device.got.some((m) => m.t === "cancel.noted" || m.t === "cmd.result")).toBe(false);
+    expect(await cancelRows(s)).toBe(0);
+    release();
+    await waitFor(() => device.got.filter((m) => m.t === "cmd.result" && m.slot.n === first.n).length === 2 || null, "the result and the cancel's answer");
+    const answers = device.got.filter((m) => (m.t === "cmd.result" || m.t === "cancel.noted") && m.slot.n === first.n);
+    expect(answers.map((m) => [m.t, (m as MessageOf<"cmd.result">).outcome?.kind])).toEqual([["cmd.result", "applied"], ["cmd.result", "applied"]]);
+    expect(cmdKinds(s)).toEqual(["cmd.applied#1"]);
+    expect(await cancelRows(s)).toBe(0);
+  });
+
+  it("a cancel that lands while a legacy copy's handler ran but its outcome was not stored waits for the re-send, then gets the real outcome", async () => {
+    const s = await server();
+    const { device, keys } = await paired(s);
+    const runtime = s.runtime as unknown as { slots: { receive: (...a: unknown[]) => Promise<unknown> } };
+    const receive = runtime.slots.receive.bind(runtime.slots);
+    let fail = true;
+    // The handler runs, then the store refuses the command that keeps its outcome (once).
+    runtime.slots.receive = async (...args: unknown[]) => {
+      if (fail) { fail = false; throw new Error("the store refused the transaction (test)"); }
+      return receive(...args);
+    };
+    let runs = 0;
+    const run = s.engine.run.bind(s.engine);
+    s.engine.run = async (cmd: Command) => { if (cmd.type === "waiting.ignore") runs += 1; return run(cmd); };
+    const first = device.slot(bot);
+    device.cmd(first, { type: "waiting.ignore", botId: BOT, text: "ran once" });
+    expect(await device.bye()).toMatchObject({ reason: "unsettled" });
+    expect(runs).toBe(1);
+    // The next session: the cancel comes first (it is not queued behind its cmd), the cmd's re-send after it.
+    const again = new Device(s, device.member).dial(keys);
+    await again.hello();
+    again.send({ t: "cancel", slot: first } as Message);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(again.got.some((m) => m.t === "cancel.noted")).toBe(false);
+    expect(await cancelRows(s)).toBe(0);
+    again.cmd(first, { type: "waiting.ignore", botId: BOT, text: "ran once" });
+    await waitFor(() => again.got.filter((m) => m.t === "cmd.result" && m.slot.n === first.n).length === 2 || null, "the result and the cancel's answer");
+    expect(again.got.filter((m) => m.t === "cmd.result").map((m) => (m as MessageOf<"cmd.result">).outcome.kind)).toEqual(["applied", "applied"]);
+    expect(cmdKinds(s)).toEqual(["cmd.applied#1"]);
+  });
+
+  it("intent commands have no such window: the decision and the apply are one transaction, so a cancel is either noted before it or too late after it", async () => {
+    const s = await server();
+    const { device } = await paired(s);
+    const first = device.slot(bot);
+    device.cmd(first, { type: "chat.send", botId: BOT, text: "one" });
+    device.send({ t: "cancel", slot: first } as Message);
+    await waitFor(() => device.got.filter((m) => (m.t === "cmd.result" || m.t === "cancel.noted") && m.slot.n === first.n).length === 2 || null, "two answers");
+    const kinds = cmdKinds(s);
+    const result = device.got.find((m): m is MessageOf<"cmd.result"> => m.t === "cmd.result" && m.slot.n === first.n)!;
+    // Cancel first: noted, and the slot is cancelled when its cmd comes. Cmd first: applied, and the cancel gets that result.
+    if (device.got.some((m) => m.t === "cancel.noted")) { expect(kinds).toEqual(["cmd.cancelled#1"]); expect(result.outcome.kind).toBe("cancelled"); }
+    else { expect(kinds).toEqual(["cmd.applied#1"]); expect(device.got.filter((m) => m.t === "cmd.result").every((m) => (m as MessageOf<"cmd.result">).outcome.kind === "applied")).toBe(true); }
   });
 });

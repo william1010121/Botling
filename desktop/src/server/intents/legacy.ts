@@ -8,7 +8,9 @@
 //                              hold → dropped (a legacy copy is never kept ahead: the handler must not run before its
 //                                     predecessors; the sender's re-send brings it again)
 //                              ready, cancelled → the slot engine stores `cmd.cancelled`
-//                              ready → run the handler once (a second copy meanwhile waits for the same run), keep
+//                              ready → mark the slot begun in the same transaction (SlotEngine.begin: from now on a
+//                                      cancel is too late and gets this slot's real outcome, D59), run the handler once
+//                                      (a second copy meanwhile waits for the same run), keep
 //                                      its result, then the slot engine applies it: the apply step only looks up that
 //                                      result (none: a plain error, nothing stored, the sender re-sends)
 //
@@ -17,7 +19,7 @@
 import type { Command } from "../../contract";
 import { ContractError } from "../../contract";
 import { queueKey, type CmdBody, type Scope } from "../../protocol";
-import { admit, cmdHash, SlotRefusal, type ApplyContext, type ReceiveStatus, type ReplySink, type SlotEngine, type SlotLog } from "../slots";
+import { admit, cmdHash, SlotRefusal, type ApplyContext, type BegunEnd, type ReceiveStatus, type ReplySink, type SlotEngine, type SlotLog } from "../slots";
 import type { TxScope, TurnEngine } from "../effects";
 
 type Ran = { ok: true; result: unknown } | { ok: false; detail: string };
@@ -43,14 +45,25 @@ export class LegacyApply {
     const scope = options.scope ?? body.scope;
     if (!scope) throw new TypeError("legacy: a command needs the scope its accepting server stated");
     const hash = cmdHash({ cmd: body.cmd, scope, basis: body.basis, via: body.via });
-    const admission = await this.scope.submit((tx) => {
-      const admitted = admit(tx, this.log, { slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, ...(body.via ? { via: body.via } : {}), hash });
-      // A command the owner refuses (a device without the scope, or no longer valid; a plugin's, N1) never runs its handler (M2).
-      const denied = admitted.kind === "ready" && !admitted.cancelled && this.slots().denies(tx, { slot: body.slot, cmd: body.cmd, scope, via: body.via }) !== null;
-      return { ...admitted, denied };
-    });
+    // Set inside the admission transaction when the slot is marked begun (SlotEngine.begin).
+    const begun: { end?: (how: BegunEnd) => void } = {};
+    let admission;
+    try {
+      admission = await this.scope.submit((tx) => {
+        const admitted = admit(tx, this.log, { slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, ...(body.via ? { via: body.via } : {}), hash });
+        // A command the owner refuses (a device without the scope, or no longer valid; a plugin's, N1) never runs its handler (M2).
+        const denied = admitted.kind === "ready" && !admitted.cancelled && this.slots().denies(tx, { slot: body.slot, cmd: body.cmd, scope, via: body.via }) !== null;
+        // D59: marked begun in the transaction that found no cancel, so a cancel after this is too late, never noted.
+        if (admitted.kind === "ready" && !admitted.cancelled && !denied) begun.end = this.slots().begin(body.slot);
+        return { ...admitted, denied };
+      });
+    } catch (error) {
+      begun.end?.("not run");
+      throw error;
+    }
     if (admission.kind === "hold") return { status: "dropped" };
     if (admission.kind !== "ready" || admission.cancelled || admission.denied) return this.slots().receive(body, options);
+    const finish = begun.end ?? (() => undefined);
     const key = keyOf(body.slot, hash);
     let run = this.running.get(key);
     // What the handler emits waits for the command that stores the receipt (TxScope.onEnter writes it first).
@@ -60,10 +73,15 @@ export class LegacyApply {
       run = this.run(body.cmd);
       this.running.set(key, run);
     }
+    let how: BegunEnd = "ran";
     try {
       this.ran.set(key, await run);
-      return await this.slots().receive(body, options);
+      const status = await this.slots().receive(body, options);
+      // A result (fresh or the stored one again) means the slot's outcome is committed.
+      if (status.status === "result") how = "stored";
+      return status;
     } finally {
+      finish(how);
       clearTimeout(timer);
       release();
       this.running.delete(key);
