@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, SITE_TOOLS_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
+import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, SITE_TOOLS_RULE, FILE_LINK_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
 import { WORKER_NOTIFY_RULE, workerNoteRule } from "../../src/core/prompts/delegation";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
@@ -49,6 +49,8 @@ function withDesktopReportGuidance(swift: string, worker: boolean): string {
     expect(expected.split(oldLead)).toHaveLength(2);
     expected = expected.replace(oldLead,
       "- Final report to the coordinator: keep research-only scope, test commands, and preview-tool details in this internal handback, separate from user report prose. User reports still state material uncertainty and failed checks in plain language. State completed or failed,");
+    // Approved 2026-11-14 (the user): workers hand back full paths, so the bot can link them.
+    expected = expected.replace("source locations or artifact paths,", "source locations or artifact paths (files and folders as full absolute paths, so the coordinator can link them),");
   }
   return expected;
 }
@@ -63,6 +65,8 @@ function withApprovedRouting(swift: string): string {
     (_all, folder: string, between: string) => `saved to ${folder}/<english-file-name>.html${between}Pictures and videos shown inline stay file:// links. ${reportOnlyRule(folder)}`);
   // Approved 2026-11-06 (Math): a verbatim request hands over its source, after the coordinator's Maintainer sentence.
   expected = expected.replace(MAINTAINER_ROUTE, `${MAINTAINER_ROUTE} ${VERBATIM_HANDOFF_RULE}`);
+  // Approved 2026-11-14 (the user): a file or folder a reply points to is a file:// link, after the chip line.
+  expected = expected.replace(/(the app draws it as a clickable chip\.\n)/, `$1${FILE_LINK_RULE}\n`);
   // Approved 2026-11-10 (the user): browser site tools are Maintainer's; a bot asks with <plugin>, after the plugin-library line.
   expected = expected.replace(/(  Only plugin-library extensions [^\n]*\n)/, (line) => `${line}  ${SITE_TOOLS_RULE}\n`);
   // Approved 2026-11-08 (Note tab): the user's note for the bot, after the archive line.
