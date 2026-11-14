@@ -214,8 +214,8 @@ export class PluginKernel {
   protected activated(_plugin: string): void {}
   /** Overridden by the service layer: the plugins to unload before `plugin` (its dependents). */
   protected dependentsOf(_plugin: string): string[] { return []; }
-  /** Overridden by the service layer: `plugin`'s unload was asked for (`dependency`: because something it needs goes). */
-  protected unloadRequested(_plugin: string, _dependency: boolean): void {}
+  /** Overridden by the service layer: someone asked for `plugin`'s unload (not a dependency or a swap). */
+  protected unloadRequested(_plugin: string): void {}
 
   // MARK: Registering
 
@@ -306,7 +306,7 @@ export class PluginKernel {
    * again while it unloads, it gives the same promise.
    */
   requestUnload(plugin: string): Promise<UnloadResult> {
-    const done = this.unload(plugin, false);
+    const done = this.unload(plugin, "request");
     return done ?? Promise.resolve({ plugin, generation: this.generation(plugin), failures: [...(this.instances.get(plugin)?.failures ?? [])] });
   }
 
@@ -318,24 +318,19 @@ export class PluginKernel {
 
   /**
    * The unload itself: null when it finished synchronously (or there was nothing to unload), else the promise of its result.
-   * `dependency`: asked because something the plugin requires is going.
+   * `cause`: someone asked ("request"), something the plugin requires is going ("dependency"), or its code is replaced ("swap");
+   * only a request makes the plugin unwanted.
    */
-  protected unload(plugin: string, dependency: boolean): Promise<UnloadResult> | null {
+  protected unload(plugin: string, cause: "request" | "dependency" | "swap" = "request"): Promise<UnloadResult> | null {
+    if (cause === "request") this.unloadRequested(plugin);
     const instance = this.instances.get(plugin);
-    if (!instance || instance.state === "absent") {
-      if (!dependency) this.unloadRequested(plugin, false);
-      return null;
-    }
-    if (instance.state === "unloading") {
-      if (!dependency) this.unloadRequested(plugin, false);
-      return instance.unloading;
-    }
-    this.unloadRequested(plugin, dependency);
+    if (!instance || instance.state === "absent") return null;
+    if (instance.state === "unloading") return instance.unloading;
     // Dependents go to "unloading" first, so no active instance ever requires one that is unloading (P3).
-    const dependents = this.dependentsOf(plugin).map((name) => this.unload(name, true));
+    const dependents = this.dependentsOf(plugin).map((name) => this.unload(name, "dependency"));
     instance.state = "unloading";
     instance.failures = [];
-    this.record("RequestUnload", plugin, instance.generation, undefined, dependency ? "dependency" : undefined);
+    this.record("RequestUnload", plugin, instance.generation, undefined, cause === "request" ? undefined : cause);
     let finish!: (result: UnloadResult) => void;
     const promise = new Promise<UnloadResult>((resolve) => { finish = resolve; });
     instance.unloading = promise;
