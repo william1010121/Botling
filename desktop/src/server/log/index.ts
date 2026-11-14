@@ -6,6 +6,6 @@ export {
   readEntries, readStream, retireOwnStreams, retireStream, verifyStream,
   type AppendItem, type ReadOptions, type RetiredLog, type StreamRow, type StreamState,
 } from "./log-store";
-export { applyReadModel } from "./read-model";
+export { applyReadModel, isCard, isOpenCard } from "./read-model";
 export { inRead, readHistory, readSnap, SnapTooLargeError, type Snap } from "./snap";
 export { LogHub, LogReader, type LogHubOptions, type LogStore, type SubResult } from "./hub";

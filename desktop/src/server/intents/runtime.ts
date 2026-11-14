@@ -1,0 +1,129 @@
+// The intent side of `botlingd` assembled (M1 step 6): the slot engine on the real log, the core set's intent
+// handlers, legacy apply, the effect worker, the event tap with the live channel, and recovery at start.
+//
+//   front end cmd ─► receive ─► intent: SlotEngine (handlers.ts in the command's transaction) ─► after commit: worker
+//                             └► legacy: the core's handler, then SlotEngine (legacy.ts)
+//   engine events ─► EventTap ─► log entries (and effect rows), `turn.delta` ─► LiveChannel
+//   engine deferTurn ─► a queued row (in the running command, or one of its own for a routine) ─► worker
+//
+// Everything that writes goes through one TxScope over the store's writer, so the tap and the handlers share the
+// command's transaction and LogHub hears about every stream a commit touched.
+import type { Event as ContractEvent } from "../../contract";
+import type { CmdBody, Scope } from "../../protocol";
+import { ensureStream, type LogHub } from "../log";
+import { ContractLiveFeed, type LiveChannel } from "../live";
+import { SlotEngine, type Audit, type Authorize, type ReceiveStatus, type ReplySink } from "../slots";
+import {
+  ensureBot, EffectWorker, EventTap, recoverEffects, serverStreamOf, TxScope,
+  type DeferredTurnRequest, type RecoveryReport, type Submitter, type TurnEngine,
+} from "../effects";
+import { routeOf } from "./commands";
+import { applyIntent, effectBasisReader, queueKeptTurn, type IntentDeps } from "./handlers";
+import { LegacyApply } from "./legacy";
+import { dbSlotLog } from "./slot-log";
+
+export interface IntentRuntimeOptions {
+  store: Submitter;
+  engine: TurnEngine;
+  hub?: LogHub | null;
+  /** The live channel `turn.delta` goes to (its checkpoint sink: effects `effectCheckpointSink`). */
+  live?: LiveChannel | null;
+  now?: () => number;
+  log?: (line: string) => void;
+  onServerEvent?: (event: ContractEvent) => void;
+  authorize?: Authorize;
+  audit?: Audit;
+}
+
+export class NotASlotCommandError extends Error {
+  constructor(readonly type: string, readonly route: string) {
+    super(`${type} is a ${route} command; it does not go through a slot`);
+    this.name = "NotASlotCommandError";
+  }
+}
+
+export class IntentRuntime {
+  readonly scope: TxScope;
+  readonly worker: EffectWorker;
+  readonly tap: EventTap;
+  readonly slots: SlotEngine;
+  readonly legacy: LegacyApply;
+  private readonly deps: IntentDeps;
+  private readonly now: () => number;
+
+  constructor(private readonly options: IntentRuntimeOptions) {
+    const log = options.log;
+    this.now = options.now ?? Date.now;
+    this.scope = new TxScope(options.store, (streams) => options.hub?.committed(streams), (error) => log?.(`intents: an after-commit step failed (${error instanceof Error ? error.message : String(error)})`));
+    this.worker = new EffectWorker({ scope: this.scope, engine: options.engine, now: this.now, log });
+    this.tap = new EventTap({
+      scope: this.scope,
+      live: options.live ? new ContractLiveFeed(options.live) : null,
+      hooks: { turnEnded: (tx, botId, turnId, status) => this.worker.turnEnded(tx, botId, turnId, status) },
+      now: this.now,
+      log,
+      onServerEvent: options.onServerEvent,
+    });
+    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log };
+    const slotLog = dbSlotLog(this.scope, log);
+    this.slots = new SlotEngine({
+      submit: (command) => this.scope.submit(command),
+      log: slotLog,
+      basis: effectBasisReader,
+      apply: (context) => (routeOf(context.cmd.type).kind === "intent" ? applyIntent(this.deps, context) : this.legacy.apply(context)),
+      ...(options.authorize ? { authorize: options.authorize } : {}),
+      ...(options.audit ? { audit: options.audit } : {}),
+    });
+    this.legacy = new LegacyApply(this.scope, slotLog, options.engine, () => this.slots, () => this.tap.hold());
+    options.engine.attach({ event: (event) => this.tap.event(event), deferTurn: (turn) => this.deferTurn(turn) });
+  }
+
+  /** At start, before any front end: every bot's stream and row, the server stream, recovery; then the worker runs. */
+  async start(): Promise<RecoveryReport> {
+    const report = await this.scope.submit((tx) => {
+      ensureStream(tx, serverStreamOf(tx));
+      for (const botId of this.options.engine.bots()) ensureBot(tx, botId);
+      return recoverEffects(this.scope, tx, this.now(), this.options.log);
+    });
+    this.worker.kick();
+    return report;
+  }
+
+  /** One copy of a front end's command (a slot). Reads and app commands never come here. */
+  receive(body: CmdBody, options: { scope?: Scope; reply?: ReplySink } = {}): Promise<ReceiveStatus> {
+    const route = routeOf(body.cmd.type);
+    if (route.kind === "intent") return this.slots.receive(body, options);
+    if (route.kind === "legacy") return this.legacy.receive(body, options);
+    return Promise.reject(new NotASlotCommandError(body.cmd.type, route.kind));
+  }
+
+  /** Waits until the worker has nothing in hand (tests, shutdown). */
+  idle(): Promise<void> {
+    return this.worker.idle();
+  }
+
+  close(): void {
+    this.worker.close();
+  }
+
+  private deferTurn(turn: DeferredTurnRequest): boolean {
+    // The worker is starting this very turn (its row is started): let it through.
+    if (this.worker.starting.has(turn.turnId)) return false;
+    const tx = this.scope.tx;
+    if (tx) {
+      queueKeptTurn(this.deps, tx, turn, "command");
+      return true;
+    }
+    if (!turn.routine) return false; // a turn the core begins by itself: its row comes with its `turn.started`
+    this.worker.keep(turn);
+    this.scope.submit((own) => {
+      // Kept again by queueKeptTurn (same turn), with the rollback and the kick.
+      queueKeptTurn(this.deps, own, turn, "routine");
+    }).catch((error) => {
+      // Not recorded: run it as 2.x would rather than lose the routine's run.
+      this.options.log?.(`intents: a routine's turn of ${turn.botId} was not recorded (${error instanceof Error ? error.message : String(error)}); it runs unrecorded`);
+      if (this.worker.forget(turn.turnId)) turn.release();
+    });
+    return true;
+  }
+}
