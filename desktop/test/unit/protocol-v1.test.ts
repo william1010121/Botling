@@ -5,6 +5,7 @@ import {
   ENTRY_KINDS, FRAME_LIMIT, FrameSplitter, GENESIS_HASH, MESSAGES, ROLE_TABLE, canonicalJson, decodeFrame, encodeFrame, entryHashInput,
   outcomeOf, packFrame, queueKey, roleRefusal, slotKey, type Entry, type Message, type MessageType, type Sender, type SessionKind,
 } from "../../src/protocol";
+import { m2Samples, type M2Type } from "./protocol-m2-samples";
 
 const bot = "6A0B0000-0000-4000-8000-000000000002";
 const stream = `bot:${bot}`;
@@ -34,8 +35,8 @@ const entries: Entry[] = [
 
 const cmdBody = { slot, floor: 2, inc: logA, cmd: { type: "chat.send", botId: bot, text: "hello" } };
 
-/** One valid sample of every message, with a sender and session that may send it. */
-const samples: { [T in MessageType]: { message: Extract<Message, { t: T }>; sender: Sender; session?: SessionKind } } = {
+/** One valid sample of every M1 message, with a sender and session that may send it (M2's: protocol-m2-samples.ts). */
+const samples: { [T in Exclude<MessageType, M2Type>]: { message: Extract<Message, { t: T }>; sender: Sender; session?: SessionKind } } = {
   hello: { sender: "fe", message: { t: "hello", deviceId: "desktop", feVersion: "3.0.0", protocol: 1, originEpoch: epoch, cursors: { [stream]: { logId: logA, seq: 4 } }, outbox: [cmdBody], want: [stream], token: "t".repeat(32) } as never },
   welcome: { sender: "server", message: { t: "welcome", serverId: "server-1", protocol: { min: 1, max: 1 }, minFeVersion: "3.0.0", rosterDigest: null, servers: [{ id: "server-1", name: "Mac", state: "live", since: null }], next: { [stream]: 4 }, views: {} } },
   sub: { sender: "fe", message: { t: "sub", stream, cursor: { logId: logA, seq: 4 } } },
@@ -70,7 +71,7 @@ const samples: { [T in MessageType]: { message: Extract<Message, { t: T }>; send
   ping: { sender: "peer", message: { t: "ping", at: 1 } },
   bye: { sender: "fe", message: { t: "bye", reason: "closing" } },
 };
-const all = Object.entries(samples) as [MessageType, (typeof samples)[MessageType]][];
+const all = Object.entries(samples) as [keyof typeof samples, (typeof samples)[keyof typeof samples]][];
 const local: SessionKind = { local: true };
 const remote: SessionKind = { local: false };
 const senders: Sender[] = ["fe", "server", "peer"];
@@ -84,7 +85,7 @@ const json = (value: unknown) => JSON.stringify(value);
 
 describe("protocol v1: round trips", () => {
   it("has a sample, a schema and a role row for every message", () => {
-    expect(Object.keys(samples).sort()).toEqual(Object.keys(MESSAGES).sort());
+    expect([...Object.keys(samples), ...Object.keys(m2Samples)].sort()).toEqual(Object.keys(MESSAGES).sort());
     for (const type of Object.keys(MESSAGES)) {
       const row = ROLE_TABLE[type];
       expect(row, type).toBeDefined();
@@ -190,7 +191,8 @@ describe("protocol v1: wrong-role messages are refused", () => {
   });
 
   it("keeps local-socket messages off other sessions", () => {
-    for (const type of ["req", "res", "content.find", "content.found", "content.open", "content.file", "shell.screenshot", "shell.browser", "shell.install", "shell.quit", "shell.done"] as const) {
+    // `req`/`res` are open to remote front ends since M2 (brief Q2; protocol-m2.test.ts).
+    for (const type of ["content.find", "content.found", "content.open", "content.file", "shell.screenshot", "shell.browser", "shell.install", "shell.quit", "shell.done"] as const) {
       const { message, sender } = samples[type];
       expect(refused(json(message), sender, remote).reason, type).toBe("role");
       expect(refused(json(message), "peer", local).reason, type).toBe("role");
@@ -204,12 +206,13 @@ describe("protocol v1: wrong-role messages are refused", () => {
     expect(peer.ok).toBe(true);
   });
 
-  it("refuses M2 messages as unsupported and pair.* outside a pairing session", () => {
-    const get = refused(json({ t: "content.get", req: "g", owner: "s", id: content, variant: "original", offset: 0, length: 1, entry: { stream, seq: 1 } }), "fe");
-    expect(get.reason).toBe("unsupported");
-    expect(get.bye.reason).toBe("role");
+  it("refuses messages without a schema as unsupported and pair.* outside a pairing session", () => {
+    // M2 gave the content path a schema; prefs.* and fetch.* (M3/M5) still have none.
+    const prefs = refused(json({ t: "prefs.have", digest: hash("a") }), "peer");
+    expect(prefs.reason).toBe("unsupported");
+    expect(prefs.bye.reason).toBe("role");
     expect(refused(json({ t: "pair.hello" }), "fe").reason).toBe("role");
-    expect(refused(json({ t: "pair.hello" }), "fe", { local: false, pairing: true }).reason).toBe("unsupported");
+    expect(refused(json({ t: "pair.join" }), "fe", { local: false, pairing: true }).reason).toBe("unsupported");
     expect(refused(json(samples.sub.message), "fe", { local: false, pairing: true }).reason).toBe("role");
     expect(decodeFrame(json(samples.ping.message), "fe", { local: false, pairing: true }).ok).toBe(true);
   });
@@ -262,7 +265,7 @@ describe("protocol v1: malformed frames are refused", () => {
   ];
 
   it.each(bad)("refuses %s", (_name, value) => {
-    const sender: Sender = (value as { t?: string } | null)?.t && Object.hasOwn(samples, (value as { t: string }).t) ? samples[(value as { t: MessageType }).t].sender : "fe";
+    const sender: Sender = (value as { t?: string } | null)?.t && Object.hasOwn(samples, (value as { t: string }).t) ? (samples as Record<string, { sender: Sender }>)[(value as { t: string }).t]!.sender : "fe";
     const decoded = refused(json(value), sender);
     expect(decoded.reason).toBe("malformed");
     expect(decoded.bye).toMatchObject({ t: "bye", reason: "malformed" });

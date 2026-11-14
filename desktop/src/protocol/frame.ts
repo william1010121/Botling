@@ -2,8 +2,10 @@
 // On a byte stream (the local socket) each frame is preceded by its length as 4 bytes, big-endian.
 // Decoding refuses malformed frames and messages outside the sender's role (§5.4); the caller ends the session
 // with the `bye` it is given.
+// One message is binary: `content.chunk` (§9A.4). Its frame is the byte 0x01, the header's length as 2 bytes big-endian,
+// the header `{t, req, offset}` as JSON, then the raw bytes. A text frame is JSON and never starts with 0x01.
 import { describeIssues } from "../contract";
-import { MESSAGES, type Message, type MessageType } from "./messages";
+import { MESSAGES, type Message, type MessageOf, type MessageType } from "./messages";
 import { knownType, roleRefusal, type Sender, type SessionKind } from "./roles";
 
 /** The most a frame's plaintext may be (§5.2, §20). */
@@ -12,6 +14,11 @@ export const FRAME_LIMIT = 256 * 1024;
 export type FrameRefusal = "too-large" | "malformed" | "role" | "unsupported";
 export type Decoded = { ok: true; message: Message } | { ok: false; reason: FrameRefusal; detail: string; bye: Message & { t: "bye" } };
 export type Encoded = { ok: true; text: string } | { ok: false; reason: FrameRefusal; detail: string };
+export type EncodedBytes = { ok: true; bytes: Uint8Array } | { ok: false; reason: FrameRefusal; detail: string };
+
+/** The first byte of a binary frame. */
+export const BINARY_FRAME_MARK = 0x01;
+const BINARY_HEADER_LIMIT = 1024;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -35,9 +42,10 @@ export function checkMessage(value: unknown, sender: Sender, session: SessionKin
   return { ok: true, message: parsed.data as Message };
 }
 
-/** Decodes one frame (its UTF-8 bytes or text) sent by `sender`. */
+/** Decodes one frame (its UTF-8 bytes or text, or a binary `content.chunk` frame) sent by `sender`. */
 export function decodeFrame(frame: string | Uint8Array, sender: Sender, session: SessionKind): Decoded {
   let text: string;
+  if (typeof frame !== "string" && frame.length > 0 && frame[0] === BINARY_FRAME_MARK) return decodeBinary(frame, sender, session);
   if (typeof frame === "string") {
     // A UTF-16 unit is at most 3 UTF-8 bytes: only measure when it could be over.
     if (frame.length * 3 > FRAME_LIMIT && encoder.encode(frame).length > FRAME_LIMIT) return refuse("too-large", `a frame is at most ${FRAME_LIMIT} bytes`);
@@ -51,8 +59,39 @@ export function decodeFrame(frame: string | Uint8Array, sender: Sender, session:
   return checkMessage(value, sender, session);
 }
 
+function decodeBinary(frame: Uint8Array, sender: Sender, session: SessionKind): Decoded {
+  if (frame.length > FRAME_LIMIT) return refuse("too-large", `a frame is at most ${FRAME_LIMIT} bytes`);
+  if (frame.length < 3) return refuse("malformed", "a binary frame has a header");
+  const headerLength = (frame[1]! << 8) | frame[2]!;
+  if (headerLength > BINARY_HEADER_LIMIT || frame.length < 3 + headerLength) return refuse("malformed", "a binary frame's header does not fit");
+  let header: unknown;
+  try { header = JSON.parse(decoder.decode(frame.subarray(3, 3 + headerLength))); } catch { return refuse("malformed", "a binary frame's header is JSON"); }
+  if (!header || typeof header !== "object" || Array.isArray(header)) return refuse("malformed", "a binary frame's header is a JSON object");
+  if ((header as { t?: unknown }).t !== "content.chunk") return refuse("malformed", "only content.chunk is a binary frame");
+  if ("bytes" in header) return refuse("malformed", "the bytes follow the header");
+  return checkMessage({ ...header, bytes: frame.slice(3 + headerLength) }, sender, session);
+}
+
+/** Encodes a `content.chunk` as a binary frame; refuses one that is malformed, outside the role or too large. */
+export function encodeChunkFrame(message: MessageOf<"content.chunk">, sender: Sender, session: SessionKind): EncodedBytes {
+  const checked = checkMessage(message, sender, session);
+  if (!checked.ok) return { ok: false, reason: checked.reason, detail: checked.detail };
+  const chunk = checked.message as MessageOf<"content.chunk">;
+  const header = encoder.encode(JSON.stringify({ t: chunk.t, req: chunk.req, offset: chunk.offset }));
+  if (header.length > BINARY_HEADER_LIMIT) return { ok: false, reason: "malformed", detail: "the header is too long" };
+  const out = new Uint8Array(3 + header.length + chunk.bytes.length);
+  if (out.length > FRAME_LIMIT) return { ok: false, reason: "too-large", detail: `a frame is at most ${FRAME_LIMIT} bytes` };
+  out[0] = BINARY_FRAME_MARK;
+  out[1] = header.length >> 8;
+  out[2] = header.length & 0xff;
+  out.set(header, 3);
+  out.set(chunk.bytes, 3 + header.length);
+  return { ok: true, bytes: out };
+}
+
 /** Encodes a message `sender` may send on this session; refuses one that is malformed, outside the role or too large. */
 export function encodeFrame(message: Message, sender: Sender, session: SessionKind): Encoded {
+  if (message.t === "content.chunk") return { ok: false, reason: "malformed", detail: "a content.chunk is a binary frame (encodeChunkFrame)" };
   const checked = checkMessage(message, sender, session);
   if (!checked.ok) return { ok: false, reason: checked.reason, detail: checked.detail };
   let text: string;
@@ -61,9 +100,9 @@ export function encodeFrame(message: Message, sender: Sender, session: SessionKi
   return { ok: true, text };
 }
 
-/** A frame's text with its 4-byte big-endian length in front, for a byte stream. */
-export function packFrame(text: string): Uint8Array {
-  const body = encoder.encode(text);
+/** A frame (its text, or a binary frame's bytes) with its 4-byte big-endian length in front, for a byte stream. */
+export function packFrame(frame: string | Uint8Array): Uint8Array {
+  const body = typeof frame === "string" ? encoder.encode(frame) : frame;
   if (body.length > FRAME_LIMIT) throw new RangeError(`a frame is at most ${FRAME_LIMIT} bytes`);
   const out = new Uint8Array(4 + body.length);
   new DataView(out.buffer).setUint32(0, body.length, false);

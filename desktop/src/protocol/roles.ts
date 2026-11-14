@@ -19,15 +19,19 @@ export interface RoleRule {
 }
 
 const rule = (fe: boolean, server: boolean, peer: boolean, extra: Partial<RoleRule> = {}): RoleRule => ({ fe, server, peer, ...extra });
-/** `pair.*` (§4.4): any side, in a pairing session only. The design does not name them yet (M2). */
+/** Other `pair.*` messages (server pairing, §4.5, M3): any side, in a pairing session only; no schema yet. */
 const PAIR_RULE: RoleRule = rule(true, true, true);
 const isPair = (type: string) => /^pair\.[a-z]{1,40}$/.test(type);
 
 /**
- * The role table, one row per message type. §5.4's rows as written, plus the local-socket messages M1 adds
- * (`history.page`, `req`/`res`, `content.find`/`content.found`, `content.open`/`content.file`, `shell.*`). Rows for M2 messages (roster, fetch,
- * prefs, the remote content path) are here so the table is whole; M1 has no schema for them, so a frame
- * naming one is refused as unsupported.
+ * The role table, one row per message type. §5.4's rows as written, plus:
+ * - M1's local-socket messages (`history.page`, `content.find`/`content.found`, `content.open`/`content.file`, `shell.*`);
+ * - M2: `req`/`res` opened to remote front ends (a v1 addition, M2 brief Q2: what a remote `req` may name is the
+ *   read allowlist in scopes.ts, checked by the remote session); uploads, so `content.chunk` also goes FE → server and
+ *   `content.credit` server → FE; the URL ticket answer `content.granted` and the upload answer `content.stored`
+ *   (server → FE); the device pairing messages; and the local-only `admin` requests and `admin.event`.
+ * Rows for messages that have no schema yet (`prefs.*`, `fetch.*`) are here so the table is whole; a frame naming one
+ * is refused as unsupported.
  */
 export const ROLE_TABLE: Readonly<Record<string, RoleRule>> = {
   hello: rule(true, false, true),
@@ -49,12 +53,14 @@ export const ROLE_TABLE: Readonly<Record<string, RoleRule>> = {
   "cmd.result": rule(false, true, true),
   "cmd.retry": rule(false, true, true),
   "content.get": rule(true, false, true),
-  "content.credit": rule(true, false, true),
+  "content.credit": rule(true, true, true),
   "content.cancel": rule(true, false, true),
   "content.ticket": rule(true, false, false),
+  "content.granted": rule(false, true, false),
   "content.put": rule(true, false, false),
+  "content.stored": rule(false, true, false),
   "content.meta": rule(false, true, true),
-  "content.chunk": rule(false, true, true),
+  "content.chunk": rule(true, true, true),
   "content.gone": rule(false, true, true),
   peer: rule(false, true, false),
   "roster.have": rule(false, false, true),
@@ -71,9 +77,18 @@ export const ROLE_TABLE: Readonly<Record<string, RoleRule>> = {
   "fetch.denied": rule(false, false, true),
   ping: rule(true, true, true),
   bye: rule(true, true, true),
+  // Device pairing (§4.4), in a pairing session only.
+  "pair.hello": rule(true, false, false),
+  "pair.added": rule(false, true, false),
+  "pair.ack": rule(true, false, false),
+  "pair.declined": rule(true, true, false),
+  // Reads with no slot (§11.1): the local socket, and remote front ends within the read allowlist (M2).
+  req: rule(true, false, false),
+  res: rule(false, true, false),
+  // Local socket only (M2): pairing and revoking from the desktop window or the CLI (§4.3).
+  admin: rule(true, false, false, { localOnly: true }),
+  "admin.event": rule(false, true, false, { localOnly: true }),
   // Local socket only (M1).
-  req: rule(true, false, false, { localOnly: true }),
-  res: rule(false, true, false, { localOnly: true }),
   "content.find": rule(true, false, false, { localOnly: true }),
   "content.found": rule(false, true, false, { localOnly: true }),
   "content.open": rule(true, false, false, { localOnly: true }),

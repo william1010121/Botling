@@ -1,9 +1,13 @@
 // Botling 3 wire protocol v1: the messages of a session, each a plaintext `{t, ...}` JSON frame (§5.2).
-// Design: protocol-v1.md §5.4 (roles), §8 (streams), §9.2 (live), §9A.4 (content.open), §11 (commands), §13.1 (attach).
-// Only the messages M1 uses have schemas; roster, pairing, fetch, prefs and the remote content path come in M2.
+// Design: protocol-v1.md §4 (roster, pairing), §5.4 (roles), §8 (streams), §9.2 (live), §9A.4 (content), §11 (commands),
+// §13.1 (attach). M1 and M2 messages have schemas; `prefs.*` and `fetch.*` (server ↔ server, M3/M5) do not yet, so a
+// frame naming one is refused as unsupported.
 import { z } from "zod";
 import { BotId, Command, MessageView, WireError } from "../contract";
-import { ContentRef, Entry } from "./entries";
+import { ContentRef, ContentVariant, Entry } from "./entries";
+import { ContentTicket, EntryRef, VariantName } from "./content-url";
+import { AdminEvent, AdminOp } from "./pairing";
+import { PublicKey, RevocationStatement, Signature, SignedStatement, StatementId } from "./roster";
 import {
   ContentId, Cursor, EntryHash, LocalContentId, Id, LogId, OriginEpoch, Outcome, PROTOCOL_VERSION, Scope, Seq, ServerId, ServerState, Slot, StreamId, Target,
 } from "./ids";
@@ -169,6 +173,85 @@ export const ContentFile = msg("content.file", {
 export const ContentGone = msg("content.gone", { req: ReqId, id: LocalContentId, reason: z.enum(["changed", "deleted", "denied", "offline", "too-large"]) });
 
 // ---------------------------------------------------------------------------------------------
+// Content, remote part (§9A.4, §9A.9): range reads over the session (the service-worker path, server ↔ server), the
+// tailnet URL ticket (M2 brief Q1, content-url.ts) and uploads. Bulk lane (§5.3).
+
+/** The most a `content.chunk` frame carries: 128 KiB (relay sessions; direct sessions send 64 KiB, §9A.4). */
+export const CONTENT_FRAME_CHUNK_LIMIT = 128 * 1024;
+/** The largest credit one `content.credit` grants (the windows are 4 MiB direct, 1 MiB relay; §9A.4). */
+export const CONTENT_CREDIT_LIMIT = 64 * 1024 * 1024;
+/** The largest upload (§9A.9, D40: 500 MB). */
+export const CONTENT_PUT_LIMIT = 500_000_000;
+
+/** Read `length` bytes of a variant from `offset`; `entry` is the proof of reference checked on every get (§9A.7). */
+export const ContentGet = msg("content.get", {
+  req: ReqId, owner: ServerId, id: ContentId, variant: VariantName, offset: Seq, length: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), entry: EntryRef,
+});
+/** The first answer to a get: what the bytes are, their chunk hashes (when the list fits) and the variants. */
+export const ContentMeta = msg("content.meta", {
+  req: ReqId, id: ContentId, size: Seq, type: z.string().min(1).max(200), chunkSize: z.literal(CONTENT_CHUNK_BYTES), chunkHashes: ChunkHashes.optional(),
+  variants: z.array(ContentVariant).max(20),
+});
+/**
+ * Bytes of a get (server → reader) or of a put (FE → server). Always a binary frame (`encodeChunkFrame`): a short JSON
+ * header, then the raw bytes, never base64 inside JSON (§9A.4).
+ */
+export const ContentChunk = msg("content.chunk", {
+  req: ReqId, offset: Seq,
+  bytes: z.instanceof(Uint8Array).refine((bytes) => bytes.length >= 1 && bytes.length <= CONTENT_FRAME_CHUNK_LIMIT, { message: `1 to ${CONTENT_FRAME_CHUNK_LIMIT} bytes` }),
+});
+/** The receiver's window: it may be sent `bytes` more. */
+export const ContentCredit = msg("content.credit", { req: ReqId, bytes: z.number().int().min(1).max(CONTENT_CREDIT_LIMIT) });
+/** The player seeked away or closed. */
+export const ContentCancel = msg("content.cancel", { req: ReqId });
+/** Ask for a URL ticket for one reference (Q1). */
+export const ContentTicketReq = msg("content.ticket", { req: ReqId, owner: ServerId, id: ContentId, entry: EntryRef });
+/** The ticket: bound to this device, the id and the entry; re-checked on every request (Q1). */
+export const ContentGranted = msg("content.granted", { req: ReqId, ticket: ContentTicket, expiresAt: z.number().int().nonnegative() });
+/** Start (or resume) an upload of the bytes whose hash is `id`; the server answers `content.stored` with what it has. */
+export const ContentPut = msg("content.put", {
+  req: ReqId, id: ContentId, size: z.number().int().min(1).max(CONTENT_PUT_LIMIT), type: z.string().min(1).max(200), name: z.string().min(1).max(1_000),
+});
+/** How many bytes of an upload the server holds; `have = size` once the bytes are in and their hash checked. */
+export const ContentStored = msg("content.stored", { req: ReqId, id: ContentId, have: Seq });
+
+// ---------------------------------------------------------------------------------------------
+// Pairing session (§4.4): after the `pair` handshake, before the device is in the roster
+
+/**
+ * The device names itself and proves its signing key: `proof` is its Ed25519 signature over the handshake's transcript
+ * hash (src/session). Its X25519 key is the handshake's static key; its member id comes from `sign`.
+ */
+export const PairHello = msg("pair.hello", { name: z.string().min(1).max(100), sign: PublicKey, proof: Signature, feVersion: Version, protocol: z.literal(PROTOCOL_VERSION) });
+/** The user confirmed the code: the device's committed `Add` and the statements it needs to trust this cluster. */
+export const PairAdded = msg("pair.added", {
+  add: SignedStatement.refine((statement) => statement.body.type === "add" && statement.body.kind === "device", { message: "a device's Add" }),
+  roster: z.array(SignedStatement).max(200),
+});
+/** The device stored its membership (the 2.x held-offer rule: the offer is used up only now). */
+export const PairAck = msg("pair.ack", { addId: StatementId });
+/** Either side ends the pairing. */
+export const PairDeclined = msg("pair.declined", { reason: z.enum(["code", "expired", "used", "busy", "cancelled", "unsupported"]) });
+
+// ---------------------------------------------------------------------------------------------
+// Roster gossip, server ↔ server (§4.6, §4.7). M2 runs one server; the shapes are fixed here with the statements.
+
+export const RosterHave = msg("roster.have", { digest: EntryHash });
+export const RosterIds = msg("roster.ids", { ids: z.array(StatementId).max(2_000) });
+export const RosterWant = msg("roster.want", { ids: z.array(StatementId).max(2_000) });
+export const RosterStatements = msg("roster.statements", { statements: z.array(SignedStatement).max(200) });
+/** Only `Revoke` and `Root` statements; also on a refused server handshake (D47). */
+export const RosterRevocations = msg("roster.revocations", { statements: z.array(RevocationStatement).max(200) });
+
+// ---------------------------------------------------------------------------------------------
+// Admin, local socket only (§4.3, M2 brief Q5): the desktop window and `botlingd`'s CLI pair and revoke devices
+
+/** An admin request, answered by `res`. */
+export const Admin = msg("admin", { req: ReqId, op: AdminOp });
+/** What happens in a pairing the window started (the code to compare, done, declined) or a revocation. */
+export const AdminEventMsg = msg("admin.event", { event: AdminEvent });
+
+// ---------------------------------------------------------------------------------------------
 // The server's requests of the attached window (local socket; the 2.x core's app ops)
 
 /** String arguments of a `shell.*` request. `shell.browser` carries the bot's browser request as JSON in `request` (≤ 64,000, as the 2.x app op). */
@@ -185,9 +268,10 @@ export const ShellDone = msg("shell.done", { req: ReqId, ok: z.boolean(), file: 
 // Session (§5.2)
 
 export const Ping = msg("ping", { at: z.number().int().nonnegative().optional() });
-export const Bye = msg("bye", { reason: z.enum(["role", "malformed", "too-large", "version", "token", "closing", "dead"]), detail: z.string().max(500).optional() });
+/** `revoked`: the peer is not (or no longer) valid in the roster (§4.6). */
+export const Bye = msg("bye", { reason: z.enum(["role", "malformed", "too-large", "version", "token", "closing", "dead", "revoked"]), detail: z.string().max(500).optional() });
 
-/** Every v1 message schema M1 knows, by its `t`. */
+/** Every v1 message schema, by its `t`. */
 export const MESSAGES = {
   hello: Hello, welcome: Welcome,
   sub: Sub, unsub: Unsub, ack: Ack, history: History, "history.page": HistoryPage,
@@ -196,6 +280,11 @@ export const MESSAGES = {
   cmd: Cmd, cancel: Cancel, held: Held, "cmd.result": CmdResult, "cmd.retry": CmdRetry,
   req: Req, res: Res,
   "content.find": ContentFind, "content.found": ContentFound, "content.open": ContentOpen, "content.file": ContentFile, "content.gone": ContentGone,
+  "content.get": ContentGet, "content.meta": ContentMeta, "content.chunk": ContentChunk, "content.credit": ContentCredit, "content.cancel": ContentCancel,
+  "content.ticket": ContentTicketReq, "content.granted": ContentGranted, "content.put": ContentPut, "content.stored": ContentStored,
+  "pair.hello": PairHello, "pair.added": PairAdded, "pair.ack": PairAck, "pair.declined": PairDeclined,
+  "roster.have": RosterHave, "roster.ids": RosterIds, "roster.want": RosterWant, "roster.statements": RosterStatements, "roster.revocations": RosterRevocations,
+  admin: Admin, "admin.event": AdminEventMsg,
   "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.done": ShellDone,
   ping: Ping, bye: Bye,
 } as const;
