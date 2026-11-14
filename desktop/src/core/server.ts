@@ -46,7 +46,7 @@ import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, 
 import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
-  type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
+  type BotView, type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
   type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView,
 } from "../contract";
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
@@ -2486,6 +2486,11 @@ First write a test that shows this, then fix it.`;
   /** Botling 3's server: whether `botId` is one of the core's bots. */
   hasBot(botId: string): boolean {
     return this.profiles.some((profile) => profile.id === botId);
+  }
+
+  /** Botling 3's server: a bot's current view (its summary row in the server's srv: table), or null. */
+  serverBotView(botId: string): BotView | null {
+    return this.bots.get(botId)?.view() ?? null;
   }
 
   /** Botling 3's server: the bots the core has now. */

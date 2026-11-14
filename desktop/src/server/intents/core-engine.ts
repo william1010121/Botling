@@ -2,13 +2,13 @@
 // before). The core's emit carries both its events and its answers to `receive`: events go to the server's host (the
 // event tap), answers settle the legacy commands this binding sent.
 import { randomUUID } from "node:crypto";
-import { ContractError, PROTOCOL_VERSION, type Command, type Event as ContractEvent, type Outbound } from "../../contract";
+import { ContractError, PROTOCOL_VERSION, type BotView, type Command, type Event as ContractEvent, type Outbound } from "../../contract";
 import type { Core } from "../../core/server";
 import type { DeferredTurn } from "../../core/bot";
 import type { ApplyNowCommand, EngineHost, TurnEngine, TurnRunning, TurnStart, TurnStatus, UserLine } from "../effects";
 
 /** What the binding uses of the core. */
-export type CoreLike = Pick<Core, "serverSend" | "serverTurn" | "serverUserLine" | "applyNow" | "receive" | "hasBot" | "botIds" | "pendingFiles" | "checkRemoveBot" | "removeBot">;
+export type CoreLike = Pick<Core, "serverSend" | "serverTurn" | "serverUserLine" | "applyNow" | "receive" | "hasBot" | "botIds" | "serverBotView" | "pendingFiles" | "checkRemoveBot" | "removeBot">;
 
 interface Waiting { resolve(value: unknown): void; reject(error: unknown): void }
 
@@ -36,6 +36,7 @@ export class CoreEngine implements TurnEngine {
 
   bots(): string[] { return this.need().botIds(); }
   hasBot(botId: string): boolean { return this.need().hasBot(botId); }
+  botView(botId: string): BotView | null { return this.core?.serverBotView(botId) ?? null; }
   pendingFiles(botId: string): number { return this.need().pendingFiles(botId); }
   checkRemove(botId: string): void { this.need().checkRemoveBot(botId); }
   applyNow(cmd: ApplyNowCommand): unknown { return this.need().applyNow(cmd); }
