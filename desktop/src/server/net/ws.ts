@@ -12,7 +12,6 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import { SESSION_FRAME_LIMIT, type SessionTransport } from "../../session";
-import type { RemoteSession } from "../session";
 
 /** Header (kind, epoch, counter) + the largest plaintext + the GCM tag: the largest frame a session ever sends. */
 export const WS_MAX_PAYLOAD = 13 + SESSION_FRAME_LIMIT + 16;
@@ -23,9 +22,16 @@ export const MAX_CONNECTIONS = 256;
 /** How long a closing socket may take to say goodbye before it is cut. */
 const CLOSE_GRACE_MS = 1_500;
 
-/** What the WebSocket side needs from botlingd's remote sessions. */
+/**
+ * What the WebSocket side needs from botlingd's sessions: device sessions (RemoteSessions) and, since M3, peer servers
+ * through server/peer's SessionRouter, which picks one by the first frame.
+ */
 export interface SessionAcceptor {
-  accept(transport: SessionTransport, kind: "tailnet"): RemoteSession;
+  accept(transport: SessionTransport, kind: "tailnet"): {
+    readonly link: { readonly established: Promise<unknown> };
+    receive(frame: Uint8Array): void;
+    transportClosed(): void;
+  };
 }
 
 export interface DeviceSocketsOptions {
