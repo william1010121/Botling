@@ -48,6 +48,7 @@ function check(value: unknown, sender: Sender, session: SessionKind, registry: R
   if (!known) return refuse("unsupported", Object.hasOwn(M3_MESSAGES, t) ? `"${t}" is an M3 message (decodeWireFrame)` : `"${t}" is not supported by this version`);
   if (t === "cmd" && sender === "fe" && (value as { scope?: unknown }).scope !== undefined) return refuse("role", "a front end does not state a command's scope");
   if (t !== "cmd" && sender !== "peer" && (value as { via?: unknown }).via !== undefined) return refuse("role", "only a peer server tags a forwarded subscription (via)");
+  if (t === "sub" && sender !== "peer" && (value as { live?: unknown }).live !== undefined) return refuse("role", "only a peer server turns live frames off for a forwarded subscription");
   if ((t === "content.get" || t === "content.locate") && sender !== "peer" && (value as { device?: unknown }).device !== undefined) return refuse("role", "only a peer server names the device it reads for");
   const parsed = (WIRE_MESSAGES as Record<string, z.ZodType>)[t]!.safeParse(value);
   if (!parsed.success) return refuse("malformed", `${t}: ${describeIssues(parsed.error)}`);

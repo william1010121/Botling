@@ -25,9 +25,23 @@
 //
 // S never builds bot state; it stores and relays frames.
 //
+// Live text (§9, M3 live across servers): a front-end leg also carries the running turn's `live` frames. B's owner side
+// subscribes each forwarded `sub` to its live channel (≤ 10 frames/s per turn and subscription, first frame the whole
+// segment) and tags the frames with the leg's `via`. S keeps the latest segment of the leg's running turn in memory
+// (§9.2 "each server on the path"): a LiveReceiver applies B's frames, and a LiveChannel of the leg's own (no
+// checkpoints) re-sends that text to the front end's session, whose LiveGate keeps the connection at ≤ 10 frames/s.
+// So S paces the front end by its own clock (jitter on the peer hop never makes the gate drop a frame), answers the
+// front end's `live.resync` (and its gate's) at once from memory, and after a lost session sends only what changed
+// while it was away. Only a frame S itself cannot apply makes S ask B (`live.resync`, tagged). S drops its copy of a
+// turn when it relays that turn's `turn.finished` / `turn.interrupted` entry, so the entries replace the live text.
+// Live frames are never stored or cached: when B's queue to S is over PEER_LIVE_SOFT_BYTES, B drops live frames (never
+// entries) and, once the queue drained, sends the whole segment again. After a lost session, the re-sent `sub` starts a
+// new live subscription whose first frame is the whole segment. Keeper legs ask B for no live frames (`sub.live: false`).
+//
 // The owner side (`PassThroughOwner`, server B): a peer's tagged `sub` / `ack` / `unsub` drive one LogReader per
 // (session, via), whose frames go back with the tag; `history` is answered from the store. They end with the session.
 import type { Cursor, LogId, Message, MessageOf, StreamId, WireMessage } from "../../protocol";
+import { LiveChannel, LiveReceiver, type Clock, type LiveFrame, type LiveSubscription } from "../live";
 import type { LogHub, LogReader } from "../log";
 import { readHistory } from "../log/snap";
 import { readStream } from "../log/log-store";
@@ -40,14 +54,31 @@ export const KEEP_AFTER_CLOSE_MS = 10 * 60 * 1000;
 export interface PassThroughSession {
   readonly peer: string | null;
   readonly state: string;
+  /** Bytes queued toward the peer (live frames back off above LIVE_SOFT_BYTES); absent: never backs off. */
+  readonly queuedBytes?: number;
   sendWire(message: WireMessage): boolean;
+}
+
+/** Above this many bytes queued toward a peer, the owner drops live frames and resends the whole segment later. */
+export const PEER_LIVE_SOFT_BYTES = 256 * 1024;
+/** How often a dropped live subscription looks again whether the queue drained. */
+export const PEER_LIVE_RETRY_MS = 100;
+
+/** The owner's live channel as the owner side uses it (server/live LiveChannel). */
+export interface PassThroughLive {
+  subscribe(stream: StreamId, send: (frame: LiveFrame) => void): LiveSubscription;
 }
 
 /** A front end's subscription to a peer's bot, as session-core holds it. */
 export interface PassThroughLeg {
   ack(cursor: Cursor): void;
+  /** The front end's receiver lost track (`live.resync`, or its gate): the whole current segment, from this server's copy. */
+  liveResync(): void;
   close(): void;
 }
+
+/** Where a leg's live frames go (the front end session's LiveGate send); frames come without `via`. */
+export type LiveSink = (frame: LiveFrame) => void;
 
 export interface PassThroughOptions {
   cache: PeerLogCache;
@@ -64,6 +95,8 @@ export interface PassThroughOptions {
   log?: (line: string) => void;
   /** Timers (injected in tests for the 10-minute keep). */
   schedule?: (run: () => void, ms: number) => () => void;
+  /** The clock of the legs' live copies (injected in tests). */
+  liveClock?: Clock;
 }
 
 type Sink = (message: Message) => boolean;
@@ -74,6 +107,10 @@ interface Leg {
   owner: string;
   /** The front end's sink; null for a keeper (S's own subscription). */
   sink: Sink | null;
+  /** The front end's live sink; null for a keeper, or a front end that takes no live frames. */
+  live: LiveSink | null;
+  /** This server's copy of the running turn's text and the front end's subscription to it (with `live`). */
+  mirror: LiveMirror | null;
   /** Last position relayed to the front end (or taken by the keeper); null: nothing yet / a snap is due. */
   cursor: Cursor | null;
   /** LogIds this leg saw retired (from relayed resets and the cache). */
@@ -86,6 +123,16 @@ interface Leg {
   chain: Promise<void>;
   closed: boolean;
   stopTimer: (() => void) | null;
+}
+
+/** A leg's copy of the owner's running turn (§9.2): B's frames in, paced frames to the front end out. */
+interface LiveMirror {
+  receiver: LiveReceiver;
+  channel: LiveChannel;
+  sub: LiveSubscription;
+  /** The turn the channel runs now, and its segment. */
+  turnId: string | null;
+  seg: number;
 }
 
 const attached = (leg: Leg): boolean => leg.session !== null && leg.session.state === "open";
@@ -101,7 +148,7 @@ export class PassThrough {
   private readonly log: (line: string) => void;
   private readonly schedule: (run: () => void, ms: number) => () => void;
   /** Counters (tests, status). */
-  readonly counts = { relayed: 0, dropped: 0, resubscribed: 0, servedFromCache: 0, stale: 0, keepersStopped: 0 };
+  readonly counts = { relayed: 0, dropped: 0, resubscribed: 0, servedFromCache: 0, stale: 0, keepersStopped: 0, liveRelayed: 0, liveDropped: 0, liveResyncs: 0 };
 
   constructor(private readonly options: PassThroughOptions) {
     this.now = options.now ?? Date.now;
@@ -127,12 +174,15 @@ export class PassThrough {
     return { fe, keepers };
   }
 
-  /** A front end subscribes to a peer's bot from `cursor`; `sink` gets frames as the owner sent them (no via). */
-  open(stream: string, cursor: Cursor | null, sink: Sink): PassThroughLeg {
+  /**
+   * A front end subscribes to a peer's bot from `cursor`; `sink` gets frames as the owner sent them (no via), `live`
+   * the running turn's live frames (no via).
+   */
+  open(stream: string, cursor: Cursor | null, sink: Sink, live: LiveSink | null = null): PassThroughLeg {
     const owner = this.options.ownerOf(stream);
     if (!owner) throw new Error(`pass-through: no peer owns ${stream}`);
     this.stopKeeper(stream);
-    const leg = this.makeLeg(stream, owner, cursor, sink);
+    const leg = this.makeLeg(stream, owner, cursor, sink, live);
     this.options.cache.touch(stream);
     const session = this.liveSession(owner);
     if (session) this.attach(leg, session);
@@ -140,6 +190,7 @@ export class PassThrough {
     // (Live in the registry with no session: between a session and its redial; `sessionOpened` or the stale state comes.)
     return {
       ack: (at) => this.ack(leg, at),
+      liveResync: () => this.liveResync(leg),
       close: () => this.closeLeg(leg),
     };
   }
@@ -206,6 +257,7 @@ export class PassThrough {
       pending.sink({ ...message, req: pending.req } as Message);
       return true;
     }
+    if (message.t === "live" && message.via !== undefined) { this.takeLive(session, message as LiveFrame & { via: string }); return true; }
     if ((message.t !== "snap" && message.t !== "batch" && message.t !== "reset") || message.via === undefined) return false;
     const leg = this.legs.get(message.via);
     if (!leg || leg.closed || leg.session !== session || leg.stream !== message.stream) {
@@ -220,7 +272,7 @@ export class PassThrough {
   }
 
   close(): void {
-    for (const leg of [...this.legs.values()]) { leg.closed = true; leg.stopTimer?.(); }
+    for (const leg of [...this.legs.values()]) { leg.closed = true; leg.stopTimer?.(); leg.mirror?.channel.close(); }
     this.legs.clear();
     this.keepers.clear();
     this.histories.clear();
@@ -228,11 +280,65 @@ export class PassThrough {
 
   // ---------------------------------------------------------------------------------------------
 
-  private makeLeg(stream: string, owner: string, cursor: Cursor | null, sink: Sink | null): Leg {
+  /** A live frame of a leg: relayed without `via` while the leg is on that session, else dropped (never stored). */
+  private takeLive(session: PassThroughSession, message: LiveFrame & { via: string }): void {
+    const leg = this.legs.get(message.via);
+    if (!leg || leg.closed || leg.session !== session || leg.stream !== message.stream || !leg.mirror) { this.counts.liveDropped++; return; }
+    const { via: _via, ...frame } = message;
+    const mirror = leg.mirror!;
+    const result = mirror.receiver.apply(frame as LiveFrame);
+    if (result === "resync") {
+      // A frame this copy cannot place: ask the owner for the whole segment (the front end keeps what it has meanwhile).
+      this.counts.liveResyncs++;
+      session.sendWire({ t: "live.resync", stream: leg.stream as StreamId, via: leg.via } as WireMessage);
+      return;
+    }
+    if (result !== "applied") return;
+    this.counts.liveRelayed++;
+    const view = mirror.receiver.view(leg.stream)!;
+    const botId = leg.stream.slice(4);
+    try {
+      if (mirror.turnId !== view.turnId || view.seg < mirror.seg) {
+        mirror.channel.start(botId, view.turnId);
+        mirror.turnId = view.turnId;
+        mirror.seg = 0;
+      }
+      while (mirror.seg < view.seg) { mirror.channel.step(botId, view.turnId); mirror.seg++; }
+      mirror.channel.replace(botId, view.turnId, view.text);
+    } catch (error) { this.log(`pass-through: live of ${leg.stream}: ${String((error as Error)?.message ?? error)}`); }
+  }
+
+  /** The leg relayed an entry that ends a turn: the entries replace its live text, so the copy is dropped. */
+  private endLive(leg: Leg, frame: Message): void {
+    const mirror = leg.mirror;
+    if (!mirror?.turnId || frame.t !== "batch") return;
+    for (const entry of frame.entries) {
+      if (entry.kind !== "turn.finished" && entry.kind !== "turn.interrupted") continue;
+      const turnId = (entry.body as { turnId?: unknown } | null)?.turnId;
+      if (!mirror.turnId || turnId !== mirror.turnId) continue;
+      mirror.channel.end(leg.stream.slice(4), mirror.turnId);
+      mirror.receiver.drop(leg.stream);
+      mirror.turnId = null;
+      mirror.seg = 0;
+    }
+  }
+
+  private liveResync(leg: Leg): void {
+    if (leg.closed || !leg.mirror) return;
+    leg.mirror.sub.resync();
+  }
+
+  private makeMirror(stream: string, live: LiveSink): LiveMirror {
+    const channel = new LiveChannel({ sink: null, ...(this.options.liveClock ? { clock: this.options.liveClock } : {}), onError: (error) => this.log(`pass-through: live of ${stream}: ${String((error as Error)?.message ?? error)}`) });
+    const sub = channel.subscribe(stream as StreamId, live);
+    return { receiver: new LiveReceiver(), channel, sub, turnId: null, seg: 0 };
+  }
+
+  private makeLeg(stream: string, owner: string, cursor: Cursor | null, sink: Sink | null, live: LiveSink | null = null): Leg {
     const via = `pt.${this.nextId++}`;
     const retired = new Set<string>();
     for (const old of this.options.cache.get(stream)?.retired.list ?? []) retired.add(old.logId);
-    const leg: Leg = { via, stream, owner, sink, cursor, retired, session: null, staleSent: null, chain: Promise.resolve(), closed: false, stopTimer: null };
+    const leg: Leg = { via, stream, owner, sink, live, mirror: live ? this.makeMirror(stream, live) : null, cursor, retired, session: null, staleSent: null, chain: Promise.resolve(), closed: false, stopTimer: null };
     this.legs.set(via, leg);
     return leg;
   }
@@ -256,8 +362,13 @@ export class PassThrough {
     leg.session = session;
     this.run(leg, () => {
       if (leg.session !== session || session.state !== "open") return;
-      session.sendWire({ t: "sub", stream: leg.stream as StreamId, cursor: leg.cursor, via: leg.via } as WireMessage);
+      session.sendWire(this.subFrame(leg));
     });
+  }
+
+  /** The leg's forwarded `sub`; a leg with no live sink (a keeper) asks for no live frames. */
+  private subFrame(leg: Leg): WireMessage {
+    return { t: "sub", stream: leg.stream as StreamId, cursor: leg.cursor, via: leg.via, ...(leg.live ? {} : { live: false }) } as WireMessage;
   }
 
   /** Owner unreachable: what the cache has above the leg's cursor, then `stale{since}` (once per `since`). */
@@ -272,6 +383,7 @@ export class PassThrough {
         this.counts.servedFromCache++;
         this.advance(leg, frame);
         leg.sink!(frame);
+        this.endLive(leg, frame);
       }
       const at = since ?? this.options.peerState(leg.owner)?.since ?? this.options.cache.get(leg.stream)?.heardAt ?? this.now();
       if (leg.staleSent === at) return;
@@ -328,12 +440,12 @@ export class PassThrough {
       if (leg.retired.has((frame as { logId: string }).logId)) return;
       this.counts.resubscribed++;
       const session = leg.session;
-      if (session && session.state === "open") session.sendWire({ t: "sub", stream: leg.stream as StreamId, cursor: leg.cursor, via: leg.via } as WireMessage);
+      if (session && session.state === "open") session.sendWire(this.subFrame(leg));
       return;
     }
     this.advance(leg, frame);
     this.counts.relayed++;
-    if (leg.sink) { leg.sink(frame); return; }
+    if (leg.sink) { leg.sink(frame); this.endLive(leg, frame); return; }
     // A keeper acknowledges what it took itself, so the owner keeps pushing (§10.4).
     if (frame.t === "batch" && leg.session?.state === "open") leg.session.sendWire({ t: "ack", stream: leg.stream as StreamId, cursor: { logId: frame.logId, seq: frame.to }, via: leg.via } as WireMessage);
   }
@@ -347,6 +459,7 @@ export class PassThrough {
     if (leg.closed) return;
     leg.closed = true;
     leg.stopTimer?.();
+    leg.mirror?.channel.close();
     this.legs.delete(leg.via);
     if (this.keepers.get(leg.stream) === leg) this.keepers.delete(leg.stream);
     if (leg.session && leg.session.state === "open") leg.session.sendWire({ t: "unsub", stream: leg.stream as StreamId, via: leg.via } as WireMessage);
@@ -396,21 +509,43 @@ export interface PassThroughOwnerOptions {
   hub: LogHub;
   /** A bot the engine has whose stream is not made yet: make it (true: the stream exists now). */
   ensureBotStream(botId: string): Promise<boolean>;
+  /** The live channel: forwarded subscriptions get the running turn's live frames, tagged (null: none). */
+  live?: PassThroughLive | null;
+  /** Queued bytes toward the peer above which live frames are dropped (default PEER_LIVE_SOFT_BYTES). */
+  liveSoftBytes?: number;
+  liveRetryMs?: number;
+  /** Timers (injected in tests). */
+  schedule?: (run: () => void, ms: number) => () => void;
   log?: (line: string) => void;
 }
 
+/** One forwarded subscription at the owner: its log reader and, unless the peer asked for none, its live subscription. */
+interface OwnerSub {
+  reader: LogReader;
+  live: LiveSubscription | null;
+  /** Live frames were dropped (back-pressure): every frame is dropped until a whole-segment one (`at = 0`) goes. */
+  liveBroken: boolean;
+  /** The look-again timer while broken. */
+  retry: (() => void) | null;
+  closed: boolean;
+}
+
 export class PassThroughOwner {
-  private readonly readers = new Map<PassThroughSession, Map<string, LogReader>>();
+  private readonly readers = new Map<PassThroughSession, Map<string, OwnerSub>>();
   private readonly log: (line: string) => void;
+  private readonly schedule: (run: () => void, ms: number) => () => void;
+  /** Counters (tests, status). */
+  readonly counts = { liveSent: 0, liveDropped: 0, liveResent: 0 };
 
   constructor(private readonly options: PassThroughOwnerOptions) {
     this.log = options.log ?? (() => undefined);
+    this.schedule = options.schedule ?? defaultSchedule;
   }
 
   /** Readers open for peers now (tests). */
   readerCount(): number { let n = 0; for (const map of this.readers.values()) n += map.size; return n; }
 
-  /** A peer's tagged `sub` / `ack` / `unsub`, or its `history`; false when the frame is not this side's. */
+  /** A peer's tagged `sub` / `ack` / `unsub` / `live.resync`, or its `history`; false when the frame is not this side's. */
   async onMessage(session: PassThroughSession, message: WireMessage): Promise<boolean> {
     if (message.t === "history") {
       if (!message.stream.startsWith("bot:")) return false;
@@ -421,23 +556,43 @@ export class PassThroughOwner {
       if (row) session.sendWire({ t: "history.page", req: message.req, stream: message.stream, logId: row.logId, messages: [], hasMore: false, older: 0 } as WireMessage);
       return true;
     }
+    if (message.t === "live.resync" && message.via !== undefined) {
+      const sub = this.readers.get(session)?.get(message.via);
+      sub?.live?.resync();
+      return true;
+    }
     if ((message.t !== "sub" && message.t !== "ack" && message.t !== "unsub") || message.via === undefined) return false;
     const via = message.via;
     let map = this.readers.get(session);
-    if (message.t === "ack") { map?.get(via)?.ack(message.stream, message.cursor); return true; }
-    map?.get(via)?.close();
+    if (message.t === "ack") { map?.get(via)?.reader.ack(message.stream, message.cursor); return true; }
+    const old = map?.get(via);
+    if (old) this.closeSub(old);
     map?.delete(via);
     if (message.t === "unsub") return true;
     if (!message.stream.startsWith("bot:")) { this.log(`pass-through: a forwarded sub of ${message.stream} from ${session.peer ?? "?"} is not served (bot streams only)`); return true; }
     if (!map) { map = new Map(); this.readers.set(session, map); }
-    const reader = this.options.hub.attach((frame) => { if (session.state === "open") session.sendWire({ ...frame, via } as WireMessage); });
-    map.set(via, reader);
-    let result = await reader.sub(message.stream, message.cursor);
-    if (!result.ok && result.reason === "unknown stream" && (await this.options.ensureBotStream(message.stream.slice(4)))) result = await reader.sub(message.stream, message.cursor);
+    const sub: OwnerSub = { reader: null as unknown as LogReader, live: null, liveBroken: false, retry: null, closed: false };
+    sub.reader = this.options.hub.attach((frame) => {
+      if (session.state !== "open") return;
+      session.sendWire({ ...frame, via } as WireMessage);
+      // A reset makes the receiver start over: the whole segment again (as a front end's own session does).
+      if (frame.t === "reset") sub.live?.resync();
+    });
+    map.set(via, sub);
+    const stream = message.stream;
+    const wantsLive = (message as { live?: false }).live !== false;
+    let result = await sub.reader.sub(stream, message.cursor);
+    if (!result.ok && result.reason === "unknown stream" && (await this.options.ensureBotStream(stream.slice(4)))) result = await sub.reader.sub(stream, message.cursor);
     if (!result.ok) {
-      this.log(`pass-through: a forwarded sub of ${message.stream} from ${session.peer ?? "?"} refused (${result.reason})`);
-      reader.close();
-      if (map.get(via) === reader) map.delete(via);
+      this.log(`pass-through: a forwarded sub of ${stream} from ${session.peer ?? "?"} refused (${result.reason})`);
+      this.closeSub(sub);
+      if (map.get(via) === sub) map.delete(via);
+      return true;
+    }
+    // As a front end's session does (§9.4): the live subscription starts with the log one; its first frame is the whole
+    // current segment, which a receiver always takes.
+    if (wantsLive && !sub.closed && this.options.live && map.get(via) === sub) {
+      sub.live = this.options.live.subscribe(stream, (frame) => this.sendLive(session, via, sub, frame));
     }
     return true;
   }
@@ -445,13 +600,54 @@ export class PassThroughOwner {
   sessionClosed(session: PassThroughSession): void {
     const map = this.readers.get(session);
     if (!map) return;
-    for (const reader of map.values()) reader.close();
+    for (const sub of map.values()) this.closeSub(sub);
     this.readers.delete(session);
   }
 
   close(): void {
-    for (const map of this.readers.values()) for (const reader of map.values()) reader.close();
+    for (const map of this.readers.values()) for (const sub of map.values()) this.closeSub(sub);
     this.readers.clear();
+  }
+
+  /**
+   * A live frame toward the peer. Under back-pressure (queue over the soft limit, or the send refused) it is dropped and
+   * the subscription is broken: later frames are dropped too until the queue drained, when the whole segment is asked
+   * again (`resync`) and goes as one frame with `at = 0`. Entries are never dropped here: they are the log reader's.
+   */
+  private sendLive(session: PassThroughSession, via: string, sub: OwnerSub, frame: LiveFrame): void {
+    if (sub.closed || session.state !== "open") return;
+    if (sub.liveBroken && frame.at !== 0) { this.counts.liveDropped++; return; }
+    const queued = session.queuedBytes ?? 0;
+    if (queued <= (this.options.liveSoftBytes ?? PEER_LIVE_SOFT_BYTES) && session.sendWire({ ...frame, via } as WireMessage)) {
+      if (sub.liveBroken) { sub.liveBroken = false; this.counts.liveResent++; }
+      this.counts.liveSent++;
+      return;
+    }
+    this.counts.liveDropped++;
+    sub.liveBroken = true;
+    this.armRetry(session, sub);
+  }
+
+  private armRetry(session: PassThroughSession, sub: OwnerSub): void {
+    if (sub.retry || sub.closed) return;
+    sub.retry = this.schedule(() => {
+      sub.retry = null;
+      if (sub.closed || !sub.liveBroken || session.state !== "open") return;
+      if ((session.queuedBytes ?? 0) > (this.options.liveSoftBytes ?? PEER_LIVE_SOFT_BYTES)) { this.armRetry(session, sub); return; }
+      // The queue drained: the next frame is the whole segment (nothing goes if the turn ended meanwhile; the entries
+      // then carry the text).
+      sub.live?.resync();
+    }, this.options.liveRetryMs ?? PEER_LIVE_RETRY_MS);
+  }
+
+  private closeSub(sub: OwnerSub): void {
+    if (sub.closed) return;
+    sub.closed = true;
+    sub.retry?.();
+    sub.retry = null;
+    sub.live?.close();
+    sub.live = null;
+    sub.reader.close();
   }
 }
 

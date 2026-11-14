@@ -18,6 +18,8 @@ export const ReqId = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]+$/);
  * The tag of a forwarded subscription (M3, §10.3): the attached server S forwards a front end's `sub` to the owner B
  * with `via` set to an id S chose for that front end's subscription; B echoes it on every `batch`, `snap`, `reset` and
  * `rows` it sends for it, and S takes it off before it relays the frame. Only a peer server states it.
+ * Live text across servers (M3, additive): B also tags the `live` frames of that subscription with its `via`, and S tags
+ * the front end's `live.resync` the same way; S takes the tag off toward the front end.
  */
 export const SubTag = ReqId;
 /** A version number of the front end, e.g. "3.0.0". */
@@ -85,7 +87,11 @@ export const Welcome = msg("welcome", {
 // Streams (§8, §10.2)
 
 /** Subscribe from a cursor (none: from a fresh `snap`). */
-export const Sub = msg("sub", { stream: StreamId, cursor: Cursor.nullable(), via: SubTag.optional() });
+/**
+ * `live: false` (M3, additive; only with `via`): the forwarded subscription wants no `live` frames (the attached server's
+ * own keeper subscription, which has no front end to show them to). Absent means live frames come, as for any reader.
+ */
+export const Sub = msg("sub", { stream: StreamId, cursor: Cursor.nullable(), via: SubTag.optional(), live: z.literal(false).optional() });
 export const Unsub = msg("unsub", { stream: StreamId, via: SubTag.optional() });
 /** The reader applied everything up to `cursor`. */
 export const Ack = msg("ack", { stream: StreamId, cursor: Cursor, via: SubTag.optional() });
@@ -128,8 +134,9 @@ export const Peer = msg("peer", { serverId: ServerId, state: ServerState, since:
 
 export const Live = msg("live", {
   stream: StreamId, turnId: Id, seg: z.number().int().nonnegative(), rev: z.number().int().nonnegative(), at: z.number().int().nonnegative(), text: z.string().max(200_000),
+  via: SubTag.optional(),
 });
-export const LiveResync = msg("live.resync", { stream: StreamId });
+export const LiveResync = msg("live.resync", { stream: StreamId, via: SubTag.optional() });
 
 // ---------------------------------------------------------------------------------------------
 // Commands (§11)

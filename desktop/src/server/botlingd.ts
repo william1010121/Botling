@@ -316,7 +316,7 @@ export class Botlingd {
       });
       prefs.onChange(() => passThrough.ensureFollowed([...followed()]));
       const passOwner = new PassThroughOwner({
-        hub, log,
+        hub, log, live,
         ensureBotStream: async (botId) => {
           if (!engine.hasBot(botId)) return false;
           await openStore.submit((tx) => { ensureBot(tx, botId); });
@@ -363,7 +363,7 @@ export class Botlingd {
         },
         passThrough: {
           isPeerStream: (stream) => passThrough.isPeerStream(stream),
-          open: (stream, cursor, sink) => passThrough.open(stream, cursor, sink),
+          open: (stream, cursor, sink, live) => passThrough.open(stream, cursor, sink, live ?? null),
           history: (request, sink) => passThrough.history(request, sink),
         },
       };

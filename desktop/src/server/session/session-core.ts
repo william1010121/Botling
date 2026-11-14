@@ -105,7 +105,8 @@ export interface SessionHost {
  */
 export interface SessionPassThrough {
   isPeerStream(stream: string): boolean;
-  open(stream: string, cursor: Cursor | null, sink: (message: Message) => boolean): { ack(cursor: Cursor): void; close(): void };
+  /** `live` gets the running turn's live frames from the owner (no `via`); the leg's `liveResync` asks the owner again. */
+  open(stream: string, cursor: Cursor | null, sink: (message: Message) => boolean, live?: (frame: MessageOf<"live">) => void): { ack(cursor: Cursor): void; liveResync?(): void; close(): void };
   history(request: MessageOf<"history">, sink: (message: Message) => boolean): void;
 }
 
@@ -171,7 +172,7 @@ export abstract class SessionCore {
   /** M3 step 7: feeds of peers' tables this front end subscribed to, and its listener of peer states. */
   private readonly tableFeeds = new Map<string, { close(): void }>();
   /** M3 step 8: this front end's pass-through legs, by stream. */
-  private readonly legs = new Map<string, { ack(cursor: Cursor): void; close(): void }>();
+  private readonly legs = new Map<string, { ack(cursor: Cursor): void; liveResync?(): void; close(): void }>();
   private peerEvents: (() => void) | null = null;
   /** M3 step 9: this session hears the owners' answers to its forwarded slots. */
   private relayOff: (() => void) | null = null;
@@ -399,8 +400,16 @@ export abstract class SessionCore {
     const pass = this.host.passThrough;
     if (pass?.isPeerStream(stream)) {
       // M3 step 8: a bot a peer owns: the sub passes through to its owner; frames come back unchanged.
+      // Live text across servers: the owner's live frames for this leg go through this connection's LiveGate (≤ 10
+      // frames/s on the connection, as for this server's own bots); a resync (the front end's, or the gate's) goes to
+      // the owner.
       this.legs.get(stream)?.close();
-      this.legs.set(stream, pass.open(stream, cursor, (frame) => this.send(frame, stream)));
+      this.gate.remove(stream);
+      let leg: { liveResync?(): void } | null = null;
+      const live = this.state === "open" ? this.gate.add(stream, () => leg?.liveResync?.()) : undefined;
+      const opened = pass.open(stream, cursor, (frame) => this.send(frame, stream), live);
+      leg = opened;
+      this.legs.set(stream, opened);
       return;
     }
     let result = await reader.sub(stream, cursor);
@@ -421,7 +430,7 @@ export abstract class SessionCore {
 
   private unsub(stream: StreamId): void {
     const leg = this.legs.get(stream);
-    if (leg) { leg.close(); this.legs.delete(stream); return; }
+    if (leg) { leg.close(); this.legs.delete(stream); this.gate.remove(stream); return; }
     const feed = this.tableFeeds.get(stream);
     if (feed) { feed.close(); this.tableFeeds.delete(stream); return; }
     this.reader?.unsub(stream);
