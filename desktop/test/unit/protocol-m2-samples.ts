@@ -45,6 +45,8 @@ export const m2Samples = {
   "content.cancel": { sender: "fe", session: remote, message: { t: "content.cancel", req: "g1" } },
   "content.ticket": { sender: "fe", session: remote, message: { t: "content.ticket", req: "k1", owner: serverA, id: contentId, entry } },
   "content.granted": { sender: "server", session: remote, message: { t: "content.granted", req: "k1", ticket, expiresAt: 1_763_100_600_000 } },
+  "content.locate": { sender: "fe", session: remote, message: { t: "content.locate", req: "k2", botId: "6A0B0000-0000-4000-8000-000000000002", line: "m2", url: "file:///clip.mp4" } },
+  "content.located": { sender: "server", session: remote, message: { t: "content.located", req: "k2", ref: { owner: serverA, id: contentId, type: "video/mp4", state: "ready", entry }, ticket, expiresAt: 1_763_100_600_000 } },
   "content.put": { sender: "fe", session: remote, message: { t: "content.put", req: "u1", id: contentId, size: 52_428_800, type: "image/jpeg", name: "photo.jpg" } },
   "content.stored": { sender: "server", session: remote, message: { t: "content.stored", req: "u1", id: contentId, have: 1_048_576 } },
   "pair.hello": { sender: "fe", session: pairing, message: { t: "pair.hello", name: "Phone", sign: key(1), proof: sig(14), feVersion: "3.0.0", protocol: 1 } },

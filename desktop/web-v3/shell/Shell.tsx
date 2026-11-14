@@ -11,6 +11,7 @@ import { PHONE_QUERY, phoneWidth } from "../../mobile/layout";
 import { mountRenderer, type MountedRenderer, type PageCapabilities } from "../bridge-v3";
 import { forgetDevice, loadDevice, saveDevice, type DeviceRecord } from "./device-store";
 import { makePairKeys, pair, pairingSupported, PairingError, type PairAttempt, type PairKeys } from "./pairing";
+import { MediaBroker } from "./media";
 import { bannerText, FE_VERSION, newDiagnostics, openConnection, type Connection, type Diagnostics } from "./connection";
 import type { DeviceScope } from "../../src/protocol";
 
@@ -158,17 +159,21 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
   useEffect(() => {
     let cancelled = false;
     let opened: Connection | null = null;
+    let media: MediaBroker | null = null;
     void openConnection(device, diagnostics, location.href).then((conn) => {
       if (cancelled) { void conn.close(); return; }
       opened = conn;
       const update = () => setBanner({ text: bannerText(conn.link.status, conn.link.pending()), state: conn.link.status.state });
       conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome") update(); });
+      // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
+      media = new MediaBroker(conn.link, () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null, diagnostics.media);
+      media.start();
       mounted.current = mountRenderer(rendererRoot.current!, { link: conn.port, capabilities, clock: { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) }, chrome });
       conn.link.start();
       update();
       setConnection(conn);
     }, (error) => setFailure(`This page could not open its storage: ${String((error as Error)?.message ?? error)}`));
-    return () => { cancelled = true; mounted.current?.unmount(); mounted.current = null; void opened?.close(); };
+    return () => { cancelled = true; media?.stop(); mounted.current?.unmount(); mounted.current = null; void opened?.close(); };
     // The connection lives as long as this device's page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device]);

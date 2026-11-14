@@ -69,7 +69,7 @@ interface Server {
   entries(stream: string): Array<{ kind: string; slot: Slot | null }>;
 }
 
-async function server(options: { pageDir?: string | null; origins?: string[]; maxHandshaking?: number } = {}): Promise<Server> {
+async function server(options: { pageDir?: string | null; origins?: string[]; maxHandshaking?: number; remoteContent?: RemoteHost["remoteContent"] } = {}): Promise<Server> {
   const dir = `${root}/d${++folders}`;
   const store: ServerStore = await openServerStore(dir);
   const identity = await loadOrCreateServerIdentity(dir, { create: true });
@@ -95,7 +95,7 @@ async function server(options: { pageDir?: string | null; origins?: string[]; ma
     ensureBotStream: async (botId) => { if (!engine.hasBot(botId)) return false; await store.submit((tx) => { ensureBot(tx, botId); }); return true; },
     log: (line) => logs.push(line),
   };
-  const host: RemoteHost = { ...base, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey } };
+  const host: RemoteHost = { ...base, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, ...(options.remoteContent ? { remoteContent: options.remoteContent } : {}) };
   const remote = new RemoteSessions(host);
   const sessions: RemoteSession[] = [];
   const acceptor = { accept: (transport: SessionTransport, kind: "tailnet") => { const session = remote.accept(transport, kind); sessions.push(session); return session; } };
@@ -268,6 +268,29 @@ describe("a device over a real loopback WebSocket", () => {
     await device.wait((m): m is MessageOf<"bye"> => m.t === "bye", "bye");
     await s.listener.close();
     await waitFor(() => device.socket.closed, "socket closed");
+  });
+
+  it("content.locate and content.ticket go to the host's remote content with the device's own id (step 9)", async () => {
+    const asked: string[] = [];
+    const ticket = "T".repeat(43);
+    const entry = { stream: bot, seq: 2 };
+    const id = `sha256:${"ab".repeat(32)}`;
+    const s = await server({ remoteContent: {
+      locate: async (deviceId, message) => { asked.push(`locate ${deviceId} ${message.line}`); return { t: "content.located", req: "ignored", ref: { owner: "srv", id, type: "video/mp4", state: "ready", entry }, ticket, expiresAt: 1 }; },
+      ticket: async (deviceId, message) => { asked.push(`ticket ${deviceId} ${message.id}`); return { t: "content.granted", req: "ignored", ticket, expiresAt: 2 }; },
+    } });
+    const keys = await deviceKeys();
+    await s.roster.addDevice({ keys: keys.keys, name: "Phone" });
+    const device = new Device(s, keys.member, keys);
+    await device.link.established;
+    device.send({ t: "hello", deviceId: keys.member, feVersion: "3.0.0", protocol: 1, originEpoch: EPOCH, cursors: {}, outbox: [], want: [] } as Message);
+    await device.wait((m): m is MessageOf<"welcome"> => m.t === "welcome", "welcome");
+    device.send({ t: "content.locate", req: "c1", botId: BOT, line: "m1", url: "file:///clip.mp4" } as Message);
+    const located = await device.wait((m): m is MessageOf<"content.located"> => m.t === "content.located", "located");
+    expect(located).toMatchObject({ req: "c1", ticket, ref: { id, entry } });
+    device.send({ t: "content.ticket", req: "c2", owner: "srv", id, entry } as Message);
+    expect(await device.wait((m): m is MessageOf<"content.granted"> => m.t === "content.granted", "granted")).toEqual({ t: "content.granted", req: "c2", ticket, expiresAt: 2 });
+    expect(asked).toEqual([`locate ${keys.member} m1`, `ticket ${keys.member} ${id}`]);
   });
 
   it("an unpaired key, junk bytes and a text message get no parsed frame; the socket ends", async () => {

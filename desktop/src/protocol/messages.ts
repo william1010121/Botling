@@ -246,6 +246,24 @@ export const ContentCancel = msg("content.cancel", { req: ReqId });
 export const ContentTicketReq = msg("content.ticket", { req: ReqId, owner: ServerId, id: ContentId, entry: EntryRef });
 /** The ticket: bound to this device, the id and the entry; re-checked on every request (Q1). */
 export const ContentGranted = msg("content.granted", { req: ReqId, ticket: ContentTicket, expiresAt: z.number().int().nonnegative() });
+/**
+ * Which reference a chat line holds for a file it names, for a remote front end (M2 step 9, a v1 addition): the 2.x
+ * renderer names a line's media by the line and the file URL the bot wrote, and a remote page cannot use
+ * `content.find` (local socket only; it may answer a `pending:` id). Needs the `read` scope and a stream the device may
+ * read. Answered by `content.located`.
+ */
+export const ContentLocate = msg("content.locate", { req: ReqId, botId: BotId, line: Id, url: z.string().min(1).max(8_000) });
+/**
+ * The line's reference (null: the line names no such indexed file, or the stream may not be read) and, once its bytes
+ * are hashed (`state: ready`), a URL ticket for it (as `content.granted`). A `preparing` reference has no ticket yet: the
+ * front end asks again after the line's `content.ready`.
+ */
+export const ContentLocated = msg("content.located", {
+  req: ReqId,
+  ref: z.strictObject({ owner: ServerId, id: LocalContentId, type: z.string().min(1).max(200), state: ContentRef.shape.state, entry: EntryRef }).nullable(),
+  ticket: ContentTicket.optional(),
+  expiresAt: z.number().int().nonnegative().optional(),
+});
 /** Start (or resume) an upload of the bytes whose hash is `id`; the server answers `content.stored` with what it has. */
 export const ContentPut = msg("content.put", {
   req: ReqId, id: ContentId, size: z.number().int().min(1).max(CONTENT_PUT_LIMIT), type: z.string().min(1).max(200), name: z.string().min(1).max(1_000),
@@ -324,7 +342,7 @@ export const MESSAGES = {
   req: Req, res: Res, "res.part": ResPart,
   "content.find": ContentFind, "content.found": ContentFound, "content.open": ContentOpen, "content.file": ContentFile, "content.gone": ContentGone,
   "content.get": ContentGet, "content.meta": ContentMeta, "content.chunk": ContentChunk, "content.credit": ContentCredit, "content.cancel": ContentCancel,
-  "content.ticket": ContentTicketReq, "content.granted": ContentGranted, "content.put": ContentPut, "content.stored": ContentStored,
+  "content.ticket": ContentTicketReq, "content.granted": ContentGranted, "content.locate": ContentLocate, "content.located": ContentLocated, "content.put": ContentPut, "content.stored": ContentStored,
   "pair.hello": PairHello, "pair.added": PairAdded, "pair.ack": PairAck, "pair.declined": PairDeclined,
   "roster.have": RosterHave, "roster.ids": RosterIds, "roster.want": RosterWant, "roster.statements": RosterStatements, "roster.revocations": RosterRevocations,
   admin: Admin, "admin.event": AdminEventMsg,

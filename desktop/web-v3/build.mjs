@@ -7,6 +7,9 @@
 // below rewrites exactly that literal while bundling and fails the build if it is not found once. The proposed 2.x
 // change that would make this unnecessary is in .bot/artifacts/v3-m2/step-8-page.md (patch).
 //
+// chat.js starts at web-v3/chat-entry.ts: the 2.x chat page's entry, then this page's media mapping (step 9,
+// chat-media.ts: a line's local file → its ticketed /v3/c/ URL, asked of the shell).
+//
 //   node web-v3/build.mjs
 import { build } from "esbuild";
 import { createHash } from "node:crypto";
@@ -49,7 +52,7 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   const [shell, chat] = await Promise.all([
     build({ ...browser, entryPoints: [join(here, "shell/main.tsx")], outfile: join(out, "web.js"), jsx: "automatic", plugins: [v3Paths],
       define: { "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(readCharacters(root)), __BOTLING_WEB__: "true" } }),
-    build({ ...browser, entryPoints: [join(root, "src/renderer/chat-frame/entry.ts")], outfile: join(out, "chat.js"), plugins: [v3Paths],
+    build({ ...browser, entryPoints: [join(here, "chat-entry.ts")], outfile: join(out, "chat.js"), plugins: [v3Paths],
       define: { __LATEX_SOURCE__: JSON.stringify(latex), __CHAT_EXTRAS_SOURCE__: JSON.stringify(chatExtras), __CATCHUP_SOURCE__: JSON.stringify(catchup), __BOARD_SOURCE__: JSON.stringify(boardPart), __BOTLING_WEB__: "true" } }),
   ]);
   const files = new Map([shell, chat].flatMap((result) => result.outputFiles.map((file) => [file.path, file.contents])));

@@ -4,10 +4,11 @@
 //
 //   /v3/          the Botling 3 page (web-v3/dist beside out/, step 8; a placeholder until it is built)
 //   /v3/ws        the device WebSocket (ws.ts): one encrypted session per connection
-//   /v3/c/…       content byte ranges (step 9; 501 until then)
+//   /v3/c/…       content byte ranges with a URL ticket (step 9, server/content/remote.ts; 501 when no content service)
 //
 // Every answer carries the security headers below (CSP `script-src 'self'`, no sniffing, no referrer, framing only by
-// the page itself). The page is static: nothing here reads a cookie, a query or a body. The WebSocket upgrade is taken
+// the page itself). The page is static: nothing here reads a cookie, a query or a body; `/v3/c/` reads only its query
+// (the entry and the ticket), never a cookie. The WebSocket upgrade is taken
 // only on `/v3/ws`, only with no Origin (a non-browser client) or an Origin this server is reached at; everything after
 // it is the session layer's business (no frame is parsed before its roster check).
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -117,6 +118,13 @@ export interface LoopbackListenerOptions {
   log: (line: string) => void;
   maxHandshaking?: number;
   maxConnections?: number;
+  /** `/v3/c/…` (step 9): GET/HEAD byte ranges of a chat line's file; without it those answer 501. */
+  content?: ContentEndpoint;
+}
+
+/** What answers `/v3/c/…` (server/content/remote.ts `RemoteContent`). */
+export interface ContentEndpoint {
+  serve(request: IncomingMessage, response: ServerResponse): Promise<void>;
 }
 
 export class LoopbackListener {
@@ -178,7 +186,12 @@ export class LoopbackListener {
     if (request.method !== "GET" && request.method !== "HEAD") { response.setHeader("Allow", "GET, HEAD"); plain(response, 405, "Method Not Allowed"); return; }
     if (path === "/" || path === "/v3") { response.statusCode = 301; response.setHeader("Location", "/v3/"); response.setHeader("Cache-Control", "no-store"); response.end(); return; }
     if (path === "/v3/ws") { response.setHeader("Upgrade", "websocket"); plain(response, 426, "Upgrade Required"); return; }
-    if (path === "/v3/c" || path.startsWith("/v3/c/")) { plain(response, 501, "Not Implemented"); return; }
+    if (path === "/v3/c" || path.startsWith("/v3/c/")) {
+      const content = this.options.content;
+      if (!content || path === "/v3/c") { plain(response, content ? 404 : 501, content ? "Not Found" : "Not Implemented"); return; }
+      void content.serve(request, response).catch(() => { if (!response.headersSent) plain(response, 500, "Internal Error"); else response.destroy(); });
+      return;
+    }
     if (!path.startsWith("/v3/")) { plain(response, 404, "Not Found"); return; }
     this.page(request, response, path.slice("/v3/".length));
   }

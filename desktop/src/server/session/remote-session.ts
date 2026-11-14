@@ -17,6 +17,9 @@
 //   device's commands that were not applied yet are refused (`cmd.refused{origin}`), never applied.
 // - `req`: the remote read allowlist only, with the `read` scope. Streams (`sub`, `history`) need `read`.
 //   `content.find` / `content.open`, `shell.*` and `admin` are local-socket rows of the role table: refused (`role`).
+// - Content over the tailnet (step 9): `content.locate` (a line's reference, with a URL ticket once hashed) and
+//   `content.ticket` (a ticket, or its renewal) go to the host's `remoteContent` (server/content/remote.ts), which
+//   checks the `read` scope and the stream; without it they are answered as not found / `offline`.
 // - Lanes: catch-up pages, snaps and read answers on the bulk lane when they fit a bulk frame; the rest on control.
 //   Back-pressure by the link's `queuedBytes` (the send queue itself is unbounded): live frames are skipped while more
 //   than LIVE_SOFT_BYTES wait (the front end asks for the whole segment again, as for any rev gap), and a session with
@@ -63,6 +66,14 @@ export interface RemoteHost extends SessionHost {
   self: LocalStatic;
   /** Device pairing (`pair` mode); without it only IK is taken. */
   pairing?: PairingHook;
+  /** Content over the tailnet (step 9): lookups and URL tickets. */
+  remoteContent?: RemoteContentHook;
+}
+
+/** server/content/remote.ts `RemoteContent` as the session uses it. */
+export interface RemoteContentHook {
+  locate(deviceId: string, message: MessageOf<"content.locate">): Promise<MessageOf<"content.located">>;
+  ticket(deviceId: string, message: MessageOf<"content.ticket">): Promise<MessageOf<"content.granted"> | MessageOf<"content.gone">>;
 }
 
 export interface RemoteSessionOptions extends SessionOptions {
@@ -186,6 +197,32 @@ export class RemoteSession extends SessionCore {
     } catch (error) {
       this.frameFailed(decoded.message, error);
     }
+  }
+
+  protected onMessage(message: Message): void {
+    if (this.state === "open" && (message.t === "content.locate" || message.t === "content.ticket")) {
+      const refused = this.frameRefusal();
+      if (refused) { this.bye(refused.reason, refused.detail); return; }
+      void this.remoteContent(message);
+      return;
+    }
+    super.onMessage(message);
+  }
+
+  private async remoteContent(message: MessageOf<"content.locate"> | MessageOf<"content.ticket">): Promise<void> {
+    const hook = this.remote.remoteContent;
+    const member = this.member;
+    let answer: Message;
+    try {
+      if (!hook || !member) throw new Error("no content service");
+      answer = message.t === "content.locate" ? await hook.locate(member, message) : await hook.ticket(member, message);
+    } catch (error) {
+      this.host.log(`session: ${message.t}: ${errorText(error)}`);
+      answer = message.t === "content.locate"
+        ? { t: "content.located", req: message.req, ref: null }
+        : { t: "content.gone", req: message.req, id: message.id, reason: "offline" };
+    }
+    this.send({ ...answer, req: message.req } as Message, message.t);
   }
 
   // ---------------------------------------------------------------------------------------------
