@@ -100,11 +100,24 @@ CREATE TABLE retired (
 ) WITHOUT ROWID;
 `;
 
-// v3 (M1 step 13, src/server/content): what each line names. `content_refs (id, stream, seq)` says an entry references
+// v3 (M1 step 6, src/server/effects and src/server/intents):
+// - effects.botId / turnId: the turn an effect row is (a chat.send's, a routine's, an answer's, or one the core began by
+//   itself), found by turn for `turn.stop` and the `turn.finished` event; effects_by_queue orders queued rows.
+// - fulltext: the whole text of a line or turn whose entry had to be cut to fit one frame (§5.2: an entry is at most
+//   ~252 KiB, a 2.x line up to 400,000 characters). key = the line id, or "turn:<turnId>"; seq = the entry it belongs to.
+const V3 = `
+ALTER TABLE effects ADD COLUMN botId TEXT;
+ALTER TABLE effects ADD COLUMN turnId TEXT;
+CREATE INDEX effects_by_turn ON effects (botId, turnId);
+CREATE INDEX effects_by_queue ON effects (state, stream, seq);
+CREATE TABLE fulltext (stream TEXT NOT NULL, key TEXT NOT NULL, seq INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (stream, key)) WITHOUT ROWID;
+`;
+
+// v4 (M1 step 13, src/server/content): what each line names. `content_refs (id, stream, seq)` says an entry references
 // the bytes `id`; `content_names` says which file of the line (by its absolute path) that is, so Electron main can turn
 // the renderer's `botling-chat://chat/attachment/…?line=` URL into the reference (`content.find`). Written in the same
 // transaction as the entry; `id` is `pending:<hex>` until the hash is ready, then the `sha256:` id (both tables).
-const V3 = `
+const V4 = `
 CREATE TABLE content_names (
   stream TEXT NOT NULL, seq INTEGER NOT NULL, line TEXT NOT NULL, path TEXT NOT NULL, id TEXT NOT NULL,
   PRIMARY KEY (stream, line, path)
@@ -133,9 +146,16 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 3,
-    description: "content path (src/server/content): the files each line names (content_names)",
+    description: "effect outbox by turn (src/server/effects), full text of cut entries",
     up(db) {
       db.exec(V3);
+    },
+  },
+  {
+    version: 4,
+    description: "content path (src/server/content): the files each line names (content_names)",
+    up(db) {
+      db.exec(V4);
     },
   },
 ];

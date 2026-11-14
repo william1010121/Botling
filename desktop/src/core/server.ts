@@ -59,7 +59,7 @@ import type { WorkerOwner } from "./agent/workers";
 import { AgentStatusWriter } from "./agent-status";
 import { filePath, pageInCard } from "./page-preview";
 import { PAGE_COMPONENT } from "./preview-url";
-import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from "./bot";
+import { Bot, NO_LONGER_NEEDED, type DeferredTurn, type PresetTurnIds, type SessionStart, type SessionStartCodex, type Status as TurnStatus } from "./bot";
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
@@ -190,7 +190,12 @@ export interface CoreOptions {
     bundle: string | null;
     request: (op: AppOp, args?: Record<string, string>) => Promise<AppAnswer>;
   } | null;
+  /** Botling 3's server only (2.x leaves it unset): turns it keeps aside in its effect outbox (bot.ts `deferTurn`). */
+  deferTurn?: (turn: DeferredTurn) => boolean;
 }
+
+/** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
+export type ApplyNowCommand = Extract<Command, { type: "chat.react" | "chat.choose" | "chat.answer" | "chat.ignoreQuestion" | "component.approve" | "settings.set" | "bots.create" }>;
 
 /** What asking for a bot came to (`Workspace.BotMaking`). */
 export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; botId: string } | { kind: "empty" } | { kind: "taken" } | { kind: "removedByUser" };
@@ -555,6 +560,7 @@ export class Core {
         callInFollowUp: (caller, asked, record, by) => this.conversations?.callInFollowUp(caller, bot, asked, record, by),
         callInFollowUpMissed: (caller, asked, why, by) => this.conversations?.callInFollowUpMissed(caller, bot, asked, why, by),
         agents: this.agentPort(profile),
+        ...(options.deferTurn ? { deferTurn: options.deferTurn } : {}),
       });
       return bot;
     };
@@ -2441,8 +2447,72 @@ First write a test that shows this, then fix it.`;
     }
   }
 
+  /**
+   * Botling 3's server: `chat.send` whose intent the server already committed, with the ids it recorded (the user's
+   * line, the turn, the reply's line). Everything else is 2.x's `chat.send`.
+   */
+  serverSend(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }, ids: PresetTurnIds): Promise<ResultOf<"chat.send">> {
+    return this.send(botId, text, { ...options, ids });
+  }
+
+  /** Botling 3's server: a turn it recorded before a restart (a routine's run, an answer's message), started now. */
+  serverTurn(botId: string, spec: Parameters<Bot["startPresetTurn"]>[0]): { turnId: string; done: Promise<TurnStatus> } {
+    return this.bot(botId).startPresetTurn(spec);
+  }
+
+  /** Botling 3's server: whether `botId` is one of the core's bots. */
+  hasBot(botId: string): boolean {
+    return this.profiles.some((profile) => profile.id === botId);
+  }
+
+  /** Botling 3's server: the bots the core has now. */
+  botIds(): string[] {
+    return this.profiles.map((profile) => profile.id);
+  }
+
+  /** Botling 3's server: files waiting in a bot's input box (they go with the next message, even an empty one). */
+  pendingFiles(botId: string): number {
+    return this.pending.list(botId).length;
+  }
+
+  /** Botling 3's server: throws what `bots.remove` would refuse with (`removeBot`), before its intent is stored. */
+  checkRemoveBot(id: string): void {
+    const profile = this.profiles.find((candidate) => candidate.id === id);
+    if (!profile) throw new ContractError("not_found", "No such bot.");
+    if (profile.role === "main" || id === MAINTAINER_ID) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
+  }
+
+  /**
+   * Botling 3's server: the core-set commands it applies inside its own transaction. Synchronous, the same handlers
+   * as `handle`: what they emit meanwhile is stored in that transaction, and a turn they start is kept aside by
+   * `deferTurn` (the server routes it after the commit).
+   */
+  applyNow(cmd: ApplyNowCommand): unknown {
+    if (!this.activated) throw new ContractError("conflict", "Waiting for the update boot receipt to commit. Please try again shortly.");
+    switch (cmd.type) {
+      case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
+      case "chat.ignoreQuestion": return this.ignoreQuestion(cmd.botId, cmd.messageId);
+      case "chat.choose": return this.calledInPick(cmd.botId, cmd.messageId, cmd.index) ?? this.bot(cmd.botId).choose(cmd.messageId, cmd.index, cmd.text);
+      case "chat.answer": {
+        const files = (cmd.images ?? []).flatMap((image) => writeIncoming(join(this.options.dataDir, "incoming"), image.name, image.base64) ?? []);
+        try {
+          if (cmd.picks) return this.calledInGroupAnswer(cmd.botId, cmd.messageId, cmd.picks, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files, cmd.picks);
+          return this.calledInAnswer(cmd.botId, cmd.messageId, cmd.text, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files);
+        } finally { for (const file of files) rmSync(file, { force: true }); }
+      }
+      case "component.approve": return this.bot(cmd.botId).componentApprove(cmd.messageId, cmd.index, cmd);
+      case "settings.set": return this.changeSetting(cmd.change);
+      case "bots.create": {
+        const made = this.makeBot(cmd.name, cmd.job, { setUp: true });
+        if (made.kind === "empty") throw new ContractError("bad_request", "A bot needs a name and a job.");
+        if (made.kind === "taken" || made.kind === "removedByUser") throw new ContractError("conflict", `No bot was made: the name "${botName(cmd.name)}" is already used by a project or the app.`);
+        return { botId: made.botId, created: made.kind === "made" };
+      }
+    }
+  }
+
   /** Your message through the plugins' beforeSend hooks first; one can change it or stop it (`Workspace.send`). */
-  private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }): Promise<ResultOf<"chat.send">> {
+  private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; ids?: PresetTurnIds }): Promise<ResultOf<"chat.send">> {
     const bot = this.bot(botId);
     // A message to a bot in Idle brings it back to the list (the user is talking to it again).
     const idle = this.settingsNow().idleBots ?? [];
@@ -2461,7 +2531,7 @@ First write a test that shows this, then fix it.`;
     }
   }
 
-  private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; files: string[]; originals?: string[] }): Promise<ResultOf<"chat.send">> {
+  private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; files: string[]; originals?: string[]; ids?: PresetTurnIds }): Promise<ResultOf<"chat.send">> {
     if (!text.trim() && !options.files.length) throw new ContractError("bad_request", "Nothing to send.");
     const outcome = await this.plugins.beforeSend(this.botInfo(bot), text);
     if ("stoppedBy" in outcome) {

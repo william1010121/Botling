@@ -86,6 +86,14 @@ const clock = (ms: number) => { const date = new Date(ms); return `${String(date
 /** How many bot-to-bot hops one user line may start: the asker's follow-up reply may still @ once more, no further. */
 const MAX_FOLLOW_DEPTH = 2;
 
+/** How many bot names a refused @ lists for the bot to choose from (more: only how many). */
+const LISTED_NAMES = 8;
+/** "@a, @b": the names a refused @ offers, at most LISTED_NAMES of them. */
+const listNames = (members: Member[]) => {
+  const names = members.map((member) => `@${member.name}`);
+  return names.length <= LISTED_NAMES ? names.join(", ") : `${names.slice(0, LISTED_NAMES).join(", ")} and ${names.length - LISTED_NAMES} more`;
+};
+
 export class Conversations {
   readonly mentionLog: BotMentionLog;
   /** Who answers in a chat right now (`callInSpeakers`, `groupSpeakers`), by the chat's id. */
@@ -127,20 +135,25 @@ export class Conversations {
     const lines = (this.pending.get(chatId) ?? []).filter((entry) => entry.body !== null).map((entry) => entry.state === "answering"
       ? `(App: ${quoteName(entry.member.name)} is still answering your @ from ${clock(entry.since)}.)`
       : `(App: ${quoteName(entry.member.name)} is queued to answer your @ from ${clock(entry.since)}, after another call-in.)`);
-    // The @s that failed since its last turn: told once, so it can say so to the user.
+    // The @s that failed since its last turn (or went to a bot under a close name): told once, so it can say so to the user.
     lines.push(...(this.failures.get(chatId) ?? []));
     this.failures.delete(chatId);
     return lines.length ? lines.join("\n") : null;
   }
 
-  /** Per chat, what its own bot is told with its next turn about @s that were not delivered or not answered. */
+  /** Per chat, what its own bot is told with its next turn about @s that were not delivered or not answered, or went to a close name. */
   private failures = new Map<string, string[]>();
 
   /** An @ of `chat`'s own bot failed: the chat gets the notice (`words`), and the bot itself is told too, so it can tell the user. */
   private failed(chat: Bot, words: string) {
     chat.appNotice(words);
-    const lines = this.failures.get(chat.id) ?? [];
-    this.failures.set(chat.id, [...lines.slice(-4), `(App: Your @ was not delivered or not answered. ${words} Tell the user so; do not ask the same bot again unless the user says so.)`]);
+    this.tell(chat.id, `(App: Your @ was not delivered or not answered. ${words} Tell the user so; do not ask the same bot again unless the user says so.)`);
+  }
+
+  /** A line for `chatId`'s own bot with its next turn (callInStatus), the latest 5 kept. */
+  private tell(chatId: string, line: string) {
+    const lines = this.failures.get(chatId) ?? [];
+    this.failures.set(chatId, [...lines.slice(-4), line]);
   }
 
   /** A spec trace line (spec/models/callin) in `chatId`, with what its pending list shows then. */
@@ -210,6 +223,26 @@ export class Conversations {
     return { kind: reachable.length ? "bot" : "elsewhere", member: one.member, written: first.name };
   }
 
+  /**
+   * The bots this chat can call in whose name is close to `word`, an @ name no bot has exactly (a bot cannot see the
+   * @ menu, so it may write "@gkey" for "gkey-release-candidate"): `word` (2 characters or more, any case) starts the
+   * name, or is one of its parts split on - _ space / . (a sub bot is matched by its name and by "Parent/Sub").
+   * Only bots this chat can call in: another bot's sub bot is never close. No fuzzy matching.
+   */
+  private closeMentions(word: string, chatId: string): Member[] {
+    const key = word.toLowerCase();
+    if ([...key].length < 2) return [];
+    const callable = this.callable(chatId);
+    const close = (name: string) => {
+      const lower = name.toLowerCase();
+      return lower.startsWith(key) || lower.split(/[-_ /.]+/).includes(key);
+    };
+    const found = this.mentionAliases(chatId)
+      .filter((alias) => (alias.full || alias.own) && close(alias.name))
+      .flatMap((alias) => callable.filter((member) => member.id === alias.member.id && member.id !== chatId));
+    return [...new Map(found.map((member) => [member.id, member])).values()];
+  }
+
   /** The bots that can be called into `chat` with @: everyone but its own bot, and its own sub bots (`callable(into:)`). */
   callable(chatId: string): Member[] {
     const members = this.deps.members();
@@ -277,13 +310,23 @@ export class Conversations {
     const isSub = (this.deps.subBots?.() ?? []).some((sub) => sub.id === chat.id);
     if (!isSub && !this.deps.members().some((member) => member.id === chat.id)) return;
     const callable = this.callable(chat.id);
-    const addressed: { member: Member; body: string }[] = [];
+    const addressed: { member: Member; body: string; written?: string }[] = [];
     const unreachable: { id: string; name: string }[] = [];
     const unknown: string[] = [];
     const ambiguous: string[] = [];
+    const several: string[] = [];
     for (const candidate of botMentionCandidates(record.text)) {
       const found = this.resolveMention(candidate, chat.id);
-      if (found.kind === "unknown") { const word = /^@([^\s,，:：、]+)/u.exec(candidate)?.[1]; if (word) unknown.push(word); continue; }
+      if (found.kind === "unknown") {
+        const word = /^@([^\s,，:：、]+)/u.exec(candidate)?.[1];
+        if (!word) continue;
+        // No bot has that name exactly: one close name here is meant; several are listed for the bot to choose.
+        const close = this.closeMentions(word, chat.id);
+        if (close.length === 1) addressed.push({ member: close[0]!, body: mentionBody(candidate, word), written: word });
+        else if (close.length > 1) several.push(`Not sent to @${word}: no bot with that exact name. Close names this chat can call in: ${listNames(close)}. Write the full name.`);
+        else unknown.push(word);
+        continue;
+      }
       if (found.kind === "ambiguous") { ambiguous.push(found.note); continue; }
       if (found.member.id === chat.id) continue;
       if (found.kind === "elsewhere" || !callable.some((member) => member.id === found.member.id)) { unreachable.push({ id: found.member.id, name: found.written }); continue; }
@@ -295,8 +338,13 @@ export class Conversations {
     }
     if (unknown.length) {
       const names = [...new Set(unknown)].map((name) => `@${name}`);
-      this.failed(chat, `Not sent to ${names.join(", ")}: no bot with that name (a sub bot that was closed is gone; the bots this chat can call in are listed in the @ menu).`);
+      // A bot cannot see the @ menu: it is told the names it can write, when they are few.
+      const reach = callable.length === 0 ? " This chat can call in no bot."
+        : callable.length <= LISTED_NAMES ? ` Bots this chat can call in: ${listNames(callable)}. Write one's full name.`
+        : ` This chat can call in ${callable.length} bots; write one's full name.`;
+      this.failed(chat, `Not sent to ${names.join(", ")}: no bot with that name (a sub bot that was closed is gone).${reach}`);
     }
+    for (const note of new Set(several)) this.failed(chat, note);
     // A name more than one bot has: nothing in this reply is sent, and the bot is told the full names to write.
     if (ambiguous.length) {
       for (const note of new Set(ambiguous)) this.failed(chat, note);
@@ -343,6 +391,12 @@ export class Conversations {
       this.failed(chat, `Not sent to ${recipient.name} with @: could not keep a record of it (${(error as Error).message}).`);
       route(recipient.id, body, "dropped");
       return;
+    }
+    // Written with a close name: the chat shows the bot it went to, and the bot learns its full name.
+    const written = addressed.find((entry) => entry.written)?.written;
+    if (written) {
+      chat.appNotice(`Sent to @${recipient.name} (written as @${written}).`);
+      this.tell(chat.id, `(App: No bot is named "${written}"; your @${written} was sent to @${recipient.name}, the one bot this chat can call in with a close name. Write its full name next time.)`);
     }
     this.startCallIn(chat, [recipient], record.id, null, { message: record.id, recipient: recipient.id, body, depth: depth + 1 });
     route(recipient.id, body, "queued");
