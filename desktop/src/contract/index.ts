@@ -635,6 +635,10 @@ export const PluginView = z.strictObject({
   replacesBuiltIn: z.string().max(100).optional(),
   /** A built-in plugin running while the library holds an older copy (or one whose version is not a semver), which is ignored: that copy's version. */
   ignoredLibraryVersion: z.string().max(100).optional(),
+  /** Installed from outside (the catalog, <install>): the Plugins page offers Remove (its data folder stays). */
+  removable: z.boolean().optional(),
+  /** The version an install or update replaced, kept for Revert. */
+  revertTo: z.string().max(100).optional(),
   permissions: z.array(z.string().max(40)).max(20),
   parts: z.array(z.enum(["web", "host", "claude", "components"])).max(4),
   settings: z.array(z.strictObject({
@@ -918,6 +922,42 @@ export const WebPluginSpecView = z.strictObject({
   builtIn: z.boolean().optional(),
 });
 export type WebPluginSpecView = z.infer<typeof WebPluginSpecView>;
+/** One plugin of the public catalog (botling-plugins' index.json) as the Plugins page's Explore and Updates show it. */
+export const PluginStoreEntryView = z.strictObject({
+  name: PluginName, title: z.string().max(200), description: z.string().max(2_000), version: z.string().max(100), license: z.string().max(100).nullable(),
+  permissions: z.array(z.string().max(40)).max(20), parts: z.array(z.string().max(40)).max(8), minAppVersion: z.string().max(100).nullable(),
+  size: z.number(), files: z.number(), commit: z.string().max(40),
+  /** Its folder at that commit on GitHub; null until released. */
+  page: z.string().max(2_000).nullable(),
+  /**
+   * available: not installed; installed: this version or newer is; update: an older one is installed (or built in); builtIn: Botling ships
+   * this version or newer; devCopy: the plugin library has its own copy (never replaced); tooOld: this Botling is too old for it;
+   * unreleased: no commit recorded yet.
+   */
+  state: z.enum(["available", "installed", "update", "builtIn", "devCopy", "tooOld", "unreleased"]),
+  installedVersion: z.string().max(100).nullable(),
+  /** An install from the page: being downloaded and checked, waiting on the install card, or how it ended. */
+  status: z.strictObject({ kind: z.enum(["checking", "asking", "installed", "declined", "failed"]), message: z.string().max(2_000).nullable() }).nullable(),
+});
+export type PluginStoreEntryView = z.infer<typeof PluginStoreEntryView>;
+export const PluginStoreView = z.strictObject({
+  url: z.string().max(2_000),
+  /** The official catalog (not settings.json `pluginIndexURL`). */
+  official: z.boolean(),
+  /** When the entries were fetched (ms since 1970); null: never. */
+  fetchedAt: z.number().nullable(),
+  /** The last fetch failed: the entries are the copy from `fetchedAt`. */
+  fromCache: z.boolean(),
+  error: z.string().max(2_000).nullable(),
+  /** The last fetch did not reach the server at all. */
+  offline: z.boolean(),
+  loading: z.boolean(),
+  appVersion: z.string().max(100).nullable(),
+  entries: z.array(PluginStoreEntryView).max(500),
+  /** How many installed plugins have a newer version in the catalog. */
+  updates: z.number().int(),
+});
+export type PluginStoreView = z.infer<typeof PluginStoreView>;
 export const PluginsView = z.strictObject({
   plugins: z.array(PluginView).max(200),
   /** Folders that look like plugins but failed the check, with why. */
@@ -1116,6 +1156,16 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.list") }),
   /** Turns a plugin on or off (on again gives a broken one another try). */
   z.strictObject({ type: z.literal("plugins.enable"), name: PluginName, enabled: z.boolean() }),
+  /** The public catalog's view (Explore, Updates); `refresh`: fetch index.json again first. */
+  z.strictObject({ type: z.literal("plugins.store"), refresh: z.boolean().optional() }),
+  /** Install or update one catalog plugin: downloaded, checked, then asked on the install card in the main bot's chat. */
+  z.strictObject({ type: z.literal("plugins.storeInstall"), name: PluginName }),
+  /** The page showed how an install ended: its note goes. */
+  z.strictObject({ type: z.literal("plugins.storeDismiss"), name: PluginName }),
+  /** Puts back the version an install or update replaced. */
+  z.strictObject({ type: z.literal("plugins.revert"), name: PluginName }),
+  /** Deletes a plugin installed from outside (its data folder stays). */
+  z.strictObject({ type: z.literal("plugins.remove"), name: PluginName }),
   /** A plugin's setting (not a secret). */
   z.strictObject({ type: z.literal("plugins.setting"), name: PluginName, key: SettingKey, value: SettingValue }),
   /** A plugin's secret setting: sealed in the core, never sent back (null or "": taken out). */
@@ -1247,7 +1297,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.output", "subagent.view", "chat.read", "chat.shown", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
-  "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
+  "plugins.list", "plugins.enable", "plugins.store", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "link.drag", "worker.file",
@@ -1375,6 +1425,11 @@ export interface Results {
   "card.image": { path: string; type: string };
   "plugins.list": PluginsView;
   "plugins.enable": PluginsView;
+  "plugins.store": PluginStoreView;
+  "plugins.storeInstall": PluginStoreView;
+  "plugins.storeDismiss": PluginStoreView;
+  "plugins.revert": PluginsView;
+  "plugins.remove": PluginsView;
   "plugins.setting": PluginsView;
   "plugins.secret": PluginsView;
   "plugins.command": { result: unknown };
@@ -1467,6 +1522,7 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("chat.decorations"), botId, decorations: z.array(ChatDecoration).max(1_000) }),
   /** The plugin library changed (a plugin added, edited, turned off, broken; the host started or stopped). */
   z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
+  z.strictObject({ type: z.literal("plugins.store"), store: PluginStoreView }),
   /** A plugin's program part pushed something to its frames (`ui.emit`), those of the bot `forBot` only when it names one. Not part of any snapshot. */
   z.strictObject({ type: z.literal("plugins.emit"), plugin: PluginName, name: z.string().min(1).max(100), forBot: z.string().max(128).optional(), data: z.unknown() }),
   /** A plugin's program part opened one of its panels (`ui.openView`). */

@@ -538,6 +538,9 @@ export class Plugins {
   // ------------------------------------------------------------------------------------------
   // What the app shows and changes
 
+  /** The version an install replaced and kept for Revert (maintainer.ts `previousOf`); the server sets it. */
+  previousVersion: (name: string) => string | null = () => null;
+
   view(): PluginsView {
     const registered = new Set(this.host.commands);
     return {
@@ -555,6 +558,8 @@ export class Plugins {
           ...(plugin.builtIn ? { builtIn: true } : {}),
           ...(plugin.replacesBuiltIn ? { replacesBuiltIn: plugin.replacesBuiltIn.slice(0, 100) } : {}),
           ...(plugin.ignoredLibraryCopy ? { ignoredLibraryVersion: plugin.ignoredLibraryCopy.version.slice(0, 100) } : {}),
+          ...(!plugin.builtIn && plugin.installedFrom ? { removable: true } : {}),
+          ...((() => { const previous = plugin.builtIn ? null : this.previousVersion(plugin.manifest.name); return previous ? { revertTo: previous.slice(0, 100) } : {}; })()),
           permissions: (ccb?.permissions ?? []).slice(0, 20).map((permission) => permission.slice(0, 40)),
           parts: [...parts, ...(ccb?.contributes?.components ? ["components" as const] : [])],
           settings: this.registry.settingsView(plugin).slice(0, 100).map((setting) => ({
