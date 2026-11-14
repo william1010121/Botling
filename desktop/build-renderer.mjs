@@ -1,7 +1,8 @@
 // Renderer-only builds never remove out/ or touch main, core, preloads or the plugin host.
 import { build } from "esbuild";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inlineTokens } from "../Web/kit/build.mjs";
 
@@ -44,7 +45,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
   const asset = (from, to, tokens = false) => files.set(join(outdir, to), tokens
     ? inlineTokens(readFileSync(from, "utf8"), from) : readFileSync(from));
   if (webBuild) {
-    for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png", "frame-host.html", "frame-host.js"]) asset(join(root, "mobile", name), name);
+    for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "frame-host.html", "frame-host.js"]) asset(join(root, "mobile", name), name);
   } else asset(join(root, "src/renderer/index.html"), "index.html");
   asset(join(root, "src/renderer/styles.css"), "styles.css", true);
   files.set(join(outdir, "styles.css"), Buffer.concat([Buffer.from(files.get(join(outdir, "styles.css"))), Buffer.from("\n"), readFileSync(join(root, "src/renderer/ModelPicker.css"))]));
@@ -61,6 +62,18 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
     asset(join(root, "builtin-plugins/botling.chat-extras/src/chat-extras.css"), "plugins/botling.chat-extras/chat-extras.css");
     asset(join(root, "builtin-plugins/botling.catchup/catchup.css"), "plugins/botling.catchup/catchup.css");
     asset(join(root, "builtin-plugins/botling.board/src/board.css"), "plugins/botling.board/board.css");
+  }
+  if (webBuild) {
+    // The build's id (a hash of what it serves): stamped in index.html and written to version.json, so a home-screen app
+    // resumed with an older page can tell a new deploy is there (mobile/build-check.ts).
+    const hash = createHash("sha256");
+    for (const [file, contents] of [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+      if (file.endsWith(".map") || file === join(outdir, "index.html")) continue;
+      hash.update(relative(outdir, file)); hash.update("\0"); hash.update(contents);
+    }
+    const id = hash.digest("hex").slice(0, 16), index = join(outdir, "index.html");
+    files.set(index, Buffer.from(Buffer.from(files.get(index)).toString("utf8").replaceAll("__BOTLING_BUILD__", id)));
+    files.set(join(outdir, "version.json"), Buffer.from(`${JSON.stringify({ build: id })}\n`));
   }
   for (const [file, contents] of files) {
     mkdirSync(dirname(file), { recursive: true });
