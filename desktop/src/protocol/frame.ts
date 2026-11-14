@@ -2,10 +2,15 @@
 // On a byte stream (the local socket) each frame is preceded by its length as 4 bytes, big-endian.
 // Decoding refuses malformed frames and messages outside the sender's role (§5.4); the caller ends the session
 // with the `bye` it is given.
+// M3's messages (messages-m3.ts) are read by the `*Wire*` functions (`decodeWireFrame`, `encodeWireFrame`); the M1/M2
+// ones (`decodeFrame`, `encodeFrame`) refuse them as unsupported, so their callers only ever see `Message`. The
+// forwarded-subscription tag `via` (M3, §10.3) may be stated by a peer server only.
 // One message is binary: `content.chunk` (§9A.4). Its frame is the byte 0x01, the header's length as 2 bytes big-endian,
 // the header `{t, req, offset}` as JSON, then the raw bytes. A text frame is JSON and never starts with 0x01.
+import type { z } from "zod";
 import { describeIssues } from "../contract";
 import { MESSAGES, RES_PART_CHARS, RES_PARTS_MAX, type Message, type MessageOf, type MessageType } from "./messages";
+import { M3_MESSAGES, WIRE_MESSAGES, type WireMessage } from "./messages-m3";
 import { knownType, roleRefusal, type Sender, type SessionKind } from "./roles";
 
 /** The most a frame's plaintext may be (§5.2, §20). */
@@ -13,6 +18,8 @@ export const FRAME_LIMIT = 256 * 1024;
 
 export type FrameRefusal = "too-large" | "malformed" | "role" | "unsupported";
 export type Decoded = { ok: true; message: Message } | { ok: false; reason: FrameRefusal; detail: string; bye: Message & { t: "bye" } };
+/** A frame read with every registry (M1, M2, M3). */
+export type WireDecoded = { ok: true; message: WireMessage } | { ok: false; reason: FrameRefusal; detail: string; bye: Message & { t: "bye" } };
 export type Encoded = { ok: true; text: string } | { ok: false; reason: FrameRefusal; detail: string };
 export type EncodedBytes = { ok: true; bytes: Uint8Array } | { ok: false; reason: FrameRefusal; detail: string };
 
@@ -28,24 +35,36 @@ function refuse(reason: FrameRefusal, detail: string): Extract<Decoded, { ok: fa
   return { ok: false, reason, detail: detail.slice(0, 500), bye: { t: "bye", reason: byeReason, detail: detail.slice(0, 500) } };
 }
 
-/** Checks a parsed value as a message `sender` may send on this session. */
-export function checkMessage(value: unknown, sender: Sender, session: SessionKind): Decoded {
+type Registry = "m2" | "wire";
+
+function check(value: unknown, sender: Sender, session: SessionKind, registry: Registry): WireDecoded {
   if (!value || typeof value !== "object" || Array.isArray(value)) return refuse("malformed", "a frame is a JSON object");
   const t = (value as { t?: unknown }).t;
   if (typeof t !== "string" || !t) return refuse("malformed", "a frame names its message in t");
   const role = roleRefusal(t, sender, session);
   if (role) return refuse(knownType(t) ? "role" : "malformed", role);
-  if (!Object.hasOwn(MESSAGES, t)) return refuse("unsupported", `"${t}" is not supported by this version`);
+  const known = registry === "wire" ? Object.hasOwn(WIRE_MESSAGES, t) : Object.hasOwn(MESSAGES, t);
+  if (!known) return refuse("unsupported", Object.hasOwn(M3_MESSAGES, t) ? `"${t}" is an M3 message (decodeWireFrame)` : `"${t}" is not supported by this version`);
   if (t === "cmd" && sender === "fe" && (value as { scope?: unknown }).scope !== undefined) return refuse("role", "a front end does not state a command's scope");
-  const parsed = MESSAGES[t as MessageType].safeParse(value);
+  if (sender !== "peer" && (value as { via?: unknown }).via !== undefined) return refuse("role", "only a peer server tags a forwarded subscription (via)");
+  const parsed = (WIRE_MESSAGES as Record<string, z.ZodType>)[t]!.safeParse(value);
   if (!parsed.success) return refuse("malformed", `${t}: ${describeIssues(parsed.error)}`);
-  return { ok: true, message: parsed.data as Message };
+  return { ok: true, message: parsed.data as WireMessage };
 }
 
-/** Decodes one frame (its UTF-8 bytes or text, or a binary `content.chunk` frame) sent by `sender`. */
-export function decodeFrame(frame: string | Uint8Array, sender: Sender, session: SessionKind): Decoded {
+/** Checks a parsed value as an M1/M2 message `sender` may send on this session (M3 messages: unsupported). */
+export function checkMessage(value: unknown, sender: Sender, session: SessionKind): Decoded {
+  return check(value, sender, session, "m2") as Decoded;
+}
+
+/** Checks a parsed value as a message of any registry (M1, M2, M3) `sender` may send on this session. */
+export function checkWireMessage(value: unknown, sender: Sender, session: SessionKind): WireDecoded {
+  return check(value, sender, session, "wire");
+}
+
+function decode(frame: string | Uint8Array, sender: Sender, session: SessionKind, registry: Registry): WireDecoded {
   let text: string;
-  if (typeof frame !== "string" && frame.length > 0 && frame[0] === BINARY_FRAME_MARK) return decodeBinary(frame, sender, session);
+  if (typeof frame !== "string" && frame.length > 0 && frame[0] === BINARY_FRAME_MARK) return decodeBinary(frame, sender, session, registry);
   if (typeof frame === "string") {
     // A UTF-16 unit is at most 3 UTF-8 bytes: only measure when it could be over.
     if (frame.length * 3 > FRAME_LIMIT && encoder.encode(frame).length > FRAME_LIMIT) return refuse("too-large", `a frame is at most ${FRAME_LIMIT} bytes`);
@@ -56,10 +75,20 @@ export function decodeFrame(frame: string | Uint8Array, sender: Sender, session:
   }
   let value: unknown;
   try { value = JSON.parse(text); } catch { return refuse("malformed", "a frame is JSON"); }
-  return checkMessage(value, sender, session);
+  return check(value, sender, session, registry);
 }
 
-function decodeBinary(frame: Uint8Array, sender: Sender, session: SessionKind): Decoded {
+/** Decodes one frame (its UTF-8 bytes or text, or a binary `content.chunk` frame) sent by `sender`: M1/M2 messages. */
+export function decodeFrame(frame: string | Uint8Array, sender: Sender, session: SessionKind): Decoded {
+  return decode(frame, sender, session, "m2") as Decoded;
+}
+
+/** Decodes one frame sent by `sender` as a message of any registry (M1, M2, M3): peer sessions and M3 front ends. */
+export function decodeWireFrame(frame: string | Uint8Array, sender: Sender, session: SessionKind): WireDecoded {
+  return decode(frame, sender, session, "wire");
+}
+
+function decodeBinary(frame: Uint8Array, sender: Sender, session: SessionKind, registry: Registry): WireDecoded {
   if (frame.length > FRAME_LIMIT) return refuse("too-large", `a frame is at most ${FRAME_LIMIT} bytes`);
   if (frame.length < 3) return refuse("malformed", "a binary frame has a header");
   const headerLength = (frame[1]! << 8) | frame[2]!;
@@ -69,7 +98,7 @@ function decodeBinary(frame: Uint8Array, sender: Sender, session: SessionKind): 
   if (!header || typeof header !== "object" || Array.isArray(header)) return refuse("malformed", "a binary frame's header is a JSON object");
   if ((header as { t?: unknown }).t !== "content.chunk") return refuse("malformed", "only content.chunk is a binary frame");
   if ("bytes" in header) return refuse("malformed", "the bytes follow the header");
-  return checkMessage({ ...header, bytes: frame.slice(3 + headerLength) }, sender, session);
+  return check({ ...header, bytes: frame.slice(3 + headerLength) }, sender, session, registry);
 }
 
 /** Encodes a `content.chunk` as a binary frame; refuses one that is malformed, outside the role or too large. */
@@ -89,15 +118,24 @@ export function encodeChunkFrame(message: MessageOf<"content.chunk">, sender: Se
   return { ok: true, bytes: out };
 }
 
-/** Encodes a message `sender` may send on this session; refuses one that is malformed, outside the role or too large. */
-export function encodeFrame(message: Message, sender: Sender, session: SessionKind): Encoded {
+function encode(message: WireMessage, sender: Sender, session: SessionKind, registry: Registry): Encoded {
   if (message.t === "content.chunk") return { ok: false, reason: "malformed", detail: "a content.chunk is a binary frame (encodeChunkFrame)" };
-  const checked = checkMessage(message, sender, session);
+  const checked = check(message, sender, session, registry);
   if (!checked.ok) return { ok: false, reason: checked.reason, detail: checked.detail };
   let text: string;
   try { text = JSON.stringify(checked.message); } catch (error) { return { ok: false, reason: "malformed", detail: String(error) }; }
   if (encoder.encode(text).length > FRAME_LIMIT) return { ok: false, reason: "too-large", detail: `a frame is at most ${FRAME_LIMIT} bytes` };
   return { ok: true, text };
+}
+
+/** Encodes a message `sender` may send on this session; refuses one that is malformed, outside the role or too large. */
+export function encodeFrame(message: Message, sender: Sender, session: SessionKind): Encoded {
+  return encode(message, sender, session, "m2");
+}
+
+/** Encodes a message of any registry (M1, M2, M3), with the same checks as `encodeFrame`. */
+export function encodeWireFrame(message: WireMessage, sender: Sender, session: SessionKind): Encoded {
+  return encode(message, sender, session, "wire");
 }
 
 /**
