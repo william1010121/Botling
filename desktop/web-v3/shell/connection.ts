@@ -6,6 +6,8 @@ import { relayDeviceToken } from "../../src/session";
 import type { LinkPort } from "../../src/main-v3/renderer-adapter";
 import type { DeviceRecord } from "./device-store";
 import { newPlayerDiagnostics, type MediaDiagnostics, type PlayerDiagnostics } from "./media";
+import { newBridgeDiagnostics, type BridgeDiagnostics } from "./sw-bridge";
+import { newVideoDiagnostics, type VideoDiagnostics } from "./video-overlay";
 
 export const FE_VERSION = "3.0.0-m2";
 /** v1 §13.3 with §5.2's dead rule: without a session for 45 s, "connecting…" turns "offline · as of <time>". */
@@ -33,9 +35,13 @@ export interface Diagnostics {
   player: PlayerDiagnostics;
   /** The page's uploads by key (step 12): state, bytes sent, puts and resume points. */
   uploads: Record<string, unknown>;
+  /** The content bridge on the relay path (step 14): the worker's state and scope, and each read it asked for. */
+  bridge: BridgeDiagnostics;
+  /** The player over the page (step 14): first frame, seeks, switches. */
+  video: VideoDiagnostics;
 }
 
-export function newDiagnostics(): Diagnostics { return { live: [], states: {}, words: {}, servers: [], banners: [], conn: [], frames: 0, ends: [], media: {}, player: newPlayerDiagnostics("tailnet"), uploads: {} }; }
+export function newDiagnostics(): Diagnostics { return { live: [], states: {}, words: {}, servers: [], banners: [], conn: [], frames: 0, ends: [], media: {}, player: newPlayerDiagnostics("tailnet"), uploads: {}, bridge: newBridgeDiagnostics(), video: newVideoDiagnostics() }; }
 
 export interface Connection {
   link: FeLink;

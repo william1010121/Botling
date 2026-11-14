@@ -14,6 +14,7 @@ import { mountRenderer, type MountedRenderer, type PageCapabilities } from "../b
 import { forgetDevice, loadDevice, loadPref, saveDevice, savePref, type DeviceRecord } from "./device-store";
 import { makePairKeys, pair, pairingSupported, PairingError, type PairAttempt, type PairKeys } from "./pairing";
 import { MediaBroker } from "./media";
+import { SwBridge } from "./sw-bridge";
 import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
@@ -193,6 +194,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     let opened: Connection | null = null;
     let media: MediaBroker | null = null;
     let uploads: PageUploads | null = null;
+    let bridge: SwBridge | null = null;
     // This device was removed from the roster (unpaired or revoked on the computer): the server says so with
     // `bye{revoked}` while connected, and what the page cached goes at once (§9A.6); pairing again is the user's
     // choice. A revocation made while the page was away is not told: the server refuses the handshake silently.
@@ -219,8 +221,10 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome" || event.type === "servers") update(); });
       // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
       const frame = () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null;
+      // The relay path (step 14): the page's service worker answers its content URLs over this session.
+      if (diagnostics.player.path === "relay") { bridge = new SwBridge(conn.link, diagnostics.bridge); bridge.start(); }
       media = new MediaBroker(conn.link, frame, diagnostics.media,
-        { cache: contentCache, path: diagnostics.player.path, player: diagnostics.player, storage: { load: loadPref, save: savePref } });
+        { cache: contentCache, path: diagnostics.player.path, player: diagnostics.player, storage: { load: loadPref, save: savePref }, bridge, video: diagnostics.video });
       media.start();
       // Attachments (step 12): the chat frame hands its files over, they are uploaded over the session.
       uploads = new PageUploads(conn.link, frame, diagnostics.uploads);
@@ -230,7 +234,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       update();
       setConnection(conn);
     }, (error) => setFailure(`This page could not open its storage: ${String((error as Error)?.message ?? error)}`));
-    return () => { cancelled = true; media?.stop(); uploads?.stop(); mounted.current?.unmount(); mounted.current = null; void opened?.close(); };
+    return () => { cancelled = true; media?.stop(); uploads?.stop(); bridge?.stop(); mounted.current?.unmount(); mounted.current = null; void opened?.close(); };
     // The connection lives as long as this device's page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device]);
