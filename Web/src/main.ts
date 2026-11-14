@@ -16,6 +16,7 @@ import { installImeGuard } from "./ime";
 import { watchFileDrops } from "./drops";
 import { setWindowVisible } from "./visible";
 import { animateSeenArrivals, setSeenHeads } from "./heads";
+import { redrawKeepingMedia } from "./media-keep";
 
 // Before anything listens for keys: an input method's Return never reaches a page handler.
 installImeGuard(window);
@@ -287,10 +288,9 @@ class Chat {
         let element = this.render(message, state);
         if (animateArrivals) animateSeenArrivals(element, entry?.element);
         if (entry) {
-          // Components that did not change keep their frames, so they do not load again.
-          const kept = keepFrames(entry.element, element);
-          if (kept === element) entry.element.replaceWith(element);
-          element = kept;
+          // Components that did not change keep their frames, so they do not load again; its videos and sounds stay
+          // the elements on screen (no reload, a playing one plays on, media-keep.ts).
+          element = redrawKeepingMedia(entry.element, element, keepFrames);
         }
         entry = { key, element, message, mark };
         this.drawn.set(message.id, entry);

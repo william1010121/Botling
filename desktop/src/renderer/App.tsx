@@ -1253,7 +1253,15 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
     };
   }, []);
 
+  // The handlers the app passes are new functions at each of its renders (every 30 s for the column's clock, and at each
+  // event): the frame's listener below reads them here, so it is not made again, and a native chat that is already bound
+  // is not sent the whole state and asked for plugins again each time (its `subscribe` says "bound" to a new listener).
+  const handlers = useRef({ onError, onSent, onAsk });
+  handlers.current = { onError, onSent, onAsk };
   useEffect(() => {
+    const onError = (failure: unknown) => handlers.current.onError(failure);
+    const onSent = () => handlers.current.onSent();
+    const onAsk: typeof handlers.current.onAsk = (view, approve, done) => handlers.current.onAsk(view, approve, done);
     // A frame's calls (saves, Detail commands, its chip) are paced: 20 at once, then 10 a second.
     const buckets = new Map<string, { tokens: number; at: number }>();
     const paced = (key: string) => {
@@ -1640,7 +1648,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, onError, onSent, onAsk, push, pushPlugins, store, channel]);
+  }, [client, push, pushPlugins, store, channel]);
 
   const viewer = report && report.botId === view.chat?.botId ? <ReportViewer url={report.url} onClose={() => setReport(null)}
     bubble={bubble ? { bot: bubble, look, on: reportChat, onOpen: setReportChat, line: stripLine } : undefined} /> : null;

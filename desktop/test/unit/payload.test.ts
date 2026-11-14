@@ -119,6 +119,19 @@ describe("the bot's routines in its chat", () => {
     // No routines: no row.
     expect(chatState(bot, { botId: "B", messages, running: null, live: [] }).state.messages[1]!.tasks).toBeNull();
   });
+
+  it("leave the reply they sit under the same from one build to the next (M1 demo bug 1: its video was drawn again every 30 s)", () => {
+    const messages: MessageView[] = [
+      { id: "u1", role: "user", text: "make the video", time: at(0) },
+      { id: "r1", role: "bot", text: "Rendered the video: ![demo](file:///synthetic/demo.mp4)", time: at(1) },
+    ];
+    const routines = [{ id: "cron:15 8 * * * Daily summary", kind: "legacy" as const, task: "Daily summary", title: "Daily summary", schedule: "Every day 08:15", cron: "15 8 * * *", timezone: "system_local", status: "enabled", next: at(30) }];
+    const build = (now: Date) => chatState(bot, { botId: "B", messages, running: null, live: [], routines }, now).state.messages;
+    const first = build(new Date(Date.UTC(2026, 9, 25, 8, 5, 0)));
+    const later = build(new Date(Date.UTC(2026, 9, 25, 8, 5, 31)));
+    expect(first[1]!.tasks).toHaveLength(1);
+    expect(JSON.stringify(later)).toBe(JSON.stringify(first));
+  });
 });
 
 describe("routines.updated", () => {
