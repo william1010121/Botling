@@ -28,7 +28,8 @@ export interface RosterIdentity {
 }
 
 export type RosterRefusal =
-  | "no-cluster" | "cluster-exists" | "bad-root" | "self-revoked" | "bad-keys" | "revoked" | "not-a-device" | "server-revoke-root-only";
+  | "no-cluster" | "cluster-exists" | "bad-root" | "self-revoked" | "bad-keys" | "revoked" | "not-a-device" | "server-revoke-root-only"
+  | "bad-join";
 
 export class RosterError extends Error {
   constructor(readonly reason: RosterRefusal, message: string) { super(message); this.name = "RosterError"; }
@@ -40,7 +41,7 @@ export interface RosterChange {
   invalidated: string[];
 }
 
-export type AuditAct = "cluster.create" | "device.add" | "device.revoke" | "member.endorse" | "statement.merge";
+export type AuditAct = "cluster.create" | "cluster.join" | "device.add" | "device.revoke" | "server.add" | "member.endorse" | "profile.write" | "statement.merge";
 
 export interface AuditBody {
   act: AuditAct;
@@ -165,7 +166,7 @@ export class RosterStore {
   }
 
   /**
-   * Revokes a device this server has in its roster (§4.3, §4.6): `Revoke{device, by: this server, gen, cascade: []}`.
+   * Revokes a device this server has in its roster (§4.3, §4.6): `Revoke{device, by: this server, gen, cascade: false}` (D61).
    * Idempotent: a device already revoked returns its counting revoke. A server cannot be revoked here (root only, M4).
    */
   revokeDevice(member: string, reason = ""): Promise<{ revokeId: string; already: boolean }> {
@@ -181,7 +182,7 @@ export class RosterStore {
         });
         return { revokeId: counting ?? "", already: true };
       }
-      const revoke = await this.sign({ type: "revoke", cluster, member, reason: reason.slice(0, 500), by: this.identity.memberId, gen: this.current.root?.gen ?? 1, cascade: [] });
+      const revoke = await this.sign({ type: "revoke", cluster, member, reason: reason.slice(0, 500), by: this.identity.memberId, gen: this.current.root?.gen ?? 1, cascade: false });
       await this.apply([revoke], cluster, [{ act: "device.revoke", statement: revoke.id, by: this.identity.memberId, member, name: info.name, ...(reason ? { reason: reason.slice(0, 500) } : {}) }]);
       return { revokeId: revoke.id, already: false };
     });
@@ -218,6 +219,103 @@ export class RosterStore {
       const changed = [...fresh, ...replacing];
       if (changed.length) await this.apply(changed, cluster, changed.map((item) => ({ act: "statement.merge" as const, statement: item.id, by: item.statement.signer, member: memberOf(item.statement.body) })));
       return changed.map((item) => item.id);
+    });
+  }
+
+  /**
+   * Adds a server (§4.5 step 4, on the member S once the joining server's code was checked): signs
+   * `Add{server, by: this server}`. Returns the existing Add when that server is already valid here with these keys.
+   */
+  addServer(input: { keys: { sign: string; dh: string }; name: string }): Promise<{ member: string; addId: string; created: boolean }> {
+    return this.serial(async () => {
+      const cluster = this.requireCluster();
+      const keys = MemberKeys.safeParse(input.keys);
+      if (!keys.success) throw new RosterError("bad-keys", "a server's keys are two 32-byte public keys");
+      const member = await memberIdFromKey(fromBase64Url(keys.data.sign)!);
+      if (member === this.identity.memberId) throw new RosterError("bad-keys", "a server does not add itself");
+      if (this.current.revoked.has(member)) throw new RosterError("revoked", "that server was removed from the cluster");
+      const existing = this.current.members.get(member);
+      if (existing && existing.kind === "server" && this.current.valid.has(member) && existing.keys.dh === keys.data.dh && existing.keys.sign === keys.data.sign) {
+        return { member, addId: existing.addId, created: false };
+      }
+      const name = input.name.trim().slice(0, 100) || "Server";
+      const add = await this.sign({ type: "add", cluster, member, kind: "server", keys: keys.data, name, by: this.identity.memberId, at: this.now(), joined: true });
+      await this.apply([add], cluster, [{ act: "server.add", statement: add.id, by: this.identity.memberId, member, name }]);
+      return { member, addId: add.id, created: true };
+    });
+  }
+
+  /**
+   * Joins a cluster (§4.5 step 4, on the joining server N, which has no cluster yet): takes the cluster id of `add` (the
+   * member S's `Add{N, server}`), stores the statement set S sent, signs `Add{S, server, by: N}` and any extra bodies
+   * (N's own Profile), all with `meta.clusterId` in one transaction; then endorses every member it finds valid (§4.2).
+   * Refused unless the set gives a root chain, S is a known server of it, `add` names this server with its own keys,
+   * and this server is valid afterwards. Returns N's Add of S.
+   */
+  joinCluster(input: { add: SignedStatement; roster: readonly SignedStatement[]; sponsor: { member: string; keys: { sign: string; dh: string }; name: string }; extra?: (cluster: string) => StatementBody[] }): Promise<{ clusterId: string; addId: string; add: SignedStatement }> {
+    return this.serial(async () => {
+      if (this.cluster !== null) throw new RosterError("cluster-exists", "this server already belongs to a cluster");
+      const add = SignedStatement.safeParse(input.add);
+      if (!add.success || add.data.body.type !== "add") throw new RosterError("bad-join", "the welcome carries no Add");
+      const body = add.data.body;
+      const self = this.identity;
+      if (body.kind !== "server" || body.joined !== true || body.member !== self.memberId || body.keys.sign !== self.keys.sign || body.keys.dh !== self.keys.dh) {
+        throw new RosterError("bad-join", "the Add does not name this server with its keys");
+      }
+      if (body.by !== input.sponsor.member) throw new RosterError("bad-join", "the Add is not signed by the server this pairing ran with");
+      const cluster = body.cluster;
+      const set = new Map<string, StoredStatement>();
+      for (const raw of [...input.roster, add.data]) {
+        const parsed = SignedStatement.safeParse(raw);
+        if (!parsed.success || parsed.data.body.cluster !== cluster) continue;
+        const id = await statementId(parsed.data.body);
+        if (!set.has(id)) set.set(id, { id, statement: parsed.data });
+      }
+      const sponsorKeys = MemberKeys.safeParse(input.sponsor.keys);
+      if (!sponsorKeys.success) throw new RosterError("bad-keys", "the sponsor's keys are malformed");
+      const own: StoredStatement[] = [await this.sign({
+        type: "add", cluster, member: input.sponsor.member, kind: "server", keys: sponsorKeys.data, name: input.sponsor.name.trim().slice(0, 100) || "Server",
+        by: self.memberId, at: this.now(), joined: false,
+      })];
+      for (const extra of input.extra?.(cluster) ?? []) own.push(await this.sign(extra));
+      const trial = [...set.values(), ...own];
+      const view = computeRoster(self.memberId, cluster, await verifyStatements(trial, this.self()));
+      if (!view.root) throw new RosterError("bad-join", "the statements give no root for that cluster");
+      if (!view.servers.has(input.sponsor.member) || !view.valid.has(input.sponsor.member)) throw new RosterError("bad-join", "the sponsor is not a valid server of that cluster");
+      if (!view.valid.has(self.memberId)) throw new RosterError("bad-join", "this server would not be valid in that cluster");
+      const sponsorInfo = view.members.get(input.sponsor.member);
+      if (!sponsorInfo || sponsorInfo.keys.sign !== sponsorKeys.data.sign || sponsorInfo.keys.dh !== sponsorKeys.data.dh) throw new RosterError("bad-join", "the sponsor's keys differ from its Add");
+      const addId = own[0].id;
+      const addOfSelf = await statementId(body);
+      await this.apply(trial, cluster, [
+        { act: "cluster.join", statement: addOfSelf, by: body.by, member: self.memberId },
+        { act: "server.add", statement: addId, by: self.memberId, member: input.sponsor.member, name: input.sponsor.name.slice(0, 100) },
+      ], (tx) => {
+        if (tx.prepare("SELECT 1 FROM meta WHERE key = 'clusterId'").get()) throw new RosterError("cluster-exists", "this server already belongs to a cluster");
+        tx.prepare("INSERT INTO meta (key, value) VALUES ('clusterId', ?)").run(cluster);
+      });
+      return { clusterId: cluster, addId, add: own[0].statement };
+    });
+  }
+
+  /**
+   * Writes `Profile{member, field, value}` signed by this server (its own addresses, or a peer's addresses this server
+   * just reached it at), unless the value read back is that already. The hlc is above every Profile of that field.
+   * Returns the statement, or null when nothing was written.
+   */
+  writeProfile(member: string, field: "name" | "icon" | "addresses", value: string): Promise<SignedStatement | null> {
+    return this.serial(async () => {
+      const cluster = this.requireCluster();
+      if (this.profile(member, field) === value) return null;
+      let ms = this.now();
+      let c = 0;
+      for (const { body } of this.verified) {
+        if (body.type !== "profile" || body.member !== member || body.field !== field) continue;
+        if (body.hlc.ms > ms || (body.hlc.ms === ms && body.hlc.c >= c)) { ms = body.hlc.ms; c = body.hlc.c + 1; }
+      }
+      const profile = await this.sign({ type: "profile", cluster, member, field, value: value.slice(0, 2_000), hlc: { ms, c: Math.min(c, 0xffff) } });
+      await this.apply([profile], cluster, [{ act: "profile.write", statement: profile.id, by: this.identity.memberId, member }]);
+      return profile.statement;
     });
   }
 
@@ -290,13 +388,14 @@ export class RosterStore {
 
   /**
    * A member's newest verified `Profile` value for `field` (by hlc, then the smaller id), signed by the member itself or
-   * by a server this roster knows; null when there is none (§4.1, §6.2: peers' addresses).
+   * by a server that is valid here (a known server that was revoked can no longer redirect a peer's address: M3 step 3
+   * review, step 4); null when there is none (§4.1, §6.2: peers' addresses).
    */
   profile(member: string, field: "name" | "icon" | "addresses"): string | null {
     let best: { value: string; ms: number; c: number; id: string } | null = null;
     for (const { id, body, signer } of this.verified) {
       if (body.type !== "profile" || body.member !== member || body.field !== field || body.cluster !== this.cluster) continue;
-      if (signer !== member && !this.current.servers.has(signer)) continue;
+      if (signer !== member && !(this.current.servers.has(signer) && this.current.valid.has(signer))) continue;
       const { ms, c } = body.hlc;
       if (!best || ms > best.ms || (ms === best.ms && (c > best.c || (c === best.c && id < best.id)))) best = { value: body.value, ms, c, id };
     }

@@ -20,7 +20,8 @@
 //     - root clause (§4.2, D46): `member` is a known server, `member ≠ R.root`, and either `by = R.root ∧ gen = R.gen`,
 //       or its id is in `R.keep` and it was signed by the chain's root of its own earlier gen (`keep` holds "the server
 //       revocations signed by earlier roots", §4.8; anything else listed there does not count). It removes the member
-//       whatever its kind, with its cascade (never R.root).
+//       whatever its kind; with `cascade: true` (D61) also every member of Cascade(member) (never R.root): the least
+//       fixpoint over joining Adds (D60, `joined` true or absent on a device Add) signed by member or by one already in it.
 //  R5 Revoked = root-revoked ∪ (device-revoked members that are not known servers).
 //  R6 valid_T(m): least fixpoint from T (T valid unless root-revoked). An Add or Endorse for m by a known server that
 //     is itself valid makes m valid when m is not root-revoked and, for a device Add, m is not a known server and not
@@ -29,8 +30,8 @@
 // An id named both as a device and as a server (only a known server can sign such Adds) is judged as a server: a
 // device revoke cannot remove a machine (only the root can, D46), and the id is never valid as a device again once
 // device-revoked; it can come back only as a server, through a server Add, which is the same power as adding any new
-// server (and is removed with that server by the default cascade).
-import type { DeviceScope, StatementBody } from "../../protocol";
+// server (and is removed with that server by a cascading revoke, since its server Add joined it).
+import { addJoins, revokeCascades, type DeviceScope, type StatementBody } from "../../protocol";
 
 type Add = Extract<StatementBody, { type: "add" }>;
 type Endorse = Extract<StatementBody, { type: "endorse" }>;
@@ -153,13 +154,30 @@ export function computeRoster(self: string, cluster: string | null, statements: 
   const deviceRevoked = new Set<string>();
   const rootRevoked = new Set<string>();
   const countingRevokes: string[] = [];
+  // K2 (D60, D61): Cascade(m), the least fixpoint over joining Adds (`joined`, absent on a device Add = true) by a known
+  // server whose `by` is m or already in the set; never R.root. Computed here from this server's own set, so every
+  // recompute (a joining Add signed or received later included) takes it in, and two servers with the same set agree.
+  const joining = adds.filter((s) => servers.has(s.body.by) && addJoins(s.body)).map((s) => s.body);
+  const cascadeOf = (member: string): Set<string> => {
+    const set = new Set<string>([member]);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const add of joining) {
+        if (!set.has(add.by) || set.has(add.member) || (root && add.member === root.root)) continue;
+        set.add(add.member);
+        changed = true;
+      }
+    }
+    set.delete(member);
+    return set;
+  };
   for (const s of revokes) {
     const device = servers.has(s.body.by);
     const byRoot = rootCounts(s.body, s.id);
     if (device) deviceRevoked.add(s.body.member);
     if (byRoot) {
       rootRevoked.add(s.body.member);
-      for (const x of s.body.cascade) if (!root || x !== root.root) rootRevoked.add(x);
+      if (revokeCascades(s.body)) for (const x of cascadeOf(s.body.member)) rootRevoked.add(x);
     }
     if (byRoot || (device && !servers.has(s.body.member))) countingRevokes.push(s.id);
   }

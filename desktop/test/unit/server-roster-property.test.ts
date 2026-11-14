@@ -13,7 +13,7 @@
 //  P5 devices' signatures never count for Add / Endorse / Revoke / Root: dropping every statement a device signed gives
 //     the same view;
 //  P6 single revocation root: a server is revoked only by a revoke from the current root at its gen, or one in keep
-//     (directly or by its cascade); the root itself is never revoked;
+//     (directly, or by its computed cascade over joining Adds when `cascade: true`, D60/D61); the root itself is never revoked;
 //  P7 with real Ed25519 signatures, verify + validity gives exactly the view of the same set computed from what each
 //     statement's signer was; a tampered signature never counts.
 import { describe, expect, it } from "vitest";
@@ -85,7 +85,7 @@ async function generate(seed: number, w: World): Promise<Item[]> {
     const asServer = w.servers.includes(target) || chance(0.08);
     if (target.id === signer.id) continue;
     await push(asServer
-      ? { type: "add", cluster, member: target.id, kind: "server", keys: { sign: target.pub, dh: target.dh }, name: "S", by: signer.id, at: at++ }
+      ? { type: "add", cluster, member: target.id, kind: "server", keys: { sign: target.pub, dh: target.dh }, name: "S", by: signer.id, at: at++, joined: chance(0.7) }
       : { type: "add", cluster, member: target.id, kind: "device", keys: { sign: target.pub, dh: target.dh }, name: "D", scope: ["read"], by: signer.id, at: at++ }, signer);
   }
   // Endorses of some of those Adds.
@@ -97,7 +97,7 @@ async function generate(seed: number, w: World): Promise<Item[]> {
   for (let i = 0, count = Math.floor(random() * 6); i < count; i++) {
     const signer = signerFor(0.75);
     const member = pick(members.filter((m) => m.id !== signer.id));
-    const cascade = w.servers.includes(member) ? subset(members.filter((m) => m.id !== member.id), 0.3).map((m) => m.id) : [];
+    const cascade: boolean | [] = w.servers.includes(member) ? chance(0.5) : chance(0.5) ? false : [];
     await push({ type: "revoke", cluster, member: member.id, reason: "", by: signer.id, gen: 1 + Math.floor(random() * 3), cascade }, signer);
   }
   const revokeIds = items.filter((item) => item.body.type === "revoke").map((item) => item.id);
@@ -120,6 +120,28 @@ async function generate(seed: number, w: World): Promise<Item[]> {
     await pushRoot({ type: "root", cluster, gen, root: pick(w.servers).id, recoveryPub: chance(0.8) ? recovery.pub : by.pub, keep: subset(revokeIds, 0.4).sort(), prev: prev.id }, by);
   }
   return items;
+}
+
+/**
+ * Cascade(m) (D60, D61), written apart from validity.ts: every member reached from m along joining Adds (`joined` not
+ * false) whose signer is a known server, never the current root.
+ */
+function joinCascade(verified: VerifiedStatement[], view: RosterView, member: string): Set<string> {
+  const out = new Set<string>();
+  const seen = new Set<string>([member]);
+  const queue = [member];
+  while (queue.length) {
+    const by = queue.shift()!;
+    for (const s of verified) {
+      if (s.body.type !== "add" || s.body.by !== by || !view.servers.has(by) || s.body.joined === false) continue;
+      const m = s.body.member;
+      if (seen.has(m) || m === view.root?.root) continue;
+      seen.add(m);
+      out.add(m);
+      queue.push(m);
+    }
+  }
+  return out;
 }
 
 /**
@@ -232,7 +254,7 @@ describe("roster validity properties (stand-in for the skipped TLA Roster gate)"
         expect(view.root, at).not.toBeNull();
         expect(server, at).not.toBe(view.root!.root);
         const sanctioned = verified.some((s) => s.body.type === "revoke"
-          && (s.body.member === server || (view.servers.has(s.body.member) && s.body.cascade.includes(server)))
+          && (s.body.member === server || (view.servers.has(s.body.member) && s.body.cascade === true && joinCascade(verified, view, s.body.member).has(server)))
           && view.servers.has(s.body.member) && s.body.member !== view.root!.root
           && ((s.body.by === view.root!.root && s.body.gen === view.root!.gen) || (view.root!.keep.has(s.id) && s.body.gen < view.root!.gen && chainRoots.get(s.body.gen) === s.body.by)));
         expect(sanctioned, `${at}: server ${server} revoked without the root`).toBe(true);

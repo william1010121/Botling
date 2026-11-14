@@ -7,12 +7,18 @@
 //     2. An offer: the link (its fragment holds the one-time secret) and the same as a QR code, valid 5 minutes.
 //     3. A device answers: both screens show a 6-digit code; the user says whether they match.
 //     4. The device acknowledges its Add: done. A lost ack gives the offer back (the device may retry until it expires).
+//   join [--name <name>]              (on the joining server N, §4.5) prints this server's name, fingerprint, the code to
+//                                     type into the member S and the link for S; shows S's fingerprint once it dials;
+//                                     ends when S finished the join, or when the offer is declined or expires
+//   add-machine <link>                (on the member S) shows both fingerprints, asks for the code shown on N (three
+//                                     tries), then adds N; the first pairing creates the cluster first (recovery code)
 //   devices [--json]                  the devices in the roster, valid and revoked
 //   revoke-device <id> [--reason …]   revokes a device; its sessions end at once
 import type { AdminEvent, DeviceScope } from "../../protocol";
 import { AdminRefused, type AdminClient } from "./admin-client";
 import { qrTerminal } from "./qr";
 import type { DeviceRow, PairOfferResult } from "./service";
+import type { JoinOfferResult, MachineAddResult, MachineCodeResult } from "./join";
 
 export interface CliIo {
   out(line: string): void;
@@ -122,4 +128,79 @@ export async function revokeDeviceCommand(client: AdminClient, io: CliIo, device
     io.out(`Cannot revoke ${deviceId}: ${errorText(error)}`);
     return 1;
   }
+}
+
+const JOIN_TRIES = 3;
+
+/** `botlingd join` on the server that joins (N); resolves with the exit code. */
+export async function joinCommand(client: AdminClient, io: CliIo, options: { name?: string } = {}): Promise<number> {
+  let offer: JoinOfferResult;
+  try {
+    offer = await client.request({ op: "join.offer", ...(options.name ? { name: options.name } : {}) }) as JoinOfferResult;
+  } catch (error) {
+    io.out(`Cannot make a join offer: ${errorText(error)}`);
+    return 1;
+  }
+  io.out(`This machine: ${offer.name}`);
+  io.out(`Fingerprint:  ${offer.fingerprint}`);
+  io.out(`Code:         ${offer.code}`);
+  io.out("On a machine of your cluster, run botlingd add-machine with this link and type the code above when it asks.");
+  io.out(`It works once, for 5 minutes (until ${new Date(offer.expiresAt).toLocaleTimeString()}):`);
+  io.out(offer.link);
+  for (;;) {
+    const left = offer.expiresAt - Date.now() + 2_000;
+    const event = await client.nextEvent((e): e is AdminEvent => "offer" in e && e.offer === offer.offer, Math.max(1_000, left));
+    if (!event) {
+      io.out(client.closed ? "botlingd closed the session." : "The offer expired; run botlingd join again.");
+      if (!client.closed) await client.request({ op: "join.cancel", offer: offer.offer }).catch(() => undefined);
+      return 1;
+    }
+    if (event.kind === "join.hello") { io.out(`Server "${event.name}" opened the pairing. Its fingerprint: ${event.fingerprint}`); continue; }
+    if (event.kind === "join.wrong") { io.out(event.left ? `A wrong code was typed there (${event.left} ${event.left === 1 ? "try" : "tries"} left).` : "A wrong code was typed there for the third time."); continue; }
+    if (event.kind === "join.done") { io.out(`Joined cluster ${event.cluster} through ${event.server}.`); return 0; }
+    if (event.kind === "join.declined") {
+      io.out(event.reason === "code" ? "Declined: three wrong codes. Run botlingd join again for a new code."
+        : event.reason === "member" ? "Declined: this server already belongs to a cluster."
+          : `The join ended: ${event.reason}.`);
+      return 1;
+    }
+  }
+}
+
+/** `botlingd add-machine <link>` on a member (S); resolves with the exit code. */
+export async function addMachineCommand(client: AdminClient, io: CliIo, link: string): Promise<number> {
+  const status = await client.request({ op: "cluster.status" }) as { clusterId: string | null };
+  if (status.clusterId === null) {
+    const made = await createCluster(client, io);
+    if (!made) return 1;
+  }
+  let added: MachineAddResult;
+  try {
+    added = await client.request({ op: "machine.add", link }) as MachineAddResult;
+  } catch (error) {
+    io.out(`Cannot pair that machine: ${errorText(error)}`);
+    return 1;
+  }
+  io.out(`This machine's fingerprint:  ${added.self.fingerprint}`);
+  io.out(`"${added.name}" fingerprint: ${added.fingerprint}`);
+  io.out(`Check that "${added.name}" shows the same fingerprint for itself and this machine's fingerprint above.`);
+  for (let typedCount = 0; typedCount < JOIN_TRIES * 2;) {
+    const typed = await io.ask(`Code shown on "${added.name}": `);
+    if (typed === null) { await client.request({ op: "machine.cancel", attempt: added.attempt }).catch(() => undefined); io.out("No code typed; cancelled."); return 1; }
+    let result: MachineCodeResult;
+    try {
+      result = await client.request({ op: "machine.code", attempt: added.attempt, code: typed.slice(0, 32) || "-" }, 120_000) as MachineCodeResult;
+    } catch (error) {
+      io.out(`The pairing failed: ${errorText(error)}`);
+      return 1;
+    }
+    if (result.ok) { io.out(`Added "${result.name}" (${result.server}) to cluster ${result.cluster}.`); return 0; }
+    if (result.reason === "malformed") { typedCount++; io.out("That is not a code (8 letters and digits, like 53RV-XFK8)."); continue; }
+    if (result.reason === "wrong") { typedCount++; io.out(`That is not the code shown there (${result.left} ${result.left === 1 ? "try" : "tries"} left).`); continue; }
+    io.out(result.reason === "code" ? "Declined: three wrong codes. Run botlingd join on the other machine again."
+      : result.reason === "member" ? "Declined: that machine already belongs to a cluster."
+        : `The pairing ended: ${result.reason}${result.detail ? ` (${result.detail})` : ""}.`);
+    return 1;
+  }
+  return 1;
 }

@@ -33,8 +33,8 @@ import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthori
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
 import { RosterStore } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, LoopbackListener } from "./net";
-import { PairingService } from "./pairing";
-import { PeerSessions, peerTimers, SessionRouter } from "./peer";
+import { PairingService, ServerJoin } from "./pairing";
+import { addressesValue, PeerSessions, peerTimers, SessionRouter } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
 import { SummaryRows } from "./replica";
@@ -130,7 +130,23 @@ export class Botlingd {
     readonly summary: SummaryRows,
     /** M3 step 3: peer servers (KK sessions over `/v3/ws`, one per pair, the D47 exchange). */
     readonly peers: PeerSessions,
+    /** M3 step 4: server pairing (join offers on this server, add-machine attempts from it). */
+    readonly join: ServerJoin,
   ) {}
+
+  /**
+   * M3 step 4: this server's own `Profile{addresses}` (its loopback `/v3/ws`), written when it is in a cluster with
+   * another server and the value changed (a lone server writes nothing, as before). Peers dial what it names.
+   */
+  async writeOwnProfile(): Promise<void> {
+    const port = this.listener?.port;
+    const view = this.roster.view;
+    if (port === undefined || this.roster.clusterId === null || !view.valid.has(view.self)) return;
+    if (![...view.members.values()].some((info) => info.kind === "server" && info.member !== view.self)) return;
+    try {
+      if (await this.roster.writeProfile(view.self, "addresses", addressesValue(port))) this.log(`roster: this server's address profile written (port ${port})`);
+    } catch (error) { this.log(`roster: the address profile was not written: ${String((error as Error)?.message ?? error)}`); }
+  }
 
   get token(): string { return this.tokenValue; }
 
@@ -230,6 +246,13 @@ export class Botlingd {
         pageUrl: () => `${origin ?? PLACEHOLDER_TAILNET_ORIGIN}/v3/`,
         addressNote: () => (origin ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), so the link names a placeholder."),
       });
+      // M3 step 4: server pairing (`botlingd join` / `add-machine`), reached at the loopback listener's `/v3/ws`.
+      const listenerPort = () => daemon?.listener?.port ?? null;
+      const serverJoin = new ServerJoin({
+        roster, identity, serverName: SERVER_NAME, version: BOTLINGD_VERSION, dataDir: paths.dataDir, log,
+        ownAddresses: () => { const at = listenerPort(); return at === null ? null : addressesValue(at); },
+        joinAddresses: () => { const at = listenerPort(); return at === null ? [] : [`ws://${LISTEN_HOST}:${at}/v3/ws`]; },
+      });
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
@@ -245,17 +268,21 @@ export class Botlingd {
           return true;
         },
         log,
-        admin: { handle: (op) => pairing.admin(op), onEvent: (listener) => pairing.onEvent(listener) },
+        admin: {
+          handle: (op) => (op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op) : pairing.admin(op)),
+          onEvent: (listener) => { const a = pairing.onEvent(listener); const b = serverJoin.onEvent(listener); return () => { a(); b(); }; },
+        },
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
       const remote = new RemoteSessions({ ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing }, options.session);
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
       const peers = new PeerSessions({ roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log }, { stateFile: join(paths.dataDir, PEERS_FILE) });
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin);
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       await daemon.listen(port, options.outDir, origin);
+      await daemon.writeOwnProfile();
       peers.start();
       daemon.watchLock();
       const schedule = backupCheckMs(env);
@@ -284,7 +311,7 @@ export class Botlingd {
     let state: Record<string, unknown>;
     try {
       this.listener = await LoopbackListener.start({
-        port, remote: new SessionRouter(this.remote, this.peers), pageDir: defaultPageDir(outDir), origins: () => (origin ? [origin] : []), log: this.log,
+        port, remote: new SessionRouter(this.remote, this.peers, undefined, this.join), pageDir: defaultPageDir(outDir), origins: () => (origin ? [origin] : []), log: this.log,
       });
       state = { pid: process.pid, address: LISTEN_HOST, port: this.listener.port };
     } catch (error) {
@@ -323,6 +350,7 @@ export class Botlingd {
     await step("daily backups", () => this.backups?.stop());
     await step("sessions", () => this.server.close());
     await step("pairing", () => this.pairing.close());
+    await step("server pairing", () => this.join.close());
     await step("remote sessions", () => this.remote.close());
     await step("peer sessions", () => this.peers.close());
     await step("listener", () => this.listener?.close());

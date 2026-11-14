@@ -4,4 +4,4 @@ export { addressesValue, DEFAULT_PEER_TIMERS, loopbackAddress, PEER_TIMERS_ENV, 
 export { webSocketConnector, type PeerConnection, type PeerConnector } from "./connector";
 export { MAX_REVOCATION_SET, PeerSession, REVOCATIONS_PER_FRAME, serverKeys, serverPeerCheck, type PeerRoster, type PeerSessionEnd, type PeerSessionEvents, type PeerSessionHost } from "./peer-session";
 export { PeerSessions, type PeerSessionsOptions, type PeerState } from "./peers";
-export { FIRST_FRAME_TIMEOUT_MS, SessionRouter, type AcceptedSession, type DeviceAcceptor, type PeerAcceptor } from "./router";
+export { FIRST_FRAME_TIMEOUT_MS, hs1Offer, SessionRouter, type AcceptedSession, type DeviceAcceptor, type JoinAcceptor, type PeerAcceptor } from "./router";

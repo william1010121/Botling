@@ -20,6 +20,10 @@
 //                             pairs a phone or browser with the running server (M2 step 5): the first pairing shows the
 //                             recovery code once and makes the cluster only after it is typed back; then a link and QR
 //                             code (5 min, single use), the 6-digit code to compare, and the device's ack
+//   botlingd join [--name <name>]
+//                             (M3 step 4) offers this server to join a cluster: prints its fingerprint, a code and a link
+//   botlingd add-machine <link>
+//                             (M3 step 4) pairs the server whose `join` printed that link into this server's cluster
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
@@ -32,7 +36,7 @@ import { LISTEN_FILE, LISTEN_HOST, listenPort, tailscaleServeCommand } from "./n
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
-import { AdminClient, devicesCommand, pairCommand, revokeDeviceCommand, type CliIo } from "./pairing";
+import { AdminClient, addMachineCommand, devicesCommand, joinCommand, pairCommand, revokeDeviceCommand, type CliIo } from "./pairing";
 import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
@@ -269,6 +273,25 @@ async function main(argv: string[]): Promise<void> {
         io.close();
         client.close();
       }
+      process.exit(code);
+      return;
+    }
+    case "join": {
+      const client = await adminSession(paths);
+      const io = stdinIo();
+      const name = flag(rest, "--name");
+      let code = 1;
+      try { code = await joinCommand(client, io, name ? { name } : {}); } finally { io.close(); client.close(); }
+      process.exit(code);
+      return;
+    }
+    case "add-machine": {
+      const link = rest.find((arg) => !arg.startsWith("--"));
+      if (!link) fail("add-machine needs the link botlingd join printed on the other machine: botlingd add-machine <link>", 2);
+      const client = await adminSession(paths);
+      const io = stdinIo();
+      let code = 1;
+      try { code = await addMachineCommand(client, io, link!); } finally { io.close(); client.close(); }
       process.exit(code);
       return;
     }
