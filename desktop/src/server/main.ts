@@ -26,6 +26,10 @@
 //                             (M3 step 4) pairs the server whose `join` printed that link into this server's cluster;
 //                             with no argument it reads the link from stdin (keeps its secret out of the process list);
 //                             asks "yes" that N shows the fingerprint it prints, or checks --expect-fingerprint
+//   botlingd machines [--json]
+//                             (M3 step 13) this server's fingerprint and every other server of its cluster: name,
+//                             fingerprint, state (live / stale / gone) and since, and how many commands wait for it;
+//                             read from the data folder, so it answers whether or not botlingd runs
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
@@ -36,6 +40,7 @@ import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/
 import { Botlingd, BOTLINGD_VERSION, DataDirInUseError, PLACEHOLDER_TAILNET_ORIGIN, tailnetOrigin } from "./botlingd";
 import { LISTEN_FILE, LISTEN_HOST, listenPort, tailscaleServeCommand } from "./net";
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
+import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
 import { AdminClient, addMachineCommand, devicesCommand, joinCommand, pairCommand, revokeDeviceCommand, type CliIo } from "./pairing";
@@ -114,6 +119,10 @@ interface Status {
   /** The newest backup (any kind) and when it was taken, or null. */
   backup: { path: string; at: number } | null;
   notes: ServerNote[];
+  /** The other servers of the cluster and their states (M3 step 13; empty for a lone server). */
+  machines: MachinesReport;
+  /** Commands held here for another server's targets (M3 step 13). */
+  forwardQueue: ForwardQueueReport;
   /** The running server's cluster (null before the first pairing), when it answers. */
   clusterId?: string | null;
   /** While a recovery code was shown and not typed back yet (the cluster is not made until it is). */
@@ -152,9 +161,10 @@ async function status(dataDir: string, socket: string): Promise<Status> {
   const result: Status = {
     version: BOTLINGD_VERSION, dataDir, running: pid !== null, pid, socket, answers, bots: 0, turns: [],
     backup: newestAnyBackup(join(dataDir, "backups")), notes: [], ...listenerStatus(dataDir, pid),
+    machines: { self: null, peers: [] }, forwardQueue: { rows: 0, cancels: 0, oldestHeldAt: null, owners: [] },
   };
   const file = join(dataDir, "server.db");
-  if (!existsSync(file)) { result.notes = serverNotes(dataDir, null); return result; }
+  if (!existsSync(file)) { result.notes = serverNotes(dataDir, null); result.machines = readMachines(dataDir, null, pid); return result; }
   const db = openReaderDb(file);
   try {
     result.bots = Number(db.prepare("SELECT count(*) AS n FROM bots").get()?.n ?? 0);
@@ -165,7 +175,9 @@ async function status(dataDir: string, socket: string): Promise<Status> {
         botId: String(row.botId ?? ""), turnId: String(row.turnId ?? ""), state: String(row.state),
         startedAt: row.startedAt == null ? null : Number(row.startedAt), liveChars: live.get(`${row.botId}\u0000${row.turnId}`) ?? 0,
       }));
-    result.notes = serverNotes(dataDir, db);
+    result.machines = readMachines(dataDir, db, pid);
+    result.forwardQueue = readForwardQueue(db);
+    result.notes = [...serverNotes(dataDir, db), ...peerNotes(result.machines, result.forwardQueue)];
   } finally {
     db.close();
   }
@@ -240,6 +252,13 @@ async function main(argv: string[]): Promise<void> {
         const since = turn.startedAt ? ` since ${new Date(turn.startedAt).toISOString()}` : "";
         out(`turn ${turn.turnId} of ${turn.botId}: ${turn.state}${since}${turn.liveChars ? `, ${turn.liveChars} characters so far` : ""}`);
       }
+      if (report.machines.peers.length || report.forwardQueue.rows) {
+        for (const line of machinesLines(report.machines, report.forwardQueue).filter((line) => !line.startsWith("this machine"))) out(`machine ${line}`);
+        const queue = report.forwardQueue;
+        out(queue.rows
+          ? `forward queue: ${queue.rows} command${queue.rows === 1 ? "" : "s"} held for other machines (oldest since ${new Date(queue.oldestHeldAt!).toISOString().replace(/\.\d+Z$/, "Z")})${queue.cancels ? `, ${queue.cancels} cancel${queue.cancels === 1 ? "" : "s"}` : ""}`
+          : "forward queue: empty");
+      }
       out(report.backup ? `newest backup: ${report.backup.path} (${new Date(report.backup.at).toISOString()})` : "no backup yet");
       for (const note of report.notes) out(`note: ${note.text}`);
       if (report.recoveryNote) out(`note: ${report.recoveryNote}`);
@@ -299,6 +318,21 @@ async function main(argv: string[]): Promise<void> {
       process.exit(code);
       return;
     }
+    case "machines": {
+      const file = join(paths.dataDir, "server.db");
+      const pid = holderPid(paths.dataDir);
+      const db = existsSync(file) ? openReaderDb(file) : null;
+      try {
+        const machines = readMachines(paths.dataDir, db, pid);
+        const queue = db ? readForwardQueue(db) : null;
+        if (rest.includes("--json")) { out(JSON.stringify({ running: pid !== null, ...machines, forwardQueue: queue })); return; }
+        if (pid === null) out("botlingd is not running: states are as last stored (nothing is live).");
+        for (const line of machinesLines(machines, queue)) out(line);
+      } finally {
+        db?.close();
+      }
+      return;
+    }
     case "devices": {
       const client = await adminSession(paths);
       try { process.exitCode = await devicesCommand(client, { out, ask: async () => null }, { json: rest.includes("--json") }); } finally { client.close(); }
@@ -339,7 +373,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     default:
-      fail(`unknown command "${command}" (start, stop, status, backup, restore, pair, devices, revoke-device)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, backup, restore, pair, join, add-machine, machines, devices, revoke-device)`, 2);
   }
 }
 
