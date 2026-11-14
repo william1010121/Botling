@@ -71,6 +71,9 @@ const SQL = {
 } as const;
 
 class BotState {
+  constructor(readonly botId: string) {}
+  /** The data folder the bot was last opened with (where its exports go). */
+  directory = "";
   messages?: Map<string, MessageRow>;
   maxSeq = 0;
   settings?: string;
@@ -88,19 +91,28 @@ class BotState {
   readonly inflight = new Set<Promise<unknown>>();
 }
 
+export interface DbBotStoresOptions {
+  /**
+   * Called after a write of bot `botId` committed (exports, src/server/exports, schedule their files from it). Never
+   * called for a write that failed. An observer that throws does not change the write's outcome.
+   */
+  onCommitted?: (botId: string, directory: string) => void;
+}
+
 /** One server.db's bot stores: shared caches, one read connection, writes through the writer. */
 export class DbBotStores {
   private reader?: Db;
   private readonly states = new Map<string, BotState>();
   private closed = false;
 
-  constructor(private readonly backend: BotStoreBackend) {}
+  constructor(private readonly backend: BotStoreBackend, private readonly options: DbBotStoresOptions = {}) {}
 
   /** The store of bot `botId`; `directory` is its data folder (exports and other bot files live there). */
   open(botId: string, directory: string): DbBotStore {
     if (this.closed) throw new Error("bot stores are closed");
     let state = this.states.get(botId);
-    if (!state) this.states.set(botId, state = new BotState());
+    if (!state) this.states.set(botId, state = new BotState(botId));
+    state.directory = directory;
     return new DbBotStore(this, state, botId, directory);
   }
 
@@ -115,7 +127,11 @@ export class DbBotStores {
     if (state.failure) throw state.failure;
     if (this.closed) throw new Error("bot stores are closed");
     const promise = this.backend.submit(command).then(
-      () => { state.inflight.delete(promise); settled?.(true); },
+      () => {
+        state.inflight.delete(promise);
+        settled?.(true);
+        try { this.options.onCommitted?.(state.botId, state.directory); } catch { /* an observer never fails a write */ }
+      },
       (error) => { state.failure ??= error; state.inflight.delete(promise); settled?.(false); },
     );
     state.inflight.add(promise);
@@ -124,6 +140,12 @@ export class DbBotStores {
   /** Resolves once every write submitted so far (all bots) committed; rejects with the first failure. */
   async durable(): Promise<void> {
     for (const state of this.states.values()) await settle(state);
+  }
+
+  /** Resolves once bot `botId`'s writes submitted so far committed; rejects with the failure that stopped them. */
+  async settled(botId: string): Promise<void> {
+    const state = this.states.get(botId);
+    if (state) await settle(state);
   }
 
   /** Waits for the writes in flight, then closes the read connection. The server store is closed by its owner. */
@@ -460,5 +482,48 @@ export class DbBotStore implements BotStore {
       taken.push(text);
     }
     return foldLines(taken.reverse());
+  }
+}
+
+// ── committed state, for the exports ─────────────────────────────────────────────────────────────────────────────────
+
+/** A bot's parts as committed in server.db, in the shape `FileBotStore` writes them; null: the part has no rows. */
+export interface CommittedBot {
+  /** chat.json's lines, oldest first. */
+  chat: unknown[] | null;
+  /** subagents.json's index entries, in their order. */
+  subagents: unknown[] | null;
+  /** pins.json, specs.json, tasks.json. */
+  lists: Record<"pins.json" | "specs.json" | "tasks.json", unknown[] | null>;
+}
+
+/**
+ * Reads bot `botId`'s committed parts from `db` (a read connection, never the writer's) in one read transaction, so
+ * they are one snapshot. What nothing has committed yet is not here: unlike the stores' caches, this is server.db.
+ */
+export function readCommittedBot(db: Db, botId: string): CommittedBot {
+  db.exec("BEGIN");
+  try {
+    const chatRows = db.prepare(SQL.rows).all(chatStream(botId)).map((row) => parse(`server.db chat line ${String(row.key)} of ${botId}`, String(row.body)) as { seq: number; record: unknown });
+    chatRows.sort((a, b) => a.seq - b.seq);
+    const listText = (name: string) => { const row = db.prepare(SQL.list).get(botId, name); return typeof row?.body === "string" ? row.body : null; };
+    const list = (name: string): unknown[] | null => {
+      const text = listText(name);
+      if (text === null) return null;
+      const value = parse(`server.db list ${name} of ${botId}`, text);
+      return Array.isArray(value) ? value : [];
+    };
+    const index = new Map<string, string>();
+    for (const row of db.prepare(SQL.rows).all(subagentsStream(botId))) index.set(String(row.key), String(row.body));
+    const order = list(SUBAGENTS_ORDER);
+    const subagents = order === null && !index.size ? null
+      : (order ?? []).map(String).filter((id) => index.has(id)).map((id) => parse(`server.db subagent ${id} of ${botId}`, index.get(id)!));
+    return {
+      chat: chatRows.length ? chatRows.map((row) => row.record) : null,
+      subagents,
+      lists: { "pins.json": list("pins.json"), "specs.json": list("specs.json"), "tasks.json": list("tasks.json") },
+    };
+  } finally {
+    db.exec("COMMIT");
   }
 }
