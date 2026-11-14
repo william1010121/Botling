@@ -16,12 +16,20 @@ describe("installing declarations", () => {
     kernel.install({ name: "a", provides: { services: ["a.s"] }, requires: { services: ["b.s"] } });
     kernel.install({ name: "b", provides: { services: ["b.s"] }, requires: { services: ["c.s"] } });
     expect(() => kernel.install({ name: "c", provides: { services: ["c.s"] }, requires: { services: ["a.s"] } }))
-      .toThrow(new KernelError("cycle", "The plugins' requires make a cycle: a → b → c → a."));
+      .toThrow(new KernelError("cycle", "The plugins' dependencies (requires, slot contributions) make a cycle: a → b → c → a."));
     expect(kernel.declaration("c")).toBeUndefined();
     // A plugin that requires its own service is a cycle too; uses (soft) never is.
     expect(() => kernel.install({ name: "self", provides: { services: ["self.s"] }, requires: { services: ["self.s"] } })).toThrow(/self → self/);
     kernel.install({ name: "c", provides: { services: ["c.s"] }, uses: { services: ["a.s"] } });
     expect(kernel.requiresGraph()).toEqual({ a: ["b"], b: ["c"], c: [] });
+    // Contributing to a slot is depending on its owner: two plugins contributing to each other's slots are a cycle too
+    // (each would wait for the other to be active); contributing to one's own slot is not.
+    const slots = new Kernel();
+    slots.install({ name: "x", provides: { slots: ["x/rail"] }, contributes: { slots: ["y/rail", "x/rail"] } });
+    expect(() => slots.install({ name: "y", provides: { slots: ["y/rail"] }, contributes: { slots: ["x/rail"] } })).toThrow(/cycle: x → y → x/);
+    slots.install({ name: "y", provides: { slots: ["y/rail"] } });
+    expect(slots.dependencyGraph()).toEqual({ x: ["y"], y: [] });
+    expect(slots.requiresGraph()).toEqual({ x: [], y: [] });
   });
 
   it("refuses a service or slot another plugin provides; a plugin may replace its own declaration", () => {
@@ -46,7 +54,7 @@ describe("services", () => {
     const kernel = new Kernel({ log: true });
     kernel.install({ name: "chat", provides: { services: ["composer.insertQuote"] } });
     kernel.install({ name: "note", requires: { services: ["composer.insertQuote"] } });
-    expect(await kernel.load("note", () => {})).toEqual({ status: "waiting", missing: ["composer.insertQuote"] });
+    expect(await kernel.load("note", () => {})).toEqual({ status: "waiting", missing: ['"composer.insertQuote"'] });
     expect(kernel.state("note")).toBe("absent");
     expect(() => kernel.startLoad("note")).toThrow(/requires "composer.insertQuote", which no active plugin provides/);
     const quoted: string[] = [];
@@ -159,25 +167,147 @@ describe("services", () => {
 });
 
 describe("slots", () => {
-  it("a contribution shows only while its contributor and the slot's owner are active; it is dormant without an owner", async () => {
-    const kernel = new Kernel();
+  it("a contribution shows only while its contributor and the slot's owner are active; without an active owner it is refused", async () => {
+    const kernel = new Kernel({ log: true });
     kernel.install({ name: "chat", provides: { slots: ["chat/link"] } });
     kernel.install({ name: "coach" });
-    await kernel.load("coach", (plugin) => { kernel.contribute(plugin, "chat/link", { command: "coach.start", title: "開始陪讀" }); });
-    // No owner yet: dormant.
-    expect(kernel.entries("chat/link")).toEqual([]);
-    expect(kernel.allContributions()).toEqual([{ plugin: "coach", slot: "chat/link", entry: { command: "coach.start", title: "開始陪讀" } }]);
+    const undone: string[] = [];
+    await kernel.load("coach", (plugin) => { kernel.contribute(plugin, "chat/link", { command: "coach.start", title: "開始陪讀" }, () => undone.push("coach.start")); });
+    // The owner is not there: refused and undone at once (K2: nothing registers into a slot its owner does not hold).
+    expect(kernel.allContributions()).toEqual([]);
+    expect(undone).toEqual(["coach.start"]);
+    expect(lines(kernel.events).filter((line) => line.startsWith("Register coach"))).toEqual(['Register coach (refused: the slot\'s owner "chat" is absent)']);
     await kernel.load("chat", (plugin) => { kernel.provideSlot(plugin, "chat/link"); });
+    expect(kernel.contribute("coach", "chat/link", { command: "coach.start", title: "開始陪讀" })).not.toBeNull();
     expect(kernel.entries("chat/link").map((entry) => [entry.plugin, entry.entry])).toEqual([["coach", { command: "coach.start", title: "開始陪讀" }]]);
     expect(kernel.slotOwner("chat/link")).toBe("chat");
+    // A live contribution makes coach a dependent of chat: it unloads first, and stays wanted.
     await kernel.requestUnload("chat");
-    expect(kernel.entries("chat/link")).toEqual([]);
-    expect(kernel.allContributions()).toHaveLength(1);
+    expect([kernel.state("coach"), kernel.entries("chat/link"), kernel.allContributions()]).toEqual(["absent", [], []]);
     await kernel.load("chat");
-    expect(kernel.entries("chat/link")).toHaveLength(1);
-    await kernel.requestUnload("coach");
-    expect(kernel.entries("chat/link")).toEqual([]);
+    expect(kernel.state("coach")).toBe("active");
+  });
+
+  it("a plugin that declares a contribution waits for the slot's owner, loads by itself once it is active, and unloads before it", async () => {
+    const kernel = new Kernel({ log: true });
+    kernel.install({ name: "chat", provides: { slots: ["chat/link"] } });
+    kernel.install({ name: "coach", contributes: { slots: ["chat/link"] } });
+    const coach = (plugin: string) => { kernel.contribute(plugin, "chat/link", "開始陪讀"); };
+    expect(await kernel.load("coach", coach)).toEqual({ status: "waiting", missing: ['slot "chat/link"'] });
+    expect(() => kernel.startLoad("coach")).toThrow('Plugin "coach" contributes to slot "chat/link", whose owner is not active.');
+    await kernel.load("chat", (plugin) => { kernel.provideSlot(plugin, "chat/link"); });
+    expect(kernel.entries("chat/link").map((entry) => entry.entry)).toEqual(["開始陪讀"]);
+    kernel.events.splice(0);
+    await kernel.requestUnload("chat");
+    expect(lines(kernel.events)).toEqual([
+      "RequestUnload coach (dependency)", "BeginUnload coach", "RunUndo coach", "FinishUnload coach",
+      "RequestUnload chat", "BeginUnload chat", "RunUndo chat", "FinishUnload chat",
+    ]);
+  });
+});
+
+describe("K1: a provider's teardown starts only after its dependents finished unloading (found by the TLA+ model)", () => {
+  it("a slot owner waits until a contributor's async undos (of its contribution there and in a third plugin's slot) are done", async () => {
+    const kernel = new Kernel({ log: true });
+    kernel.install({ name: "chat", provides: { slots: ["chat/link"] } });
+    kernel.install({ name: "board", provides: { slots: ["board/rail"] } });
+    kernel.install({ name: "coach", contributes: { slots: ["chat/link", "board/rail"] } });
+    const slow = deferred();
+    let ownerTornDown = false;
+    await kernel.load("chat", (plugin) => { kernel.provideSlot(plugin, "chat/link"); kernel.register(plugin, "ui", "chat", () => { ownerTornDown = true; }); });
+    await kernel.load("board", (plugin) => { kernel.provideSlot(plugin, "board/rail"); });
+    await kernel.load("coach", (plugin) => {
+      kernel.contribute(plugin, "board/rail", "rail entry");
+      kernel.contribute(plugin, "chat/link", "開始陪讀", () => slow.promise);
+    });
+    const unloaded = kernel.requestUnload("chat");
+    // The contributor left the active state at once, but is still unloading: its contributions are still held.
+    expect([kernel.state("coach"), kernel.state("chat")]).toEqual(["unloading", "unloading"]);
+    await flush();
+    expect(ownerTornDown).toBe(false);
+    expect(lines(kernel.events)).not.toContain("BeginUnload chat");
+    slow.resolve();
+    await unloaded;
+    expect(ownerTornDown).toBe(true);
     expect(kernel.allContributions()).toEqual([]);
+    const at = (line: string) => lines(kernel.events).indexOf(line);
+    expect(at("FinishUnload coach")).toBeLessThan(at("BeginUnload chat"));
+    // The third plugin's slot lost the contribution too; board itself never unloaded.
+    expect([kernel.state("board"), kernel.entries("board/rail")]).toEqual(["active", []]);
+  });
+
+  it("a contributor that registered without declaring it is a dependent too (by its live contribution)", async () => {
+    const kernel = new Kernel({ log: true });
+    kernel.install({ name: "chat", provides: { slots: ["chat/link"] } });
+    kernel.install({ name: "note" });
+    const slow = deferred();
+    await kernel.load("chat", (plugin) => { kernel.provideSlot(plugin, "chat/link"); });
+    await kernel.load("note", (plugin) => { kernel.contribute(plugin, "chat/link", "問", () => slow.promise); });
+    const unloaded = kernel.requestUnload("chat");
+    await flush();
+    // note is still unloading (its contribution's undo has not finished): chat has not begun.
+    expect(kernel.state("note")).toBe("unloading");
+    expect(lines(kernel.events)).not.toContain("BeginUnload chat");
+    slow.resolve();
+    await unloaded;
+    expect(kernel.allContributions()).toEqual([]);
+  });
+});
+
+describe("K2: nothing loads or contributes into a slot whose owner is being torn down (found by the TLA+ model)", () => {
+  it("a contributor asked to load while the owner unloads waits, and loads once the owner is active again", async () => {
+    const kernel = new Kernel({ log: true });
+    kernel.install({ name: "chat", provides: { slots: ["chat/link"] } });
+    kernel.install({ name: "coach", contributes: { slots: ["chat/link"] } });
+    const slow = deferred();
+    await kernel.load("chat", (plugin) => { kernel.provideSlot(plugin, "chat/link"); kernel.register(plugin, "ui", "chat", () => slow.promise); });
+    const unloading = kernel.requestUnload("chat");
+    expect(kernel.state("chat")).toBe("unloading");
+    expect(await kernel.load("coach", (plugin) => { kernel.contribute(plugin, "chat/link", "開始陪讀"); })).toEqual({ status: "waiting", missing: ['slot "chat/link"'] });
+    expect(kernel.state("coach")).toBe("absent");
+    expect(kernel.allContributions()).toEqual([]);
+    slow.resolve();
+    await unloading;
+    await kernel.load("chat");
+    expect(kernel.state("coach")).toBe("active");
+    expect(kernel.entries("chat/link").map((entry) => entry.entry)).toEqual(["開始陪讀"]);
+  });
+
+  it("a contribution offered while the owner waits for its dependents (its slot still open) is refused and undone at once", async () => {
+    const kernel = new Kernel({ log: true });
+    kernel.install({ name: "chat", provides: { slots: ["chat/link"] } });
+    kernel.install({ name: "coach", contributes: { slots: ["chat/link"] } });
+    kernel.install({ name: "other" });
+    const slow = deferred();
+    await kernel.load("chat", (plugin) => { kernel.provideSlot(plugin, "chat/link"); });
+    await kernel.load("coach", (plugin) => { kernel.contribute(plugin, "chat/link", "開始陪讀", () => slow.promise); });
+    await kernel.load("other", () => {});
+    const unloading = kernel.requestUnload("chat");
+    // chat is unloading but has not begun its undos (K1: coach is still unloading), so the slot is still registered.
+    expect([kernel.state("chat"), kernel.slotOwner("chat/link"), kernel.state("coach")]).toEqual(["unloading", "chat", "unloading"]);
+    const undone: string[] = [];
+    expect(kernel.contribute("other", "chat/link", "late", () => undone.push("late"))).toBeNull();
+    expect([undone, kernel.allContributions()]).toEqual([["late"], []]);
+    expect(lines(kernel.events).filter((line) => line.startsWith("Register other"))).toEqual(['Register other (refused: the slot\'s owner "chat" is unloading)']);
+    slow.resolve();
+    await unloading;
+    expect(kernel.state("other")).toBe("active");
+  });
+
+  it("a contribution made while the owner is unloading is refused and undone at once", async () => {
+    const kernel = new Kernel({ log: true });
+    kernel.install({ name: "chat", provides: { slots: ["chat/link"] } });
+    kernel.install({ name: "other" });
+    const slow = deferred();
+    await kernel.load("chat", (plugin) => { kernel.provideSlot(plugin, "chat/link"); kernel.register(plugin, "ui", "chat", () => slow.promise); });
+    await kernel.load("other", () => {});
+    const unloading = kernel.requestUnload("chat");
+    const undone: string[] = [];
+    expect(kernel.contribute("other", "chat/link", "late", () => undone.push("late"))).toBeNull();
+    expect([undone, kernel.allContributions()]).toEqual([["late"], []]);
+    expect(lines(kernel.events).filter((line) => line.startsWith("Register other"))).toEqual(['Register other (refused: the slot\'s owner "chat" is unloading)']);
+    slow.resolve();
+    await unloading;
   });
 });
 
@@ -188,9 +318,13 @@ const SERVICES = ["s1", "s2"];
 const SLOTS = ["slot/x", "slot/y"];
 const PLUGINS = ["a", "b", "c"];
 
-/** Whether the declarations' requires graph has a cycle (brute force: some plugin reaches itself). */
+/** Whether the declarations' dependency graph (requires, slot contributions) has a cycle (brute force: some plugin reaches itself). */
 function hasCycle(declarations: PluginDeclaration[]): boolean {
-  const providers = (name: string) => declarations.filter((other) => (declarations.find((d) => d.name === name)?.requires?.services ?? []).some((service) => other.provides?.services?.includes(service))).map((other) => other.name);
+  const providers = (name: string) => {
+    const declaration = declarations.find((d) => d.name === name);
+    return declarations.filter((other) => (declaration?.requires?.services ?? []).some((service) => other.provides?.services?.includes(service))
+      || (other.name !== name && (declaration?.contributes?.slots ?? []).some((slot) => other.provides?.slots?.includes(slot)))).map((other) => other.name);
+  };
   return declarations.some((start) => {
     const seen = new Set<string>();
     const stack = providers(start.name);
@@ -215,13 +349,33 @@ async function serviceRun(seed: number, maxActions = 40): Promise<{ steps: numbe
   kernel = new Kernel({
     timers, undoTimeoutMs: timeout,
     log: (event) => {
-      // P4 / P3 at the moment a provider starts undoing: nothing that requires its services is still loaded.
-      if (event.action !== "BeginUnload") return;
-      const provided = declarations.find((d) => d.name === event.plugin)?.provides?.services ?? [];
-      for (const other of declarations) {
-        if (other.name !== event.plugin && (other.requires?.services ?? []).some((service) => provided.includes(service)) && kernel.state(other.name) !== "absent") {
-          problems.push(`${event.plugin} began undoing while ${other.name} (requiring it) was ${kernel.state(other.name)}`);
+      const declared = declarations.find((d) => d.name === event.plugin);
+      if (event.action === "BeginUnload") {
+        // P4 and K1 at the moment a provider starts undoing: everything that depends on it (requires its services, or
+        // contributes to its slots by declaration or by a live contribution) has finished unloading: absent, not just inactive.
+        const provided = declared?.provides?.services ?? [];
+        const owned = declared?.provides?.slots ?? [];
+        const contributing = new Set(kernel.allContributions().filter((c) => owned.includes(c.slot)).map((c) => c.plugin));
+        for (const other of declarations) {
+          if (other.name === event.plugin) continue;
+          const depends = (other.requires?.services ?? []).some((service) => provided.includes(service)) || (other.contributes?.slots ?? []).some((slot) => owned.includes(slot)) || contributing.has(other.name);
+          if (depends && kernel.state(other.name) !== "absent") problems.push(`${event.plugin} began undoing while ${other.name} (depending on it) was ${kernel.state(other.name)}`);
         }
+      } else if (event.action === "StartLoad") {
+        // P3 and K2 at the start of a load: its providers and the owners of the slots it contributes to are active.
+        for (const service of declared?.requires?.services ?? []) {
+          const provider = declarations.find((d) => d.provides?.services?.includes(service))?.name;
+          if (!provider || kernel.state(provider) !== "active") problems.push(`${event.plugin} started loading while ${service}'s provider was ${provider ? kernel.state(provider) : "missing"}`);
+        }
+        for (const slot of declared?.contributes?.slots ?? []) {
+          const owner = declarations.find((d) => d.provides?.slots?.includes(slot))?.name;
+          if (owner && owner !== event.plugin && kernel.state(owner) !== "active") problems.push(`${event.plugin} started loading while ${slot}'s owner was ${kernel.state(owner)}`);
+        }
+      } else if (event.action === "Register" && !event.note && event.registration?.startsWith("contribution:")) {
+        // K2 at each accepted contribution: the slot's owner is active (or it is the contributor's own slot).
+        const slot = event.registration.slice("contribution:".length, event.registration.lastIndexOf("#"));
+        const owner = kernel.slotOwner(slot);
+        if (!owner || (owner !== event.plugin && kernel.state(owner) !== "active")) problems.push(`${event.plugin}'s contribution to ${slot} was accepted while its owner was ${owner ? kernel.state(owner) : "missing"}`);
       }
     },
   });
@@ -232,7 +386,8 @@ async function serviceRun(seed: number, maxActions = 40): Promise<{ steps: numbe
   for (const name of PLUGINS) {
     const provides = SERVICES.filter((service) => owners.get(service) === name);
     const requires = SERVICES.filter((service) => owners.get(service) !== name && random.chance(0.5));
-    const declaration: PluginDeclaration = { name, provides: { services: provides, slots: SLOTS.filter((slot) => slotOwners.get(slot) === name) }, requires: { services: requires } };
+    const contributes = SLOTS.filter((slot) => slotOwners.get(slot) !== name && random.chance(0.5));
+    const declaration: PluginDeclaration = { name, provides: { services: provides, slots: SLOTS.filter((slot) => slotOwners.get(slot) === name) }, requires: { services: requires }, contributes: { slots: contributes } };
     const cyclic = hasCycle([...declarations, declaration]);
     try {
       kernel.install(declaration);
@@ -241,8 +396,8 @@ async function serviceRun(seed: number, maxActions = 40): Promise<{ steps: numbe
     } catch (error) {
       if (!(error instanceof KernelError) || error.code !== "cycle" || !cyclic) throw error;
       refusedCycles += 1;
-      // Installed without its requires instead.
-      const plain = { ...declaration, requires: { services: [] } };
+      // Installed without its dependencies instead.
+      const plain = { ...declaration, requires: { services: [] }, contributes: { slots: [] } };
       kernel.install(plain);
       declarations.push(plain);
     }
@@ -265,7 +420,13 @@ async function serviceRun(seed: number, maxActions = 40): Promise<{ steps: numbe
     const declaration = declarations.find((d) => d.name === plugin)!;
     for (const service of declaration.provides?.services ?? []) kernel.provide(plugin, service, `${plugin}@${version}`);
     for (const slot of declaration.provides?.slots ?? []) kernel.provideSlot(plugin, slot);
-    for (const slot of SLOTS) if (random.chance(0.5)) kernel.contribute(plugin, slot, `${plugin}→${slot}`);
+    // Its declared contributions (their owners are active: K2), and sometimes one it did not declare (refused unless the owner is active).
+    for (const slot of SLOTS) {
+      if (!declaration.contributes?.slots?.includes(slot) && !random.chance(0.3)) continue;
+      const name = `${plugin}→${slot}-${++item}`;
+      world.set(name, plugin);
+      if (!kernel.contribute(plugin, slot, name, undoFor(name))) world.delete(name);
+    }
     for (let n = random.int(3); n > 0; n -= 1) { const name = `${plugin}-${++item}`; world.set(name, plugin); kernel.register(plugin, "item", name, undoFor(name)); }
   };
   const loads: Promise<unknown>[] = [];
@@ -275,7 +436,7 @@ async function serviceRun(seed: number, maxActions = 40): Promise<{ steps: numbe
       const state = kernel.state(plugin);
       // P3: an active instance has every required service from an active provider.
       if (state === "active" && kernel.missing(plugin).length) problems.push(`${where}: ${plugin} active without ${kernel.missing(plugin).join(", ")}`);
-      const live = new Set(kernel.registrations(plugin).map((reg) => reg.key));
+      const live = new Set([...kernel.registrations(plugin).map((reg) => reg.key), ...kernel.allContributions<string>().filter((c) => c.plugin === plugin).map((c) => c.entry)]);
       for (const [name, owner] of world) if (owner === plugin && !live.has(name)) problems.push(`${where}: ${plugin} left ${name}`);
     }
     // P2: what a slot shows has an active contributor and an active owner.
@@ -284,8 +445,13 @@ async function serviceRun(seed: number, maxActions = 40): Promise<{ steps: numbe
         if (kernel.state(entry.plugin) !== "active" || kernel.state(kernel.slotOwner(slot)!) !== "active") problems.push(`${where}: ${slot} shows ${entry.plugin}'s entry`);
       }
     }
-    // P1 for contributions and services: none belongs to an absent instance.
-    for (const contribution of kernel.allContributions()) if (kernel.state(contribution.plugin) === "absent") problems.push(`${where}: absent ${contribution.plugin} still contributes`);
+    // P1 for contributions and services: none belongs to an absent instance; P2 as the model states it (NoOrphan): a held
+    // contribution's slot has an owner that is not absent.
+    for (const contribution of kernel.allContributions()) {
+      if (kernel.state(contribution.plugin) === "absent") problems.push(`${where}: absent ${contribution.plugin} still contributes`);
+      const owner = kernel.slotOwner(contribution.slot);
+      if (!owner || kernel.state(owner) === "absent") problems.push(`${where}: ${contribution.plugin}'s contribution to ${contribution.slot} outlived its owner`);
+    }
     for (const service of SERVICES) { const provider = kernel.providerOf(service); if (provider && kernel.state(provider) === "absent") problems.push(`${where}: absent ${provider} still provides ${service}`); }
     if (problems.length) throw new Error(`seed ${seed}: ${problems[0]}`);
   };
@@ -328,7 +494,7 @@ async function serviceRun(seed: number, maxActions = 40): Promise<{ steps: numbe
 }
 
 describe("seeded random runs with services and slots (P1, P2, P3/P4, P6 stand-in)", () => {
-  it("300 runs keep the properties, refuse every cycle at install, and end with every instance absent", async () => {
+  it("300 runs keep the properties (with K1 and K2), refuse every cycle at install, and end with every instance absent", async () => {
     let cycles = 0;
     for (let seed = 1; seed <= 300; seed += 1) cycles += (await serviceRun(seed)).refusedCycles;
     // The random declarations do try cycles (two plugins each requiring the other's service).

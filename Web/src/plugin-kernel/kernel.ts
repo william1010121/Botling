@@ -288,6 +288,15 @@ export class PluginKernel {
     return `${reg.kind}:${reg.key}#${reg.id}`;
   }
 
+  /** Refuses a registration the layer above does not allow now (`why` is logged): `undo` runs at once, as for a late one. */
+  protected refuse(plugin: string, kind: string, key: string, undo: Undo, why: string): null {
+    const label = `${kind}:${key}`;
+    const generation = this.generation(plugin);
+    this.record("Register", plugin, generation, label, `refused: ${why}`);
+    this.runLate(plugin, generation, label, undo);
+    return null;
+  }
+
   /** Runs the undo of a registration that came too late, now; a failure is reported, never thrown. */
   private runLate(plugin: string, generation: number, label: string, undo: Undo): void {
     this.record("RunUndo", plugin, generation, label, "undone at once");

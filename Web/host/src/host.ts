@@ -203,15 +203,15 @@ export class Host {
       progress = false;
       for (const spec of round) {
         if (this.plugins.has(spec.name)) continue;
-        let requires: boolean;
+        let depends: boolean;
         try {
-          requires = this.declare(spec);
+          depends = this.declare(spec);
         } catch (error) {
           // A declaration the kernel refuses (a requires cycle, a service another plugin provides).
           failed.push({ name: spec.name, message: errorText(error) });
           continue;
         }
-        if (requires && this.kernel.missing(spec.name).length) { waiting.push(spec); continue; }
+        if (depends && this.kernel.waitingFor(spec.name).length) { waiting.push(spec); continue; }
         progress = true;
         const started = performance.now();
         try {
@@ -223,17 +223,17 @@ export class Host {
         }
       }
     }
-    for (const spec of waiting) failed.push({ name: spec.name, message: `It requires ${this.kernel.missing(spec.name).map((service) => `"${service}"`).join(", ")}, which no loaded plugin provides.` });
+    for (const spec of waiting) failed.push({ name: spec.name, message: `It needs ${this.kernel.waitingFor(spec.name).join(", ")}, which no loaded plugin provides.` });
     this.announce();
     const unloadFailed = this.unloadFailures.splice(0);
     return { loaded: [...this.plugins.keys()], failed, timings, ...(unloadFailed.length ? { unloadFailed } : {}) };
   }
 
-  /** Gives the kernel the plugin's declaration (once per load); whether it declares anything it requires. */
+  /** Gives the kernel the plugin's declaration (once per load); whether it depends on another (requires, slot contributions). */
   private declare(spec: HostPluginSpec): boolean {
     const declared = this.options.declarations?.(spec) ?? null;
     if (this.kernel.state(spec.name) === "absent") this.kernel.install({ name: spec.name, ...(declared ?? {}) });
-    return !!declared?.requires?.services?.length;
+    return !!(declared?.requires?.services?.length || declared?.contributes?.slots?.length);
   }
 
   private async load(spec: HostPluginSpec): Promise<void> {
@@ -256,6 +256,7 @@ export class Host {
     if (this.kernel.state(spec.name) !== "loading" || this.kernel.generation(spec.name) !== generation) return;
     // What it declares it provides is there once it is up (the host carries no calls between plugins yet).
     for (const service of this.kernel.declaration(spec.name)?.provides?.services ?? []) this.kernel.provide(spec.name, service, spec.name);
+    for (const slot of this.kernel.declaration(spec.name)?.provides?.slots ?? []) this.kernel.provideSlot(spec.name, slot);
     this.kernel.activate(spec.name);
   }
 

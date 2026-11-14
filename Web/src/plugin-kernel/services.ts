@@ -1,14 +1,20 @@
 // Services and slots between plugins, on the kernel core (kernel.ts; plugin-kernel design §5.2, §5.3; kernel step 1 step 3).
 //
-// A plugin's declaration (its manifest's `provides`, `requires`, `uses`; read for built-in plugins only in step 1) is
-// installed before it loads. The kernel then:
-//   - refuses a declaration that would make a `requires` cycle, or provide a service or slot another plugin provides;
-//   - starts or activates an instance only while every service it `requires` is provided by an active instance (P3);
+// A plugin's declaration (its manifest's `provides`, `requires`, `uses`, and the slots it `contributes` to; read for
+// built-in plugins only in step 1) is installed before it loads. A plugin depends on another when it requires a service
+// the other provides or contributes to a slot the other owns. The kernel then:
+//   - refuses a declaration that would make a dependency cycle, or provide a service or slot another plugin provides;
+//   - starts or activates an instance only while every service it `requires` is provided by an active instance (P3) and
+//     the owner of every slot it declares it contributes to is active, not unloading (K2, found by the TLA+ model);
 //     `uses` is soft: the service may be absent, and a call then finds nothing;
-//   - unloads the instances that require a plugin's services before that plugin's own undos start (P4), keeping them
-//     wanted, so they load again (re-bound to the new provider) once the service is back, e.g. after a `swap`;
-//   - shows a contribution in a slot only while both its contributor and the slot's owner are active (P2); a contribution
-//     to a slot whose owner is gone stays dormant with its contributor and shows again when the owner is back.
+//   - accepts a contribution only while the slot's owner is active (K2): one into a slot whose owner is absent, loading
+//     or being torn down is refused and undone at once, so a slot never holds what its owner's teardown races;
+//   - unloads a plugin's dependents (the instances requiring its services, or contributing to its slots) before that
+//     plugin's own undos start, and starts them only once every dependent has finished unloading, all its undos done,
+//     not merely left the active state (P4 and K1, found by the TLA+ model: a dependent still unloading would otherwise
+//     keep a contribution in the slot after its owner is gone); the dependents stay wanted, so they load again (re-bound
+//     to the new provider) once it is back, e.g. after a `swap`;
+//   - shows a contribution only while both its contributor and the slot's owner are active (P2).
 // Every service, slot and contribution is an ordinary registration of its plugin, so it goes with the plugin's unload.
 
 import { KernelError, PluginKernel, type KernelOptions, type Registration, type Undo } from "./kernel";
@@ -18,6 +24,8 @@ export interface PluginDeclaration {
   provides?: { services?: readonly string[]; slots?: readonly string[] };
   requires?: { services?: readonly string[] };
   uses?: { services?: readonly string[] };
+  /** The slots (of other plugins) it contributes to: it loads only while their owners are active, and unloads before them. */
+  contributes?: { slots?: readonly string[] };
 }
 
 /** Loads one instance: registers what the plugin adds (sync or async); the kernel activates it when this settles. */
@@ -57,6 +65,7 @@ export class Kernel extends PluginKernel {
       provides: { services: list(declaration.provides?.services), slots: list(declaration.provides?.slots) },
       requires: { services: list(declaration.requires?.services) },
       uses: { services: list(declaration.uses?.services) },
+      contributes: { slots: list(declaration.contributes?.slots) },
     };
     for (const other of this.declarations.values()) {
       if (other.name === next.name) continue;
@@ -66,7 +75,7 @@ export class Kernel extends PluginKernel {
       if (slot) throw new KernelError("conflict", `Slot "${slot}" is already provided by "${other.name}".`);
     }
     const cycle = findCycle(new Map([...this.declarations, [next.name, next]]));
-    if (cycle) throw new KernelError("cycle", `The plugins' requires make a cycle: ${cycle.join(" → ")}.`);
+    if (cycle) throw new KernelError("cycle", `The plugins' dependencies (requires, slot contributions) make a cycle: ${cycle.join(" → ")}.`);
     this.declarations.set(next.name, next);
   }
 
@@ -85,7 +94,14 @@ export class Kernel extends PluginKernel {
   /** Each installed plugin with the plugins whose services it requires (by declaration). */
   requiresGraph(): Record<string, string[]> {
     const graph: Record<string, string[]> = {};
-    for (const [name, declaration] of this.declarations) graph[name] = providersOf(this.declarations, declaration);
+    for (const [name, declaration] of this.declarations) graph[name] = providersOf(this.declarations, declaration, false);
+    return graph;
+  }
+
+  /** Each installed plugin with the plugins it depends on (by declaration): its services' providers and its slots' owners. */
+  dependencyGraph(): Record<string, string[]> {
+    const graph: Record<string, string[]> = {};
+    for (const [name, declaration] of this.declarations) graph[name] = providersOf(this.declarations, declaration, true);
     return graph;
   }
 
@@ -146,8 +162,24 @@ export class Kernel extends PluginKernel {
     return this.slots.get(slot)?.plugin ?? null;
   }
 
-  /** `plugin` adds `entry` to `slot` (whoever owns it, or nobody yet: then it is dormant). `undo` is anything more to take back. */
+  /** The plugin that declares it provides `slot` (null: none installed). */
+  declaredOwner(slot: string): string | null {
+    for (const declaration of this.declarations.values()) if (declaration.provides?.slots?.includes(slot)) return declaration.name;
+    return null;
+  }
+
+  /**
+   * `plugin` adds `entry` to `slot`. Accepted only while the slot's owner has it and is active (or `plugin` owns it
+   * itself, K2); otherwise refused and `undo` (anything more to take back) runs at once. Returns null then.
+   */
   contribute<T>(plugin: string, slot: string, entry: T, undo?: Undo): Registration | null {
+    const owner = this.slots.get(slot);
+    if (!owner || (owner.plugin !== plugin && this.state(owner.plugin) !== "active")) {
+      const named = owner?.plugin ?? this.declaredOwner(slot);
+      const state = named ? this.state(named) : "absent";
+      const why = !named ? "no plugin owns the slot" : state === "active" ? `the slot's owner "${named}" has not opened it` : `the slot's owner "${named}" is ${state}`;
+      return this.refuse(plugin, "contribution", slot, () => undo?.(), why);
+    }
     let registration: Registration | null = null;
     registration = this.register(plugin, "contribution", slot, () => {
       if (registration) this.contributions.delete(registration.id);
@@ -166,7 +198,7 @@ export class Kernel extends PluginKernel {
       .map((contribution) => ({ plugin: contribution.plugin, entry: contribution.entry as T, registration: contribution.registration }));
   }
 
-  /** Every contribution held (shown or dormant), by registration order. */
+  /** Every contribution held (shown, or held while its contributor or the slot's owner is loading or unloading), by registration order. */
   allContributions<T = unknown>(): { plugin: string; slot: string; entry: T }[] {
     return [...this.contributions.values()].map(({ plugin, slot, entry }) => ({ plugin, slot, entry: entry as T }));
   }
@@ -176,6 +208,19 @@ export class Kernel extends PluginKernel {
   /** The plugins someone wants loaded (they load again by themselves when what they require comes back). */
   wanted(): string[] {
     return [...this.wantedSet];
+  }
+
+  /**
+   * What `plugin` waits for before it may load: each required service no active instance provides (`"name"`), and each
+   * slot it declares it contributes to whose installed owner is not active (`slot "name"`). A slot no installed plugin
+   * provides does not hold it back (its contributions there are refused until an owner comes).
+   */
+  waitingFor(plugin: string): string[] {
+    const slots = (this.declarations.get(plugin)?.contributes?.slots ?? []).filter((slot) => {
+      const owner = this.declaredOwner(slot);
+      return owner !== null && owner !== plugin && this.state(owner) !== "active";
+    });
+    return [...this.missing(plugin).map((service) => `"${service}"`), ...slots.map((slot) => `slot "${slot}"`)];
   }
 
   /** The required services that no active instance provides now. */
@@ -215,8 +260,7 @@ export class Kernel extends PluginKernel {
     if (state === "active") return Promise.resolve({ status: "active" });
     if (state === "loading") return this.loads.get(plugin) ?? Promise.resolve({ status: "active" });
     if (state === "unloading") return (this.unload(plugin, "swap") ?? Promise.resolve()).then(() => (this.wantedSet.has(plugin) ? this.tryLoad(plugin) : { status: "waiting", missing: [] }));
-    const missing = this.missing(plugin);
-    if (missing.length) return Promise.resolve({ status: "waiting", missing });
+    if (this.waitingFor(plugin).length) return Promise.resolve({ status: "waiting", missing: this.waitingFor(plugin) });
     const loader = this.loaders.get(plugin);
     const generation = this.startLoad(plugin);
     const failed = (error: unknown): Promise<LoadOutcome> => {
@@ -225,7 +269,7 @@ export class Kernel extends PluginKernel {
       return (this.unload(plugin, "request") ?? Promise.resolve()).then(() => ({ status: "failed" as const, message }));
     };
     const finish = (): Promise<LoadOutcome> | LoadOutcome => {
-      if (this.state(plugin) !== "loading" || this.generation(plugin) !== generation) return { status: "waiting", missing: this.missing(plugin) };
+      if (this.state(plugin) !== "loading" || this.generation(plugin) !== generation) return { status: "waiting", missing: this.waitingFor(plugin) };
       try {
         this.activate(plugin);
       } catch (error) {
@@ -253,7 +297,7 @@ export class Kernel extends PluginKernel {
       for (let progress = true; progress;) {
         progress = false;
         for (const plugin of this.wantedSet) {
-          if (this.state(plugin) !== "absent" || this.missing(plugin).length || !this.loaders.has(plugin)) continue;
+          if (this.state(plugin) !== "absent" || this.waitingFor(plugin).length || !this.loaders.has(plugin)) continue;
           void this.tryLoad(plugin);
           progress = true;
         }
@@ -268,6 +312,8 @@ export class Kernel extends PluginKernel {
   protected override checkCanLoad(plugin: string): void {
     const missing = this.missing(plugin);
     if (missing.length) throw new KernelError("missing", `Plugin "${plugin}" requires ${missing.map((name) => `"${name}"`).join(", ")}, which no active plugin provides.`);
+    const slots = this.waitingFor(plugin).filter((item) => item.startsWith("slot "));
+    if (slots.length) throw new KernelError("missing", `Plugin "${plugin}" contributes to ${slots.join(", ")}, whose owner is not active.`);
   }
 
   protected override checkCanActivate(plugin: string): void {
@@ -279,16 +325,25 @@ export class Kernel extends PluginKernel {
   }
 
   /**
-   * The instances (not absent) that require a service `plugin` provides, by its declaration or its registrations; the last
-   * loaded first, as unloadAll and the undos go.
+   * The instances (not absent) that depend on `plugin`: they require a service it provides, or contribute to a slot it owns
+   * (by declaration or by a live registration); the last loaded first, as unloadAll and the undos go. The unload waits
+   * until each of them has finished unloading (K1).
    */
   protected override dependentsOf(plugin: string): string[] {
     const provided = new Set([
       ...(this.declarations.get(plugin)?.provides?.services ?? []),
       ...[...this.services].filter(([, held]) => held.plugin === plugin).map(([service]) => service),
     ]);
-    if (!provided.size) return [];
-    return this.plugins().reverse().filter((other) => other !== plugin && (this.declarations.get(other)?.requires?.services ?? []).some((service) => provided.has(service)));
+    const owned = new Set([
+      ...(this.declarations.get(plugin)?.provides?.slots ?? []),
+      ...[...this.slots].filter(([, held]) => held.plugin === plugin).map(([slot]) => slot),
+    ]);
+    if (!provided.size && !owned.size) return [];
+    const contributors = new Set([...this.contributions.values()].filter((contribution) => owned.has(contribution.slot)).map((contribution) => contribution.plugin));
+    return this.plugins().reverse().filter((other) => other !== plugin && (
+      (this.declarations.get(other)?.requires?.services ?? []).some((service) => provided.has(service))
+      || (this.declarations.get(other)?.contributes?.slots ?? []).some((slot) => owned.has(slot))
+      || contributors.has(other)));
   }
 
   protected override unloadRequested(plugin: string): void {
@@ -296,16 +351,21 @@ export class Kernel extends PluginKernel {
   }
 }
 
-/** The plugins that provide what `declaration` requires. */
-function providersOf(declarations: Map<string, PluginDeclaration>, declaration: PluginDeclaration): string[] {
+/** The plugins that provide what `declaration` requires, and with `slots` the owners of the slots it contributes to (not itself). */
+function providersOf(declarations: Map<string, PluginDeclaration>, declaration: PluginDeclaration, slots: boolean): string[] {
   const out: string[] = [];
   for (const service of declaration.requires?.services ?? []) {
     for (const other of declarations.values()) if (other.provides?.services?.includes(service) && !out.includes(other.name)) out.push(other.name);
   }
+  if (slots) {
+    for (const slot of declaration.contributes?.slots ?? []) {
+      for (const other of declarations.values()) if (other.name !== declaration.name && other.provides?.slots?.includes(slot) && !out.includes(other.name)) out.push(other.name);
+    }
+  }
   return out;
 }
 
-/** A cycle in the requires graph (the plugins on it, the first repeated at the end), or null. */
+/** A cycle in the dependency graph (requires and slot contributions; the plugins on it, the first repeated at the end), or null. */
 export function findCycle(declarations: Map<string, PluginDeclaration>): string[] | null {
   const state = new Map<string, "open" | "done">();
   const path: string[] = [];
@@ -315,7 +375,7 @@ export function findCycle(declarations: Map<string, PluginDeclaration>): string[
     state.set(name, "open");
     path.push(name);
     const declaration = declarations.get(name);
-    for (const next of declaration ? providersOf(declarations, declaration) : []) {
+    for (const next of declaration ? providersOf(declarations, declaration, true) : []) {
       const cycle = visit(next);
       if (cycle) return cycle;
     }

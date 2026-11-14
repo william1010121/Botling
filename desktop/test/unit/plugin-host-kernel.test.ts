@@ -166,6 +166,6 @@ describe("the plugin host on the kernel", () => {
     const without = await host.sync([spec("note"), spec("other")]);
     expect(order.splice(0)).toEqual(["dispose note", "dispose coach", "dispose chat"]);
     expect(without.loaded).toEqual(["other"]);
-    expect(without.failed).toEqual([{ name: "note", message: 'It requires "quote", which no loaded plugin provides.' }]);
+    expect(without.failed).toEqual([{ name: "note", message: 'It needs "quote", which no loaded plugin provides.' }]);
   });
 });
