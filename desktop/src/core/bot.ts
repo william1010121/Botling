@@ -252,6 +252,38 @@ export interface BotOptions {
   launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native"; claudeWorkerLimit?: number; specWriters?: readonly string[] };
   /** The app-wide agent registry (agents.json): agents it hosts for another owner, and agents it owns that run elsewhere. */
   agents?: AgentPort;
+  /**
+   * Botling 3's server only (2.x leaves it unset): asked before a turn is routed to a head. True keeps the turn
+   * aside (not routed); the server records it in its effect outbox and routes it later with `release()`.
+   */
+  deferTurn?: (turn: DeferredTurn) => boolean;
+}
+
+/** The ids a Botling 3 server chose for a turn before the core makes it (its intent was committed first). */
+export interface PresetTurnIds {
+  turnId: string;
+  /** The reply's chat line. */
+  messageId: string;
+  /** The user's line (chat.send). */
+  userId?: string;
+}
+
+/** A turn the server may keep aside (`BotOptions.deferTurn`). */
+export interface DeferredTurn {
+  botId: string;
+  turnId: string;
+  messageId: string;
+  userId: string | null;
+  origin: "user" | "app" | "background" | "tidy";
+  words: string;
+  /** The head it goes to. */
+  engine: Engine;
+  /** A routine's run (its time came, or its watch failed). */
+  routine: boolean;
+  /** Settles once this turn ended, however it ended (a turn another turn read in settles when that one ends, or never). */
+  done: Promise<Status>;
+  /** Routes it now; resolves with the turn that took it (another turn under way may read it in) and how it ended. */
+  release(): { turnId: string; done: Promise<Status> };
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -313,6 +345,10 @@ interface Turn {
   callInBy?: "user";
   /** Its turn on the report or note of a worker it started in a call-in: its reply goes back to that chat too. */
   relayTo?: CallInRelay;
+  /** A routine's run (Botling 3's server records it in its effect outbox before it starts). */
+  routine?: boolean;
+  /** Already past `deferTurn` (released by the server, or never deferred). */
+  released?: boolean;
 }
 
 /** What a bot said for its turn in another chat (1.x's `GroupAnswer`). */
@@ -2043,8 +2079,8 @@ export class Bot {
    * showing; `decisionOwner`: a shared decision's answer, for the head that asked it only; `via`: a
    * plugin sent it (its title, shown on the line).
    */
-  send(text: string, { replyTo, to, appNote, decisionOwner, files, originals, via, onDelivery }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; originals?: string[]; via?: string; onDelivery?: (delivered: boolean) => void } = {}): ResultOf<"chat.send"> {
-    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files, ...(originals ? { originals } : {}), via, onDelivery });
+  send(text: string, { replyTo, to, appNote, decisionOwner, files, originals, via, onDelivery, ids }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; originals?: string[]; via?: string; onDelivery?: (delivered: boolean) => void; ids?: PresetTurnIds } = {}): ResultOf<"chat.send"> {
+    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files, ...(originals ? { originals } : {}), via, onDelivery, ...(ids ? { ids } : {}) });
     this.refuseIfClosed();
     const words = text.trim();
     if (!words && !files?.length) throw new ContractError("bad_request", "Nothing to send.");
@@ -2056,7 +2092,7 @@ export class Bot {
     const heads = this.headsSettings;
     const two = hasTwo(heads);
     const target = fitted(heads, decisionOwner ?? to ?? resolvePrimary(heads, this.appPrimary()), this.appPrimary());
-    const user: ChatRecord = { id: newId(), role: "user", text: words, date: toSwiftDate() };
+    const user: ChatRecord = { id: ids?.userId ?? newId(), role: "user", text: words, date: toSwiftDate() };
     if (two) user.to = target;
     if (via) user.via = via;
     if (kept.length) user.attachments = kept.map((file) => ({ url: file.url, kind: file.kind }));
@@ -2079,26 +2115,28 @@ export class Bot {
     if (kept.length) lines.push(attachmentList(kept.map((file) => file.path)));
     const message = lines.join("\n\n");
     if (!two) {
-      const turn = this.route(this.watchDelivery(this.newTurn("user", message, user.id), onDelivery));
+      const turn = this.route(this.watchDelivery(this.newTurn("user", message, user.id, ids), onDelivery));
       return { messageId: turn.messageId, turnId: turn.id };
     }
     this.conduct(this.conductor.userMessage(words));
     if (decisionOwner) {
       // A shared decision has one owner: no copy goes to the other head as context.
-      const turn = this.deliverTo(decisionOwner, message, user.id, { delivery: onDelivery });
+      const turn = this.deliverTo(decisionOwner, message, user.id, { delivery: onDelivery, ids });
       return { messageId: turn.messageId, turnId: turn.id };
     }
-    const turn = this.deliverTo(target, message, user.id, { delivery: onDelivery });
+    const turn = this.deliverTo(target, message, user.id, { delivery: onDelivery, ids });
     return { messageId: turn.messageId, turnId: turn.id };
   }
 
   /** A turn for `head` (this bot's or its partner's), routed there now. */
-  private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery">> = {}): Turn {
+  private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds } = {}): Turn {
     // Work for a head the bot does not have (a hand-off from a bot with one head): made when first needed (1.x's `bot(for:)`).
     this.requireEngineRoute(head);
     const bot = this.botFor(head) ?? this.owner.makePartner(head);
     if (!bot) throw new ContractError("conflict", "Requested engine could not be created; nothing was rerouted.");
-    const turn = bot.newTurn(extra.origin ?? (userId ? "user" : "app"), words, userId);
+    const turn = bot.newTurn(extra.origin ?? (userId ? "user" : "app"), words, userId, extra.ids);
+    if (extra.routine) turn.routine = true;
+    if (extra.released) turn.released = true;
     if (extra.conducted) turn.conducted = true;
     if (extra.handoffId) turn.handoffId = extra.handoffId;
     if (extra.about) turn.about = extra.about;
@@ -2121,13 +2159,24 @@ export class Bot {
     tell?.(true);
   }
 
-  private newTurn(origin: Origin, words: string, userId: string | null): Turn {
+  /**
+   * Botling 3's server: a turn whose intent the server committed before a restart (a routine's run, an answer's
+   * message), made again with the ids it recorded and routed now, past `deferTurn`.
+   */
+  startPresetTurn(spec: { ids: PresetTurnIds; words: string; userId: string | null; origin: "user" | "app"; engine?: Engine; routine?: boolean }): { turnId: string; done: Promise<Status> } {
+    if (this.options.primary) return this.options.primary.startPresetTurn(spec);
+    this.refuseIfClosed();
+    const turn = this.deliverTo(spec.engine ?? this.engine, spec.words, spec.userId, { origin: spec.origin, ids: spec.ids, released: true, ...(spec.routine ? { routine: true } : {}) });
+    return { turnId: turn.id, done: turn.done };
+  }
+
+  private newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn {
     // Your message (or the app's) goes on with the session: the try waiting after an API error is not needed.
     if (origin === "user" || origin === "app") this.clearApiRetry();
     let resolve!: Turn["resolve"];
     const done = new Promise<Status>((r) => (resolve = r));
     const turn: Turn = {
-      id: `t-${randomUUID()}`, messageId: newId(), userId, origin, words, reply: new ReplyText(), steps: [], record: null,
+      id: ids?.turnId ?? `t-${randomUUID()}`, messageId: ids?.messageId ?? newId(), userId, origin, words, reply: new ReplyText(), steps: [], record: null,
       open: true, sent: false, head: null, retried: false, started: toSwiftDate(),
       ended: [], conducted: false, handoffId: null, about: [], peer: new Set(), told: 0, done, resolve,
     };
@@ -2766,6 +2815,15 @@ export class Bot {
 
   /** Where a new turn goes: now, joined with the one under way, or after it. The turn that carries it. */
   private route(turn: Turn): Turn {
+    if (this.options.deferTurn && !turn.released) {
+      turn.released = true;
+      const kept = this.options.deferTurn({
+        botId: this.id, turnId: turn.id, messageId: turn.messageId, userId: turn.userId, origin: turn.origin, words: turn.words,
+        engine: this.engine, routine: turn.routine === true, done: turn.done,
+        release: () => ({ turnId: this.route(turn).id, done: turn.done }),
+      });
+      if (kept) return turn;
+    }
     const routed = this.routeTurn(turn);
     if (routed === turn && this.queue.includes(turn)) this.redrawQueued(turn);
     return routed;
@@ -5032,7 +5090,7 @@ export class Bot {
       if (wake) {
         this.log(`watch "${title}" failed: the bot is woken`);
         this.add({ id: newId(), role: "divider", text: routineDivider(job, result.ranAt), date: toSwiftDate(result.ranAt) });
-        this.deliverTo(this.engine, watchPrompt(title, command, result, state.failingSince), null, { origin: "app" });
+        this.deliverTo(this.engine, watchPrompt(title, command, result, state.failingSince), null, { origin: "app", routine: true });
       }
       this.routinesChanged();
     }, (error) => {
@@ -5056,7 +5114,7 @@ export class Bot {
     this.add({ id: newId(), role: "divider", text: routineDivider(job, now), date: toSwiftDate(now) });
     const prompt = routinePrompt(job, this.profile.role, () => this.options.projectBriefing?.() ?? "");
     this.log(`routine "${routineTitle(job.task)}" runs`);
-    this.deliverTo(this.engine, prompt, null, { origin: "app" });
+    this.deliverTo(this.engine, prompt, null, { origin: "app", routine: true });
   }
 
   // ------------------------------------------------------------------------------------------

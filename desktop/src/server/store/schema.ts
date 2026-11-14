@@ -100,6 +100,19 @@ CREATE TABLE retired (
 ) WITHOUT ROWID;
 `;
 
+// v3 (M1 step 6, src/server/effects and src/server/intents):
+// - effects.botId / turnId: the turn an effect row is (a chat.send's, a routine's, an answer's, or one the core began by
+//   itself), found by turn for `turn.stop` and the `turn.finished` event; effects_by_queue orders queued rows.
+// - fulltext: the whole text of a line or turn whose entry had to be cut to fit one frame (§5.2: an entry is at most
+//   ~252 KiB, a 2.x line up to 400,000 characters). key = the line id, or "turn:<turnId>"; seq = the entry it belongs to.
+const V3 = `
+ALTER TABLE effects ADD COLUMN botId TEXT;
+ALTER TABLE effects ADD COLUMN turnId TEXT;
+CREATE INDEX effects_by_turn ON effects (botId, turnId);
+CREATE INDEX effects_by_queue ON effects (state, stream, seq);
+CREATE TABLE fulltext (stream TEXT NOT NULL, key TEXT NOT NULL, seq INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (stream, key)) WITHOUT ROWID;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -117,6 +130,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "log streams (src/server/log): each entry's logId, the evicted tail, retired logIds (D50)",
     up(db) {
       db.exec(V2);
+    },
+  },
+  {
+    version: 3,
+    description: "effect outbox by turn (src/server/effects), full text of cut entries",
+    up(db) {
+      db.exec(V3);
     },
   },
 ];

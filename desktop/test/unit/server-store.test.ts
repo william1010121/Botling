@@ -141,7 +141,7 @@ describe("schema and migrations (v1 §7.3)", () => {
     const v2: Migration = { version: 2, description: "test column", up: (db) => db.exec("ALTER TABLE bots ADD COLUMN extra TEXT") };
     const store = await open(dir, { migrations: [...MIGRATIONS.slice(0, 1), v2] });
     expect(store.migrated).toEqual([2]);
-    expect(store.meta("schemaVersion")).toBe("2");
+    expect(store.meta("schemaVersion")).toBe(String(LATEST_SCHEMA_VERSION));
     const backups = listBackups(store.backupsDir, "pre-migration");
     expect(backups).toHaveLength(1);
     const copy = openDb(backups[0], { readOnly: true });
