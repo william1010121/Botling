@@ -148,6 +148,12 @@ export const CmdResult = msg("cmd.result", { slot: Slot, outcome: Outcome, logId
   .refine((result) => result.seq !== null || (result.outcome.kind === "refused" && result.outcome.reason === "slot conflict"), { message: "only a slot conflict has no entry", path: ["seq"] });
 /** Sent to an earlier incarnation of the owner: re-send with `inc` once you have its `reset`. Not an outcome (D49). */
 export const CmdRetry = msg("cmd.retry", { slot: Slot, inc: LogId });
+/**
+ * The answer to a `cancel` that came before the slot was decided (D59): the cancel is committed, the slot will be
+ * `cmd.cancelled`. A cancel of a slot already decided is answered by that slot's stored `cmd.result` instead, so every
+ * `cancel` gets exactly one of the two. A forwarding server (M3) deletes its `forwardq` row for the cancel only on one.
+ */
+export const CancelNoted = msg("cancel.noted", { slot: Slot });
 
 // ---------------------------------------------------------------------------------------------
 // Reads that need no slot (§11.1): local socket requests answered by `res`
@@ -310,6 +316,7 @@ export const MESSAGES = {
   batch: Batch, snap: Snap, reset: Reset, stale: Stale, peer: Peer,
   live: Live, "live.resync": LiveResync,
   cmd: Cmd, cancel: Cancel, held: Held, "cmd.result": CmdResult, "cmd.retry": CmdRetry,
+  "cancel.noted": CancelNoted,
   req: Req, res: Res, "res.part": ResPart,
   "content.find": ContentFind, "content.found": ContentFound, "content.open": ContentOpen, "content.file": ContentFile, "content.gone": ContentGone,
   "content.get": ContentGet, "content.meta": ContentMeta, "content.chunk": ContentChunk, "content.credit": ContentCredit, "content.cancel": ContentCancel,

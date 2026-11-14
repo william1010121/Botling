@@ -481,3 +481,98 @@ describe("the owner's slot check (slotAuthorize)", () => {
     expect(authorize(tx, { slot: slot("admin-ish"), cmd: { type: "mobile.pair" } as unknown as Command, scope: "read" })).toMatchObject({ reason: "scope" });
   });
 });
+
+// D58: one session is a FIFO stream; a dropped or reordered frame voids the session, and the owner commits one
+// session's commands of a queue in send order. D59: every `cancel` is answered.
+describe("D58: one session's commands commit in send order; a broken stream ends the session", () => {
+  const cmdKinds = (s: Server) => s.entries(bot).filter((e) => e.kind.startsWith("cmd.")).map((e) => `${e.kind}#${e.slot?.n}`);
+
+  it("back-to-back commands of one queue (slow legacy, legacy, intent) all commit, in slot order, in the same session", async () => {
+    const s = await server();
+    const { device } = await paired(s);
+    const run = s.engine.run.bind(s.engine);
+    // The first legacy handler is slow: before D58 the copies behind it were checked first, slot 2 (legacy) was dropped
+    // unanswered and slot 3 waited behind it for good.
+    let slow = true;
+    s.engine.run = async (cmd: Command) => { if (slow && cmd.type === "waiting.ignore") { slow = false; await new Promise((r) => setTimeout(r, 40)); } return run(cmd); };
+    const slots = [device.slot(bot), device.slot(bot), device.slot(bot)];
+    device.cmd(slots[0]!, { type: "waiting.ignore", botId: BOT, text: "first" });
+    device.cmd(slots[1]!, { type: "waiting.ignore", botId: BOT, text: "second" });
+    device.cmd(slots[2]!, { type: "chat.send", botId: BOT, text: "third" });
+    for (const slot of slots) expect((await device.result(slot)).outcome.kind).toBe("applied");
+    expect(cmdKinds(s)).toEqual(["cmd.applied#1", "cmd.applied#2", "cmd.applied#3"]);
+    expect(device.got.some((m) => m.t === "bye")).toBe(false);
+    expect(s.runtime.slots.heldCount()).toBe(0);
+  });
+
+  /** Lets the test reorder or drop the device's frames on their way to the server. */
+  function tap(device: Device): { frames: (edit: (frame: Uint8Array) => Uint8Array[]) => void } {
+    const real = device.session;
+    const receive = real.receive.bind(real);
+    let editor: ((frame: Uint8Array) => Uint8Array[]) | null = null;
+    real.receive = (frame: Uint8Array) => { for (const f of editor ? editor(frame) : [frame]) receive(f); };
+    return { frames: (edit) => { editor = edit; } };
+  }
+
+  for (const [name, edit] of [
+    ["reordered", (): ((frame: Uint8Array) => Uint8Array[]) => { let held: Uint8Array | null = null; return (frame) => { if (!held) { held = frame; return []; } return [frame, held]; }; }],
+    ["dropped", (): ((frame: Uint8Array) => Uint8Array[]) => { let first = true; return (frame) => { if (first) { first = false; return []; } return [frame]; }; }],
+  ] as const) {
+    it(`a ${name} frame ends the session before any later command is opened; re-sent in order on a new session, they commit in order`, async () => {
+      const s = await server();
+      const { device, keys } = await paired(s);
+      tap(device).frames(edit());
+      const first = device.slot(bot), second = device.slot(bot);
+      device.cmd(first, { type: "chat.send", botId: BOT, text: "one" });
+      device.cmd(second, { type: "chat.send", botId: BOT, text: "two" });
+      await waitFor(() => device.session.link.ending, "the server ends the session");
+      expect(device.session.link.ending).toMatchObject({ reason: "order" });
+      await s.runtime.scope.submit(() => undefined);
+      // Slot 2 was never opened: nothing committed, nothing held ahead of the missing slot 1.
+      expect(cmdKinds(s)).toEqual([]);
+      expect(s.runtime.slots.heldCount()).toBe(0);
+      // The front end re-attaches and re-sends its outbox in slot order.
+      const again = new Device(s, device.member).dial(keys);
+      await again.hello();
+      again.cmd(first, { type: "chat.send", botId: BOT, text: "one" });
+      again.cmd(second, { type: "chat.send", botId: BOT, text: "two" });
+      expect((await again.result(first)).outcome.kind).toBe("applied");
+      expect((await again.result(second)).outcome.kind).toBe("applied");
+      expect(cmdKinds(s)).toEqual(["cmd.applied#1", "cmd.applied#2"]);
+    });
+  }
+
+  it("a copy the owner cannot keep (a legacy copy ahead of its predecessor) ends the session instead of going unanswered", async () => {
+    const s = await server();
+    const { device } = await paired(s);
+    // Slot 2 with slot 1 never sent: the session broke FIFO (a front end bug or a lost frame the link did not see).
+    device.cmd(device.slot(bot, 2), { type: "waiting.ignore", botId: BOT, text: "second" });
+    expect(await device.bye()).toMatchObject({ reason: "malformed", detail: expect.stringMatching(/D58/) });
+    await s.runtime.scope.submit(() => undefined);
+    expect(cmdKinds(s)).toEqual([]);
+  });
+});
+
+describe("D59: every cancel is answered", () => {
+  it("a cancel ahead of its slot → cancel.noted (committed), then the slot is cmd.cancelled; a cancel too late → the stored cmd.result", async () => {
+    const s = await server();
+    const { device } = await paired(s);
+    const first = device.slot(bot);
+    device.send({ t: "cancel", slot: first } as Message);
+    const noted = await device.wait((m): m is MessageOf<"cancel.noted"> => m.t === "cancel.noted", "cancel.noted");
+    expect(noted.slot).toEqual(first);
+    device.cmd(first, { type: "chat.send", botId: BOT, text: "never mind" });
+    expect((await device.result(first)).outcome.kind).toBe("cancelled");
+    expect(s.entries(bot).some((e) => e.kind === "message.added")).toBe(false);
+
+    const second = device.slot(bot);
+    device.cmd(second, { type: "chat.send", botId: BOT, text: "kept" });
+    expect((await device.result(second)).outcome.kind).toBe("applied");
+    device.send({ t: "cancel", slot: second } as Message);
+    await waitFor(() => device.got.filter((m) => m.t === "cmd.result" && m.slot.n === second.n).length === 2 || null, "the stored result again");
+    const answers = device.got.filter((m) => (m.t === "cmd.result" || m.t === "cancel.noted") && m.slot.n === second.n);
+    expect(answers.map((m) => m.t)).toEqual(["cmd.result", "cmd.result"]);
+    expect(answers[1]).toMatchObject({ outcome: { kind: "applied" } });
+    expect(device.got.filter((m) => m.t === "cancel.noted")).toHaveLength(1);
+  });
+});

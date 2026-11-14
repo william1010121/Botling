@@ -19,7 +19,15 @@
 //     apply throws SlotRefusal          → cmd.refused{reason} (the apply's writes rolled back)
 //     else                              → the apply's intent entries + cmd.applied{slot, result}
 //   then receipt(n, h, outcome), next = n + 1, commit, cmd.result{slot, outcome, logId, seq}, held slots in turn.
-//   on cancel(n): n < next → "too late" with the stored outcome; else n joins cancels (committed).
+//   on cancel(n): n < next → "too late" with the stored outcome; else n joins cancels (committed). Either way the
+//   canceller gets one answer (D59, `cancelAnswer`): the stored `cmd.result`, or `cancel.noted` once committed.
+//
+// Order (D58): a slot is decided only when it is exactly `next`, so within a queue outcomes commit in slot order; a
+// held copy is re-run only by `pump`, in slot order, after its predecessor moved `next`. The only way past a slot that
+// never arrived is a floor above `next` (cmd.skipped): the origin computes floor as its smallest unresolved slot, so a
+// floor above `next` names slots the origin already holds an outcome for (seen before a rewind or restore), never one
+// it still wants. A session delivers one queue's copies in send order (the session core chains them), so a gap or a
+// copy dropped from the held buffer means the session broke FIFO: that session is ended and the origin re-sends.
 import type { Command } from "../../contract";
 import { GRANT_REFUSAL_DETAIL, queueKey, type CmdBody, type Cursor, type LogId, type MessageOf, type Outcome, type Scope, type Slot, type Via } from "../../protocol";
 import type { Command as StoreCommand, Db } from "../store";
@@ -70,6 +78,23 @@ export type ReceiveStatus =
   | { status: "dropped" };
 
 export type CancelStatus = { status: "too late"; message: CmdResultMessage } | { status: "cancelled ahead" };
+export type CancelNotedMessage = MessageOf<"cancel.noted">;
+/** What a `cancel` is answered with (D59): exactly one per cancel the owner committed or found too late. */
+export type CancelAnswer = CmdResultMessage | CancelNotedMessage;
+
+/** The answer the canceller gets for a `cancel` (D59): the stored outcome when too late, otherwise `cancel.noted`. */
+export function cancelAnswer(slot: Slot, status: CancelStatus): CancelAnswer {
+  return status.status === "too late" ? status.message : { t: "cancel.noted", slot };
+}
+
+/**
+ * The slot a message answers a `cancel` for, or null (D59). M3's forwarding server keeps a forwarded `cancel` in its
+ * `forwardq` until this returns the cancel's slot for a message from the owner; only then may it delete the row (a
+ * `cmd.retry` or `held` is not an answer). The slot must match origin, originEpoch, target and n.
+ */
+export function cancelAnswered(message: { t: string; slot?: Slot }): Slot | null {
+  return (message.t === "cancel.noted" || message.t === "cmd.result") && message.slot ? message.slot : null;
+}
 
 export interface SlotEngineOptions {
   /** The writer's submit (ServerStore.submit): runs a synchronous command in the group-commit transaction. */

@@ -37,6 +37,8 @@ const isJoin = (type: string) => type.startsWith("join.");
  *   beside `prefs.have` / `prefs.rows` (server ↔ server), and server pairing `join.*` (peer servers, pairing session only).
  *   The forwarded rows (`sub`/`ack`/`history`/`cmd`/`cancel`, `batch`/`snap`/`reset`/`stale`, `held`/`cmd.result`/
  *   `cmd.retry`, `content.get/credit/cancel/meta/chunk/gone`) were in the server ↔ server column since M1/M2.
+ * - D59: `cancel.noted`, the answer to a `cancel` that came before its slot was decided (server → FE, and server ↔
+ *   server for the forwarding server's `forwardq`).
  * Rows for messages that have no schema yet (`fetch.*`) are here so the table is whole; a frame naming one is refused
  * as unsupported. `ROLE_ROWS` must hold a row for every message type (checked by the compiler below).
  */
@@ -59,6 +61,7 @@ const ROLE_ROWS = {
   held: rule(false, true, true),
   "cmd.result": rule(false, true, true),
   "cmd.retry": rule(false, true, true),
+  "cancel.noted": rule(false, true, true),
   "content.get": rule(true, false, true),
   "content.credit": rule(true, true, true),
   "content.cancel": rule(true, false, true),

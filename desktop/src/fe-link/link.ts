@@ -97,6 +97,8 @@ export interface PendingView {
   lost: boolean;
   /** Show the "sending" marker (waiting longer than ~150 ms). */
   sending: boolean;
+  /** The owner committed this item's cancel (D59 `cancel.noted`): its outcome will be "cancelled". */
+  cancelNoted?: true;
   createdAt: number;
 }
 
@@ -129,6 +131,8 @@ export class FeLink {
   /** `res` answers too large for one frame, joined from their `res.part`s. */
   private readonly resParts = new ResAssembler();
   private readonly visibleAt = new Map<string, number>();
+  /** Items whose cancel the owner answered with `cancel.noted` (D59); memory only, a re-sent cancel is noted again. */
+  private readonly cancelNoted = new Set<string>();
   private reqCounter = 0;
   private started = false;
   private stopped = false;
@@ -253,6 +257,7 @@ export class FeLink {
         ...(item.state === "not sent" && item.outcome?.kind === "refused" && REFUSE_REASON_TEXT[item.outcome.reason] ? { reasonText: REFUSE_REASON_TEXT[item.outcome.reason] } : {}),
         lost: item.lost === true,
         sending: item.state === "waiting" && now - shown >= this.markerMs,
+        ...(this.cancelNoted.has(key) && (item.state === "waiting" || item.state === "held") ? { cancelNoted: true as const } : {}),
         createdAt: item.createdAt,
       };
     });
@@ -374,6 +379,7 @@ export class FeLink {
       case "held": void this.outbox.held(message.slot, message.at).then((item) => { if (item) this.emit({ type: "pending" }); }, (error) => this.emit({ type: "error", error })); return;
       case "cmd.result": this.onResult(message); return;
       case "cmd.retry": this.onRetry(session, message); return;
+      case "cancel.noted": this.onCancelNoted(message); return;
       case "res": case "history.page": this.onAnswer(message); return;
       case "res.part": this.onResPart(message); return;
       case "content.found": case "content.file": case "content.gone": this.onContentAnswer(message); return;
@@ -541,6 +547,15 @@ export class FeLink {
     void this.resolveSlot(result.slot, result.outcome, { logId: result.logId, seq: result.seq });
   }
 
+  /** D59: the owner committed the cancel; the slot's outcome (cancelled) follows as a `cmd.result` or log entry. */
+  private onCancelNoted(noted: MessageOf<"cancel.noted">): void {
+    const key = slotKey(noted.slot);
+    const item = this.outbox.get(key);
+    if (!item || !item.cancel || (item.state !== "waiting" && item.state !== "held") || this.cancelNoted.has(key)) return;
+    this.cancelNoted.add(key);
+    this.emit({ type: "pending" });
+  }
+
   private onRetry(session: Session, retry: MessageOf<"cmd.retry">): void {
     const key = slotKey(retry.slot);
     const item = this.outbox.get(key);
@@ -562,6 +577,7 @@ export class FeLink {
     }
     if (!result) return;
     this.visibleAt.delete(slotKey(slot));
+    this.cancelNoted.delete(slotKey(slot));
     if (result.kind === "moved") {
       this.visibleAt.set(slotKey(result.item.slot), this.clock.now());
       if (this.session && this.canSend()) this.trySend(this.session, result.item);

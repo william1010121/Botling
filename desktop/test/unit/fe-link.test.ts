@@ -493,3 +493,37 @@ describe("a req answer too large for one frame (M1 demo bug 1: plugins.web)", ()
     expect((await broken)?.message).toMatch(/out of order/);
   });
 });
+
+describe("cancel answers (D59)", () => {
+  it("cancel.noted marks the waiting item; its outcome then comes as cancelled and clears the mark; a cancel too late gets the stored result", async () => {
+    const server = new FakeServer();
+    const clock = new FakeClock();
+    const { link, events } = await openLink(server, new MemoryFeStorage(), clock);
+    await flush();
+    // Keep the item undecided at the owner: its first copy names an incarnation the front end has not heard of yet.
+    server.holdResets = true;
+    server.restore();
+    const item = await link.submit(BOT, react("m1"));
+    await flush();
+    expect(link.pending()[0]).toMatchObject({ state: "waiting" });
+    expect(link.pending()[0].cancelNoted).toBeUndefined();
+    await link.cancel(item.slot);
+    await flush();
+    expect(server.received.filter((m) => m.t === "cancel")).toHaveLength(1);
+    expect(link.pending()[0]).toMatchObject({ state: "waiting", cancelNoted: true });
+
+    server.releaseResets();
+    await flush();
+    expect(server.applied).toEqual([]);
+    expect(outcomesOf(events, item.slot)).toEqual([{ kind: "cancelled" }]);
+    expect(link.pending()[0]).toMatchObject({ state: "not sent", reason: "cancelled" });
+    expect(link.pending()[0].cancelNoted).toBeUndefined();
+
+    // A stray cancel.noted for an item already resolved changes nothing.
+    const noted = events.filter((e) => e.type === "pending").length;
+    server.send({ t: "cancel.noted", slot: item.slot });
+    await flush();
+    expect(link.pending()[0].cancelNoted).toBeUndefined();
+    expect(events.filter((e) => e.type === "pending").length).toBe(noted);
+  });
+});
