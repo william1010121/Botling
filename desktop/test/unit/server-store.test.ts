@@ -109,7 +109,7 @@ describe("schema and migrations (v1 §7.3)", () => {
     try {
       const tables = reader.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
       expect(tables).toEqual([
-        "bots", "cancels", "cards", "chunk_cache", "content", "content_refs", "effects", "entries", "forwardq", "grants",
+        "bots", "cancels", "cards", "chunk_cache", "content", "content_refs", "effects", "entries", "forwardq", "fulltext", "grants",
         "lists", "media_jobs", "messages", "meta", "myorigins", "prefs", "receipts", "retired", "roster", "rows", "slots", "streams",
         "variants",
       ]);
@@ -141,7 +141,7 @@ describe("schema and migrations (v1 §7.3)", () => {
     const v2: Migration = { version: 2, description: "test column", up: (db) => db.exec("ALTER TABLE bots ADD COLUMN extra TEXT") };
     const store = await open(dir, { migrations: [...MIGRATIONS.slice(0, 1), v2] });
     expect(store.migrated).toEqual([2]);
-    expect(store.meta("schemaVersion")).toBe(String(LATEST_SCHEMA_VERSION));
+    expect(store.meta("schemaVersion")).toBe("2");
     const backups = listBackups(store.backupsDir, "pre-migration");
     expect(backups).toHaveLength(1);
     const copy = openDb(backups[0], { readOnly: true });

@@ -1,6 +1,6 @@
 // M1 step 6: the core set's intent handlers, the effect outbox, recovery, legacy apply, the event tap and oversized
 // entries, over the real server.db (in memory), the real log and slot engine, and a fake engine.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Command } from "../../src/contract";
 import { ENTRY_BYTES_LIMIT, readSnap } from "../../src/server/log";
 import { cutNote, effectCheckpointSink, fitBody, readFullText } from "../../src/server/effects";
@@ -309,9 +309,13 @@ describe("recovery at start", () => {
 describe("legacy apply", () => {
   it("runs the core handler once, then stores its events and the receipt together", async () => {
     const h = await start();
+    await h.runtime.idle(); // the worker's first look at the outbox
+    const submit = vi.spyOn(h.runtime.scope, "submit");
     const outcome = outcomeOf(await h.send({ type: "chat.read", botId: "B1" } as never, { n: 1 }));
     expect(outcome).toMatchObject({ kind: "applied", result: {} });
     expect(kinds(h.db, B1)).toEqual(["chat.decorations", "cmd.applied"]);
+    // The handler's event rode in the receipt's command: the check (admit) and the slot's command, nothing of the tap's own.
+    expect(submit).toHaveBeenCalledTimes(2);
     await h.send({ type: "chat.read", botId: "B1" } as never, { n: 1 });
     expect(h.engine.runs).toHaveLength(1);
   });

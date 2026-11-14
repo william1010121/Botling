@@ -53,6 +53,7 @@ function bodyOf(event: ContractEvent): Record<string, unknown> {
 export class EventTap {
   private pending: ContractEvent[] = [];
   private scheduled = false;
+  private holds = 0;
   private readonly now: () => number;
 
   constructor(private readonly options: EventTapOptions) {
@@ -81,7 +82,27 @@ export class EventTap {
       return;
     }
     this.pending.push(event);
-    if (this.scheduled) return;
+    this.schedule();
+  }
+
+  /**
+   * Keeps events that arrive from now in `pending` until the returned release is called (or a command writes them):
+   * legacy apply holds them while the core's handler runs, so what the handler emitted is stored in the same
+   * transaction as the command's receipt. Release is idempotent.
+   */
+  hold(): () => void {
+    this.holds += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.holds -= 1;
+      this.schedule();
+    };
+  }
+
+  private schedule(): void {
+    if (this.scheduled || this.holds > 0 || !this.pending.length) return;
     this.scheduled = true;
     // An empty command: TxScope.onEnter writes what waits.
     this.options.scope.submit(() => undefined).catch((error) => {

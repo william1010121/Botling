@@ -1,7 +1,8 @@
 // Legacy apply (M1 brief §3): every mutating command outside the core set. The core's own handler runs first (it may
 // be asynchronous: plugin code, a process, the network); then one writer command stores what it emitted (the event
-// tap's waiting events are written at the start of that command, TxScope.onEnter) together with the slot's
-// `cmd.applied` / `cmd.refused` and its receipt.
+// tap holds its own writes meanwhile and its waiting events are written at the start of that command,
+// TxScope.onEnter) together with the slot's `cmd.applied` / `cmd.refused` and its receipt. A handler that runs longer
+// than `holdMs` (50 ms) releases the hold: its later events, and every running turn's, are stored on their own.
 //
 //   copy → admit (read-only):  retry / duplicate / conflict → the slot engine answers as for any command
 //                              hold → dropped (a legacy copy is never kept ahead: the handler must not run before its
@@ -32,6 +33,10 @@ export class LegacyApply {
     private readonly log: SlotLog,
     private readonly engine: TurnEngine,
     private readonly slots: () => SlotEngine,
+    /** Holds the event tap's own writes (EventTap.hold); returns the release. */
+    private readonly holdEvents: () => () => void = () => () => {},
+    /** A handler that runs longer than this lets its events be stored on their own (turn events must not wait). */
+    private readonly holdMs = 50,
   ) {}
 
   async receive(body: CmdBody, options: { scope?: Scope; reply?: ReplySink } = {}): Promise<ReceiveStatus> {
@@ -43,6 +48,9 @@ export class LegacyApply {
     if (admission.kind !== "ready" || admission.cancelled) return this.slots().receive(body, options);
     const key = keyOf(body.slot, hash);
     let run = this.running.get(key);
+    // What the handler emits waits for the command that stores the receipt (TxScope.onEnter writes it first).
+    const release = this.holdEvents();
+    const timer = setTimeout(release, this.holdMs);
     if (!run) {
       run = this.run(body.cmd);
       this.running.set(key, run);
@@ -51,6 +59,8 @@ export class LegacyApply {
       this.ran.set(key, await run);
       return await this.slots().receive(body, options);
     } finally {
+      clearTimeout(timer);
+      release();
       this.running.delete(key);
       this.ran.delete(key);
     }

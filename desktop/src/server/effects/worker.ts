@@ -122,13 +122,12 @@ export class EffectWorker {
   }
 
   /** The tap stored `turn.finished` of `turnId` in `tx`: turns it read in end with it, in the same transaction. */
-  turnEnded(tx: Db, botId: string, turnId: string, status: TurnStatus): void {
+  turnEnded(tx: Db, _botId: string, turnId: string, status: TurnStatus): void {
     const absorbed = this.absorbed.get(turnId);
     if (!absorbed) return;
     this.absorbed.delete(turnId);
     for (const turn of absorbed) this.finish(tx, turn.effectId, turn.botId, turn.turnId, turn.replyId, status);
     this.options.scope.onRollback(() => this.absorbed.set(turnId, absorbed));
-    void botId;
   }
 
   close(): void {

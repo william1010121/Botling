@@ -74,7 +74,7 @@ export class IntentRuntime {
       ...(options.authorize ? { authorize: options.authorize } : {}),
       ...(options.audit ? { audit: options.audit } : {}),
     });
-    this.legacy = new LegacyApply(this.scope, slotLog, options.engine, () => this.slots);
+    this.legacy = new LegacyApply(this.scope, slotLog, options.engine, () => this.slots, () => this.tap.hold());
     options.engine.attach({ event: (event) => this.tap.event(event), deferTurn: (turn) => this.deferTurn(turn) });
   }
 
