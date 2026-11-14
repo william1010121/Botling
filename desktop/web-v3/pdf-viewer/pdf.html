@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0E0E10">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="./pdf-viewer.css">
+<title>PDF</title>
+</head>
+<body>
+<header class="bar">
+  <button type="button" id="close" class="icon" aria-label="Close" title="Close">✕</button>
+  <span id="title" class="title"></span>
+  <span id="page-no" class="page-no" aria-live="polite"></span>
+  <button type="button" id="zoom-out" class="icon" aria-label="Zoom out" title="Zoom out" disabled>−</button>
+  <button type="button" id="zoom-in" class="icon" aria-label="Zoom in" title="Zoom in">+</button>
+  <button type="button" id="outline-toggle" class="icon" aria-label="Contents" title="Contents">☰</button>
+  <button type="button" id="find-toggle" class="icon" aria-label="Find" title="Find">⌕</button>
+</header>
+<form id="find-bar" class="find" hidden>
+  <input id="find-input" type="search" placeholder="Find in this PDF" aria-label="Find in this PDF" enterkeyhint="search" autocomplete="off">
+  <button type="button" id="find-prev" class="icon" aria-label="Previous match">‹</button>
+  <button type="submit" id="find-next" class="icon" aria-label="Next match">›</button>
+  <span id="find-count" class="find-count" aria-live="polite"></span>
+</form>
+<nav id="outline" class="outline" hidden aria-label="Contents"></nav>
+<span id="status" class="status" role="status"></span>
+<main id="pages" class="pages"></main>
+<script type="module" src="./pdf-viewer.js"></script>
+</body>
+</html>

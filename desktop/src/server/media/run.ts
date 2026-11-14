@@ -29,6 +29,8 @@ export interface RunOptions {
   /** Where the running tool's pid is written (and removed after). */
   pidFile?: string;
   signal?: AbortSignal;
+  /** Extra environment for the tool (on top of botlingd's). */
+  env?: Record<string, string>;
 }
 
 /** Runs `tool args…` under `nice` (when found); rejects with `ToolError` on a non-zero exit or a timeout. */
@@ -36,7 +38,7 @@ export function runTool(tools: MediaTools, tool: string, args: string[], options
   const command = tools.paths.nice ?? tool;
   const argv = tools.paths.nice ? ["-n", "10", tool, ...args] : args;
   return new Promise((resolve, reject) => {
-    const child = spawn(command, argv, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, argv, { stdio: ["ignore", "pipe", "pipe"], ...(options.env ? { env: { ...process.env, ...options.env } } : {}) });
     if (options.pidFile && child.pid) {
       try { writeFileSync(options.pidFile, `${child.pid} ${basename(tool)}\n`); } catch { /* best effort */ }
     }
@@ -66,6 +68,8 @@ export function runTool(tools: MediaTools, tool: string, args: string[], options
 
 /** Tools a media job may leave running (the names `runTool` writes in the pid file). */
 const OUR_TOOLS = new Set(["ffmpeg", "ffprobe", "qpdf", "pdftoppm", "sips", "qlmanage"]);
+/** The PDF text job runs botlingd's own runtime (Node, or Electron as Node) on this script (M2 step 15). */
+export const PDF_TEXT_SCRIPT = "pdf-text.cjs";
 
 /**
  * At start: a tool a killed botlingd left running (its pid file names it, and that pid still runs that tool) is
@@ -77,9 +81,12 @@ export function killLeftoverTool(pidFile: string): number | null {
   rmSync(pidFile, { force: true });
   const [pidText, name] = text.trim().split(/\s+/);
   const pid = Number(pidText);
-  if (!Number.isInteger(pid) || pid <= 1 || !name || !OUR_TOOLS.has(name)) return null;
+  const runtime = name === basename(process.execPath);
+  if (!Number.isInteger(pid) || pid <= 1 || !name || (!OUR_TOOLS.has(name) && !runtime)) return null;
   const ps = spawnSync("ps", ["-p", String(pid), "-o", "comm="], { encoding: "utf8" });
   const command = (ps.stdout ?? "").trim();
   if (!command || basename(command) !== name) return null;
+  // Our runtime is stopped only while it runs the PDF text script (never another Node or Electron process).
+  if (runtime && !(spawnSync("ps", ["-p", String(pid), "-o", "args="], { encoding: "utf8" }).stdout ?? "").includes(PDF_TEXT_SCRIPT)) return null;
   try { process.kill(pid, "SIGKILL"); return pid; } catch { return null; }
 }

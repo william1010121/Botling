@@ -244,7 +244,7 @@ describe.skipIf(!HAVE)("media jobs (ffmpeg found)", () => {
     const [s] = streams(String(thumb.path));
     expect(Math.max(s!.width!, s!.height!)).toBeLessThanOrEqual(512);
     const pdfVariants = variantRows(pdf);
-    expect(pdfVariants.map((row) => row.variant)).toEqual(["linearized", "thumb"]);
+    expect(pdfVariants.map((row) => row.variant)).toEqual(["linearized", "text", "thumb"]);
     const [p] = streams(String(pdfVariants.find((row) => row.variant === "thumb")!.path));
     expect(Math.max(p!.width!, p!.height!)).toBeLessThanOrEqual(512);
     const meta = rows("SELECT meta FROM content_meta WHERE id = ?", pdf)[0];
