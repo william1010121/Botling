@@ -6,16 +6,24 @@
 // `inc` every `cmd` carries) → the outbox in slot order, as soon as the owner's inc is known. Duplicates are harmless:
 // the owner answers a copy it has with the stored outcome. With one server (M1) the attached server owns every target.
 //
+// Two servers and more (M3 step 11, v1 §10.1, §11.6, §13.1, §13.3): `welcome.servers` and `peer{…}` give every server's
+// state; the link follows every peer's `srv:` table through the attached server (tables.ts: `rows` batches, the
+// directory of which server owns which bot); a command's `inc` is its owner's logId as this front end knows it; the
+// outbox goes out only after every `srv:` catch-up of the session; `stale{stream, since}` marks a peer's bot as served
+// from the attached server's cache. Delivery states and owner words are in `pending()` (held at <S>, waiting for <P>).
+//
 // Pure TypeScript: no Electron, no core, no Node built-ins; time comes from an injected clock.
 import type { Command } from "../contract";
 import {
-  decodeFrame, encodeChunkFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, REFUSE_REASON_TEXT, ResAssembler, slotKey,
-  type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type Slot, type StreamId, type Target,
+  decodeWireFrame, encodeChunkFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, REFUSE_REASON_TEXT, ResAssembler, slotKey,
+  type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type ServerState, type Slot, type StreamId, type Target,
 } from "../protocol";
+import type { Rows } from "../protocol/table-rows";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";
 import { connReduce, initialConn, versionBelow, writesSent, type ConnEvent, type ConnModel } from "./connection-state";
 import { StreamCursors } from "./cursors";
 import { Outbox, type ResolveResult } from "./outbox";
+import { TableCopies } from "./tables";
 import { SerialWriter, type FeStorage, type OutboxItem, type RetiredLog, type StoredCursor } from "./storage";
 
 /** One transport connection. Frames are whole messages (a byte-stream transport packs them with `packFrame`). */
@@ -64,6 +72,11 @@ export interface FeLinkOptions {
   /** §5.2: ping after 15 s of sending nothing; no frame for 45 s ends the session. */
   pingAfterMs?: number;
   deadAfterMs?: number;
+  /**
+   * M3 step 11: a peer's `srv:` table the attached server has no copy of (no catch-up comes) stops holding the outbox
+   * after this long (default 5 s); a table the front end had is always waited for.
+   */
+  absentTableMs?: number;
   /** §13.4: the "sending" marker shows only after this long without `held` or an outcome (default 150 ms). */
   sendingMarkerMs?: number;
 }
@@ -83,6 +96,12 @@ export type FeLinkEvent =
   | { type: "message"; message: Message }
   /** A session was welcomed (true) or ended (false): uploads (M2 step 12) put again from what the server has. */
   | { type: "attached"; attached: boolean }
+  /**
+   * M3 step 11: what the link knows of the servers changed: a server's state (`welcome.servers`, `peer`), a peer's
+   * `srv:` table (`table`: its stream, the row keys changed and removed), or a stream served from the attached server's
+   * cache (`stale`).
+   */
+  | { type: "servers"; table?: { stream: string; changed: string[]; removed: string[] } }
   /** The server ended the session with `bye` (M2 step 11: `revoked` tells the page to drop what it cached). */
   | { type: "bye"; reason: string; detail?: string }
   | { type: "error"; error: unknown };
@@ -106,7 +125,20 @@ export interface PendingView {
   /** The owner committed this item's cancel (D59 `cancel.noted`): its outcome will be "cancelled". */
   cancelNoted?: true;
   createdAt: number;
+  /** M3 step 11: the server that owns the target (the directory), and its name and state as the attached server says. */
+  owner?: string;
+  ownerName?: string;
+  /** The name of the server that holds it (`heldAt`): "held at <S>". */
+  heldAtName?: string;
+  /** "waiting for <machine>": unresolved while its owner is stale or gone (§11.6). */
+  waitingFor?: string;
 }
+
+/** A server as the attached server sees it (`welcome.servers`, `peer`, v1 §10.5). */
+export interface ServerView { id: string; name: string; state: ServerState; since: number | null; self: boolean }
+
+/** How many settled delivered items the link remembers for a later reset (D50, M3 step 11). */
+const SETTLED_KEPT = 200;
 
 const TURN_END = new Set(["turn.finished", "turn.interrupted", "turn.cancelled"]);
 
@@ -143,6 +175,12 @@ export class FeLink {
   private readonly visibleAt = new Map<string, number>();
   /** Items whose cancel the owner answered with `cancel.noted` (D59); memory only, a re-sent cancel is noted again. */
   private readonly cancelNoted = new Set<string>();
+  /** M3 step 11: the peers' `srv:` tables (tables.ts), every server's state, streams served from a cache. */
+  private readonly tables: TableCopies;
+  private readonly serverViews = new Map<string, ServerView>();
+  private readonly staleStreams = new Map<string, number>();
+  /** Delivered items that left the outbox lately (their line was shown): a reset may yet take them away (D50). */
+  private settledRecent: OutboxItem[] = [];
   private reqCounter = 0;
   private started = false;
   private stopped = false;
@@ -150,10 +188,11 @@ export class FeLink {
   private backoff: number;
   private timers: { reconnect?: unknown; offline?: unknown; ping?: unknown; dead?: unknown } = {};
 
-  private constructor(private readonly options: FeLinkOptions, private readonly writer: SerialWriter, private readonly outbox: Outbox, private readonly cursors: StreamCursors) {
+  private constructor(private readonly options: FeLinkOptions, private readonly writer: SerialWriter, private readonly outbox: Outbox, private readonly cursors: StreamCursors, tablesRetired: Record<string, RetiredLog[]> = {}) {
     this.clock = options.clock ?? systemClock;
     this.conn = initialConn(this.clock.now());
     this.backoff = options.reconnectMinMs ?? 250;
+    this.tables = new TableCopies(tablesRetired);
   }
 
   /** Loads the storage (a fresh or wiped one gets a new origin epoch) and returns a link that has not dialed yet. */
@@ -162,7 +201,7 @@ export class FeLink {
     const state = await options.storage.load();
     const writer = new SerialWriter(options.storage);
     const outbox = await Outbox.open({ origin: options.deviceId, state, writer, newEpoch: options.newEpoch, now: () => clock.now() });
-    return new FeLink(options, writer, outbox, new StreamCursors(state.cursors, state.retired));
+    return new FeLink(options, writer, outbox, new StreamCursors(state.cursors, state.retired), state.retired);
   }
 
   // -------------------------------------------------------------------------------------------
@@ -269,8 +308,48 @@ export class FeLink {
         sending: item.state === "waiting" && now - shown >= this.markerMs,
         ...(this.cancelNoted.has(key) && (item.state === "waiting" || item.state === "held") ? { cancelNoted: true as const } : {}),
         createdAt: item.createdAt,
+        ...this.ownerWords(item),
       };
     });
+  }
+
+  /** Every server as the attached server last said (itself first); empty before the first welcome. */
+  servers(): ServerView[] {
+    return [...this.serverViews.values()].map((view) => ({ ...view }));
+  }
+
+  /** The server that owns a target: `srv:<id>` names it; a bot is a peer's when that peer's table holds it. */
+  ownerOf(target: Target | StreamId): string | null {
+    if (target.startsWith("srv:")) return target.slice(4);
+    if (target.startsWith("bot:")) return this.tables.ownerOfBot(target.slice(4)) ?? this.serverId;
+    return this.serverId;
+  }
+
+  /** A peer's `srv:` table as this front end holds it (summary rows by key); null when not followed. */
+  table(serverId: string): { logId: LogId | null; rev: number; rows: ReadonlyMap<string, unknown>; caught: boolean } | null {
+    const copy = this.tables.get(`srv:${serverId}`);
+    return copy ? { logId: copy.logId, rev: copy.rev, rows: copy.rows, caught: copy.caught } : null;
+  }
+
+  /** When the attached server last heard the stream's owner, while it serves the stream from its cache (`stale`). */
+  staleSince(stream: StreamId): number | null {
+    return this.staleStreams.get(stream) ?? null;
+  }
+
+  private ownerWords(item: OutboxItem): Partial<PendingView> {
+    const owner = this.ownerOf(item.slot.target);
+    const words: Partial<PendingView> = {};
+    if (owner) {
+      words.owner = owner;
+      const view = this.serverViews.get(owner);
+      // Another server's name only: this machine's own items keep this machine's words ("this machine's history").
+      if (view && !view.self) {
+        words.ownerName = view.name;
+        if ((item.state === "waiting" || item.state === "held") && !view.self && view.state !== "live") words.waitingFor = view.name;
+      }
+    }
+    if (item.heldAt) { const at = this.serverViews.get(item.heldAt); if (at) words.heldAtName = at.name; }
+    return words;
   }
 
   /** The running segment of a stream's turn; `stale` while the session is down (§9.4). */
@@ -407,13 +486,18 @@ export class FeLink {
 
   private onFrame(session: Session, frame: string | Uint8Array): void {
     this.armDead(session);
-    const decoded = decodeFrame(frame, "server", { local: this.local });
+    const decoded = decodeWireFrame(frame, "server", { local: this.local });
     if (!decoded.ok) {
       this.send(session, { t: "bye", reason: decoded.bye.reason, detail: decoded.detail });
       this.endSession(session, decoded.detail);
       return;
     }
-    const message = decoded.message;
+    if (decoded.message.t === "rows") {
+      if (!session.welcomed) { this.send(session, { t: "bye", reason: "malformed", detail: `"rows" before welcome` }); this.endSession(session, "message before welcome"); return; }
+      this.onRows(session, decoded.message as Rows);
+      return;
+    }
+    const message = decoded.message as Message;
     if (!session.welcomed && message.t !== "welcome" && message.t !== "ping" && message.t !== "bye") {
       this.send(session, { t: "bye", reason: "malformed", detail: `"${message.t}" before welcome` });
       this.endSession(session, "message before welcome");
@@ -442,6 +526,8 @@ export class FeLink {
         }
         return;
       case "ping": return;
+      case "peer": this.onPeer(session, message); this.emit({ type: "message", message }); return;
+      case "stale": this.staleStreams.set(message.stream, message.since); this.emit({ type: "servers" }); this.emit({ type: "message", message }); return;
       default: this.emit({ type: "message", message });
     }
   }
@@ -458,8 +544,18 @@ export class FeLink {
     if (Object.entries(welcome.next).some(([target, next]) => next > this.outbox.nextN(target as Target))) {
       void this.outbox.rotateEpoch().catch((error) => this.emit({ type: "error", error }));
     }
+    this.serverViews.clear();
+    for (const server of welcome.servers) this.serverViews.set(server.id, { id: server.id, name: server.name, state: server.state, since: server.since, self: server.id === welcome.serverId });
+    if (!this.serverViews.has(welcome.serverId)) this.serverViews.set(welcome.serverId, { id: welcome.serverId, name: welcome.serverId, state: "live", since: null, self: true });
+    for (const server of welcome.servers) if (server.id !== welcome.serverId) this.tables.add(`srv:${server.id}`);
     for (const stream of this.streams()) this.send(session, { t: "sub", stream, cursor: this.cursors.subCursor(stream) });
-    this.reduce({ type: "welcome", catching: this.cursors.catching(this.streams()) });
+    for (const stream of this.tables.streams()) this.send(session, { t: "sub", stream: stream as StreamId, cursor: this.tables.subCursor(stream, this.clock.now()) });
+    this.emit({ type: "servers" });
+    if (this.tables.streams().length) {
+      // A table the attached server has no copy of stops holding the outbox after a while (tablesCaught).
+      this.clock.setTimeout(() => { if (this.session === session && !session.closed) { this.updateCatching(); this.sendOutbox(session); } }, (this.options.absentTableMs ?? 5_000) + 1);
+    }
+    this.reduce({ type: "welcome", catching: this.catchingNow() });
     this.sendOutbox(session);
     this.emit({ type: "attached", attached: true });
   }
@@ -480,9 +576,17 @@ export class FeLink {
     return !!this.session?.welcomed && writesSent(this.conn.state);
   }
 
-  private incFor(_target: Target): LogId | null {
+  /**
+   * The `inc` a command carries: its owner's `srv:` logId as this front end knows it (§11.1, §13.1). Null until every
+   * `srv:` table had its catch-up on this session (the outbox waits for all of them, §13.1 step 2 before 3), so the
+   * directory and the incarnations are current when anything is (re-)sent.
+   */
+  private incFor(target: Target): LogId | null {
     const srv = this.srvStream();
-    return srv ? this.cursors.currentLogId(srv) : null;
+    if (!srv || !this.tablesCaught()) return null;
+    const owner = this.ownerOf(target);
+    if (owner && owner !== this.serverId) return this.tables.get(`srv:${owner}`)?.logId ?? null;
+    return this.cursors.currentLogId(srv);
   }
 
   private sendOutbox(session: Session): void {
@@ -506,6 +610,7 @@ export class FeLink {
 
   private onBatch(session: Session, batch: MessageOf<"batch">): void {
     if (!this.followed(batch.stream)) return;
+    this.freshFrom(batch.stream);
     const decision = this.cursors.onBatch(batch);
     switch (decision.kind) {
       case "drop": return;
@@ -545,6 +650,7 @@ export class FeLink {
 
   private onSnap(session: Session, snap: MessageOf<"snap">): void {
     if (!this.followed(snap.stream)) return;
+    this.freshFrom(snap.stream);
     if (!this.cursors.onSnap(snap)) return;
     this.emit({ type: "snap", snap });
     this.persistCursor(snap.stream, { logId: snap.logId, seq: snap.seq, hash: snap.hash });
@@ -556,18 +662,91 @@ export class FeLink {
   }
 
   private onReset(session: Session, reset: MessageOf<"reset">): void {
+    if (this.tables.has(reset.stream)) { this.onTableReset(session, reset); return; }
     if (!this.followed(reset.stream)) return;
     const added = this.cursors.onReset(reset);
     if (added === null) return;
     void this.writer.run(() => ({ ops: [{ op: "retired", stream: reset.stream, retired: reset.retired.map((old) => ({ logId: old.logId, keptSeq: old.keptSeq })) }], commit: () => undefined }))
       .catch((error) => this.emit({ type: "error", error }));
     void this.outbox.markLost(reset.stream as Target, reset.retired).then((changed) => { if (changed?.length) this.emit({ type: "pending" }); }, (error) => this.emit({ type: "error", error }));
+    this.reviveLost(reset.stream as Target, reset.retired);
     this.dropLive(reset.stream);
-    this.reduce({ type: "reset", ...(reset.restoredTo !== undefined ? { restoredTo: reset.restoredTo } : {}) });
+    // A bot another server owns was reset by that server's restore: its words are the item's ("delivered, then lost
+    // when <P> was restored"), never "this machine's history was restored".
+    const peerBot = reset.stream.startsWith("bot:") ? this.tables.lastOwnerOfBot(reset.stream.slice(4)) : null;
+    if (!peerBot || peerBot === this.serverId) this.reduce({ type: "reset", ...(reset.restoredTo !== undefined ? { restoredTo: reset.restoredTo } : {}) });
     this.emit({ type: "reset", reset });
     // The owner's srv: stream moved: items told to retry under this inc go out now (D49).
     if (reset.stream === this.srvStream()) this.sendOutbox(session);
     this.updateCatching();
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Other servers (M3 step 11)
+
+  private onRows(session: Session, batch: Rows): void {
+    const decision = this.tables.onRows(batch);
+    switch (decision.kind) {
+      case "wait": case "drop": return;
+      case "resub": this.send(session, { t: "sub", stream: batch.stream as StreamId, cursor: decision.cursor }); this.updateCatching(); return;
+      case "apply": {
+        this.emit({ type: "servers", table: { stream: batch.stream, changed: decision.changed, removed: decision.removed } });
+        // Every table caught up: the outbox goes out with each owner's current inc (§13.1).
+        this.sendOutbox(session);
+        this.updateCatching();
+        this.emit({ type: "pending" });
+      }
+    }
+  }
+
+  private onTableReset(session: Session, reset: MessageOf<"reset">): void {
+    const taken = this.tables.onReset(reset);
+    if (!taken) return;
+    if (taken.added.length) {
+      void this.writer.run(() => ({ ops: [{ op: "retired", stream: reset.stream, retired: taken.added }], commit: () => undefined })).catch((error) => this.emit({ type: "error", error }));
+    }
+    void this.outbox.markLost(reset.stream as Target, reset.retired).then((changed) => { if (changed?.length) this.emit({ type: "pending" }); }, (error) => this.emit({ type: "error", error }));
+    this.reviveLost(reset.stream as Target, reset.retired);
+    this.emit({ type: "servers", table: { stream: reset.stream, changed: [], removed: taken.removed } });
+    this.emit({ type: "reset", reset });
+    this.updateCatching();
+    // The whole table of the new logId follows (`after: 0`); items wait for it.
+    void session;
+  }
+
+  private onPeer(session: Session, peer: MessageOf<"peer">): void {
+    if (peer.serverId === this.serverId) return;
+    const known = this.serverViews.get(peer.serverId);
+    this.serverViews.set(peer.serverId, { id: peer.serverId, name: known?.name ?? peer.serverId, state: peer.state, since: peer.since, self: false });
+    if (peer.state === "live") {
+      for (const stream of [...this.staleStreams.keys()]) if (this.ownerOf(stream as StreamId) === peer.serverId) this.staleStreams.delete(stream);
+    }
+    const stream = `srv:${peer.serverId}`;
+    if (!this.tables.has(stream)) {
+      this.tables.add(stream);
+      this.send(session, { t: "sub", stream: stream as StreamId, cursor: this.tables.subCursor(stream, this.clock.now()) });
+      this.updateCatching();
+    }
+    this.emit({ type: "servers" });
+    this.emit({ type: "pending" });
+  }
+
+  /** A frame of the stream came from its owner (through the attached server): it is not stale any more. */
+  private freshFrom(stream: StreamId): void {
+    if (this.staleStreams.delete(stream)) this.emit({ type: "servers" });
+  }
+
+  /** Settled delivered items whose entry a reset took away come back as "delivered, then lost" (D50). */
+  private reviveLost(target: Target, retired: RetiredLog[]): void {
+    const settled = this.settledRecent.filter((item) => item.slot.target === target);
+    if (!settled.length) return;
+    void this.outbox.reviveLost(target, retired, settled).then((back) => {
+      if (!back?.length) return;
+      const keys = new Set(back.map((item) => slotKey(item.slot)));
+      this.settledRecent = this.settledRecent.filter((item) => !keys.has(slotKey(item.slot)));
+      for (const item of back) this.emit({ type: "outcome", item });
+      this.emit({ type: "pending" });
+    }, (error) => this.emit({ type: "error", error }));
   }
 
   private onLive(session: Session, frame: MessageOf<"live">): void {
@@ -575,6 +754,7 @@ export class FeLink {
     const applied = this.receiver.apply(frame);
     if (applied === "resync") this.send(session, { t: "live.resync", stream: frame.stream });
     if (applied !== "applied") return;
+    this.freshFrom(frame.stream);
     this.liveStale.delete(frame.stream);
     this.emit({ type: "live", stream: frame.stream, view: this.receiver.view(frame.stream), stale: false });
   }
@@ -587,7 +767,7 @@ export class FeLink {
   }
 
   private followed(stream: StreamId): boolean {
-    return this.subs.has(stream) || stream === this.srvStream();
+    return this.subs.has(stream) || stream === this.srvStream() || this.tables.has(stream);
   }
 
   private persistCursor(stream: StreamId, cursor: StoredCursor | null): void {
@@ -647,7 +827,10 @@ export class FeLink {
   private async settle(target: Target): Promise<void> {
     try {
       const gone = await this.outbox.settle(target, this.cursors.get(target), !this.followed(target));
-      if (gone?.length) this.emit({ type: "pending" });
+      if (gone?.length) {
+        this.settledRecent = [...this.settledRecent, ...gone].slice(-SETTLED_KEPT);
+        this.emit({ type: "pending" });
+      }
     } catch (error) {
       this.emit({ type: "error", error });
     }
@@ -720,6 +903,7 @@ export class FeLink {
     for (const [req, pending] of this.requests) { this.requests.delete(req); pending.reject(new Error("fe-link: the session ended")); }
     this.resParts.drop();
     this.cursors.detach();
+    this.tables.detach();
     for (const stream of this.subs) {
       const view = this.receiver.view(stream);
       if (view && !this.liveStale.has(stream)) { this.liveStale.add(stream); this.emit({ type: "live", stream, view: { ...view }, stale: true }); }
@@ -764,7 +948,14 @@ export class FeLink {
 
   private updateCatching(): void {
     if (!this.session?.welcomed) return;
-    this.reduce({ type: "catching", catching: this.cursors.catching(this.streams()) });
+    this.reduce({ type: "catching", catching: this.catchingNow() });
+  }
+
+  private tablesCaught(): boolean { return this.tables.allCaught(this.clock.now(), this.options.absentTableMs ?? 5_000); }
+
+  /** A snap or catch-up pages are due on a followed stream, or a peer's table has not had its catch-up yet. */
+  private catchingNow(): boolean {
+    return this.cursors.catching(this.streams()) || !this.tablesCaught();
   }
 
   private reduce(event: ConnEvent): void {

@@ -24,16 +24,24 @@
 //   wrong: a followed chat was replaced by a new `snap` (reset, hash mismatch, a fallback answer), or the link
 //   re-attached after a loss (bots, settings and plugins may have changed meanwhile, as when the 2.x core restarted).
 //
+// - Two servers and more (M3 step 11, v1 §10.1, §11.6, §13.1, §13.3): the bots of the other servers come from the
+//   link's copies of their `srv:` tables (summary rows → `BotView`s in the list, `bot.updated` / `bot.removed` as rows
+//   change); a chat of a peer's bot is a bot stream like any other (the attached server passes it through). The notice
+//   line then also says "<machine> offline · as of <time>" over a peer's bot while that machine is stale (its chat is
+//   the attached server's cache), with how many messages are held at the attached server, "waiting for <machine>".
+//   A message whose outcome a restore of its owner took away shows "delivered, then lost when <machine> was restored".
+//
 // Pure TypeScript over two ports (the link, and the renderer's event sink): no Electron, no Node built-ins.
 import {
   EventEnvelope, MESSAGE_TEXT_LIMIT, PROTOCOL_VERSION,
-  type Command, type CommandType, type Event, type EventEnvelope as EventEnvelopeT, type MessageView, type ResultOf, type WireError,
+  type BotView, type Command, type CommandType, type Event, type EventEnvelope as EventEnvelopeT, type MessageView, type ResultOf, type WireError,
 } from "../contract";
 import {
   BotSnapView, interruptedLine, ProtocolEntryEvent, REFUSE_REASON_TEXT, slotKey,
   type ConnectionState, type Cursor, type Entry, type MessageOf, type Outcome, type Slot, type StreamId, type Target,
 } from "../protocol";
-import type { Clock, ConnModel, FeLinkEvent, OutboxItem, PendingView, StoredCursor } from "../fe-link";
+import type { Clock, ConnModel, FeLinkEvent, OutboxItem, PendingView, ServerView, StoredCursor } from "../fe-link";
+import type { SummaryRow } from "../protocol/table-rows";
 import { apply, type ChatView, type WorkspaceView } from "../renderer/store";
 
 /** What the adapter needs of the front-end link (src/fe-link FeLink has it all). */
@@ -52,6 +60,11 @@ export interface LinkPort {
   cursor(stream: StreamId): StoredCursor | null;
   request(cmd: Command): Promise<unknown>;
   history(stream: StreamId, before: string, bytes?: number): Promise<MessageOf<"history.page">>;
+  /** M3 step 11 (FeLink has them; a one-server port may leave them out): every server, the directory, peers' tables. */
+  servers?(): ServerView[];
+  ownerOf?(target: Target | StreamId): string | null;
+  table?(serverId: string): { rows: ReadonlyMap<string, unknown> } | null;
+  staleSince?(stream: StreamId): number | null;
 }
 
 export type AdapterAnswer = { ok: true; result: unknown } | { ok: false; error: WireError };
@@ -146,6 +159,36 @@ export function noticeText(status: ConnModel): string | null {
     case "update required": return `This Botling window needs an update to use the server${status.minFeVersion ? ` (version ${status.minFeVersion} or later)` : ""}. What you write is kept until then.`;
     default: return `Botling server: ${status.state}.`;
   }
+}
+
+/**
+ * The notice over a peer's bot while its machine is not live (M3 step 11, §13.3 "one machine stale"): "<machine>
+ * offline · as of <time>" over the cached chat, and the messages held for it ("waiting for <machine>", held at the
+ * attached server). Null while the owner is live (or is the attached server).
+ */
+export function peerNoticeText(owner: ServerView | null, attached: ServerView | null, pending: PendingView[], staleSince: number | null = null): string | null {
+  if (!owner || owner.self || owner.state === "live") return null;
+  const name = owner.name;
+  const at = attached?.name ?? "this server";
+  const asOf = owner.since ?? staleSince;
+  const head = owner.state === "gone" ? `${name} removed · read-only.` : `${name} offline${asOf !== null ? ` · as of ${hhmm(asOf)}` : ""}.`;
+  const held = pending.filter((item) => !item.lost && item.waitingFor === name && (item.state === "held" || item.state === "waiting"));
+  const heldAt = held.filter((item) => item.state === "held").length;
+  const tail = held.length
+    ? ` ${held.length} ${held.length === 1 ? "message" : "messages"} waiting for ${name}${heldAt ? ` (held at ${held.find((item) => item.state === "held")?.heldAtName ?? at})` : ""}; ${held.length === 1 ? "it goes" : "they go"} when ${name} is back.`
+    : ` New messages are held at ${at} and go when ${name} is back.`;
+  return head + tail;
+}
+
+/** A summary row of a peer's table as the renderer's bot list shows it (no folder paths: the folder's name only). */
+export function botViewOfSummary(botId: string, row: SummaryRow): BotView {
+  return {
+    id: botId, name: row.name, role: row.role, avatar: row.face?.avatar ?? "circle", folder: row.folderName ?? "",
+    phase: row.status === "running" ? "awake" : "asleep", working: row.status === "running", approvals: row.waiting.length,
+    unread: row.unread, subagents: 0, problem: row.status === "error" ? "This bot reports an error on its machine." : null,
+    heads: [row.engine], job: null, parent: row.parent, subagentRows: [],
+    lastActivity: row.lastAt !== null ? new Date(row.lastAt).toISOString() : null,
+  } as BotView;
 }
 
 const IMMEDIATE_NOTICE: ReadonlySet<ConnectionState> = new Set(["history restored", "update required"]);
@@ -260,6 +303,8 @@ export class RendererAdapter {
       if (cmd.type === "chat.snapshot") return { ok: true, result: await this.snapshot(cmd.botId) };
       if (cmd.type === "chat.history") return { ok: true, result: await this.history(cmd) };
       if (cmd.type === "chat.shown" && cmd.botId) this.show(cmd.botId);
+      // A peer's bot: the window hints go nowhere (the attached server's core does not have the bot; M3 step 11).
+      if ((cmd.type === "chat.shown" || cmd.type === "chat.read") && cmd.botId && this.peerOf(cmd.botId)) return { ok: true, result: {} };
       if (READ_COMMANDS.has(cmd.type)) return await this.read(cmd);
       return await this.command(cmd);
     } catch (error) {
@@ -339,11 +384,13 @@ export class RendererAdapter {
     if (this.attached() || !this.base) {
       if (!this.attached()) await this.whenAttached();
       try {
-        const answer = await this.options.link.request({ type: "chat.snapshot", ...(botId ? { botId } : {}) }) as Snapshot;
+        // A peer's bot is not in the attached server's core: its chat comes from its bot stream only (M3 step 11).
+        const peer = botId ? this.peerOf(botId) : null;
+        const answer = await this.options.link.request({ type: "chat.snapshot", ...(botId && !peer ? { botId } : {}) }) as Snapshot;
         const { epoch: _epoch, seq: _seq, chat, ...rest } = answer;
-        this.base = rest;
-        if (chat) this.chatBase.set(chat.botId, chat);
-        botId = chat?.botId ?? botId;
+        this.base = { ...rest, bots: this.withPeerBots(rest.bots) };
+        if (chat && !peer) this.chatBase.set(chat.botId, chat);
+        if (!peer) botId = chat?.botId ?? botId;
         fresh = true;
       } catch (error) {
         if (!this.base) throw error;
@@ -460,7 +507,7 @@ export class RendererAdapter {
       case "snap": this.onSnap(event.snap); return;
       case "entries": this.onEntries(event.stream, event.entries); return;
       case "live": if (!event.stale) this.onLive(event.stream, event.view); return;
-      case "pending": this.reconcile(); return;
+      case "pending": this.reconcile(); this.renderNotice(); return;
       case "outcome": this.onOutcome(event.item); return;
       case "reset": case "dropped": {
         // A snap follows; the model it replaces is gone now.
@@ -469,6 +516,7 @@ export class RendererAdapter {
         return;
       }
       case "error": this.audit(`link: ${String((event.error as Error)?.message ?? event.error)}`); return;
+      case "servers": this.onServers(event.table); return;
       default: return;
     }
   }
@@ -482,6 +530,61 @@ export class RendererAdapter {
       this.everAttached = true;
     } else this.pluginsWeb = null;
     this.wasAttached = attached;
+    this.renderNotice();
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Other servers (M3 step 11)
+
+  /** The server that owns a bot when it is not the attached one; null for the attached server's own bots. */
+  private peerOf(botId: string): string | null {
+    const owner = this.options.link.ownerOf?.(streamOf(botId)) ?? null;
+    return owner && owner !== this.options.link.server ? owner : null;
+  }
+
+  private serverView(id: string | null): ServerView | null {
+    if (!id) return null;
+    return this.options.link.servers?.().find((server) => server.id === id) ?? null;
+  }
+
+  /** The peers' bots (from their summary rows) after the attached server's own, each once. */
+  private peerBots(): BotView[] {
+    const link = this.options.link;
+    if (!link.servers || !link.table) return [];
+    const found: BotView[] = [];
+    for (const server of link.servers()) {
+      if (server.self) continue;
+      const table = link.table(server.id);
+      if (!table) continue;
+      for (const [key, body] of table.rows) if (key.startsWith("bot:")) found.push(botViewOfSummary(key.slice(4), body as SummaryRow));
+    }
+    return found;
+  }
+
+  private withPeerBots(own: BotView[]): BotView[] {
+    const ids = new Set(own.map((bot) => bot.id));
+    return [...own, ...this.peerBots().filter((bot) => !ids.has(bot.id))];
+  }
+
+  /** A peer's table changed: its bots in the list follow; the notice may change with a server's state. */
+  private onServers(table?: { stream: string; changed: string[]; removed: string[] }): void {
+    if (table && this.base) {
+      const rows = this.options.link.table?.(table.stream.slice(4))?.rows;
+      const own = new Set((this.base.bots ?? []).map((bot) => bot.id));
+      for (const key of table.changed) {
+        if (!key.startsWith("bot:") || !rows?.has(key)) continue;
+        const bot = botViewOfSummary(key.slice(4), rows.get(key) as SummaryRow);
+        const held = this.base.bots.find((known) => known.id === bot.id);
+        if (held && JSON.stringify(held) === JSON.stringify(bot)) continue;
+        if (!held || this.peerOf(bot.id)) this.emitEvent({ type: "bot.updated", bot });
+        own.add(bot.id);
+      }
+      for (const key of table.removed) {
+        if (!key.startsWith("bot:")) continue;
+        const botId = key.slice(4);
+        if (this.base.bots.some((bot) => bot.id === botId) && !this.peerOf(botId)) this.emitEvent({ type: "bot.removed", botId });
+      }
+    }
     this.renderNotice();
   }
 
@@ -716,9 +819,21 @@ export class RendererAdapter {
   // -------------------------------------------------------------------------------------------
   // The connection notice
 
+  /** The notice line's words: the connection state's, else a peer's bot whose machine is not live. */
+  private noticeNow(): string | null {
+    const link = this.options.link;
+    const own = noticeText(link.status);
+    if (own) return own;
+    const botId = this.shown;
+    if (!botId || !link.servers) return null;
+    const owner = this.peerOf(botId);
+    if (!owner) return null;
+    return peerNoticeText(this.serverView(owner), this.serverView(link.server), link.pending(), link.staleSince?.(streamOf(botId)) ?? null);
+  }
+
   private renderNotice(): void {
     const status = this.options.link.status;
-    const text = noticeText(status);
+    const text = this.noticeNow();
     const botId = this.shown;
     const model = botId ? this.models.get(botId) : undefined;
     if (!text || !model?.ready) {
@@ -734,7 +849,7 @@ export class RendererAdapter {
     if (this.noticeTimer !== undefined) return;
     this.noticeTimer = this.options.clock.setTimeout(() => {
       this.noticeTimer = undefined;
-      const now = noticeText(this.options.link.status);
+      const now = this.noticeNow();
       const shown = this.shown ? this.models.get(this.shown) : undefined;
       if (now && shown?.ready) this.drawNotice(shown, now);
     }, this.options.noticeDelayMs ?? 400);
@@ -821,7 +936,7 @@ export function pendingLine(item: PendingView): MessageView {
   const cmd = item.cmd as Extract<Command, { type: "chat.send" }>;
   const id = pendingLineId(item.slot);
   const time = new Date(item.createdAt).toISOString();
-  if (item.lost) return { id, role: "error", text: `Delivered, then lost when this machine's history was restored: ${cmd.text}`, time };
+  if (item.lost) return { id, role: "error", text: `Delivered, then lost when ${item.ownerName ?? "this machine's history"} was restored: ${cmd.text}`, time };
   if (item.state === "not sent") return { id, role: "error", text: `Not sent (${item.reasonText ?? item.reason ?? "refused"}): ${cmd.text}`, time };
   return {
     id, role: "user", text: cmd.text, time,

@@ -31,7 +31,7 @@ export interface RemoteContentOptions {
    * M3 step 10: content owned by a peer server (peer-content.ts). Lookups of a peer's bot's lines, tickets for a
    * peer's reference and `/v3/c/<peer>/…` requests go there, after the same ticket and device checks.
    */
-  peer?: Pick<PeerContent, "ownerOfBot" | "locate" | "check" | "respond"> | null;
+  peer?: Pick<PeerContent, "ownerOfBot" | "locate" | "check" | "respond"> & Partial<Pick<PeerContent, "describe">> | null;
 }
 
 /** Why an HTTP request was refused before any file was looked at (the `X-Botling-Content` header names it). */
@@ -57,7 +57,8 @@ export class RemoteContent {
     const ref = { owner: found.owner, id: found.id, type: found.type, state: found.state, entry: found.entry };
     if (found.state !== "ready" || !found.id.startsWith("sha256:")) return { ...none, ref };
     const { ticket, expiresAt } = this.options.tickets.issue({ deviceId, owner: found.owner, id: found.id, entry: found.entry });
-    const described = this.options.service.describe?.(found.id) ?? null;
+    // A peer's file: as its owner described it (M3 step 12); this server's own: its own record.
+    const described = (peer ? peer.describe?.(found.id) : this.options.service.describe?.(found.id)) ?? null;
     const variants = described?.variants ?? [];
     return { ...none, ref: { ...ref, ...(described ? { size: described.size } : {}) }, ticket, expiresAt, ...(variants.length ? { variants } : {}) };
   }

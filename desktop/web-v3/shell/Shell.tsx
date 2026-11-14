@@ -210,8 +210,13 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       if (cancelled) { void conn.close(); return; }
       opened = conn;
       conn.link.on((event) => { if (event.type === "bye" && event.reason === "revoked") revoked("revoked (bye)"); });
-      const update = () => setBanner({ text: bannerText(conn.link.status, conn.link.pending()), state: conn.link.status.state });
-      conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome") update(); });
+      const update = () => {
+        const text = bannerText(conn.link.status, conn.link.pending(), conn.link.servers());
+        const last = diagnostics.banners[diagnostics.banners.length - 1];
+        if (text && last !== text) { diagnostics.banners.push(text); if (diagnostics.banners.length > 200) diagnostics.banners.shift(); }
+        setBanner({ text, state: conn.link.status.state === "live" && text ? "peer" : conn.link.status.state });
+      };
+      conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome" || event.type === "servers") update(); });
       // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
       const frame = () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null;
       media = new MediaBroker(conn.link, frame, diagnostics.media,

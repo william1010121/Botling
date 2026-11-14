@@ -253,6 +253,26 @@ describe("M3 step 10: content owned by B, read through A", () => {
     expect(w.owner.counts.refused).toBe(0);
   }, 120_000);
 
+  it("M3 step 12: A's answer for B's file carries B's size and variants (poster, preview), as B described them", async () => {
+    const w = await world();
+    const poster = { name: "poster", id: `sha256:${"a".repeat(64)}`, type: "image/jpeg", size: 2_000 };
+    const preview = { name: "preview", id: `sha256:${"b".repeat(64)}`, type: "video/mp4", size: 40_000, bitrate: 600_000 };
+    const real = w.serviceB.describe.bind(w.serviceB);
+    w.serviceB.describe = (id: string) => { const found = real(id); return found ? { size: found.size, variants: [poster, preview] as never } : null; };
+    const file = join(scratch, "v1.mp4");
+    writeFileSync(file, bytes("v1", 123_456));
+    await w.post("v1", file);
+    const found = await w.locate("v1", file);
+    expect(found.ref).toMatchObject({ owner: w.bId, state: "ready", size: 123_456 });
+    expect(found.variants).toEqual([poster, preview]);
+    // B unreachable: the reference and what B said last.
+    await w.peer.flushed();
+    w.setOffline(true);
+    const again = await w.locate("v1", file);
+    expect(again.ref).toMatchObject({ owner: w.bId, size: 123_456 });
+    expect(again.variants).toEqual([poster, preview]);
+  });
+
   it("a second read of the same range is served from A's cache with no peer traffic", async () => {
     const w = await world();
     const item = await located(w, "c1", 3 * MiB + 7);

@@ -200,6 +200,25 @@ export class Outbox {
   }
 
   /**
+   * Delivered items that already left the outbox (settled: their line was shown), whose outcome entry a reset of
+   * `target` has now taken away (above the retired logId's kept seq, D50): written back as "delivered, then lost", so
+   * the UI can say so (M3 step 11; the line itself is gone with the snap). Items the outbox holds are left to markLost.
+   */
+  reviveLost(target: Target, retired: RetiredLog[], settled: OutboxItem[]): Promise<OutboxItem[] | undefined> {
+    return this.writer.run(() => {
+      const kept = new Map(retired.map((old) => [old.logId, old.keptSeq]));
+      const back: OutboxItem[] = [];
+      for (const item of settled) {
+        if (item.slot.target !== target || this.items.has(slotKey(item.slot)) || !item.from || item.from.seq === null) continue;
+        const keptSeq = kept.get(item.from.logId);
+        if (keptSeq !== undefined && item.from.seq > keptSeq) back.push({ ...item, state: "delivered", lost: true });
+      }
+      if (!back.length) return null;
+      return { ops: back.map((item) => ({ op: "put" as const, item })), commit: () => { for (const item of back) this.items.set(slotKey(item.slot), item); return back; } };
+    });
+  }
+
+  /**
    * Removes delivered items whose outcome entry the reader now has (the entry took the pending item's place, §13.4), or
    * every delivered item of the target when `all` (the stream is not followed, so nothing will show the entry).
    */

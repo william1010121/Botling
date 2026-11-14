@@ -26,7 +26,7 @@ import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import { fileHeaders, rangedResponse } from "../../main/preview-response";
 import { CHAT_MEDIA_CSP, goneResponse } from "../../main-v3/content-protocol";
-import { CONTENT_CHUNK_BYTES, type ContentUrl, type EntryRef, type MessageOf, type WireMessage } from "../../protocol";
+import { CONTENT_CHUNK_BYTES, type ContentUrl, type ContentVariant, type EntryRef, type MessageOf, type WireMessage } from "../../protocol";
 import type { DeviceScope } from "../../protocol/scopes";
 import type { PeerSession } from "../peer";
 import type { Db, ServerStore } from "../store";
@@ -42,6 +42,8 @@ export const PEER_CONTENT_FRAME = 64 * 1024;
 /** The owner's answer (located, meta, next chunk) must come within this time, or the read fails as offline. */
 export const PEER_CONTENT_TIMEOUT_MS = 15_000;
 const HASHES_TEXT_LIMIT = 240_000;
+/** How many owner descriptions (size, variants) of peer files are kept in memory (M3 step 12). */
+const DESCRIBED_KEPT = 2_000;
 
 export type GoneReason = MessageOf<"content.gone">["reason"];
 /** Why a read through a peer failed. */
@@ -135,6 +137,7 @@ const refKey = (owner: string, id: string, entry: EntryRef) => `${owner}\n${id}\
 export class PeerContent {
   private readonly metas = new Map<string, Meta>();
   private readonly refs = new Set<string>();
+  private readonly described = new Map<string, { size: number; variants: ContentVariant[] }>();
   private readonly locates = new Map<string, { owner: string; done: Deferred<MessageOf<"content.located"> | null>; timer: ReturnType<typeof setTimeout> }>();
   private readonly upstreams = new Map<string, Upstream>();
   /** Chunks on their way from an owner, by file and index (a second reader waits for the same bytes). */
@@ -227,6 +230,18 @@ export class PeerContent {
    * `content.locate` of a line of a peer's bot: the owner decides (over the peer session); while it is unreachable,
    * the last answer it gave. Null: no such reference, or the owner refused.
    */
+  /**
+   * M3 step 12: what the owner said of a ready file it holds (size and variants), from its last `content.located`
+   * (this process's memory: a page asks again after a restart, and the owner answers again).
+   */
+  describe(id: string): { size: number; variants: ContentVariant[] } | null { return this.described.get(id) ?? null; }
+
+  private remember(id: string, value: { size: number; variants: ContentVariant[] }): void {
+    this.described.delete(id);
+    this.described.set(id, value);
+    if (this.described.size > DESCRIBED_KEPT) this.described.delete(this.described.keys().next().value!);
+  }
+
   async locate(deviceId: string, message: MessageOf<"content.locate">): Promise<LocatedRef | null> {
     const owner = this.ownerOfBot(message.botId);
     if (!owner) return null;
@@ -247,7 +262,10 @@ export class PeerContent {
             tx.prepare("INSERT OR REPLACE INTO peer_content_lines (botId, line, url, owner, id, type, state, stream, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
               .run(message.botId, message.line, message.url, ref.owner, ref.id, ref.type, ref.state, ref.entry.stream, ref.entry.seq);
           });
-          if (ref && ref.state === "ready" && ref.id.startsWith("sha256:")) this.confirm(owner, ref.id, ref.entry);
+          if (ref && ref.state === "ready" && ref.id.startsWith("sha256:")) {
+            this.confirm(owner, ref.id, ref.entry);
+            if (ref.size !== undefined) this.remember(ref.id, { size: ref.size, variants: answer.variants ?? [] });
+          }
           return ref;
         }
       } else {
@@ -673,7 +691,7 @@ export function failureResponse(error: unknown): Response {
 // Owner side
 
 export interface PeerContentOwnerOptions {
-  service: Pick<ContentService, "open" | "locate" | "chunkHashesOf" | "markChanged" | "hasher">;
+  service: Pick<ContentService, "open" | "locate" | "chunkHashesOf" | "markChanged" | "hasher"> & Partial<Pick<ContentService, "describe">>;
   roster: { device(member: string): { scope?: readonly DeviceScope[] } | null };
   log?: (line: string) => void;
   /**
@@ -729,7 +747,10 @@ export class PeerContentOwner {
         const m = message as MessageOf<"content.locate">;
         this.counts.locates++;
         const ref = this.readable(m.device) ? this.options.service.locate(m) : null;
-        session.sendWire({ t: "content.located", req: m.req, ref: ref ?? null } as WireMessage);
+        // M3 step 12: the owner describes its own ready file (size, variants: poster, preview, text), so the attached
+        // server can hand the page what it hands for its own files (the poster first, the 1.5× rule, the PDF's text).
+        const described = ref && ref.state === "ready" && ref.id.startsWith("sha256:") ? this.options.service.describe?.(ref.id) ?? null : null;
+        session.sendWire({ t: "content.located", req: m.req, ref: ref ? { ...ref, ...(described ? { size: described.size } : {}) } : null, ...(described?.variants.length ? { variants: described.variants } : {}) } as WireMessage);
         return true;
       }
       case "content.get": {
