@@ -30,7 +30,7 @@ import {
   type Command, type CommandType, type Event, type EventEnvelope as EventEnvelopeT, type MessageView, type ResultOf, type WireError,
 } from "../contract";
 import {
-  BotSnapView, ProtocolEntryEvent, slotKey,
+  BotSnapView, interruptedLine, ProtocolEntryEvent, slotKey,
   type ConnectionState, type Cursor, type Entry, type MessageOf, type Outcome, type Slot, type StreamId, type Target,
 } from "../protocol";
 import type { Clock, ConnModel, FeLinkEvent, OutboxItem, PendingView, StoredCursor } from "../fe-link";
@@ -574,10 +574,13 @@ export class RendererAdapter {
       const messageId = typeof body.messageId === "string" ? body.messageId : model.turns.get(turnId) ?? `fe-int-${turnId}`.slice(0, 64);
       model.turns.delete(turnId);
       if (model.live?.turnId === turnId) model.live = null;
-      model.committed.set(messageId, text);
-      // The renderer shows a stopped reply as interrupted: the checkpoint text with nothing re-run (§9.3, §12).
-      this.ensureLine(model, messageId, turnId, text, "stopped");
-      this.emitEvent({ type: "turn.finished", botId: model.botId, turnId, messageId, status: "stopped", text }, model);
+      // Shown as 2.x shows a reply its core died during (protocol/interrupted.ts): the checkpoint text and the note,
+      // "failed", nothing re-run (§9.3, §12). The server's read model makes the same line, so a later snap matches.
+      const held = model.known.has(messageId) ? model.chat.messages.find((message) => message.id === messageId) : undefined;
+      const line = interruptedLine(held, { turnId, text }, { id: messageId, time: new Date(this.options.clock.now()).toISOString() });
+      model.committed.set(messageId, line.text);
+      this.emitEvent({ type: "turn.finished", botId: model.botId, turnId, messageId, status: "failed", text: line.text }, model);
+      this.emitEvent({ type: "message.updated", botId: model.botId, message: line }, model);
       return;
     }
     if (entry.kind === "turn.cancelled") {

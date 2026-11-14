@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { BotView, Command, EventEnvelope, MessageView, ResultOf } from "../../src/contract";
 import { SlotRefusal } from "../../src/server/slots";
 import { FeLink, MemoryFeStorage } from "../../src/fe-link";
-import type { Message, StreamId } from "../../src/protocol";
+import { INTERRUPTED_NOTE, type Message, type StreamId } from "../../src/protocol";
 import { WorkspaceStore } from "../../src/renderer/store";
 import { NOTICE_ID, READ_COMMANDS, RendererAdapter, noticeText, pendingLineId } from "../../src/main-v3/renderer-adapter";
 import { BOT, FakeClock, FakeServer, flush } from "./fe-link-harness";
@@ -227,7 +227,7 @@ describe("live text", () => {
     expect(r.chat().find((m) => m.id === "r1")!.text).toBe("First part. Second.");
   });
 
-  it("turn.interrupted shows the checkpoint text as a stopped reply", async () => {
+  it("turn.interrupted shows the checkpoint text as 2.x shows a reply its core died during (failed, with the note)", async () => {
     const r = await rig();
     await r.store.resync();
     r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
@@ -236,7 +236,11 @@ describe("live text", () => {
     await flush();
     r.server.append(BOT, "turn.interrupted", { botId: "b1", turnId: "t1", messageId: "r1", text: "partial" });
     await flush();
-    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ text: "partial", state: "stopped" });
+    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ text: `partial\n\n${INTERRUPTED_NOTE}`, state: "failed", interrupted: true });
+    expect(r.store.getView().chat?.running ?? null).toBeNull();
+    // A snapshot now is what the renderer holds (the mirror ran the same events).
+    const snapshot = await r.adapter.snapshot("b1");
+    expect(snapshot.chat?.messages.find((m) => m.id === "r1")).toEqual(r.chat().find((m) => m.id === "r1"));
   });
 });
 
