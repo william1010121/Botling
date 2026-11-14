@@ -1,0 +1,371 @@
+// Botling 3's window main (src/main-v3, M1 step 11): the renderer adapter between the front-end link and the 2.x
+// renderer, run headless. The "renderer" here is the real renderer store (renderer/store.ts WorkspaceStore): it takes
+// its snapshots and history pages from the adapter and applies every event the adapter emits, resyncing on a new epoch
+// or a seq gap exactly as the window does. The server is the fe-link test's fake botlingd (real slot rules).
+import { afterEach, describe, expect, it } from "vitest";
+import type { BotView, Command, EventEnvelope, MessageView, ResultOf } from "../../src/contract";
+import { SlotRefusal } from "../../src/server/slots";
+import { FeLink, MemoryFeStorage } from "../../src/fe-link";
+import type { Message, StreamId } from "../../src/protocol";
+import { WorkspaceStore } from "../../src/renderer/store";
+import { NOTICE_ID, READ_COMMANDS, RendererAdapter, noticeText, pendingLineId } from "../../src/main-v3/renderer-adapter";
+import { BOT, FakeClock, FakeServer, flush } from "./fe-link-harness";
+
+const bot = { id: "b1", name: "B1", role: "main", avatar: "circle", folder: "/p", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null } as unknown as BotView;
+const line = (id: string, text = `line ${id}`, over: Partial<MessageView> = {}): MessageView => ({ id, role: "bot", text, time: new Date(2026, 0, 1).toISOString(), ...over });
+
+/** The chat's lines as the server's log has them (message.* entries folded). */
+function linesOf(server: FakeServer, stream: string): MessageView[] {
+  const lines = new Map<string, MessageView>();
+  for (const entry of server.entries(stream)) {
+    const body = entry.body as { message?: MessageView; messageId?: string };
+    if (entry.kind === "message.added" || entry.kind === "message.updated") lines.set(body.message!.id, body.message!);
+    if (entry.kind === "message.removed") lines.delete(body.messageId!);
+  }
+  return [...lines.values()];
+}
+
+interface Rig {
+  server: FakeServer;
+  clock: FakeClock;
+  link: FeLink;
+  adapter: RendererAdapter;
+  store: WorkspaceStore;
+  events: EventEnvelope[];
+  reqs: Command[];
+  ids(): string[];
+  chat(): MessageView[];
+}
+
+const opened: Array<{ link: FeLink; adapter: RendererAdapter }> = [];
+afterEach(async () => {
+  for (const { link, adapter } of opened.splice(0)) { adapter.stop(); await link.stop(); }
+});
+
+let epochs = 0;
+async function rig(setup: (server: FakeServer) => void = () => undefined, options: { snapPage?: number } = {}): Promise<Rig> {
+  const server = new FakeServer();
+  const clock = new FakeClock();
+  const reqs: Command[] = [];
+  const page = options.snapPage ?? 1_000;
+  server.snapView = (stream) => {
+    const all = linesOf(server, stream);
+    const messages = all.slice(-page);
+    return { bot: null, messages, history: { hasMore: all.length > messages.length, older: all.length - messages.length }, cards: [] };
+  };
+  server.applyHook = ({ tx, slot, cmd, log }) => {
+    if (cmd.type === "chat.send") {
+      if (cmd.text === "refuse me") throw new SlotRefusal("scope", "not here");
+      const id = `u-${slot.n}`;
+      log.appendEntry(tx, `bot:${cmd.botId}` as StreamId, "message.added", { botId: cmd.botId, message: { id, role: "user", text: cmd.text, time: new Date(2026, 0, 2).toISOString() } }, slot);
+      return { result: { messageId: id, turnId: null } };
+    }
+    if (cmd.type === "chat.react" && cmd.emoji === "✗") throw new SlotRefusal("changed", "gone");
+    return { result: { n: slot.n } };
+  };
+  server.onMessage = (message: Message) => {
+    if (message.t === "req") {
+      reqs.push(message.cmd);
+      if (message.cmd.type === "chat.snapshot") {
+        const result = {
+          epoch: "server", seq: 0, bots: [bot], imported: null, components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null },
+          chat: { botId: "b1", messages: linesOf(server, BOT).slice(-page), running: null, live: [], runs: [], heads: null },
+        };
+        server.send({ t: "res", req: message.req, ok: true, result });
+      } else server.send({ t: "res", req: message.req, ok: true, result: { read: message.cmd.type } });
+    }
+    if (message.t === "history") {
+      const all = linesOf(server, message.stream);
+      const at = all.findIndex((m) => m.id === message.before);
+      const messages = all.slice(Math.max(0, at - 2), at);
+      const older = Math.max(0, at - 2);
+      server.send({ t: "history.page", req: message.req, stream: message.stream, logId: server.log.current(message.stream), messages, hasMore: older > 0, older });
+    }
+  };
+  setup(server);
+  const link = await FeLink.open({ storage: new MemoryFeStorage(), dial: server.dial, deviceId: "desktop", feVersion: "3.0.0", clock, newEpoch: () => (++epochs).toString(16).padStart(32, "0") });
+  const events: EventEnvelope[] = [];
+  let store!: WorkspaceStore;
+  let n = 0;
+  const adapter = new RendererAdapter({ link, clock, newEpoch: () => `e${++n}`, emit: (envelope) => { events.push(envelope); store.receive(envelope); } });
+  const unwrap = async <T,>(answer: Promise<{ ok: boolean; result?: unknown; error?: unknown }>) => {
+    const a = await answer;
+    if (!a.ok) throw new Error(JSON.stringify(a.error));
+    return a.result as T;
+  };
+  store = new WorkspaceStore(
+    (botId) => unwrap<ResultOf<"chat.snapshot">>(adapter.request({ type: "chat.snapshot", ...(botId ? { botId } : {}) })),
+    (botId, before, until) => unwrap<ResultOf<"chat.history">>(adapter.request({ type: "chat.history", botId, before, ...(until ? { until } : {}) })),
+  );
+  opened.push({ link, adapter });
+  adapter.start();
+  link.start();
+  await flush();
+  const chat = () => store.getView().chat?.messages ?? [];
+  return { server, clock, link, adapter, store, events, reqs, chat, ids: () => chat().map((m) => m.id) };
+}
+
+/** Lets the renderer's resyncs (after a new epoch) finish. */
+async function settle(r: Rig): Promise<void> {
+  await flush();
+  await r.store.resync();
+  await flush();
+}
+
+const types = (events: EventEnvelope[]) => events.map((e) => e.event.type);
+
+describe("snapshots", () => {
+  it("answers chat.snapshot with the server's workspace and the bot stream's lines; events after it keep the seq", async () => {
+    const r = await rig((s) => { s.append(BOT, "message.added", { botId: "b1", message: line("m1") }); s.append(BOT, "message.added", { botId: "b1", message: line("m2") }); });
+    await r.store.resync();
+    expect(r.store.getView().bots.map((b) => b.id)).toEqual(["b1"]);
+    expect(r.ids()).toEqual(["m1", "m2"]);
+    expect(r.adapter.followed()).toEqual(["b1"]);
+    expect(r.reqs.map((c) => c.type)).toEqual(["chat.snapshot"]);
+    const resyncs = r.store.getView().resyncs;
+    r.server.append(BOT, "message.added", { botId: "b1", message: line("m3") });
+    r.server.append(BOT, "message.updated", { botId: "b1", message: line("m1", "edited") });
+    await flush();
+    expect(r.ids()).toEqual(["m1", "m2", "m3"]);
+    expect(r.chat()[0].text).toBe("edited");
+    expect(r.store.getView().resyncs).toBe(resyncs);
+    // Envelopes are valid, one epoch, gapless.
+    const seqs = r.events.map((e) => e.seq);
+    expect(seqs).toEqual(seqs.map((_, i) => seqs[0] + i));
+  });
+
+  it("a later snapshot is exactly the renderer's view at that seq (the mirror runs the renderer's reducer)", async () => {
+    const r = await rig((s) => s.append(BOT, "message.added", { botId: "b1", message: line("m1") }));
+    await r.store.resync();
+    r.server.append(BOT, "message.added", { botId: "b1", message: line("m2") });
+    r.server.append(BOT, "message.removed", { botId: "b1", messageId: "m1" });
+    await flush();
+    const answer = await r.adapter.request({ type: "chat.snapshot", botId: "b1" });
+    expect(answer.ok).toBe(true);
+    const snap = (answer as { result: ResultOf<"chat.snapshot"> }).result;
+    expect(snap.seq).toBe(r.adapter.currentSeq);
+    expect(snap.chat!.messages).toEqual(r.chat());
+  });
+
+  it("a restore (reset + snap) makes a new epoch: the renderer takes a fresh snapshot with the restored lines", async () => {
+    const r = await rig((s) => s.append(BOT, "message.added", { botId: "b1", message: line("m1") }));
+    await r.store.resync();
+    const epoch = r.adapter.currentEpoch;
+    r.server.restore();
+    await settle(r);
+    expect(r.adapter.currentEpoch).not.toBe(epoch);
+    expect(r.ids()[0]).toBe("m1");
+  });
+});
+
+describe("history", () => {
+  it("chat.history pages the bot stream; `until` reads back page by page to that line", async () => {
+    const r = await rig((s) => { for (let i = 1; i <= 7; i += 1) s.append(BOT, "message.added", { botId: "b1", message: line(`m${i}`) }); }, { snapPage: 2 });
+    await r.store.resync();
+    expect(r.ids()).toEqual(["m6", "m7"]);
+    expect(r.store.getView().chat!.history).toEqual({ hasMore: true, older: 5 });
+    await r.store.loadOlder();
+    expect(r.ids()).toEqual(["m4", "m5", "m6", "m7"]);
+    await r.store.loadOlder("m1");
+    expect(r.ids()).toEqual(["m1", "m2", "m3", "m4", "m5", "m6", "m7"]);
+    expect(r.store.getView().chat!.history).toBeUndefined();
+    expect(r.server.received.filter((m) => m.t === "history").map((m) => (m as { before: string }).before)).toEqual(["m6", "m4", "m2"]);
+  });
+
+  it("a line from an older page gets its later updates (the renderer appends nothing twice)", async () => {
+    const r = await rig((s) => { for (let i = 1; i <= 4; i += 1) s.append(BOT, "message.added", { botId: "b1", message: line(`m${i}`) }); }, { snapPage: 2 });
+    await r.store.resync();
+    await r.store.loadOlder();
+    r.server.append(BOT, "message.updated", { botId: "b1", message: line("m1", "changed") });
+    await flush();
+    expect(r.ids()).toEqual(["m1", "m2", "m3", "m4"]);
+    expect(r.chat()[0].text).toBe("changed");
+  });
+});
+
+describe("live text", () => {
+  const live = (r: Rig, seg: number, rev: number, at: number, text: string) => r.server.send({ t: "live", stream: BOT, turnId: "t1", seg, rev, at, text });
+
+  it("live frames grow the reply as turn.delta; a new segment adds to the earlier ones; turn.finished sets the text", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    await flush();
+    live(r, 0, 0, 0, "Hel");
+    await flush();
+    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ role: "bot", text: "Hel", state: "streaming" });
+    live(r, 0, 1, 3, "lo");
+    await flush();
+    expect(r.chat().find((m) => m.id === "r1")!.text).toBe("Hello");
+    // A step boundary: the server commits the reply so far, then streams the next segment from 0.
+    r.server.append(BOT, "message.updated", { botId: "b1", message: line("r1", "Hello", { turnId: "t1", state: "streaming" }) });
+    await flush();
+    live(r, 1, 0, 0, " world");
+    await flush();
+    expect(r.chat().find((m) => m.id === "r1")!.text).toBe("Hello world");
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "done", text: "Hello world!" });
+    await flush();
+    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ text: "Hello world!", state: "done" });
+    expect(types(r.events)).toContain("turn.delta");
+    expect(r.ids().filter((id) => id === "r1")).toHaveLength(1);
+  });
+
+  it("joining mid-turn: a later segment's first frame starts from the reply's committed text", async () => {
+    const r = await rig((s) => {
+      s.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+      s.append(BOT, "message.added", { botId: "b1", message: line("r1", "First part.", { turnId: "t1", state: "streaming" }) });
+    });
+    await r.store.resync();
+    r.server.append(BOT, "turn.steps", { botId: "b1", turnId: "t1", messageId: "r1", steps: [] });
+    await flush();
+    // The snap does not say which turn runs (no runs in M1's snap view): the reply line is known by the turn.started
+    // this test sends again (a server mid-turn would carry it in its snapshot's runs).
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    await flush();
+    live(r, 2, 0, 0, " Second.");
+    await flush();
+    expect(r.chat().find((m) => m.id === "r1")!.text).toBe("First part. Second.");
+  });
+
+  it("turn.interrupted shows the checkpoint text as a stopped reply", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    await flush();
+    live(r, 0, 0, 0, "partial answ");
+    await flush();
+    r.server.append(BOT, "turn.interrupted", { botId: "b1", turnId: "t1", messageId: "r1", text: "partial" });
+    await flush();
+    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ text: "partial", state: "stopped" });
+  });
+});
+
+describe("pending lines → delivered by slot", () => {
+  it("chat.send answers once durable, shows a pending line, and swaps it for the line carrying its slot", async () => {
+    const r = await rig();
+    await r.store.resync();
+    const answer = await r.adapter.request({ type: "chat.send", botId: "b1", text: "hi there" });
+    expect(answer.ok).toBe(true);
+    const pendingId = (answer as { result: { messageId: string } }).result.messageId;
+    expect(pendingId).toMatch(/^fe-p-[0-9a-f]{16}$/);
+    await flush();
+    expect(r.ids()).toEqual(["u-1"]);
+    expect(r.chat()[0]).toMatchObject({ role: "user", text: "hi there" });
+    const seen = r.events.map((e) => e.event as { type: string; message?: MessageView; messageId?: string });
+    const added = seen.findIndex((e) => e.type === "message.added" && e.message?.id === pendingId);
+    const removed = seen.findIndex((e) => e.type === "message.removed" && e.messageId === pendingId);
+    const real = seen.findIndex((e) => e.type === "message.added" && e.message?.id === "u-1");
+    expect(added).toBeGreaterThanOrEqual(0);
+    expect(removed).toBeGreaterThan(added);
+    expect(real).toBeGreaterThan(removed);
+    // A fast ack never flashes the "sending" marker.
+    expect(seen.some((e) => e.message?.queued)).toBe(false);
+  });
+
+  it("offline: the line waits with the sending marker after 150 ms, then is delivered on reconnect with no duplicate", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.refuse = true;
+    r.server.kill();
+    await flush();
+    const answer = await r.adapter.request({ type: "chat.send", botId: "b1", text: "later" });
+    const pendingId = (answer as { result: { messageId: string } }).result.messageId;
+    await flush();
+    expect(r.chat().find((m) => m.id === pendingId)).toMatchObject({ role: "user", text: "later" });
+    expect(r.chat().find((m) => m.id === pendingId)!.queued).toBeUndefined();
+    r.clock.advance(200);
+    await flush();
+    expect(r.chat().find((m) => m.id === pendingId)!.queued).toBe(true);
+    r.server.refuse = false;
+    for (let i = 0; i < 6 && !r.link.status.attached; i += 1) { r.clock.advance(5_000); await flush(); }
+    await settle(r);
+    expect(r.link.status.attached).toBe(true);
+    expect(r.ids().filter((id) => id !== NOTICE_ID)).toEqual(["u-1"]);
+  });
+
+  it("a refused send turns its line into a 'not sent' line; the next send clears it", async () => {
+    const r = await rig();
+    await r.store.resync();
+    const answer = await r.adapter.request({ type: "chat.send", botId: "b1", text: "refuse me" });
+    const pendingId = (answer as { result: { messageId: string } }).result.messageId;
+    await flush();
+    expect(r.chat().find((m) => m.id === pendingId)).toMatchObject({ role: "error", text: "Not sent (scope): refuse me" });
+    await r.adapter.request({ type: "chat.send", botId: "b1", text: "ok now" });
+    await flush();
+    expect(r.ids()).toEqual(["u-2"]);
+  });
+
+  it("other commands answer with their outcome; reads go as requests with no slot", async () => {
+    const r = await rig();
+    await r.store.resync();
+    expect(await r.adapter.request({ type: "chat.react", botId: "b1", messageId: "m1", emoji: "👍", present: true })).toEqual({ ok: true, result: { n: 1 } });
+    const refused = await r.adapter.request({ type: "chat.react", botId: "b1", messageId: "m1", emoji: "✗", present: true });
+    expect(refused).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(await r.adapter.request({ type: "settings.get" })).toEqual({ ok: true, result: { read: "settings.get" } });
+    expect(r.reqs.map((c) => c.type)).toContain("settings.get");
+    expect(READ_COMMANDS.has("chat.send")).toBe(false);
+    expect(r.server.copies.map((c) => c.cmd.type)).toEqual(["chat.react", "chat.react"]);
+  });
+
+  it("pending line ids are stable per slot and valid message ids", () => {
+    const slot = { origin: "desktop", originEpoch: "0".repeat(32), target: BOT, n: 7 };
+    expect(pendingLineId(slot)).toBe(pendingLineId({ ...slot }));
+    expect(pendingLineId(slot)).not.toBe(pendingLineId({ ...slot, n: 8 }));
+    expect(pendingLineId(slot)).toMatch(/^[A-Za-z0-9_.:-]{1,64}$/);
+  });
+});
+
+describe("connection states in the renderer", () => {
+  const notice = (r: Rig) => r.chat().find((m) => m.id === NOTICE_ID);
+
+  it("connecting shows (after a short delay) as a notice line; offline after 10 s; it goes when live again", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.refuse = true;
+    r.server.kill();
+    await flush();
+    expect(r.link.status.state).toBe("connecting");
+    expect(notice(r)).toBeUndefined();
+    r.clock.advance(450);
+    await flush();
+    expect(notice(r)).toMatchObject({ role: "notice", text: "Connecting to the Botling server…" });
+    r.clock.advance(10_000);
+    await flush();
+    expect(r.link.status.state).toBe("offline");
+    expect(notice(r)!.text).toMatch(/^Offline · as of \d\d:\d\d\./);
+    r.server.refuse = false;
+    for (let i = 0; i < 6 && !r.link.status.attached; i += 1) { r.clock.advance(5_000); await flush(); }
+    await settle(r);
+    expect(r.link.status.state).toBe("live");
+    expect(notice(r)).toBeUndefined();
+  });
+
+  it("a normal attach never flashes the notice", async () => {
+    const r = await rig();
+    await r.store.resync();
+    expect(r.events.some((e) => (e.event as { message?: MessageView }).message?.id === NOTICE_ID)).toBe(false);
+  });
+
+  it("history restored shows at once and stays until the user sends again", async () => {
+    const r = await rig((s) => s.append(BOT, "message.added", { botId: "b1", message: line("m1") }));
+    await r.store.resync();
+    r.server.restore();
+    await settle(r);
+    expect(r.link.status.state).toBe("history restored");
+    expect(notice(r)).toMatchObject({ role: "notice" });
+    expect(notice(r)!.text).toMatch(/^This machine's history was restored from a backup \(noticed at \d\d:\d\d\)/);
+    r.clock.advance(60_000);
+    await flush();
+    expect(notice(r)).toBeDefined();
+    await r.adapter.request({ type: "chat.send", botId: "b1", text: "seen" });
+    await flush();
+    expect(r.link.status.state).toBe("live");
+    expect(notice(r)).toBeUndefined();
+  });
+
+  it("every state has words, and live has none", () => {
+    const base = { since: 0, attached: false, offline: false, catching: false, restoredAt: null, asOf: null, minFeVersion: null };
+    expect(noticeText({ ...base, state: "live", attached: true })).toBeNull();
+    for (const state of ["connecting", "offline", "catching up", "history restored", "update required"] as const) expect(noticeText({ ...base, state })).toMatch(/\w/);
+  });
+});

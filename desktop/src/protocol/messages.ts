@@ -148,14 +148,15 @@ export const ContentGone = msg("content.gone", { req: ReqId, id: ContentId, reas
 // ---------------------------------------------------------------------------------------------
 // The server's requests of the attached window (local socket; the 2.x core's app ops)
 
-const ShellArgs = z.record(z.string().max(100), z.string().max(8_000));
+/** String arguments of a `shell.*` request. `shell.browser` carries the bot's browser request as JSON in `request` (≤ 64,000, as the 2.x app op). */
+const ShellArgs = z.record(z.string().max(100), z.string().max(64_000));
 export const ShellScreenshot = msg("shell.screenshot", { req: ReqId, args: ShellArgs.optional() });
 export const ShellBrowser = msg("shell.browser", { req: ReqId, args: ShellArgs.optional() });
 /** Install the newer release (the core's `installRelease`). */
 export const ShellInstall = msg("shell.install", { req: ReqId, args: ShellArgs.optional() });
 export const ShellQuit = msg("shell.quit", { req: ReqId, args: ShellArgs.optional() });
-/** The window's answer to a `shell.*` request. */
-export const ShellDone = msg("shell.done", { req: ReqId, ok: z.boolean(), file: z.string().max(4_096).optional(), error: z.string().max(2_000).optional() });
+/** The window's answer to a `shell.*` request; `data` is what a browser request answered (the 2.x app op's `data`). */
+export const ShellDone = msg("shell.done", { req: ReqId, ok: z.boolean(), file: z.string().max(4_096).optional(), error: z.string().max(2_000).optional(), data: z.unknown().optional() });
 
 // ---------------------------------------------------------------------------------------------
 // Session (§5.2)
