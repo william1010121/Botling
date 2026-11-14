@@ -10,6 +10,7 @@ import { canonicalJson } from "./entries";
 import { fromBase64Url, toBase64Url, utf8Bytes } from "./encoding";
 import { ClusterId, MemberId, MemberKeys, RecoveryCode, StatementId } from "./roster";
 import { DeviceScope } from "./scopes";
+import { PrefKey } from "./prefs";
 
 /** A server join offer's id (`JoinOffer.offer`, join.ts). */
 const JoinOfferId = z.string().regex(/^[A-Za-z0-9_-]{16,32}$/);
@@ -95,6 +96,10 @@ export const AdminOp = z.discriminatedUnion("op", [
   /** The code as typed (read forgivingly by the server: `JoinCode`); a malformed one costs no try. */
   z.strictObject({ op: z.literal("machine.code"), attempt: JoinOfferId, code: z.string().min(1).max(32) }),
   z.strictObject({ op: z.literal("machine.cancel"), attempt: JoinOfferId }),
+  // Cluster preferences (§17, M3 step 5): a write from the window or CLI on this machine (LWW per key, gossiped to
+  // every peer server) and the current registers.
+  z.strictObject({ op: z.literal("prefs.set"), key: PrefKey, value: z.unknown() }),
+  z.strictObject({ op: z.literal("prefs.list") }),
 ]);
 export type AdminOp = z.infer<typeof AdminOp>;
 

@@ -34,10 +34,10 @@ import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type SessionHost, type SessionOptions } from "./session";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
-import { RosterStore } from "./roster";
+import { Gossip, PrefsStore, RosterStore } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, LoopbackListener } from "./net";
 import { PairingService, ServerJoin } from "./pairing";
-import { addressesValue, PeerSessions, peerTimers, SessionRouter } from "./peer";
+import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
 import { PeerTables, SummaryRows, TableFeeds } from "./replica";
@@ -144,8 +144,9 @@ export class Botlingd {
    * M3 step 4: this server's own `Profile{addresses}` (its loopback `/v3/ws`), written when it is in a cluster with
    * another server and the value changed (a lone server writes nothing, as before). Peers dial what it names.
    */
-  async writeOwnProfile(): Promise<void> {
-    const port = this.listener?.port;
+  async writeOwnProfile(advertise: (port: number) => number = (port) => port): Promise<void> {
+    const listening = this.listener?.port;
+    const port = listening === undefined ? undefined : advertise(listening);
     const view = this.roster.view;
     if (port === undefined || this.roster.clusterId === null || !view.valid.has(view.self)) return;
     if (![...view.members.values()].some((info) => info.kind === "server" && info.member !== view.self)) return;
@@ -194,6 +195,9 @@ export class Botlingd {
       const { serverId, memberId } = await store.submit((tx) => bindServerIdentity(tx, identity));
       const roster = await RosterStore.open(store, identity, { log });
       const clusterSetup = new ClusterSetup(roster);
+      // M3 step 5: cluster preferences (LWW per key) and the gossip of statements and preferences between servers.
+      const prefs = await PrefsStore.open(store, { self: memberId, knownWriter: (writer) => roster.view.servers.has(writer), log });
+      const gossip = new Gossip({ roster, prefs, log });
       log(`identity: member ${memberId}${identity.created ? " (new keys)" : ""}, cluster ${roster.clusterId ?? "none yet"}`);
       const hub = new LogHub(store, { serverStreams: true });
       const live = new LiveChannel({ sink: effectCheckpointSink(store), onError: (error) => log(`live: ${String((error as Error)?.message ?? error)}`) });
@@ -270,8 +274,9 @@ export class Botlingd {
       const listenerPort = () => daemon?.listener?.port ?? null;
       const serverJoin = new ServerJoin({
         roster, identity, serverName: SERVER_NAME, version: BOTLINGD_VERSION, dataDir: paths.dataDir, log,
-        ownAddresses: () => { const at = listenerPort(); return at === null ? null : addressesValue(at); },
+        ownAddresses: () => { const at = listenerPort(); return at === null ? null : addressesValue(advertisedPort(env, at)); },
         joinAddresses: () => { const at = listenerPort(); return at === null ? [] : [`ws://${LISTEN_HOST}:${at}/v3/ws`]; },
+        prefs,
       });
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
@@ -289,7 +294,11 @@ export class Botlingd {
         },
         log,
         admin: {
-          handle: (op) => (op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op) : pairing.admin(op)),
+          handle: async (op) => {
+            if (op.op === "prefs.set") return { row: await prefs.set(op.key, op.value) };
+            if (op.op === "prefs.list") return { rows: prefs.rows() };
+            return op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op) : pairing.admin(op);
+          },
           onEvent: (listener) => { const a = pairing.onEvent(listener); const b = serverJoin.onEvent(listener); return () => { a(); b(); }; },
         },
         // M3 step 7: peers' states (`welcome.servers`, `peer{…}`) and their tables, from this server's copies.
@@ -313,19 +322,21 @@ export class Botlingd {
       const peers = new PeerSessions({
         roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log,
         // M3 step 7: every peer's srv: table is subscribed while its session is open (§10.1).
-        onMessage: (session, message) => peerTables.onMessage(session, message),
-        sessionOpened: (session) => { void peerTables.opened(session); },
-        sessionClosed: (session) => peerTables.sessionClosed(session),
+        // M3 step 5: gossip frames first (roster sync is the first exchange, §4.6), then the tables.
+        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || peerTables.onMessage(session, message),
+        sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); },
+        sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); });
       feeds.start();
+      gossip.start();
       daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables);
       daemon.remoteContent = remoteContent;
       daemon.media = media;
       daemon.tokenValue = writeToken(paths.token);
       await server.listen();
       await daemon.listen(port, options.outDir, origin);
-      await daemon.writeOwnProfile();
+      await daemon.writeOwnProfile((at) => advertisedPort(env, at));
       peers.start();
       daemon.watchLock();
       const schedule = backupCheckMs(env);

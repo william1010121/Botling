@@ -63,6 +63,19 @@ export function loopbackAddress(value: string | null): string | null {
   return port >= 1 && port <= 65_535 ? loopback : null;
 }
 
+/**
+ * The port this server names in its own `Profile{addresses}` (M3 step 5): its listener's port, unless
+ * BOTLING_SERVER_ADVERTISE_PORT names another loopback port (tests: the fault proxy in front of it, so peers that learn
+ * the address by gossip dial through the proxy). The listener still binds its own port on 127.0.0.1 only.
+ */
+export const ADVERTISE_PORT_ENV = "BOTLING_SERVER_ADVERTISE_PORT";
+export function advertisedPort(env: Record<string, string | undefined>, port: number): number {
+  const raw = env[ADVERTISE_PORT_ENV];
+  if (raw === undefined || raw === "") return port;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1 && value <= 65_535 ? value : port;
+}
+
 /** A Profile `addresses` value naming this server's loopback listener. */
 export function addressesValue(port: number): string {
   return JSON.stringify({ loopback: `ws://127.0.0.1:${port}/v3/ws` });
