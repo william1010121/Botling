@@ -73,7 +73,7 @@ async function chatFrame(page: Page): Promise<Frame> {
   return page.frames().find((f) => f.url().includes("/v3/chat.html"))!;
 }
 
-interface Logged { at: number; url: string; range: string | null; status?: number; contentRange?: string | null; bytes?: number }
+interface Logged { at: number; url: string; range: string | null; status?: number; contentRange?: string | null; bytes?: number; botlingStatus?: string | null }
 
 async function run(engine: string, type: BrowserType) {
   const root = mkdtempSync(join(TMP, `content-${engine}-`));
@@ -110,6 +110,7 @@ async function run(engine: string, type: BrowserType) {
         if (!response) return;
         entry.status = response.status();
         entry.contentRange = await response.headerValue("content-range").catch(() => null);
+        entry.botlingStatus = await response.headerValue("x-botling-status").catch(() => null);
       }, () => undefined);
     });
     context.on("requestfinished", (request) => {
@@ -181,9 +182,10 @@ async function run(engine: string, type: BrowserType) {
 
     // 3. A PDF's byte ranges, through its ticketed URL (what pdf.js will read).
     await say(page, `/say The report: ![doc](${pathToFileURL(pdf).href})`);
-    const diagMedia = () => page.evaluate(() => (globalThis as { botling3Diagnostics?: { media: Record<string, { state: string; src?: string }> } }).botling3Diagnostics?.media ?? {});
-    await expect.poll(async () => Object.entries(await diagMedia()).find(([key, v]) => key.endsWith("doc.pdf") && v.state === "ready")?.[1].src ?? "", { timeout: 60_000 }).toMatch(/^\/v3\/c\//);
-    const pdfSrc = Object.entries(await diagMedia()).find(([key]) => key.endsWith("doc.pdf"))![1].src!;
+    // The line itself shows the page-1 thumbnail (step 11); the file's own ticketed URL is the answer's `url`.
+    const diagMedia = () => page.evaluate(() => (globalThis as { botling3Diagnostics?: { media: Record<string, { state: string; url?: string }> } }).botling3Diagnostics?.media ?? {});
+    await expect.poll(async () => Object.entries(await diagMedia()).find(([key, v]) => key.endsWith("doc.pdf") && v.state === "ready")?.[1].url ?? "", { timeout: 60_000 }).toMatch(/^\/v3\/c\//);
+    const pdfSrc = Object.entries(await diagMedia()).find(([key]) => key.endsWith("doc.pdf"))![1].url!;
     const pdfBytes = readFileSync(pdf);
     const ranges = [`bytes=0-1023`, `bytes=-1024`, `bytes=${Math.floor(pdfBytes.length / 2)}-${Math.floor(pdfBytes.length / 2) + 65_535}`];
     const pdfAnswers = await page.evaluate(async ({ url, ranges }) => Promise.all(ranges.map(async (range) => {
@@ -217,11 +219,15 @@ async function run(engine: string, type: BrowserType) {
     if (target === null) { await page.reload(); changedFrame = await chatFrame(page); }
     await expect.poll(() => changedFrame.evaluate(() => document.querySelector("[data-testid=media-changed]")?.textContent ?? "").catch(() => ""), { timeout: 60_000 }).toBe("This file changed after this message.");
     await page.waitForTimeout(500);
-    const afterRewrite = log.filter((e) => e.at >= rewrittenAt);
-    expect(afterRewrite.filter((e) => e.status !== undefined && e.status >= 200 && e.status < 300), JSON.stringify(afterRewrite)).toEqual([]);
+    // The video's reads (the shell may fetch the PDF's page-1 thumbnail meanwhile, step 11).
+    const videoPath = src.split("?")[0]!;
+    const afterRewrite = log.filter((e) => e.at >= rewrittenAt && new URL(e.url).pathname === videoPath);
+    // A refusal of WebKit's media loader is an empty 200 that says the real status (step 11: a 4xx makes it retry in a
+    // loop); never bytes.
+    expect(afterRewrite.filter((e) => e.status !== undefined && e.status >= 200 && e.status < 300 && !(e.botlingStatus && e.contentRange === null)), JSON.stringify(afterRewrite)).toEqual([]);
     const hidden = await changedFrame.evaluate(() => { const v = document.querySelector("video.media") as HTMLVideoElement | null; return { hidden: !!v && v.hidden && getComputedStyle(v).display === "none", src: v?.getAttribute("src") ?? null }; });
     expect(hidden).toEqual({ hidden: true, src: null });
-    result.changed = { how: target === null ? "reload (the whole clip was buffered)" : `seek to ${target} s (not buffered)`, msAfterRewrite: Date.now() - rewrittenAt, requestsAfter: afterRewrite.map(({ range, status }) => ({ range, status })) };
+    result.changed = { how: target === null ? "reload (the whole clip was buffered)" : `seek to ${target} s (not buffered)`, msAfterRewrite: Date.now() - rewrittenAt, requestsAfter: afterRewrite.map(({ range, status, botlingStatus }) => ({ range, status, ...(botlingStatus ? { botlingStatus } : {}) })) };
     if (SHOTS && engine === "chromium") await page.screenshot({ path: join(SHOTS, "video-changed.png"), mask: [chatOf(page).locator("#messages .row").filter({ hasText: "/say" })] });
     result.pageErrors = errors;
     expect(errors).toEqual([]);

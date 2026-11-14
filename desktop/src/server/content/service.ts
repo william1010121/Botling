@@ -21,7 +21,7 @@
 import { realpathSync, rmSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
-import { CONTENT_CHUNK_BYTES, type ContentRef, type Entry, type MessageOf, type StreamId } from "../../protocol";
+import { CONTENT_CHUNK_BYTES, type ContentRef, type ContentVariant, type Entry, type MessageOf, type StreamId } from "../../protocol";
 import { appendEntries, inRead, readStream } from "../log";
 import type { Command, Db, SqlRow } from "../store";
 import { contentTypeOf, namedFiles, pathOfFileRef, type LineLike, type NamedFile } from "./files";
@@ -55,6 +55,8 @@ export interface ContentMedia {
   kick(): void;
   /** A ready variant's file, or null (not made, evicted: the FE falls back to the original). */
   openVariant(srcId: string, name: string): Promise<{ path: string; type: string; sig: StatSig } | null>;
+  /** M2 step 11: the variants a front end may pick from now (the original's bitrate/height/duration, ready variants). */
+  variantsOf?(source: { id: string; size: number; type: string }): ContentVariant[];
 }
 
 export interface NotedFile {
@@ -388,6 +390,17 @@ export class ContentService {
       if (!this.readableStream(stream, db)) return null;
       return this.find({ t: "content.find", req: "locate", botId: message.botId, line: message.line, url: message.url }).ref;
     });
+  }
+
+  /** M2 step 11: a ready content id's size and variants (no variants without media jobs or before its meta). */
+  describe(id: string): { size: number; variants: ContentVariant[] } | null {
+    if (!id.startsWith("sha256:")) return null;
+    const row = this.db().prepare("SELECT size, type FROM content WHERE id = ? AND state = 'ready'").get(id);
+    if (!row) return null;
+    const size = Number(row.size);
+    let variants: ContentVariant[] = [];
+    try { variants = this.media?.variantsOf?.({ id, size, type: String(row.type) }) ?? []; } catch { variants = []; }
+    return { size, variants };
   }
 
   /**

@@ -270,9 +270,18 @@ export const ContentLocate = msg("content.locate", {
  */
 export const ContentLocated = msg("content.located", {
   req: ReqId,
-  ref: z.strictObject({ owner: ServerId, id: LocalContentId, type: z.string().min(1).max(200), state: ContentRef.shape.state, entry: EntryRef }).nullable(),
+  ref: z.strictObject({
+    owner: ServerId, id: LocalContentId, type: z.string().min(1).max(200), state: ContentRef.shape.state, entry: EntryRef,
+    /** M2 step 11 (additive): the file's size once hashed (the page caches images ≤ 2 MB and shows the size). */
+    size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  }).nullable(),
   ticket: ContentTicket.optional(),
   expiresAt: z.number().int().nonnegative().optional(),
+  /**
+   * M2 step 11 (additive): the variants the owner holds now (the `original` with bitrate, height and duration; poster,
+   * preview, thumb …), so a page that missed the `content.variant` entries can pick one (§9A.5 1.5× rule).
+   */
+  variants: z.array(ContentVariant).max(20).optional(),
 });
 /** Start (or resume) an upload of the bytes whose hash is `id`; the server answers `content.stored` with what it has. */
 export const ContentPut = msg("content.put", {

@@ -16,7 +16,7 @@ import { buildSync } from "esbuild";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { contentUrlPath, type StreamId } from "../../src/protocol";
 import { ContentService } from "../../src/server/content";
-import { RemoteContent } from "../../src/server/content/remote";
+import { mediaLoaderRefusal, RemoteContent } from "../../src/server/content/remote";
 import { ContentTickets } from "../../src/server/content/tickets";
 import { ensureStream } from "../../src/server/log";
 import { findOnPath, findTools, MediaJobs, previewReason, type MediaJobsOptions } from "../../src/server/media";
@@ -133,7 +133,7 @@ const rows = (sql: string, ...params: Array<string | number>) => {
 };
 const variantRows = (srcId: string) => rows("SELECT variant, id, state, path, size, type, info FROM variants WHERE srcId = ? ORDER BY variant", srcId);
 const variantEntries = () => rows("SELECT body FROM entries WHERE stream = ? AND kind = 'content.variant' ORDER BY seq", STREAM)
-  .map((row) => JSON.parse(String(row.body)) as { id: string; variant: { name: string; id: string; size: number; type: string; bitrate?: number; height?: number } });
+  .map((row) => JSON.parse(String(row.body)) as { id: string; variant: { name: string; id: string; size: number; type: string; bitrate?: number; height?: number; durationMs?: number } });
 
 /** GET a variant through `/v3/c/` with a ticket for (device, owner, src id, entry). */
 async function fetchVariant(srcId: string, seq: number, variant: string, range?: string, ticket?: string) {
@@ -191,6 +191,14 @@ describe.skipIf(!HAVE)("media jobs (ffmpeg found)", () => {
     const original = variantEntries().find((e) => e.id === hi && e.variant.name === "original")!.variant;
     expect(original.bitrate).toBeGreaterThan(1_500_000);
     expect(original.height).toBe(720);
+    // Step 11: the duration rides on the original variant (additive `durationMs`), for the poster.
+    expect(Math.abs(original.durationMs! - 12_000)).toBeLessThan(200);
+    // …and `content.located` lists the variants the owner holds now, with the size (a page that missed the entries).
+    const described = content.describe(hi)!;
+    expect(described.size).toBe(statSync(clip.hi).size);
+    expect(described.variants.map((v) => v.name)).toEqual(["original", "poster", "preview"]);
+    expect(described.variants[0]).toMatchObject({ bitrate: original.bitrate, height: 720, durationMs: original.durationMs });
+    expect(content.describe(lo)!.variants.map((v) => v.name)).toEqual(["original", "poster"]);
     expect(previewReason({ bitrate: 300_000, container: "mov,mp4", videoCodec: "h264", audioCodec: "aac" }, 1e6, "video/mp4")).toBeNull();
     expect(previewReason({ bitrate: 300_000, container: "matroska,webm", videoCodec: "vp9", audioCodec: "opus" }, 1e6, "video/webm")).toMatch(/not MP4/);
     expect(previewReason({ bitrate: 300_000, container: "mov,mp4", videoCodec: "hevc", audioCodec: "aac" }, 1e6, "video/mp4")).toMatch(/not H.264/);
@@ -210,6 +218,15 @@ describe.skipIf(!HAVE)("media jobs (ffmpeg found)", () => {
     expect(poster.status).toBe(200);
     expect(poster.headers.get("content-type")).toBe("image/jpeg");
     expect((await fetchVariant(lo, seq, "preview")).status).toBe(410); // not made: the FE plays the original
+    // Step 11: the same refusal to WebKit's media loader (X-Playback-Session-Id + Range) is an empty 200 that keeps the
+    // reason, which ends its retry loop; anyone else still gets the 410.
+    const loader = mediaLoaderRefusal(await fetchVariant(lo, seq, "preview", "bytes=5000-"), { "x-playback-session-id": "S", range: "bytes=5000-" });
+    expect(loader.status).toBe(200);
+    expect(loader.headers.get("x-botling-status")).toBe("410");
+    expect(loader.headers.get("content-range")).toBeNull();
+    expect((await loader.arrayBuffer()).byteLength).toBe(0);
+    expect(mediaLoaderRefusal(await fetchVariant(lo, seq, "preview", "bytes=5000-"), { range: "bytes=5000-" }).status).toBe(410);
+    expect(mediaLoaderRefusal(await fetchVariant(hi, seq, "preview", "bytes=0-9"), { "x-playback-session-id": "S", range: "bytes=0-9" }).status).toBe(206);
     expect((await fetchVariant(hi, seq, "preview", undefined, "x".repeat(43))).status).toBe(403); // unknown ticket
     // A ticket for lo does not open hi's preview (binding), and an entry that does not reference hi is refused.
     const loTicket = tickets.issue({ deviceId: DEVICE, owner: content.serverId, id: lo, entry: { stream: STREAM, seq } }).ticket;

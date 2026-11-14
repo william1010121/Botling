@@ -79,6 +79,8 @@ export type FeLinkEvent =
   | { type: "live"; stream: StreamId; view: LiveSegmentView | null; stale: boolean }
   /** Any other server message (stale, peer, shell.*, content.*). */
   | { type: "message"; message: Message }
+  /** The server ended the session with `bye` (M2 step 11: `revoked` tells the page to drop what it cached). */
+  | { type: "bye"; reason: string; detail?: string }
   | { type: "error"; error: unknown };
 
 /** An outbox item as the UI renders it in place (§11.6, §13.4). */
@@ -396,7 +398,10 @@ export class FeLink {
       case "content.found": case "content.file": case "content.gone": case "content.located": case "content.granted": this.onContentAnswer(message); return;
       case "bye":
         if (message.reason === "version") this.updateRequired(session, "a newer version");
-        else this.endSession(session, `bye: ${message.reason}`);
+        else {
+          this.emit({ type: "bye", reason: message.reason, ...(message.detail ? { detail: message.detail } : {}) });
+          this.endSession(session, `bye: ${message.reason}`);
+        }
         return;
       case "ping": return;
       default: this.emit({ type: "message", message });
