@@ -278,14 +278,17 @@ export class Kernel extends PluginKernel {
     this.retryWanted();
   }
 
-  /** The instances (not absent) that require a service `plugin` provides, by its declaration or its registrations. */
+  /**
+   * The instances (not absent) that require a service `plugin` provides, by its declaration or its registrations; the last
+   * loaded first, as unloadAll and the undos go.
+   */
   protected override dependentsOf(plugin: string): string[] {
     const provided = new Set([
       ...(this.declarations.get(plugin)?.provides?.services ?? []),
       ...[...this.services].filter(([, held]) => held.plugin === plugin).map(([service]) => service),
     ]);
     if (!provided.size) return [];
-    return this.plugins().filter((other) => other !== plugin && (this.declarations.get(other)?.requires?.services ?? []).some((service) => provided.has(service)));
+    return this.plugins().reverse().filter((other) => other !== plugin && (this.declarations.get(other)?.requires?.services ?? []).some((service) => provided.has(service)));
   }
 
   protected override unloadRequested(plugin: string): void {

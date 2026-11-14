@@ -216,6 +216,8 @@ export class PluginKernel {
   protected dependentsOf(_plugin: string): string[] { return []; }
   /** Overridden by the service layer: someone asked for `plugin`'s unload (not a dependency or a swap). */
   protected unloadRequested(_plugin: string): void {}
+  /** Overridden by a host: `plugin`'s instance `generation` is now unloading, before any of its undos runs (stop routing to it). */
+  protected unloadStarted(_plugin: string, _generation: number): void {}
 
   // MARK: Registering
 
@@ -331,6 +333,7 @@ export class PluginKernel {
     instance.state = "unloading";
     instance.failures = [];
     this.record("RequestUnload", plugin, instance.generation, undefined, cause === "request" ? undefined : cause);
+    this.unloadStarted(plugin, instance.generation);
     let finish!: (result: UnloadResult) => void;
     const promise = new Promise<UnloadResult>((resolve) => { finish = resolve; });
     instance.unloading = promise;

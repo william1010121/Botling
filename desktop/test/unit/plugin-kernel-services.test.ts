@@ -89,10 +89,11 @@ describe("services", () => {
     const unloaded = kernel.requestUnload("chat");
     expect(["note", "coach", "chat"].map((name) => kernel.state(name))).toEqual(["absent", "absent", "absent"]);
     await unloaded;
-    expect(seen).toEqual(["quote bye from note", "note undone", "quote bye from coach", "coach undone", "chat undone"]);
+    // The last loaded dependent first.
+    expect(seen).toEqual(["quote bye from coach", "coach undone", "quote bye from note", "note undone", "chat undone"]);
     expect(lines(kernel.events)).toEqual([
-      "RequestUnload note (dependency)", "BeginUnload note", "RunUndo note", "FinishUnload note",
       "RequestUnload coach (dependency)", "BeginUnload coach", "RunUndo coach", "FinishUnload coach",
+      "RequestUnload note (dependency)", "BeginUnload note", "RunUndo note", "FinishUnload note",
       "RequestUnload chat", "BeginUnload chat", "RunUndo chat", "RunUndo chat", "FinishUnload chat",
     ]);
     expect(kernel.wanted().sort()).toEqual(["coach", "note"]);
