@@ -93,13 +93,13 @@ describe("a playing video in a reply", () => {
     }
   });
 
-  it("plays on from where it is when its reply also has a card (a result page's preview) and is drawn again", () => {
+  it("plays on from where it is when its reply also has a card (a result page's preview) and is drawn again", async () => {
     const reply = (text: string) => message({ id: "p2", text, previews: [{ name: "card", data: "{\"url\":\"report.html\"}" }] });
     window.ccb.setState(state([reply(`Here: ![clip](${VIDEO})`)], { components: { card }, working: true }));
     const [video] = videos();
     const frame = document.querySelector("#messages iframe.component-frame");
     expect(frame).not.toBeNull();
-    playFrom(video, 7.5);
+    const asked = playFrom(video, 7.5);
     window.ccb.setState(state([reply(`Here: ![clip](${VIDEO}) and the report`)], { components: { card } }));
     // The card's frame was kept (the row patched in place), and so was the video.
     expect(document.querySelector("#messages iframe.component-frame")).toBe(frame);
@@ -108,6 +108,9 @@ describe("a playing video in a reply", () => {
     expect(shown).toBe(video);
     expect(shown.currentTime).toBe(7.5);
     expect(shown.paused).toBe(false);
+    // The patch took it out of the page for a moment, and no atomic move puts it back: it is played again, once.
+    await Promise.resolve(); await Promise.resolve();
+    expect(asked).toEqual({ plays: 1, pauses: 0 });
   });
 
   it("goes with its reply when the reply is removed", () => {

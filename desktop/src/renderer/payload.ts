@@ -47,14 +47,21 @@ function step(view: NonNullable<MessageView["steps"]>[number]): WebStep {
 /** Statuses of a routine that will still run. */
 const WAITING_ROUTINE = new Set(["pending", "due", "enabled"]);
 
+/**
+ * Where a routine's chip sorts among the row's work: before all of it, as it did when its start was the build's clock.
+ * A routine has no start of its own and its line shows when it fires, never how long it ran; a fixed value keeps the row
+ * the same from one build to the next, so the chat page does not draw that reply again (with any video in it) each time.
+ */
+export const ROUTINE_CHIP_STARTED = Number.MAX_SAFE_INTEGER;
+
 /** The bot's own routines that will still run, as scheduled work in the background-work row (drawn under `messageID`). */
-export function routineChips(routines: RoutineView[], messageID: string, now: Date): TaskChipView[] {
+export function routineChips(routines: RoutineView[], messageID: string): TaskChipView[] {
   return routines.filter((routine) => WAITING_ROUTINE.has(routine.status)).map((routine) => ({
     id: `routine:${routine.id}`,
     kind: "cron" as const,
     title: routine.title || routine.task,
     status: "running" as const,
-    started: now.getTime(),
+    started: ROUTINE_CHIP_STARTED,
     ended: null,
     detail: routine.task,
     message: messageID,
@@ -188,7 +195,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     task.status === "running" || (task.monitor && ["pending", "dispatching", "uncertain"].includes(task.monitor.callback)) || lastUser < 0 || index >= lastUser || (task.ended ?? -Infinity) > new Date(chat.messages[lastUser]!.time).getTime()
   ).map((task) => ({ ...task, message: message.id })));
   const backgroundRow = shown.findLast((message) => message.role === "bot" || message.role === "notice")?.id;
-  if (backgroundRow) background.push(...routineChips(chat.routines ?? [], backgroundRow, now));
+  if (backgroundRow) background.push(...routineChips(chat.routines ?? [], backgroundRow));
   const lastYours = shown.findLastIndex((message) => message.role === "user");
   const messages: WebMessage[] = shown.map((message, index) => {
     if (message.state) extras.states[message.id] = message.state;

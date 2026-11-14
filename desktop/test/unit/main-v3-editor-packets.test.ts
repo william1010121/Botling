@@ -16,10 +16,16 @@ const messages: MessageView[] = [
   { id: "r1", role: "bot", text: "Here: ![clip](file:///Users/x/clip.mp4)", time: "2026-11-14T09:00:05.000Z", state: "done" },
 ];
 const stamp = { surfaceId: "s1", documentGeneration: "g1" };
-/** What the window sends at `now` (App.tsx ChatFrame: a full state at every re-bind). */
+/** The 2.x chat state at `now` (renderer/payload.ts), as the window builds it. */
+const stateAt = (now: number) => chatState(bot, { botId: "B", messages, running: null, live: [], routines: [routine] } as never, new Date(now));
+/**
+ * What the window sent at `now` before the 2.x renderer made routine chips steady (App.tsx ChatFrame: a full state at every
+ * re-bind): the routine chip's `started` was `now`. main-v3 still steadies such packets (an older window build).
+ */
 const packetAt = (now: number) => {
-  const { state, extras } = chatState(bot, { botId: "B", messages, running: null, live: [], routines: [routine] } as never, new Date(now));
-  return { stamp, message: { botling: "state", state, extras, revision: 1 } };
+  const { state, extras } = stateAt(now);
+  const rows = state.messages.map((row) => row.tasks ? { ...row, tasks: row.tasks.map((chip) => chip.id.startsWith("routine:") ? { ...chip, started: now } : chip) } : row);
+  return { stamp, message: { botling: "state", state: { ...state, messages: rows }, extras, revision: 1 } };
 };
 /** The chat page's key for each row (Web/src/main.ts: `JSON.stringify([message, mark])`, no components here). */
 const rowKeys = (packet: unknown) => ((packet as { message: { state: { messages: unknown[] } } }).message.state.messages).map((m) => JSON.stringify([m, null]));
@@ -37,6 +43,9 @@ describe("steady chat packets", () => {
     // Nothing else moves: the packet it was given is not changed, and a row with no routine chip is the same object.
     expect(rowKeys(a)[1]).toContain(`"started":${t}`);
     expect((steadyEditorPacket(a) as ReturnType<typeof packetAt>).message.state.messages[0]).toBe(a.message.state.messages[0]);
+    // The 2.x renderer now builds the steady value itself (the same one), so its packets pass unchanged in effect.
+    expect(stateAt(t).state.messages[1]!.tasks![0]!.started).toBe(ROUTINE_CHIP_STARTED);
+    expect(JSON.stringify(stateAt(t).state.messages)).toBe(JSON.stringify(stateAt(t + 30_000).state.messages));
   });
 
   it("a stateDelta's changed rows are made steady too; other packets and real tasks pass as they are", () => {
