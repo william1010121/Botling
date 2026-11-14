@@ -95,7 +95,8 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {shown && current?.id === "permissions" && <Permissions client={client} settings={shown} change={change} />}
             {shown && current?.id === "chat" && <ChatAndReports client={client} settings={shown} change={change} plugins={plugins} onProblem={setProblem} onNavigate={go} />}
             {current?.id === "setup" && <EngineSetup client={client} settings={shown} change={change} />}
-            {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
+            {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} lang={settings?.effectiveLanguage ?? null}
+              onShowMain={onOpenBot && bots.find((one) => one.role === "main") ? () => { onOpenBot(bots.find((one) => one.role === "main")!.id); onClose(); } : undefined} />}
             {current?.plugin && <SlotFrame key={current.id} client={client} plugin={current.plugin} view={current.view ?? current.id} title={current.title} fontSize={15} />}
             {shown && current?.id === "phone" && <PhoneSettings client={client} bots={bots} lang={shown.effectiveLanguage} />}
             {shown && current?.id === "machines" && <MachinesSettings client={client} lang={shown.effectiveLanguage} />}
@@ -455,11 +456,11 @@ function Developer({ settings, change, bots }: { settings: SettingsView; change:
   );
 }
 
-function PluginsSection({ client, plugins }: { client: Client; plugins: PluginsView | null }) {
+function PluginsSection({ client, plugins, lang, onShowMain }: { client: Client; plugins: PluginsView | null; lang: SettingsView["effectiveLanguage"] | null; onShowMain?: () => void }) {
   const [panel, setPanel] = useState<{ plugin: string; id: string; title: string } | null>(null);
   return (
     <>
-      <PluginsPanel client={client} plugins={plugins} embedded onPanel={setPanel} onClose={() => {}} />
+      <PluginsPanel client={client} plugins={plugins} embedded lang={lang} onPanel={setPanel} onClose={() => {}} {...(onShowMain ? { onShowMain } : {})} />
       {panel && <PanelFrame client={client} plugin={panel.plugin} panel={panel.id} title={panel.title} onClose={() => setPanel(null)} />}
     </>
   );

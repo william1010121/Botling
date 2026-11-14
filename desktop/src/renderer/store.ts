@@ -247,7 +247,8 @@ export class WorkspaceStore {
 }
 
 export function apply(view: WorkspaceView, event: Event): WorkspaceView {
-  if (event.type === "plugins.emit") return view;
+  // The plugin catalog's view goes to the Plugins page itself (PluginStore.tsx `usePluginStore`).
+  if (event.type === "plugins.emit" || event.type === "plugins.store") return view;
   if (event.type === "components.updated") return { ...view, components: event.components };
   if (event.type === "plugins.updated") return { ...view, plugins: event.plugins };
   if (event.type === "plugins.open") return { ...view, pluginPanel: { plugin: event.plugin, panel: event.panel, title: event.title } };

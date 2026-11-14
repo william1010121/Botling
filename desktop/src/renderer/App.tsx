@@ -701,7 +701,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             title="A bot of its own, with its own memory and routines (a morning news bot, say)"><Icon name="sparkles" size={13} />New bot</button>
         </div>
         <UpdateEntry client={client} />
-        <PluginsButton client={client} plugins={view.plugins} onAsked={() => { void store.select(MAINTAINER_BOT_ID); }} />
+        <PluginsButton client={client} plugins={view.plugins} lang={view.settings?.effectiveLanguage ?? null} onAsked={() => { void store.select(MAINTAINER_BOT_ID); }}
+          onShowMain={() => { const main = view.bots.find((one) => one.role === "main"); if (main) void store.select(main.id); }} />
         <div className="rail-settings">
           <SidebarSettings client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />
         </div>

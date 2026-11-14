@@ -355,9 +355,20 @@ in the `PLUGINS.md` the app writes into the plugin library on launch. Check a pl
 ```
 
 Or ask the Maintainer to write it for you; it can also turn one of your own projects into a
-plugin, asking before it reads the folder. **External plugins** from git, npm or a zip are
+plugin, asking before it reads the folder. **External plugins** from git or a folder are
 installed only after you approve a card listing their source, license, permissions and MCP
 servers. Secrets go to the macOS keychain.
+
+**The Plugins page** (bottom left) has three parts: **Installed** (built-in and library plugins,
+on/off, settings, and Update / Revert / Remove for plugins installed from outside), **Explore**
+(the public catalog, [botling-plugins](https://github.com/william1010121/botling-plugins): what
+each plugin does, its license, permissions and minimum Botling version) and **Updates** (the
+count shows on the Plugins button). Install downloads exactly the commit the catalog's
+`index.json` records, takes out only that plugin's folder, refuses it unless its files hash to
+the index's value, and then shows the same install card in the main bot's chat; nothing is
+installed until you press Install there. The catalog is cached, so Explore works offline with
+the last list. Remove keeps the plugin's data folder. To get a plugin listed, see that repo's
+README and the plugin guide's `reference/install-and-revert.md`.
 
 ## Developer mode & contributing
 
