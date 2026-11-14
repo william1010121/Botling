@@ -175,6 +175,17 @@ CREATE INDEX fwdcancels_by_owner ON fwdcancels (owner, origin, originEpoch, targ
 CREATE INDEX forwardq_by_owner ON forwardq (owner, origin, originEpoch, target, n);
 `;
 
+// v9 (M3 step 8, src/server/replica/peer-log-cache.ts): this server's cache of peers' bot logs (v1 §10.3, §10.5): per
+// stream the newest snap the owner sent and the entries after it (hash chain checked), the logIds the owner retired,
+// and when it was last used (LRU inside the peer cache budget, followed bots last).
+const V9 = `
+CREATE TABLE peerlogs (
+  stream TEXT PRIMARY KEY, owner TEXT NOT NULL, logId TEXT NOT NULL, snapSeq INTEGER NOT NULL, head INTEGER NOT NULL,
+  headHash TEXT, snap TEXT, retired TEXT NOT NULL, bytes INTEGER NOT NULL, usedAt INTEGER NOT NULL, heardAt INTEGER
+) WITHOUT ROWID;
+CREATE TABLE peerlog_entries (stream TEXT NOT NULL, seq INTEGER NOT NULL, entry TEXT NOT NULL, PRIMARY KEY (stream, seq)) WITHOUT ROWID;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -234,6 +245,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "forwarding (src/server/forward): cancels kept until the owner answers (fwdcancels), forwardq by owner",
     up(db) {
       db.exec(V8);
+    },
+  },
+  {
+    version: 9,
+    description: "pass-through (src/server/replica): the cache of peers' bot logs (peerlogs, peerlog_entries)",
+    up(db) {
+      db.exec(V9);
     },
   },
 ];
