@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KernelEvent } from "../../../Web/src/plugin-kernel";
-import { CORE_PLUGIN, CORE_SLOTS, ContributionKernel, slotOf } from "../../src/core/plugins/kernel-list";
+import { CONTRIBUTION_KINDS, CORE_PLUGIN, CORE_SLOTS, ContributionKernel, slotOf } from "../../src/core/plugins/kernel-list";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
-import type { Contribution } from "../../src/core/plugins/contributions";
+import { HOOKS, MENU_SLOTS, STATUS_SLOTS, VIEW_SLOTS, type Contribution, type ContributionKind } from "../../src/core/plugins/contributions";
 import { writeFixturePlugins } from "../kernel-goldens";
 import { desktop } from "../helpers";
 
@@ -87,6 +87,17 @@ describe("the contribution list on the kernel", () => {
     expect(registry.contributionKernel.loaded()).toEqual(["zed.tools"]);
     expect(registry.contributionKernel.kernel.holdsNothingOf("acme-board")).toBe(true);
     expect(registry.contributions().every((entry) => entry.plugin === "zed.tools")).toBe(true);
+  });
+
+  it("every contribution kind has its slots in the core: the kinds are a record the compiler checks against ContributionKind", () => {
+    // A record that leaves a kind out (or names one that is not) does not compile, so a new kind cannot be dropped.
+    const kinds: Record<ContributionKind, true> = CONTRIBUTION_KINDS;
+    // @ts-expect-error: a kind left out
+    const missing: Record<ContributionKind, true> = { command: true };
+    expect(missing).toBeTruthy();
+    const placed: Record<string, readonly string[]> = { view: VIEW_SLOTS, menu: MENU_SLOTS, hook: HOOKS, statusItem: STATUS_SLOTS };
+    const expected = (Object.keys(kinds) as ContributionKind[]).flatMap((kind) => (placed[kind] ? placed[kind]!.map((where) => `${kind}/${where}`) : [kind]));
+    expect([...CORE_SLOTS].sort()).toEqual(expected.sort());
   });
 
   it("reconcile returns what it holds in the order asked, and unloads what is no longer asked for", () => {

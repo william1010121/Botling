@@ -16,9 +16,16 @@ import { HOOKS, MENU_SLOTS, STATUS_SLOTS, VIEW_SLOTS, type Contribution, type Co
 /** The core's instance in the kernel: owns every 2.x slot. Not a valid plugin name, so no plugin can take it. */
 export const CORE_PLUGIN = ":core";
 
-const KINDS: readonly ContributionKind[] = [
-  "command", "keybinding", "slash", "view", "tile", "card", "statusItem", "setting", "menu", "hook", "routine", "replyTag", "promptSection", "agentCommand", "agent",
-];
+/**
+ * Every contribution kind, as a record the compiler checks against `ContributionKind`: a kind added to the union and not
+ * here (or named here and not in the union) does not compile, so no kind's slot can be silently left out of the core.
+ */
+export const CONTRIBUTION_KINDS = {
+  command: true, keybinding: true, slash: true, view: true, tile: true, card: true, statusItem: true, setting: true, menu: true,
+  hook: true, routine: true, replyTag: true, promptSection: true, agentCommand: true, agent: true,
+} as const satisfies Record<ContributionKind, true>;
+
+const KINDS = Object.keys(CONTRIBUTION_KINDS) as ContributionKind[];
 
 /** The slot a contribution goes into. */
 export function slotOf(contribution: Contribution): string {
