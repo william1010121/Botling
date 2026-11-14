@@ -10,13 +10,21 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { BotView, SubagentRowView, WaitingView } from "../../src/contract";
 import { SubBotNav } from "../../src/renderer/SubBotNav";
 import { headerNav } from "../../src/renderer/sub-bot-nav";
 import { WorkersBadge, WorkersMenu } from "../../src/renderer/Workers";
 import { desktop } from "../helpers";
 
+// The menu reads Date.now() itself and splits workers at local midnight ("Today" rows, "Earlier · 7 days" folded behind
+// "Show N more"). Pin the clock at local noon so workers that ended 20 minutes ago are today at any hour the test runs;
+// on the real clock, from 00:00 to 00:20 they were yesterday's and no worker row was drawn.
+const noon = new Date();
+noon.setHours(12, 0, 0, 0);
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(noon);
+afterAll(() => { vi.useRealTimers(); });
 const now = Date.now();
 const worker = (id: string, title: string): SubagentRowView => ({ id, title, status: "completed", head: "claude", startedAt: now - 30 * 60_000, endedAt: now - 20 * 60_000, unsettledAt: null, settled: true, prompt: "p" });
 const math: BotView = { id: "m", name: "Math", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null,
