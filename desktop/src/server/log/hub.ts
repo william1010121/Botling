@@ -289,7 +289,10 @@ export class LogHub {
     await this.rewinding;
   }
 
-  /** Readers of streams retired by a restore done in this process (step 12): reset + snap. */
+  /**
+   * Readers of streams retired under a running hub: reset + snap. botlingd's restore does not use it: it runs with the
+   * server stopped (restore.ts says why), and readers get reset + snap when they subscribe to the next start.
+   */
   retiredUnder(streams: Iterable<readonly [StreamId, string]>): void {
     for (const [stream, oldLogId] of streams) for (const reader of [...this.readers]) reader.retired(stream, oldLogId);
   }

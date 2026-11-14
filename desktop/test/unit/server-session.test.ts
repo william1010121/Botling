@@ -199,12 +199,15 @@ describe("the srv: stream and a restore", () => {
     expect(snap.view).toEqual({ serverId, bots: [] });
     const cursor = { logId: snap.logId, seq: snap.seq };
     hub.close();
-    const backup = await takeBackup(store.file, store.backupsDir, "manual");
+    const takenAt = new Date(Date.now() - 60_000);
+    const backup = await takeBackup(store.file, store.backupsDir, "manual", takenAt);
     await store.close();
 
     const restored = await restoreBackup(dataDir, backup);
     expect(restored.streams).toBeGreaterThanOrEqual(1);
-    expect(restored.restoredTo).toBe(Math.floor(statSync(backup).mtimeMs));
+    // When the backup was taken, from its own metadata (step 12), not its file time.
+    expect(restored).toMatchObject({ restoredTo: takenAt.getTime(), restoredToFrom: "metadata" });
+    expect(restored.restoredTo).not.toBe(Math.floor(statSync(backup).mtimeMs));
     store = await openServerStore(dataDir);
     try {
       const after = new LogHub(store, { serverStreams: true });
