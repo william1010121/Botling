@@ -58,6 +58,7 @@ const samples: { [T in Exclude<MessageType, M2Type>]: { message: Extract<Message
   "cmd.retry": { sender: "server", message: { t: "cmd.retry", slot, inc: logB } },
   req: { sender: "fe", session: { local: true }, message: { t: "req", req: "r1", cmd: { type: "routines.list", botId: bot } } as never },
   res: { sender: "server", session: { local: true }, message: { t: "res", req: "r1", ok: true, result: { routines: [] } } },
+  "res.part": { sender: "server", session: { local: true }, message: { t: "res.part", req: "r1", i: 0, n: 2, text: "{\"t\":\"res\"" } },
   "content.find": { sender: "fe", session: { local: true }, message: { t: "content.find", req: "c0", botId: bot, line: "m2", url: "file:///clip.mp4" } },
   "content.found": { sender: "server", session: { local: true }, message: { t: "content.found", req: "c0", ref: { owner: "server-1", id: `pending:${"0f".repeat(16)}`, type: "video/mp4", state: "preparing", entry: { stream, seq: 7 } } } },
   "content.open": { sender: "fe", session: { local: true }, message: { t: "content.open", req: "c1", owner: "server-1", id: content, variant: "original", entry: { stream, seq: 7 } } },

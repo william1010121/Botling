@@ -7,7 +7,7 @@
 //   (src/server/slots/basis.ts) read it: an answer to a closed card, or to a newer revision than the front end showed,
 //   is refused with `changed`. A removed line takes its card with it.
 // The bot row (`bots`) and `lists` are written by their own owners (src/server/effects, src/server/botstore).
-import { canonicalJson, type Entry } from "../../protocol";
+import { canonicalJson, interruptedLine, type Entry } from "../../protocol";
 import type { MessageView } from "../../contract";
 import type { Db } from "../store";
 
@@ -39,6 +39,18 @@ export function applyReadModel(db: Db, entry: Entry): void {
       } else {
         db.prepare("DELETE FROM cards WHERE botId = ? AND cardId = ?").run(body.botId!, message.id);
       }
+      return;
+    }
+    case "turn.interrupted": {
+      // The reply line shows the interruption as the live path does (protocol/interrupted.ts), so a snap after the
+      // restart matches what the window showed (M1 demo bug 5a). A reply that had no line yet stays without one.
+      const interrupted = entry.body as { botId: string; turnId: string; messageId?: string; text: string };
+      if (!interrupted.messageId) return;
+      const row = db.prepare("SELECT body FROM messages WHERE botId = ? AND msgId = ?").get(interrupted.botId, interrupted.messageId);
+      if (!row) return;
+      const line = interruptedLine(JSON.parse(String(row.body)) as MessageView, interrupted, { id: interrupted.messageId, time: "" });
+      db.prepare("UPDATE messages SET rev = ?, body = ? WHERE botId = ? AND msgId = ?").run(entry.seq, canonicalJson(line), interrupted.botId, interrupted.messageId);
+      if (isCard(line)) db.prepare("UPDATE cards SET rev = ?, state = ?, body = ? WHERE botId = ? AND cardId = ?").run(entry.seq, isOpenCard(line) ? "open" : "closed", canonicalJson(line), interrupted.botId, interrupted.messageId);
       return;
     }
     case "message.removed":

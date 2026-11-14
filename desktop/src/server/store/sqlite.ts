@@ -88,14 +88,21 @@ export function openDb(path: string, options: OpenOptions = {}): Db {
 }
 
 /**
+ * The most pages one backup step may copy: more than any database has, so a step with it copies every page. node:sqlite
+ * takes a 32-bit `rate`, and Electron's Node (24.22) refuses SQLite's own "all pages" value -1 that plain Node takes.
+ */
+const ALL_PAGES = 2 ** 31 - 1;
+
+/**
  * SQLite's online backup of `source` into the file `dest` (overwritten). `pagesPerStep` < 0 copies every page in one
  * step, which holds one read snapshot for the whole copy: with the source being a read connection on a WAL database,
  * the result is exactly the state of one committed moment, and writes on other connections cannot restart it.
+ * Works under plain Node and under Electron as Node (M1 demo bug 2).
  */
 export async function backupDb(source: Db, dest: string, pagesPerStep = -1): Promise<number> {
   const raw = handles.get(source);
   if (!raw) throw new Error("backupDb: not a connection opened by openDb");
-  return sqliteBackup(raw, dest, { rate: pagesPerStep });
+  return sqliteBackup(raw, dest, { rate: pagesPerStep < 0 || pagesPerStep > ALL_PAGES ? ALL_PAGES : Math.max(1, Math.floor(pagesPerStep)) });
 }
 
 /** The SQLite library version inside the running Node (for evidence and the Electron-upgrade test). */

@@ -20,7 +20,7 @@
 // above `maxBuffered`) is dropped rather than let botlingd's memory grow: it re-attaches from its cursors.
 import type { Socket } from "node:net";
 import { ContractError, type Command, type CommandType } from "../../contract";
-import { decodeFrame, encodeFrame, FrameSplitter, packFrame, PROTOCOL_VERSION, type CmdBody, type Message, type MessageOf, type StreamId } from "../../protocol";
+import { decodeFrame, encodeFrame, encodeResFrames, FrameSplitter, packFrame, PROTOCOL_VERSION, type CmdBody, type Message, type MessageOf, type StreamId } from "../../protocol";
 import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
 import { readStream, type LogHub, type LogReader } from "../log";
@@ -97,7 +97,7 @@ export class Session implements ShellWindow {
   private subChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly socket: Socket, private readonly host: SessionHost, private readonly options: SessionOptions = {}) {
-    this.gate = new LiveGate((frame) => this.send(frame), { intervalMs: options.liveIntervalMs ?? 100, ...(options.liveClock ? { clock: options.liveClock } : {}) });
+    this.gate = new LiveGate((frame) => this.send(frame, streamOf(frame)), { intervalMs: options.liveIntervalMs ?? 100, ...(options.liveClock ? { clock: options.liveClock } : {}) });
     socket.on("data", (chunk: Buffer) => this.onData(chunk));
     socket.on("error", () => this.close());
     socket.on("close", () => this.close());
@@ -114,22 +114,56 @@ export class Session implements ShellWindow {
 
   onClosed(handler: () => void): void { this.closedHandlers.push(handler); }
 
-  /** Sends one frame; false when it was not sent (the session is closed, or the frame cannot be encoded). */
-  send(message: Message): boolean {
+  /**
+   * Sends one frame; false when it was not sent (the session is closed, or the frame cannot be encoded). A frame that
+   * cannot be encoded (over the frame limit, malformed) is never written: the refusal is logged with its reason and
+   * `what` (the request it answers, when there is one).
+   */
+  send(message: Message, what?: string): boolean {
     if (this.state === "closed" || this.socket.destroyed) return false;
     const encoded = encodeFrame(message, "server", SESSION_KIND);
     if (!encoded.ok) {
-      this.host.log(`session: cannot send ${message.t}: ${encoded.detail}`);
+      this.host.log(`session: cannot send ${message.t}${what ? ` (${what})` : ""}: ${encoded.detail}`);
       return false;
     }
+    return this.write([encoded.text], message.t, what);
+  }
+
+  /**
+   * Writes encoded frames in order; false when the front end does not read (it is dropped) or the session ended. The
+   * only place that writes to the socket: every frame is packed (and its size checked) before any is written, so a set
+   * of frames goes whole or not at all, and one over the limit is logged and refused, never attempted.
+   */
+  private write(texts: string[], t: string, what?: string): boolean {
+    if (this.state === "closed" || this.socket.destroyed) return false;
     if (this.socket.writableLength > (this.options.maxBuffered ?? 32 * 1024 * 1024)) {
       this.host.log(`session ${this.deviceId ?? "?"}: dropped, it does not read (${this.socket.writableLength} bytes waiting)`);
       this.close();
       return false;
     }
-    this.socket.write(packFrame(encoded.text));
+    let packed: Uint8Array[];
+    try {
+      packed = texts.map((text) => packFrame(text));
+    } catch (error) {
+      this.host.log(`session: cannot send ${t}${what ? ` (${what})` : ""}: ${(error as Error)?.message ?? String(error)}`);
+      return false;
+    }
+    for (const frame of packed) this.socket.write(frame);
     this.lastSent = Date.now();
     return true;
+  }
+
+  /**
+   * Answers a `req`. A result over the frame limit goes as `res.part`s (the front end joins them); one too large even
+   * for those is answered with an error naming the command, so the front end's request ends instead of waiting.
+   */
+  private sendRes(message: MessageOf<"res">, command: string): boolean {
+    if (this.state === "closed" || this.socket.destroyed) return false;
+    const encoded = encodeResFrames(message, "server", SESSION_KIND);
+    if (encoded.ok) return this.write(encoded.texts, encoded.texts.length > 1 ? "res.part" : "res", command);
+    this.host.log(`session: cannot send res (${command}): ${encoded.detail}`);
+    if (!message.ok) return false;
+    return this.send({ t: "res", req: message.req, ok: false, error: { code: "internal", message: `The answer to ${command} is too large to send: ${encoded.detail}`.slice(0, 2_000) } }, command);
   }
 
   /** Ends the session with a `bye` (§5.2). */
@@ -206,7 +240,7 @@ export class Session implements ShellWindow {
     if (!sameToken(hello.token, this.host.token())) { this.bye("token", "the local token does not match (read botlingd.token again)"); return; }
     this.state = "open";
     this.deviceId = hello.deviceId;
-    this.reader = this.host.hub.attach((message) => { this.send(message); this.onLogFrame(message); });
+    this.reader = this.host.hub.attach((message) => { this.send(message, streamOf(message)); this.onLogFrame(message); });
     let next: Record<string, number> = {};
     try { next = this.host.nextFor(hello.deviceId, hello.originEpoch); } catch (error) { this.host.log(`session: next for ${hello.deviceId}: ${errorText(error)}`); }
     this.send({
@@ -259,7 +293,7 @@ export class Session implements ShellWindow {
 
   private history(request: MessageOf<"history">): void {
     const page = this.reader?.history(request);
-    if (page) { this.send(page); return; }
+    if (page) { this.send(page, `history of ${request.stream}`); return; }
     // An unknown line (2.x answers not_found): an empty page of the current incarnation ends the paging.
     const row = readStream(this.host.hub.reader(), request.stream);
     if (row) this.send({ t: "history.page", req: request.req, stream: request.stream, logId: row.logId as MessageOf<"history.page">["logId"], messages: [], hasMore: false, older: 0 });
@@ -269,7 +303,7 @@ export class Session implements ShellWindow {
   // Commands and requests
 
   private async cmd(body: CmdBody): Promise<void> {
-    const reply = (message: Message) => { this.send(message); };
+    const reply = (message: Message) => { this.send(message, body.cmd.type); };
     const route = routeOf(body.cmd.type).kind;
     try {
       if (route === "intent" || route === "legacy") await this.host.runtime.receive(body, { scope: "local", reply });
@@ -293,15 +327,15 @@ export class Session implements ShellWindow {
   private async req(message: MessageOf<"req">): Promise<void> {
     const cmd = message.cmd as Command;
     if (!servedAsReq(cmd.type)) {
-      this.send({ t: "res", req: message.req, ok: false, error: { code: "bad_request", message: `${cmd.type} changes state: send it as a cmd, not a req.` } });
+      this.send({ t: "res", req: message.req, ok: false, error: { code: "bad_request", message: `${cmd.type} changes state: send it as a cmd, not a req.` } }, cmd.type);
       return;
     }
     try {
       const result = await this.host.engine.run(cmd);
-      this.send({ t: "res", req: message.req, ok: true, result: result ?? null });
+      this.sendRes({ t: "res", req: message.req, ok: true, result: result ?? null }, cmd.type);
     } catch (error) {
       const wire = error instanceof ContractError ? error.toWire() : { code: "internal" as const, message: errorText(error).slice(0, 2_000) };
-      this.send({ t: "res", req: message.req, ok: false, error: wire });
+      this.sendRes({ t: "res", req: message.req, ok: false, error: wire }, cmd.type);
     }
   }
 
@@ -318,8 +352,14 @@ export class Session implements ShellWindow {
         : { t: "content.gone", req: message.req, id: message.id, reason: "offline" };
     }
     // The answer carries the request's own `req` (the service echoes it; kept here whatever it says).
-    this.send({ ...answer, req: message.req } as Message);
+    this.send({ ...answer, req: message.req } as Message, message.t);
   }
+}
+
+/** The stream a frame is about, for a log line. */
+function streamOf(message: Message): string | undefined {
+  const stream = (message as { stream?: unknown }).stream;
+  return typeof stream === "string" ? stream : undefined;
 }
 
 function errorText(error: unknown): string {

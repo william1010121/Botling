@@ -30,7 +30,7 @@ import {
   type Command, type CommandType, type Event, type EventEnvelope as EventEnvelopeT, type MessageView, type ResultOf, type WireError,
 } from "../contract";
 import {
-  BotSnapView, ProtocolEntryEvent, slotKey,
+  BotSnapView, interruptedLine, ProtocolEntryEvent, slotKey,
   type ConnectionState, type Cursor, type Entry, type MessageOf, type Outcome, type Slot, type StreamId, type Target,
 } from "../protocol";
 import type { Clock, ConnModel, FeLinkEvent, OutboxItem, PendingView, StoredCursor } from "../fe-link";
@@ -219,6 +219,12 @@ export class RendererAdapter {
   private notice: { botId: string; text: string } | null = null;
   private noticeTimer: unknown;
   private unsubscribe: (() => void) | null = null;
+  /**
+   * The last `plugins.web` answer (every web part's source, ~2 MB with the built-in plugins). The 2.x window asks for it
+   * again each time its chat frame re-binds (at every app render, every 30 s at least), and the specs only change with
+   * the library: kept until a `plugins.updated` event, a plugins command, or a new epoch (M1 demo bug 1).
+   */
+  private pluginsWeb: Promise<unknown> | null = null;
 
   constructor(private readonly options: RendererAdapterOptions) {
     this.newEpoch = options.newEpoch ?? randomEpoch;
@@ -282,10 +288,21 @@ export class RendererAdapter {
       const wait = this.everAttached ? 0 : (this.options.firstAttachWaitMs ?? 15_000);
       if (!wait || !(await this.whenAttached(wait))) return { ok: false, error: { code: "core_unavailable", message: "The Botling server is not connected." } };
     }
+    if (cmd.type === "plugins.web") return { ok: true, result: await this.pluginsWebAnswer() };
     return { ok: true, result: await this.options.link.request(cmd) };
   }
 
+  private pluginsWebAnswer(): Promise<unknown> {
+    if (this.pluginsWeb) return this.pluginsWeb;
+    const asked = this.options.link.request({ type: "plugins.web" });
+    this.pluginsWeb = asked;
+    // A failed answer is not kept: the next ask goes to the server again.
+    asked.catch(() => { if (this.pluginsWeb === asked) this.pluginsWeb = null; });
+    return asked;
+  }
+
   private async command(cmd: Command): Promise<AdapterAnswer> {
+    if (cmd.type.startsWith("plugins.")) this.pluginsWeb = null;
     const botId = botIdOf(cmd);
     let target: Target;
     if (botId) target = streamOf(botId);
@@ -463,7 +480,7 @@ export class RendererAdapter {
       // The renderer's view may be behind on what changed while detached: a new epoch makes it take a fresh snapshot.
       if (!this.wasAttached && this.everAttached && this.served) this.bumpEpoch();
       this.everAttached = true;
-    }
+    } else this.pluginsWeb = null;
     this.wasAttached = attached;
     this.renderNotice();
   }
@@ -517,6 +534,9 @@ export class RendererAdapter {
         model.committed.set(message.id, message.text);
         const live = this.overlayFor(model, message.id);
         const shown = live !== null && (message.state === undefined || message.state === "streaming") ? { ...message, text: live } : message;
+        // A line the renderer already holds exactly so (a checkpoint of text the live frames showed, an entry seen again)
+        // is not sent again: the chat page would draw its row anew, and a video in it would start over (M1 demo bug 1).
+        if (model.known.has(message.id) && sameLine(model.chat.messages.find((held) => held.id === message.id), shown)) return;
         // The renderer ignores an `added` for a line it holds (a pending or live line drawn first): update it instead.
         if (event.type === "message.added" && !model.known.has(message.id)) this.emitEvent({ ...event, message: shown }, model);
         else this.emitEvent({ type: "message.updated", botId: model.botId, message: shown }, model);
@@ -554,10 +574,13 @@ export class RendererAdapter {
       const messageId = typeof body.messageId === "string" ? body.messageId : model.turns.get(turnId) ?? `fe-int-${turnId}`.slice(0, 64);
       model.turns.delete(turnId);
       if (model.live?.turnId === turnId) model.live = null;
-      model.committed.set(messageId, text);
-      // The renderer shows a stopped reply as interrupted: the checkpoint text with nothing re-run (§9.3, §12).
-      this.ensureLine(model, messageId, turnId, text, "stopped");
-      this.emitEvent({ type: "turn.finished", botId: model.botId, turnId, messageId, status: "stopped", text }, model);
+      // Shown as 2.x shows a reply its core died during (protocol/interrupted.ts): the checkpoint text and the note,
+      // "failed", nothing re-run (§9.3, §12). The server's read model makes the same line, so a later snap matches.
+      const held = model.known.has(messageId) ? model.chat.messages.find((message) => message.id === messageId) : undefined;
+      const line = interruptedLine(held, { turnId, text }, { id: messageId, time: new Date(this.options.clock.now()).toISOString() });
+      model.committed.set(messageId, line.text);
+      this.emitEvent({ type: "turn.finished", botId: model.botId, turnId, messageId, status: "failed", text: line.text }, model);
+      this.emitEvent({ type: "message.updated", botId: model.botId, message: line }, model);
       return;
     }
     if (entry.kind === "turn.cancelled") {
@@ -738,6 +761,7 @@ export class RendererAdapter {
   private bumpEpoch(): void {
     this.epoch = this.newEpoch();
     this.seq = 0;
+    this.pluginsWeb = null;
     // One event under the new epoch so the renderer notices at once; `core.swap{null}` changes nothing it shows.
     this.emitEvent({ type: "core.swap", phase: null });
   }
@@ -748,6 +772,7 @@ export class RendererAdapter {
     const checked = EventEnvelope.safeParse(envelope);
     if (!checked.success) { this.audit(`dropped an event the renderer would refuse: ${event.type}`); return; }
     this.seq += 1;
+    if (event.type === "plugins.updated") this.pluginsWeb = null;
     this.mirror(event, model);
     this.options.emit(checked.data);
   }
@@ -780,6 +805,11 @@ export class RendererAdapter {
   }
 
   private audit(text: string): void { this.options.audit?.(text); }
+}
+
+/** The renderer's reducer stores an updated line as it comes, so the same JSON is the same row. */
+function sameLine(held: MessageView | undefined, next: MessageView): boolean {
+  return !!held && JSON.stringify(held) === JSON.stringify(next);
 }
 
 function emptyChat(botId: string): ChatView {

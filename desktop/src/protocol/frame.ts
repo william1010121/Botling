@@ -5,7 +5,7 @@
 // One message is binary: `content.chunk` (§9A.4). Its frame is the byte 0x01, the header's length as 2 bytes big-endian,
 // the header `{t, req, offset}` as JSON, then the raw bytes. A text frame is JSON and never starts with 0x01.
 import { describeIssues } from "../contract";
-import { MESSAGES, type Message, type MessageOf, type MessageType } from "./messages";
+import { MESSAGES, RES_PART_CHARS, RES_PARTS_MAX, type Message, type MessageOf, type MessageType } from "./messages";
 import { knownType, roleRefusal, type Sender, type SessionKind } from "./roles";
 
 /** The most a frame's plaintext may be (§5.2, §20). */
@@ -98,6 +98,59 @@ export function encodeFrame(message: Message, sender: Sender, session: SessionKi
   try { text = JSON.stringify(checked.message); } catch (error) { return { ok: false, reason: "malformed", detail: String(error) }; }
   if (encoder.encode(text).length > FRAME_LIMIT) return { ok: false, reason: "too-large", detail: `a frame is at most ${FRAME_LIMIT} bytes` };
   return { ok: true, text };
+}
+
+/**
+ * A `res` as text frames: the one frame when it fits, else its JSON cut into `res.part` frames (in order). Refused (with
+ * the reason) only when it is not a `res` the sender may send, or even `RES_PARTS_MAX` parts cannot carry it.
+ */
+export function encodeResFrames(message: MessageOf<"res">, sender: Sender, session: SessionKind): { ok: true; texts: string[] } | { ok: false; reason: FrameRefusal; detail: string } {
+  const whole = encodeFrame(message, sender, session);
+  if (whole.ok) return { ok: true, texts: [whole.text] };
+  if (whole.reason !== "too-large") return whole;
+  const checked = checkMessage(message, sender, session);
+  if (!checked.ok) return { ok: false, reason: checked.reason, detail: checked.detail };
+  const text = JSON.stringify(checked.message);
+  const n = Math.ceil(text.length / RES_PART_CHARS);
+  if (n > RES_PARTS_MAX) return { ok: false, reason: "too-large", detail: `a res is at most ${RES_PARTS_MAX} parts of ${RES_PART_CHARS} characters (this one is ${text.length})` };
+  const texts: string[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const part = encodeFrame({ t: "res.part", req: message.req, i, n, text: text.slice(i * RES_PART_CHARS, (i + 1) * RES_PART_CHARS) }, sender, session);
+    if (!part.ok) return part;
+    texts.push(part.text);
+  }
+  return { ok: true, texts };
+}
+
+/**
+ * Joins the `res.part`s of answers back into their `res` (one `req` at a time each; parts in order). `push` gives the
+ * `res` once its last part is in, null before that, or a refusal when the parts do not make one (out of order, a
+ * different count, or text that is not the `res` of that `req`).
+ */
+export class ResAssembler {
+  private readonly open = new Map<string, { n: number; texts: string[] }>();
+
+  push(part: MessageOf<"res.part">, session: SessionKind): { ok: true; message: MessageOf<"res"> | null } | { ok: false; detail: string } {
+    const held = this.open.get(part.req) ?? { n: part.n, texts: [] };
+    if (held.n !== part.n || part.i !== held.texts.length) {
+      this.open.delete(part.req);
+      return { ok: false, detail: `res.part ${part.i + 1}/${part.n} of ${part.req} out of order` };
+    }
+    held.texts.push(part.text);
+    if (held.texts.length < held.n) { this.open.set(part.req, held); return { ok: true, message: null }; }
+    this.open.delete(part.req);
+    let value: unknown;
+    try { value = JSON.parse(held.texts.join("")); } catch { return { ok: false, detail: `the parts of ${part.req} are not JSON` }; }
+    const checked = checkMessage(value, "server", session);
+    if (!checked.ok) return { ok: false, detail: `the parts of ${part.req}: ${checked.detail}` };
+    if (checked.message.t !== "res" || checked.message.req !== part.req) return { ok: false, detail: `the parts of ${part.req} are not its res` };
+    return { ok: true, message: checked.message };
+  }
+
+  /** Forgets the parts of `req` (its request ended), or all of them. */
+  drop(req?: string): void { if (req === undefined) this.open.clear(); else this.open.delete(req); }
+
+  get pending(): number { return this.open.size; }
 }
 
 /** A frame (its text, or a binary frame's bytes) with its 4-byte big-endian length in front, for a byte stream. */

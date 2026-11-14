@@ -19,6 +19,7 @@ import { FeLink, systemClock, type Clock, type Dial, type FeLinkOptions, type Fe
 import type { AppOp, CoreClient as CoreClient2x, CoreClientOptions } from "../main/core-client";
 import { RendererAdapter, type LinkPort } from "./renderer-adapter";
 import { unixDial } from "./unix-dial";
+import { INHERITED_IMPORT_VARS } from "../server/inherited-env";
 
 /** The frontend's version told in `hello` (an update is asked for when the server needs a newer one). */
 export const FE_VERSION = "3.0.0-m1";
@@ -46,6 +47,19 @@ export function serverPaths(env: Record<string, string | undefined>): ServerPath
     token: join(serverDir, "botlingd.token"),
     feStorage: join(appData, "electron", "fe-link.sqlite"),
   };
+}
+
+/**
+ * The environment the window starts botlingd with: its own, Electron as Node, the server's data folder, and never the
+ * variables that would make it import 1.x/2.x data (M1 demo bug 4: importing is M6's explicit step; botlingd also drops
+ * them itself, server/inherited-env.ts).
+ */
+export function botlingdLaunchEnv(env: Record<string, string | undefined>, paths: ServerPaths): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) if (value !== undefined && !(INHERITED_IMPORT_VARS as readonly string[]).includes(key)) out[key] = value;
+  Object.assign(out, { ELECTRON_RUN_AS_NODE: "1", BOTLING_DATA_DIR: paths.serverDir, BOTLING_PLUGIN_HOST: "node" });
+  if (env.BOTLING_SERVER_SOCKET) out.BOTLING_SERVER_SOCKET = env.BOTLING_SERVER_SOCKET;
+  return out;
 }
 
 /** The server build beside a core build: `<out>/server/main.cjs` beside `<out>/core/main.cjs`. */
@@ -164,8 +178,7 @@ export class ServerClient {
     const script = serverScriptFor(this.options.script);
     if (!existsSync(script)) { this.options.audit(`botlingd is not running and ${script} is not built`); return; }
     mkdirSync(this.paths.serverDir, { recursive: true });
-    const env: Record<string, string> = { ...this.options.env, ELECTRON_RUN_AS_NODE: "1", BOTLING_DATA_DIR: this.paths.serverDir, BOTLING_PLUGIN_HOST: "node" };
-    if (this.options.env.BOTLING_SERVER_SOCKET) env.BOTLING_SERVER_SOCKET = this.options.env.BOTLING_SERVER_SOCKET;
+    const env = botlingdLaunchEnv(this.options.env, this.paths);
     try {
       const child = spawn(process.execPath, [script, "start"], { env, detached: true, stdio: "ignore" });
       child.unref();

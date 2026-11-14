@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { BotView, Command, EventEnvelope, MessageView, ResultOf } from "../../src/contract";
 import { SlotRefusal } from "../../src/server/slots";
 import { FeLink, MemoryFeStorage } from "../../src/fe-link";
-import type { Message, StreamId } from "../../src/protocol";
+import { INTERRUPTED_NOTE, type Message, type StreamId } from "../../src/protocol";
 import { WorkspaceStore } from "../../src/renderer/store";
 import { NOTICE_ID, READ_COMMANDS, RendererAdapter, noticeText, pendingLineId } from "../../src/main-v3/renderer-adapter";
 import { BOT, FakeClock, FakeServer, flush } from "./fe-link-harness";
@@ -227,7 +227,7 @@ describe("live text", () => {
     expect(r.chat().find((m) => m.id === "r1")!.text).toBe("First part. Second.");
   });
 
-  it("turn.interrupted shows the checkpoint text as a stopped reply", async () => {
+  it("turn.interrupted shows the checkpoint text as 2.x shows a reply its core died during (failed, with the note)", async () => {
     const r = await rig();
     await r.store.resync();
     r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
@@ -236,7 +236,11 @@ describe("live text", () => {
     await flush();
     r.server.append(BOT, "turn.interrupted", { botId: "b1", turnId: "t1", messageId: "r1", text: "partial" });
     await flush();
-    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ text: "partial", state: "stopped" });
+    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ text: `partial\n\n${INTERRUPTED_NOTE}`, state: "failed", interrupted: true });
+    expect(r.store.getView().chat?.running ?? null).toBeNull();
+    // A snapshot now is what the renderer holds (the mirror ran the same events).
+    const snapshot = await r.adapter.snapshot("b1");
+    expect(snapshot.chat?.messages.find((m) => m.id === "r1")).toEqual(r.chat().find((m) => m.id === "r1"));
   });
 });
 
@@ -367,5 +371,65 @@ describe("connection states in the renderer", () => {
     const base = { since: 0, attached: false, offline: false, catching: false, restoredAt: null, asOf: null, minFeVersion: null };
     expect(noticeText({ ...base, state: "live", attached: true })).toBeNull();
     for (const state of ["connecting", "offline", "catching up", "history restored", "update required"] as const) expect(noticeText({ ...base, state })).toMatch(/\w/);
+  });
+});
+
+// M1 demo bug 1: the 2.x window re-binds its chat frame at every app render (every 30 s at least) and then asks for the
+// whole chat state and `plugins.web` again. On Botling 3 that must not redraw the newest row (a playing video in it
+// would start over) nor fetch ~2 MB of plugin sources each time.
+describe("what a re-bind asks again", () => {
+  const pluginsView = { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null };
+  const webReqs = (r: Rig) => r.reqs.filter((c) => c.type === "plugins.web").length;
+
+  it("plugins.web is asked of the server once, then again only after plugins.updated, a plugins command or a re-attach", async () => {
+    const r = await rig();
+    await r.store.resync();
+    for (let i = 0; i < 5; i += 1) expect(await r.adapter.request({ type: "plugins.web" })).toEqual({ ok: true, result: { read: "plugins.web" } });
+    expect(webReqs(r)).toBe(1);
+    // The fake server's srv: stream does not carry appended entries; the event reaches the adapter the same way on a
+    // followed stream (every contract event the renderer gets goes through one emit).
+    r.server.append(BOT, "plugins.updated", { plugins: pluginsView });
+    await flush();
+    await r.adapter.request({ type: "plugins.web" });
+    await r.adapter.request({ type: "plugins.web" });
+    expect(webReqs(r)).toBe(2);
+    await r.adapter.request({ type: "plugins.enable", name: "notes", enabled: false });
+    await r.adapter.request({ type: "plugins.web" });
+    expect(webReqs(r)).toBe(3);
+    r.server.kill();
+    await flush();
+    r.clock.advance(60_000);
+    await flush();
+    await settle(r);
+    await r.adapter.request({ type: "plugins.web" });
+    expect(webReqs(r)).toBe(4);
+  });
+
+  it("a line entry that changes nothing the renderer holds is not sent again (its row is not drawn anew)", async () => {
+    const r = await rig((s) => s.append(BOT, "message.added", { botId: "b1", message: line("m1", "![v](file:///v.mp4)") }));
+    await r.store.resync();
+    const before = r.events.length;
+    r.server.append(BOT, "message.updated", { botId: "b1", message: line("m1", "![v](file:///v.mp4)") });
+    await flush();
+    expect(r.events.length).toBe(before);
+    r.server.append(BOT, "message.updated", { botId: "b1", message: line("m1", "![v](file:///v.mp4) more") });
+    await flush();
+    expect(types(r.events.slice(before))).toEqual(["message.updated"]);
+    expect(r.chat()[0].text).toBe("![v](file:///v.mp4) more");
+  });
+
+  it("a checkpoint of the text the live frames already showed sends nothing", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    await flush();
+    r.server.send({ t: "live", stream: BOT, turnId: "t1", seg: 0, rev: 0, at: 0, text: "Hello" });
+    await flush();
+    const held = r.chat().find((m) => m.id === "r1")!;
+    const before = r.events.length;
+    r.server.append(BOT, "message.updated", { botId: "b1", message: held });
+    await flush();
+    expect(r.events.slice(before)).toEqual([]);
+    expect(r.chat().find((m) => m.id === "r1")!.text).toBe("Hello");
   });
 });

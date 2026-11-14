@@ -12,3 +12,4 @@ export * from "./scopes";
 export * from "./roster";
 export * from "./content-url";
 export * from "./pairing";
+export * from "./interrupted";
