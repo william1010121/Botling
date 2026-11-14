@@ -66,7 +66,8 @@ export type ShellMessage =
   | { botling: "composerBarReply"; frame: ComposerBarFrame; data: unknown }
   | { botling: "composerModelsResult"; requestID: number; value?: unknown; error?: string }
   | { botling: "projectFilesResult"; requestID: number; value?: unknown; error?: string }
-  | { botling: "composerResult"; requestID: string; ok: boolean; error?: string }
+  /** `uncertain`: no answer came and the chat could not tell (the phone): shown as unconfirmed, never as not sent. */
+  | { botling: "composerResult"; requestID: string; ok: boolean; error?: string; uncertain?: boolean }
   | { botling: "taskOutput"; botID: string; messageID: string; taskID: string; text: string }
   /**
    * The keys the chat page relays to the shell (Settings > Shortcuts): app shortcuts' (id to binding) and plugin

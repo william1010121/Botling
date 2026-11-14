@@ -10,6 +10,7 @@ import { composerHost, DeliveryUncertain, type DeliveryResult } from "./composer
 import { escapeRegExp, shared } from "./contract";
 import { language, t } from "./i18n";
 import { isComposingEnter, isComposingKey, isSendEnter } from "./ime";
+import { EnterMode } from "./enter-mode";
 import { escapeHTML } from "./util";
 import type { AnswerWithView, ChatState, Draft } from "./types";
 
@@ -54,6 +55,8 @@ export class Composer {
   private draftTimer: ReturnType<typeof setTimeout> | null = null;
   /** The editor's own label for screen readers, in the page's language. */
   private readonly label = new Compartment();
+  /** Return sends with a physical keyboard, makes a new line on a phone's on-screen keyboard (enter-mode.ts). */
+  private readonly enterMode = new EnterMode();
   /** The language the box's own words were last set in. */
   private wordsIn = "";
   private readonly plus: HTMLButtonElement;
@@ -182,7 +185,7 @@ export class Composer {
           // Ahead of every keymap: a key pressed while an input method is choosing (Zhuyin, Pinyin)
           // belongs to it, so Return commits the candidate instead of sending.
           Prec.highest(EditorView.domEventHandlers({
-            keydown: (event, view) => isComposingKey(event) || isComposingEnter(event) || view.composing || this.mentionKey(event) || this.answerKey(event) || this.onKey(event) || this.enterKey(event),
+            keydown: (event, view) => (this.enterMode.saw(event), false) || isComposingKey(event) || isComposingEnter(event) || view.composing || this.mentionKey(event) || this.answerKey(event) || this.onKey(event) || this.enterKey(event),
           })),
           EditorView.domEventHandlers({
             // Suppress CodeMirror's file-to-text insertion, but let the drop bubble to
@@ -193,6 +196,7 @@ export class Composer {
             blur: () => { if (this.draftTimer !== null) this.saveDraft(); return false; },
           }),
           this.label.of(EditorView.contentAttributes.of({ "aria-label": "" })),
+          EditorView.contentAttributes.of({ enterkeyhint: this.enterMode.hint() }),
         ],
       }),
     });
@@ -446,9 +450,11 @@ export class Composer {
     } else { this.previewKey = ""; this.preview = null; }
   }
 
-  /** Return alone sends (Shift-Return is a new line); an input method's Return never does. */
+  /** Return alone sends (Shift-Return is a new line); an input method's Return never does. On a phone's on-screen
+   * keyboard Return is a new line and only the Send button sends (enter-mode.ts). */
   private enterKey(event: KeyboardEvent): boolean {
     if (!isSendEnter(event) || event.metaKey || event.ctrlKey || event.altKey) return false;
+    if (!this.enterMode.sends()) return false;
     // Nothing to send: Return falls through to the keymap and is a new line, as before.
     if (!this.submit()) return false;
     event.preventDefault();

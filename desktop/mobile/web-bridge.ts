@@ -13,6 +13,7 @@
 import { CancelEnvelope, RequestEnvelope, errorResponse, okResponse, type Command, type ResponseEnvelope, type ResultOf } from '../src/contract';
 import type { Bridge } from '../src/renderer/client';
 import { MobileError, type MobileCommand } from './transport';
+import { DELIVERY_UNCONFIRMED } from '../src/renderer/delivery';
 import { phoneLayout } from './layout';
 
 export const REMOTE_COMMANDS: ReadonlySet<string> = new Set(['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer', 'turn.stop']);
@@ -137,6 +138,20 @@ export class WebBridge implements Bridge {
         this.last = { botId: fresh.chat?.botId, snapshot: fresh };
         return answer(okResponse(id, this.overlay(fresh)));
       }
+      if (cmd.type === 'chat.send') {
+        // The lines of this chat seen before sending: if no answer comes, the chat says whether it arrived.
+        const seen = this.last?.botId === cmd.botId ? new Set(this.last.snapshot.chat?.messages.map(message => message.id) ?? []) : null;
+        let result: unknown;
+        try { result = await this.options.transport.request(cmd as MobileCommand); }
+        catch (error) {
+          const checked = error instanceof MobileError && error.uncertain && seen ? await this.inChat(cmd.botId, cmd.text, seen) : 'unknown';
+          if (checked === 'unknown') throw error;
+          if (checked === 'absent') throw new MobileError('Not delivered: your computer did not receive this message. Send it again.');
+          result = { messageId: checked.id, turnId: null };
+        }
+        this.options.onMutated?.();
+        return answer(okResponse(id, result));
+      }
       if (REMOTE_COMMANDS.has(cmd.type)) {
         const result = await this.options.transport.request(cmd as MobileCommand);
         this.options.onMutated?.();
@@ -163,6 +178,20 @@ export class WebBridge implements Bridge {
       }
       return answer(errorResponse(id, { code: 'internal', message: 'Request failed. Check the chat before sending again.' }));
     }
+  }
+
+  /** Whether a message whose answer never came is in the chat now: your line with these words that was not there
+   * before (sent), no new line of yours at all (absent), or it cannot be told (unknown: the chat could not be read,
+   * or a new line of yours reads differently, as a plugin may change a message on the way). */
+  private async inChat(botId: string, text: string, seen: Set<string>): Promise<{ id: string } | 'absent' | 'unknown'> {
+    if (!text.trim()) return 'unknown';
+    let snapshot: Snapshot;
+    try { snapshot = await this.options.transport.request({ type: 'chat.snapshot', botId }) as Snapshot; }
+    catch { return 'unknown'; }
+    if (snapshot.chat?.botId !== botId) return 'unknown';
+    const mine = snapshot.chat.messages.filter(message => message.role === 'user' && !seen.has(message.id));
+    const same = mine.find(message => message.text.trim() === text.trim());
+    return same ? { id: same.id } : mine.length ? 'unknown' : 'absent';
   }
 
   private emit(message: unknown) {

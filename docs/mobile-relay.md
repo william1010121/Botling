@@ -113,8 +113,19 @@ iOS Safari 17+, Chrome 133+, Firefox 130+ provide X25519.
   relay closes that token's connections at once and refuses it from then on. Even a relay that ignored this could not
   help: the desktop checks the phone's record on every handshake and every request.
 - **Reconnect/resume**: the phone retries with backoff (1 s, 3 s, 10 s, 30 s) and a new handshake. Requests asked
-  while the channel is down wait (15 s) and are sent after it is back **with their original request id**; the
+  while the channel is down wait and are sent after it is back **with their original request id**; the
   desktop's mutation journal answers a resent `chat.send` with its first outcome (at-most-once, as the bridge).
+- **Waiting for an answer** (`relay-client.ts`): answers come back in order behind whatever the desktop sent first (a
+  chat read carries about a megabyte; on a phone network one can take many seconds), so a request is not given up while
+  frames keep arriving. A connection that carries nothing back for 30 s while an answer is awaited counts as stalled:
+  the phone connects again and asks again with the same id. The journal answers a message it took with its first
+  answer, and one it is still taking with "pending"; the phone then asks again each second. A message is given up after
+  120 s (a read after 60 s): never sent at all, it is "not sent"; sent and never answered, it is "unconfirmed" — the
+  page then reads the chat (`web-bridge.ts`): your new line with those words is a sent message, no new line of yours
+  is "not delivered", anything else stays unconfirmed (the composer's unconfirmed state, never "Not sent").
+- **Pairing, then the first read**: only the pairing itself can fail as a pairing ("show a new code"). Once the desktop
+  has paired the phone, the page says "Paired. Connecting to your computer…" while the first read comes; if it fails,
+  the pairing is kept and the page connects again with it (after 2 s, then as any kept pairing).
 - **Back on the page**: the page shown again, back online, or restored from the back-forward cache calls
   `RelayClient.resume`: a client waiting out its backoff connects at once, and after more than 10 s away (or a network
   change) the socket is replaced, since one that slept can look open and carry nothing. The chat on screen is then read
