@@ -51,6 +51,11 @@ export interface InstalledPlugin {
   failure: string | null;
   /** Installed from outside (git, a folder): where from. */
   installedFrom: string | null;
+  /**
+   * The entries of its `contributes` this Botling skips, with why (a slot, `where` or `forRole` it does not know, a wrong field):
+   * the rest of the plugin loads. Shown on the Plugins page and logged once. Left out when there are none.
+   */
+  skipped?: string[];
 }
 
 /** What the plugin host needs to run one program part (`HostPluginSpec` in Web/host/src/host.ts). */
@@ -117,10 +122,14 @@ export class PluginRegistry {
   onBroken: (plugin: string, problem: string) => void = () => {};
   /** A plugin's version changed on disk, with the version it had. */
   onUpdated: (plugin: InstalledPlugin, from: string) => void = () => {};
+  /** Entries of a plugin's `contributes` this Botling skips (`InstalledPlugin.skipped`), when they change: the log says so. */
+  onSkipped: (plugin: string, skipped: string[]) => void = () => {};
   /** Anything that matters changed (`revision` moved). */
   onChanged: () => void = () => {};
 
   private state: State;
+  /** What `onSkipped` last said for each plugin. */
+  private reportedSkips: Record<string, string[]> = {};
   private fingerprints: Record<string, string> = {};
   /** Each Claude part's content hash, by the fingerprint it was taken at (`claudeContents`). */
   private claudeContents = new Map<string, { fingerprint: string; hash: string }>();
@@ -483,10 +492,14 @@ export class PluginRegistry {
         prints[manifest.name] = print;
         const failed = this.state.failures[manifest.name];
         const failure = failed && failed.fingerprint === print ? failed.message : null;
+        const skipped = skippedContributions(folder);
+        if (skipped.length && JSON.stringify(this.reportedSkips[manifest.name] ?? []) !== JSON.stringify(skipped)) this.onSkipped(manifest.name, skipped);
+        this.reportedSkips[manifest.name] = skipped;
         found.set(manifest.name, {
           manifest, folder, builtIn, failure, enabled: !this.state.disabled.includes(manifest.name) && !failure,
           installedFrom: builtIn ? null : this.state.installed?.[manifest.name] ?? null,
           ...(!builtIn && shipped?.builtIn ? { replacesBuiltIn: shipped.manifest.version } : {}),
+          ...(skipped.length ? { skipped } : {}),
         });
         delete this.reportedProblems[name];
       } else {
@@ -571,5 +584,15 @@ export class PluginRegistry {
   /** Checks a folder without adding it (for installs). */
   static check(folder: string): string[] {
     return checkPlugin(folder);
+  }
+}
+
+/** The entries of a loaded plugin's `contributes` this Botling skips, with why (readManifest's problems; none: all of it loads). */
+function skippedContributions(folder: string): string[] {
+  try {
+    const read = readManifest(JSON.parse(readFileSync(join(folder, "package.json"), "utf8")), diskFolder(folder));
+    return read.format ? read.problems.slice(0, 50) : [];
+  } catch {
+    return [];
   }
 }

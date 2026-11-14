@@ -27,7 +27,7 @@ import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
 import { viewSurfaces } from "./views";
 import { MarkedTabs } from "./marked-tabs";
-import { tabMatches } from "../../browser-tab-menu";
+import { chatLinkAddress, tabMatches } from "../../browser-tab-menu";
 import { fileURLToPath } from "node:url";
 import { CORE_PROMPT_SECTIONS } from "../prompts";
 import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
@@ -378,6 +378,9 @@ export class Plugins {
     this.host = new PluginHostClient(options.hostScript, options.node, this.dataRoot, (line) => world.log(line), options.timing ?? DEFAULT_TIMING, options.onPid);
     this.registry.onNotice = (text) => world.notice(text);
     this.registry.onBroken = (plugin, problem) => world.broken(plugin, problem);
+    this.registry.onSkipped = (plugin, skipped) => world.log(`plugin ${plugin}: skipped ${skipped.length} contribution(s) this Botling does not know or cannot read (the rest loads): ${skipped.join("; ")}`);
+    // The registry's first scan ran before this was set: say what it skipped too.
+    for (const plugin of this.registry.plugins) if (plugin.skipped?.length) this.registry.onSkipped(plugin.manifest.name, plugin.skipped);
     this.registry.onUpdated = (plugin, from) => world.notice(`Plugin "${title(plugin.manifest)}" updated: ${from} → ${plugin.manifest.version}`);
     this.registry.onChanged = () => this.sync();
     this.host.onPluginFailure = (plugin, message, fatal) => {
@@ -558,6 +561,7 @@ export class Plugins {
           ...(plugin.builtIn ? { builtIn: true } : {}),
           ...(plugin.replacesBuiltIn ? { replacesBuiltIn: plugin.replacesBuiltIn.slice(0, 100) } : {}),
           ...(plugin.ignoredLibraryCopy ? { ignoredLibraryVersion: plugin.ignoredLibraryCopy.version.slice(0, 100) } : {}),
+          ...(plugin.skipped?.length ? { skipped: plugin.skipped.slice(0, 50).map((problem) => problem.slice(0, 2_000)) } : {}),
           ...(!plugin.builtIn && plugin.installedFrom ? { removable: true } : {}),
           ...((() => { const previous = plugin.builtIn ? null : this.previousVersion(plugin.manifest.name); return previous ? { revertTo: previous.slice(0, 100) } : {}; })()),
           permissions: (ccb?.permissions ?? []).slice(0, 20).map((permission) => permission.slice(0, 40)),
@@ -666,6 +670,27 @@ export class Plugins {
     const botId = this.options.world.botId?.("main") === tab.botId ? "main" : tab.botId;
     try {
       return await this.host.command(id, [{ botId, tabId: tab.tabId, url: tab.url, path }]);
+    } catch (error) {
+      this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
+      throw new ContractError("conflict", (error as Error).message);
+    }
+  }
+
+  /**
+   * A plugin's button beside a link in a chat message (menu "chat/link"): runs its command with `{ botId, messageId, url, path }`
+   * and nothing more. Only an entry of that plugin whose `when` matches the link; the core (server.ts) has checked the link is in
+   * that message. `path`: the local file, for a file: URL or an absolute path (undefined for a web link).
+   */
+  async linkCommand(id: string, link: { botId: string; messageId: string; url: string }): Promise<unknown> {
+    const address = chatLinkAddress(link.url);
+    const offered = address !== null && ofKind(this.contributions(), "menu").some((entry) => entry.menu === "chat/link" && entry.command === id && id.startsWith(`${entry.plugin}.`) && tabMatches(entry.when, address));
+    if (!offered) throw new ContractError("forbidden", `"${id}" is not offered for this link.`);
+    if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
+    let path: string | undefined;
+    try { if (address && new URL(address).protocol === "file:") path = fileURLToPath(address); } catch { /* not a local file */ }
+    const botId = this.options.world.botId?.("main") === link.botId ? "main" : link.botId;
+    try {
+      return await this.host.command(id, [{ botId, messageId: link.messageId, url: link.url, ...(path ? { path } : {}) }]);
     } catch (error) {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
       throw new ContractError("conflict", (error as Error).message);

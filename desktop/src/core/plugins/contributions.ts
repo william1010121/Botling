@@ -37,8 +37,14 @@ export const MAIN_TAB_ROLES = [...VIEW_ROLES, "marked"] as const;
 export const VIEW_CHAT = ["float"] as const;
 export const TILE_SURFACES = ["board", "whiteboard", "pin"] as const;
 export const STATUS_SLOTS = ["chatHeader", "botRow"] as const;
-/** `browser/tab`: a button in the browser pane's toolbar for the tab on screen, on the tabs its `when` matches (browser-tab-menu.ts). */
-export const MENU_SLOTS = ["message/context", "bot/context", "composer/plus", "commandPalette", "message/preview", "browser/tab"] as const;
+/**
+ * `browser/tab`: a button in the browser pane's toolbar for the tab on screen, on the tabs its `when` matches (browser-tab-menu.ts).
+ * `chat/link`: a button that shows beside a link in a chat message while the pointer rests on it (or it has keyboard focus), on the
+ * links its `when` matches (the same `when`, read from the link's parsed URL).
+ */
+export const MENU_SLOTS = ["message/context", "bot/context", "composer/plus", "commandPalette", "message/preview", "browser/tab", "chat/link"] as const;
+/** The menus whose entries take a `when` (browser-tab-menu.ts `TabWhen`). */
+export const WHEN_MENUS: readonly string[] = ["browser/tab", "chat/link"];
 export const HOOKS = ["beforeSend", "afterReply", "toolCall"] as const;
 /**
  * Where a prompt section goes: right after the line about <show> (at the end when a prompt has none), right after the
@@ -92,8 +98,9 @@ export type Contribution = { plugin: string } & (
   /**
    * `quick` (message menus): a button of its own (tooltip: its title, then `hint`; `locales`: those words in another page language, "zh-Hant") beside the reply's other buttons (or on a result page's preview card, `message/preview`) instead of
    * a row in the "⋯" menu, drawn with the page's icon `icon`; `alt` is its words for a reply that already is a library component.
+   * `title`: its own words (default: its command's title). `when` (browser/tab, chat/link): which tabs or links it is for.
    */
-  | { kind: "menu"; menu: (typeof MENU_SLOTS)[number]; command: string; icon?: string; quick?: boolean; alt?: string; hint?: string; locales?: Record<string, { title?: string; alt?: string; hint?: string }>; when?: TabWhen }
+  | { kind: "menu"; menu: (typeof MENU_SLOTS)[number]; command: string; title?: string; icon?: string; quick?: boolean; alt?: string; hint?: string; locales?: Record<string, { title?: string; alt?: string; hint?: string }>; when?: TabWhen }
   | { kind: "hook"; hook: (typeof HOOKS)[number] }
   | { kind: "routine"; id: string; cron: string; command: string }
   /** A tag bots may write in a reply (`<tag …>body</tag>`): taken out of the text and handed to the plugin's program part. */
@@ -110,6 +117,22 @@ export type Contribution = { plugin: string } & (
   | { kind: "agent"; claude: string | null; mcp: string | null; skills: { name: string; dir: string }[]; agents: { name: string; file: string }[] }
 );
 export type ContributionKind = Contribution["kind"];
+
+/**
+ * The plugin API (the 2.x minor of `API_VERSION`) a contribution first works on, and its name in the check's report. An app older
+ * than that skips it (2.7 on: with a warning on the Plugins page; before 2.7 silently), so a plugin that needs it says so in
+ * `engines` (`--check-plugin` errors when the range lets an older app in). Everything not named here has been there since 2.0.
+ */
+export function contributionApi(contribution: Contribution): { minor: number; feature: string } {
+  const c = contribution;
+  if (c.kind === "menu" && (c.menu === "browser/tab" || c.menu === "chat/link")) return { minor: 7, feature: `menus["${c.menu}"] ${c.command}` };
+  if (c.kind === "view" && c.forRole === "marked") return { minor: 7, feature: `view ${c.id}: forRole "marked"` };
+  if (c.kind === "view" && c.chat) return { minor: 7, feature: `view ${c.id}: chat "${c.chat}"` };
+  const name = c.kind === "menu" ? `menus["${c.menu}"] ${c.command}` : c.kind === "keybinding" ? `keybinding ${c.key}` : c.kind === "slash" ? `slash /${c.name}`
+    : c.kind === "setting" ? `setting ${c.key}` : c.kind === "hook" ? `hook ${c.hook}` : c.kind === "replyTag" ? `replyTag <${c.tag}>` : c.kind === "agent" ? "agent part"
+    : c.kind === "view" ? `view ${c.id} (${c.where})` : `${c.kind} ${c.id}`;
+  return { minor: 0, feature: name };
+}
 
 export const ofKind = <K extends ContributionKind>(list: Contribution[], kind: K) =>
   list.filter((contribution): contribution is Extract<Contribution, { kind: K }> => contribution.kind === kind);
@@ -258,14 +281,14 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
   if (c.menus != null) {
     if (!isObject(c.menus)) problems.push("contributes.menus has the wrong type.");
     else for (const [menu, items] of Object.entries(c.menus)) {
-      if (!(MENU_SLOTS as readonly string[]).includes(menu)) { problems.push(`Menu "${menu}" is not one of ${MENU_SLOTS.join(", ")}.`); continue; }
+      if (!(MENU_SLOTS as readonly string[]).includes(menu)) { problems.push(`Menu "${menu}" is not one of ${MENU_SLOTS.join(", ")} (skipped; the rest of the plugin loads).`); continue; }
       for (const [index, item] of (Array.isArray(items) ? items : [items]).entries()) {
-        const f = isObject(item) ? fields(item, `contributes.menus.${menu}.${index}`, ["command", "icon?", "alt?", "hint?"]) : (problems.push(`contributes.menus.${menu}.${index} has the wrong type.`), null);
+        const f = isObject(item) ? fields(item, `contributes.menus.${menu}.${index}`, ["command", "title?", "icon?", "alt?", "hint?"]) : (problems.push(`contributes.menus.${menu}.${index} has the wrong type.`), null);
         if (f) {
           const quick = isObject(item) && item.quick === true;
           if (menu === "message/preview" && !quick) { problems.push(`contributes.menus.${menu}.${index}: a preview card's menu entry must be quick.`); continue; }
           const rawWhen = isObject(item) ? item.when : undefined;
-          if (rawWhen !== undefined && menu !== "browser/tab") { problems.push(`contributes.menus.${menu}.${index}: when is only for the "browser/tab" menu.`); continue; }
+          if (rawWhen !== undefined && !WHEN_MENUS.includes(menu)) { problems.push(`contributes.menus.${menu}.${index}: when is only for the "browser/tab" and "chat/link" menus.`); continue; }
           const read = rawWhen === undefined ? {} : parseTabWhen(rawWhen);
           if (read.problem) { problems.push(`contributes.menus.${menu}.${index}: ${read.problem}`); continue; }
           const locales: Record<string, { title?: string; alt?: string; hint?: string }> = {};
@@ -277,7 +300,7 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
               locales[language.slice(0, 20)] = { ...(title !== undefined ? { title } : {}), ...(alt !== undefined ? { alt } : {}), ...(hint !== undefined ? { hint } : {}) };
             }
           }
-          out.push({ kind: "menu", plugin, menu: menu as (typeof MENU_SLOTS)[number], command: f.command, ...(Object.keys(locales).length ? { locales } : {}), ...(f.icon !== undefined ? { icon: f.icon.slice(0, 40) } : {}), ...(quick ? { quick: true } : {}), ...(f.alt !== undefined ? { alt: f.alt.slice(0, 200) } : {}), ...(f.hint !== undefined ? { hint: f.hint.slice(0, 400) } : {}), ...(read.when ? { when: read.when } : {}) });
+          out.push({ kind: "menu", plugin, menu: menu as (typeof MENU_SLOTS)[number], command: f.command, ...(f.title !== undefined ? { title: f.title.slice(0, 200) } : {}), ...(Object.keys(locales).length ? { locales } : {}), ...(f.icon !== undefined ? { icon: f.icon.slice(0, 40) } : {}), ...(quick ? { quick: true } : {}), ...(f.alt !== undefined ? { alt: f.alt.slice(0, 200) } : {}), ...(f.hint !== undefined ? { hint: f.hint.slice(0, 400) } : {}), ...(read.when ? { when: read.when } : {}) });
         }
       }
     }

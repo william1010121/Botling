@@ -610,8 +610,8 @@ export const ChatDecoration = z.strictObject({
 export type ChatDecoration = z.infer<typeof ChatDecoration>;
 const PluginCommandId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/);
 /** The app's fixed places a plugin may add a command to (`contributes.menus`). */
-const PluginMenu = z.enum(["message/context", "bot/context", "composer/plus", "commandPalette", "message/preview", "browser/tab"]);
-/** A `browser/tab` menu entry's tabs (browser-tab-menu.ts `TabWhen`). */
+const PluginMenu = z.enum(["message/context", "bot/context", "composer/plus", "commandPalette", "message/preview", "browser/tab", "chat/link"]);
+/** A `browser/tab` menu entry's tabs, or a `chat/link` one's links (browser-tab-menu.ts `TabWhen`). */
 const TabWhenView = z.strictObject({ scheme: z.string().max(100).optional(), ext: z.array(z.string().max(20)).max(20).optional(), host: z.string().max(100).optional() });
 /** Who asks a plugin: one of its sandboxed frames (panel, tile, card) or the chat page (its web part). */
 const PluginCaller = z.enum(["frame", "chat"]);
@@ -635,6 +635,8 @@ export const PluginView = z.strictObject({
   replacesBuiltIn: z.string().max(100).optional(),
   /** A built-in plugin running while the library holds an older copy (or one whose version is not a semver), which is ignored: that copy's version. */
   ignoredLibraryVersion: z.string().max(100).optional(),
+  /** Entries of its `contributes` this Botling skips, with why (a slot or value it does not know): the rest of it loads. */
+  skipped: z.array(z.string().max(2_000)).max(50).optional(),
   /** Installed from outside (the catalog, <install>): the Plugins page offers Remove (its data folder stays). */
   removable: z.boolean().optional(),
   /** The version an install or update replaced, kept for Revert. */
@@ -1176,6 +1178,11 @@ export const Command = z.discriminatedUnion("type", [
    * to) or the chat page (only commands of plugins whose web part runs there).
    */
   z.strictObject({ type: z.literal("plugins.command"), id: PluginCommandId, from: PluginCaller.optional(), name: PluginName.optional(), args: z.array(z.string().max(200)).max(4).optional() }),
+  /**
+   * A plugin's button beside a link in a chat message (menu "chat/link"): its command, run with that bot, message and link. The core
+   * runs it only when the link is in that message and the entry's `when` matches it.
+   */
+  z.strictObject({ type: z.literal("plugins.linkCommand"), id: PluginCommandId, botId: BotId, messageId: z.string().min(1).max(200), url: z.string().min(1).max(8_000) }),
   /** A plugin's button in the browser pane's toolbar (menu "browser/tab"): its command, run with that bot's tab on screen. */
   z.strictObject({ type: z.literal("plugins.tabCommand"), id: PluginCommandId, botId: BotId, tabId: z.string().min(1).max(200), url: z.string().min(1).max(8_000) }),
   /** A plugin panel's web part (module text) and its settings, for its sandboxed frame. */
@@ -1297,7 +1304,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.output", "subagent.view", "chat.read", "chat.shown", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
-  "plugins.list", "plugins.enable", "plugins.store", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
+  "plugins.list", "plugins.enable", "plugins.store", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.linkCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "link.drag", "worker.file",
@@ -1434,6 +1441,7 @@ export interface Results {
   "plugins.secret": PluginsView;
   "plugins.command": { result: unknown };
   "plugins.tabCommand": { result: unknown };
+  "plugins.linkCommand": { result: unknown };
   "plugins.panel": { title: string; source: string; settings: Record<string, boolean | number | string | null> };
   "plugins.call": { result: unknown };
   "plugins.approvalAsk": { needsApproval: ApprovalAskView | null };

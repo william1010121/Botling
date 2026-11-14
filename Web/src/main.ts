@@ -7,6 +7,7 @@ import { extensions, feedback, jumpTo, messageElement, messageMenu, refreshRetry
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { showMainSpeed } from "./subagent-speed";
 import { handleMediaClicks } from "./lightbox";
+import { installLinkMenu, setLinkMenu } from "./link-menu";
 import { PluginHost, type PluginSpec } from "./plugins";
 import type { ChatState, Draft, MessageView, StatePatch } from "./types";
 import { applyPatch } from "./patch";
@@ -223,6 +224,8 @@ class Chat {
     const flagged = !!state.feedback && !state.subagent;
     const menu = state.subagent ? [] : state.messageMenu ?? [];
     const previews = state.subagent ? [] : state.previewMenu ?? [];
+    // Plugins' buttons beside links (chat/link): the page matches each link itself, nothing is redrawn for them.
+    setLinkMenu(state.subagent ? [] : state.linkMenu ?? []);
     if (flagged !== feedback.enabled || JSON.stringify(menu) !== JSON.stringify(messageMenu.items) || JSON.stringify(previews) !== JSON.stringify(messageMenu.previews)) {
       feedback.enabled = flagged;
       messageMenu.items = menu;
@@ -640,6 +643,7 @@ class Chat {
   /** Pictures open in a lightbox over the chat; other chips and files open outside the page. */
   private handleClicks(): void {
     handleMediaClicks(document);
+    installLinkMenu(document);
   }
 
   /** Files dropped anywhere on the chat are attached. */

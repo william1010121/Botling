@@ -6,7 +6,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, isAbsolute } from "node:path";
 import { legacyKey } from "../../contract/shortcuts";
-import { insidePlugin, readContributions, type Contribution, type FolderView } from "./contributions";
+import { contributionApi, insidePlugin, readContributions, type Contribution, type FolderView } from "./contributions";
 
 export type { FolderView } from "./contributions";
 
@@ -78,10 +78,13 @@ const PERMISSION_NAMES = Object.keys(PERMISSIONS);
 
 /**
  * The Botling plugin API version plugins are written against (`PluginRegistry.apiVersion`): the minor is the Botling release
- * that last added to the API (2.6: the notes API with note.db's cells and outline, the note events, composer.insertQuote), so a
- * plugin that needs those says `"^2.6.0"` (botling.note) and one that does not keeps `"^2.0.0"`.
+ * that last added to the API, so a plugin that needs something says so in `engines` and one that does not keeps `"^2.0.0"`.
+ * 2.6: the notes API with note.db's cells and outline, the note events, composer.insertQuote (botling.note says `"^2.6.0"`).
+ * 2.7: views with `forRole: "marked"` and `chat: "float"`, `ui.showTab`, `bots.create`'s parent / instructions / delegation,
+ * `botling.openChat(botId, messageId)`, menus `browser/tab` and `chat/link` (with `when`); and from 2.7 on an app skips a
+ * contribution it does not know (a slot, a `where` or `forRole` value) with a warning instead of quietly (`contributionApi`).
  */
-export const API_VERSION = { major: 2, minor: 6 } as const;
+export const API_VERSION = { major: 2, minor: 7 } as const;
 /** The range a plugin that needs nothing newer declares (what Maintainer's new plugins and the library's own manifests say). */
 export const ENGINE_RANGE = `^${API_VERSION.major}.0.0`;
 
@@ -242,6 +245,8 @@ export const CHECK_NEXT_STEPS = {
   SETTING_TYPE_INVALID: "Set the setting's type to boolean, enum, string or number.",
   LINK_OUTSIDE_FOLDER: "Replace that link with a real copy of the file inside the plugin folder (a symlink must not point outside it).",
   ICON_TOO_LARGE: `Shrink that image below ${Math.round(MAX_IMAGE_BYTES / 1024)} KB (export a smaller size or use SVG) or remove it; a plugin's icons should be small.`,
+  ENGINE_TOO_LOW: "Raise engines.ccb in package.json to at least the API the message names (for example \"^2.7.0\"), or drop that contribution.",
+  CONTRIBUTION_SKIPPED: "Fix that entry of contributes as the message says (see the plugin guide for the slots and values this Botling knows); until then this Botling skips it.",
 } as const;
 
 export type CheckCode = keyof typeof CHECK_NEXT_STEPS;
@@ -322,6 +327,34 @@ export function checkPluginIssues(folder: string): PluginIssue[] {
   }
   staticGate(folder, add);
   return issues;
+}
+
+/**
+ * What the check says about a plugin's contributions, beyond whether it may load (`--check-plugin`, the checkIssues query):
+ * each contribution with the plugin API it needs (`contributionApi`), ENGINE_TOO_LOW when `engines` lets in an app older
+ * than one needs (that app would skip it), and CONTRIBUTION_SKIPPED for each entry this app skips. None of it stops loading.
+ */
+export function contributionIssues(folder: string): { needs: { feature: string; api: string }[]; issues: PluginIssue[] } {
+  const add = (code: CheckCode, message: string): PluginIssue => ({ code, message, nextStep: CHECK_NEXT_STEPS[code] });
+  let value: unknown;
+  try { value = JSON.parse(readFileSync(join(folder, "package.json"), "utf8")); } catch { return { needs: [], issues: [] }; }
+  const read = readManifest(value, diskFolder(folder));
+  if (!read.format) return { needs: [], issues: [] };
+  const issues = read.problems.filter((problem) => !/^(name|version) is missing\.$/.test(problem)).map((problem) => add("CONTRIBUTION_SKIPPED", problem));
+  const needs = read.contributions.map((contribution) => {
+    const { minor, feature } = contributionApi(contribution);
+    return { feature, api: `${API_VERSION.major}.${minor}`, minor };
+  });
+  const range = read.engine;
+  const highest = Math.max(0, ...needs.map((need) => need.minor));
+  if (range !== undefined && highest > 0) {
+    const older = Array.from({ length: highest }, (_, minor) => minor).filter((minor) => admits(range, [API_VERSION.major, minor]));
+    for (const need of needs) {
+      if (need.minor === 0 || !older.some((minor) => minor < need.minor)) continue;
+      issues.push(add("ENGINE_TOO_LOW", `${need.feature} needs plugin API ${need.api}, but engines "${range}" lets in Botling ${API_VERSION.major}.${Math.min(...older)}, which skips it (use "^${need.api}.0").`));
+    }
+  }
+  return { needs: needs.map(({ feature, api }) => ({ feature, api })), issues };
 }
 
 /** The problems with a plugin folder (`PluginRegistry.check`) as plain messages; none: it may load. */
@@ -512,12 +545,17 @@ function comparators(text: string): Comparator[] | null {
 
 /** Whether this app's plugin API (every patch of it) is in an npm semver range (`PluginRegistry.compatible`). */
 export function compatible(range: string): boolean {
+  return admits(range, [API_VERSION.major, API_VERSION.minor]);
+}
+
+/** Whether an app whose plugin API is `api` (major, minor; every patch of it) is in an npm semver range. */
+export function admits(range: string, api: [number, number]): boolean {
   const alternatives: Comparator[][] = [];
   for (const part of range.split("||")) {
     const set = comparators(part);
     if (!set) return false;
     alternatives.push(set);
   }
-  const version: Version = [API_VERSION.major, API_VERSION.minor, Number.MAX_SAFE_INTEGER];
+  const version: Version = [api[0], api[1], Number.MAX_SAFE_INTEGER];
   return alternatives.some((set) => set.every((comparator) => holds(comparator, version)));
 }

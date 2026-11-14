@@ -3,7 +3,7 @@
 // asks for runs only when a key, the / menu or that menu offers it now. The chat page is one realm with the
 // plugins' web parts, so this is no wall against them; it keeps it from running any other command.
 import type { PluginsView } from "../contract";
-import { tabMatches } from "../browser-tab-menu";
+import { chatLinkAddress, tabMatches } from "../browser-tab-menu";
 import { legacyKey, type PluginKeybinding } from "../contract/shortcuts";
 import latex from "../../builtin-plugins/ccb-latex/package.json";
 import design from "../../builtin-plugins/botling.design/package.json";
@@ -74,6 +74,38 @@ export function browserTabActions(plugins: PluginsView | null | undefined, url: 
     const title = ((lang ? item.locales?.[lang]?.title : undefined) ?? item.title).slice(0, 200);
     return { command: item.command, title, ...(item.icon ? { icon: item.icon } : {}) };
   });
+}
+
+/**
+ * The plugins' buttons beside links in a chat message (menu "chat/link"), with their `when` (the chat page matches each link
+ * itself, Web/src/link-menu.ts; the core checks a click again). Empty when no plugin contributes one: no button shows.
+ */
+export function chatLinkMenu(plugins: PluginsView | null | undefined, lang?: string | null): { command: string; title: string; icon?: string; when?: { scheme?: string; ext?: string[]; host?: string } }[] {
+  return (plugins?.menus ?? []).filter((item) => item.menu === "chat/link").slice(0, 20).map((item) => {
+    const title = ((lang ? item.locales?.[lang]?.title : undefined) ?? item.title).slice(0, 200);
+    return { command: item.command, title, ...(item.icon ? { icon: item.icon } : {}), ...(item.when ? { when: item.when } : {}) };
+  });
+}
+
+/** Whether a `chat/link` entry with command `id` is offered now for the link `url` (as the chat page shows it). */
+export function chatLinkOffered(plugins: PluginsView | null | undefined, id: string, url: string): boolean {
+  const address = chatLinkAddress(attachmentRefURL(url) ?? url);
+  return address !== null && (plugins?.menus ?? []).some((item) => item.menu === "chat/link" && item.command === id && tabMatches(item.when, address));
+}
+
+/** The file: URL a chat attachment link (the chat origin's) names, read from the link itself; null for any other. */
+function attachmentRefURL(url: string): string | null {
+  const prefix = "botling-chat://chat/attachment/";
+  if (!url.startsWith(prefix)) return null;
+  const ref = url.slice(prefix.length).split(/[?#]/)[0]!.split("/")[1];
+  if (!ref) return null;
+  try {
+    const binary = atob(ref.replaceAll("-", "+").replaceAll("_", "/"));
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+    return text.startsWith("file:") ? text : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Whether `id` is offered `via` a key, the / menu or `menu` now (what the chat page may ask the app page to run). */

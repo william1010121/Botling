@@ -40,6 +40,8 @@ import { fileURLToPath } from "node:url";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
 import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { claudeAutoCompactWindow, codexConfigFile } from "./engine-files";
+import { attachmentFile as attachmentLinkFile } from "../contract/attachment-url";
+import { lineHasLink } from "../browser-tab-menu";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, updateProjectRow, type BriefingRow } from "./projects";
 import { answerLabel } from "./attachments";
 import {
@@ -2817,6 +2819,13 @@ First write a test that shows this, then fix it.`;
       case "plugins.setting": return this.plugins.setSetting(cmd.name, cmd.key, cmd.value);
       case "plugins.secret": return this.plugins.setSecret(cmd.name, cmd.key, cmd.value);
       case "plugins.command": return { result: await this.plugins.command(cmd.id, cmd.from, cmd.name, cmd.args) ?? null };
+      case "plugins.linkCommand": {
+        // A chat attachment's link (the chat origin's URL) stands for its file; the link must be in that bot or user line.
+        const url = attachmentLinkFile(cmd.url, cmd.botId) ?? cmd.url;
+        const line = this.bot(cmd.botId).lines().find((candidate) => candidate.id === cmd.messageId);
+        if (!line || (line.role !== "bot" && line.role !== "user") || !lineHasLink(line, url)) throw new ContractError("not_found", "That link is not in that message.");
+        return { result: await this.plugins.linkCommand(cmd.id, { botId: cmd.botId, messageId: cmd.messageId, url }) ?? null };
+      }
       case "plugins.tabCommand": return { result: await this.plugins.tabCommand(cmd.id, { botId: cmd.botId, tabId: cmd.tabId, url: cmd.url }) ?? null };
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params, cmd.from) ?? null };
