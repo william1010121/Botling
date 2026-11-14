@@ -30,7 +30,7 @@ import {
   type Command, type CommandType, type Event, type EventEnvelope as EventEnvelopeT, type MessageView, type ResultOf, type WireError,
 } from "../contract";
 import {
-  BotSnapView, interruptedLine, ProtocolEntryEvent, slotKey,
+  BotSnapView, interruptedLine, ProtocolEntryEvent, REFUSE_REASON_TEXT, slotKey,
   type ConnectionState, type Cursor, type Entry, type MessageOf, type Outcome, type Slot, type StreamId, type Target,
 } from "../protocol";
 import type { Clock, ConnModel, FeLinkEvent, OutboxItem, PendingView, StoredCursor } from "../fe-link";
@@ -154,7 +154,7 @@ function wireError(outcome: Outcome): WireError {
   switch (outcome.kind) {
     case "refused": {
       const code = outcome.reason === "changed" || outcome.reason === "turn ended" ? "conflict" : outcome.reason === "invalid" ? "bad_request" : "forbidden";
-      return { code, message: `Not sent: ${outcome.reason}${outcome.detail ? ` (${outcome.detail})` : ""}`.slice(0, 2_000) };
+      return { code, message: `Not sent: ${REFUSE_REASON_TEXT[outcome.reason] ?? outcome.reason}${outcome.detail ? ` (${outcome.detail})` : ""}`.slice(0, 2_000) };
     }
     case "cancelled": return { code: "cancelled", message: "Not sent: cancelled." };
     case "skipped": return { code: "cancelled", message: "Not sent: skipped after a restore." };
@@ -822,7 +822,7 @@ export function pendingLine(item: PendingView): MessageView {
   const id = pendingLineId(item.slot);
   const time = new Date(item.createdAt).toISOString();
   if (item.lost) return { id, role: "error", text: `Delivered, then lost when this machine's history was restored: ${cmd.text}`, time };
-  if (item.state === "not sent") return { id, role: "error", text: `Not sent (${item.reason ?? "refused"}): ${cmd.text}`, time };
+  if (item.state === "not sent") return { id, role: "error", text: `Not sent (${item.reasonText ?? item.reason ?? "refused"}): ${cmd.text}`, time };
   return {
     id, role: "user", text: cmd.text, time,
     ...(cmd.replyTo ? { replyTo: cmd.replyTo } : {}),

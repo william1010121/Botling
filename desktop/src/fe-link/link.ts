@@ -9,7 +9,7 @@
 // Pure TypeScript: no Electron, no core, no Node built-ins; time comes from an injected clock.
 import type { Command } from "../contract";
 import {
-  decodeFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, ResAssembler, slotKey,
+  decodeFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, REFUSE_REASON_TEXT, ResAssembler, slotKey,
   type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type Slot, type StreamId, type Target,
 } from "../protocol";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";
@@ -91,6 +91,8 @@ export interface PendingView {
   heldAt?: string;
   /** For "not sent": refused reason, "cancelled" or "skipped". */
   reason?: string;
+  /** For "not sent": the reason's words when it has words of its own (`REFUSE_REASON_TEXT`, e.g. `grant`, N2). */
+  reasonText?: string;
   /** "delivered, then lost when <machine> was restored" (D50). */
   lost: boolean;
   /** Show the "sending" marker (waiting longer than ~150 ms). */
@@ -248,6 +250,7 @@ export class FeLink {
         key, slot: item.slot, cmd: item.cmd, ...(item.basis ? { basis: item.basis } : {}),
         state: item.state, ...(item.heldAt ? { heldAt: item.heldAt } : {}),
         ...(item.state === "not sent" && item.outcome ? { reason: reasonOf(item.outcome) } : {}),
+        ...(item.state === "not sent" && item.outcome?.kind === "refused" && REFUSE_REASON_TEXT[item.outcome.reason] ? { reasonText: REFUSE_REASON_TEXT[item.outcome.reason] } : {}),
         lost: item.lost === true,
         sending: item.state === "waiting" && now - shown >= this.markerMs,
         createdAt: item.createdAt,

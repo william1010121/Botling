@@ -79,9 +79,20 @@ export function queueKey(slot: Pick<Slot, "origin" | "originEpoch" | "target">):
 export const Scope = z.enum(["read", "reply", "approve", "manage", "admin", "local"]);
 export type Scope = z.infer<typeof Scope>;
 
-/** Why an owner refused a slot (§11.3, §11.5, §12). */
-export const RefuseReason = z.enum(["slot conflict", "changed", "scope", "origin", "invalid", "turn ended"]);
+/**
+ * Why an owner refused a slot (§11.3, §11.5, §12). `grant` (plan change N2, D52–D57): the command came from a plugin
+ * (`via`) whose code hash holds no grant for it; until M5 every command carrying `via` is refused so (fail closed).
+ */
+export const RefuseReason = z.enum(["slot conflict", "changed", "scope", "origin", "invalid", "turn ended", "grant"]);
 export type RefuseReason = z.infer<typeof RefuseReason>;
+
+/** How the UI words a refusal reason after "not sent" (§11.6); only reasons with words of their own are listed. */
+export const REFUSE_REASON_TEXT: Partial<Record<RefuseReason, string>> = {
+  grant: "the plugin may not do this",
+};
+
+/** The detail the owner gives a `grant` refusal until plugin grants exist (M5). */
+export const GRANT_REFUSAL_DETAIL = "plugin grants arrive in M5";
 
 /** The outcome of a slot: exactly one of applied / cancelled / refused, or skipped below a `floor` (§11.3). */
 export const Outcome = z.discriminatedUnion("kind", [
