@@ -73,6 +73,26 @@ describe("LiveGate: at most one live frame per 100 ms on a connection", () => {
     gate.close();
   });
 
+  it("a grant whose frame never came (the turn ended) lapses and the stream's next turn streams again", async () => {
+    const clock = new GateClock();
+    const sent: LiveFrame[] = [];
+    const gate = new LiveGate((f) => sent.push(f), { clock, intervalMs: 100 });
+    const a = gate.add("bot:A", () => undefined);
+    // B's resync finds its turn over: the channel sends nothing.
+    const b = gate.add("bot:B", () => undefined);
+    a(frame("bot:A", 1, 0, "hel"));
+    b(frame("bot:B", 1, 0, "wor"));
+    await clock.advance(100); // B granted, no frame
+    await clock.advance(100); // the grant lapses
+    await clock.advance(1_000);
+    // B's next turn: its frames go out again (before the fix B stayed waiting and lost every frame for good).
+    b(frame("bot:B", 1, 0, "next", "t2"));
+    await clock.advance(100);
+    b(frame("bot:B", 2, 4, " turn", "t2"));
+    expect(sent.filter((f) => f.stream === "bot:B").map((f) => f.text)).toEqual(["next", " turn"]);
+    gate.close();
+  });
+
   it("never sends two frames within the interval, except the rest of one too-big segment in the same tick", async () => {
     const clock = new GateClock();
     const sent: Array<{ f: LiveFrame; at: number }> = [];

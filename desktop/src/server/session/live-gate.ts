@@ -136,8 +136,15 @@ export class LiveGate {
   /** The slot is free again: the oldest waiting stream gets it, for its whole-segment frame. */
   private next(): void {
     if (this.closed) return;
-    // A grant whose frame never came (the turn ended meanwhile) lapses after one interval.
+    // A grant whose frame never came (the turn ended meanwhile) lapses after one interval. Its stream stops waiting:
+    // otherwise every later frame of it (the next turn's too) would be dropped with nothing left to grant it again. Its
+    // next frame goes as any other; the receiver asks for the whole segment if it does not match (`live.resync`).
+    const lapsed = this.granted;
     this.granted = null;
+    if (lapsed !== null && !this.queue.includes(lapsed)) {
+      const state = this.streams.get(lapsed);
+      if (state) state.waiting = false;
+    }
     const now = this.clock.now();
     if (now - this.lastSent < this.intervalMs) { this.schedule(); return; }
     const stream = this.queue.shift();
