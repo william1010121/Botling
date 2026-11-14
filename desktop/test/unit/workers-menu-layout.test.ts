@@ -26,7 +26,7 @@ vi.useFakeTimers({ toFake: ["Date"] });
 vi.setSystemTime(noon);
 afterAll(() => { vi.useRealTimers(); });
 const now = Date.now();
-const worker =(id: string, title: string): SubagentRowView => ({ id, title, status: "completed", head: "claude", startedAt: now - 30 * 60_000, endedAt: now - 20 * 60_000, unsettledAt: null, settled: true, prompt: "p" });
+const worker = (id: string, title: string): SubagentRowView => ({ id, title, status: "completed", head: "claude", startedAt: now - 30 * 60_000, endedAt: now - 20 * 60_000, unsettledAt: null, settled: true, prompt: "p" });
 const math: BotView = { id: "m", name: "Math", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null,
   subagentRows: [worker("w1", "Fix the API"), worker("w2", "Write the docs"), worker("w3", "Run the tests")] };
 const sub = (id: string, name: string): BotView => ({ ...math, id, name, role: "bot", parent: "m", job: `${name} job`, subagentRows: [] });
