@@ -1,5 +1,6 @@
 // Botling 3 wire protocol v1: which side may send what (protocol-v1.md §5.4, D24).
 // A message outside the sender's role ends the session with `bye{reason: "role"}`.
+import type { WireMessageType } from "./messages-m3";
 
 /** Who sends a frame, on which kind of session. */
 export type Sender =
@@ -22,6 +23,8 @@ const rule = (fe: boolean, server: boolean, peer: boolean, extra: Partial<RoleRu
 /** Other `pair.*` messages (server pairing, §4.5, M3): any side, in a pairing session only; no schema yet. */
 const PAIR_RULE: RoleRule = rule(true, true, true);
 const isPair = (type: string) => /^pair\.[a-z]{1,40}$/.test(type);
+/** `join.*` (server pairing, §4.5, M3): peer servers, in a pairing session only. */
+const isJoin = (type: string) => type.startsWith("join.");
 
 /**
  * The role table, one row per message type. §5.4's rows as written, plus:
@@ -30,10 +33,14 @@ const isPair = (type: string) => /^pair\.[a-z]{1,40}$/.test(type);
  *   read allowlist in scopes.ts, checked by the remote session); uploads, so `content.chunk` also goes FE → server and
  *   `content.credit` server → FE; the URL ticket answer `content.granted` and the upload answer `content.stored`
  *   (server → FE); the device pairing messages; and the local-only `admin` requests and `admin.event`.
- * Rows for messages that have no schema yet (`prefs.*`, `fetch.*`) are here so the table is whole; a frame naming one
- * is refused as unsupported.
+ * - M3 (a second server): the table-stream batch `rows` (server → FE and server ↔ server), `prefs.ids` / `prefs.want`
+ *   beside `prefs.have` / `prefs.rows` (server ↔ server), and server pairing `join.*` (peer servers, pairing session only).
+ *   The forwarded rows (`sub`/`ack`/`history`/`cmd`/`cancel`, `batch`/`snap`/`reset`/`stale`, `held`/`cmd.result`/
+ *   `cmd.retry`, `content.get/credit/cancel/meta/chunk/gone`) were in the server ↔ server column since M1/M2.
+ * Rows for messages that have no schema yet (`fetch.*`) are here so the table is whole; a frame naming one is refused
+ * as unsupported. `ROLE_ROWS` must hold a row for every message type (checked by the compiler below).
  */
-export const ROLE_TABLE: Readonly<Record<string, RoleRule>> = {
+const ROLE_ROWS = {
   hello: rule(true, false, true),
   welcome: rule(false, true, true),
   sub: rule(true, false, true),
@@ -69,7 +76,19 @@ export const ROLE_TABLE: Readonly<Record<string, RoleRule>> = {
   "roster.statements": rule(false, false, true),
   "roster.revocations": rule(false, false, true),
   "prefs.have": rule(false, false, true),
+  "prefs.ids": rule(false, false, true),
+  "prefs.want": rule(false, false, true),
   "prefs.rows": rule(false, false, true),
+  // A table stream's rows (M3, §8.2): to front ends, and between servers.
+  rows: rule(false, true, true),
+  // Server pairing (§4.5, M3), in a pairing session between two servers only.
+  "join.hello": rule(false, false, true),
+  "join.code": rule(false, false, true),
+  "join.wrong": rule(false, false, true),
+  "join.checked": rule(false, false, true),
+  "join.welcome": rule(false, false, true),
+  "join.done": rule(false, false, true),
+  "join.declined": rule(false, false, true),
   "fetch.ask": rule(false, false, true),
   "fetch.grant": rule(false, false, true),
   "fetch.chunk": rule(false, false, true),
@@ -100,7 +119,13 @@ export const ROLE_TABLE: Readonly<Record<string, RoleRule>> = {
   "shell.install": rule(false, true, false, { localOnly: true }),
   "shell.quit": rule(false, true, false, { localOnly: true }),
   "shell.done": rule(true, false, false, { localOnly: true }),
-};
+} satisfies Record<string, RoleRule>;
+
+/** The role table, one row per message type. */
+export const ROLE_TABLE: Readonly<Record<string, RoleRule>> = ROLE_ROWS;
+// The table stays total: a message type of any registry without a row is a compile error here.
+const _everyMessageHasARow: Record<WireMessageType, RoleRule> = ROLE_ROWS;
+void _everyMessageHasARow;
 
 /** What a session is: who sends, whether it runs on the local socket, whether it is a pairing session. */
 export interface SessionKind {
@@ -120,6 +145,7 @@ export function roleRefusal(type: string, sender: Sender, session: SessionKind):
   if (!row[sender]) return `a ${sender === "fe" ? "front end" : sender === "server" ? "server (to a front end)" : "peer server"} may not send "${type}"`;
   if (row.localOnly && !session.local) return `"${type}" is only for the local socket`;
   if (isPair(type) && !session.pairing) return `"${type}" is only for a pairing session`;
-  if (session.pairing && !isPair(type) && type !== "bye" && type !== "ping") return `a pairing session carries only pair.*, ping and bye`;
+  if (isJoin(type) && !session.pairing) return `"${type}" is only for a server pairing session`;
+  if (session.pairing && !isPair(type) && !isJoin(type) && type !== "bye" && type !== "ping") return `a pairing session carries only pair.*, join.*, ping and bye`;
   return null;
 }

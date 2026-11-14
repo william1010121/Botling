@@ -1,7 +1,7 @@
 // Botling 3 wire protocol v1: the messages of a session, each a plaintext `{t, ...}` JSON frame (§5.2).
 // Design: protocol-v1.md §4 (roster, pairing), §5.4 (roles), §8 (streams), §9.2 (live), §9A.4 (content), §11 (commands),
-// §13.1 (attach). M1 and M2 messages have schemas; `prefs.*` and `fetch.*` (server ↔ server, M3/M5) do not yet, so a
-// frame naming one is refused as unsupported.
+// §13.1 (attach). M1 and M2 messages have schemas here; M3's (`rows`, `prefs.*`, `join.*`) are in messages-m3.ts and
+// read only by `decodeWireFrame` (frame.ts); `fetch.*` (M5) has none yet, so a frame naming one is refused as unsupported.
 import { z } from "zod";
 import { BotId, Command, MessageView, WireError } from "../contract";
 import { ContentRef, ContentVariant, Entry } from "./entries";
@@ -14,6 +14,12 @@ import {
 
 /** A request id chosen by the asker, echoed by the answer. */
 export const ReqId = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]+$/);
+/**
+ * The tag of a forwarded subscription (M3, §10.3): the attached server S forwards a front end's `sub` to the owner B
+ * with `via` set to an id S chose for that front end's subscription; B echoes it on every `batch`, `snap`, `reset` and
+ * `rows` it sends for it, and S takes it off before it relays the frame. Only a peer server states it.
+ */
+export const SubTag = ReqId;
 /** A version number of the front end, e.g. "3.0.0". */
 const Version = z.string().min(1).max(40).regex(/^[0-9A-Za-z.+-]+$/);
 /** At most this many entries in one batch (catch-up page, §20). */
@@ -65,10 +71,10 @@ export const Welcome = msg("welcome", {
 // Streams (§8, §10.2)
 
 /** Subscribe from a cursor (none: from a fresh `snap`). */
-export const Sub = msg("sub", { stream: StreamId, cursor: Cursor.nullable() });
-export const Unsub = msg("unsub", { stream: StreamId });
+export const Sub = msg("sub", { stream: StreamId, cursor: Cursor.nullable(), via: SubTag.optional() });
+export const Unsub = msg("unsub", { stream: StreamId, via: SubTag.optional() });
 /** The reader applied everything up to `cursor`. */
-export const Ack = msg("ack", { stream: StreamId, cursor: Cursor });
+export const Ack = msg("ack", { stream: StreamId, cursor: Cursor, via: SubTag.optional() });
 /** Older lines before message `before` (the 2.x `chat.history` paging, §8.4). */
 export const History = msg("history", { req: ReqId, stream: StreamId, before: Id, bytes: z.number().int().min(1024).max(8 * 1024 * 1024).optional() });
 /** One page of older lines; `logId` is the incarnation it was read from. */
@@ -78,7 +84,7 @@ export const HistoryPage = msg("history.page", {
 
 /** Entries `from`…`to` of one incarnation; `prevHash` is the hash before `from` (§8.1). */
 export const Batch = msg("batch", {
-  stream: StreamId, logId: LogId, from: Seq.min(1), to: Seq.min(1), prevHash: EntryHash, entries: z.array(Entry).min(1).max(BATCH_ENTRIES_LIMIT), more: z.boolean(),
+  stream: StreamId, logId: LogId, from: Seq.min(1), to: Seq.min(1), prevHash: EntryHash, entries: z.array(Entry).min(1).max(BATCH_ENTRIES_LIMIT), more: z.boolean(), via: SubTag.optional(),
 }).superRefine((batch, ctx) => {
   if (batch.to - batch.from + 1 !== batch.entries.length) ctx.addIssue({ code: "custom", path: ["entries"], message: "entries do not cover from…to" });
   batch.entries.forEach((entry, index) => {
@@ -87,7 +93,7 @@ export const Batch = msg("batch", {
   });
 });
 /** The read model at `seq` (newest page of messages, open cards, bot state; or a table's rows), then entries after it (§8.4). */
-export const Snap = msg("snap", { stream: StreamId, logId: LogId, seq: Seq, hash: EntryHash, view: z.record(z.string().max(100), z.unknown()) });
+export const Snap = msg("snap", { stream: StreamId, logId: LogId, seq: Seq, hash: EntryHash, view: z.record(z.string().max(100), z.unknown()), via: SubTag.optional() });
 /**
  * The stream has a new incarnation `logId`; `retired` lists every earlier one with the last seq the restore kept of it.
  * A reader never goes back to a retired logId (§7.6, §8.3, D50).
@@ -96,6 +102,7 @@ export const Reset = msg("reset", {
   stream: StreamId, logId: LogId, retired: z.array(z.strictObject({ logId: LogId, keptSeq: Seq })).min(1).max(1_000), reason: z.enum(["restored", "rewind"]),
   /** A restore from a backup: when that backup was taken (ms), so the window can say "restored to <time>". */
   restoredTo: z.number().int().nonnegative().optional(),
+  via: SubTag.optional(),
 }).refine((reset) => !reset.retired.some((old) => old.logId === reset.logId), { message: "the new logId cannot be retired", path: ["retired"] });
 /** The serving server lost the stream's owner (§10.2). */
 export const Stale = msg("stale", { stream: StreamId, since: z.number().int().nonnegative() });
