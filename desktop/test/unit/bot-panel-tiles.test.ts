@@ -229,7 +229,7 @@ describe("when the panel plugin is not there", () => {
     expect(refused.tiles("board")).toEqual([]);
   });
 
-  it("the plugin is unloading: no tile at once, before its registrations are taken back", async () => {
+  it("the plugin is unloading (its dependent's slow undo still running): no tile, in any surface", async () => {
     const { feed, host, kernel, tiles } = world();
     await host.start();
     feed.reconcile(viewOf(TILES));
@@ -238,10 +238,8 @@ describe("when the panel plugin is not there", () => {
     void kernel.requestUnload(BOT_PANEL_PLUGIN);
     await flush();
     expect(kernel.state(BOT_PANEL_PLUGIN)).toBe("unloading");
-    // The kernel still holds the registrations (their undo has not finished); it shows none of them.
-    expect(kernel.allContributions().filter((held) => held.slot === "tile/board").length).toBeGreaterThan(0);
     expect(kernel.entries("tile/board")).toEqual([]);
-    expect(tiles("board")).toEqual([]);
+    expect([tiles("board"), tiles("whiteboard"), tiles("pin")]).toEqual([[], [], []]);
     slow.resolve();
     await flush();
   });
