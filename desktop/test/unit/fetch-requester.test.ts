@@ -2,12 +2,13 @@
 // resume after a lost session). The source is the real `FetchSource` (M5-07a); the "network" is an in-process pipe that
 // round-trips every frame through the real codec and can flip bytes, drop the session or reconnect. Temp folders only,
 // no window, loopback not even needed (no socket).
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decodeWireFrame, encodeChunkFrame, encodeWireFrame, type WireMessage } from "../../src/protocol";
+import { FETCH_MAX_DEPTH, FETCH_MAX_DIRS, FETCH_MAX_FILES } from "../../src/protocol/fetch";
 import { FetchRequester, incomingDirName, type FetchPeer, type FetchResult } from "../../src/server/fetch/requester";
 import { FetchSource, type FetchAskHook, type FetchSink } from "../../src/server/fetch/source";
 import { bindServerIdentity, loadOrCreateServerIdentity } from "../../src/server/identity";
@@ -24,6 +25,8 @@ const race = vi.hoisted(() => ({
   beforeOpen: null as ((path: string) => void) | null,
   afterLstat: null as ((path: string) => void) | null,
   noProc: false, // true: this machine has no /proc (existsSync says no, readlink fails)
+  afterReaddir: null as ((path: string) => void) | null,
+  mkdirs: null as string[] | null, // every mkdirSync path the requester made (when a test sets an array)
 }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -37,7 +40,9 @@ vi.mock("node:fs", async (importOriginal) => {
     if (race.noProc && isProc(path)) throw Object.assign(new Error(`ENOENT: no such file or directory, readlink '${path}'`), { code: "ENOENT" });
     return (actual.readlinkSync as (...a: unknown[]) => unknown)(path, ...rest);
   };
-  return { ...actual, realpathSync, lstatSync, existsSync, readlinkSync };
+  const readdirSync = (path: string, ...rest: unknown[]) => { const out = (actual.readdirSync as (...a: unknown[]) => unknown)(path, ...rest); race.afterReaddir?.(String(path)); return out; };
+  const mkdirSync = (path: string, ...rest: unknown[]) => { race.mkdirs?.push(String(path)); return (actual.mkdirSync as (...a: unknown[]) => unknown)(path, ...rest); };
+  return { ...actual, realpathSync, lstatSync, existsSync, readlinkSync, readdirSync, mkdirSync };
 });
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -66,7 +71,7 @@ function manifestOf(files: Array<{ rel: string; bytes: Uint8Array }>): string {
 
 type Tamper = (message: WireMessage) => WireMessage | null;
 
-async function setup(options: { ask?: FetchAskHook; resumeWindowMs?: number } = {}) {
+async function setup(options: { ask?: FetchAskHook; resumeWindowMs?: number; maxDirs?: number; maxDepth?: number; onAudit?: () => void } = {}) {
   const root = mkdtempSync(join(tmpdir(), "botling-fetch-req-"));
   const dataA = join(root, "data-a");
   const dataB = join(root, "data-b");
@@ -114,8 +119,20 @@ async function setup(options: { ask?: FetchAskHook; resumeWindowMs?: number } = 
   let afterDeliver: ((message: WireMessage) => void) | null = null;
   let muted = false; // true: asks reach nobody (the test plays the source by hand)
 
+  // `auditFails`: the audit row cannot be written (submit rejects, or throws before returning a promise).
+  const audit = { fails: null as null | "reject" | "throw" };
+  const store = {
+    submit: ((fn: Parameters<ServerStore["submit"]>[0]) => {
+      if (audit.fails === "throw") throw new Error("audit disk is full");
+      if (audit.fails === "reject") return Promise.reject(new Error("audit disk is full"));
+      return storeB.submit(fn);
+    }) as ServerStore["submit"],
+  };
   const requester = new FetchRequester({
-    store: storeB,
+    store,
+    ...(options.maxDirs !== undefined ? { maxDirs: options.maxDirs } : {}),
+    ...(options.maxDepth !== undefined ? { maxDepth: options.maxDepth } : {}),
+    ...(options.onAudit ? { onAudit: options.onAudit } : {}),
     session: (member) => (current && current.open && member === ka.memberId ? current : null),
     botFolder: (botId) => (botId === "bot-b" ? folderB : null),
     serverName: (member) => (member === ka.memberId ? SOURCE_NAME : null),
@@ -191,6 +208,7 @@ async function setup(options: { ask?: FetchAskHook; resumeWindowMs?: number } = 
   return {
     root, folderA, folderB, artifactsA, ka, kb, storeA, storeB, readerA, readerB, source, requester, asks, delivered,
     muteSource: () => { muted = true; },
+    failAudit: (how: "reject" | "throw" | null) => { audit.fails = how; },
     setTamper: (fn: Tamper | null) => { tamper = fn; },
     setAfterDeliver: (fn: ((message: WireMessage) => void) | null) => { afterDeliver = fn; },
     drop, reconnect, incoming, srvDir,
@@ -228,7 +246,7 @@ const ok = (result: FetchResult): Extract<FetchResult, { ok: true }> => {
 
 describe("M5-07b: the requester receives a fetch", () => {
   const cleanups: Array<() => Promise<void>> = [];
-  afterEach(async () => { race.afterRealpath = null; race.beforeOpen = null; race.afterLstat = null; race.noProc = false; for (const fn of cleanups.splice(0)) await fn(); });
+  afterEach(async () => { race.afterRealpath = null; race.beforeOpen = null; race.afterLstat = null; race.noProc = false; race.afterReaddir = null; race.mkdirs = null; for (const fn of cleanups.splice(0)) await fn(); });
   const make = async (options?: Parameters<typeof setup>[0]) => { const env = await setup(options); cleanups.push(env.cleanup); return env; };
 
   it("names the folder after the source's safe name and the first 8 characters of its id", () => {
@@ -709,6 +727,280 @@ describe("M5-07b: the requester receives a fetch", () => {
       const result = await pending;
       expect(result).toMatchObject({ ok: false, reason: "corrupt" });
       if (!result.ok) expect(result.detail).toMatch(/did not land/);
+    });
+  });
+  // ---- follow-up card: fetch-receive hardening (M5-07b review F-2 leftover staging, F-3 directory flood, F-4 audit) ----
+  describe("fetch-receive hardening", () => {
+    const chunk = (fetchId: string, index: number, file: string, text: string): WireMessage => {
+      const bytes = new Uint8Array(Buffer.from(text));
+      return { t: "fetch.chunk", fetchId, index, file, sha256: sha256Hex(bytes), bytes };
+    };
+    const grant = (fetchId: string, bytes: number, files: number): WireMessage =>
+      ({ t: "fetch.grant", fetchId, prefix: "/p", mode: "read", bytes, files, expires: null } as WireMessage);
+    const done = (fetchId: string, files: Array<{ rel: string; text: string }>): WireMessage => ({
+      t: "fetch.done", fetchId, manifest: manifestOf(files.map((f) => ({ rel: f.rel, bytes: Buffer.from(f.text) }))),
+      bytes: files.reduce((n, f) => n + Buffer.byteLength(f.text), 0),
+    } as WireMessage);
+    /** Starts a fetch the test answers by hand. */
+    const start = async (env: Awaited<ReturnType<typeof setup>>) => {
+      env.muteSource();
+      const before = env.asks.length;
+      const pending = env.requester.fetch("bot-b", env.ka.memberId, artifact("x"), "x", MiB);
+      const ask = await until(() => env.asks[before] ?? null, { timeout: 2_000, what: "ask" });
+      const srv = join(env.incoming(), env.srvDir());
+      const send = (m: WireMessage) => env.requester.onMessage(env.current()!, m);
+      return { pending, id: ask.fetchId, staging: join(srv, `.${ask.fetchId}.partial`), dest: join(srv, ask.fetchId), send };
+    };
+    const noFiles = (dir: string) => listTree(dir).filter((p) => !p.endsWith("/"));
+    /** A tree of folders `names` deep, with one file at the bottom, under `<artifactsA>/<root>`. */
+    const deepTree = (env: Awaited<ReturnType<typeof setup>>, root: string, depth: number) => {
+      const folders = Array.from({ length: depth }, (_, i) => `f${i}`);
+      mkdirSync(join(env.artifactsA, root, ...folders), { recursive: true });
+      writeFileSync(join(env.artifactsA, root, ...folders, "leaf.txt"), "leaf");
+    };
+
+    describe("1. staging folders a fetch that never finished left behind are removed at start", () => {
+      const SRV = "build_box_1-deadbeef";
+      /** `<incoming>/<SRV>/.<uuid>.partial/` with a nested file in it. */
+      const leftover = (folder: string) => {
+        const srv = join(folder, ".bot", "incoming", SRV);
+        const name = `.${randomUUID()}.partial`;
+        mkdirSync(join(srv, name, "a", "b"), { recursive: true });
+        writeFileSync(join(srv, name, "a", "b", "x.bin"), "partial bytes");
+        writeFileSync(join(srv, name, "top.txt"), "t");
+        return { srv, name, path: join(srv, name) };
+      };
+
+      it("1a. removes every staging folder of the bot folders it is given, and nothing else in them", async () => {
+        const env = await make();
+        const other = join(env.root, "bots", "bot-c");
+        const one = leftover(env.folderB);
+        const two = leftover(env.folderB);
+        const three = leftover(other);
+        // a finished fetch (`<fetchId>/`) is the bot's data: never touched
+        const finished = join(one.srv, randomUUID());
+        mkdirSync(finished);
+        writeFileSync(join(finished, "kept.txt"), "kept");
+        expect(env.requester.removeLeftoverStaging([env.folderB, other])).toBe(3);
+        for (const gone of [one.path, two.path, three.path]) expect(existsSync(gone)).toBe(false);
+        expect(readFileSync(join(finished, "kept.txt"), "utf8")).toBe("kept");
+      });
+
+      it("1b. only the exact staging name goes: `.<uuid>.partial`, a plain folder, nothing else", async () => {
+        const env = await make();
+        const srv = join(env.incoming(), SRV);
+        mkdirSync(srv, { recursive: true });
+        const id = randomUUID();
+        const keepFolders = [".partial", ".abc.partial", `.${id}.partial.bak`, `..${id}.partial`, `.${id.toUpperCase()}.partial`, id, `x.${id}.partial`];
+        for (const name of keepFolders) { mkdirSync(join(srv, name)); writeFileSync(join(srv, name, "keep.txt"), name); }
+        const fileName = `.${randomUUID()}.partial`; // a regular FILE with the staging name is not a staging folder
+        writeFileSync(join(srv, fileName), "a file");
+        expect(env.requester.removeLeftoverStaging([env.folderB])).toBe(0);
+        for (const name of keepFolders) expect(readFileSync(join(srv, name, "keep.txt"), "utf8")).toBe(name);
+        expect(readFileSync(join(srv, fileName), "utf8")).toBe("a file");
+      });
+
+      it("1c. a symlink is never followed: one named like a staging folder stays, and a link inside one is removed without touching its target", async () => {
+        const env = await make();
+        const outside = join(env.root, "outside-clean");
+        mkdirSync(join(outside, "sub"), { recursive: true });
+        writeFileSync(join(outside, "keep.txt"), "outside");
+        writeFileSync(join(outside, "sub", "keep2.txt"), "outside2");
+        const srv = join(env.incoming(), SRV);
+        mkdirSync(srv, { recursive: true });
+        const linkName = `.${randomUUID()}.partial`;
+        symlinkSync(outside, join(srv, linkName)); // named like staging but a link: left alone, not followed
+        const real = leftover(env.folderB);
+        symlinkSync(outside, join(real.path, "link-dir"));
+        symlinkSync(join(outside, "keep.txt"), join(real.path, "link-file"));
+        expect(env.requester.removeLeftoverStaging([env.folderB])).toBe(1);
+        expect(existsSync(real.path)).toBe(false);
+        expect(lstatSync(join(srv, linkName)).isSymbolicLink()).toBe(true);
+        expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("outside");
+        expect(readFileSync(join(outside, "sub", "keep2.txt"), "utf8")).toBe("outside2");
+      });
+
+      it("1d. only under a plain `.bot/incoming/<source>/`: a symlink at `.bot`, `incoming` or the source folder is not followed", async () => {
+        const env = await make();
+        const name = `.${randomUUID()}.partial`;
+        const mk = (label: string) => { const folder = join(env.root, "bots", `case-${label}`); mkdirSync(folder, { recursive: true }); return folder; };
+        const outsideFor = (label: string, ...inside: string[]) => {
+          const outside = join(env.root, `outside-${label}`);
+          mkdirSync(join(outside, ...inside, name), { recursive: true });
+          writeFileSync(join(outside, ...inside, name, "keep.txt"), label);
+          return { outside, file: join(outside, ...inside, name, "keep.txt") };
+        };
+        const a = outsideFor("bot", "incoming", SRV); // `.bot` is a link
+        const fa = mk("bot"); symlinkSync(a.outside, join(fa, ".bot"));
+        const b = outsideFor("incoming", SRV); // `.bot/incoming` is a link
+        const fb = mk("incoming"); mkdirSync(join(fb, ".bot")); symlinkSync(b.outside, join(fb, ".bot", "incoming"));
+        const c = outsideFor("srv"); // `.bot/incoming/<source>` is a link
+        const fc = mk("srv"); mkdirSync(join(fc, ".bot", "incoming"), { recursive: true }); symlinkSync(c.outside, join(fc, ".bot", "incoming", SRV));
+        expect(env.requester.removeLeftoverStaging([fa, fb, fc])).toBe(0);
+        for (const [x, label] of [[a, "bot"], [b, "incoming"], [c, "srv"]] as const) expect(readFileSync(x.file, "utf8")).toBe(label);
+      });
+
+      it("1e. a folder missing, or a bot folder with no .bot, is fine (nothing thrown, nothing removed)", async () => {
+        const env = await make();
+        expect(env.requester.removeLeftoverStaging([join(env.root, "no-such-folder"), env.folderB])).toBe(0);
+      });
+
+      it("1f. a fetch running now keeps its staging folder (only the leftovers beside it go)", async () => {
+        const env = await make();
+        const { pending, staging } = await start(env);
+        const stale = leftover(env.folderB);
+        expect(env.requester.removeLeftoverStaging([env.folderB])).toBe(1);
+        expect(existsSync(stale.path)).toBe(false);
+        expect(lstatSync(staging).isDirectory()).toBe(true);
+        env.requester.close();
+        expect(await pending).toMatchObject({ ok: false, reason: "unreachable" });
+      });
+
+      it("1g. race: the staging folder swapped for a symlink after it was checked loses only the link, nothing outside", async () => {
+        const env = await make();
+        const outside = join(env.root, "outside-race");
+        mkdirSync(join(outside, "sub"), { recursive: true });
+        writeFileSync(join(outside, "keep.txt"), "outside");
+        writeFileSync(join(outside, "sub", "keep2.txt"), "outside2");
+        const stale = leftover(env.folderB);
+        let swapped = 0;
+        race.afterLstat = (path) => {
+          if (path !== stale.path || swapped++) return;
+          renameSync(stale.path, join(stale.srv, "aside")); // the bot moves its (real) folder away and links outside in its place
+          symlinkSync(outside, stale.path);
+        };
+        env.requester.removeLeftoverStaging([env.folderB]);
+        expect(swapped).toBeGreaterThan(0);
+        expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("outside");
+        expect(readFileSync(join(outside, "sub", "keep2.txt"), "utf8")).toBe("outside2");
+      });
+
+      it("1h. race: the source folder swapped for a symlink after it was listed makes the cleanup stop there, nothing outside is removed", async () => {
+        const env = await make();
+        const stale = leftover(env.folderB);
+        const outside = join(env.root, "outside-srv");
+        mkdirSync(join(outside, stale.name), { recursive: true }); // the same name, out there
+        writeFileSync(join(outside, stale.name, "keep.txt"), "outside");
+        let swapped = 0;
+        race.afterReaddir = (path) => {
+          if (path !== stale.srv || swapped++) return;
+          renameSync(stale.srv, `${stale.srv}-aside`);
+          symlinkSync(outside, stale.srv);
+        };
+        env.requester.removeLeftoverStaging([env.folderB]);
+        expect(swapped).toBeGreaterThan(0);
+        expect(readFileSync(join(outside, stale.name, "keep.txt"), "utf8")).toBe("outside");
+      });
+    });
+
+    describe("2. a source cannot make the requester create unbounded or too deeply nested folders", () => {
+      it("2a. the default caps sit with the file and byte caps and match the source's folder cap", () => {
+        expect(FETCH_MAX_DIRS).toBe(20_000);
+        expect(FETCH_MAX_DIRS).toBe(FETCH_MAX_FILES);
+        expect(FETCH_MAX_DEPTH).toBe(64);
+      });
+
+      it("2b. a flood of zero-byte files, each in a fresh folder: the cap is `limit`, and no more folders than the cap were ever made", async () => {
+        const env = await make({ maxDirs: 3 });
+        const { pending, id, send } = await start(env);
+        race.mkdirs = [];
+        send(grant(id, 0, 50));
+        for (let i = 0; i < 10; i++) send(chunk(id, i, `d${i}/x`, ""));
+        expect(await pending).toMatchObject({ ok: false, reason: "limit" });
+        // (matched by the fetch id: the requester works on real paths, which on a Mac differ from the typed temp path)
+        expect(race.mkdirs.filter((path) => path.includes(`.${id}.partial/`))).toHaveLength(3);
+        expect(readdirSync(env.folderB)).toEqual([".bot"]);
+        expect(noFiles(env.incoming())).toEqual([]);
+        expect(existsSync(join(env.incoming(), env.srvDir()))).toBe(false);
+      });
+
+      it("2c. the cap counts folders made, not files: three files in one folder chain stay at the cap, one more fresh folder goes over", async () => {
+        const env = await make({ maxDirs: 3 });
+        const first = await start(env);
+        first.send(grant(first.id, 0, 3));
+        for (const [i, file] of ["a/b/c/x", "a/b/c/y", "a/b/c/z"].entries()) first.send(chunk(first.id, i, file, ""));
+        first.send(done(first.id, ["a/b/c/x", "a/b/c/y", "a/b/c/z"].map((rel) => ({ rel, text: "" }))));
+        expect(ok(await first.pending).files).toBe(3);
+        const second = await start(env);
+        second.send(grant(second.id, 0, 2));
+        second.send(chunk(second.id, 0, "a/b/c/x", ""));
+        second.send(chunk(second.id, 1, "a/b/d/x", "")); // a, b, c, d: the fourth new folder
+        expect(await second.pending).toMatchObject({ ok: false, reason: "limit" });
+      });
+
+      it("2d. a path nested deeper than the depth cap is `limit` before any folder is made for it", async () => {
+        const env = await make({ maxDepth: 3 });
+        const { pending, id, send } = await start(env);
+        race.mkdirs = [];
+        send(grant(id, 0, 1));
+        send(chunk(id, 0, "a/b/c/d/x", "")); // four folders deep
+        expect(await pending).toMatchObject({ ok: false, reason: "limit" });
+        expect(race.mkdirs.filter((path) => path.includes(`.${id}.partial/`))).toEqual([]);
+        expect(readdirSync(env.folderB)).toEqual([".bot"]);
+      });
+
+      it("2e. through the real source: a tree exactly at the folder cap arrives, one folder more is `limit` and leaves nothing", async () => {
+        const env = await make({ maxDirs: 5 });
+        for (const [root, n] of [["t5", 5], ["t6", 6]] as const) {
+          for (let i = 0; i < n; i++) { mkdirSync(join(env.artifactsA, root, `d${i}`), { recursive: true }); writeFileSync(join(env.artifactsA, root, `d${i}`, "f.txt"), `f${i}`); }
+        }
+        const good = ok(await env.requester.fetch("bot-b", env.ka.memberId, artifact("t5"), "x", MiB));
+        expect(good.files).toBe(5);
+        expect(listTree(join(env.folderB, good.dest)).filter((p) => p.endsWith("/"))).toHaveLength(5);
+        expect(await env.requester.fetch("bot-b", env.ka.memberId, artifact("t6"), "x", MiB)).toMatchObject({ ok: false, reason: "limit" });
+        expect(readdirSync(join(env.incoming(), env.srvDir()))).toEqual([good.fetchId]);
+      });
+
+      it("2f. through the real source: a tree exactly at the depth cap arrives, one folder deeper is `limit`", async () => {
+        const env = await make({ maxDepth: 3 });
+        deepTree(env, "ok3", 3);
+        deepTree(env, "bad4", 4);
+        const good = ok(await env.requester.fetch("bot-b", env.ka.memberId, artifact("ok3"), "x", MiB));
+        expect(readFileSync(join(env.folderB, good.dest, "f0", "f1", "f2", "leaf.txt"), "utf8")).toBe("leaf");
+        expect(await env.requester.fetch("bot-b", env.ka.memberId, artifact("bad4"), "x", MiB)).toMatchObject({ ok: false, reason: "limit" });
+        expect(readdirSync(join(env.incoming(), env.srvDir()))).toEqual([good.fetchId]);
+      });
+
+      it("2g. with the default caps: 64 folders deep arrives, 65 is `limit`", async () => {
+        const env = await make();
+        deepTree(env, "ok64", FETCH_MAX_DEPTH);
+        deepTree(env, "bad65", FETCH_MAX_DEPTH + 1);
+        ok(await env.requester.fetch("bot-b", env.ka.memberId, artifact("ok64"), "x", MiB));
+        expect(await env.requester.fetch("bot-b", env.ka.memberId, artifact("bad65"), "x", MiB)).toMatchObject({ ok: false, reason: "limit" });
+      });
+    });
+
+    describe("3. an audit row that cannot be written means the fetch is not ok and nothing is kept", () => {
+      const rowCount = (env: Awaited<ReturnType<typeof setup>>) =>
+        (env.readerB.prepare("SELECT COUNT(*) AS n FROM rows WHERE stream = ? AND key LIKE 'audit:%' AND deleted = 0").get(`srv:${env.kb.memberId}`) as { n: number }).n;
+
+      for (const how of ["reject", "throw"] as const) {
+        it(`3a. the audit write ${how === "reject" ? "rejects" : "throws"}: corrupt, the files already placed are removed, no row`, async () => {
+          const env = await make();
+          writeFileSync(join(env.artifactsA, "r.txt"), "hello");
+          env.failAudit(how);
+          const result = await env.requester.fetch("bot-b", env.ka.memberId, artifact("r.txt"), "x", MiB);
+          expect(result).toMatchObject({ ok: false, reason: "corrupt" });
+          if (!result.ok) expect(result.detail).toMatch(/audit/);
+          expect(readdirSync(env.folderB)).toEqual([".bot"]);
+          expect(noFiles(env.incoming())).toEqual([]);
+          expect(existsSync(join(env.incoming(), env.srvDir()))).toBe(false);
+          expect(rowCount(env)).toBe(0);
+          // the requester is not stuck: with the store back, the same fetch is ok and has its row
+          env.failAudit(null);
+          const again = ok(await env.requester.fetch("bot-b", env.ka.memberId, artifact("r.txt"), "x", MiB));
+          expect(readFileSync(join(env.folderB, again.dest, "r.txt"), "utf8")).toBe("hello");
+          expect(rowCount(env)).toBe(1);
+        });
+      }
+
+      it("3b. onAudit (the notify after the row is written) throwing does not undo a fetch whose row is there", async () => {
+        const env = await make({ onAudit: () => { throw new Error("feed gone"); } });
+        writeFileSync(join(env.artifactsA, "r.txt"), "hello");
+        const result = ok(await env.requester.fetch("bot-b", env.ka.memberId, artifact("r.txt"), "x", MiB));
+        expect(readFileSync(join(env.folderB, result.dest, "r.txt"), "utf8")).toBe("hello");
+        expect(rowCount(env)).toBe(1);
+      });
     });
   });
 });
