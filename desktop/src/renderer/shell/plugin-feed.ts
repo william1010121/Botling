@@ -16,6 +16,7 @@ import { canonicalSlot, type Kernel } from "../../../../Web/src/plugin-kernel";
 import type { PluginsView, WebPluginSpecView } from "../../contract";
 import { rendererKernel } from "../renderer-kernel";
 import { FEED_MENU_SLOTS, FEED_VIEWS } from "./feed-slots";
+import { tileRows } from "./tile-rows";
 
 /** What the feed contributes to a slot: one `PluginsView` row (a view's or a menu's). */
 export interface FeedEntry<Row = unknown> { kind: "feed"; row: Row }
@@ -41,6 +42,7 @@ function planOf(view: PluginsView | null, web: FeedWeb): Map<string, Wanted> {
   if (view) {
     for (const [key, slot] of FEED_VIEWS) for (const row of view[key] ?? []) add(row.plugin, { slot, row });
     for (const row of view.menus ?? []) { const slot = `menu/${row.menu}`; if (MENU_SLOTS.has(slot)) add(row.plugin, { slot, row }); }
+    for (const { slot, row } of tileRows(view)) add(row.plugin, { slot, row }); // the tile slots of botling.bot-panel (M7-03b)
   }
   const versions = new Map((web?.specs ?? []).map((spec) => [spec.name, spec.version]));
   const wanted = new Map<string, Wanted>();
