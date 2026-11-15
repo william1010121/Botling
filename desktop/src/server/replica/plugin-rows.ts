@@ -1,5 +1,8 @@
-// M5-13b: each server's own `plugin:<name>` rows in its `srv:` table (D52, D56, §8.2, §14.3, §14.4, §18.3, C12, C14).
+// M5-13b / M6-03b: each server's own `plugin:<name>` rows in its `srv:` table (D52, D56, §8.2, §14.3, §14.4, §18.3, C12, C14).
 import { createHash } from "node:crypto";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import type { CommandType } from "../../contract";
 import { folderHash } from "../../core/plugins/catalog";
 import type { InstalledPlugin } from "../../core/plugins/registry";
 import { RowKey, type PluginGrant, type PluginRow, type Tier } from "../../protocol/table-rows";
@@ -9,11 +12,30 @@ import { deleteRow, putRow, readRowBody } from "./tables";
 const WRITE_PERMISSIONS = new Set(["network", "files", "exec", "sessions", "routines", "cards", "app", "studio"]);
 const REQUEST_PERMISSIONS = new Set(["composer", "bots", "claude"]);
 
+const PERMISSION_REQUESTS: Readonly<Record<string, readonly CommandType[]>> = {
+  composer: ["chat.send"],
+  bots: ["bots.create", "chat.send"],
+  claude: ["chat.send"],
+};
+
+export interface TierOptions {
+  /** True when the plugin has a non-empty data folder of its own (`plugin-data/<name>/`). */
+  hasData?: boolean;
+}
+
 export interface InstalledPluginInput {
   name: string;
   codeHash: string;
   manifest: PluginRow["manifest"];
   author: PluginRow["author"];
+}
+
+export interface InstalledFromRegistryOptions {
+  log?: (line: string) => void;
+  /** Author assigned to non-built-in plugins (defaults to `"user"`; 2.x import passes `"import"`). */
+  author?: Exclude<PluginRow["author"], "builtin">;
+  /** Plugin data root (`<dataDir>/plugin-data`); non-built-ins with non-empty data ask `"write"`. */
+  dataRoot?: string;
 }
 
 export interface ReconcilePluginRowsOptions {
@@ -28,8 +50,9 @@ export interface ReconcilePluginRowsResult {
   digest: string;
 }
 
-/** Maps 2.x `ccb.permissions` to a 3.0 grant tier (§14.4). */
-export function tierOf(permissions: readonly string[]): Tier {
+/** Maps 2.x `ccb.permissions` (and whether the plugin keeps data of its own) to a 3.0 grant tier (§14.4). */
+export function tierOf(permissions: readonly string[], options: TierOptions = {}): Tier {
+  if (options.hasData) return "write";
   let tier: Tier = "read";
   for (const permission of permissions) {
     if (WRITE_PERMISSIONS.has(permission)) return "write";
@@ -38,12 +61,39 @@ export function tierOf(permissions: readonly string[]): Tier {
   return tier;
 }
 
-/** Builds a `PluginRow.manifest` from 2.x permissions; `requests`, `owns`, `provides` stay empty in 3.0. */
-export function manifestAsks(permissions: readonly string[]): PluginRow["manifest"] {
+/**
+ * Maps 2.x `ccb.permissions` to the 3.0 commands those permissions could cause (§14.4, M6-03b):
+ * - `composer` -> `chat.send`
+ * - `bots` -> `bots.create`, `chat.send`
+ * - `claude` -> `chat.send`
+ */
+export function requestsOf(permissions: readonly string[]): CommandType[] {
+  const out = new Set<CommandType>();
+  for (const permission of permissions) {
+    const commands = PERMISSION_REQUESTS[permission];
+    if (!commands) continue;
+    for (const command of commands) out.add(command);
+  }
+  return [...out].sort();
+}
+
+/** True when `<dataRoot>/<name>/` exists and is a non-empty directory. */
+export function hasPluginData(dataRoot: string, name: string): boolean {
+  const dir = join(dataRoot, name);
+  try {
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) return false;
+    return readdirSync(dir).some((entry) => entry !== ".DS_Store");
+  } catch {
+    return false;
+  }
+}
+
+/** Builds a `PluginRow.manifest` from 2.x permissions; `owns` and `provides` stay empty in 3.0. */
+export function manifestAsks(permissions: readonly string[], options: TierOptions = {}): PluginRow["manifest"] {
   return {
-    tier: tierOf(permissions),
+    tier: tierOf(permissions, options),
     reads: [],
-    requests: [],
+    requests: requestsOf(permissions),
     owns: [],
     provides: [],
     requires: [],
@@ -63,21 +113,29 @@ export function pluginsDigestOf(installed: ReadonlyArray<{ name: string; codeHas
 }
 
 /** Reads the installed plugin inputs from the core's registry using the catalog's folder hash (C14). */
-export function installedFromRegistry(plugins: readonly InstalledPlugin[], log?: (line: string) => void): InstalledPluginInput[] {
+export function installedFromRegistry(
+  plugins: readonly InstalledPlugin[],
+  logOrOptions?: ((line: string) => void) | InstalledFromRegistryOptions,
+): InstalledPluginInput[] {
+  const opts: InstalledFromRegistryOptions = typeof logOrOptions === "function"
+    ? { log: logOrOptions }
+    : (logOrOptions ?? {});
+  const nonBuiltInAuthor = opts.author ?? "user";
   const out: InstalledPluginInput[] = [];
   for (const plugin of plugins) {
     let codeHash: string;
     try {
       codeHash = folderHash(plugin.folder);
     } catch (error) {
-      log?.(`plugin row skipped: failed to hash ${plugin.manifest.name} (${String((error as Error)?.message ?? error)})`);
+      opts.log?.(`plugin row skipped: failed to hash ${plugin.manifest.name} (${String((error as Error)?.message ?? error)})`);
       continue;
     }
+    const hasData = !plugin.builtIn && opts.dataRoot ? hasPluginData(opts.dataRoot, plugin.manifest.name) : false;
     out.push({
       name: plugin.manifest.name,
       codeHash,
-      manifest: manifestAsks(plugin.manifest.ccb?.permissions ?? []),
-      author: plugin.builtIn ? "builtin" : "user",
+      manifest: manifestAsks(plugin.manifest.ccb?.permissions ?? [], { hasData }),
+      author: plugin.builtIn ? "builtin" : nonBuiltInAuthor,
     });
   }
   return out;
