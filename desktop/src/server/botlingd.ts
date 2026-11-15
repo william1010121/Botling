@@ -715,6 +715,8 @@ export class Botlingd {
       runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
       // M5-02c: the host's side asks through the same origin, and hears how each ask ended (a refused ask ends its wait at once).
       hostCallIns = runtime.callHost;
+      // M5-03a (D51): a reply after the host gave up is appended marked late and wakes nobody.
+      runtime.callHost.bindLate((late) => core.conversations.postLate(late));
       runtime.callHost.attach({
         self: roster.memberId, ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd),
         onOutcome: (listener) => serverOrigin.on(listener), outcome: (slot) => serverOrigin.outcome(slot),

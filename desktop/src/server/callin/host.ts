@@ -20,9 +20,18 @@
 //                                  asked (`check`, in the command's transaction); a reply from anyone else is refused and
 //                                  leaves the wait alone.
 //   the wait ends after the commit `deliver` runs after the reply's transaction committed, never inside it.
-//   restart                        the waits are in memory: a restart of A loses them, and a reply that arrives later finds no
-//                                  wait and is dropped (applied, logged once, no line, nobody woken). M5-03a keeps given-up
-//                                  call-ins and posts a late line.
+//   restart                        the waits are in memory: a restart of A loses them, and a reply for a call-in nobody gave up
+//                                  on (finished, never asked, lost in the restart) finds no wait and is dropped (applied, logged
+//                                  once, no line, nobody woken).
+//   giving up (M5-03a, D51)        when the wait ends because B is silent for 75 s, B is gone, or the cap is reached: ONE
+//                                  `callin.cancel` goes to B (a slot: B skips the call-in if it has not started, stops the
+//                                  guest turn if it has) and the callId is kept in `meta` for 7 days (`late.ts`). The wait ends
+//                                  first (`settle`), so the give-up and the cancel happen once. Not a give-up: the ask could
+//                                  not be sent or was refused (nothing was queued), this host closing.
+//   a late reply                   a `callin.reply` for a given-up call-in is posted marked late through `bindLate` (the chat
+//                                  notice and the guest's line) and wakes nobody: it never resolves a wait and never takes the
+//                                  2.x wake path. It is used up by the first reply (at most one late line, across restarts);
+//                                  a late `failed` or `busy` (a cancelled call answers `failed "cancelled"`) posts nothing.
 import { randomUUID } from "node:crypto";
 import type { Command } from "../../contract";
 import type { GuestAnswer } from "../../core/bot";
@@ -34,7 +43,9 @@ import { slotKey, type Outcome, type Slot, type Target } from "../../protocol";
 import type { ApplyContext } from "../slots";
 import { SlotRefusal } from "../slots";
 import type { TxScope } from "../effects";
+import type { Db } from "../store";
 import type { CallInSender } from "./guest";
+import { GaveUpBook, type GaveUp } from "./late";
 import { cleanLine, stripControls } from "./prompt";
 import { CALLIN_NAME_LIMIT, CALLIN_REPLY_LIMIT, CALLIN_TRANSCRIPT_LIMIT, cutOldest, cutUnits } from "./wire-text";
 
@@ -66,7 +77,20 @@ export interface CallInHostSender extends CallInSender {
   peerState(server: string): { state: "live" | "stale" | "gone"; since: number | null } | null;
 }
 
+/** A late answer for the host chat (M5-03a): the guest's line is appended marked late; nobody is woken for it. */
+export interface LateLine {
+  /** The host chat. */
+  chatId: string;
+  member: { id: string; name: string };
+  answer: Extract<GuestAnswer, { kind: "reply" }>;
+}
+
 export interface CallInHostOptions {
+  /** Where given-up call-ins are kept (`meta`); none: memory only (tests). */
+  scope?: TxScope;
+  /** How long a given-up call-in is remembered (default 7 days) and how many are kept (default 500). */
+  keepMs?: number;
+  maxGaveUp?: number;
   /** How long B's server may stay stale before the wait ends (default `CALLIN_HOST_WAIT_MS`). */
   staleMs?: number;
   /** The most a wait may last (default `CALLIN_HOST_CAP_MS`). */
@@ -85,6 +109,8 @@ interface Wait {
   machine: string;
   startedAt: number;
   settle(answer: GuestAnswer): void;
+  /** The wait ends "unreachable" and B is told to cancel (D51); a no-op once the wait has ended. */
+  giveUp(): void;
 }
 
 /** `remoteTurn`'s request, plus an optional signal that cancels the wait. */
@@ -115,21 +141,31 @@ export class CallInHost {
   private readonly now: () => number;
   private ticker: NodeJS.Timeout | null = null;
   private readonly log: (line: string) => void;
+  private readonly options: CallInHostOptions;
+  private readonly gaveUp: GaveUpBook;
+  private lateSink: ((late: LateLine) => void | Promise<void>) | null = null;
 
   constructor(options: CallInHostOptions = {}) {
+    this.options = options;
     this.staleMs = options.staleMs ?? CALLIN_HOST_WAIT_MS;
     this.capMs = options.capMs ?? CALLIN_HOST_CAP_MS;
     this.tickMs = options.tickMs ?? TICK_MS;
     this.now = options.now ?? Date.now;
     this.log = options.log ?? (() => undefined);
+    this.gaveUp = new GaveUpBook({ scope: options.scope ?? null, now: this.now, log: this.log, ...(options.keepMs !== undefined ? { keepMs: options.keepMs } : {}), ...(options.maxGaveUp !== undefined ? { max: options.maxGaveUp } : {}) });
   }
+
+  /** Binds where a late line goes (botlingd: the core's `Conversations.postLate`); until then a late answer is dropped. */
+  bindLate(sink: (late: LateLine) => void | Promise<void>): void { this.lateSink = sink; }
 
   /** Binds the server origin (botlingd does it once `ServerOrigin` exists); until then every call-in is "not reachable". */
   attach(sender: CallInHostSender): void {
+    void this.sweep(); // expired given-up records go at every start
     this.unsubscribe?.();
     this.sender = sender;
     this.unsubscribe = sender.onOutcome?.((slot, outcome) => this.askEnded(slot, outcome)) ?? null;
   }
+
 
   /** How many call-ins are waiting for their answer. */
   get waiting(): number { return this.waits.size; }
@@ -164,7 +200,22 @@ export class CallInHost {
     return new Promise<GuestAnswer>((resolve) => {
       let done = false;
       let slotId: string | null = null;
-      const onAbort = () => settle(failed("cancelled"));
+      // The ask went out (true) or could not be sent (false): a cancel only follows an ask that was queued.
+      let sent: Promise<boolean> = Promise.resolve(false);
+      const who = { server: call.member.server, hostBotId: call.host.botId, guestBotId: call.member.id, guestName: call.member.name };
+      // The caller stopped waiting: B is told, and the answer is not wanted later either (no record, so a reply is dropped).
+      const onAbort = () => {
+        if (done) return;
+        settle(failed("cancelled"));
+        void this.cancelAsk(target, callId, machine, sent);
+      };
+      // D51: B is silent, gone or over the cap. The wait ends first (so this runs once); the record is written before B is
+      // told, so a reply to the cancel finds it.
+      const giveUp = () => {
+        if (done) return;
+        settle(unreachable);
+        void this.gaveUp.remember(callId, who).then(() => this.cancelAsk(target, callId, machine, sent));
+      };
       const settle = (answer: GuestAnswer) => {
         if (done) return;
         done = true;
@@ -174,24 +225,37 @@ export class CallInHost {
         if (slotId) this.asked.delete(slotId);
         resolve(answer);
       };
-      this.waits.set(callId, { server: call.member.server, guestBotId: call.member.id, hostBotId: call.host.botId, machine, startedAt: this.now(), settle });
+      this.waits.set(callId, { server: call.member.server, guestBotId: call.member.id, hostBotId: call.host.botId, machine, startedAt: this.now(), settle, giveUp });
       this.startTicker();
       call.signal?.addEventListener("abort", onAbort, { once: true });
-      sender.submit(target, ask).then((slot) => {
-        if (done) return;
+      sent = sender.submit(target, ask).then((slot) => {
+        if (done) return true; // ended before the ask was queued: it is queued now, and a cancel (if any) follows it
         call.onBegin?.();
         slotId = slotKey(slot);
         this.asked.set(slotId, callId);
         // Refused before we looked (the outcome is already known): end now.
         const known = sender.outcome?.(slot) ?? null;
         if (known) this.askEnded(slot, known);
+        return true;
       }, (error: unknown) => {
         // `ServerOrigin.submit` checks before it commits: nothing was queued, nothing will answer.
         this.log(`callin: the call-in to ${machine} could not be sent (${errorText(error)})`);
         settle(failed(`its machine ${machine} could not be asked`));
+        return false;
       });
     });
   };
+
+  /** D51: tells B this host gave up (`callin.cancel`, one slot), after its ask was queued. A failure is logged, never retried. */
+  private async cancelAsk(target: Target, callId: string, machine: string, sent: Promise<boolean>): Promise<void> {
+    const sender = this.sender;
+    try {
+      if (!sender || !(await sent)) return;
+      await sender.submit(target, { type: "callin.cancel", botId: target.slice("bot:".length), callId });
+    } catch (error) {
+      this.log(`callin: the cancel for the call-in to ${machine} could not be sent (${errorText(error)})`);
+    }
+  }
 
   private startTicker(): void {
     if (this.ticker) return;
@@ -213,14 +277,13 @@ export class CallInHost {
     const sender = this.sender;
     const now = this.now();
     for (const wait of [...this.waits.values()]) {
-      const unreachable = failed(`its machine ${wait.machine} is not reachable`);
-      if (now - wait.startedAt >= this.capMs) { wait.settle(unreachable); continue; }
+      if (now - wait.startedAt >= this.capMs) { wait.giveUp(); continue; }
       let peer: ReturnType<CallInHostSender["peerState"]> = null;
       try { peer = sender?.peerState(wait.server) ?? null; } catch { peer = null; }
       if (peer?.state === "live") continue;
-      if (peer?.state === "gone") { wait.settle(unreachable); continue; }
+      if (peer?.state === "gone") { wait.giveUp(); continue; }
       const quietSince = Math.max(peer?.since ?? wait.startedAt, wait.startedAt);
-      if (now - quietSince >= this.staleMs) wait.settle(unreachable);
+      if (now - quietSince >= this.staleMs) wait.giveUp();
     }
   }
 
@@ -249,26 +312,57 @@ export class CallInHost {
   }
 
   /**
-   * `callin.reply`'s check, inside the command's transaction: when a call-in is waiting, the reply must come from the
-   * server it was asked of and name the bots it was asked about. Nothing waiting is not a refusal (it is dropped later).
+   * `callin.reply`'s check, inside the command's transaction. A call-in is waiting: the reply must come from the server it was
+   * asked of and name the bots it was asked about (null: delivered to the wait after the commit). A call-in this server gave
+   * up on (D51): the same, then its record is used up here, in this transaction, and the record is returned: the reply is
+   * late. Nothing known: not a refusal (dropped after the commit).
    */
-  check(origin: string, cmd: Reply): void {
+  check(tx: Db, origin: string, cmd: Reply): GaveUp | null {
     const wait = this.waits.get(cmd.callId);
-    if (wait && !this.matches(wait, origin, cmd)) throw new SlotRefusal("invalid", "that answer is not for this call-in");
+    if (wait) {
+      if (!this.matches(wait, origin, cmd)) throw new SlotRefusal("invalid", "that answer is not for this call-in");
+      return null;
+    }
+    const record = this.gaveUp.find(tx, cmd.callId);
+    if (!record) return null;
+    if (!this.matches(record, origin, cmd)) throw new SlotRefusal("invalid", "that answer is not for this call-in");
+    this.gaveUp.consume(tx, cmd.callId);
+    return record;
   }
 
-  /** After the reply's transaction committed: ends the wait with the answer, or drops a reply nobody waits for. */
-  deliver(origin: string, cmd: Reply): void {
+  /** Sweeps the expired and damaged given-up records (a writer transaction of its own). */
+  sweep(): Promise<void> {
+    return this.options.scope?.submit((tx) => this.gaveUp.sweep(tx)).catch((error: unknown) => this.log(`callin: the given-up records could not be swept (${errorText(error)})`)) ?? Promise.resolve();
+  }
+
+  /**
+   * After the reply's transaction committed: ends the wait with the answer; or, for a call-in given up on (`late`, from
+   * `check`), posts the guest's line marked late (D51: wakes nobody, never resolves a wait); or drops a reply nobody waits for.
+   */
+  deliver(origin: string, cmd: Reply, late: GaveUp | null = null): void {
+    if (late) { this.postLate(late, cmd); return; }
     const wait = this.waits.get(cmd.callId);
     if (!wait || !this.matches(wait, origin, cmd)) {
-      // A duplicate, a late reply, one for a call-in that was never asked or lost in a restart (D51; M5-03a posts late ones).
+      // A duplicate, one for a call-in that was never asked, finished, or lost in a restart (no record of a give-up).
       this.log("callin: dropped an answer: no call-in is waiting for it (finished, given up, or this server restarted)");
       return;
     }
     wait.settle(this.answerOf(cmd.outcome));
   }
 
-  private matches(wait: Wait, origin: string, cmd: Reply): boolean {
+  /** D51: the late line. Only an answer with words is posted; a late `failed` (a cancelled call answers so) or `busy` is not. */
+  private postLate(record: GaveUp, cmd: Reply): void {
+    const outcome = cmd.outcome;
+    const sink = this.lateSink;
+    if (outcome.kind !== "reply" || !sink) { this.log("callin: a late answer without a line was dropped"); return; }
+    const answer = { kind: "reply" as const, text: cleanReply(outcome.text), steps: [], engine: outcome.engine };
+    const failedPost = (error: unknown) => this.log(`callin: a late answer could not be posted (${errorText(error)})`);
+    try {
+      void Promise.resolve(sink({ chatId: record.hostBotId, member: { id: record.guestBotId, name: record.guestName }, answer })).catch(failedPost);
+    } catch (error) { failedPost(error); }
+  }
+
+  private matches(wait: { server: string; hostBotId: string; guestBotId: string }, origin: string, cmd: Reply): boolean {
     return origin === wait.server && cmd.botId === wait.hostBotId && cmd.guest.botId === wait.guestBotId;
   }
 
@@ -280,10 +374,10 @@ export class CallInHost {
 }
 
 /** `callin.reply` at the owner of the host bot (the intent handler): checked now, delivered after the commit. */
-export function callInReply(deps: { scope: TxScope; callHost?: CallInHost }, { slot }: ApplyContext, cmd: Reply) {
+export function callInReply(deps: { scope: TxScope; callHost?: CallInHost }, { slot, tx }: ApplyContext, cmd: Reply) {
   const host = deps.callHost;
   if (!host) throw new SlotRefusal("invalid", "call-ins are not ready on this server");
-  host.check(slot.origin, cmd);
-  deps.scope.afterCommit(() => host.deliver(slot.origin, cmd));
+  const late = host.check(tx, slot.origin, cmd);
+  deps.scope.afterCommit(() => host.deliver(slot.origin, cmd, late));
   return { result: { applied: true as const } };
 }
