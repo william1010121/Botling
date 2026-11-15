@@ -2,7 +2,7 @@
 // `botling-content://file/<token>/<name>` (browser-pdf-v3.ts), not from its file: URL as in 2.x. A plugin's `when`
 // (`{ scheme: "file", ext: "pdf" }`, the guide's example) and its command's `path` are about the file, so main gives each
 // such tab the file: URL of its PDF (`fileUrl`), the toolbar matches that, and a click sends it to the core.
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -35,6 +35,21 @@ describe("a Botling 3 PDF tab names its file for plugins", () => {
     expect(pdfTabFileUrl2x(url)).toBeNull();
   });
 
+  it("only this window's own grant, at its exact address, names a file: other hosts, cases, paths, queries and file: URLs give none", () => {
+    const path = pdf();
+    const url = pdfFileUrl(path);
+    const token = /file\/([0-9a-f]{32})\//.exec(url)![1]!;
+    for (const forged of [
+      `botling-content://c/${token}/x.pdf`, `botling-content://FILE/${token}/x.pdf`, `botling-content://file.evil/${token}/x.pdf`,
+      `botling-content://file/${token.toUpperCase()}/x.pdf`, `botling-content://file/${token}/../etc/passwd`, `botling-content://file/${token}/a/b.pdf`,
+      `botling-content://file/${token}%2F..%2Fx.pdf`, `botling-content://file/${token}/x.pdf?y=1`, `botling-content://file/${token}x/x.pdf`,
+      `botling-content://user@file/${token}/x.pdf`, `botling-chat://file/${token}/x.pdf`, pathToFileURL(path).href, path, "",
+    ]) expect(pdfTabFileUrl(forged), forged).toBeNull();
+    // The name part is not trusted: the grant's own path comes back whatever name the URL carries.
+    expect(pdfTabFileUrl(`botling-content://file/${token}/..`)).toBe(pathToFileURL(path).href);
+    expect(pdfTabFileUrl(`botling-content://file/${token}`)).toBe(pathToFileURL(path).href);
+  });
+
   it("main's tab list carries fileUrl while the tab is on the PDF, and drops it when the tab goes elsewhere", () => {
     const path = pdf();
     const states: { url: string; fileUrl?: string }[][] = [];
@@ -61,6 +76,27 @@ describe("a Botling 3 PDF tab names its file for plugins", () => {
     expect(browserTabActions(plugins, browserTabAddress(tab))).toEqual([{ command: "coach.start", title: "Read with me", icon: "book" }]);
     expect(browserTabAddress({ url: "https://arxiv.org/abs/1" })).toBe("https://arxiv.org/abs/1");
     expect(browserTabAddress(null)).toBeNull();
+  });
+});
+
+describe("wiring (Electron main and the window, not unit-testable)", () => {
+  const source = (file: string) => readFileSync(join(__dirname, "../../src", file), "utf8");
+  it("main's tab list works fileUrl out with browser-pdf's pdfTabFileUrl (browser-pdf-v3.ts in the v3 bundle)", () => {
+    const host = source("main/browser-host.ts");
+    expect(host).toMatch(/import \{[^}]*\bpdfTabFileUrl\b[^}]*\} from "\.\.\/browser-pdf";/);
+    const tabs = host.slice(host.indexOf("new BrowserTabs({"), host.indexOf("});", host.indexOf("new BrowserTabs({")));
+    expect(tabs).toMatch(/\bfileUrl: pdfTabFileUrl\b/);
+  });
+  it("the window matches toolbar buttons and sends clicks with browserTabAddress, never the bare tab URL", () => {
+    const app = source("renderer/App.tsx");
+    const start = app.indexOf("<BrowserPane ");
+    const pane = app.slice(start, app.indexOf("/>", app.indexOf("onTabAction=", start)));
+    expect(pane).toMatch(/tabActions=\{browserTabActions\(view\.plugins, browserTabAddress\(/);
+    expect(pane).toMatch(/type: "plugins\.tabCommand"[^}]*url: browserTabAddress\(tab\)/);
+  });
+  it("a bot's tab list (app_browser_tabs) does not carry fileUrl", () => {
+    const bot = source("main/browser-bot-host.ts");
+    expect(bot).not.toMatch(/fileUrl/);
   });
 });
 
