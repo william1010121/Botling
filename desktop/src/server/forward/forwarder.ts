@@ -100,14 +100,14 @@ export class Forwarder {
       this.relay(envelope.slot.origin, this.refusedRevoked(envelope.slot, envelope.inc));
       return;
     }
-    const hash = cmdHash({ cmd: envelope.cmd, scope: envelope.scope, basis: envelope.basis, via: envelope.via });
+    const hash = cmdHash({ cmd: envelope.cmd, scope: envelope.scope!, basis: envelope.basis, via: envelope.via });
     await this.options.submit((tx) => commitRow(tx, envelope, hash, owner, this.now()));
     this.pump(owner);
   }
 
   /** A machine-only command of the window (M7-12a): the row is kept as dead (its queue goes on above it) and its origin hears `refused scope`. */
   private async refuseMachineOnly(envelope: CmdBody, owner: string, detail: string): Promise<void> {
-    const hash = cmdHash({ cmd: envelope.cmd, scope: envelope.scope, basis: envelope.basis, via: envelope.via });
+    const hash = cmdHash({ cmd: envelope.cmd, scope: envelope.scope!, basis: envelope.basis, via: envelope.via });
     const raw = JSON.stringify(envelope);
     await this.options.submit((tx) => {
       commitRow(tx, envelope, hash, owner, this.now());
