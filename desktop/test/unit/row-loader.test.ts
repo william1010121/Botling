@@ -224,17 +224,19 @@ describe("a web part that cannot be had, and a row that moves on", () => {
   it("a newer row wins over a fetch still on its way: the stale bytes are never activated", async () => {
     let release!: () => void;
     const until = new Promise<void>((resolve) => { release = resolve; });
-    const f = fetcher({ gate: { ref: refOf(A2), until } });
+    const f = fetcher({ gate: { ref: refOf(A1), until } });
     const { loader } = setup({ fetch: f.fetch });
     const seen: (string | undefined)[] = [];
     loader.subscribe(() => seen.push(loader.webSource("a")?.source));
-    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
+    const first = loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
+    for (let i = 0; i < 50 && !f.calls.length; i++) await new Promise((resolve) => setTimeout(resolve, 0)); // the fetch is on its way
+    expect(f.calls).toHaveLength(1);
     const second = loader.reconcile(rowsOf({ a: row(h("a2"), { web: refOf(A2) }) }));
-    const third = loader.reconcile(rowsOf({ a: row(h("a3"), { web: refOf(A3) }) }));
     release();
-    await Promise.all([second, third]);
-    expect(loader.webSource("a")?.source).toBe(A3);
-    expect(seen).not.toContain(A2);
+    await Promise.all([first, second]);
+    expect(f.calls.map((call) => call.ref)).toContain(refOf(A1));
+    expect(loader.webSource("a")?.source).toBe(A2);
+    expect(seen).not.toContain(A1);
   });
 
   it("a row that goes while its fetch is on its way is not loaded when the bytes arrive", async () => {
@@ -242,10 +244,15 @@ describe("a web part that cannot be had, and a row that moves on", () => {
     const until = new Promise<void>((resolve) => { release = resolve; });
     const f = fetcher({ gate: { ref: refOf(A1), until } });
     const { loader, kernel } = setup({ fetch: f.fetch });
+    const seen: (string | undefined)[] = [];
+    loader.subscribe(() => seen.push(loader.webSource("a")?.source));
     const first = loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
+    for (let i = 0; i < 50 && !f.calls.length; i++) await new Promise((resolve) => setTimeout(resolve, 0)); // the fetch is on its way
+    expect(f.calls).toHaveLength(1);
     const gone = loader.reconcile(rowsOf({}));
     release();
     await Promise.all([first, gone]);
+    expect(seen).not.toContain(A1);
     expect(loader.webSource("a")).toBeNull();
     expect(kernel.installed()).toEqual([]);
   });
