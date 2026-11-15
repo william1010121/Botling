@@ -1005,15 +1005,18 @@ export class Bot {
    * showing neither in this chat. Wakes it if asleep. While it is busy with its own chat it waits up to
    * `waitForMs`, then gives up (busy); once asked, it has `answerWithinMs` to reply.
    */
-  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked, by, onBegin }: { callIn?: string; asked?: string; by?: "user"; onBegin?: () => void } = {}): Promise<GuestAnswer> {
-    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked, by, onBegin });
+  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked, by, onBegin, signal }: { callIn?: string; asked?: string; by?: "user"; onBegin?: () => void; signal?: AbortSignal } = {}): Promise<GuestAnswer> {
+    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked, by, onBegin, signal });
     const deadline = Date.now() + waitForMs;
     while (this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold) {
       if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
+      // Botling 3 M5-02b: `signal` (a call-in the host gave up, D51) ends the wait and the turn; 2.x passes none.
+      if (signal?.aborted) return { kind: "failed", why: "cancelled" };
       if (Date.now() >= deadline) return { kind: "busy" };
       await sleep(300);
     }
     if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
+    if (signal?.aborted) return { kind: "failed", why: "cancelled" };
     const problem = this.problem ?? this.profile.problem;
     if (problem) return { kind: "failed", why: problem };
     this.guestTurn = true;
@@ -1025,7 +1028,7 @@ export class Bot {
         if (callIn) { turn.callIn = callIn; turn.callInAsked = asked ?? ""; if (by) turn.callInBy = by; }
         let settled = false;
         const settle = (answer: GuestAnswer) => { if (!settled) { settled = true; clearTimeout(timer); resolve(answer); } };
-        const timer = setTimeout(() => {
+        const giveUp = (why: string) => {
           if (turn.open) {
             turn.open = false;
             if (this.turn === turn) this.turn = null;
@@ -1034,11 +1037,16 @@ export class Bot {
             // Its reply, when it comes, belongs to nobody now.
             if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }
           }
-          settle({ kind: "failed", why: "No answer in time." });
-        }, answerWithinMs);
+          settle({ kind: "failed", why });
+        };
+        const timer = setTimeout(() => giveUp("No answer in time."), answerWithinMs);
+        const aborted = () => giveUp("cancelled");
+        signal?.addEventListener("abort", aborted, { once: true });
+        void turn.done.finally(() => signal?.removeEventListener("abort", aborted));
         // A failed or stopped turn hands "" here (finishTurn): not a reply; turn.done says what happened.
         turn.onReply = (reply) => { if (reply) settle({ kind: "reply", text: reply, steps: turn.steps.slice(-500), engine }); };
         void turn.done.then((status) => settle(status === "done" ? { kind: "reply", text: turn.reply.text, steps: turn.steps.slice(-500), engine } : { kind: "failed", why: status === "failed" ? "It could not answer." : "It was stopped." }));
+        if (signal?.aborted) { giveUp("cancelled"); return; }
         onBegin?.();
         this.begin(turn);
       });

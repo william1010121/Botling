@@ -104,6 +104,14 @@ function askTierPhrase(tier: Tier): string {
   }
 }
 
+/** Outside text (plugin, folder and bot names, problem lines) as one report line: control and line-break characters escaped (L-004). */
+function cleanName(text: string): string {
+  return text.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, (ch) => {
+    const code = ch.charCodeAt(0);
+    return code > 0xff ? `\\u${code.toString(16).padStart(4, "0")}` : `\\x${code.toString(16).padStart(2, "0")}`;
+  });
+}
+
 function normalizeEntry(entry: PluginReportEntry): {
   name: string;
   author: PluginRow["author"];
@@ -111,16 +119,16 @@ function normalizeEntry(entry: PluginReportEntry): {
   granted: Tier;
 } {
   if ("row" in entry) {
-    const granted = entry.row.grants[entry.row.codeHash]?.tier ?? "read";
+    const granted = (Object.hasOwn(entry.row.grants, entry.row.codeHash) ? entry.row.grants[entry.row.codeHash]?.tier : undefined) ?? "read";
     return {
-      name: entry.name,
+      name: cleanName(entry.name),
       author: entry.row.author,
       ask: entry.row.manifest.tier,
       granted,
     };
   }
   return {
-    name: entry.name,
+    name: cleanName(entry.name),
     author: entry.author,
     ask: entry.ask,
     granted: entry.granted ?? "read",
@@ -215,7 +223,7 @@ export function formatImportReport(data: ImportReportData): string {
       const skippedText = bot.skipped > 0 ? ` (${fmtCount(bot.skipped)} skipped)` : "";
       const missingPinsText = bot.missingPinLines > 0 ? ` (${fmtCount(bot.missingPinLines)} missing line)` : "";
       botsLines.push(
-        `  ${bot.name} [${bot.kind}]  lines: ${fmtCount(bot.lines)}${skippedText} · pins: ${fmtCount(bot.pins)}${missingPinsText} · specs: ${fmtCount(bot.specs)} · tasks: ${fmtCount(bot.tasks)} · subagents: ${fmtCount(bot.subagents)} (${fmtCount(bot.subagentSteps)} steps)`,
+        `  ${cleanName(bot.name)} [${bot.kind}]  lines: ${fmtCount(bot.lines)}${skippedText} · pins: ${fmtCount(bot.pins)}${missingPinsText} · specs: ${fmtCount(bot.specs)} · tasks: ${fmtCount(bot.tasks)} · subagents: ${fmtCount(bot.subagents)} (${fmtCount(bot.subagentSteps)} steps)`,
       );
     }
   }
@@ -226,7 +234,7 @@ export function formatImportReport(data: ImportReportData): string {
   } else {
     for (const row of data.idMap) {
       const clash = row.clash ? " [clash: re-minted]" : "";
-      idMapLines.push(`  ${row.oldId} -> ${row.newId}  (${row.kind}, ${row.name})${clash}`);
+      idMapLines.push(`  ${cleanName(row.oldId)} -> ${row.newId}  (${row.kind}, ${cleanName(row.name)})${clash}`);
     }
   }
 
@@ -266,7 +274,7 @@ export function formatImportReport(data: ImportReportData): string {
     problemLines.push("  (none)");
   } else {
     for (const problem of data.problems) {
-      problemLines.push(`  - ${problem}`);
+      problemLines.push(`  - ${cleanName(problem)}`);
     }
   }
 

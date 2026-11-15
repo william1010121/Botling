@@ -33,7 +33,8 @@ export const BATCH_ENTRIES_LIMIT = 500;
  * Which plugin's code a command came from (D53, plan change N1): the plugin's name and the hash of its installed code
  * (the whole plugin folder's hash). Written by the front end's shell from the frame broker's attribution when the item
  * goes into the outbox (M5), never by a plugin and never added at send time. It counts in the command hash only when
- * present, and until M5 an owner refuses a command that carries it with `refused{grant}` (after the scope check).
+ * present. The owner checks it (M5-15): after the scope check it reads its own `plugin:<name>` row and refuses with
+ * `refused{grant}` unless the plugin has a grant at `codeHash` that allows the command.
  */
 export const Via = z.strictObject({
   plugin: PluginName,
@@ -382,6 +383,8 @@ export const ShellBrowser = msg("shell.browser", { req: ReqId, args: ShellArgs.o
 /** Install the newer release (the core's `installRelease`). */
 export const ShellInstall = msg("shell.install", { req: ReqId, args: ShellArgs.optional() });
 export const ShellQuit = msg("shell.quit", { req: ReqId, args: ShellArgs.optional() });
+export const ShellSeal = msg("shell.seal", { req: ReqId, text: z.string().max(100_000) });
+export const ShellOpen = msg("shell.open", { req: ReqId, sealed: z.string().max(140_000) });
 /** The window's answer to a `shell.*` request; `data` is what a browser request answered (the 2.x app op's `data`). */
 export const ShellDone = msg("shell.done", { req: ReqId, ok: z.boolean(), file: z.string().max(4_096).optional(), error: z.string().max(2_000).optional(), data: z.unknown().optional() });
 
@@ -412,7 +415,7 @@ export const MESSAGES = {
   "roster.have": RosterHave, "roster.ids": RosterIds, "roster.want": RosterWant, "roster.statements": RosterStatements, "roster.revocations": RosterRevocations,
   admin: Admin, "admin.event": AdminEventMsg,
   "push.subscribe": PushSubscribe,
-  "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.done": ShellDone,
+  "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.seal": ShellSeal, "shell.open": ShellOpen, "shell.done": ShellDone,
   ping: Ping, bye: Bye,
 } as const;
 export type MessageType = keyof typeof MESSAGES;
