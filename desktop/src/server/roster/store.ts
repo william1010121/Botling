@@ -7,10 +7,10 @@
 //   `isValid` on its next frame refuses a revoked device, M2 step 4).
 // - Acts are serialised (one at a time), so two acts never compute their views from the same old set.
 // - What this server signs (§4.3): the cluster's first Root is signed by the recovery key (identity/cluster.ts hands it
-//   in); `Add` of a device, `Revoke` of a device it has in its roster, and `Endorse` of a member it finds valid that it
-//   neither added nor endorsed yet ("Endorse (self)", §4.2). No server revocation (root only, M4), no gossip (M3).
+//   in); `Add` of a device, `Revoke` of a device it has in its roster, `Revoke` of a server when this server is the
+//   current revocation root (D46, D61), and `Endorse` of a member it finds valid that it neither added nor endorsed yet.
 // - Listeners hear which members stopped being valid (sessions close, M2 step 4).
-import { clusterIdFromRecoveryKey, DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
+import { addJoins, clusterIdFromRecoveryKey, DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, revokeCascades, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
 import type { Command, Db } from "../store";
 import { computeRoster, validDevice, type MemberInfo, type RosterView, type VerifiedStatement } from "./validity";
 import { parseStored, signStatement, storedBytes, verifySignature, verifyStatements, type StoredStatement } from "./verify";
@@ -29,7 +29,7 @@ export interface RosterIdentity {
 
 export type RosterRefusal =
   | "no-cluster" | "cluster-exists" | "bad-root" | "self-revoked" | "bad-keys" | "revoked" | "not-a-device" | "server-revoke-root-only"
-  | "bad-join";
+  | "cannot-revoke-root" | "not-a-server" | "bad-join";
 
 export class RosterError extends Error {
   constructor(readonly reason: RosterRefusal, message: string) { super(message); this.name = "RosterError"; }
@@ -41,7 +41,7 @@ export interface RosterChange {
   invalidated: string[];
 }
 
-export type AuditAct = "cluster.create" | "cluster.join" | "device.add" | "device.revoke" | "server.add" | "member.endorse" | "profile.write" | "statement.merge";
+export type AuditAct = "cluster.create" | "cluster.join" | "device.add" | "device.revoke" | "server.add" | "server.revoke" | "member.endorse" | "profile.write" | "statement.merge";
 
 export interface AuditBody {
   act: AuditAct;
@@ -223,7 +223,7 @@ export class RosterStore {
   revokeDevice(member: string, reason = ""): Promise<{ revokeId: string; already: boolean }> {
     return this.serial(async () => {
       const cluster = this.requireCluster();
-      if (this.current.servers.has(member)) throw new RosterError("server-revoke-root-only", "a server is revoked only by the revocation root (M4)");
+      if (this.current.servers.has(member)) throw new RosterError("server-revoke-root-only", "a server is revoked only by the revocation root (use revokeServer)");
       const info = this.current.members.get(member);
       if (!info || info.kind !== "device") throw new RosterError("not-a-device", "no such device in this roster");
       if (this.current.revoked.has(member)) {
@@ -235,6 +235,81 @@ export class RosterStore {
       }
       const revoke = await this.sign({ type: "revoke", cluster, member, reason: reason.slice(0, 500), by: this.identity.memberId, gen: this.current.root?.gen ?? 1, cascade: false });
       await this.apply([revoke], cluster, [{ act: "device.revoke", statement: revoke.id, by: this.identity.memberId, member, name: info.name, ...(reason ? { reason: reason.slice(0, 500) } : {}) }]);
+      return { revokeId: revoke.id, already: false };
+    });
+  }
+
+  /**
+   * Preview of the members `revokeServer(member, true)` would remove alongside `member` (D60, D61): the transitive
+   * closure of joining Adds signed by `member` or someone already in the set, never the root. Computed on a copy;
+   * writes nothing.
+   */
+  cascadePreview(member: string): string[] {
+    const cluster = this.cluster;
+    const root = this.current.root;
+    if (cluster === null || !root || member === root.root || !this.current.servers.has(member)) return [];
+    // Compute on a copy of the verified roots and adds with one synthetic cascading Revoke so validity.ts's own
+    // `cascadeOf` closure runs without mutating the store.
+    const copy: VerifiedStatement[] = this.verified.filter((item) => item.body.type === "root" || item.body.type === "add");
+    copy.push({
+      id: "~preview",
+      body: { type: "revoke", cluster, member, reason: "", by: root.root, gen: root.gen, cascade: true },
+      signer: root.root,
+    });
+    const view = computeRoster(this.identity.memberId, cluster, copy);
+    return [...view.revoked].filter((id) => id !== member).sort();
+  }
+
+  /**
+   * Revokes a server (§4.3, §4.6, D46, D60, D61, K8): allowed only on the roster's current revocation root, never for
+   * the root itself, and only for a known server. Signs `Revoke{member, gen: R.gen, cascade, seen}` in one transaction
+   * with the `server.revoke` audit row; `seen` lists every joining Add signed by `member` that this root holds.
+   * Idempotent: a second call for the same member and cascade (or when already revoked with cascade) signs nothing.
+   */
+  revokeServer(member: string, cascade: boolean, reason = ""): Promise<{ revokeId: string; already: boolean }> {
+    return this.serial(async () => {
+      const cluster = this.requireCluster();
+      const root = this.current.root;
+      if (!root || root.root !== this.identity.memberId) {
+        throw new RosterError("server-revoke-root-only", "only the revocation root can remove a server");
+      }
+      if (member === root.root) {
+        throw new RosterError("cannot-revoke-root", "the revocation root cannot remove itself");
+      }
+      if (!this.current.servers.has(member)) {
+        throw new RosterError("not-a-server", "no such server in this roster");
+      }
+      // Idempotent for the same member and cascade (or if already revoked with cascade, which covers non-cascading).
+      const existing = this.current.countingRevokes.find((id) => {
+        const body = this.stored.get(id)?.statement.body;
+        return body?.type === "revoke" && body.member === member && (revokeCascades(body) === cascade || revokeCascades(body));
+      });
+      if (existing) return { revokeId: existing, already: true };
+      // K8 (D66): record every joining Add signed by `member` that the root holds (sorted for deterministic canonical bytes).
+      const seen = this.verified
+        .filter((item) => item.body.type === "add" && item.body.cluster === cluster && item.body.by === member && addJoins(item.body))
+        .map((item) => item.id)
+        .sort();
+      const cleanReason = reason.slice(0, 500);
+      const revoke = await this.sign({
+        type: "revoke",
+        cluster,
+        member,
+        reason: cleanReason,
+        by: this.identity.memberId,
+        gen: root.gen,
+        cascade,
+        seen,
+      });
+      const info = this.current.members.get(member);
+      await this.commit([revoke], cluster, [{
+        act: "server.revoke",
+        statement: revoke.id,
+        by: this.identity.memberId,
+        member,
+        ...(info?.name ? { name: info.name } : {}),
+        ...(cleanReason ? { reason: cleanReason } : {}),
+      }]);
       return { revokeId: revoke.id, already: false };
     });
   }
