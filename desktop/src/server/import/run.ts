@@ -119,6 +119,23 @@ function isInside(child: string, parent: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+/** `path` with symlinks resolved, also when its last parts do not exist yet (the nearest existing folder is resolved). */
+function realPathOrNearest(path: string): string {
+  const tail: string[] = [];
+  let current = resolve(path);
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    tail.unshift(basename(current));
+    current = parent;
+  }
+  try {
+    return join(realpathSync(current), ...tail);
+  } catch {
+    return join(current, ...tail);
+  }
+}
+
 function sha256Text(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
@@ -189,6 +206,7 @@ function copyTreeReadOnly(srcDir: string, dstDir: string, srcBoundary: string): 
   for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (entry.name === ".git" || entry.name === "node_modules") continue;
     const srcPath = join(srcDir, entry.name);
+    if (srcPath === join(srcBoundary, "plugin-secrets.json") || srcPath === join(srcRootReal, "plugin-secrets.json")) continue;
     const dstPath = join(dstDir, entry.name);
     let stat;
     try {
@@ -200,6 +218,7 @@ function copyTreeReadOnly(srcDir: string, dstDir: string, srcBoundary: string): 
       try {
         const real = realpathSync(srcPath);
         if (!isInside(real, srcRootReal)) continue;
+        if (real === join(srcRootReal, "plugin-secrets.json")) continue;
         if (statSync(real).isDirectory()) continue;
         const data = readFileReadOnly(real);
         if (data !== null) writeBytesAtomic(dstPath, data);
@@ -323,6 +342,15 @@ function prepareDryRunBot(bot: Read2xBot, newId: string): {
   };
 }
 
+/** The 2.x bots the id map covers; one added to 2.x after this import started is left out and named in problems. */
+function mappedBots(bots: readonly Read2xBot[], mapByOld: ReadonlyMap<string, IdMapRow>, problems: string[]): Read2xBot[] {
+  return bots.filter((bot) => {
+    if (mapByOld.has(bot.id)) return true;
+    problems.push(`${bot.name} (${bot.id}): added to Botling 2 after this import started; not imported`);
+    return false;
+  });
+}
+
 function reconstructIdMap(
   bots: readonly Read2xBot[],
   stored: readonly { oldId: string; newId: string; kind: IdMapRow["kind"] }[],
@@ -349,6 +377,7 @@ function writeImportedWorkspaceFiles(
   idMap: readonly IdMapRow[],
   mainId: string,
   maintainerId: string,
+  problems: string[],
 ): void {
   const mapByOld = new Map(idMap.map((row) => [row.oldId.toUpperCase(), row]));
   const botsRoot = join(sourceReal, "bots");
@@ -394,6 +423,12 @@ function writeImportedWorkspaceFiles(
       const ownDir = Layout.standalone(targetDir, mapped.newId);
       copyTreeReadOnly(resolvedFolder, ownDir, sourceReal);
       nextFolder = pathToFileURL(ownDir + sep).toString();
+    } else if (resolvedFolder && realPathOrNearest(resolvedFolder) === sourceReal) {
+      // A bot that worked in the 2.x data folder itself: never copy that folder (chats, settings, plugin-secrets.json).
+      const ownDir = Layout.standalone(targetDir, mapped.newId);
+      mkdirSync(ownDir, { recursive: true });
+      nextFolder = pathToFileURL(ownDir + sep).toString();
+      problems.push(`${project.name}: its folder was the Botling 2 data folder; it was not copied (the bot gets an empty folder)`);
     } else if (resolvedFolder && isInside(resolvedFolder, sourceReal)) {
       const remapped = remapApprovalPath(resolvedFolder, sourceReal, targetDir, idMap);
       copyTreeReadOnly(resolvedFolder, remapped, sourceReal);
@@ -482,14 +517,16 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
   const targetResolved = resolve(options.targetDir);
 
   refuse2xData(targetResolved);
-  if (isInside(targetResolved, sourceResolved) || isInside(sourceResolved, targetResolved)) {
-    throw new ImportError("The import's source and target must be separate folders.", 2);
-  }
   if (!looksLike2x(sourceResolved)) {
     throw new ImportError(`${sourceResolved} does not look like a Botling 2 data folder.`, 2);
   }
 
   const sourceReal = realpathSync(sourceResolved);
+  // Compare real paths: a symlinked spelling of either folder must not let the target sit inside the 2.x folder.
+  const targetReal = realPathOrNearest(targetResolved);
+  if (isInside(targetReal, sourceReal) || isInside(sourceReal, targetReal)) {
+    throw new ImportError("The import's source and target must be separate folders.", 2);
+  }
   const sourceHash = sha256Text(sourceReal);
   const metaKey = importSourceMetaKey(sourceHash);
   const reportPath = join(targetResolved, "import-report.md");
@@ -538,9 +575,10 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         ? reconstructIdMap(read.bots, storedIdMap)
         : mapIds(read.bots, { mainId, maintainerId, designated, existingIds: existingLiveIds });
     const mapByOld = new Map(idMap.map((r) => [r.oldId, r]));
+    const bots = mappedBots(read.bots, mapByOld, problems);
 
     const botReports: ImportBotReportEntry[] = [];
-    for (const bot of read.bots) {
+    for (const bot of bots) {
       const mapped = mapByOld.get(bot.id)!;
       const dryBot = prepareDryRunBot(bot, mapped.newId);
       problems.push(...dryBot.problems);
@@ -673,13 +711,14 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         await store.submit((tx) => saveIdMap(tx, sourceHash, idMap));
       }
       const mapByOld = new Map(idMap.map((r) => [r.oldId, r]));
+      const bots = mappedBots(read.bots, mapByOld, problems);
 
       // 3 & 4. Chats + Lists per bot (via DbBotStores)
       const botReports: ImportBotReportEntry[] = [];
       const stores = new DbBotStores(store);
       try {
-        for (let i = 0; i < read.bots.length; i++) {
-          const bot = read.bots[i]!;
+        for (let i = 0; i < bots.length; i++) {
+          const bot = bots[i]!;
           const mapped = mapByOld.get(bot.id)!;
           const result = await importBotChat(store, stores, bot, mapped, {
             source: sourceHash,
@@ -723,7 +762,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
             oldId: bot.id,
             newId: mapped.newId,
             index: i,
-            total: read.bots.length,
+            total: bots.length,
           });
         }
       } finally {
@@ -738,10 +777,11 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         idMap,
         mainId,
         maintainerId,
+        problems,
       );
 
       // 5. Approvals
-      const botApprovalRefs: BotApprovalRef[] = read.bots.map((bot) => {
+      const botApprovalRefs: BotApprovalRef[] = bots.map((bot) => {
         const mapped = mapByOld.get(bot.id)!;
         return {
           oldId: bot.id,
@@ -849,13 +889,13 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         sourceName: basename(sourceReal),
         reportHash,
       });
+      // The report file first: if it cannot be written the meta mark stays unset and a second run can redo it.
+      writeFileAtomic(reportPath, reportText);
       await store.submit((tx) => {
         tx.prepare(
           "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
         ).run(metaKey, metaValue);
       });
-
-      writeFileAtomic(reportPath, reportText);
 
       return {
         dryRun: false,

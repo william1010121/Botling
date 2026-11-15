@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { CORE_EXIT_DATA_DIR_IN_USE } from "../../src/core/store/data-dir-lock";
+import { CORE_EXIT_DATA_DIR_IN_USE, readLockHolder } from "../../src/core/store/data-dir-lock";
 import { MAIN_BOT_ID, MAINTAINER_ID, toSwiftDate, type ChatRecord } from "../../src/core/store/records";
 import { Layout } from "../../src/core/store/workspace";
 import type { MessageOf } from "../../src/protocol";
@@ -37,6 +38,7 @@ function collectFiles(root: string, dir = root, out: FileSnapshot[] = []): FileS
 function setModeRecursive(dir: string, dirMode: number, fileMode: number): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
+    if (entry.isSymbolicLink()) continue; // chmod would follow it
     if (entry.isDirectory()) {
       setModeRecursive(full, dirMode, fileMode);
       chmodSync(full, dirMode);
@@ -327,4 +329,120 @@ describe("botlingd import CLI & run.ts (M6-01d)", () => {
     const after = collectFiles(src);
     expect(after).toEqual(before);
   }, 90_000);
+
+  it("7. refuses a target that is a 2.x folder, or that sits inside the source (also through a symlink), writing nothing", async () => {
+    const root = makeRoot("refuse-targets");
+    const src = join(root, "v2");
+    make2xFolder(src);
+    const otherV2 = join(root, "other-v2");
+    make2xFolder(otherV2);
+    const before = collectFiles(src);
+    const otherBefore = collectFiles(otherV2);
+
+    await expect(runImport({ sourceDir: src, targetDir: otherV2 })).rejects.toThrow(/looks like a Botling 2\.x data folder/);
+    await expect(runImport({ sourceDir: src, targetDir: join(src, "v3") })).rejects.toThrow(
+      "The import's source and target must be separate folders.",
+    );
+    symlinkSync(src, join(root, "alias"));
+    await expect(runImport({ sourceDir: src, targetDir: join(root, "alias", "v3") })).rejects.toThrow(
+      "The import's source and target must be separate folders.",
+    );
+    await expect(runImport({ sourceDir: join(root, "alias"), targetDir: join(src, "v3"), dryRun: true })).rejects.toThrow(
+      "The import's source and target must be separate folders.",
+    );
+
+    expect(collectFiles(src)).toEqual(before);
+    expect(collectFiles(otherV2)).toEqual(otherBefore);
+  }, 60_000);
+
+  it("8. --dry-run refuses an already imported source, and a live run holds the data-folder lock until it ends", async () => {
+    const root = makeRoot("dry-refused-lock");
+    const src = join(root, "v2");
+    const dataDir = join(root, "v3");
+    make2xFolder(src);
+
+    const holders: (number | undefined)[] = [];
+    await runImport({ sourceDir: src, targetDir: dataDir, onBotDone: () => holders.push(readLockHolder(dataDir)?.pid) });
+    expect(holders).toHaveLength(5);
+    expect(holders.every((pid) => pid === process.pid)).toBe(true);
+    expect(readLockHolder(dataDir)).toBeNull();
+
+    const dryCli = botlingdCommand(dataDir, ["import", src, "--dry-run"]);
+    expect(dryCli.code).toBe(2);
+    expect(dryCli.stderr).toMatch(/This folder was imported on .+\. Nothing was changed\./);
+  }, 60_000);
+
+  it("9. a bot whose folder is the 2.x folder itself gets an empty folder; the 2.x folder and plugin-secrets.json are not copied", async () => {
+    const root = makeRoot("root-project");
+    const src = join(root, "v2");
+    const dataDir = join(root, "v3");
+    make2xFolder(src);
+    const projects = JSON.parse(readFileSync(Layout.projectsFile(src), "utf8")) as Array<Record<string, unknown>>;
+    projects[0]!.folder = pathToFileURL(src + sep).toString();
+    writeFileSync(Layout.projectsFile(src), JSON.stringify(projects));
+
+    const result = await runImport({ sourceDir: src, targetDir: dataDir });
+    expect(existsSync(join(dataDir, "plugin-secrets.json"))).toBe(false);
+    const ownDir = Layout.standalone(dataDir, String(projects[0]!.id));
+    expect(readdirSync(ownDir)).toEqual([]);
+    expect(result.problems.some((p) => p.includes("its folder was the Botling 2 data folder"))).toBe(true);
+  }, 60_000);
+
+  it("10. a resume after 2.x gained a bot finishes the known bots and names the new one in problems", async () => {
+    const root = makeRoot("source-gained-bot");
+    const src = join(root, "v2");
+    const dataDir = join(root, "v3");
+    make2xFolder(src);
+    await expect(
+      runImport({ sourceDir: src, targetDir: dataDir, onBotDone: ({ index }) => { if (index === 0) throw new Error("crash"); } }),
+    ).rejects.toThrow("crash");
+
+    const spare = join(root, "spare");
+    const spareFx = make2xFolder(spare, { standaloneCount: 2 });
+    const extraId = spareFx.standaloneIds[1]!;
+    cpSync(Layout.standalone(spare, extraId), Layout.standalone(src, extraId), { recursive: true });
+    const spareProjects = JSON.parse(readFileSync(Layout.projectsFile(spare), "utf8")) as Array<Record<string, unknown>>;
+    const added = spareProjects.find((p) => p.id === extraId)!;
+    const projects = JSON.parse(readFileSync(Layout.projectsFile(src), "utf8")) as unknown[];
+    projects.push({ ...added, folder: pathToFileURL(Layout.standalone(src, extraId) + sep).toString() });
+    writeFileSync(Layout.projectsFile(src), JSON.stringify(projects));
+
+    const resumed = await runImport({ sourceDir: src, targetDir: dataDir });
+    expect(resumed.bots).toHaveLength(5);
+    expect(resumed.problems.some((p) => p.includes(extraId) && p.includes("not imported"))).toBe(true);
+  }, 60_000);
+
+  it("11. a broken plugin-secrets.json is named in problems without quoting its contents", async () => {
+    const root = makeRoot("secret-snippet");
+    const src = join(root, "v2");
+    const dataDir = join(root, "v3");
+    make2xFolder(src);
+    writeFileSync(join(src, "plugin-secrets.json"), '{"sample-plugin": {"apiToken": SEALED-SECRET-BYTES}}');
+
+    const dry = await runImport({ sourceDir: src, targetDir: dataDir, dryRun: true });
+    expect(dry.reportText).toContain("plugin-secrets.json: could not be read");
+    expect(dry.reportText).not.toContain("SEALED");
+    const live = await runImport({ sourceDir: src, targetDir: dataDir });
+    expect(live.reportText).not.toContain("SEALED");
+    expect(readFileSync(join(dataDir, "import-report.md"), "utf8")).not.toContain("SEALED");
+  }, 60_000);
+
+  it("12. when the report file cannot be written the source is not marked imported, and a second run finishes", async () => {
+    const root = makeRoot("report-fails");
+    const src = join(root, "v2");
+    const dataDir = join(root, "v3");
+    make2xFolder(src);
+    mkdirSync(join(dataDir, "import-report.md", "blocker"), { recursive: true });
+
+    await expect(runImport({ sourceDir: src, targetDir: dataDir })).rejects.toThrow();
+    const db = openReaderDb(join(dataDir, "server.db"));
+    const marks = db.prepare("SELECT key FROM meta WHERE key LIKE 'import:%' AND key NOT LIKE '%:bot:%'").all();
+    db.close();
+    expect(marks).toHaveLength(0);
+
+    rmSync(join(dataDir, "import-report.md"), { recursive: true, force: true });
+    const second = await runImport({ sourceDir: src, targetDir: dataDir });
+    expect(second.bots).toHaveLength(5);
+    expect(existsSync(join(dataDir, "import-report.md"))).toBe(true);
+  }, 60_000);
 });
