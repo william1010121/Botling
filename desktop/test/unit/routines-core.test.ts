@@ -3,7 +3,7 @@
 // (and a claim nobody confirmed stays delivery_uncertain), Codex's app_routines changes the same
 // file, and a monitored command waits for its Allow once card, runs, and wakes Codex once.
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir, until, sleep } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
@@ -55,9 +55,14 @@ describe("routines", () => {
     const dir = tempDir("routines");
     const c = core(dir);
     const file = join(dir, "main", "routines.cron");
-    await until(() => existsSync(file));
+    // The core makes the file with `open(a+)` (an empty file, visible to everyone) and renames its header over it a moment later
+    // (`RoutineFile.create`): "the file exists" is not "the file is made". Wait for its text, or `before` can be "" and the file
+    // the core settles on (the header) never equals it.
+    await until(() => existsSync(file) && readFileSync(file, "utf8") !== "");
     const before = readFileSync(file, "utf8");
-    writeFileSync(file, `${before}@once Alert: disk full on 4090-2\n`);
+    expect(before).toMatch(/^# Routines: /);
+    // As the script does it: `echo "@once …" >> routines.cron`.
+    appendFileSync(file, "@once Alert: disk full on 4090-2\n");
     const prompt = await until(() => claudeInputs(dir).find((text) => text.includes('Time for the routine "Alert"')), { timeout: 8_000 });
     expect(prompt).toContain("disk full on 4090-2");
     await until(() => readFileSync(file, "utf8") === before);
