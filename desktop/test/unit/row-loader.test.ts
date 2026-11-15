@@ -26,6 +26,8 @@ import { desktop } from "../helpers";
 const hex = (text: string | Uint8Array) => createHash("sha256").update(text).digest("hex");
 const refOf = (text: string) => `sha256:${hex(text)}`;
 const H64 = (letter: string) => letter.repeat(64);
+/** A code hash as the rows carry it: 64 hex characters (the in-page loader refuses any other shape). */
+const h = (tag: string) => hex(`code ${tag}`);
 
 const A1 = "plugin a, version 1";
 const A2 = "plugin a, version 2";
@@ -104,20 +106,20 @@ describe("rows as plans", () => {
 describe("a row loads a frame", () => {
   it("fetches the reference the row names for the plugin the row names, and holds the bytes while the instance is active", async () => {
     const { kernel, loader, f } = setup();
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
     expect(f.calls).toEqual([{ plugin: "a", ref: refOf(A1) }]);
     expect(kernel.state(webInstance("a"))).toBe("active");
-    expect(loader.webSource("a")).toEqual({ codeHash: "h-a1", ref: refOf(A1), source: A1 });
-    expect(loader.loaded()).toEqual([{ name: "a", where: "frame", codeHash: "h-a1" }]);
+    expect(loader.webSource("a")).toEqual({ codeHash: h("a1"), ref: refOf(A1), source: A1 });
+    expect(loader.loaded()).toEqual([{ name: "a", where: "frame", codeHash: h("a1") }]);
     // The same row again changes nothing: no second fetch, no new instance.
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
     expect(f.calls).toHaveLength(1);
     expect(kernel.generation(webInstance("a"))).toBe(1);
   });
 
   it("does nothing for a row with no reference (plugins.web is its source), and never fetches for it", async () => {
     const { loader, f, kernel } = setup();
-    await loader.reconcile(rowsOf({ a: row("h-a1") }));
+    await loader.reconcile(rowsOf({ a: row(h("a1")) }));
     expect(f.calls).toEqual([]);
     expect(loader.webSource("a")).toBeNull();
     expect(kernel.installed()).toEqual([]);
@@ -125,8 +127,8 @@ describe("a row loads a frame", () => {
 
   it("unloads a plugin whose row is gone, or whose row lost its reference", async () => {
     const { loader, kernel } = setup();
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }), b: row("h-b1", { web: refOf(B1) }) }));
-    await loader.reconcile(rowsOf({ a: row("h-a2"), b: row("h-b1", { web: refOf(B1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }), b: row(h("b1"), { web: refOf(B1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a2")), b: row(h("b1"), { web: refOf(B1) }) }));
     expect(loader.webSource("a")).toBeNull();
     expect(kernel.state(webInstance("a"))).toBe("absent");
     expect(kernel.declaration(webInstance("a"))).toBeUndefined();
@@ -139,12 +141,12 @@ describe("a row loads a frame", () => {
 describe("a row change swaps that plugin only", () => {
   it("another plugin's instance keeps its generation and registrations, and is not fetched again", async () => {
     const { kernel, loader, f } = setup();
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }), b: row("h-b1", { web: refOf(B1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }), b: row(h("b1"), { web: refOf(B1) }) }));
     let bUndone = 0;
     kernel.register(webInstance("b"), "counter", "n", () => { bUndone += 1; });
     const bGeneration = kernel.generation(webInstance("b"));
-    await loader.reconcile(rowsOf({ a: row("h-a2", { web: refOf(A2) }), b: row("h-b1", { web: refOf(B1) }) }));
-    expect(loader.webSource("a")).toEqual({ codeHash: "h-a2", ref: refOf(A2), source: A2 });
+    await loader.reconcile(rowsOf({ a: row(h("a2"), { web: refOf(A2) }), b: row(h("b1"), { web: refOf(B1) }) }));
+    expect(loader.webSource("a")).toEqual({ codeHash: h("a2"), ref: refOf(A2), source: A2 });
     expect(kernel.generation(webInstance("a"))).toBe(2);
     expect(kernel.generation(webInstance("b"))).toBe(bGeneration);
     expect(kernel.state(webInstance("b"))).toBe("active");
@@ -158,11 +160,11 @@ describe("a row change swaps that plugin only", () => {
 
   it("a plugin whose dependents require its service: they unload first (D64) and load again when it is back (D65)", async () => {
     const { kernel, loader } = setup();
-    const rows = (a: string, web: string) => rowsOf({ a: row(a, { web, provides: ["svc.a"] }), c: row("h-c1", { web: refOf(C1), requires: ["svc.a"] }) });
-    await loader.reconcile(rows("h-a1", refOf(A1)));
+    const rows = (a: string, web: string) => rowsOf({ a: row(a, { web, provides: ["svc.a"] }), c: row(h("c1"), { web: refOf(C1), requires: ["svc.a"] }) });
+    await loader.reconcile(rows(h("a1"), refOf(A1)));
     expect(loader.webSource("c")?.source).toBe(C1);
     expect(kernel.generation(webInstance("c"))).toBe(1);
-    await loader.reconcile(rows("h-a2", refOf(A2)));
+    await loader.reconcile(rows(h("a2"), refOf(A2)));
     // c finished unloading before a's own undos began.
     const cGone = eventAt(kernel, "FinishUnload", webInstance("c"), 1);
     const aBegins = eventAt(kernel, "BeginUnload", webInstance("a"), 1);
@@ -176,9 +178,9 @@ describe("a row change swaps that plugin only", () => {
 
   it("a plugin that goes away leaves its dependents waiting; they load again when the plugin's row is back", async () => {
     const { kernel, loader, f } = setup();
-    const withA = rowsOf({ a: row("h-a1", { web: refOf(A1), provides: ["svc.a"] }), c: row("h-c1", { web: refOf(C1), requires: ["svc.a"] }) });
+    const withA = rowsOf({ a: row(h("a1"), { web: refOf(A1), provides: ["svc.a"] }), c: row(h("c1"), { web: refOf(C1), requires: ["svc.a"] }) });
     await loader.reconcile(withA);
-    await loader.reconcile(rowsOf({ c: row("h-c1", { web: refOf(C1), requires: ["svc.a"] }) }));
+    await loader.reconcile(rowsOf({ c: row(h("c1"), { web: refOf(C1), requires: ["svc.a"] }) }));
     expect(loader.webSource("a")).toBeNull();
     expect(loader.webSource("c")).toBeNull();
     expect(kernel.wanted()).toContain(webInstance("c"));
@@ -193,7 +195,7 @@ describe("a row change swaps that plugin only", () => {
 
   it("a declaration the kernel refuses (a service another plugin provides) fails that plugin only", async () => {
     const { loader, lines } = setup();
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1), provides: ["svc.x"] }), b: row("h-b1", { web: refOf(B1), provides: ["svc.x"] }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1), provides: ["svc.x"] }), b: row(h("b1"), { web: refOf(B1), provides: ["svc.x"] }) }));
     const running = ["a", "b"].filter((name) => loader.webSource(name));
     expect(running).toHaveLength(1);
     expect(lines.some((line) => line.includes("cannot be declared"))).toBe(true);
@@ -205,13 +207,13 @@ describe("a web part that cannot be had, and a row that moves on", () => {
     const missing = new Set<string>([refOf(A2)]);
     const f = fetcher({ missing });
     const { kernel, loader, lines } = setup({ fetch: f.fetch });
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
-    await loader.reconcile(rowsOf({ a: row("h-a2", { web: refOf(A2) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a2"), { web: refOf(A2) }) }));
     expect(loader.webSource("a")?.source).toBe(A1);
     expect(kernel.generation(webInstance("a"))).toBe(1);
     expect(lines.some((line) => line.includes("was not loaded"))).toBe(true);
     const asked = f.calls.length;
-    await loader.reconcile(rowsOf({ a: row("h-a2", { web: refOf(A2) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a2"), { web: refOf(A2) }) }));
     expect(f.calls).toHaveLength(asked);
     missing.clear();
     await loader.retry();
@@ -226,9 +228,9 @@ describe("a web part that cannot be had, and a row that moves on", () => {
     const { loader } = setup({ fetch: f.fetch });
     const seen: (string | undefined)[] = [];
     loader.subscribe(() => seen.push(loader.webSource("a")?.source));
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
-    const second = loader.reconcile(rowsOf({ a: row("h-a2", { web: refOf(A2) }) }));
-    const third = loader.reconcile(rowsOf({ a: row("h-a3", { web: refOf(A3) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
+    const second = loader.reconcile(rowsOf({ a: row(h("a2"), { web: refOf(A2) }) }));
+    const third = loader.reconcile(rowsOf({ a: row(h("a3"), { web: refOf(A3) }) }));
     release();
     await Promise.all([second, third]);
     expect(loader.webSource("a")?.source).toBe(A3);
@@ -240,7 +242,7 @@ describe("a web part that cannot be had, and a row that moves on", () => {
     const until = new Promise<void>((resolve) => { release = resolve; });
     const f = fetcher({ gate: { ref: refOf(A1), until } });
     const { loader, kernel } = setup({ fetch: f.fetch });
-    const first = loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
+    const first = loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
     const gone = loader.reconcile(rowsOf({}));
     release();
     await Promise.all([first, gone]);
@@ -323,18 +325,18 @@ describe("the outcome of an item the old code caused", () => {
   it("keeps its via and is shown once on the live instance after a swap; a second outcome for it is dropped", async () => {
     const pending: OutcomeItem[] = [];
     const { loader } = setup({ pending: (outcome) => pending.push(outcome) });
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }), b: row("h-b1", { web: refOf(B1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }), b: row(h("b1"), { web: refOf(B1) }) }));
     const shownOnA: OutcomeItem[] = [];
     const shownOnB: OutcomeItem[] = [];
     loader.attach("a", (outcome) => shownOnA.push(outcome));
     loader.attach("b", (outcome) => shownOnB.push(outcome));
-    const old = item(1, "a", "h-a1");
-    await loader.reconcile(rowsOf({ a: row("h-a2", { web: refOf(A2) }), b: row("h-b1", { web: refOf(B1) }) }));
+    const old = item(1, "a", h("a1"));
+    await loader.reconcile(rowsOf({ a: row(h("a2"), { web: refOf(A2) }), b: row(h("b1"), { web: refOf(B1) }) }));
     expect(loader.route(old)).toBe("instance");
     expect(loader.route(old)).toBe("duplicate");
     expect(shownOnA).toHaveLength(1);
     // The item still names the old code: the swap did not rewrite it.
-    expect(shownOnA[0]!.via).toEqual({ plugin: "a", codeHash: "h-a1" });
+    expect(shownOnA[0]!.via).toEqual({ plugin: "a", codeHash: h("a1") });
     expect(shownOnB).toEqual([]);
     expect(pending).toEqual([]);
   });
@@ -342,11 +344,11 @@ describe("the outcome of an item the old code caused", () => {
   it("goes to the shell's pending view once when its plugin has no live instance", async () => {
     const pending: OutcomeItem[] = [];
     const { loader } = setup({ pending: (outcome) => pending.push(outcome) });
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
     const shown: OutcomeItem[] = [];
     loader.attach("a", (outcome) => shown.push(outcome));
     await loader.reconcile(rowsOf({}));
-    const caused = item(2, "a", "h-a1");
+    const caused = item(2, "a", h("a1"));
     expect(loader.route(caused)).toBe("pending");
     expect(loader.route(caused)).toBe("duplicate");
     expect(pending).toEqual([caused]);
@@ -356,10 +358,10 @@ describe("the outcome of an item the old code caused", () => {
   it("is not shown on another plugin's instance, and an item with no via has nowhere to go", async () => {
     const pending: OutcomeItem[] = [];
     const { loader } = setup({ pending: (outcome) => pending.push(outcome) });
-    await loader.reconcile(rowsOf({ b: row("h-b1", { web: refOf(B1) }) }));
+    await loader.reconcile(rowsOf({ b: row(h("b1"), { web: refOf(B1) }) }));
     const shownOnB: OutcomeItem[] = [];
     loader.attach("b", (outcome) => shownOnB.push(outcome));
-    expect(loader.route(item(3, "a", "h-a1"))).toBe("pending");
+    expect(loader.route(item(3, "a", h("a1")))).toBe("pending");
     expect(loader.route({ slot: slot(4) })).toBe("none");
     expect(shownOnB).toEqual([]);
     expect(pending).toHaveLength(1);
@@ -457,12 +459,12 @@ describe("following the link's rows", () => {
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   it("loads at once, follows a change of the attached server's own table, and ignores another server's", async () => {
-    const r = rig(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
+    const r = rig(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
     const { loader, f } = setup();
     const off = followRows(loader, r.link);
     await settle();
     expect(loader.webSource("a")?.source).toBe(A1);
-    r.set(rowsOf({ a: row("h-a2", { web: refOf(A2) }) }));
+    r.set(rowsOf({ a: row(h("a2"), { web: refOf(A2) }) }));
     r.emit({ type: "servers", table: { stream: "srv:peer" } });
     await settle();
     expect(loader.webSource("a")?.source).toBe(A1);
@@ -486,7 +488,7 @@ describe("following the link's rows", () => {
   it("a re-attach tries again what failed", async () => {
     const missing = new Set<string>([refOf(A1)]);
     const f = fetcher({ missing });
-    const r = rig(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
+    const r = rig(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
     const { loader } = setup({ fetch: f.fetch });
     followRows(loader, r.link);
     await settle();
@@ -501,11 +503,11 @@ describe("following the link's rows", () => {
 describe("stop", () => {
   it("unloads everything the loader runs, and later rows do nothing", async () => {
     const { loader, kernel } = setup();
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
     await loader.stop();
     expect(kernel.installed()).toEqual([]);
     expect(loader.loaded()).toEqual([]);
-    await loader.reconcile(rowsOf({ a: row("h-a1", { web: refOf(A1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
     expect(kernel.installed()).toEqual([]);
   });
 });
