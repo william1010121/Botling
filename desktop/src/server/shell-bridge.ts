@@ -8,6 +8,10 @@
 //   `error` on to the bot, browser-tools.ts).
 // - Plugin secrets (D74 / M6-06): `sealer()` asks the attached window to seal and open with `safeStorage` (`shell.seal`
 //   / `shell.open`); when no window is attached, it rejects with `NO_SAFE_STORAGE`. Never logs secret payloads.
+// - A quit from macOS (`quit app "Botling 3"`, Activity Monitor's Quit) can reach the packaged botlingd instead of the
+//   window: both are the same app bundle. `answerSystemQuit` passes it on to the attached windows (`shell.quit`, which
+//   they answer like Cmd+Q) and botlingd keeps running, as when the window quits; with no window attached, or while
+//   macOS logs out or shuts down, botlingd stops the normal way (main-v3/main.ts catches Electron's `before-quit`).
 // - A request waits 30 s for its answer (installing a release: 20 min, it downloads and verifies first); a window that
 //   detaches meanwhile fails its requests.
 import type { Sealer } from "../core/plugins/secrets";
@@ -112,6 +116,18 @@ export class ShellBridge {
     };
   }
 
+  /**
+   * Asks every attached window to quit (`shell.quit`, not waited for: a quitting window may not answer); returns how
+   * many were sent it. Their `shell.done` answers nothing and is dropped.
+   */
+  quitWindows(): number {
+    let sent = 0;
+    for (const window of [...this.windows]) {
+      if (window.send({ t: "shell.quit", req: `quit-${++this.counter}` })) sent++;
+    }
+    return sent;
+  }
+
   request(op: AppOp, args?: Record<string, string>): Promise<AppAnswer> {
     const window = this.windows[this.windows.length - 1];
     if (!window) return Promise.resolve({ ok: false, error: NO_WINDOW_ERROR });
@@ -148,4 +164,38 @@ export class ShellBridge {
     clearTimeout(waiting.timer);
     waiting.resolve(answer);
   }
+}
+
+/** Called with whether macOS is logging out or shutting down (botlingd must then stop, or logout waits for it). */
+export type SystemQuitListener = (systemEnding: boolean) => void;
+
+/**
+ * botlingd's answer to a quit from macOS: "kept" when attached windows got `shell.quit` (botlingd keeps running),
+ * "stop" when it should stop (no window took it, or macOS is logging out or shutting down).
+ */
+export function answerSystemQuit(shell: Pick<ShellBridge, "quitWindows">, systemEnding: boolean, log: (line: string) => void): "kept" | "stop" {
+  if (systemEnding) {
+    log("macOS asked botlingd to quit while logging out or shutting down: stopping");
+    return "stop";
+  }
+  const sent = shell.quitWindows();
+  if (sent === 0) {
+    log("macOS asked botlingd to quit and no Botling 3 window is attached: stopping");
+    return "stop";
+  }
+  log(`macOS asked botlingd to quit (a quit for "Botling 3" reached this process): passed it to ${sent} Botling 3 window${sent === 1 ? "" : "s"}; botlingd keeps running (\`botlingd stop\` stops it)`);
+  return "kept";
+}
+
+/** `botlingd start`: stops the normal way (`stop(0)`, as on SIGTERM) unless the daemon handed the quit to its windows. */
+export function stopOnSystemQuit(
+  onSystemQuit: ((listener: SystemQuitListener) => void) | undefined,
+  daemon: { answerSystemQuit(systemEnding: boolean): "kept" | "stop" },
+  stop: (code: number) => void,
+): void {
+  onSystemQuit?.((systemEnding) => {
+    let answer: "kept" | "stop" = "stop";
+    try { answer = daemon.answerSystemQuit(systemEnding); } catch { /* not handed on: stop rather than drop the quit */ }
+    if (answer === "stop") stop(0);
+  });
 }

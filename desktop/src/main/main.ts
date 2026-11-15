@@ -241,8 +241,9 @@ const core: CoreClient = new CoreClient({
       return browserBot.answer(request);
     }
     if (op === "quit") {
-      // An install of a developer build: the script outside the app waits for it to quit.
-      note("quitting to install a developer build");
+      // An install of a developer build (the script outside the app waits for it to quit), or in Botling 3 a quit from
+      // macOS that reached botlingd (the same app bundle) and is passed on here (server/shell-bridge.ts answerSystemQuit).
+      note("quitting: the core asked (an install, or a quit macOS sent to Botling 3's botlingd)");
       setTimeout(() => app.quit(), 100);
       return { ok: true };
     }
