@@ -49,6 +49,7 @@ import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
+import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "./push";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
 import { PluginRow, RowKey } from "../protocol/table-rows";
@@ -335,6 +336,8 @@ export interface BotlingdOptions {
   /** Packaged Electron run: launch child Node work (plugin host, pdf-text) via utilityProcess.fork. */
   packaged?: boolean;
   electronUtility?: ElectronUtilityContext;
+  /** Optional Web Push transport override (used by tests to point at a local fake push server). */
+  pushTransport?: PushTransport;
 }
 
 export class Botlingd {
@@ -370,6 +373,8 @@ export class Botlingd {
     readonly pairing: PairingService,
     /** M3 step 6: this server's summary rows (`srv:` table). */
     readonly summary: SummaryRows,
+    /** M4-24: Web Push triggers for owned bots needing the user. */
+    readonly pushTriggers: PushTriggers,
     /** M3 step 3: peer servers (KK sessions over `/v3/ws`, one per pair, the D47 exchange). */
     readonly peers: PeerSessions,
     /** M3 step 4: server pairing (join offers on this server, add-machine attempts from it). */
@@ -570,6 +575,9 @@ export class Botlingd {
       const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
       // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
       let summary: SummaryRows | null = null;
+      // M4-24: Web Push triggers for owned bots needing the user (wired after remote sessions exist).
+      let pushTriggers: PushTriggers | null = null;
+      let attachedDevices = (): Set<string> => new Set();
       // M2 step 12: uploads from pages (`content.put`), kept in <data>/uploads; a chat.send naming them waits for them.
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
@@ -586,7 +594,7 @@ export class Botlingd {
             summary?.seen(event);
             if (event.type === "plugins.updated") void syncPlugins();
           },
-          eventStored: (tx, event) => summary?.stored(tx, event),
+          eventStored: (tx, event) => { summary?.stored(tx, event); pushTriggers?.stored(tx, event); },
         },
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
@@ -606,8 +614,24 @@ export class Botlingd {
       });
       const report = await runtime.start();
       log(`recovery: ${JSON.stringify(report)}`);
+      const pushSender = new PushSender({
+        dataDir: paths.dataDir,
+        ownsBot: (botId) => engine.hasBot(botId),
+        roster,
+        log,
+        ...(options.pushTransport ? { transport: options.pushTransport } : {}),
+      });
+      const push = new PushTriggers({
+        scope: runtime.scope,
+        sender: pushSender,
+        reader: () => hub.reader(),
+        botName: (botId) => engine.botView(botId)?.name ?? null,
+        attachedDevices: () => attachedDevices(),
+        log,
+      });
+      pushTriggers = push;
       const summaries = summary;
-      const reconciled = await runtime.scope.submit((tx) => summaries.reconcile(tx));
+      const reconciled = await runtime.scope.submit((tx) => { push.seed(tx); return summaries.reconcile(tx); });
       log(`summary rows: ${JSON.stringify({ ...reconciled, unknown: reconciled.unknown.length })}`);
       summaries.startPurging();
       // M5-13b/M5-13c: publish one plugin:<name> row per installed plugin (plus audit row for bot writes) and keep machine.pluginsDigest current.
@@ -818,6 +842,7 @@ export class Botlingd {
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
       const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), log, peer: peerContent });
       const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner }, options.session);
+      attachedDevices = () => attachedDeviceIds(remote.open);
       // M5-06c: a fetch that asks puts a card into the Maintainer's chat; asks left open by the last run are `gone`.
       const approval = new FetchApproval({
         core, store, reader: () => hub.reader(), self: serverId, names: clusterNames(roster, () => hub.reader()), log,
@@ -872,7 +897,7 @@ export class Botlingd {
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
       feeds.start();
       gossip.start();
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, push, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
       daemon.remoteContent = remoteContent;
       daemon.peerContent = peerContent;
       daemon.peerContentOwner = peerContentOwner;
@@ -1010,6 +1035,8 @@ export class Botlingd {
     await step("events", () => this.runtime.scope.submit(() => undefined));
     await step("summary rows", () => this.summary.flush());
     this.summary.close();
+    this.pushTriggers.close();
+    await step("push triggers", () => this.pushTriggers.idle());
     await step("runtime", () => this.runtime.close());
     await step("media jobs", () => this.media?.close());
     await step("content", () => this.content.close());

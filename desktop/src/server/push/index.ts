@@ -35,3 +35,8 @@ export {
   type PushSenderOptions,
   type PushSendReport,
 } from "./sender";
+export {
+  attachedDeviceIds,
+  PushTriggers,
+  type PushTriggersOptions,
+} from "./triggers";
