@@ -304,6 +304,27 @@ describe("the app page with the regions drawn from the slots", () => {
     expect(page.element.querySelectorAll("aside.detail-panel")).toHaveLength(1);
   });
 
+  it("only the rightful contributor's claim counts: another plugin that declares the slot and claims it does not bring a region back", async () => {
+    const one = botPanelHost();
+    await one.start();
+    seenBy(one);
+    const page = await mountPage();
+    await openTerminal(page);
+    const [side] = regionEntries("app/side");
+    const [bottom] = regionEntries("app/bottom");
+    rendererKernel.install({ name: "x.claimer", contributes: { slots: ["app/side", "app/bottom"] } });
+    await rendererKernel.load("x.claimer", (plugin) => {
+      rendererKernel.contribute(plugin, "app/side", { kind: "region", region: "side" } satisfies RegionEntry);
+      rendererKernel.contribute(plugin, "app/bottom", { kind: "region", region: "bottom" } satisfies RegionEntry);
+    });
+    expect(regionEntries("app/side").map(({ plugin }) => plugin)).toEqual([BOT_PANEL_PLUGIN, "x.claimer"]);
+    await act(async () => { await side!.registration.dispose(); await bottom!.registration.dispose(); notifySlots(); });
+    expect(page.element.querySelector("aside.detail-panel")).toBeNull();
+    expect(page.element.querySelector("button.bottom-toggle")).toBeNull();
+    await rendererKernel.requestUnload("x.claimer");
+    rendererKernel.uninstall("x.claimer");
+  });
+
   it("the chat header's toggle shows and hides the panel, and so does the plugin's toggle command (the page-wide signal)", async () => {
     const page = await mountPage();
     await openTerminal(page);
