@@ -16,6 +16,7 @@ import { FeLink, MemoryFeStorage } from "../../src/fe-link";
 import { RendererAdapter } from "../../src/main-v3/renderer-adapter";
 import { KeptResultMarker, REMOTE_READS, type Message, type Slot } from "../../src/protocol";
 import { ENTRY_BYTES_LIMIT } from "../../src/server/log";
+import { ownTableStream, putRow } from "../../src/server/replica/tables";
 import { pluginFrameHost } from "../../src/renderer/plugin-frame-host";
 import type { Bridge } from "../../src/renderer/client";
 import { Client } from "../../src/renderer/client";
@@ -106,7 +107,13 @@ describe("the window: a 1 MiB note read through plugin-frame-host, the adapter a
   afterEach(async () => { for (const { link, adapter } of opened.splice(0)) { adapter.stop(); await link.stop(); } });
 
   const HASH = "sha256:" + "11".repeat(32);
-  const row = { codeHash: HASH, manifest: { tier: "write", reads: [], requests: ["plugins.call"], owns: ["note"], provides: [], requires: [], uses: [], clients: [], needsShell: [] }, author: "builtin", grants: {} };
+  /** The Note's `plugin:` row as the replica writes it for a shipped plugin: a write grant on its running code (plugin-rows.ts, grantedBy builtin). */
+  const row = {
+    codeHash: HASH,
+    manifest: { tier: "write", reads: [], requests: [], owns: ["note"], provides: [], requires: [], uses: [], clients: [], needsShell: [] },
+    author: "builtin",
+    grants: { [HASH]: { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: 1 } },
+  };
 
   interface Rig {
     client: Client;
@@ -136,7 +143,11 @@ describe("the window: a 1 MiB note read through plugin-frame-host, the adapter a
     link.start();
     adapter.start();
     await flush();
-    // The attached server's plugin: row, from which the adapter stamps `via { plugin, codeHash }` (M5-12b).
+    // The server's own plugin: row (the owner checks the grant at via.codeHash, M5-15) and the front end's copy of it, from
+    // which the adapter stamps `via { plugin, codeHash }` (M5-12b).
+    server.db.exec("BEGIN");
+    putRow(server.db, ownTableStream(server.db), "plugin:botling.note", row);
+    server.db.exec("COMMIT");
     server.sendWire({ t: "rows", stream: SRV_STREAM, logId: "incown01", after: 0, to: 1, rows: [{ key: "plugin:botling.note", rev: 1, body: row }], more: false });
     await flush();
     // The renderer's Client over a bridge that hands each request to the adapter, as the preload does.
