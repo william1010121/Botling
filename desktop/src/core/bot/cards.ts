@@ -7,6 +7,7 @@
 // every name it borrows from `Bot`, one forwarder each. `Bot` keeps a one-line delegate for every name moved here.
 import type { ApprovalAskView, Event, MessageView, ResultOf } from "../../contract";
 import type { Bot } from "../bot";
+import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
 import { BUILT_INS, COMPONENT_LIMIT, componentKnowledgeFor, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
@@ -18,21 +19,21 @@ import type { BotOptions } from "./types";
 import { keepable, resolvePath } from "./view-functions";
 
 export class BotCards {
-  constructor(private readonly host: Bot) {}
+  constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
 
   // ---- Bridge: the names borrowed from `Bot` (one line each) ----
-  private get options(): BotOptions { return this.host.options; }
-  private get store(): BotStore { return this.host.store; }
-  private get owner(): Bot { return this.host.owner; }
-  private get peers(): Bot[] { return this.host.peers; }
-  private get id() { return this.host.id; }
+  private get options(): BotOptions { return this.ctx.options; }
+  private get store(): BotStore { return this.ctx.store; }
+  private get owner(): Bot { return this.ctx.owner; }
+  private get peers(): Bot[] { return this.ctx.peers; }
+  private get id() { return this.ctx.id; }
   private get records(): ChatRecord[] { return this.host.records; }
   private get readOnly(): boolean { return this.host.readOnly; }
   private changed(record: ChatRecord) { this.host.changed(record); }
   private remove(record: ChatRecord) { this.host.remove(record); }
   private updated() { this.host.updated(); }
   private messageView(record: ChatRecord): MessageView { return this.host.messageView(record); }
-  private emit(event: Event) { this.host.emit(event); }
+  private emit(event: Event) { this.ctx.emit(event); }
 
   // ---- Fields owned here (`Bot` reads three of them through accessors) ----
   /** What a plugin that keeps cards of its own (botling.board's pins) says changed in them, to tell the bot with the user's next message (`cards.setNotes`; the primary's). Swift dates. */

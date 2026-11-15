@@ -317,7 +317,7 @@ export class Bot {
   private routinesShown = "";
   /** The components and cards of this bot (M7-S43): made on first use, from this bot. */
   private botCards: BotCards | null = null;
-  private get cards(): BotCards { return this.botCards ??= new BotCards(this); }
+  private get cards(): BotCards { return this.botCards ??= new BotCards(this, this.ctx); }
   /** The fields BotCards owns, as this bot has always had them (`componentList` and `componentsMayHaveChanged` are read by BotCards through other bots). */
   get componentList(): string[] | null { return this.cards.componentList; }
   set componentList(list: string[] | null) { this.cards.componentList = list; }
@@ -446,7 +446,7 @@ export class Bot {
   get profile() { return this.ctx.profile; }
   private get paths() { return this.ctx.paths; }
   private log(line: string) { this.ctx.log(line); }
-  emit(event: Event) { this.ctx.emit(event); }
+  private emit(event: Event) { this.ctx.emit(event); }
 
   /** What the partner's chat did, in this chat (`mirror`): its lines are this chat's lines too. */
   /** Called by BotContext.emit (M7-S41). */
