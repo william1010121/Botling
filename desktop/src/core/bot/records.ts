@@ -33,10 +33,6 @@ export class BotRecords {
   private emit(event: Event) { this.host.emit(event); }
 
   // ---- Bridge: names on `Bot` (`host`) ----
-  private get problem(): string | null { return this.host.problem; }
-  private set problem(value: string | null) { this.host.problem = value; }
-  private get readOnly(): boolean { return this.host.readOnly; }
-  private set readOnly(value: boolean) { this.host.readOnly = value; }
   private get shuttingDown(): boolean { return this.host.shuttingDown; }
   private get lineMediaStore(): string { return this.host.lineMediaStore; }
   private updated() { this.host.updated(); }
@@ -51,8 +47,15 @@ export class BotRecords {
   /** The subagent rows as the windows last saw them (a change sends bot.updated). */
   lastRows = "";
   unread = 0;
+  /** Why the chat file could not be read (the bot is then left as it is), and whether the bot may write. Read through `Bot`. */
+  problem: string | null = null;
+  readOnly = false;
   /** What this head's session has been told of the chat's reactions (null: tell it from scratch). */
   reactionsSeen: SeenReactions | null = null;
+  /** The session has been told of these reactions (`seen`). */
+  seeReactions(seen: SeenReactions | null) { this.reactionsSeen = seen; }
+  /** What the head has been told of the reactions is forgotten (it is a new head). */
+  forgetReactions() { this.reactionsSeen = null; }
 
   /** What the partner's chat did, in this chat (`mirror`): its lines are this chat's lines too. */
   /** Called by BotContext.emit (M7-S41). */

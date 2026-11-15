@@ -57,7 +57,6 @@ export class HeadEvents {
   private get session(): HeadState { return this.host.session; }
   private get approvals(): Bot["approvals"] { return this.host.approvals; }
   private get claudeMidTurn(): WeakSet<AgentHead> { return this.host.claudeMidTurn; }
-  private get cutOffByNetwork(): Set<string> { return this.host.cutOffByNetwork; }
   private get draining(): Bot["draining"] { return this.host.draining; }
   private get ending(): WeakSet<AgentHead> { return this.host.ending; }
   private get managedHandbacks(): Set<string> { return this.host.managedHandbacks; }
@@ -75,22 +74,17 @@ export class HeadEvents {
   private get inHeadSubagents(): SubagentRecord[] { return this.host.inHeadSubagents; }
   private get lineMediaStore(): string { return this.host.lineMediaStore; }
   // Fields of `Bot` it writes (a setter for another owner's field: M7-S54 ... replace these by named transitions):
-  private get apiRetries(): number { return this.host.apiRetries; }
-  private set apiRetries(v: number) { this.host.apiRetries = v; }
   // BotHead's transitions (M7-S57):
   private briefingDue() { this.host.headRun.briefingDue(); }
   private sessionStarted() { this.host.headRun.sessionStarted(); }
   private sessionRenamed(sessionId: string) { this.host.headRun.sessionRenamed(sessionId); }
-  private get codexRetry(): Bot["codexRetry"] { return this.host.codexRetry; }
-  private set codexRetry(v: Bot["codexRetry"]) { this.host.codexRetry = v; }
   private get head(): AgentHead | null { return this.host.head; }
   private detach() { this.host.headRun.detach(); }
   private get ignoreResults(): number { return this.host.ignoreResults; }
-  private get managedPending(): boolean { return this.host.managedPending; }
-  private set managedPending(v: boolean) { this.host.managedPending = v; }
   private get restarting(): AgentHead | null { return this.host.restarting; }
   private get retryingConnection(): boolean { return this.host.retryingConnection; }
-  private set retryingConnection(v: boolean) { this.host.retryingConnection = v; }
+  private get progress() { return this.host.progress; }
+  private get tasks() { return this.host.tasks; }
   private get turn(): Turn | null { return this.host.turn; }
   private get turns() { return this.host.turns; }
   // Methods of `Bot`:
@@ -177,14 +171,14 @@ export class HeadEvents {
     this.settleSessionSchedules();
     // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
     if (item.kind === "connectionTrouble") {
-      if (!this.retryingConnection) { this.retryingConnection = true; this.updated(); }
+      if (!this.retryingConnection) { this.progress.retryingStarted(); this.updated(); }
       return;
     }
     // Codex waiting on a retry is no step either; the bot shows it until the turn moves on.
     if (item.kind === "apiRetry") return this.noteCodexRetry(item);
     if (!subagentOf(item) && item.kind !== "managedPending" && item.kind !== "rateLimits") this.clearCodexRetry();
     if (item.kind === "connectionLost") {
-      if (item.parent) this.cutOffByNetwork.add(item.parent);
+      if (item.parent) this.host.workers.lostToNetwork(item.parent);
       else if (this.turn?.open && this.turn.head === head) this.turn.lostConnection = true;
       return;
     }
@@ -276,11 +270,11 @@ export class HeadEvents {
     }
     if (item.kind === "toolUse" && item.parent) {
       const call = scheduleCall(item.tool, item.input);
-      if (call) this.scheduleCalls.set(item.id, call);
+      if (call) this.tasks.scheduleCalled(item.id, call);
     }
     if (item.kind === "scheduleResult" && item.parent) {
       const call = this.scheduleCalls.get(item.id);
-      this.scheduleCalls.delete(item.id);
+      this.tasks.scheduleSettled(item.id);
       const task = call ? scheduledTask(item.id, call, item.result) : null;
       if (task) this.placeSubagentTask(item.parent, task);
       const tool = this.toolCalls.get(item.id)?.tool;
@@ -319,7 +313,7 @@ export class HeadEvents {
     if (item.kind === "permission") return this.ask(head, item, turn);
     if (item.kind === "scheduleResult") {
       const call = this.scheduleCalls.get(item.id);
-      this.scheduleCalls.delete(item.id);
+      this.tasks.scheduleSettled(item.id);
       const task = call ? scheduledTask(item.id, call, item.result) : null;
       if (task && !turn.tasks?.some((candidate) => candidate.id === task.id)) (turn.tasks ??= []).push(task);
       const tool = this.toolCalls.get(item.id)?.tool;
@@ -337,7 +331,7 @@ export class HeadEvents {
         return;
       case "toolUse": {
         const call = scheduleCall(item.tool, item.input);
-        if (call) this.scheduleCalls.set(item.id, call);
+        if (call) this.tasks.scheduleCalled(item.id, call);
         // The words claude said before this call: the other head hears them now.
         const said = turn.reply.text.slice(turn.told).trim();
         if (said && turn.origin !== "tidy") { turn.told = turn.reply.text.length; this.headWords(streamingText(said)); }
@@ -347,7 +341,7 @@ export class HeadEvents {
         return;
       }
       case "toolResult": {
-        this.scheduleCalls.delete(item.id);
+        this.tasks.scheduleSettled(item.id);
         const step = turn.steps.find((candidate) => candidate.id === item.id);
         if (!step) return;
         // A subagent's step is done when the subagent is, not when its call returns.
@@ -377,12 +371,12 @@ export class HeadEvents {
         // wait, with a short line instead of claude's words; once every try failed, one plain failed line.
         if (end.status === "failed" && item.apiPassing && turn.origin !== "tidy") {
           if (this.retryApiLater(turn)) return;
-          this.apiRetries = 0;
+          this.progress.apiRetriesReset();
           turn.reply = new ReplyText();
           this.finishTurn(turn, "failed", apiGaveUpText(apiRetryDelays().length, item.error || item.text));
           return;
         }
-        if (turn.origin !== "tidy") this.apiRetries = 0;
+        if (turn.origin !== "tidy") this.progress.apiRetriesReset();
         // claude cut this turn off to take your line (priority "now"): the app's doing, not an error. It ends stopped,
         // with the words it wrote so far or, with none, no bubble at all; the raw subtype never shows.
         if (!item.ok && item.subtype === "error_during_execution" && turn.steeredNow) { this.finishTurn(turn, "stopped"); return; }
@@ -568,8 +562,8 @@ export class HeadEvents {
     const cutOff = lostToNetwork ? this.inHeadSubagents.map((subagent) => subagent.id) : [];
     const lostSession = this.session.started ? this.session.sessionId : null;
     this.detach();
-    this.retryingConnection = false;
-    this.codexRetry = null;
+    this.progress.retryingEnded();
+    this.progress.codexRetryEnded();
     this.clearIdle();
     this.turns.ignoreNone();
     // Paused work went with the process (1.x drops `pausedWork` when the process exits).
@@ -577,7 +571,7 @@ export class HeadEvents {
     this.turns.forgetSent();
     for (const [id, approval] of [...this.approvals]) if (approval.head === head) this.settle(id, NO_LONGER_NEEDED, false);
     // Its subagents (and Codex's workers) run inside its process: they went with it.
-    this.managedPending = false;
+    this.host.workers.managedEnded();
     if (this.subagents.stopRunning()) this.saveSubagents();
     const why = `${exit.signal ?? exit.code}`;
     const turn = this.turn;

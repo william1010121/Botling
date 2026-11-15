@@ -42,6 +42,8 @@ export class BotCards {
   componentList: string[] | null = null;
   /** What this head's session has been told about components (null: tell it in full). */
   briefedComponents: ComponentKnowledge | null = null;
+  /** The head was told of the components: no more. */
+  forgetBriefed() { this.briefedComponents = null; }
   componentsMayHaveChanged = false;
 
   // ---- Moved from `Bot` ----
