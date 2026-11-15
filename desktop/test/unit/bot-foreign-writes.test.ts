@@ -370,3 +370,104 @@ describe("restart flags the M7-S58 review found unguarded", () => {
     expect(r.restartForPluginsOnly).toBe(false); expect(r.restartPending).toBe(false);
   });
 });
+
+// claudeMidTurn: the last field of TurnControl that head-events wrote with `.add`/`.delete` (M7-S59: `midTurnStarted`/`midTurnEnded`).
+describe("claudeMidTurn through the TurnBook", () => {
+  it("midTurnStarted/midTurnEnded add and remove the head and touch no other", () => {
+    const { peek } = rig("claude"); const tc = peek.turns; const a: any = {}, b: any = {};
+    tc.midTurnStarted(a); tc.midTurnStarted(b);
+    expect(tc.claudeMidTurn.has(a) && tc.claudeMidTurn.has(b)).toBe(true);
+    tc.midTurnEnded(a); expect(tc.claudeMidTurn.has(a)).toBe(false); expect(tc.claudeMidTurn.has(b)).toBe(true);
+    tc.midTurnEnded(a); expect(peek.claudeMidTurn).toBe(tc.claudeMidTurn);
+  });
+
+  it("claude's 'started' and its output mark the head mid-turn; the result ends it", async () => {
+    const A = rig("claude");
+    A.b.send("one"); await A.sent(0, 1);
+    const head = A.peek.head;
+    expect(A.peek.claudeMidTurn.has(head)).toBe(false);
+    A.head(0).item({ kind: "command", state: "started", id: "cmd-1" });
+    expect(A.peek.claudeMidTurn.has(head)).toBe(true);
+    A.reply(0, "ok"); await waitFor("the turn to end", () => !A.peek.turn);
+    expect(A.peek.claudeMidTurn.has(head)).toBe(false);
+    A.b.send("two"); await A.sent(0, 2);
+    A.delta(0, "thinking"); expect(A.peek.claudeMidTurn.has(head)).toBe(true);
+  });
+});
+
+// The call-site gaps of the M7-S55 and M7-S56 reviews (A5, A8, A10, A11 and B4, B10, B11): the survivors named there, asserted so a
+// change to those lines shows. See .bot/artifacts/v3-split/M7-S55-review.md and M7-S56-review.md.
+describe("call sites the S55 and S56 reviews found unguarded", () => {
+  const idOf = (turn: any) => (turn.userId ?? turn.messageId).toLowerCase();
+  /** A bot with a turn under way on a running head, and a second turn of ours set aside (deferred) for that head. */
+  async function withDeferred() {
+    const A = rig("claude");
+    A.b.send("one"); await A.sent(0, 1);
+    const head = A.peek.head; const turn = A.peek.newTurn("user", "later", null);
+    turn.head = head; A.peek.deferred = turn;
+    return { A, head, turn };
+  }
+
+  it("A5, commandEnded: the end of another command leaves the deferred turn alone; its own command takes it back", async () => {
+    const { A, head, turn } = await withDeferred();
+    A.peek.commandEnded(head, "some-other-command", "completed");
+    expect(A.peek.deferred).toBe(turn); expect(turn.open).toBe(true);
+    A.peek.commandEnded({} as any, idOf(turn), "completed");
+    expect(A.peek.deferred).toBe(turn);
+    A.peek.commandEnded(head, idOf(turn), "completed");
+    expect(A.peek.deferred).toBeNull(); expect(turn.open).toBe(false);
+  });
+
+  it("A8, onExit: a deferred turn is taken back and ends as failed when its head exits", async () => {
+    const { A, turn } = await withDeferred();
+    const seen = A.events.length;
+    A.head(0).finish();
+    expect(A.peek.deferred).toBeNull(); expect(turn.open).toBe(false);
+    const failed = A.events.slice(seen).filter((e) => e.type === "turn.finished" && e.turnId === turn.id);
+    expect(failed).toHaveLength(1); expect(failed[0]).toMatchObject({ status: "failed" });
+  });
+
+  it("A10, shutdown: a deferred turn is closed, resolved as stopped and taken back", async () => {
+    const A = rig("claude"); const turn = A.peek.newTurn("user", "later", null); const resolve = vi.fn(); turn.resolve = resolve;
+    A.peek.deferred = turn;
+    await A.peek.shutdown({ tidy: false });
+    expect(resolve).toHaveBeenCalledWith("stopped"); expect(turn.open).toBe(false); expect(A.peek.deferred).toBeNull();
+  });
+
+  it("A11, hearNow: the note written to claude is remembered, so its own turn for it starts the app's background turn", async () => {
+    const A = rig("claude");
+    A.b.send("one"); await A.sent(0, 1);
+    expect(A.peek.hearNow("what the other head said", [])).toBe(true);
+    const note = A.head(0).sent[1]; expect(note.text).toBe("what the other head said");
+    expect(A.peek.turns.contextSent.has(note.id)).toBe(true);
+    // The turn under way ends first; claude then answers the note in a turn of its own.
+    A.reply(0, "ok"); await waitFor("the turn to end", () => !A.peek.turn);
+    A.head(0).item({ kind: "command", state: "started", id: note.id });
+    expect(A.peek.turn?.origin).toBe("app"); expect(A.peek.turns.contextSent.has(note.id)).toBe(false);
+  });
+
+  it("B4, onExit: the pause ends with the head's process", async () => {
+    const A = rig("claude");
+    A.b.send("one"); await A.sent(0, 1);
+    A.peek.turns.startPause({ conducted: true, handoffId: null });
+    expect(A.peek.paused).not.toBeNull();
+    A.head(0).finish();
+    expect(A.peek.paused).toBeNull();
+  });
+
+  it("B10, swapInterrupt: the pause ends for a swap too", async () => {
+    const A = rig("claude");
+    A.peek.turns.startPause({ conducted: true, handoffId: null });
+    await A.peek.swapInterrupt();
+    expect(A.peek.paused).toBeNull();
+  });
+
+  it("B11, a subagent that ends with no turn under way is kept for the next turn claude starts itself", async () => {
+    const A = rig("claude");
+    A.b.send("one"); await A.sent(0, 1); A.reply(0, "ok"); await waitFor("the turn to end", () => !A.peek.turn);
+    A.head(0).item({ kind: "subagentStarted", id: "sub-1", description: "d", type: "general-purpose", prompt: "p", background: true });
+    A.head(0).item({ kind: "subagentEnded", id: "sub-1", status: "completed", summary: "done" });
+    expect(A.peek.turn).toBeNull();
+    expect(A.peek.pendingEnded).toEqual(["sub-1"]);
+  });
+});

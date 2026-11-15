@@ -223,7 +223,7 @@ export class HeadEvents {
     if (item.kind === "command") {
       if (commandEnded(item.state)) { this.commandEnded(head, item.id, item.state); return; }
       const mid = this.claudeMidTurn.has(head);
-      if (item.state === "started") this.claudeMidTurn.add(head);
+      if (item.state === "started") this.turns.midTurnStarted(head);
       // claude begins a turn: the one set aside is under way after all (or another first, whose result tells).
       if (item.state === "started" && this.unbegun?.head === head) this.clearUnbegun();
       const steered = this.steered.get(item.id);
@@ -285,8 +285,8 @@ export class HeadEvents {
     }
     // Subagents are followed whoever's turn it is; their own lines stop here.
     if (this.onSubagentItem(item)) return;
-    if (item.kind === "result") this.claudeMidTurn.delete(head);
-    else this.claudeMidTurn.add(head);
+    if (item.kind === "result") this.turns.midTurnEnded(head);
+    else this.turns.midTurnStarted(head);
     // Output of a turn: claude began the one set aside after all.
     if (item.kind !== "result" && this.unbegun?.head === head) this.clearUnbegun();
     // The tail of a turn that was cut off: it belongs to nobody.

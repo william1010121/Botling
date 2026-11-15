@@ -157,6 +157,10 @@ export class TurnControl {
   ignoreNone() { this.ignoreResults = 0; }
   /** `head` is being ended: nothing it prints counts any more. */
   headEnding(head: AgentHead) { this.ending.add(head); }
+  /** claude has a turn under way on `head` (it said "started" for a line, or its turn said something). */
+  midTurnStarted(head: AgentHead) { this.claudeMidTurn.add(head); }
+  /** claude's turn on `head` ended (its result came). */
+  midTurnEnded(head: AgentHead) { this.claudeMidTurn.delete(head); }
   /** How turn `id` ended. */
   recordFinished(id: string, status: Status) { this.finished.set(id, status); }
   /** A subagent ended between turns: the next turn claude starts itself reports it. */
