@@ -924,6 +924,25 @@ describe("RosterStore characterization (M7-S89)", () => {
     await refuses(A.roster.replaceRecovery(CODE1), "not-root");
   });
 
+  it("a pending replacement is cleared when the root changes, even if this server becomes the root again before confirming", async () => {
+    const h = harness();
+    const { A, B } = await threeServers(h);
+    vi.mocked(newRecoveryCode).mockReturnValueOnce(CODE2);
+    await A.roster.replaceRecovery(CODE1);
+    h.tick();
+    await B.roster.reroot({ code: CODE1, oldRootLost: false, keep: [] });
+    await A.roster.mergeRevocations(B.roster.revocations().map((item) => item.statement));
+    expect(A.roster.view.root?.root).toBe(B.identity.memberId);
+    // A takes the root back, with no confirmRecovery in between. Its pending replacement was made under the first root.
+    h.tick();
+    await A.roster.reroot({ code: CODE1, oldRootLost: false, keep: [] });
+    expect(A.roster.view.root?.root).toBe(A.identity.memberId);
+    expect(A.roster.view.root?.gen).toBe(3);
+    // A is the root again, so `not-root` is not what stops it: the replacement was dropped when B became the root
+    // (kept, it would be `stale`: its root id is the gen-1 Root).
+    expect(await A.roster.confirmRecovery(CODE2)).toEqual({ ok: false, reason: "no-setup" });
+  });
+
   it("merge: keeps well-formed statements of this cluster once, in input order; a copy that does not verify gives way to one that does, never the other way", async () => {
     const h = harness();
     const { A, root } = await startCluster(h);
@@ -1070,6 +1089,39 @@ describe("RosterStore characterization (M7-S89)", () => {
     pin("mergeRevocations.sequences", shown);
   });
 
+  it("mergeRevocations: of two Roots of one generation signed by the same recovery key only the one that wins the chain is stored", async () => {
+    const h = harness();
+    const { A, B, C, root, clusterId } = await threeServers(h);
+    h.tick();
+    const key1 = await recoveryKeyFromCode(CODE1);
+    const rootFor = async (who: Node) => signStatement(
+      { type: "root", cluster: clusterId, gen: 2, root: who.identity.memberId, recoveryPub: key1.recoveryPub, keep: [], prev: root.id },
+      "recovery",
+      signWith(key1.privateKey),
+    );
+    const forB = await rootFor(B);
+    const forC = await rootFor(C);
+    h.names.set(forB.id, "root-g2-for-B");
+    h.names.set(forC.id, "root-g2-for-C");
+    // Both are signed by the key their `prev` names, so keepChainRoots lets both through; only the chain decides.
+    const offered = [forB.statement, forC.statement];
+    const fresh = await A.roster.mergeRevocations(offered);
+    expect(fresh).toHaveLength(1);
+    const winnerId = A.roster.view.root!.id;
+    expect([forB.id, forC.id]).toContain(winnerId);
+    expect(fresh).toEqual([winnerId]);
+    const loserId = winnerId === forB.id ? forC.id : forB.id;
+    const held = idsOf(A.roster.statements());
+    expect(held).toContain(winnerId);
+    expect(held).not.toContain(loserId);
+    // The order of the offer does not change which one is kept.
+    const g = harness();
+    const s = await threeServers(g);
+    const again = await s.A.roster.mergeRevocations([...offered].reverse());
+    expect(again).toEqual(fresh);
+    expect(idsOf(s.A.roster.statements())).not.toContain(loserId);
+  });
+
   it("mergeGossip: stores only what verifies and what a party this set knows signed; refused ids come back; ignores other clusters; honours the limit", async () => {
     const h = harness();
     const { A, clusterId, root } = await startCluster(h);
@@ -1187,6 +1239,34 @@ describe("RosterStore characterization (M7-S89)", () => {
     expect(A.roster.statementsById([foreign.id, foreign.id, "unknown", root.id]).map((item) => item.id)).toEqual([foreign.id, root.id]);
     expect(h.lab(idsOf(A.roster.revocations()))).toEqual(["foreign-root", "root:g1"]); // every Root and Revoke it holds, the foreign Root included
     h.golden("gossipStatements.dump", { carried: h.lab(carried), stored: h.lab(idsOf(A.roster.statements())) });
+  });
+
+  it("writeProfile: a written Profile leaves one `profile.write` audit line (by, member, statement, at); an unchanged value adds none", async () => {
+    const h = harness();
+    const { A } = await startCluster(h);
+    h.tick();
+    const phone = await member(10);
+    h.names.member(phone, "phone");
+    await A.roster.addDevice({ keys: phone.keys, name: "Phone" });
+    h.tick();
+    const writes = () => auditRows(A).filter((audit) => audit.act === "profile.write");
+    expect(writes()).toEqual([]);
+    const written = await A.roster.writeProfile(phone.memberId, "name", "My phone");
+    expect(written).not.toBeNull();
+    const id = (await signStatement(written!.body, A.identity.memberId, (bytes) => A.identity.sign(bytes))).id;
+    expect(writes()).toEqual([{ act: "profile.write", by: A.identity.memberId, member: phone.memberId, statement: id, at: h.clock.now }]);
+    expect(auditRows(A)[0]).toEqual(writes()[0]); // it is the newest line
+    // The same value again: writeProfile answers null and nothing is audited.
+    const lines = auditRows(A).length;
+    h.tick();
+    expect(await A.roster.writeProfile(phone.memberId, "name", "My phone")).toBeNull();
+    expect(auditRows(A)).toHaveLength(lines);
+    expect(writes()).toHaveLength(1);
+    // A new value is a new line, newest first.
+    const second = await A.roster.writeProfile(phone.memberId, "name", "Renamed");
+    const secondId = (await signStatement(second!.body, A.identity.memberId, (bytes) => A.identity.sign(bytes))).id;
+    expect(writes().map((audit) => audit.statement)).toEqual([secondId, id]);
+    expect(writes()[0]).toMatchObject({ by: A.identity.memberId, member: phone.memberId, at: h.clock.now });
   });
 
   it("profiles: the hlc is above every earlier Profile of the field; an unchanged value writes nothing; the newest valid writer wins; push is for valid devices", async () => {
