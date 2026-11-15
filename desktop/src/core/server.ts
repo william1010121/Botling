@@ -88,7 +88,7 @@ import { FolderWatch, type WatchTarget } from "./folder-watch";
 import { probeNetwork } from "./network-resume";
 import { agentContributions, agentStamp, claudeWiring, skillRootsWiring } from "./plugins/agent-contributions";
 import { claudeSkillFolders, placedSkillRoot } from "./plugins/engine-skills";
-import { Plugins, type BotInfo, type EngineCli } from "./plugins";
+import { Plugins, type BotInfo, type EngineCli, type PluginWorld } from "./plugins";
 import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
@@ -197,6 +197,8 @@ export interface CoreOptions {
    * kept in `directory` (its folder, or a second head's partner-<engine>/ in it), on server.db rows.
    */
   botStore?: (directory: string) => BotStore;
+  /** Botling 3's server only (2.x leaves it unset): content read for plugins (`content.read`). */
+  content?: PluginWorld["content"];
 }
 
 /** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
@@ -460,6 +462,7 @@ export class Core {
         usageView: async () => { await this.usage.refresh(); return usageView(this.usage.view()); },
         workspace: this.workspaceSource(),
         workspaceWatch: (on) => this.watchWorkspace(on),
+        ...(options.content ? { content: options.content } : {}),
       },
     });
     // Settings that are a built-in plugin's now (the paste limits: botling.chat-extras) move to its settings once.
