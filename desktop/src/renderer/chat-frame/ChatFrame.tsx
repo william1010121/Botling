@@ -16,6 +16,7 @@ import { Client, RequestFailed } from "../client";
 import { DELIVERY_UNCONFIRMED } from "../delivery";
 import { WorkspaceStore } from "../store";
 import { chatState, subagentState } from "../payload";
+import { chatPlugins, useChatSlotsVersion } from "../chat-slot";
 import { chatLinkOffered, keybindingsOf, offered, type PluginMenu } from "../plugin-commands";
 import { ChatStateChannel } from "../chat-state-channel";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./protocol";
@@ -94,7 +95,8 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = nu
       lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null, bots: current.bots,
       // Developer mode with Botling's source among the projects: replies get "not right" (`feedback`).
       feedback: !!current.settings?.developerMode && current.bots.some((candidate) => candidate.id === current.settings?.developerProject && candidate.role === "manager"),
-      plugins: current.plugins,
+      // The chat's menus are what the kernel slots of `botling.chat` hold (chat-slot.ts).
+      plugins: chatPlugins(current.plugins),
     });
     // Back in a project bot from its sub bot: "New while you were in Release" over what came meanwhile.
     if (!current.subagent) {
@@ -107,7 +109,9 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = nu
       ...(traceId ? { traceId } : {}) };
   }, postToChat), [store]);
   const push = useCallback(() => channel.flush(true), [channel]);
-  useEffect(() => { channel.schedule(); }, [channel, view, replying, askAbout]);
+  // A slot of the kernel changed (the chat plugin came or went, the feed caught up with a new plugin list): the menus are sent again.
+  const slots = useChatSlotsVersion();
+  useEffect(() => { channel.schedule(); }, [channel, view, replying, askAbout, slots]);
   useEffect(() => channel.reset, [channel]);
 
   // Plugins' web parts, asked for again whenever the library changes (only what changed reloads in the page).
