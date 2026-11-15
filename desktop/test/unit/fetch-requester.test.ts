@@ -373,7 +373,8 @@ describe("M5-07b: the requester receives a fetch", () => {
     mkdirSync(join(env.folderB, ".bot"), { recursive: true });
     symlinkSync(outside, join(env.folderB, ".bot", "incoming"));
     const result = await env.requester.fetch("bot-b", env.ka.memberId, artifact("r.txt"), "x", MiB);
-    expect(result.ok).toBe(false);
+    // A local failure, not the source's "no" (the bot must not read "<machine> said no" for this).
+    expect(result).toMatchObject({ ok: false, reason: "local" });
     expect(readdirSync(outside)).toEqual([]);
     expect(env.asks).toHaveLength(0);
   });
@@ -465,7 +466,7 @@ describe("M5-07b: the requester receives a fetch", () => {
 
   it("6b. a bot this server does not have, or a maxBytes outside 1..500 MiB, never reaches the wire", async () => {
     const env = await make();
-    expect(await env.requester.fetch("no-such-bot", env.ka.memberId, artifact("x"), "x", MiB)).toMatchObject({ ok: false, reason: "denied" });
+    expect(await env.requester.fetch("no-such-bot", env.ka.memberId, artifact("x"), "x", MiB)).toMatchObject({ ok: false, reason: "local" });
     const result = await env.requester.fetch("bot-b", env.ka.memberId, artifact("missing.txt"), "x", 10 ** 12);
     expect(env.asks[0]?.maxBytes ?? 500 * MiB).toBe(500 * MiB);
     expect(result.ok).toBe(false); // the file is not there

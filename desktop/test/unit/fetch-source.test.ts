@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   CONTENT_FRAME_CHUNK_LIMIT, decodeWireFrame, encodeChunkFrame, encodeWireFrame, fromBase64Url, type WireMessage,
 } from "../../src/protocol";
-import { FetchAsk } from "../../src/protocol/fetch";
+import { FETCH_MAX_DEPTH, FetchAsk } from "../../src/protocol/fetch";
 import { ContentService } from "../../src/server/content";
 import { statSig } from "../../src/server/content/pin";
 import { PEER_CONTENT_FRAME } from "../../src/server/content/peer-content";
@@ -1029,6 +1029,40 @@ describe("M5-07a: fetch source", () => {
     const d2 = await until(() => s2.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "l3 f2" });
     expect(d2).toMatchObject({ t: "fetch.denied", fetchId: "l3-f2", reason: "limit" });
     expect(s2.sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+  });
+
+  it("F-a. a tree deeper than FETCH_MAX_DEPTH is `limit` before any approval, chunk or grant; exactly at the cap is served", async () => {
+    const asked: string[] = [];
+    const env = await setupInProcessCluster(async (fetch) => { asked.push(fetch.fetchId); return "once" as const; });
+    cleanups.push(env.cleanup);
+    const deep = (root: string, depth: number) => {
+      const folders = Array.from({ length: depth }, (_, i) => `f${i}`);
+      mkdirSync(join(root, ...folders), { recursive: true });
+      writeFileSync(join(root, ...folders, "leaf.txt"), "leaf");
+    };
+    deep(join(env.artifactsA, "ok64"), FETCH_MAX_DEPTH);
+    deep(join(env.artifactsA, "bad65"), FETCH_MAX_DEPTH + 1);
+    deep(join(env.srcA, "bad65"), FETCH_MAX_DEPTH + 1); // outside the artifacts: this one would need an approval card
+    const ask = async (fetchId: string, what: { kind: "artifact"; botId: string; path: string } | { kind: "path"; path: string }) => {
+      const sink = makeFakeSink(env.kb.memberId);
+      env.source.onMessage(sink.sink, { t: "fetch.ask", fetchId, requester: { bot: env.botB }, source: env.ka.memberId, what, purpose: "deep", maxBytes: 10 * MiB });
+      const end = await until(() => sink.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: fetchId });
+      return { end, chunks: sink.sent.filter((m) => m.t === "fetch.chunk").length };
+    };
+
+    const good = await ask("fa-ok", { kind: "artifact", botId: "bot-a", path: "ok64" });
+    expect(good.end.t).toBe("fetch.done");
+
+    const bad = await ask("fa-bad", { kind: "artifact", botId: "bot-a", path: "bad65" });
+    expect(bad.end).toMatchObject({ t: "fetch.denied", fetchId: "fa-bad", reason: "limit" });
+    expect(bad.chunks).toBe(0);
+
+    const badPath = await ask("fa-bad-path", { kind: "path", path: join(env.srcA, "bad65") });
+    expect(badPath.end).toMatchObject({ t: "fetch.denied", fetchId: "fa-bad-path", reason: "limit" });
+    expect(badPath.chunks).toBe(0);
+    expect(asked).not.toContain("fa-bad-path"); // refused before a card was raised
+    const grants = env.readerA.prepare("SELECT COUNT(*) AS n FROM grants WHERE fetchId IN (?, ?)").get("fa-bad", "fa-bad-path") as { n: number };
+    expect(Number(grants.n)).toBe(0); // no grant row for either refused fetch
   });
 
   it("L-a. a cancelled serve ends without the approval hook answering (session closed, then source closed)", async () => {
