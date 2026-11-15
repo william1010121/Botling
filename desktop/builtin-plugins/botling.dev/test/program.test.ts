@@ -116,6 +116,22 @@ describe("<install-build> from a bot's reply", () => {
     expect(installOutcome(join(root, "core"))).toMatchObject({ kind: "installed", state: { requesterID: "DEV", note: "Faster startup." } });
   });
 
+  it("in Botling 3 (the state names botlingd's data folder) the card says botlingd stops and the script gets that folder", async () => {
+    const root = tempDir("dev-plugin");
+    const { program, calls, picks, running, tag } = setup(root, { server: { dataDir: join(root, "server") } });
+    await program.start();
+    const built = fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
+    tag("install-build", DEV, { path: built }, "Faster startup.");
+    await vi.waitFor(() => expect(picks).toHaveLength(1));
+    expect(calls.find((call) => call[0] === "card")![1]).toContain("The Botling 3 window and botlingd stop for it");
+    picks[0]!(0);
+    await vi.waitFor(() => expect(calls.some((call) => call[0] === "install")).toBe(true));
+    const [, command] = calls.find((call) => call[0] === "install")!;
+    expect(command).toHaveLength(13);
+    expect(command.slice(3, 6)).toEqual(["4242", running, built]);
+    expect(command.at(-1)).toBe(join(root, "server"));
+  });
+
   it("a build that is refused (the running one, paused after failures) is said in the main bot's chat and to the bot", async () => {
     const root = tempDir("dev-plugin");
     const { program, calls, running, tag } = setup(root);
