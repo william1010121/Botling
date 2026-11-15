@@ -159,6 +159,17 @@ describe("M7-12a: a window command forwarded by a peer", () => {
       expect(w.result(PHONE, 2)!.outcome).toMatchObject({ kind: "applied" });
     } finally { await w.close(); }
   });
+
+  it("a local command under another origin is not stamped: B decides it as read and refuses it", async () => {
+    const w = await world();
+    try {
+      await w.fromWindow(1, send("a local client posing as the phone"), { origin: PHONE });
+      await until(() => w.result(PHONE, 1), { what: "the refusal" });
+      expect(w.seenAtB[0]!.scope).toBe("local");
+      expect(w.result(PHONE, 1)!.outcome).toMatchObject({ kind: "refused", reason: "scope" });
+      expect(w.applied).toEqual([]);
+    } finally { await w.close(); }
+  });
 });
 
 describe("M7-12a: the pieces", () => {
@@ -170,6 +181,13 @@ describe("M7-12a: the pieces", () => {
     for (const scope of ["read", "reply", "approve", "manage"] as const) expect(windowForward(stamped(scope))).toEqual({ envelope: stamped(scope) });
     expect(windowForward({ ...stamped("local"), cmd: adminCmd })).toHaveProperty("refusal");
     expect(windowForward({ ...stamped("local"), cmd: machineCmd })).toHaveProperty("refusal");
+    // A local command whose origin is not the window's (another local client naming a phone or a server) is not
+    // stamped: B decides it as `read`, so a local token at A never borrows that origin's scope at B.
+    for (const origin of [PHONE, "srv-a", "other-local"]) {
+      const other = { ...stamped("local"), slot: slot(origin) };
+      expect(windowForward(other)).toEqual({ envelope: other });
+      expect(windowForward({ ...other, cmd: adminCmd })).toEqual({ envelope: { ...other, cmd: adminCmd } });
+    }
     // A forwarded phone command that states admin is not rewritten either: it stays the owner's to refuse.
     expect(windowForward({ ...stamped("admin"), cmd: adminCmd })).toEqual({ envelope: { ...stamped("admin"), cmd: adminCmd } });
   });
