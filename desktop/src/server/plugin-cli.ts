@@ -2,7 +2,8 @@
 // local socket (pairing/admin-client.ts). The words are the user-approved ones of M5-14b / M5-14d; input and output are
 // injected, so tests drive the same code.
 //
-//   plugins                               one line per plugin: <name>  <tier word>  (code <first 8 of the hash>)
+//   plugins                               one line per plugin: <name>  <tier word>  (code <first 8 of the hash>[, carried
+//                                         from <old 8>][; asks more than code <old 8>: <what grew>; allow it again])
 //   plugins grant <name> --tier <tier>    grants the tier at the plugin's current code, with what it asks for
 import { RowKey } from "../protocol/table-rows";
 import type { AdminClient, CliIo } from "./pairing";
@@ -50,7 +51,11 @@ export async function pluginsCommand(client: AdminClient, io: CliIo, args: strin
 async function listPlugins(client: AdminClient, io: CliIo): Promise<number> {
   try {
     const { plugins } = await client.request({ op: "plugins.list" }) as { plugins: PluginListRow[] };
-    for (const plugin of plugins) io.out(`${shown(plugin.name)}  ${TIER_WORDS[plugin.tier]}  (code ${shown(codeOf(plugin.codeHash))})`);
+    for (const plugin of plugins) {
+      const carried = plugin.carriedFrom ? `, carried from ${shown(codeOf(plugin.carriedFrom))}` : "";
+      const grew = plugin.grewFrom ? `; asks more than code ${shown(codeOf(plugin.grewFrom.codeHash))}: ${shown(plugin.grewFrom.grew.join(", "))}; allow it again` : "";
+      io.out(`${shown(plugin.name)}  ${TIER_WORDS[plugin.tier]}  (code ${shown(codeOf(plugin.codeHash))}${carried}${grew})`);
+    }
     return 0;
   } catch (error) {
     io.out(`cannot list the plugins: ${shown(errorText(error))}`);

@@ -4,6 +4,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { folderHash } from "../../core/plugins/catalog";
 import type { InstalledPlugin } from "../../core/plugins/registry";
+import { carryFactsOf, carryPluginGrant, type CarryFacts } from "./plugin-grant-carry";
 import { RowKey, type AuditRow, type PluginGrant, type PluginRow, type Tier } from "../../protocol/table-rows";
 import type { Db } from "../store";
 import { deleteRow, putRow, readRowBody } from "./tables";
@@ -34,6 +35,8 @@ export interface InstalledPluginInput {
   manifest: PluginRow["manifest"];
   author: PluginRow["author"];
   writtenBy?: { botId: string; at?: number };
+  /** Permissions, parts and source, for carrying a grant across an update (plugin-grant-carry.ts); none: no carry. */
+  facts?: CarryFacts;
 }
 
 export interface InstalledFromRegistryOptions {
@@ -161,6 +164,7 @@ interface CachedPluginHash {
   folder: string;
   builtIn: boolean;
   permissionsKey: string;
+  installedFrom: string | null;
   hasData: boolean;
   statSig: string;
   input: InstalledPluginInput;
@@ -208,6 +212,7 @@ export class PluginHashCache {
         && cached.folder === plugin.folder
         && cached.builtIn === plugin.builtIn
         && cached.permissionsKey === permissionsKey
+        && cached.installedFrom === plugin.installedFrom
         && cached.hasData === hasData
         && cached.statSig === statSig
       ) {
@@ -227,12 +232,14 @@ export class PluginHashCache {
         codeHash,
         manifest: manifestAsks(permissions, { hasData }),
         author: plugin.builtIn ? "builtin" : "user",
+        facts: carryFactsOf(plugin),
       };
       if (statSig !== null) {
         nextCache.set(plugin.manifest.name, {
           folder: plugin.folder,
           builtIn: plugin.builtIn,
           permissionsKey,
+          installedFrom: plugin.installedFrom,
           hasData,
           statSig,
           input,
@@ -269,6 +276,7 @@ export function installedFromRegistry(
       codeHash,
       manifest: manifestAsks(plugin.manifest.ccb?.permissions ?? [], { hasData }),
       author: plugin.builtIn ? "builtin" : nonBuiltInAuthor,
+      facts: carryFactsOf(plugin),
     });
   }
   return out;
@@ -306,7 +314,8 @@ export function prunePluginGrants(
 
 /**
  * Writes changed `plugin:<name>` rows (plus an `audit:plugin-write` row when `writtenBy` is set) and tombstones removed ones in `stream`.
- * Never drops an existing grant on a hash change (C12) beyond the 20-grant limit; built-ins keep a `write` grant at their current hash (§14.4).
+ * Never drops an existing grant on a hash change (C12) beyond the 20-grant limit; built-ins keep a `write` grant at their current hash (§14.4);
+ * a non-built-in's new hash gets the old grant carried when it asks for nothing more (plugin-grant-carry.ts).
  */
 export function reconcilePluginRows(
   tx: Db,
@@ -347,6 +356,14 @@ export function reconcilePluginRows(
       if (!current || (current.grantedBy === "builtin" && current.tier !== "write")) {
         rawGrants[plugin.codeHash] = { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: now };
       }
+    }
+    // A plugin update keeps its grant unless it asks for more (plugin-grant-carry.ts).
+    if (author !== "builtin" && plugin.facts) {
+      const line = carryPluginGrant(tx, stream, {
+        name: plugin.name, codeHash: plugin.codeHash, manifest: plugin.manifest, facts: plugin.facts,
+        prevCodeHash: prev?.codeHash, grants: rawGrants, now, onWritten: options.onWritten,
+      });
+      if (line) options.log?.(line);
     }
     const grants = prunePluginGrants(rawGrants, plugin.codeHash);
 

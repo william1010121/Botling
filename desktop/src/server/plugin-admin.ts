@@ -8,6 +8,7 @@ import type { Command } from "../contract";
 import type { CmdBody, StreamId } from "../protocol";
 import { PluginRow, RowKey } from "../protocol/table-rows";
 import type { IntentRuntime } from "./intents";
+import { carryNoteAt } from "./replica/plugin-grant-carry";
 import { readRowBody } from "./replica/tables";
 import type { Db } from "./store";
 
@@ -21,6 +22,10 @@ export interface PluginListRow {
   tier: GrantTier;
   /** What the plugin's manifest asks for. */
   asks: Exclude<GrantTier, "none">;
+  /** The grant at this hash was carried from an older hash's (the update asked for nothing more). */
+  carriedFrom?: string;
+  /** The update asked for more than the code granted before: needs Allow again; what grew. */
+  grewFrom?: { codeHash: string; grew: string[] };
 }
 
 export type PluginGrantAnswer =
@@ -61,7 +66,14 @@ export class PluginAdmin {
       try { body = JSON.parse(String(row.body)); } catch { continue; }
       const parsed = PluginRow.safeParse(body);
       if (!parsed.success) continue;
-      out.push({ name: String(row.key).slice(7), codeHash: parsed.data.codeHash, tier: grantTierAt(parsed.data), asks: parsed.data.manifest.tier });
+      const name = String(row.key).slice(7);
+      const tier = grantTierAt(parsed.data);
+      const entry: PluginListRow = { name, codeHash: parsed.data.codeHash, tier, asks: parsed.data.manifest.tier };
+      // Truthful only while it still describes the grant: a carried grant later changed by the user is the user's own.
+      const note = carryNoteAt(this.options.reader(), name, parsed.data.codeHash);
+      if (note && !note.grew && tier !== "none" && parsed.data.grants[parsed.data.codeHash]!.at === note.at) entry.carriedFrom = note.from;
+      if (note?.grew && tier === "none") entry.grewFrom = { codeHash: note.from, grew: note.grew };
+      out.push(entry);
     }
     return out;
   }

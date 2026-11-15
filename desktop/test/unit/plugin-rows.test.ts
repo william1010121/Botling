@@ -197,7 +197,8 @@ describe("M5-13b: reconcilePluginRows and pluginsDigestOf", () => {
     const userGrant = { tier: "request" as const, reads: [], requests: ["chat.send" as const], grantedBy: "user" as const, at: 2_000 };
     await writer.submit((tx) => putRow(tx, stream, "plugin:user.tool", { ...existingUser, grants: { [oldUserHash]: userGrant } }));
 
-    // Edit user plugin's web file -> new codeHash, old grant still preserved, new hash has no grant.
+    // Edit user plugin's web file -> new codeHash, old grant still preserved; the new hash asks for nothing more, so the
+    // grant is carried to it (plugin-grant-carry.ts).
     writeFileSync(join(userFolder, "dist", "web.js"), "export const v = 2;\n");
     // Override built-in in library with same version and edited content -> author becomes "user", no builtin grant on new hash, old builtin grant preserved.
     writePlugin(library, "botling.sample", { version: "1.0.0", permissions: ["files"], webCode: "export const b = 2;\n" });
@@ -208,7 +209,7 @@ describe("M5-13b: reconcilePluginRows and pluginsDigestOf", () => {
     const newUserHash = folderHash(userFolder);
     expect(newUserHash).not.toBe(oldUserHash);
     expect(updatedUser.codeHash).toBe(newUserHash);
-    expect(updatedUser.grants).toEqual({ [oldUserHash]: userGrant });
+    expect(updatedUser.grants).toEqual({ [oldUserHash]: userGrant, [newUserHash]: { ...userGrant, at: 3_000 } });
 
     const updatedBuiltin = readRowBody(db, stream, "plugin:botling.sample") as PluginRow;
     const newBuiltinHash = folderHash(join(library, "botling.sample"));
