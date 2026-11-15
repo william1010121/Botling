@@ -80,7 +80,7 @@ import { notePath } from "./bot-note";
 import { unsupportedRequest, type BotRequest } from "./reply";
 import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
-import { Conversations } from "./conversations";
+import { Conversations, type ConversationsDeps, type RemoteMember } from "./conversations";
 import { answeredNote, guestCardAnswerNote, pickedNote, relayedAnswerNote, type GROUP_TIMING } from "./groups";
 import { ComponentsContext } from "./components/service";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
@@ -205,6 +205,10 @@ export interface CoreOptions {
   content?: PluginWorld["content"];
   /** Botling 3's server only (2.x leaves it unset): a bot created or edited a plugin in `<data>/plugins`. */
   pluginWritten?: (name: string, botId: string) => void;
+  /** Botling 3's server only (2.x leaves it unset): peer bots callable with @. */
+  remoteMembers?: () => RemoteMember[];
+  /** Botling 3's server only (2.x leaves it unset): runs a cross-server call-in turn (M5-02c). */
+  remoteTurn?: ConversationsDeps["remoteTurn"];
 }
 
 /** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
@@ -616,6 +620,8 @@ export class Core {
       refreshWaiting: () => this.refreshWaiting(),
       log: (line) => this.log(line),
       timing: options.groupTiming,
+      ...(options.remoteMembers ? { remoteMembers: options.remoteMembers } : {}),
+      ...(options.remoteTurn ? { remoteTurn: options.remoteTurn } : {}),
     });
     this.maintainer = new MaintainerDesk({
       root: options.dataDir,
