@@ -494,6 +494,7 @@ export class Botlingd {
         runMainBot: designated === memberId,
         mainBotMachine: () => (designated === memberId ? null : machineLine(designated)),
         mayRunServerPart: (name, codeHash) => mayRunPluginServerPart(() => hub.reader(), `srv:${serverId}`, name, codeHash),
+        separateHosts: true,
         pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
           read: async (ref, offset, length) => {

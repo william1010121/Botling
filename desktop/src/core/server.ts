@@ -209,6 +209,8 @@ export interface CoreOptions {
   content?: PluginWorld["content"];
   /** Botling 3's server only (2.x leaves it unset): whether a plugin's program part may start at `codeHash` (M5-18a). */
   mayRunServerPart?: (name: string, codeHash: string) => boolean;
+  /** Botling 3's server only (2.x leaves it unset): run each non-built-in plugin's program part in its own host process (M5-18b). */
+  separateHosts?: boolean;
   /** Botling 3's server only (2.x leaves it unset): a bot created or edited a plugin in `<data>/plugins`. */
   pluginWritten?: (name: string, botId: string) => void;
   /** Botling 3's server only (2.x leaves it unset): peer bots callable with @. */
@@ -388,6 +390,7 @@ export class Core {
       timing: host?.timing,
       onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
       ...(options.mayRunServerPart ? { mayRunServerPart: options.mayRunServerPart } : {}),
+      ...(options.separateHosts !== undefined ? { separateHosts: options.separateHosts } : {}),
       ...(options.pluginGrant ? { pluginGrant: options.pluginGrant } : {}),
       world: {
         bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
