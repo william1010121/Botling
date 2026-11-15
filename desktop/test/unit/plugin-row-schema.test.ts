@@ -1,7 +1,9 @@
 // M5-13a: `plugin:<name>` row schema in `srv:` tables (D52, §8.2, Q-C9).
 import { describe, expect, it } from "vitest";
+import { CommandTypeEnum } from "../../src/contract";
 import { canonicalJson } from "../../src/protocol/entries";
 import { decodeWireFrame, encodeWireFrame } from "../../src/protocol/frame";
+import { COMMAND_SCOPES } from "../../src/protocol/scopes";
 import {
   knownRowKey, PluginGrant, PluginRow, rowBodySchema, Rows, TABLE_ROW_CHARS, TableRow, Tier, UnknownRowBody,
 } from "../../src/protocol/table-rows";
@@ -104,6 +106,9 @@ describe("M5-13a: plugin:<name> row schema", () => {
         grants: { [hash]: { ...baseGrant, requests: [type] } },
       })).success, `grant ${type}`).toBe(false);
     }
+
+    // The set a plugin may request (CommandTypeEnum, which the row schema uses) is exactly every command not in scope server.
+    expect([...CommandTypeEnum.options].sort()).toEqual(Object.entries(COMMAND_SCOPES).filter(([, scope]) => scope !== "server").map(([type]) => type).sort());
 
     // Invalid codeHash (root or grant key) and negative/float `at` are refused.
     expect(PluginRow.safeParse(sampleRow({ codeHash: "bad hash!" })).success).toBe(false);

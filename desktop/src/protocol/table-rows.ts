@@ -9,11 +9,10 @@
 // transaction: the reader's table then equals the owner's at `to`. The §8.2 limits (≤ 5 waiting items, ≤ 3 lines of
 // ≤ 140 characters, a small row) are enforced here, so an over-size summary is refused as malformed.
 import { z } from "zod";
-import { BotId, type CommandType, Engine } from "../contract";
+import { BotId, CommandTypeEnum, Engine } from "../contract";
 import { canonicalJson } from "./entries";
 import { ContentId, EntryHash, Id, LogId, Seq, ServerId } from "./ids";
 import { SubTag } from "./messages";
-import { COMMAND_SCOPES } from "./scopes";
 
 /** At most this many waiting items in a bot's summary (§8.2, §20). */
 export const SUMMARY_WAITING_LIMIT = 5;
@@ -122,7 +121,12 @@ export type Tier = z.infer<typeof Tier>;
 const PluginCodeHash = z.string().min(1).max(100).regex(/^[A-Za-z0-9:_.-]+$/);
 const PluginManifestItem = z.string().max(200);
 const PluginManifestList = z.array(PluginManifestItem).max(100);
-const PluginCommandType = z.enum((Object.keys(COMMAND_SCOPES) as CommandType[]).filter((type) => COMMAND_SCOPES[type] !== "server") as [CommandType, ...CommandType[]]);
+/**
+ * What a plugin may request: every command except the server-scope ones (call-ins, M5-01). `CommandTypeEnum` is exactly that set
+ * (server-scope commands sit outside `BASE_COMMANDS`) and is the type `plugin.grant.requests` uses, so a grant built from a manifest
+ * typechecks with no cast. plugin-row-schema.test.ts pins it equal to "COMMAND_SCOPES without scope server".
+ */
+const PluginCommandType = CommandTypeEnum;
 
 /** One per-codeHash grant recorded in a `plugin:<name>` row (D52, §8.2). */
 export const PluginGrant = z.strictObject({
