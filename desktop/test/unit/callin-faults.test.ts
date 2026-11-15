@@ -80,7 +80,7 @@ const callInRows = (): CallInRow[] => withDb(b, (db) => (db.prepare("SELECT stat
   .map((row) => { const payload = JSON.parse(row.payload) as { asked: string; replied: boolean }; return { state: row.state, replied: payload.replied, asked: payload.asked }; }));
 /** The `callin:gaveup:` rows in A's `meta` (M5-03a: one per call-in A gave up on, used up by its late reply). */
 const gaveUpRows = (): number => withDb(a, (db) => Number((db.prepare("SELECT COUNT(*) AS n FROM meta WHERE key LIKE 'callin:gaveup:%'").get() as { n: number }).n));
-/** A's stopped data folder: drops the queued `callin.cancel` rows and steps each target's slot counter back (a crash before the submit). */
+/** A's stopped data folder: drops the queued `callin.cancel` rows (queue row, pending key) and steps each target's slot counter back: what a crash before the submit's transaction leaves. */
 function dropQueuedCancels(): number {
   const db = new DatabaseSync(join(a.dataDir, "server.db"));
   try {
@@ -92,6 +92,8 @@ function dropQueuedCancels(): number {
       // Only the newest slot of its target can be taken back without a gap (every run of this wave has a guest of its own).
       if (!mine || Number(mine.nextN) !== Number(row.n) + 1) throw new Error(`the cancel ${row.target}#${row.n} is not the newest slot of its target (nextN ${mine?.nextN})`);
       db.prepare("DELETE FROM forwardq WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ?").run(row.origin, row.originEpoch, row.target, row.n);
+      // `ServerOrigin.submit` commits the queue row, the slot counter and this pending key in one transaction; a crash before it leaves none.
+      db.prepare("DELETE FROM meta WHERE key = ?").run(`serverOrigin:${row.originEpoch}:${row.target}:${row.n}`);
       db.prepare("UPDATE myorigins SET nextN = ? WHERE target = ? AND originEpoch = ?").run(row.n, row.target, row.originEpoch);
     }
     db.exec("COMMIT");
