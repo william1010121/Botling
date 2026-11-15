@@ -321,3 +321,51 @@ describe("no set accessor in a bridge block (check-lines)", () => {
     } finally { rmSync(repo, { recursive: true, force: true }); }
   });
 });
+
+// The two mutants of the M7-S58 review that no test killed (.bot/artifacts/v3-split/M7-S58-review.md, x5 and x6): writes moved byte
+// for byte by S58, asserted here so a change to them shows.
+describe("restart flags the M7-S58 review found unguarded", () => {
+  const REASON = { told: "restarted", shown: "restart" };
+
+  it("x5, consumed: the folder restart no longer waits once its head is ended for it, though the new head has not started yet", () => {
+    const { peek } = rig("claude"); const r = peek.restarts; const old: any = { id: "old" };
+    r.folderPending = true; r.restartPending = true; r.restartNonModel = true; r.restartForPluginsOnly = true; r.restartReason = REASON;
+    expect(peek.consumeRestart(old)).toBe(REASON);
+    expect(r.folderPending).toBe(false); expect(r.restartPending).toBe(false); expect(r.restartNonModel).toBe(false);
+    expect(r.restartForPluginsOnly).toBe(false); expect(r.restarting).toBe(old); expect(r.restartReason).toBeNull();
+  });
+
+  it("x5, in flight: while the old head has not exited, the message that ended it has taken the folder restart (no new head yet)", async () => {
+    const A = rig("claude");
+    A.b.send("one"); await A.sent(0, 1); A.reply(0, "ok"); await waitFor("the first turn to end", () => !A.peek.turn);
+    A.head(0).exited = new Promise(() => {});
+    A.peek.restartFor(REASON, false, true);
+    expect(A.peek.restarts.folderPending).toBe(true);
+    A.b.send("two");
+    await waitFor("the restart to be taken", () => A.peek.restarts.restartPending === false);
+    expect(A.peek.restarts.folderPending).toBe(false);
+    expect(fixture.heads).toHaveLength(1);
+  });
+
+  it("x6, request: it clears restartForPluginsOnly first, asleep or awake", () => {
+    const A = rig("claude"); const r = A.peek.restarts;
+    expect(A.peek.head?.running).toBeFalsy();
+    r.restartForPluginsOnly = true; r.restartPending = true; r.folderPending = true;
+    A.peek.restartFor(REASON);
+    expect(r.restartForPluginsOnly).toBe(false); expect(r.restartPending).toBe(false); expect(r.folderPending).toBe(false);
+    // Awake: a head is running; the flag is cleared and the restart waits.
+    A.peek.head = { running: true } as any;
+    r.restartForPluginsOnly = true;
+    A.peek.restartFor(REASON);
+    expect(r.restartForPluginsOnly).toBe(false); expect(r.restartPending).toBe(true);
+    A.peek.head = null;
+  });
+
+  it("x6, through reloadPlugins: an only-plugins restart still flagged, then a restart asked asleep, leaves no only-plugins flag", () => {
+    const A = rig("claude"); const r = A.peek.restarts;
+    r.restartPending = true; r.restartForPluginsOnly = true; r.restartReason = REASON;
+    expect(A.peek.head?.running).toBeFalsy();
+    A.peek.restartFor({ told: "other", shown: "other" });
+    expect(r.restartForPluginsOnly).toBe(false); expect(r.restartPending).toBe(false);
+  });
+});
