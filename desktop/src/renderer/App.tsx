@@ -6,6 +6,9 @@ import { useComposerBar } from "./ComposerBar";
 // frame (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts what the user does
 // (send, a pick on an approval, Stop); this page turns that into contract commands. Only this page has the bridge to main.
 import { ShellFrame } from "./shell/ShellFrame";
+import { RailSlot } from "./SidebarRail";
+import { RAIL_SLOT } from "./sidebar-names";
+import { useRailLayout, type LayoutKey, type RailLayout } from "./sidebar-layout";
 import { openReport } from "./report-opener";
 import { askChatToQuote, setComposerQuoter } from "./composer-quote";
 import { shellOverlayActive } from "./ShellOverlay";
@@ -14,31 +17,28 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { status, statusText } from "../contract/bot-status";
 import { commandBindings, formatCombo } from "../contract/shortcuts";
 import { say, setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
-import { isMaintainer, resultLinks, type BotView, type ResultView, type RoutineView, type SubagentRowView } from "../contract";
+import { isMaintainer, resultLinks, type BotView, type ResultView, type RoutineView, type SettingsChange, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { browserTabActions, browserTabAddress, keybindingsOf, menuItems } from "./plugin-commands";
 import { sameHeldColors, setBotColors } from "./avatars";
-import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame } from "./Plugins";
+import { MainTabFrame, PanelFrame, SlotFrame } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
 import { composerBarFor, mainTabsFor, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { StorageTab } from "./StorageTab";
-import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
-import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
-import { botCounts, canIdle, idleCounts, idleList, railSplit } from "./rail-idle";
-import { markViewed, railWords, railWorkers, readOpenJobs, readRailFold, readRailSince, readViewedWorkers, seenInChat, toggleOpenJob, toggleRailFold, type RailFold, type RailMarks } from "./rail-workers";
-import { RailWorkerList, type RailWorkerActions } from "./RailWorkers";
+import { idleList } from "./rail-idle";
+import { markViewed, readViewedWorkers, seenInChat } from "./rail-workers";
 import { SubBotNav } from "./SubBotNav";
 import { flashMs, headerNav, leaveMark, movePinned, newSubBotAsk, NEW_SINCE_PREFIX, pinnedTarget, rememberRoom, roomStep, togglePinned, type LastRooms } from "./sub-bot-nav";
 import { useAppKeys, useBottomControls, useBuiltinRunner } from "./app-hooks";
 import { PINNED_KEYS, leaveMarks, useWhiteboardChoice, type WebChrome } from "./app-shared";
 export type { WebChrome } from "./app-shared";
 import { ChatFrame } from "./chat-frame/ChatFrame";
-import { BotRow, focusComposer, RailStrip, RailToggle, rowTarget, runPluginCommand, searchHits, SubBotTitle } from "./rail-parts";
+import { focusComposer, rowTarget, runPluginCommand, SubBotTitle } from "./rail-parts";
 export { BotRow, focusComposer, railMatches, RailStrip, rowTarget, runPluginCommand, SubBotTitle } from "./rail-parts";
-import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, SubBotMenu, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
+import { AgentMenu, BotMenu, CloseSubBotDialog, RemoveDialog, SubBotMenu, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { useApprovalSheet } from "./ApprovalSheet";
 import { WorkerAskBar, WorkersBadge, WorkersMenu } from "./Workers";
@@ -110,42 +110,39 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (web || !current.chat?.botId) return;
     browserStore.toggle(current.chat.botId);
   }, [store, web]);
-  // The left column: folded into a strip of faces (⌃⌘S), its search (⌘K) and the pinned bots (1.x's RailView).
-  const railCollapsed = view.settings?.railCollapsed ?? false;
+  // The left column: folded into a strip of faces (⌃⌘S), its search (⌘K) and the pinned bots (1.x's RailView). Its layout (folded, pinned,
+  // Idle) is the sidebar plugin's (M7-05a): kept in the shell's storage while the plugin is up, in the settings keys otherwise.
+  const writeLayout = useCallback((key: LayoutKey, value: RailLayout[LayoutKey]) => {
+    void client.request({ type: "settings.set", change: { key, value } as SettingsChange }).catch(() => {});
+  }, [client]);
+  const { layout, read: readLayout, change: changeLayout } = useRailLayout(view.settings, !web, writeLayout);
+  const railCollapsed = layout.railCollapsed;
   const toggleRail = useCallback((collapse?: boolean) => {
-    const next = collapse ?? !(store.getView().settings?.railCollapsed ?? false);
-    void client.request({ type: "settings.set", change: { key: "railCollapsed", value: next } }).catch(() => {});
-  }, [client, store]);
+    changeLayout((now) => ({ railCollapsed: collapse ?? !now.railCollapsed }));
+  }, [changeLayout]);
   const [query, setQuery] = useState("");
   const search = useRef<HTMLInputElement>(null);
   const startSearch = useCallback(() => {
-    if (store.getView().settings?.railCollapsed) toggleRail(false);
+    if (readLayout().railCollapsed) toggleRail(false);
     // After the open column (and its field) is drawn.
     setTimeout(() => search.current?.focus(), 50);
-  }, [store, toggleRail]);
+  }, [readLayout, toggleRail]);
   const pinned = useMemo(() => {
-    const ids = view.settings?.pinnedBots ?? [];
-    return ids.filter((id) => view.bots.some((candidate) => candidate.id === id && candidate.role !== "main" && !isMaintainer(candidate)));
-  }, [view.settings?.pinnedBots, view.bots]);
+    return layout.pinnedBots.filter((id) => view.bots.some((candidate) => candidate.id === id && candidate.role !== "main" && !isMaintainer(candidate)));
+  }, [layout.pinnedBots, view.bots]);
   const togglePin = useCallback((botId: string) => {
-    const now = (store.getView().settings?.pinnedBots ?? []).filter((id) => store.getView().bots.some((candidate) => candidate.id === id));
-    const next = now.includes(botId) ? now.filter((id) => id !== botId) : [...now, botId];
-    void client.request({ type: "settings.set", change: { key: "pinnedBots", value: next } }).catch(() => {});
-  }, [client, store]);
+    changeLayout((current) => {
+      const now = current.pinnedBots.filter((id) => store.getView().bots.some((candidate) => candidate.id === id));
+      return { pinnedBots: now.includes(botId) ? now.filter((id) => id !== botId) : [...now, botId] };
+    });
+  }, [changeLayout, store]);
   // Idle (the left column's bottom group): only the user sends a bot there, with the clock on its row; the back arrow brings it back.
-  const idle = view.settings?.idleBots ?? [];
-  const [idleOpen, setIdleOpen] = useState(false);
+  const idle = layout.idleBots;
   const setIdle = useCallback((botId: string, away: boolean) => {
-    const now = (store.getView().settings?.idleBots ?? []).filter((id) => store.getView().bots.some((candidate) => candidate.id === id));
-    void client.request({ type: "settings.set", change: { key: "idleBots", value: idleList(now, botId, away) } }).catch(() => {});
-  }, [client, store]);
-  // The worker list under each bot row (rail-workers.ts): finished workers you opened, the list's first start (older ones
-  // count as opened), the fold (kept across restarts) and the bots whose "N more" is open (this window only).
+    changeLayout((current) => ({ idleBots: idleList(current.idleBots.filter((id) => store.getView().bots.some((candidate) => candidate.id === id)), botId, away) }));
+  }, [changeLayout, store]);
+  // Finished workers you opened (the left column's worker lists, rail-workers.ts).
   const [viewedWorkers, setViewedWorkers] = useState<ReadonlySet<string>>(() => readViewedWorkers());
-  const [railSince] = useState(() => readRailSince(Date.now()));
-  const [railFold, setRailFold] = useState<RailFold>(() => readRailFold());
-  const [railAll, setRailAll] = useState<ReadonlySet<string>>(() => new Set());
-  const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(() => readOpenJobs());
   // Navigation v5: the Sub bots menu left of Chat | Storage (⌘⇧S), and ⌘[ / ⌘] between a project bot and the
   // sub bot last shown under it (kept for this window only, never in a bot's context).
   const [subBotsOpen, setSubBotsOpen] = useState(false);
@@ -466,125 +463,22 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (bot && bot.unread > 0) void client.request({ type: "chat.read", botId: bot.id }).catch(() => {});
   }, [client, bot]);
 
-  return <ShellFrame plugins={view.plugins} legacy={(
+  return <ShellFrame plugins={view.plugins} inline={[RAIL_SLOT]} legacy={(
     <div className={`shell${paneOpen ? " browser-on" : ""}${browserFull ? " browser-full" : ""}${browserDocked ? " browser-mini" : ""}${browserFloat ? " browser-float" : ""}`} data-ready={view.ready ? "1" : "0"}>
       {/* A panel a plugin's program part opened (`ui.openView`). */}
       {!web && view.pluginPanel && (
         <PanelFrame key={`${view.pluginPanel.plugin}/${view.pluginPanel.panel}`} client={client} plugin={view.pluginPanel.plugin} panel={view.pluginPanel.panel}
           title={view.pluginPanel.title} onClose={() => store.closePluginPanel()} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />
       )}
-      {railCollapsed ? (
-        <RailStrip bots={view.bots} pinned={pinned} idle={idle} look={view.settings?.botLook ?? "original"} shown={!watching ? chat?.botId ?? null : null}
-          waiting={(id) => view.waiting.items.some((item) => item.botId === id)}
-          onSelect={selectBot} onMenu={(candidate, x, y) => setMenu({ bot: candidate, x, y })}
-          onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }}
-          settingsControl={web ? null : <SidebarSettings compact client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />} />
-      ) : (
-      <aside className="rail">
-        <div className="rail-top drag"><RailToggle collapsed={false} onToggle={() => toggleRail(true)} /></div>
-        <div className="rail-search">
-          <Icon name="search" size={13} className="rail-search-icon" />
-          <input ref={search} type="search" placeholder="Search" aria-label="Search bots" value={query} onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") { event.preventDefault(); setQuery(""); search.current?.blur(); focusComposer(); }
-              if (event.key === "Enter") { const first = searchHits(view.bots, pinned, query)[0]; if (first) { selectBot(first.id); setQuery(""); focusComposer(); } }
-            }} />
-          {!query && <span className="rail-search-key" aria-hidden="true">{shortcutLabel("search")}</span>}
-        </div>
-        <nav className="bots" aria-label="Bots">
-          {query.trim() ? (() => {
-            const hits = searchHits(view.bots, pinned, query);
-            if (!hits.length) return <div className="rail-empty">No bots match</div>;
-            return hits.map((candidate) => (
-              <div key={candidate.id} className="bot-entry">
-                  <BotRow bot={candidate} look={view.settings?.botLook ?? "original"} selected={candidate.id === chat?.botId && !watching}
-                    waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
-                    counts={botCounts(candidate, view.bots, view.waiting, candidate.id === chat?.botId && !watching)}
-                    onSelect={() => { selectBot(candidate.id); setQuery(""); focusComposer(); }} />
-              </div>
-            ));
-          })() : (
-            <>
-              {(() => {
-                const look = view.settings?.botLook ?? "original";
-                const split = railSplit(view.bots, pinned, idle);
-                const shownId = !watching ? chat?.botId ?? null : null;
-                const lang = view.settings?.effectiveLanguage ?? null;
-                const words = railWords(lang);
-                const workerMarks: RailMarks = { viewed: viewedWorkers, since: railSince, watching: watching && chat?.botId ? { botId: chat.botId, id: watching } : null,
-                  folded: new Set(railFold.folded), all: railAll, jobsOpen: openJobs };
-                const workerActions: RailWorkerActions = {
-                  onOpen: openSubagent,
-                  onSettle: (ownerId, workerRow) => settleSubagent(ownerId, workerRow, true),
-                  onAll: (key) => setRailAll((current) => { const next = new Set(current); if (!next.delete(key)) next.add(key); return next; }),
-                  onToggleJob: (key) => setOpenJobs(toggleOpenJob(key)),
-                };
-                const row = (candidate: BotView, away: boolean) => {
-                  const counts = botCounts(candidate, view.bots, view.waiting, candidate.id === shownId);
-                  const list = railWorkers(candidate, view.bots, now, workerMarks);
-                  return (<>
-                    <BotRow
-                      bot={candidate}
-                      look={look}
-                      selected={(candidate.id === chat?.botId || (!!bot?.parent && candidate.id === bot.parent)) && !watching}
-                      inside={bot?.parent === candidate.id && !watching ? bot.name : undefined}
-                      waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
-                      counts={counts}
-                      // A click opens the chat; its workers are listed under the row (no card on hover any more).
-                      onSelect={() => selectBot(candidate.id)}
-                      workers={list.total > 0 ? {
-                        total: list.total, unread: list.unread, folded: list.folded, unreadTip: words.unread(list.unread),
-                        label: list.folded ? words.unfold(candidate.name, list.total) : words.fold(candidate.name),
-                        onToggle: () => setRailFold(toggleRailFold(candidate.id)),
-                      } : undefined}
-                      pinned={!away && canIdle(candidate) ? pinned.includes(candidate.id) : undefined}
-                      onTogglePin={() => togglePin(candidate.id)}
-                      idle={canIdle(candidate) ? { away, onToggle: () => setIdle(candidate.id, !away) } : undefined}
-                      onMenu={candidate.role !== "main" && !isMaintainer(candidate) ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
-                    />
-                    {list.items.length > 0 && <RailWorkerList botId={candidate.id} list={list} name={candidate.name} now={now} lang={lang} actions={workerActions} />}
-                  </>);
-                };
-                const idleNumbers = idleCounts(split.idle, view.bots, view.waiting);
-                return <>
-                  {split.rows.map(({ bot: candidate, section }) => (
-                    <div key={candidate.id} className="bot-entry">
-                      {section === "pinned" && <h4 className="rail-section">Pinned</h4>}
-                      {section === "rest" && split.rows.some((entry) => entry.section === "pinned") && <div className="rail-rule" />}
-                      {row(candidate, false)}
-                    </div>
-                  ))}
-                  {split.idle.length > 0 && <div className="rail-idle">
-                    <button type="button" className="rail-idle-row" aria-expanded={idleOpen} onClick={() => setIdleOpen(!idleOpen)}
-                      aria-label={`Idle, ${idleNumbers.bots} bot${idleNumbers.bots === 1 ? "" : "s"}`}>
-                      <span className={`rail-idle-chevron${idleOpen ? " open" : ""}`} aria-hidden="true"><Icon name="chevronLeft" size={11} /></span>
-                      <span>Idle</span>
-                      <span className="bot-gap" />
-                      <span className="rail-idle-count">{idleNumbers.bots} bot{idleNumbers.bots === 1 ? "" : "s"}</span>
-                    </button>
-                    {idleOpen && split.idle.map((candidate) => <div key={candidate.id} className="bot-entry">{row(candidate, true)}</div>)}
-                  </div>}
-                </>;
-              })()}
-            </>
-          )}
-        </nav>
-        {web ? <div className="rail-settings web-rail-footer">{web.railFooter}</div> : <>
-        {makingBot && <NewBotForm onDone={createBot} busy={creating} />}
-        <div className="rail-add">
-          <button type="button" className="rail-button" onClick={addProject}><Icon name="plus" size={13} />Add project</button>
-          <button type="button" className={`rail-button new-bot-button${makingBot ? " on" : ""}`} onClick={() => setMakingBot(!makingBot)}
-            title="A bot of its own, with its own memory and routines (a morning news bot, say)"><Icon name="sparkles" size={13} />New bot</button>
-        </div>
-        <UpdateEntry client={client} />
-        <PluginsButton client={client} plugins={view.plugins} bots={view.bots} lang={view.settings?.effectiveLanguage ?? null} onAsked={() => { const maintainer = store.getView().bots.find(isMaintainer); if (maintainer) void store.select(maintainer.id); }}
-          onShowMain={() => { const main = view.bots.find((one) => one.role === "main"); if (main) void store.select(main.id); }} />
-        <div className="rail-settings">
-          <SidebarSettings client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />
-        </div>
-        </>}
-      </aside>
-      )}
+      {/* The left column: the sidebar plugin's contribution to `app/rail` (SidebarRail.tsx), drawn here, inside the page's own layout. */}
+      <RailSlot value={{
+        client, view, web, now, collapsed: railCollapsed, pinned, idle, chatBotId: chat?.botId ?? null, bot, watching,
+        query, setQuery, search, makingBot, setMakingBot, creating, viewedWorkers, settingsOpen,
+        onOpenSettings: openSettings, onCreateBot: createBot, onSelectBot: selectBot, onAddProject: addProject, onToggleRail: toggleRail, onTogglePin: togglePin, onSetIdle: setIdle,
+        onMenu: (candidate, x, y) => setMenu({ bot: candidate, x, y }), onOpenSubagent: openSubagent, onSettleSubagent: settleSubagent,
+        onAsked: () => { const maintainer = store.getView().bots.find(isMaintainer); if (maintainer) void store.select(maintainer.id); },
+        onShowMain: () => { const main = view.bots.find((one) => one.role === "main"); if (main) void store.select(main.id); },
+      }} />
       {!railCollapsed && <ColumnDivider column="rail" />}
       <section className="chat-pane">
         <div className={`chat-column${tab || storageOn ? " main-tab-on" : ""}`}>

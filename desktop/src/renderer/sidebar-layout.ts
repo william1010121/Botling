@@ -167,20 +167,28 @@ export class RailLayoutStore {
 export const railLayout = new RailLayoutStore();
 
 /**
- * The layout the column draws, and how to change it. `settings`: the page's settings (the old keys). `device`: false for a page of
+ * The layout the column draws, how to change it (a patch, or a function of the layout as it is right now) and how to read it right now
+ * (for a handler, which may run before the next draw). `settings`: the page's settings (the old keys). `device`: false for a page of
  * Botling Web, whose layout is the bridge's. `write` sends one key to `settings.set`.
  */
-export function useRailLayout(settings: Partial<Record<LayoutKey, unknown>> | null | undefined, device: boolean, write: Mirror): { layout: RailLayout; change: (patch: Partial<RailLayout>) => void } {
+export function useRailLayout(settings: Partial<Record<LayoutKey, unknown>> | null | undefined, device: boolean, write: Mirror): {
+  layout: RailLayout; read: () => RailLayout; change: (patch: Partial<RailLayout> | ((now: RailLayout) => Partial<RailLayout>)) => void;
+} {
   useSyncExternalStore(railLayout.subscribe, railLayout.version, railLayout.version);
   const sign = settings ? JSON.stringify(layoutOfSettings(settings)) : null;
   const legacy = useMemo(() => layoutOfSettings(settings), [sign]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (device && sign !== null) railLayout.observe(legacy); }, [device, sign, legacy]);
+  const layout = (device ? railLayout.current() : null) ?? legacy;
   const writer = useRef(write);
   writer.current = write;
-  const change = useCallback((patch: Partial<RailLayout>) => {
+  const drawn = useRef(legacy);
+  drawn.current = legacy;
+  const read = useCallback((): RailLayout => (device ? railLayout.current() : null) ?? drawn.current, [device]);
+  const change = useCallback((patch: Partial<RailLayout> | ((now: RailLayout) => Partial<RailLayout>)) => {
     const mirror: Mirror = (key, value) => writer.current(key, value);
-    if (device && railLayout.change(patch, mirror)) return;
-    for (const key of LAYOUT_KEYS) if (key in patch) mirror(key, patch[key]!);
-  }, [device]);
-  return { layout: (device ? railLayout.current() : null) ?? legacy, change };
+    const next = typeof patch === "function" ? patch(read()) : patch;
+    if (device && railLayout.change(next, mirror)) return;
+    for (const key of LAYOUT_KEYS) if (key in next) mirror(key, next[key]!);
+  }, [device, read]);
+  return { layout, read, change };
 }

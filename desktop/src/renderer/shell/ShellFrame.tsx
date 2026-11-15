@@ -11,6 +11,9 @@
 // The frame also holds the shell's in-page loader (inpage-host.ts, M7-02c): the built-in plugins the FE build shipped are loaded into
 // the kernel while it is up and unloaded when it goes.
 //
+// A slot the legacy page draws itself, inside its own layout, is left out of the frame's list (`inline`; M7-05a: the left column,
+// `app/rail`, sits beside the chat pane in the page's flex row, so the page places it: shell/SidebarRail.tsx `RailSlot`).
+//
 // The contribution reads the page through a ref the frame keeps current, so it is registered once, not on every render of App;
 // it is registered while the frame renders (the first draw already holds it) and taken back when the frame unmounts.
 import { useEffect, useRef, type ReactNode } from "react";
@@ -32,7 +35,7 @@ export function contributeToShell(slot: string, entry: SlotEntry): (() => void) 
 
 let framesMade = 0;
 
-export function ShellFrame({ legacy, frames: services, plugins = null }: { /** The whole page as App draws it today. */ legacy: ReactNode; frames?: SlotFrames; /** The plugin list App has now (null: none yet). */ plugins?: PluginsView | null }) {
+export function ShellFrame({ legacy, frames: services, plugins = null, inline = [] }: { /** The whole page as App draws it today. */ legacy: ReactNode; frames?: SlotFrames; /** The plugin list App has now (null: none yet). */ plugins?: PluginsView | null; /** Root slots the page draws itself (not drawn again here). */ inline?: readonly string[] }) {
   // A name for this frame's entries (not useId: that would move the ids every other component of the page gets).
   const named = useRef("");
   const scope = (named.current ||= `shell-${++framesMade}`);
@@ -53,5 +56,5 @@ export function ShellFrame({ legacy, frames: services, plugins = null }: { /** T
   useEffect(() => inPageHost.acquire(), []);
   // The kernel did not take the page (the shell instance is not up): the page is drawn directly rather than not at all.
   if (!take.current) return <>{legacy}</>;
-  return <>{ROOT_SLOTS.map((slot) => <KernelSlot key={slot} slot={slot} scope={scope} {...(services ? { frames: services } : {})} />)}</>;
+  return <>{ROOT_SLOTS.filter((slot) => !inline.includes(slot)).map((slot) => <KernelSlot key={slot} slot={slot} scope={scope} {...(services ? { frames: services } : {})} />)}</>;
 }
