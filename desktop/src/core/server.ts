@@ -78,7 +78,7 @@ export class Core {
   agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
   /** The next event number: the one transition that moves `seq` (the collaborators ask for it, they do not set it). */
-  nextSeq() { return ++this.seq; }
+  nextSeq() { return ++this.coreEvents.seq; }
   activated = false;
   readonly ledger: ProcessLedger;
   /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
