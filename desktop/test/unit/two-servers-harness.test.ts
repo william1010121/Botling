@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Entry, Message, MessageOf, Slot } from "../../src/protocol";
 import { generateDhKeyPair, SessionLink, type LocalStatic, type SessionEnd, type SessionTransport } from "../../src/session";
-import { MAIN } from "../botlingd-harness";
+import { mainBotOf } from "../botlingd-harness";
 import { sleep, until } from "../helpers";
 import { FaultProxy } from "../support/fault-proxy";
 import { dialFramed, framedEcho, framedServer, LOOPBACK, type FramedConnection, type FramedServer } from "../support/framed";
@@ -80,6 +80,7 @@ describe("two-server harness: two botlingd on loopback", () => {
       const client = await server.client("script", `${server.name === "A" ? "a" : "b"}`.repeat(32));
       await client.sub(client.srv);
       const srvSnap = await client.wait((m): m is MessageOf<"snap"> => m.t === "snap" && m.stream === client.srv, "srv snap");
+      const MAIN = mainBotOf(server.dataDir); // each server minted its own main bot (M5-04g)
       const stream = `bot:${MAIN}`;
       await client.sub(stream);
       await client.wait((m): m is MessageOf<"snap"> => m.t === "snap" && m.stream === stream, "bot snap");
@@ -110,10 +111,12 @@ describe("two-server harness: two botlingd on loopback", () => {
       again.close();
 
       // The other server's store never saw it.
+      const otherMain = mainBotOf(other.dataDir);
+      expect(otherMain).not.toBe(MAIN);
       const look = await other.client("look", "c".repeat(32));
-      await look.sub(stream, null);
-      await look.wait((m): m is MessageOf<"snap"> => m.t === "snap" && m.stream === stream, "other bot snap");
-      const shown = await look.req({ type: "chat.snapshot", botId: MAIN });
+      await look.sub(`bot:${otherMain}`, null);
+      await look.wait((m): m is MessageOf<"snap"> => m.t === "snap" && m.stream === `bot:${otherMain}`, "other bot snap");
+      const shown = await look.req({ type: "chat.snapshot", botId: otherMain });
       expect(JSON.stringify(shown)).not.toContain(marker);
       look.close();
     }
