@@ -81,6 +81,11 @@ export class PluginHostClient {
   onPluginFailure: (plugin: string | null, message: string, fatal: boolean) => void = () => {};
   /** Registered hooks or commands changed. */
   onRegistered: () => void = () => {};
+  /**
+   * Asked right before the host starts again after it exited (M5-18a): the plugins' files may have changed since the
+   * last `update`, so what it runs is decided again (it may call `update`, which then starts the host itself).
+   */
+  beforeRestart: (() => void) | null = null;
 
   private specs: HostSpec[] = [];
   /** The plugins the host's last load ran (not the ones that failed). */
@@ -115,6 +120,16 @@ export class PluginHostClient {
     if (!specs.length) this.stop();
     else if (!this.process) this.start();
     else if (this.running) void this.load();
+  }
+
+  /**
+   * Ends the running host and starts a fresh one for `specs` (M5-18a: a plugin lost its grant or its granted code; Node
+   * cannot unload an ES module, so an unload would leave that module's own timers and sockets running).
+   */
+  replace(specs: HostSpec[]) {
+    this.specs = specs;
+    if (this.process) this.stop();
+    else if (specs.length) this.start();
   }
 
   stop() {
@@ -325,7 +340,7 @@ export class PluginHostClient {
     this.events.clear();
     for (const id of [...this.pending.keys()]) this.finish(id, new Error("The plugin host exited."));
     if (this.stopping) {
-      if (!this.shutDown && this.specs.length) this.start();
+      if (!this.shutDown && this.specs.length) this.restart();
       return;
     }
     const status = signal ?? code ?? "?";
@@ -335,9 +350,14 @@ export class PluginHostClient {
     this.restarts++;
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      if (!this.process && !this.stopping && this.specs.length) this.start();
+      if (!this.process && !this.stopping && this.specs.length) this.restart();
     }, this.timing.restartDelay);
     this.restartTimer.unref?.();
+  }
+
+  private restart() {
+    this.beforeRestart?.();
+    if (!this.process && !this.shutDown && this.specs.length) this.start();
   }
 
   private write(message: HostMessage) {

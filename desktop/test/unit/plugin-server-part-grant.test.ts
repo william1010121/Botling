@@ -2,7 +2,7 @@
 // or a plugin whose current code hash has a `write` grant on this server (D56, §18.3, §4.1 check 4).
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PluginsView } from "../../src/contract";
@@ -12,7 +12,8 @@ import { WorkspaceSource } from "../../src/core/workspace";
 import { PluginsPanel } from "../../src/renderer/Plugins";
 import type { Client } from "../../src/renderer/client";
 import { ResAssembler, type Message, type MessageOf, type Slot } from "../../src/protocol";
-import { Botlingd } from "../../src/server/botlingd";
+import { Botlingd, mayRunPluginServerPart } from "../../src/server/botlingd";
+import type { Db } from "../../src/server/store";
 import { botlingdEnv, ScriptClient, testRoot } from "../botlingd-harness";
 import { desktop, until } from "../helpers";
 
@@ -413,4 +414,120 @@ export function activate(ccb) {
     expect(unit.plugins.view().plugins.find((p) => p.name === "legacy.tool")?.failure).toBeNull();
     expect(await unit.plugins.command("legacy.tool.ping")).toBe("pong:legacy.tool");
   });
+});
+
+describe("M5-18a review: the grant is read at the folder's current hash, and nothing runs code it no longer may", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => { while (cleanups.length) await cleanups.pop()!(); });
+
+  const row = (author: string, codeHash: string, grants: Record<string, { tier: string }>) => JSON.stringify({
+    codeHash,
+    manifest: { tier: "write", reads: [], requests: [], owns: [], provides: [], requires: [], uses: [], clients: [], needsShell: [] },
+    author,
+    grants: Object.fromEntries(Object.entries(grants).map(([hash, grant]) => [hash, { reads: [], requests: [], grantedBy: "user", at: 1, ...grant }])),
+  });
+  const db = (rows: Record<string, string>): (() => Db) => () => ({
+    prepare: () => ({ get: (stream: string, key: string) => (stream === "srv:s" && rows[key] !== undefined ? { body: rows[key], deleted: 0 } : undefined) }),
+  }) as unknown as Db;
+  const may = (rows: Record<string, string>, name: string, hash: string) => mayRunPluginServerPart(db(rows), "srv:s", name, hash);
+
+  it("checks the hash it is given, not the row's, and fails closed", () => {
+    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "write" } }) }, "p", "h1")).toBe(true);
+    // The folder moved on to h2 before reconcile rewrote the row: the grant at h1 does not cover h2.
+    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "write" } }) }, "p", "h2")).toBe(false);
+    // An old hash still granted runs only that old code.
+    expect(may({ "plugin:p": row("user", "h2", { h1: { tier: "write" } }) }, "p", "h1")).toBe(true);
+    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "request" } }) }, "p", "h1")).toBe(false);
+    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "read" } }) }, "p", "h1")).toBe(false);
+    expect(may({ "plugin:p": row("bot", "h1", {}) }, "p", "h1")).toBe(false);
+    // A built-in runs only at the hash its row was written for.
+    expect(may({ "plugin:b": row("builtin", "s1", { s1: { tier: "write" } }) }, "b", "s1")).toBe(true);
+    expect(may({ "plugin:b": row("builtin", "s1", { s1: { tier: "write" } }) }, "b", "s2")).toBe(false);
+    // Missing, malformed, unreadable, or a name with no row key.
+    expect(may({}, "p", "h1")).toBe(false);
+    expect(may({ "plugin:p": JSON.stringify({ codeHash: "h1", author: "user", grants: { h1: { tier: "write" } } }) }, "p", "h1")).toBe(false);
+    expect(mayRunPluginServerPart(() => { throw new Error("closed"); }, "srv:s", "p", "h1")).toBe(false);
+    expect(may({}, "P/../x", "h1")).toBe(false);
+  });
+
+  function plugins(mayRunServerPart: (name: string, codeHash: string) => boolean) {
+    const root = testRoot("spg-review");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const dataDir = join(root, "data");
+    mkdirSync(join(dataDir, "plugins"), { recursive: true });
+    let pid = 0;
+    const unit = new Plugins({
+      dataDir, node: { command: process.execPath }, hostScript: join(desktop, "out", "host", "host.mjs"), builtIns: null, sealer: null,
+      timing: { hook: 1_000, call: 5_000, load: 5_000, ready: 5_000, restartDelay: 100 },
+      onPid: (p, alive) => { if (alive) pid = p; },
+      mayRunServerPart,
+      world: {
+        bots: () => [], send: () => ({ messageId: "m1" }), interrupt: async () => null, notice: () => {}, ask: async () => ({ index: 0 }),
+        openPanel: () => {}, appSettings: () => ({ language: "en", botLook: "original", workerLimit: 4 }), shortcutOverrides: () => ({}),
+        commandApproval: () => null, approveCommand: () => false, commandRun: () => null, component: () => null, imageUrls: () => null,
+        createBot: () => { throw new Error("unused"); }, addRoutine: () => "no-bot", changed: () => {}, broken: () => {}, log: () => {},
+        workspace: emptyWorkspace(), workspaceWatch: () => {},
+      },
+    });
+    cleanups.push(() => unit.shutdown());
+    return { dataDir, unit, pid: () => pid };
+  }
+  const program = (root: string, name: string, files: Record<string, string>, commands: string[] = []) => {
+    const folder = join(root, name);
+    mkdirSync(join(folder, "dist"), { recursive: true });
+    writeFileSync(join(folder, "package.json"), JSON.stringify({ name, version: "1.0.0", engines: { ccb: "^2.0.0" },
+      ccb: { host: "dist/host.mjs", contributes: { commands: commands.map((id) => ({ id, title: id })) } } }));
+    for (const [file, text] of Object.entries(files)) writeFileSync(join(folder, file), text);
+    return folder;
+  };
+
+  it("holds the program part back when the check throws", async () => {
+    const { dataDir, unit } = plugins(() => { throw new Error("no store"); });
+    program(join(dataDir, "plugins"), "p.throws", { "dist/host.mjs": "export function activate() {}\n" });
+    unit.scan();
+    await unit.start();
+    expect(unit.view().plugins.find((p) => p.name === "p.throws")?.failure).toBe(HELD_BACK_NOTICE);
+  });
+
+  it("a crash restart decides again: a module edited after the grant (fingerprint unchanged) does not run", async () => {
+    const granted = new Set<string>();
+    const { dataDir, unit, pid } = plugins((_name, hash) => granted.has(hash));
+    const folder = program(join(dataDir, "plugins"), "p.lib", {
+      "dist/host.mjs": `import { v } from "./lib.mjs"; export function activate(ccb) { ccb.commands.register("p.lib.v", () => v); }\n`,
+      "dist/lib.mjs": `export const v = "granted";\n`,
+    }, ["p.lib.v"]);
+    granted.add(folderHash(folder));
+    unit.scan();
+    await unit.start();
+    await until(async () => { try { return (await unit.command("p.lib.v")) === "granted"; } catch { return false; } }, { what: "granted code runs" });
+    // A file the registry's fingerprint does not cover changes: a new hash with no grant, and no rescan notices.
+    writeFileSync(join(folder, "dist", "lib.mjs"), `export const v = "not granted";\n`);
+    unit.scan();
+    const before = pid();
+    process.kill(before, "SIGKILL");
+    await until(() => unit.view().plugins.find((p) => p.name === "p.lib")?.failure === HELD_BACK_NOTICE || null, { timeout: 8_000, what: "held back after the crash" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await expect(unit.command("p.lib.v")).rejects.toThrow(/No command/);
+  }, 20_000);
+
+  it("a revoke while another plugin keeps the host up ends the revoked module (fresh host, not an unload)", async () => {
+    const granted = new Set<string>();
+    const { dataDir, unit } = plugins((name, hash) => name === "keep.up" || granted.has(hash));
+    const tick = join(dataDir, "tick.txt");
+    program(join(dataDir, "plugins"), "keep.up", { "dist/host.mjs": `export function activate(ccb) { ccb.commands.register("keep.up.ping", () => "up"); }\n` }, ["keep.up.ping"]);
+    const folder = program(join(dataDir, "plugins"), "p.timer", {
+      "dist/host.mjs": `import { writeFileSync } from "node:fs"; export function activate() { setInterval(() => writeFileSync(${JSON.stringify(tick)}, String(Date.now())), 50); }\n`,
+    });
+    granted.add(folderHash(folder));
+    unit.scan();
+    await unit.start();
+    await until(() => existsSync(tick) || null, { what: "the granted module ticks" });
+    granted.clear();
+    unit.registry.rescan(true); // what botlingd's onPluginGrant does after the revoke commits
+    await until(() => unit.view().plugins.find((p) => p.name === "p.timer")?.failure === HELD_BACK_NOTICE || null, { what: "held back" });
+    await until(async () => { try { return (await unit.command("keep.up.ping")) === "up"; } catch { return false; } }, { what: "the other plugin runs again" });
+    const settled = readFileSync(tick, "utf8");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(readFileSync(tick, "utf8")).toBe(settled);
+  }, 20_000);
 });

@@ -427,6 +427,8 @@ export class Plugins {
     };
     this.host.onNotification = (method, params) => this.notified(method, params);
     this.host.onRequest = (method, params) => this.requested(method, params);
+    // M5-18a: a restart after a crash runs only what may run now (a file the fingerprint does not cover may have changed).
+    if (options.mayRunServerPart) this.host.beforeRestart = () => this.sync();
     setPluginTags([...this.replyTagOwners().keys()]);
   }
 
@@ -466,7 +468,9 @@ export class Plugins {
       return [{ ...spec, app }];
     });
     this.heldBack = nextHeldBack;
-    this.host.update(specs);
+    // M5-18a: a plugin the host still runs lost its grant (or its granted code): a fresh host, not an unload (§18.3).
+    if ([...nextHeldBack].some((name) => this.host.runs(name))) this.host.replace(specs);
+    else this.host.update(specs);
     for (const name of [...this.status.keys()]) if (!this.loaded(name)) this.status.delete(name);
     if (this.takeover && !this.drawing(this.takeover.plugin)) this.takeover = null;
     this.dropDecorations();
