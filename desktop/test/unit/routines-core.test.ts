@@ -74,11 +74,13 @@ describe("routines", () => {
   it("an app-owned schedule is claimed, dispatched once and marked fired; a claim nobody confirmed stays delivery_uncertain", async () => {
     const dir = tempDir("routines");
     const c = core(dir);
-    const at = new Date(Date.now() + 1_500).toISOString().replace(/\.\d+Z$/, "Z");
+    // `at` must still be ahead when `routines.change` answers, so the answer shows `pending`: on a loaded host the call took more than the
+    // 1.5 s this had (S42 run of 2026-11-16: `due`). The cost is the wait for it to fire, about 8 s.
+    const at = new Date(Date.now() + 8_000).toISOString().replace(/\.\d+Z$/, "Z");
     const made = await c.call({ type: "routines.change", botId: MAIN, operation: "create", kind: "once", at, timezone: "Asia/Taipei", task: "Check: look at the build", requestId: "check-1" });
     const routine = made.routines.find((r: any) => r.kind === "once");
     expect(routine).toMatchObject({ title: "Check", status: "pending", timezone: "Asia/Taipei" });
-    await until(async () => (await c.chat()).messages.find((m: any) => m.role === "divider" && m.text.startsWith("Check · ")), { timeout: 8_000 });
+    await until(async () => (await c.chat()).messages.find((m: any) => m.role === "divider" && m.text.startsWith("Check · ")), { timeout: 20_000 });
     const updated = await until(() => c.of("routines.updated").map((e) => e.event as any).find((e) => e.routines.some((r: any) => r.id === routine.id && r.status === "fired")));
     expect(updated).toBeTruthy();
     const saved = JSON.parse(readFileSync(join(dir, "main", "scheduled-routines.json"), "utf8")).routines[0];
