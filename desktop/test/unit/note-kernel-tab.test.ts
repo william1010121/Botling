@@ -68,6 +68,8 @@ describe("the Note's declaration", () => {
     expect(parseFrameDeclaration({ name: "x.y", ccb: { kernel: 1 } })).toEqual({ uses: [] });
     expect(parseFrameDeclaration({ name: "x.y", botling: { kernel: 1, uses: { services: ["a.b", 7, "../x", "a.b", "", null] } } })).toEqual({ uses: ["a.b"] });
     expect(parseFrameDeclaration({ name: "x.y", ccb: { kernel: 1, uses: "nope" } })).toEqual({ uses: [] });
+    // As the core's reader (manifest.ts readKernelFields): a `botling` field wins over `ccb`.
+    expect(parseFrameDeclaration({ name: "x.y", botling: { kernel: 1, uses: { services: ["a.b"] } }, ccb: { kernel: 1, uses: { services: ["c.d"] } } })).toEqual({ uses: ["a.b"] });
     expect(parseFrameDeclaration(null)).toBeNull();
     expect(parseFrameDeclaration("text")).toBeNull();
   });
@@ -88,6 +90,21 @@ describe("the Note's declaration", () => {
     expect(rendererKernel.state(NOTE)).toBe("active");
     expect(rendererKernel.declaration(NOTE)?.uses?.services).toEqual([]);
     expect(pluginFeed.declares(NOTE)).toBe(false);
+  });
+
+  it("a library copy taking over the built-in's name drops the declaration (and quotes as a 2.x plugin); the built-in back takes it again", async () => {
+    stops.push(setComposerQuoter(async () => true));
+    reconcileView(view());
+    expect(pluginFeed.declares(NOTE)).toBe(true);
+    reconcileView(view({ builtIn: false }));
+    expect(rendererKernel.state(NOTE)).toBe("active");
+    expect(pluginFeed.declares(NOTE)).toBe(false);
+    expect(rendererKernel.declaration(NOTE)?.uses?.services).toEqual([]);
+    const { quote } = frame();
+    expect(await quote(9)).toEqual({ ccb: "reply", id: 9, ok: true, value: { inserted: true } });
+    reconcileView(view());
+    expect(pluginFeed.declares(NOTE)).toBe(true);
+    expect(rendererKernel.declaration(NOTE)?.uses?.services).toEqual([INSERT_QUOTE]);
   });
 
   it("the tab is the Note's contribution to main/tab, kept as the page's row (2.x id view/mainTab, new name main/tab)", () => {
@@ -144,6 +161,17 @@ describe("a frame's ccb.composer.insertQuote, bound from the declaration", () =>
     expect(pluginFeed.declares("botling.mute")).toBe(true);
     const { quote } = frame("botling.mute");
     expect(await quote(3)).toEqual({ ccb: "reply", id: 3, ok: true, value: { inserted: false } });
+    expect(calls).toEqual([]);
+  });
+
+  it("the binding is the declaration the kernel holds, not the bundled manifest: a manifest changed without a reconcile grants nothing", async () => {
+    FRAME_MANIFESTS.set("botling.mute", { name: "botling.mute", ccb: { kernel: 1, uses: { services: [] } } });
+    const calls: unknown[] = [];
+    stops.push(setComposerQuoter(async (...args) => { calls.push(args); return true; }));
+    reconcileView(view({ name: "botling.mute" }));
+    FRAME_MANIFESTS.set("botling.mute", { name: "botling.mute", ccb: { kernel: 1, uses: { services: [INSERT_QUOTE] } } });
+    const { quote } = frame("botling.mute");
+    expect(await quote(8)).toEqual({ ccb: "reply", id: 8, ok: true, value: { inserted: false } });
     expect(calls).toEqual([]);
   });
 
