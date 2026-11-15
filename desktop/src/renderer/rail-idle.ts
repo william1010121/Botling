@@ -1,10 +1,10 @@
 // The left column's Idle group, the two numbers on a bot row and the rows of a bot's status card: the pure part
 // (App.tsx and Rail.tsx draw it). Only the user sends a bot to Idle (settings `idleBots`); nothing goes there by itself.
-import { listedRows, MAINTAINER_BOT_ID, type BotView, type SubagentRowView, type WaitingView } from "../contract";
+import { isMaintainer, listedRows, type BotView, type SubagentRowView, type WaitingView } from "../contract";
 
 /** The main bot, Maintainer and sub bots (never a row of the column) cannot be sent to Idle. */
-export function canIdle(bot: Pick<BotView, "id" | "role" | "parent">): boolean {
-  return bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID && !bot.parent;
+export function canIdle(bot: Pick<BotView, "id" | "role" | "parent" | "maintainer">): boolean {
+  return bot.role !== "main" && !isMaintainer(bot) && !bot.parent;
 }
 
 /** The column split in two: its rows without the idle bots (railOrder, section heads recomputed), and the idle bots in the order sent. */
@@ -95,11 +95,11 @@ export function elapsedText(ms: number): string {
 export function railOrder(all: BotView[], pinned: string[]): { bot: BotView; section: "main" | "pinned" | "rest" | null }[] {
   // A sub bot is not a row of the column: it is listed under its project bot (its status card) and opens from there.
   const bots = all.filter((bot) => !bot.parent);
-  const main = bots.filter((bot) => bot.role === "main" || bot.id === MAINTAINER_BOT_ID).sort((a, b) => (a.role === "main" ? -1 : b.role === "main" ? 1 : 0));
-  const top = pinned.map((id) => bots.find((bot) => bot.id === id && bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID)).filter((bot): bot is BotView => !!bot);
+  const main = bots.filter((bot) => bot.role === "main" || isMaintainer(bot)).sort((a, b) => (a.role === "main" ? -1 : b.role === "main" ? 1 : 0));
+  const top = pinned.map((id) => bots.find((bot) => bot.id === id && bot.role !== "main" && !isMaintainer(bot))).filter((bot): bot is BotView => !!bot);
   const when = (bot: BotView) => (bot.lastActivity ? Date.parse(bot.lastActivity) : -Infinity);
   const rest = bots.map((bot, offset) => ({ bot, offset }))
-    .filter(({ bot }) => bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID && !pinned.includes(bot.id))
+    .filter(({ bot }) => bot.role !== "main" && !isMaintainer(bot) && !pinned.includes(bot.id))
     .sort((a, b) => when(b.bot) - when(a.bot) || a.offset - b.offset).map(({ bot }) => bot);
   return [
     ...main.map((bot) => ({ bot, section: null })),

@@ -9,7 +9,7 @@ import { UpdateActions } from "./Updates";
 // bot.json) are `BotSettings`, in the right panel one level in. Each control shows what the core saved: a change goes
 // out, the answer (or `settings.updated`) comes back.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BotView, PluginsView, SettingsChange, SettingsView, UpdateView } from "../contract";
+import { isMaintainer, type BotView, type PluginsView, type SettingsChange, type SettingsView, type UpdateView } from "../contract";
 import { Client } from "./client";
 import { PanelFrame, PluginsPanel, SlotFrame } from "./Plugins";
 import { faceURL } from "./avatars";
@@ -95,7 +95,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {shown && current?.id === "permissions" && <Permissions client={client} settings={shown} change={change} />}
             {shown && current?.id === "chat" && <ChatAndReports client={client} settings={shown} change={change} plugins={plugins} onProblem={setProblem} onNavigate={go} />}
             {current?.id === "setup" && <EngineSetup client={client} settings={shown} change={change} />}
-            {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} lang={settings?.effectiveLanguage ?? null}
+            {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} bots={bots} lang={settings?.effectiveLanguage ?? null}
               onShowMain={onOpenBot && bots.find((one) => one.role === "main") ? () => { onOpenBot(bots.find((one) => one.role === "main")!.id); onClose(); } : undefined} />}
             {current?.plugin && <SlotFrame key={current.id} client={client} plugin={current.plugin} view={current.view ?? current.id} title={current.title} fontSize={15} />}
             {shown && current?.id === "phone" && <PhoneSettings client={client} bots={bots} lang={shown.effectiveLanguage} />}
@@ -439,7 +439,7 @@ function Shortcuts({ settings, change, plugins }: { settings: SettingsView; chan
 }
 
 function Developer({ settings, change, bots }: { settings: SettingsView; change: (next: SettingsChange) => void; bots: BotView[] }) {
-  const projects = bots.filter((candidate) => candidate.role === "manager" && candidate.id !== "DEC0DE00-0000-4000-8000-00000000DEC0");
+  const projects = bots.filter((candidate) => candidate.role === "manager" && !isMaintainer(candidate));
   return (
     <Group title="Developer mode" note={settings.developerMode
       ? `${projects.find((project) => project.id === settings.developerProject)?.name ?? "That project"}'s manager may install new builds (you confirm; one that does not start is rolled back), take screenshots of this window, and gets what you flag as “not right” in any chat. Every report is also kept in feedback.md.`
@@ -456,11 +456,11 @@ function Developer({ settings, change, bots }: { settings: SettingsView; change:
   );
 }
 
-function PluginsSection({ client, plugins, lang, onShowMain }: { client: Client; plugins: PluginsView | null; lang: SettingsView["effectiveLanguage"] | null; onShowMain?: () => void }) {
+function PluginsSection({ client, plugins, bots, lang, onShowMain }: { client: Client; plugins: PluginsView | null; bots?: BotView[]; lang: SettingsView["effectiveLanguage"] | null; onShowMain?: () => void }) {
   const [panel, setPanel] = useState<{ plugin: string; id: string; title: string } | null>(null);
   return (
     <>
-      <PluginsPanel client={client} plugins={plugins} embedded lang={lang} onPanel={setPanel} onClose={() => {}} {...(onShowMain ? { onShowMain } : {})} />
+      <PluginsPanel client={client} plugins={plugins} bots={bots} embedded lang={lang} onPanel={setPanel} onClose={() => {}} {...(onShowMain ? { onShowMain } : {})} />
       {panel && <PanelFrame client={client} plugin={panel.plugin} panel={panel.id} title={panel.title} onClose={() => setPanel(null)} />}
     </>
   );

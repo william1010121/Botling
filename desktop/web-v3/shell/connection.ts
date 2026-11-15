@@ -1,12 +1,12 @@
 // The shell's outbox wiring: the front-end link (src/fe-link) over IndexedDB (`botling3-fe`, D45) and an encrypted
-// WebSocket to this page's own server (`/v3/ws`, or its relay room with §6.2 fallback and 60 s direct re-probing),
-// with the connection words the shell shows (protocol v1 §13.3) and a small diagnostics record the headless harness
-// reads (live frame times, every delivery state an item went through).
+// WebSocket to the attached server (`/v3/ws`, or its relay room with §6.2 fallback and 60 s direct re-probing, plus
+// §13.1 / D72 server choice and 30 s / 5-minute automatic & manual switching), with the connection words the shell shows
+// (protocol v1 §13.3) and a small diagnostics record the headless harness reads.
 import {
-  DEFAULT_IDB_NAME, FeLink, IdbFeStorage, relaySocketImpl, systemClock, wsDial, wsUrlFor,
-  type Clock, type ConnModel, type Dial, type FeSocket, type FeStorage, type PendingView, type ServerView, type SocketHandlers,
+  DEFAULT_IDB_NAME, FeLink, IdbFeStorage, relaySocketImpl, ServerSwitchController, systemClock, wsDial, wsUrlFor,
+  type Clock, type ConnModel, type Dial, type FeSocket, type FeStorage, type PendingView, type ServerCandidate, type ServerView, type SocketHandlers, type SwitchPath,
 } from "../../src/fe-link";
-import { encodeFrame, PROTOCOL_VERSION, type OriginEpoch } from "../../src/protocol";
+import { encodeFrame, fromBase64Url, PROTOCOL_VERSION, toBase64Url, type OriginEpoch, type ServerAddresses, type ServerState } from "../../src/protocol";
 import { relayDeviceToken } from "../../src/session";
 import type { LinkPort } from "../../src/main-v3/renderer-adapter";
 import type { DeviceRecord } from "./device-store";
@@ -61,6 +61,10 @@ export interface Connection {
   port: LinkPort;
   readonly path: DialPath;
   readonly revoked: boolean;
+  /** Currently targeted (or attached) server id (D72). */
+  readonly serverId?: string;
+  /** D72: manually switch immediately to `serverId` (ignores 5-min anti-flap holdoff) and persist preference. */
+  pickServer?(serverId: string): boolean;
   close(): Promise<void>;
 }
 
@@ -79,10 +83,27 @@ export interface VisibilitySource {
   removeEventListener(type: "visibilitychange", listener: () => void): void;
 }
 
+export interface ServerDialTarget {
+  id: string;
+  name: string;
+  state?: ServerState;
+  dh?: string;
+  addresses?: ServerAddresses;
+  directDial?: Dial;
+  relayDial?: Dial;
+}
+
 export interface FallbackLinkOptions {
   storage: FeStorage;
-  directDial: Dial;
+  directDial?: Dial;
   relayDial?: Dial;
+  /** Multi-server D72 mode: candidate servers in roster order (overrides single `directDial`/`relayDial`). */
+  servers?: ServerDialTarget[];
+  designatedServerId?: string;
+  lastGoodServerId?: string | null;
+  resolveServerDial?: (server: ServerDialTarget) => { directDial?: Dial; relayDial?: Dial } | null;
+  switchAfterMs?: number;
+  antiFlapMs?: number;
   /** Forces one path (`?via=relay` or `?via=tailnet`); undefined = direct with 2 s relay fallback and 60 s re-probe. */
   forcedPath?: DialPath;
   deviceId: string;
@@ -95,9 +116,13 @@ export interface FallbackLinkOptions {
   reconnectMaxMs?: number;
   directTimeoutMs?: number;
   reprobeIntervalMs?: number;
+  absentTableMs?: number;
   visibility?: VisibilitySource;
   onPath?: (path: DialPath) => void;
   onProbe?: (result: "welcomed" | "failed" | "timeout") => void;
+  onServer?: (serverId: string) => void;
+  onLastGoodServer?: (serverId: string) => void;
+  onSwitch?: (event: { from: string; to: string; reason: "auto" | "manual" }) => void;
   onRevoked?: () => void;
 }
 
@@ -105,6 +130,8 @@ export interface FallbackLink {
   readonly link: FeLink;
   readonly path: DialPath;
   readonly revoked: boolean;
+  readonly serverId: string | null;
+  pickServer(serverId: string): boolean;
   start(): void;
   close(): Promise<void>;
 }
@@ -129,26 +156,102 @@ function isRevokedByeFrame(frame: string | Uint8Array): boolean {
 }
 
 /**
- * Pure/isomorphic §6.2 path controller around `FeLink`: tries direct first; if no welcome comes within 2 s (or it
- * fails), falls back to the relay; while on the relay, re-probes direct every 60 s and closes the old session before
- * dialing direct when direct welcomes. Stops timers when the page hides or closes.
+ * Pure/isomorphic §6.2 path controller + D72 multi-server switch controller around `FeLink`: tries direct first; if no
+ * welcome comes within 2 s (or it fails), falls back to the relay; while on the relay, re-probes direct every 60 s and
+ * closes the old session before dialing direct when direct welcomes. In multi-server mode, switches to the next server
+ * in §13.1 order after all paths fail for 30 s, enforces a 5-minute anti-flap holdoff, and supports manual `pickServer`.
  */
 export async function openFallbackLink(options: FallbackLinkOptions): Promise<FallbackLink> {
   const clock = options.clock ?? systemClock;
   const directTimeoutMs = options.directTimeoutMs ?? DIRECT_TIMEOUT_MS;
   const reprobeMs = options.reprobeIntervalMs ?? REPROBE_INTERVAL_MS;
   const forced = options.forcedPath;
-  const relayDial = forced === "direct" ? undefined : options.relayDial;
   const isLocal = options.local ?? false;
 
-  let currentPath: DialPath = forced === "relay" && relayDial ? "relay" : "direct";
+  const targetsById = new Map<string, ServerDialTarget>();
+  for (const s of options.servers ?? []) {
+    targetsById.set(
+      s.id,
+      s.state === "gone"
+        ? { id: s.id, name: s.name || s.id, state: "gone", ...(s.dh ? { dh: s.dh } : {}) }
+        : { ...s },
+    );
+  }
+
+  const resolveDialsFor = (target: ServerDialTarget): { directDial?: Dial; relayDial?: Dial } => {
+    if (target.state === "gone") return {};
+    if (target.directDial || target.relayDial) {
+      return {
+        ...(target.directDial ? { directDial: target.directDial } : {}),
+        ...(target.relayDial && forced !== "direct" ? { relayDial: target.relayDial } : {}),
+      };
+    }
+    const resolved = options.resolveServerDial?.(target);
+    return {
+      ...(resolved?.directDial ? { directDial: resolved.directDial } : {}),
+      ...(resolved?.relayDial && forced !== "direct" ? { relayDial: resolved.relayDial } : {}),
+    };
+  };
+
+  const toCandidate = (target: ServerDialTarget): ServerCandidate => {
+    const dials = resolveDialsFor(target);
+    return {
+      id: target.id,
+      name: target.name,
+      ...(target.state !== undefined ? { state: target.state } : {}),
+      ...(target.dh ? { dh: target.dh } : {}),
+      ...(target.addresses ? { addresses: target.addresses } : {}),
+      dialable: !!(dials.directDial || dials.relayDial),
+    };
+  };
+
+  let switching = false;
+  let link!: FeLink;
   let stopped = false;
   let revoked = false;
+  let started = false;
+
+  const controller = options.servers?.length
+    ? new ServerSwitchController({
+      servers: options.servers.map(toCandidate),
+      designatedId: options.designatedServerId ?? options.servers[0].id,
+      lastGoodId: options.lastGoodServerId ?? null,
+      clock,
+      ...(options.switchAfterMs !== undefined ? { switchAfterMs: options.switchAfterMs } : {}),
+      ...(options.antiFlapMs !== undefined ? { antiFlapMs: options.antiFlapMs } : {}),
+      onServer: options.onServer,
+      onLastGoodServer: options.onLastGoodServer,
+      onSwitch: (ev) => {
+        options.onSwitch?.(ev);
+        if (!revoked && !stopped) {
+          switching = true;
+          try { link.replaceSocket(); } finally { switching = false; }
+        }
+      },
+    })
+    : null;
+
+  const currentDials = (): { serverId: string | null; directDial?: Dial; relayDial?: Dial } => {
+    if (!controller) {
+      return {
+        serverId: null,
+        ...(options.directDial ? { directDial: options.directDial } : {}),
+        ...(options.relayDial && forced !== "direct" ? { relayDial: options.relayDial } : {}),
+      };
+    }
+    const id = controller.current();
+    const target = targetsById.get(id);
+    if (!target) return { serverId: id };
+    const dials = resolveDialsFor(target);
+    return { serverId: id, ...dials };
+  };
+
+  const initial = currentDials();
+  let currentPath: DialPath = forced === "relay" && initial.relayDial ? "relay" : (!initial.directDial && initial.relayDial ? "relay" : "direct");
   let attachedOnRelay = false;
   let probeTimer: unknown = undefined;
   let activeProbe: { cancel(): void } | null = null;
   let nextProbeAt: number | null = null;
-  let link!: FeLink;
 
   const setPath = (next: DialPath) => {
     if (currentPath === next) return;
@@ -173,6 +276,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
     attachedOnRelay = false;
     nextProbeAt = null;
     cancelProbe();
+    controller?.stop();
     options.visibility?.removeEventListener("visibilitychange", onVisibility);
   };
 
@@ -180,7 +284,8 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
 
   const scheduleProbe = (reset = false) => {
     clearProbeTimer();
-    if (stopped || forced === "relay" || !relayDial || !attachedOnRelay || currentPath !== "relay") {
+    const { relayDial, directDial } = currentDials();
+    if (stopped || forced === "relay" || !relayDial || !directDial || !attachedOnRelay || currentPath !== "relay") {
       nextProbeAt = null;
       return;
     }
@@ -194,7 +299,8 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
   };
 
   const runProbe = () => {
-    if (stopped || forced === "relay" || !relayDial || !attachedOnRelay || currentPath !== "relay" || isHidden() || activeProbe) return;
+    const { serverId: probeServerId, directDial, relayDial } = currentDials();
+    if (stopped || forced === "relay" || !relayDial || !directDial || !attachedOnRelay || currentPath !== "relay" || isHidden() || activeProbe) return;
     let cancelled = false;
     let welcomed = false;
     let openedEarly = false;
@@ -227,14 +333,14 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
         if (cancelled) return;
         cancelled = true;
         cleanup();
-        try { socket?.close(); } catch { /* already gone */ }
+        try { socket?.close(); } catch { /* ignore */ }
       },
     };
     activeProbe = probe;
     timer = clock.setTimeout(() => failProbe("timeout"), directTimeoutMs);
 
     try {
-      socket = options.directDial({
+      socket = directDial({
         open() {
           if (cancelled) { try { socket?.close(); } catch { /* ignore */ } return; }
           if (!socket) { openedEarly = true; return; }
@@ -257,6 +363,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
             const bye = encodeFrame({ t: "bye", reason: "closing" }, "fe", { local: isLocal });
             if (bye.ok) { try { socket?.send(bye.text); } catch { /* ignore */ } }
             try { socket?.close(); } catch { /* ignore */ }
+            if (controller && controller.current() !== probeServerId) return;
             options.onProbe?.("welcomed");
             // D18: close the relay session first (inside replaceSocket) before dialing direct fresh.
             attachedOnRelay = false;
@@ -293,6 +400,14 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
       return { send() { /* revoked */ }, close() { /* revoked */ } };
     }
 
+    const { serverId: targetId, directDial, relayDial } = currentDials();
+    const availablePaths: SwitchPath[] = forced === "relay" && relayDial
+      ? ["relay"]
+      : forced === "direct" && directDial
+        ? ["direct"]
+        : [...(directDial ? ["direct" as const] : []), ...(relayDial ? ["relay" as const] : [])];
+    if (controller && targetId) controller.noteDialStart(targetId, availablePaths);
+
     const forwardFrame = (f: string | Uint8Array) => {
       const hit = isRevokedByeFrame(f);
       if (hit) markRevoked();
@@ -303,14 +418,38 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
       }
     };
 
-    if (forced === "relay" && relayDial) {
+    if ((forced === "relay" && relayDial) || (!directDial && relayDial)) {
       setPath("relay");
-      return relayDial({ ...handlers, frame: forwardFrame });
+      if (controller && targetId) controller.notePathAttempt(targetId, "relay", availablePaths);
+      let relayWelcomed = false;
+      return relayDial({
+        ...handlers,
+        frame(f) {
+          if (!relayWelcomed && isWelcomeFrame(f)) {
+            relayWelcomed = true;
+            attachedOnRelay = true;
+            if (forced !== "relay" && directDial) scheduleProbe(true);
+          }
+          forwardFrame(f);
+        },
+        close(detail) {
+          attachedOnRelay = false;
+          nextProbeAt = null;
+          cancelProbe();
+          handlers.close(detail);
+        },
+      });
+    }
+
+    if (!directDial) {
+      queueMicrotask(() => handlers.close("no dial path"));
+      return { send() { /* closed */ }, close() { /* closed */ } };
     }
 
     if (!relayDial) {
       setPath("direct");
-      return options.directDial({ ...handlers, frame: forwardFrame });
+      if (controller && targetId) controller.notePathAttempt(targetId, "direct", availablePaths);
+      return directDial({ ...handlers, frame: forwardFrame });
     }
 
     let cancelled = false;
@@ -333,6 +472,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
       try { directSocket?.close(); } catch { /* ignore */ }
       directSocket = null;
       setPath("relay");
+      if (controller && targetId) controller.notePathAttempt(targetId, "relay", availablePaths);
       let relayOpenedEarly = false;
       const onRelayOpen = () => {
         if (cancelled || phase !== "relay") return;
@@ -380,6 +520,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
     };
 
     setPath("direct");
+    if (controller && targetId) controller.notePathAttempt(targetId, "direct", availablePaths);
     directTimer = clock.setTimeout(() => {
       if (cancelled || welcomed || phase !== "direct") return;
       startRelay();
@@ -392,7 +533,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
     };
 
     try {
-      const sock = options.directDial({
+      const sock = directDial({
         open() {
           if (!directSocket) { directOpenedEarly = true; return; }
           onDirectOpen();
@@ -456,18 +597,79 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
     ...(options.offlineAfterMs !== undefined ? { offlineAfterMs: options.offlineAfterMs } : {}),
     ...(options.reconnectMinMs !== undefined ? { reconnectMinMs: options.reconnectMinMs } : {}),
     ...(options.reconnectMaxMs !== undefined ? { reconnectMaxMs: options.reconnectMaxMs } : {}),
+    ...(options.absentTableMs !== undefined ? { absentTableMs: options.absentTableMs } : {}),
   });
+
+  if (controller) {
+    const syncServers = (views: ServerView[]): ServerCandidate[] => {
+      for (const view of views) {
+        const prev = targetsById.get(view.id);
+        const isGone = prev?.state === "gone" || view.state === "gone";
+        const dh = view.dh ?? prev?.dh;
+        const name = view.name || prev?.name || view.id;
+        if (isGone) {
+          targetsById.set(view.id, {
+            id: view.id,
+            name,
+            state: "gone",
+            ...(dh ? { dh } : {}),
+          });
+        } else {
+          const addresses = view.addresses !== undefined ? view.addresses : prev?.addresses;
+          targetsById.set(view.id, {
+            id: view.id,
+            name,
+            state: view.state,
+            ...(dh ? { dh } : {}),
+            ...(addresses ? { addresses } : {}),
+            ...(prev?.directDial ? { directDial: prev.directDial } : {}),
+            ...(prev?.relayDial ? { relayDial: prev.relayDial } : {}),
+          });
+        }
+      }
+      return views.map((view) => toCandidate(targetsById.get(view.id)!));
+    };
+    const staleStreamIds = new Set<string>();
+    link.on((event) => {
+      if (event.type === "attached") {
+        if (event.attached) {
+          staleStreamIds.clear();
+          const attachedId = link.attachedServerId() ?? controller.current();
+          controller.noteAttached(attachedId, syncServers(link.servers()));
+        } else if (!revoked && !stopped && !switching) {
+          controller.noteDisconnected(controller.current());
+        }
+      } else if (event.type === "servers") {
+        controller.updateServers(syncServers(link.servers()));
+        controller.updateStaleStreams(staleStreamIds.size);
+      } else if (event.type === "message" && event.message.t === "stale") {
+        staleStreamIds.add(event.message.stream);
+        controller.updateStaleStreams(staleStreamIds.size);
+      } else if ((event.type === "entries" || event.type === "snap") && staleStreamIds.delete(event.type === "entries" ? event.stream : event.snap.stream)) {
+        controller.updateStaleStreams(staleStreamIds.size);
+      }
+    });
+  }
 
   return {
     link,
     get path() { return currentPath; },
     get revoked() { return revoked; },
-    start() { link.start(); },
+    get serverId() { return controller ? controller.current() : link.attachedServerId(); },
+    pickServer(serverId: string) {
+      return controller ? controller.pickServer(serverId) : false;
+    },
+    start() {
+      if (started) return;
+      started = true;
+      link.start();
+    },
     async close() {
       stopped = true;
       attachedOnRelay = false;
       nextProbeAt = null;
       cancelProbe();
+      controller?.stop();
       options.visibility?.removeEventListener("visibilitychange", onVisibility);
       await link.close();
     },
@@ -477,50 +679,105 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
 export interface OpenConnectionOptions {
   forcedPath?: DialPath;
   onPath?: (path: DialPath) => void;
+  onServer?: (serverId: string) => void;
   onRevoked?: () => void;
   directTimeoutMs?: number;
   reprobeIntervalMs?: number;
+  switchAfterMs?: number;
+  antiFlapMs?: number;
+}
+
+function isLoopbackPage(pageUrl: string): boolean {
+  try {
+    const { hostname } = new URL(pageUrl);
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
 }
 
 /** Opens the link for a paired device (not started: the renderer mounts first, then `link.start()`). */
 export async function openConnection(device: DeviceRecord, diag: Diagnostics, pageUrl: string, pathOrOptions?: DialPath | OpenConnectionOptions): Promise<Connection> {
   const opts: OpenConnectionOptions = typeof pathOrOptions === "string" ? { forcedPath: pathOrOptions } : (pathOrOptions ?? {});
   const storage = await IdbFeStorage.open({ name: DEFAULT_IDB_NAME });
-  const identity = {
-    cluster: device.cluster,
-    memberId: device.memberId,
-    dh: { privateKey: device.dhKey, publicKey: device.dhPub },
-    server: { memberId: device.server.memberId, dhPub: device.server.dhPub },
-  };
+  const { loadPref, savePref } = await import("./device-store");
+  const savedServerId = await loadPref("server").catch(() => null);
   const onEnd = (end: { reason: string; detail: string }) => {
     diag.ends.push(`${end.reason}: ${end.detail}`.slice(0, 200));
     if (diag.ends.length > 200) diag.ends.shift();
   };
   const onFrame = () => { diag.frames += 1; };
   const network = { online: () => navigator.onLine !== false, events: window };
-  const directDial = wsDial({ url: () => wsUrlFor(pageUrl), identity, onEnd, onFrame, network });
 
-  // The relay join token: from the static DH with the server's roster key (src/session/relay-wire.ts), computed once.
-  let token: Promise<string> | null = null;
-  const relay = device.relay;
-  const relayDial = relay ? wsDial({
-    url: () => wsUrlFor(pageUrl),
-    transport: "relay",
-    WebSocketImpl: relaySocketImpl(() => ({
-      url: relay.url,
-      room: relay.room,
-      token: (token ??= relayDeviceToken(device.memberId, device.dhKey, device.server.dhPub)),
-    })),
-    identity,
-    onEnd,
-    onFrame,
-    network,
-  }) : undefined;
+  const initialServers: ServerDialTarget[] = (device.servers?.length ? device.servers : []).map((s) => ({
+    id: s.id,
+    name: s.name,
+    ...(s.state !== undefined ? { state: s.state } : {}),
+    ...(s.dh ? { dh: s.dh } : {}),
+    ...(s.addresses ? { addresses: s.addresses } : {}),
+  }));
+  if (!initialServers.some((s) => s.id === device.server.memberId)) {
+    initialServers.unshift({
+      id: device.server.memberId,
+      name: device.server.name,
+      dh: toBase64Url(device.server.dhPub),
+      ...(device.relay ? { addresses: { relay: device.relay } } : {}),
+    });
+  }
+
+  const dialCache = new Map<string, { directDial?: Dial; relayDial?: Dial }>();
+  const resolveServerDial = (server: ServerDialTarget): { directDial?: Dial; relayDial?: Dial } | null => {
+    if (server.state === "gone") return null;
+    const isPairedServer = server.id === device.server.memberId;
+    const dhB64 = server.dh ?? (isPairedServer ? toBase64Url(device.server.dhPub) : undefined);
+    if (!dhB64) return null;
+    const directUrl = isPairedServer && isLoopbackPage(pageUrl)
+      ? wsUrlFor(pageUrl)
+      : (server.addresses?.tailnet ?? (isPairedServer ? wsUrlFor(pageUrl) : undefined));
+    const relay = server.addresses?.relay ?? (isPairedServer ? device.relay : undefined);
+    if (!directUrl && !relay) return null;
+
+    const cacheKey = `${server.id}\u0000${dhB64}\u0000${directUrl ?? ""}\u0000${relay?.url ?? ""}\u0000${relay?.room ?? ""}`;
+    const cached = dialCache.get(cacheKey);
+    if (cached) return cached;
+
+    const dhPub = isPairedServer && !server.dh ? device.server.dhPub : fromBase64Url(dhB64);
+    if (!dhPub) return null;
+    const identity = {
+      cluster: device.cluster,
+      memberId: device.memberId,
+      dh: { privateKey: device.dhKey, publicKey: device.dhPub },
+      server: { memberId: server.id, dhPub },
+    };
+    const directDial = directUrl ? wsDial({ url: () => directUrl, identity, onEnd, onFrame, network }) : undefined;
+
+    // The relay join token: from the static DH with this server's roster key, computed once per server/key.
+    let token: Promise<string> | null = null;
+    const relayDial = relay ? wsDial({
+      url: () => directUrl ?? wsUrlFor(pageUrl),
+      transport: "relay",
+      WebSocketImpl: relaySocketImpl(() => ({
+        url: relay.url,
+        room: relay.room,
+        token: (token ??= relayDeviceToken(device.memberId, device.dhKey, dhPub)),
+      })),
+      identity,
+      onEnd,
+      onFrame,
+      network,
+    }) : undefined;
+
+    const entry = { ...(directDial ? { directDial } : {}), ...(relayDial ? { relayDial } : {}) };
+    dialCache.set(cacheKey, entry);
+    return entry;
+  };
 
   const fb = await openFallbackLink({
     storage,
-    directDial,
-    ...(relayDial ? { relayDial } : {}),
+    servers: initialServers,
+    designatedServerId: device.server.memberId,
+    lastGoodServerId: savedServerId,
+    resolveServerDial,
     ...(opts.forcedPath ? { forcedPath: opts.forcedPath } : {}),
     deviceId: device.memberId,
     feVersion: FE_VERSION,
@@ -529,8 +786,12 @@ export async function openConnection(device: DeviceRecord, diag: Diagnostics, pa
     offlineAfterMs: OFFLINE_AFTER_MS,
     ...(opts.directTimeoutMs !== undefined ? { directTimeoutMs: opts.directTimeoutMs } : {}),
     ...(opts.reprobeIntervalMs !== undefined ? { reprobeIntervalMs: opts.reprobeIntervalMs } : {}),
+    ...(opts.switchAfterMs !== undefined ? { switchAfterMs: opts.switchAfterMs } : {}),
+    ...(opts.antiFlapMs !== undefined ? { antiFlapMs: opts.antiFlapMs } : {}),
     ...(typeof document !== "undefined" ? { visibility: document } : {}),
     onPath: opts.onPath,
+    onServer: opts.onServer,
+    onLastGoodServer: (id) => { void savePref("server", id).catch(() => undefined); },
     onRevoked: () => {
       revoked = true;
       if (diag.conn[diag.conn.length - 1] !== "needs pairing") diag.conn.push("needs pairing");
@@ -555,6 +816,8 @@ export async function openConnection(device: DeviceRecord, diag: Diagnostics, pa
     port: link as unknown as LinkPort,
     get path() { return fb.path; },
     get revoked() { return fb.revoked; },
+    get serverId() { return fb.serverId ?? device.server.memberId; },
+    pickServer(serverId: string) { return fb.pickServer(serverId); },
     async close() { await fb.close(); },
   };
 }

@@ -37,18 +37,39 @@ export const DENY: readonly DenyPattern[] = [
   { kind: "segment-glob", pattern: /\.keychain$/i, glob: "*.keychain" },
   { kind: "segment-glob", pattern: /\.keychain-db$/i, glob: "*.keychain-db" },
   { kind: "subpath", parts: ["Library", "Application Support", "Google", "Chrome"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Google", "Chrome Beta"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Google", "Chrome Canary"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Google", "Chrome Dev"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Chromium"] },
   { kind: "subpath", parts: ["Library", "Application Support", "Firefox"] },
   { kind: "subpath", parts: ["Library", "Application Support", "Safari"] },
   { kind: "subpath", parts: ["Library", "Application Support", "BraveSoftware", "Brave-Browser"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "BraveSoftware", "Brave-Browser-Beta"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "BraveSoftware", "Brave-Browser-Nightly"] },
   { kind: "subpath", parts: ["Library", "Application Support", "Microsoft Edge"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Microsoft Edge Beta"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Microsoft Edge Dev"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Microsoft Edge Canary"] },
   { kind: "subpath", parts: ["Library", "Application Support", "Arc"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Vivaldi"] },
   { kind: "subpath", parts: [".config", "google-chrome"] },
+  { kind: "subpath", parts: [".config", "google-chrome-beta"] },
+  { kind: "subpath", parts: [".config", "google-chrome-unstable"] },
   { kind: "subpath", parts: [".config", "chromium"] },
   { kind: "subpath", parts: [".config", "BraveSoftware", "Brave-Browser"] },
+  { kind: "subpath", parts: [".config", "BraveSoftware", "Brave-Browser-Beta"] },
+  { kind: "subpath", parts: [".config", "BraveSoftware", "Brave-Browser-Nightly"] },
   { kind: "subpath", parts: [".config", "microsoft-edge"] },
+  { kind: "subpath", parts: [".config", "microsoft-edge-beta"] },
+  { kind: "subpath", parts: [".config", "microsoft-edge-dev"] },
+  { kind: "subpath", parts: [".config", "vivaldi"] },
   { kind: "subpath", parts: [".config", "gcloud"] },
+  { kind: "subpath", parts: [".config", "gh"] },
   { kind: "file-glob", pattern: /^\.env$/i, glob: ".env" },
   { kind: "file-glob", pattern: /^\.env\./i, glob: ".env.*" },
+  { kind: "file-glob", pattern: /^\.git-credentials$/i, glob: ".git-credentials" },
+  { kind: "file-glob", pattern: /^\.npmrc$/i, glob: ".npmrc" },
+  { kind: "file-glob", pattern: /^\.pypirc$/i, glob: ".pypirc" },
   { kind: "file-glob", pattern: /^id_rsa/i, glob: "id_rsa*" },
   { kind: "file-glob", pattern: /^id_ed25519/i, glob: "id_ed25519*" },
   { kind: "file-glob", pattern: /^id_ecdsa/i, glob: "id_ecdsa*" },
@@ -163,12 +184,16 @@ function hasMarkerFileInAncestors(realPath: string, markerFile: string): boolean
   }
 }
 
-function isDeniedRealPath(realPath: string, dataDir?: string): boolean {
-  if (dataDir !== undefined) {
-    assertAbsoluteDataDir(dataDir);
-    const realDataDir = resolveCanonicalPath(dataDir);
-    if (!realDataDir || isSubpathOrEqual(realDataDir, realPath)) return true;
+function isDeniedRealPath(realPath: string, dataDir: string): boolean {
+  assertAbsoluteDataDir(dataDir);
+  let realDataDir: string;
+  try {
+    realDataDir = realpath(dataDir);
+  } catch {
+    return true;
   }
+  if (isSubpathOrEqual(realDataDir, realPath)) return true;
+
   const segments = realPath.split(sep).filter(Boolean);
   const lowerSegments = segments.map((s) => s.toLowerCase());
   const fileName = segments.length > 0 ? segments[segments.length - 1]! : "";
@@ -196,8 +221,8 @@ function isDeniedRealPath(realPath: string, dataDir?: string): boolean {
 }
 
 /** Checks a path's real target against `DENY` and `dataDir` (fails closed on resolution failure). */
-export function isDeniedPath(targetPath: string, dataDir?: string): boolean {
-  if (dataDir !== undefined) assertAbsoluteDataDir(dataDir);
+export function isDeniedPath(targetPath: string, dataDir: string): boolean {
+  assertAbsoluteDataDir(dataDir);
   const realPath = resolveCanonicalPath(targetPath);
   if (!realPath) return true;
   return isDeniedRealPath(realPath, dataDir);
@@ -233,26 +258,28 @@ export function classify(input: ClassifyInput): ClassifyResult {
       : isAbsolute(what.path)
         ? what.path
         : `${artifactsDir}${sep}${what.path}`;
-    const realTarget = resolveCanonicalPath(targetPath);
-    if (!realTarget) return { kind: "denied", reason: "outside" };
+    let realTarget: string;
+    try {
+      realTarget = realpath(targetPath);
+    } catch {
+      return { kind: "denied", reason: "outside" };
+    }
     if (isDeniedRealPath(realTarget, dataDir)) return { kind: "denied", reason: "deny-list" };
 
     let realBotFolder: string;
     let realArtifactsDir: string;
-    let realExistingTarget: string;
     try {
       realBotFolder = realpath(botFolder);
       realArtifactsDir = realpath(artifactsDir);
-      realExistingTarget = realpath(targetPath);
     } catch {
       return { kind: "denied", reason: "outside" };
     }
-    if (!isSubpathOrEqual(realArtifactsDir, realExistingTarget)) {
+    if (!isSubpathOrEqual(realArtifactsDir, realTarget)) {
       return { kind: "denied", reason: "outside" };
     }
-    // Require real artifactsDir to live inside the real bot folder so symlinked .bot/artifacts cannot widen `free`.
-    if (!isSubpathOrEqual(realBotFolder, realArtifactsDir)) {
-      return { kind: "ask", prefix: realExistingTarget };
+    // Require exact <realBotFolder>/.bot/artifacts layout so symlinks on .bot or artifacts cannot widen `free`.
+    if (realArtifactsDir !== join(realBotFolder, ".bot", "artifacts")) {
+      return { kind: "ask", prefix: realTarget };
     }
     return { kind: "free", prefix: realArtifactsDir };
   }
@@ -276,7 +303,7 @@ export function classify(input: ClassifyInput): ClassifyResult {
       continue;
     }
     if (
-      isSubpathOrEqual(realBotFolder, realArtifactsDir) &&
+      realArtifactsDir === join(realBotFolder, ".bot", "artifacts") &&
       isSubpathOrEqual(realArtifactsDir, realTarget)
     ) {
       return { kind: "free", prefix: realArtifactsDir };

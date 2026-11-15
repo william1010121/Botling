@@ -11,12 +11,13 @@
 //
 // Not in botlingd (M1): the 2.x phone bridge and relay connector, the restart checkpoint and core hot swap (botlingd
 // outlives windows), plugin secrets (risk 3: no safe storage without the window, see `noSafeStorage`).
-import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
+import type { RemoteMember } from "../core/conversations";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
 import type { Sealer } from "../core/plugins/secrets";
 import { Core } from "../core/server";
-import { MAIN_BOT_ID } from "../core/store/records";
+import { MAIN_BOT_ID, MAINTAINER_ID } from "../core/store/records";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "../core/store/data-dir-lock";
 import { fromBase64Url, type StreamId } from "../protocol";
 import { backupCheckMs, DailyBackups } from "./backup-schedule";
@@ -38,7 +39,8 @@ import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
-import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type SessionHost, type SessionOptions } from "./session";
+import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type DeviceRoster, type SessionHost, type SessionOptions } from "./session";
+import { fixedIds } from "./fixed-ids";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
@@ -46,10 +48,12 @@ import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from ".
 import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { ShellBridge } from "./shell-bridge";
-import { openServerStore, type ServerStore } from "./store";
+import { openServerStore, type Db, type ServerStore } from "./store";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, SummaryRows, TableFeeds } from "./replica";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
-import { Directory, Forwarder, OwnerInbox } from "./forward";
+import type { Command } from "../contract";
+import type { Target } from "../protocol";
+import { Directory, Forwarder, OwnerInbox, ServerOrigin } from "./forward";
 import { release as osRelease } from "node:os";
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
@@ -94,6 +98,21 @@ export function clusterOrigins(
     connectOrigins.add(`wss://${host}`);
   }
   return { origins: [...origins].sort(), connectOrigins: [...connectOrigins].sort() };
+}
+
+/**
+ * Device & peer-server roster view passed to `slotAuthorize` (M5-04b): a peer server is accepted only when it is in
+ * `view.servers` AND `view.valid` (not root-revoked and not unvouched/not-yet-effective).
+ */
+export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">): DeviceRoster {
+  return {
+    memberId: roster.memberId,
+    device: (member) => roster.device(member),
+    server: (member) => {
+      const view = roster.view;
+      return member !== view.self && view.servers.has(member) && view.valid.has(member);
+    },
+  };
 }
 
 /** The oldest Botling 3 window this server serves (fe-link compares it without the -suffix). */
@@ -162,12 +181,51 @@ export function relayAllowList(options: {
 }
 
 /** The key of the bot store kept in `directory`: the bot's id, or `<id>/partner-<engine>` for a second head's store. */
-export function storeKeyOf(dataDir: string, directory: string): string {
+export function storeKeyOf(dataDir: string, directory: string, mainId: string): string {
   const rel = relative(dataDir, directory).split(sep).join("/");
-  if (rel === "main") return MAIN_BOT_ID;
-  if (rel.startsWith("main/")) return `${MAIN_BOT_ID}/${rel.slice(5)}`;
+  if (rel === "main") return mainId;
+  if (rel.startsWith("main/")) return `${mainId}/${rel.slice(5)}`;
   if (rel.startsWith("projects/")) return rel.slice("projects/".length);
-  return rel || MAIN_BOT_ID;
+  return rel || mainId;
+}
+
+/**
+ * Peer bots callable with @ from this server (M5-02a): live `bot:` summary rows of valid peer servers (role `bot`
+ * or `manager`, top-level only), leaving out the 2.x constants `MAIN_BOT_ID` and `MAINTAINER_ID`.
+ */
+export function peerRemoteMembers(roster: Pick<RosterStore, "view">, db: Db): RemoteMember[] {
+  const view = roster.view;
+  const peers = [...view.valid].filter((member) => member !== view.self && view.servers.has(member)).sort();
+  if (!peers.length) return [];
+  const streamState = db.prepare("SELECT state FROM streams WHERE stream = ?");
+  const machineRow = db.prepare("SELECT body FROM rows WHERE stream = ? AND key = 'machine' AND deleted = 0");
+  const botRows = db.prepare("SELECT key, body FROM rows WHERE stream = ? AND key LIKE 'bot:%' AND deleted = 0 ORDER BY rev");
+  const result: RemoteMember[] = [];
+  for (const server of peers) {
+    const stream = `srv:${server}`;
+    const meta = streamState.get(stream);
+    if (meta && String(meta.state) === "gone") continue;
+    let machineName = "";
+    try {
+      const m = machineRow.get(stream);
+      if (m?.body != null) {
+        const parsed = JSON.parse(String(m.body)) as { name?: unknown };
+        if (typeof parsed.name === "string") machineName = parsed.name.trim();
+      }
+    } catch { /* ignore malformed machine row */ }
+    const serverName = view.members.get(server)?.name?.trim() || machineName || server;
+    for (const row of botRows.all(stream)) {
+      const id = String(row.key).slice(4);
+      if (!id || id === MAIN_BOT_ID || id === MAINTAINER_ID) continue;
+      let body: { name?: unknown; role?: unknown; parent?: unknown };
+      try { body = JSON.parse(String(row.body ?? "{}")); } catch { continue; }
+      if (body.role !== "bot" && body.role !== "manager") continue;
+      if (body.parent !== null && body.parent !== undefined) continue;
+      if (typeof body.name !== "string" || !body.name.trim()) continue;
+      result.push({ id, name: body.name, server, serverName });
+    }
+  }
+  return result;
 }
 
 export interface BotlingdOptions {
@@ -259,6 +317,9 @@ export class Botlingd {
   peerContent: PeerContent | null = null;
   peerContentOwner: PeerContentOwner | null = null;
   chunkCache: ChunkCache | null = null;
+  /** M5-04a: this server acting as its own command origin. */
+  serverOrigin: ServerOrigin | null = null;
+  private originHookStop: (() => void) | null = null;
   fetchSource: FetchSource | null = null;
 
   get token(): string { return this.tokenValue; }
@@ -294,6 +355,11 @@ export class Botlingd {
       // anything reads meta.serverId (a fresh data folder is named by its member id, v1 §3).
       const identity = await loadOrCreateServerIdentity(paths.dataDir, { create: store.meta("memberId") === undefined });
       const { serverId, memberId } = await store.submit((tx) => bindServerIdentity(tx, identity));
+      const hadFixedIds = store.meta("ids.main") !== undefined;
+      const ids = await store.submit((tx) => fixedIds(tx, { created: identity.created }));
+      if (!ids.minted && !hadFixedIds) {
+        log("ids: this data folder keeps the 2.x ids for its main bot and Maintainer (made before Botling 3 M5); a new folder gets its own.");
+      }
       const roster = await RosterStore.open(store, identity, { log });
       const clusterSetup = new ClusterSetup(roster);
       // M3 step 5: cluster preferences (LWW per key) and the gossip of statements and preferences between servers.
@@ -322,6 +388,8 @@ export class Botlingd {
           node: plainHostNode(env as NodeJS.ProcessEnv), sealer: noSafeStorage, app: shell.appBridge(),
         }),
         deferTurn,
+        mainBotId: ids.main,
+        maintainerId: ids.maintainer,
         pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
           read: async (ref, offset, length) => {
@@ -333,8 +401,9 @@ export class Botlingd {
             return pluginRead.fetch(storageDir, ref);
           },
         },
+        remoteMembers: () => peerRemoteMembers(roster, hub.reader()),
         botStore: (directory) => {
-          const key = storeKeyOf(paths.dataDir, directory);
+          const key = storeKeyOf(paths.dataDir, directory, ids.main);
           opened.set(key, directory);
           return stores.open(key, directory);
         },
@@ -356,11 +425,7 @@ export class Botlingd {
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize({
-          memberId: roster.memberId,
-          device: (member) => roster.device(member),
-          server: (member) => { const view = roster.view; return member !== view.self && view.servers.has(member) && view.valid.has(member); },
-        }), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster)), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
         tapHooks: {
           eventSeen: (event) => {
             summary?.seen(event);
@@ -474,6 +539,13 @@ export class Botlingd {
         isRevoked: (peer) => !roster.view.valid.has(peer),
       });
       roster.onChange((change) => { void forwarder.revoked(change.invalidated); });
+      // M5-04a: this server acting as its own command origin (call-ins, main bot); slot.origin is always roster.memberId.
+      const serverOrigin = new ServerOrigin({
+        self: roster.memberId, submit: (command) => openStore.submit(command), reader: () => hub.reader(), forwarder,
+        isRevoked: (peer) => !roster.view.valid.has(peer),
+        subscribeTable: (stream, sink) => feeds.subscribe(stream, null, sink), log,
+      });
+      roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);
@@ -570,7 +642,7 @@ export class Botlingd {
       pluginRead = new PluginContentRead({ serverId, service: content, peer: peerContent, roster });
       const peerContentOwner = new PeerContentOwner({ service: content, roster, log, corruptId: testCorruptContent(env) });
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
-      const remoteContent = new RemoteContent({ service: content, tickets, roster, log, peer: peerContent });
+      const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), log, peer: peerContent });
       const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner }, options.session);
       // M5-07a: source side of on-demand fetch between servers.
       const fetchSource = new FetchSource({
@@ -613,6 +685,8 @@ export class Botlingd {
       daemon.peerContent = peerContent;
       daemon.peerContentOwner = peerContentOwner;
       daemon.chunkCache = chunkCache;
+      daemon.serverOrigin = serverOrigin;
+      if (originTestHookEnabled(env)) daemon.originHookStop = startOriginTestHook(paths.dataDir, serverOrigin, log);
       daemon.fetchSource = fetchSource;
       daemon.media = media;
       daemon.pluginTimer = pluginTimer;
@@ -715,6 +789,8 @@ export class Botlingd {
     this.peerContent?.close();
     await step("peer log cache", () => this.peerLogs.idle());
     await step("peer content", () => this.peerContent?.flushed());
+    this.originHookStop?.();
+    this.serverOrigin?.close();
     await step("fetch source", () => this.fetchSource?.flushed());
     this.feeds.close();
     await step("listener", () => this.listener?.close());
@@ -759,6 +835,60 @@ export const TEST_CORRUPT_CONTENT_ENV = "BOTLING_SERVER_TEST_CORRUPT_CONTENT";
 export function testCorruptContent(env: Record<string, string | undefined>): string | null {
   const value = (env[TEST_CORRUPT_CONTENT_ENV] ?? "").trim();
   return /^sha256:[0-9a-f]{64}$/.test(value) ? value : null;
+}
+
+
+/** Test hook (M5-04a): requires `BOTLING_AGENT=fake` and both test flags (`BOTLING_SERVER_TEST_ORIGIN_HOOK=1` and `BOTLING_SERVER_TEST_ORIGIN_HOOK_ALLOW=1`). */
+export const TEST_ORIGIN_HOOK_ENV = "BOTLING_SERVER_TEST_ORIGIN_HOOK";
+export const TEST_ORIGIN_HOOK_ALLOW_ENV = "BOTLING_SERVER_TEST_ORIGIN_HOOK_ALLOW";
+export function originTestHookEnabled(env: Record<string, string | undefined>): boolean {
+  return env.BOTLING_AGENT === "fake"
+    && env[TEST_ORIGIN_HOOK_ENV] === "1"
+    && env[TEST_ORIGIN_HOOK_ALLOW_ENV] === "1";
+}
+function startOriginTestHook(dataDir: string, serverOrigin: ServerOrigin, log: (line: string) => void): () => void {
+  const reqDir = join(dataDir, "test-server-origin-requests");
+  const submittedFile = join(dataDir, "test-server-origin-submitted.jsonl");
+  const outcomesFile = join(dataDir, "test-server-origin-outcomes.jsonl");
+  const off = serverOrigin.on((slot, outcome) => {
+    try { appendFileSync(outcomesFile, `${JSON.stringify({ slot, outcome })}\n`, { mode: 0o600 }); } catch (error) {
+      log(`server-origin hook: writing outcome failed: ${String((error as Error)?.message ?? error)}`);
+    }
+  });
+  let busy = false;
+  const poll = () => {
+    if (busy || !existsSync(reqDir)) return;
+    busy = true;
+    void (async () => {
+      try {
+        for (const name of readdirSync(reqDir).filter((f) => f.endsWith(".json")).sort()) {
+          const full = join(reqDir, name);
+          let raw: string;
+          try { raw = readFileSync(full, "utf8"); unlinkSync(full); } catch { continue; }
+          let req: { id?: unknown; target?: unknown; cmd?: unknown } | null = null;
+          try {
+            req = JSON.parse(raw) as { id?: unknown; target?: unknown; cmd?: unknown };
+            if (!req || typeof req.id !== "string" || typeof req.target !== "string" || !req.cmd || typeof req.cmd !== "object") {
+              throw new TypeError("malformed server-origin test hook request");
+            }
+            const slot = await serverOrigin.submit(req.target as Target, req.cmd as Command);
+            appendFileSync(submittedFile, `${JSON.stringify({ id: req.id, slot })}\n`, { mode: 0o600 });
+          } catch (error) {
+            if (req && typeof req.id === "string") {
+              appendFileSync(submittedFile, `${JSON.stringify({ id: req.id, error: String((error as Error)?.message ?? error) })}\n`, { mode: 0o600 });
+            } else {
+              log(`server-origin hook: bad request ${name}: ${String((error as Error)?.message ?? error)}`);
+            }
+          }
+        }
+      } finally {
+        busy = false;
+      }
+    })();
+  };
+  const timer = setInterval(poll, 25);
+  timer.unref();
+  return () => { clearInterval(timer); off(); };
 }
 
 /** Where the built server's out/ folder is: `<out>/server/main.cjs` → `<out>`. */

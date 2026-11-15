@@ -1,5 +1,6 @@
 // The bots' faces: coloured shapes with big eyes, as the Swift app draws them (Avatar.swift),
 // here as SVG data URLs so both the React chrome and the reused chat page can show them.
+import { isMaintainer } from "../contract";
 
 const COLORS: Record<string, string> = {
   circle: "#FF4B42", star: "#FFC915", square: "#2F86F6", triangle: "#2E9E3A", diamond: "#9B5CF0",
@@ -149,14 +150,13 @@ export const SPARE_COLORS = [...new Set([
   ...[0.5, 0.68, 0.84].flatMap((lightness, ring) => Array.from({ length: 18 }, (_, i) => oklch(lightness, 0.16, i * 20 + ring * 10))),
 ])];
 
-export const MAINTAINER_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
-type ColorBot = { id: string; avatar: string; role?: string; parent?: string | null };
+type ColorBot = { id: string; avatar: string; role?: string; parent?: string | null; maintainer?: true };
 
 /** Each bot's colour by id, clashes moved to the least clashing colour (see above). `pinned`: the
  * pinned bots' ids, served right after the main bot and Maintainer, as the column shows them together.
  * `held`: colours already settled (still on the same shape), kept as they are and taken first. */
 export function resolveBotColors(bots: readonly ColorBot[], pinned: readonly string[] = [], held: HeldColors = {}): Map<string, string> {
-  const rank = (bot: ColorBot) => (bot.role === "main" ? 0 : bot.id === MAINTAINER_ID ? 1 : pinned.includes(bot.id) ? 2 : bot.parent ? 4 : 3);
+  const rank = (bot: ColorBot) => (bot.role === "main" ? 0 : isMaintainer(bot) ? 1 : pinned.includes(bot.id) ? 2 : bot.parent ? 4 : 3);
   const ordered = [...bots].sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const out = new Map<string, string>();
   const taken: string[] = [];
@@ -207,7 +207,7 @@ let botColorsHeld: HeldColors = {};
 /** The app's bots, so every face drawn after this uses their colours (App calls it on each bot list).
  * `held`: the settled colours (settings `botColors`). Returns the colours to hold from now on, for App to keep. */
 export function setBotColors(bots: readonly ColorBot[], pinned: readonly string[] = [], held?: HeldColors): HeldColors {
-  const key = bots.map((bot) => `${bot.id}:${bot.avatar}:${bot.role ?? ""}:${bot.parent ?? ""}`).sort().join(",") + `|${pinned.join(",")}|${JSON.stringify(held ?? null)}`;
+  const key = bots.map((bot) => `${bot.id}:${bot.avatar}:${bot.role ?? ""}:${bot.parent ?? ""}:${bot.maintainer ? "m" : ""}`).sort().join(",") + `|${pinned.join(",")}|${JSON.stringify(held ?? null)}`;
   if (key === botColorsKey) return botColorsHeld;
   botColorsKey = key;
   botColorsHeld = heldBotColors(bots, pinned, held);

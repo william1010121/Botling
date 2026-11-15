@@ -3,7 +3,7 @@ import { ShellOverlay } from "./ShellOverlay";
 // ever sent, never shown back: the page knows whether it is set), its commands, and its panels, which
 // open in a sandboxed frame (panel-page.ts). A small stand-in until 2.0 has 1.x's Settings window.
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
-import { MAINTAINER_BOT_ID, type BotView, type ComponentInfoView, type PluginStoreEntryView, type PluginStoreView, type PluginView, type PluginsView } from "../contract";
+import { isMaintainer, type BotView, type ComponentInfoView, type PluginStoreEntryView, type PluginStoreView, type PluginView, type PluginsView } from "../contract";
 import { StoreList, usePluginStore } from "./PluginStore";
 import { say } from "./shortcut-labels";
 import type { Lang } from "../../../Web/src/i18n";
@@ -16,7 +16,7 @@ import { pluginFrameHost, type PluginFrameHostDeps } from "./plugin-frame-host";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-export function PluginsButton({ client, plugins, onAsked, lang = null, onShowMain, initialStore = null }: { client: Client; plugins: PluginsView | null; onAsked?: () => void; lang?: Lang | null;
+export function PluginsButton({ client, plugins, bots, onAsked, lang = null, onShowMain, initialStore = null }: { client: Client; plugins: PluginsView | null; bots?: BotView[]; onAsked?: () => void; lang?: Lang | null;
   /** Shows the main bot's chat (where the install card is). */
   onShowMain?: () => void;
   /** The catalog's view before the core's answer (tests). */
@@ -32,7 +32,7 @@ export function PluginsButton({ client, plugins, onAsked, lang = null, onShowMai
         Plugins{broken && <span className="rail-dot" aria-label="a plugin needs attention" />}
         {updates > 0 && <span className="badge plugins-updates-badge" title={say(lang, "plugins.updatesCount", { n: updates })} aria-label={say(lang, "plugins.updatesCount", { n: updates })}>{updates}</span>}
       </button>
-      {open && <ShellOverlay><PluginsPanel client={client} plugins={plugins} lang={lang} onPanel={(next) => { setPanel(next); setOpen(false); }} onClose={() => setOpen(false)} onAsked={() => { setOpen(false); onAsked?.(); }}
+      {open && <ShellOverlay><PluginsPanel client={client} plugins={plugins} bots={bots} lang={lang} onPanel={(next) => { setPanel(next); setOpen(false); }} onClose={() => setOpen(false)} onAsked={() => { setOpen(false); onAsked?.(); }}
         {...(onShowMain ? { onShowMain: () => { setOpen(false); onShowMain(); } } : {})} /></ShellOverlay>}
       {panel && <ShellOverlay><PanelFrame client={client} plugin={panel.plugin} panel={panel.id} title={panel.title} onClose={() => setPanel(null)} /></ShellOverlay>}
     </div>
@@ -41,7 +41,8 @@ export function PluginsButton({ client, plugins, onAsked, lang = null, onShowMai
 
 export type PluginsTab = "installed" | "explore" | "updates";
 
-export function PluginsPanel({ client, plugins, onPanel, onClose, onAsked, onShowMain, embedded = false, lang = null, initialTab = "installed", initialStore = null }: { client: Client; plugins: PluginsView | null; onPanel: (panel: { plugin: string; id: string; title: string }) => void; onClose: () => void; onAsked?: () => void; onShowMain?: () => void; embedded?: boolean; lang?: Lang | null; initialTab?: PluginsTab; initialStore?: PluginStoreView | null }) {
+export function PluginsPanel({ client, plugins, bots, onPanel, onClose, onAsked, onShowMain, embedded = false, lang = null, initialTab = "installed", initialStore = null }: { client: Client; plugins: PluginsView | null; bots?: BotView[]; onPanel: (panel: { plugin: string; id: string; title: string }) => void; onClose: () => void; onAsked?: () => void; onShowMain?: () => void; embedded?: boolean; lang?: Lang | null; initialTab?: PluginsTab; initialStore?: PluginStoreView | null }) {
+  const maintainer = bots?.find(isMaintainer);
   const [problem, setProblem] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [tab, setTab] = useState<PluginsTab>(initialTab);
@@ -75,7 +76,7 @@ export function PluginsPanel({ client, plugins, onPanel, onClose, onAsked, onSho
       {problem && <p className="plugins-problem" role="alert">{problem}</p>}
       {result && <p className="plugins-result" role="status">{result}</p>}
       {!plugins?.plugins.length && <p className="plugins-empty">No plugins yet. Ask the main bot or Maintainer for one, or to install one.</p>}
-      <AskMaintainer onSend={(text) => run(client.request({ type: "chat.send", botId: MAINTAINER_BOT_ID, text }).then(() => { setResult("Sent to Maintainer. It builds the plugin and checks it; you approve anything it needs."); onAsked?.(); }))} />
+      <AskMaintainer onSend={(text) => { if (!maintainer) return; run(client.request({ type: "chat.send", botId: maintainer.id, text }).then(() => { setResult("Sent to Maintainer. It builds the plugin and checks it; you approve anything it needs."); onAsked?.(); })); }} />
       <ul>
         {plugins?.plugins.map((plugin) => (
           <PluginItem key={plugin.name} plugin={plugin} lang={lang} catalog={catalog.get(plugin.name) ?? null}
