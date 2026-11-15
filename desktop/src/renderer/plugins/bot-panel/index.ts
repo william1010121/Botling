@@ -5,18 +5,22 @@
 //     (waiting list, results, settled workers), one registration each, `{kind: "panel-block", block}`; RightPanel.tsx draws them;
 //   - `panel/section` (2.x `view/rightPanel.section`): plugins' `rightPanel.section` views land here as the feed's rows;
 //   - `panel/takeover` (2.x `view/rightPanel.takeover`): plugins' `rightPanel.takeover` views land here as the feed's rows.
-// Nothing core goes in the last two. The panel's head and Now card, the bot's own settings page and the folded strip's face are the
+//   - `panel/tile/board`, `panel/tile/whiteboard`, `panel/tile/pin` (2.x `tile/<surface>`, M7-03b): a plugin's `tile` contributions land here,
+//     one row per surface the tile names, as the feed's rows (shell/tile-rows.ts); panel-slot.ts `tilesFor` reads them.
+// Nothing core goes in the last five. The panel's head and Now card, the bot's own settings page and the folded strip's face are the
 // shell's: with this plugin away the panel shows the shell's "unavailable" line in its place and the chat stays (panel-slot.ts).
 import type { PluginDeclaration } from "../../../../../Web/src/plugin-kernel";
 import { isInPageApi } from "../../shell/inpage-host";
-import { BOT_PANEL_PLUGIN, MAIN_SLOT, PANEL_BLOCKS, SECTION_SLOT, TAKEOVER_SLOT, type PanelBlockEntry } from "../../panel-names";
+import { BOT_PANEL_PLUGIN, MAIN_SLOT, PANEL_BLOCKS, SECTION_SLOT, TAKEOVER_SLOT, TILE_SLOTS, TILE_SURFACES, type PanelBlockEntry } from "../../panel-names";
 
-export const botPanelDeclaration: PluginDeclaration = { name: BOT_PANEL_PLUGIN, provides: { slots: [MAIN_SLOT, SECTION_SLOT, TAKEOVER_SLOT] } };
+const SLOTS = [MAIN_SLOT, SECTION_SLOT, TAKEOVER_SLOT, ...TILE_SURFACES.map((surface) => TILE_SLOTS[surface])];
+
+export const botPanelDeclaration: PluginDeclaration = { name: BOT_PANEL_PLUGIN, provides: { slots: SLOTS } };
 
 export function activate(api: unknown): Promise<() => void> {
   if (!isInPageApi(api)) return Promise.reject(new Error("no in-page api"));
   return api.define(botPanelDeclaration, (kernel, plugin) => {
-    for (const slot of [MAIN_SLOT, SECTION_SLOT, TAKEOVER_SLOT]) kernel.provideSlot(plugin, slot);
+    for (const slot of SLOTS) kernel.provideSlot(plugin, slot);
     for (const block of PANEL_BLOCKS) {
       // The plugin owns the slot, so the kernel takes this while it loads; a refusal fails the load (nothing half-registered stays).
       if (!kernel.contribute(plugin, MAIN_SLOT, { kind: "panel-block", block } satisfies PanelBlockEntry)) throw new Error(`the kernel refused the ${block} block`);
