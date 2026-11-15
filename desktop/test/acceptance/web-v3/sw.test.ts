@@ -271,20 +271,24 @@ async function run(engine: string, type: BrowserType) {
 
     // 5b. A refusal through the worker: the clip's URL naming an entry that does not reference it (seq 1). The server
     // refuses the read (`denied`); the worker answers 404 as the server would, and WebKit's media loader (its requests
-    // carry X-Playback-Session-Id + Range) gets the empty 200 with X-Botling-Status (step 11).
+    // carry X-Playback-Session-Id + Range) gets the empty 200 with X-Botling-Status (step 11), except its opening probe
+    // (`bytes=0-1`), which keeps the real status so a source refused from the start errors at once (M3 step 14).
     const clipSrc = Object.values((await pageDiag(page)).media).find((m) => m.src?.includes("sw=1") && m.variant)!.src!;
     const wrong = clipSrc.replace(/([?&]e=[^&]*\.)\d+/, "$11");
     expect(wrong).not.toBe(clipSrc);
     const refusals = await page.evaluate(async (url) => {
       const plain = await fetch(url, { headers: { Range: "bytes=0-1" }, cache: "no-store" });
-      const loader = await fetch(url, { headers: { Range: "bytes=0-1", "X-Playback-Session-Id": "TEST" }, cache: "no-store" });
+      const probe = await fetch(url, { headers: { Range: "bytes=0-1", "X-Playback-Session-Id": "TEST" }, cache: "no-store" });
+      const loader = await fetch(url, { headers: { Range: "bytes=5-", "X-Playback-Session-Id": "TEST" }, cache: "no-store" });
       return {
+        probe: { status: probe.status },
         plain: { status: plain.status, why: plain.headers.get("x-botling-content") },
         loader: { status: loader.status, botlingStatus: loader.headers.get("x-botling-status"), bytes: (await loader.arrayBuffer()).byteLength },
       };
     }, wrong);
     result.refusals = refusals;
     expect(refusals.plain).toEqual({ status: 404, why: "gone; reason=denied" });
+    expect(refusals.probe).toEqual({ status: 404 });
     expect(refusals.loader).toEqual({ status: 200, botlingStatus: "404", bytes: 0 });
 
     // 6. Nothing reached botlingd over HTTP for content; /mobile/ is not under the worker.
