@@ -402,7 +402,9 @@ export class RendererAdapter {
     const key = JSON.stringify([cmd.botId, cmd.messageId, cmd.url, cmd.id]);
     const running = this.linkRuns.get(key);
     if (running) return await running;
-    const run = this.command(cmd, { plugin }).finally(() => { this.linkRuns.delete(key); });
+    // The owner's row, for this shell button only: no plugin code of this machine runs, the owner's own code does. A frame's
+    // command stays on the attached server's row (the code the frame runs), so the owner checks that hash (C7: "differs on").
+    const run = this.command(cmd, { plugin }, this.peerOf(cmd.botId)).finally(() => { this.linkRuns.delete(key); });
     this.linkRuns.set(key, run);
     return await run;
   }
@@ -416,7 +418,7 @@ export class RendererAdapter {
     return asked;
   }
 
-  /** `serverId`: whose `plugin:` row stamps the hash: the owner of the bot the command is for (M5-09), else the attached server. */
+  /** `serverId`: whose `plugin:` row stamps the hash: the attached server's, or a peer bot's owner for its link button (M5-09). */
   private resolveVia(via: RequestVia, serverId: string | null = this.options.link.server): Via | null {
     const table = serverId ? this.options.link.table?.(serverId) ?? null : null;
     const rawRow = table?.rows.get(`plugin:${via.plugin}`);
@@ -425,10 +427,12 @@ export class RendererAdapter {
     return { plugin: via.plugin, codeHash: parsedRow.data.codeHash };
   }
 
-  private async command(cmd: Command, via?: RequestVia): Promise<AdapterAnswer> {
+  /**
+   * `viaServer`: whose `plugin:` row stamps `via`. The attached server's by default: a frame runs that machine's code, so its
+   * hash goes even to a peer's bot, whose owner refuses another version (C7). Only `linkCommand` passes a peer (M5-09).
+   */
+  private async command(cmd: Command, via?: RequestVia, viaServer: string | null = this.options.link.server): Promise<AdapterAnswer> {
     const botId = botIdOf(cmd);
-    // A command for a peer's bot is decided on that machine: its row, its code hash (M5-09).
-    const viaServer = (botId ? this.peerOf(botId) : null) ?? this.options.link.server;
     const missing = (): AdapterAnswer => ({ ok: false, error: { code: "forbidden", message: `not sent: the plugin is not installed on ${viaServer === this.options.link.server ? "this" : "that"} machine` } });
     if (via && !this.resolveVia(via, viaServer)) return missing();
     if (cmd.type.startsWith("plugins.")) this.pluginsWeb = null;

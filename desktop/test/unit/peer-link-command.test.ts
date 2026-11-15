@@ -23,7 +23,7 @@ import { PluginContentRead } from "../../src/server/content/plugin-read";
 import { ensureStream } from "../../src/server/log";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import { tempDir, until } from "../helpers";
-import { FakeClock, FakeServer, flush, SERVER_ID } from "./fe-link-harness";
+import { FakeClock, FakeServer, flush, SERVER_ID, SRV_STREAM } from "./fe-link-harness";
 
 // ---------------------------------------------------------------------------------------------
 // Owner side, 1: the content reference of a line's file (real ContentService and store)
@@ -376,6 +376,26 @@ describe("pressing the button on a peer bot's line runs at its owner, as the con
     // A different line or link is a different press.
     await Promise.all([press({ messageId: "L2" }), press({ messageId: "L3" })]);
     expect(sentTo(FAR_STREAM)).toHaveLength(4);
+  });
+
+  it("review probe: a frame's command for the peer's bot keeps A's hash (the code it runs); only the link button takes B's", async () => {
+    const { server, adapter, press, sentTo } = await rig({ coach: pluginRow(HASH_B) });
+    await adapter.snapshot();
+    await adapter.snapshot(FAR);
+    const frame = (cmd: Record<string, unknown>) => adapter.request(cmd as Command, { plugin: "coach" });
+    const snap = { type: "plugins.noteSnapshot", name: "coach", botId: FAR, rect: { x: 0, y: 0, width: 10, height: 10 } };
+    // A has no coach row: its frame cannot be attributed, whatever B has.
+    expect(await frame(snap)).toMatchObject({ ok: false, error: { code: "forbidden", message: expect.stringContaining("this machine") } });
+    expect(sentTo(FAR_STREAM)).toEqual([]);
+    const HASH_A = "sha256:" + "aa".repeat(32);
+    server.sendWire({ t: "rows", stream: SRV_STREAM, logId: "incown01", after: 0, to: 1, rows: [{ key: "plugin:coach", rev: 1, body: pluginRow(HASH_A) }], more: false });
+    await flush();
+    await frame(snap);
+    await frame({ type: "plugins.approvalAsk", name: "coach", botId: FAR, command: "ls", folder: "/p" });
+    await press();
+    expect(sentTo(FAR_STREAM).map((copy) => [copy.cmd.type, copy.via?.codeHash])).toEqual([
+      ["plugins.noteSnapshot", HASH_A], ["plugins.approvalAsk", HASH_A], ["plugins.linkCommand", HASH_B],
+    ]);
   });
 
   it("A's own bot: as today, no via (the window needs none), no lookup in any table", async () => {
