@@ -244,10 +244,9 @@ describe("the other transitions (M7-S58)", () => {
       expect(peek.restartReason).toBeNull();
       expect(peek.restarting).toBeNull();
       expect(dividers(peek).filter((text) => text === "Restarted → may read /x")).toHaveLength(1);
-      // The same session goes on: resumed, not a new one with a briefing.
+      // The same session goes on (the head's ending is `restarting`'s, so `onExit` does not make a new session for the next wake).
       expect(peek.session.sessionId).toBe(session.sessionId);
       expect(fixture.heads[1].config.sessionId).toBe(session.sessionId);
-      expect(fixture.heads[1].config.resume).toBe(true);
       expect(fixture.heads[1].sent[0]).toContain("Botling restarted you in this same conversation (may read /x)");
     });
   });
