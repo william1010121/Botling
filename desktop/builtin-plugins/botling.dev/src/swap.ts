@@ -15,6 +15,8 @@ import { writeFileAtomic } from "../../../src/core/durable/atomic";
 
 /** Seconds the new build has to come up. */
 export const HEALTH_WAIT_S = 90;
+/** Botling 3: the window starts botlingd, which must open its store and see a window attach first. */
+export const HEALTH_WAIT_S_V3 = 120;
 /** How long a new build must have run before it counts as up. */
 export const HEALTHY_AFTER_MS = 8_000;
 /** Builds in a row that failed to come up before installing pauses. */
@@ -90,7 +92,7 @@ export interface InstallState {
 
 export const updateFolder = (root: string) => join(root, "self-update");
 const stateFile = (root: string) => join(updateFolder(root), "state.json");
-const healthyFile = (root: string) => join(updateFolder(root), "healthy");
+export const healthyFile = (root: string) => join(updateFolder(root), "healthy");
 const rolledBackFile = (root: string) => join(updateFolder(root), "rolled-back");
 export const failuresFile = (root: string) => join(updateFolder(root), "failures");
 export const installLog = (root: string) => join(updateFolder(root), "install.log");
@@ -155,20 +157,131 @@ reopen "$PREVIOUS"
 exit 1
 `;
 
-/** Writes the state and the script; returns the command that runs the script (detached; the app quits right after). */
-export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), target = from.path): string[] {
+/**
+ * Botling 3's script, run as: install.sh botlingd-pid target new backup healthy rolled-back seconds app-data previous server-data.
+ * The app is the window plus botlingd, which runs the core and stops itself once the window quit (server/shell-bridge.ts
+ * `quitForInstall`). The script waits for botlingd, ends whatever still runs from the old bundle (a window that did not quit;
+ * a botlingd it started again), swaps the app keeping the old one, checks the copy's signature, opens it on the same data
+ * folders and waits for `healthy` (written by the new botlingd once a window attached, core/self-update.ts). A build that
+ * does not come up is ended, kept as <target>.failed, and the old one put back and opened. botlingd is never SIGKILLed
+ * before the swap; only a new build that ignores SIGTERM is (else the old build could not start on the data folder).
+ * After the install-3.0 script (.bot/artifacts/install-3.0/install.sh).
+ */
+export const INSTALL_SCRIPT_V3 = `#!/bin/bash
+# Installs a new Botling 3 build once its window and botlingd have stopped; puts the old one back if the new one does not
+# come up. Written by Botling 3 (builtin-plugins/botling.dev).
+PID="$1"; TARGET="$2"; NEW="$3"; BACKUP="$4"; HEALTHY="$5"; ROLLED="$6"; WAIT="$7"; DATA="$8"; PREVIOUS="\${9:-$2}"; SERVER="\${10:-}"
+OPEN="\${BOTLING_TEST_OPEN:-/usr/bin/open}"
+DITTO="\${BOTLING_TEST_DITTO:-/usr/bin/ditto}"
+CODESIGN="\${BOTLING_TEST_CODESIGN:-/usr/bin/codesign}"
+XATTR="\${BOTLING_TEST_XATTR:-/usr/bin/xattr}"
+QUIT_WAIT="\${BOTLING_TEST_QUIT_WAIT:-300}"
+APP_WAIT="\${BOTLING_TEST_APP_WAIT:-30}"
+say() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
+alive() { kill -0 "$1" 2>/dev/null; }
+# The processes whose program is inside bundle $1 (the window, botlingd, what they started), but not this script.
+app_pids() {
+  ps -A -ww -o pid=,command= | BUNDLE_DIR="$1/Contents/MacOS/" SELF="$$" awk '{
+    line = $0; sub(/^[ ]*[0-9]+[ ]/, "", line)
+    if ($1 != ENVIRON["SELF"] && index(line, ENVIRON["BUNDLE_DIR"]) == 1) print $1
+  }'
+}
+botlingd_pids() {
+  ps -A -ww -o pid=,command= | BUNDLE_DIR="$1/Contents/MacOS/" awk '{
+    line = $0; sub(/^[ ]*[0-9]+[ ]/, "", line)
+    if (index(line, ENVIRON["BUNDLE_DIR"]) == 1 && index(line, " --botlingd") > 0) print $1
+  }'
+}
+wait_gone() { local n=0; while [ -n "$(app_pids "$1")" ]; do [ "$n" -ge "$2" ] && return 1; sleep 1; n=$((n + 1)); done; return 0; }
+# Ends what runs from bundle $1: SIGTERM (the window quits, botlingd stops as for botlingd stop), then SIGKILL; with $2 = 0
+# never botlingd (it may still be saving), so that case fails instead.
+end_bundle() {
+  local pids; pids="$(app_pids "$1")"
+  [ -z "$pids" ] && return 0
+  say "still running from $1: $(echo $pids); SIGTERM"
+  kill -TERM $pids 2>/dev/null
+  wait_gone "$1" "$APP_WAIT" && return 0
+  pids="$(app_pids "$1")"
+  if [ "$2" = 0 ]; then
+    local keep; keep=" $(echo $(botlingd_pids "$1")) "
+    local p; local hard=""
+    for p in $pids; do case "$keep" in *" $p "*) ;; *) hard="$hard $p" ;; esac; done
+    pids="$hard"
+  fi
+  if [ -n "$(echo $pids)" ]; then say "still running after SIGTERM: $(echo $pids); SIGKILL"; kill -KILL $pids 2>/dev/null; fi
+  wait_gone "$1" 5
+}
+launch() (
+  # The script is botlingd's child: its data overrides name botlingd's folder, not the window's.
+  unset BOTLING_DATA_DIR BOTLING_APP_DATA_DIR BOTLING_APP_LOCAL_DATA_DIR BOTLING_APP_BUNDLE BOTLING_SERVER_DATA_DIR BOTLING_SERVER_SOCKET ELECTRON_RUN_AS_NODE
+  unset BOTLING_MAIN_PID BOTLING_STARTUP_LOG BOTLING_SHOT_COMMAND BOTLING_CHECK_COMMAND BOTLING_REPORT_COMMAND BOTLING_REPORT_DOCS BOTLING_APP_COMMAND
+  args=(-n "$1")
+  [ -n "$DATA" ] && args+=(--env "BOTLING_DATA_DIR=$DATA")
+  if [ -n "$SERVER" ] && { [ -z "$DATA" ] || [ "$SERVER" != "$DATA/server" ]; }; then args+=(--env "BOTLING_SERVER_DATA_DIR=$SERVER"); fi
+  "$OPEN" "\${args[@]}"
+)
+reopen() { launch "$1"; }
+putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
+fail() { say "$1"; echo "$1" > "$ROLLED"; }
+say "waiting for botlingd ($PID) to stop; it stops once the Botling 3 window quit"
+n=0; while alive "$PID" && [ "$n" -lt "$QUIT_WAIT" ]; do sleep 1; n=$((n + 1)); done
+if alive "$PID"; then
+  say "botlingd did not stop in $QUIT_WAIT seconds; SIGTERM, as botlingd stop sends"
+  kill -TERM "$PID" 2>/dev/null
+  n=0; while alive "$PID" && [ "$n" -lt "$APP_WAIT" ]; do sleep 1; n=$((n + 1)); done
+fi
+if alive "$PID"; then fail "botlingd did not stop; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
+if ! end_bundle "$PREVIOUS" 0; then fail "Botling 3 did not quit; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
+if [ -e "$TARGET" ]; then
+  say "moving $TARGET to $BACKUP"
+  mv "$TARGET" "$BACKUP" || { fail "could not move the old build"; reopen "$PREVIOUS"; exit 1; }
+else
+  BACKUP=""
+  say "installing to $TARGET (the running build stays at $PREVIOUS)"
+  mkdir -p "$(dirname "$TARGET")" || { fail "could not make the folder for the new build"; reopen "$PREVIOUS"; exit 1; }
+fi
+if ! "$DITTO" "$NEW" "$TARGET"; then
+  rm -rf "$TARGET"; putback; fail "could not copy the new build"; reopen "$PREVIOUS"; exit 1
+fi
+if ! "$CODESIGN" --verify "$TARGET"; then
+  rm -rf "$TARGET"; putback; fail "the copied build's signature does not check out"; reopen "$PREVIOUS"; exit 1
+fi
+"$XATTR" -dr com.apple.quarantine "$TARGET" 2>/dev/null || true
+say "opening the new build"
+launch "$TARGET"
+for i in $(seq 1 "$WAIT"); do
+  if [ -f "$HEALTHY" ]; then say "the new build is up"; exit 0; fi
+  sleep 1
+done
+say "the new build did not come up in $WAIT seconds; putting the old one back"
+end_bundle "$TARGET" 1
+rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null
+putback
+fail "the new build did not come up in $WAIT seconds"
+reopen "$PREVIOUS"
+exit 1
+`;
+
+/**
+ * Writes the state and the script; returns the command that runs the script (detached; the app quits right after).
+ * With `serverDir` (Botling 3: botlingd's data folder) it is the Botling 3 script, `pid` is botlingd's, and the command
+ * ends with that folder (thirteen words).
+ */
+export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), target = from.path, serverDir?: string): string[] {
   // Rollback and the detached script must name the real folders, not an alias.
   root = physicalPath(root);
   if (dataDir) dataDir = physicalPath(dataDir);
+  const v3 = !!serverDir;
   const folder = updateFolder(root);
   mkdirSync(join(folder, "backups"), { recursive: true });
   for (const marker of [healthyFile(root), rolledBackFile(root)]) rmSync(marker, { force: true });
   const stamp = `${now.toISOString().slice(0, 10)}-${Math.floor(now.getTime() / 1000)}`;
-  const backup = join(folder, "backups", `Botling-2-${from.version.replace(/[^0-9A-Za-z.-]/g, "_")}-${stamp}.app`);
+  const backup = join(folder, "backups", `Botling-${v3 ? 3 : 2}-${from.version.replace(/[^0-9A-Za-z.-]/g, "_")}-${stamp}.app`);
   const state: InstallState = { from, to, requesterID: requester, note, startedAt: now.toISOString(), backup };
   writeFileAtomic(stateFile(root), JSON.stringify(state, null, 2));
-  writeFileSync(scriptFile(root), INSTALL_SCRIPT, { mode: 0o700 });
-  return ["/usr/bin/nohup", "/bin/bash", scriptFile(root), String(pid), target, to.path, backup, healthyFile(root), rolledBackFile(root), String(HEALTH_WAIT_S), dataDir, from.path];
+  writeFileSync(scriptFile(root), v3 ? INSTALL_SCRIPT_V3 : INSTALL_SCRIPT, { mode: 0o700 });
+  const command = ["/usr/bin/nohup", "/bin/bash", scriptFile(root), String(pid), target, to.path, backup, healthyFile(root), rolledBackFile(root), String(v3 ? HEALTH_WAIT_S_V3 : HEALTH_WAIT_S), dataDir, from.path];
+  return v3 ? [...command, physicalPath(serverDir!)] : command;
 }
 
 /** How the last install went, read at start: null when none was under way. */

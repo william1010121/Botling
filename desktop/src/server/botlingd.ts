@@ -56,7 +56,7 @@ import { PhoneDesk } from "./pairing/phone-desk";
 import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "./push";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { VapidKeySync } from "./push";
-import { NO_SAFE_STORAGE, ShellBridge, answerSystemQuit } from "./shell-bridge";
+import { NO_SAFE_STORAGE, ShellBridge, answerSystemQuit, appBundleOf } from "./shell-bridge";
 import { PluginRow, RowKey } from "../protocol/table-rows";
 import { openServerStore, type Db, type ServerStore } from "./store";
 import { PeerChatMirror, type MirrorBot } from "./replica/peer-chat-mirror";
@@ -394,6 +394,8 @@ export interface BotlingdOptions {
   pushTransport?: PushTransport;
   /** Optional per-bot push coalescing window override in ms (defaults to 60,000 ms). */
   pushCoalesceMs?: number;
+  /** Stops this process for an install of a developer build (default: SIGTERM to itself, as `botlingd stop` sends). Tests replace it. */
+  stopSelf?: () => void;
 }
 
 export class Botlingd {
@@ -597,7 +599,17 @@ export class Botlingd {
         }
       });
       const coreEngine = new CoreEngine();
-      const shell = new ShellBridge({ appDataDir: env.BOTLING_APP_DATA_DIR || null });
+      // Installing a developer build (botling.dev): the script waits for this process and reopens the app on these folders.
+      const shell = new ShellBridge({
+        appDataDir: env.BOTLING_APP_DATA_DIR || null,
+        pid: process.pid,
+        bundle: appBundleOf(process.execPath, !!options.packaged),
+        serverDataDir: paths.dataDir,
+        stopServer: () => {
+          log("stopping for an install of a developer build (the windows have quit)");
+          (options.stopSelf ?? (() => process.kill(process.pid, "SIGTERM")))();
+        },
+      });
       const { emit, deferTurn } = coreEngine.coreOptions();
       const utilityHost = options.packaged && options.electronUtility
         ? createUtilityHostLauncher({

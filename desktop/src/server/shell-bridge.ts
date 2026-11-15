@@ -14,9 +14,15 @@
 //   macOS logs out or shuts down, botlingd stops the normal way (main-v3/main.ts catches Electron's `before-quit`).
 // - A request waits 30 s for its answer (installing a release: 20 min, it downloads and verifies first); a window that
 //   detaches meanwhile fails its requests.
+// - Installing a developer build (botling.dev's `<install-build>`, core/self-update.ts `installAndQuit`): the core is told
+//   botlingd's pid, bundle and data folder (the install script waits for botlingd and reopens the window on that folder).
+//   `quitForInstall` asks every attached window to quit from inside its own process (`shell.quit`, main's `app.quit()`;
+//   never an AppleEvent), waits until they have gone (at most `quitWaitMs`), then stops botlingd (`stopServer`, the same
+//   SIGTERM as `botlingd stop`). `windowAttached` resolves once a window is here: a new build counts as up only then.
 import type { Sealer } from "../core/plugins/secrets";
 import type { AppAnswer, AppOp } from "../core/server";
 import type { Message, MessageOf } from "../protocol";
+import { dirname } from "node:path";
 
 /** What a session gives the bridge: a way to send the window a frame (false: not sent, the session is gone). */
 export interface ShellWindow {
@@ -37,6 +43,26 @@ export interface ShellBridgeOptions {
   appDataDir?: string | null;
   timeoutMs?: number;
   installTimeoutMs?: number;
+  /** botlingd's pid, the process an install script waits for (null: none told). */
+  pid?: number | null;
+  /** The app bundle botlingd runs from (`appBundleOf`; null: not from a bundle, as in development). */
+  bundle?: string | null;
+  /** botlingd's data folder (null: none told). */
+  serverDataDir?: string | null;
+  /** Stops botlingd for an install, once the windows have gone. */
+  stopServer?: () => void;
+  /** How long an install waits for the windows to quit before botlingd stops anyway (default 30 s). */
+  quitWaitMs?: number;
+}
+
+/** The `.app` bundle around a packaged macOS program (`<bundle>.app/Contents/MacOS/<name>`), else null. */
+export function appBundleOf(execPath: string, packaged: boolean, platform: NodeJS.Platform = process.platform): string | null {
+  if (!packaged || platform !== "darwin") return null;
+  const macos = dirname(execPath);
+  const contents = dirname(macos);
+  const bundle = dirname(contents);
+  if (!macos.endsWith("/MacOS") || !contents.endsWith("/Contents") || !bundle.endsWith(".app")) return null;
+  return bundle;
 }
 
 interface Waiting {
@@ -49,6 +75,7 @@ export class ShellBridge {
   private readonly windows: ShellWindow[] = [];
   private readonly waiting = new Map<string, Waiting>();
   private readonly attachListeners = new Set<() => void>();
+  private readonly detachListeners = new Set<() => void>();
   private counter = 0;
 
   constructor(private readonly options: ShellBridgeOptions = {}) {}
@@ -72,6 +99,9 @@ export class ShellBridge {
   detach(window: ShellWindow): void {
     this.detachOnly(window);
     for (const [req, waiting] of [...this.waiting]) if (waiting.window === window) this.settle(req, { ok: false, error: DETACHED_ERROR });
+    for (const listener of [...this.detachListeners]) {
+      try { listener(); } catch { /* a listener never breaks a detach */ }
+    }
   }
 
   get hasWindow(): boolean { return this.windows.length > 0; }
@@ -89,8 +119,45 @@ export class ShellBridge {
   }
 
   /** The core's `app` option (CoreOptions.app). */
-  appBridge(): { pid: null; dataDir: string | null; bundle: null; request: (op: AppOp, args?: Record<string, string>) => Promise<AppAnswer> } {
-    return { pid: null, dataDir: this.options.appDataDir ?? null, bundle: null, request: (op, args) => this.request(op, args) };
+  appBridge(): {
+    pid: number | null; dataDir: string | null; bundle: string | null; server: { dataDir: string } | null;
+    request: (op: AppOp, args?: Record<string, string>) => Promise<AppAnswer>;
+    quitForInstall: () => Promise<void>;
+    windowAttached: () => Promise<void>;
+  } {
+    const serverDataDir = this.options.serverDataDir ?? null;
+    return {
+      pid: this.options.pid ?? null, dataDir: this.options.appDataDir ?? null, bundle: this.options.bundle ?? null,
+      server: serverDataDir ? { dataDir: serverDataDir } : null,
+      request: (op, args) => this.request(op, args),
+      quitForInstall: () => this.quitForInstall(),
+      windowAttached: () => this.windowAttached(),
+    };
+  }
+
+  /** An install: every attached window quits itself; once they have gone (or `quitWaitMs` passed), botlingd stops. */
+  async quitForInstall(): Promise<void> {
+    const windows = [...this.windows];
+    const wait = this.options.quitWaitMs ?? 30_000;
+    await new Promise<void>((resolve) => {
+      const done = () => { clearTimeout(timer); this.detachListeners.delete(check); resolve(); };
+      const check = () => { if (!windows.some((window) => this.windows.includes(window))) done(); };
+      const timer = setTimeout(done, wait);
+      timer.unref?.();
+      this.detachListeners.add(check);
+      // Each window answers, then quits (main's `app.quit()`); its session ending is what counts.
+      for (const window of windows) void this.sendRequest(window, (req) => ({ t: "shell.quit", req }), wait);
+      check();
+    });
+    this.options.stopServer?.();
+  }
+
+  /** Resolves once a window is attached (at once when one is). */
+  windowAttached(): Promise<void> {
+    if (this.windows.length) return Promise.resolve();
+    return new Promise((resolve) => {
+      const off = this.onAttach(() => { off(); resolve(); });
+    });
   }
 
   /** D74 (M6-06): seals and opens plugin secrets through the attached Botling 3 window's safe storage. */

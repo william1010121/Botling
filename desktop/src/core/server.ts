@@ -98,7 +98,7 @@ import { INDEX_URL_SETTING } from "./plugins/catalog";
 import { maintainerInstructions, maintainerVisualToolRules } from "./maintainer-text";
 import { siteToolsFolder } from "./site-tools-guard";
 import type { ChatRecord } from "./store/records";
-import { ReleaseNotices, confirmHealthy, devWorkRoot, spawnInstaller } from "./self-update";
+import { ReleaseNotices, confirmHealthyWhen, devWorkRoot, installAndQuit } from "./self-update";
 
 /** What the core asks of main (self-update.ts, plugins/app-seam.ts). */
 export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
@@ -223,6 +223,12 @@ export interface CoreOptions {
     dataDir: string | null;
     bundle: string | null;
     request: (op: AppOp, args?: Record<string, string>) => Promise<AppAnswer>;
+    /** Botling 3 (server/shell-bridge.ts): botlingd runs this core; `pid` is then its pid, the process an install waits for. */
+    server?: { dataDir: string } | null;
+    /** Botling 3: for an install the window quits itself, then botlingd stops (2.x asks main to quit). */
+    quitForInstall?: () => Promise<void>;
+    /** Botling 3: resolves once a window is attached (a new build counts as up only then). */
+    windowAttached?: () => Promise<void>;
   } | null;
   /** Botling 3's server only (2.x leaves it unset): turns it keeps aside in its effect outbox (bot.ts `deferTurn`). */
   deferTurn?: (turn: DeferredTurn) => boolean;
@@ -539,16 +545,14 @@ export class Core {
         app: {
           state: () => ({
             pid: options.app?.pid ?? null, dataDir: options.dataDir, appDataDir: options.app?.dataDir ?? null, bundle: options.app?.bundle ?? null,
+            server: options.app?.server ?? null,
             developerMode: settingsView(readSettings(Layout.settings(options.dataDir))).developerMode,
             developer: (() => { const bot = this.developerProject(); return bot ? { id: bot.id, name: bot.profile.name, folder: bot.profile.folder } : null; })(),
           }),
-          installAndRestart: (command, log) => {
-            // Running work resumes on the new build (restart-continuation.ts); a failed checkpoint stops the install.
-            this.prepareRestart();
-            try { spawnInstaller(command, log); } catch (error) { this.cancelRestart(); throw error; }
-            // Bots write their notes as the app quits; the script waits for that.
-            void options.app?.request("quit");
-          },
+          // Running work resumes on the new build (restart-continuation.ts); a failed checkpoint stops the install.
+          installAndRestart: (command, log) => installAndQuit(command, log, {
+            prepareRestart: () => this.prepareRestart(), cancelRestart: () => this.cancelRestart(), app: options.app, log: (line) => this.log(line),
+          }),
           captureWindow: async () => {
             if (!options.app) return null;
             try { const answer = await options.app.request("screenshot"); return answer.ok && answer.file ? answer.file : null; } catch { return null; }
@@ -803,7 +807,8 @@ export class Core {
     const options = this.options;
     // How an install of a developer build went (`checkSelfUpdate`).
     // The new build says it came up (the install script waits for that); botling.dev tells the bot that asked.
-    try { confirmHealthy(options.dataDir); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
+    // Botling 3: only once a window attached to this botlingd (`windowAttached`).
+    try { confirmHealthyWhen(options.dataDir, options.app?.windowAttached, undefined, (line) => this.log(line)); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
     void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
     if (options.pluginCatalog?.autoRefresh) this.pluginStore.startup();
     // Checking a wall-clock time every 15 s (rather than sleeping until it) survives the computer

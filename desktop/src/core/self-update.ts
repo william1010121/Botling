@@ -23,11 +23,7 @@ const declinedFile = (root: string) => join(updateFolder(root), "declined-releas
  * tells the bot that asked how it went. Returns the timer (null: no install under way).
  */
 export function confirmHealthy(root: string, afterMs = HEALTHY_AFTER_MS): NodeJS.Timeout | null {
-  try {
-    const state = JSON.parse(readFileSync(stateFile(root), "utf8")) as { from?: { path?: unknown }; to?: { path?: unknown }; requesterID?: unknown };
-    if (!state?.from?.path || !state?.to?.path || typeof state.requesterID !== "string") return null;
-  } catch { return null; }
-  if (existsSync(rolledBackFile(root))) return null;
+  if (!installUnderWay(root)) return null;
   const timer = setTimeout(() => {
     try {
       mkdirSync(updateFolder(root), { recursive: true });
@@ -36,6 +32,60 @@ export function confirmHealthy(root: string, afterMs = HEALTHY_AFTER_MS): NodeJS
   }, afterMs);
   timer.unref?.();
   return timer;
+}
+
+/**
+ * Botling 3 (core/server.ts with botlingd's `app`): the new build counts as up only once a window attached to its botlingd
+ * (`ready`), then after `afterMs`. Whether an install is under way is read now, at start: botling.dev may finish the state
+ * before a window attaches. Without `ready` it is `confirmHealthy`.
+ */
+export function confirmHealthyWhen(root: string, ready: (() => Promise<void>) | undefined, afterMs = HEALTHY_AFTER_MS, log: (line: string) => void = () => {}): void {
+  if (!ready) { confirmHealthy(root, afterMs); return; }
+  if (!installUnderWay(root)) return;
+  void ready().then(() => {
+    const timer = setTimeout(() => {
+      try {
+        mkdirSync(updateFolder(root), { recursive: true });
+        writeFileSync(healthyFile(root), "ok\n");
+      } catch (error) { log(`self-update: could not write healthy: ${(error as Error).message}`); }
+    }, afterMs);
+    timer.unref?.();
+  }, (error) => log(`self-update: ${(error as Error)?.message ?? String(error)}`));
+}
+
+function installUnderWay(root: string): boolean {
+  try {
+    const state = JSON.parse(readFileSync(stateFile(root), "utf8")) as { from?: { path?: unknown }; to?: { path?: unknown }; requesterID?: unknown };
+    if (!state?.from?.path || !state?.to?.path || typeof state.requesterID !== "string") return false;
+  } catch { return false; }
+  return !existsSync(rolledBackFile(root));
+}
+
+/** What installing a build asks of the app around the core (CoreOptions.app). */
+export interface InstallApp {
+  request(op: "quit"): Promise<unknown>;
+  /** Botling 3 (server/shell-bridge.ts): the window quits itself, then botlingd stops; 2.x asks main to quit instead. */
+  quitForInstall?: () => Promise<void>;
+}
+
+/**
+ * `app.installAndRestart` (botling.dev): checkpoint the work under way (it resumes on the new build), start the install script
+ * outside the app, then quit for it. A script that does not start cancels the checkpoint, quits nothing and throws.
+ */
+export function installAndQuit(command: string[], log: string, deps: {
+  prepareRestart: () => void;
+  cancelRestart: () => void;
+  app: InstallApp | null | undefined;
+  spawn?: (command: string[], log: string) => void;
+  log: (line: string) => void;
+}): void {
+  deps.prepareRestart();
+  try { (deps.spawn ?? spawnInstaller)(command, log); } catch (error) { deps.cancelRestart(); throw error; }
+  const app = deps.app;
+  if (!app) return;
+  // Bots write their notes as the app quits; the script waits for that.
+  const quit = app.quitForInstall ? () => app.quitForInstall!() : () => app.request("quit");
+  void Promise.resolve().then(quit).catch((error) => deps.log(`install: could not stop for the install: ${(error as Error)?.message ?? String(error)}`));
 }
 
 /** The external volume a path is on (`/Volumes/<name>`), or null when it is on this Mac's own disk. */

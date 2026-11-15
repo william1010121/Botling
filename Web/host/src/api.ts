@@ -349,7 +349,7 @@ export interface SessionsApi {
 // ── The app (plugin-extraction.md §3.2 #6): install a build and restart, a picture of the window; built-in plugins only ──
 /** The app as the developer tools see it. */
 export interface AppState {
-  /** Main's pid (null: no app around). */
+  /** The pid the install script waits for to quit: main's in 2.x, botlingd's in Botling 3 (null: no app around). */
   pid: number | null;
   /** The core's data folder, and the app's own. */
   dataDir: string;
@@ -359,11 +359,13 @@ export interface AppState {
   developerMode: boolean;
   /** The project that is Botling's own source while developer mode is on. */
   developer: { id: string; name: string; folder: string } | null;
+  /** Botling 3: botlingd runs the core; its data folder (the install script's last word). Null or absent in 2.x. */
+  server?: { dataDir: string } | null;
 }
 export interface AppApi {
   state(): Promise<AppState>;
   /**
-   * Starts `command` (the install script `<dataDir>/self-update/install.sh` with its twelve words) detached and quits the app for it, after
+   * Starts `command` (the install script `<dataDir>/self-update/install.sh` with its twelve words, thirteen in Botling 3) detached and quits the app for it, after
    * Botling checkpointed the work under way so it resumes on the new build. Throws when it cannot start; nothing quits then.
    */
   installAndRestart(command: string[], log: string): Promise<void>;

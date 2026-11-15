@@ -30,6 +30,8 @@ export class Program {
       bot: (id) => { const info = program.bots.get(id); return info ? program.proxy(info.id, info.name, "") : null; },
       get appPid() { return program.state?.pid ?? null; },
       get appDataDir() { return program.state?.appDataDir ?? null; },
+      // Botling 3: botlingd runs the core; the state names its data folder.
+      get serverDir() { return program.state?.server?.dataDir ?? null; },
       devWork: options.devWork ?? (() => devWorkRoot()),
       applicationsDir: () => join(homedir(), "Applications"),
       launchInstaller: (command, log) => api.app.installAndRestart(command, log),
