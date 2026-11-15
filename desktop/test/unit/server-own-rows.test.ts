@@ -205,6 +205,37 @@ describe("M5-14e: the own table's plugin rows to a front end", () => {
     await flush();
     expect(server.feeds.count(server.own)).toBe(0);
   });
+
+  it("a revoke mid-session stops the feed: no rows after it, even when plugin rows change", async () => {
+    const server = await startServer();
+    const phone = await makeDeviceKeys();
+    await server.roster.addDevice({ keys: phone.keys, name: "Phone", scope: ["read"] });
+    const fe = await connect(server, phone);
+    fe.send({ t: "sub", stream: server.own as never, cursor: null });
+    await flush();
+    expect(server.feeds.count(server.own)).toBe(1);
+    await server.roster.revokeDevice(phone.member, "lost");
+    await flush();
+    expect(fe.got.some((m) => m.t === "bye")).toBe(true);
+    expect(server.feeds.count(server.own)).toBe(0);
+    const before = rowsOf(fe.got, server.own).length;
+    await server.write((tx) => { putRow(tx, server.own, "plugin:after", pluginBody("after")); });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await flush();
+    expect(rowsOf(fe.got, server.own)).toHaveLength(before);
+  });
+
+  it("a session that ends while its sub is under way leaves no feed", async () => {
+    const server = await startServer();
+    const phone = await makeDeviceKeys();
+    await server.roster.addDevice({ keys: phone.keys, name: "Phone", scope: ["read"] });
+    const fe = await connect(server, phone);
+    fe.send({ t: "sub", stream: server.own as never, cursor: null });
+    fe.session.close();
+    await flush();
+    await flush();
+    expect(server.feeds.count(server.own)).toBe(0);
+  });
 });
 
 describe("M5-14e: ownTableFrame", () => {

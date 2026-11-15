@@ -105,6 +105,22 @@ describe("fe-link: the own server's rows (M5-14e)", () => {
     server.sendWire(rowsOf(SRV_STREAM, "incown01", 3, 5, [{ key: "plugin:zzz", rev: 5, body: pluginRow("zzz") }]));
     await flush();
     expect([...link.table(SERVER_ID)!.rows.keys()]).toEqual(["plugin:gamma"]);
+    // One that would fit the new copy's rev (after <= rev) is still of the old incarnation: dropped all the same.
+    server.sendWire(rowsOf(SRV_STREAM, "incown01", 1, 5, [{ key: "plugin:old", rev: 5, body: pluginRow("old") }]));
+    await flush();
+    expect([...link.table(SERVER_ID)!.rows.keys()]).toEqual(["plugin:gamma"]);
+    expect(link.table(SERVER_ID)!.logId).toBe("incown02");
+  });
+
+  it("a tombstone in a whole table (a first serve from rev 0 carries them) leaves no row behind", async () => {
+    const server = new FakeServer();
+    const { link } = await attach(server);
+    server.sendWire(rowsOf(SRV_STREAM, "incown01", 0, 4, [
+      { key: "plugin:alpha", rev: 2, body: pluginRow("alpha") },
+      { key: "plugin:gone", rev: 4, deleted: true },
+    ]));
+    await flush();
+    expect([...link.table(SERVER_ID)!.rows.keys()]).toEqual(["plugin:alpha"]);
   });
 
   it("a delta that starts above the copy's rev is ignored (the next sub brings the whole table)", async () => {
