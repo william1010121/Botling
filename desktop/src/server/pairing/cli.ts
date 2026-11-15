@@ -1,6 +1,6 @@
-// `botlingd pair`, `botlingd devices`, `botlingd revoke-device`, `botlingd machines remove` (M2 step 5, M4-05, protocol
-// v1 §4.3–§4.6, §4.8), over the running botlingd's local socket (admin-client.ts). Input and output are injected, so
-// tests drive the same code.
+// `botlingd pair`, `botlingd devices`, `botlingd revoke-device`, `botlingd machines remove`, `botlingd reroot` (M2 step 5,
+// M4-05, M4-10, M4-11, protocol v1 §4.3–§4.6, §4.8), over the running botlingd's local socket (admin-client.ts).
+// Input and output are injected, so tests drive the same code.
 //
 //   pair [--name <device name>] [--scope read,reply,approve,manage]
 //     1. No cluster yet (the first pairing): the recovery code is shown once and must be typed back; the cluster exists
@@ -20,10 +20,13 @@
 //   revoke-device <id> [--reason …]   revokes a device; its sessions end at once
 //   machines remove <name-or-id> [--yes | --only]
 //                                     (on the revocation root, §4.3) previews what it added, asks once, and revokes it
-import { memberFingerprint, parseJoinLink, type AdminEvent, type DeviceScope } from "../../protocol";
+//   recovery replace                  (on the revocation root, §4.8) verifies the old code and replaces it
+//   reroot [--keep-all] [--old-root lost|keep]
+//                                     (§4.8, M4-11) promotes this server to revocation root; recovery code on stdin only
+import { memberFingerprint, parseJoinLink, RecoveryCode, type AdminEvent, type DeviceScope } from "../../protocol";
 import { AdminRefused, type AdminClient } from "./admin-client";
 import { qrTerminal } from "./qr";
-import type { DeviceRow, DroppedListResult, MachineRemovePreview, PairOfferResult } from "./service";
+import type { DeviceRow, DroppedListResult, MachineRemovePreview, PairOfferResult, RecoveryStatusResult, RerootPreview, RerootResult } from "./service";
 import type { JoinOfferResult, MachineAddResult, MachineCodeResult } from "./join";
 
 export interface CliIo {
@@ -261,6 +264,175 @@ export async function droppedMachinesCommand(
   return 0;
 }
 
+export class RerootArgsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RerootArgsError";
+  }
+}
+
+export interface RerootOptions {
+  keepAll?: boolean;
+  oldRoot?: "lost" | "keep";
+}
+
+/** Parses `botlingd reroot` flags; refuses positional arguments so a recovery code can never sit in argv / ps. */
+export function parseRerootArgs(args: readonly string[]): RerootOptions {
+  const options: RerootOptions = {};
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--keep-all") {
+      options.keepAll = true;
+      continue;
+    }
+    if (arg === "--old-root") {
+      const value = args[i + 1];
+      if (value !== "lost" && value !== "keep") {
+        throw new RerootArgsError("--old-root takes lost or keep");
+      }
+      options.oldRoot = value;
+      i++;
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      const flagName = arg.split("=")[0];
+      throw new RerootArgsError(`unknown option "${flagName}" (use --keep-all, --old-root lost|keep)`);
+    }
+    throw new RerootArgsError("reroot reads the recovery code from stdin only, never as an argument");
+  }
+  return options;
+}
+
+const CODE_PROMPT = "Type the recovery code (26 characters; spaces and dashes are fine): ";
+
+/** `botlingd reroot [--keep-all] [--old-root lost|keep]` (§4.8, M4-11): code read from stdin only, never echoed. */
+export async function rerootCommand(
+  client: AdminClient,
+  io: CliIo,
+  options: RerootOptions = {},
+): Promise<number> {
+  let preview: RerootPreview;
+  try {
+    preview = await client.request({ op: "roster.rerootPreview" }) as RerootPreview;
+  } catch (error) {
+    io.out(`Cannot reroot: ${errorText(error)}`);
+    return 1;
+  }
+  if (preview.isRoot) {
+    io.out(`"${preview.selfName}" is already the revocation root.`);
+    return 1;
+  }
+
+  io.out(`This makes "${preview.selfName}" the revocation root of your machines.`);
+  const firstCode = await io.ask(CODE_PROMPT);
+  if (firstCode === null) {
+    io.out("Nothing was changed.");
+    return 1;
+  }
+
+  let oldRootLost: boolean;
+  if (options.oldRoot !== undefined) {
+    oldRootLost = options.oldRoot === "lost";
+  } else {
+    const lostAnswer = await io.ask(
+      `Is the old root "${preview.oldRootName}" lost or stolen? Type "lost" to remove it (what it added stays), or "keep" to leave it a member: `,
+    );
+    const choice = lostAnswer?.trim().toLowerCase() ?? "";
+    if (choice === "lost") oldRootLost = true;
+    else if (choice === "keep") oldRootLost = false;
+    else {
+      io.out("Stopped; nothing was changed.");
+      return 1;
+    }
+  }
+
+  let keep: string[];
+  if (preview.keepCandidates.length === 0 || options.keepAll) {
+    keep = preview.keepCandidates.map((c) => c.revokeId);
+  } else {
+    io.out("Removals made by earlier roots (untick any you did not make):");
+    const nameWidth = Math.max(12, ...preview.keepCandidates.map((c) => c.memberName.length + 2)) + 3;
+    preview.keepCandidates.forEach((c, index) => {
+      const when = c.receivedAt !== null
+        ? new Date(c.receivedAt).toISOString().slice(0, 16).replace("T", " ")
+        : "unknown time";
+      const memberLabel = `"${c.memberName}"`.padEnd(nameWidth);
+      io.out(`  [x] ${index + 1}  ${memberLabel}removed by ${c.signerName}   ${when}`);
+    });
+    const untickAnswer = await io.ask('Type the numbers to UNtick (e.g. "2"), or press Enter to keep all: ');
+    if (untickAnswer === null) {
+      io.out("Stopped; nothing was changed.");
+      return 1;
+    }
+    const untick = new Set<number>();
+    const trimmed = untickAnswer.trim();
+    if (trimmed) {
+      for (const token of trimmed.split(/[\s,]+/)) {
+        if (!/^[0-9]+$/.test(token)) {
+          io.out("Invalid selection; nothing was changed.");
+          return 1;
+        }
+        const n = Number(token);
+        if (n < 1 || n > preview.keepCandidates.length) {
+          io.out("Invalid selection; nothing was changed.");
+          return 1;
+        }
+        untick.add(n - 1);
+      }
+    }
+    keep = preview.keepCandidates.filter((_, index) => !untick.has(index)).map((c) => c.revokeId);
+  }
+
+  let candidateCode = firstCode;
+  for (let wrongTries = 0;;) {
+    let result: RerootResult;
+    const parsedCode = RecoveryCode.safeParse(candidateCode);
+    if (!parsedCode.success) {
+      result = { ok: false, reason: "bad-code" };
+    } else {
+      try {
+        result = await client.request({
+          op: "roster.reroot",
+          code: parsedCode.data,
+          oldRootLost,
+          keep,
+        }) as RerootResult;
+      } catch (error) {
+        io.out(`Cannot reroot: ${errorText(error)}`);
+        return 1;
+      }
+    }
+
+    if (result.ok) {
+      if (oldRootLost) {
+        io.out(`Done. "${preview.selfName}" is the revocation root. "${preview.oldRootName}" was removed; what it added stays.`);
+        if (result.oldRootAdded.length > 0) {
+          io.out(`Machines and phones "${preview.oldRootName}" added, newest first (remove any you do not know with "botlingd machines remove"):`);
+          const labels = result.oldRootAdded.map((item) =>
+            item.kind === "device" ? `phone "${item.name}"` : `"${item.name}"`,
+          );
+          const width = Math.max(16, ...labels.map((label) => label.length + 3));
+          result.oldRootAdded.forEach((item, index) => {
+            const day = new Date(item.at).toISOString().slice(0, 10);
+            io.out(`  ${labels[index]!.padEnd(width)}${day}`);
+          });
+        }
+      } else {
+        io.out(`Done. "${preview.selfName}" is the revocation root. "${preview.oldRootName}" remains a member.`);
+      }
+      io.out('Replace the recovery code now? Run "botlingd recovery replace".');
+      return 0;
+    }
+
+    wrongTries++;
+    io.out("That is not the recovery code. Nothing was changed.");
+    if (wrongTries >= RECOVERY_TRIES) return 1;
+    const retry = await io.ask(CODE_PROMPT);
+    if (retry === null) return 1;
+    candidateCode = retry;
+  }
+}
+
 const JOIN_TRIES = 3;
 
 /** A fingerprint as typed or shown (`ABCD EFGH …`, any case or spacing) to the member id it spells, or null. */
@@ -306,7 +478,7 @@ export async function joinCommand(client: AdminClient, io: CliIo, options: { nam
 }
 
 /**
- * `botlingd add-machine [<link>]` on a member (S); resolves with the exit code. With no link argument the link is read
+ * `botlingd add-machine [<link>] [--expect-fingerprint <fp>]` on a member (S); resolves with the exit code. With no link argument the link is read
  * from stdin, so its one-time secret is not on the command line, where other local users see it in the process list
  * and the shell keeps it in its history (review J2).
  */
@@ -379,5 +551,80 @@ export async function addMachineCommand(client: AdminClient, io: CliIo, linkArg:
         : `The pairing ended: ${result.reason}${result.detail ? ` (${result.detail})` : ""}.`);
     return 1;
   }
+  return 1;
+}
+
+/** `botlingd recovery replace` (§4.8, M4-12): replaces the recovery code on the current revocation root via stdin only. */
+export async function recoveryReplaceCommand(client: AdminClient, io: CliIo): Promise<number> {
+  let status: RecoveryStatusResult;
+  try {
+    status = await client.request({ op: "recovery.status" }) as RecoveryStatusResult;
+  } catch (error) {
+    io.out(`Cannot check recovery status: ${errorText(error)}`);
+    return 1;
+  }
+  if (!status.hasCluster) {
+    io.out("There is no cluster yet. Run botlingd pair first.");
+    return 1;
+  }
+  if (!status.isRoot) {
+    io.out(`Only the revocation root (${status.rootName ?? status.rootMember}) can replace the recovery code. Run this there.`);
+    return 1;
+  }
+
+  io.out(`Replace the recovery code for this cluster (current root: "${status.serverName}").`);
+  let started: { code: string; clusterId: string; expiresAt: number } | null = null;
+  for (let attempt = 1; attempt <= RECOVERY_TRIES; attempt++) {
+    const typed = await io.ask("Type the current recovery code (26 characters; spaces and dashes are fine): ");
+    if (typed === null) {
+      io.out("No code given; nothing was changed.");
+      return 1;
+    }
+    try {
+      started = await client.request({ op: "recovery.replace", code: typed.slice(0, 64) }) as { code: string; clusterId: string; expiresAt: number };
+      break;
+    } catch (error) {
+      if (!(error instanceof AdminRefused)) throw error;
+      const msg = error.message;
+      if (msg.includes("Only the revocation root") || msg.includes("no cluster")) {
+        io.out(msg);
+        return 1;
+      }
+      if (attempt < RECOVERY_TRIES) io.out("That is not the recovery code.");
+    }
+  }
+  if (!started) {
+    io.out("That is not the recovery code. Nothing was changed.");
+    return 1;
+  }
+
+  io.out("Your new recovery code (shown once; write it down or keep it in a password manager, never in Botling):");
+  io.out("");
+  io.out(`    ${started.code}`);
+  io.out("");
+  io.out("Type the new recovery code back to confirm. The old code stops working only after you confirm.");
+
+  for (let attempt = 1; attempt <= RECOVERY_TRIES; attempt++) {
+    const typed = await io.ask("New recovery code: ");
+    if (typed === null) break;
+    let result: { ok: boolean; reason?: string; gen?: number };
+    try {
+      result = await client.request({ op: "recovery.confirm", code: typed.slice(0, 64) }) as typeof result;
+    } catch (error) {
+      if (!(error instanceof AdminRefused)) throw error;
+      result = { ok: false, reason: "malformed" };
+    }
+    if (result.ok) {
+      io.out(`Recovery code replaced (Root gen ${result.gen}). The old recovery code no longer works.`);
+      return 0;
+    }
+    if (result.reason === "expired" || result.reason === "no-setup" || result.reason === "stale" || result.reason === "not-root" || result.reason === "no-cluster") {
+      break;
+    }
+    io.out(result.reason === "malformed" ? "That is not a recovery code (26 letters and digits)." : "That is not the new code shown above.");
+  }
+
+  await client.request({ op: "recovery.cancel" }).catch(() => undefined);
+  io.out("The new recovery code was not confirmed, so nothing was changed.");
   return 1;
 }

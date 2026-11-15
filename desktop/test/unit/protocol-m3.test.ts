@@ -3,7 +3,7 @@
 // limits are refused; the role table stays total; M1/M2 decoders keep refusing M3 messages.
 import { describe, expect, it } from "vitest";
 import {
-  AuditRow, BINARY_FRAME_MARK, FrameSplitter, JOIN_CODE_TRIES, JoinCode, M3_MESSAGES, MESSAGES, PrefRow, ROLE_TABLE, Rows, SUMMARY_LINE_CHARS,
+  AuditRow, BINARY_FRAME_MARK, FETCH_MESSAGES, FrameSplitter, JOIN_CODE_TRIES, JoinCode, M3_MESSAGES, MESSAGES, PrefRow, ROLE_TABLE, Rows, SUMMARY_LINE_CHARS,
   SummaryRow, TableRow, WIRE_MESSAGES, comparePrefVersions, decodeFrame, decodeWireFrame, encodeChunkFrame, encodeWireFrame, joinCodeFromBytes,
   joinLink, joinOfferExpired, memberFingerprint, mergePrefs, packFrame, parseJoinLink, prefsDigest, roleRefusal, tableOwner, toBase64Url,
   type JoinOffer, type M3MessageType, type SessionKind, type Sender, type SignedStatement, type WireMessage,
@@ -82,17 +82,17 @@ describe("protocol M3: registries and the role table", () => {
       expect(Object.hasOwn(MESSAGES, type), type).toBe(false);
       expect(ROLE_TABLE[type], type).toBeDefined();
     }
-    expect(Object.keys(WIRE_MESSAGES).sort()).toEqual([...Object.keys(MESSAGES), ...Object.keys(M3_MESSAGES)].sort());
+    expect(Object.keys(WIRE_MESSAGES).sort()).toEqual([...Object.keys(MESSAGES), ...Object.keys(M3_MESSAGES), ...Object.keys(FETCH_MESSAGES)].sort());
   });
 
-  it("keeps the role table total: every row is a message with a schema, or fetch.* (M5)", () => {
+  it("keeps the role table total: every row is a message with a schema", () => {
     for (const type of Object.keys(WIRE_MESSAGES)) {
       const row = ROLE_TABLE[type]!;
       expect(row, type).toBeDefined();
       expect(row.fe || row.server || row.peer, type).toBe(true);
     }
     const withoutSchema = Object.keys(ROLE_TABLE).filter((type) => !Object.hasOwn(WIRE_MESSAGES, type));
-    expect(withoutSchema.sort()).toEqual(["fetch.ask", "fetch.chunk", "fetch.denied", "fetch.done", "fetch.grant"]);
+    expect(withoutSchema.sort()).toEqual([]);
   });
 
   it("follows §5.4's server ↔ server column for what M3 forwards", () => {
@@ -180,9 +180,10 @@ describe("protocol M3: M1/M2 decoders are unchanged", () => {
     }
   });
 
-  it("still refuses fetch.* as unsupported with the wire decoder", () => {
-    expect(refused(json({ t: "fetch.ask", req: "f1" }), "peer", remote).reason).toBe("unsupported");
+  it("refuses malformed or wrong-role fetch.* with the wire decoder, while decodeFrame keeps refusing fetch.* as unsupported", () => {
+    expect(refused(json({ t: "fetch.ask", req: "f1" }), "peer", remote).reason).toBe("malformed");
     expect(refused(json({ t: "fetch.ask", req: "f1" }), "fe", remote).reason).toBe("role");
+    expect(decodeFrame(json({ t: "fetch.ask", req: "f1" }), "peer", remote)).toMatchObject({ ok: false, reason: "unsupported", bye: { t: "bye", reason: "role" } });
   });
 });
 

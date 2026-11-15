@@ -127,7 +127,7 @@ export class PeerSession {
   private readonly ignored = new Set<string>();
   private readonly now: () => number;
 
-  constructor(transport: SessionTransport, side: { dial: PeerStatic } | { accept: true; transport?: "tailnet" | "relay" }, private readonly host: PeerSessionHost, private readonly events: PeerSessionEvents = {}) {
+  constructor(transport: SessionTransport, side: { dial: PeerStatic; transport?: "tailnet" | "relay" } | { accept: true; transport?: "tailnet" | "relay" }, private readonly host: PeerSessionHost, private readonly events: PeerSessionEvents = {}) {
     this.now = host.now ?? Date.now;
     this.lastHeard = this.lastSent = this.now();
     const cluster = host.roster.clusterId ?? "0".repeat(32);
@@ -135,7 +135,7 @@ export class PeerSession {
     if ("dial" in side) {
       this.initiator = host.self.memberId;
       this.peer = side.dial.memberId;
-      this.link = SessionLink.initiate(transport, { mode: "kk", transport: "tailnet", cluster, self: host.self, responder: side.dial }, linkEvents);
+      this.link = SessionLink.initiate(transport, { mode: "kk", transport: side.transport ?? "tailnet", cluster, self: host.self, responder: side.dial }, linkEvents);
     } else {
       this.initiator = null;
       this.peer = null;
