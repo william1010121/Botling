@@ -15,7 +15,8 @@ import type { Client } from "./client";
 import type { ComponentInfo } from "../../../Web/src/types";
 import type { PluginFrameHost } from "./frame-broker";
 import { openReport } from "./report-opener";
-import { quoteIntoComposer } from "./composer-quote";
+import { callFrameService } from "./shell/frame-services";
+import { shellStorage } from "./shell/storage";
 
 /** The most of a tile's data (as JSON) a frame may give: a whiteboard picture's limit. */
 export const TILE_DATA_MAX = 256_000;
@@ -87,9 +88,20 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
     },
     async composerQuote(plugin, { botId, text, focus }) {
       // The broker has checked it is the frame's own bot; the chat surface's service writes into that bot's input box
-      // (composer-quote.ts), called through the renderer's plugin kernel for the frame's plugin.
+      // (composer-quote.ts), called through the renderer's plugin kernel for the frame's plugin, as its manifest declares
+      // it uses the service (shell/frame-services.ts): a plugin that does not, or no provider, finds nothing.
       if (!bots().some((each) => each.id === botId)) return { inserted: false };
-      return { inserted: await quoteIntoComposer(botId, text, focus, plugin).catch(() => false) };
+      try {
+        const called = callFrameService<Promise<boolean>>(plugin, "composer.insertQuote", botId, text, focus);
+        return { inserted: !called.absent && (await called.value) === true };
+      } catch { return { inserted: false }; }
+    },
+    // async: a refusal that throws at once (a name that is no namespace, `:shell` not loaded) still answers the frame.
+    async storage(plugin, req) {
+      const store = shellStorage(plugin);
+      if (req.op === "get") return store.get(req.key);
+      if (req.op === "set") return store.set(req.key, req.value);
+      return store.remove(req.key);
     },
     async requestApproval(plugin, { botId, command, folder, card, detail }) {
       const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}), ...(detail ? { detail } : {}) }, undefined, { plugin }).catch(failed);

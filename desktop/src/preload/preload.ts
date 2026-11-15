@@ -32,6 +32,10 @@ contextBridge.exposeInMainWorld("botling", Object.freeze({
   // The Storage tab's drop (StorageTab.tsx): the on-disk path of a File dropped from Finder ('' when it has none). Main
   // still checks every path is a file before the core remembers it.
   ...(process.isMainFrame ? { pathForFile: (file: unknown) => { try { return webUtils.getPathForFile(file as File); } catch { return ""; } } } : {}),
+  ...(process.isMainFrame ? { shellStorage: Object.freeze({
+    load: (namespace: string) => ipcRenderer.invoke("botling:shellStorage", { op: "load", namespace }),
+    save: (namespace: string, json: string | null) => ipcRenderer.invoke("botling:shellStorage", { op: "save", namespace, json }),
+  }) } : {}),
   ...(process.isMainFrame&&process.argv.includes("--botling-editor-shell=1")?{editorHost:editorBridge(ipcRenderer,"shell")} : {}),
   platform: process.platform,
   post(envelope: unknown, via?: { plugin: string }) {

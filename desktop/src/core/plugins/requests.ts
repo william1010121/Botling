@@ -9,6 +9,7 @@ import { findConflict, legacyKey } from "../../contract/shortcuts";
 import { commandSurfaces } from "./commands";
 import { ofKind, type Contribution } from "./contributions";
 import { title, type JSONValue } from "./manifest";
+import { mustOwnNote } from "./plugin-owns";
 import type { InstalledPlugin, PluginRegistry } from "./registry";
 import type { SealedSecretStore } from "./secrets";
 import { cleanFolder, type SessionFolder, type SessionFolders } from "./session-folders";
@@ -98,6 +99,7 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "notes.write": {
       const { plugin, data } = this.asked(NoteWriteParams, params);
       this.needs(plugin, "files", "Changing a bot's note");
+      mustOwnNote(plugin, "Changing a bot's note");
       const file = this.noteFile(data.bot);
       const result = noteService().write(file, data.text, data.base, data.bot);
       this.notes.watch(data.bot, file, result.mtime);
@@ -106,6 +108,7 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "notes.importAsset": {
       const { plugin, data } = this.asked(NoteAssetParams, params);
       this.needs(plugin, "files", "Adding a picture to a bot's note");
+      mustOwnNote(plugin, "Adding a picture to a bot's note");
       const file = this.noteFile(data.bot);
       let ref: string;
       if ("path" in data) {
@@ -127,6 +130,7 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "notes.localizeImages": {
       const { plugin, data } = this.asked(NoteLocalizeParams, params);
       this.needs(plugin, "files", "Changing a bot's note");
+      mustOwnNote(plugin, "Changing a bot's note");
       const file = this.noteFile(data.bot);
       const note = noteService().read(file, data.bot);
       if (data.base !== undefined && note.mtime !== data.base) {
@@ -172,6 +176,7 @@ export async function requested(this: RequestHost, method: string, params: unkno
       // A note in note.db ("db") or a plain file ("file"); switching to file writes note.md without ids.
       const { plugin, data } = this.asked(NoteModeParams, params);
       this.needs(plugin, "files", data.mode ? "Changing a bot's note" : "Reading a bot's note");
+      if (data.mode) mustOwnNote(plugin, "Changing a bot's note");
       const file = this.noteFile(data.bot);
       const answer = noteService().mode(file, data.mode, data.bot);
       if (data.mode) { try { this.notes.watch(data.bot, file, statSync(file).mtimeMs); } catch { /* gone */ } }

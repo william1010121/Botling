@@ -44,6 +44,11 @@ export interface PluginManifest {
     /** The program part, run in the plugin host. */
     host?: string;
     styles?: string[];
+    /**
+     * The server data this plugin writes (M7-04a, v1 §23 step 4), e.g. `["note"]`: read from every package.json (a wrong entry is
+     * dropped), honoured only for a plugin shipped with Botling (`plugin-owns.ts`): a library plugin that names it owns nothing.
+     */
+    owns?: string[];
     /** A Claude Code plugin folder handed to bots with --plugin-dir. */
     claude?: string;
     contributes?: {
@@ -118,6 +123,7 @@ function decodeManifest(value: unknown): PluginManifest {
     if (ccb.permissions != null) out.permissions = strings(ccb.permissions, ["ccb", "permissions"]);
     for (const key of ["web", "host", "claude"] as const) { const v = optString(ccb, key, ["ccb"]); if (v !== undefined) out[key] = v; }
     if (ccb.styles != null) out.styles = strings(ccb.styles, ["ccb", "styles"]);
+    if (Array.isArray(ccb.owns)) out.owns = [...new Set(ccb.owns.filter((name): name is string => typeof name === "string" && KERNEL_NAME.test(name)))];
     if (ccb.contributes != null) {
       const c = dict(ccb.contributes, ["ccb", "contributes"]);
       const contributes: NonNullable<NonNullable<PluginManifest["ccb"]>["contributes"]> = {};

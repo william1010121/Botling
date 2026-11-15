@@ -2,8 +2,8 @@
 // plugin frames as services, and (M7-02a) the slots the page is drawn from. Two instances of the page's own live here, with names
 // no plugin can have:
 //   - `:chat` provides `composer.insertQuote` while App is up (composer-quote.ts); a frame's call reaches it through the frame
-//     broker (plugin-frame-host.ts) as a kernel call carrying the frame's plugin. The Note declares that it uses it (soft: with no
-//     provider the quote is not inserted).
+//     broker (plugin-frame-host.ts, shell/frame-services.ts) as a kernel call carrying the frame's plugin. The Note declares that it uses
+//     it in its manifest (soft: with no provider the quote is not inserted); the plugin feed installs that declaration (M7-04b).
 //   - `:shell` owns the shell's root slots (`ROOT_SLOTS`: app/rail, app/main, app/side, app/bottom, app/overlay). Whatever is
 //     drawn in one is a contribution to it: today the whole page, as one contribution to `app/main` ("the legacy surface",
 //     shell/ShellFrame.tsx). shell/KernelSlot.tsx draws a slot; it re-draws when `subscribeSlots` says the kernel changed.
@@ -11,6 +11,7 @@
 //     received it, one instance per plugin (shell/plugin-feed.ts), until a plugin owns a place itself.
 // Slots have the new names and the 2.x names as aliases (slot-names.ts): the kernel holds one registration and finds it under both.
 import { Kernel, ROOT_SLOTS, canonicalSlot } from "../../../Web/src/plugin-kernel";
+import { SHELL_STORAGE, provideShellStorage } from "./shell/storage";
 import { FEED_SLOTS } from "./shell/feed-slots";
 
 /** The chat surface's instance in the renderer's kernel. */
@@ -19,6 +20,7 @@ export const CHAT_SURFACE = ":chat";
 export const SHELL_SURFACE = ":shell";
 /** The service a plugin frame's `ccb.composer.insertQuote` calls. */
 export const INSERT_QUOTE = "composer.insertQuote";
+export { SHELL_STORAGE };
 
 const listeners = new Set<() => void>();
 let version = 0;
@@ -49,5 +51,8 @@ export const rendererKernel = new Kernel({
 });
 rendererKernel.install({ name: CHAT_SURFACE, provides: { services: [INSERT_QUOTE] } });
 const SHELL_SLOTS = [...ROOT_SLOTS, ...FEED_SLOTS];
-rendererKernel.install({ name: SHELL_SURFACE, provides: { slots: SHELL_SLOTS } });
-void rendererKernel.load(SHELL_SURFACE, (plugin) => { for (const slot of SHELL_SLOTS) rendererKernel.provideSlot(plugin, slot); });
+rendererKernel.install({ name: SHELL_SURFACE, provides: { slots: SHELL_SLOTS, services: [SHELL_STORAGE] } });
+void rendererKernel.load(SHELL_SURFACE, (plugin) => {
+  for (const slot of SHELL_SLOTS) rendererKernel.provideSlot(plugin, slot);
+  provideShellStorage(rendererKernel, plugin);
+});

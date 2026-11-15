@@ -11,6 +11,7 @@ import {
 import type { SummaryRow } from "../protocol/table-rows";
 import type { Clock, ConnModel, FeLinkEvent, OutboxItem, PendingView, ServerView, StoredCursor } from "../fe-link";
 import type { ChatView } from "../renderer/store";
+import type { BundleFetcher } from "../renderer/shell/row-loader";
 
 /** What the adapter needs of the front-end link (src/fe-link FeLink has it all). */
 export interface LinkPort {
@@ -55,6 +56,12 @@ export interface RendererAdapterOptions {
   /** "connecting" / "offline" / "catching up" show only after this long (default 400 ms). */
   noticeDelayMs?: number;
   audit?: (text: string) => void;
+  /**
+   * M7-09b: reads a plugin's web bundle by the content reference its row names (renderer/shell/row-loader.ts `ticketBundleFetcher`).
+   * With it, `plugins.web` and `plugins.panel` answer a plugin whose row names a bundle with that bundle's code; without it (or for a
+   * row with no reference, or a bundle that cannot be had) the server's own source stays.
+   */
+  bundles?: BundleFetcher;
 }
 
 /**

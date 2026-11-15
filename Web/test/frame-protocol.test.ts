@@ -103,6 +103,15 @@ describe("the frame protocol", () => {
     expect(builtinCommand("charts.open", ["B1"])).toBeNull();
   });
 
+  it("parses storage requests without allowing a plugin or namespace override", () => {
+    expect(parseFrameRequest({ ccb: "storage", id: 1, op: "get", key: "layout" })).toEqual({ ccb: "storage", id: 1, op: "get", key: "layout" });
+    expect(parseFrameRequest({ ccb: "storage", id: 2, op: "set", key: "layout", value: null })).toEqual({ ccb: "storage", id: 2, op: "set", key: "layout", value: null });
+    expect(parseFrameRequest({ ccb: "storage", id: 3, op: "remove", key: "layout" })).toEqual({ ccb: "storage", id: 3, op: "remove", key: "layout" });
+    expect(parseFrameRequest({ ccb: "storage", id: 4, op: "set", key: "layout" })).toBeNull();
+    expect(parseFrameRequest({ ccb: "storage", id: 5, op: "get", key: "layout", value: 1 })).toBeNull();
+    expect(parseFrameRequest({ ccb: "storage", id: 6, op: "get", key: "layout", plugin: "other" })).toBeNull();
+  });
+
   it("finds the frame a message came from by its window", () => {
     const a = document.createElement("iframe");
     const b = document.createElement("iframe");
