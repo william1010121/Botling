@@ -485,7 +485,6 @@ export function PluginsSheet({ device, connection, onClose }: { device: DeviceRe
   const [, setTick] = useState(0);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [choice, setChoice] = useState<GrantTier | null>(null);
-  const [sent, setSent] = useState<Array<{ name: string; slot: Slot }> | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const link = connection?.link ?? null;
   const source = useMemo(() => (link ? linkPluginSource(link) : NO_PLUGIN_SOURCE), [link]);
@@ -498,29 +497,44 @@ export function PluginsSheet({ device, connection, onClose }: { device: DeviceRe
   }, [link]);
 
   const review = (name: string) => {
-    setSent(null);
     setFailure(null);
     setChoice(pluginSheet(source, name)?.selected ?? null);
     setReviewing(name);
   };
   const sheet = reviewing ? pluginSheet(source, reviewing) : null;
-  const back = () => { setReviewing(null); setSent(null); setFailure(null); };
+  const back = () => { setReviewing(null); setFailure(null); };
 
+  // What this sheet already put in the outbox, by plugin, hash, tier and machine: a retry after a part-way failure, or a
+  // second Review, sends only to the machines that have not got it (a resend would be a new slot and a new audit row).
+  const delivered = useRef(new Map<string, { name: string; slot: Slot }>());
+  const deliveredKey = (name: string, hash: string, tier: GrantTier, serverId: string) => [name, hash, tier, serverId].join("\u0000");
+  // One user act sends once: a second tap while the first is still being written to the outbox does nothing.
+  const allowing = useRef(false);
   const allow = async () => {
-    if (!link || !sheet || !canManage || choice === null) return;
+    if (!link || !sheet || !canManage || choice === null || allowing.current) return;
+    allowing.current = true;
     try {
-      const items = grantCommands(sheet, choice);
-      const slots: Array<{ name: string; slot: Slot }> = [];
-      for (const [index, item] of items.entries()) slots.push({ name: sheet.targets[index]!.serverName, slot: (await link.submit(item.target, item.cmd)).slot });
-      setSent(slots);
+      for (const item of grantCommands(sheet, choice)) {
+        const serverId = item.target.slice("srv:".length);
+        const key = deliveredKey(sheet.name, sheet.codeHash, choice, serverId);
+        if (delivered.current.has(key)) continue;
+        const slot = (await link.submit(item.target, item.cmd)).slot;
+        delivered.current.set(key, { name: sheet.targets.find((h) => h.serverId === serverId)?.serverName ?? serverId, slot });
+        setTick((n) => n + 1);
+      }
       setFailure(null);
     } catch (error) {
+      // What was already sent stays shown, and [Allow] stays for the machines that have not got it.
       setFailure((error as Error).message);
+    } finally {
+      allowing.current = false;
+      setTick((n) => n + 1);
     }
   };
 
   if (reviewing && sheet) {
     const views = link?.pending() ?? [];
+    const sent = choice === null ? [] : sheet.targets.flatMap((h) => delivered.current.get(deliveredKey(sheet.name, sheet.codeHash, choice, h.serverId)) ?? []);
     return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
       <section className="v3-sheet" role="dialog" aria-label="Plugin grant" data-testid="grant-sheet" onClick={(event) => event.stopPropagation()}>
         <h2>{sheet.title}</h2>
@@ -531,20 +545,20 @@ export function PluginsSheet({ device, connection, onClose }: { device: DeviceRe
           : <fieldset className="v3-grant-options">
             <legend>Allow it to:</legend>
             {sheet.options.map((option) => <label key={option.tier} className="v3-grant-option">
-              <input type="radio" name="v3-grant-tier" value={option.tier} checked={choice === option.tier} disabled={sent !== null}
+              <input type="radio" name="v3-grant-tier" value={option.tier} checked={choice === option.tier} disabled={sent.length > 0}
                 onChange={() => setChoice(option.tier)} /> {option.words}</label>)}
           </fieldset>}
-        {sent && <div data-testid="grant-sent">
+        {sent.length > 0 && <div data-testid="grant-sent">
           <p>{`Sent to ${sent.length} ${sent.length === 1 ? "machine" : "machines"}.`}</p>
           {sent.map(({ name, slot }) => {
             const view = views.find((item) => item.key === slotKey(slot));
-            return <p key={name} className="v3-sheet-warn">{view ? `${name}: ${itemWords(view)}` : name}</p>;
+            return <p key={slotKey(slot)} className="v3-sheet-warn">{view ? `${name}: ${itemWords(view)}` : name}</p>;
           })}
         </div>}
         {failure && <p className="v3-sheet-warn" role="alert">{failure}</p>}
         <div className="v3-sheet-actions">
-          <button type="button" className="web-secondary" onClick={back}>{sent ? "Done" : "Cancel"}</button>
-          {!sent && <button type="button" className="web-primary" disabled={!canManage || choice === null || sheet.targets.length === 0} onClick={() => void allow()}>Allow</button>}
+          <button type="button" className="web-secondary" onClick={back}>{sent.length > 0 ? "Done" : "Cancel"}</button>
+          {sent.length < sheet.targets.length && <button type="button" className="web-primary" disabled={!canManage || choice === null || sheet.targets.length === 0} onClick={() => void allow()}>Allow</button>}
         </div>
       </section>
     </div>;

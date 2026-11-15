@@ -125,6 +125,10 @@ export interface SheetModel {
   builtIn: boolean;
   /** The code hash being granted. */
   codeHash: string;
+  /** What the ask line shows (the reference row's manifest): exactly this is sent to every target, so a target row that
+   * claims the same hash with other asks can never be granted more than the user was shown (the owner still refuses
+   * anything above its own manifest). */
+  asks: { reads: string[]; requests: PluginRow["manifest"]["requests"] };
   /** The machines that get one `plugin.grant` each. */
   targets: Held[];
   /** `<machine>: a different version (cannot be allowed together)` per machine whose hash is not the shown one. */
@@ -134,10 +138,10 @@ export interface SheetModel {
 }
 
 function askLine(row: PluginRow): string {
-  const parts = ["read the chat it is shown in", ...row.manifest.reads.map((item) => `read ${item}`)];
+  const parts = ["read the chat it is shown in", ...row.manifest.reads.map((item) => `read "${item}"`)];
   for (const type of row.manifest.requests) {
     if (type === "plugin.grant") continue; // D54: never offered as a request
-    parts.push(type === "chat.send" ? "send messages in that chat (chat.send)" : `use ${type}`);
+    parts.push(type === "chat.send" ? "send messages in that chat (chat.send)" : `send ${type}`);
   }
   if (row.manifest.tier === "write") parts.push("change its own data on the server");
   return `It asks to: ${parts.join("; ")}.`;
@@ -170,6 +174,7 @@ export function pluginSheet(source: PluginSource, name: string): SheetModel | nu
     selected,
     builtIn,
     codeHash: shown,
+    asks: { reads: [...reference.manifest.reads], requests: reference.manifest.requests.filter((type) => type !== "plugin.grant") },
     targets,
     differing: held.filter((h) => h.row.codeHash !== shown).map((h) => `${h.serverName}: ${DIFFERENT_VERSION}`),
     unreadServers: unread,
@@ -186,9 +191,10 @@ export function grantCommands(sheet: SheetModel, tier: GrantTier): Array<{ targe
       plugin: sheet.name,
       codeHash: sheet.codeHash,
       tier,
-      reads: [...h.row.manifest.reads],
-      // `plugin.grant` is never put in a grant's requests (D54, M5-14a F3); a read grant carries none.
-      requests: tier === "read" ? [] : h.row.manifest.requests.filter((type) => type !== "plugin.grant"),
+      // The shown asks, the same for every target (never a target row's own, possibly wider, manifest).
+      reads: [...sheet.asks.reads],
+      // `plugin.grant` is never put in a grant's requests (D54, M5-14a F3; filtered in `asks`); a read grant carries none.
+      requests: tier === "read" ? [] : [...sheet.asks.requests],
     },
   }));
 }

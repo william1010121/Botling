@@ -115,11 +115,31 @@ describe("M5-14b sheet model and commands", () => {
     const odd = source({ [SRV_A]: { "plugin:p": row({ manifest: manifest("request", ["chat.send", "plugin.grant"]) }) } });
     expect(grantCommands(pluginSheet(odd, "p")!, "request")[0]!.cmd).toMatchObject({ requests: ["chat.send"] });
   });
+
+  it("review: every target gets exactly the asks the sheet shows, never a target row's own wider manifest", () => {
+    const wide = row({ manifest: manifest("request", ["chat.send", "settings.set"]) });
+    const sheet = pluginSheet(source({ [SRV_A]: { "plugin:p": row() }, [SRV_B]: { "plugin:p": wide } }), "p")!;
+    expect(sheet.askLine).not.toContain("settings.set");
+    for (const item of grantCommands(sheet, "request")) expect(item.cmd.requests).toEqual(["chat.send"]);
+  });
+
+  it("review: reads are quoted and other requests say send, not use", () => {
+    const m = { ...manifest("request", ["chat.send", "settings.set"]), reads: ["nothing else; it never sends"] };
+    const sheet = pluginSheet(source({ [SRV_A]: { "plugin:p": row({ manifest: m }) } }), "p")!;
+    expect(sheet.askLine).toBe('It asks to: read the chat it is shown in; read "nothing else; it never sends"; send messages in that chat (chat.send); send settings.set.');
+  });
+
+  it("review: the ask line never offers plugin.grant, and a read grant carries no requests", () => {
+    const sheet = pluginSheet(source({ [SRV_A]: { "plugin:p": row({ manifest: manifest("request", ["chat.send", "plugin.grant"]) }) } }), "p")!;
+    expect(sheet.askLine).not.toContain("plugin.grant");
+    expect(grantCommands(sheet, "read")[0]!.cmd.requests).toEqual([]);
+  });
 });
 
 interface Sent { target: string; cmd: Record<string, unknown>; extra: unknown[] }
 
-function makeConnection(tables: Record<string, Record<string, unknown> | null>, sent: Sent[]): Connection {
+function makeConnection(tables: Record<string, Record<string, unknown> | null>, sent: Sent[], failOnce?: string): Connection {
+  let failing = failOnce;
   const names: Record<string, string> = { [SRV_A]: "studio", [SRV_B]: "build-box" };
   let n = 0;
   const pendings: Array<{ key: string; slot: unknown; state: string; cmd: unknown; lost: boolean; sending: boolean; createdAt: number; owner: string }> = [];
@@ -131,6 +151,7 @@ function makeConnection(tables: Record<string, Record<string, unknown> | null>, 
     pending: () => pendings,
     on: () => () => undefined,
     submit: async (target: string, cmd: Record<string, unknown>, ...extra: unknown[]) => {
+      if (failing === target) { failing = undefined; throw new Error("outbox is full"); }
       sent.push({ target, cmd, extra });
       const slot = { origin: "dev1", originEpoch: "e".repeat(32), target, n: ++n } as never;
       pendings.push({ key: slotKey(slot), slot, state: "delivered", cmd, lost: false, sending: false, createdAt: 1, owner: target.slice(4) });
@@ -149,13 +170,13 @@ afterEach(async () => {
   for (const item of roots.splice(0)) { await act(async () => { item.root.unmount(); }); item.el.remove(); }
 });
 
-async function mountSheet(scope: string[], tables: Record<string, Record<string, unknown> | null>, sent: Sent[]): Promise<HTMLElement> {
+async function mountSheet(scope: string[], tables: Record<string, Record<string, unknown> | null>, sent: Sent[], failOnce?: string): Promise<HTMLElement> {
   const { PluginsSheet } = await import("../../web-v3/shell/Shell");
   const el = document.createElement("div");
   document.body.appendChild(el);
   const root = createRoot(el);
   roots.push({ root, el });
-  await act(async () => { root.render(createElement(PluginsSheet, { device: device(scope), connection: makeConnection(tables, sent), onClose: () => undefined })); });
+  await act(async () => { root.render(createElement(PluginsSheet, { device: device(scope), connection: makeConnection(tables, sent, failOnce), onClose: () => undefined })); });
   return el;
 }
 const click = async (button: Element) => { await act(async () => { (button as HTMLElement).click(); }); };
@@ -185,6 +206,34 @@ describe("M5-14b the sheet in Shell.tsx", () => {
     expect(sent.every((s) => s.extra.length === 0 && s.cmd.tier === "request")).toBe(true);
     expect(el.textContent).toContain("Sent to 2 machines.");
     expect(el.textContent).toContain("build-box: delivered");
+  });
+
+  it("review: a double tap on Allow sends one plugin.grant per machine, not two", async () => {
+    const sent: Sent[] = [];
+    const el = await mountSheet(["read", "reply", "manage"], peers(row({ grants: { [HASH]: grant("read") } }), row({ grants: { [HASH]: grant("read") } })), sent);
+    await click(buttonNamed(el, "Review"));
+    const allow = buttonNamed(el, "Allow");
+    await act(async () => { allow.click(); allow.click(); });
+    expect(sent.map((s) => s.target)).toEqual([`srv:${SRV_B}`, `srv:${SRV_C}`]);
+  });
+
+  it("review: after a part-way failure what was sent stays, and Allow again sends only to the machine that has not got it", async () => {
+    const sent: Sent[] = [];
+    const el = await mountSheet(["read", "reply", "manage"], peers(row({ grants: { [HASH]: grant("read") } }), row({ grants: { [HASH]: grant("read") } })), sent, `srv:${SRV_C}`);
+    await click(buttonNamed(el, "Review"));
+    await click(buttonNamed(el, "Allow"));
+    expect(sent.map((s) => s.target)).toEqual([`srv:${SRV_B}`]);
+    expect(el.textContent).toContain("outbox is full");
+    expect(el.textContent).toContain("Sent to 1 machine.");
+    await click(buttonNamed(el, "Allow"));
+    expect(sent.map((s) => s.target)).toEqual([`srv:${SRV_B}`, `srv:${SRV_C}`]);
+    expect(el.textContent).toContain("Sent to 2 machines.");
+    expect(buttonNamed(el, "Allow")).toBeUndefined();
+    // Leaving and reviewing again does not send either machine a second time.
+    await click(buttonNamed(el, "Done"));
+    await click(buttonNamed(el, "Review"));
+    expect(buttonNamed(el, "Allow")).toBeUndefined();
+    expect(sent).toHaveLength(2);
   });
 
   it("3. a device without manage: no Review button and no submit, the text shown", async () => {
