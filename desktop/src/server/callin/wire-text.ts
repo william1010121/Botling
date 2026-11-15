@@ -6,8 +6,10 @@
 export const CALLIN_TRANSCRIPT_LIMIT = 64 * 1024;
 /** `callin.reply` text, in escaped bytes (contract/index.ts `CALLIN_REPLY_BYTES`). */
 export const CALLIN_REPLY_LIMIT = 200 * 1024;
-/** `callin.reply` `failed.why`, in characters. */
+/** `callin.reply` `failed.why`, in UTF-16 units (zod `.max`). */
 export const CALLIN_WHY_LIMIT = 1_000;
+/** `callin.reply` `guest.name`, in UTF-16 units (zod `.max`). */
+export const CALLIN_NAME_LIMIT = 200;
 
 const encoder = new TextEncoder();
 
@@ -41,4 +43,18 @@ export function cutEscaped(text: string, limit: number, marker = ""): string {
     end += ch.length;
   }
   return text.slice(0, end) + marker;
+}
+
+/**
+ * `text` cut to at most `max` UTF-16 units (what zod's string `.max` counts), at a code point boundary so no surrogate
+ * pair is split. `oneLine` counts user-perceived characters, and one of those can be many units (an emoji family is 11).
+ */
+export function cutUnits(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let end = 0;
+  for (const ch of text) {
+    if (end + ch.length > max) break;
+    end += ch.length;
+  }
+  return text.slice(0, end);
 }

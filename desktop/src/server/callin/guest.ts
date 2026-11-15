@@ -22,7 +22,7 @@ import {
 } from "../effects";
 import { SlotRefusal } from "../slots";
 import { guestPrompt, cleanLine, stripControls } from "./prompt";
-import { CALLIN_REPLY_LIMIT, CALLIN_WHY_LIMIT, cutEscaped } from "./wire-text";
+import { CALLIN_NAME_LIMIT, CALLIN_REPLY_LIMIT, CALLIN_WHY_LIMIT, cutEscaped, cutUnits } from "./wire-text";
 
 /** Where the guest's answer goes: `ServerOrigin` (botlingd binds it after it exists). */
 export interface CallInSender {
@@ -138,7 +138,7 @@ export class CallInGuest implements CallInRunner {
   /** The wire outcome: the text cut to its escaped-byte limit (never a frame the peer link cannot send), the reason to one line. */
   private outcomeOf(answer: CallInAnswer): Outcome {
     if (answer.kind === "busy") return { kind: "busy" };
-    if (answer.kind === "failed") return { kind: "failed", why: oneLine(stripControls(answer.why), CALLIN_WHY_LIMIT - 1) || "It could not answer." };
+    if (answer.kind === "failed") return { kind: "failed", why: cutUnits(oneLine(stripControls(answer.why), CALLIN_WHY_LIMIT - 1), CALLIN_WHY_LIMIT) || "It could not answer." };
     return { kind: "reply", text: cutEscaped(answer.text, CALLIN_REPLY_LIMIT, CUT_NOTE), engine: answer.engine };
   }
 
@@ -189,9 +189,12 @@ export class CallInGuest implements CallInRunner {
     }
   }
 
-  /** The guest's name as the host shows it: one clean line, 1–150 characters. */
+  /**
+   * The guest's name as the host shows it: one clean line, 1–150 characters and at most 200 UTF-16 units (the schema's
+   * bound; the short fallback answer carries the same name, so a name over it would leave the host with no answer).
+   */
   private nameOf(botId: string): string {
     const name = this.options.engine.botView?.(botId)?.name ?? "";
-    return cleanLine(name, 150).trim() || "bot";
+    return cutUnits(cleanLine(name, 150).trim(), CALLIN_NAME_LIMIT).trim() || "bot";
   }
 }

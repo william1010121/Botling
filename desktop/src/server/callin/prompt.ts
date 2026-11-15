@@ -19,9 +19,12 @@ const CONTROL = /[\u0000-\u0008\u000E-\u001F\u007F-\u0084\u0086-\u009F\u200B-\u2
 /** `text` without control characters (newlines kept for `oneLine` to turn into " ⏎ "). */
 export const stripControls = (text: string): string => text.replace(CONTROL, "");
 
+/** Runs of 3+ `>` or `<` spaced out ("> > > >"): replacing only ">>>" would leave ">>>" behind in ">>>>>". */
+const FENCE_RUN = /[>]{3,}|[<]{3,}/g;
+
 /** One cleaned line of at most `limit` characters; the fence words cannot close or open the prompt's quoted block. */
 export function cleanLine(text: string, limit: number): string {
-  return oneLine(stripControls(text), limit).replaceAll(">>>", "> > >").replaceAll("<<<", "< < <");
+  return oneLine(stripControls(text), limit).replace(FENCE_RUN, (run) => [...run].join(" "));
 }
 
 /** The host chat's lines: the newest `GUEST_PROMPT_LINES`, each one line with a speaker label (else "Notice: "). */
