@@ -224,18 +224,21 @@ describe("botlingd secrets lifecycle (M6-06)", () => {
     await until(async () => ((await window2.call({ type: "plugins.command", id: "my-tool.token" })) as { result?: unknown }).result === expectedDigest || null, { timeout: 15_000, what: "plugin reads secret after attach" });
     expect((await window2.call({ type: "plugins.list" })).secretsProblem).toBeNull();
     await window2.stop();
-    // F1: calling plugins.secret after detach fails immediately with core_unavailable and never persists to fe-link.sqlite.
-    const detachedRes = await window2.request({ type: "plugins.secret", name: "my-tool", key: "token", value: "s3cret" });
+    const needle = Buffer.from("s3cret", "utf8");
+    const expectNoClearSecret = () => {
+      const appFiles = [...walkFiles(appDir1), ...walkFiles(appDir2)];
+      expect(appFiles.some((file) => file.endsWith("fe-link.sqlite"))).toBe(true);
+      for (const file of [...walkFiles(dataDir), ...appFiles]) expect(readFileSync(file).includes(needle), `clear secret found in ${file}`).toBe(false);
+      expect(logs.join("\n")).not.toContain("s3cret");
+    };
+    // F1: the secret window1 sent is in no file (checked before the detached step, which would hang if it were queued).
+    expectNoClearSecret();
+    // F1: plugins.secret after detach fails at once with core_unavailable (bounded: a queued outbox item never answers).
+    const noAnswer = new Promise((resolve) => { setTimeout(() => resolve({ ok: false, error: { code: "no answer in 5 s (queued in the outbox?)" } }), 5_000).unref?.(); });
+    const detachedRes = await Promise.race([window2.request({ type: "plugins.secret", name: "my-tool", key: "token", value: "s3cret" }), noAnswer]);
     expect(detachedRes).toMatchObject({ ok: false, error: { code: "core_unavailable" } });
     await daemon2.stop();
-
-    const needle = Buffer.from("s3cret", "utf8");
-    const appFiles = [...walkFiles(appDir1), ...walkFiles(appDir2)];
-    expect(appFiles.some((file) => file.endsWith("fe-link.sqlite"))).toBe(true);
-    const files = [...walkFiles(dataDir), ...appFiles];
-    expect(files.length).toBeGreaterThan(0);
-    for (const file of files) expect(readFileSync(file).includes(needle), `clear secret found in ${file}`).toBe(false);
-    expect(logs.join("\n")).not.toContain("s3cret");
+    expectNoClearSecret();
   }, 60_000);
 });
 
@@ -278,7 +281,9 @@ describe("protocol role check, remote refusal, race guard, bound format, safe-se
 
     const got: Message[] = [];
     let link!: SessionLink;
-    const session = remote.accept({ send: (f) => link.receive(f), close: () => setTimeout(() => link.transportClosed(), 0) } as SessionTransport, "memory");
+    // The server ends the transport right after its bye: the device ends its link only once frames already received
+    // (the bye, still being decrypted) are handled, or the bye is lost under load.
+    const session = remote.accept({ send: (f) => link.receive(f), close: () => { void link.received().then(() => link.transportClosed()); } } as SessionTransport, "memory");
     link = SessionLink.initiate(
       { send: (f) => session.receive(f), close: () => setTimeout(() => link.transportClosed(), 0) } as SessionTransport,
       { mode: "ik", transport: "memory", cluster: roster.clusterId!, self: { memberId: deviceMember, dhPub: dh.publicKey, dhKey: dh.privateKey }, responder: { memberId, dhPub: identity.dhPub } },
