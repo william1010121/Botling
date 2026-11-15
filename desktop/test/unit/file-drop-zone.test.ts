@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { watchFileDrops } from "../../../Web/src/drops";
+import { readChatCss } from "../../../Web/test/helpers/chat-css";
 
 function drag(type: string, target: EventTarget, files: File[] = [], types = ["Files"]) {
   const event = new Event(type, { bubbles: true, cancelable: true });
@@ -27,7 +28,7 @@ afterEach(() => { stop(); document.head.innerHTML = ""; vi.useRealTimers(); });
 function outlineStyle() {
   for (const file of ["../../../Web/src/chat.css", "../../src/renderer/chat-frame/frame.css"]) {
     const style = document.createElement("style");
-    style.textContent = readFileSync(join(__dirname, file), "utf8");
+    style.textContent = file.endsWith("/chat.css") ? readChatCss() : readFileSync(join(__dirname, file), "utf8");
     document.head.append(style);
   }
   const probe = document.createElement("div");

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 // The chat page as the Board's tests need it: the page's kit lent to the plugin (what `PluginHost` does when it loads it), and the bars
 // the plugin puts on a card in a reply (`ccb.messages.cardBar`; and `ccb.studio.specButton`, the pin in a built component's head), registered the way `activate` registers them.
+import { readChatCss } from "../../../../Web/test/helpers/chat-css";
 import { sent as postedActions } from "../../../../Web/src/bridge";
 import { extensions } from "../../../../Web/src/messages";
 import { pageKit, studioSeam } from "../../../../Web/src/plugins";
@@ -40,5 +41,5 @@ export function removeBoard(): void {
 
 /** The chat page's stylesheet and the Board's, in the order the page loads them (the Board's after). */
 export function pageCss(): string {
-  return readFileSync(resolve(__dirname, "../../../../Web/src/chat.css"), "utf8") + "\n" + readFileSync(resolve(__dirname, "../src/board.css"), "utf8");
+  return readChatCss() + "\n" + readFileSync(resolve(__dirname, "../src/board.css"), "utf8");
 }

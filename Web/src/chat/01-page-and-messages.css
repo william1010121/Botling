@@ -1,0 +1,296 @@
+/* Colours are in tokens.css (shared with the app shell and the component kit). */
+:root {
+  --chat-avatar-size: 48px;
+  /* The controls over and in the input box (pinned strip, hand-off chip, toolbar): one height,
+     radius, border and muted color; status is a 7px dot and its color. */
+  --control-h: 32px;
+  --control-radius: 10px;
+  color-scheme: dark;
+}
+/* Dark unless the page sets data-theme="light" (Botling 2 does, from its App appearance setting); tokens.css has both sets. */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); }
+body {
+  font: 15px/1.65 -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+body.dropping::after {
+  content: "";
+  position: fixed;
+  inset: 12px;
+  border: 2px dashed var(--blue);
+  border-radius: 16px;
+  pointer-events: none;
+}
+button { font: inherit; color: inherit; }
+
+/* The message list: anchored to the bottom, no visible scroller (it would shift the column).
+   Never sideways: wide content wraps, or scrolls inside its own block (a table, a code block). */
+#scroller { flex: 1; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+#scroller::-webkit-scrollbar { display: none; }
+#messages {
+  max-width: 640px;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 24px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.stamped { display: flex; flex-direction: column; gap: 14px; }
+.stamp { text-align: center; font-size: 12px; color: var(--faint); }
+
+.row { display: flex; align-items: flex-start; gap: 10px; border-radius: 18px; transition: background 0.4s; }
+.row.flash { background: rgba(76, 141, 255, 0.12); }
+.row.user { justify-content: flex-end; align-items: center; }
+.row.user .reply-button { order: -1; }
+.row.bot, .row.notice { justify-content: flex-start; }
+
+/* Scale the complete character + bot hat together, including working and notice rows. */
+.avatar { width: var(--chat-avatar-size); height: var(--chat-avatar-size); flex-shrink: 0; margin-top: 6px; }
+@media (width < 480px) {
+  #messages { padding-left: 16px; padding-right: 16px; }
+  :root { --chat-avatar-size: 40px; }
+  /* A phone: cards and a question's choices stay inside their bubble (the desktop's 280px floor would push them out). */
+  iframe.component-frame { min-width: 0; width: 100%; }
+  .bubble .choices { min-width: 0; }
+  .bubble .choice { flex-wrap: wrap; }
+  .bubble .choice .detail { white-space: normal; }
+}
+.mini-avatar { width: 18px; height: 18px; flex-shrink: 0; }
+
+.reply-button {
+  width: 28px; height: 28px; flex-shrink: 0; align-self: center;
+  border: none; background: transparent; color: var(--muted); border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  opacity: 0; cursor: pointer;
+}
+.row:hover .reply-button, .reply-button:focus-visible { opacity: 1; }
+
+.bubble { padding: 12px 16px; border-radius: 18px; min-width: 0; overflow-wrap: anywhere; }
+.bot-bubble { background: var(--bubble); max-width: 520px; }
+.notice-bubble { background: var(--notice); border: 1px solid var(--line); max-width: 520px; }
+.notice-bubble.open { border-color: var(--orange-line); }
+.speaker-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 520px; }
+.speaker { font-size: 12px; color: var(--faint); padding-left: 4px; }
+.mention-list {
+  position: absolute; bottom: calc(100% + 6px); left: 12px; z-index: 15; min-width: 200px; max-width: 320px;
+  padding: 4px; background: var(--popover); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
+  max-height: 320px; overflow-y: auto;
+}
+.mention-list[hidden] { display: none; }
+.mention-list button {
+  display: block; width: 100%; padding: 7px 10px; border: none; border-radius: 8px; background: transparent;
+  color: var(--text); font-size: 14px; text-align: left; cursor: pointer;
+}
+.mention-list button.active, .mention-list button:hover { background: var(--active); }
+.mention-list button { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-hint { min-width: 0; flex: 0 1 auto; font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The / list is meant to go unnoticed: small rows, a flat box, no shadow.
+   It is still wide enough to read: about 360px, up to the composer's width, the name whole and
+   the description on a second faint line that wraps rather than being cut. */
+.mention-list.slash {
+  width: max-content; min-width: min(360px, calc(100% - 24px)); max-width: calc(100% - 24px);
+  padding: 2px; border-color: var(--slash-line); border-radius: 8px; box-shadow: none; background: var(--slash-bg);
+}
+.mention-list.slash button {
+  flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 1px;
+  padding: 4px 8px; font-size: 12.5px; border-radius: 5px; color: var(--muted);
+}
+.mention-list.slash .mention-name { flex-shrink: 0; max-width: 100%; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; white-space: normal; }
+.mention-list.slash .mention-hint { max-width: 100%; overflow: visible; text-overflow: clip; white-space: normal; line-height: 1.35; }
+.mention-list.slash button.active, .mention-list.slash button:hover { background: var(--selected); color: var(--text); }
+/* A library component the bot does not have yet: a shade fainter, with a "library" hint. */
+.mention-list.slash button.library .mention-name { opacity: 0.75; }
+.composer { position: relative; }
+.user-body { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 460px; min-width: 0; }
+.user-body > .speaker { padding: 0 4px 0 0; margin-bottom: -2px; }
+.user-bubble { background: var(--user-bubble); padding: 10px 16px; }
+.quote {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  border: none; background: transparent; color: var(--faint); font-size: 12px; cursor: pointer;
+}
+.quote span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The handed-over line itself, not the row around it (which has the class "relay" too). */
+.relay:not(.row) {
+  display: flex; align-items: flex-start; gap: 8px; max-width: 520px;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px;
+  color: var(--muted); font-size: 13px;
+}
+.row.divider { align-items: center; gap: 12px; }
+.row.divider .line { flex: 1; min-width: 24px; height: 1px; background: var(--line); }
+/* A long handoff note wraps (centered) instead of widening the chat past the window. */
+.row.divider .label { min-width: 0; font-size: 12px; color: var(--faint); text-align: center; overflow-wrap: anywhere; }
+/* "New while you were in Release" (Navigation v5): back in a project bot, over what came while you were in its sub bot. */
+.row.divider[data-id^="new-since:"] .label { color: var(--muted); font-size: 11.5px; }
+.error-text { color: var(--error); font-size: 13px; }
+
+/* Markdown inside bubbles */
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p { margin: 0 0 10px; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 4px 0 8px; line-height: 1.35; }
+.markdown h1 { font-size: 19px; } .markdown h2 { font-size: 17px; } .markdown h3, .markdown h4 { font-size: 15px; }
+.markdown ul, .markdown ol { margin: 0 0 10px; padding-left: 22px; }
+.markdown li { margin: 2px 0; }
+.markdown li::marker { color: var(--muted); }
+.markdown blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid var(--strong-line); color: var(--muted); }
+.markdown code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: var(--code); padding: 1px 5px; border-radius: 5px; }
+.markdown pre { margin: 0 0 10px; padding: 12px; background: var(--code); border-radius: 10px; white-space: pre-wrap; }
+.markdown pre code { padding: 0; background: none; }
+.markdown .table-scroll { max-width: 100%; margin: 0 0 10px; overflow-x: auto; overflow-y: hidden; }
+.markdown table { border-collapse: collapse; margin: 0; font-size: 14px; }
+.markdown table.fitted { width: 100%; }
+/* break-word, not the bubble's anywhere: a column is never narrower than its longest word. */
+.markdown th, .markdown td { text-align: left; vertical-align: top; overflow-wrap: break-word; padding: 4px 14px 4px 0; border-bottom: 1px solid var(--line); }
+.markdown hr { border: none; height: 1px; background: var(--line); margin: 10px 0; }
+.chip { color: var(--link); background: var(--chip); border-radius: 6px; padding: 0 5px; text-decoration: none; }
+.chip:hover { text-decoration: underline; }
+
+.math-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.math-display::-webkit-scrollbar { display: none; }
+.katex { font-size: 1.08em; }
+.katex .katex-error, .katex-error { color: var(--error) !important; }
+
+.media { display: block; max-width: 100%; max-height: 320px; border-radius: 12px; margin: 6px 0; cursor: zoom-in; }
+video.media { width: 480px; max-height: 270px; background: #000; cursor: default; }
+
+.attachments { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.thumb { width: 120px; height: 90px; object-fit: cover; border-radius: 10px; cursor: zoom-in; }
+.file-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 10px;
+  background: var(--chip); border-radius: 10px; color: var(--text); font-size: 13px; text-decoration: none;
+}
+.file-chip.missing { color: var(--muted); text-decoration: line-through; cursor: default; }
+
+/* Plugins' chips above the box (composer.chips), and what one opens above it. */
+.composer-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px 0; }
+.composer-chips[hidden], .composer-chip-preview[hidden] { display: none; }
+.composer-chip-preview { position: absolute; bottom: calc(100% + 8px); left: 0; right: 0; z-index: 15; }
+
+.open-source {
+  margin-top: 10px; min-height: 28px; padding: 0;
+  border: none; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer;
+}
+
+.from-subagent {
+  display: flex; align-items: center; gap: 8px; max-width: 100%; margin-bottom: 8px; min-height: 28px; padding: 0 10px;
+  border: none; border-radius: 8px; background: var(--chip); color: var(--muted); font-size: 13px; cursor: pointer;
+}
+.from-subagent > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.from-subagent-open { flex-shrink: 0; color: var(--link); }
+/* A turn cut off before it answered: what it had said and done so far stays, marked. */
+.interrupted-note { margin-top: 6px; font-size: 12px; color: var(--faint); font-style: italic; }
+
+/* Components and choice buttons */
+.component { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; position: relative; }
+/* New data drawing behind the frame on screen (keepFrames), until it is ready to take its place. */
+.component-frame.incoming { visibility: hidden; pointer-events: none; }
+.component-frame { flex: 1; min-width: 280px; height: 52px; border: none; background: transparent; color-scheme: dark; }
+.component-side { flex-shrink: 0; min-width: 36px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.flag {
+  width: 32px; height: 32px; border: none; background: transparent; color: var(--muted);
+  border-radius: 8px; opacity: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.component:hover .flag, .flag:focus-visible { opacity: 1; }
+.updated { font-size: 11px; color: var(--green); white-space: nowrap; }
+.spinner {
+  width: 16px; height: 16px; margin: 8px; border-radius: 50%;
+  border: 2px solid var(--strong-line); border-top-color: var(--blue); animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* A component whose data comes from a command: its bar, the ask to allow it, its error. */
+.command-card { margin-top: 10px; min-width: 280px; border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px 8px; }
+.command-card > .component { margin-top: 4px; }
+.command-bar { display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 12px; color: var(--muted); }
+.command-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
+.command-text::before { content: "$ "; }
+.command-when { flex: none; }
+.command-refresh {
+  flex: none; width: 32px; height: 32px; border: none; border-radius: 8px; background: transparent; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.command-refresh:hover:not(:disabled), .command-refresh:focus-visible { background: var(--chip); color: var(--text); }
+.command-refresh:disabled { cursor: default; opacity: 0.5; }
+.command-refresh.spinning svg { animation: spin 0.8s linear infinite; }
+.command-approve { display: flex; flex-direction: column; gap: 6px; padding: 4px 4px 2px; font-size: 13px; }
+.command-folder { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); word-break: break-all; }
+.command-full, .command-error pre {
+  margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--code); white-space: pre-wrap; word-break: break-word;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 180px; overflow: auto;
+}
+.command-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.command-allow { min-height: 36px; }
+.command-note { font-size: 12px; color: var(--muted); }
+.command-error { display: flex; flex-direction: column; gap: 6px; padding: 4px; font-size: 13px; color: var(--error); }
+.command-error pre { color: var(--text); }
+.command-waiting { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
+.command-waiting .spinner { margin: 4px; }
+
+.choices { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; min-width: 280px; }
+.choice {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 48px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--card-line);
+  background: var(--card); text-align: left; cursor: pointer;
+}
+.choice.recommended { border-color: var(--orange-line); }
+.choice.recommended .detail { color: var(--orange-text); }
+.choice.picked { border-color: var(--blue); background: var(--accent-bg); }
+.choice.faded { opacity: 0.4; }
+.choice:disabled { cursor: default; }
+.choice .detail { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+/* Several questions answered together (question-group.ts): one card group, one Submit.
+   Theme colours only (light and dark); at phone width it fills the bubble and its inputs stay 16px (no iOS zoom). */
+.question-group { gap: 14px; }
+.question { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.question + .question { padding-top: 14px; border-top: 1px solid var(--card-line); }
+.question-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 0; margin-bottom: 2px; font-size: 14px; font-weight: 600; color: var(--text); }
+.question-number { font-size: 12px; font-weight: 500; color: var(--faint); font-variant-numeric: tabular-nums; }
+.question-words { min-width: 0; overflow-wrap: anywhere; }
+.question-kind { font-size: 12px; font-weight: 400; color: var(--muted); }
+.question-option { justify-content: flex-start; color: var(--text); font: inherit; font-size: 14px; }
+.question-option .question-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.question-option .detail { white-space: normal; text-align: right; }
+.question-mark { flex: none; width: 16px; height: 16px; box-sizing: border-box; border: 1.5px solid var(--muted); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+.question.multiple .question-mark { border-radius: 4px; }
+.question-option.picked .question-mark { border-color: var(--blue); background: var(--blue); }
+.question-option.picked .question-mark::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--card); }
+.question.multiple .question-option.picked .question-mark::after { width: 8px; height: 4px; border-radius: 0; background: none; border: solid var(--card); border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg); }
+.question-option:focus-visible, .question-submit:focus-visible, .question-skip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.question-other { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.question-other input {
+  flex: 1 1 auto; width: 0; min-width: 0; min-height: 44px; padding: 10px 14px; box-sizing: border-box;
+  border-radius: 12px; border: 1px solid var(--card-line); background: var(--card); color: var(--text); font: inherit; font-size: 16px;
+}
+.question-other input::placeholder { color: var(--faint); }
+.question-other input:focus { outline: none; border-color: var(--blue); }
+.question-other.picked input { border-color: var(--blue); background: var(--accent-bg); }
+.question-other.faded { opacity: 0.4; }
+.question-other input:disabled { cursor: default; }
+.question-skip { flex: none; min-height: 44px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.question-skip:hover { color: var(--text); text-decoration: underline; }
+.question-skipped { font-size: 12px; color: var(--faint); }
+.question-other[hidden], .question-skipped[hidden] { display: none; }
+.question.skipped .question-option { opacity: 0.4; }
+.question-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.question-progress { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.question-submit {
+  flex: 1 0 auto; max-width: 100%; min-height: 44px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--blue);
+  background: var(--accent-bg); color: var(--text); font: inherit; font-size: 14px; cursor: pointer;
+}
+.question-submit:disabled { opacity: 0.4; cursor: default; }
+.question-group.sending .question-submit { cursor: progress; }
+@media (max-width: 480px) { .question-group { min-width: 0; } .question-submit { flex-basis: 100%; } }
+.reaction-message-column .question-group { min-width: 0; }
+

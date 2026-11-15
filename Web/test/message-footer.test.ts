@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { messageElement } from "../src/messages";
+import { readChatCss } from "./helpers/chat-css";
 import { resetTaskChips } from "../src/tasks";
 import type { MessageView } from "../src/types";
 
@@ -43,7 +43,7 @@ it("omits absent groups and an entirely empty footer", () => {
 
 // jsdom cannot measure geometry. These constraints accompany browser measurements at 640/320px.
 it("allows compact centered metadata to wrap and gives expanded work details their own line", () => {
-  const css = readFileSync(`${__dirname}/../src/chat.css`, "utf8");
+  const css = readChatCss();
   const rule = (selector: string) => css.split(`${selector} {`)[1]?.split("}")[0] ?? "";
   expect(rule(".message-footer")).toMatch(/display: flex/);
   expect(rule(".message-footer")).toMatch(/flex-wrap: wrap/);
