@@ -361,7 +361,7 @@ export class Bot {
   private botRestart: BotRestart | null = null;
   private get restarts(): BotRestart { return this.botRestart ??= new BotRestart(this, this.ctx); }
   private botHead: BotHead | null = null;
-  private get headRun(): BotHead { return this.botHead ??= new BotHead(this, this.ctx); }
+  get headRun(): BotHead { return this.botHead ??= new BotHead(this, this.ctx); }
 
   /** The turn under way and the queue behind it (M7-S52): made on first use, from this bot. */
   private turnControl: TurnControl | null = null;
@@ -425,7 +425,7 @@ export class Bot {
     }
     if (this.engine === "agy") {
       const saved = this.store.loadSettings().agyConversation;
-      if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) { this.session = { sessionId: saved, started: true }; this.briefing = false; }
+      if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) { this.headRun.sessionResumed(saved); }
     }
     this.conductor = new Conductor(this.headsSettings);
     this.load();

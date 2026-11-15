@@ -79,14 +79,16 @@ export class HeadEvents {
   // Fields of `Bot` it writes (a setter for another owner's field: M7-S54 ... replace these by named transitions):
   private get apiRetries(): number { return this.host.apiRetries; }
   private set apiRetries(v: number) { this.host.apiRetries = v; }
-  private get briefing(): boolean { return this.host.briefing; }
-  private set briefing(v: boolean) { this.host.briefing = v; }
+  // BotHead's transitions (M7-S57):
+  private briefingDue() { this.host.headRun.briefingDue(); }
+  private sessionStarted() { this.host.headRun.sessionStarted(); }
+  private sessionRenamed(sessionId: string) { this.host.headRun.sessionRenamed(sessionId); }
   private get codexRetry(): Bot["codexRetry"] { return this.host.codexRetry; }
   private set codexRetry(v: Bot["codexRetry"]) { this.host.codexRetry = v; }
   private get deferred(): Turn | null { return this.host.deferred; }
   private set deferred(v: Turn | null) { this.host.deferred = v; }
   private get head(): AgentHead | null { return this.host.head; }
-  private set head(v: AgentHead | null) { this.host.head = v; }
+  private detach() { this.host.headRun.detach(); }
   private get ignoreResults(): number { return this.host.ignoreResults; }
   private set ignoreResults(v: number) { this.host.ignoreResults = v; }
   private get managedPending(): boolean { return this.host.managedPending; }
@@ -221,8 +223,8 @@ export class HeadEvents {
     if (item.kind === "init") {
       if (this.engine === "agy") this.store.saveSetting("agyRecovery", undefined);
       let save = false;
-      if (!this.session.started) { this.session.started = true; save = true; }
-      if (item.sessionId && item.sessionId !== this.session.sessionId && /^[0-9a-f-]{36}$/i.test(item.sessionId)) { this.session.sessionId = item.sessionId; save = true; }
+      if (!this.session.started) { this.sessionStarted(); save = true; }
+      if (item.sessionId && item.sessionId !== this.session.sessionId && /^[0-9a-f-]{36}$/i.test(item.sessionId)) { this.sessionRenamed(item.sessionId); save = true; }
       if (save) { this.store.saveHead(this.session); if (this.engine === "agy") this.store.saveSetting("agyConversation", this.session.sessionId); }
       return;
     }
@@ -575,7 +577,7 @@ export class HeadEvents {
     const lostToNetwork = !exit.expected && !this.shuttingDown && (this.outage !== null || (exit.code !== 0 && mentionsConnectionError(exit.stderr)));
     const cutOff = lostToNetwork ? this.inHeadSubagents.map((subagent) => subagent.id) : [];
     const lostSession = this.session.started ? this.session.sessionId : null;
-    this.head = null;
+    this.detach();
     this.retryingConnection = false;
     this.codexRetry = null;
     this.clearIdle();
@@ -618,7 +620,7 @@ export class HeadEvents {
       this.restarting = null;
     } else if (this.restartRecovery || (exit.expected && this.engine === "agy")) {
       // agy resumes by its actual conversation ID after cancel, sleep or shutdown.
-      this.briefing = !this.session.started;
+      this.briefingDue();
     } else if (exit.expected) {
       // It went to sleep: the next wake is a new session, briefed from memory.md and the chat.
       this.newSession();
@@ -629,7 +631,7 @@ export class HeadEvents {
       if (this.engine === "agy") {
         // Preserve identity across failed resumes, the next explicit message and app restart.
         this.store.saveSetting("agyRecovery", { sessionId: this.session.sessionId, state: "resume-required", reason: exit.stderr.slice(-1000) || why });
-        this.briefing = !this.session.started;
+        this.briefingDue();
       } else this.newSession();
       this.store.saveHead(this.session);
       if (lostToNetwork) {
