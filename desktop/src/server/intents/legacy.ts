@@ -69,7 +69,7 @@ export class LegacyApply {
         // Nor does one for a target it does not belong to (U1): that check used to come after the handler. Same order as the
         // slot engine's decision (scope first, then target); the engine then stores the refusal.
         const denied = admitted.kind === "ready" && !admitted.cancelled
-          && (this.slots().denies(tx, { slot: body.slot, cmd: body.cmd, scope, via: body.via }) !== null || !belongsToTarget(body));
+          && (this.slots().denies(tx, { slot: body.slot, cmd: body.cmd, scope, via: body.via, ...(options.peer !== undefined ? { peer: options.peer } : {}) }) !== null || !belongsToTarget(body));
         // D59: marked begun in the transaction that found no cancel, so a cancel after this is too late, never noted.
         if (admitted.kind === "ready" && !admitted.cancelled && !denied) begun.end = this.slots().begin(body.slot);
         return { ...admitted, denied };
