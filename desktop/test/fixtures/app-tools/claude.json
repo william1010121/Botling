@@ -156,6 +156,38 @@
   }
  },
  {
+  "name": "app_fetch",
+  "description": "Fetch a file or folder from another machine in this Botling cluster into this bot's folder (.bot/incoming/). The other machine may ask its user first. Give a short purpose; it is shown to them.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "machine": {
+     "type": "string",
+     "description": "The machine's name."
+    },
+    "path": {
+     "type": "string",
+     "description": "As on that machine; ~ is allowed."
+    },
+    "purpose": {
+     "type": "string",
+     "maxLength": 500
+    },
+    "max_bytes": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 524288000
+    }
+   },
+   "required": [
+    "machine",
+    "path",
+    "purpose"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
   "name": "app_browser_tabs",
   "description": "List the tabs open in the user's in-app browser pane beside your chat: tab_id, url, title, which one is selected, and how many network requests were captured. The pane is the user's own browser (their sign-ins); you read it, you do not drive it.",
   "inputSchema": {
