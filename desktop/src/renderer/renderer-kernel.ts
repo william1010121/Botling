@@ -9,6 +9,7 @@
 //     shell/ShellFrame.tsx). shell/KernelSlot.tsx draws a slot; it re-draws when `subscribeSlots` says the kernel changed.
 // Slots have the new names and the 2.x names as aliases (slot-names.ts): the kernel holds one registration and finds it under both.
 import { Kernel, ROOT_SLOTS, canonicalSlot } from "../../../Web/src/plugin-kernel";
+import { SHELL_STORAGE, provideShellStorage } from "./shell/storage";
 
 /** The chat surface's instance in the renderer's kernel. */
 export const CHAT_SURFACE = ":chat";
@@ -16,6 +17,7 @@ export const CHAT_SURFACE = ":chat";
 export const SHELL_SURFACE = ":shell";
 /** The service a plugin frame's `ccb.composer.insertQuote` calls. */
 export const INSERT_QUOTE = "composer.insertQuote";
+export { SHELL_STORAGE };
 
 const listeners = new Set<() => void>();
 let version = 0;
@@ -45,5 +47,8 @@ export const rendererKernel = new Kernel({
   },
 });
 rendererKernel.install({ name: CHAT_SURFACE, provides: { services: [INSERT_QUOTE] } });
-rendererKernel.install({ name: SHELL_SURFACE, provides: { slots: ROOT_SLOTS } });
-void rendererKernel.load(SHELL_SURFACE, (plugin) => { for (const slot of ROOT_SLOTS) rendererKernel.provideSlot(plugin, slot); });
+rendererKernel.install({ name: SHELL_SURFACE, provides: { slots: ROOT_SLOTS, services: [SHELL_STORAGE] } });
+void rendererKernel.load(SHELL_SURFACE, (plugin) => {
+  for (const slot of ROOT_SLOTS) rendererKernel.provideSlot(plugin, slot);
+  provideShellStorage(rendererKernel, plugin);
+});
