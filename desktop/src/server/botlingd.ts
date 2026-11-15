@@ -575,7 +575,10 @@ export class Botlingd {
       content.attachMedia(media);
       // M3 step 7: the own table's feed (to peers and front ends) and the copies of peers' tables.
       const feeds = new TableFeeds({ reader: () => hub.reader(), ownStream: `srv:${serverId}`, log });
-      const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
+      // fu-callin-outbox review: a copy that fills after its session opened can make a host bot's server known with no roster
+      // change; interrupted call-ins waiting for it are answered then (bound once the guest is attached, below).
+      let copyChanged: () => void = () => {};
+      const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log, copyChanged: () => copyChanged() });
       // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
       let summary: SummaryRows | null = null;
       // M2 step 12: uploads from pages (`content.put`), kept in <data>/uploads; a chat.send naming them waits for them.
@@ -941,6 +944,7 @@ export class Botlingd {
       // is refused "not ready" (fail closed) and a queued call-in waits.
       runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd), submitIn: (tx, target, cmd) => serverOrigin.submitIn(tx, target, cmd) });
       roster.onChange(() => { runtime.callIns.retry(); }); // interrupted call-ins waiting for a host's server
+      copyChanged = () => { runtime.callIns.retry(); };
       daemon.chatMirror.start();
       daemon.watchLock();
       const schedule = backupCheckMs(env);

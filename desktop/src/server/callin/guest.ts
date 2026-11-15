@@ -69,6 +69,10 @@ export class CallInGuest implements CallInRunner {
   private resolveReady!: () => void;
   private readonly ready = new Promise<void>((resolve) => { this.resolveReady = resolve; });
   private resumed = false;
+  /** A `resume` pass is running; `again`: a change came during it. `waiting`: interrupted rows the last pass left for later. */
+  private resuming = false;
+  private again = false;
+  private waiting = 0;
   /** Started rows' turns, to abort on `callin.cancel`. */
   private readonly running = new Map<string, AbortController>();
   /** A cancel that came before the runner created its controller (the row was just taken). */
@@ -206,6 +210,8 @@ export class CallInGuest implements CallInRunner {
   private async resume(): Promise<void> {
     if (this.resumed) return;
     this.resumed = true;
+    this.resuming = true;
+    this.again = false;
     try {
       const rows = await this.options.scope.submit((tx) => effectsIn(tx, "interrupted").filter((row) => row.kind === "callin" && !(row.payload as CallInPayload).replied));
       let waiting = 0;
@@ -214,15 +220,27 @@ export class CallInGuest implements CallInRunner {
         if (!this.sender?.ownerOf(`bot:${host}` as Target)) { waiting += 1; continue; }
         await this.finish(row, "interrupted", { kind: "failed", why: RESTARTED });
       }
-      if (waiting) this.options.log?.(`callin: ${waiting} interrupted call-in(s) wait for their host's server to be known before they are answered`);
+      if (waiting && waiting !== this.waiting) this.options.log?.(`callin: ${waiting} interrupted call-in(s) wait for their host's server to be known before they are answered`);
+      this.waiting = waiting;
     } catch (error) {
+      this.waiting = Math.max(this.waiting, 1); // unknown: look again at the next change
       this.options.log?.(`callin: answering interrupted call-ins failed (${errorText(error)})`);
+    } finally {
+      this.resuming = false;
     }
+    // A change that came while this pass ran may have made a host's server known after its row was looked at.
+    if (this.again) this.retry();
   }
 
-  /** The roster or the peers changed: answers the interrupted call-ins that were waiting for their host's server (none: nothing happens). */
+  /**
+   * Something `ownerOf` reads changed (the roster, or a peer's `srv:` table copy, which fills only after the peer's session
+   * opened, without a roster change): answers the interrupted call-ins that were waiting for their host's server. Nothing
+   * happens while none waits, so it may be called on every copy change.
+   */
   retry(): void {
     if (!this.sender) return;
+    if (this.resuming) { this.again = true; return; }
+    if (this.waiting === 0) return;
     this.resumed = false;
     void this.resume();
   }

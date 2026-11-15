@@ -160,6 +160,46 @@ describe("fu-callin-outbox: an interrupted call-in is not answered before its ho
     expect(s.done).toHaveLength(1);
     expect(calls).toBe(1);
   });
+
+  it("8. (review) a change that comes while the start-time pass runs is not lost; with nothing waiting a retry reads nothing", async () => {
+    const first = await harness({ bots: ["MAIN", GUEST] });
+    open.push(first);
+    first.engine.callInMode = "hold";
+    first.runtime.callIns.attach(markerSender().sender);
+    await first.send(ask("call-8"), { origin: ORIGIN });
+    for (let i = 0; i < 200 && first.engine.callIns.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = await first.restart({ bots: ["MAIN", GUEST] });
+    open.push(second);
+    const s = markerSender();
+    let known = false;
+    let looks = 0;
+    // The peer's srv: copy fills right after the pass looked at the row (and found no owner): the copy change calls retry()
+    // while that pass still runs.
+    const sender: CallInGuestSender = {
+      ...s.sender,
+      ownerOf: (target) => {
+        looks += 1;
+        const owner = known && target === HOST_TARGET ? ORIGIN : null;
+        if (!known) { known = true; second.runtime.callIns.retry(); }
+        return owner;
+      },
+    };
+    second.runtime.callIns.attach(sender);
+    for (let i = 0; i < 200 && s.done.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    await second.settle();
+    expect(s.done.map((reply) => reply.callId)).toEqual(["call-8"]);
+    expect(rowsOf(second)).toEqual([["interrupted", true]]);
+    // Nothing waits now: a copy change (called on every applied batch) costs no writer transaction and looks at nothing.
+    const before = looks;
+    // (`resume` submits before its first await, so a retry that started a pass shows here at once.)
+    const submits = vi.spyOn(second.runtime.scope, "submit");
+    for (let i = 0; i < 5; i += 1) second.runtime.callIns.retry();
+    expect(submits).not.toHaveBeenCalled();
+    submits.mockRestore();
+    await second.settle();
+    expect(looks).toBe(before);
+    expect(s.done).toHaveLength(1);
+  });
 });
 
 describe("fu-callin-outbox: the crash hook is a fake-agent test knob", () => {
