@@ -566,8 +566,6 @@ export class Botlingd {
         subscribeTable: (stream, sink) => feeds.subscribe(stream, null, sink), log,
       });
       roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
-      // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
-      runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
       // M5-02c: the host's side asks through the same origin, and hears how each ask ended (a refused ask ends its wait at once).
       hostCallIns = runtime.callHost;
       // M5-03a (D51): a reply after the host gave up is appended marked late and wakes nobody.
@@ -737,6 +735,11 @@ export class Botlingd {
       await daemon.relay?.start();
       await daemon.writeOwnProfile((at) => advertisedPort(env, at));
       peers.start();
+      // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
+      // Bound only now (M5-03b review): `attach` answers the call-ins a crash interrupted at once, and before `peers.start()`
+      // the directory knows no peer, so every such answer was refused and lost (marked sent, never queued). Until here an ask
+      // is refused "not ready" (fail closed) and a queued call-in waits.
+      runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
       daemon.watchLock();
       const schedule = backupCheckMs(env);
       if (schedule) {
