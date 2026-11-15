@@ -22,6 +22,7 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readCharacters } from "../build-renderer.mjs";
+import { FE_MANIFEST_FILE, feBuildManifestFile } from "../fe-build-manifest.mjs";
 import { inlineTokens } from "../../Web/kit/build.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -43,7 +44,8 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   // Every file the build reads (absolute paths), for the page tests' freshness check (test/acceptance/web-v3/page-fresh.ts).
   const sources = new Set([fileURLToPath(import.meta.url)]);
   const [latex, chatExtras, catchup, boardPart] = await Promise.all(["ccb-latex", "botling.chat-extras", "botling.catchup", "botling.board"].map((name) => webPart(name, sources)));
-  const browser = { bundle: true, format: "iife", target: ["chrome130", "safari17"], minify: !development, sourcemap: "linked", legalComments: "eof", write: false, nodePaths, metafile: true };
+  const browser = { bundle: true, format: "iife", target: ["chrome130", "safari17"], minify: !development, sourcemap: "linked", legalComments: "eof", write: false, nodePaths, metafile: true,
+    logOverride: { "empty-glob": "silent" } }; // the in-page plugin folder (shell/inpage-bundled.ts) has no plugin yet
   const [shell, chat, pdfViewer, worker] = await Promise.all([
     build({ ...browser, entryPoints: [join(here, "shell/main.tsx")], outfile: join(out, "web.js"), jsx: "automatic",
       define: { __BOTLING_WEB_BASE__: WEB_BASE, "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(readCharacters(root)), __BOTLING_WEB__: "true" } }),
@@ -77,6 +79,9 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   asset(join(root, "builtin-plugins/botling.chat-extras/src/chat-extras.css"), "plugins/botling.chat-extras/chat-extras.css");
   asset(join(root, "builtin-plugins/botling.catchup/catchup.css"), "plugins/botling.catchup/catchup.css");
   asset(join(root, "builtin-plugins/botling.board/src/board.css"), "plugins/botling.board/board.css");
+  // The in-page plugins this build ships (M7-10a): name and folder hash, built from src/renderer/plugins/* (the bundled ones are in the metafile's inputs).
+  files.set(join(out, FE_MANIFEST_FILE), feBuildManifestFile(root));
+  sources.add(join(root, "fe-build-manifest.mjs"));
   // The build's id, stamped in index.html and version.json (as the 2.x page does).
   const hash = createHash("sha256");
   for (const [file, contents] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {

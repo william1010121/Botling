@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inlineTokens } from "../Web/kit/build.mjs";
+import { FE_MANIFEST_FILE, feBuildManifestFile } from "./fe-build-manifest.mjs";
 
 export const desktopRoot = dirname(fileURLToPath(import.meta.url));
 /** The bot look "Cute"'s pictures (base64 PNG by character and expression): bundled into the page, and
@@ -32,8 +33,9 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
     format: "esm", target: "chrome130", minify: true, legalComments: "eof", write: false, nodePaths, tsconfigRaw: { compilerOptions: {} } })).outputFiles[0].text : "";
   const [latex, chatExtras, catchup, boardPart] = await Promise.all([webPart("ccb-latex"), webPart("botling.chat-extras"), webPart("botling.catchup"), webPart("botling.board")]);
   const characters = readCharacters(root);
+  // "empty-glob": the in-page plugin folder (shell/inpage-bundled.ts) has no plugin yet.
   const browser = { bundle: true, format: "iife", target: "chrome130", minify: !development,
-    sourcemap: "linked", legalComments: "eof", write: false, nodePaths };
+    sourcemap: "linked", legalComments: "eof", write: false, nodePaths, logOverride: { "empty-glob": "silent" } };
   const bundles = await Promise.all([
     build({ ...browser, entryPoints: [join(root, webBuild ? "mobile/main.tsx" : "src/renderer/main.tsx")], outfile: join(outdir, webBuild ? "web.js" : "renderer.js"),
       jsx: "automatic", define: { "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(characters), __BOTLING_WEB__: JSON.stringify(webBuild) } }),
@@ -63,6 +65,8 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
     asset(join(root, "builtin-plugins/botling.catchup/catchup.css"), "plugins/botling.catchup/catchup.css");
     asset(join(root, "builtin-plugins/botling.board/src/board.css"), "plugins/botling.board/board.css");
   }
+  // The in-page plugins this build ships (M7-10a); Botling Web (2.x) runs no plugins and has none.
+  if (!webBuild) files.set(join(outdir, FE_MANIFEST_FILE), feBuildManifestFile(root));
   if (webBuild) {
     // The build's id (a hash of what it serves): stamped in index.html and written to version.json, so a home-screen app
     // resumed with an older page can tell a new deploy is there (mobile/build-check.ts).
