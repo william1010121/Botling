@@ -114,6 +114,9 @@ export const AdminOp = z.discriminatedUnion("op", [
   // every peer server) and the current registers.
   z.strictObject({ op: z.literal("prefs.set"), key: PrefKey, value: z.unknown() }),
   z.strictObject({ op: z.literal("prefs.list") }),
+  // Fetch grants (§16, M5-06c): the "always" grants in force, and revoking one. Local socket only.
+  z.strictObject({ op: z.literal("fetch.grants") }),
+  z.strictObject({ op: z.literal("fetch.revoke"), grantId: Id }),
 ]);
 export type AdminOp = z.infer<typeof AdminOp>;
 
