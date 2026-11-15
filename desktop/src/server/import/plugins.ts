@@ -368,8 +368,10 @@ export function importPlugins(
           replacesBuiltIn = true;
         }
 
-        // The shared name rule (a dot, the reserved `botling`): a plugin coming in is refused, never renamed or deleted at the source.
-        const nameIssue = incomingNameIssues(identity.name)[0];
+        // The shared name rule (a dot, the reserved `botling`): a plugin coming in is refused, never renamed or deleted at the
+        // source. The one exception is a library copy that replaces a built-in the app really ships (`replacesBuiltIn`: the
+        // name is in the built-ins folder `builtInsDir`, not just claimed by this manifest), which 2.x always allowed.
+        const nameIssue = replacesBuiltIn ? undefined : incomingNameIssues(identity.name)[0];
         if (nameIssue) {
           skipped.push(`${JSON.stringify(`plugins/${dirName}`)}: not imported, ${nameIssue.message}`);
           continue;

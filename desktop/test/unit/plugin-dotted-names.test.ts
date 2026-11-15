@@ -116,6 +116,22 @@ describe("every install path goes through the shared check", () => {
   });
 });
 
+describe("the one exception in the 2.x import: a copy that replaces a built-in the app really ships", () => {
+  it("a newer library copy of botling.board still replaces it (the name is in the built-ins folder); botling.evil, claiming the same family, does not", () => {
+    const root = tempDir("import-builtin");
+    const src = join(root, "v2"), dst = join(root, "v3"), builtIns = join(root, "builtins");
+    plugin(builtIns, "botling.board", { version: "1.5.0" });
+    plugin(join(src, "plugins"), "botling.board", { version: "1.6.0" });
+    plugin(join(src, "plugins"), "botling.evil", { version: "9.0.0" });
+    plugin(join(src, "plugins"), "botling.board-fork", { version: "1.0.0" });
+    const result = importPlugins(src, dst, { builtInsDir: builtIns });
+    expect(result.plugins.map((p) => p.name)).toEqual(["botling.board"]);
+    expect(result.plugins[0].replacesBuiltIn).toBe(true);
+    expect(readdirSync(join(dst, "plugins"))).toEqual(["botling.board"]);
+    expect(result.skipped.filter((line) => line.includes("not imported")).length).toBe(2);
+  });
+});
+
 describe("a plugin already installed with a dotted name", () => {
   it("stays loaded and on disk, is warned about once per name, and a new plugin with that name is still refused", () => {
     const dir = tempDir("present");
