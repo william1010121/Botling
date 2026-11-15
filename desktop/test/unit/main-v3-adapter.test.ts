@@ -11,6 +11,11 @@ import { INTERRUPTED_NOTE, type Message, type StreamId } from "../../src/protoco
 import { WorkspaceStore } from "../../src/renderer/store";
 import { NOTICE_ID, READ_COMMANDS, RendererAdapter, noticeText, pendingLineId } from "../../src/main-v3/renderer-adapter";
 import { BOT, FakeClock, FakeServer, flush } from "./fe-link-harness";
+import type { StreamItem } from "../../src/core/agent/stream";
+import { headTurnContent } from "../../src/core/head-turn";
+import { parseHeadTags } from "../../src/core/heads";
+import { parseReply } from "../../src/core/reply";
+import { hasVisibleContent, ReplyText } from "../../src/core/worker-core";
 
 const bot = { id: "b1", name: "B1", role: "main", avatar: "circle", folder: "/p", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null } as unknown as BotView;
 const line = (id: string, text = `line ${id}`, over: Partial<MessageView> = {}): MessageView => ({ id, role: "bot", text, time: new Date(2026, 0, 1).toISOString(), ...over });
@@ -242,6 +247,111 @@ describe("live text", () => {
     // A snapshot now is what the renderer holds (the mirror ran the same events).
     const snapshot = await r.adapter.snapshot("b1");
     expect(snapshot.chat?.messages.find((m) => m.id === "r1")).toEqual(r.chat().find((m) => m.id === "r1"));
+  });
+});
+
+describe("a reply with nothing to show (2.x draws no line for it)", () => {
+  const step = (id: string) => ({ id, kind: "tool" as const, tool: "Bash", title: "Run", detail: null, output: null, failed: false, done: true });
+  /** The core's verdict for a finished turn (bot.ts finishTurn): whether it keeps a line, and the line's words and buttons. */
+  const verdict = (items: StreamItem[], origin: "user" | "app" | "background", steps: number) => {
+    const reply = new ReplyText();
+    for (const item of items) reply.add(item);
+    const parsed = parseReply(reply.text);
+    const tags = parseHeadTags(parsed.body);
+    const content = headTurnContent({ status: "done", origin, sharesChat: false, raw: reply.text, parsed, body: tags.body, handoff: false, steps, error: null });
+    return { shows: hasVisibleContent(content), raw: reply.text, text: content.body, choices: parsed.choices ?? [] };
+  };
+
+  it("a worker's question answered with a tool call and only <no-reply/>: no empty bubble (the screenshot of 2026-11-15)", async () => {
+    // The core keeps it out: the app's note answered with <no-reply/>, after two tool calls.
+    const core = verdict([{ kind: "textBlock" }, { kind: "delta", text: "<no-reply/>" }] as StreamItem[], "app", 2);
+    expect(core.shows).toBe(false);
+    const r = await rig((s) => s.append(BOT, "message.added", { botId: "b1", message: line("m1", "the worker's question", { role: "user" }) }));
+    await r.store.resync();
+    // What the core sends for it: the turn, its steps, and its end with no text (no message.added: it never had words).
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    r.server.append(BOT, "turn.steps", { botId: "b1", turnId: "t1", messageId: "r1", steps: [step("s1"), step("s2")] });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "done", text: core.text });
+    await flush();
+    expect(r.ids()).toEqual(["m1"]);
+    expect(r.store.getView().chat?.running ?? null).toBeNull();
+    // A snapshot now is what the renderer holds.
+    expect((await r.adapter.snapshot("b1")).chat?.messages.map((m) => m.id)).toEqual(["m1"]);
+  });
+
+  it("a line the core drew and then took away (message.removed) does not come back when the turn ends with no text", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    r.server.append(BOT, "message.added", { botId: "b1", message: line("r1", "", { turnId: "t1", state: "streaming" }) });
+    r.server.append(BOT, "message.removed", { botId: "b1", messageId: "r1" });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "done", text: "" });
+    await flush();
+    expect(r.ids()).toEqual([]);
+    // A turn cut off before it said anything shows nothing either (2.x: an interrupted reply with no words has no bubble).
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t2", messageId: "r2" });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t2", messageId: "r2", status: "stopped", text: "" });
+    await flush();
+    expect(r.ids()).toEqual([]);
+  });
+
+  it("a line only the live frames drew goes when the turn ends with no text and no line in the log", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    await flush();
+    r.server.send({ t: "live", stream: BOT, turnId: "t1", seg: 0, rev: 0, at: 0, text: " " });
+    await flush();
+    expect(r.ids()).toEqual(["r1"]);
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "done", text: "" });
+    await flush();
+    expect(r.ids()).toEqual([]);
+    expect((await r.adapter.snapshot("b1")).chat?.messages).toEqual([]);
+  });
+
+  it("a failed turn with no line still shows one (the server's own turn.finished for a turn the core never ended)", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "failed", text: "", error: "the engine went away" });
+    await flush();
+    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ role: "bot", state: "failed" });
+  });
+
+  it("your message answered with words and choices, a tool call, then a last <no-reply/>: the words and choices show, the tag does not", async () => {
+    const said = "Both are not done yet.";
+    const choices = '<choices question="Phone">\n* Deploy now | it changes the live relay\n- Wait | phone keeps 2.x\n</choices>';
+    const core = verdict([
+      { kind: "delta", text: `${said}\n\n${choices}` },
+      { kind: "textBlock" }, // a tool call, then a new text block
+      { kind: "delta", text: "<no-reply/>" },
+    ] as StreamItem[], "user", 1);
+    expect(core.raw).toContain("<no-reply/>");
+    expect(core.shows).toBe(true);
+    expect(core.text).toBe(said);
+    expect(core.choices.map((c) => c.label)).toEqual(["Deploy now", "Wait"]);
+    const r = await rig((s) => s.append(BOT, "message.added", { botId: "b1", message: line("u1", "is it done?", { role: "user" }) }));
+    await r.store.resync();
+    // The core's events: the words stream (its tags held back), the line is placed, a tool call, and the end.
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    await flush();
+    r.server.send({ t: "live", stream: BOT, turnId: "t1", seg: 0, rev: 0, at: 0, text: said });
+    r.server.append(BOT, "message.added", { botId: "b1", message: line("r1", said, { turnId: "t1", state: "streaming" }) });
+    await flush();
+    r.server.append(BOT, "message.updated", { botId: "b1", message: line("r1", said, { turnId: "t1", state: "streaming" }) });
+    r.server.append(BOT, "turn.steps", { botId: "b1", turnId: "t1", messageId: "r1", steps: [step("s1")] });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "done", text: core.text });
+    const final = line("r1", core.text, {
+      turnId: "t1", state: "done", steps: [step("s1")],
+      choices: core.choices.map((c) => ({ label: c.label, detail: c.detail ?? null, recommended: c.recommended, action: null })),
+    });
+    r.server.append(BOT, "message.updated", { botId: "b1", message: final });
+    await flush();
+    expect(r.ids()).toEqual(["u1", "r1"]);
+    const shown = r.chat().find((m) => m.id === "r1")!;
+    expect(shown).toMatchObject({ text: said, state: "done" });
+    expect(shown.text).not.toContain("no-reply");
+    expect(shown.choices?.map((c) => c.label)).toEqual(["Deploy now", "Wait"]);
   });
 });
 
