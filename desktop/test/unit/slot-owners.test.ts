@@ -28,25 +28,25 @@ import { desktop } from "../helpers";
 
 const manifest = parseFeManifest(JSON.parse(feBuildManifestFile(desktop).toString("utf8")));
 const SHELL = SHELL_SURFACE;
+const BOT_PANEL = "botling.bot-panel";
 
 /**
  * The owner of every 2.x slot on this branch (`now`), and whom a card on another lane gives it to (`later`):
- *   - `panel/*` (rightPanel, .section, .takeover): `botling.bot-panel` after M7-03a;
  *   - `main/tab` (mainTab): the chat plugin after M7-07a;
  *   - `bot/context`: the sidebar plugin after M7-05a/05b.
  * `app/main`, `app/overlay` (2.x `window`), `app/bottom` and `app/palette` (`commandPalette`) are the shell's for good.
  */
 const OWNERS: Record<string, { now: string; later?: string }> = {
-  "view/rightPanel": { now: SHELL, later: "botling.bot-panel" },
+  "view/rightPanel": { now: BOT_PANEL },
   "view/main": { now: SHELL },
   "view/window": { now: SHELL },
   "view/mainTab": { now: SHELL, later: CHAT_PLUGIN },
   "view/settings.section": { now: SETTINGS_PLUGIN },
   "view/quickSettings": { now: SETTINGS_PLUGIN },
-  "view/rightPanel.section": { now: SHELL, later: "botling.bot-panel" },
+  "view/rightPanel.section": { now: BOT_PANEL },
   "view/bottomPanel": { now: SHELL },
   "view/chatHeader": { now: CHAT_PLUGIN },
-  "view/rightPanel.takeover": { now: SHELL, later: "botling.bot-panel" },
+  "view/rightPanel.takeover": { now: BOT_PANEL },
   "view/composerBar": { now: CHAT_PLUGIN },
   "menu/message/context": { now: CHAT_PLUGIN },
   "menu/bot/context": { now: SHELL, later: "botling.sidebar" },

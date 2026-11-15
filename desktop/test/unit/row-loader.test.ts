@@ -17,7 +17,7 @@ import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { Kernel } from "../../../Web/src/plugin-kernel";
 import {
-  RowLoader, followRows, plansOf, ticketBundleFetcher, webInstance, webRefOf, MAX_BUNDLE_BYTES,
+  BundleRefusedError, RowLoader, bundleMatches, followRows, plansOf, ticketBundleFetcher, webInstance, webRefOf, MAX_BUNDLE_BYTES,
   type BundleFetcher, type BundleRequest, type BundleTicketPort, type OutcomeItem, type RowsLink,
 } from "../../src/renderer/shell/row-loader";
 import type { InPageSource } from "../../src/renderer/shell/inpage-loader";
@@ -221,6 +221,58 @@ describe("a web part that cannot be had, and a row that moves on", () => {
     expect(kernel.generation(webInstance("a"))).toBe(2);
   });
 
+  // M7-09b-F (FU-6): bytes that are not the web part the row names are refused, whoever fetched them; the loader never falls back.
+  it("refuses bytes that do not hash to the row's reference even from a fetcher that did not check: the old code keeps running, the wrong bytes never run", async () => {
+    const wrong: BundleFetcher = async (request) => (request.ref === refOf(A2) ? "evil();" : SOURCES[request.ref]!);
+    const { kernel, loader, lines } = setup({ fetch: wrong });
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a2"), { web: refOf(A2) }) }));
+    expect(loader.webSource("a")?.source).toBe(A1);
+    expect(kernel.generation(webInstance("a"))).toBe(1);
+    expect(lines.some((line) => line.includes("refused") && line.includes("\"a\""))).toBe(true);
+    expect(lines.some((line) => line.includes("evil"))).toBe(false);
+  });
+
+  it("starts nothing for a first load whose bytes do not match, and does not try it again until the row changes", async () => {
+    let calls = 0;
+    const wrong: BundleFetcher = async () => { calls++; return "evil();"; };
+    const { kernel, loader } = setup({ fetch: wrong });
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
+    expect(loader.webSource("a")).toBeNull();
+    expect(kernel.declaration(webInstance("a"))?.name ?? null).toBeNull();
+    expect(loader.loaded()).toEqual([]);
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
+    expect(calls).toBe(1);
+  });
+
+  it("a fetcher that refuses (BundleRefusedError) leaves the old code running and says it was refused", async () => {
+    const refuse: BundleFetcher = async (request) => { if (request.ref === refOf(A2)) throw new BundleRefusedError("the bytes are not the web part its row names"); return SOURCES[request.ref]!; };
+    const { loader, lines } = setup({ fetch: refuse });
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: refOf(A1) }) }));
+    await loader.reconcile(rowsOf({ a: row(h("a2"), { web: refOf(A2) }) }));
+    expect(loader.webSource("a")?.source).toBe(A1);
+    expect(lines.some((line) => line.includes("refused"))).toBe(true);
+  });
+
+  it("accepts a bundle that starts with a byte order mark when its bytes hash to the reference", async () => {
+    const text = "\uFEFFexport const bom = 1;";
+    const ref = `sha256:${hex(new TextEncoder().encode(text))}`;
+    expect(bundleMatches(text, ref)).toBe(true);
+    expect(bundleMatches(text + " ", ref)).toBe(false);
+    const { loader } = setup({ fetch: async () => text });
+    await loader.reconcile(rowsOf({ a: row(h("a1"), { web: ref }) }));
+    expect(loader.webSource("a")?.source).toBe(text);
+  });
+
+  // M7-09b-F review: the cap counts UTF-8 bytes, not UTF-16 units (CJK is 3 bytes a character), whatever the fetcher checked.
+  it("bundleMatches refuses text over the size cap even when it hashes to the reference", async () => {
+    const big = "\u4e2d".repeat(Math.ceil((MAX_BUNDLE_BYTES + 1) / 3));
+    expect(big.length).toBeLessThan(MAX_BUNDLE_BYTES);
+    expect(bundleMatches(big, `sha256:${hex(big)}`)).toBe(false);
+    const fits = "\u4e2d".repeat(Math.floor(MAX_BUNDLE_BYTES / 3));
+    expect(bundleMatches(fits, `sha256:${hex(fits)}`)).toBe(true);
+  });
+
   it("a newer row wins over a fetch still on its way: the stale bytes are never activated", async () => {
     let release!: () => void;
     const until = new Promise<void>((resolve) => { release = resolve; });
@@ -412,12 +464,40 @@ describe("the ticket fetcher", () => {
     expect(asked).toHaveLength(2);
   });
 
+  it("tells a refusal of the bytes (a hash mismatch, over the cap, not UTF-8) from a bundle that could not be had", async () => {
+    const refusals: Array<[string, Uint8Array | string, string]> = [
+      ["mismatch", "other bytes", refOf(A1)],
+      ["too large", new Uint8Array(MAX_BUNDLE_BYTES + 1), `sha256:${hex(new Uint8Array(MAX_BUNDLE_BYTES + 1))}`],
+      ["not UTF-8", new Uint8Array([0x63, 0xff, 0xfe, 0x64]), `sha256:${hex(new Uint8Array([0x63, 0xff, 0xfe, 0x64]))}`],
+    ];
+    for (const [, bytes, ref] of refusals) {
+      const fetchBundle = ticketBundleFetcher({ link: port().link, base: "http://page.example", fetch: web(bytes).fetchImpl });
+      await expect(fetchBundle({ plugin: "a", ref })).rejects.toBeInstanceOf(BundleRefusedError);
+    }
+    const noTicket = ticketBundleFetcher({ link: port("srvA", () => ({ t: "content.gone", reason: "denied" })).link, base: "http://page.example", fetch: web(A1).fetchImpl });
+    const rejected = await noTicket({ plugin: "a", ref: refOf(A1) }).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(Error);
+    expect(rejected).not.toBeInstanceOf(BundleRefusedError);
+    const http = ticketBundleFetcher({ link: port().link, base: "http://page.example", fetch: web(A1, 500).fetchImpl });
+    expect(await http({ plugin: "a", ref: refOf(A1) }).catch((error: unknown) => error)).not.toBeInstanceOf(BundleRefusedError);
+  });
+
   it("refuses a bundle over the size cap before it hashes it", async () => {
     const big = new Uint8Array(MAX_BUNDLE_BYTES + 1);
     const { link } = port();
     const { fetchImpl } = web(big);
     const fetchBundle = ticketBundleFetcher({ link, base: "http://page.example", fetch: fetchImpl });
     await expect(fetchBundle({ plugin: "a", ref: `sha256:${hex(big)}` })).rejects.toThrow(/too large/);
+  });
+
+  // M7-09b-F review: the fetcher hashes the raw bytes and the consumers re-hash the text (`bundleMatches`); a decoder that dropped the
+  // byte order mark would make every bundle that starts with one disagree with its own reference.
+  it("keeps a leading byte order mark: the text it returns hashes back to the bytes it checked", async () => {
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode("export const bom = 1;")]);
+    const ref = `sha256:${hex(bytes)}`;
+    const text = await ticketBundleFetcher({ link: port().link, base: "http://page.example", fetch: web(bytes).fetchImpl })({ plugin: "a", ref });
+    expect(text.charCodeAt(0)).toBe(0xfeff);
+    expect(bundleMatches(text, ref)).toBe(true);
   });
 
   it("refuses bytes that hash to the reference but are not UTF-8 text (no replacement characters run)", async () => {

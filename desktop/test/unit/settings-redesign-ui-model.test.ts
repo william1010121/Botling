@@ -10,22 +10,22 @@ import { defaultsChange, engineChoices, ownChoices, tokensLabel } from "../../sr
 describe("Settings' pages", () => {
   it("are four groups, with plugins' pages under Plugins", () => {
     const plugins = { settingsSections: [{ plugin: "meter", id: "meter.page", title: "Meter", terms: "quota rings", after: "engines", link: null }] } as unknown as PluginsView;
-    expect(settingsNav(plugins).map((group) => [group.title, group.pages.map((page) => page.title)])).toEqual([
+    expect(settingsNav(plugins.settingsSections!).map((group) => [group.title, group.pages.map((page) => page.title)])).toEqual([
       ["App", ["General", "Appearance", "Shortcuts"]],
       ["Bots", ["Models & workers", "Permissions", "Chat & reports"]],
       ["Connect", ["Engine setup", "Plugins", "Meter", "Phone", "Machines"]],
       ["Advanced", ["Updates", "Developer"]],
     ]);
-    expect(settingsNav(plugins).flatMap((group) => group.pages).find((page) => page.title === "Meter")).toMatchObject({ id: "meter/meter.page", indent: true });
+    expect(settingsNav(plugins.settingsSections!).flatMap((group) => group.pages).find((page) => page.title === "Meter")).toMatchObject({ id: "meter/meter.page", indent: true });
   });
 
   it("are found by the words of the settings on them; a group with none left is left out", () => {
-    const found = (words: string) => settingsNav(null, words).flatMap((group) => group.pages.map((page) => page.id));
+    const found = (words: string) => settingsNav([], words).flatMap((group) => group.pages.map((page) => page.id));
     expect(found("subagents")).toEqual(["models"]);
     expect(found("doctor")).toEqual(["setup"]);
     expect(found("yolo")).toEqual(["permissions"]);
     expect(found("dark")).toEqual(["appearance"]);
-    expect(settingsNav(null, "nothing like this")).toEqual([]);
+    expect(settingsNav([], "nothing like this")).toEqual([]);
   });
 
   it("older page ids open the page that has their settings now", () => {

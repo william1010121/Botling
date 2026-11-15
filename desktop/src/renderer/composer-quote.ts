@@ -1,8 +1,8 @@
 // A plugin frame's `ccb.composer.insertQuote` (the Note's "ask about this block"): text put into a bot's input box in the
 // chat page. It is the service `composer.insertQuote` of the chat surface in the renderer's plugin kernel
 // (renderer-kernel.ts): App provides it while it is up (it opens the Note's floating chat and asks the chat page,
-// `composerQuote`); plugin-frame-host.ts calls it for the frame's plugin, only for the frame's own bot (frame-broker.ts
-// checks that). With no provider the call finds nothing and the quote is not inserted.
+// `composerQuote`); plugin-frame-host.ts calls it for the frame's plugin through shell/frame-services.ts (bound from the plugin's declared `uses`, M7-04b),
+// only for the frame's own bot (frame-broker.ts checks that). With no provider the call finds nothing and the quote is not inserted.
 import { CHAT_SURFACE, INSERT_QUOTE, rendererKernel } from "./renderer-kernel";
 
 type Quoter = (botId: string, text: string, focus: boolean) => Promise<boolean>;

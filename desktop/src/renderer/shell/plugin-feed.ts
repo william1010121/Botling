@@ -16,6 +16,7 @@ import { canonicalSlot, type Kernel } from "../../../../Web/src/plugin-kernel";
 import type { PluginsView, WebPluginSpecView } from "../../contract";
 import { rendererKernel } from "../renderer-kernel";
 import { FEED_MENU_SLOTS, FEED_VIEWS } from "./feed-slots";
+import { frameDeclaration, type FrameDeclaration } from "./frame-declarations";
 
 /** What the feed contributes to a slot: one `PluginsView` row (a view's or a menu's). */
 export interface FeedEntry<Row = unknown> { kind: "feed"; row: Row }
@@ -28,7 +29,7 @@ const PLUGIN_NAME = /^[a-z0-9][a-z0-9._-]{0,213}$/;
 const MENU_SLOTS = new Set(FEED_MENU_SLOTS);
 
 interface Row { slot: string; row: unknown }
-interface Wanted { fingerprint: string; rows: Row[] }
+interface Wanted { fingerprint: string; rows: Row[]; /** What the shipped plugin's manifest declares to the kernel (null: nothing; M7-04b). */ declaration: FrameDeclaration | null }
 
 /** Each plugin the view names (listed and on, or with a row), with its rows, in the plugin list's order. */
 function planOf(view: PluginsView | null, web: FeedWeb): Map<string, Wanted> {
@@ -46,7 +47,9 @@ function planOf(view: PluginsView | null, web: FeedWeb): Map<string, Wanted> {
   const wanted = new Map<string, Wanted>();
   const want = (name: string, listed: PluginsView["plugins"][number] | undefined) => {
     const own = rows.get(name) ?? [];
-    wanted.set(name, { rows: own, fingerprint: [listed?.version ?? "", listed?.asks?.codeHash ?? "", versions.get(name) ?? "", JSON.stringify(own)].join("\u0000") });
+    // The manifest's kernel fields count only for a plugin the core lists as shipped with Botling, never for a library copy of the same name.
+    const declaration = listed?.builtIn === true ? frameDeclaration(name) : null;
+    wanted.set(name, { rows: own, declaration, fingerprint: [listed?.version ?? "", listed?.asks?.codeHash ?? "", versions.get(name) ?? "", JSON.stringify(own), JSON.stringify(declaration)].join("\u0000") });
   };
   for (const plugin of view?.plugins ?? []) if (PLUGIN_NAME.test(plugin.name) && plugin.enabled && plugin.failure === null && !wanted.has(plugin.name)) want(plugin.name, plugin);
   const listed = new Map((view?.plugins ?? []).map((plugin) => [plugin.name, plugin]));
@@ -57,6 +60,8 @@ function planOf(view: PluginsView | null, web: FeedWeb): Map<string, Wanted> {
 export class PluginFeed {
   /** The instances this feed made, with the fingerprint each was loaded for. */
   private readonly owned = new Map<string, string>();
+  /** The instances installed with their manifest's kernel fields (`declares`). */
+  private readonly declared = new Set<string>();
   /** The last view and web answer reconciled (`refresh` reconciles them again). */
   private last: { view: PluginsView | null; web: FeedWeb } = { view: null, web: undefined };
 
@@ -76,9 +81,11 @@ export class PluginFeed {
       // Not ours (a name the kernel already holds or declares): untouched.
       if (held === undefined && (this.kernel.state(name) !== "absent" || this.kernel.declaration(name))) continue;
       if (held !== undefined && !this.drop(name, false)) continue;
+      this.declared.delete(name);
       try {
-        this.kernel.install({ name, contributes: { slots: [...new Set(plan.rows.map((row) => row.slot))] } });
+        this.kernel.install({ name, ...(plan.declaration ? { uses: { services: plan.declaration.uses } } : {}), contributes: { slots: [...new Set(plan.rows.map((row) => row.slot))] } });
       } catch { continue; }
+      if (plan.declaration) this.declared.add(name);
       this.owned.set(name, plan.fingerprint);
       void this.kernel.load(name, (plugin) => {
         for (const { slot, row } of plan.rows) this.kernel.contribute(plugin, slot, { kind: "feed", row } satisfies FeedEntry);
@@ -90,12 +97,20 @@ export class PluginFeed {
   /**
    * A plugin that owns `slots` has come or gone (an in-page built-in, shell/inpage-host.ts): the kernel refuses a contribution to a
    * slot whose owner is away and does not ask again when it returns, so the instances that contribute to them are loaded again
-   * from the last view. Slots are given by either name. The other instances are not touched.
+   * from the last view. Slots are given by either name. The other instances are not touched, unless they share a slot with one that is loaded again and come after it in the list (their order in that slot).
    */
   refresh(slots: readonly string[]): string[] {
     const changed = new Set(slots.map(canonicalSlot));
-    for (const name of this.owned.keys()) {
-      if (this.kernel.declaration(name)?.contributes?.slots?.some((slot) => changed.has(slot))) this.owned.set(name, "");
+    // A plugin that is loaded again comes after the ones that were not touched, in every slot it is in; so every later plugin (the
+    // list's order) that shares a slot with one that is loaded again is loaded again too, and every slot keeps the list's order as a
+    // fresh load gives it (F1). A plugin that shares no slot with them is not touched.
+    const moved = new Set<string>();
+    for (const [name, plan] of planOf(this.last.view, this.last.web)) {
+      if (!this.owned.has(name)) continue;
+      const slots = this.kernel.declaration(name)?.contributes?.slots ?? [];
+      if (!slots.some((slot) => changed.has(slot) || moved.has(slot))) continue;
+      this.owned.set(name, "");
+      for (const { slot } of plan.rows) moved.add(canonicalSlot(slot));
     }
     return this.reconcile(this.last.view, this.last.web);
   }
@@ -103,9 +118,27 @@ export class PluginFeed {
   /** The plugins the feed holds. */
   loaded(): string[] { return [...this.owned.keys()]; }
 
+  /** Whether `name` is held with the kernel fields of its shipped manifest (its declaration's `uses` come from there); false: a 2.x plugin or not held. */
+  declares(name: string): boolean { return this.owned.has(name) && this.declared.has(name); }
+
   /** `slot`'s rows as the kernel holds them (given by either name of the slot), in registration order. */
   rows<Row = unknown>(slot: string): Row[] {
     return this.kernel.entries<Partial<FeedEntry<Row>>>(slot).filter(({ entry }) => entry.kind === "feed").map(({ entry }) => entry.row as Row);
+  }
+
+  /**
+   * `slot`'s rows in the plugin list's order (the order of the `PluginsView` arrays they mirror), each plugin's rows in the order it
+   * registered them. `rows` gives registration order, where a plugin that was switched off and on, or reloaded for an owner that
+   * came back, comes after the ones that stayed (P2): a surface that draws the rows reads them here, so the same view always gives
+   * the same page (F1 of the 02c review).
+   */
+  rowsInListOrder<Row = unknown>(slot: string): Row[] {
+    const place = new Map([...planOf(this.last.view, this.last.web).keys()].map((name, index) => [name, index] as const));
+    return this.kernel.entries<Partial<FeedEntry<Row>>>(slot)
+      .map((one, index) => ({ one, index }))
+      .filter(({ one }) => one.entry.kind === "feed")
+      .sort((a, b) => (place.get(a.one.plugin) ?? place.size) - (place.get(b.one.plugin) ?? place.size) || a.index - b.index)
+      .map(({ one }) => one.entry.row as Row);
   }
 
   /**
@@ -116,7 +149,7 @@ export class PluginFeed {
   private drop(name: string, forget = true): boolean {
     void this.kernel.requestUnload(name);
     if (this.kernel.state(name) !== "absent") { this.owned.set(name, ""); return false; }
-    if (forget) { this.kernel.uninstall(name); this.owned.delete(name); }
+    if (forget) { this.kernel.uninstall(name); this.owned.delete(name); this.declared.delete(name); }
     return true;
   }
 }

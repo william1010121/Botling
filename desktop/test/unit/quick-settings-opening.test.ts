@@ -9,10 +9,12 @@ import { EDITOR_CHANNEL } from '../../src/editor-host-wire';
 import { settingsView } from '../../src/core/settings';
 import type { Client } from '../../src/renderer/client';
 import type { PluginsView } from '../../src/contract';
+import { loadSettingsShell, type SettingsShell } from '../settings-shell';
 const usagePlugin = { plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null,
   settingsSections: [{ plugin: 'botling.usage', id: 'botling.usage.settings', title: 'Usage', terms: '', after: 'engines', link: 'Usage by bot' }],
   quickSettings: [{ plugin: 'botling.usage', id: 'botling.usage.quota', title: 'Subscription usage' }] } as PluginsView;
-let host: HTMLDivElement, root: Root, stop: () => void;
+// The gear draws the plugin's block and link from the settings plugin's slots (M7-02d): the shell is loaded with the plugin list.
+let host: HTMLDivElement, root: Root, stop: () => void, shell: SettingsShell | null = null;
 const stamp = { surfaceId: 'surface', documentGeneration: 'document' };
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,11 +22,12 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => {
-  await act(async () => root.unmount()); stop?.(); host.remove();
+  await act(async () => root.unmount()); stop?.(); await shell?.stop(); shell = null; host.remove();
   vi.unstubAllGlobals(); vi.restoreAllMocks();
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false;
 });
 async function mount() {
+  shell = await loadSettingsShell(usagePlugin);
   const callbacks = new Map<string, Function>(), send = vi.fn();
   const bridge = editorBridge({ on: (channel, fn) => callbacks.set(channel, fn), send }, 'shell');
   callbacks.get(EDITOR_CHANNEL.bound)!({}, stamp);

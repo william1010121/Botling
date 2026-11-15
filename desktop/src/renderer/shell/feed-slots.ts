@@ -19,27 +19,34 @@ export type FeedViewKey = (typeof FEED_VIEWS)[number][0];
 /** Every menu slot (`PluginsView.menus` rows go to `menu/<menu>`), by 2.x id. */
 export const FEED_MENU_SLOTS: readonly string[] = SLOT_ALIASES.filter((alias) => alias.group === "menu").map(legacySlotId);
 
-/**
- * Every 2.x view place, so the shell owns the ones no `PluginsView` array feeds either (`view/rightPanel`; `main` and `window` are root slots):
- * until a plugin owns one (M7-03a: the bot-panel plugin takes `view/rightPanel`), no 2.x place is without an owner (M7-06c, slot-owners.test.ts).
- */
-const ALL_VIEW_SLOTS: readonly string[] = SLOT_ALIASES.filter((alias) => alias.group === "view").map(legacySlotId);
-
 const ROOT_IDS = new Set(ROOT_SLOTS.map(canonicalSlot));
-/**
- * The places a built-in plugin owns now, so `:shell` does not (M7-02c: `botling.settings` provides `settings/section` and `settings/quick`;
- * M7-06a: `botling.chat` provides `message/context`, `message/preview`, `chat/link`, `composer/plus`, `composer/bar` and `chat/header`).
- */
-export const PLUGIN_OWNED_SLOTS: readonly string[] = ["view/settings.section", "view/quickSettings",
-  "menu/message/context", "menu/message/preview", "menu/chat/link", "menu/composer/plus", "view/composerBar", "view/chatHeader",
+/** The places a built-in plugin owns now, so `:shell` does not, by 2.x id, one block per plugin. */
+export const PLUGIN_OWNED_SLOTS: readonly string[] = [
+  // botling.settings (M7-02c): settings/section, settings/quick
+  "view/settings.section",
+  "view/quickSettings",
 
-  // M7-06c: `botling.browser-pane` provides `browser/tab`.
-  "menu/browser/tab"];
+  // botling.bot-panel (M7-03a): panel/main, panel/section, panel/takeover
+  "view/rightPanel",
+  "view/rightPanel.section",
+  "view/rightPanel.takeover",
+
+  // botling.chat (M7-06a): message/context, message/preview, chat/link, composer/plus, composer/bar, chat/header
+  "menu/message/context",
+  "menu/message/preview",
+  "menu/chat/link",
+  "menu/composer/plus",
+  "view/composerBar",
+  "view/chatHeader",
+
+  // botling.browser-pane (M7-06c): browser/tab
+  "menu/browser/tab",
+];
 const OWNED_ELSEWHERE = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 
 /**
- * What `:shell` owns besides the root slots (renderer-kernel.ts): the places the feed fills, and the other 2.x view places (`ALL_VIEW_SLOTS`),
- * that are not a root slot already (`view/bottomPanel` is `app/bottom`, a root slot: it is not listed twice). A card that gives one of these a real owner (the
+ * What `:shell` owns besides the root slots (renderer-kernel.ts): the places the feed fills that are not a root slot already
+ * (`view/bottomPanel` is `app/bottom`, a root slot: it is not listed twice). A card that gives one of these a real owner (the
  * settings plugin for `view/settings.section`, …) takes it off this list in the same change, by listing it in `PLUGIN_OWNED_SLOTS`.
  */
-export const FEED_SLOTS: readonly string[] = [...new Set([...FEED_VIEWS.map(([, slot]) => slot), ...FEED_MENU_SLOTS, ...ALL_VIEW_SLOTS])].filter((slot) => !ROOT_IDS.has(slot) && !OWNED_ELSEWHERE.has(slot));
+export const FEED_SLOTS: readonly string[] = [...new Set([...FEED_VIEWS.map(([, slot]) => slot), ...FEED_MENU_SLOTS])].filter((slot) => !ROOT_IDS.has(slot) && !OWNED_ELSEWHERE.has(slot));
