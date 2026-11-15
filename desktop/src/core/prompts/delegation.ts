@@ -53,6 +53,13 @@ export const VERBATIM_HANDOFF_RULE = "When the user asks for something verbatim,
  */
 export const WORKER_NOTIFY_RULE = "While you work, the app_notify_owner tool sends a short note to the bot that started you, and only to it: kind \"report\" when you reach a milestone others can act on or a plan or progress file is ready (give its full paths in files), kind \"question\" when an answer would change your work (the answer joins this run as a message; carry on meanwhile with what does not depend on it). Not for chatter or routine progress; your final message is still your report.";
 
+/**
+ * How every engine's worker looks things up (M7-F02): independent lookups go out together in one turn, and a symbol is
+ * found with desktop/scripts/where.mjs before grepping. Research 2026-11-16: about half of a worker's tool calls only find
+ * or read, at 1.04 calls per turn, and each turn re-reads the whole context. Workers only; the coordinator text is frozen.
+ */
+export const WORKER_LOOKUP_RULE = "Send independent lookups (searches, file reads, symbol lookups) together in one turn; go one at a time only when a lookup needs the result of the one before. To find where a symbol is defined or used, run `node desktop/scripts/where.mjs <name>` first.";
+
 /** What a coordinator does with a worker's note (<app_worker_note>): interim news to act on, never the final report. */
 export function workerNoteRule(caps: Pick<DelegationCaps, "steerWorkerRun">): string {
   return `A worker that is still running may send you a note as an app message: <app_worker_note task_id="…" run="…" kind="report" or "question" name="…">. It is interim news, never the worker's final report (that still comes as app_task_result), and it resolves nothing. Act on it: start parallel workers on what it unblocks, and answer a question with app_send_message to its task_id${caps.steerWorkerRun ? "" : " and run"} (your words join its run under way). Tell the user only when it matters to them or needs their decision.`;

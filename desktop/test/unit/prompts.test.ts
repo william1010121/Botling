@@ -6,7 +6,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, SITE_TOOLS_RULE, FILE_LINK_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
-import { WORKER_NOTIFY_RULE, workerNoteRule } from "../../src/core/prompts/delegation";
+import { WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, workerNoteRule } from "../../src/core/prompts/delegation";
+import { CLAUDE_WORKER_POLICY } from "../../src/core/agent/claude-workers";
+import { AGY_WORKER_POLICY } from "../../src/core/prompts-agy";
+import { codexWorkerInstructions } from "../../src/core/prompts";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
 import { desktop } from "../helpers";
@@ -80,7 +83,8 @@ function withApprovedRouting(swift: string): string {
   expected = expected.replace("reply with only <no-reply/> and the app shows nothing. ", `reply with only <no-reply/> and the app shows nothing. A worker's question (<app_worker_note kind="question">) is never only interim: answer it. `);
   expected = expected.replace("To stop one, app_cancel_task. Do it yourself only when it is quicker than explaining it.", `To stop one, app_cancel_task. ${workerNoteRule({ steerWorkerRun: true })} Do it yourself only when it is quicker than explaining it.`);
   expected = expected.replace("\n\nThe app delivers worker execution reports through app_task_result", `\n\n${workerNoteRule({ steerWorkerRun: true })}\n\nThe app delivers worker execution reports through app_task_result`);
-  expected = expected.replace("\n- Complete the task before returning your final report.", `\n- ${WORKER_NOTIFY_RULE}\n- Complete the task before returning your final report.`);
+  // Approved 2026-11-16 (the user, M7-F02): a worker sends independent lookups together and finds a symbol with where.mjs.
+  expected = expected.replace("\n- Complete the task before returning your final report.", `\n- ${WORKER_NOTIFY_RULE}\n- ${WORKER_LOOKUP_RULE}\n- Complete the task before returning your final report.`);
   // Approved 2026-11-08 (the user): task cards are gone, so no bot is told to write <task …/> lines any more.
   expected = expected.replace(/^- The app keeps a task card for each piece of work[^\n]*\n/m, "");
   return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.`);
@@ -123,6 +127,21 @@ describe("prompts: the Swift app's strings", () => {
       }
     });
   }
+
+  it("every engine's worker text carries the lookup rule exactly once (M7-F02)", () => {
+    const count = (text: string, part: string) => text.split(part).length - 1;
+    const profile = { name: "Probe", role: "bot" as const, folder: "/fixture", memoryPath: ".bot/memory.md", job: null };
+    for (const [engine, text] of [["claude", CLAUDE_WORKER_POLICY], ["agy", AGY_WORKER_POLICY], ["codex", codexWorkerInstructions(profile, "en")]] as const) {
+      expect(count(text, WORKER_LOOKUP_RULE), engine).toBe(1);
+    }
+    expect(WORKER_LOOKUP_RULE).toContain("Send independent lookups (searches, file reads, symbol lookups) together in one turn; go one at a time only when a lookup needs the result of the one before.");
+    expect(WORKER_LOOKUP_RULE).toContain("run `node desktop/scripts/where.mjs <name>` first.");
+    // workers only: no coordinator text gets it
+    for (const engine of ["claude", "codex", "agy"] as const) {
+      const prompts = botPrompts({ profile, engine, heads: null, language: "en" });
+      expect(prompts.system, engine).not.toContain(WORKER_LOOKUP_RULE);
+    }
+  });
 
   it("gives agy both app-managed delegation and, in a multi-engine bot, the peer handoff protocol", () => {
     const profile = { name: "Probe", role: "bot" as const, folder: "/fixture", memoryPath: ".bot/memory.md", job: null };

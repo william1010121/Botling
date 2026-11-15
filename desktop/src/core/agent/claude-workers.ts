@@ -28,7 +28,7 @@ import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import { commandEnded, type StreamItem } from "./stream";
 import type { WaitingOn } from "../worker-core/events";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
-import { WORKER_NOTIFY_RULE } from "../prompts/delegation";
+import { WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE } from "../prompts/delegation";
 import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "../api-retry";
 import { EFFORTS_BY_ENGINE, type EffortLevel } from "../../contract/efforts";
 import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
@@ -76,6 +76,7 @@ export const CLAUDE_WORKER_POLICY = [
   "End every run with a concise report: what you did, the evidence (commands and their results, files changed), and anything left, blocked or needing a decision. Name files and folders by their full absolute paths, so the coordinator can link them.",
   "Messages that arrive later come from the coordinator and continue the same task.",
   WORKER_NOTIFY_RULE,
+  WORKER_LOOKUP_RULE,
 ].join("\n");
 
 /** A `.claude/agents/<type>.md` definition, as far as a worker can reproduce it. */

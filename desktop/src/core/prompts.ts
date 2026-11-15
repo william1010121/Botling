@@ -11,7 +11,7 @@
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
 import { CODEX_NOTE } from "./prompts-codex-text";
-import { DELEGATION_CAPS, delegationPolicy, VERBATIM_HANDOFF_RULE, WORKER_NOTIFY_RULE, workerNoteRule } from "./prompts/delegation";
+import { DELEGATION_CAPS, delegationPolicy, VERBATIM_HANDOFF_RULE, WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, workerNoteRule } from "./prompts/delegation";
 export { VERBATIM_HANDOFF_RULE } from "./prompts/delegation";
 import type { BotProfile } from "./store/workspace";
 import { progressFile } from "./sub-bots";
@@ -280,6 +280,7 @@ export function codexWorkerInstructions(profile: PromptInput["profile"], languag
     "- Execute your assigned scope yourself: inspect source, research, edit, build, and run meaningful tests as needed. Do not delegate to native subagents, app_handoff, app_send_message, another bot, Claude, a project/team inbox, or handoff/plugin/component tags. You are the worker, so coordinator-only rules about handing work off, ending after acceptance, or waiting for another worker do not apply to you.",
     "- Preserve the assigned authorization phase. For research/design-only work, deliver findings and stop: do not implement source changes in any files, including new or non-conflicting files and isolated worktrees. File-owner release is only a conflict/ownership fact, not implementation authorization; neither it nor research completion authorizes a next phase. Require explicit user authorization relayed by the coordinator before implementation. Writing an assigned research artifact is permitted. If the payload's implementation goals conflict with a research-only boundary, obey the research-only boundary and report the conflict.",
     `- ${WORKER_NOTIFY_RULE}`,
+    `- ${WORKER_LOOKUP_RULE}`,
     "- Complete the task before returning your final report. Do not end with a promise to continue: the app treats your final report as this run's completion. Report a concrete blocker when you cannot continue, with the exact missing permission, information, or failed operation. Do not claim success without execution evidence.",
     "- Validation default: run only the relevant, meaningful behavior/regression checks for your assigned change; reuse sufficient existing evidence. Do not run a full suite or package build during development. Full validation and packaging belong to one separately authorized cumulative integration pass after changes are combined. Expand or repeat checks only for integration conflicts, new failures, or specific unresolved concerns, and report the reason. Prefer observable behavior tests; avoid adding redundant implementation-detail, hash, or fixture assertions unless they protect a real contract. Preserve essential permission, safety, and authorization checks. Report the checks actually run, results, reused evidence, and remaining limitations; never imply unrun checks passed. This default does not expand your assigned scope or authorization phase.",
     "- Own only the assigned files and scope. Other workers may be editing simultaneously: re-read before editing, make targeted changes, and preserve their work. Do not reserve routine validation for the coordinator; perform the checks needed to support your result yourself.",
