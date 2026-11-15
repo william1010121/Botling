@@ -263,8 +263,8 @@ export class Core {
   get agents() { return this.coreAgents.agents; }
   set agents(value: CoreAgents["agents"]) { this.coreAgents.agents = value; }
   private get agentStatus() { return this.coreAgents.agentStatus; }
-  private get reportTurns() { return this.coreAgents.reportTurns; }
-  private get reportStarts() { return this.coreAgents.reportStarts; }
+  get reportTurns() { return this.coreAgents.reportTurns; }
+  get reportStarts() { return this.coreAgents.reportStarts; }
   private madeCopies?: CoreCopies;
   private get coreCopies(): CoreCopies { return (this.madeCopies ??= new CoreCopies(this)); }
   private madeWaiting?: CoreWaiting;
@@ -1063,7 +1063,7 @@ export class Core {
   private madeCommands?: CoreCommands;
   private get coreCommands(): CoreCommands { return (this.madeCommands ??= new CoreCommands(this)); }
   get shownChat() { return this.coreCommands.shownChat; }
-  private handle(...a: Parameters<CoreCommands["handle"]>) { return this.coreCommands.handle(...a); }
+  handle(...a: Parameters<CoreCommands["handle"]>) { return this.coreCommands.handle(...a); }
   snapshot(...a: Parameters<CoreCommands["snapshot"]>) { return this.coreCommands.snapshot(...a); }
   settingsNow(...a: Parameters<CoreCommands["settingsNow"]>) { return this.coreCommands.settingsNow(...a); }
   changeSetting(...a: Parameters<CoreCommands["changeSetting"]>) { return this.coreCommands.changeSetting(...a); }
