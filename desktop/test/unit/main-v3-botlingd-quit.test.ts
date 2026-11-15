@@ -7,10 +7,16 @@
 // Expected: botlingd never lets Electron end it on a quit from macOS. It passes the quit on to the attached Botling 3
 // windows (`shell.quit`, which they answer like Cmd+Q) and keeps running, as it does when the window quits; with no
 // window attached, or while macOS logs out or shuts down, it stops the normal way (daemon.stop, as on SIGTERM).
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { runMainV3, type SystemQuitListener } from "../../src/main-v3/main";
+import { main as serverMain } from "../../src/server/main";
+import { botlingdPaths, readToken } from "../../src/server/session";
 import { ShellBridge, answerSystemQuit, stopOnSystemQuit, type ShellWindow } from "../../src/server/shell-bridge";
 import type { Message } from "../../src/protocol";
+import { botlingdEnv, ScriptClient, testRoot } from "../botlingd-harness";
+import { until } from "../helpers";
 import { flush } from "./fe-link-harness";
 
 type Listener = (...args: unknown[]) => void;
@@ -194,5 +200,45 @@ describe("stopOnSystemQuit: botlingd start wires the quit to its normal stop", (
 
   it("does nothing without a quit source (not Electron, or a development run)", () => {
     expect(() => stopOnSystemQuit(undefined, { answerSystemQuit: () => "stop" }, vi.fn())).not.toThrow();
+  });
+});
+
+describe("botlingd start in process: the quit reaches the real daemon (server/main.ts wiring, Botlingd.answerSystemQuit)", () => {
+  it("a desktop window gets shell.quit and botlingd keeps running; once it is gone the next quit stops botlingd (daemon.stop removes the socket, exit 0)", { timeout: 60_000 }, async () => {
+    const dataDir = testRoot("v3-quit-start");
+    const savedEnv = { ...process.env };
+    const events = ["SIGTERM", "SIGINT", "SIGHUP", "uncaughtException"] as const;
+    const before = new Map(events.map((event) => [event, new Set(process.listeners(event))]));
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const client = new ScriptClient("desktop");
+    let listener: SystemQuitListener | undefined;
+    try {
+      for (const key of Object.keys(process.env)) if (key.startsWith("BOTLING_")) delete process.env[key];
+      Object.assign(process.env, botlingdEnv(dataDir, { BOTLING_SERVER_PORT: "off", BOTLING_SERVER_BACKUP_CHECK_MS: "0" }));
+      const paths = botlingdPaths(process.env);
+      await serverMain(["start"], { outDir: join(__dirname, "..", "..", "out"), onSystemQuit: (next) => { listener = next; } });
+      expect(listener).toBeTypeOf("function");
+      await client.connect(paths.socket, readToken(paths.token)!);
+
+      listener!(false);
+      await until(() => client.received.some((m) => m.t === "shell.quit"), { what: "shell.quit at the window" });
+      expect(exit).not.toHaveBeenCalled();
+
+      client.close();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      listener!(false);
+      listener!(false); // a second quit while stopping stops once
+      await until(() => exit.mock.calls.length > 0, { timeout: 30_000, what: "botlingd to stop" });
+      expect(exit.mock.calls).toEqual([[0]]);
+      expect(existsSync(paths.socket)).toBe(false);
+    } finally {
+      client.close();
+      exit.mockRestore();
+      stdout.mockRestore();
+      for (const event of events) for (const added of process.listeners(event)) if (!before.get(event)!.has(added)) process.removeListener(event, added as never);
+      for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
+      Object.assign(process.env, savedEnv);
+    }
   });
 });
