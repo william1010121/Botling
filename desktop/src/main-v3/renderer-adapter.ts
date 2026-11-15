@@ -762,6 +762,17 @@ export class RendererAdapter {
       case "turn.finished":
         model.turns.delete(event.turnId);
         if (model.live?.turnId === event.turnId) model.live = null;
+        // A reply with nothing to show (the core kept it out: only <no-reply/> or reactions, or cut off before it said
+        // anything): the log holds no line for it, so neither does the renderer, as in 2.x. A line only the live frames
+        // drew goes; none is made. A failed turn still gets its line (the server ends a turn the core never did so).
+        if (!event.text && event.status !== "failed" && !model.committed.has(event.messageId)) {
+          if (model.known.has(event.messageId)) {
+            this.emitEvent({ type: "message.removed", botId: model.botId, messageId: event.messageId }, model);
+            model.known.delete(event.messageId);
+          }
+          this.emitEvent(event, model);
+          return;
+        }
         model.committed.set(event.messageId, event.text);
         this.ensureLine(model, event.messageId, event.turnId, event.text, event.status);
         this.emitEvent(event, model);
