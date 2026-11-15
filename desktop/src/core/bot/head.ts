@@ -85,19 +85,7 @@ export class BotHead {
   private settingsView(): BotSettingsView { return this.host.settingsView(); }
   private syncWorkerOwners() { this.host.syncWorkerOwners(); }
   private updated() { this.host.updated(); }
-  // The restart state it reads and clears is BotRestart's (through `Bot`):
-  private get restartPending(): boolean { return this.host.restartPending; }
-  private set restartPending(v: boolean) { this.host.restartPending = v; }
-  private get modelSettingsPending(): boolean { return this.host.modelSettingsPending; }
-  private set modelSettingsPending(v: boolean) { this.host.modelSettingsPending = v; }
-  private get folderPending(): boolean { return this.host.folderPending; }
-  private set folderPending(v: boolean) { this.host.folderPending = v; }
-  private get restartNonModel(): boolean { return this.host.restartNonModel; }
-  private set restartNonModel(v: boolean) { this.host.restartNonModel = v; }
-  private get restartForPluginsOnly(): boolean { return this.host.restartForPluginsOnly; }
-  private set restartForPluginsOnly(v: boolean) { this.host.restartForPluginsOnly = v; }
-  private get restartReason() { return this.host.restartReason; }
-  private set restartReason(v) { this.host.restartReason = v; }
+  // The restart state it reads is BotRestart's (through `Bot`); it clears it through `Bot`'s named transitions:
   private get settingsGeneration(): number { return this.host.settingsGeneration; }
   private get settingsHold() { return this.host.settingsHold; }
   private get restartRecovery(): boolean { return this.host.restartRecovery; }
@@ -157,11 +145,7 @@ export class BotHead {
     // It fell asleep before its switch of engine was done: it wakes on the new one.
     if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
     this.requireEngineRoute(this.engine, this.owner.engine);
-    this.restartPending = false;
-    this.restartNonModel = false;
-    this.modelSettingsPending = false;
-    this.folderPending = false;
-    this.restartForPluginsOnly = false;
+    this.host.releaseRestart();
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
     const prompts = this.prompts();
     // claude keeps the system prompt a session was created with (--resume ignores a new one): when the app's
@@ -292,9 +276,7 @@ export class BotHead {
     }
     // Changed again meanwhile: the newer change still waits (a later message applies it).
     if (generation !== this.settingsGeneration) return true;
-    this.modelSettingsPending = false;
-    const shown = this.restartReason?.shown ?? "new settings";
-    if (!this.restartNonModel) { this.restartPending = false; this.restartReason = null; this.restartForPluginsOnly = false; }
+    const shown = this.host.restartSwitchedInPlace();
     this.owner.add({ id: newId(), role: "divider", text: `Switched → ${shown}`, date: toSwiftDate() });
     this.log(`switched to ${shown} in place, without a restart`);
     return true;

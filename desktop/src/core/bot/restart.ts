@@ -96,17 +96,22 @@ export class BotRestart {
    */
   restartBeforeNextMessage(reason: { told: string; shown: string } | null = null) {
     if (this.options.primary) { this.options.primary.restartBeforeNextMessage(reason); return; }
-    this.restartFor(reason);
+    this.request(reason);
   }
 
   /** Its session's folder moved (a plugin's `sessions.folder`): it starts again there before your next message, never answering it from the old one. */
   folderMoved(reason: { told: string; shown: string }) {
     if (this.options.primary) { this.options.primary.folderMoved(reason); return; }
-    this.restartFor(reason, false, true);
+    this.request(reason, false, true);
   }
 
-  /** This head starts again in the same session before its next message, for `reason` (`restart(_:)`). Asleep: the next wake has it. */
-  restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) {
+  /**
+   * This head starts again in the same session before its next message, for `reason` (`restart(_:)`). Asleep: the next wake has it.
+   * The first of the transitions (M7-S58): the eight restart flags change only in `request`, `consumed`, `dropPluginsOnly`, `release`,
+   * `switchedInPlace`, `ended` and in `reloadPlugins`' last line. `restartPending` and `restartForPluginsOnly` have five writers each
+   * (`Bot.restartFor`, `reloadPlugins`, `deliver`, `ensureHead`, `switchInPlace`); `restarting` two (`deliver`, `onExit`).
+   */
+  request(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) {
     this.restartForPluginsOnly = false;
     if (!this.head?.running) { this.restartPending = false; this.restartNonModel = false; this.folderPending = false; return; }
     this.restartPending = true;
@@ -115,6 +120,46 @@ export class BotRestart {
     if (modelSettings) this.settingsGeneration += 1;
     else this.restartNonModel = true;
     if (reason) this.restartReason = reason;
+  }
+
+  /** `deliver` ends the head for the restart that waited: nothing waits any more, `old` is the head that ends for it. The reason it was for. */
+  consumed(old: AgentHead): { told: string; shown: string } | null {
+    this.restartPending = false;
+    this.folderPending = false;
+    this.restartNonModel = false;
+    this.restartForPluginsOnly = false;
+    this.restarting = old;
+    const reason = this.restartReason;
+    this.restartReason = null;
+    return reason;
+  }
+
+  /** The head that ended for such a restart is gone (`onExit`): its session carries on. */
+  ended() { this.restarting = null; }
+
+  /** The restart waiting was only for plugins and they came back to what its session has (`deliver`, `reloadPlugins`): it is not needed. */
+  dropPluginsOnly() {
+    this.restartPending = false;
+    this.restartNonModel = false;
+    this.restartForPluginsOnly = false;
+    this.restartReason = null;
+  }
+
+  /** A head starts (`ensureHead`): it has the restarts that waited, so none waits any more. */
+  release() {
+    this.restartPending = false;
+    this.restartNonModel = false;
+    this.modelSettingsPending = false;
+    this.folderPending = false;
+    this.restartForPluginsOnly = false;
+  }
+
+  /** The running head took the new model/effort in place (`switchInPlace`): that change no longer waits. What it was for, to say so. */
+  switchedInPlace(): string {
+    this.modelSettingsPending = false;
+    const shown = this.restartReason?.shown ?? "new settings";
+    if (!this.restartNonModel) { this.restartPending = false; this.restartReason = null; this.restartForPluginsOnly = false; }
+    return shown;
   }
 
   /**
@@ -162,12 +207,12 @@ export class BotRestart {
   reloadPlugins() {
     if (this.options.primary) return;
     if (this.hasCurrentPlugins()) {
-      if (this.restartForPluginsOnly) { this.restartPending = false; this.restartNonModel = false; this.restartReason = null; this.restartForPluginsOnly = false; }
+      if (this.restartForPluginsOnly) this.dropPluginsOnly();
       return;
     }
     const waiting = this.restartPending;
     for (const peer of this.peers) peer.restartFor(PLUGINS_RESTART);
-    this.restartFor(PLUGINS_RESTART);
+    this.request(PLUGINS_RESTART);
     if (!waiting && this.restartPending) this.restartForPluginsOnly = true;
   }
 
