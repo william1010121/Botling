@@ -698,7 +698,6 @@ describe("M5-04a: ServerOrigin across two real botlingd processes", () => {
 
   it("7b. B restored between send and decision -> cmd.retry with new inc -> A re-commits only after srv:B reaches new inc, applied once", async () => {
     const target = `bot:${botB}` as const;
-    listPlainItems(...PLAIN);
     const backup = b.backup();
     const oldInc = withDb(b, (db) => String((db.prepare("SELECT logId FROM streams WHERE stream = ?").get(srvB()) as { logId: string }).logId));
 
@@ -711,6 +710,8 @@ describe("M5-04a: ServerOrigin across two real botlingd processes", () => {
     await b.restore(backup);
     const newInc = withDb(b, (db) => String((db.prepare("SELECT logId FROM streams WHERE stream = ?").get(srvB()) as { logId: string }).logId));
     expect(newInc).not.toBe(oldInc);
+    // The restore may bring back an older folder: the plain item the peer's ignore names is listed again before the slot is decided.
+    listPlainItems(...PLAIN);
 
     pa.heal(); pb.heal();
 
