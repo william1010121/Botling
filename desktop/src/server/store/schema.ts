@@ -211,6 +211,13 @@ CREATE TABLE chunk_cache (
 ) WITHOUT ROWID;
 `;
 
+// v11 (M6-01b, src/server/import/id-map.ts): mapping of imported 2.x bot ids to 3.x ids per import source (§14.4).
+const V11 = `
+CREATE TABLE import_ids (
+  oldId TEXT NOT NULL, newId TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, PRIMARY KEY (source, oldId)
+) WITHOUT ROWID;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -284,6 +291,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "peer content (src/server/content): peers' content metadata, confirmed references, line lookups and the chunk cache",
     up(db) {
       db.exec(V10);
+    },
+  },
+  {
+    version: 11,
+    description: "2.x -> 3.x import id mapping (src/server/import/id-map.ts)",
+    up(db) {
+      db.exec(V11);
     },
   },
 ];
