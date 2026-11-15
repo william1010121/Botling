@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -64,6 +65,14 @@ function makeRoot(name = "import-cli"): string {
   const dir = testRoot(name);
   roots.push(dir);
   return dir;
+}
+
+/** A temp folder on the boot volume (case-insensitive on a default Mac), or null when that volume is case-sensitive. */
+function caseInsensitiveRoot(name: string): string | null {
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), `${name}-`)));
+  roots.push(dir);
+  mkdirSync(join(dir, "CaseProbe"));
+  return existsSync(join(dir, "caseprobe")) ? dir : null;
 }
 
 afterEach(async () => {
@@ -444,5 +453,92 @@ describe("botlingd import CLI & run.ts (M6-01d)", () => {
     const second = await runImport({ sourceDir: src, targetDir: dataDir });
     expect(second.bots).toHaveLength(5);
     expect(existsSync(join(dataDir, "import-report.md"))).toBe(true);
+  }, 60_000);
+
+  it("13. a resumed run still counts the lines skipped by the run that finished a bot", async () => {
+    const root = makeRoot("resume-skipped");
+    const src = join(root, "v2");
+    const dataDir = join(root, "v3");
+    const fx = make2xFolder(src);
+    // A line messageView throws on (out-of-range date): skipped and counted by the import.
+    const broken: ChatRecord = { id: makeUuid(1600, 1), role: "user", text: "Out-of-range date", date: 1e20 };
+    writeFileSync(join(Layout.mainBot(src), "chat.json"), JSON.stringify([...fx.mainMessages, broken]));
+
+    await expect(
+      runImport({ sourceDir: src, targetDir: dataDir, onBotDone: ({ index }) => { if (index === 0) throw new Error("crash"); } }),
+    ).rejects.toThrow("crash");
+
+    const resumed = await runImport({ sourceDir: src, targetDir: dataDir });
+    const main = resumed.bots.find((b) => b.newId === MAIN_BOT_ID)!;
+    expect(main.lines).toBe(fx.mainMessages.length);
+    expect(main.skipped).toBe(1);
+    expect(resumed.totalSkipped).toBe(1);
+    expect(resumed.reportText.split("\n")[1]).toContain("(1 skipped)");
+  }, 60_000);
+
+  const ciRoot = (() => {
+    try {
+      const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "import-cli-ci-check-")));
+      mkdirSync(join(dir, "CaseProbe"));
+      const insensitive = existsSync(join(dir, "caseprobe"));
+      rmSync(dir, { recursive: true, force: true });
+      return insensitive;
+    } catch {
+      return false;
+    }
+  })();
+
+  it.skipIf(!ciRoot)("14. on a case-insensitive volume a target spelled with other case is refused, and the source keeps one identity", async () => {
+    const root = caseInsensitiveRoot("import-cli-case")!;
+    const src = join(root, "v2");
+    make2xFolder(src);
+    const before = collectFiles(src);
+
+    // The target inside the 2.x folder, reached through other case: refused, nothing written there.
+    await expect(runImport({ sourceDir: src, targetDir: join(root, "V2", "v3") })).rejects.toThrow(
+      "The import's source and target must be separate folders.",
+    );
+    await expect(runImport({ sourceDir: join(root, "V2"), targetDir: join(src, "v3"), dryRun: true })).rejects.toThrow(
+      "The import's source and target must be separate folders.",
+    );
+    expect(collectFiles(src)).toEqual(before);
+
+    // The same folder spelled with other case is the same source: a second import is refused.
+    const dataDir = join(root, "v3");
+    const first = await runImport({ sourceDir: join(root, "V2"), targetDir: dataDir });
+    expect(first.sourceRealPath).toBe(src);
+    await expect(runImport({ sourceDir: src, targetDir: dataDir })).rejects.toThrow(
+      /This folder was imported on .+\. Nothing was changed\./,
+    );
+    expect(collectFiles(src)).toEqual(before);
+  }, 60_000);
+
+  const firmlinkTmp = (() => {
+    const real = realpathSync.native(tmpdir());
+    const data = `/System/Volumes/Data${real}`;
+    try {
+      return process.platform === "darwin" && existsSync(data) && realpathSync.native(data) !== real ? data : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  it.skipIf(!firmlinkTmp)("15. a target reached through a path no realpath folds (a macOS firmlink) is refused by inode", async () => {
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "import-cli-firmlink-")));
+    roots.push(dir);
+    const src = join(dir, "v2");
+    make2xFolder(src);
+    const before = collectFiles(src);
+    const aliasOfSrc = `/System/Volumes/Data${src}`;
+    expect(existsSync(aliasOfSrc)).toBe(true);
+
+    await expect(runImport({ sourceDir: src, targetDir: join(aliasOfSrc, "v3") })).rejects.toThrow(
+      "The import's source and target must be separate folders.",
+    );
+    await expect(runImport({ sourceDir: aliasOfSrc, targetDir: join(src, "v3"), dryRun: true })).rejects.toThrow(
+      "The import's source and target must be separate folders.",
+    );
+    expect(collectFiles(src)).toEqual(before);
+    void firmlinkTmp;
   }, 60_000);
 });

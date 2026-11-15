@@ -119,6 +119,50 @@ function isInside(child: string, parent: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+/**
+ * The real path as the file system spells it. The OS realpath (`realpathSync.native`), not Node's JS one: on a
+ * case-insensitive volume (the Mac's default) the JS one keeps the caller's case, so `/x/V2` and `/x/v2` would look like
+ * two folders. Every path used to compare or identify folders here goes through it.
+ */
+function realPath(path: string): string {
+  return realpathSync.native(path);
+}
+
+/** The ancestors of `path` (itself first) that exist, with their device and inode. */
+function existingChain(path: string): { dev: number; ino: number }[] {
+  const chain: { dev: number; ino: number }[] = [];
+  let current = resolve(path);
+  for (;;) {
+    try {
+      const stat = statSync(current);
+      chain.push({ dev: stat.dev, ino: stat.ino });
+    } catch {
+      // not there (yet): only existing folders can be shared
+    }
+    const parent = dirname(current);
+    if (parent === current) return chain;
+    current = parent;
+  }
+}
+
+/**
+ * True when one folder is the other or inside it, by device and inode as well as by path: catches spellings no
+ * realpath folds (macOS firmlinks such as /System/Volumes/Data/Users, a case-insensitive volume reached by another
+ * path).
+ */
+function sameOrNested(a: string, b: string): boolean {
+  if (isInside(a, b) || isInside(b, a)) return true;
+  const chainA = existingChain(a);
+  const chainB = existingChain(b);
+  // `b` is `a` or one of a's existing ancestors (a may not exist yet: its nearest existing folder stands in for it),
+  // or the other way round. A folder that does not exist cannot contain the other one.
+  const nodeA = existsSync(a) ? chainA[0] : undefined;
+  const nodeB = existsSync(b) ? chainB[0] : undefined;
+  const has = (chain: readonly { dev: number; ino: number }[], node: { dev: number; ino: number } | undefined) =>
+    node !== undefined && chain.some((other) => other.dev === node.dev && other.ino === node.ino);
+  return has(chainA, nodeB) || has(chainB, nodeA);
+}
+
 /** `path` with symlinks resolved, also when its last parts do not exist yet (the nearest existing folder is resolved). */
 function realPathOrNearest(path: string): string {
   const tail: string[] = [];
@@ -130,7 +174,7 @@ function realPathOrNearest(path: string): string {
     current = parent;
   }
   try {
-    return join(realpathSync(current), ...tail);
+    return join(realPath(current), ...tail);
   } catch {
     return join(current, ...tail);
   }
@@ -201,7 +245,7 @@ function copyTreeReadOnly(srcDir: string, dstDir: string, srcBoundary: string): 
     return;
   }
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return;
-  const srcRootReal = realpathSync(srcBoundary);
+  const srcRootReal = realPath(srcBoundary);
   mkdirSync(dstDir, { recursive: true });
   for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (entry.name === ".git" || entry.name === "node_modules") continue;
@@ -216,7 +260,7 @@ function copyTreeReadOnly(srcDir: string, dstDir: string, srcBoundary: string): 
     }
     if (stat.isSymbolicLink()) {
       try {
-        const real = realpathSync(srcPath);
+        const real = realPath(srcPath);
         if (!isInside(real, srcRootReal)) continue;
         if (real === join(srcRootReal, "plugin-secrets.json")) continue;
         if (statSync(real).isDirectory()) continue;
@@ -521,10 +565,12 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
     throw new ImportError(`${sourceResolved} does not look like a Botling 2 data folder.`, 2);
   }
 
-  const sourceReal = realpathSync(sourceResolved);
-  // Compare real paths: a symlinked spelling of either folder must not let the target sit inside the 2.x folder.
+  // The OS spelling (case folded on a case-insensitive volume): it is also the source's identity (`sourceHash`).
+  const sourceReal = realPath(sourceResolved);
+  // Compare real paths and inodes: a symlinked or differently-cased spelling of either folder must not let the target
+  // sit inside the 2.x folder.
   const targetReal = realPathOrNearest(targetResolved);
-  if (isInside(targetReal, sourceReal) || isInside(sourceReal, targetReal)) {
+  if (sameOrNested(targetReal, sourceReal)) {
     throw new ImportError("The import's source and target must be separate folders.", 2);
   }
   const sourceHash = sha256Text(sourceReal);
@@ -730,6 +776,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
 
           let lines = result.lines;
           let lists = result.lists;
+          let skipped = result.skipped;
           if (result.alreadyDone) {
             const reader = store.openReader();
             try {
@@ -739,6 +786,10 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
             } finally {
               reader.close();
             }
+            // Done in an earlier run: recount (read only) what that run skipped, with the same rule the import used.
+            const again = prepareDryRunBot(bot, mapped.newId);
+            skipped = again.skipped;
+            lists = { ...lists, missingPinLines: again.lists.missingPinLines };
           }
 
           problems.push(...result.problems, ...lists.problems);
@@ -749,7 +800,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
             name: mapped.name,
             ...(mapped.clash ? { clash: true } : {}),
             lines,
-            skipped: result.skipped,
+            skipped,
             pins: lists.pins,
             missingPinLines: lists.missingPinLines,
             specs: lists.specs,
