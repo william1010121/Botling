@@ -331,10 +331,10 @@ describe("M5-14d: botlingd keeps the window's list on the running hash", () => {
     const codeHash = () => { const row = sql<{ body: string }>("SELECT body FROM rows WHERE stream = ? AND key = 'plugin:probe.tool' AND deleted = 0", stream); return row ? JSON.parse(row.body).codeHash : null; };
     // The last list the core announced (snapshot or plugins.updated): what the window shows.
     const shown = () => (JSON.parse((daemon.core as any).lastPlugins).plugins as PluginView[]).find((p) => p.name === "probe.tool");
-    const write = (version: string, code: string) => {
+    const write = (version: string, code: string, permissions = ["composer"]) => {
       const folder = join(dir, "plugins", "probe.tool");
       mkdirSync(join(folder, "dist"), { recursive: true });
-      writeFileSync(join(folder, "package.json"), JSON.stringify({ name: "probe.tool", version, engines: { ccb: "^2.0.0" }, ccb: { permissions: ["composer"], web: "dist/web.js" } }));
+      writeFileSync(join(folder, "package.json"), JSON.stringify({ name: "probe.tool", version, engines: { ccb: "^2.0.0" }, ccb: { permissions, web: "dist/web.js" } }));
       writeFileSync(join(folder, "dist", "web.js"), code);
       return folder;
     };
@@ -353,7 +353,8 @@ describe("M5-14d: botlingd keeps the window's list on the running hash", () => {
       expect((status as any).message.outcome).toMatchObject({ kind: "applied" });
       await until(() => shown()?.grant === "request" || null, { timeout: 2_000, every: 20, what: "window shows the grant" });
 
-      write("1.0.1", "export function activate() { return 2; }\n");
+      // The update asks for more (files: tier write), so the old grant is not carried (plugin-grant-carry.ts).
+      write("1.0.1", "export function activate() { return 2; }\n", ["composer", "files"]);
       daemon.core.plugins.scan();
       const h2 = folderHash(folder);
       await until(() => codeHash() === h2 || null, { timeout: 5_000, every: 50, what: "row at h2" });
