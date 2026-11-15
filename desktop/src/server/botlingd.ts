@@ -300,7 +300,11 @@ export class Botlingd {
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(roster), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize({
+          memberId: serverId,
+          device: (member) => roster.device(member),
+          server: (member) => { const view = roster.view; return member !== view.self && view.servers.has(member) && view.valid.has(member); },
+        }), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
         tapHooks: { eventSeen: (event) => summary?.seen(event), eventStored: (tx, event) => summary?.stored(tx, event) },
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
