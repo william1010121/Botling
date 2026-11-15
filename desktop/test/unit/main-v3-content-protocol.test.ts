@@ -194,7 +194,13 @@ describe("chat media through the server's references (ContentProtocol + ContentS
   let service: ContentService;
   let reqs = 0;
   const asked: string[] = [];
-  const link: ContentLink = { content: (message) => { asked.push(message.t); return service.handle({ ...message, req: `r${++reqs}` } as never); } };
+  const link: ContentLink = {
+    content: (message) => { asked.push(message.t); return service.handle({ ...message, req: `r${++reqs}` } as never); },
+    postContent: () => false,
+    onContent: () => () => {},
+    newReq: () => `r${++reqs}`,
+    attachedServerId: () => store.meta("serverId")!,
+  };
 
   async function open(options: Partial<ConstructorParameters<typeof ContentService>[0]> = {}) {
     store = await openServerStore(join(scratch, "data"));
@@ -296,6 +302,10 @@ describe("chat media through the server's references (ContentProtocol + ContentS
     writeFileSync(file, bytes(name, 100_000));
     const { ready } = await post({ id: "m1", text: `![v](${file})` });
     const racing: ContentLink = {
+      postContent: link.postContent,
+      onContent: link.onContent,
+      newReq: link.newReq,
+      attachedServerId: link.attachedServerId,
       content: async (message) => {
         if (message.t === "content.open" && message.id.startsWith("pending:")) {
           release(); await ready;
