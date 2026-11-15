@@ -152,7 +152,9 @@ const PluginManifest = z.strictObject({
 
 /**
  * `plugin:<name>` — an installed plugin and its per-codeHash grants (D52, §8.2). `files` is left optional and never
- * written in 3.0 so a later version can add it without breaking readers (Q-C9).
+ * written in 3.0 so a later version can add it without breaking readers (Q-C9). 3.1 writes one content reference to the
+ * built web part there, `files: {web: "sha256:<hex>"}` (M7-09a, Q-M7-C3): the hash of the file `ccb.web` names, fetched
+ * over the content path (server/content/plugin-bundle.ts). It stays `unknown` here so a 3.0 reader accepts the row.
  */
 export const PluginRow = z.strictObject({
   codeHash: PluginCodeHash,
