@@ -22,12 +22,13 @@
 // window) first runs `cluster.create` (the recovery code is shown once) and `cluster.confirm` (typed back). Admin
 // requests come only from the local socket (the role table keeps `admin` off every other session) or the CLI over it.
 import {
-  DeviceScope, fromBase64Url, pairLink, PAIR_OFFER_TTL_MS, PAIR_PENDING_LIMIT, PairOffer, toBase64Url,
+  DeviceScope, fromBase64Url, memberFingerprint, pairLink, PAIR_OFFER_TTL_MS, PAIR_PENDING_LIMIT, PairOffer, toBase64Url,
   type AdminEvent, type AdminOp, type Message, type MessageOf, type SignedStatement,
 } from "../../protocol";
 import { verifyPairProof, type PeerClaim, type PeerDecision, type SessionInfo } from "../../session";
 import type { ClusterSetup } from "../identity/cluster";
 import { RosterError, type RosterStore } from "../roster/store";
+import type { RosterView } from "../roster/validity";
 
 /** How long an established pairing session may take to send `pair.hello`. */
 export const PAIR_HELLO_TIMEOUT_MS = 15_000;
@@ -71,9 +72,21 @@ export interface PairChannel {
 
 export type PairOfferResult = { offer: string; link: string; expiresAt: number; clusterId: string; note?: string };
 export interface DeviceRow { id: string; name: string; scope: string[]; valid: boolean; revoked: boolean; addedAt: number; addedBy: string }
+export type MachineRemovePreview =
+  | { isRoot: false; rootMember: string; rootName: string }
+  | {
+      isRoot: true;
+      member: string;
+      name: string;
+      fingerprint: string;
+      cascade: Array<{ member: string; kind: "server" | "device"; name: string }>;
+    };
 
 export class PairingError extends Error {
-  constructor(readonly code: "no-cluster" | "limit" | "unknown" | "state" | "no-address" | "not-a-device" | "bad-request", message: string) {
+  constructor(
+    readonly code: "no-cluster" | "limit" | "unknown" | "state" | "no-address" | "not-a-device" | "bad-request" | "not-root" | "cannot-revoke-root" | "not-a-server" | "ambiguous",
+    message: string,
+  ) {
     super(message);
     this.name = "PairingError";
   }
@@ -223,6 +236,8 @@ export class PairingService {
       case "pair.cancel": return this.cancel(op.offer);
       case "devices.list": return { devices: this.devices() };
       case "device.revoke": return this.revokeDevice(op.deviceId, op.reason);
+      case "machine.removePreview": return this.removeMachinePreview(op.member);
+      case "machine.remove": return this.removeMachine(op.member, op.cascade, op.reason);
       default: throw new PairingError("bad-request", `${op.op} is not a device pairing request`);
     }
   }
@@ -319,6 +334,84 @@ export class PairingService {
     this.options.log?.(`pairing: device ${deviceId} revoked${result.already ? " (already)" : ""}`);
     this.emit({ kind: "device.revoked", deviceId });
     return result;
+  }
+
+  /** Preview of removing a server (M4-05): checks root, resolves name/id/fingerprint, and names the cascade. */
+  removeMachinePreview(target: string): MachineRemovePreview {
+    const view = this.options.roster.view;
+    const root = view.root;
+    if (this.options.roster.clusterId === null || !root) {
+      throw new PairingError("no-cluster", "there is no cluster yet");
+    }
+    if (root.root !== this.options.roster.memberId) {
+      return { isRoot: false, rootMember: root.root, rootName: this.serverDisplayName(root.root, view) };
+    }
+    const query = target.trim();
+    if (!query) throw new PairingError("not-a-server", "no machine name or id given");
+    let resolved: string | null = null;
+    if (view.servers.has(query)) {
+      resolved = query;
+    } else {
+      const byName = [...view.servers].filter((id) => this.serverDisplayName(id, view) === query).sort();
+      if (byName.length > 1) {
+        const choices = byName.map((id) => `${id} (${memberFingerprint(id)})`).join(", ");
+        throw new PairingError("ambiguous", `more than one machine is named "${query}" (${choices}); pass the id instead`);
+      }
+      if (byName.length === 1) {
+        resolved = byName[0]!;
+      } else {
+        const fpKey = query.replace(/[\s-]/g, "").toLowerCase();
+        if (/^[a-z2-7]{26}$/.test(fpKey) && view.servers.has(fpKey)) resolved = fpKey;
+      }
+    }
+    if (!resolved) throw new PairingError("not-a-server", `no machine named "${query}" in this cluster`);
+    if (resolved === root.root) throw new PairingError("cannot-revoke-root", "the revocation root cannot remove itself");
+    const cascade = this.options.roster.cascadePreview(resolved).map((id) => {
+      const info = view.members.get(id);
+      const kind: "server" | "device" = view.servers.has(id) || info?.kind === "server" ? "server" : "device";
+      const name = this.options.roster.profile(id, "name") ?? info?.name ?? id;
+      return { member: id, kind, name };
+    });
+    return {
+      isRoot: true,
+      member: resolved,
+      name: this.serverDisplayName(resolved, view),
+      fingerprint: memberFingerprint(resolved),
+      cascade,
+    };
+  }
+
+  /** Revokes a server on the revocation root (§4.3, D61, M4-05). */
+  async removeMachine(member: string, cascade: boolean, reason = ""): Promise<{ revokeId: string; already: boolean }> {
+    const view = this.options.roster.view;
+    const root = view.root;
+    if (this.options.roster.clusterId === null || !root) {
+      throw new PairingError("no-cluster", "there is no cluster yet");
+    }
+    if (root.root !== this.options.roster.memberId) {
+      throw new PairingError("not-root", `Only the revocation root (${this.serverDisplayName(root.root, view)}) can remove a machine. Run this there.`);
+    }
+    try {
+      const result = await this.options.roster.revokeServer(member, cascade, reason);
+      this.options.log?.(`pairing: server ${member} removed (cascade=${cascade})${result.already ? " (already)" : ""}`);
+      return result;
+    } catch (error) {
+      if (error instanceof RosterError) {
+        if (error.reason === "server-revoke-root-only") {
+          throw new PairingError("not-root", `Only the revocation root (${this.serverDisplayName(root.root, view)}) can remove a machine. Run this there.`);
+        }
+        if (error.reason === "cannot-revoke-root") throw new PairingError("cannot-revoke-root", error.message);
+        if (error.reason === "not-a-server") throw new PairingError("not-a-server", error.message);
+        if (error.reason === "no-cluster") throw new PairingError("no-cluster", error.message);
+      }
+      throw error;
+    }
+  }
+
+  private serverDisplayName(id: string, view: RosterView): string {
+    return this.options.roster.profile(id, "name")
+      ?? view.members.get(id)?.name
+      ?? (id === this.options.roster.memberId ? this.options.serverName : id);
   }
 
   /** Offers pending now (ids and states), for status and tests. */

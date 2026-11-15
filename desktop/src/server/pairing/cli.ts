@@ -1,5 +1,6 @@
-// `botlingd pair`, `botlingd devices`, `botlingd revoke-device` (M2 step 5, protocol v1 §4.4, §4.6, §4.8), over the
-// running botlingd's local socket (admin-client.ts). Input and output are injected, so tests drive the same code.
+// `botlingd pair`, `botlingd devices`, `botlingd revoke-device`, `botlingd machines remove` (M2 step 5, M4-05, protocol
+// v1 §4.3–§4.6, §4.8), over the running botlingd's local socket (admin-client.ts). Input and output are injected, so
+// tests drive the same code.
 //
 //   pair [--name <device name>] [--scope read,reply,approve,manage]
 //     1. No cluster yet (the first pairing): the recovery code is shown once and must be typed back; the cluster exists
@@ -17,10 +18,12 @@
 //                                     tries), then adds N; the first pairing creates the cluster first (recovery code)
 //   devices [--json]                  the devices in the roster, valid and revoked
 //   revoke-device <id> [--reason …]   revokes a device; its sessions end at once
+//   machines remove <name-or-id> [--yes | --only]
+//                                     (on the revocation root, §4.3) previews what it added, asks once, and revokes it
 import { memberFingerprint, parseJoinLink, type AdminEvent, type DeviceScope } from "../../protocol";
 import { AdminRefused, type AdminClient } from "./admin-client";
 import { qrTerminal } from "./qr";
-import type { DeviceRow, PairOfferResult } from "./service";
+import type { DeviceRow, MachineRemovePreview, PairOfferResult } from "./service";
 import type { JoinOfferResult, MachineAddResult, MachineCodeResult } from "./join";
 
 export interface CliIo {
@@ -131,6 +134,69 @@ export async function revokeDeviceCommand(client: AdminClient, io: CliIo, device
     io.out(`Cannot revoke ${deviceId}: ${errorText(error)}`);
     return 1;
   }
+}
+
+/** `botlingd machines remove <name-or-id> [--yes | --only]`. */
+export async function removeMachineCommand(
+  client: AdminClient,
+  io: CliIo,
+  target: string,
+  options: { yes?: boolean; only?: boolean } = {},
+): Promise<number> {
+  if (options.yes && options.only) {
+    io.out("Cannot use both --yes and --only.");
+    return 2;
+  }
+  let preview: MachineRemovePreview;
+  try {
+    preview = await client.request({ op: "machine.removePreview", member: target }) as MachineRemovePreview;
+  } catch (error) {
+    io.out(`Cannot remove ${target}: ${errorText(error)}`);
+    return 1;
+  }
+  if (!preview.isRoot) {
+    io.out(`Only the revocation root (${preview.rootName}) can remove a machine. Run this there.`);
+    return 1;
+  }
+  const phones = preview.cascade.filter((item) => item.kind === "device");
+  const machines = preview.cascade.filter((item) => item.kind === "server");
+  const formatGroup = (items: typeof phones, singular: string, plural: string) => {
+    const count = `${items.length} ${items.length === 1 ? singular : plural}`;
+    return items.length ? `${count} (${items.map((item) => `"${item.name}"`).join(", ")})` : count;
+  };
+  io.out(`Remove "${preview.name}" (fingerprint ${preview.fingerprint})?`);
+  io.out(`It also removes what it added: ${formatGroup(phones, "phone", "phones")}, ${formatGroup(machines, "machine", "machines")}.`);
+  let cascade: boolean;
+  if (options.yes) {
+    cascade = true;
+  } else if (options.only) {
+    cascade = false;
+  } else {
+    const answer = await io.ask(`Type "remove" to remove it and what it added, "only" to remove just ${preview.name}, anything else to stop: `);
+    // EOF on stdin (null) or anything other than "remove" / "only" means stop, never remove.
+    const choice = answer?.trim().toLowerCase() ?? "";
+    if (choice === "remove") cascade = true;
+    else if (choice === "only") cascade = false;
+    else {
+      io.out("Stopped; nothing was removed.");
+      return 1;
+    }
+  }
+  let result: { revokeId: string; already: boolean };
+  try {
+    result = await client.request({ op: "machine.remove", member: preview.member, cascade }) as { revokeId: string; already: boolean };
+  } catch (error) {
+    io.out(`Cannot remove ${preview.name}: ${errorText(error)}`);
+    return 1;
+  }
+  if (result.already) {
+    io.out(`"${preview.name}" (${preview.member}) was already removed.`);
+  } else if (cascade) {
+    io.out(`Removed "${preview.name}" (${preview.member}) and what it added (Revoke ${result.revokeId}).`);
+  } else {
+    io.out(`Removed "${preview.name}" (${preview.member}); what it added was kept (Revoke ${result.revokeId}).`);
+  }
+  return 0;
 }
 
 const JOIN_TRIES = 3;
