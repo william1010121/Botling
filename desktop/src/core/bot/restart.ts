@@ -364,13 +364,13 @@ export class BotRestart {
       turn.handoffId=entry.handoffId??null;
       // Keep task correlation, but use a new transport turn: the prior turn is visibly interrupted.
       turn.retried=true; // A failed resume must never fall back to a fresh session/replay.
-      bot.turns.enqueue(turn);
+      bot.queue.push(turn);
     }
     for(const saved of entry.queued){
       if(!["user","app","background"].includes(saved.origin))throw Error("Queued work origin requires reconciliation.");
       const turn=bot.newTurn(saved.origin as Origin,saved.words,saved.userId);
       turn.id=saved.turnId;turn.messageId=saved.messageId;turn.handoffId=saved.handoffId;turn.conducted=saved.conducted;turn.retried=true;
-      bot.turns.enqueue(turn);
+      bot.queue.push(turn);
     }
     if(bot.queue.length)bot.next();
     // A Codex head's workers live in it: it starts to check and resume them (and hand over reports they still owe).
