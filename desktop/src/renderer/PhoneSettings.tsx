@@ -1,4 +1,4 @@
-// Settings > Phone: turn the end-to-end encrypted relay on or off, make a one-time pairing code (QR) for the relay
+// Settings > Phone (2.x; a Botling 3 view, with `v3`, is PhoneSettingsV3's): turn the end-to-end encrypted relay on or off, make a one-time pairing code (QR) for the relay
 // or one of the bridge's routes, see the routes a phone tries, and list or revoke paired phones. The core does the
 // work (mobile-bridge/desk.ts, mobile-relay/connector.ts); this shows what it says. The pairing link is a secret:
 // it is held in this component's state only until it is hidden, used, or expires, and is never written anywhere.
@@ -7,6 +7,7 @@ import type { BotView, MobileDeskView, MobilePairView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { mobileWords } from "./mobile-text";
 import { QrCode } from "./qr-view";
+import { PhoneSettingsV3 } from "./PhoneSettingsV3";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 const when = (ms: number, lang: string | null) => new Date(ms).toLocaleDateString(lang ?? undefined, { month: "short", day: "numeric" });
@@ -62,6 +63,8 @@ export function PhoneSettings({ client, bots, lang }: { client: Client; bots: Bo
 
   if (failed && !view) return <section className="settings-group" aria-label={words.title}><h3>{words.title}</h3><p className="settings-note">{failed}</p></section>;
   if (!view) return null;
+  // Botling 3: botlingd answers with its own pairing (`v3`); the 2.x screen below stays as it was.
+  if (view.v3) return <PhoneSettingsV3 client={client} lang={lang} view={{ ...view, v3: view.v3 }} setView={setView} refresh={refresh} />;
   const relay = view.relay;
   if (!view.enabled && !relay) return <section className="settings-group" aria-label={words.title}><h3>{words.title}</h3><p className="settings-note">{words.off}</p></section>;
 

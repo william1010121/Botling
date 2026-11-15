@@ -24,6 +24,7 @@ import { ContractError } from "../../contract";
 import { queueKey, type CmdBody } from "../../protocol";
 import { admit, checkTarget, cmdHash, SlotRefusal, requiredSlotScope, type ApplyContext, type BegunEnd, type ReceiveOptions, type ReceiveStatus, type SlotEngine, type SlotLog } from "../slots";
 import type { TxScope, TurnEngine } from "../effects";
+import { routeOf } from "./commands";
 
 type Ran = { ok: true; result: unknown } | { ok: false; detail: string };
 
@@ -114,6 +115,9 @@ export class LegacyApply {
   }
 
   private async run(cmd: Command): Promise<Ran> {
+    // A `local` command (botlingd's phone pairing) is a req on this machine's socket only: under a slot its result (a
+    // pairing link, a secret) would be stored in the log, so it is refused before any handler runs (commands.ts).
+    if (routeOf(cmd.type).kind === "local") return { ok: false, detail: `${cmd.type} is answered only as a request from this machine's window, never as a command` };
     try {
       return { ok: true, result: await this.engine.run(cmd) };
     } catch (error) {

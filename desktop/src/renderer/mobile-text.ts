@@ -1,4 +1,12 @@
-// The Phone settings' words, English and Traditional Chinese (the app's two UI languages).
+// The Phone settings' words, English and Traditional Chinese (the app's two UI languages). `v3`: the Botling 3
+// screen (PhoneSettingsV3.tsx: the first pairing's recovery code, the 6-digit code check, the relay page).
+type V3Words = {
+  setup: string; setupNote: string; codeTitle: string; codeNote: string; typeBack: string; confirmCode: string; confirming: string; newCode: string; waitingNote: string;
+  clusterReason: Record<"wrong-code" | "malformed" | "expired" | "no-setup" | "cluster-exists" | "refused", string>;
+  pairNote: string; compareTitle: string; compareNote: (device: string) => string; accept: string; reject: string; adding: string; paired: (device: string) => string;
+  declined: Record<"code" | "expired" | "cancelled" | "refused", string>;
+  relayNote: string; relayFixed: string; added: (when: string) => string;
+};
 type Words = {
   title: string; note: string; off: string; unavailable: string;
   routes: string; routesNote: string; routeKind: { lan: string; tailscale: string; tunnel: string; relay: string }; first: string;
@@ -6,6 +14,7 @@ type Words = {
   relayState: { off: string; connecting: string; online: string; offline: string }; viaRelay: string;
   pairTitle: string; pairNote: string; allBots: string; route: string; create: string; creating: string; scan: string; expires: (minutes: number) => string; hide: string; copyLink: string; copied: string; copyNote: string;
   devices: string; none: string; paired: (when: string) => string; until: (when: string) => string; revoke: string; revokeAsk: (name: string) => string; revokeYes: string; cancel: string; unnamed: string;
+  v3: V3Words;
 };
 const en: Words = {
   title: "Phone", note: "Pair a phone or browser with a one-time QR code. A paired phone can chat with all your bots (bots you add later too), and nothing more: no settings, files or plugins.",
@@ -19,6 +28,27 @@ const en: Words = {
   pairTitle: "Pair a phone", pairNote: "Scan the code with the phone's camera. The phone gets all your bots. The code works once and expires in 5 minutes.",
   allBots: "All bots", route: "Address in the code", create: "Create pairing code", creating: "Creating…", scan: "Scan with the phone's camera", expires: (m) => `Expires in ${m} min`, hide: "Hide code", copyLink: "Copy link", copied: "Copied", copyNote: "Or copy the link and paste it into Botling on the phone (Universal Clipboard, or send it to yourself). It works once, for a few minutes.",
   devices: "Paired phones", none: "No phones are paired.", paired: (when) => `Paired ${when}`, until: (when) => `until ${when}`, revoke: "Revoke", revokeAsk: (name) => `Sign out ${name}? It will need a new code to connect again.`, revokeYes: "Revoke", cancel: "Cancel", unnamed: "Phone",
+  v3: {
+    setup: "Set up phone pairing",
+    setupNote: "Before the first phone, Botling makes your recovery code. It is shown once: write it down or keep it in a password manager (never in Botling). You need it only if this computer is ever lost.",
+    codeTitle: "Your recovery code (shown once)", codeNote: "Write it down now, then type it back below to finish setting up.",
+    typeBack: "Type the recovery code back", confirmCode: "Confirm", confirming: "Checking…", newCode: "Show a new code",
+    waitingNote: "A recovery code was shown and waits to be typed back. If you did not keep it, show a new one.",
+    clusterReason: {
+      "wrong-code": "That is not the code that was shown. Check it and try again.", malformed: "A recovery code has 26 letters and digits (A–Z, 2–7).",
+      expired: "The code expired. Show a new one.", "no-setup": "Show a new code first.", "cluster-exists": "Pairing is already set up.", refused: "The code was not confirmed.",
+    },
+    pairNote: "Scan the code with the iPhone's camera and open the link. The phone then shows a 6-digit code: check it against the one shown here. The code works once and expires in 5 minutes.",
+    compareTitle: "Check the code", compareNote: (device) => `${device} wants to pair. Does the phone show this code?`,
+    accept: "Same code: add the phone", reject: "Different: reject", adding: "Adding the phone…", paired: (device) => `${device} is paired.`,
+    declined: {
+      code: "Rejected: the codes were different. Make a new pairing code to try again.", expired: "The pairing code expired. Make a new one.",
+      cancelled: "The pairing was cancelled.", refused: "The phone was not added. Make a new pairing code to try again.",
+    },
+    relayNote: "Reach Botling from anywhere through a relay. A phone pairs on the relay's page; the phone and this computer encrypt everything end to end, so the relay only passes along data it cannot read.",
+    relayFixed: "BOTLING_SERVER_RELAY_URL sets the relay where Botling runs, so it cannot be changed here.",
+    added: (when) => `Paired ${when}`,
+  },
 };
 const zh: Words = {
   title: "手機", note: "用一次性 QR code 配對手機或瀏覽器。配對後的手機可以與你所有的機器人對話（包括之後新增的），但不能做更多：沒有設定、檔案或外掛。",
@@ -32,5 +62,26 @@ const zh: Words = {
   pairTitle: "配對手機", pairNote: "用手機相機掃描代碼，手機就能使用你所有的機器人。代碼只能使用一次，5 分鐘後失效。",
   allBots: "所有機器人", route: "代碼中的位址", create: "建立配對代碼", creating: "建立中…", scan: "用手機相機掃描", expires: (m) => `${m} 分鐘後失效`, hide: "隱藏代碼", copyLink: "複製連結", copied: "已複製", copyNote: "也可以複製連結，貼到手機上的 Botling（通用剪貼板，或傳給自己）。只能用一次，幾分鐘內有效。",
   devices: "已配對的手機", none: "沒有已配對的手機。", paired: (when) => `${when} 配對`, until: (when) => `有效至 ${when}`, revoke: "撤銷", revokeAsk: (name) => `要登出「${name}」嗎？它需要新的代碼才能再次連線。`, revokeYes: "撤銷", cancel: "取消", unnamed: "手機",
+  v3: {
+    setup: "設定手機配對",
+    setupNote: "配對第一支手機前，Botling 會產生你的復原碼。它只會顯示一次：請寫下來或存進密碼管理器（不要存在 Botling 裡）。只有這台電腦遺失時才需要它。",
+    codeTitle: "你的復原碼（只顯示一次）", codeNote: "現在先寫下來，再在下方輸入一次以完成設定。",
+    typeBack: "再輸入一次復原碼", confirmCode: "確認", confirming: "檢查中…", newCode: "產生新的復原碼",
+    waitingNote: "已顯示過復原碼，正等待你輸入確認。如果沒有記下來，請產生新的。",
+    clusterReason: {
+      "wrong-code": "這不是剛才顯示的復原碼，請檢查後再試一次。", malformed: "復原碼是 26 個英文字母與數字（A–Z、2–7）。",
+      expired: "復原碼已過期，請產生新的。", "no-setup": "請先產生復原碼。", "cluster-exists": "已經設定好配對了。", refused: "復原碼未確認。",
+    },
+    pairNote: "用 iPhone 相機掃描代碼並開啟連結。手機接著會顯示 6 位數代碼：請與這裡顯示的核對。代碼只能使用一次，5 分鐘後失效。",
+    compareTitle: "核對代碼", compareNote: (device) => `「${device}」想要配對。手機上顯示的是這組代碼嗎？`,
+    accept: "代碼相同：加入手機", reject: "代碼不同：拒絕", adding: "加入手機中…", paired: (device) => `「${device}」已配對。`,
+    declined: {
+      code: "已拒絕：兩邊代碼不同。請建立新的配對代碼再試一次。", expired: "配對代碼已過期，請建立新的。",
+      cancelled: "配對已取消。", refused: "手機未加入。請建立新的配對代碼再試一次。",
+    },
+    relayNote: "透過中繼站從任何地方連到 Botling。手機在中繼站的頁面上配對；手機與這台電腦之間全程端到端加密，中繼站只轉送它讀不懂的資料。",
+    relayFixed: "執行 Botling 的環境以 BOTLING_SERVER_RELAY_URL 指定了中繼站，因此無法在這裡變更。",
+    added: (when) => `${when} 配對`,
+  },
 };
 export const mobileWords = (lang: string | null): Words => (lang === "zh-Hant" ? zh : en);

@@ -137,6 +137,8 @@ export const COMMAND_SCOPES: Record<CommandType, CommandScope> = {
   "mobile.pair": admin,
   "mobile.revoke": admin,
   "mobile.relay": admin,
+  "mobile.cluster": admin,
+  "mobile.confirm": admin,
   "machines.view": admin,
   "machines.hosts": admin,
   "machines.add": admin,

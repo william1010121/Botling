@@ -2,7 +2,8 @@
 // It turns the relay path on without an environment variable, so the packaged app (started from Finder) uses it too.
 //
 // - Written by `botlingd relay set <url>` / `botlingd relay clear` and by the 2.x import (only the 2.x address, never
-//   its room or identity keys). It takes effect at botlingd's next start.
+//   its room or identity keys), which take effect at botlingd's next start; and by Settings › Phone in the Botling 3
+//   window (`changeRelaySetting`), which botlingd applies at once (Botlingd.useRelay).
 // - `BOTLING_SERVER_RELAY_URL`, when set, wins (tests and development; "off" turns the relay off).
 // - Address rules are the 2.x ones (mobile-relay/store.ts `relayURL`): wss:// anywhere, ws:// only to this machine,
 //   the path `/ws` (a bare host gets it), no credentials, query or fragment.
@@ -101,4 +102,25 @@ export function effectiveRelayUrl(
     log?.(`relay: off, ${error instanceof RelaySettingError ? error.message : `${RELAY_SETTING_FILE} cannot be read`} (botlingd relay set <url> writes it again)`);
     return { url: null, source: "off" };
   }
+}
+
+/**
+ * Settings › Phone changes the relay (the Botling 3 window, server/pairing/phone-desk.ts): the address is checked, kept
+ * in relay.json (null removes it) and then handed to `apply`, which switches botlingd's room over at once. Refused, with
+ * nothing written, while `BOTLING_SERVER_RELAY_URL` is set (it wins over the setting) or for an address that breaks the
+ * rules. Returns the address as kept.
+ */
+export async function changeRelaySetting(input: {
+  env: Record<string, string | undefined>;
+  dataDir: string;
+  url: string | null;
+  apply: (url: string | null) => Promise<void>;
+}): Promise<string | null> {
+  if ((input.env[RELAY_URL_ENV] ?? "").trim() !== "") {
+    throw new RelaySettingError(`${RELAY_URL_ENV} is set where Botling 3 runs, so botlingd uses it; remove it to choose the relay here.`);
+  }
+  const clean = input.url === null || input.url.trim() === "" ? null : relaySettingUrl(input.url);
+  writeRelaySetting(input.dataDir, clean);
+  await input.apply(clean);
+  return clean;
 }

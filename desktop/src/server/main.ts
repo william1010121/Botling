@@ -48,7 +48,8 @@
 //   botlingd relay [set <url> | clear]
 //                             the relay this server keeps its room on (the Botling 3 phone page and its pairing link
 //                             are then on that relay when no tailnet origin is set): shows it, keeps one (wss://…/ws)
-//                             in <data>/relay.json, or removes it; takes effect when botlingd next starts.
+//                             in <data>/relay.json, or removes it; takes effect when botlingd next starts
+//                             (Settings › Phone in the Botling 3 window changes it at once).
 //                             BOTLING_SERVER_RELAY_URL, when set, wins
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]

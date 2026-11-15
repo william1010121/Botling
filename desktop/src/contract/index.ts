@@ -869,15 +869,37 @@ export type UsageView = z.infer<typeof UsageView>;
  * phones paired through it are listed with `via: "relay"`. */
 export const MobileRouteView = z.strictObject({ kind: z.enum(["lan", "tailscale", "tunnel", "relay"]), origin: z.string().max(300) });
 export const MobileRelayView = z.strictObject({ url: z.string().max(300).nullable(), state: z.enum(["off", "connecting", "online", "offline"]) });
+/** Botling 3 only (botlingd's own pairing, server/pairing/phone-desk.ts; the 2.x core never sends it): whether the
+ * cluster exists (made at the first pairing: the recovery code shown once, then typed back), whether
+ * BOTLING_SERVER_RELAY_URL fixes the relay, the pairings this window started (waiting for a scan, the 6-digit code to
+ * compare, being added, paired or declined; never the link or its secret), and the paired phones (valid ones). */
+export const MobileV3Offer = z.strictObject({
+  offer: z.string().max(64), expiresAt: z.number(),
+  state: z.enum(["waiting", "compare", "adding", "paired", "declined"]),
+  code: z.string().regex(/^[0-9]{6}$/).optional(), device: z.string().max(100).optional(),
+  reason: z.enum(["code", "expired", "cancelled", "refused"]).optional(),
+});
+export const MobileV3View = z.strictObject({
+  cluster: z.enum(["none", "confirming", "ready"]), relayFixed: z.boolean(),
+  offers: z.array(MobileV3Offer).max(10),
+  devices: z.array(z.strictObject({ id: z.string().max(64), name: z.string().max(100), addedAt: z.number(), scope: z.array(z.string().max(16)).max(8) })).max(400),
+});
+export type MobileV3View = z.infer<typeof MobileV3View>;
 export const MobileDeskView = z.strictObject({
   enabled: z.boolean(), routes: z.array(MobileRouteView).max(6),
   devices: z.array(z.strictObject({ id: z.string().max(64), label: z.string().max(40), pairedAt: z.number(), expiresAt: z.number(), botIds: z.array(z.string().max(64)).max(200),
     via: z.enum(["bridge", "relay"]).optional() })).max(400),
   relay: MobileRelayView.optional(),
+  v3: MobileV3View.optional(),
 });
 export type MobileDeskView = z.infer<typeof MobileDeskView>;
-export const MobilePairView = z.strictObject({ url: z.string().max(600), expiresAt: z.number(), route: MobileRouteView });
+/** A pairing link (a secret, shown once). Botling 3 adds its offer id (to match the code to compare) and a note when
+ * the link names only a placeholder address; its link is longer (an offer with keys, the secret and the cluster). */
+export const MobilePairView = z.strictObject({ url: z.string().max(4_000), expiresAt: z.number(), route: MobileRouteView, offer: z.string().max(64).optional(), note: z.string().max(500).optional() });
 export type MobilePairView = z.infer<typeof MobilePairView>;
+/** Botling 3's first pairing: `mobile.cluster` without a code shows a new recovery code once; with one, confirms it. */
+export const MobileClusterView = z.strictObject({ ok: z.boolean(), code: z.string().max(64).optional(), expiresAt: z.number().optional(), reason: z.string().max(40).optional() });
+export type MobileClusterView = z.infer<typeof MobileClusterView>;
 
 
 export const BotSettingsView = z.strictObject({
@@ -1287,6 +1309,11 @@ const BASE_COMMANDS = [
   z.strictObject({ type: z.literal("mobile.revoke"), deviceId: z.string().max(64) }),
   /** Turns the phone relay on (its wss:// address) or off (null). */
   z.strictObject({ type: z.literal("mobile.relay"), url: z.string().max(300).nullable() }),
+  /** Botling 3 only: the first pairing's cluster (no code: show a new recovery code once; a code: the one typed back). */
+  z.strictObject({ type: z.literal("mobile.cluster"), code: z.string().max(64).optional() }),
+  /** Botling 3 only: the person compared the phone's 6-digit code with the window's (accept adds the phone). An accept
+   * names the code it was shown: a different phone that took the offer since (a new code) is not added. */
+  z.strictObject({ type: z.literal("mobile.confirm"), offer: z.string().min(1).max(64), accept: z.boolean(), code: z.string().regex(/^[0-9]{6}$/).optional() }),
   /** Settings › Machines: the list; ~/.ssh/config's hosts; add an ssh host (its key is read, to approve next); a relay
    * install line (a one-time secret); approve (ssh: its key; relay: the code it shows); decline; revoke; remove; check. */
   z.strictObject({ type: z.literal("machines.view") }),
@@ -1404,7 +1431,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
   "plugins.list", "plugins.enable", "plugins.store", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.linkCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink", "plugin.grant",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "mobile.cluster", "mobile.confirm", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "link.drag", "worker.file",
   "storage.list", "storage.add", "storage.pick", "storage.remove", "storage.open", "storage.drag",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
@@ -1577,6 +1604,8 @@ export interface Results {
   "mobile.pair": MobilePairView;
   "mobile.revoke": MobileDeskView;
   "mobile.relay": MobileDeskView;
+  "mobile.cluster": MobileClusterView;
+  "mobile.confirm": MobileDeskView;
   "machines.view": MachinesView;
   "machines.hosts": { hosts: string[] };
   "machines.add": MachinesView;
