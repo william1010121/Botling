@@ -31,6 +31,8 @@ const RETRY_MS = 15_000;
 const PAIRED_RETRY_MS = 2_000;
 const PAIRED_CONNECTING = 'Paired. Connecting to your computer…';
 const PAIRED_WAITING = 'Paired with your computer. It is not answering yet (Botling may still be starting, or the network is slow); still connecting…';
+/** Paired, but this browser did not keep the pairing (relay-session.ts read it back and it was not there). */
+export const RELAY_NOT_KEPT = 'This browser cannot keep the pairing (a private tab, or website data turned off), so you will need to scan the code again next time.';
 type Auth = 'checking' | 'signedOut' | 'denied' | 'unavailable';
 const TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 /** The bridge over HTTPS (a token), or the end-to-end encrypted relay (a paired phone). */
@@ -111,8 +113,10 @@ export function WebApp() {
   /** The camera open for scanning a pairing code (opened from the Scan button's tap). */
   const [camera, setCamera] = useState<MediaStream | null>(null);
   const connecting = useRef(false);
-  /** A relay pairing is saved in this browser (it can reconnect without a new code). */
+  /** A relay pairing is held (stored in this browser, or only in this page's memory): it can reconnect without a new code. */
   const [relaySaved, setRelaySaved] = useState(false);
+  /** Paired here, but this browser could not store the pairing: it lasts only while this page is open. */
+  const [relayNotKept, setRelayNotKept] = useState(false);
   /** A bridge sign-in (token) is kept in this browser. */
   const [bridgeSaved, setBridgeSaved] = useState(false);
   /** This page came from a relay pairing code (or holds a relay pairing): an access token has no use here (the relay
@@ -225,11 +229,13 @@ export function WebApp() {
     try { paired = await RelayClient.pair(relayLink, location.origin, deviceName(), { onRevoked: relayLost, onSession: keepRelay }); }
     catch (cause) { failed(cause, 'Pairing failed. Show a new code on your computer.'); connecting.current = false; return; }
     try {
-      // Kept in this browser (in memory at least: a private window) so a retry needs no new code.
-      await saveRelaySession(paired.session);
-      setRelaySaved(true);
+      // Kept in this browser so the page opened again needs no new code; in this page's memory at least (a private
+      // tab), so a retry here needs none. Not kept is said, never shown as kept.
+      const kept = await saveRelaySession(paired.session);
+      setRelaySaved(true); setRelayNotKept(!kept);
       setMessage(PAIRED_CONNECTING);
       await showRelay(paired.client);
+      if (!kept) setMessage(RELAY_NOT_KEPT);
     } catch (cause) {
       if (cause instanceof MobileError && cause.auth) { setRelaySaved(false); await forgetRelaySession(); failed(cause, cause.message); }
       else { setAuth('unavailable'); setMessage(PAIRED_WAITING); setPairedRetry(n => n + 1); }
@@ -308,7 +314,7 @@ export function WebApp() {
     connected.bridge.close(); clearDrafts(); forgetLocal(storage()); setConnected(null); setAuth('signedOut'); setMessage('');
     setBridgeSaved(false); void forgetBridgeLogin();
     // Signing out of a relay session forgets its pairing in this browser (the desktop can revoke it in Settings › Phone).
-    if (connected.transport instanceof RelayClient) { connected.transport.close(); setRelaySaved(false); void forgetRelaySession(); }
+    if (connected.transport instanceof RelayClient) { connected.transport.close(); setRelaySaved(false); setRelayNotKept(false); void forgetRelaySession(); }
   }, [connected]);
 
   const chrome = useMemo(() => ({
@@ -339,6 +345,7 @@ export function WebApp() {
         {tokenText && <button type="submit" className="web-primary" disabled={busy}>{busy ? 'Connecting…' : 'Connect'}</button>}
       </div>
       {busy && !tokenText && <p className="web-signin-muted">Connecting…</p>}
+      {relaySaved && relayNotKept && <p className="web-signin-muted">{RELAY_NOT_KEPT}</p>}
       <p className="web-signin-muted">{relayPage ? 'Keep Botling running on your computer. Everything between this phone and Botling is end-to-end encrypted.'
         : 'Keep Botling running on your computer. This phone stays signed in until you sign out here or revoke it on your computer.'}</p>
     </form>

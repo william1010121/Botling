@@ -18,8 +18,10 @@ No service worker stores private conversations or credentials.
 
 The same page also works through the phone relay ([docs/mobile-relay.md](../../docs/mobile-relay.md)): a relay
 pairing link (`/mobile/#relay=…&k=…&s=…`) pairs over an end-to-end encrypted channel (`relay-client.ts`), the
-pairing is kept in IndexedDB with a non-extractable key (`relay-session.ts`), and the page reconnects with it on the
-next visit. Sign out forgets it.
+pairing is kept in IndexedDB (`relay-session.ts`), and the page reconnects with it on the next visit. Sign out
+forgets it. The phone's private key is stored only wrapped under a non-extractable AES-GCM key and unwrapped as a
+non-extractable key: WebKit stores a record holding an X25519 CryptoKey without an error and reads it back as null.
+A save is read back; a browser that does not keep it (a private tab) is told so on the page.
 
 The home-screen app keeps its own storage apart from Safari (and the Camera app would open a scanned link in Safari),
 so the sign-in page pairs on its own: **Scan QR code** opens the back camera in the page (`QrScanner.tsx`: asked

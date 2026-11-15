@@ -13,7 +13,9 @@ vi.mock('./relay-client', () => ({
 }));
 /** The pairing this browser keeps (saved by a successful pairing). */
 let kept: unknown = null;
-vi.mock('./relay-session', () => ({ loadRelaySession: async () => kept, saveRelaySession: async (session: unknown) => { kept = session; return true; }, forgetRelaySession: async () => { kept = null; },
+/** Whether this browser can store the pairing (false: a private tab; it is then held only in memory). */
+let storable = true;
+vi.mock('./relay-session', () => ({ loadRelaySession: async () => kept, saveRelaySession: async (session: unknown) => { kept = session; return storable; }, forgetRelaySession: async () => { kept = null; },
   loadBridgeLogin: async () => null, saveBridgeLogin: async () => true, forgetBridgeLogin: async () => {} }));
 const { WebApp } = await import('./WebApp');
 const { MobileError } = await import('./transport');
@@ -26,7 +28,7 @@ beforeEach(() => {
   window.history.replaceState(null, '', `/mobile/#relay=${KEY}&k=${KEY}&s=${KEY}`);
   window.matchMedia = ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} })) as any;
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
-  pair.mockReset(); connect.mockReset(); kept = null;
+  pair.mockReset(); connect.mockReset(); kept = null; storable = true;
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 const flush = async () => { for (let i = 0; i < 8; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
@@ -134,3 +136,19 @@ it('while the first read after pairing is under way the page says it is connecti
   await flush();
   expect(container.querySelector('.rail .bot-row')).not.toBeNull();
 });
+
+for (const canStore of [true, false]) {
+  it(`a pairing this browser ${canStore ? 'stores is not' : 'cannot store is said, in one sentence, and never'} shown as kept`, async () => {
+    storable = canStore;
+    const client = new ((await import('./relay-client')).RelayClient as any)();
+    client.closed = false;
+    client.request = async (cmd: any) => snapshotOf(cmd);
+    pair.mockResolvedValue({ client, session: { botIds: ['*'], expiresAt: Date.now() + 1e9 } });
+    await act(async () => root.render(<WebApp />));
+    await flush();
+    expect(container.querySelector('.rail .bot-row')).not.toBeNull();
+    const alert = container.querySelector('[role="alert"]')?.textContent ?? '';
+    if (canStore) expect(alert).not.toMatch(/cannot keep/);
+    else expect(alert).toContain('This browser cannot keep the pairing');
+  });
+}

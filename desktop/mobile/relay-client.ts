@@ -16,7 +16,8 @@ import { DeskHandshake, DeskMessage, RELAY_PAIR_ACK, type RelayLink } from '../s
 import { MobileError, type MobileCommand } from './transport';
 import { DELIVERY_UNCONFIRMED } from '../src/renderer/delivery';
 
-/** What the phone keeps after pairing (relay-session.ts stores it; the private key is never exportable). */
+/** What the phone keeps after pairing (relay-session.ts stores it, with the private key only wrapped under a
+ * non-extractable key: the key made when pairing can be wrapped once, a key loaded again cannot be exported). */
 export interface RelaySession {
   ws: string; room: string; deskKey: string; deviceId: string; token: string; keys: KeyPair;
   coreId: string; botIds: string[]; expiresAt: number;
@@ -215,7 +216,8 @@ export class RelayClient {
     if (msg.t === 'joined') {
       this.ephemeral = await generateKeyPair();
       if (this.hello.kind === 'pair') {
-        const keys = await generateKeyPair();
+        // Extractable only so relay-session.ts can wrap it for storage (WebKit cannot store an X25519 CryptoKey).
+        const keys = await generateKeyPair(true);
         this.session = { ws: this.hello.link.ws!, room: this.hello.link.room, deskKey: this.hello.link.deskKey, deviceId: await deviceIdOf(keys.publicKey),
           token: '', keys, coreId: '', botIds: [], expiresAt: 0 };
         this.send({ t: 'd', d: JSON.stringify({ h: 'pair', v: 1, offer: await offerIdOf(this.hello.secret), device: b64u.encode(keys.publicKey), eph: b64u.encode(this.ephemeral.publicKey) }) });
