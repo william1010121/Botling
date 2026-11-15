@@ -9,7 +9,9 @@
 //                           on that machine may send it. A stated scope other than `local` (a phone's, already one of
 //                           the four device scopes) is forwarded as it is, and so is a `local` command whose origin is
 //                           not the window's fixed id (another local client: B still decides it as `read`, so a local
-//                           token at A never borrows a phone's or a server's origin at B).
+//                           token at A never borrows a phone's or a server's origin at B). The machine-only refusal
+//                           runs on every `local` command before that, so a call-in under a server's origin never
+//                           leaves A (B would accept it: a call-in is stated `read`).
 //   at B (`windowOwnerCheck`) a slot whose origin is the window's fixed id and whose forwarded scope is `manage` is
 //                           decided as a device holding all four device scopes (the window is a user: it may settle a
 //                           card, which a server origin never may). Anything else with that origin falls through to
@@ -38,9 +40,11 @@ export type WindowForward = { envelope: CmdBody } | { refusal: string };
 
 /** The envelope the attached server forwards (a window's `local` becomes `manage`), or why it is refused here. */
 export function windowForward(envelope: CmdBody): WindowForward {
-  if (envelope.scope !== "local" || envelope.slot.origin !== WINDOW_ORIGIN) return { envelope };
+  if (envelope.scope !== "local") return { envelope };
+  // Every local command first: a machine-only one or a call-in never leaves A, whatever origin the local client named.
   const refusal = machineOnlyRefusal(envelope.cmd);
   if (refusal) return { refusal };
+  if (envelope.slot.origin !== WINDOW_ORIGIN) return { envelope };
   return { envelope: { ...envelope, scope: WINDOW_FORWARD_SCOPE as Scope } };
 }
 

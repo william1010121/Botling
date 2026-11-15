@@ -35,6 +35,7 @@ const send = (text: string): Command => ({ type: "chat.send", botId: BOT, text }
 const choose: Command = { type: "chat.choose", botId: BOT, messageId: CARD, index: 0 };
 const adminCmd: Command = { type: "mobile.view" };
 const machineCmd: Command = { type: "settings.set", change: { key: "developerMode", value: true } };
+const callinCancel: Command = { type: "callin.cancel", botId: BOT, callId: "6A0B0000-0000-4000-8000-0000000000D1" };
 
 interface World {
   applied: Array<{ origin: string; n: number; type: string }>;
@@ -170,6 +171,21 @@ describe("M7-12a: a window command forwarded by a peer", () => {
       expect(w.applied).toEqual([]);
     } finally { await w.close(); }
   });
+
+  it("a local call-in under a server's origin is refused at A and never reaches B (F2)", async () => {
+    const w = await world();
+    const atA: Array<MessageOf<"cmd.result">> = [];
+    w.forwarder.attach(A, (m) => { if (m.t === "cmd.result") atA.push(m); return true; });
+    try {
+      await w.fromWindow(1, callinCancel, { origin: A });
+      await until(() => atA.length > 0, { what: "the refusal at A" });
+      expect(atA[0]!.outcome).toMatchObject({ kind: "refused", reason: "scope" });
+      expect((atA[0]!.outcome as { detail?: string }).detail).toContain("needs the desktop window on that machine");
+      expect(w.seenAtB).toEqual([]);
+      expect(w.applied).toEqual([]);
+      expect(w.queued()).toBe(0);
+    } finally { await w.close(); }
+  });
 });
 
 describe("M7-12a: the pieces", () => {
@@ -186,7 +202,9 @@ describe("M7-12a: the pieces", () => {
     for (const origin of [PHONE, "srv-a", "other-local"]) {
       const other = { ...stamped("local"), slot: slot(origin) };
       expect(windowForward(other)).toEqual({ envelope: other });
-      expect(windowForward({ ...other, cmd: adminCmd })).toEqual({ envelope: { ...other, cmd: adminCmd } });
+      // ...but a machine-only command or a call-in is still refused at A, whatever the origin.
+      expect(windowForward({ ...other, cmd: adminCmd })).toHaveProperty("refusal");
+      expect(windowForward({ ...other, cmd: callinCancel })).toHaveProperty("refusal");
     }
     // A forwarded phone command that states admin is not rewritten either: it stays the owner's to refuse.
     expect(windowForward({ ...stamped("admin"), cmd: adminCmd })).toEqual({ envelope: { ...stamped("admin"), cmd: adminCmd } });
