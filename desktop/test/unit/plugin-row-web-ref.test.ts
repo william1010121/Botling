@@ -92,7 +92,7 @@ describe("M7-09a: the plugin row names its web bundle by content reference", () 
     expect(s.row("botling.none")).not.toBeNull();
     expect(Object.hasOwn(s.row("botling.none")!, "files")).toBe(false);
     expect(Object.hasOwn(s.row("botling.huge")!, "files")).toBe(false);
-    expect(readdirSync(s.bundlesDir).filter((name) => !name.endsWith(".tmp"))).toEqual([]);
+    expect(existsSync(s.bundlesDir) ? readdirSync(s.bundlesDir) : []).toEqual([]);
     await s.writer.close();
   });
 
