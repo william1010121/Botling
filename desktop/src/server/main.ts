@@ -6,6 +6,8 @@
 //                             exits 75 when another server or core holds the data folder; never imports 1.x/2.x data
 //                             from an inherited BOTLING_IMPORT_FROM / BOTLING_1X_DIR (inherited-env.ts)
 //   botlingd stop             asks the running server to stop (SIGTERM to the lock holder) and waits for it
+//   botlingd service install | uninstall | status
+//                             (M6-08) manages the login item (LaunchAgent on macOS, systemd user unit on Linux)
 //   botlingd status [--json]  running or not, its pid and socket, the turns under way (from server.db), the Doctor notes
 //                             (external disk, backups missing or old, a restore), the newest backup, the loopback
 //                             listener (127.0.0.1:BOTLING_SERVER_PORT, default 8744, "off" for none) and the
@@ -49,6 +51,7 @@ import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
+import { serviceCommand, ServiceError } from "./service";
 import { AdminClient, addMachineCommand, createStdinIo, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./pairing";
 import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
 import { DeviceScope } from "../protocol";
@@ -76,7 +79,7 @@ async function start(): Promise<void> {
   try {
     daemon = await Botlingd.start({ env: process.env, outDir: join(__dirname, "..") });
   } catch (error) {
-    if (error instanceof DataDirInUseError) fail(error.message, CORE_EXIT_DATA_DIR_IN_USE);
+    if (error instanceof DataDirInUseError) fail(error.message, process.env.BOTLING_SERVICE === "1" ? 0 : CORE_EXIT_DATA_DIR_IN_USE);
     if (error instanceof PathsError) fail(error.message, 2);
     fail(`did not start: ${(error as Error)?.stack ?? String(error)}`);
     return;
@@ -228,8 +231,10 @@ function flag(args: string[], name: string): string | undefined {
 
 async function main(argv: string[]): Promise<void> {
   const [command = "start", ...rest] = argv;
-  let paths;
-  try { paths = botlingdPaths(process.env); } catch (error) { fail((error as Error).message, 2); return; }
+  let paths!: BotlingdPaths;
+  if (command !== "service") {
+    try { paths = botlingdPaths(process.env); } catch (error) { fail((error as Error).message, 2); return; }
+  }
   switch (command) {
     case "start": await start(); return;
     case "stop": await stopCommand(paths.dataDir); return;
@@ -408,6 +413,16 @@ async function main(argv: string[]): Promise<void> {
       try { process.exitCode = await revokeDeviceCommand(client, { out, ask: async () => null }, id!, flag(rest, "--reason")); } finally { client.close(); }
       return;
     }
+    case "service": {
+      try {
+        await serviceCommand(rest, process.env, out);
+      } catch (error) {
+        if (error instanceof PathsError) fail(error.message, 2);
+        if (error instanceof ServiceError) fail(error.message, error.exitCode);
+        throw error;
+      }
+      return;
+    }
     case "backup": {
       const file = join(paths.dataDir, "server.db");
       if (!existsSync(file)) fail(`no server.db in ${paths.dataDir}`);
@@ -436,7 +451,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     default:
-      fail(`unknown command "${command}" (start, stop, status, backup, restore, pair, join, add-machine, machines, recovery, reroot, devices, revoke-device)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, pair, join, add-machine, machines, recovery, reroot, devices, revoke-device)`, 2);
   }
 }
 
