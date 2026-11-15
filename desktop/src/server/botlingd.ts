@@ -409,7 +409,7 @@ export class Botlingd {
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
       });
-      const pluginHashCache = new PluginHashCache({ dataRoot: join(paths.dataDir, "plugin-data") });
+      const pluginHashCache = new PluginHashCache({ dataRoot: join(paths.dataDir, "plugin-data"), bundlesDir: join(paths.dataDir, "plugin-bundles") });
       const readInstalledPlugins = () => pluginHashCache.read(core.plugins.registry.plugins, log);
       const machineRow = (pluginsDigest: string | null) => ({
         name: SERVER_NAME,
@@ -685,7 +685,7 @@ export class Botlingd {
       pluginRead = new PluginContentRead({ serverId, service: content, peer: peerContent, roster });
       const peerContentOwner = new PeerContentOwner({ service: content, roster, log, corruptId: testCorruptContent(env) });
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
-      const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), log, peer: peerContent });
+      const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), pluginBundlesDir: join(paths.dataDir, "plugin-bundles"), log, peer: peerContent });
       const vapidState: VapidSyncState = { known: false, warnedMissing: false };
       if (roster.clusterId) {
         await ensureSoleServerVapidKeys(paths.dataDir, roster, log, vapidState).catch((error) => {
