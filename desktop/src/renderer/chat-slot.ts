@@ -17,8 +17,8 @@ import { rendererKernel, slotsVersion, subscribeSlots } from "./renderer-kernel"
 import { inPageHost, type InPageHost } from "./shell/inpage-host";
 import type { FeedEntry } from "./shell/plugin-feed";
 
-/** The two view places, by their 2.x ids (the kernel finds them under `chat/header` and `composer/bar` too). */
-export type ChatViewSlot = "view/chatHeader" | "view/composerBar";
+/** The three view places, by their 2.x ids (the kernel finds them under `chat/header`, `composer/bar` and `main/tab` too). */
+export type ChatViewSlot = "view/chatHeader" | "view/composerBar" | "view/mainTab";
 type Menus = NonNullable<PluginsView["menus"]>;
 const OWNED = new Set<string>(CHAT_MENUS);
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
@@ -55,6 +55,18 @@ export function slotViews<Row>(slot: ChatViewSlot, views: readonly Row[], kernel
   const held = up ? kernel.entries<Partial<FeedEntry<Row>>>(slot).flatMap(({ entry }) => (entry.kind === "feed" && entry.row !== undefined ? [entry.row] : [])) : [];
   const shown = views.filter((row) => held.some((one) => same(one, row)));
   return shown.length === views.length ? views : shown;
+}
+
+/**
+ * The view the chat column reads its tabs from (M7-07a): `plugins` with `mainTabs` cut to the rows `main/tab` (2.x `view/mainTab`) holds, by the
+ * same rule as `slotViews` (a row counts only when the slot holds it AND the array still has it, in the array's order; owner away → no tab, so
+ * the switch offers Chat and Storage only; a host that never touched the plugin → the view as it is). What a bot last showed (settings.json
+ * `mainTabs`) is not touched: a tab that is offered again shows again.
+ */
+export function chatMainTabs(plugins: PluginsView | null | undefined, kernel: Kernel = rendererKernel, host: Pick<InPageHost, "unavailable"> = inPageHost): PluginsView | null | undefined {
+  if (!plugins?.mainTabs) return plugins;
+  const tabs = slotViews("view/mainTab", plugins.mainTabs, kernel, host);
+  return tabs === plugins.mainTabs ? plugins : { ...plugins, mainTabs: [...tabs] };
 }
 
 /** The version of the slots, to draw again when one changes (a useSyncExternalStore snapshot of the kernel's slots). */

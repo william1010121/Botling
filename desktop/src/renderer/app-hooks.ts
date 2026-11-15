@@ -5,6 +5,7 @@ import type { WorkspaceStore } from "./store";
 import { pinnedNumber } from "./app-shared";
 import { setShortcutLabels } from "./shortcut-labels";
 import { namedBot, mainTabsFor, STORAGE_TAB, type MainTab } from "./main-tabs";
+import { chatMainTabs } from "./chat-slot";
 import { openReport } from "./report-opener";
 import { postToChat } from "./editor-surface";
 import { jumpInPlace } from "./note-dock";
@@ -137,7 +138,7 @@ export function useBuiltinRunner({ client, store, fail, setError, chooseTab, set
       return;
     }
     if (command.id === "botling.openTab") {
-      const tab = mainTabsFor(store.getView().plugins, { id: botId, role: store.getView().bots.find((candidate) => candidate.id === botId)?.role ?? "bot", parent: store.getView().bots.find((candidate) => candidate.id === botId)?.parent })
+      const tab = mainTabsFor(chatMainTabs(store.getView().plugins), { id: botId, role: store.getView().bots.find((candidate) => candidate.id === botId)?.role ?? "bot", parent: store.getView().bots.find((candidate) => candidate.id === botId)?.parent })
         .find((candidate) => candidate.plugin === command.plugin && candidate.id === command.view);
       if (!tab) { fail(new Error(`No tab "${command.view.slice(0, 80)}".`)); return; }
       selectBot(botId);
