@@ -98,19 +98,26 @@ export const PROFILE_VALUE_LIMIT = 2_000;
 export const ProfileField = z.enum(["name", "icon", "addresses", "push"]);
 export type ProfileField = z.infer<typeof ProfileField>;
 
-/** Web Push endpoint URL (§18.4): https in production, or loopback http in tests. */
+/** Host names that never belong to a public push service (local, link-local and private DNS zones). */
+const PRIVATE_HOST = /(^|\.)(localhost|local|internal|home\.arpa)$/;
+
+/**
+ * Web Push endpoint URL (§18.4). Every server POSTs to it (M4-23), so a device must not be able to aim the servers at
+ * their own machine or network: https on the default port, a DNS name with a dot, no IP literal, no local zone, no
+ * credentials. A name that resolves to a private address is the sender's check at send time (M4-23).
+ */
 export const PushEndpoint = z.string().min(1).max(1_900).refine((value) => {
   if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
   try {
     const url = new URL(value);
-    if (url.username || url.password) return false;
-    if (url.protocol === "https:") return Boolean(url.hostname);
-    if (url.protocol === "http:") return url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
-    return false;
+    if (url.protocol !== "https:" || url.username || url.password || url.port !== "") return false;
+    const host = url.hostname.toLowerCase().replace(/\.$/, "");
+    if (!host.includes(".") || host.startsWith("[") || /^[0-9.]+$/.test(host) || PRIVATE_HOST.test(host)) return false;
+    return true;
   } catch {
     return false;
   }
-}, { message: "must be an https URL (or loopback http URL)" });
+}, { message: "must be an https URL of a public host on the default port" });
 
 /** Web Push device keys (RFC 8291): 65-byte uncompressed P-256 point and 16-byte auth secret, base64url. */
 export const PushKeys = z.strictObject({

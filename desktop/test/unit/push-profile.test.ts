@@ -1,6 +1,7 @@
 // Botling 3 M4-22: Profile `push` field and `push.subscribe` (protocol v1 §4.1, §18.4).
 // - `Profile{device, field: "push", value}` and `push.subscribe` round-trip, respect the 2,000-char limit and
-//   validate endpoints (https or loopback http in tests) and P-256 / 16-byte auth keys;
+//   validate endpoints (https to a public host on the default port, never an IP literal or local zone) and P-256 /
+//   16-byte auth keys;
 // - only the device's own authenticated remote session can set its `push` field (refused on local sockets, pairing
 //   sessions, server/peer roles, or before hello; extra `device` field rejected);
 // - a revoked device (direct revoke, cascading server revoke, or quiet per-frame check) cannot set a subscription and
@@ -12,8 +13,8 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   canonicalJson, decodeFrame, encodeFrame, FrameSplitter, memberIdFromKey, packFrame,
-  ProfileStatement, SignedStatement, statementBytes, statementId, toBase64Url,
-  type Message, type MessageOf, type PushSubscription, type Sender, type SessionKind,
+  ProfileStatement, PushSubscription, SignedStatement, statementBytes, statementId, toBase64Url,
+  type Message, type MessageOf, type Sender, type SessionKind,
 } from "../../src/protocol";
 import { effectCheckpointSink } from "../../src/server/effects";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "../../src/server/identity";
@@ -246,9 +247,23 @@ describe("M4-22 protocol: Profile push field and push.subscribe", () => {
     expect(decoded.ok).toBe(true);
     if (decoded.ok) expect(decoded.message).toEqual(msg);
 
-    // Loopback http URL is accepted for local test push endpoints.
-    const loopback: MessageOf<"push.subscribe"> = { t: "push.subscribe", endpoint: "http://127.0.0.1:41234/push", keys: sub.keys };
-    expect(decodeFrame(JSON.stringify(loopback), "fe", REMOTE).ok).toBe(true);
+  });
+
+  it("refuses endpoints that aim the servers at their own machine or network (SSRF, M4-22 review)", () => {
+    const keys = makeSub(1).keys;
+    const ok = ["https://fcm.googleapis.com/fcm/send/abc", "https://updates.push.services.mozilla.com/wpush/v2/x", "https://web.push.apple.com:443/Q", "https://PUSH.Example./sub"];
+    for (const endpoint of ok) expect(decodeFrame(JSON.stringify({ t: "push.subscribe", endpoint, keys }), "fe", REMOTE).ok, endpoint).toBe(true);
+    const refused = [
+      "http://127.0.0.1:41234/push", "http://localhost/push", "http://[::1]/push",
+      "https://127.0.0.1/push", "https://2130706433/push", "https://0x7f.1/push", "https://10.0.0.5/push", "https://169.254.169.254/latest",
+      "https://[::1]/push", "https://[fd00::1]/push",
+      "https://localhost/push", "https://localhost./push", "https://a.localhost/push", "https://printer.local/push", "https://metadata.google.internal/x",
+      "https://router.home.arpa/push", "https://intranet/push", "https://push.example:8443/sub", "https://push.example:22/sub",
+    ];
+    for (const endpoint of refused) {
+      expect(decodeFrame(JSON.stringify({ t: "push.subscribe", endpoint, keys }), "fe", REMOTE), endpoint).toMatchObject({ ok: false, reason: "malformed" });
+      expect(PushSubscription.safeParse({ endpoint, keys }).success, endpoint).toBe(false);
+    }
   });
 
   it("enforces role boundaries: remote device fe only; refused on local socket, pairing, server, and peer", () => {
