@@ -154,6 +154,18 @@ describe("a frame's ccb.composer.insertQuote, bound from the declaration", () =>
     expect(await quote(4)).toEqual({ ccb: "reply", id: 4, ok: true, value: { inserted: true } });
   });
 
+  it("a declared plugin whose instance is not active (unloaded under the feed) is refused until it is loaded again", async () => {
+    const calls: unknown[] = [];
+    stops.push(setComposerQuoter(async (...args) => { calls.push(args); return true; }));
+    reconcileView(view());
+    const { quote } = frame();
+    await rendererKernel.requestUnload(NOTE);
+    expect(rendererKernel.state(NOTE)).toBe("absent");
+    expect(pluginFeed.declares(NOTE)).toBe(true);
+    expect(await quote(5)).toEqual({ ccb: "reply", id: 5, ok: true, value: { inserted: false } });
+    expect(calls).toEqual([]);
+  });
+
   it("swapping :chat (unload, load) while the Note's frame stays mounted: the next quote is inserted, the frame and the Note are not reloaded", async () => {
     const used: string[] = [];
     const first = setComposerQuoter(async () => { used.push("first"); return true; });
