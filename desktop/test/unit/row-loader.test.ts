@@ -420,6 +420,13 @@ describe("the ticket fetcher", () => {
     await expect(fetchBundle({ plugin: "a", ref: `sha256:${hex(big)}` })).rejects.toThrow(/too large/);
   });
 
+  it("refuses bytes that hash to the reference but are not UTF-8 text (no replacement characters run)", async () => {
+    const bad = new Uint8Array([0x63, 0xff, 0xfe, 0x64]);
+    const { link } = port();
+    const fetchBundle = ticketBundleFetcher({ link, base: "http://page.example", fetch: web(bad).fetchImpl });
+    await expect(fetchBundle({ plugin: "a", ref: `sha256:${hex(bad)}` })).rejects.toThrow();
+  });
+
   it("rejects when there is no ticket (a refusal, or no session), an HTTP error, no address, or a request that is not a plugin and a reference", async () => {
     const gone = port("srvA", () => ({ t: "content.gone", reason: "denied" }));
     await expect(ticketBundleFetcher({ link: gone.link, base: "http://p", fetch: web(A1).fetchImpl })({ plugin: "a", ref: refOf(A1) })).rejects.toThrow(/no ticket/);
