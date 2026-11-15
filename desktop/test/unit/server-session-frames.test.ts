@@ -7,7 +7,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  BINARY_FRAME_MARK, CONTENT_CHUNK_BYTES, decodeFrame, encodeFrame, encodeResFrames, FRAME_LIMIT, FrameSplitter,
+  BINARY_FRAME_MARK, CONTENT_CHUNK_BYTES, decodeFrame, encodeChunkFrame, encodeFrame, encodeResFrames, FRAME_LIMIT, FrameSplitter,
   packFrame, RES_PART_CHARS, ResAssembler, type Message, type MessageOf,
 } from "../../src/protocol";
 import { Session, type SessionHost } from "../../src/server/session/session";
@@ -244,5 +244,56 @@ describe("encodeResFrames / ResAssembler", () => {
     for (const part of parts) { const step = joiner.push(part, LOCAL); if (!step.ok) throw new Error(step.detail); done = step.message ?? done; }
     expect(done).toEqual({ t: "res", req: "b", ok: true, result: { text } });
     expect(joiner.pending).toBe(0);
+  });
+});
+
+describe("M4-43 (D67): bye{unsettled} names the slot on cmd/cancel failures, omits it on upload chunk failures", () => {
+  const slot = { origin: "test", originEpoch: EPOCH, target: "bot:b1" as const, n: 1 };
+
+  it("carries slot when cmd handling throws", async () => {
+    const { socket, session } = open(async () => null, {
+      runtime: { receive: async () => { throw new Error("store write failed"); } } as unknown as SessionHost["runtime"],
+    });
+    socket.feed({ t: "cmd", slot, floor: 1, inc: "inc-0000001", cmd: { type: "chat.send", botId: "b1", text: "hi" } });
+    await settle();
+    const bye = socket.frames().find((f) => f.t === "bye") as MessageOf<"bye"> | undefined;
+    expect(bye).toMatchObject({ t: "bye", reason: "unsettled", slot });
+    session.close();
+  });
+
+  it("carries slot when cmd is dropped (D58)", async () => {
+    const { socket, session } = open(async () => null, {
+      runtime: { receive: async () => ({ status: "dropped" }) } as unknown as SessionHost["runtime"],
+    });
+    socket.feed({ t: "cmd", slot, floor: 1, inc: "inc-0000001", cmd: { type: "chat.send", botId: "b1", text: "hi" } });
+    await settle();
+    const bye = socket.frames().find((f) => f.t === "bye") as MessageOf<"bye"> | undefined;
+    expect(bye).toMatchObject({ t: "bye", reason: "unsettled", slot });
+    session.close();
+  });
+
+  it("carries slot when cancel cannot be settled", async () => {
+    const { socket, session } = open(async () => null, {
+      runtime: { slots: { cancel: async () => { throw new Error("cancel store error"); } } } as unknown as SessionHost["runtime"],
+    });
+    socket.feed({ t: "cancel", slot });
+    await settle();
+    const bye = socket.frames().find((f) => f.t === "bye") as MessageOf<"bye"> | undefined;
+    expect(bye).toMatchObject({ t: "bye", reason: "unsettled", slot });
+    session.close();
+  });
+
+  it("omits slot when an upload chunk write fails", async () => {
+    const { socket, session } = open(async () => null, {
+      uploads: { chunk: async () => { throw new Error("chunk write failed"); } } as unknown as SessionHost["uploads"],
+    });
+    const chunk = encodeChunkFrame({ t: "content.chunk", req: "u1", offset: 0, bytes: new Uint8Array([1, 2, 3]) }, "fe", LOCAL);
+    if (!chunk.ok) throw new Error(chunk.detail);
+    socket.emit("data", Buffer.from(packFrame(chunk.bytes)));
+    await settle();
+    const bye = socket.frames().find((f) => f.t === "bye") as MessageOf<"bye"> | undefined;
+    expect(bye).toMatchObject({ t: "bye", reason: "unsettled" });
+    expect(bye?.slot).toBeUndefined();
+    session.close();
   });
 });

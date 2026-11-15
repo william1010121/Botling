@@ -18,7 +18,7 @@ import { SwBridge } from "./sw-bridge";
 import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
-import { askedPath, bannerText, FE_VERSION, newDiagnostics, openConnection, type Connection, type Diagnostics, type DialPath } from "./connection";
+import { askedPath, bannerText, FE_VERSION, itemWords, newDiagnostics, openConnection, UNSETTLED_LEGACY_WARNING, type Connection, type Diagnostics, type DialPath } from "./connection";
 import type { DeviceScope } from "../../src/protocol";
 
 /** Diagnostics for the headless harness and support (not a capability; the renderer never sees it). */
@@ -288,9 +288,18 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
 }
 
 /** Settings › This device: who this device is, which server it is paired with, and forgetting it. */
-function ThisDevice({ device, connection, path, onClose, onForget }: { device: DeviceRecord; connection: Connection | null; path: DialPath; onClose: () => void; onForget: () => void }) {
+export function ThisDevice({ device, connection, path, onClose, onForget }: { device: DeviceRecord; connection: Connection | null; path: DialPath; onClose: () => void; onForget: () => void }) {
   const [confirm, setConfirm] = useState(false);
-  const pending = connection?.link.pending().length ?? 0;
+  const [pendingItems, setPendingItems] = useState(() => connection?.link.pending() ?? []);
+  useEffect(() => {
+    if (!connection) { setPendingItems([]); return; }
+    setPendingItems(connection.link.pending());
+    return connection.link.on((event) => {
+      if (event.type === "pending" || event.type === "outcome") setPendingItems(connection.link.pending());
+    });
+  }, [connection]);
+  const pending = pendingItems.length;
+  const stoppedItems = pendingItems.filter((item) => item.stopped);
   return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
     <section className="v3-sheet" role="dialog" aria-label="This device" onClick={(event) => event.stopPropagation()}>
       <h2>This device</h2>
@@ -303,6 +312,16 @@ function ThisDevice({ device, connection, path, onClose, onForget }: { device: D
         <dt>Waiting to send</dt><dd>{pending}</dd>
         <dt>Connected</dt><dd data-testid="dial-path">{path === "relay" ? "via relay" : diagnostics.player.path === "local" ? "on this computer" : "via tailnet"}</dd>
       </dl>
+      {stoppedItems.length > 0 && <div className="v3-sheet-stopped" data-testid="stopped-items">
+        {stoppedItems.map((item) => <div key={item.key} className="v3-sheet-stopped-item" data-testid="stopped-item">
+          <p className="v3-sheet-stopped-title"><code>{item.cmd.type}</code></p>
+          <p className="v3-sheet-stopped-msg">{itemWords(item)}</p>
+          <p className="v3-sheet-warn">{UNSETTLED_LEGACY_WARNING}</p>
+          <div className="v3-sheet-actions">
+            <button type="button" className="web-secondary" onClick={() => void connection?.link.giveUp(item.slot).catch(() => undefined)}>Give up</button>
+          </div>
+        </div>)}
+      </div>}
       {device.relay && <div className="v3-sheet-actions">
         <button type="button" className="web-secondary" data-testid="switch-path" onClick={() => void savePref("path", path === "relay" ? "auto" : "relay").then(() => location.reload())}>
           {path === "relay" ? "Connect directly" : "Connect via relay"}</button>

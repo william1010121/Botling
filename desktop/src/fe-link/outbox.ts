@@ -231,6 +231,19 @@ export class Outbox {
     });
   }
 
+  /**
+   * D67: the user gave up on an unresolved slot after repeated `bye{unsettled}`. Leaves `unresolved()` as
+   * `state: "not sent"` with `outcome: { kind: "skipped" }` (persisted until dismissed) so the queue's next command
+   * carries `floor` past it.
+   */
+  giveUp(slot: Slot): Promise<OutboxItem | undefined> {
+    return this.change(slot, (item) => {
+      if (!unresolved(item)) return null;
+      const { retryInc: _retry, ...rest } = item;
+      return { ...rest, state: "not sent", outcome: { kind: "skipped" } };
+    });
+  }
+
   /** The UI is done with a resolved item ("not sent", or "delivered, then lost"). */
   dismiss(slot: Slot): Promise<boolean | undefined> {
     return this.writer.run(() => {

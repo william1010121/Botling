@@ -17,6 +17,10 @@
 .v3-sheet-warn { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
 .v3-sheet-actions { display: flex; gap: 8px; }
 .v3-sheet-actions > button { flex: 1; }
+.v3-sheet-stopped { display: flex; flex-direction: column; gap: 10px; margin: 0 0 14px; }
+.v3-sheet-stopped-item { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.v3-sheet-stopped-title { margin: 0 0 4px; font-size: 13px; }
+.v3-sheet-stopped-msg { margin: 0 0 4px; font-size: 13.5px; }
 .v3-pdf { position: fixed; inset: 0; z-index: 100; width: 100%; height: 100%; border: 0; background: var(--bg, #0e0e10); }
 /* The video player over the page on the relay path (M2 step 14): the PDF viewer's bar, the clip on black. */
 .v3-video { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: #000; color: #e8e8ea; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }

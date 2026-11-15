@@ -21,6 +21,8 @@ export const OFFLINE_AFTER_MS = 45_000;
 export const DIRECT_TIMEOUT_MS = 2_000;
 /** §6.2 / M4-17: while on the relay, re-probe direct every 60 s. */
 export const REPROBE_INTERVAL_MS = 60_000;
+export const UNSETTLED_STOPPED_TEXT = "The server could not take this command.";
+export const UNSETTLED_LEGACY_WARNING = "A legacy command may already have run.";
 
 export interface Diagnostics {
   /** `performance.now()` of every live frame the link handed up. */
@@ -497,7 +499,7 @@ export async function openConnection(device: DeviceRecord, diag: Diagnostics, pa
 
 function recordStates(diag: Diagnostics, items: PendingView[]): void {
   for (const item of items) {
-    const label = item.lost ? "lost" : item.state;
+    const label = item.lost ? "lost" : item.stopped ? "stopped" : item.state;
     const seen = (diag.states[item.key] ??= []);
     if (seen[seen.length - 1] !== label) seen.push(label);
     const word = itemWords(item);
@@ -511,6 +513,7 @@ export function itemWords(item: PendingView): string {
   if (item.lost) return `delivered, then lost when ${item.ownerName ?? "its machine"} was restored`;
   if (item.state === "delivered") return "delivered";
   if (item.state === "not sent") return `not sent: ${item.reasonText ?? item.reason ?? "refused"}`;
+  if (item.stopped) return UNSETTLED_STOPPED_TEXT;
   if (item.waitingFor) return `waiting for ${item.waitingFor}${item.state === "held" ? ` (held at ${item.heldAtName ?? item.heldAt ?? "?"})` : ""}`;
   if (item.state === "held") return `held at ${item.heldAtName ?? item.heldAt ?? "?"}`;
   return "waiting";
