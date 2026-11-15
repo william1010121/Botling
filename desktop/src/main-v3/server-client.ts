@@ -49,17 +49,55 @@ export function serverPaths(env: Record<string, string | undefined>): ServerPath
   };
 }
 
+function isPackagedElectron(): boolean {
+  if (!process.versions.electron) return false;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const electron = require("electron") as { app?: { isPackaged?: boolean } } | string;
+    return typeof electron === "object" && electron?.app?.isPackaged === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * The environment the window starts botlingd with: its own, Electron as Node, the server's data folder, and never the
- * variables that would make it import 1.x/2.x data (M1 demo bug 4: importing is M6's explicit step; botlingd also drops
- * them itself, server/inherited-env.ts).
+ * The environment the window starts botlingd with: its own, Electron as Node when unpackaged (or plain `--botlingd`
+ * when packaged, because the `runAsNode` fuse stays off), the server's data folder, and never the variables that would
+ * make it import 1.x/2.x data (M1 demo bug 4: importing is M6's explicit step; botlingd also drops them itself,
+ * server/inherited-env.ts).
  */
-export function botlingdLaunchEnv(env: Record<string, string | undefined>, paths: ServerPaths): Record<string, string> {
+export function botlingdLaunchEnv(
+  env: Record<string, string | undefined>,
+  paths: ServerPaths,
+  options: { packaged?: boolean } = {},
+): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) if (value !== undefined && !(INHERITED_IMPORT_VARS as readonly string[]).includes(key)) out[key] = value;
-  Object.assign(out, { ELECTRON_RUN_AS_NODE: "1", BOTLING_DATA_DIR: paths.serverDir, BOTLING_PLUGIN_HOST: "node" });
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) continue;
+    if ((INHERITED_IMPORT_VARS as readonly string[]).includes(key)) continue;
+    if (options.packaged && key === "ELECTRON_RUN_AS_NODE") continue;
+    out[key] = value;
+  }
+  if (options.packaged) {
+    Object.assign(out, { BOTLING_DATA_DIR: paths.serverDir });
+  } else {
+    Object.assign(out, { ELECTRON_RUN_AS_NODE: "1", BOTLING_DATA_DIR: paths.serverDir, BOTLING_PLUGIN_HOST: "node" });
+  }
   if (env.BOTLING_SERVER_SOCKET) out.BOTLING_SERVER_SOCKET = env.BOTLING_SERVER_SOCKET;
   return out;
+}
+
+export function botlingdLaunchSpec(
+  env: Record<string, string | undefined>,
+  paths: ServerPaths,
+  options: { packaged?: boolean; execPath?: string; script?: string } = {},
+): { program: string; args: string[]; env: Record<string, string> } {
+  const packaged = options.packaged ?? isPackagedElectron();
+  const program = options.execPath ?? process.execPath;
+  const launchEnv = botlingdLaunchEnv(env, paths, { packaged });
+  if (packaged) return { program, args: ["--botlingd", "start"], env: launchEnv };
+  if (!options.script) throw new Error("botlingd script path is required when unpackaged");
+  return { program, args: [options.script, "start"], env: launchEnv };
 }
 
 /** The server build beside a core build: `<out>/server/main.cjs` beside `<out>/core/main.cjs`. */
@@ -70,13 +108,17 @@ export function serverScriptFor(coreScript: string): string {
 export interface ServerClientDeps {
   dial?: Dial;
   storage?: () => FeStorage | Promise<FeStorage>;
-  /** Starts botlingd when nothing listens on the socket (default: `<server script> start`, detached). */
+  /** Starts botlingd when nothing listens on the socket (default: `<server script> start` or `--botlingd start` when packaged, detached). */
   launch?: () => void;
   readToken?: () => string | undefined;
   clock?: Clock;
   feVersion?: string;
   /** FeLink timing overrides (tests). */
   link?: Partial<FeLinkOptions>;
+  /** Overrides Electron packaged detection (tests). */
+  packaged?: boolean;
+  /** Overrides child_process.spawn (tests). */
+  spawn?: typeof spawn;
 }
 
 const SHELL_OPS: Record<string, AppOp> = {
@@ -193,12 +235,13 @@ export class ServerClient {
     if (now - this.lastLaunch < LAUNCH_EVERY_MS) return;
     this.lastLaunch = now;
     if (this.deps.launch) { this.deps.launch(); return; }
+    const packaged = this.deps.packaged ?? isPackagedElectron();
     const script = serverScriptFor(this.options.script);
-    if (!existsSync(script)) { this.options.audit(`botlingd is not running and ${script} is not built`); return; }
+    if (!packaged && !existsSync(script)) { this.options.audit(`botlingd is not running and ${script} is not built`); return; }
     mkdirSync(this.paths.serverDir, { recursive: true });
-    const env = botlingdLaunchEnv(this.options.env, this.paths);
+    const launch = botlingdLaunchSpec(this.options.env, this.paths, { packaged, script });
     try {
-      const child = spawn(process.execPath, [script, "start"], { env, detached: true, stdio: "ignore" });
+      const child = (this.deps.spawn ?? spawn)(launch.program, launch.args, { env: launch.env, detached: true, stdio: "ignore" });
       child.unref();
       this.options.audit(`started botlingd (pid ${child.pid ?? "?"})`);
     } catch (error) {
