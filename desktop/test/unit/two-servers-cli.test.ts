@@ -101,8 +101,8 @@ beforeAll(async () => {
   const add = new CliRun(a, ["add-machine", link]);
   const recovery = (await add.line(/^Your recovery code.*\n\n\s+(\S[^\n]*)$/m))[1].trim();
   codes.push(recovery);
-  await add.line(/^Recovery code:/m);
-  add.type(recovery);
+  await add.line(/^Press Enter once you have saved it/m);
+  add.type("");
   aFingerprint = (await add.line(/^This machine's fingerprint:\s+(\S.*)$/m))[1].trim();
   await add.line(/^Does "B" show exactly this fingerprint/m);
   add.type("yes");

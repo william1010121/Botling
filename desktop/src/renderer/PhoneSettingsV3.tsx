@@ -1,6 +1,7 @@
 // Settings › Phone, Botling 3 (shown by PhoneSettings when botlingd's view carries `v3`; botlingd answers these requests
 // itself, server/pairing/phone-desk.ts). The relay (on, off, elsewhere: botlingd switches at once), the first pairing
-// (a recovery code shown once and typed back), a pairing code as a QR of the Botling 3 link, the phone's 6-digit code to
+// (one button: the cluster is made, its recovery code shown once in a dialog like an API key, never typed back, and the
+// pairing code follows when it is saved), a pairing code as a QR of the Botling 3 link, the phone's 6-digit code to
 // compare and accept or reject, and the paired phones. Secrets (the link, the recovery code) live in this component's
 // state only until they are used, hidden or expire; they are never written anywhere or shown as plain text (the link).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,6 +9,7 @@ import type { MobileClusterView, MobileDeskView, MobilePairView, MobileV3View } 
 import { qrModules } from "../server/pairing/qr";
 import { Client, RequestFailed } from "./client";
 import { mobileWords } from "./mobile-text";
+import { ShellOverlay } from "./ShellOverlay";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 const when = (ms: number, lang: string | null) => new Date(ms).toLocaleDateString(lang ?? undefined, { month: "short", day: "numeric" });
@@ -50,11 +52,10 @@ export function PhoneSettingsV3({ client, lang, view, setView, refresh }: Props)
   const [failed, setFailed] = useState<string | null>(null);
   const [relayText, setRelayText] = useState<string | null>(null);
   const [savingRelay, setSavingRelay] = useState(false);
-  /** The recovery code just shown (once); gone when it is confirmed or a new one is asked for. */
-  const [recovery, setRecovery] = useState<{ code: string; expiresAt: number } | null>(null);
-  const [typed, setTyped] = useState("");
+  /** The recovery code just made, shown once in a dialog; gone when "I've saved it" is pressed. */
+  const [recovery, setRecovery] = useState<string | null>(null);
+  const [recoveryCopied, setRecoveryCopied] = useState(false);
   const [clusterBusy, setClusterBusy] = useState(false);
-  const [clusterError, setClusterError] = useState<string | null>(null);
   const [offer, setOffer] = useState<MobilePairView | null>(null);
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
@@ -84,12 +85,13 @@ export function PhoneSettingsV3({ client, lang, view, setView, refresh }: Props)
     if (followed.state === "paired") { setOffer(null); setOutcome(t.paired(followed.device || words.unnamed)); }
     else if (followed.state === "declined") { setOffer(null); setOutcome(t.declined[followed.reason ?? "cancelled"]); }
   }, [offer, followed, t, words.unnamed]);
-  // A recovery code that expired unconfirmed is not shown any longer.
+  // While the recovery code is shown, Escape does not close Settings under it (the code would be lost unseen).
   useEffect(() => {
     if (!recovery) return;
-    const timer = setTimeout(() => { setRecovery(null); setClusterError(t.clusterReason.expired); }, Math.max(0, recovery.expiresAt - Date.now()));
-    return () => clearTimeout(timer);
-  }, [recovery, t.clusterReason.expired]);
+    const hold = (event: KeyboardEvent) => { if (event.key === "Escape") event.stopImmediatePropagation(); };
+    window.addEventListener("keydown", hold, true);
+    return () => window.removeEventListener("keydown", hold, true);
+  }, [recovery]);
 
   const saveRelay = async (url: string | null) => {
     if (busy.current.relay) return;
@@ -98,30 +100,18 @@ export function PhoneSettingsV3({ client, lang, view, setView, refresh }: Props)
     catch (failure) { setFailed(why(failure)); }
     finally { busy.current.relay = false; setSavingRelay(false); }
   };
-  const newRecoveryCode = async () => {
+  const setUp = async () => {
     if (busy.current.cluster) return;
-    busy.current.cluster = true; setClusterBusy(true); setClusterError(null); setFailed(null);
+    busy.current.cluster = true; setClusterBusy(true); setFailed(null);
     try {
       const made: MobileClusterView = await client.request({ type: "mobile.cluster" });
-      if (made.ok && made.code) { setRecovery({ code: made.code, expiresAt: made.expiresAt ?? Date.now() + 600_000 }); setTyped(""); }
+      if (made.ok && made.code) { setRecovery(made.code); setRecoveryCopied(false); }
       await refresh();
-    } catch (failure) { setFailed(why(failure)); }
+    } catch (failure) { setFailed(why(failure)); void refresh(); }
     finally { busy.current.cluster = false; setClusterBusy(false); }
   };
-  const confirmRecovery = async () => {
-    if (busy.current.cluster || !typed.trim()) return;
-    busy.current.cluster = true; setClusterBusy(true); setClusterError(null); setFailed(null);
-    try {
-      const result: MobileClusterView = await client.request({ type: "mobile.cluster", code: typed.trim() });
-      if (result.ok) { setRecovery(null); setTyped(""); await refresh(); }
-      else {
-        const reason = result.reason ?? "refused";
-        setClusterError(Object.hasOwn(t.clusterReason, reason) ? t.clusterReason[reason as keyof typeof t.clusterReason] : t.clusterReason.refused);
-        if (reason === "cluster-exists") await refresh();
-      }
-    } catch (failure) { setFailed(why(failure)); }
-    finally { busy.current.cluster = false; setClusterBusy(false); }
-  };
+  /** "I've saved it": the code goes, and the pairing code (the QR) follows at once. */
+  const savedRecovery = () => { setRecovery(null); void createCode(); };
   const createCode = async () => {
     if (busy.current.pair) return;
     busy.current.pair = true; setCreating(true); setFailed(null); setOutcome(null);
@@ -143,6 +133,9 @@ export function PhoneSettingsV3({ client, lang, view, setView, refresh }: Props)
   const copyLink = useCallback(async (url: string) => {
     try { await navigator.clipboard.writeText(url); setCopied(url); } catch (failure) { setFailed(why(failure)); }
   }, []);
+  const copyRecovery = async (code: string) => {
+    try { await navigator.clipboard.writeText(code); setRecoveryCopied(true); } catch (failure) { setFailed(why(failure)); }
+  };
 
   const relayValue = relayText ?? relay.url ?? "";
   const minutes = offer ? Math.max(1, Math.ceil((offer.expiresAt - now) / 60_000)) : 0;
@@ -179,30 +172,8 @@ export function PhoneSettingsV3({ client, lang, view, setView, refresh }: Props)
           {v3.cluster !== "ready" && (
             <>
               <div className="settings-row"><div className="settings-label">{words.pairTitle}<div className="settings-hint">{t.setupNote}</div></div></div>
-              {recovery && (
-                <div className="settings-row">
-                  <div className="settings-label">{t.codeTitle}
-                    <div><code className="phone-recovery-code">{recovery.code}</code></div>
-                    <div className="settings-hint">{t.codeNote}</div>
-                  </div>
-                </div>
-              )}
-              {!recovery && v3.cluster === "confirming" && <div className="settings-row"><div className="settings-hint">{t.waitingNote}</div></div>}
-              {(recovery || v3.cluster === "confirming") && (
-                <div className="settings-row">
-                  <div className="settings-label">{t.typeBack}{clusterError && <div className="settings-hint" role="alert">{clusterError}</div>}</div>
-                  <div className="settings-control">
-                    <input type="text" aria-label={t.typeBack} spellCheck={false} autoComplete="off" autoCapitalize="characters" value={typed} disabled={clusterBusy}
-                      onChange={(event) => setTyped(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void confirmRecovery(); }} />
-                  </div>
-                </div>
-              )}
-              {!(recovery || v3.cluster === "confirming") && clusterError && <div className="settings-row"><div className="settings-hint" role="alert">{clusterError}</div></div>}
               <div className="settings-actions">
-                {(recovery || v3.cluster === "confirming") && <button type="button" disabled={clusterBusy || !typed.trim()} onClick={() => void confirmRecovery()}>{clusterBusy ? t.confirming : t.confirmCode}</button>}
-                <button type="button" className={recovery || v3.cluster === "confirming" ? "task-report" : undefined} disabled={clusterBusy} onClick={() => void newRecoveryCode()}>
-                  {v3.cluster === "none" && !recovery ? t.setup : t.newCode}
-                </button>
+                <button type="button" disabled={clusterBusy} onClick={() => void setUp()}>{clusterBusy ? words.creating : t.setup}</button>
               </div>
             </>
           )}
@@ -241,6 +212,20 @@ export function PhoneSettingsV3({ client, lang, view, setView, refresh }: Props)
           )}
         </div>
       </section>
+
+      {recovery && (
+        <ShellOverlay><div className="dialog-backdrop">
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="phone-recovery-title" aria-describedby="phone-recovery-note">
+            <h2 id="phone-recovery-title">{t.codeTitle}</h2>
+            <p><code className="phone-recovery-code">{recovery}</code></p>
+            <p id="phone-recovery-note">{t.codeNote}</p>
+            <div className="dialog-buttons">
+              <button type="button" className="dialog-cancel" onClick={() => void copyRecovery(recovery)}>{recoveryCopied ? t.copied : t.copyCode}</button>
+              <button type="button" className="dialog-primary" onClick={savedRecovery} autoFocus>{t.saved}</button>
+            </div>
+          </div>
+        </div></ShellOverlay>
+      )}
 
       <section className="settings-group" aria-label={words.devices}>
         <h3>{words.devices}</h3>

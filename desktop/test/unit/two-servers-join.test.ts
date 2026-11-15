@@ -115,9 +115,9 @@ describe("M3 step 4: server pairing between two botlingd", () => {
     const add = new CliRun(a, ["add-machine", link]);
     const recovery = (await add.line(/^Your recovery code.*\n\n\s+(\S[^\n]*)$/m))[1].trim();
     secrets.push(recovery);
-    await add.line(/^Recovery code:/m);
-    add.type(recovery);
-    await add.line(/^Cluster \S+ created\./m);
+    await add.line(/^This is the first pairing, so it created your Botling cluster/m);
+    await add.line(/^Press Enter once you have saved it/m);
+    add.type("");
     const sFingerprint = (await add.line(/^This machine's fingerprint:\s+(\S.*)$/m))[1];
     expect((await add.line(/^"B" fingerprint:\s+(\S.*)$/m))[1]).toBe(nFingerprint);
     // N shows S's fingerprint once S dials.

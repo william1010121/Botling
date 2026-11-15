@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Botling 3 Settings › Phone in the window (src/renderer/PhoneSettingsV3.tsx, shown by PhoneSettings when botlingd's
-// view carries `v3`): the first pairing makes the cluster (the recovery code is shown once and typed back), a pairing
-// code is a QR of the Botling 3 link, a phone's 6-digit code is compared and accepted or rejected once, paired phones
+// view carries `v3`): one button makes the cluster (the recovery code is shown once in a dialog, never typed back),
+// then a pairing code follows at once as a QR of the Botling 3 link, a phone's 6-digit code is compared and accepted or rejected once, paired phones
 // are listed and revoked (after asking). The 2.x view (no `v3`) keeps its own screen. The phone page's sign-in words
 // point at Settings › Phone, never at a command line.
 import { act, createElement } from "react";
@@ -38,51 +38,34 @@ const settle = async (ms = 0) => { await act(async () => { await new Promise((re
 const v3 = mobileWords("en").v3;
 
 describe("Settings › Phone in Botling 3", () => {
-  it("first pairing: makes the cluster, shows the recovery code once and asks for it typed back, then pairs", async () => {
+  it("first pairing: one button makes the cluster, shows the recovery code once in a dialog (no typing back), then the QR", async () => {
     const calls: any[] = [];
     let cluster: V3["cluster"] = "none";
     const m = await mount(async (cmd) => {
       calls.push(cmd);
-      if (cmd.type === "mobile.cluster" && cmd.code === undefined) { cluster = "confirming"; return { ok: true, code: CODE, expiresAt: Date.now() + 600_000 }; }
-      if (cmd.type === "mobile.cluster") { if (cmd.code.toUpperCase() !== CODE) return { ok: false, reason: "wrong-code" }; /* botlingd reads it forgivingly */ cluster = "ready"; return { ok: true }; }
+      if (cmd.type === "mobile.cluster") { cluster = "ready"; return { ok: true, code: CODE }; }
       if (cmd.type === "mobile.pair") return { url: LINK, expiresAt: Date.now() + 300_000, route: { kind: "relay", origin: "https://relay.example" }, offer: OFFER };
       return viewOf({ cluster, relayFixed: false, offers: [], devices: [] });
     });
     try {
       expect(button(m.host, mobileWords("en").create)).toBeUndefined(); // no code before the cluster exists
-      expect(m.host.textContent).toContain(v3.setupNote);
       await click(button(m.host, v3.setup));
       expect(calls.filter((c) => c.type === "mobile.cluster")).toEqual([{ type: "mobile.cluster" }]);
-      expect(m.host.textContent).toContain(CODE);
-      const input = m.host.querySelector(`input[aria-label="${v3.typeBack}"]`) as HTMLInputElement;
-      await type(input, "wrong");
-      await click(button(m.host, v3.confirmCode));
-      expect(m.host.querySelector('[role="alert"]')?.textContent).toContain(v3.clusterReason["wrong-code"]);
-      await type(input, CODE.toLowerCase());
-      await click(button(m.host, v3.confirmCode));
-      expect(calls.filter((c) => c.type === "mobile.cluster").at(-1)).toEqual({ type: "mobile.cluster", code: CODE.toLowerCase() });
+      // The recovery code, once, in a dialog like an API key: copy it, say it is saved. Nothing to type back.
+      const dialog = document.querySelector('[role="dialog"][aria-modal="true"]') as HTMLElement;
+      expect(dialog?.textContent).toContain(CODE);
+      expect(dialog.textContent).toContain(v3.codeNote);
+      expect(dialog.querySelector("input")).toBeNull();
+      expect(m.host.querySelector('input[type="text"]')).toBeNull();
+      expect(button(dialog, v3.copyCode)).toBeTruthy();
+      expect(calls.some((c) => c.type === "mobile.pair")).toBe(false);
+      await click(button(dialog, v3.saved));
       await settle();
-      expect(m.host.textContent).not.toContain(CODE); // shown once: gone once confirmed
-      await click(button(m.host, mobileWords("en").create));
-      expect(calls.find((c) => c.type === "mobile.pair")).toEqual({ type: "mobile.pair" });
+      expect(document.body.textContent).not.toContain(CODE); // shown once: gone once saved
+      expect(calls.filter((c) => c.type === "mobile.pair")).toEqual([{ type: "mobile.pair" }]);
       // A Botling 3 link (about 600 bytes) still makes a QR picture, and the link is never shown as text.
       expect(m.host.querySelector("svg.qr-code path")?.getAttribute("d")).toBeTruthy();
       expect(m.host.textContent).not.toContain("e".repeat(40));
-    } finally { await m.done(); }
-  });
-
-  it("asks for the recovery code again after a reopen while the cluster waits for it, and can show a new one", async () => {
-    const calls: any[] = [];
-    const m = await mount(async (cmd) => {
-      calls.push(cmd);
-      if (cmd.type === "mobile.cluster") return { ok: true, code: CODE, expiresAt: Date.now() + 600_000 };
-      return viewOf({ cluster: "confirming", relayFixed: false, offers: [], devices: [] });
-    });
-    try {
-      expect(m.host.querySelector(`input[aria-label="${v3.typeBack}"]`)).not.toBeNull();
-      await click(button(m.host, v3.newCode));
-      expect(calls.filter((c) => c.type === "mobile.cluster")).toEqual([{ type: "mobile.cluster" }]);
-      expect(m.host.textContent).toContain(CODE);
     } finally { await m.done(); }
   });
 
@@ -167,7 +150,9 @@ describe("Settings › Phone in Botling 3", () => {
 
   it("speaks Traditional Chinese", async () => {
     const m = await mount(async () => viewOf({ cluster: "none", relayFixed: false, offers: [], devices: [] }), "zh-Hant");
-    try { expect(m.host.textContent).toContain(mobileWords("zh-Hant").v3.setup); } finally { await m.done(); }
+    try {
+      expect(m.host.textContent).toContain(mobileWords("zh-Hant").v3.setup);
+    } finally { await m.done(); }
   });
 
   it("leaves the 2.x screen as it was when the view has no v3 part", async () => {

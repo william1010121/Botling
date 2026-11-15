@@ -470,7 +470,7 @@ export class ServerJoin {
     if (!offer) throw new JoinError("bad-link", "that is not a join link (botlingd join prints one)");
     if (joinOfferExpired(offer, this.now())) throw new JoinError("expired", "the join link expired; run botlingd join on the other machine again");
     const roster = this.options.roster;
-    if (roster.clusterId === null) throw new JoinError("no-cluster", "this server has no cluster yet: create it first (the recovery code is shown once and typed back)");
+    if (roster.clusterId === null) throw new JoinError("no-cluster", "this server has no cluster yet: create it first (its recovery code is shown once)");
     if (!roster.isValid(roster.memberId)) throw new JoinError("state", "this server was removed from its cluster");
     if (offer.server === roster.memberId) throw new JoinError("bad-link", "that link is this server's own");
     const sign = fromBase64Url(offer.keys.sign);

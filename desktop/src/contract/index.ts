@@ -870,7 +870,7 @@ export type UsageView = z.infer<typeof UsageView>;
 export const MobileRouteView = z.strictObject({ kind: z.enum(["lan", "tailscale", "tunnel", "relay"]), origin: z.string().max(300) });
 export const MobileRelayView = z.strictObject({ url: z.string().max(300).nullable(), state: z.enum(["off", "connecting", "online", "offline"]) });
 /** Botling 3 only (botlingd's own pairing, server/pairing/phone-desk.ts; the 2.x core never sends it): whether the
- * cluster exists (made at the first pairing: the recovery code shown once, then typed back), whether
+ * cluster exists (made at once at the first pairing: the recovery code shown once in a dialog, never typed back), whether
  * BOTLING_SERVER_RELAY_URL fixes the relay, the pairings this window started (waiting for a scan, the 6-digit code to
  * compare, being added, paired or declined; never the link or its secret), and the paired phones (valid ones). */
 export const MobileV3Offer = z.strictObject({
@@ -1309,7 +1309,7 @@ const BASE_COMMANDS = [
   z.strictObject({ type: z.literal("mobile.revoke"), deviceId: z.string().max(64) }),
   /** Turns the phone relay on (its wss:// address) or off (null). */
   z.strictObject({ type: z.literal("mobile.relay"), url: z.string().max(300).nullable() }),
-  /** Botling 3 only: the first pairing's cluster (no code: show a new recovery code once; a code: the one typed back). */
+  /** Botling 3 only: the first pairing's cluster (no code: make it at once and return its recovery code, shown once; a code: the older type-back, now only told the cluster exists). */
   z.strictObject({ type: z.literal("mobile.cluster"), code: z.string().max(64).optional() }),
   /** Botling 3 only: the person compared the phone's 6-digit code with the window's (accept adds the phone). An accept
    * names the code it was shown: a different phone that took the offer since (a new code) is not added. */
