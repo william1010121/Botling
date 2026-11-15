@@ -35,7 +35,7 @@
 // botlingd pings after 15 s of its own silence and drops a session it has not heard from for 45 s (§5.2; fe-link does
 // the same the other way).
 import { ContractError, type Command, type CommandType } from "../../contract";
-import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, type Cursor, type ServerState, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type StreamId } from "../../protocol";
+import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type WelcomeServer, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type StreamId } from "../../protocol";
 import { DEAD_AFTER_MS, PING_AFTER_MS } from "../../session";
 import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
@@ -44,6 +44,8 @@ import { readStream, type LogHub, type LogReader } from "../log";
 import type { LocalPeerReads, LocalPeerReadSink } from "../content/local-peer-read";
 import type { LocatedRef } from "../content/peer-content";
 import type { LiveChannel, LiveSubscription } from "../live";
+import { peerAddresses } from "../peer/config";
+import type { RosterView } from "../roster";
 import type { ShellBridge } from "../shell-bridge";
 import { LiveGate, type LiveGateClock } from "./live-gate";
 
@@ -109,6 +111,19 @@ export interface SessionHost {
   peerReads?: () => LocalPeerReads | null;
   /** M4-01a: local socket `content.find` fallback for a peer bot's line (`LOCAL_WINDOW`). */
   peerLocate?: (message: MessageOf<"content.locate">) => Promise<LocatedRef | null>;
+  /** D70: roster + own DH key for filling `dh` and K12 Profile `addresses` on `welcome.servers` and `peer`. */
+  roster?: SessionRoster;
+  self?: { readonly dhPub: Uint8Array };
+}
+
+/** Shared subset of `RosterView` used by session hosts and remote rosters. */
+export type SessionRosterView = Pick<RosterView, "valid" | "revoked" | "members">;
+
+/** Optional roster view and K12 profile reader used to populate `welcome.servers` and `peer` (D70). */
+export interface SessionRoster {
+  readonly clusterId?: string | null;
+  readonly view?: SessionRosterView;
+  profile?(member: string, field: "addresses"): string | null;
 }
 
 /** server/content/put.ts `Uploads` as a session uses it. */
@@ -150,9 +165,9 @@ export interface SessionForward {
 /** What a front end's session reads of peer servers and their tables (server/replica/peer-tables.ts, server/peer). */
 export interface SessionTables {
   /** Every peer server as `welcome.servers` lists it. */
-  peers(): Array<{ id: string; name: string; state: ServerState; since: number | null }>;
+  peers(): Array<{ id: string; name: string; state: ServerState; since: number | null; dh?: string; addresses?: ServerAddresses }>;
   /** A peer's state changed (`peer{serverId, state, since}` to front ends, §10.5). */
-  onPeer(listener: (peer: { id: string; state: ServerState; since: number | null }) => void): () => void;
+  onPeer(listener: (peer: { id: string; state: ServerState; since: number | null; dh?: string; addresses?: ServerAddresses }) => void): () => void;
   /** A peer's `srv:` table, served from this server's copy (not the log hub). */
   isPeerTable(stream: string): boolean;
   subscribe(stream: string, cursor: Cursor | null, sink: (message: WireMessage) => boolean): { close(): void };
@@ -405,10 +420,10 @@ export abstract class SessionCore {
     try { next = this.host.nextFor(hello.deviceId, hello.originEpoch); } catch (error) { this.host.log(`session: next for ${hello.deviceId}: ${errorText(error)}`); }
     this.send({
       t: "welcome", serverId: this.host.serverId, protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION }, minFeVersion: this.host.minFeVersion,
-      rosterDigest: null, servers: [{ id: this.host.serverId, name: this.host.serverName, state: "live", since: this.host.startedAt }, ...this.peerList()], next, views: {},
+      rosterDigest: null, servers: [this.selfServerEntry(), ...this.peerList()], next, views: {},
     } as MessageOf<"welcome">);
     const tables = this.host.tables;
-    if (tables) this.peerEvents = tables.onPeer((peer) => { this.send({ t: "peer", serverId: peer.id, state: peer.state, since: peer.since } as MessageOf<"peer">); });
+    if (tables) this.peerEvents = tables.onPeer((peer) => { this.send(this.peerMessage(peer)); });
     if (this.host.forward) this.relayOff = this.host.forward.attach(hello.deviceId, (message) => this.send(message));
     this.opened(hello);
     // `cursors` / `want`: fe-link sends a `sub` for each after the welcome (§13.1); taking both would send two snaps.
@@ -418,8 +433,57 @@ export abstract class SessionCore {
   // ---------------------------------------------------------------------------------------------
   // Streams
 
-  private peerList(): Array<{ id: string; name: string; state: ServerState; since: number | null }> {
-    try { return (this.host.tables?.peers() ?? []).slice(0, 63); } catch (error) { this.host.log(`session: peers: ${errorText(error)}`); return []; }
+  /** D70: this server's own `welcome.servers` entry, with `dh` and K12 Profile `addresses` when available. */
+  private selfServerEntry(): WelcomeServer {
+    const id = this.host.serverId;
+    const view = this.host.roster?.view;
+    const dh = this.host.self?.dhPub ? toBase64Url(this.host.self.dhPub) : view?.members.get(id)?.keys.dh;
+    const valid = !view || (view.valid.has(id) && !view.revoked?.has(id));
+    const addresses = valid ? this.profileAddresses(id) : undefined;
+    return {
+      id, name: this.host.serverName, state: "live", since: this.host.startedAt,
+      ...(dh ? { dh } : {}), ...(addresses ? { addresses } : {}),
+    };
+  }
+
+  private peerEntry(peer: { id: string; name: string; state: ServerState; since: number | null; dh?: string; addresses?: ServerAddresses }): WelcomeServer {
+    const view = this.host.roster?.view;
+    const gone = peer.state === "gone" || !!view?.revoked?.has(peer.id);
+    const dh = peer.dh ?? view?.members.get(peer.id)?.keys.dh;
+    const valid = !gone && (!view || view.valid.has(peer.id));
+    const addresses = valid ? (cleanServerAddresses(peer.addresses) ?? this.profileAddresses(peer.id)) : undefined;
+    return {
+      id: peer.id, name: peer.name, state: gone ? "gone" : peer.state, since: peer.since,
+      ...(dh ? { dh } : {}), ...(addresses ? { addresses } : {}),
+    };
+  }
+
+  private peerMessage(peer: { id: string; state: ServerState; since: number | null; dh?: string; addresses?: ServerAddresses }): MessageOf<"peer"> {
+    const view = this.host.roster?.view;
+    const gone = peer.state === "gone" || !!view?.revoked?.has(peer.id);
+    const dh = peer.dh ?? view?.members.get(peer.id)?.keys.dh;
+    const valid = !gone && (!view || view.valid.has(peer.id));
+    const addresses = valid ? (cleanServerAddresses(peer.addresses) ?? this.profileAddresses(peer.id)) : undefined;
+    return {
+      t: "peer", serverId: peer.id, state: gone ? "gone" : peer.state, since: peer.since,
+      ...(dh ? { dh } : {}), ...(addresses ? { addresses } : {}),
+    } as MessageOf<"peer">;
+  }
+
+  private profileAddresses(member: string): ServerAddresses | undefined {
+    try {
+      const parsed = peerAddresses(this.host.roster?.profile?.(member, "addresses") ?? null);
+      return cleanServerAddresses({
+        ...(parsed.tailnet ? { tailnet: parsed.tailnet } : {}),
+        ...(parsed.relay ? { relay: parsed.relay } : {}),
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  private peerList(): WelcomeServer[] {
+    try { return (this.host.tables?.peers() ?? []).slice(0, 63).map((peer) => this.peerEntry(peer)); } catch (error) { this.host.log(`session: peers: ${errorText(error)}`); return []; }
   }
 
   private queueSub(stream: StreamId, cursor: MessageOf<"sub">["cursor"]): void {
@@ -729,4 +793,12 @@ export function streamOf(message: Message): string | undefined {
 
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function cleanServerAddresses(addresses?: ServerAddresses): ServerAddresses | undefined {
+  if (!addresses) return undefined;
+  const out: ServerAddresses = {};
+  if (addresses.tailnet) out.tailnet = addresses.tailnet;
+  if (addresses.relay) out.relay = addresses.relay;
+  return out.tailnet || out.relay ? out : undefined;
 }

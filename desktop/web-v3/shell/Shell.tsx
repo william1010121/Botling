@@ -11,7 +11,7 @@ import { Icon } from "../../src/renderer/icons";
 import { QrScanner, cameraError, openCamera } from "../../mobile/QrScanner";
 import { PHONE_QUERY, phoneWidth } from "../../mobile/layout";
 import { mountRenderer, type MountedRenderer, type PageCapabilities } from "../bridge-v3";
-import { forgetDevice, loadDevice, loadPref, saveDevice, savePref, type DeviceRecord } from "./device-store";
+import { forgetDevice, loadDevice, loadPref, saveDevice, saveDeviceServers, savePref, type DeviceRecord } from "./device-store";
 import { makePairKeys, pair, pairingSupported, PairingError, type PairAttempt, type PairKeys } from "./pairing";
 import { MediaBroker } from "./media";
 import { SwBridge } from "./sw-bridge";
@@ -245,6 +245,11 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       updateBanner = update;
       conn.link.on((event) => { if (event.type === "bye" && event.reason === "revoked") revoked("revoked (bye)"); });
       conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome" || event.type === "servers") update(); });
+      conn.link.on((event) => {
+        if ((event.type === "attached" && event.attached) || (event.type === "message" && event.message.t === "peer")) {
+          void saveDeviceServers(conn.link.servers()).catch(() => undefined);
+        }
+      });
       // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
       const frame = () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null;
       // The relay path (step 14): the page's service worker answers its content URLs over this session.
