@@ -31,7 +31,7 @@ export const StatementId = EntryHash;
 /** A member's two public keys. */
 export const MemberKeys = z.strictObject({ sign: PublicKey, dh: PublicKey });
 
-const uniqueScopes = (scopes: readonly string[]) => new Set(scopes).size === scopes.length;
+const uniqueItems = (items: readonly string[]) => new Set(items).size === items.length;
 
 /** `Add{cluster, member, kind, keys, name, scope, by, at}` (§4.1): a server adds a server or a device. */
 export const AddStatement = z.strictObject({
@@ -42,7 +42,7 @@ export const AddStatement = z.strictObject({
   keys: MemberKeys,
   name: z.string().min(1).max(100),
   /** A device's scopes (§11.7); a server has none (it acts with `manage` on other servers' bots). */
-  scope: z.array(DeviceScope).min(1).max(4).refine(uniqueScopes, { message: "a scope is listed once" }).optional(),
+  scope: z.array(DeviceScope).min(1).max(4).refine(uniqueItems, { message: "a scope is listed once" }).optional(),
   by: MemberId,
   at: z.number().int().nonnegative(),
   /**
@@ -59,7 +59,7 @@ export const AddStatement = z.strictObject({
 });
 /** `Endorse{cluster, member, addId, by}`: a server found the member valid and keeps it valid (§4.2). */
 export const EndorseStatement = z.strictObject({ type: z.literal("endorse"), cluster: ClusterId, member: MemberId, addId: StatementId, by: MemberId });
-/** `Revoke{cluster, member, reason, by, gen, cascade}` (§4.6); `gen` is the root generation its signer held. */
+/** `Revoke{cluster, member, reason, by, gen, cascade, seen}` (§4.6); `gen` is the root generation its signer held. */
 export const RevokeStatement = z.strictObject({
   type: z.literal("revoke"),
   cluster: ClusterId,
@@ -73,6 +73,12 @@ export const RevokeStatement = z.strictObject({
    * those statements keep their ids and signatures. Only `true` cascades. New revocations sign a boolean.
    */
   cascade: z.union([z.boolean(), z.array(MemberId).length(0)]),
+  /**
+   * K8 (D66, proposed): on a server revocation, the joining Adds signed by the revoked server that the root held when
+   * it signed. Optional with no default so old revocations without it keep their canonical bytes and ids. Ignored on
+   * device revocations and by validity until D66 is adopted (B-01 in validity.ts; revocations never fail open).
+   */
+  seen: z.array(StatementId).max(1_000).refine(uniqueItems, { message: "each statement is listed once" }).optional(),
 });
 /** `Root{cluster, gen, root, recoveryPub, keep, prev}` (§4.8): signed by the recovery key; gen 1 has no prev and keeps nothing. */
 export const RootStatement = z.strictObject({
