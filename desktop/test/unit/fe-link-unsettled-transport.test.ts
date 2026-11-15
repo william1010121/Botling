@@ -33,21 +33,33 @@ async function until(check: () => boolean, ms: number): Promise<void> {
   }
 }
 
+/** A snap of BOT about 200 KB long (under the frame limit). */
+function bigSnap(i: number): Message {
+  return { t: "snap", stream: BOT, logId: LOG_ID, seq: 0, hash: HASH, view: { i, text: "x".repeat(200_000) } } as unknown as Message;
+}
+
 /** A botlingd local server whose command runtime always throws (nothing can ever be stored). */
-async function neverSettlingServer(): Promise<{ path: string; copies: () => number; sessions: () => number }> {
+async function neverSettlingServer(backlog: boolean): Promise<{ path: string; copies: () => number; sessions: () => number }> {
   const dir = mkdtempSync(join(tmpdir(), "n1-"));
   const path = join(dir, "s.sock");
   let copies = 0;
   let sessions = 0;
-  const fail = async () => { copies += 1; throw new Error("could not be stored"); };
+  let logSend: ((message: Message) => void) | null = null;
+  const fail = async () => {
+    copies += 1;
+    // As in the field (69 bots catching up after a 2.x import): log frames are still waiting in the socket's write
+    // buffer when the session ends, so the bye is queued behind them, not written at once.
+    if (backlog) for (let i = 0; i < 12; i += 1) logSend?.(bigSnap(i));
+    throw new Error("could not be stored");
+  };
   const host = {
     serverId: SERVER_ID, serverName: "Mac", startedAt: 0, minFeVersion: "3.0.0", token: () => TOKEN,
     hub: {
-      attach: (send: (message: Message) => void) => ({
+      attach: (send: (message: Message) => void) => (logSend = send, {
         close() {}, ack() {}, unsub() {}, history: () => null,
         // The server's own srv: stream: a snap, so the front end may send its outbox (§13.1).
         sub: async (stream: StreamId) => {
-          if (stream !== SRV) return { ok: false, reason: "unknown stream" };
+          if (stream !== SRV && stream !== BOT) return { ok: false, reason: "unknown stream" };
           send({ t: "snap", stream, logId: LOG_ID, seq: 0, hash: HASH, view: {} } as unknown as Message);
           return { ok: true };
         },
@@ -76,9 +88,12 @@ async function neverSettlingServer(): Promise<{ path: string; copies: () => numb
   return { path, copies: () => copies, sessions: () => sessions };
 }
 
-describe("D67 over the real local transport (N1)", () => {
+describe.each([
+  { name: "an idle socket", backlog: false },
+  { name: "log frames still waiting in the server's write buffer (the field case)", backlog: true },
+])("D67 over the real local transport (N1), $name", ({ backlog }) => {
   it("a slot the server can never settle is sent 5 times, then stopped; the front end stops re-attaching in a loop", async () => {
-    const server = await neverSettlingServer();
+    const server = await neverSettlingServer(backlog);
     const byes: string[] = [];
     const dial = unixDial({ path: server.path });
     const link = await FeLink.open({
@@ -89,6 +104,7 @@ describe("D67 over the real local transport (N1)", () => {
     cleanups.push(() => link.stop());
     const events: FeLinkEvent[] = [];
     link.on((event) => { events.push(event); if (event.type === "bye") byes.push(event.reason); });
+    link.subscribe(BOT);
     link.start();
     await until(() => link.state === "live", 5_000);
 
@@ -110,7 +126,7 @@ describe("D67 over the real local transport (N1)", () => {
   }, 20_000);
 
   it("the server's bye{unsettled} reaches the client before the socket closes", async () => {
-    const server = await neverSettlingServer();
+    const server = await neverSettlingServer(backlog);
     const { createConnection } = await import("node:net");
     const { encodeFrame, packFrame } = await import("../../src/protocol");
     const socket = createConnection(server.path);
@@ -139,6 +155,7 @@ describe("D67 over the real local transport (N1)", () => {
       cmd: { type: "chat.react", botId: "b1", messageId: "m1", emoji: "👍", present: true },
     } as never);
     await closed;
+    if (backlog) expect(got.filter((m) => m.t === "snap" && m.stream === BOT)).toHaveLength(12);
     expect(got.find((m) => m.t === "bye")).toMatchObject({ t: "bye", reason: "unsettled", slot: { n: 1 } });
   }, 20_000);
 });
