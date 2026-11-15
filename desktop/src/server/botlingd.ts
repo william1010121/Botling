@@ -640,7 +640,7 @@ export class Botlingd {
       pluginRead = new PluginContentRead({ serverId, service: content, peer: peerContent, roster });
       const peerContentOwner = new PeerContentOwner({ service: content, roster, log, corruptId: testCorruptContent(env) });
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
-      const remoteContent = new RemoteContent({ service: content, tickets, roster, log, peer: peerContent });
+      const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), log, peer: peerContent });
       const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner }, options.session);
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
       const peers: PeerSessions = new PeerSessions({

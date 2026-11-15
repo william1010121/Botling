@@ -5,7 +5,7 @@
 import { z } from "zod";
 import { BotId, Command, MessageView, WireError } from "../contract";
 import { ContentRef, ContentVariant, Entry } from "./entries";
-import { ContentTicket, EntryRef, VariantName } from "./content-url";
+import { ContentTicket, EntryRef, PluginName, VariantName } from "./content-url";
 import { AdminEvent, AdminOp } from "./pairing";
 import { MemberId, PublicKey, RevocationStatement, Signature, SignedStatement, StatementId } from "./roster";
 import {
@@ -34,7 +34,7 @@ export const BATCH_ENTRIES_LIMIT = 500;
  * present, and until M5 an owner refuses a command that carries it with `refused{grant}` (after the scope check).
  */
 export const Via = z.strictObject({
-  plugin: z.string().min(1).max(214).regex(/^[a-z0-9][a-z0-9._-]*$/),
+  plugin: PluginName,
   codeHash: z.string().min(1).max(100).regex(/^[A-Za-z0-9:_.-]+$/),
 });
 export type Via = z.infer<typeof Via>;
@@ -282,7 +282,7 @@ export const ContentCredit = msg("content.credit", { req: ReqId, bytes: z.number
 /** The player seeked away or closed. */
 export const ContentCancel = msg("content.cancel", { req: ReqId });
 /** Ask for a URL ticket for one reference (Q1). */
-export const ContentTicketReq = msg("content.ticket", { req: ReqId, owner: ServerId, id: ContentId, entry: EntryRef });
+export const ContentTicketReq = msg("content.ticket", { req: ReqId, owner: ServerId, id: ContentId, entry: EntryRef, plugin: PluginName.optional() });
 /** The ticket: bound to this device, the id and the entry; re-checked on every request (Q1). */
 export const ContentGranted = msg("content.granted", { req: ReqId, ticket: ContentTicket, expiresAt: z.number().int().nonnegative() });
 /**
