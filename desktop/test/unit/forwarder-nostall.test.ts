@@ -205,7 +205,7 @@ describe("Forwarder.pump does not stall on a row that can never be sent", () => 
       expect(h.dead()).toEqual([]);
       expect(h.queued()).toEqual([1, 2]);
       expect(h.cmds()).toEqual([]);
-      await until(() => h.dead().length === 1 && h.cmds().length === 1, 10_000);
+      await until(() => h.dead().length === 1 && h.cmds().length === 1, { timeout: 10_000 });
       expect(h.results().filter((r) => r.slot.n === 1)).toHaveLength(1);
     } finally {
       await h.close();
