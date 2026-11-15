@@ -54,8 +54,13 @@ export type SlotReply = CmdResultMessage | CmdRetryMessage;
 /** Where the messages about one copy of a command go (the session that sent it). */
 export type ReplySink = (message: SlotReply) => void;
 
-/** What every `receive` caller passes: the scope its accepting server stated (never optional), and where replies go. */
-export interface ReceiveOptions { scope: Scope; reply?: ReplySink }
+/**
+ * What every `receive` caller passes: the scope its accepting server stated (never optional), and where replies go.
+ * `peer` (M7-12c, R1): the peer server whose session delivered this copy (a forwarded command); the owner checks it is
+ * still a valid server where it decides the slot (`slotAuthorize`), for a held copy too. `null` = a peer session that
+ * names no peer (refused); undefined = not a forwarded copy (the local socket, a device, the window), unchanged.
+ */
+export interface ReceiveOptions { scope: Scope; reply?: ReplySink; peer?: string | null }
 
 /**
  * The scope the caller stated, or a TypeError (fail closed, L-009). The envelope's own `body.scope` is never read:
@@ -78,6 +83,8 @@ export interface SlotInput {
   inc: LogId;
   cmd: Command;
   scope: Scope;
+  /** The peer server that delivered this copy (`ReceiveOptions.peer`); never part of `hash`. */
+  peer?: string | null;
   basis?: Cursor;
   /** The plugin the command came from (N1): checked against this owner's grant for `codeHash` (M5-15). */
   via?: Via;
@@ -137,7 +144,7 @@ export interface SlotEngineOptions {
   heldLimit?: number;
 }
 
-interface HeldCopy { body: CmdBody; scope: Scope; reply?: ReplySink }
+interface HeldCopy { body: CmdBody; scope: Scope; reply?: ReplySink; peer?: string | null }
 
 /** This server's `plugin:<name>` row, or null when there is none or it cannot be read (fail closed: no row, no grant). */
 function readPluginRow(tx: Db, plugin: string): PluginRow | null {
@@ -224,7 +231,7 @@ export class SlotEngine {
    * The scope and origin check alone (§11.3 "origin invalid or scope forbids"), read-only. Legacy apply runs it before a
    * command's handler, so a command the owner would refuse never runs its handler (the slot is then decided as usual).
    */
-  denies(tx: Db, input: { slot: Slot; cmd: Command; scope: Scope; via?: Via }): { reason: "scope" | "origin" | "grant"; detail?: string } | null {
+  denies(tx: Db, input: { slot: Slot; cmd: Command; scope: Scope; via?: Via; peer?: string | null }): { reason: "scope" | "origin" | "grant"; detail?: string } | null {
     // §11.3 / D53 / M5-15: the device's scope first (N7), then the plugin's grant at `via.codeHash`, read from this
     // owner's own `srv:` row inside the decision transaction. Only the owner refuses for a grant (D58).
     const denied = this.authorize(tx, input);
@@ -258,13 +265,14 @@ export class SlotEngine {
     const scope = requiredSlotScope(options, "slots");
     const input: SlotInput = {
       slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, ...(body.via ? { via: body.via } : {}),
+      ...(options.peer !== undefined ? { peer: options.peer } : {}),
       hash: cmdHash({ cmd: body.cmd, scope, basis: body.basis, via: body.via }),
     };
     let holdResult: ReceiveStatus = { status: "held" };
     const step = await this.options.submit((tx) => {
       const decided = this.step(tx, input);
       // Kept in memory inside the transaction's turn, so a predecessor later in the same batch finds it when it pumps.
-      if (decided.kind === "hold") holdResult = this.hold(input.slot, { body, scope, reply: options.reply });
+      if (decided.kind === "hold") holdResult = this.hold(input.slot, { body, scope, reply: options.reply, peer: options.peer });
       return decided;
     });
     if (step.kind === "retry") {
@@ -397,7 +405,7 @@ export class SlotEngine {
   private decide(tx: Db, input: SlotInput): { outcome: Outcome; seq: number } {
     const { log } = this.options;
     let outcome: Outcome;
-    const denied = this.denies(tx, { slot: input.slot, cmd: input.cmd, scope: input.scope, via: input.via });
+    const denied = this.denies(tx, { slot: input.slot, cmd: input.cmd, scope: input.scope, via: input.via, ...(input.peer !== undefined ? { peer: input.peer } : {}) });
     if (denied) {
       outcome = { kind: "refused", reason: denied.reason, ...(denied.detail ? { detail: truncate(denied.detail) } : {}) };
     } else {
@@ -467,7 +475,7 @@ export class SlotEngine {
       copies.delete(n);
       if (copies.size === 0) this.held.delete(key);
       // A copy that fails (the store refused the transaction) is dropped; the sender re-sends it.
-      await this.receive(copy.body, { scope: copy.scope, reply: copy.reply }).catch(() => undefined);
+      await this.receive(copy.body, { scope: copy.scope, reply: copy.reply, ...(copy.peer !== undefined ? { peer: copy.peer } : {}) }).catch(() => undefined);
     }
   }
 }
