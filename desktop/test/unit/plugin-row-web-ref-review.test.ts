@@ -51,9 +51,10 @@ async function serving(plugins: Record<string, string>, ticketOpts: ConstructorP
   const self = stream.slice(4);
   const devices = new Map<string, DeviceScope[]>([["dev", ["read"]]]);
   const openCalls: string[] = [];
+  const tickets = new ContentTickets(ticketOpts);
   const remote = new RemoteContent({
     service: { serverId: self, locate: () => null, open: async (m: { req: string; id: string }) => { openCalls.push(m.id); return { t: "content.gone", req: m.req, id: m.id, reason: "denied" }; }, markChanged: async () => undefined } as never,
-    tickets: new ContentTickets(ticketOpts),
+    tickets,
     roster: { device: (m: string) => (devices.has(m) ? { keys: { sign: "s", dh: "d" }, scope: devices.get(m)! } : null) },
     reader: () => db, pluginBundlesDir: bundlesDir,
   });
@@ -62,7 +63,7 @@ async function serving(plugins: Record<string, string>, ticketOpts: ConstructorP
   const ticket = (plugin: string, id: string, e: { stream: string; seq: number } = entry) => remote.ticket("dev", { t: "content.ticket", req: "r", owner: self, id, entry: e as never, plugin });
   const get = (id: string, plugin: string, token: string, e: { stream: string; seq: number } = entry) =>
     remote.respond(contentUrlPath({ owner: self, id, variant: "original", entry: e as never, ticket: token, plugin }), new Request("http://local/"));
-  return { dir, folders, registry, bundlesDir, cache, db, writer, stream, sync, row, grant, self, remote, ref, entry, ticket, get, openCalls, devices };
+  return { dir, folders, registry, bundlesDir, cache, db, writer, stream, sync, row, grant, self, remote, tickets, ref, entry, ticket, get, openCalls, devices };
 }
 
 describe("M7-09a review: bundle security", () => {
@@ -166,7 +167,7 @@ describe("M7-09a review: bundle security", () => {
     await t.writer.close();
   });
 
-  it("seq is arbitrary: other stream / no-plugin / bot stream never serves a bundle through the line path", async () => {
+  it("other stream / no-plugin / bot stream never serves a bundle through the line path", async () => {
     const t = await serving({ "plugin-a": "A\n" });
     const ref = t.ref("plugin-a");
     // plugin ticket, bot stream entry, bundle id -> falls to service.open (denied), never the bundle
@@ -174,11 +175,32 @@ describe("M7-09a review: bundle security", () => {
     // no plugin claim at all with a srv: entry -> line path (denied by service)
     const noPlugin = await t.remote.ticket("dev", { t: "content.ticket", req: "r", owner: t.self, id: ref, entry: t.entry });
     expect(noPlugin.t).toBe("content.gone");
-    // seq values
-    for (const seq of [1, 2, 99, Number.MAX_SAFE_INTEGER]) {
-      const g = await t.ticket("plugin-a", ref, { stream: t.stream, seq });
-      expect(g.t).toBe("content.granted");
+    expect((await t.ticket("plugin-a", ref, { stream: t.stream, seq: 1 })).t).toBe("content.granted");
+    await t.writer.close();
+  });
+
+  // M7-09b-F (FU-3): the entry of a bundle is the plugin's row, one canonical entry (`seq: 1`); any other seq is refused at issue
+  // and again at use (it would only be another ticket-cache key for the same bytes).
+  it("a bundle ticket is issued for seq 1 only", async () => {
+    const t = await serving({ "plugin-a": "A\n" });
+    const ref = t.ref("plugin-a");
+    for (const seq of [2, 99, Number.MAX_SAFE_INTEGER]) {
+      expect((await t.ticket("plugin-a", ref, { stream: t.stream, seq })).t).toBe("content.gone");
     }
+    expect((await t.ticket("plugin-a", ref, { stream: t.stream, seq: 1 })).t).toBe("content.granted");
+    await t.writer.close();
+  });
+
+  it("a bundle ticket whose entry is not seq 1 serves nothing, even when it was issued (checked at use)", async () => {
+    const t = await serving({ "plugin-a": "A\n" });
+    const ref = t.ref("plugin-a");
+    const other = { stream: t.stream, seq: 2 };
+    const { ticket } = t.tickets.issue({ deviceId: "dev", owner: t.self, id: ref, entry: other as never, plugin: "plugin-a" });
+    const refusedAnswer = await t.get(ref, "plugin-a", ticket, other);
+    expect(refusedAnswer.status).toBeGreaterThanOrEqual(400);
+    expect(await refusedAnswer.text()).not.toBe("A\n");
+    const good = (await t.ticket("plugin-a", ref)) as { ticket: string };
+    expect((await t.get(ref, "plugin-a", good.ticket)).status).toBe(200);
     await t.writer.close();
   });
 
