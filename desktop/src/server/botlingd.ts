@@ -1214,9 +1214,18 @@ export async function ensureSoleServerVapidKeys(
     state.warnedMissing = false;
     return true;
   }
-  if (isSoleServerInRoster(roster)) {
+  const root = roster.view.root;
+  if (isSoleServerInRoster(roster) && !root) {
+    // No valid root chain: the gen is unknown, so do not mint a gen-1 pair (fail closed, retried on the next call).
+    if (!state.warnedMissing) {
+      state.warnedMissing = true;
+      log("vapid: the cluster root is not known yet; leaving Web Push disabled on this server");
+    }
+    return false;
+  }
+  if (isSoleServerInRoster(roster) && root) {
     // Same (gen, covers) as the first server pairing (pairing/join.ts), so VapidKeySync does not rotate it again.
-    await ensureVapidKeys(dataDir, { gen: roster.view.root?.gen ?? 1, covers: revokedServerIds(roster.view) });
+    await ensureVapidKeys(dataDir, { gen: root.gen, covers: revokedServerIds(roster.view) });
     state.known = true;
     state.warnedMissing = false;
     return true;
