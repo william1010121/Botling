@@ -26,11 +26,6 @@ export const PLUGIN_OWNED_SLOTS: readonly string[] = [
   "view/settings.section",
   "view/quickSettings",
 
-  // botling.bot-panel (M7-03a): panel/main, panel/section, panel/takeover
-  "view/rightPanel",
-  "view/rightPanel.section",
-  "view/rightPanel.takeover",
-
   // botling.chat (M7-06a): message/context, message/preview, chat/link, composer/plus, composer/bar, chat/header
   "menu/message/context",
   "menu/message/preview",
@@ -38,6 +33,11 @@ export const PLUGIN_OWNED_SLOTS: readonly string[] = [
   "menu/composer/plus",
   "view/composerBar",
   "view/chatHeader",
+
+  // botling.bot-panel (M7-03a): panel/main, panel/section, panel/takeover
+  "view/rightPanel",
+  "view/rightPanel.section",
+  "view/rightPanel.takeover",
 
   // botling.browser-pane (M7-06c): browser/tab
   "menu/browser/tab",
