@@ -68,6 +68,7 @@ function refuseFrom(error: unknown): never {
 }
 
 function requireBot(engine: TurnEngine, botId: string): void {
+  try { engine.checkBot?.(botId); } catch (error) { refuseFrom(error); }
   if (!engine.hasBot(botId)) throw new SlotRefusal("invalid", `no bot ${botId}`);
 }
 
@@ -140,6 +141,7 @@ function send(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<Command
 }
 
 function stop(deps: IntentDeps, { tx }: ApplyContext, cmd: Extract<Command, { type: "turn.stop" }>) {
+  try { deps.engine.checkBot?.(cmd.botId); } catch (error) { refuseFrom(error); }
   const row = findTurnEffect(tx, cmd.botId, cmd.turnId);
   // checkBasis already refused a turn whose row is not queued or started.
   if (!row) throw new SlotRefusal("changed", `turn ${cmd.turnId} already ended`);

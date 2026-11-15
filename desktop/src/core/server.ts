@@ -201,6 +201,10 @@ export interface CoreOptions {
   mainBotId?: string;
   /** Botling 3's server only (default: the 2.x `MAINTAINER_ID`): UUID of Maintainer. */
   maintainerId?: string;
+  /** Botling 3's server only (default: true): whether this server runs a main bot. */
+  runMainBot?: boolean;
+  /** Botling 3's server only: designated server name when `runMainBot` is false. */
+  mainBotMachine?: () => string | null;
   /** Botling 3's server only (2.x leaves it unset): content read/fetch for plugins (`content.read`, `content.fetch`). */
   content?: PluginWorld["content"];
   /** Botling 3's server only (2.x leaves it unset): a bot created or edited a plugin in `<data>/plugins`. */
@@ -216,6 +220,7 @@ export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; bo
 export class Core {
   readonly mainBotId: string;
   readonly maintainerId: string;
+  private readonly runMainBot: boolean;
   readonly doctor: DoctorModel;
   private agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
@@ -284,11 +289,30 @@ export class Core {
   private agentReconcile: ReconcileReport | null = null;
   private flagCache: { at: number; agentMoves: boolean; claudeOwnerMoves: boolean } | null = null;
 
-  mainBot(): Bot | null { return this.bots.get(this.mainBotId) ?? null; }
+  mainBot(): Bot | null {
+    if (!this.runMainBot) return null;
+    const bot = this.bots.get(this.mainBotId);
+    return bot?.profile.role === "main" ? bot : null;
+  }
+
+  private isMainBotId(id: string): boolean {
+    return this.runMainBot && id === this.mainBotId;
+  }
+
+  private noMainBotMessage(): string {
+    const name = this.options.mainBotMachine?.()?.trim();
+    return name ? `There is no main bot on this machine; it runs on ${name}.` : "There is no main bot on this machine.";
+  }
+
+  /** Botling 3's server: throws when a command names "main" on a non-designated server. */
+  checkBot(id: string): void {
+    if (id === "main" && !this.mainBot()) throw new ContractError("not_found", this.noMainBotMessage());
+  }
 
   constructor(private options: CoreOptions) {
     this.mainBotId = options.mainBotId ?? MAIN_BOT_ID;
     this.maintainerId = options.maintainerId ?? MAINTAINER_ID;
+    this.runMainBot = options.runMainBot !== false;
     this.doctor = new DoctorModel(options.doctor ?? new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(options.dataDir)), options.dataDir) }), doctor => this.event({ type: "doctor.updated", doctor }));
     mkdirSync(options.dataDir, { recursive: true });
     this.storage = new StorageBook(join(options.dataDir, "storage.json"));
@@ -369,7 +393,7 @@ export class Core {
         openPanel: (plugin, panel, title) => this.event({ type: "plugins.open", plugin, panel, title }),
         openTab: (plugin, view, botId) => this.event({ type: "plugins.openTab", plugin, view, botId }),
         // Straight to the app page, not through `event()`: no plugin, workspace or phone listener has anything to do with it.
-        frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? this.mainBotId : botId } : {}), data } }),
+        frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? (this.mainBot()?.id ?? botId) : botId } : {}), data } }),
         botFolder: (botId) => this.pluginBot(botId)?.profile.folder ?? null,
         botNote: (botId) => {
           const bot = this.pluginBot(botId);
@@ -408,13 +432,13 @@ export class Core {
           const bot = this.pluginBot(botId);
           if (!bot) return null;
           const chat = bot.pluginChat(limit);
-          return { ...chat, botId: chat.botId === this.mainBotId ? "main" : chat.botId };
+          return { ...chat, botId: this.outId(chat.botId) };
         },
         botId: (botId) => this.pluginBot(botId)?.id ?? null,
         decorated: (botId) => { if (this.bots.has(botId)) this.event({ type: "chat.decorations", botId, decorations: this.plugins.decorations(botId) }); },
         engineCli: (engine) => options.engineCli?.(engine) ?? null,
         addRoutine: (botId, cron, task) => {
-          const bot = this.bots.get(botId === "main" ? this.mainBotId : botId);
+          const bot = botId === "main" ? this.mainBot() : this.bots.get(botId);
           if (!bot) return "no-bot";
           return bot.addRoutine(cron, task) ? "added" : "bad-schedule";
         },
@@ -503,7 +527,20 @@ export class Core {
     } catch { /* none */ }
     const appMaintainer = maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, options.shotCommand ?? null)
       + "\n" + maintainerVisualToolRules(siteToolsFolder(options.dataDir, options.app?.dataDir)), this.maintainerId);
-    const profiles = [...loaded.profiles, appMaintainer];
+    const baseProfiles = this.runMainBot
+      ? loaded.profiles
+      : loaded.profiles.flatMap((profile) => {
+          if (profile.id !== this.mainBotId) return [profile];
+          let hasHistory = false;
+          try {
+            const chat = this.storeOf(profile.storeDir).loadMessages();
+            hasHistory = chat.records.length > 0 || chat.dropped > 0;
+          } catch {
+            hasHistory = true;
+          }
+          return hasHistory ? [{ ...profile, role: "bot" as const, name: "Main (old)" }] : [];
+        });
+    const profiles = [...baseProfiles, appMaintainer];
     const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig, this.maintainerId);
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;
@@ -648,7 +685,7 @@ export class Core {
       watch: true, log: (line) => this.log(line),
       conflict: (note, kept, reason) => {
         const entry = [...this.bots.entries()].find(([id, bot]) => !this.removed.has(id) && notePath(bot.profile) === note);
-        if (entry) this.plugins.event("noteConflict", { botId: entry[0] === this.mainBotId ? "main" : entry[0], file: kept, reason });
+        if (entry) this.plugins.event("noteConflict", { botId: this.outId(entry[0]), file: kept, reason });
       },
     });
     setNoteBots(() => [...this.bots.entries()].filter(([id]) => !this.removed.has(id)).map(([id, bot]) => ({ id, name: bot.profile.name, folder: bot.profile.folder, note: notePath(bot.profile) })));
@@ -1737,6 +1774,7 @@ First write a test that shows this, then fix it.`;
    * the ones it runs itself are stopped, then it is removed. Its project bot's chat says which went where.
    */
   async closeSubBot(id: string): Promise<ResultOf<"subbot.close">> {
+    this.checkBot(id);
     const profile = this.profiles.find((candidate) => candidate.id === id);
     if (!profile || this.removed.has(id)) throw new ContractError("not_found", "No such bot.");
     if (!profile.parent) throw new ContractError("bad_request", "Only a sub bot can be closed.");
@@ -1855,6 +1893,7 @@ First write a test that shows this, then fix it.`;
    * and its chat files stay. Its questions copied into the main bot's chat can no longer be answered.
    */
   async removeBot(id: string, { quiet = false }: { quiet?: boolean } = {}): Promise<{ removed: boolean }> {
+    this.checkBot(id);
     const profile = this.profiles.find((candidate) => candidate.id === id);
     if (!profile) throw new ContractError("not_found", "No such bot.");
     if (profile.role === "main" || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
@@ -1994,6 +2033,7 @@ First write a test that shows this, then fix it.`;
 
   /** Hands what the main bot wrote into an inbox.md to that bot, emptying the file (`deliverInboxes`). */
   deliverInboxes() {
+    if (!this.mainBot()) return;
     for (const profile of this.profiles) {
       // A sub bot shares its project bot's folder, so that folder's inbox is the project bot's alone.
       if (profile.role === "main" || profile.parent || profile.problem) continue;
@@ -2073,7 +2113,7 @@ First write a test that shows this, then fix it.`;
   // one method each, read only. The main bot is "main" to plugins, as in `bots.list`.
 
   private outId(id: string) {
-    return id === this.mainBotId ? "main" : id;
+    return this.isMainBotId(id) ? "main" : id;
   }
 
   /** The bot a plugin names, with its profile; throws when there is none. */
@@ -2111,7 +2151,7 @@ First write a test that shows this, then fix it.`;
     return {
       items: view.items.map((item) => ({ ...item, botId: this.outId(item.botId) })),
       doing: Object.fromEntries(Object.entries(view.doing).map(([id, text]) => [this.outId(id), text])),
-      ...(view.acked ? { acked: view.acked.map((key) => (key.startsWith(main) ? `main-${key.slice(main.length)}` : key)) } : {}),
+      ...(view.acked ? { acked: view.acked.map((key) => (this.runMainBot && key.startsWith(main) ? `main-${key.slice(main.length)}` : key)) } : {}),
     };
   }
 
@@ -2224,6 +2264,7 @@ First write a test that shows this, then fix it.`;
 
   /** Takes one off the list without answering it (settings' `ignoredWaiting`, 1.x's ids). */
   ignoreWaiting(botId: string, text: string): WaitingView {
+    this.checkBot(botId);
     const file = Layout.settings(this.options.dataDir);
     const raw = readSettings(file);
     const ignored = readSettingsList(raw.ignoredWaiting);
@@ -2261,7 +2302,7 @@ First write a test that shows this, then fix it.`;
     // New bots and <open-question> (`Workspace.handle`): only the main bot
     // shows other bots' cards; it makes bots when you ask it, and Maintainer may too. From anyone else
     // they are left out, as in 1.x. They act once the reply is in.
-    const main = bot.id === this.mainBotId;
+    const main = bot.profile.role === "main";
     const later: (() => void)[] = [];
     const rest: BotRequest[] = [];
     for (const request of requests) {
@@ -2282,7 +2323,7 @@ First write a test that shows this, then fix it.`;
     const asked = requests.filter((request): request is Extract<BotRequest, { kind: "newProject" }> => request.kind === "newProject");
     if (!asked.length) return requests;
     // Only the main bot adds projects; anyone else's <new-project> is left out silently, as in 1.x (`Workspace.handle`).
-    if (bot.id !== this.mainBotId) return requests.filter((request) => request.kind !== "newProject");
+    if (bot.profile.role !== "main") return requests.filter((request) => request.kind !== "newProject");
     const main = bot;
     const home = homedir();
     const own = resolvePath(this.options.dataDir);
@@ -2428,8 +2469,8 @@ First write a test that shows this, then fix it.`;
   }
 
   private pluginBot(botId: string): Bot | null {
-    const id = botId === "main" ? this.mainBotId : botId;
-    return this.removed.has(id) ? null : this.bots.get(id) ?? null;
+    const id = botId === "main" ? (this.mainBot()?.id ?? "") : botId;
+    return !id || this.removed.has(id) ? null : this.bots.get(id) ?? null;
   }
 
   /** The workers seen at work, so each one's end is told once (`workerDone`). */
@@ -2438,7 +2479,7 @@ First write a test that shows this, then fix it.`;
   /** What plugins listening with `events.on` hear of a core event. */
   private pluginEvent(event: Event) {
     if (!("botId" in event)) return;
-    const botId = event.botId === this.mainBotId ? "main" : event.botId;
+    const botId = this.outId(event.botId);
     if (event.type === "message.added" && event.message.role === "user") {
       this.plugins.event("messagePosted", { botId, role: "user", text: event.message.text, id: event.message.id });
     } else if (event.type === "turn.started") {
@@ -2463,7 +2504,7 @@ First write a test that shows this, then fix it.`;
     if (maintainer && (maintainer.view().working || maintainer.subagentsAtWork)) return this.maintainerId;
     const pluginsRoot = join(this.options.dataDir, "plugins");
     for (const bot of this.bots.values()) {
-      if (bot.id === this.mainBotId) continue;
+      if (bot.profile.role === "main") continue;
       const folder = bot.profile.folder;
       if (folder !== pluginsRoot && !pluginsRoot.startsWith(folder + sep) && !folder.startsWith(pluginsRoot + sep)) continue;
       if (bot.view().working || bot.subagentsAtWork) return bot.id;
@@ -2472,7 +2513,7 @@ First write a test that shows this, then fix it.`;
   }
 
   private botInfo(bot: Bot): BotInfo {
-    return { id: bot.id === this.mainBotId ? "main" : bot.id, name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
+    return { id: this.outId(bot.id), name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
   }
 
   /** A reply showed: plugins listening hear it; Maintainer's settles the component changes bots asked for. */
@@ -2482,7 +2523,7 @@ First write a test that shows this, then fix it.`;
     // A line of its reply that starts with @ and another bot's name calls that bot in (`receiveBotMention`).
     this.conversations.receiveBotMention(record, bot);
     // What the main bot wrote into an inbox goes to that bot now (1.x: after every main-bot reply).
-    if (bot.id === this.mainBotId) this.deliverInboxes();
+    if (bot.profile.role === "main") this.deliverInboxes();
     if (bot.id === this.maintainerId) {
       this.settlingMaintainer = true;
       try { this.maintainer.settle(record); } finally { this.settlingMaintainer = false; }
@@ -2540,6 +2581,7 @@ First write a test that shows this, then fix it.`;
 
   /** Botling 3's server: throws what `bots.remove` would refuse with (`removeBot`), before its intent is stored. */
   checkRemoveBot(id: string): void {
+    this.checkBot(id);
     const profile = this.profiles.find((candidate) => candidate.id === id);
     if (!profile) throw new ContractError("not_found", "No such bot.");
     if (profile.role === "main" || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
@@ -2929,6 +2971,11 @@ First write a test that shows this, then fix it.`;
   }
 
   private bot(id: string): Bot {
+    if (id === "main") {
+      const main = this.mainBot();
+      if (!main) throw new ContractError("not_found", this.noMainBotMessage());
+      return main;
+    }
     const bot = this.bots.get(id);
     if (!bot) throw new ContractError("not_found", "No such bot.");
     return bot;
@@ -3040,6 +3087,7 @@ First write a test that shows this, then fix it.`;
       case "mobile.pair": {
         // No list: every bot (`*`, resolved on each request), so a bot made later is on the phone too.
         const botIds = cmd.botIds ?? [ALL_BOTS];
+        if (cmd.botIds?.some((id) => id === "main" && !this.mainBot())) throw new ContractError("not_found", this.noMainBotMessage());
         if (cmd.botIds?.some((id) => !this.bots.has(id))) throw new Error("Unknown bot.");
         if (cmd.relay) {
           if (!this.relay) throw new Error("The phone relay is not available.");
@@ -3096,7 +3144,7 @@ First write a test that shows this, then fix it.`;
       case "bot.restart": return this.bot(cmd.botId).restartNow();
       case "files.add": this.bot(cmd.botId); return { files: this.pending.addPaths(cmd.botId, cmd.paths) };
       case "files.data": this.bot(cmd.botId); return { files: await this.pending.addData(cmd.botId, cmd.name, cmd.base64) };
-      case "files.remove": return { files: this.pending.remove(cmd.botId, cmd.id) };
+      case "files.remove": this.checkBot(cmd.botId); return { files: this.pending.remove(cmd.botId, cmd.id) };
       case "project.files": {
         this.bot(cmd.botId);
         const profile = this.profiles.find(p => p.id === cmd.botId);
@@ -3136,6 +3184,7 @@ First write a test that shows this, then fix it.`;
       case "task.output": return this.bot(cmd.botId).taskOutput(cmd.messageId, cmd.taskId);
       case "subagent.view": return this.agentView(cmd.botId, cmd.subagentId);
       case "worker.cwd": {
+        this.checkBot(cmd.botId);
         // Where the worker runs: its host bot's session folder (a worktree when one is set), else that bot's own folder.
         const record = this.agents.byHostBot(cmd.botId, cmd.subagentId) ?? this.agents.movedIn(cmd.botId).find((candidate) => candidate.nativeId === cmd.subagentId);
         const hostId = record?.host.botId ?? cmd.botId;
@@ -3149,6 +3198,7 @@ First write a test that shows this, then fix it.`;
       case "agent.group": return this.groupAgents(cmd.botId, cmd.subagentIds, { kind: "newSubBot", name: cmd.name, ...(cmd.note ? { note: cmd.note } : {}) });
       case "subbot.close": return this.closeSubBot(cmd.botId);
       case "chat.shown": {
+        if (cmd.botId) this.checkBot(cmd.botId);
         // The main window says what it shows; plugins watching the workspace hear it (kind "current").
         this.shownChat = cmd.botId ? { botId: cmd.botId, view: cmd.view, tab: cmd.tab } : null;
         this.checkWorkspaceSoon();
@@ -3157,7 +3207,7 @@ First write a test that shows this, then fix it.`;
       case "chat.read": {
         // You read it up to its newest line: plugins hear how much was unread before (`chatRead`).
         const bot = this.bot(cmd.botId);
-        this.plugins.event("chatRead", { botId: bot.id === this.mainBotId ? "main" : bot.id, ...bot.readMark() });
+        this.plugins.event("chatRead", { botId: this.outId(bot.id), ...bot.readMark() });
         return bot.read();
       }
       case "component.command": return this.bot(cmd.botId).componentCommand(cmd.messageId, cmd.index, cmd);
@@ -3200,8 +3250,7 @@ First write a test that shows this, then fix it.`;
   }
 
   snapshot(botId?: string): ResultOf<"chat.snapshot"> {
-    const bot = this.bots.get(botId ?? this.mainBotId);
-    if (botId && !bot) throw new ContractError("not_found", "No such bot.");
+    const bot = botId === undefined ? this.mainBot() : this.bot(botId);
     const views = this.order.map((id) => this.bots.get(id)!.view());
     return {
       epoch: this.epoch,

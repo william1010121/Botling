@@ -313,6 +313,32 @@ export class Botlingd {
       });
       const stores: DbBotStores = new DbBotStores(store, { onCommitted: (botId, directory) => exports.committed(botId, directory) });
       const opened = new Map<string, string>();
+      let peerSessions: PeerSessions | null = null;
+      const resolveDesignated = (raw: unknown): string => {
+        const view = roster.view;
+        if (
+          typeof raw === "string"
+          && view.servers.has(raw)
+          && !view.revoked.has(raw)
+          && (!view.valid.has(memberId) || view.valid.has(raw))
+        ) {
+          return raw;
+        }
+        return view.root?.root ?? memberId;
+      };
+      const machineName = (id: string): string =>
+        peerSessions?.states().find((state) => state.member === id)?.name
+        ?? roster.profile(id, "name")
+        ?? roster.view.members.get(id)?.name
+        ?? (id === memberId ? SERVER_NAME : id);
+      const designated = resolveDesignated(prefs.get("designatedServer")?.value);
+      prefs.onChange((rows) => {
+        for (const row of rows) {
+          if (row.key === "designatedServer") {
+            log(`designatedServer is now ${machineName(resolveDesignated(row.value))}; the main bot moves when each server next starts.`);
+          }
+        }
+      });
       const coreEngine = new CoreEngine();
       const shell = new ShellBridge({ appDataDir: env.BOTLING_APP_DATA_DIR || null });
       const { emit, deferTurn } = coreEngine.coreOptions();
@@ -327,6 +353,8 @@ export class Botlingd {
         deferTurn,
         mainBotId: ids.main,
         maintainerId: ids.maintainer,
+        runMainBot: designated === memberId,
+        mainBotMachine: () => (designated === memberId ? null : machineName(designated)),
         pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
           read: async (ref, offset, length) => {
@@ -591,6 +619,7 @@ export class Botlingd {
         sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
         sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); peerContent.sessionClosed(session); peerContentOwner.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
+      peerSessions = peers;
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
       feeds.start();
       gossip.start();
