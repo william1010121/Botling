@@ -266,6 +266,7 @@ describe("20 swaps during the airplane script lose and double nothing", () => {
     }
     await until(clock, () => places.length >= 20, 20_000);
     await flush(60);
+    console.log("DEBUG", server.received.map((m) => m.t).join(","), "copies", server.copies.length, "state", page.link.state, "pending", JSON.stringify(page.link.pending().slice(0, 2)));
 
     expect(server.applied).toHaveLength(20);
     expect(new Set(server.applied.map((applied) => slotKey(applied.slot))).size).toBe(20);
