@@ -5,6 +5,23 @@ type Engine = import("zod").infer<typeof import("../../contract").Engine>;
 
 export type TurnStatus = "done" | "stopped" | "failed";
 
+/** What a guest's turn in a call-in from another server ended with (M5-02b): the same three outcomes `callin.reply` carries. */
+export type CallInAnswer = { kind: "busy" } | { kind: "failed"; why: string } | { kind: "reply"; text: string; engine: Engine };
+
+/** What the engine is told of a call-in turn besides the prompt (M5-02b). Peer text in it is already cleaned by the caller. */
+export interface CallInOptions {
+  host: { botId: string; name: string };
+  asked: string;
+  by: "user" | "bot";
+  /** The notice the guest's own chat keeps with its reply (`Bot.keepCallIn`). */
+  note: string;
+  /** How long it waits for a busy guest, then answers `busy`; how long the turn may take. */
+  busyWaitMs: number;
+  answerMs: number;
+  /** Aborted when the host gave up (`callin.cancel`, D51): the wait or the turn ends, the answer is `failed` "cancelled". */
+  signal: AbortSignal;
+}
+
 /** A turn the effect worker starts (its row was committed `started` with its `turn.started` entry first). */
 export interface TurnStart {
   botId: string;
@@ -91,6 +108,12 @@ export interface TurnEngine {
    * with no chat of its own leaves it out. Throws a ContractError to refuse the send.
    */
   userLine?(botId: string, line: UserLine): void;
+  /**
+   * M5-02b: the guest's turn of a call-in from a bot on another server, in the guest's own session; the reply is kept in
+   * the guest's own chat. `onBegin` is called as the turn begins (not while it waits for a busy guest). Absent: this
+   * engine cannot take call-ins.
+   */
+  callInTurn?(guestId: string, prompt: string, onBegin: () => void, options: CallInOptions): Promise<CallInAnswer>;
   /** Starts a turn (after its `started` row committed). Rejects when the engine refused it. */
   startTurn(turn: TurnStart): Promise<TurnRunning>;
   /** Stops a running turn (its `turn.finished{stopped}` comes as an event). */

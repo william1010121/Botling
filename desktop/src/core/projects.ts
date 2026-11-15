@@ -231,8 +231,11 @@ export class MemoryFiles {
 /** A row of the main bot's project list: its name, what goes in brackets, its memory and inbox files, an open question's first line. */
 export interface BriefingRow { name: string; about: string; memory: string; inbox: string; question: string | null }
 
-/** A bot on another machine in the main bot's project list (M5-04c): `about` may be empty (no brackets then). */
-export interface PeerBriefingRow { name: string; machine: string; about: string; inbox: string }
+/**
+ * A bot on another machine in the main bot's project list (M5-04c): `about` may be empty (no brackets then). `chat` (M5-04e)
+ * is the read-only copy of its last lines; without it the line has no `chat copy` part.
+ */
+export interface PeerBriefingRow { name: string; machine: string; about: string; inbox: string; chat?: string }
 
 /**
  * `Workspace.projectBriefing`: the project list the main bot gets each time it wakes
@@ -245,7 +248,7 @@ export function projectBriefingText(input: { projects: BriefingRow[]; bots: Brie
   const projectLines = input.projects.length ? input.projects.map(line).join("\n") : "(No projects yet.)";
   const botLines = input.bots.length ? "\n(App: Bots of their own, which you reach the same way.)\n" + input.bots.map(line).join("\n") : "";
   // M5-04c: with no peers the text is byte for byte the 2.x one.
-  const peerLine = (row: PeerBriefingRow) => `- ${row.name} on ${row.machine}${row.about ? ` (${row.about})` : ""}: inbox file ${row.inbox}`;
+  const peerLine = (row: PeerBriefingRow) => `- ${row.name} on ${row.machine}${row.about ? ` (${row.about})` : ""}: ${row.chat ? `chat copy ${row.chat}; ` : ""}inbox file ${row.inbox}`;
   const peerLines = input.peers?.length
     ? '\n(App: Bots on other machines. To hand off work, append a line to the end of its inbox file; the app sends it to that machine. To make a bot on another machine, write <new-bot name="…" machine="…">its job</new-bot>.)\n' + input.peers.map(peerLine).join("\n")
     : "";
