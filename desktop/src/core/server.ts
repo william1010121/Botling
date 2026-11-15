@@ -106,6 +106,33 @@ import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-s
 import { MACHINE_NAME } from "../remote/machines";
 import { machineNameFrom } from "../remote/relay/wire";
 
+/** An id from a peer's rows that is safe as a path part and as a stream key (M5-04c F2). */
+const PEER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** The longest `bots.create` job and `waiting.ignore` text the contract takes (`contract/index.ts`, counted in characters as zod does). */
+const BOT_JOB_LIMIT = 4_000;
+const WAITING_TEXT_LIMIT = 400;
+/**
+ * The most a peer message may take on the wire, counted as the JSON-escaped UTF-8 bytes of its text (M5-04d, checklist 6): a
+ * frame is at most 256 KiB (`protocol/frame.ts` FRAME_LIMIT, which a test keeps this under) and the slot, scope and counters
+ * around the text need under 2 KiB; 16 KiB is left. Characters alone are not enough: 100,000 CJK characters are about 300 KB.
+ */
+export const PEER_MESSAGE_BYTES = 240 * 1024;
+
+/**
+ * Text from a peer as plain text in a markdown chat line (Web/src/markdown.ts renders notices): the punctuation that
+ * makes links, autolinks, images, code or emphasis is backslash-escaped, which markdown shows as the character itself.
+ */
+function plainMarkdown(text: string): string {
+  return text.replace(/[\\`*_[\]()<>!|~]/g, "\\$&");
+}
+
+/** Text from a peer or a model as one clean line for a note, a log or a report: control characters gone, runs of spaces one, at most 300 characters, no closing full stop (the note adds its own). */
+function oneLine(text: string): string {
+  const line = text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
+  const characters = [...line];
+  return characters.length > 300 ? `${characters.slice(0, 299).join("")}…` : line || "no reason given";
+}
+
 export interface CoreOptions {
   /** Workers on other machines (src/remote/service.ts): app_handoff's `machine`; absent: refused. */
   remoteWorkers?: import("../remote/service").RemoteWorkers | null;
@@ -222,6 +249,8 @@ export interface CoreOptions {
   remoteCommand?(target: string, cmd: Command): { committed: Promise<void>; outcome: Promise<{ ok: true } | { ok: false; why: string }> };
   /** Botling 3's server only: this machine's name, for "From the main bot on <name>" in what a peer's bot is sent (M5-04c); read at each send. */
   machineName?: string | (() => string);
+  /** Botling 3's server only (M5-04d): the other machines of this cluster (valid peers, not this server), named as the main bot's tags name them; read at each use. */
+  machines?(): Array<{ id: string; name: string }>;
   /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash. */
   pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
 }
@@ -1010,7 +1039,7 @@ First write a test that shows this, then fix it.`;
     // Names and ids come from a peer's rows (schema-checked only): one clean line each, and an id that is one path part.
     return this.options.remoteMembers()
       .map((peer) => ({ ...peer, name: botName(peer.name), serverName: botName(peer.serverName) || peer.server }))
-      .filter((peer) => peer.name && peer.name !== "Main (old)" && /^[A-Za-z0-9_-]{1,64}$/.test(peer.id));
+      .filter((peer) => peer.name && peer.name !== "Main (old)" && PEER_ID.test(peer.id));
   }
 
   /** The file the main bot appends to for a peer's bot; it lives next to the main bot's, never on the peer's machine. */
@@ -1930,6 +1959,97 @@ First write a test that shows this, then fix it.`;
     return bot;
   }
 
+  /** This machine's name as the main bot's tags name it (`machineName`, M5-04c), one clean line; "" when none is given. */
+  private ownMachine(): string {
+    const name = typeof this.options.machineName === "function" ? this.options.machineName() : this.options.machineName;
+    return botName(name ?? "");
+  }
+
+  /**
+   * The machine a tag's `machine="…"` names (M5-04d), matched without case against the peers' names (one clean line each):
+   * this machine, one peer, none, or more than one with that name. The peer list needs a way to send, and an id that is
+   * not a plain id is never a target (a peer's rows are schema-checked only).
+   */
+  private machineNamed(raw: string): { kind: "here" } | { kind: "peer"; id: string; name: string } | { kind: "ambiguous"; name: string } | { kind: "unknown"; name: string } {
+    const name = botName(raw);
+    const key = name.toLowerCase();
+    const peers = this.options.remoteCommand ? (this.options.machines?.() ?? []).map((machine) => ({ id: machine.id, name: botName(machine.name) }))
+      .filter((machine) => machine.name && PEER_ID.test(machine.id)) : [];
+    const found = peers.filter((machine) => machine.name.toLowerCase() === key);
+    const own = this.ownMachine();
+    if (own && own.toLowerCase() === key) return found.length ? { kind: "ambiguous", name } : { kind: "here" };
+    if (found.length === 1) return { kind: "peer", id: found[0]!.id, name: found[0]!.name };
+    return { kind: found.length ? "ambiguous" : "unknown", name };
+  }
+
+  /**
+   * What the main bot is told about its acts on other machines (M5-04d): a line in its chat, and the same words as an
+   * `(App: …)` note with its next message. The line is what keeps it: `queueNote` holds one note and none for a bot that is
+   * not awake, and an outcome from another machine can come late (after a sleep, or two in one turn).
+   */
+  private tellMain(words: (part: (text: string) => string) => string) {
+    const main = this.mainBot();
+    // The chat line is markdown: a peer's name or reason such as `[x](https://…)` must stay text, never a link (review
+    // M5-04d); the note goes to the model as written.
+    main?.appNotice(words(plainMarkdown));
+    main?.queueNote(`(App: ${words((text) => text)})`);
+  }
+
+  /**
+   * The main bot's <new-bot name="…" machine="…">job</new-bot> (M5-04d, D26, Q-C3): `bots.create` on that peer's server, this
+   * server as origin (scope `manage`). The bot is made there, never here; the outcome comes back to the main bot as a note.
+   */
+  private botRequestedOn(machineName: string, rawName: string, rawJob: string, sentOnce: Set<string>) {
+    const machine = this.machineNamed(machineName);
+    if (machine.kind === "here") { this.botRequested(rawName, rawJob, null); return; }
+    if (machine.kind === "unknown") { this.tellMain((p) => `There is no machine named "${p(machine.name)}"; the bot was not made.`); return; }
+    const name = botName(rawName);
+    const job = rawJob.trim();
+    if (!name || !job) return;
+    const remoteCommand = this.options.remoteCommand!;
+    let told = false;
+    const tell = (why: string | null) => {
+      if (told) return;
+      told = true;
+      this.tellMain((p) => (why === null ? `The bot "${p(name)}" was made on ${p(machine.name)}.` : `${p(machine.name)} did not make the bot "${p(name)}": ${p(oneLine(why))}.`));
+    };
+    if (machine.kind === "ambiguous") { tell("more than one machine has that name"); return; }
+    if (job.length > BOT_JOB_LIMIT) { tell(`the job is longer than ${BOT_JOB_LIMIT} characters`); return; }
+    const once = `${machine.id}\n${name.toLowerCase()}`;
+    if (sentOnce.has(once)) return;
+    sentOnce.add(once);
+    let sent: ReturnType<typeof remoteCommand>;
+    try { sent = remoteCommand(`srv:${machine.id}`, { type: "bots.create", name, job }); } catch (error) { tell((error as Error).message); return; }
+    // The slot is committed first (a failure there is final), the owner's decision comes later; the main bot hears one of them.
+    sent.committed.catch((error: unknown) => tell((error as Error).message));
+    sent.outcome.then((outcome) => tell(outcome.ok ? null : outcome.why), (error: unknown) => tell((error as Error).message));
+  }
+
+  /** A bot of another machine of this cluster (`peerBots`) that is not one of this server's own (a local id always wins). */
+  private peerBotFor(botId: string): RemoteMember | null {
+    if (botId === "main" || this.bots.has(botId) || this.profiles.some((profile) => profile.id === botId)) return null;
+    return this.peerBots().find((peer) => peer.id === botId) ?? null;
+  }
+
+  /** Waiting items being set aside on a peer (committed or decided not yet): a second tap sends nothing (M5-04d). */
+  private peerIgnoring = new Set<string>();
+
+  /** `waiting.ignore` for a peer's bot, with this server as origin (scope `reply`); a failure is logged, never thrown. */
+  private ignoreWaitingOn(peer: RemoteMember, text: string) {
+    const remoteCommand = this.options.remoteCommand;
+    const who = `${peer.name} on ${peer.serverName}`;
+    const key = `${peer.id}\n${text}`;
+    if (!remoteCommand || this.peerIgnoring.has(key)) return;
+    if (!text || text.length > WAITING_TEXT_LIMIT) { this.log(`ignoring a waiting item of ${who} failed: the text is empty or longer than ${WAITING_TEXT_LIMIT} characters`); return; }
+    let sent: ReturnType<typeof remoteCommand>;
+    try { sent = remoteCommand(`bot:${peer.id}`, { type: "waiting.ignore", botId: peer.id, text }); } catch (error) { this.log(`ignoring a waiting item of ${who} failed: ${oneLine((error as Error).message)}`); return; }
+    this.peerIgnoring.add(key);
+    let logged = false;
+    const failed = (why: string) => { this.peerIgnoring.delete(key); if (!logged) { logged = true; this.log(`ignoring a waiting item of ${who} failed: ${oneLine(why)}`); } };
+    sent.committed.catch((error: unknown) => failed((error as Error).message));
+    sent.outcome.then((outcome) => { if (outcome.ok) this.peerIgnoring.delete(key); else failed(outcome.why); }, (error: unknown) => failed((error as Error).message));
+  }
+
   /** The main bot's (or Maintainer's) <new-bot name="…">job</new-bot>: made and set up, or why not. */
   private botRequested(name: string, job: string, by: string | null) {
     const main = this.mainBot();
@@ -2107,6 +2227,8 @@ First write a test that shows this, then fix it.`;
 
   /** Peer bots whose inbox is in flight (committed not settled yet): never sent twice (M5-04c). */
   private peerSending = new Set<string>();
+  /** Peers whose over-limit inbox the main bot was told about (M5-04d, U3). */
+  private peerOverTold = new Set<string>();
   /** Gone peers whose kept inbox was already logged: once is enough. */
   private peerGoneLogged = new Set<string>();
 
@@ -2129,7 +2251,18 @@ First write a test that shows this, then fix it.`;
       const who = `${peer.name} on ${peer.serverName}`;
       const machine = typeof this.options.machineName === "function" ? this.options.machineName() : this.options.machineName;
       const wrapped = `From the main bot on ${machine || "this machine"}:\n${text}`;
-      if (wrapped.length > MESSAGE_TEXT_LIMIT) { this.log(`inbox of ${who} kept: the text is longer than ${MESSAGE_TEXT_LIMIT} characters`); continue; }
+      const tooLong = wrapped.length > MESSAGE_TEXT_LIMIT ? `the text is longer than ${MESSAGE_TEXT_LIMIT} characters`
+        : Buffer.byteLength(JSON.stringify(wrapped), "utf8") > PEER_MESSAGE_BYTES ? `the text is bigger than ${PEER_MESSAGE_BYTES} bytes on the wire` : null;
+      if (tooLong) {
+        this.log(`inbox of ${who} kept: ${tooLong}`);
+        // U3: the file is kept and logged on every turn, but the main bot is told once (again after it fits and went).
+        if (!this.peerOverTold.has(peer.id)) {
+          this.peerOverTold.add(peer.id);
+          this.tellMain((p) => `The message for "${p(peer.name)}" on ${p(peer.serverName)} is too long to send, so it was not sent. Cut it down in its inbox file.`);
+        }
+        continue;
+      }
+      this.peerOverTold.delete(peer.id);
       let sent: ReturnType<typeof remoteCommand>;
       try { sent = remoteCommand(`bot:${peer.id}`, { type: "chat.send", botId: peer.id, text: wrapped }); } catch (error) { this.log(`inbox of ${who} kept: ${(error as Error).message}`); continue; }
       this.peerSending.add(peer.id);
@@ -2143,7 +2276,13 @@ First write a test that shows this, then fix it.`;
         this.peerSending.delete(peer.id);
         this.log(`inbox of ${who} kept: ${(error as Error).message}`);
       });
-      sent.outcome.then((outcome) => { if (!outcome.ok) this.log(`message to ${who} was not delivered: ${outcome.why}`); }, () => undefined);
+      // The slot committed but the owner refused it (the bot is gone, the server was removed): told to the main bot, once per slot.
+      sent.outcome.then((outcome) => {
+        if (outcome.ok) return;
+        const why = oneLine(outcome.why);
+        this.log(`message to ${who} was not delivered: ${why}`);
+        this.tellMain((p) => `The message to "${p(peer.name)}" on ${p(peer.serverName)} was not delivered: ${p(why)}.`);
+      }, () => undefined);
     }
     // A bot that left (its server was removed): its text stays in the file, and the log says so once.
     const root = join(dirname(this.peerInbox("x")), "..");
@@ -2328,7 +2467,12 @@ First write a test that shows this, then fix it.`;
       taskHistory: (botId) => { this.workspaceBot(botId); return []; },
       results: (botId, limit) => this.resultLinks(this.workspaceBot(botId).bot, limit),
       waiting: () => this.workspaceWaiting(),
-      ignoreWaiting: (botId, text) => { this.ignoreWaiting(this.workspaceBot(botId).bot.id, text); },
+      ignoreWaiting: (botId, text) => {
+        // A bot of this machine first ("main" is the local main bot whatever a peer's rows say: `peerBotFor`), then a peer's (M5-04d).
+        const peer = this.peerBotFor(botId);
+        if (peer) this.ignoreWaitingOn(peer, text);
+        else this.ignoreWaiting(this.workspaceBot(botId).bot.id, text);
+      },
       pendingApprovals: (botId) => this.workspaceBot(botId).bot.pendingApprovals(),
       face: (botId, look) => {
         const { bot } = this.workspaceBot(botId);
@@ -2426,6 +2570,10 @@ First write a test that shows this, then fix it.`;
   /** Takes one off the list without answering it (settings' `ignoredWaiting`, 1.x's ids). */
   ignoreWaiting(botId: string, text: string): WaitingView {
     this.checkBot(botId);
+    // A command reached this server because it owns the target (the front end sends a peer bot's command to its owner,
+    // and the slot engine refuses a target that is not `bot:<botId>`), so it is never sent on to another machine (§11.2
+    // step 5: no second hop). The legacy handler runs before that target check, so forwarding here would let a peer send
+    // a command to a third machine as this server. A peer's item is set aside from the workspace source (M5-04d).
     const file = Layout.settings(this.options.dataDir);
     const raw = readSettings(file);
     const ignored = readSettingsList(raw.ignoredWaiting);
@@ -2466,8 +2614,15 @@ First write a test that shows this, then fix it.`;
     const main = bot.profile.role === "main";
     const later: (() => void)[] = [];
     const rest: BotRequest[] = [];
+    // M5-04d: one bots.create per machine and name in a reply, however often the tag was written.
+    const elsewhere = new Set<string>();
     for (const request of requests) {
-      if (request.kind === "newBot") { if (main || bot.id === this.maintainerId) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
+      if (request.kind === "newBot" && request.machine) {
+        // Only the main bot acts on another machine (D26); from anyone else the tag is left out, as a tag from a bot that may not make bots.
+        if (main) later.push(() => this.botRequestedOn(request.machine!, request.name, request.job, elsewhere));
+        else if (bot.id === this.maintainerId && this.machineNamed(request.machine).kind === "here") later.push(() => this.botRequested(request.name, request.job, bot.profile.name));
+      }
+      else if (request.kind === "newBot") { if (main || bot.id === this.maintainerId) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
       else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
       else if (request.kind === "subBot") later.push(() => { void this.subBotRequested(bot, request); });
       else if (request.kind === "removeSubBot") later.push(() => { void this.removeSubBotRequested(bot, request); });
@@ -2488,12 +2643,26 @@ First write a test that shows this, then fix it.`;
     const main = bot;
     const home = homedir();
     const own = resolvePath(this.options.dataDir);
+    // M5-04d: `projects.add` is never sent. A project on another machine is that machine's own window's to add.
+    const told = new Set<string>();
+    const here = asked.filter((request) => {
+      if (!request.machine) return true;
+      const machine = this.machineNamed(request.machine);
+      if (machine.kind === "here") return true;
+      if (machine.kind === "unknown") {
+        this.tellMain((p) => `There is no machine named "${p(machine.name)}"; the project was not added.`);
+      } else if (!told.has(machine.name.toLowerCase())) {
+        told.add(machine.name.toLowerCase());
+        this.tellMain((p) => `Adding a project on ${p(machine.name)} needs ${p(machine.name)}'s own window.`);
+      }
+      return false;
+    });
     const adding: { folder: string; task: string }[] = [];
     const missing: string[] = [];
     const tooBroad: string[] = [];
     const handed: string[] = [];
     const expanded: { path: string; task: string }[] = [];
-    for (const { folder: path, task } of asked) {
+    for (const { folder: path, task } of here) {
       const trimmed = path.trim();
       if (trimmed.endsWith("/**")) {
         const parent = folderPath(trimmed.slice(0, -3));

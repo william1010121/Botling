@@ -220,13 +220,36 @@ export function storeKeyOf(dataDir: string, directory: string, mainId: string): 
  * or `manager`, top-level only), leaving out the 2.x constants `MAIN_BOT_ID` and `MAINTAINER_ID`.
  */
 export function peerRemoteMembers(roster: Pick<RosterStore, "view">, db: Db): RemoteMember[] {
+  const botRows = db.prepare("SELECT key, body FROM rows WHERE stream = ? AND key LIKE 'bot:%' AND deleted = 0 ORDER BY rev");
+  const result: RemoteMember[] = [];
+  for (const { id: server, name: serverName } of peerMachines(roster, db)) {
+    const stream = `srv:${server}`;
+    for (const row of botRows.all(stream)) {
+      const id = String(row.key).slice(4);
+      if (!id || id === MAIN_BOT_ID || id === MAINTAINER_ID) continue;
+      let body: { name?: unknown; role?: unknown; parent?: unknown };
+      try { body = JSON.parse(String(row.body ?? "{}")); } catch { continue; }
+      if (body.role !== "bot" && body.role !== "manager") continue;
+      if (body.parent !== null && body.parent !== undefined) continue;
+      if (typeof body.name !== "string" || !body.name.trim()) continue;
+      result.push({ id, name: body.name, server, serverName });
+    }
+  }
+  return result;
+}
+
+/**
+ * The other machines of this cluster (M5-04d, `CoreOptions.machines`; M5-02a's peers): valid servers of the roster that
+ * are not this one and whose table is not gone, each named as the main bot's tags and the call-in list name it: the roster
+ * member name, else the machine row's name, else the server id.
+ */
+export function peerMachines(roster: Pick<RosterStore, "view">, db: Db): Array<{ id: string; name: string }> {
   const view = roster.view;
   const peers = [...view.valid].filter((member) => member !== view.self && view.servers.has(member)).sort();
   if (!peers.length) return [];
   const streamState = db.prepare("SELECT state FROM streams WHERE stream = ?");
   const machineRow = db.prepare("SELECT body FROM rows WHERE stream = ? AND key = 'machine' AND deleted = 0");
-  const botRows = db.prepare("SELECT key, body FROM rows WHERE stream = ? AND key LIKE 'bot:%' AND deleted = 0 ORDER BY rev");
-  const result: RemoteMember[] = [];
+  const result: Array<{ id: string; name: string }> = [];
   for (const server of peers) {
     const stream = `srv:${server}`;
     const meta = streamState.get(stream);
@@ -239,17 +262,7 @@ export function peerRemoteMembers(roster: Pick<RosterStore, "view">, db: Db): Re
         if (typeof parsed.name === "string") machineName = parsed.name.trim();
       }
     } catch { /* ignore malformed machine row */ }
-    const serverName = view.members.get(server)?.name?.trim() || machineName || server;
-    for (const row of botRows.all(stream)) {
-      const id = String(row.key).slice(4);
-      if (!id || id === MAIN_BOT_ID || id === MAINTAINER_ID) continue;
-      let body: { name?: unknown; role?: unknown; parent?: unknown };
-      try { body = JSON.parse(String(row.body ?? "{}")); } catch { continue; }
-      if (body.role !== "bot" && body.role !== "manager") continue;
-      if (body.parent !== null && body.parent !== undefined) continue;
-      if (typeof body.name !== "string" || !body.name.trim()) continue;
-      result.push({ id, name: body.name, server, serverName });
-    }
+    result.push({ id: server, name: view.members.get(server)?.name?.trim() || machineName || server });
   }
   return result;
 }
@@ -485,6 +498,7 @@ export class Botlingd {
           },
         },
         remoteMembers: () => peerRemoteMembers(roster, hub.reader()),
+        machines: () => peerMachines(roster, hub.reader()),
         // M5-04c: the origin is built below, after the core; a call before then is "not ready".
         remoteCommand: (target, cmd) => remoteCommandVia(originRef, target, cmd),
         machineName: () => ownMachineName(roster, serverId, SERVER_NAME),
