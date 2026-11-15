@@ -115,7 +115,9 @@ async function run(seed: number, steps: number): Promise<{ items: number; restor
   const unrelay: Array<() => void> = [];
   const newForwarder = () => {
     for (const off of unrelay.splice(0)) off();
-    forwarder = new Forwarder({ self: A, submit: (c) => fwdStore.writer.submit(c), reader: () => fwdStore.db, directory, log: () => undefined, session: () => (peerOpen ? liveA : null) });
+    forwarder = new Forwarder({ self: A, submit: (c) => fwdStore.writer.submit(c), reader: () => fwdStore.db, directory, log: () => undefined, session: () => (peerOpen ? liveA : null),
+      // The stand-in commands (target ids like "x2") are not real wire commands: this test is about queue order, not frame checks.
+      encode: () => ({ ok: true }) });
     for (const origin of ORIGINS) unrelay.push(forwarder.attach(origin, (m) => feDown.get(origin)!.push(structuredClone(m))));
     if (peerOpen) forwarder.opened(liveA);
   };
