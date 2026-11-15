@@ -15,6 +15,7 @@ import { CORE_PROMPT_SECTIONS } from "../prompts";
 import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
 import type { PluginHostClient } from "./host-client";
 import { title } from "./manifest";
+import { mustOwnNote } from "./plugin-owns";
 import type { InstalledPlugin, PluginRegistry } from "./registry";
 import type { PendingTags } from "./pending-tags";
 import type { BriefingBook, AppWorld } from "./app-seam";
@@ -267,11 +268,12 @@ export function approvalAsk(this: HostEventsHost, name: string, botId: string, c
 /** The pictures a frame's tile data names, as card-page URLs (`ccb.tile`: the app page puts them into the tile's page). */
 /**
  * A plugin frame's `ccb.snapshot` ("freeze to image" in the Note tab): the picture main took of that frame's own rect,
- * kept in the bot's note-assets folder like a pasted one. Needs "files"; the plugin links the ref itself.
+ * kept in the bot's note-assets folder like a pasted one. Needs "files" and owning the note (plugin-owns.ts); the plugin links the ref itself.
  */
 export function noteSnapshot(this: HostEventsHost, name: string, botId: string, picture: { base64: string; name: string } | undefined): { ref: string; url: string | null } {
   const plugin = this.asking(name);
   this.needs(plugin, "files", "Adding a picture to a bot's note");
+  mustOwnNote(plugin, "Adding a picture to a bot's note");
   if (!picture) throw new ContractError("conflict", "No picture could be taken of that card.");
   const file = this.noteFile(botId);
   const ref = importAssetBytes(file, Buffer.from(picture.base64, "base64"), picture.name);
