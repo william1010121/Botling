@@ -340,7 +340,7 @@ export function ThisDevice({
   device: DeviceRecord;
   connection: Connection | null;
   path: DialPath;
-  serverId?: string;
+  serverId: string;
   knownServers?: readonly StoredServer[];
   onClose: () => void;
   onForget: () => void;
@@ -352,14 +352,11 @@ export function ThisDevice({
     () => (connection?.link.attached ? (connection.link.attachedServerId() ?? null) : null),
   );
   const [liveServers, setLiveServers] = useState<PickerServer[]>(() => (connection?.link.attached ? connection.link.servers() : []));
-  const [selectedServerId, setSelectedServerId] = useState<string>(
-    () => serverId ?? connection?.serverId ?? connection?.link.attachedServerId() ?? device.server.memberId,
-  );
+  const [selectedServerId, setSelectedServerId] = useState<string>(serverId);
 
   useEffect(() => {
-    if (serverId !== undefined) setSelectedServerId(serverId);
-    else setSelectedServerId(connection?.serverId ?? connection?.link.attachedServerId() ?? device.server.memberId);
-  }, [serverId, connection, device.server.memberId]);
+    setSelectedServerId(serverId);
+  }, [serverId]);
 
   useEffect(() => {
     if (!connection) {
@@ -383,25 +380,25 @@ export function ThisDevice({
         syncLink();
       } else if (event.type === "attached") {
         syncLink(event.attached);
-        if (event.attached && serverId === undefined) {
-          setSelectedServerId(connection.serverId ?? connection.link.attachedServerId() ?? device.server.memberId);
-        }
       } else if (event.type === "servers" || (event.type === "message" && event.message.t === "peer")) {
         syncLink();
       }
     });
-  }, [connection, serverId, device.server.memberId]);
+  }, [connection]);
 
-  const offlineServers = knownServers ?? device.servers ?? [];
+  const stickyServers = knownServers ?? device.servers ?? [];
+  const goneIds = new Set(stickyServers.filter((s) => s.state === "gone").map((s) => s.id));
   const baseServers: readonly PickerServer[] = attached
     ? liveServers
-    : (offlineServers.length > 0 ? offlineServers : [{ id: device.server.memberId, name: device.server.name }]);
-  const serverOptions: PickerServer[] = [...baseServers];
+    : (stickyServers.length > 0 ? stickyServers : [{ id: device.server.memberId, name: device.server.name }]);
+  const serverOptions: PickerServer[] = baseServers.map((s) => (
+    goneIds.has(s.id) && s.state !== "gone" ? { ...s, state: "gone" as const } : s
+  ));
   if (!serverOptions.some((s) => s.id === selectedServerId)) {
-    serverOptions.push({ id: selectedServerId, name: selectedServerId });
+    serverOptions.push({ id: selectedServerId, name: selectedServerId, ...(goneIds.has(selectedServerId) ? { state: "gone" as const } : {}) });
   }
   if (attachedServerId && !serverOptions.some((s) => s.id === attachedServerId)) {
-    serverOptions.push({ id: attachedServerId, name: attachedServerId });
+    serverOptions.push({ id: attachedServerId, name: attachedServerId, ...(goneIds.has(attachedServerId) ? { state: "gone" as const } : {}) });
   }
   const serverName = (id: string): string => serverOptions.find((s) => s.id === id)?.name ?? id;
   const serverStatusText = attachedServerId

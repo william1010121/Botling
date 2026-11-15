@@ -214,8 +214,10 @@ export interface CoreOptions {
    * server as origin. `committed` settles when the slot is durably queued; `outcome` when the owner has decided.
    */
   remoteCommand?(target: string, cmd: Command): { committed: Promise<void>; outcome: Promise<{ ok: true } | { ok: false; why: string }> };
-  /** Botling 3's server only: this machine's name, for "From the main bot on <name>" in what a peer's bot is sent (M5-04c). */
-  machineName?: string;
+  /** Botling 3's server only: this machine's name, for "From the main bot on <name>" in what a peer's bot is sent (M5-04c); read at each send. */
+  machineName?: string | (() => string);
+  /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash. */
+  pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
 }
 
 /** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
@@ -297,6 +299,15 @@ export class Core {
 
   mainBot(): Bot | null { return this.bots.get(this.mainBotId) ?? null; }
 
+  /** Botling 3's server only: a plugin row changed (a grant, or the running hash); tells front ends when the list now reads differently. */
+  pluginGrantsChanged(): void {
+    const view = this.plugins.view();
+    const text = JSON.stringify(view);
+    if (text === this.lastPlugins) return;
+    this.lastPlugins = text;
+    this.event({ type: "plugins.updated", plugins: view });
+  }
+
   constructor(private options: CoreOptions) {
     this.mainBotId = options.mainBotId ?? MAIN_BOT_ID;
     this.maintainerId = options.maintainerId ?? MAINTAINER_ID;
@@ -347,6 +358,7 @@ export class Core {
       sealer: host?.sealer ?? null,
       timing: host?.timing,
       onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
+      ...(options.pluginGrant ? { pluginGrant: options.pluginGrant } : {}),
       world: {
         bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
         send: (botId, text, via) => {
@@ -952,7 +964,10 @@ First write a test that shows this, then fix it.`;
    */
   private peerBots(): RemoteMember[] {
     if (!this.options.remoteCommand || !this.options.remoteMembers) return [];
-    return this.options.remoteMembers().filter((peer) => peer.name !== "Main (old)");
+    // Names and ids come from a peer's rows (schema-checked only): one clean line each, and an id that is one path part.
+    return this.options.remoteMembers()
+      .map((peer) => ({ ...peer, name: botName(peer.name), serverName: botName(peer.serverName) || peer.server }))
+      .filter((peer) => peer.name && peer.name !== "Main (old)" && /^[A-Za-z0-9_-]{1,64}$/.test(peer.id));
   }
 
   /** The file the main bot appends to for a peer's bot; it lives next to the main bot's, never on the peer's machine. */
@@ -2066,7 +2081,8 @@ First write a test that shows this, then fix it.`;
       try { text = readFileSync(file, "utf8"); } catch { continue; }
       if (!text.trim()) continue;
       const who = `${peer.name} on ${peer.serverName}`;
-      const wrapped = `From the main bot on ${this.options.machineName ?? "this machine"}:\n${text}`;
+      const machine = typeof this.options.machineName === "function" ? this.options.machineName() : this.options.machineName;
+      const wrapped = `From the main bot on ${machine || "this machine"}:\n${text}`;
       if (wrapped.length > MESSAGE_TEXT_LIMIT) { this.log(`inbox of ${who} kept: the text is longer than ${MESSAGE_TEXT_LIMIT} characters`); continue; }
       let sent: ReturnType<typeof remoteCommand>;
       try { sent = remoteCommand(`bot:${peer.id}`, { type: "chat.send", botId: peer.id, text: wrapped }); } catch (error) { this.log(`inbox of ${who} kept: ${(error as Error).message}`); continue; }
