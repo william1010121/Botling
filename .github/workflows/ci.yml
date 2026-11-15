@@ -7,9 +7,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Nightly: the full seed and crash-run counts and the Windows job, which pull requests skip (see the desktop job).
+  schedule:
+    - cron: "30 18 * * *"
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event is part of the group so the nightly run on main and a push to main do not cancel each other.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -76,7 +81,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-26, ubuntu-latest, windows-latest]
+        # Windows runs on main and nightly only (it does not block merges); pull requests run macOS and Ubuntu.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["macos-26", "ubuntu-latest"]') || fromJSON('["macos-26", "ubuntu-latest", "windows-latest"]') }}
+    # Seeded property and crash loops: pull requests run fewer (the first seeds); main, nightly and manual runs keep the
+    # tests' own full counts, written out here because an empty value would not mean "default" for every knob.
+    env:
+      FORWARD_FAULT_RUNS: ${{ github.event_name == 'pull_request' && '2' || '6' }}
+      V3_CONTENT_CRASH_RUNS: ${{ github.event_name == 'pull_request' && '5' || '20' }}
+      V3_EFFECTS_CRASH_RUNS: ${{ github.event_name == 'pull_request' && '5' || '20' }}
+      V3_STORE_CRASH_RUNS: ${{ github.event_name == 'pull_request' && '5' || '20' }}
+      KERNEL_ACCEPTANCE_RUNS: ${{ github.event_name == 'pull_request' && '150' || '500' }}
+      V3_GOSSIP_PROPERTY_SEEDS: ${{ github.event_name == 'pull_request' && '2' || '6' }}
+      V3_LOG_PROPERTY_RUNS: ${{ github.event_name == 'pull_request' && '10' || '30' }}
     defaults:
       run:
         working-directory: desktop
@@ -103,9 +119,17 @@ jobs:
           fi
       - run: npm run test:release
         if: ${{ !cancelled() }}
+      # npm run typecheck is incremental (.cache/tsc); the build info stores content hashes, so a cache from an older
+      # commit is safe and only the changed files are checked again.
+      - uses: actions/cache@v4
+        with:
+          path: desktop/.cache/tsc
+          key: tsc-${{ runner.os }}-${{ hashFiles('desktop/package-lock.json') }}-${{ github.sha }}
+          restore-keys: tsc-${{ runner.os }}-${{ hashFiles('desktop/package-lock.json') }}-
       - run: npm run typecheck
         if: ${{ !cancelled() }}
-      - run: npm run test:unit
+      # Ubuntu runners have 4 vCPUs: 4 test workers there (vitest.config.mts keeps 2 elsewhere).
+      - run: npm run test:unit -- ${{ matrix.os == 'ubuntu-latest' && '--maxWorkers=4' || '' }}
         if: ${{ !cancelled() }}
       - run: npm run test:reports
         if: ${{ !cancelled() }}
