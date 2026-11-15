@@ -16,6 +16,7 @@ import { FeLink, MemoryFeStorage } from "../../src/fe-link";
 import { RendererAdapter } from "../../src/main-v3/renderer-adapter";
 import { slotKey, type Message } from "../../src/protocol";
 import { Kernel } from "../../../Web/src/plugin-kernel";
+import type { InPageSource } from "../../src/renderer/shell/inpage-loader";
 import { RowLoader, followRows, webInstance, type BundleFetcher, type BundleRequest, type OutcomeItem, type RowsLink } from "../../src/renderer/shell/row-loader";
 import { BOT, FakeClock, FakeServer, flush, react } from "./fe-link-harness";
 
@@ -399,6 +400,26 @@ describe("a server switch (Q-M7-C1)", () => {
     serverB.publish({ a: row(A(1)) });
     await until(clock, () => page.runs("a") === A(1));
     expect(page.runs("a")).toBe(A(1));
+  });
+
+  it("a step that began for the old server and ends after the switch records nothing (L-008)", async () => {
+    const kernel = new Kernel({ log: true });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let built = false;
+    // The build's copy of plugin a is slow to come, and is missing the first time (the old server's step fails): a failure that belongs
+    // to the old server must not stay on the plan for the new one.
+    const source: InPageSource = async () => { await gate; return built ? { activate: () => () => undefined } : undefined; };
+    const loader = new RowLoader({ kernel, fetch: async () => { throw new Error("no bundle"); }, manifest: { plugins: [{ name: "a", codeHash: code("a1") }] }, source, log: () => undefined });
+    const rows = new Map<string, unknown>([["plugin:a", row(A(1), "a1")]]);
+    const first = loader.reconcile(rows);
+    await flush();
+    loader.switchServer();
+    release();
+    await first;
+    built = true;
+    await loader.reconcile(rows);
+    expect(loader.loaded()).toEqual([{ name: "a", where: "page", codeHash: code("a1") }]);
   });
 
   it("the outbox stays the shell's: an outcome of a plugin the new server lacks is shown once, in the pending view", async () => {
