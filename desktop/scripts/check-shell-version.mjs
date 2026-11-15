@@ -1,6 +1,6 @@
 // Build check: `minFeVersion` names the shell only (M7-10b; plan-change §4.3 check 4, D55, N8).
 //   node scripts/check-shell-version.mjs [--repo <dir>] [--whole] [--no-baseline] [<base> [<head>]]      (default: main HEAD)
-//   node scripts/check-shell-version.mjs [--repo <dir>] --update      rewrite desktop/fe-shell-baseline.json from the working tree
+//   node scripts/check-shell-version.mjs [--repo <dir>] --update      rewrite desktop/fe-shell-baseline.json (MIN_FE_VERSION only) from the working tree
 //
 // A commit that touches only plugin sources (desktop/builtin-plugins/**, desktop/src/renderer/plugins/**; tests, docs and
 // notes beside them do not count) must leave both halves of the manifest's shell part as they were:
@@ -8,15 +8,15 @@
 //   - the shell hash (fe-shell-manifest.mjs: the files of the shell, never a plugin source).
 // A commit that touches anything else may change them. Every non-merge commit of <base>..<head> is checked against its first
 // parent; `--whole` checks <base> → <head> as one change instead. Both values are read from git, nothing is checked out.
-// The build's manifest is not committed, so the committed baseline (desktop/fe-shell-baseline.json: the shell part as of the last shell
-// change) is what <head> is compared with: if the shell's files or MIN_FE_VERSION at <head> differ from it, the change that moved them
-// has to run `--update` in the same branch (a plugin-only change never needs to; it moves neither). `--no-baseline` skips that part.
+// The build's manifest is not committed, so the committed baseline (desktop/fe-shell-baseline.json: `minFeVersion` only) is what the
+// head's MIN_FE_VERSION is compared with: a bump has to run `--update` in the same branch. The shell hash is deliberately not in the
+// baseline (parallel branches that edit the shell would all conflict on it); its rule is the per-commit one above. `--no-baseline` skips it.
 // Exit 1 lists the commits that broke the rule; a value that cannot be read fails (never "unchanged").
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFileSync } from "node:fs";
-import { findMinFeVersion, fsTree, gitTree, isNeutralPath, isPluginSourcePath, parseShellBaseline, SHELL_BASELINE_FILE, shellBaselineText, shellHash, shellManifest } from "../fe-shell-manifest.mjs";
+import { findMinFeVersion, fsTree, gitTree, isNeutralPath, isPluginSourcePath, parseShellBaseline, SHELL_BASELINE_FILE, shellBaselineText, shellHash } from "../fe-shell-manifest.mjs";
 
 const git = (repo, ...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
 
@@ -45,16 +45,14 @@ export function checkChange(repo, from, to, paths, { hash = shellHash } = {}) {
   return { kind, problems };
 }
 
-/** <ref>'s shell part against the committed baseline: a list of problems (empty when they agree). */
-export function checkBaseline(repo, ref, hash = shellHash) {
+/** <ref>'s MIN_FE_VERSION against the committed baseline: a list of problems (empty when they agree). The hash is not in the baseline. */
+export function checkBaseline(repo, ref) {
   let text;
   try { text = gitTree(repo, ref).read(SHELL_BASELINE_FILE); } catch { return [`${SHELL_BASELINE_FILE} is missing at ${ref} (run: node desktop/scripts/check-shell-version.mjs --update)`]; }
   const baseline = parseShellBaseline(text);
-  if (!baseline) return [`${SHELL_BASELINE_FILE} is not a valid baseline (run: node desktop/scripts/check-shell-version.mjs --update)`];
-  const now = shellAt(repo, ref, hash), problems = [];
-  if (now.minFeVersion !== baseline.minFeVersion) problems.push(`MIN_FE_VERSION is ${JSON.stringify(now.minFeVersion)} but the baseline says ${JSON.stringify(baseline.minFeVersion)}`);
-  if (now.hash !== baseline.hash) problems.push(`the shell hash is ${now.hash.slice(0, 12)} but the baseline says ${baseline.hash.slice(0, 12)}`);
-  return problems.length ? [...problems, "the shell changed without a new baseline: run node desktop/scripts/check-shell-version.mjs --update and commit it"] : [];
+  if (baseline === null) return [`${SHELL_BASELINE_FILE} is not a valid baseline (run: node desktop/scripts/check-shell-version.mjs --update)`];
+  const now = findMinFeVersion(gitTree(repo, ref));
+  return now === baseline ? [] : [`MIN_FE_VERSION is ${JSON.stringify(now)} but the baseline says ${JSON.stringify(baseline)}`, "MIN_FE_VERSION changed without a new baseline: run node desktop/scripts/check-shell-version.mjs --update and commit it"];
 }
 
 const changedPaths = (repo, from, to) => git(repo, "diff", "--name-only", "-z", "--no-renames", from, to).split("\0").filter(Boolean);
@@ -79,10 +77,10 @@ function main(argv) {
   const flag = (name) => args.includes(name) && args.splice(args.indexOf(name), 1).length === 1;
   const whole = flag("--whole"), noBaseline = flag("--no-baseline"), update = flag("--update");
   if (update) {
-    const shell = shellManifest(fsTree(repo));
+    const shell = { minFeVersion: findMinFeVersion(fsTree(repo)) };
     if (shell.minFeVersion === null) throw new Error("MIN_FE_VERSION is not defined exactly once under desktop/src");
-    writeFileSync(resolve(repo, SHELL_BASELINE_FILE), shellBaselineText(shell));
-    console.log(`check-shell-version: ${SHELL_BASELINE_FILE} updated (${shell.minFeVersion}, ${shell.hash.slice(0, 12)})`);
+    writeFileSync(resolve(repo, SHELL_BASELINE_FILE), shellBaselineText(shell.minFeVersion));
+    console.log(`check-shell-version: ${SHELL_BASELINE_FILE} updated (${shell.minFeVersion})`);
     return 0;
   }
   const [base = "main", head = "HEAD"] = args;

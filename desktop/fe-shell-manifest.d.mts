@@ -19,5 +19,5 @@ export function shellHash(tree: FeTree, roots?: readonly string[], accept?: (pat
 export function findMinFeVersion(tree: FeTree): string | null;
 export function shellManifest(tree: FeTree, roots?: readonly string[]): ShellManifest;
 export const SHELL_BASELINE_FILE: string;
-export function shellBaselineText(shell: ShellManifest): string;
-export function parseShellBaseline(text: string): { minFeVersion: string; hash: string } | null;
+export function shellBaselineText(minFeVersion: string): string;
+export function parseShellBaseline(text: string): string | null;

@@ -106,14 +106,15 @@ export function findMinFeVersion(tree) {
 /** `{ minFeVersion, hash }` for the tree: the manifest's shell part. */
 export const shellManifest = (tree, roots = SHELL_ROOTS) => ({ minFeVersion: findMinFeVersion(tree), hash: shellHash(tree, roots) });
 
-/** The committed baseline: the shell part as of the last shell change (the build's manifest is not committed, so the check compares with this).
- * It lives beside the manifest code and outside SHELL_ROOTS, so writing it never moves the hash. */
+/** The committed baseline: only `minFeVersion`, as of the last bump (the build's manifest is not committed, so the check compares with this).
+ * The shell hash is NOT in it on purpose: many branches edit the shell at once and would all conflict on it; the hash rule is per commit
+ * (scripts/check-shell-version.mjs). It lives outside SHELL_ROOTS. */
 export const SHELL_BASELINE_FILE = "desktop/fe-shell-baseline.json";
-export const shellBaselineText = (shell) => `${JSON.stringify({ version: 1, shell: { minFeVersion: shell.minFeVersion, hash: shell.hash } }, null, 2)}\n`;
-/** The shell part named by a baseline file's text; null when it is not a well-formed baseline (fails closed). */
+export const shellBaselineText = (minFeVersion) => `${JSON.stringify({ version: 1, shell: { minFeVersion } }, null, 2)}\n`;
+/** The `minFeVersion` a baseline file's text names; null when it is not a well-formed baseline (fails closed). */
 export function parseShellBaseline(text) {
   try {
-    const shell = JSON.parse(text)?.shell;
-    return shell && typeof shell.minFeVersion === "string" && /^[0-9a-f]{64}$/.test(shell.hash) ? { minFeVersion: shell.minFeVersion, hash: shell.hash } : null;
+    const value = JSON.parse(text)?.shell?.minFeVersion;
+    return typeof value === "string" && value !== "" ? value : null;
   } catch { return null; }
 }

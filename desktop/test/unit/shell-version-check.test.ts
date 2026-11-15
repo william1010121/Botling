@@ -46,8 +46,8 @@ function makeRepo() {
     "desktop/src/renderer/plugins/settings/index.ts": "export const activate = () => {};\n",
     "docs/notes.md": "# notes\n",
   }, "base");
-  // The committed baseline of the shell part (what `--update` writes).
-  const baseline = commit({ [SHELL_BASELINE_FILE]: shellBaselineText(shellManifest(fsTree(repo))) }, "baseline");
+  // The committed baseline (MIN_FE_VERSION only; what `--update` writes).
+  const baseline = commit({ [SHELL_BASELINE_FILE]: shellBaselineText(findMinFeVersion(fsTree(repo))!) }, "baseline");
   return { repo, commit, base: baseline };
 }
 
@@ -193,36 +193,38 @@ describe("check-shell-version: a plugin-only change never moves the shell part",
 describe("the committed baseline", () => {
   const cli = (repo: string, ...args: string[]) => spawnSync(process.execPath, [script, "--repo", repo, ...args], { encoding: "utf8" });
 
-  it("agrees with a tree whose shell is as it was, also after plugin-only commits", () => {
+  it("holds MIN_FE_VERSION only (no shell hash), and agrees with a tree whose value is as it was, also after plugin-only commits", () => {
     const { repo, commit, base } = makeRepo();
     expect(checkBaseline(repo, base)).toEqual([]);
     const plugin = commit({ "desktop/builtin-plugins/botling.note/index.js": "module.exports = 2;\n", "docs/notes.md": "x\n" });
     expect(checkBaseline(repo, plugin)).toEqual([]);
-    expect(parseShellBaseline(readFileSync(join(repo, SHELL_BASELINE_FILE), "utf8"))).toEqual(shellManifest(gitTree(repo, base)));
+    const text = readFileSync(join(repo, SHELL_BASELINE_FILE), "utf8");
+    expect(JSON.parse(text)).toEqual({ version: 1, shell: { minFeVersion: "3.0.0-m1" } });
+    expect(parseShellBaseline(text)).toBe("3.0.0-m1");
   });
 
-  it("names a shell change or a MIN_FE_VERSION bump that did not bring a new baseline, and accepts it once --update is committed", () => {
+  it("leaves a shell change alone (the hash is not in the baseline), names a MIN_FE_VERSION bump without a new baseline, and accepts it once --update is committed", () => {
     const { repo, commit, base } = makeRepo();
     const shell = commit({ "desktop/src/renderer/shell/main.tsx": "export const shell = 2;\n" });
-    expect(checkBaseline(repo, shell)).toEqual([expect.stringContaining("the shell hash is"), expect.stringContaining("--update")]);
-    const failing = cli(repo, base, shell);
-    expect(failing.status).toBe(1);
-    expect(failing.stdout).toContain("baseline out of date");
-    expect(failing.stderr).toContain("the shell changed without a new baseline");
-    const updated = cli(repo, "--update");
-    expect(updated.status).toBe(0);
-    const fixed = commit({ [SHELL_BASELINE_FILE]: readFileSync(join(repo, SHELL_BASELINE_FILE), "utf8") }, "baseline");
-    expect(checkBaseline(repo, fixed)).toEqual([]);
+    expect(checkBaseline(repo, shell)).toEqual([]);
+    expect(cli(repo, base, shell).status).toBe(0);
     const bump = commit({ [CONSTANT_FILE]: constant("3.0.0-m2") });
     expect(checkBaseline(repo, bump)).toEqual([expect.stringContaining('MIN_FE_VERSION is "3.0.0-m2"'), expect.stringContaining("--update")]);
-    expect(cli(repo, fixed, fixed).status).toBe(0);
+    const failing = cli(repo, shell, bump);
+    expect(failing.status).toBe(1);
+    expect(failing.stderr).toContain("MIN_FE_VERSION changed without a new baseline");
+    expect(cli(repo, "--update").status).toBe(0);
+    expect(JSON.parse(readFileSync(join(repo, SHELL_BASELINE_FILE), "utf8"))).toEqual({ version: 1, shell: { minFeVersion: "3.0.0-m2" } });
+    const fixed = commit({ [SHELL_BASELINE_FILE]: readFileSync(join(repo, SHELL_BASELINE_FILE), "utf8") }, "baseline");
+    expect(checkBaseline(repo, fixed)).toEqual([]);
+    expect(cli(repo, bump, fixed).status).toBe(0);
   });
 
   it("fails closed for a missing or malformed baseline", () => {
     const { repo, commit } = makeRepo();
     const garbled = commit({ [SHELL_BASELINE_FILE]: "{ not json" });
     expect(checkBaseline(repo, garbled)).toEqual([expect.stringContaining("not a valid baseline")]);
-    const odd = commit({ [SHELL_BASELINE_FILE]: JSON.stringify({ version: 1, shell: { minFeVersion: "3.0.0-m1", hash: "zz" } }) });
+    const odd = commit({ [SHELL_BASELINE_FILE]: JSON.stringify({ version: 1, shell: { hash: "zz" } }) });
     expect(checkBaseline(repo, odd)).toEqual([expect.stringContaining("not a valid baseline")]);
     const gone = commit({ [SHELL_BASELINE_FILE]: null });
     expect(checkBaseline(repo, gone)).toEqual([expect.stringContaining("is missing")]);

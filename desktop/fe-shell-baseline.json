@@ -1,7 +1,6 @@
 {
   "version": 1,
   "shell": {
-    "minFeVersion": "3.0.0-m1",
-    "hash": "f39b3ff7abf70b833b03c4bac94105218852d635f17658311199ef49739e716b"
+    "minFeVersion": "3.0.0-m1"
   }
 }
