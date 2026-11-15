@@ -4,7 +4,14 @@
 #   desktop/scripts/remote-test.sh <branch-or-sha> [vitest args...]      npm run build, then npx vitest run <args>
 #   desktop/scripts/remote-test.sh <branch-or-sha> --changed <base>      npm run test:changed -- <base> (typecheck too)
 #   desktop/scripts/remote-test.sh <branch-or-sha> --unit [vitest args]  npm run test:unit (the full unit suite)
+#   desktop/scripts/remote-test.sh <branch-or-sha> --typecheck [...]    typecheck first (npm run typecheck = tsc --noEmit),
+#                                                                       then the mode above; a type error fails the run
+#   desktop/scripts/remote-test.sh <branch-or-sha> --typecheck-only     only the typecheck, no tests (use this, not tsc on the Mac)
 #   desktop/scripts/remote-test.sh --setup [host]                        one-time host setup (Node 24, bare repo)
+#
+# --typecheck / --typecheck-only come right after the commit. The typecheck reports PASS or FAIL with its time and, on
+# failure, the first errors; tests after a failed typecheck are not run. With --changed it is redundant (test:changed
+# typechecks) and ignored.
 #
 # What it does: picks the host (the primary, or the fallback when that one does not answer), pushes the
 # commit over ssh to a code-only bare repo there, waits for a free slot, checks the commit out in a per-run worktree,
@@ -31,11 +38,11 @@
 #   BOTLING_REMOTE_LOGS     local folder for the saved output (default <main checkout>/.bot/remote-test-logs)
 #   BOTLING_REMOTE_KEEP=1   keep the host worktree after the run (for poking at a failure; remove it by hand)
 #
-# Exit status: the test command's status; 2 for a usage or setup error.
+# Exit status: the typecheck's or test command's status; 2 for a usage or setup error.
 set -euo pipefail
 
 NODE_VERSION=v24.22.3 # the Node 24 that --setup installs (CI's desktop jobs use Node 24)
-usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 1 ] || usage
 case "$1" in -h|--help) usage ;; esac
 
@@ -73,16 +80,25 @@ on_host() {
 
 if [ "$1" = --setup ]; then
   h=${2:-$BOTLING_TEST_HOST}
-  on_host "$h" "$rdir" "" "" setup "$NODE_VERSION" 0 0 0 ""
+  on_host "$h" "$rdir" "" "" setup "$NODE_VERSION" 0 0 0 "" 0
   exit
 fi
 
 ref=$1; shift
-mode=vitest; base=
+mode=vitest; base=; tc=0
+case "${1:-}" in
+  --typecheck) tc=1; shift ;;
+  --typecheck-only) tc=only; shift ;;
+esac
 case "${1:-}" in
   --changed) [ $# -ge 2 ] || usage; mode=changed; base=$2; shift 2 ;;
   --unit) mode=unit; shift ;;
 esac
+if [ "$tc" = only ]; then
+  [ $# -eq 0 ] || { echo "remote-test: --typecheck-only takes no further arguments" >&2; usage; }
+  mode=typecheck
+elif [ "$mode" = changed ]; then tc=0 # test:changed typechecks already
+fi
 
 host=$BOTLING_TEST_HOST
 fallback=${BOTLING_TEST_FALLBACK:-}
@@ -121,7 +137,7 @@ git push -q "$host:$rdir/repo.git" "${refs[@]}" || {
   echo "remote-test: push to $host failed; set the host up once with: desktop/scripts/remote-test.sh --setup $host" >&2; exit 2; }
 
 set +e
-on_host "$host" "$rdir" "$run" "$sha" "$mode" "$basesha" "$slots" "$timeout" "$keep" "$workers" "$@" 2>&1 | tee "$log"
+on_host "$host" "$rdir" "$run" "$sha" "$mode" "$basesha" "$slots" "$timeout" "$keep" "$workers" "$tc" "$@" 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 set -e
 echo "remote-test: exit $status on $host; output saved to $log"
@@ -129,12 +145,12 @@ exit "$status"
 
 #==REMOTE==
 # Runs on the host (bash 5), sent over ssh as one string; stdin carries the heartbeat (see on_host). Arguments: dir run sha mode base slots timeout
-# keep workers [vitest args...]; for mode "setup", base is the Node version. Node comes from <dir>/tools/node (no shell
+# keep workers typecheck(0|1|only) [vitest args...]; for mode "setup", base is the Node version. Node comes from <dir>/tools/node (no shell
 # rc changes on the host). Paths here are the host's own.
 set -uo pipefail
 export LC_ALL=C
-dir=$HOME/$1 run=$2 sha=$3 mode=$4 base=$5 slots=$6 timeout=$7 keep=$8 workers=$9
-shift 9
+dir=$HOME/$1 run=$2 sha=$3 mode=$4 base=$5 slots=$6 timeout=$7 keep=$8 workers=$9 tc=${10}
+shift 10
 export PATH="$dir/tools/node/bin:$PATH"
 repo=$dir/repo.git wt=$dir/runs/$run out=$dir/logs/$run
 tmp=/tmp/botling-rt-$run
@@ -243,9 +259,25 @@ reporters=(--reporter=default --reporter=./test/failure-reporter.ts --reporter=j
 extra=(); [ -n "$workers" ] && extra=(--maxWorkers="$workers")
 case "$mode" in
   vitest)  cmd=(bash -c 'npm run build && exec npx vitest run "$@"' _ "${reporters[@]}" "${extra[@]}" "$@") ;;
+  typecheck) cmd=(true) ;;
   unit)    cmd=(npm run test:unit -- "${reporters[@]}" "${extra[@]}" "$@") ;;
   changed) cmd=(npm run test:changed -- "$base") ;;
 esac
+
+# --typecheck: run npm run typecheck first inside the same process group; a failure skips the tests. Its verdict and the
+# first errors are printed in the output; $tmp/tcfail marks it for the summary.
+if [ "$tc" != 0 ]; then
+  cmd=(bash -c '
+    t=$(date +%s); echo "remote-test: typecheck: npm run typecheck"
+    npm run typecheck >"$TMPDIR/typecheck.log" 2>&1; rc=$?; s=$(( $(date +%s) - t ))
+    if [ "$rc" = 0 ]; then echo "remote-test: typecheck PASS in ${s}s"; exec "$@"; fi
+    : >"$TMPDIR/tcfail"
+    n=$(grep -c "error TS" "$TMPDIR/typecheck.log")
+    echo "remote-test: typecheck FAIL (exit $rc, $n errors) in ${s}s; first errors:"
+    grep -m10 "error TS" "$TMPDIR/typecheck.log" | sed "s/^/  /"
+    [ "$n" = 0 ] && tail -n 15 "$TMPDIR/typecheck.log"
+    exit "$rc"' _ "${cmd[@]}")
+fi
 
 # The tests run in their own process group (setsid, no fork here) so a timeout or a dropped ssh stops all of them.
 t0=$(date +%s)
@@ -266,6 +298,10 @@ kill -KILL -- "-$tpid" 2>/dev/null   # anything the tests left running
 tpid=
 secs=$(( $(date +%s) - t0 ))
 [ -n "$why" ] && { say "stopped: $why"; rc=124; }
+if [ "$mode" = typecheck ] || [ -e "$tmp/tcfail" ]; then
+  say "$([ "$rc" = 0 ] && echo PASS || echo FAIL) (exit $rc) in ${secs}s"
+  exit "$rc"
+fi
 
 # Summary: vitest's JSON when there is one; the tests skipped here because they need the Mac.
 SECS=$secs RC=$rc JSON=$json MODE=$mode node - "$@" <<'NODE'
