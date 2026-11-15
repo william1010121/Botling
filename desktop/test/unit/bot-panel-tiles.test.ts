@@ -112,6 +112,23 @@ describe("PluginsView.tiles, made from the contribution list", () => {
     expect(rows[0]!.title).toHaveLength(200);
     expect(PluginsView.shape.tiles.safeParse(rows).success).toBe(true);
   });
+
+  it("names each surface once (a manifest may repeat one, and the contract keeps three), and cuts sizes at 10 of 20 characters (M7-03b review)", () => {
+    const [row] = tileView([tile({ surfaces: ["board", "board", "pin", "whiteboard"], sizes: Array.from({ length: 12 }, (_, index) => `${index + 1}x${"1".repeat(25)}`) })]).tiles!;
+    expect(row!.surfaces).toEqual(["board", "pin", "whiteboard"]);
+    expect(row!.sizes).toHaveLength(10);
+    expect(row!.sizes.every((size) => size.length === 20)).toBe(true);
+    expect(PluginsView.shape.tiles.safeParse([row]).success).toBe(true);
+  });
+
+  it("the contract refuses more than 200 rows, 11 sizes, a size of 21 characters and 4 surfaces (M7-03b review)", () => {
+    const rows = PluginsView.shape.tiles;
+    expect(rows.safeParse(Array.from({ length: 200 }, () => TODO)).success).toBe(true);
+    expect(rows.safeParse(Array.from({ length: 201 }, () => TODO)).success).toBe(false);
+    expect(rows.safeParse([{ ...TODO, sizes: Array.from({ length: 11 }, () => "1x1") }]).success).toBe(false);
+    expect(rows.safeParse([{ ...TODO, sizes: ["x".repeat(21)] }]).success).toBe(false);
+    expect(rows.safeParse([{ ...TODO, surfaces: ["board", "pin", "whiteboard", "board"] }]).success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------- the feed and the slots
@@ -199,6 +216,15 @@ describe("tiles in the slots of the surfaces they name", () => {
     kernel.install({ name: "acme.evil", contributes: { slots: ["tile/pin"] } });
     await kernel.load("acme.evil", (plugin) => { kernel.contribute(plugin, "tile/pin", { kind: "feed", row: TODO }); kernel.contribute(plugin, "tile/pin", { kind: "tile", row: { ...TODO, plugin: "acme.evil" } }); kernel.contribute(plugin, "tile/pin", "not an entry"); });
     expect(kernel.entries("tile/pin")).toHaveLength(4);
+    expect(tiles("pin")).toEqual([ONLY.id]);
+  });
+
+  it("the slot's owner is not a tile source either: bot-panel's own entry naming itself is not a tile (M7-03b review)", async () => {
+    const { feed, host, tiles, kernel } = world();
+    await host.start();
+    feed.reconcile(viewOf([ONLY]));
+    expect(kernel.contribute(BOT_PANEL_PLUGIN, "tile/pin", { kind: "feed", row: { ...ONLY, plugin: BOT_PANEL_PLUGIN, id: "botling.bot-panel.x" } })).not.toBeNull();
+    expect(kernel.entries("tile/pin")).toHaveLength(2);
     expect(tiles("pin")).toEqual([ONLY.id]);
   });
 
