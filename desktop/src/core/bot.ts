@@ -7,7 +7,7 @@ import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
 import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
-import { AgyAcpHead, verifyAcpRuntime } from "./agent/agy-acp";
+import { AgyAcpHead, isAgyConversationGone, verifyAcpRuntime } from "./agent/agy-acp";
 import { AGY_EXECUTION_BLOCKED } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
 // claude process), the turn under way, the tool approvals it is waiting on, and its subagents
@@ -4137,8 +4137,8 @@ export class Bot {
     const turn = this.turn;
     let failedTurn = false;
     if (turn?.open && turn.head === head) {
-      // A resume of a session claude no longer has: start a new session and send the message again, once.
-      if (!this.restartRecovery && this.engine !== "agy" && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
+      // A resume of a session claude (or Antigravity: its conversation is not found) no longer has: start a new session and send the message again, once.
+      if (!this.restartRecovery && (this.engine !== "agy" || isAgyConversationGone(exit.stderr)) && exit.silent && this.session.started && !turn.retried && !exit.expected && (turn.origin !== "tidy" || (turn.guest && this.engine === "agy")) && turn.origin !== "background") {
         this.log(`resuming session ${this.session.sessionId} failed (${why}: ${exit.stderr.slice(0, 200)}); starting a new session`);
         this.newSession();
         this.store.saveHead(this.session);

@@ -7,7 +7,7 @@ import {AgyMcpBridge} from '../../src/core/agent/agy-mcp';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 const gate=vi.hoisted(()=>({workers:true}));
 vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>gate.workers}));
-import {AgyAcpProtocol,AgyAcpHead,AGY_REPLY_REMINDER,ACP_TOOLS,verifyAcpRuntime} from '../../src/core/agent/agy-acp';
+import {AgyAcpProtocol,AgyAcpHead,AGY_CONVERSATION_GONE,isAgyConversationGone,AGY_REPLY_REMINDER,ACP_TOOLS,verifyAcpRuntime} from '../../src/core/agent/agy-acp';
 const clients:AgyAcpProtocol[]=[];
 afterEach(()=>{gate.workers=true;clients.splice(0).forEach(c=>c.close());});
 const tick=async()=>{for(let i=0;i<15;i++)await Promise.resolve();};
@@ -35,6 +35,12 @@ it('failed resume does not create replacement conversation or expose auth error 
  expect(h.frames.at(-1)).toMatchObject({method:'session/load',params:{sessionId:'old'}});
  h.client.receive({jsonrpc:'2.0',id:h.frames.at(-1).id,error:{code:-32000,message:'secret-code'}});await done;
  expect(h.errors[0]?.message).not.toContain('secret');expect(h.frames.some(f=>f.method==='session/new')).toBe(false);
+});
+it('a resume that finds no conversation (-32002 on session/load) says so; any other code stays generic',async()=>{
+ const load=async(code:number,resume=true)=>{const h=harness(resume),done=h.client.send('task','u');h.reply({protocolVersion:1,agentInfo:{name:'antigravity-acp',version:'1.4.3'},agentCapabilities:{loadSession:true}});await tick();
+  h.client.receive({jsonrpc:'2.0',id:h.frames.at(-1).id,error:{code,message:'Session not found in the current GEMINI_HOME',data:{geminiHome:'/secret/home'}}});await done;return h.errors[0]?.message??'';};
+ const gone=await load(-32002);expect(gone).toBe(AGY_CONVERSATION_GONE);expect(isAgyConversationGone(gone)).toBe(true);expect(gone).not.toContain('secret');
+ expect(isAgyConversationGone(await load(-32000))).toBe(false);
 });
 it('streams tools/text, holds approval, rejects once and cancels pending cards',async()=>{
  const h=harness(),done=h.client.send('task','u');await h.init();h.policy();await tick();expect(h.frames.at(-1).method).toBe('session/prompt');const prompt=h.frames.at(-1).id;
