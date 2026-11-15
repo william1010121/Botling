@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Command, type Command as CommandType } from "../../src/contract";
 import { encodeWireFrame, type Slot, type Target } from "../../src/protocol";
 import { cutEscaped, escapedBytes, guestPrompt, CALLIN_REPLY_LIMIT, CALLIN_TRANSCRIPT_LIMIT } from "../../src/server/callin";
-import type { CallInSender } from "../../src/server/callin";
+import type { CallInGuestSender } from "../../src/server/callin";
 import { effectRows, harness, outcomeOf, type Harness } from "./server-intents-harness";
 
 const GUEST = "GUEST";
@@ -26,20 +26,25 @@ const cancel = (callId = CALL): CommandType => ({ type: "callin.cancel", botId: 
 
 interface Sent { target: Target; cmd: Extract<CommandType, { type: "callin.reply" }> }
 
-/** A stand-in for ServerOrigin: parses like the real `submit` does, and records what would go to the host's server. */
+/**
+ * A stand-in for ServerOrigin: parses like the real `submit` / `submitIn` do (before anything is written), and records what would
+ * go to the host's server: `submit` at once, `submitIn` when its transaction committed (`done`).
+ */
 function fakeSender(options: { owner?: string | null; failFirst?: boolean } = {}) {
   const sent: Sent[] = [];
   let failed = false;
-  const sender: CallInSender = {
+  const check = (target: Target, cmd: CommandType): Sent => {
+    if (options.failFirst && !failed) { failed = true; throw new TypeError("server-origin: callin.reply is not a valid command (test)"); }
+    const parsed = Command.parse(cmd);
+    const frame = encodeWireFrame({ t: "cmd", slot: { origin: "srv-b", originEpoch: "f".repeat(32), target, n: 1 }, floor: 1, inc: "x".repeat(10), cmd: parsed, scope: "read" } as never, "peer", { local: false });
+    if (!frame.ok) throw new TypeError(frame.detail);
+    return { target, cmd: parsed as Sent["cmd"] };
+  };
+  const slotOf = (target: Target) => ({ origin: "srv-b", originEpoch: "f".repeat(32), target, n: sent.length + 1 }) as Slot;
+  const sender: CallInGuestSender = {
     ownerOf: (target) => (target === HOST_TARGET ? (options.owner === undefined ? ORIGIN : options.owner) : null),
-    async submit(target, cmd) {
-      if (options.failFirst && !failed) { failed = true; throw new TypeError("server-origin: callin.reply is not a valid command (test)"); }
-      const parsed = Command.parse(cmd);
-      const frame = encodeWireFrame({ t: "cmd", slot: { origin: "srv-b", originEpoch: "f".repeat(32), target, n: 1 }, floor: 1, inc: "x".repeat(10), cmd: parsed, scope: "read" } as never, "peer", { local: false });
-      if (!frame.ok) throw new TypeError(frame.detail);
-      sent.push({ target, cmd: parsed as Sent["cmd"] });
-      return { origin: "srv-b", originEpoch: "f".repeat(32), target, n: sent.length } as Slot;
-    },
+    async submit(target, cmd) { const slot = slotOf(target); sent.push(check(target, cmd)); return slot; },
+    submitIn(_tx, target, cmd) { const item = check(target, cmd); const slot = slotOf(target); return { slot, done: () => { sent.push(item); } }; },
   };
   return { sender, sent };
 }
@@ -233,7 +238,7 @@ describe("M5-02b: the guest's owner runs the call-in", () => {
     expect(one.sent).toHaveLength(1);
     expect(one.sent[0]!.cmd.outcome).toEqual({ kind: "failed", why: "its answer could not be sent" });
 
-    const bad: CallInSender = { ownerOf: () => ORIGIN, submit: async () => { throw new Error("no way"); } };
+    const bad: CallInGuestSender = { ownerOf: () => ORIGIN, submit: async () => { throw new Error("no way"); }, submitIn: () => { throw new Error("no way"); } };
     const two = await harness({ bots: ["MAIN", GUEST] });
     open.push(two);
     two.runtime.callIns.attach(bad);

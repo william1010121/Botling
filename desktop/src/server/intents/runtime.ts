@@ -10,7 +10,7 @@
 // command's transaction and LogHub hears about every stream a commit touched.
 import type { Event as ContractEvent } from "../../contract";
 import type { CmdBody } from "../../protocol";
-import { CallInGuest, CallInHost, type CallInHostOptions } from "../callin";
+import { CallInGuest, CallInHost, type CallInCrash, type CallInHostOptions } from "../callin";
 import { contentLineHook, type ContentService } from "../content";
 import { ensureStream, type LogHub } from "../log";
 import { ContractLiveFeed, type LiveChannel } from "../live";
@@ -49,6 +49,8 @@ export interface IntentRuntimeOptions {
   pluginRowsChanged?: () => void;
   /** M5-03b test knob: the host's wait timers (botlingd: `callInTimers(env)`, only with the fake agent). */
   callHostTimers?: Pick<CallInHostOptions, "staleMs" | "capMs" | "tickMs">;
+  /** Test hook (`BOTLING_SERVER_CALLIN_CRASH`, fake agent only): kills the process right after a call-in step committed. */
+  callInCrash?: CallInCrash | null;
 }
 
 export class NotASlotCommandError extends Error {
@@ -75,8 +77,8 @@ export class IntentRuntime {
     const log = options.log;
     this.now = options.now ?? Date.now;
     this.scope = new TxScope(options.store, (streams) => options.hub?.committed(streams), (error) => log?.(`intents: an after-commit step failed (${error instanceof Error ? error.message : String(error)})`));
-    this.callIns = new CallInGuest({ scope: this.scope, engine: options.engine, now: this.now, log });
-    this.callHost = new CallInHost({ log, scope: this.scope, now: this.now, ...(options.callHostTimers ?? {}) });
+    this.callIns = new CallInGuest({ scope: this.scope, engine: options.engine, now: this.now, log, crash: options.callInCrash ?? null });
+    this.callHost = new CallInHost({ log, scope: this.scope, now: this.now, crash: options.callInCrash ?? null, ...(options.callHostTimers ?? {}) });
     this.worker = new EffectWorker({ scope: this.scope, engine: options.engine, now: this.now, log, callIns: this.callIns });
     this.tap = new EventTap({
       scope: this.scope,

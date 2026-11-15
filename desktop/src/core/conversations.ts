@@ -67,6 +67,9 @@ export interface RemoteTurnRequest {
 
 /** A remote guest's answer that came late (M5-03a): the host chat, who answered, the cleaned reply. */
 export interface LateAnswer {
+  /** The call-in (fu-callin-outbox): with it the notice and the line are posted once, however often this is called (a crash
+   * after the post and before the host's outbox row was deleted calls it again). Absent: no such guard. */
+  callId?: string;
   chatId: string;
   member: Member;
   answer: Extract<GuestAnswer, { kind: "reply" }>;
@@ -625,8 +628,16 @@ export class Conversations {
     const chat = this.deps.bot(late.chatId);
     if (!chat) { this.deps.log("callin: a late answer was dropped: its chat is gone"); return; }
     if (!late.answer.text.trim()) { this.deps.log("callin: a late answer was dropped: it had no words"); return; }
-    chat.appNotice(`Late answer from ${late.member.name} (after its machine was not reachable): nobody was woken for it.`);
-    await this.postGuestReply(late.answer, late.member, null, chat, { passes: false, tagsAct: false });
+    // The notice and the line each carry a key of the call-in (`moveNotice`, which only `hasMoveNotice` reads), so a repeat after
+    // a crash posts what is missing and nothing twice, even when the crash fell between the two.
+    const noticeKey = late.callId ? `late:${late.callId}` : undefined;
+    const lineKey = late.callId ? `late-line:${late.callId}` : undefined;
+    if (lineKey && chat.hasMoveNotice(lineKey)) return;
+    if (!noticeKey || !chat.hasMoveNotice(noticeKey)) {
+      chat.appNotice(`Late answer from ${late.member.name} (after its machine was not reachable): nobody was woken for it.`,
+        undefined, undefined, noticeKey ? { moveNotice: noticeKey } : {});
+    }
+    await this.postGuestReply(late.answer, late.member, null, chat, { passes: false, tagsAct: false }, lineKey ? (line) => { line.moveNotice = lineKey; } : undefined);
   }
 
   /** Who answers in `chatId` now (null: nobody); `guest`, the bot that starts or stops answering there, is drawn again too. */

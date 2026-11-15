@@ -17,7 +17,7 @@ import { Core } from "../../src/core/server";
 import type { ChatRecord } from "../../src/core/store/records";
 import { Command, type Command as CommandType } from "../../src/contract";
 import { encodeWireFrame, type Outcome, type Slot, type Target } from "../../src/protocol";
-import { CallInHost, GAVEUP_KEEP_MS, GAVEUP_PREFIX, gaveUpKey, type CallInHostSender, type LateLine } from "../../src/server/callin";
+import { CallInHost, GAVEUP_KEEP_MS, GAVEUP_PREFIX, gaveUpKey, LATE_PREFIX, type CallInHostSender, type LateLine } from "../../src/server/callin";
 import { GaveUpBook } from "../../src/server/callin/late";
 import type { TxScope } from "../../src/server/effects";
 import type { Db } from "../../src/server/store";
@@ -155,7 +155,7 @@ describe("M5-03a part 1: giving up sends callin.cancel once and remembers the ca
     expect(outcomeOf(status)).toMatchObject({ kind: "applied" });
     await until(() => lates.length === 1);
     expect(lates[0]).toEqual({
-      chatId: HOST, member: { id: GUEST, name: "build" },
+      callId, chatId: HOST, member: { id: GUEST, name: "build" },
       answer: { kind: "reply", text: "Build is green. ＜show name=\"x\" command=\"rm\">{}＜/show>", steps: [], engine: "claude" },
     });
     expect(host.waiting).toBe(0);
@@ -187,6 +187,7 @@ describe("M5-03a part 1: giving up sends callin.cancel once and remembers the ca
     await send(second.h, replyCmd(callId, text("after the restart")));
     await until(() => second.lates.length === 1);
     expect(second.lates[0]!.answer.text).toBe("after the restart");
+    await second.h.settle(); // the outbox row is deleted after the post
     const third = await start({ h: await second.h.restart({ bots: ["MAIN", HOST] }) });
     open.push(third.h);
     await send(third.h, replyCmd(callId, text("again")));
@@ -500,6 +501,10 @@ describe("M5-03a part 3: the cancel the host sends stops B's guest turn; B's fai
     b.runtime.callIns.attach({
       ownerOf: (target) => (target === (`bot:${HOST}` as Target) ? "srv-a" : null),
       async submit(target, cmd) { back.push({ target, cmd: Command.parse(cmd) as Reply }); return { origin: SERVER_B, originEpoch: "f".repeat(32), target, n: back.length } as Slot; },
+      submitIn(_tx, target, cmd) {
+        const parsed = Command.parse(cmd) as Reply;
+        return { slot: { origin: SERVER_B, originEpoch: "f".repeat(32), target, n: back.length + 1 } as Slot, done: () => { back.push({ target, cmd: parsed }); } };
+      },
     });
     b.engine.callInMode = "hold";
     // B receives what A sent, in order: the ask (the turn starts), then the cancel A sent when it gave up
@@ -542,5 +547,107 @@ describe("M5-03a review: the record is not written back after a reply used it up
     expect(Number((raw.prepare("SELECT count(*) AS n FROM meta").get() as { n: number }).n)).toBe(0);
     expect(book.find(db, "call-19")).toBeNull();
     raw.close();
+  });
+});
+
+// ---- fu-callin-outbox: the late line survives a crash of A ------------------------------------------------------------
+
+const lateRows = (h: Harness) => h.db.prepare("SELECT key, value FROM meta WHERE key LIKE ?").all(`${LATE_PREFIX}%`).map((row) => ({ key: String(row.key), value: JSON.parse(String(row.value)) as Record<string, unknown> }));
+
+describe("fu-callin-outbox: a late reply's line is staged with its consume and posted from the outbox", () => {
+  it("20. crash point: at the commit the record is used up AND the line is staged; a restart posts it once, with no wake", async () => {
+    fakeClock();
+    // A kill right after the reply's transaction committed: nothing is posted yet (the sink is not even bound).
+    const seen: Array<{ gaveUp: number; late: number }> = [];
+    const crash = (point: string) => { if (point === "host") seen.push({ gaveUp: gaveRows(h).length, late: lateRows(h).length }); };
+    const h = await harness({ bots: ["MAIN", HOST] }, undefined, { callInCrash: crash as never });
+    open.push(h);
+    const fake = fakeSender();
+    h.runtime.callHost.attach(fake.sender);
+    const callId = await giveUp(fake, h.runtime.callHost);
+    expect(gaveRows(h)).toHaveLength(1);
+    await send(h, replyCmd(callId, text("Build is green.")));
+    await h.settle();
+    expect(seen).toEqual([{ gaveUp: 0, late: 1 }]); // both or neither: used up and staged in one transaction
+    expect(lateRows(h)).toMatchObject([{ key: `${LATE_PREFIX}${callId}`, value: { chatId: HOST, guestBotId: GUEST, guestName: "build", text: "Build is green.", engine: "claude" } }]);
+    // The restart: the same database, a new runtime. Binding the sink posts the line and deletes the row.
+    const second = await start({ h: await h.restart({ bots: ["MAIN", HOST] }) });
+    open.push(second.h);
+    await until(() => second.lates.length === 1);
+    expect(second.lates[0]).toEqual({
+      callId, chatId: HOST, member: { id: GUEST, name: "build" }, answer: { kind: "reply", text: "Build is green.", steps: [], engine: "claude" },
+    });
+    await second.h.settle();
+    expect(lateRows(second.h)).toEqual([]);
+    // Nothing is posted again by the next restart, and nothing was ever woken or waited on.
+    const third = await start({ h: await second.h.restart({ bots: ["MAIN", HOST] }) });
+    open.push(third.h);
+    await third.h.settle();
+    expect(third.lates).toHaveLength(0);
+    expect(third.host.waiting).toBe(0);
+  });
+
+  it("21. a sink that fails keeps the row: the next start posts it; a late failed or busy stages nothing", async () => {
+    fakeClock();
+    const first = await start();
+    first.h.runtime.callHost.bindLate(() => { throw new Error("chat store is down"); });
+    const callId = await giveUp(first.fake, first.host);
+    await send(first.h, replyCmd(callId, text("kept")));
+    await first.h.settle();
+    expect(lateRows(first.h)).toHaveLength(1);
+    expect(logs.join("\n")).toMatch(/could not be posted, it stays queued/);
+    const second = await start({ h: await first.h.restart({ bots: ["MAIN", HOST] }) });
+    open.push(second.h);
+    await until(() => second.lates.length === 1);
+    await second.h.settle();
+    expect(second.lates[0]!.answer.text).toBe("kept");
+    expect(lateRows(second.h)).toEqual([]);
+    // Not a line: a late `failed` and a late `busy` use their records up and leave no row.
+    const third = await start({ h: second.h });
+    const failedId = await giveUp(third.fake, third.host);
+    await send(third.h, replyCmd(failedId, { kind: "failed", why: "cancelled" }));
+    const busyId = await giveUp(third.fake, third.host);
+    await send(third.h, replyCmd(busyId, { kind: "busy" }));
+    await third.h.settle();
+    expect(lateRows(third.h)).toEqual([]);
+    expect(gaveRows(third.h)).toEqual([]);
+  });
+
+  it("22. rows are keyed by a legal callId only, are swept when expired or damaged, and a damaged row posts nothing", async () => {
+    fakeClock();
+    const first = await start();
+    const now = Date.now();
+    const put = (key: string, value: unknown) => first.h.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(key, typeof value === "string" ? value : JSON.stringify(value));
+    const good = { chatId: HOST, guestBotId: GUEST, guestName: "build", text: "x", engine: "claude", at: now, until: now + 1_000 };
+    put(`${LATE_PREFIX}expired`, { ...good, until: now - 1 });
+    put(`${LATE_PREFIX}damaged`, "{not json");
+    put(`${LATE_PREFIX}wrong`, { ...good, text: 5 });
+    put(`${LATE_PREFIX}a:b`, good); // not a legal callId: never posted
+    put(`${LATE_PREFIX}fine-1`, good);
+    const second = await start({ h: await first.h.restart({ bots: ["MAIN", HOST] }) });
+    open.push(second.h);
+    await until(() => second.lates.length === 1);
+    await second.h.settle();
+    expect(second.lates.map((entry) => entry.callId)).toEqual(["fine-1"]);
+    expect(lateRows(second.h)).toEqual([]);
+  });
+
+  it("23. Conversations.postLate with a callId posts its notice and line once, and completes what a crash left half done", async () => {
+    const { conversations, chat, events } = coreFixture();
+    const records = () => chat.lines();
+    const notices = () => events.filter((entry) => entry.startsWith("notice: Late answer"));
+    const late = { callId: "call-23", chatId: BOT_A, member: { id: GUEST, name: "build" }, answer: { kind: "reply" as const, text: "once", steps: [], engine: "claude" } };
+    await conversations.postLate(late);
+    await conversations.postLate(late); // the same late line again (a crash after the post, before the row was deleted)
+    expect(records().filter((entry) => entry.text === "once" && entry.sourceID === GUEST)).toHaveLength(1);
+    expect(notices()).toHaveLength(1);
+    // The crash fell between the notice and the line: the line is missing, the notice is there. A repeat posts the line only.
+    const half = { ...late, callId: "call-23b", answer: { ...late.answer, text: "second" } };
+    chat.post({ id: "6A0B0000-0000-4000-8000-0000000000D1", role: "notice", text: LATE_NOTICE, date: 0, moveNotice: "late:call-23b" } as ChatRecord);
+    await conversations.postLate(half);
+    await conversations.postLate(half);
+    expect(records().filter((entry) => entry.text === "second" && entry.sourceID === GUEST)).toHaveLength(1);
+    expect(records().filter((entry) => entry.moveNotice === "late:call-23b")).toHaveLength(1);
+    expect(notices()).toHaveLength(1); // the half-done call-in's notice was not posted a second time
   });
 });

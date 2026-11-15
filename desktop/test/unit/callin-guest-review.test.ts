@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Command, type Command as CommandType } from "../../src/contract";
 import type { Slot, Target } from "../../src/protocol";
-import { cleanLine, cutUnits, guestPrompt, type CallInSender } from "../../src/server/callin";
+import { cleanLine, cutUnits, guestPrompt, type CallInGuestSender } from "../../src/server/callin";
 import { callInEffectId } from "../../src/server/effects";
 import { effectRows, harness, type Harness } from "./server-intents-harness";
 
@@ -24,14 +24,18 @@ const ask: CommandType = {
   transcript: "User (newest): @g hi", asked: "@g hi", by: "user", depth: 1,
 };
 
-/** Parses like `ServerOrigin.submit` (it throws on a command the schema refuses) and records what would be sent. */
+/** Parses like `ServerOrigin.submitIn` (it throws on a command the schema refuses) and records what would be sent once its transaction committed. */
 function parsingSender() {
   const sent: Extract<CommandType, { type: "callin.reply" }>[] = [];
-  const sender: CallInSender = {
+  const sender: CallInGuestSender = {
     ownerOf: (target) => (target === HOST_TARGET ? ORIGIN : null),
     async submit(target, cmd) {
       sent.push(Command.parse(cmd) as (typeof sent)[number]);
       return { origin: "srv-b", originEpoch: "f".repeat(32), target, n: sent.length } as Slot;
+    },
+    submitIn(_tx, target, cmd) {
+      const parsed = Command.parse(cmd) as (typeof sent)[number];
+      return { slot: { origin: "srv-b", originEpoch: "f".repeat(32), target, n: sent.length + 1 } as Slot, done: () => { sent.push(parsed); } };
     },
   };
   return { sender, sent };

@@ -39,7 +39,7 @@ import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
 import { BotExports } from "./exports";
-import { callInTimers, type CallInHost } from "./callin";
+import { callInCrash, callInTimers, type CallInHost } from "./callin";
 import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
@@ -584,6 +584,7 @@ export class Botlingd {
       const runtime = new IntentRuntime({
         store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, { plainWaiting: (botId, text) => core.peerMayIgnoreWaiting(botId, text) })), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
         callHostTimers: callInTimers(env),
+        callInCrash: callInCrash(env),
         // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
         // may run and re-announces its list once (core.pluginGrantsChanged).
         pluginRowsChanged: () => {
@@ -938,7 +939,7 @@ export class Botlingd {
       // Bound only now (M5-03b review): `attach` answers the call-ins a crash interrupted at once, and before `peers.start()`
       // the directory knows no peer, so every such answer was refused and lost (marked sent, never queued). Until here an ask
       // is refused "not ready" (fail closed) and a queued call-in waits.
-      runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
+      runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd), submitIn: (tx, target, cmd) => serverOrigin.submitIn(tx, target, cmd) });
       daemon.chatMirror.start();
       daemon.watchLock();
       const schedule = backupCheckMs(env);
