@@ -52,7 +52,7 @@ async function page(web: boolean): Promise<HTMLElement> {
   document.body.append(host);
   const root = createRoot(host);
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-  await act(async () => root.render(createElement(App, { client, store, web })));
+  await act(async () => root.render(createElement(App, { client, store, web: web ? { railFooter: null } : undefined })));
   cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
   return host;
 }
