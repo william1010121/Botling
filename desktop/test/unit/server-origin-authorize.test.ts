@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { Command } from "../../src/contract";
 import type { Slot } from "../../src/protocol";
 import { peerScope } from "../../src/server/forward/owner-inbox";
-import { slotAuthorize, statedScope, type DeviceRoster } from "../../src/server/session";
+import { slotAuthorize, statedScope, USER_ONLY_CARD_DETAIL, type DeviceRoster } from "../../src/server/session";
 
 const BOT = "6A0B0000-0000-4000-8000-000000000002";
 const MSG = "6A0B0000-0000-4000-8000-000000000003";
@@ -84,17 +84,16 @@ describe("M5-04b: slotAuthorize for server origins", () => {
     expect(authorize(tx, { slot: slot(PEER), cmd: create, scope: "read" })).toMatchObject({ reason: "scope" });
   });
 
-  it("3. refuses approve commands from a server origin with reason scope", () => {
+  it("3. refuses approve commands from a server origin: component.approve settles a card, so it is origin (peer-answer-guard); an approve command that settles no card stays scope", () => {
     const { roster } = fakeRoster();
     const authorize = slotAuthorize(roster);
 
-    expect(authorize(tx, { slot: slot(PEER), cmd: approve, scope: "approve" })).toEqual({
+    expect(authorize(tx, { slot: slot(PEER), cmd: approve, scope: "approve" })).toEqual({ reason: "origin", detail: USER_ONLY_CARD_DETAIL });
+    expect(authorize(tx, { slot: slot(PEER), cmd: approve, scope: "read" })).toEqual({ reason: "origin", detail: USER_ONLY_CARD_DETAIL });
+    const grant = { type: "plugins.approve", name: "demo", botId: BOT, command: "echo ok", folder: "/tmp/work" } as unknown as Command;
+    expect(authorize(tx, { slot: slot(PEER), cmd: grant, scope: "approve" })).toEqual({
       reason: "scope",
-      detail: "component.approve is not allowed from another server (approve)",
-    });
-    expect(authorize(tx, { slot: slot(PEER), cmd: approve, scope: "read" })).toEqual({
-      reason: "scope",
-      detail: "component.approve is not allowed from another server (approve)",
+      detail: "plugins.approve is not allowed from another server (approve)",
     });
   });
 

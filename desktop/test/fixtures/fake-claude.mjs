@@ -387,7 +387,8 @@ async function turn(job) {
     return;
   }
   // A component made from its reply, to draw (Phase 5a's fill request): <show> with the data FAKE_CLAUDE_FILL names (else {"filled":true}).
-  const fill = /^\(App: Draw the component "([^"]+)" for your reply/.exec(prompt);
+  // A bot that was not yet told of a component change gets that note ahead of it, in the same message: a line start, not the message start.
+  const fill = /^\(App: Draw the component "([^"]+)" for your reply/m.exec(prompt);
   if (fill) {
     const text = await stream(process.env.FAKE_CLAUDE_FILL === "refuse" ? "That reply does not fit this component." : `<show name="${fill[1]}">${process.env.FAKE_CLAUDE_FILL ?? '{"filled":true}'}</show>`);
     result(text);

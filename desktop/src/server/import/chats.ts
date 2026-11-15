@@ -12,15 +12,23 @@
 //    `DbBotStores` owns its own writer backend and does not accept an external `tx`, so the core copy runs right after
 //    the log batches commit (before the bot is marked "done").
 //
+// 3. M6-05: when `options.content` is given, each appended line is indexed with `content.noteLine` in the SAME writer
+//    transaction as its entry, and once the bot's lines are all committed `content.afterCommit` pins and hashes the
+//    files (a failure there is counted, never undoes a line). `options.attachmentMap` (old `file:` URL -> the copy under
+//    `<dataDir>/imported/`, from `copyMedia`) is applied to every record first, so the line, its entry and the core copy
+//    point at the copy and the content store pins the copy, never the 2.x path.
+//
 // `head.json` (the engine session) is never imported, and 2.x bot ids mentioned inside message text are kept verbatim.
 import { messageView } from "../../core/bot";
 import type { ChatRecord } from "../../core/store/records";
+import type { ContentService, NotedLine } from "../content/service";
 import { DbBotStores, type DbBotStore } from "../botstore";
 import { fitBody } from "../effects/fit";
 import { botStream, ensureBot } from "../effects/log-ops";
 import { appendEntries } from "../log";
 import type { Db, ServerStore } from "../store";
 import type { IdMapKind, IdMapRow } from "./id-map";
+import { remapAttachments } from "./media";
 import { readChat, type Read2xBot, type Read2xChat } from "./reader-2x";
 
 export const CHAT_IMPORT_BATCH_SIZE = 500;
@@ -56,6 +64,8 @@ export interface ImportedBotChat {
   batches: number;
   alreadyDone: boolean;
   lists: ImportedBotLists;
+  /** M6-05: files the content store pinned and hashed for this bot's lines, and files it could not. */
+  content: { ready: number; failed: number };
   problems: string[];
 }
 
@@ -79,6 +89,10 @@ export interface ImportChatsOptions {
   /** Clock for HLC timestamps (defaults to `Date.now`). */
   now?: () => number;
   log?: (line: string) => void;
+  /** M6-05: the content service that indexes each line's files in the line's own transaction. */
+  content?: Pick<ContentService, "noteLine" | "afterCommit">;
+  /** M6-05: old attachment URL -> URL of its copy under `<dataDir>/imported/` (`copyMedia`). */
+  attachmentMap?: ReadonlyMap<string, string>;
   /** Hook called before each batch transaction (useful for progress or crash injection in tests). */
   onBatch?: (info: { oldId: string; newId: string; batch: number; totalBatches: number }) => void;
 }
@@ -87,6 +101,8 @@ interface PreparedLine {
   body: Record<string, unknown>;
   full: string | null;
   msgId: string;
+  /** The line as the content indexer reads it (id, text, attachments). */
+  view: ReturnType<typeof messageView>;
 }
 
 const EMPTY_LISTS: ImportedBotLists = {
@@ -130,6 +146,19 @@ function hasBotling3History(db: Db, botId: string): boolean {
 function resetUnfinishedBot(tx: Db, botId: string): void {
   const stream = botStream(botId);
   const substepsPrefix = `substeps:[${JSON.stringify(botId)},`;
+  // M6-05: the content rows the first run noted for this stream's lines go too (a retry notes them again); rows another
+  // stream still references stay. Pin files no row names are swept at the next start (`ContentService.recover`).
+  const doomed = tx
+    .prepare("SELECT DISTINCT id FROM content_refs WHERE stream = ? AND id NOT IN (SELECT id FROM content_refs WHERE stream <> ?)")
+    .all(stream, stream)
+    .map((row) => String(row.id));
+  tx.prepare("DELETE FROM content_names WHERE stream = ?").run(stream);
+  tx.prepare("DELETE FROM content_refs WHERE stream = ?").run(stream);
+  for (const id of doomed) {
+    tx.prepare("DELETE FROM content WHERE id = ?").run(id);
+    tx.prepare("DELETE FROM content_meta WHERE id = ?").run(id);
+    tx.prepare("DELETE FROM content_aliases WHERE pending = ? OR id = ?").run(id, id);
+  }
   tx.prepare("DELETE FROM entries WHERE stream = ?").run(stream);
   tx.prepare("DELETE FROM fulltext WHERE stream = ?").run(stream);
   tx.prepare("DELETE FROM messages WHERE botId = ?").run(botId);
@@ -212,6 +241,7 @@ function prepareLines(
   records: readonly ChatRecord[],
   newId: string,
   log?: (line: string) => void,
+  attachmentMap?: ReadonlyMap<string, string>,
 ): { prepared: PreparedLine[]; skipped: number } {
   const prepared: PreparedLine[] = [];
   let skipped = 0;
@@ -220,6 +250,15 @@ function prepareLines(
     let view: ReturnType<typeof messageView>;
     try {
       view = messageView(record);
+      // The copy's file name has a `<n>-` prefix; the line keeps showing the file's own name.
+      if (attachmentMap?.size && record.attachments?.length) {
+        const remapped = messageView(remapAttachments(record, attachmentMap));
+        const names = view.attachments?.map((file) => file.name);
+        view = remapped;
+        if (names && view.attachments && names.length === view.attachments.length) {
+          view.attachments.forEach((file, i) => { file.name = names[i]!; });
+        }
+      }
     } catch (error) {
       skipped += 1;
       log?.(`${stream}: skipped line ${String((record as { id?: unknown })?.id ?? "?")} (${error instanceof Error ? error.message : String(error)})`);
@@ -231,7 +270,7 @@ function prepareLines(
       log?.(`${stream}: skipped oversized message.added line ${view.id}`);
       continue;
     }
-    prepared.push({ body: fitted.body, full: fitted.full, msgId: view.id });
+    prepared.push({ body: fitted.body, full: fitted.full, msgId: view.id, view });
   }
   return { prepared, skipped };
 }
@@ -242,8 +281,16 @@ function appendPreparedBatch(
   batch: readonly PreparedLine[],
   now: (() => number) | undefined,
   log?: (line: string) => void,
-): { imported: number; skipped: number; importedIds: string[] } {
-  if (!batch.length) return { imported: 0, skipped: 0, importedIds: [] };
+  content?: Pick<ContentService, "noteLine">,
+  newId?: string,
+): { imported: number; skipped: number; importedIds: string[]; noted: NotedLine[] } {
+  const noted: NotedLine[] = [];
+  // M6-05: indexed inside the transaction that appended the entry (`noteLine` never throws for one file).
+  const note = (item: PreparedLine, entry: { stream: typeof stream; seq: number }) => {
+    const found = content && newId ? content.noteLine(tx, newId, item.view, entry) : null;
+    if (found) noted.push(found);
+  };
+  if (!batch.length) return { imported: 0, skipped: 0, importedIds: [], noted };
   const putFulltext = tx.prepare(SQL.putFulltext);
   const appendOpts = now ? { now: now() } : {};
 
@@ -260,26 +307,30 @@ function appendPreparedBatch(
       if (item.full !== null) {
         putFulltext.run(stream, item.msgId, entries[i]!.seq, item.full);
       }
+      note(item, entries[i]!);
     }
     tx.exec("RELEASE import_chat_batch");
-    return { imported: entries.length, skipped: 0, importedIds: batch.map((item) => item.msgId) };
+    return { imported: entries.length, skipped: 0, importedIds: batch.map((item) => item.msgId), noted };
   } catch (error) {
     if (!tx.inTransaction) throw error;
     tx.exec("ROLLBACK TO import_chat_batch");
     tx.exec("RELEASE import_chat_batch");
     log?.(`${stream}: batch append failed (${error instanceof Error ? error.message : String(error)}); retrying line by line`);
+    noted.length = 0;
   }
 
   let imported = 0;
   let skipped = 0;
   const importedIds: string[] = [];
   for (const item of batch) {
+    const notedBefore = noted.length;
     tx.exec("SAVEPOINT import_chat_item");
     try {
       const [entry] = appendEntries(tx, stream, [{ kind: "message.added", body: item.body }], appendOpts);
       if (item.full !== null) {
         putFulltext.run(stream, item.msgId, entry!.seq, item.full);
       }
+      note(item, entry!);
       tx.exec("RELEASE import_chat_item");
       imported += 1;
       importedIds.push(item.msgId);
@@ -287,11 +338,12 @@ function appendPreparedBatch(
       if (!tx.inTransaction) throw error;
       tx.exec("ROLLBACK TO import_chat_item");
       tx.exec("RELEASE import_chat_item");
+      noted.length = notedBefore;
       skipped += 1;
       log?.(`${stream}: skipped line ${item.msgId} (${error instanceof Error ? error.message : String(error)})`);
     }
   }
-  return { imported, skipped, importedIds };
+  return { imported, skipped, importedIds, noted };
 }
 
 export async function importBotChat(
@@ -315,6 +367,7 @@ export async function importBotChat(
       batches: 0,
       alreadyDone: true,
       lists: { ...EMPTY_LISTS, problems: [] },
+      content: { ready: 0, failed: 0 },
       problems: [],
     };
   }
@@ -341,6 +394,7 @@ export async function importBotChat(
         batches: 0,
         alreadyDone: false,
         lists: { ...EMPTY_LISTS, problems: [] },
+        content: { ready: 0, failed: 0 },
         problems: [problem],
       };
     }
@@ -348,7 +402,7 @@ export async function importBotChat(
 
   // Strictly read-only read of chat.json, lists, subagents, and bot.json (head.json is intentionally never imported).
   const chatData = readChat(bot);
-  const { prepared, skipped: prepSkipped } = prepareLines(chatData.chat, mapped.newId, options.log);
+  const { prepared, skipped: prepSkipped } = prepareLines(chatData.chat, mapped.newId, options.log, options.attachmentMap);
   const batchSize = Math.max(1, Math.floor(options.batchSize ?? CHAT_IMPORT_BATCH_SIZE));
   const batches: PreparedLine[][] = [];
   for (let i = 0; i < prepared.length; i += batchSize) {
@@ -361,6 +415,7 @@ export async function importBotChat(
   let batchCount = 0;
   let rejected = false;
   const importedMsgIds = new Set<string>();
+  const noted: NotedLine[] = [];
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i]!;
@@ -376,14 +431,18 @@ export async function importBotChat(
         if (prev?.value === "unfinished") {
           resetUnfinishedBot(tx, mapped.newId);
         } else if (prev?.value === "done") {
-          return { imported: 0, skipped: 0, importedIds: [] as string[], rejected: false, alreadyDone: true };
+          return { imported: 0, skipped: 0, importedIds: [] as string[], noted: [] as NotedLine[], rejected: false, alreadyDone: true };
         } else if (hasBotling3History(tx, mapped.newId)) {
-          return { imported: 0, skipped: 0, importedIds: [] as string[], rejected: true, alreadyDone: false };
+          return { imported: 0, skipped: 0, importedIds: [] as string[], noted: [] as NotedLine[], rejected: true, alreadyDone: false };
         }
         ensureBot(tx, mapped.newId);
         tx.prepare(SQL.setMeta).run(metaKey, "unfinished");
       }
-      return { ...appendPreparedBatch(tx, stream, batch, options.now, options.log), rejected: false, alreadyDone: false };
+      return {
+        ...appendPreparedBatch(tx, stream, batch, options.now, options.log, options.content, mapped.newId),
+        rejected: false,
+        alreadyDone: false,
+      };
     });
     if (outcome.alreadyDone) {
       return {
@@ -396,6 +455,7 @@ export async function importBotChat(
         batches: 0,
         alreadyDone: true,
         lists: { ...EMPTY_LISTS, problems: [] },
+        content: { ready: 0, failed: 0 },
         problems: [],
       };
     }
@@ -406,6 +466,7 @@ export async function importBotChat(
     importedLines += outcome.imported;
     appendSkipped += outcome.skipped;
     for (const id of outcome.importedIds) importedMsgIds.add(id);
+    noted.push(...outcome.noted);
     batchCount += 1;
   }
 
@@ -422,8 +483,24 @@ export async function importBotChat(
       batches: 0,
       alreadyDone: false,
       lists: { ...EMPTY_LISTS, problems: [] },
+      content: { ready: 0, failed: 0 },
       problems: [problem],
     };
+  }
+
+  // M6-05: the lines are committed; pin and hash their files in order. A failure is counted, never undoes a line.
+  const contentResult = { ready: 0, failed: 0 };
+  if (options.content) {
+    for (const item of noted) {
+      try {
+        const readyEntries = await options.content.afterCommit(item);
+        contentResult.ready += readyEntries.length;
+        contentResult.failed += Math.max(0, item.files.length - readyEntries.length);
+      } catch (error) {
+        contentResult.failed += item.files.length;
+        options.log?.(`${stream}: content for line ${item.lineId} failed (${error instanceof Error ? error.message : String(error)})`);
+      }
+    }
   }
 
   // Core's 2.x-shaped copy via DbBotStore (bot.json settings + newest HISTORY_LIMIT lines + lists/subagents).
@@ -431,7 +508,7 @@ export async function importBotChat(
   for (const [key, value] of Object.entries(chatData.settings)) {
     if (value !== undefined) botStore.saveSetting(key, value);
   }
-  botStore.saveMessages(chatData.chat);
+  botStore.saveMessages(options.attachmentMap?.size ? chatData.chat.map((record) => remapAttachments(record, options.attachmentMap!)) : chatData.chat);
   const lists = await importLists(botStore, bot, {
     chatData,
     knownMessageIds: importedMsgIds,
@@ -451,6 +528,7 @@ export async function importBotChat(
     batches: batchCount,
     alreadyDone: false,
     lists,
+    content: contentResult,
     problems: chatData.problems,
   };
 }

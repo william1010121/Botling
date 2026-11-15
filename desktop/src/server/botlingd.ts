@@ -39,6 +39,7 @@ import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
 import { BotExports } from "./exports";
+import type { CallInHost } from "./callin";
 import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
@@ -50,6 +51,7 @@ import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
+import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "./push";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
 import { PluginRow, RowKey } from "../protocol/table-rows";
@@ -133,10 +135,10 @@ export function clusterOrigins(
  * Device & peer-server roster view passed to `slotAuthorize` (M5-04b): a peer server is accepted only when it is in
  * `view.servers` AND `view.valid` (not root-revoked and not unvouched/not-yet-effective).
  */
-export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">, userOnlyCard?: (messageId: string) => boolean): DeviceRoster {
+export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">, hooks: Pick<DeviceRoster, "plainWaiting"> = {}): DeviceRoster {
   return {
     memberId: roster.memberId,
-    ...(userOnlyCard ? { userOnlyCard } : {}),
+    ...(hooks.plainWaiting ? { plainWaiting: hooks.plainWaiting } : {}),
     device: (member) => roster.device(member),
     server: (member) => {
       const view = roster.view;
@@ -336,6 +338,10 @@ export interface BotlingdOptions {
   /** Packaged Electron run: launch child Node work (plugin host, pdf-text) via utilityProcess.fork. */
   packaged?: boolean;
   electronUtility?: ElectronUtilityContext;
+  /** Optional Web Push transport override (used by tests to point at a local fake push server). */
+  pushTransport?: PushTransport;
+  /** Optional per-bot push coalescing window override in ms (defaults to 60,000 ms). */
+  pushCoalesceMs?: number;
 }
 
 export class Botlingd {
@@ -371,6 +377,8 @@ export class Botlingd {
     readonly pairing: PairingService,
     /** M3 step 6: this server's summary rows (`srv:` table). */
     readonly summary: SummaryRows,
+    /** M4-24: Web Push triggers for owned bots needing the user. */
+    readonly pushTriggers: PushTriggers,
     /** M3 step 3: peer servers (KK sessions over `/v3/ws`, one per pair, the D47 exchange). */
     readonly peers: PeerSessions,
     /** M3 step 4: server pairing (join offers on this server, add-machine attempts from it). */
@@ -520,6 +528,7 @@ export class Botlingd {
       const pendingBotWrites = new Map<string, { botId: string; at: number }>();
       let syncPlugins: (force?: boolean) => Promise<void> = async () => undefined;
       let originRef: ServerOrigin | null = null;
+      let hostCallIns: CallInHost | null = null;
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
@@ -548,6 +557,8 @@ export class Botlingd {
         // M5-04c: the origin is built below, after the core; a call before then is "not ready".
         remoteCommand: (target, cmd) => remoteCommandVia(originRef, target, cmd),
         machineName: () => ownMachineName(roster, serverId, SERVER_NAME),
+        // M5-02c: the host's side of call-ins (the runtime below owns it; until it exists a call-in is "not reachable").
+        remoteTurn: (call) => hostCallIns ? hostCallIns.remoteTurn(call) : Promise.resolve({ kind: "failed", why: "its machine cannot take call-ins yet" }),
         fetch: createAppFetch({ roster, requester: () => fetchRequesterRef }),
         pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
         botStore: (directory) => {
@@ -574,11 +585,14 @@ export class Botlingd {
       const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
       // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
       let summary: SummaryRows | null = null;
+      // M4-24: Web Push triggers for owned bots needing the user (wired after remote sessions exist).
+      let pushTriggers: PushTriggers | null = null;
+      let attachedDevices = (): Set<string> => new Set();
       // M2 step 12: uploads from pages (`content.put`), kept in <data>/uploads; a chat.send naming them waits for them.
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, (messageId) => core.serverAskOpen(messageId))), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, { plainWaiting: (botId, text) => core.peerMayIgnoreWaiting(botId, text) })), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
         // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
         // may run and re-announces its list once (core.pluginGrantsChanged).
         pluginRowsChanged: () => {
@@ -590,7 +604,7 @@ export class Botlingd {
             summary?.seen(event);
             if (event.type === "plugins.updated") void syncPlugins();
           },
-          eventStored: (tx, event) => summary?.stored(tx, event),
+          eventStored: (tx, event) => { summary?.stored(tx, event); pushTriggers?.stored(tx, event); },
         },
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
@@ -610,8 +624,28 @@ export class Botlingd {
       });
       const report = await runtime.start();
       log(`recovery: ${JSON.stringify(report)}`);
+      const pushSender = new PushSender({
+        dataDir: paths.dataDir,
+        ownsBot: (botId) => engine.hasBot(botId),
+        roster,
+        log,
+        ...(options.pushTransport ? { transport: options.pushTransport } : {}),
+      });
+      const deviceReadable = (member: string) => { const device = roster.device(member); return !!device && (device.scope ?? []).includes("read"); };
+      const push = new PushTriggers({
+        scope: runtime.scope,
+        sender: pushSender,
+        roster,
+        canPushDevice: deviceReadable,
+        reader: () => hub.reader(),
+        botName: (botId) => engine.botView(botId)?.name ?? null,
+        attachedDevices: () => attachedDevices(),
+        ...(options.pushCoalesceMs !== undefined ? { coalesceMs: options.pushCoalesceMs } : {}),
+        log,
+      });
+      pushTriggers = push;
       const summaries = summary;
-      const reconciled = await runtime.scope.submit((tx) => summaries.reconcile(tx));
+      const reconciled = await runtime.scope.submit((tx) => { push.seed(tx); return summaries.reconcile(tx); });
       log(`summary rows: ${JSON.stringify({ ...reconciled, unknown: reconciled.unknown.length })}`);
       summaries.startPurging();
       // M5-13b/M5-13c: publish one plugin:<name> row per installed plugin (plus audit row for bot writes) and keep machine.pluginsDigest current.
@@ -709,6 +743,16 @@ export class Botlingd {
       roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
       // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
       runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
+      // M5-02c: the host's side asks through the same origin, and hears how each ask ended (a refused ask ends its wait at once).
+      hostCallIns = runtime.callHost;
+      // M5-03a (D51): a reply after the host gave up is appended marked late and wakes nobody.
+      runtime.callHost.bindLate((late) => core.conversations.postLate(late));
+      runtime.callHost.attach({
+        self: roster.memberId, ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd),
+        onOutcome: (listener) => serverOrigin.on(listener), outcome: (slot) => serverOrigin.outcome(slot),
+        // The peer sessions' own bookkeeping (live / stale since the last frame / gone): the wait is a liveness wait.
+        peerState: (server) => { const state = peers.states().find((entry) => entry.member === server); return state ? { state: state.state, since: state.since } : null; },
+      });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);
@@ -805,7 +849,6 @@ export class Botlingd {
       const tickets = new ContentTickets();
       roster.onChange((change) => { for (const member of change.invalidated) tickets.dropDevice(member); });
       // M3 step 10: content owned by a peer, passed through and verified per chunk; this server's content read by peers.
-      const deviceReadable = (member: string) => { const device = roster.device(member); return !!device && (device.scope ?? []).includes("read"); };
       const chunkCache: ChunkCache = new ChunkCache({
         store, reader: () => hub.reader(), dataDir: paths.dataDir, budget: peerBudget, log,
         priority: (key, stream) => peerContent.priority(key, stream),
@@ -823,6 +866,7 @@ export class Botlingd {
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
       const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), log, peer: peerContent });
       const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner }, options.session);
+      attachedDevices = () => attachedDeviceIds(remote.open);
       // M5-06c: a fetch that asks puts a card into the Maintainer's chat; asks left open by the last run are `gone`.
       const approval = new FetchApproval({
         core, store, reader: () => hub.reader(), self: serverId, names: clusterNames(roster, () => hub.reader()), log,
@@ -859,6 +903,13 @@ export class Botlingd {
         onAudit: () => feeds.notify(feeds.ownStream),
         log,
       });
+      // Staging folders of a fetch that a killed process never finished are removed now, before any session exists.
+      try {
+        const folders: string[] = [];
+        for (const botId of engine.bots()) { const folder = engine.botView(botId)?.folder; if (folder) folders.push(folder); }
+        const removed = fetchRequester.removeLeftoverStaging(folders);
+        if (removed > 0) log(`fetch: removed ${removed} unfinished staging folder(s) left by an earlier run`);
+      } catch (error) { log(`fetch: leftover staging cleanup failed: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 200))}`); }
       fetchRequesterRef = fetchRequester;
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
       const peers: PeerSessions = new PeerSessions({
@@ -878,7 +929,7 @@ export class Botlingd {
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
       feeds.start();
       gossip.start();
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, push, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
       daemon.remoteContent = remoteContent;
       daemon.peerContent = peerContent;
       daemon.peerContentOwner = peerContentOwner;
@@ -1016,6 +1067,8 @@ export class Botlingd {
     await step("events", () => this.runtime.scope.submit(() => undefined));
     await step("summary rows", () => this.summary.flush());
     this.summary.close();
+    this.pushTriggers.close();
+    await step("push triggers", () => this.pushTriggers.idle());
     await step("runtime", () => this.runtime.close());
     await step("media jobs", () => this.media?.close());
     await step("content", () => this.content.close());

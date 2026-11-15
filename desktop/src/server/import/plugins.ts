@@ -22,6 +22,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { writeFileAtomic } from "../../core/durable/atomic";
 import { folderHash } from "../../core/plugins/catalog";
+import { incomingNameIssues } from "../../core/plugins/manifest";
 import { libraryCopyWins } from "../../core/plugins/versions";
 
 export const DEFAULT_MAX_PLUGIN_FILE_BYTES = 50 * 1024 * 1024;
@@ -365,6 +366,15 @@ export function importPlugins(
             continue;
           }
           replacesBuiltIn = true;
+        }
+
+        // The shared name rule (a dot, the reserved `botling`): a plugin coming in is refused, never renamed or deleted at the
+        // source. The one exception is a library copy that replaces a built-in the app really ships (`replacesBuiltIn`: the
+        // name is in the built-ins folder `builtInsDir`, not just claimed by this manifest), which 2.x always allowed.
+        const nameIssue = replacesBuiltIn ? undefined : incomingNameIssues(identity.name)[0];
+        if (nameIssue) {
+          skipped.push(`${JSON.stringify(`plugins/${dirName}`)}: not imported, ${nameIssue.message}`);
+          continue;
         }
 
         const dstPluginDir = join(target, "plugins", dirName);

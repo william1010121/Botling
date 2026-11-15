@@ -68,7 +68,8 @@ if (scrubbed.length) console.warn(`[packaged] ignored ${scrubbed.join(", ")}`);
 // `--check-plugin <folder>` (1.x's flag): the plugin check Maintainer runs, then exit; no window, no data folder.
 const checkAt = process.argv.indexOf("--check-plugin");
 if (checkAt >= 0) {
-  const report = checkReport(process.argv[checkAt + 1]);
+  // A library copy of a shipped built-in (Maintainer's way to change one) keeps its reserved name.
+  const report = checkReport(process.argv[checkAt + 1], "incoming", app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins"));
   // Written synchronously, then exit at once: nothing below (data folder, single-instance lock) runs.
   if (report.stdout) writeSync(1, report.stdout);
   if (report.stderr) writeSync(2, report.stderr);

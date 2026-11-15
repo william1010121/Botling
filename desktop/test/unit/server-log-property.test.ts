@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { StreamId } from "../../src/protocol";
 import { ensureStream, hashAfter, LogHub, readStream, retireStream, verifyStream, type LogReader } from "../../src/server/log";
 import { FakeFe, message, quickStore, type QuickStore } from "./server-log-helpers";
+import { envCount } from "../helpers";
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -20,7 +21,7 @@ function mulberry32(seed: number): () => number {
 }
 
 const STREAMS = ["bot:alpha", "bot:beta"] as StreamId[];
-const RUNS = 30;
+const RUNS = envCount("V3_LOG_PROPERTY_RUNS", 30); // CI lowers it on pull requests
 const STEPS = 160;
 
 const stores: QuickStore[] = [];
