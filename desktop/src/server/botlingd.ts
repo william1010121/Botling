@@ -55,6 +55,7 @@ import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica
 import type { Command } from "../contract";
 import type { Target } from "../protocol";
 import { Directory, Forwarder, OwnerInbox, ServerOrigin } from "./forward";
+import { designatedServer, machineLabel } from "./designated";
 import { release as osRelease } from "node:os";
 
 /**
@@ -409,6 +410,22 @@ export class Botlingd {
       });
       const stores: DbBotStores = new DbBotStores(store, { onCommitted: (botId, directory) => exports.committed(botId, directory) });
       const opened = new Map<string, string>();
+      let peerSessions: PeerSessions | null = null;
+      const resolveDesignated = (raw: unknown): string => designatedServer(roster.view, raw);
+      const machineName = (id: string): string =>
+        peerSessions?.states().find((state) => state.member === id)?.name
+        ?? roster.profile(id, "name")
+        ?? roster.view.members.get(id)?.name
+        ?? (id === memberId ? SERVER_NAME : id);
+      const machineLine = (id: string): string => machineLabel(machineName(id));
+      const designated = resolveDesignated(prefs.get("designatedServer")?.value);
+      prefs.onChange((rows) => {
+        for (const row of rows) {
+          if (row.key === "designatedServer") {
+            log(`designatedServer is now ${machineLine(resolveDesignated(row.value))}; the main bot moves when each server next starts.`);
+          }
+        }
+      });
       const coreEngine = new CoreEngine();
       const shell = new ShellBridge({ appDataDir: env.BOTLING_APP_DATA_DIR || null });
       const { emit, deferTurn } = coreEngine.coreOptions();
@@ -423,6 +440,8 @@ export class Botlingd {
         deferTurn,
         mainBotId: ids.main,
         maintainerId: ids.maintainer,
+        runMainBot: designated === memberId,
+        mainBotMachine: () => (designated === memberId ? null : machineLine(designated)),
         mayRunServerPart: (name, codeHash) => mayRunPluginServerPart(() => hub.reader(), `srv:${serverId}`, name, codeHash),
         pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
@@ -631,7 +650,13 @@ export class Botlingd {
         log,
         admin: {
           handle: async (op, session) => {
-            if (op.op === "prefs.set") return { row: await prefs.set(op.key, op.value) };
+            if (op.op === "prefs.set") {
+              // M5-04i: only a server this one holds valid can be designated (the CLI and every window are told why not).
+              if (op.key === "designatedServer" && designatedServer(roster.view, op.value) !== op.value) {
+                throw new Error(`${JSON.stringify(op.value)?.slice(0, 80) ?? "undefined"} is not a server of this cluster that can run the main bot (unknown, revoked or not valid)`);
+              }
+              return { row: await prefs.set(op.key, op.value) };
+            }
             if (op.op === "prefs.list") return { rows: prefs.rows() };
             if (op.op === "machine.removePreview" || op.op === "machine.remove") return pairing.admin(op, session);
             return op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op, session) : pairing.admin(op, session);
@@ -719,6 +744,7 @@ export class Botlingd {
         sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
         sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); peerContent.sessionClosed(session); peerContentOwner.sessionClosed(session); fetchSource.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
+      peerSessions = peers;
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
       feeds.start();
       gossip.start();

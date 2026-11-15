@@ -35,6 +35,9 @@
 //                             (M3 step 13) this server's fingerprint and every other server of its cluster: name,
 //                             fingerprint, state (live / stale / gone) and since, and how many commands wait for it;
 //                             read from the data folder, so it answers whether or not botlingd runs
+//   botlingd designate <machine>
+//                             (M5-04i) sets the cluster's designatedServer preference to that machine (takes effect at
+//                             each server's next start)
 //   botlingd machines remove <name-or-id> [--yes | --only]
 //                             (M4-05) on the revocation root: previews what it added, asks once, and revokes it
 //   botlingd machines dropped [--json]
@@ -61,6 +64,7 @@ import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
+import { machineLabel } from "./designated";
 
 const out = (line: string) => process.stdout.write(`${line}\n`);
 const fail = (line: string, code = 1): never => { process.stderr.write(`botlingd: ${line}\n`); process.exit(code); };
@@ -370,6 +374,55 @@ async function main(argv: string[]): Promise<void> {
       }
       return;
     }
+    case "designate": {
+      const unknown = rest.find((arg) => arg.startsWith("--"));
+      if (unknown) fail(`unknown option "${unknown}"`, 2);
+      const target = rest.find((arg) => !arg.startsWith("--"))?.trim();
+      if (!target) return fail("designate needs a machine name or id: botlingd designate <machine> (botlingd machines lists them)", 2);
+      const file = join(paths.dataDir, "server.db");
+      const pid = holderPid(paths.dataDir);
+      const db = existsSync(file) ? openReaderDb(file) : null;
+      let machines: MachinesReport;
+      try {
+        machines = readMachines(paths.dataDir, db, pid);
+      } finally {
+        db?.close();
+      }
+      const candidates: Array<{ member: string; name: string | null; fingerprint: string }> = [
+        ...(machines.self ? [machines.self] : []),
+        ...machines.peers,
+      ];
+      let resolved: { member: string; name: string | null; fingerprint: string } | null = null;
+      const byId = candidates.find((item) => item.member === target);
+      if (byId) {
+        resolved = byId;
+      } else {
+        const byName = candidates.filter((item) => item.name === target);
+        if (byName.length > 1) {
+          const choices = byName.map((item) => `${item.member} (${item.fingerprint})`).join(", ");
+          fail(`more than one machine is named "${machineLabel(target)}" (${choices}); pass the id instead`, 2);
+        }
+        if (byName.length === 1) {
+          resolved = byName[0]!;
+        } else {
+          const fpKey = target.replace(/[\s-]/g, "").toLowerCase();
+          if (/^[a-z2-7]{26}$/.test(fpKey)) {
+            resolved = candidates.find((item) => item.member === fpKey) ?? null;
+          }
+        }
+      }
+      if (!resolved) return fail(`no machine named "${machineLabel(target)}" (botlingd machines lists them)`, 2);
+      const client = await adminSession(paths);
+      try {
+        await client.request({ op: "prefs.set", key: "designatedServer", value: resolved.member });
+      } catch (error) {
+        fail(`cannot designate ${machineLabel(resolved.name ?? target)}: ${(error as Error).message}`, 2);
+      } finally {
+        client.close();
+      }
+      out(`designated ${machineLabel(resolved.name ?? target)}; its main bot takes over when each server next starts.`);
+      return;
+    }
     case "recovery": {
       if (rest[0] !== "replace") fail(`unknown recovery command "${rest[0] ?? ""}" (use: botlingd recovery replace)`, 2);
       if (rest.length > 1) fail("recovery replace takes no arguments (recovery codes are read from stdin)", 2);
@@ -471,7 +524,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     default:
-      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, pair, join, add-machine, machines, recovery, reroot, devices, revoke-device)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device)`, 2);
   }
 }
 
