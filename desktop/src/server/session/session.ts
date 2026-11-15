@@ -106,7 +106,15 @@ export class Session extends SessionCore implements ShellWindow {
   // The desktop window answers the core's app ops (browser, screenshot, install, quit).
   protected opened(hello: MessageOf<"hello">): void { if (hello.deviceId === "desktop") this.host.shell.attach(this); }
 
-  protected cmdScope(_body: CmdBody): { scope: Scope } { return { scope: "local" }; }
+  /**
+   * M7-12c: a local command names the session's own `hello.deviceId` as its origin, as a device's does (`remote-session.ts`
+   * `cmdScope`). Otherwise any holder of the local token could write origin `desktop` (A stamps it `manage` for a peer) or
+   * a phone's or server's id. Only the real window says `desktop`; the CLI says `botlingd-cli`.
+   */
+  protected cmdScope(body: CmdBody): { scope: Scope } | ShellRefusal {
+    if (this.deviceId === null || body.slot.origin !== this.deviceId) return { reason: "role", detail: "a local client's commands name its own hello deviceId as their origin" };
+    return { scope: "local" };
+  }
 
   protected reqRefusal(cmd: Command): { code: "bad_request"; message: string } | null {
     return servedAsReq(cmd.type) ? null : { code: "bad_request", message: `${cmd.type} changes state: send it as a cmd, not a req.` };

@@ -50,7 +50,7 @@ export class SlotRefusal extends Error {
 }
 
 /** Who may do what (§11.7). Null allows; otherwise the refusal. M1 has only the local desktop front end. */
-export type Authorize = (tx: Db, input: { slot: Slot; cmd: Command; scope: Scope }) => { reason: "scope" | "origin"; detail?: string } | null;
+export type Authorize = (tx: Db, input: { slot: Slot; cmd: Command; scope: Scope; peer?: string | null }) => { reason: "scope" | "origin"; detail?: string } | null;
 
 /** The read models the §11.5 basis checks read. */
 export interface BasisReader {
