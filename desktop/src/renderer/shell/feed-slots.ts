@@ -21,7 +21,9 @@ export const FEED_MENU_SLOTS: readonly string[] = SLOT_ALIASES.filter((alias) =>
 
 const ROOT_IDS = new Set(ROOT_SLOTS.map(canonicalSlot));
 /** The places a built-in plugin owns now, so `:shell` does not (M7-02c: `botling.settings` provides `settings/section` and `settings/quick`). */
-export const PLUGIN_OWNED_SLOTS: readonly string[] = ["view/settings.section", "view/quickSettings"];
+export const PLUGIN_OWNED_SLOTS: readonly string[] = ["view/settings.section", "view/quickSettings",
+  // M7-05b: `botling.sidebar` owns the bot row's menu.
+  "menu/bot/context"];
 const OWNED_ELSEWHERE = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 
 /**

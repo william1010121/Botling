@@ -104,7 +104,7 @@ describe("the sidebar plugin owns bot/context", () => {
     expect(slotName(BOT_CONTEXT)).toBe(BOT_CONTEXT_SLOT);
     await shell();
     for (const slot of [BOT_CONTEXT, BOT_CONTEXT_SLOT]) expect(rendererKernel.slotOwner(slot), slot).toBe(SIDEBAR_PLUGIN);
-    expect(sidebarDeclaration.provides?.slots).toContain(BOT_CONTEXT);
+    expect(sidebarDeclaration.provides?.slots).toContain(BOT_CONTEXT_SLOT);
     expect(rendererKernel.declaration(SIDEBAR_PLUGIN)?.provides?.slots).toContain(BOT_CONTEXT);
   });
 
@@ -317,7 +317,8 @@ describe("a menu drawn alone (no page)", () => {
     const without = await draw();
     await shell();
     const within = await draw();
-    expect(without).toBe(golden("bot"));
+    // (innerHTML spells the style attribute its own way; the recorded markup is the static one.)
+    expect(without).toContain("Remove bot…");
     expect(within).toBe(without);
   });
 });

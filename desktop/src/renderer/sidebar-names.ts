@@ -8,3 +8,5 @@ export const RAIL_SLOT = "app/rail";
 export const BOT_ROW_SLOT = "bot/row";
 /** The key the rail's layout is kept under in the plugin's shell-storage namespace (the namespace is the plugin's name). */
 export const LAYOUT_STORAGE_KEY = "layout";
+/** The bot row's context menu: owned by the sidebar plugin (M7-05b; the 2.x menu `bot/context`, canonical id `menu/bot/context`, the same name). */
+export const BOT_CONTEXT_SLOT = "bot/context";
