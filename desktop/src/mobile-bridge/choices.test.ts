@@ -16,7 +16,7 @@ it.each(['permissionTool', 'denialAsks', 'appQuestions'] as const)('mobile %s re
   const effect = vi.fn();
   const record: any = { id: 'question', role: 'bot', choices: [{ label: 'Allow', action: 'allowOnce' }] };
   const bot: any = Object.create(Bot.prototype);
-  Object.assign(bot, { options: { profile: { id: botId } }, records: [record], appQuestions: new Map(), appAnswers: new Map(), cardPicks: new Map(),
+  Object.assign(bot, { options: { profile: { id: botId } }, records: [record], partners: new Map(), appQuestions: new Map(), appAnswers: new Map(), cardPicks: new Map(),
     denialAsks: new Map(), approvals: new Map(), sessionRules: [], rulesGivenAfter: new Map(), toolCalls: new Map(),
     changed: vi.fn(), updated: vi.fn(), log: vi.fn(), tellReviewOutcome: vi.fn(), tellHead: effect });
   if (kind === 'permissionTool') {

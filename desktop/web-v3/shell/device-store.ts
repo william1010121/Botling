@@ -9,7 +9,9 @@ import { toBase64Url, type ServerAddresses, type ServerState } from "../../src/p
 import { importDhKeyPair } from "../../src/session";
 
 export const DEVICE_DB = `${IDB_PREFIX}device`;
+export const SHELL_STORAGE_DB = `${IDB_PREFIX}shell-storage`;
 const STORE = "device";
+const SHELL_STORE = "namespaces";
 const KEY = "self";
 
 /** D70: a known cluster server stored on this device (`welcome.servers`, `peer{…}`), merged by id. */
@@ -224,9 +226,57 @@ export async function savePref(name: string, value: string, factory: IDBFactory 
   } finally { db.close(); }
 }
 
+function openShellStorage(factory: IDBFactory = globalThis.indexedDB): Promise<IDBDatabase> {
+  if (!factory) return Promise.reject(new Error("shell storage: IndexedDB is not available"));
+  return new Promise((resolve, reject) => {
+    const req = factory.open(SHELL_STORAGE_DB, 1);
+    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains(SHELL_STORE)) req.result.createObjectStore(SHELL_STORE); };
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
+    req.onerror = () => reject(req.error ?? new Error("shell storage: open failed"));
+    req.onblocked = () => reject(new Error("shell storage: blocked by another tab"));
+  });
+}
+
+export async function loadShellStorageNamespace(namespace: string, factory: IDBFactory = globalThis.indexedDB): Promise<string | null> {
+  const db = await openShellStorage(factory);
+  try {
+    return await new Promise<string | null>((resolve, reject) => {
+      const req = db.transaction(SHELL_STORE, "readonly").objectStore(SHELL_STORE).get(namespace);
+      req.onsuccess = () => resolve(typeof req.result === "string" ? req.result : null);
+      req.onerror = () => reject(req.error ?? new Error("shell storage: read failed"));
+    });
+  } finally { db.close(); }
+}
+
+export async function saveShellStorageNamespace(namespace: string, json: string | null, factory: IDBFactory = globalThis.indexedDB): Promise<void> {
+  const db = await openShellStorage(factory);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(SHELL_STORE, "readwrite");
+      const store = tx.objectStore(SHELL_STORE);
+      if (json === null) store.delete(namespace);
+      else store.put(json, namespace);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("shell storage: write failed"));
+      tx.onabort = () => reject(tx.error ?? new Error("shell storage: write aborted"));
+    });
+  } finally { db.close(); }
+}
+
+export function createWebShellStorageBackend(factory?: IDBFactory) {
+  return {
+    load: (namespace: string) => loadShellStorageNamespace(namespace, factory),
+    save: (namespace: string, json: string | null) => saveShellStorageNamespace(namespace, json, factory),
+  };
+}
+
 /** Forgets this device (sign-out / "pair again"): the membership and the front-end storage. */
 export async function forgetDevice(other: string[] = [], factory: IDBFactory = globalThis.indexedDB): Promise<void> {
-  for (const name of [DEVICE_DB, ...other]) {
+  for (const name of [...new Set([DEVICE_DB, SHELL_STORAGE_DB, ...other])]) {
     if (!name.startsWith(IDB_PREFIX)) throw new Error(`refusing to delete ${name}`);
     await new Promise<void>((resolve) => {
       const req = factory.deleteDatabase(name);
