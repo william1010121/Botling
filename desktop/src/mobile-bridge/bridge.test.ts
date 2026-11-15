@@ -50,6 +50,8 @@ describe('core adapter', () => {
     let dispatched = 0;
     core.activated = true;
     core.bots = new Map([[botId, { id: botId }]]);
+    // Core.send reads the settings first (a message to a bot in Idle brings it back to the list; 25f43ae4); this bare Core has no options/dataDir.
+    core.settingsNow = () => ({ idleBots: [] });
     core.pending = { views: () => queue, take: () => { const files = queue; queue = []; return files; }, done: () => {}, restore: (_id: string, files: any[]) => { queue.push(...files); } };
     core.sendWith = async (_bot: unknown, _text: string, options: any) => {
       dispatched++; expect(options.files).toEqual([]); await Promise.resolve(); return { messageId: 'm', turnId: null };
