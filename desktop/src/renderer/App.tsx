@@ -12,16 +12,16 @@ import { shellOverlayActive } from "./ShellOverlay";
 import { postToChat } from "./editor-surface";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { status, statusText } from "../contract/bot-status";
-import { actionForEvent, commandBindings, commandForEvent, formatCombo } from "../contract/shortcuts";
+import { commandBindings, formatCombo } from "../contract/shortcuts";
 import { say, setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
 import { isMaintainer, resultLinks, type BotView, type ResultView, type RoutineView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { browserTabActions, browserTabAddress, keybindingsOf, menuItems } from "./plugin-commands";
 import { sameHeldColors, setBotColors } from "./avatars";
-import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
+import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
-import { composerBarFor, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { composerBarFor, mainTabsFor, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { StorageTab } from "./StorageTab";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
@@ -32,7 +32,8 @@ import { markViewed, railWords, railWorkers, readOpenJobs, readRailFold, readRai
 import { RailWorkerList, type RailWorkerActions } from "./RailWorkers";
 import { SubBotNav } from "./SubBotNav";
 import { flashMs, headerNav, leaveMark, movePinned, newSubBotAsk, NEW_SINCE_PREFIX, pinnedTarget, rememberRoom, roomStep, togglePinned, type LastRooms } from "./sub-bot-nav";
-import { PINNED_KEYS, leaveMarks, pinnedNumber, useWhiteboardChoice, type WebChrome } from "./app-shared";
+import { useAppKeys, useBottomControls, useBuiltinRunner } from "./app-hooks";
+import { PINNED_KEYS, leaveMarks, useWhiteboardChoice, type WebChrome } from "./app-shared";
 export type { WebChrome } from "./app-shared";
 import { ChatFrame } from "./chat-frame/ChatFrame";
 import { BotRow, focusComposer, RailStrip, RailToggle, rowTarget, runPluginCommand, searchHits, SubBotTitle } from "./rail-parts";
@@ -47,7 +48,7 @@ import { ColumnDivider } from "./ColumnDivider";
 import { FloatingChat, useFloatMemory } from "./FloatingChat";
 import { lastLine } from "./floating-chat";
 import { ChatBody } from "./NoteDock";
-import { dockKey, docked as dockShown, jumpInPlace, keepDock, toggleDock } from "./note-dock";
+import { dockKey, docked as dockShown, keepDock, toggleDock } from "./note-dock";
 import { browserStore, useBrowser } from "./browser-state";
 
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
@@ -60,7 +61,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (heldToWrite) void client.request({ type: "settings.set", change: { key: "botColors", value: heldToWrite } }).catch(() => {});
   }, [client, heldToWrite]);
   const [error, setError] = useState<string | null>(null);
-  const [bottomControls, setBottomControls] = useState<HTMLSpanElement | null>(null);
+  const [bottomControls, setBottomControls] = useBottomControls();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const openSettings = useCallback((section: SettingsSection = "general") => { setSettingsSection(section); setSettingsOpen(true); }, []);
@@ -182,69 +183,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const runCommand = useCallback((id: string, args: string[] = [], caller?: { from: "frame"; name: string }) => {
     runPluginCommand(client, store.getView().plugins, id, args, (failure) => setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure)), caller);
   }, [client, store]);
-  // A key a panel's frame did not use (a modifier held): runs Botling's shortcuts or that plugin's own bound command (never another plugin's, and never a synthetic window keydown).
-  const forwardKey = useCallback((plugin: string, key: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) => {
-    const action = actionForEvent(key, shortcutBindings);
-    const pin = pinnedNumber(action);
-    if (pin) { openPinned(pin); return; }
-    switch (action) {
-      case "settings": openSettings(); break;
-      case "toggleRightPanel": toggleRight(); break;
-      case "toggleWorkers": toggleWorkers(); break;
-      case "toggleBrowser": toggleBrowser(); break;
-      case "toggleSidebar": toggleRail(); break;
-      case "search": startSearch(); break;
-      case "subBots": toggleSubBots(); break;
-      case "roomBack": stepRoom("back"); break;
-      case "roomForward": stepRoom("forward"); break;
-      case null: {
-        const command = commandForEvent(key, pluginKeys);
-        if (command) runCommand(command, [], { from: "frame", name: plugin });
-        break;
-      }
-    }
-  }, [openSettings, toggleRight, toggleWorkers, toggleBrowser, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const action = actionForEvent(event, shortcutBindings);
-      const pin = pinnedNumber(action);
-      if (pin) { event.preventDefault(); openPinned(pin); return; }
-      switch (action) {
-        case "settings": event.preventDefault(); openSettings(); break;
-        case "toggleRightPanel": event.preventDefault(); toggleRight(); break;
-        case "toggleWorkers": event.preventDefault(); toggleWorkers(); break;
-        case "toggleBrowser": event.preventDefault(); toggleBrowser(); break;
-        case "toggleSidebar": event.preventDefault(); toggleRail(); break;
-        case "search": event.preventDefault(); startSearch(); break;
-        case "subBots": event.preventDefault(); toggleSubBots(); break;
-        case "roomBack": event.preventDefault(); stepRoom("back"); break;
-        case "roomForward": event.preventDefault(); stepRoom("forward"); break;
-        case null: {
-          const command = event.defaultPrevented ? null : commandForEvent(event, pluginKeys);
-          if (command) { event.preventDefault(); runCommand(command); }
-          break;
-        }
-      }
-    };
-    const onCommand = (event: Event) => {
-      const pin = pinnedNumber(String((event as CustomEvent).detail));
-      if (pin) { openPinned(pin); return; }
-      switch ((event as CustomEvent).detail) {
-        case "settings": openSettings(); break;
-        case "rightPanel": toggleRight(); break;
-        case "workers": toggleWorkers(); break;
-        case "browser": toggleBrowser(); break;
-        case "sidebar": toggleRail(); break;
-        case "search": startSearch(); break;
-        case "subBots": toggleSubBots(); break;
-        case "roomBack": stepRoom("back"); break;
-        case "roomForward": stepRoom("forward"); break;
-      }
-    };
-    window.addEventListener("botling:chat-command", onCommand);
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("botling:chat-command", onCommand); };
-  }, [openSettings, toggleRight, toggleWorkers, toggleBrowser, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
+  const forwardKey = useAppKeys({ openSettings, toggleRight, toggleWorkers, toggleBrowser, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand });
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   const watching = view.subagent?.id ?? null;
@@ -422,42 +361,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request({ type: "settings.set", change: { key: "mainTab", value: { botId, tab: key } } }).catch(fail);
   }, [client, store, fail]);
   // Botling's own commands a plugin frame may run: a bot's chat (its Chat tab), one of a bot's results.
-  const runBuiltin = useCallback<BuiltinRunner>((_plugin, command) => {
-    const botId = namedBot(store.getView().bots, command.botId);
-    if (!botId) { setError(`No bot "${command.botId.slice(0, 80)}".`); return; }
-    if (command.id === "botling.openResult") {
-      void client.request({ type: "result.open", botId, url: command.url })
-        .then((result) => { if (result.previewURL) openReport(botId, result.previewURL); }).catch(fail);
-      return;
-    }
-    if (command.id === "botling.openLink") {
-      // A Markdown file comes back as a report page (main never hands .md to the system's app): shown like the chat's.
-      void client.request({ type: "link.open", source: "user", botId, url: command.url })
-        .then((result) => { if (result.previewURL) openReport(botId, result.previewURL); }).catch(fail);
-      return;
-    }
-    if (command.id === "botling.openTab") {
-      const tab = mainTabsFor(store.getView().plugins, { id: botId, role: store.getView().bots.find((candidate) => candidate.id === botId)?.role ?? "bot", parent: store.getView().bots.find((candidate) => candidate.id === botId)?.parent })
-        .find((candidate) => candidate.plugin === command.plugin && candidate.id === command.view);
-      if (!tab) { fail(new Error(`No tab "${command.view.slice(0, 80)}".`)); return; }
-      selectBot(botId);
-      chooseTab(botId, tab);
-      return;
-    }
-    const shown = store.getView().chat?.botId;
-    // At one line (botling.openChat(botId, messageId)): from the bot's own tab with the floating chat, that chat opens
-    // over the tab; else its Chat shows. The chat page goes to the line once it shows that chat (none such: just the chat).
-    const dock = quoteNow.current;
-    if (jumpInPlace(dock.botId, botId, dock.noteKey, command.messageId)) {
-      if (!dock.noteOpen) dock.openNoteChat(true);
-    } else {
-      if (shown) chooseTab(shown, null);
-      chooseTab(botId, null);
-      setWhiteboardOn(false);
-      selectBot(botId);
-    }
-    if (command.messageId) postToChat({ botling: "jumpTo", botID: botId, messageID: command.messageId });
-  }, [client, store, fail, chooseTab, setWhiteboardOn, selectBot]);
+  const runBuiltin = useBuiltinRunner({ client, store, fail, setError, chooseTab, setWhiteboardOn, selectBot, dockNow: () => quoteNow.current });
   // A plugin's program part asked to show a bot with one of its tabs (`ui.showTab(…, { open: true })`): as its frame's openTab would.
   const openTabSeq = view.openTab?.seq ?? 0;
   useEffect(() => {

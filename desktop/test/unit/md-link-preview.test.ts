@@ -59,7 +59,8 @@ describe("wiring", () => {
     expect(results).toMatch(/openReport\(/);
   });
   it("a plugin's botling.openLink command shows the preview main hands back", () => {
-    const app = readFileSync(join(desktop, "src/renderer/App.tsx"), "utf8");
+    // The runner moved from App.tsx to app-hooks.ts (M7-S78).
+    const app = readFileSync(join(desktop, "src/renderer/app-hooks.ts"), "utf8");
     const builtin = app.slice(app.indexOf('command.id === "botling.openLink"'), app.indexOf('command.id === "botling.openTab"'));
     expect(builtin).toMatch(/previewURL/);
     expect(builtin).toMatch(/openReport\(/);
