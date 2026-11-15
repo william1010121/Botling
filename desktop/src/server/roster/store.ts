@@ -13,7 +13,7 @@
 import { addJoins, clusterIdFromRecoveryKey, DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, revokeCascades, RootStatement, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
 import { normalizeRecoveryCode, recoveryKeyFromCode } from "../identity/recovery";
 import type { Command, Db } from "../store";
-import { computeRoster, validDevice, type MemberInfo, type RosterView, type VerifiedStatement } from "./validity";
+import { computeRoster, validDevice, type DroppedRow, type MemberInfo, type RosterView, type VerifiedStatement } from "./validity";
 import { parseStored, signStatement, signWith, storedBytes, verifySignature, verifyStatements, type StoredStatement } from "./verify";
 
 export interface RosterBackend {
@@ -30,7 +30,7 @@ export interface RosterIdentity {
 
 export type RosterRefusal =
   | "no-cluster" | "cluster-exists" | "bad-root" | "self-revoked" | "bad-keys" | "revoked" | "not-a-device" | "server-revoke-root-only"
-  | "cannot-revoke-root" | "not-a-server" | "bad-join" | "bad-code" | "already-root" | "bad-keep";
+  | "cannot-revoke-root" | "not-a-server" | "bad-join" | "bad-code" | "already-root" | "bad-keep" | "not-dropped";
 
 export class RosterError extends Error {
   constructor(readonly reason: RosterRefusal, message: string) { super(message); this.name = "RosterError"; }
@@ -42,7 +42,7 @@ export interface RosterChange {
   invalidated: string[];
 }
 
-export type AuditAct = "cluster.create" | "cluster.join" | "device.add" | "device.revoke" | "server.add" | "server.revoke" | "member.endorse" | "profile.write" | "statement.merge" | "root.change";
+export type AuditAct = "cluster.create" | "cluster.join" | "device.add" | "device.revoke" | "server.add" | "server.revoke" | "server.revoke.dropped" | "member.endorse" | "profile.write" | "statement.merge" | "root.change";
 
 export interface AuditBody {
   act: AuditAct;
@@ -100,6 +100,8 @@ export class RosterStore {
   private readonly listeners = new Set<(change: RosterChange) => void>();
   private readonly now: () => number;
   private gossipCache: { view: RosterView; items: StoredStatement[] } | null = null;
+  private readonly dismissed = new Set<string>();
+  private readonly auditedDropped = new Set<string>();
 
   private constructor(private readonly backend: RosterBackend, private readonly identity: RosterIdentity, private readonly options: RosterStoreOptions, cluster: string | null) {
     this.now = options.now ?? Date.now;
@@ -111,17 +113,36 @@ export class RosterStore {
   static async open(backend: RosterBackend, identity: RosterIdentity, options: RosterStoreOptions = {}): Promise<RosterStore> {
     const reader = backend.openReader();
     let cluster: string | null;
+    let serverId: string | null = null;
     const rows: Array<{ id: string; bytes: Uint8Array; receivedAt: number }> = [];
+    const dismissedIds: string[] = [];
+    const auditedIds: string[] = [];
     try {
       const meta = reader.prepare("SELECT value FROM meta WHERE key = 'clusterId'").get();
       cluster = meta ? String(meta.value) : null;
+      const sidRow = reader.prepare("SELECT value FROM meta WHERE key = 'serverId'").get();
+      serverId = sidRow ? String(sidRow.value) : null;
       for (const row of reader.prepare("SELECT id, bytes, receivedAt FROM roster").all()) {
         rows.push({ id: String(row.id), bytes: row.bytes as Uint8Array, receivedAt: Number(row.receivedAt) });
+      }
+      for (const row of reader.prepare("SELECT key FROM meta WHERE key LIKE 'dropped.dismissed:%'").all()) {
+        const id = String(row.key).slice("dropped.dismissed:".length);
+        if (id) dismissedIds.push(id);
+      }
+      if (serverId) {
+        for (const row of reader.prepare("SELECT body FROM rows WHERE stream = ? AND key LIKE 'audit:dropped:%'").all(`srv:${serverId}`)) {
+          try {
+            const body = JSON.parse(String(row.body)) as Partial<AuditBody>;
+            if (body.act === "server.revoke.dropped" && typeof body.statement === "string") auditedIds.push(body.statement);
+          } catch { /* ignore malformed row */ }
+        }
       }
     } finally {
       reader.close();
     }
     const roster = new RosterStore(backend, identity, options, cluster);
+    for (const id of dismissedIds) roster.dismissed.add(id);
+    for (const id of auditedIds) roster.auditedDropped.add(id);
     let skipped = 0;
     for (const row of rows) {
       const statement = parseStored(row.bytes);
@@ -131,6 +152,12 @@ export class RosterStore {
     if (skipped) options.log?.(`roster: ${skipped} stored statements are malformed and were skipped`);
     roster.verified = await verifyStatements(roster.stored.values(), roster.self());
     roster.current = computeRoster(identity.memberId, cluster, roster.verified);
+    const missingDropped = droppedAuditsFor(roster.current, roster.auditedDropped);
+    if (serverId && missingDropped.length) {
+      const at = roster.now();
+      await backend.submit((tx) => writeAudits(tx, missingDropped.map((audit) => ({ ...audit, at }))));
+      for (const audit of missingDropped) roster.auditedDropped.add(audit.statement);
+    }
     return roster;
   }
 
@@ -149,6 +176,35 @@ export class RosterStore {
    * Pending server revocations (§4.8) a reroot offers to `keep`: counting server revocations signed by the current or
    * carried-over earlier roots, minus any against this server itself, sorted by revokeId. Read-only.
    */
+  /**
+   * Server revocations from earlier roots that did not carry over across a reroot (D63, §4.8), minus any dismissed
+   * locally on this server. Pure validity stays in `view.dropped`; dismissing never changes member validity.
+   */
+  dropped(): DroppedRow[] {
+    return this.current.dropped.filter((row) => !this.dismissed.has(row.revokeId));
+  }
+
+  /**
+   * Hides a dropped revocation locally on this server (`meta`, §4.8, M4-10): signs nothing, replicates nothing, and
+   * never changes any member's validity.
+   */
+  dismissDropped(revokeId: string): Promise<{ already: boolean }> {
+    return this.serial(async () => {
+      if (this.cluster === null) throw new RosterError("no-cluster", "there is no cluster yet (it is made at the first pairing)");
+      if (this.dismissed.has(revokeId)) return { already: true };
+      if (!this.current.dropped.some((row) => row.revokeId === revokeId)) {
+        throw new RosterError("not-dropped", "no such dropped revocation");
+      }
+      const at = this.now();
+      await this.backend.submit((tx) => {
+        tx.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+          .run(`dropped.dismissed:${revokeId}`, String(at));
+      });
+      this.dismissed.add(revokeId);
+      return { already: false };
+    });
+  }
+
   keepCandidates(): KeepCandidate[] {
     if (!this.current.root) return [];
     const counting = new Set(this.current.countingRevokes);
@@ -742,12 +798,15 @@ export class RosterStore {
     for (const item of fresh) stored.set(item.id, { ...item, receivedAt: at });
     const verified = await verifyStatements(stored.values(), this.self());
     const view = computeRoster(this.identity.memberId, cluster, verified);
+    const droppedAudits = droppedAuditsFor(view, this.auditedDropped);
+    const allAudits = [...audits, ...droppedAudits];
     await this.backend.submit((tx) => {
       extra?.(tx);
       const insert = tx.prepare("INSERT INTO roster (id, kind, member, bytes, receivedAt) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET bytes = excluded.bytes, receivedAt = excluded.receivedAt");
       for (const item of fresh) insert.run(item.id, item.statement.body.type, memberOf(item.statement.body), storedBytes(item.statement), at);
-      writeAudits(tx, audits.map((audit) => ({ ...audit, at })));
+      writeAudits(tx, allAudits.map((audit) => ({ ...audit, at })));
     });
+    for (const audit of droppedAudits) this.auditedDropped.add(audit.statement);
     const before = this.current;
     this.stored = stored;
     this.verified = verified;
@@ -773,6 +832,22 @@ export class RosterStore {
 }
 
 /** Audit rows in the server's `srv:` table stream (§8.2): key `audit:<statement id>`, rev = the stream's next rev. */
+function droppedAuditsFor(view: RosterView, audited: ReadonlySet<string>): Array<Omit<AuditBody, "at">> {
+  return view.dropped
+    .filter((row) => !audited.has(row.revokeId))
+    .map((row) => {
+      const name = view.members.get(row.member)?.name;
+      return {
+        act: "server.revoke.dropped" as const,
+        statement: row.revokeId,
+        by: row.signer,
+        member: row.member,
+        ...(name ? { name } : {}),
+        reason: `gen ${row.gen}: ${row.why}`,
+      };
+    });
+}
+
 function writeAudits(tx: Db, audits: AuditBody[]): void {
   if (!audits.length) return;
   const serverId = tx.prepare("SELECT value FROM meta WHERE key = 'serverId'").get();
@@ -780,7 +855,14 @@ function writeAudits(tx: Db, audits: AuditBody[]): void {
   const stream = `srv:${String(serverId.value)}`;
   let rev = Number(tx.prepare("SELECT MAX(rev) AS rev FROM rows WHERE stream = ?").get(stream)?.rev ?? 0);
   const put = tx.prepare("INSERT INTO rows (stream, key, rev, body, deleted) VALUES (?, ?, ?, ?, 0) ON CONFLICT (stream, key) DO NOTHING");
-  for (const audit of audits) put.run(stream, `audit:${audit.statement}`, ++rev, JSON.stringify(audit));
+  for (const audit of audits) {
+    // Dropped-row audits use a distinct audit:dropped: prefix (<= 64 chars after audit:, fitting RowKey) so they do
+    // not collide with the Revoke statement's own statement.merge / server.revoke row at audit:<statement id>.
+    const key = audit.act === "server.revoke.dropped"
+      ? `audit:dropped:${audit.statement.slice(0, 56)}`
+      : `audit:${audit.statement}`;
+    put.run(stream, key, ++rev, JSON.stringify(audit));
+  }
 }
 
 /** The audit rows (newest first), for `botlingd devices` and tests. */

@@ -99,6 +99,9 @@ export const AdminOp = z.discriminatedUnion("op", [
   // Server removal (§4.3, D61, M4-05). Local socket only.
   z.strictObject({ op: z.literal("machine.removePreview"), member: z.string().min(1).max(100) }),
   z.strictObject({ op: z.literal("machine.remove"), member: MemberId, cascade: z.boolean(), reason: z.string().max(500).optional() }),
+  // Dropped server revocations (D63, §4.8, M4-10). Local socket only.
+  z.strictObject({ op: z.literal("roster.dropped") }),
+  z.strictObject({ op: z.literal("roster.dismiss"), revokeId: StatementId }),
   // Cluster preferences (§17, M3 step 5): a write from the window or CLI on this machine (LWW per key, gossiped to
   // every peer server) and the current registers.
   z.strictObject({ op: z.literal("prefs.set"), key: PrefKey, value: z.unknown() }),
