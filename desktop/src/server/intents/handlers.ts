@@ -48,6 +48,8 @@ export interface IntentDeps {
   log?: (line: string) => void;
   /** M2 step 12: files a page uploaded, named by `chat.send.files` (none: such a command is refused). */
   uploads?: UploadedFiles | null;
+  /** Botling 3's server: a `plugin:` row's grants changed (after the commit), so the window's plugin list is redrawn. */
+  pluginRowsChanged?: () => void;
 }
 
 const newLineId = () => randomUUID().toUpperCase();
@@ -266,6 +268,7 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
       hash: cmd.codeHash.slice(0, 80),
       reason: `tier ${cmd.tier}`,
     });
+    deps.scope.afterCommit(() => deps.pluginRowsChanged?.());
   } catch (error) {
     if (error instanceof RowBodyError) throw new SlotRefusal("invalid", error.message);
     throw error;

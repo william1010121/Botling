@@ -246,6 +246,8 @@ export interface PluginsOptions {
   timing?: HostTiming;
   /** The plugin host's pid, for the process ledger. */
   onPid?: (pid: number, alive: boolean) => void;
+  /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash, or null to omit. */
+  pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
 }
 
 const str = (max: number) => z.string().max(max);
@@ -571,6 +573,7 @@ export class Plugins {
       plugins: this.registry.plugins.slice(0, 200).map((plugin) => {
         const ccb = plugin.manifest.ccb;
         const parts = (["web", "host", "claude"] as const).filter((part) => ccb?.[part]);
+        const grant = this.options.pluginGrant?.(plugin.manifest.name) ?? null;
         return {
           name: plugin.manifest.name,
           title: title(plugin.manifest).slice(0, 200),
@@ -580,6 +583,7 @@ export class Plugins {
           failure: plugin.failure?.slice(0, 2_000) ?? null,
           installedFrom: plugin.installedFrom?.slice(0, 2_000) ?? null,
           ...(plugin.builtIn ? { builtIn: true } : {}),
+          ...(grant !== null ? { grant } : {}),
           ...(plugin.replacesBuiltIn ? { replacesBuiltIn: plugin.replacesBuiltIn.slice(0, 100) } : {}),
           ...(plugin.ignoredLibraryCopy ? { ignoredLibraryVersion: plugin.ignoredLibraryCopy.version.slice(0, 100) } : {}),
           ...(plugin.skipped?.length ? { skipped: plugin.skipped.slice(0, 50).map((problem) => problem.slice(0, 2_000)) } : {}),
