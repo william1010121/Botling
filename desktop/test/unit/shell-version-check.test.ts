@@ -1,7 +1,7 @@
 // `minFeVersion` names the shell only (M7-10b; plan-change §4.3 check 4, D55, N8): the manifest's shell part and the build check
 // that fails a plugin-only commit which moves MIN_FE_VERSION or the shell hash. Every case runs on a throwaway git repository.
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,10 +118,12 @@ describe("the shell part of the manifest", () => {
     expect(manifest.version).toBe(1);
     expect(manifest.shell.hash).toMatch(/^[0-9a-f]{64}$/);
     // The value in the manifest is the one the server source defines (found by name, not by line).
-    const source = readFileSync(join(desktop, "src/server/botlingd.ts"), "utf8");
-    const declared = /const MIN_FE_VERSION\s*=\s*"([^"]+)"/.exec(source)?.[1];
-    expect(declared).toBeTruthy();
-    expect(manifest.shell.minFeVersion).toBe(declared);
+    // The constant has moved between server files before (botlingd.ts -> botlingd-start.ts), so look in every one.
+    const server = join(desktop, "src/server");
+    const declared = readdirSync(server).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+      .flatMap((name) => /const MIN_FE_VERSION\s*=\s*"([^"]+)"/.exec(readFileSync(join(server, name), "utf8"))?.[1] ?? []);
+    expect(declared).toHaveLength(1);
+    expect(manifest.shell.minFeVersion).toBe(declared[0]);
     expect(Object.keys(manifest)).toEqual(["version", "shell", "plugins"]);
     expect(SHELL_ROOTS.every((root) => !isPluginSourcePath(root))).toBe(true);
   });
