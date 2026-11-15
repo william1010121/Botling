@@ -2,10 +2,10 @@
 // confirm card for `<install-build>`, starting the install, how it went at the next start, and `<app-screenshot/>`.
 // What it needs of the app and the bots comes in `DevBuildDeps` (host.ts gives it the plugin api's `app`), so tests give fakes.
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pruneBackups, pruneUpdateLeftovers } from "./prune";
 import {
-  FAILURE_LIMIT, HEALTHY_AFTER_MS, HEALTH_WAIT_S, buildLabel, failures, failuresFile, finishInstall, installLog, installOutcome, prepareInstall, updateFolder,
+  FAILURE_LIMIT, HEALTHY_AFTER_MS, HEALTH_WAIT_S, HEALTH_WAIT_S_V3, buildLabel, healthyFile, failures, failuresFile, finishInstall, installLog, installOutcome, prepareInstall, updateFolder,
   readBuild, sensitiveChanges, setFailures, type BuildInfo,
 } from "./swap";
 
@@ -27,9 +27,11 @@ export interface DevBuildDeps {
   developer: () => DeskBot | null;
   mainBot: () => DeskBot;
   bot: (id: string) => DeskBot | null;
-  /** Main's pid (the script waits for it to quit) and its data folder (the new build opens with it). */
+  /** The pid the script waits for to quit (main's; botlingd's in Botling 3) and the app's data folder (the new build opens with it). */
   appPid: number | null;
   appDataDir: string | null;
+  /** Botling 3: botlingd's data folder (it runs the core); absent or null in 2.x. */
+  serverDir?: string | null;
   /** Where developer work goes (`devWorkRoot`); absent or null: beside the project. */
   devWork?: () => string | null;
   /** The folder holding update leftovers (~/Applications); absent or null: they are not cleaned up. */
@@ -50,8 +52,15 @@ function bundlePath(raw: string): string | null {
   return path.startsWith("/") ? resolve(path) : null;
 }
 
+/** How often Botling 3's restart check looks for `healthy`. */
+const HEALTHY_POLL_MS = 1_000;
+
 export class DevBuilds {
   constructor(private deps: DevBuildDeps) {}
+
+  /** Botling 3: the app is the window plus botlingd (it runs the core and this plugin). */
+  private get v3(): boolean { return !!this.deps.serverDir; }
+  private get product(): string { return this.v3 ? "Botling 3" : "Botling 2"; }
 
   /** What the developer project's manager is told on top of a manager's usual instructions (`developerBriefing`). */
   briefing(bot: DeskBot, appWorktree = false): string {
@@ -60,13 +69,17 @@ export class DevBuilds {
     const work = this.deps.devWork?.() ?? null;
     const worktrees = work ?? join(bot.profile.folder, ".bot", "worktrees");
     const dist = work ? join(work, "builds", "dist") : null;
-    return `(App: Developer mode. This folder is Botling's own source, the app you are running in (Botling 2 is in desktop/), and you develop it.
+    const product = this.product;
+    // Botling 3 is the same desktop/ built with --v3 (electron-builder.v3.config.cjs), written to <dist>/v3/.
+    const build = this.v3 ? "npm run dist:dir -- --v3" : "npm run dist:dir";
+    const output = `${dist ?? "desktop/dist"}${this.v3 ? "/v3" : ""}/mac-arm64/${product}.app`;
+    return `(App: Developer mode. This folder is Botling's own source, the app you are running in (${product} is in desktop/), and you develop it.
 ${appWorktree
   ? "- One writer at a time. The app made the git worktree you work in (the Worktree note says where): edit, build and test there and commit there; do not run git worktree yourself. When the tests pass, say so; the user merges it into the main branch from the app, which removes the worktree. If git status in the main folder shows changes you did not make, someone else is working: stop and ask the user."
   : `- One writer at a time. Do each task in a git worktree of its own: git worktree add ${worktrees}/<short-task> -b bot/<short-task>. Edit, build and test there; when the tests pass, merge it into the main branch and remove the worktree. If git status in the main folder shows changes you did not make, someone else is working: stop and ask the user.`}
 - Feedback from the user ("not right" on a reply) comes to you with the chat around it. First write a test that shows the problem, then fix it, then say in one sentence what was wrong.
-- To try your work: ${appWorktree ? "from your worktree (relative paths; do not cd to the main folder)" : "from the main folder, after merging,"} build the app with cd desktop && ${dist ? `BOTLING_DIST_DIR=${dist} ` : ""}npm run dist:dir; it is written to ${dist ?? "desktop/dist"}/mac-arm64/Botling 2.app (mac-x64 on Intel).
-- To install it: write where you are into your memory file first (you are restarted too), then end your reply with <install-build path="full path of that Botling 2.app">what changed, in a sentence or two</install-build>. The user confirms; the app restarts on the new build and tells you whether it came up. A build that does not come up is rolled back by itself.
+- To try your work: ${appWorktree ? "from your worktree (relative paths; do not cd to the main folder)" : "from the main folder, after merging,"} build the app with cd desktop && ${dist ? `BOTLING_DIST_DIR=${dist} ` : ""}${build}; it is written to ${output} (mac-x64 on Intel).
+- To install it: write where you are into your memory file first (you are restarted too), then end your reply with <install-build path="full path of that ${product}.app">what changed, in a sentence or two</install-build>. The user confirms; the app restarts on the new build and tells you whether it came up. A build that does not come up is rolled back by itself.
 - To see the running app: end your reply with <app-screenshot/>; a picture of its window comes back to you.
 - Never change what bots may do (tools, permissions, the prompts' rules) unless the user asked for it; the install card shows such changes to the user.)`;
   }
@@ -92,7 +105,7 @@ ${appWorktree
     const folder = bundlePath(path);
     const build = folder ? readBuild(folder) : null;
     if (!build) return refuse(`there is no app bundle at ${path}.`);
-    if (build.bundleID !== running.bundleID) return refuse(`${path} is not Botling 2 (${build.bundleID}).`);
+    if (build.bundleID !== running.bundleID) return refuse(`${path} is not ${this.product} (${build.bundleID}).`);
     if (build.path === running.path) return refuse("that is the build running now; build into desktop/dist/ and point at that.");
     return this.card(build, running, note, from);
   }
@@ -115,7 +128,8 @@ ${appWorktree
     } else {
       lines.push("", "Which commits these are is not known, so changes to what bots may do cannot be shown.");
     }
-    lines.push("", `Bots save their original conversations and unfinished work before restart. Supported work resumes automatically; pending permissions or uncertain execution stay paused for reconciliation. If the new build does not come up within ${HEALTH_WAIT_S} seconds, the running one comes back by itself.`);
+    if (this.v3) lines.push("", "The Botling 3 window and botlingd stop for it; the old app is kept, and both start again on the new one.");
+    lines.push("", `Bots save their original conversations and unfinished work before restart. Supported work resumes automatically; pending permissions or uncertain execution stay paused for reconciliation. If the new build does not come up within ${this.v3 ? HEALTH_WAIT_S_V3 : HEALTH_WAIT_S} seconds, the running one comes back by itself.`);
     const install = "Install and restart";
     main.appNotice(lines.join("\n"), [
       { label: sensitive ? `${install} anyway` : install, recommended: !sensitive },
@@ -134,7 +148,7 @@ ${appWorktree
     const running = this.deps.runningBuild();
     if (!running || !this.deps.appPid) return;
     try {
-      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid, this.deps.appDataDir ?? "");
+      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid, this.deps.appDataDir ?? "", new Date(), running.path, this.deps.serverDir ?? undefined);
       this.deps.log(`installing ${buildLabel(build)} for ${requester}`);
       await this.deps.launchInstaller(command, installLog(this.deps.root));
     } catch (error) {
@@ -153,7 +167,7 @@ ${appWorktree
     const { state } = outcome;
     const main = this.deps.mainBot();
     if (outcome.kind === "installed") {
-      const timer = setTimeout(() => {
+      const told = () => {
         finishInstall(this.deps.root);
         setFailures(this.deps.root, 0);
         this.cleanAfterUpdate(state);
@@ -163,7 +177,23 @@ ${appWorktree
         try {
           asker?.relay(`(App) Botling restarted on ${buildLabel(state.to)}, the build you asked to install${state.note ? ` (${state.note})` : ""}${how}. Read your memory file for where you were, check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.`);
         } catch (error) { this.deps.log(`could not tell ${state.requesterID}: ${(error as Error).message}`); }
-      }, healthyAfterMs);
+      };
+      if (this.v3) {
+        // Botling 3: botlingd (and so this plugin) starts before a window attaches; the build is up only once the core wrote
+        // `healthy` (a window stayed attached 8 s, core/self-update.ts `confirmHealthyWhen`). Without it nothing is said: the script
+        // rolls the build back and the old one tells.
+        let elapsed = 0;
+        const limit = healthyAfterMs + (HEALTH_WAIT_S_V3 + 30) * 1_000;
+        const timer = setInterval(() => {
+          elapsed += HEALTHY_POLL_MS;
+          if (elapsed < healthyAfterMs) return;
+          if (existsSync(healthyFile(this.deps.root))) { clearInterval(timer); told(); return; }
+          if (elapsed >= limit) clearInterval(timer);
+        }, HEALTHY_POLL_MS);
+        timer.unref?.();
+        return timer;
+      }
+      const timer = setTimeout(told, healthyAfterMs);
       timer.unref?.();
       return timer;
     }
@@ -173,7 +203,7 @@ ${appWorktree
     const paused = count >= FAILURE_LIMIT ? ` That is ${count} in a row: installing is paused until developer mode is turned off and on again.` : "";
     main.appNotice(`The new build ${buildLabel(state.to)} did not come up (${outcome.reason}); ${buildLabel(state.from)} is running again.${paused}`, undefined, undefined, { sourceID: state.requesterID });
     try {
-      this.deps.bot(state.requesterID)?.relay(`(App) The build you asked to install, ${buildLabel(state.to)}, did not come up: ${outcome.reason}. Botling put ${buildLabel(state.from)} back. The install log is ${installLog(this.deps.root)}; the failed build was kept beside the app as Botling 2.app.failed. Find out why before trying again.${paused}`);
+      this.deps.bot(state.requesterID)?.relay(`(App) The build you asked to install, ${buildLabel(state.to)}, did not come up: ${outcome.reason}. Botling put ${buildLabel(state.from)} back. The install log is ${installLog(this.deps.root)}; the failed build was kept beside the app as ${basename(state.from.path)}.failed. Find out why before trying again.${paused}`);
     } catch (error) { this.deps.log(`could not tell ${state.requesterID}: ${(error as Error).message}`); }
     return null;
   }

@@ -1,10 +1,10 @@
 // What the core keeps of the app replacing itself (core/self-update.ts): the `healthy` handshake the install script waits for,
 // and the notice of a newer signed release in the main bot's chat. The rest of self-update is botling.dev's.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../helpers";
-import { ReleaseNotices, confirmHealthy, updateFolder, type NoticeBot } from "../../src/core/self-update";
+import { ReleaseNotices, confirmHealthy, confirmHealthyWhen, installAndQuit, updateFolder, type NoticeBot } from "../../src/core/self-update";
 
 class FakeBot implements NoticeBot {
   notices: { text: string; choices?: { label: string; recommended?: boolean }[]; onPick?: (index: number) => void }[] = [];
@@ -52,6 +52,87 @@ describe("the healthy handshake", () => {
     install(broken);
     writeFileSync(join(updateFolder(broken), "state.json"), "{ not json");
     expect(confirmHealthy(broken, 1)).toBeNull();
+  });
+});
+
+describe("installing a build (core/server.ts installAndRestart)", () => {
+  const deps = (over: Partial<Parameters<typeof installAndQuit>[2]> = {}) => {
+    const calls: string[] = [];
+    return {
+      calls,
+      deps: {
+        prepareRestart: () => { calls.push("checkpoint"); },
+        cancelRestart: () => { calls.push("cancel"); },
+        spawn: (command: string[], log: string) => { calls.push(`spawn ${command.join(" ")} > ${log}`); },
+        app: { request: async (op: string) => { calls.push(`ask ${op}`); return { ok: true }; } },
+        log: (line: string) => { calls.push(`log ${line}`); },
+        ...over,
+      } as Parameters<typeof installAndQuit>[2],
+    };
+  };
+
+  it("2.x: checkpoints, starts the script, then asks main to quit", async () => {
+    const { calls, deps: given } = deps();
+    installAndQuit(["/usr/bin/nohup", "x"], "/l", given);
+    await vi.waitFor(() => expect(calls).toEqual(["checkpoint", "spawn /usr/bin/nohup x > /l", "ask quit"]));
+  });
+
+  it("Botling 3: the window and botlingd stop through quitForInstall (never a plain quit ask)", async () => {
+    const order: string[] = [];
+    const { calls, deps: given } = deps({ app: { request: async () => { order.push("ask"); return { ok: true }; }, quitForInstall: async () => { order.push("quitForInstall"); } } });
+    installAndQuit(["s"], "/l", given);
+    await vi.waitFor(() => expect(order).toEqual(["quitForInstall"]));
+    expect(calls).toEqual(["checkpoint", "spawn s > /l"]);
+  });
+
+  it("a script that does not start cancels the checkpoint and quits nothing; a failed stop is logged", async () => {
+    const quit = vi.fn(async () => {});
+    const { calls, deps: given } = deps({ spawn: () => { throw new Error("no bash"); }, app: { request: async () => ({ ok: true }), quitForInstall: quit } });
+    expect(() => installAndQuit(["s"], "/l", given)).toThrow("no bash");
+    expect(calls).toEqual(["checkpoint", "cancel"]);
+    expect(quit).not.toHaveBeenCalled();
+    const failing = deps({ app: { request: async () => ({ ok: true }), quitForInstall: async () => { throw new Error("window gone"); } } });
+    installAndQuit(["s"], "/l", failing.deps);
+    await vi.waitFor(() => expect(failing.calls.at(-1)).toBe("log install: could not stop for the install: window gone"));
+  });
+});
+
+describe("the healthy handshake in Botling 3", () => {
+  const install = (root: string) => {
+    mkdirSync(updateFolder(root), { recursive: true });
+    writeFileSync(join(updateFolder(root), "state.json"), JSON.stringify({ from: { path: "/a.app" }, to: { path: "/b.app" }, requesterID: "DEV", note: "" }));
+  };
+
+  it("counts only a window that stayed attached, and reads the install state at start (botling.dev may finish it first)", async () => {
+    vi.useFakeTimers();
+    const root = tempDir("self-update");
+    install(root);
+    let attach!: () => void;
+    const attached = new Promise<void>((resolve) => { attach = resolve; });
+    const asked: number[] = [];
+    confirmHealthyWhen(root, (ms) => { asked.push(ms); return attached; }, 8_000);
+    expect(asked).toEqual([8_000]);
+    // botling.dev finishing the state before the window attached must not stop `healthy`.
+    rmSync(join(updateFolder(root), "state.json"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(existsSync(join(updateFolder(root), "healthy"))).toBe(false);
+    // The gate resolves once a window stayed attached that long (ShellBridge.windowHeld): `healthy` follows at once.
+    attach();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(existsSync(join(updateFolder(root), "healthy"))).toBe(true);
+  });
+
+  it("without a window gate it is the 2.x handshake; without an install under way nothing waits", async () => {
+    vi.useFakeTimers();
+    const root = tempDir("self-update");
+    install(root);
+    confirmHealthyWhen(root, undefined, 8_000);
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(existsSync(join(updateFolder(root), "healthy"))).toBe(true);
+    const none = tempDir("self-update");
+    const gate = vi.fn(() => new Promise<void>(() => {}));
+    confirmHealthyWhen(none, gate, 1);
+    expect(gate).not.toHaveBeenCalled();
   });
 });
 

@@ -1788,7 +1788,7 @@ export class Plugins {
         const { plugin, data } = this.asked(AppInstallParams, params);
         const app = this.appPlugin(plugin);
         const state = app.state();
-        if (!installCommandOK(data.command, state.dataDir)) throw new Error("That is not the install script of this Botling.");
+        if (!installCommandOK(data.command, state.dataDir, !!state.server)) throw new Error("That is not the install script of this Botling.");
         app.installAndRestart(data.command, data.log);
         return null;
       }

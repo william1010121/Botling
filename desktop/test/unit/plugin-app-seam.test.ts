@@ -20,7 +20,7 @@ const running: Plugins[] = [];
 afterEach(async () => { for (const plugins of running.splice(0)) await plugins.shutdown(); });
 
 /** Plugins over a fake host process; `holdLoad`: the host answers `load` only when `release` is called (a host still starting). */
-async function setup(dir: string, options: { holdLoad?: boolean } = {}) {
+async function setup(dir: string, options: { holdLoad?: boolean; server?: { dataDir: string } } = {}) {
   const calls: any[] = [];
   const picks: ((index: number) => void)[] = [];
   const world: PluginWorld = {
@@ -29,7 +29,7 @@ async function setup(dir: string, options: { holdLoad?: boolean } = {}) {
     commandApproval: () => null, approveCommand: () => false, commandRun: () => null, component: () => null, imageUrls: () => null,
     botId: (id) => (id === "main" ? "MAIN-ID" : id.startsWith("B") ? id : null),
     app: {
-      state: () => ({ pid: 4242, dataDir: join(dir, "core"), appDataDir: null, bundle: "/Applications/Botling 2.app", developerMode: true, developer: { id: "B1", name: "botling", folder: "/p/botling" } }),
+      state: () => ({ pid: 4242, dataDir: join(dir, "core"), appDataDir: null, bundle: "/Applications/Botling 2.app", developerMode: true, developer: { id: "B1", name: "botling", folder: "/p/botling" }, ...(options.server ? { server: options.server } : {}) }),
       installAndRestart: (command, log) => { calls.push(["install", command, log]); },
       captureWindow: async () => "/tmp/shot.png",
       card: (text, choices, source) => new Promise((resolve) => { calls.push(["card", text, choices, source]); if (choices) picks.push(resolve); else resolve(null); }),
@@ -124,6 +124,28 @@ describe("the app seam", () => {
     expect(calls).toEqual([]);
     expect(installCommandOK(COMMAND(dir), join(dir, "core"))).toBe(true);
     expect(installCommandOK(COMMAND(dir), join(dir, "elsewhere"))).toBe(false);
+  });
+
+  it("Botling 3 (the state names botlingd's folder): the script takes a thirteenth word, which 2.x refuses", async () => {
+    const dir = tempDir("app-seam");
+    plugin(join(dir, "builtin"), "botling.dev", ["app"]);
+    const v3 = [...COMMAND(dir), "/srv"];
+    const { ask: ask2x, calls: calls2x } = await setup(dir);
+    await expect(ask2x("app.installAndRestart", { plugin: "botling.dev", command: v3, log: "/l" })).rejects.toThrow("not the install script");
+    expect(calls2x).toEqual([]);
+    const dir3 = tempDir("app-seam");
+    plugin(join(dir3, "builtin"), "botling.dev", ["app"]);
+    const { ask, calls } = await setup(dir3, { server: { dataDir: "/srv" } });
+    const command = [...COMMAND(dir3), "/srv"];
+    await ask("app.installAndRestart", { plugin: "botling.dev", command, log: "/l" });
+    expect(calls.at(-1)).toEqual(["install", command, "/l"]);
+    calls.length = 0;
+    await expect(ask("app.installAndRestart", { plugin: "botling.dev", command: COMMAND(dir3), log: "/l" })).rejects.toThrow("not the install script");
+    await expect(ask("app.installAndRestart", { plugin: "botling.dev", command: [...command, "x"], log: "/l" })).rejects.toThrow();
+    expect(calls).toEqual([]);
+    expect(installCommandOK(command, join(dir3, "core"), true)).toBe(true);
+    expect(installCommandOK(command, join(dir3, "core"))).toBe(false);
+    expect(installCommandOK(COMMAND(dir3), join(dir3, "core"), true)).toBe(false);
   });
 
   it("keeps the developer briefing for exactly that bot, across a restart, and drops it when the plugin is off", async () => {

@@ -10,7 +10,7 @@ import { writeFileAtomic } from "../durable/atomic";
 
 /** The app as the developer tools see it (`app.state`). */
 export interface AppStateView {
-  /** Main's pid (the install script waits for it to quit); null: no app around (tests, a headless core). */
+  /** The pid the install script waits for to quit: main's in 2.x, botlingd's in Botling 3; null: no app around (tests, a headless core). */
   pid: number | null;
   /** The core's data folder (state, script, log and screenshots live under self-update/) and the app's own data folder. */
   dataDir: string;
@@ -20,6 +20,8 @@ export interface AppStateView {
   developerMode: boolean;
   /** The project that is Botling's own source while developer mode is on. */
   developer: { id: string; name: string; folder: string } | null;
+  /** Botling 3: botlingd runs the core, and its data folder (the reopened window must find it); null or absent in 2.x. */
+  server?: { dataDir: string } | null;
 }
 
 /** What the core lends the app seam. */
@@ -42,16 +44,17 @@ export const AppCardParams = z.object({
   source: str(64).optional(),
 });
 export const AppTellParams = z.object({ plugin: str(214), bot: str(64), kind: z.enum(["relay", "note"]), text: z.string().min(1).max(100_000), files: z.array(str(4_000)).max(20).optional() });
-export const AppInstallParams = z.object({ plugin: str(214), command: z.array(str(8_000)).length(12), log: str(4_000) });
+export const AppInstallParams = z.object({ plugin: str(214), command: z.array(str(8_000)).min(12).max(13), log: str(4_000) });
 export const AppBriefingParams = z.object({ plugin: str(214), briefing: z.object({ bot: str(64), plain: str(20_000), worktree: str(20_000) }).nullable() });
 
 /**
  * The only command the app starts for a plugin: `nohup bash <data>/self-update/install.sh <pid> <target> <new> <backup> <healthy>
  * <rolled-back> <seconds> <data-dir> <previous>` (twelve words), the script the plugin wrote into the core's own self-update folder.
+ * Botling 3 (`v3`: the state names botlingd) adds botlingd's data folder: thirteen words, and only then.
  */
-export function installCommandOK(command: string[], root: string): boolean {
+export function installCommandOK(command: string[], root: string, v3 = false): boolean {
   const script = resolve(root, "self-update", "install.sh");
-  return command.length === 12 && command[0] === "/usr/bin/nohup" && command[1] === "/bin/bash" && resolve(command[2]!) === script && /^\d+$/.test(command[3]!);
+  return command.length === (v3 ? 13 : 12) && command[0] === "/usr/bin/nohup" && command[1] === "/bin/bash" && resolve(command[2]!) === script && /^\d+$/.test(command[3]!);
 }
 
 /** The developer briefing the plugin pushed (`app.briefing`), kept on disk so a bot's first wake after a restart already has it. */
