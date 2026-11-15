@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Bot, GuestAnswer } from "./bot";
 import { writeFileAtomic } from "./durable/atomic";
 import {
-  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botFollowUpNote, botFollowUpMissedNote, botUnansweredNote, botCallInPrompt, botCallInWorkNote, callInWorkNote, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
+  GROUP_TIMING, botAnswerNote, botFollowUpNote, botFollowUpMissedNote, botUnansweredNote, botCallInPrompt, botCallInWorkNote, callInWorkNote, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
   isPass, mentionBody, mentioned, quoteName, transcriptBefore, type Member,
 } from "./groups";
 import { parseReply, type BotRequest } from "./reply";
@@ -355,7 +355,8 @@ export class Conversations {
 
   /**
    * A reply of `chat`'s own bot (`receiveBotMention`): a line that starts with @ and another bot's name
-   * calls that bot in with it — one bot per reply, once (bot-mentions.json), at most 3 per message of yours.
+   * calls that bot in with it — one bot per reply, once (bot-mentions.json); no cap per message of yours, a chain of
+   * hand-backs ends at MAX_FOLLOW_DEPTH.
    */
   receiveBotMention(record: ChatRecord, chat: Bot) {
     if (record.role !== "bot" || typeof record.sourceID === "string") return;
@@ -428,7 +429,7 @@ export class Conversations {
       route(recipient.id, body, "dropped");
       return;
     }
-    // Since the user's last line: the same words again are a retry, and only so many calls.
+    // Since the user's last line: the same words again are a retry.
     const lastUser = chat.lines().findLast((line) => line.role === "user");
     const since = lastUser ? new Date(Date.UTC(2001, 0, 1) + lastUser.date * 1000).getTime() : 0;
     const recent = log.records.filter((entry) => entry.sender === chat.id && Date.parse(entry.date) > since);
@@ -438,11 +439,6 @@ export class Conversations {
         this.failed(chat, `Not sent to ${recipient.name} with @: it was already asked the same since your last message.`);
         route(recipient.id, body, "dropped");
       } else route(recipient.id, body, "merged");
-      return;
-    }
-    if (recent.length >= BOT_MENTIONS_PER_USER_LINE) {
-      this.failed(chat, `Not sent to ${recipient.name} with @: a bot can call others in at most ${BOT_MENTIONS_PER_USER_LINE} times per message of yours.`);
-      route(recipient.id, body, "dropped");
       return;
     }
     try {
