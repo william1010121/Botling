@@ -212,5 +212,10 @@ describe("peer-answer-guard: a peer server cannot answer or hide cards on a real
     expect(after.some((item) => item.text === "Which domain?")).toBe(false);
     expect(after.some((item) => item.text === "Publish now?" && item.messageId === null)).toBe(true);
     expect(ignoredKeys()).toEqual([`${botA}-Which domain?`]);
+    // The owner checks the scope before the handler and again when it stores the outcome: the first answer above is
+    // `applied` only because an item already set aside still passes. A repeat is a no-op, never a refusal or a second key.
+    expect(await fromB({ type: "waiting.ignore", botId: botA, text: "Which domain?" })).toMatchObject({ kind: "applied" });
+    expect(ignoredKeys()).toEqual([`${botA}-Which domain?`]);
+    expect(await fromB({ type: "waiting.ignore", botId: botA, text: "Never listed" })).toMatchObject({ kind: "refused", reason: "scope" });
   }, 120_000);
 });

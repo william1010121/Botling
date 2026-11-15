@@ -27,8 +27,9 @@ export interface DeviceRoster {
   readonly memberId?: string;
   /**
    * peer-answer-guard: true when this server's waiting list holds, right now, a plain item (no card: `messageId` null)
-   * of `botId` with exactly `text`. A peer server's `waiting.ignore` is accepted only for such an item; no hook, or one
-   * that throws, means no.
+   * of `botId` with exactly `text`, or that item is already set aside (the check runs again after the handler ran,
+   * and a repeat is a no-op). A peer server's `waiting.ignore` is accepted only then; no hook, or one that throws,
+   * means no.
    */
   plainWaiting?(botId: string, text: string): boolean;
 }

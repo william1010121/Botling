@@ -2289,6 +2289,17 @@ First write a test that shows this, then fix it.`;
   }
 
   /**
+   * peer-answer-guard: whether a peer server's `waiting.ignore{botId, text}` may go ahead here. Yes for a plain waiting
+   * item (no card: `messageId` null) on the list now, never for a question or approval card or a text that is not on
+   * the list. Also yes for a key that is already ignored: the owner checks the scope before the handler runs and again
+   * when it stores the outcome, and by then the handler has set the item aside; a repeat of an ignore is a no-op.
+   */
+  peerMayIgnoreWaiting(botId: string, text: string): boolean {
+    if (readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting).includes(`${botId}-${text}`)) return true;
+    return this.waiting().items.some((item) => item.messageId === null && item.botId === botId && item.text === text);
+  }
+
+  /**
    * Adds a folder as a project with a manager (`Workspace.addProject`); a folder that is one already
    * gives that project. Its row goes into projects.json, its `.bot/` is made, its bot joins the list.
    */
