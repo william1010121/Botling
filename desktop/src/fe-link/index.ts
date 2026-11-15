@@ -12,3 +12,4 @@ export * from "./ws-dial";
 export * from "./uploader";
 export * from "./sha256";
 export * from "./relay-socket";
+export * from "./server-switch";

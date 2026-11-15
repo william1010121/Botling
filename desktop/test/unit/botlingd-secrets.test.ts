@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { folderHash } from "../../src/core/plugins/catalog";
 import { SealedSecretStore, type Sealer } from "../../src/core/plugins/secrets";
 import { NO_SAFE_STORAGE_ERROR, sealWithSafeStorage, type SafeStorageLike } from "../../src/main/safe-seal";
 import { ServerClient } from "../../src/main-v3/server-client";
@@ -163,7 +164,7 @@ describe("botlingd secrets lifecycle (M6-06)", () => {
     mkdirSync(join(pluginDir, "dist"), { recursive: true });
     writeFileSync(join(pluginDir, "package.json"), JSON.stringify({
       name: "my-tool", version: "1.0.0", engines: { ccb: "^2.0.0" },
-      ccb: { host: "dist/host.mjs", contributes: { settings: { token: { type: "string", title: "Token", secret: true } } } },
+      ccb: { host: "dist/host.mjs", permissions: ["network"], contributes: { settings: { token: { type: "string", title: "Token", secret: true } } } },
     }));
     writeFileSync(join(pluginDir, "dist", "host.mjs"), "export function activate() {}");
 
@@ -184,6 +185,8 @@ describe("botlingd secrets lifecycle (M6-06)", () => {
     const window1 = openWindow(appDir1);
     window1.start();
     await window1.ready();
+    // M5-18a: a library plugin's program part runs only with a write grant at its code hash (kept in server.db for daemon2).
+    await window1.call({ type: "plugin.grant", plugin: "my-tool", codeHash: folderHash(pluginDir), tier: "write", reads: [], requests: [] });
     await until(async () => {
       const r = await window1.request({ type: "plugins.list" });
       return r.ok && (r.result as { host?: { running?: boolean } }).host?.running ? true : null;

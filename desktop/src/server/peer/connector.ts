@@ -2,9 +2,13 @@
 // WebSocket client, no dependency), one binary message per session frame, as the acceptor side (server/net/ws.ts).
 import type { SessionTransport } from "../../session";
 
+/** Socket bytes not yet flushed past which SessionLink pauses sealing and wakes on drain. */
+export const WS_HIGH_WATER = 1024 * 1024;
+const WS_DRAIN_POLL_MS = 5;
+
 /** A dialled connection: a session transport whose incoming frames are handed over once the session is bound. */
 export interface PeerConnection extends SessionTransport {
-  bind(events: { frame(frame: Uint8Array): void; closed(): void }): void;
+  bind(events: { frame(frame: Uint8Array): void; closed(): void; resume?(): void }): void;
 }
 
 export interface PeerConnector {
@@ -22,17 +26,47 @@ export const webSocketConnector: PeerConnector = {
       try { ws = new WebSocket(url); } catch (error) { reject(error); return; }
       ws.binaryType = "arraybuffer";
       const waiting: Uint8Array[] = [];
-      let bound: { frame(frame: Uint8Array): void; closed(): void } | null = null;
+      let bound: { frame(frame: Uint8Array): void; closed(): void; resume?(): void } | null = null;
       let closed = false;
       let opened = false;
+      let paused = false;
+      let drainTimer: ReturnType<typeof setTimeout> | null = null;
+      const clearDrain = () => {
+        if (drainTimer) { clearTimeout(drainTimer); drainTimer = null; }
+      };
+      const scheduleDrain = () => {
+        if (closed || drainTimer || ws.readyState !== WebSocket.OPEN) return;
+        drainTimer = setTimeout(() => {
+          drainTimer = null;
+          if (closed || ws.readyState !== WebSocket.OPEN) return;
+          if (ws.bufferedAmount < WS_HIGH_WATER) {
+            paused = false;
+            bound?.resume?.();
+          } else {
+            scheduleDrain();
+          }
+        }, WS_DRAIN_POLL_MS);
+        drainTimer.unref?.();
+      };
       const timer = setTimeout(() => { if (!opened) { try { ws.close(); } catch { /* gone */ } reject(new Error("the connection did not open in time")); } }, CONNECT_TIMEOUT_MS);
       timer.unref?.();
       const connection: PeerConnection = {
         send: (frame) => { if (!closed && ws.readyState === WebSocket.OPEN) ws.send(frame); },
-        close: () => { if (closed) return; closed = true; try { ws.close(1000); } catch { /* gone */ } },
+        close: () => { if (closed) return; closed = true; clearDrain(); try { ws.close(1000); } catch { /* gone */ } },
+        writable: () => {
+          if (closed || ws.readyState !== WebSocket.OPEN) return false;
+          if (ws.bufferedAmount < WS_HIGH_WATER) return true;
+          paused = true;
+          scheduleDrain();
+          return false;
+        },
         bind: (events) => {
           bound = events;
           for (const frame of waiting.splice(0)) events.frame(frame);
+          if (paused && ws.bufferedAmount < WS_HIGH_WATER) {
+            paused = false;
+            events.resume?.();
+          }
           if (closed && ws.readyState === WebSocket.CLOSED) events.closed();
         },
       };
@@ -44,6 +78,7 @@ export const webSocketConnector: PeerConnector = {
       });
       ws.addEventListener("close", () => {
         closed = true;
+        clearDrain();
         clearTimeout(timer);
         if (!opened) reject(new Error("the connection closed before it opened"));
         bound?.closed();

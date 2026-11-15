@@ -32,6 +32,10 @@ export interface ImportPluginsOptions {
   builtInsDir?: string | null;
   /** Maximum file size in bytes to copy (defaults to 50 MB). */
   maxFileBytes?: number;
+  /** Called with each folder and file before it is written; throws to stop the import (M6-01d: never into 2.x). */
+  guardWrite?: (path: string) => void;
+  /** A source file (by its stat) not to copy at all (M6-01d: a hard link to plugin-secrets.json). */
+  skipSourceFile?: (stat: { dev: number; ino: number }) => boolean;
 }
 
 export interface ImportedPluginEntry {
@@ -153,6 +157,7 @@ function copyTreeReadOnly(
   maxFileBytes: number,
   skipped: string[],
   problems: string[],
+  options: Pick<ImportPluginsOptions, "guardWrite" | "skipSourceFile"> = {},
 ): number {
   let filesCopied = 0;
   let realSrcRoot: string;
@@ -172,6 +177,7 @@ function copyTreeReadOnly(
       return;
     }
 
+    options.guardWrite?.(currentDst);
     mkdirSync(currentDst, { recursive: true });
 
     for (const entry of entries) {
@@ -241,6 +247,11 @@ function copyTreeReadOnly(
         continue;
       }
 
+      if (options.skipSourceFile?.(st)) {
+        skipped.push(`${relLabel}: the same file as plugin-secrets.json; not copied`);
+        continue;
+      }
+
       if (st.size > maxFileBytes) {
         const limitMb = Math.round((maxFileBytes / (1024 * 1024)) * 100) / 100;
         skipped.push(`${relLabel}: larger than ${limitMb} MB (${st.size} bytes)`);
@@ -259,6 +270,7 @@ function copyTreeReadOnly(
         continue;
       }
 
+      options.guardWrite?.(dstPath);
       mkdirSync(dirname(dstPath), { recursive: true });
       writeFileSync(dstPath, data, { mode: st.mode & 0o111 ? 0o755 : 0o644 });
       filesCopied++;
@@ -364,6 +376,7 @@ export function importPlugins(
           maxFileBytes,
           skipped,
           problems,
+          options,
         );
 
         let sourceHash = "";
@@ -428,6 +441,7 @@ export function importPlugins(
           maxFileBytes,
           skipped,
           problems,
+          options,
         );
         dataDirsCopied.push(name);
       }
@@ -498,6 +512,7 @@ export function importPlugins(
           ...(keys !== undefined ? { keys } : {}),
         };
 
+        options.guardWrite?.(join(target, "plugins.json"));
         mkdirSync(target, { recursive: true });
         writeFileAtomic(join(target, "plugins.json"), `${JSON.stringify(migrated, null, 2)}\n`);
         pluginsJsonWritten = true;
