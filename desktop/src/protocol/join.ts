@@ -98,8 +98,9 @@ export function memberFingerprint(memberId: string): string {
 }
 
 /** The cluster's Web Push key pair (§18.4): P-256, the public key uncompressed (65 bytes), the private scalar (32 bytes). */
+export const VapidPublicKey = z.string().regex(/^[A-Za-z0-9_-]{87}$/).refine((text) => { const bytes = fromBase64Url(text); return bytes?.length === 65 && bytes[0] === 4; }, { message: "an uncompressed P-256 point" });
 export const VapidKeys = z.strictObject({
-  publicKey: z.string().regex(/^[A-Za-z0-9_-]{87}$/).refine((text) => { const bytes = fromBase64Url(text); return bytes?.length === 65 && bytes[0] === 4; }, { message: "an uncompressed P-256 point" }),
+  publicKey: VapidPublicKey,
   privateKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/).refine((text) => fromBase64Url(text)?.length === 32, { message: "a 32-byte scalar" }),
 });
 export type VapidKeys = z.infer<typeof VapidKeys>;

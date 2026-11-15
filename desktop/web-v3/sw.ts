@@ -22,19 +22,28 @@ import {
   answerHeaders, askedRange, bridgeTarget, goneStatus, loaderRefusal, planRange, SW_VERSION,
   type BridgeGone, type BridgeTarget, type RangePlan, type ShellToSw, type SwGet, type SwToShell,
 } from "./sw-wire";
+import { handleNotificationClick, handlePush, type NotificationClickEventLike, type PushEventLike, type PushSwScope } from "./push-sw";
 
 // The worker's globals (the DOM lib of this tree has no worker types; only what is used here).
-interface WindowClientLike { id: string; url: string; postMessage(message: unknown, transfer?: Transferable[]): void }
+interface WindowClientLike { id: string; url: string; postMessage(message: unknown, transfer?: Transferable[]): void; focus?(): Promise<unknown> }
 interface ExtendableEventLike extends Event { waitUntil(promise: Promise<unknown>): void }
 interface FetchEventLike extends ExtendableEventLike { request: Request; respondWith(response: Promise<Response> | Response): void }
 interface MessageEventLike extends ExtendableEventLike { data: unknown; source: { postMessage(message: unknown): void } | null }
-interface WorkerScope {
+interface PushSwEventLike extends ExtendableEventLike, PushEventLike {}
+interface NotifClickSwEventLike extends ExtendableEventLike, NotificationClickEventLike {}
+interface WorkerScope extends PushSwScope {
   location: Location;
   skipWaiting(): Promise<void>;
-  clients: { claim(): Promise<void>; matchAll(options: { type: "window"; includeUncontrolled?: boolean }): Promise<WindowClientLike[]> };
+  clients: {
+    claim(): Promise<void>;
+    matchAll(options: { type: "window"; includeUncontrolled?: boolean }): Promise<WindowClientLike[]>;
+    openWindow?(url: string): Promise<unknown>;
+  };
   addEventListener(type: "install" | "activate", listener: (event: ExtendableEventLike) => void): void;
   addEventListener(type: "fetch", listener: (event: FetchEventLike) => void): void;
   addEventListener(type: "message", listener: (event: MessageEventLike) => void): void;
+  addEventListener(type: "push", listener: (event: PushSwEventLike) => void): void;
+  addEventListener(type: "notificationclick", listener: (event: NotifClickSwEventLike) => void): void;
 }
 const sw = self as unknown as WorkerScope;
 
@@ -50,6 +59,9 @@ const counts = { requests: 0, gets: 0, cancels: 0, bytes: 0, refused: 0, statuse
 
 sw.addEventListener("install", (event) => { event.waitUntil(sw.skipWaiting()); });
 sw.addEventListener("activate", (event) => { event.waitUntil(sw.clients.claim()); });
+
+sw.addEventListener("push", (event) => { event.waitUntil(handlePush(sw, event)); });
+sw.addEventListener("notificationclick", (event) => { event.waitUntil(handleNotificationClick(sw, event)); });
 
 sw.addEventListener("message", (event) => {
   const data = event.data as { botling3?: string } | null;

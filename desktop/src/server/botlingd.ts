@@ -44,7 +44,7 @@ import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type DeviceRoster, type SessionHost, type SessionOptions } from "./session";
 import { fixedIds } from "./fixed-ids";
-import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
+import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeys } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
@@ -817,7 +817,13 @@ export class Botlingd {
       const peerContentOwner = new PeerContentOwner({ service: content, roster, log, corruptId: testCorruptContent(env) });
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
       const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), log, peer: peerContent });
-      const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner }, options.session);
+      if (roster.clusterId) await ensureVapidKeys(paths.dataDir);
+      roster.onChange(() => {
+        if (roster.clusterId && !readVapidKeys(paths.dataDir)) {
+          void ensureVapidKeys(paths.dataDir).catch((error) => log(`vapid: ${String((error as Error)?.message ?? error)}`));
+        }
+      });
+      const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner, vapidPublicKey: () => readVapidKeys(paths.dataDir)?.publicKey ?? null }, options.session);
       // M5-06c: a fetch that asks puts a card into the Maintainer's chat; asks left open by the last run are `gone`.
       const approval = new FetchApproval({
         core, store, reader: () => hub.reader(), self: serverId, names: clusterNames(roster, () => hub.reader()), log,

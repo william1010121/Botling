@@ -6,6 +6,7 @@ import { z } from "zod";
 import { BotId, Command, MessageView, WireError } from "../contract";
 import { ContentRef, ContentVariant, Entry } from "./entries";
 import { ContentTicket, EntryRef, PluginName, VariantName } from "./content-url";
+import { VapidPublicKey } from "./join";
 import { AdminEvent, AdminOp } from "./pairing";
 import { canonicalJson } from "./entries";
 import { utf8Bytes } from "./encoding";
@@ -101,6 +102,8 @@ export const Welcome = msg("welcome", {
   /** The owner's `next` for this front end's current epoch, per target this server owns (§11.4). */
   next: z.record(Target, z.number().int().min(1)),
   views: z.record(z.string().max(100), z.unknown()),
+  /** Cluster VAPID public key for Web Push subscribe (§18.4, M4-25). */
+  vapidPublicKey: VapidPublicKey.optional(),
 });
 
 // ---------------------------------------------------------------------------------------------

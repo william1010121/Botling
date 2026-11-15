@@ -15,6 +15,8 @@ import { forgetDevice, loadDevice, loadPref, saveDevice, saveDeviceServers, save
 import { makePairKeys, pair, pairingSupported, PairingError, type PairAttempt, type PairKeys } from "./pairing";
 import { MediaBroker } from "./media";
 import { SwBridge } from "./sw-bridge";
+import { safeBotId } from "../push-sw";
+import { disablePushNotifications, enablePushNotifications, PUSH_ENABLED_PREF, pushSupport, syncPushOnAttach, type PushPrefs } from "./push";
 import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
@@ -259,6 +261,15 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
         if (event.type === "attached" && event.attached) {
           const nextId = conn.serverId ?? conn.link.attachedServerId();
           if (nextId) setServerId(nextId);
+          void syncPushOnAttach({
+            vapidPublicKey: conn.link.vapidPublicKey,
+            sendPushSubscribe: (sub) => {
+              const ok = conn.link.sendPushSubscribe(sub);
+              if (ok) { diagnostics.push.state = "subscribed"; diagnostics.push.sends += 1; diagnostics.push.error = undefined; }
+              return ok;
+            },
+            prefs: { load: loadPref, save: savePref },
+          }).catch(() => undefined);
         }
         if ((event.type === "attached" && event.attached) || (event.type === "message" && event.message.t === "peer")) {
           void saveDeviceServers(conn.link.servers()).then((merged) => {
@@ -278,6 +289,8 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       uploads = new PageUploads(conn.link, frame, diagnostics.uploads);
       uploads.start();
       mounted.current = mountRenderer(rendererRoot.current!, { link: conn.port, capabilities: { ...capabilities, uploads }, clock: { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) }, chrome });
+      const initialBot = safeBotId(new URLSearchParams(location.search).get("bot"));
+      if (initialBot) mounted.current.store.select(initialBot);
       conn.link.start();
       update();
       setConnection(conn);
@@ -288,6 +301,19 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
   }, [device]);
 
   useEffect(() => { mounted.current?.render(chrome); }, [chrome]);
+
+  useEffect(() => {
+    const sw = typeof navigator !== "undefined" ? navigator.serviceWorker : undefined;
+    if (!sw) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { botling3?: unknown; botId?: unknown } | null;
+      if (data?.botling3 !== "push.open") return;
+      const botId = safeBotId(data.botId);
+      if (botId) mounted.current?.store.select(botId);
+    };
+    sw.addEventListener("message", onMessage);
+    return () => sw.removeEventListener("message", onMessage);
+  }, []);
 
   useEffect(() => {
     // Across the phone width (a rotation): the drawer closes and the left column is shown as that width shows it.
@@ -335,6 +361,7 @@ export function ThisDevice({
   path,
   serverId,
   knownServers,
+  pushPrefs,
   onClose,
   onForget,
 }: {
@@ -343,6 +370,7 @@ export function ThisDevice({
   path: DialPath;
   serverId: string;
   knownServers?: readonly StoredServer[];
+  pushPrefs?: PushPrefs;
   onClose: () => void;
   onForget: () => void;
 }) {
@@ -355,6 +383,19 @@ export function ThisDevice({
   );
   const [liveServers, setLiveServers] = useState<PickerServer[]>(() => (connection?.link.attached ? connection.link.servers() : []));
   const [selectedServerId, setSelectedServerId] = useState<string>(serverId);
+  const prefs = useMemo<PushPrefs>(() => pushPrefs ?? { load: loadPref, save: savePref }, [pushPrefs]);
+  const [pushSupportState, setPushSupportState] = useState(() => pushSupport());
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushNotice, setPushNotice] = useState<string | null>(null);
+  const pushBusyRef = useRef(false);
+  const [vapidPublicKey, setVapidPublicKey] = useState<string | null>(() => connection?.link.vapidPublicKey ?? null);
+
+  useEffect(() => {
+    let alive = true;
+    void prefs.load(PUSH_ENABLED_PREF).then((value) => { if (alive) setPushEnabled(value === "1"); }, () => undefined);
+    return () => { alive = false; };
+  }, [prefs]);
 
   useEffect(() => {
     setSelectedServerId(serverId);
@@ -366,6 +407,7 @@ export function ThisDevice({
       setAttached(false);
       setAttachedServerId(null);
       setLiveServers([]);
+      setVapidPublicKey(null);
       return;
     }
     const syncLink = (attachedOverride?: boolean) => {
@@ -373,6 +415,7 @@ export function ThisDevice({
       setAttached(isAttached);
       setAttachedServerId(isAttached ? (connection.link.attachedServerId() ?? null) : null);
       setLiveServers(isAttached ? connection.link.servers() : []);
+      setVapidPublicKey(connection.link.vapidPublicKey ?? null);
     };
     setPendingItems(connection.link.pending());
     syncLink();
@@ -447,6 +490,91 @@ export function ThisDevice({
         <dt>Paired</dt><dd>{new Date(device.pairedAt).toLocaleString()}</dd>
         <dt>Waiting to send</dt><dd>{pending}</dd>
         <dt>Connected</dt><dd data-testid="dial-path">{path === "relay" ? "via relay" : diagnostics.player.path === "local" ? "on this computer" : "via tailnet"}</dd>
+        <dt>Notifications</dt>
+        <dd>
+          <div className="v3-push-status" data-testid="push-status">
+            {!pushSupportState.supported
+              ? pushSupportState.message
+              : (pushEnabled && typeof Notification !== "undefined" && Notification.permission === "granted" ? "Enabled" : "Off")}
+          </div>
+          {pushSupportState.supported && (
+            pushEnabled && typeof Notification !== "undefined" && Notification.permission === "granted"
+              ? <button
+                  type="button"
+                  className="web-secondary v3-push-btn"
+                  data-testid="disable-notifications"
+                  disabled={pushBusy}
+                  onClick={() => {
+                    if (pushBusyRef.current) return;
+                    pushBusyRef.current = true;
+                    setPushBusy(true);
+                    setPushNotice(null);
+                    void disablePushNotifications(prefs).then(() => {
+                      setPushEnabled(false);
+                      diagnostics.push.state = "idle";
+                      diagnostics.push.error = undefined;
+                      setPushNotice("Notifications turned off for this browser.");
+                    }).finally(() => {
+                      pushBusyRef.current = false;
+                      setPushBusy(false);
+                    });
+                  }}
+                >
+                  Turn off notifications
+                </button>
+              : <button
+                  type="button"
+                  className="web-secondary v3-push-btn"
+                  data-testid="enable-notifications"
+                  disabled={pushBusy || !attached || !vapidPublicKey}
+                  onClick={() => {
+                    if (pushBusyRef.current) return;
+                    pushBusyRef.current = true;
+                    setPushBusy(true);
+                    setPushNotice(null);
+                    diagnostics.push.state = "subscribing";
+                    diagnostics.push.error = undefined;
+                    void enablePushNotifications({
+                      vapidPublicKey,
+                      sendPushSubscribe: (sub) => connection?.link.sendPushSubscribe(sub) ?? false,
+                      prefs,
+                    }).then((result) => {
+                      setPushSupportState(pushSupport());
+                      if (!result.ok) {
+                        diagnostics.push.state = "error";
+                        diagnostics.push.error = result.message;
+                        setPushNotice(result.message);
+                        return;
+                      }
+                      setPushEnabled(true);
+                      diagnostics.push.state = "subscribed";
+                      if (result.sent) {
+                        diagnostics.push.sends += 1;
+                        setPushNotice("Subscription sent to server. Lock screen shows only the bot name and \"needs you\".");
+                      } else {
+                        setPushNotice("Saved locally; will send when attached to the server.");
+                      }
+                    }, () => {
+                      diagnostics.push.state = "error";
+                      diagnostics.push.error = "Could not enable push notifications.";
+                      setPushNotice("Could not enable push notifications.");
+                    }).finally(() => {
+                      pushBusyRef.current = false;
+                      setPushBusy(false);
+                    });
+                  }}
+                >
+                  {pushBusy ? "Enabling…" : "Enable notifications"}
+                </button>
+          )}
+          {!pushSupportState.supported && pushSupportState.reason === "ios-home-screen" && (
+            <button type="button" className="web-secondary v3-push-btn" data-testid="enable-notifications" disabled>
+              Enable notifications (requires Home Screen app on iOS)
+            </button>
+          )}
+          <div className="v3-push-hint">On iPhone and iPad, open Botling from your Home Screen app.</div>
+          {pushNotice && <div className="v3-push-hint" data-testid="push-notice">{pushNotice}</div>}
+        </dd>
       </dl>
       {stoppedItems.length > 0 && <div className="v3-sheet-stopped" data-testid="stopped-items">
         {stoppedItems.map((item) => <div key={item.key} className="v3-sheet-stopped-item" data-testid="stopped-item">
