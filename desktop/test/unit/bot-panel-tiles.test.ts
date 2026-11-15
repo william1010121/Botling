@@ -201,6 +201,17 @@ describe("tiles in the slots of the surfaces they name", () => {
     expect(kernel.entries("tile/pin")).toHaveLength(4);
     expect(tiles("pin")).toEqual([ONLY.id]);
   });
+
+  it("a row counts only in the slot of a surface it names: the plugin's own row in another surface's slot is not a tile there", async () => {
+    const { host, tiles, kernel } = world();
+    await host.start();
+    // `acme.pin` is a plugin of its own here (no feed): it puts its pin-only row into the board slot and the pin slot.
+    kernel.install({ name: ONLY.plugin, contributes: { slots: ["tile/board", "tile/pin"] } });
+    await kernel.load(ONLY.plugin, (plugin) => { kernel.contribute(plugin, "tile/board", { kind: "feed", row: ONLY }); kernel.contribute(plugin, "tile/pin", { kind: "feed", row: ONLY }); });
+    expect(kernel.entries("tile/board")).toHaveLength(1);
+    expect(tiles("board")).toEqual([]);
+    expect(tiles("pin")).toEqual([ONLY.id]);
+  });
 });
 
 // ---------------------------------------------------------------- fail closed
