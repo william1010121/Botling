@@ -1769,13 +1769,13 @@ export class Bot {
 
   private async deliver(turn: Turn, given?: AgentHead) { return this.delivery.deliver(turn, given); }
   private turnImages(turn: Turn): string[] { return this.delivery.turnImages(turn); }
-  private get lineMediaStore(): string { return this.delivery.lineMediaStore; }
+  get lineMediaStore(): string { return this.delivery.lineMediaStore; }
   attachmentPath(url: string, line?: string): string | null { return this.delivery.attachmentPath(url, line); }
   private namedAttachmentPath(url: string): string | null { return this.delivery.namedAttachmentPath(url); }
   private compose(turn: Turn, brief: boolean): string { return this.delivery.compose(turn, brief); }
   private wakeLine(turn: Turn, recent: (leavingOut: string | null) => string): string { return this.delivery.wakeLine(turn, recent); }
-  private wakeNote(): string { return this.delivery.wakeNote(); }
-  private prompts(): BotPrompts { return this.delivery.prompts(); }
+  wakeNote(): string { return this.delivery.wakeNote(); }
+  prompts(): BotPrompts { return this.delivery.prompts(); }
 
   ensureHead(): AgentHead {
     this.requireEngineRoute(this.engine, this.owner.engine);
