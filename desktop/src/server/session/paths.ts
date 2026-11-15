@@ -3,8 +3,9 @@
 // `botlingd.token`. `BOTLING_SERVER_DATA_DIR` names the folder (the window's spawn passes it as `BOTLING_DATA_DIR`),
 // `BOTLING_SERVER_SOCKET` moves the socket (a macOS socket path is at most 104 bytes).
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, closeSync, existsSync, fsyncSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { looksLike2x } from "../import/reader-2x";
 
 export interface BotlingdPaths {
   dataDir: string;
@@ -37,10 +38,7 @@ export function botlingdPaths(env: Record<string, string | undefined>): Botlingd
  * folder and never writes into a 2.x one (M1: 2.x data is untouched; importing it is a later step).
  */
 export function refuse2xData(dataDir: string): void {
-  if (!existsSync(dataDir) || existsSync(join(dataDir, "server.db"))) return;
-  let names: string[];
-  try { names = readdirSync(dataDir); } catch { return; }
-  if (names.includes("projects") || names.includes("settings.json") || names.includes("main")) {
+  if (looksLike2x(dataDir)) {
     throw new PathsError(`${dataDir} looks like a Botling 2.x data folder (it has bots or settings but no server.db); botlingd needs a folder of its own.`);
   }
 }
