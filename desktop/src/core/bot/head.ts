@@ -58,7 +58,7 @@ export class BotHead {
   private get routineStorePath(): string | null { return this.host.routineStorePath; }
   private get workerCore(): WorkerCoreFactory { return this.host.workerCore; }
   private get turn(): Turn | null { return this.host.turn; }
-  private set turn(v: Turn | null) { this.host.turn = v; }
+  private get turns() { return this.host.turns; }
   private get ignoreResults(): number { return this.host.ignoreResults; }
   private set ignoreResults(v: number) { this.host.ignoreResults = v; }
   private get switchTo(): Engine | null { return this.host.switchTo; }
@@ -86,19 +86,7 @@ export class BotHead {
   private settingsView(): BotSettingsView { return this.host.settingsView(); }
   private syncWorkerOwners() { this.host.syncWorkerOwners(); }
   private updated() { this.host.updated(); }
-  // The restart state it reads and clears is BotRestart's (through `Bot`):
-  private get restartPending(): boolean { return this.host.restartPending; }
-  private set restartPending(v: boolean) { this.host.restartPending = v; }
-  private get modelSettingsPending(): boolean { return this.host.modelSettingsPending; }
-  private set modelSettingsPending(v: boolean) { this.host.modelSettingsPending = v; }
-  private get folderPending(): boolean { return this.host.folderPending; }
-  private set folderPending(v: boolean) { this.host.folderPending = v; }
-  private get restartNonModel(): boolean { return this.host.restartNonModel; }
-  private set restartNonModel(v: boolean) { this.host.restartNonModel = v; }
-  private get restartForPluginsOnly(): boolean { return this.host.restartForPluginsOnly; }
-  private set restartForPluginsOnly(v: boolean) { this.host.restartForPluginsOnly = v; }
-  private get restartReason() { return this.host.restartReason; }
-  private set restartReason(v) { this.host.restartReason = v; }
+  // The restart state it reads is BotRestart's (through `Bot`); it clears it through `Bot`'s named transitions:
   private get settingsGeneration(): number { return this.host.settingsGeneration; }
   private get settingsHold() { return this.host.settingsHold; }
   private get restartRecovery(): boolean { return this.host.restartRecovery; }
@@ -132,17 +120,33 @@ export class BotHead {
   /** A session handed over by the old core is resumed as it is once (a cut-off turn goes on exactly where it stopped). */
   adoptedSession = false;
 
+  // ---- Transitions (M7-S57): the only way another part of the bot changes `head`, `session`, `briefing` or `tidying` ----
+  /** Its process is running: this is the head now. */
+  attach(head: AgentHead) { this.head = head; }
+  /** Its process is gone: there is no head. */
+  detach() { this.head = null; }
+  /** The session's first line came: it has started. */
+  sessionStarted() { this.session.started = true; }
+  /** The session goes by this id from now on (the id its process reported). */
+  sessionRenamed(sessionId: string) { this.session.sessionId = sessionId; }
+  /** An earlier session goes on as it was (a conversation saved, or the one a lost network cut off): it is resumed, so no wake briefing. */
+  sessionResumed(sessionId: string) { this.session = { sessionId, started: true }; this.briefing = false; }
+  /** The briefing is due again, unless the session never started (an exit that keeps the session). */
+  briefingDue() { this.briefing = !this.session.started; }
+  /** The wake briefing has been given. */
+  briefingGiven() { this.briefing = false; }
+  /** It tidies its notes: nothing goes to sleep or switches meanwhile. */
+  tidyStart() { this.tidying = true; }
+  /** The tidy is over (or it goes back to what it was before a nested one: `was`). */
+  tidyEnd(was = false) { this.tidying = was; }
+
   ensureHead(): AgentHead {
     this.requireEngineRoute(this.engine, this.owner.engine);
     if (this.head?.running) return this.head;
     // It fell asleep before its switch of engine was done: it wakes on the new one.
     if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
     this.requireEngineRoute(this.engine, this.owner.engine);
-    this.restartPending = false;
-    this.restartNonModel = false;
-    this.modelSettingsPending = false;
-    this.folderPending = false;
-    this.restartForPluginsOnly = false;
+    this.host.releaseRestart();
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
     const prompts = this.prompts();
     // claude keeps the system prompt a session was created with (--resume ignores a new one): when the app's
@@ -205,7 +209,7 @@ export class BotHead {
       });
     }
     head.start();
-    this.head = head;
+    this.attach(head);
     // Workers it hosts for another bot: their host learns who owns them before any report goes out (a move made while it slept).
     if (this.engine !== "claude") this.syncWorkerOwners();
     this.sessionCost = { last: 0 };
@@ -273,9 +277,7 @@ export class BotHead {
     }
     // Changed again meanwhile: the newer change still waits (a later message applies it).
     if (generation !== this.settingsGeneration) return true;
-    this.modelSettingsPending = false;
-    const shown = this.restartReason?.shown ?? "new settings";
-    if (!this.restartNonModel) { this.restartPending = false; this.restartReason = null; this.restartForPluginsOnly = false; }
+    const shown = this.host.restartSwitchedInPlace();
     this.owner.add({ id: newId(), role: "divider", text: `Switched → ${shown}`, date: toSwiftDate() });
     this.log(`switched to ${shown} in place, without a restart`);
     return true;
@@ -327,7 +329,7 @@ export class BotHead {
     // Cut off by the network, it keeps its session for when the network is back.
     if ((this.inHeadSubagents.length || this.managedPending || this.backgroundWorkRunning || this.outage || this.steered.size) && !this.shuttingDown) { this.scheduleIdle(); return; }
     this.clearIdle();
-    this.tidying = true;
+    this.tidyStart();
     this.updated();
     this.log("idle: tidying its notes, then going to sleep");
     if (tidyMs > 0) {
@@ -339,7 +341,7 @@ export class BotHead {
       const exited = await Promise.race([head.exited.then(() => true), sleep(5_000).then(() => false)]);
       if (!exited) await head.terminate(1_000);
     }
-    this.tidying = false;
+    this.tidyEnd();
     this.updated();
     // What the user said meanwhile wakes it again, in a new session.
     if (!this.shuttingDown) this.next();
@@ -353,7 +355,7 @@ export class BotHead {
   async maintenance(text: string, timeoutMs: number, head: AgentHead): Promise<string | null> {
     const deadline = Date.now() + timeoutMs;
     const wasTidying = this.tidying;
-    this.tidying = true;
+    this.tidyStart();
     try {
       let reply = await this.internal(text, timeoutMs);
       while (this.engine === "codex" && reply !== null && this.head === head && head.running && (this.managedPending || this.turn) && Date.now() < deadline) {
@@ -364,7 +366,7 @@ export class BotHead {
       }
       return reply;
     } finally {
-      this.tidying = wasTidying;
+      this.tidyEnd(wasTidying);
     }
   }
 
@@ -379,7 +381,7 @@ export class BotHead {
         this.log("the tidy did not end in time");
         if (turn.open) {
           turn.open = false;
-          if (this.turn === turn) this.turn = null;
+          if (this.turn === turn) this.turns.close();
           turn.resolve("stopped");
           // Its result, if it comes, belongs to nobody.
           if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }

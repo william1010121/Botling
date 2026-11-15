@@ -115,6 +115,22 @@ export class TurnControl {
    */
   unbegun: { turn: Turn; head: AgentHead; timer: ReturnType<typeof setTimeout> } | null = null;
 
+  // ---- TurnBook transitions: the only places `turn` and `queue` are assigned (M7-S54) ----
+  /** `turn` waits behind the turn under way (or the tidy): last in line. */
+  enqueue(turn: Turn) { this.queue.push(turn); }
+  /** A message that waits for this head's own work before a model/effort restart goes first in line (`holdForSettings`). */
+  enqueueFirst(turn: Turn) { this.queue.unshift(turn); }
+  /** The message first in line leaves it, if any. */
+  dequeue(): Turn | undefined { return this.queue.shift(); }
+  /** The message at `at` leaves the line (read into the turn under way, or taken back). */
+  dequeueAt(at: number) { this.queue.splice(at, 1); }
+  /** Every waiting message leaves the line (quitting): the caller ends them. */
+  dequeueAll(): Turn[] { return this.queue.splice(0); }
+  /** `turn` is the turn under way (`Bot.begin`'s name is taken by the forwarder to it below). */
+  start(turn: Turn) { this.turn = turn; }
+  /** No turn is under way. */
+  close() { this.turn = null; }
+
   // ---- Moved from `Bot` ----
   /** Where a new turn goes: now, joined with the one under way, or after it. The turn that carries it. */
   route(turn: Turn): Turn {
@@ -136,11 +152,11 @@ export class TurnControl {
     this.requireEngineRoute(this.engine, this.owner.engine);
     const current = this.turn;
     // The core is being swapped (hot-swap.ts): nothing new begins; it waits and is handed over.
-    if (this.swapHold) { this.queue.push(turn); return turn; }
+    if (this.swapHold) { this.enqueue(turn); return turn; }
     // A switch of engine waits for this message: the handoff first, then the message (`restartsBeforeMessage`).
-    if (!current && this.switchReady) { this.queue.push(turn); void this.handOver(); return turn; }
+    if (!current && this.switchReady) { this.enqueue(turn); void this.handOver(); return turn; }
     // A message already waits for this head's work before a model/effort restart: this one goes after it.
-    if (this.settingsHold) { this.queue.push(turn); this.checkSettingsHold(); return turn; }
+    if (this.settingsHold) { this.enqueue(turn); this.checkSettingsHold(); return turn; }
     if (!current && !this.tidying && !this.switching && this.waitsForRestart(turn) && this.head?.running && this.ownWorkRunning
       && (this.folderPending || (this.modelSettingsPending && !this.canSwitchInPlace(this.head)))) {
       this.holdForSettings(turn);
@@ -149,15 +165,15 @@ export class TurnControl {
     if (!current && !this.tidying && !this.switching) { this.begin(turn); return turn; }
     // A saved model/effort, or a new working folder, belongs to a new turn, never to steering the old process.
     // While it tidies before sleep nothing joins a turn of claude's own (a report): its process is about to end.
-    if (current && (this.modelSettingsPending || this.folderPending || this.tidying)) { this.queue.push(turn); return turn; }
+    if (current && (this.modelSettingsPending || this.folderPending || this.tidying)) { this.enqueue(turn); return turn; }
     if (current && this.canPause(current, turn)) return this.pause(current, turn);
     if (current && this.canSteer(current, turn) && this.steerInto(current, turn)) return current;
     if (current && this.offerInsert(current, turn)) {
-      this.queue.push(turn);
+      this.enqueue(turn);
       this.log("you wrote while Antigravity worked: your message goes into its turn with its next tool result (queued until then)");
       return turn;
     }
-    this.queue.push(turn);
+    this.enqueue(turn);
     this.log("a message waits for the turn under way");
     return turn;
   }
@@ -186,7 +202,7 @@ export class TurnControl {
       current.conducted = paused.conducted;
       current.handoffId = paused.handoffId;
       next.words = next.words.slice(PAUSE_NOTE.length + 2);
-      this.queue.push(next);
+      this.enqueue(next);
       return next;
     }
     this.paused = paused;
@@ -257,7 +273,7 @@ export class TurnControl {
     const current = this.turn;
     const at = this.queue.indexOf(next);
     if (at < 0 || !next.open || next.sent || !current?.open || current.head !== head) return;
-    this.queue.splice(at, 1);
+    this.dequeueAt(at);
     next.head = head;
     next.sent = true;
     this.joinTurn(current, next);
@@ -329,12 +345,12 @@ export class TurnControl {
     const waiting = this.turn;
     // Read into the turn under way after all.
     if (waiting && (!waiting.open || waiting.head !== head || waiting.reply.text || waiting.steps.length || waiting.record || this.deferred)) return;
-    if (waiting) { this.turn = null; this.deferred = waiting; }
+    if (waiting) { this.close(); this.deferred = waiting; }
     const turn = this.newTurn("user", next.words, next.userId);
     turn.head = head;
     turn.sent = true;
     turn.about = [...next.about];
-    this.turn = turn;
+    this.start(turn);
     this.clearIdle();
     this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
     this.updated();
@@ -409,7 +425,7 @@ export class TurnControl {
     if (deferred) {
       // It was sent already: claude begins it now.
       this.deferred = null;
-      if (deferred.open && deferred.head === this.head && this.head?.running) { this.turn = deferred; this.awaitBegin(deferred, this.head); return; }
+      if (deferred.open && deferred.head === this.head && this.head?.running) { this.start(deferred); this.awaitBegin(deferred, this.head); return; }
       // Stopped meanwhile: what claude does with it belongs to nobody.
       if (!deferred.open && deferred.head === this.head && this.head?.running) { this.ignoreResults += 1; this.head.interrupt(); }
     }
@@ -418,7 +434,7 @@ export class TurnControl {
     // Your message waits for this head's own work before a model/effort restart.
     if (this.settingsHold && !this.releaseSettingsHold()) return;
     if (this.queue.some((turn) => turn.open) && this.switchReady) { void this.handOver(); return; }
-    const waiting = this.queue.shift();
+    const waiting = this.dequeue();
     if (waiting) {
       this.withdrawInsert(waiting);
       if (!waiting.open) return this.next();
@@ -461,7 +477,7 @@ export class TurnControl {
       // A message still waiting its turn: taken back (it never reached claude).
       const waiting = this.queue.find((candidate) => candidate.id === turnId);
       if (waiting) {
-        this.queue.splice(this.queue.indexOf(waiting), 1);
+        this.dequeueAt(this.queue.indexOf(waiting));
         this.withdrawInsert(waiting);
         waiting.open = false;
         this.emit({ type: "turn.finished", botId: this.id, turnId, messageId: waiting.messageId, status: "stopped", text: "" });
@@ -499,7 +515,7 @@ export class TurnControl {
     this.paused = null;
     // Order matters: the turn is closed (and says so) before claude hears of it.
     turn.open = false;
-    this.turn = null;
+    this.close();
     const text = parseReply(turn.reply.text).body;
     let record = turn.record;
     if (record || turn.origin !== "background") {
