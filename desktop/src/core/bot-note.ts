@@ -4,7 +4,7 @@
 // and a rename, and a save based on an older version than the one on disk is refused with what is there, so a bot's
 // edit is never overwritten. NoteWatcher tells when a watched note changes on disk by someone else (a bot, the user's
 // editor), once per settled change and never for the app's own saves.
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, watch, writeFileSync, type FSWatcher, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { profilePaths } from "./prompts";
 import type { BotProfile } from "./store/workspace";
@@ -28,12 +28,19 @@ const mtimeOf = (file: string): number | null => {
  * note.md's mtime after the app wrote it, always later than `before` (its mtime before the write): the mtime is the
  * version a save is based on, and Linux file systems stamp with the kernel's coarse clock (a few ms), so two saves in
  * one tick would otherwise share it and a save based on the older one would not be refused. APFS stamps in ns.
+ * The words are already saved here, so a stat or a stamp that fails (a disk that refuses utimes, the note removed
+ * just now) never turns the save into an error: the mtime as it is (0 when there is no file) is the answer.
  */
 function laterMtime(file: string, before: number | null): number {
-  const stat = statSync(file);
-  if (before === null || before === undefined || stat.mtimeMs > before) return stat.mtimeMs;
-  utimesSync(file, stat.atime, new Date(Math.floor(before) + 1));
-  return statSync(file).mtimeMs;
+  let stat: Stats;
+  try { stat = statSync(file); } catch { return 0; }
+  if (before === null || stat.mtimeMs > before) return stat.mtimeMs;
+  try {
+    utimesSync(file, stat.atime, new Date(Math.floor(before) + 1));
+    return statSync(file).mtimeMs;
+  } catch {
+    return stat.mtimeMs;
+  }
 }
 
 /** The note's words and when it last changed; an empty one is made (folders too) when there is none. */

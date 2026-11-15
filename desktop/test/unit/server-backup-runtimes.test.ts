@@ -23,7 +23,7 @@ const runtimes = [
 // headless Linux host: there the electron runtime's cases are skipped (run them on the Mac; CI's Ubuntu has the
 // libraries and runs them). Only the dynamic loader's own error skips: Electron failing any other way still fails.
 const electronLoads = process.platform === "darwin"
-  || !/error while loading shared libraries/.test(spawnSync(electron, ["--version"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" }).stderr ?? "");
+  || !/error while loading shared libraries/.test(spawnSync(electron, ["--version"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", timeout: 10_000 }).stderr ?? "");
 
 const root = testRoot("backup-runtimes");
 afterAll(() => rmSync(root, { recursive: true, force: true }));
