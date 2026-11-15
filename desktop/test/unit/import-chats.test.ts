@@ -4,15 +4,16 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { messageView } from "../../src/core/bot";
-import { HISTORY_LIMIT, MAIN_BOT_ID, toSwiftDate, type ChatRecord } from "../../src/core/store/records";
+import { HISTORY_LIMIT, MAIN_BOT_ID, MAINTAINER_ID, toSwiftDate, type ChatRecord } from "../../src/core/store/records";
 import { DbBotStores } from "../../src/server/botstore";
 import { BODY_BYTES_LIMIT } from "../../src/server/effects/fit";
+import { ensureBot } from "../../src/server/effects/log-ops";
 import { TxScope } from "../../src/server/effects/scope";
 import { EventTap } from "../../src/server/effects/tap";
 import { read2x, readChat } from "../../src/server/import";
 import { importBotMetaKey, importChats } from "../../src/server/import/chats";
 import { mapIds } from "../../src/server/import/id-map";
-import { readEntries, readStream, verifyStream } from "../../src/server/log";
+import { appendEntries, readEntries, readStream, verifyStream } from "../../src/server/log";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import { make2xFolder } from "../support/fixture-2x";
 
@@ -54,6 +55,24 @@ function makeUuid(prefix: number, index: number): string {
   return `${String(prefix).padStart(8, "0")}-0000-4000-8000-${String(index).padStart(12, "0")}`;
 }
 
+function snapshotBotDbState(store: ServerStore, botId: string) {
+  const reader = store.openReader();
+  try {
+    const stream = `bot:${botId}`;
+    return {
+      streams: reader.prepare("SELECT * FROM streams WHERE stream = ? ORDER BY stream").all(stream),
+      entries: reader.prepare("SELECT * FROM entries WHERE stream = ? ORDER BY seq").all(stream),
+      fulltext: reader.prepare("SELECT * FROM fulltext WHERE stream = ? ORDER BY key").all(stream),
+      messages: reader.prepare("SELECT * FROM messages WHERE botId = ? ORDER BY seq, msgId").all(botId),
+      cards: reader.prepare("SELECT * FROM cards WHERE botId = ? ORDER BY cardId").all(botId),
+      rows: reader.prepare("SELECT * FROM rows WHERE stream = ? ORDER BY key").all(`chat:${botId}`),
+      bots: reader.prepare("SELECT * FROM bots WHERE botId = ?").all(botId),
+    };
+  } finally {
+    reader.close();
+  }
+}
+
 const dirs: string[] = [];
 const stores: ServerStore[] = [];
 const botStoresList: DbBotStores[] = [];
@@ -85,6 +104,7 @@ afterEach(async () => {
 
 const TARGET_MAIN_ID = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
 const TARGET_MAINTAINER_ID = "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB";
+const UNRELATED_BOT_ID = "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC";
 
 describe("2.x chats import (M6-01c)", () => {
   it("imports a bot's 3 lines into bot:<id> matching EventTap output, preserves 2.x id mentions, and skips head.json", async () => {
@@ -253,11 +273,12 @@ describe("2.x chats import (M6-01c)", () => {
     // Partial run left main marked unfinished and 1,000 entries committed
     const midReader = store.openReader();
     try {
+      const stream = `bot:${TARGET_MAIN_ID}`;
       const metaRow = midReader
         .prepare("SELECT value FROM meta WHERE key = ?")
         .get(importBotMetaKey(source, MAIN_BOT_ID));
       expect(metaRow?.value).toBe("unfinished");
-      expect(readStream(midReader, `bot:${TARGET_MAIN_ID}`)?.head).toBe(1000);
+      expect(readStream(midReader, stream)?.head).toBe(1000);
     } finally {
       midReader.close();
     }
@@ -446,5 +467,236 @@ describe("2.x chats import (M6-01c)", () => {
     }
 
     expect(collectFiles(src)).toEqual(before);
+  });
+
+  it("rejects target bots with pre-existing Botling 3 history without modifying or deleting existing rows, entries, messages, or cards", async () => {
+    const src = join(tempDir(), "v2-preexisting");
+    const fx = make2xFolder(src, { projectCount: 1, standaloneCount: 0 });
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, {
+      mainId: TARGET_MAIN_ID,
+      maintainerId: TARGET_MAINTAINER_ID,
+      designated: true,
+    });
+    const projectOldId = fx.projectIds[0]!;
+    const source = "sha256:test-preexisting";
+
+    const store = await openStore();
+    const baseDate = toSwiftDate(Date.UTC(2026, 5, 1, 9, 0, 0));
+    const existingMainRecord: ChatRecord = {
+      id: makeUuid(910, 1),
+      role: "bot",
+      text: "Existing Botling 3 main question",
+      date: baseDate,
+      choices: [{ label: "Keep", recommended: true }],
+    };
+    const existingMaintainerRecord: ChatRecord = {
+      id: makeUuid(920, 1),
+      role: "user",
+      text: "Existing Botling 3 maintainer chat",
+      date: baseDate + 1,
+    };
+
+    // Pre-existing Botling 3 history on mainId (entries + messages + cards) and maintainerId (entries + messages),
+    // plus an empty initialized stream/bot row for the project bot (as IntentRuntime.start() does on an empty server).
+    await store.submit((tx) => {
+      const mainStream = ensureBot(tx, TARGET_MAIN_ID);
+      appendEntries(tx, mainStream, [
+        { kind: "message.added", body: { botId: TARGET_MAIN_ID, message: messageView(existingMainRecord) } },
+      ]);
+      const maintStream = ensureBot(tx, TARGET_MAINTAINER_ID);
+      appendEntries(tx, maintStream, [
+        { kind: "message.added", body: { botId: TARGET_MAINTAINER_ID, message: messageView(existingMaintainerRecord) } },
+      ]);
+      ensureBot(tx, projectOldId);
+    });
+
+    const preStoreView = new DbBotStores(store);
+    botStoresList.push(preStoreView);
+    const preMainBotStore = preStoreView.open(TARGET_MAIN_ID, "");
+    preMainBotStore.saveSetting("model", "opus");
+    preMainBotStore.saveMessages([existingMainRecord]);
+    await preMainBotStore.durable();
+
+    const mainBefore = snapshotBotDbState(store, TARGET_MAIN_ID);
+    const maintBefore = snapshotBotDbState(store, TARGET_MAINTAINER_ID);
+    expect(mainBefore.entries).toHaveLength(1);
+    expect(mainBefore.messages).toHaveLength(1);
+    expect(mainBefore.cards).toHaveLength(1);
+    expect(mainBefore.rows).toHaveLength(1);
+    expect(maintBefore.entries).toHaveLength(1);
+    expect(maintBefore.messages).toHaveLength(1);
+
+    const first = await importChats(store, data.bots, idMap, { source });
+    const mainRes = first.bots.find((b) => b.oldId === MAIN_BOT_ID)!;
+    const maintRes = first.bots.find((b) => b.oldId === MAINTAINER_ID)!;
+    const projRes = first.bots.find((b) => b.oldId === projectOldId)!;
+
+    expect(mainRes).toMatchObject({
+      oldId: MAIN_BOT_ID,
+      newId: TARGET_MAIN_ID,
+      lines: 0,
+      batches: 0,
+      alreadyDone: false,
+    });
+    expect(mainRes.problems).toContain(
+      "Main bot already has Botling 3 history; import it into an empty server",
+    );
+
+    expect(maintRes).toMatchObject({
+      oldId: MAINTAINER_ID,
+      newId: TARGET_MAINTAINER_ID,
+      lines: 0,
+      batches: 0,
+      alreadyDone: false,
+    });
+    expect(maintRes.problems).toContain(
+      "Maintainer already has Botling 3 history; import it into an empty server",
+    );
+
+    // Empty initialized server bot (head = 0, no history) still imports cleanly
+    expect(projRes).toMatchObject({
+      oldId: projectOldId,
+      newId: projectOldId,
+      lines: 1,
+      alreadyDone: false,
+      problems: [],
+    });
+
+    expect(snapshotBotDbState(store, TARGET_MAIN_ID)).toEqual(mainBefore);
+    expect(snapshotBotDbState(store, TARGET_MAINTAINER_ID)).toEqual(maintBefore);
+    expect(store.meta(importBotMetaKey(source, MAIN_BOT_ID))).toBeUndefined();
+    expect(store.meta(importBotMetaKey(source, MAINTAINER_ID))).toBeUndefined();
+
+    // Subsequent retry also refuses main & maintainer with zero mutations/deletions
+    const second = await importChats(store, data.bots, idMap, { source });
+    expect(second.bots.find((b) => b.oldId === MAIN_BOT_ID)!.problems).toContain(
+      "Main bot already has Botling 3 history; import it into an empty server",
+    );
+    expect(second.bots.find((b) => b.oldId === MAINTAINER_ID)!.problems).toContain(
+      "Maintainer already has Botling 3 history; import it into an empty server",
+    );
+    expect(second.bots.find((b) => b.oldId === projectOldId)!.alreadyDone).toBe(true);
+    expect(snapshotBotDbState(store, TARGET_MAIN_ID)).toEqual(mainBefore);
+    expect(snapshotBotDbState(store, TARGET_MAINTAINER_ID)).toEqual(maintBefore);
+  });
+
+  it("retries cleanly after crashing mid-first-batch without affecting already-imported or unrelated bots", async () => {
+    const src = join(tempDir(), "v2-first-batch-crash");
+    const fx = make2xFolder(src, { projectCount: 1, standaloneCount: 0 });
+    const baseDate = toSwiftDate(Date.UTC(2026, 5, 2, 10, 0, 0));
+    const maintRecords: ChatRecord[] = [
+      { id: makeUuid(950, 1), role: "user", text: "Maintainer line 1", date: baseDate },
+      { id: makeUuid(950, 2), role: "bot", text: "Maintainer line 2", date: baseDate + 1, state: "done" },
+      { id: makeUuid(950, 3), role: "user", text: "Maintainer line 3", date: baseDate + 2 },
+      { id: makeUuid(950, 4), role: "bot", text: "Maintainer line 4", date: baseDate + 3, state: "done" },
+    ];
+    writeFileSync(join(src, "projects", MAINTAINER_ID, "chat.json"), JSON.stringify(maintRecords));
+
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, {
+      mainId: TARGET_MAIN_ID,
+      maintainerId: TARGET_MAINTAINER_ID,
+      designated: true,
+    });
+    const projectOldId = fx.projectIds[0]!;
+    const source = "sha256:test-crash-first-batch";
+
+    const store = await openStore();
+    const unrelatedRecord: ChatRecord = {
+      id: makeUuid(960, 1),
+      role: "bot",
+      text: "Unrelated Botling 3 bot message",
+      date: baseDate - 10,
+      choices: [{ label: "Ack", recommended: true }],
+    };
+    await store.submit((tx) => {
+      const stream = ensureBot(tx, UNRELATED_BOT_ID);
+      appendEntries(tx, stream, [
+        { kind: "message.added", body: { botId: UNRELATED_BOT_ID, message: messageView(unrelatedRecord) } },
+      ]);
+    });
+    const preStores = new DbBotStores(store);
+    botStoresList.push(preStores);
+    const unrelatedStore = preStores.open(UNRELATED_BOT_ID, "");
+    unrelatedStore.saveSetting("model", "haiku");
+    unrelatedStore.saveMessages([unrelatedRecord]);
+    await unrelatedStore.durable();
+
+    const unrelatedBefore = snapshotBotDbState(store, UNRELATED_BOT_ID);
+
+    // Crash during Maintainer's first batch (before batch 1 commits); Main bot is already done.
+    await expect(
+      importChats(store, data.bots, idMap, {
+        source,
+        batchSize: 2,
+        onBatch({ oldId, batch }) {
+          if (oldId === MAINTAINER_ID && batch === 1) {
+            throw new Error("crash mid-first-batch");
+          }
+        },
+      }),
+    ).rejects.toThrow("crash mid-first-batch");
+
+    const mainAfterFirst = snapshotBotDbState(store, TARGET_MAIN_ID);
+    expect(store.meta(importBotMetaKey(source, MAIN_BOT_ID))).toBe("done");
+    expect(mainAfterFirst.entries).toHaveLength(fx.mainMessages.length);
+    expect(store.meta(importBotMetaKey(source, MAINTAINER_ID))).toBeUndefined();
+    expect(snapshotBotDbState(store, UNRELATED_BOT_ID)).toEqual(unrelatedBefore);
+
+    // Retry, then crash right after Maintainer's first batch commits (before batch 2).
+    await expect(
+      importChats(store, data.bots, idMap, {
+        source,
+        batchSize: 2,
+        onBatch({ oldId, batch }) {
+          if (oldId === MAINTAINER_ID && batch === 2) {
+            throw new Error("crash after batch 1");
+          }
+        },
+      }),
+    ).rejects.toThrow("crash after batch 1");
+
+    expect(store.meta(importBotMetaKey(source, MAINTAINER_ID))).toBe("unfinished");
+    expect(snapshotBotDbState(store, TARGET_MAIN_ID)).toEqual(mainAfterFirst);
+    expect(snapshotBotDbState(store, UNRELATED_BOT_ID)).toEqual(unrelatedBefore);
+
+    // Final retry succeeds for Maintainer & Project 1 without touching Main bot or Unrelated bot.
+    const resumed = await importChats(store, data.bots, idMap, { source, batchSize: 2 });
+    expect(resumed.bots.find((b) => b.oldId === MAIN_BOT_ID)).toMatchObject({
+      alreadyDone: true,
+      problems: [],
+    });
+    expect(resumed.bots.find((b) => b.oldId === MAINTAINER_ID)).toMatchObject({
+      oldId: MAINTAINER_ID,
+      newId: TARGET_MAINTAINER_ID,
+      lines: 4,
+      batches: 2,
+      alreadyDone: false,
+      problems: [],
+    });
+    expect(resumed.bots.find((b) => b.oldId === projectOldId)).toMatchObject({
+      oldId: projectOldId,
+      lines: 1,
+      alreadyDone: false,
+      problems: [],
+    });
+
+    const reader = store.openReader();
+    try {
+      expect(verifyStream(reader, `bot:${TARGET_MAINTAINER_ID}`)).toMatchObject({ ok: true });
+      const maintEntries = readEntries(reader, `bot:${TARGET_MAINTAINER_ID}`, 1, {
+        maxEntries: 100,
+        maxBytes: 10_000_000,
+      }).entries;
+      expect(maintEntries.map((e) => (e.body as { message: { text: string } }).message.text)).toEqual(
+        maintRecords.map((r) => r.text),
+      );
+    } finally {
+      reader.close();
+    }
+
+    expect(snapshotBotDbState(store, TARGET_MAIN_ID)).toEqual(mainAfterFirst);
+    expect(snapshotBotDbState(store, UNRELATED_BOT_ID)).toEqual(unrelatedBefore);
   });
 });
