@@ -7,7 +7,7 @@
 // storage after SQLite's COMMIT with `synchronous = FULL` and `fullfsync`). An item counts as in the outbox only after
 // its write resolved. Pure TypeScript: no Node built-ins, no Electron, no core.
 import type { Command } from "../contract";
-import type { Cursor, LogId, OriginEpoch, Outcome, Slot } from "../protocol";
+import type { Cursor, LogId, OriginEpoch, Outcome, Slot, Via } from "../protocol";
 
 /** An outbox item's stored state. "delivered" and "not sent" items stay until settled or dismissed (§11.6, §13.4). */
 export type ItemState = "waiting" | "held" | "delivered" | "not sent";
@@ -17,6 +17,8 @@ export interface OutboxItem {
   cmd: Command;
   /** The bot cursor the front end showed, for acts on visible things (§11.5). */
   basis?: Cursor;
+  /** The plugin that caused the command (D53, §11.1); fixed when written, never added or changed at send time. */
+  via?: Via;
   createdAt: number;
   state: ItemState;
   /** The server that stored it (`held{at}`, §11.2). */

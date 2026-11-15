@@ -14,7 +14,7 @@
 // - `cmd.retry{inc}` (D49): the item is re-sent once the owner's `srv:` stream is on that inc.
 // - A `reset` marks delivered items whose outcome entry lies above the retired logId's kept seq as lost (D50).
 import type { Command } from "../contract";
-import { slotKey, type CmdBody, type Cursor, type LogId, type OriginEpoch, type Outcome, type Slot, type Target } from "../protocol";
+import { slotKey, type CmdBody, type Cursor, type LogId, type OriginEpoch, type Outcome, type Slot, type Target, type Via } from "../protocol";
 import type { OutboxItem, RetiredLog, SerialWriter, StorageOp, StoredState } from "./storage";
 
 export type ResolveResult =
@@ -93,15 +93,15 @@ export class Outbox {
   }
 
   envelope(item: OutboxItem, inc: LogId): CmdBody {
-    return { slot: item.slot, floor: this.floor(item), inc, cmd: item.cmd, ...(item.basis ? { basis: item.basis } : {}) } as CmdBody;
+    return { slot: item.slot, floor: this.floor(item), inc, cmd: item.cmd, ...(item.basis ? { basis: item.basis } : {}), ...(item.via ? { via: item.via } : {}) } as CmdBody;
   }
 
   /** Writes a new item; resolves with it once durable (only then does it count as in the outbox, D45). */
-  async submit(target: Target, cmd: Command, basis?: Cursor): Promise<OutboxItem> {
+  async submit(target: Target, cmd: Command, basis?: Cursor, via?: Via): Promise<OutboxItem> {
     const item = await this.writer.run(() => {
       const n = this.nextN(target);
       const slot: Slot = { origin: this.origin, originEpoch: this.epochValue, target, n };
-      const created: OutboxItem = { slot, cmd, ...(basis ? { basis } : {}), createdAt: this.now(), state: "waiting" };
+      const created: OutboxItem = { slot, cmd, ...(basis ? { basis } : {}), ...(via ? { via: { plugin: via.plugin, codeHash: via.codeHash } } : {}), createdAt: this.now(), state: "waiting" };
       return {
         ops: [{ op: "put", item: created }, { op: "counter", target, next: n + 1 }],
         commit: () => { this.items.set(slotKey(slot), created); this.counters.set(target, n + 1); return created; },
@@ -146,7 +146,7 @@ export class Outbox {
           ops.push({ op: "epoch", epoch });
         }
         const n = counters.get(slot.target) ?? 1;
-        const moved: OutboxItem = { slot: { ...item.slot, originEpoch: epoch, n }, cmd: item.cmd, ...(item.basis ? { basis: item.basis } : {}), createdAt: item.createdAt, state: "waiting", ...(item.cancel ? { cancel: true as const } : {}), movedFrom: item.slot };
+        const moved: OutboxItem = { slot: { ...item.slot, originEpoch: epoch, n }, cmd: item.cmd, ...(item.basis ? { basis: item.basis } : {}), ...(item.via ? { via: item.via } : {}), createdAt: item.createdAt, state: "waiting", ...(item.cancel ? { cancel: true as const } : {}), movedFrom: item.slot };
         ops.push({ op: "delete", slot: item.slot }, { op: "put", item: moved }, { op: "counter", target: slot.target, next: n + 1 });
         return {
           ops,

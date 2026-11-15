@@ -16,7 +16,7 @@
 import type { Command } from "../contract";
 import {
   decodeWireFrame, encodeChunkFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, REFUSE_REASON_TEXT, ResAssembler, slotKey,
-  type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type ServerAddresses, type ServerState, type Slot, type StreamId, type Target,
+  type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type ServerAddresses, type ServerState, type Slot, type StreamId, type Target, type Via,
 } from "../protocol";
 import type { Rows } from "../protocol/table-rows";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";
@@ -282,8 +282,8 @@ export class FeLink {
    * Puts a command in the outbox. Resolves once it is durable (the UI shows it as waiting only then, §11.2, D45); it
    * goes out at once when the session allows writes, otherwise on the next attach.
    */
-  async submit(target: Target, cmd: Command, basis?: Cursor): Promise<OutboxItem> {
-    const item = await this.outbox.submit(target, cmd, basis);
+  async submit(target: Target, cmd: Command, basis?: Cursor, via?: Via): Promise<OutboxItem> {
+    const item = await this.outbox.submit(target, cmd, basis, via);
     const key = slotKey(item.slot);
     this.visibleAt.set(key, this.clock.now());
     this.clock.setTimeout(() => { if (this.outbox.get(key)?.state === "waiting" && !this.unsettledStopped.has(key)) this.emit({ type: "pending" }); }, this.markerMs);
