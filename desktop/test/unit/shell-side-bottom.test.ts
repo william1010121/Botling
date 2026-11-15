@@ -264,6 +264,12 @@ describe("ShellFrame and RegionSlot", () => {
     let open!: () => void; let release!: () => void;
     const gate = new Promise<void>((resolve) => { open = resolve; });
     const hang = new Promise<void>((resolve) => { release = resolve; });
+    // Runs even when an expectation below fails, so the plugin is not left loading/unloading for the next tests.
+    cleanups.push(async () => {
+      open(); release();
+      if (rendererKernel.state(BOT_PANEL_PLUGIN) !== "absent") await rendererKernel.requestUnload(BOT_PANEL_PLUGIN);
+      if (mine) rendererKernel.uninstall(BOT_PANEL_PLUGIN);
+    });
     let loaded!: Promise<unknown>;
     await act(async () => { loaded = rendererKernel.load(BOT_PANEL_PLUGIN, async (plugin) => { rendererKernel.register(plugin, "test", "hold", () => hang); await gate; }); });
     expect(rendererKernel.state(BOT_PANEL_PLUGIN)).toBe("loading");
@@ -278,7 +284,6 @@ describe("ShellFrame and RegionSlot", () => {
     await act(async () => { release(); await unloaded; });
     expect(rendererKernel.state(BOT_PANEL_PLUGIN)).toBe("absent");
     expect(host.querySelector("#side")).not.toBeNull();
-    if (mine) rendererKernel.uninstall(BOT_PANEL_PLUGIN);
   });
 
   it("the side region needs botling.bot-panel's contribution while the plugin is up, and is drawn while the plugin is not (its own data, or the shell's unavailable line)", async () => {
