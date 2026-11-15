@@ -507,6 +507,65 @@ describe("M4-26: root minting & encrypted peer distribution on server revocation
     expect(readVapidKeys(lateNode.dir)).toEqual(goodRec!.keys);
     expect(readVapidKeyRecord(rootNode.dir)).toEqual({ id: 0, keys: initial });
   });
+
+  it("never sends vapid.key to a revoked or exchange-only session even if still open, and refuses non-root rotation", () => {
+    const dir = join(root, `sync-guard-${++seqDir}`);
+    mkdirSync(dir, { recursive: true });
+    writeVapidKeys(dir, generateTestVapidKeys(), 0);
+
+    const view: import("../../src/server/roster").RosterView = {
+      self: "root-1",
+      cluster: "cluster-1",
+      root: { id: "r1", gen: 1, root: "root-1", recoveryPub: "rec", keep: new Set() },
+      servers: new Set(["root-1", "good-1", "revoked-1"]),
+      revoked: new Set(["revoked-1"]),
+      valid: new Set(["root-1", "good-1"]),
+      members: new Map(),
+      countingRevokes: [],
+      dropped: [],
+    };
+    const listeners = new Set<(c: import("../../src/server/roster").RosterChange) => void>();
+    const sentGood: unknown[] = [];
+    const sentRevoked: unknown[] = [];
+    const sentExchange: unknown[] = [];
+    const logs: string[] = [];
+
+    const goodSession = { peer: "good-1", state: "open", sendWire: (m: unknown) => { sentGood.push(m); return true; } };
+    const revokedSession = { peer: "revoked-1", state: "open", sendWire: (m: unknown) => { sentRevoked.push(m); return true; } };
+    const exchangeSession = { peer: "good-1", state: "exchange", sendWire: (m: unknown) => { sentExchange.push(m); return true; } };
+
+    const sync = new VapidKeySync({
+      dataDir: dir,
+      roster: {
+        memberId: "root-1",
+        get view() { return view; },
+        onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+      },
+      sessions: () => [goodSession, revokedSession, exchangeSession],
+      log: (l) => logs.push(l),
+    });
+    sync.start();
+
+    // Non-server-revocation roster change does not rotate.
+    for (const fn of listeners) fn({ view, invalidated: [] });
+    expect(readVapidKeyRecord(dir)?.id).toBe(0);
+    expect(sentGood).toHaveLength(0);
+
+    // Server revocation rotates once and sends ONLY to open valid peer session.
+    for (const fn of listeners) fn({ view, invalidated: ["revoked-1"], serverRevokeSigned: true });
+    expect(readVapidKeyRecord(dir)?.id).toBe(1);
+    expect(sentGood).toHaveLength(1);
+    expect(sentRevoked).toHaveLength(0);
+    expect(sentExchange).toHaveLength(0);
+
+    // sessionOpened also refuses revoked and non-open sessions.
+    sync.sessionOpened(revokedSession);
+    sync.sessionOpened(exchangeSession);
+    expect(sentRevoked).toHaveLength(0);
+    expect(sentExchange).toHaveLength(0);
+
+    sync.close();
+  });
 });
 
 describe("M4-26: welcome.vapidPublicKey & PushSender use rotated keys", () => {
