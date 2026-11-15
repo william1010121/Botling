@@ -22,6 +22,7 @@ import {
   fromBase64Url,
   packFrame,
   toBase64Url,
+  type DeviceScope,
   type Message,
   type MessageOf,
   type PushSubscription,
@@ -34,7 +35,7 @@ import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity, writeVapi
 import { IntentRuntime } from "../../src/server/intents";
 import { LiveChannel } from "../../src/server/live";
 import { LogHub } from "../../src/server/log";
-import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "../../src/server/push";
+import { attachedDeviceIds, DEFAULT_PUSH_COALESCE_MS, parseRetryAfterMs, PushSender, PushTriggers, type PushTransport } from "../../src/server/push";
 import { RosterStore } from "../../src/server/roster";
 import { RemoteSession, RemoteSessions, Session, SessionHost, slotAuthorize, type RemoteHost, type SessionOptions } from "../../src/server/session";
 import { ShellBridge } from "../../src/server/shell-bridge";
@@ -123,14 +124,30 @@ function decryptAes128Gcm(body: Uint8Array, uaPrivateKey: Uint8Array, uaPublicKe
   return Buffer.concat(records);
 }
 
-async function startFakePushServer() {
-  const received: Array<{ url: string; method: string; headers: IncomingHttpHeaders; body: Buffer }> = [];
+type FakePushResponse = { status: number; headers?: Record<string, string> };
+type FakePushResponder = (req: {
+  url: string;
+  origin: string;
+  method: string;
+  headers: IncomingHttpHeaders;
+  body: Buffer;
+}) => FakePushResponse | Promise<FakePushResponse>;
+
+async function startFakePushServer(responder?: FakePushResponder) {
+  const received: Array<{ url: string; origin: string; method: string; headers: IncomingHttpHeaders; body: Buffer; at: number }> = [];
   const server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
-      received.push({ url: req.url ?? "/", method: req.method ?? "", headers: req.headers, body: Buffer.concat(chunks) });
-      res.statusCode = 201;
+    req.on("end", async () => {
+      const originHeader = req.headers["x-test-origin"];
+      const origin = typeof originHeader === "string" ? originHeader : "https://push.example";
+      const entry = { url: req.url ?? "/", origin, method: req.method ?? "", headers: req.headers, body: Buffer.concat(chunks), at: Date.now() };
+      received.push(entry);
+      const reply = responder ? await responder(entry) : { status: 201 };
+      if (reply.headers) {
+        for (const [k, v] of Object.entries(reply.headers)) res.setHeader(k, v);
+      }
+      res.statusCode = reply.status;
       res.end();
     });
   });
@@ -141,10 +158,18 @@ async function startFakePushServer() {
   const transport: PushTransport = (req) => new Promise((resolve, reject) => {
     const parsed = new URL(req.url);
     const localReq = httpRequest(
-      { host: "127.0.0.1", port, path: `${parsed.pathname}${parsed.search}`, method: "POST", headers: req.headers },
+      {
+        host: "127.0.0.1",
+        port,
+        path: `${parsed.pathname}${parsed.search}`,
+        method: "POST",
+        headers: { ...req.headers, "x-test-origin": parsed.origin },
+      },
       (res) => {
-        res.resume();
-        res.on("end", () => resolve({ status: res.statusCode ?? 0 }));
+        const rawRetryAfter = res.headers["retry-after"];
+        const retryAfter = Array.isArray(rawRetryAfter) ? rawRetryAfter[0] : rawRetryAfter;
+        res.destroy();
+        resolve(retryAfter ? { status: res.statusCode ?? 0, retryAfter } : { status: res.statusCode ?? 0 });
       },
     );
     localReq.on("error", reject);
@@ -289,7 +314,18 @@ class FakeLocalSocket extends EventEmitter {
   }
 }
 
-async function setupHarness(options: { ownedBots?: string[]; withVapid?: boolean; sessionOptions?: SessionOptions } = {}) {
+async function setupHarness(options: {
+  ownedBots?: string[];
+  withVapid?: boolean;
+  sessionOptions?: SessionOptions;
+  responder?: FakePushResponder;
+  coalesceMs?: number;
+  backoffBaseMs?: number;
+  maxBackoffMs?: number;
+  maxRetries?: number;
+  now?: () => number;
+  sender?: Pick<PushSender, "notify">;
+} = {}) {
   const dir = makeTempDir();
   const store = await openServerStore(dir);
   const identity = await loadOrCreateServerIdentity(dir, { create: true });
@@ -304,7 +340,7 @@ async function setupHarness(options: { ownedBots?: string[]; withVapid?: boolean
     writeVapidKeys(dir, generateTestVapidKeys());
   }
 
-  const fakePush = await startFakePushServer();
+  const fakePush = await startFakePushServer(options.responder);
   const ownedBots = options.ownedBots ?? [OWNED_BOT];
   const engine = new ViewEngine({ bots: ownedBots, hold: true });
   const hub = new LogHub(store, { serverStreams: true });
@@ -327,20 +363,31 @@ async function setupHarness(options: { ownedBots?: string[]; withVapid?: boolean
     },
   });
 
-  const sender = new PushSender({
+  const sender = options.sender ?? new PushSender({
     dataDir: dir,
     ownsBot: (botId) => engine.hasBot(botId),
     roster,
     transport: fakePush.transport,
+    ...(options.now ? { now: options.now } : {}),
     log: (line) => logs.push(line),
   });
 
   triggers = new PushTriggers({
     scope: runtime.scope,
     sender,
+    roster,
+    canPushDevice: (member) => {
+      const dev = roster.device(member);
+      return !!dev && (dev.scope ?? []).includes("read");
+    },
     reader: () => hub.reader(),
     botName: (botId) => engine.botView(botId)?.name ?? null,
     attachedDevices: () => (remote ? attachedDeviceIds(remote.open) : []),
+    ...(options.coalesceMs !== undefined ? { coalesceMs: options.coalesceMs } : {}),
+    ...(options.backoffBaseMs !== undefined ? { backoffBaseMs: options.backoffBaseMs } : {}),
+    ...(options.maxBackoffMs !== undefined ? { maxBackoffMs: options.maxBackoffMs } : {}),
+    ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
+    ...(options.now ? { now: options.now } : {}),
     log: (line) => logs.push(line),
   });
 
@@ -394,14 +441,19 @@ async function setupHarness(options: { ownedBots?: string[]; withVapid?: boolean
     await store.close();
   });
 
-  const addDevice = async (name: string, seed: number) => {
+  const addDevice = async (name: string, seed: number, devOpts: { scope?: readonly DeviceScope[]; origin?: string } = {}) => {
     const auth = await deviceAuth();
     const devKeys = makeDevicePushKeys(seed);
+    const origin = devOpts.origin ?? "https://push.example";
     const sub: PushSubscription = {
-      endpoint: `https://push.example/sub/${name}-cap-${seed}`,
+      endpoint: `${origin}/sub/${name}-cap-${seed}`,
       keys: { p256dh: devKeys.p256dh, auth: devKeys.auth },
     };
-    const added = await roster.addDevice({ name, keys: auth.keys });
+    const added = await roster.addDevice({
+      name,
+      keys: auth.keys,
+      ...(devOpts.scope ? { scope: devOpts.scope } : {}),
+    });
     await roster.writeProfile(added.member, "push", encodePushSubscription(sub));
     return { memberId: added.member, auth, devKeys, sub };
   };
@@ -487,7 +539,7 @@ describe("M4-24 PushTriggers: event selection and deduplication", () => {
   });
 
   it("pushes once when a plain message becomes an open question card, skips duplicate updates while open, and ignores answered/ignored/queued cards", async () => {
-    const h = await setupHarness();
+    const h = await setupHarness({ coalesceMs: 0 });
     await h.addDevice("phone1", 11);
 
     h.engine.emit({ type: "bot.updated", bot: makeBotView(OWNED_BOT, "Helper") });
@@ -590,7 +642,7 @@ describe("M4-24 PushTriggers: event selection and deduplication", () => {
 
 describe("M4-24 PushTriggers: attached page suppression, ownership, startup seed, and tx safety", () => {
   it("suppresses push for attached RemoteSession devices (multi-tab aware), resumes on disconnect, and ignores pre-hello or local sessions", async () => {
-    const h = await setupHarness();
+    const h = await setupHarness({ coalesceMs: 0 });
     const d1 = await h.addDevice("phone1", 11);
     const d2 = await h.addDevice("phone2", 22);
 
@@ -649,7 +701,7 @@ describe("M4-24 PushTriggers: attached page suppression, ownership, startup seed
   });
 
   it("skips non-owned bots, seeds pre-existing open cards without re-pushing, and obeys rollback / same-tx close", async () => {
-    const h = await setupHarness({ ownedBots: [OWNED_BOT] });
+    const h = await setupHarness({ ownedBots: [OWNED_BOT], coalesceMs: 0 });
     await h.addDevice("phone1", 11);
 
     // Pre-existing open card stored before a new PushTriggers instance starts (simulating server restart).
@@ -744,6 +796,7 @@ describe("M4-24 Botlingd end-to-end wiring", () => {
       outDir: join(desktop, "out"),
       log: (line) => logs.push(line),
       pushTransport: fakePush.transport,
+      pushCoalesceMs: 0,
     });
     cleanups.push(() => daemon.stop());
 
@@ -757,6 +810,14 @@ describe("M4-24 Botlingd end-to-end wiring", () => {
       endpoint: "https://push.example/sub/e2e-phone",
       keys: { p256dh: devKeys.p256dh, auth: devKeys.auth },
     };
+    const noReadAuth = await deviceAuth();
+    const noReadKeys = makeDevicePushKeys(78);
+    const noReadAdded = await daemon.roster.addDevice({ name: "ApproveOnly", keys: noReadAuth.keys, scope: ["approve"] });
+    await daemon.roster.writeProfile(noReadAdded.member, "push", encodePushSubscription({
+      endpoint: "https://push.example/sub/e2e-approve-only",
+      keys: { p256dh: noReadKeys.p256dh, auth: noReadKeys.auth },
+    }));
+
     const added = await daemon.roster.addDevice({ name: "Phone", keys: auth.keys });
     const serverIdentity = await loadOrCreateServerIdentity(dataDir, { create: false });
 
@@ -820,5 +881,305 @@ describe("M4-24 Botlingd end-to-end wiring", () => {
 
     await until(() => (fakePush.received.length >= 2 ? fakePush.received[1] : null), { timeout: 20_000, what: "e2e approval push received" });
     expect(fakePush.received).toHaveLength(2);
+    expect(fakePush.received.every((r) => r.url === "/sub/e2e-phone")).toBe(true);
   }, 60_000);
+});
+
+
+describe("M4-24 review items: read scope, gone memory, 429 Retry-After, backoff, coalescing, and dynamic retry checks", () => {
+  it("R3: skips devices whose scope lacks 'read' (e.g. reply/approve only) and pushes once 'read' is present", async () => {
+    const h = await setupHarness({ coalesceMs: 0 });
+    await h.addDevice("no-read", 11, { scope: ["reply", "approve"] });
+    await h.addDevice("read-only", 12, { scope: ["read"] });
+
+    h.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("scope-card-1", {
+        text: "Secret question",
+        choices: [{ label: "Yes", recommended: true, detail: null, action: null }],
+      }),
+    });
+    await h.settle();
+
+    expect(h.fakePush.received.map((r) => r.url)).toEqual(["/sub/read-only-cap-12"]);
+  });
+
+  it("R2: never retries 404/410, remembers gone endpoint without logging it, and resumes when the device writes a new subscription", async () => {
+    let status = 410;
+    const h = await setupHarness({
+      coalesceMs: 0,
+      backoffBaseMs: 10,
+      responder: () => ({ status }),
+    });
+    const d1 = await h.addDevice("phone1", 41);
+
+    // Card 1 -> 410 Gone: sent once, NEVER retried.
+    h.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("gone-1", {
+        text: "First card",
+        choices: [{ label: "OK", recommended: true, detail: null, action: null }],
+      }),
+    });
+    await h.settle();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.fakePush.received).toHaveLength(1);
+    expect(h.fakePush.received[0].url).toBe("/sub/phone1-cap-41");
+
+    // Card 2 while device still has the same gone endpoint -> skipped completely.
+    h.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("gone-2", {
+        text: "Second card",
+        choices: [{ label: "OK", recommended: true, detail: null, action: null }],
+      }),
+    });
+    await h.settle();
+    expect(h.fakePush.received).toHaveLength(1);
+
+    // Same for 404 on a second device.
+    status = 404;
+    await h.addDevice("phone2", 42);
+    h.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("gone-3", {
+        text: "Third card",
+        choices: [{ label: "OK", recommended: true, detail: null, action: null }],
+      }),
+    });
+    await h.settle();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.fakePush.received.map((r) => r.url)).toEqual(["/sub/phone1-cap-41", "/sub/phone2-cap-42"]);
+
+    // Device 1 writes a new subscription endpoint -> pushing resumes for device 1 (and still skips device 2's gone endpoint).
+    status = 201;
+    const newKeys = makeDevicePushKeys(43);
+    await h.roster.writeProfile(d1.memberId, "push", encodePushSubscription({
+      endpoint: "https://push.example/sub/phone1-cap-fresh",
+      keys: { p256dh: newKeys.p256dh, auth: newKeys.auth },
+    }));
+    h.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("gone-4", {
+        text: "Fourth card",
+        choices: [{ label: "OK", recommended: true, detail: null, action: null }],
+      }),
+    });
+    await h.settle();
+    expect(h.fakePush.received.map((r) => r.url)).toEqual([
+      "/sub/phone1-cap-41",
+      "/sub/phone2-cap-42",
+      "/sub/phone1-cap-fresh",
+    ]);
+
+    // Never log the full endpoint capability path.
+    const joinedLogs = h.logs.join("\n");
+    expect(joinedLogs).not.toContain("/sub/phone1-cap-41");
+    expect(joinedLogs).not.toContain("/sub/phone2-cap-42");
+    expect(joinedLogs).not.toContain("/sub/phone1-cap-fresh");
+  });
+
+  it("R2: parses Retry-After (seconds and HTTP-date), honours 429 Retry-After per endpoint origin, and bounds exponential backoff retries", async () => {
+    expect(parseRetryAfterMs("3", 1_000)).toBe(3_000);
+    expect(parseRetryAfterMs("0", 1_000)).toBe(0);
+    expect(parseRetryAfterMs("Wed, 21 Oct 2015 07:28:05 GMT", Date.parse("Wed, 21 Oct 2015 07:28:00 GMT"))).toBe(5_000);
+    expect(parseRetryAfterMs("not-a-date", 1_000)).toBeUndefined();
+
+    // 1) 429 with Retry-After on origin-a blocks origin-a (defers another device on origin-a) while origin-b sends immediately.
+    const bot2 = "6A0B0000-0000-4000-8000-000000000099";
+    const h2 = await setupHarness({
+      ownedBots: [OWNED_BOT, bot2],
+      coalesceMs: 0,
+      backoffBaseMs: 10,
+      maxBackoffMs: 120,
+      maxRetries: 2,
+      responder: (req) => {
+        if (req.origin === "https://origin-a.example" && req.url === "/sub/a1-cap-61") {
+          const hits = h2.fakePush.received.filter((r) => r.url === "/sub/a1-cap-61").length;
+          if (hits === 1) return { status: 429, headers: { "Retry-After": "1" } };
+        }
+        return { status: 201 };
+      },
+    });
+    await h2.addDevice("a1", 61, { origin: "https://origin-a.example" });
+    const t0 = Date.now();
+    h2.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("ra-bot1", { text: "Q1", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await h2.settle();
+    expect(h2.fakePush.received.map((r) => r.url)).toEqual(["/sub/a1-cap-61"]);
+
+    // Now add a2 on origin-a and b1 on origin-b, trigger bot2 immediately while origin-a is cooled down:
+    await h2.addDevice("a2", 62, { origin: "https://origin-a.example" });
+    await h2.addDevice("b1", 63, { origin: "https://origin-b.example" });
+    h2.engine.emit({
+      type: "message.added",
+      botId: bot2,
+      message: makeMessage("ra-bot2", { text: "Q2", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await h2.settle();
+
+    // origin-b receives immediately; origin-a has NOT been hit again yet!
+    expect(h2.fakePush.received.filter((r) => r.origin === "https://origin-b.example")).toHaveLength(1);
+    expect(h2.fakePush.received.filter((r) => r.origin === "https://origin-a.example")).toHaveLength(1);
+
+    // After the Retry-After cooldown expires, both a1 (retry) and a2 (deferred) deliver cleanly.
+    await until(
+      () => (h2.fakePush.received.filter((r) => r.origin === "https://origin-a.example").length >= 3 ? true : null),
+      { timeout: 5_000, what: "origin-a retry and deferred delivery" },
+    );
+    await h2.triggers.idle();
+    const minOriginARetryAt = Math.min(...h2.fakePush.received.filter((r) => r.origin === "https://origin-a.example").slice(1).map((r) => r.at));
+    expect(minOriginARetryAt - t0).toBeGreaterThanOrEqual(80);
+
+    // 2) Persistent 503 retries up to maxRetries (2) with bounded backoff and stops (1 + 2 = 3 total attempts).
+    const h3 = await setupHarness({
+      coalesceMs: 0,
+      backoffBaseMs: 10,
+      maxBackoffMs: 25,
+      maxRetries: 2,
+      responder: () => ({ status: 503 }),
+    });
+    await h3.addDevice("flaky", 64);
+    h3.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("retry-cap", { text: "503?", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await until(() => (h3.fakePush.received.length >= 3 ? true : null), { timeout: 5_000, what: "3 attempts for maxRetries=2" });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(h3.fakePush.received).toHaveLength(3);
+  });
+
+  it("R2: coalesces events for the same bot within coalesceMs (default 1 minute) while pushing other bots and after window expiry", async () => {
+    let clock = 10_000;
+    const bot2 = "6A0B0000-0000-4000-8000-000000000088";
+    expect(DEFAULT_PUSH_COALESCE_MS).toBe(60_000);
+    const h = await setupHarness({
+      ownedBots: [OWNED_BOT, bot2],
+      coalesceMs: DEFAULT_PUSH_COALESCE_MS,
+      now: () => clock,
+    });
+    await h.addDevice("phone1", 71);
+
+    // Bot 1 needs user at t = 10s -> pushes.
+    h.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("c-1", { text: "First", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await h.settle();
+    expect(h.fakePush.received).toHaveLength(1);
+
+    // Bot 1 needs user again at t = 35s (within 60s) -> coalesced!
+    clock = 35_000;
+    h.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("c-2", { text: "Second", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await h.settle();
+    expect(h.fakePush.received).toHaveLength(1);
+
+    // Bot 2 needs user at t = 35s -> independent bot, pushes!
+    h.engine.emit({
+      type: "message.added",
+      botId: bot2,
+      message: makeMessage("c-b2", { text: "Bot2", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await h.settle();
+    expect(h.fakePush.received).toHaveLength(2);
+
+    // Bot 1 needs user again at t = 71s (>= 60s after t=10s) -> pushes!
+    clock = 71_000;
+    h.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("c-3", { text: "Third", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await h.settle();
+    expect(h.fakePush.received).toHaveLength(3);
+  });
+
+  it("R6: re-checks roster revocation, attachment, and open-card state dynamically before firing a scheduled retry, and catches notify rejections", async () => {
+    // 1) Revoked before retry fires -> retry sends nothing (L-008).
+    const hRevoke = await setupHarness({
+      coalesceMs: 0,
+      backoffBaseMs: 60,
+      maxBackoffMs: 60,
+      maxRetries: 2,
+      responder: () => ({ status: 503 }),
+    });
+    const dRev = await hRevoke.addDevice("rev", 81);
+    hRevoke.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("r6-rev", { text: "Q", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await hRevoke.settle();
+    expect(hRevoke.fakePush.received).toHaveLength(1);
+    await hRevoke.roster.revokeDevice(dRev.memberId);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(hRevoke.fakePush.received).toHaveLength(1);
+
+    // 2) Device attaches before retry fires -> retry sends nothing.
+    const hAttach = await setupHarness({
+      coalesceMs: 0,
+      backoffBaseMs: 60,
+      maxBackoffMs: 60,
+      maxRetries: 2,
+      responder: () => ({ status: 503 }),
+    });
+    const dAtt = await hAttach.addDevice("att", 82);
+    hAttach.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("r6-att", { text: "Q", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await hAttach.settle();
+    expect(hAttach.fakePush.received).toHaveLength(1);
+    const tab = hAttach.connectDevice(dAtt.memberId, dAtt.auth);
+    await tab.hello();
+    await new Promise((r) => setTimeout(r, 120));
+    expect(hAttach.fakePush.received).toHaveLength(1);
+
+    // 3) Card is answered before retry fires -> retry sends nothing.
+    const hClosed = await setupHarness({
+      coalesceMs: 0,
+      backoffBaseMs: 60,
+      maxBackoffMs: 60,
+      maxRetries: 2,
+      responder: () => ({ status: 503 }),
+    });
+    await hClosed.addDevice("cls", 83);
+    const msg = makeMessage("r6-cls", { text: "Q", choices: [{ label: "OK", recommended: true, detail: null, action: null }] });
+    hClosed.engine.emit({ type: "message.added", botId: OWNED_BOT, message: msg });
+    await hClosed.settle();
+    expect(hClosed.fakePush.received).toHaveLength(1);
+    hClosed.engine.emit({ type: "message.updated", botId: OWNED_BOT, message: { ...msg, chosen: 0, answer: "OK" } });
+    await hClosed.settle();
+    await new Promise((r) => setTimeout(r, 120));
+    expect(hClosed.fakePush.received).toHaveLength(1);
+
+    // 4) notify() rejection (e.g. vapid-keys read error) is caught cleanly.
+    const hErr = await setupHarness({
+      coalesceMs: 0,
+      sender: { notify: () => Promise.reject(new Error("vapid-keys vanished")) },
+    });
+    await hErr.addDevice("err-dev", 84);
+    hErr.engine.emit({
+      type: "message.added",
+      botId: OWNED_BOT,
+      message: makeMessage("r6-err", { text: "Q", choices: [{ label: "OK", recommended: true, detail: null, action: null }] }),
+    });
+    await hErr.settle();
+    expect(hErr.logs.some((l) => l.includes("vapid-keys vanished"))).toBe(true);
+  });
 });

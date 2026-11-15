@@ -27,6 +27,7 @@ export {
 export {
   DEFAULT_PUSH_TIMEOUT_MS,
   DEFAULT_PUSH_TTL_SECONDS,
+  parseRetryAfterMs,
   PushSender,
   type PushAlert,
   type PushDeviceResult,
@@ -37,6 +38,10 @@ export {
 } from "./sender";
 export {
   attachedDeviceIds,
+  DEFAULT_PUSH_BACKOFF_BASE_MS,
+  DEFAULT_PUSH_COALESCE_MS,
+  DEFAULT_PUSH_MAX_BACKOFF_MS,
+  DEFAULT_PUSH_MAX_RETRIES,
   PushTriggers,
   type PushTriggersOptions,
 } from "./triggers";

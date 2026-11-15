@@ -338,6 +338,8 @@ export interface BotlingdOptions {
   electronUtility?: ElectronUtilityContext;
   /** Optional Web Push transport override (used by tests to point at a local fake push server). */
   pushTransport?: PushTransport;
+  /** Optional per-bot push coalescing window override in ms (defaults to 60,000 ms). */
+  pushCoalesceMs?: number;
 }
 
 export class Botlingd {
@@ -621,12 +623,16 @@ export class Botlingd {
         log,
         ...(options.pushTransport ? { transport: options.pushTransport } : {}),
       });
+      const deviceReadable = (member: string) => { const device = roster.device(member); return !!device && (device.scope ?? []).includes("read"); };
       const push = new PushTriggers({
         scope: runtime.scope,
         sender: pushSender,
+        roster,
+        canPushDevice: deviceReadable,
         reader: () => hub.reader(),
         botName: (botId) => engine.botView(botId)?.name ?? null,
         attachedDevices: () => attachedDevices(),
+        ...(options.pushCoalesceMs !== undefined ? { coalesceMs: options.pushCoalesceMs } : {}),
         log,
       });
       pushTriggers = push;
@@ -824,7 +830,6 @@ export class Botlingd {
       const tickets = new ContentTickets();
       roster.onChange((change) => { for (const member of change.invalidated) tickets.dropDevice(member); });
       // M3 step 10: content owned by a peer, passed through and verified per chunk; this server's content read by peers.
-      const deviceReadable = (member: string) => { const device = roster.device(member); return !!device && (device.scope ?? []).includes("read"); };
       const chunkCache: ChunkCache = new ChunkCache({
         store, reader: () => hub.reader(), dataDir: paths.dataDir, budget: peerBudget, log,
         priority: (key, stream) => peerContent.priority(key, stream),
