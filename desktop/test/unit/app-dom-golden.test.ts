@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { settingsView } from "../../src/core/settings";
 import { App } from "../../src/renderer/App";
+import { rendererKernel } from "../../src/renderer/renderer-kernel";
 import type { Client } from "../../src/renderer/client";
 import { WorkspaceStore, type WorkspaceView } from "../../src/renderer/store";
 import type { BotView, PluginsView } from "../../src/contract";
@@ -71,6 +72,9 @@ describe("the app page's DOM", () => {
   it("is as recorded for a manager bot with the step-1 fixture view", async () => {
     const markup = await pageMarkup([bot], fixturePlugins());
     expect(markup).toContain('class="shell');
+    // The whole page is the one contribution of `:shell` to `app/main` (and so `view/main`) while it is up.
+    expect(rendererKernel.entries("app/main")).toHaveLength(1);
+    expect(rendererKernel.entries("view/main")).toHaveLength(1);
     same("bot-fixture", markup);
   });
   it("is as recorded with no bot and no plugins view", async () => {
