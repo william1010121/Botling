@@ -48,6 +48,8 @@ export interface IntentDeps {
   log?: (line: string) => void;
   /** M2 step 12: files a page uploaded, named by `chat.send.files` (none: such a command is refused). */
   uploads?: UploadedFiles | null;
+  /** M5-18a: called after commit when a plugin.grant row change is written. */
+  onPluginGrant?: (plugin: string) => void;
 }
 
 const newLineId = () => randomUUID().toUpperCase();
@@ -270,6 +272,7 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
     if (error instanceof RowBodyError) throw new SlotRefusal("invalid", error.message);
     throw error;
   }
+  deps.scope.afterCommit(() => deps.onPluginGrant?.(cmd.plugin));
   return { result: { applied: true } };
 }
 

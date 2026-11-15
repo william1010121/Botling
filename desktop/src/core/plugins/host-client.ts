@@ -94,6 +94,7 @@ export class PluginHostClient {
   private blame = new Map<number, string>();
   private nextId = 1;
   private stopping = false;
+  private shutDown = false;
   private restartTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -118,6 +119,13 @@ export class PluginHostClient {
 
   stop() {
     this.stopping = true;
+    this.running = false;
+    this.beforeSendHooks = 0;
+    this.afterReplyHooks = 0;
+    this.commands = [];
+    this.exposed.clear();
+    this.events.clear();
+    this.loaded.clear();
     if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     const process = this.process;
     if (process) void process.terminate(1_000);
@@ -126,6 +134,7 @@ export class PluginHostClient {
   /** Ends it and waits (quitting). */
   async shutdown() {
     this.stopping = true;
+    this.shutDown = true;
     if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     const process = this.process;
     if (!process) return;
@@ -258,6 +267,7 @@ export class PluginHostClient {
     }
     this.problem = null;
     this.stopping = false;
+    this.shutDown = false;
     mkdirSync(this.cwd, { recursive: true });
     let child: HostProcess;
     const handlers: HostHandlers = {
@@ -314,7 +324,10 @@ export class PluginHostClient {
     this.loaded.clear();
     this.events.clear();
     for (const id of [...this.pending.keys()]) this.finish(id, new Error("The plugin host exited."));
-    if (this.stopping) return;
+    if (this.stopping) {
+      if (!this.shutDown && this.specs.length) this.start();
+      return;
+    }
     const status = signal ?? code ?? "?";
     this.log(`plugin host exited (${status})${this.stderr ? `: ${this.stderr.slice(-400)}` : ""}`);
     if (!blamed.size) this.onPluginFailure(null, `The plugin host exited (${status})`, false);
