@@ -319,6 +319,10 @@ export class Botlingd {
             if (!pluginRead) throw new Error("The machine that has this file is not reachable.");
             return pluginRead.read(ref, offset, length);
           },
+          fetch: async (storageDir, ref) => {
+            if (!pluginRead) throw new Error("The machine that has this file is not reachable.");
+            return pluginRead.fetch(storageDir, ref);
+          },
         },
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory);

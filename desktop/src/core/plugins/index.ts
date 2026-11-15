@@ -188,9 +188,10 @@ export interface PluginWorld {
    * work itself, starting subagents or workers only when the user asks).
    */
   createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined, more?: PluginBotExtras): BotInfo & { created: boolean };
-  /** Botling 3 content read (`content.read`): reads up to 4 MiB of a chat-referenced item. Absent in 2.x. */
+  /** Botling 3 content read/fetch (`content.read`, `content.fetch`). Absent in 2.x. */
   content?: {
     read(ref: { owner: string; id: string; entry: { stream: StreamId; seq: number } }, offset: number, length: number): Promise<Uint8Array>;
+    fetch?(storageDir: string, ref: { owner: string; id: string; entry: { stream: StreamId; seq: number } }): Promise<string>;
   };
   /** A chat's newest `limit` lines (`chat.messages`; null: no such bot). Absent: a world without chats (tests, spec adapters). */
   chat?(botId: string, limit: number): PluginChat | null;
@@ -339,11 +340,16 @@ const FolderParams = BotParams.extend({
 const FoldersParams = z.object({ plugin: str(214), folders: z.record(str(64), z.unknown()) });
 const EngineParams = z.object({ plugin: str(214), engine: z.enum(["claude", "codex"]) });
 const CONTENT_READ_LIMIT = 4 * CONTENT_CHUNK_BYTES;
+const ContentRefParams = z.object({ owner: ServerId, id: ContentId, entry: EntryRef });
 const ContentReadParams = z.object({
   plugin: str(214),
-  ref: z.object({ owner: ServerId, id: ContentId, entry: EntryRef }),
+  ref: ContentRefParams,
   offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   length: z.number().int().nonnegative().max(CONTENT_READ_LIMIT),
+});
+const ContentFetchParams = z.object({
+  plugin: str(214),
+  ref: ContentRefParams,
 });
 /** How much one plugin may draw in one chat (`chat.decorate`), as JSON. */
 const DECORATION_BYTES = 1_000_000;
@@ -1536,6 +1542,12 @@ export class Plugins {
         if (!world.content) throw new Error("Reading content needs Botling 3.");
         const bytes = await world.content.read(data.ref, data.offset, data.length);
         return { data: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64") };
+      }
+      case "content.fetch": {
+        const { plugin, data } = this.asked(ContentFetchParams, params);
+        if (!world.content?.fetch) throw new Error("Fetching content needs Botling 3.");
+        const path = await world.content.fetch(join(this.dataRoot, plugin.manifest.name), data.ref);
+        return { path };
       }
       case "chat.messages": {
         const { plugin, data } = this.asked(ChatParams, params);
