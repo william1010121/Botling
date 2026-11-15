@@ -311,7 +311,9 @@ describe("useTiles", () => {
     const feed = new PluginFeed(rendererKernel);
     const host = new InPageHost({ feed, manifest: { ...manifest, plugins: [shipped] } });
     hosts.push(host);
-    const probe = ({ surface }: { surface: (typeof TILE_SURFACES)[number] }) => createElement("ul", { "data-surface": surface }, useTiles(surface, { unavailable: (name) => host.unavailable(name) }).map((tile) => createElement("li", { key: tile.id }, tile.title)));
+    // One host object for every render, as the app's (inPageHost): a redraw must come from the slots' version, not from a new host (M7-03b review).
+    const gate = { unavailable: (name: string) => host.unavailable(name) };
+    const probe = ({ surface }: { surface: (typeof TILE_SURFACES)[number] }) => createElement("ul", { "data-surface": surface }, useTiles(surface, gate).map((tile) => createElement("li", { key: tile.id }, tile.title)));
     const holder = document.createElement("div");
     document.body.append(holder);
     const root = createRoot(holder);
