@@ -3,6 +3,7 @@
 // M5-18a notice until `plugin.grant{tier: "write"}` starts it on its M6-03a copied data folder, and a
 // request-tier plugin's command is refused `grant` before its grant and applied within its granted tier after.
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PluginsView, WebPluginSpecView } from "../../src/contract";
@@ -62,13 +63,13 @@ function readBuiltinManifests(builtInsDir: string): BuiltinManifestInfo[] {
   });
 }
 
-/** Every entry under `dir` (path, kind, size, mtime, mode): the 2.x folder must be exactly as it was after the import. */
+/** Every entry under `dir` (path, kind, size, mtime, mode, sha256 of a file's content): the 2.x folder must be exactly as it was after the import. */
 function treeSnapshot(dir: string, rel = ""): string[] {
   const out: string[] = [];
   for (const name of readdirSync(join(dir, rel)).sort()) {
     const path = rel ? `${rel}/${name}` : name;
     const st = lstatSync(join(dir, path));
-    out.push(`${path} ${st.isDirectory() ? "d" : st.isSymbolicLink() ? "l" : "f"} ${st.size} ${st.mtimeMs} ${st.mode}`);
+    out.push(`${path} ${st.isDirectory() ? "d" : st.isSymbolicLink() ? "l" : "f"} ${st.size} ${st.mtimeMs} ${st.mode} ${st.isFile() ? createHash("sha256").update(readFileSync(join(dir, path))).digest("hex") : "-"}`);
     if (st.isDirectory()) out.push(...treeSnapshot(dir, path));
   }
   return out;
