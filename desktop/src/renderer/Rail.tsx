@@ -8,6 +8,8 @@ import { LISTED_AT_MOST, listedRows, type AgentTargetView, type BotView, type Su
 import { Icon, SubagentMark } from "./icons";
 import { faceURL, type Look } from "./avatars";
 import { elapsedText, type peekCard } from "./rail-idle";
+import { BUILTIN_BOT_MENU, type BotMenuItemId } from "./bot-menu-items";
+import { useBotMenuSource } from "./bot-menu-slot";
 
 /** The clock the column's time-based rows go by: a tick every 30 s (1.x's TimelineView). */
 export function useMinuteClock(): number {
@@ -214,16 +216,31 @@ export function BotMenu({ bot, at, onRemove, onClose, pinned, onTogglePin, onRes
     window.addEventListener("blur", onClose);
     return () => { window.removeEventListener("pointerdown", close, true); window.removeEventListener("keydown", key); window.removeEventListener("blur", onClose); };
   }, [onClose]);
+  const source = useBotMenuSource();
+  const zh = lang === "zh-Hant";
+  // What each of the sidebar's items does here (the slot says which exist and where; the page's state is this menu's props).
+  const item = (id: BotMenuItemId) => {
+    if (id === "pin") return <button key={id} type="button" role="menuitem" className="bot-menu-item" onClick={onTogglePin}>{pinned ? "Unpin" : "Pin"}</button>;
+    if (id === "restart") return <button key={id} type="button" role="menuitem" className="bot-menu-item" onClick={onRestart} title={zh ? "在同一段對話中重新啟動，並載入最新的系統提示詞；正在進行的工作結束後才會生效" : "Starts it again in the same conversation with the current instructions; waits for work in progress to finish"}>{zh ? "重新啟動 Bot" : "Restart bot"}</button>;
+    return <button key={id} type="button" role="menuitem" className="bot-menu-item destructive" onClick={onRemove}>{bot.role === "bot" ? "Remove bot…" : "Remove project…"}</button>;
+  };
+  if (source.state === "unavailable") {
+    return <ShellOverlay><div className="bot-menu" role="menu" style={{ left: at.x, top: at.y }}><p className="settings-hint settings-unavailable" role="status">The bot menu is unavailable.</p></div></ShellOverlay>;
+  }
+  const direct = source.state === "direct";
+  const top = direct ? BUILTIN_BOT_MENU.filter((entry) => entry.place === "top").map((entry) => entry.id) : source.top;
+  const bottom = direct ? BUILTIN_BOT_MENU.filter((entry) => entry.place === "bottom").map((entry) => entry.id) : source.bottom;
+  // The plugins' commands: the slot's rows, or (without the shell) the page's own list of them.
+  const rows = direct ? commands : source.rows;
   return (
     <ShellOverlay><div className="bot-menu" role="menu" style={{ left: at.x, top: at.y }}>
-        <button type="button" role="menuitem" className="bot-menu-item" onClick={onTogglePin}>{pinned ? "Unpin" : "Pin"}</button>
-      <button type="button" role="menuitem" className="bot-menu-item" onClick={onRestart} title={lang === "zh-Hant" ? "在同一段對話中重新啟動，並載入最新的系統提示詞；正在進行的工作結束後才會生效" : "Starts it again in the same conversation with the current instructions; waits for work in progress to finish"}>{lang === "zh-Hant" ? "重新啟動 Bot" : "Restart bot"}</button>
-      {onCommand && commands.length > 0 && <>
+      {top.map(item)}
+      {onCommand && rows.length > 0 && <>
         <div className="bot-menu-rule" />
-        {commands.map((item) => <button key={item.command} type="button" role="menuitem" className="bot-menu-item" onClick={() => onCommand(item.command)}>{item.title}</button>)}
+        {rows.map((row) => <button key={row.command} type="button" role="menuitem" className="bot-menu-item" onClick={() => onCommand(row.command)}>{row.title}</button>)}
       </>}
-      <div className="bot-menu-rule" />
-      <button type="button" role="menuitem" className="bot-menu-item destructive" onClick={onRemove}>{bot.role === "bot" ? "Remove bot…" : "Remove project…"}</button>
+      {bottom.length > 0 && <div className="bot-menu-rule" />}
+      {bottom.map(item)}
     </div></ShellOverlay>
   );
 }

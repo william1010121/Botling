@@ -111,7 +111,7 @@ describe("the sidebar plugin as the FE build ships it", () => {
     expect(rail.map(({ plugin }) => plugin)).toEqual([SIDEBAR_PLUGIN]);
     // The declaration is what the kernel holds: it needs the shell's storage service, owns one slot and contributes to one.
     expect(sidebarDeclaration.requires?.services).toEqual([SHELL_STORAGE]);
-    expect(rendererKernel.declaration(SIDEBAR_PLUGIN)?.provides?.slots).toEqual([BOT_ROW]);
+    expect(rendererKernel.declaration(SIDEBAR_PLUGIN)?.provides?.slots).toEqual([BOT_ROW, "menu/bot/context"]);
     expect(rendererKernel.declaration(SIDEBAR_PLUGIN)?.contributes?.slots).toEqual([RAIL_SLOT]);
   });
 

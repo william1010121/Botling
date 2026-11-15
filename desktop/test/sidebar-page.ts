@@ -9,7 +9,7 @@ import { App } from "../src/renderer/App";
 import type { Client } from "../src/renderer/client";
 import { WorkspaceStore, type WorkspaceView } from "../src/renderer/store";
 import type { WebChrome } from "../src/renderer/app-shared";
-import type { BotView, SubagentRowView } from "../src/contract";
+import type { BotView, PluginsView, SubagentRowView } from "../src/contract";
 
 /** A fixed clock: the worker lines under a row say "ran 12m", so the time must not move. */
 export const NOW = new Date(2026, 10, 16, 12, 0).getTime();
@@ -52,6 +52,8 @@ export interface PageOptions {
   /** What settings.json holds (the page reads it through `settingsView`). */
   settings?: Record<string, unknown>;
   web?: WebChrome;
+  /** The plugin list the page holds (default: null, as before). The menu tests (M7-05b) give it a plugin's `bot/context` rows. */
+  plugins?: PluginsView | null;
   /** Which bot's chat is on screen (default: none). */
   shown?: string | null;
   /** The answer to each command, by its `type` (default: `{ result: null }`). */
@@ -62,6 +64,8 @@ export interface MountedPage {
   host: HTMLElement;
   /** Every command the page sent. */
   sent: { type: string; [key: string]: unknown }[];
+  /** The arguments of every `client.request` call (a third one would be the `via` stamp), in order. */
+  calls: unknown[][];
   /** The left column's markup (the open column, or the folded strip). */
   rail(): string;
   /** The page's markup as a whole (React ids written `:rN:`). */
@@ -79,7 +83,7 @@ export async function mountPage(options: PageOptions = {}): Promise<MountedPage>
   const bots = options.bots ?? fixtureBots();
   const defaults = new WorkspaceStore(async () => { throw new Error("Unexpected snapshot"); }).getView();
   const build = (settings: Record<string, unknown>): WorkspaceView => ({
-    ...defaults, ready: true, bots, settings: settingsView(settings), plugins: null,
+    ...defaults, ready: true, bots, settings: settingsView(settings), plugins: options.plugins ?? null,
     chat: options.shown ? { botId: options.shown, messages: [], running: null, live: [] } : defaults.chat,
   });
   let view = build(options.settings ?? {});
@@ -90,8 +94,10 @@ export async function mountPage(options: PageOptions = {}): Promise<MountedPage>
     subscribeChat: () => () => {}, showBoard: () => {}, select: async () => {},
   } as unknown as WorkspaceStore;
   const sent: MountedPage["sent"] = [];
+  const calls: unknown[][] = [];
   const client = {
-    request: vi.fn(async (command: { type: string; [key: string]: unknown }) => {
+    request: vi.fn(async (command: { type: string; [key: string]: unknown }, ...rest: unknown[]) => {
+      calls.push([command, ...rest]);
       sent.push(command);
       const custom = options.answer?.(command);
       if (custom !== undefined) return custom;
@@ -109,10 +115,22 @@ export async function mountPage(options: PageOptions = {}): Promise<MountedPage>
   await act(async () => root.render(createElement(App, { client, store, ...(options.web ? { web: options.web } : {}) })));
   const html = () => host.innerHTML.replace(/:r[0-9a-z]+:/g, ":rN:");
   return {
-    host, sent,
+    host, sent, calls,
     html,
     rail: () => (host.querySelector(RAIL_SELECTOR)?.outerHTML ?? "").replace(/:r[0-9a-z]+:/g, ":rN:"),
     settings: async (next) => { view = build(next); await act(async () => { for (const listener of [...listeners]) listener(); }); },
     unmount: async () => { await act(async () => root.unmount()); host.remove(); },
   };
+}
+
+/** A plugin list with one enabled plugin per name and these `menus` rows (what the core sends; only what the menus read is real). */
+export function pluginsWithMenus(menus: { plugin: string; menu: string; command: string; title: string }[]): PluginsView {
+  const names = [...new Set(menus.map((row) => row.plugin))];
+  return {
+    plugins: names.map((name) => ({
+      name, title: name, version: "1.0.0", description: "", enabled: true, failure: null, installedFrom: null, builtIn: false,
+      permissions: [], parts: [], settings: [], panels: [], commands: menus.filter((row) => row.plugin === name).map((row) => ({ id: row.command, title: row.title, registered: false })),
+    })),
+    broken: [], host: { running: true, problem: null }, secretsProblem: null, menus,
+  } as unknown as PluginsView;
 }
