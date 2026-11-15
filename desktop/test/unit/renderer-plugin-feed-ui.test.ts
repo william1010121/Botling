@@ -12,7 +12,7 @@ import type { Client } from "../../src/renderer/client";
 import { rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
 import { KernelSlot } from "../../src/renderer/shell/KernelSlot";
 import { pluginFeed, reconcileView } from "../../src/renderer/shell/plugin-feed";
-import { ShellFrame } from "../../src/renderer/shell/ShellFrame";
+import { FIRST_WEB_WAIT_MS, ShellFrame } from "../../src/renderer/shell/ShellFrame";
 import { desktop } from "../helpers";
 
 const unmounts: (() => Promise<void>)[] = [];
@@ -91,6 +91,36 @@ describe("ShellFrame and the plugin feed", () => {
     expect(of(second, "botling.note")).not.toBe(of(first, "botling.note"));
     expect(of(second, "botling.whiteboard")).toBe(of(first, "botling.whiteboard"));
     expect(of(second, "zed.tools")).toBe(of(first, "zed.tools"));
+  });
+
+  it("goes on without the web versions when plugins.web fails, or does not answer within FIRST_WEB_WAIT_MS (M7-02c-F review)", async () => {
+    const view = fixture();
+    const failing = { request: vi.fn(async () => { throw new Error("no"); }) } as unknown as Client;
+    const first = await mount(createElement(ShellFrame, { legacy: page, plugins: view, client: failing }));
+    expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
+    await first.unmount();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const silent = { request: vi.fn(() => new Promise(() => {})) } as unknown as Client;
+      await mount(createElement(ShellFrame, { legacy: page, plugins: view, client: silent }));
+      expect(held()).toEqual([]);
+      await act(async () => { vi.advanceTimersByTime(FIRST_WEB_WAIT_MS); });
+      expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("drops a plugins.web answer that comes after the list changed again (the newer answer stays)", async () => {
+    const view = fixture();
+    const answers: ((version: string) => void)[] = [];
+    const client = { request: vi.fn(() => new Promise((resolve) => { answers.push((version) => resolve({ specs: [{ name: "botling.note", version }] })); })) } as unknown as Client;
+    const shown = await mount(createElement(ShellFrame, { legacy: page, plugins: view, client }));
+    await shown.render(createElement(ShellFrame, { legacy: page, plugins: { ...view }, client }));
+    await act(async () => { answers[1]!("new"); });
+    const ids = () => rendererKernel.entries<{ row: { plugin: string } }>("view/mainTab").map(({ registration }) => registration.id);
+    const before = ids();
+    expect(before.length).toBe(view.mainTabs!.length);
+    await act(async () => { answers[0]!("old"); });
+    expect(ids()).toEqual(before);
   });
 
   it("holds nothing for a frame given no plugin list", async () => {

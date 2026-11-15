@@ -33,6 +33,9 @@ export function contributeToShell(slot: string, entry: SlotEntry): (() => void) 
 
 let framesMade = 0;
 
+/** How long the first `plugins.web` answer is waited for: after it the feed goes on without the web versions (null) until one comes. */
+export const FIRST_WEB_WAIT_MS = 2000;
+
 export function ShellFrame({ legacy, frames: services, plugins = null, client }: { /** The whole page as App draws it today. */ legacy: ReactNode; frames?: SlotFrames; /** The plugin list App has now (null: none yet). */ plugins?: PluginsView | null;
   /** Asked for `plugins.web` whenever the list changes: the web parts' versions are part of the feed's fingerprints (M7-02c F3). */ client?: Pick<Client, "request"> }) {
   // A name for this frame's entries (not useId: that would move the ids every other component of the page gets).
@@ -49,8 +52,8 @@ export function ShellFrame({ legacy, frames: services, plugins = null, client }:
     take.current ??= contributeToShell(LEGACY_SLOT, { kind: "component", scope, render: () => page.current });
     return () => { take.current?.(); take.current = null; };
   }, [scope]);
-  // The `plugins.web` answer (undefined: not answered yet; null: it failed). With a client the feed waits for the first answer, so the web
-  // parts' versions do not reload (and reorder) the plugins that have one right after the first load.
+  // The `plugins.web` answer (undefined: not answered yet; null: it failed). With a client the feed waits for the first answer (at most
+  // FIRST_WEB_WAIT_MS), so the web parts' versions do not reload (and reorder) the plugins that have one right after the first load.
   const [web, setWeb] = useState<FeedWeb>(client ? undefined : null);
   useEffect(() => {
     if (!client) return;
@@ -61,6 +64,12 @@ export function ShellFrame({ legacy, frames: services, plugins = null, client }:
     })();
     return () => { live = false; };
   }, [client, plugins]);
+  // A request that never settles must not keep the feed empty (the plugins' own Settings pages are read from it).
+  useEffect(() => {
+    if (!client) return;
+    const late = setTimeout(() => setWeb((held) => (held === undefined ? null : held)), FIRST_WEB_WAIT_MS);
+    return () => clearTimeout(late);
+  }, [client]);
   useEffect(() => { if (web !== undefined) reconcileView(plugins, web); }, [plugins, web]);
   useEffect(() => () => { reconcileView(null); }, []);
   // The in-page built-in plugins (botling.settings, …) the build shipped are loaded while the frame is up (M7-02c).
