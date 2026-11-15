@@ -42,6 +42,11 @@
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
+//   botlingd plugins          (M5-14c) every plugin on this machine: name, what it is allowed (a tier word) and the first
+//                             8 characters of its code hash
+//   botlingd plugins grant <name> --tier read|request|write
+//                             allows the plugin that tier for its current code, with what it asks for (a local-window
+//                             `plugin.grant`; a built-in's grant is fixed, and a tier above its asks is refused)
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/store/data-dir-lock";
@@ -52,6 +57,7 @@ import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQ
 import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
 import { serviceCommand, ServiceError } from "./service";
+import { pluginsCommand } from "./plugin-cli";
 import { AdminClient, addMachineCommand, createStdinIo, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./pairing";
 import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
 import { DeviceScope } from "../protocol";
@@ -413,6 +419,12 @@ async function main(argv: string[]): Promise<void> {
       try { process.exitCode = await revokeDeviceCommand(client, { out, ask: async () => null }, id!, flag(rest, "--reason")); } finally { client.close(); }
       return;
     }
+    case "plugins": {
+      // `plugins` lists, `plugins grant <name> --tier read|request|write` grants (M5-14c), over the local admin socket.
+      const client = await adminSession(paths);
+      try { process.exitCode = await pluginsCommand(client, { out, ask: async () => null }, rest); } finally { client.close(); }
+      return;
+    }
     case "service": {
       try {
         await serviceCommand(rest, process.env, out);
@@ -451,7 +463,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     default:
-      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, pair, join, add-machine, machines, recovery, reroot, devices, revoke-device)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, pair, join, add-machine, machines, recovery, reroot, devices, revoke-device, plugins)`, 2);
   }
 }
 
