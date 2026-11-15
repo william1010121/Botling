@@ -31,6 +31,7 @@ import {
 } from "../../protocol";
 import { signPairProof, verifyPairProof, SessionLink, type LocalStatic, type PeerClaim, type PeerDecision, type SessionEnd, type SessionInfo, type SessionTransport } from "../../session";
 import { ensureVapidKeys, readVapidKeys, vapidFilePath, writeVapidKeys } from "../identity/vapid";
+import { addressesForUrl } from "../peer/config";
 import { webSocketConnector, type PeerConnection, type PeerConnector } from "../peer/connector";
 import type { RosterStore } from "../roster/store";
 import { rmSync } from "node:fs";
@@ -513,7 +514,8 @@ export class ServerJoin {
       added = await roster.addServer({ keys: offer.keys, name: peer.name });
       const own = this.options.ownAddresses();
       if (own) await roster.writeProfile(roster.memberId, "addresses", own);
-      await roster.writeProfile(peer.member, "addresses", JSON.stringify({ loopback: attempt.url }));
+      const peerAddress = addressesForUrl(attempt.url);
+      if (peerAddress) await roster.writeProfile(peer.member, "addresses", peerAddress);
       const made = await ensureVapidKeys(this.options.dataDir);
       vapid = made.keys;
       if (made.created) this.log("server pairing: the cluster's Web Push key pair was made (first server pairing)");
