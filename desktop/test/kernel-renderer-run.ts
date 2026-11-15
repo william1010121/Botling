@@ -112,9 +112,17 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   const declarations = () => kernel.installed().map((name) => kernel.declaration(name)!);
   const watcher = ruleWatcher(declarations, () => kernel, problems);
   const trace: KernelEvent[] = [];
+  // The instances that were active when the settings plugin's current instance started loading: the only ones that may stay
+  // active while it is loading (they loaded while it was not installed; a new instance of theirs starts only with it active, K2).
+  let activeAtOwnerStart = new Set<string>();
+  const noteStart = (event: KernelEvent) => {
+    if (event.action !== "StartLoad") return;
+    if (event.plugin === SETTINGS) activeAtOwnerStart = new Set(kernel.plugins().filter((name) => name !== SETTINGS && kernel.state(name) === "active"));
+    else activeAtOwnerStart.delete(event.plugin);
+  };
   kernel = new Kernel({
     slotName: canonicalSlot, timers, undoTimeoutMs: TIMEOUT,
-    log: (event) => { trace.push(event); if (watching) watcher(event); },
+    log: (event) => { trace.push(event); noteStart(event); if (watching) watcher(event); },
     onUndoFailure: (failure) => failures.push(failure),
   });
   const result: RendererRunResult = { events: 0, rounds: 0, failures: 0, aliasShown: 0, feedCompared: 0, frameEntries: 0, componentEntries: 0, shellUnloads: 0, chatUnloads: 0, settingsUnloads: 0 };
@@ -240,10 +248,13 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
         if (kernel.missing(name).length) fail(`${name} active without ${kernel.missing(name).join(", ")}`);
         for (const slot of kernel.declaration(name)?.contributes?.slots ?? []) {
           const owner = kernel.declaredOwner(slot);
-          // An owner that is installed after its contributors loaded (the settings plugin comes up with feed plugins already
-          // active: K2 looks at the declared owner at StartLoad, and there was none) is loading while they are active; the host
-          // then calls `feed.refresh`, which loads them again with the owner active. Any other state of the owner is an error.
-          if (owner && owner !== name && kernel.state(owner) !== "active" && !(kernel.state(owner) === "loading" && PLUGIN_OWNED_SLOTS.map(canonicalSlot).includes(canonicalSlot(slot)))) fail(`${name} active while ${slot}'s owner ${owner} is ${kernel.state(owner)}`);
+          // An owner that is installed after its contributors loaded (the settings plugin, which stands in here for every
+          // PLUGIN_OWNED_SLOTS owner, comes up with feed plugins already active: K2 looks at the declared owner at StartLoad, and
+          // there was none) is loading while they are active; the host then calls `feed.refresh`, which loads them again with the
+          // owner active. Only an instance that was already active when the owner started loading is excused; any other state of
+          // the owner, or a contributor that started or became active after it, is an error.
+          const lateOwner = owner === SETTINGS && kernel.state(owner) === "loading" && activeAtOwnerStart.has(name) && OWNED_CANONICAL.has(canonicalSlot(slot));
+          if (owner && owner !== name && kernel.state(owner) !== "active" && !lateOwner) fail(`${name} active while ${slot}'s owner ${owner} is ${kernel.state(owner)}`);
         }
       }
     }
