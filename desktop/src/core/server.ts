@@ -162,7 +162,7 @@ export interface CoreOptions {
   subBotWaitMs?: number;
   /** The plugin host (null: plugins' program parts do not run) and how secrets are sealed. */
   /** `builtIns`: the plugins shipped with the app (out/builtin-plugins; none when left out). */
-  plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; timing?: HostTiming; builtIns?: string | null } | null;
+  plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; boundSecrets?: boolean; timing?: HostTiming; builtIns?: string | null } | null;
   /** Maintainer's `ccb plugin check` command (null: none this time). */
   checkCommand?: string | null;
   /** The component-shot command Maintainer is given (Phase 5a; null: none, it reads the template). */
@@ -375,6 +375,7 @@ export class Core {
       hostScript: host?.hostScript ?? "",
       builtIns: host?.builtIns ?? null,
       sealer: host?.sealer ?? null,
+      boundSecrets: host?.boundSecrets,
       timing: host?.timing,
       onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
       ...(options.mayRunServerPart ? { mayRunServerPart: options.mayRunServerPart } : {}),
@@ -2600,6 +2601,11 @@ First write a test that shows this, then fix it.`;
   /** Botling 3's server: the bots the core has now. */
   botIds(): string[] {
     return this.profiles.map((profile) => profile.id);
+  }
+
+  /** Botling 3's server (M6-06): re-opens plugin secrets once a window attaches and syncs the host. */
+  reloadPluginSecrets(): Promise<void> {
+    return this.plugins.reloadSecrets();
   }
 
   /** Botling 3's server: files waiting in a bot's input box (they go with the next message, even an empty one). */

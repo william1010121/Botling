@@ -6,8 +6,11 @@
 //   detaches, the one before it (if still attached) takes over.
 // - No window: the op fails at once. A bot's browser and screenshot tools then say to open Botling 3 (the 2.x tools pass
 //   `error` on to the bot, browser-tools.ts).
+// - Plugin secrets (D74 / M6-06): `sealer()` asks the attached window to seal and open with `safeStorage` (`shell.seal`
+//   / `shell.open`); when no window is attached, it rejects with `NO_SAFE_STORAGE`. Never logs secret payloads.
 // - A request waits 30 s for its answer (installing a release: 20 min, it downloads and verifies first); a window that
 //   detaches meanwhile fails its requests.
+import type { Sealer } from "../core/plugins/secrets";
 import type { AppAnswer, AppOp } from "../core/server";
 import type { Message, MessageOf } from "../protocol";
 
@@ -17,6 +20,7 @@ export interface ShellWindow {
 }
 
 export const NO_WINDOW_ERROR = "Open Botling 3 to use the browser or take a screenshot: no Botling 3 window is attached to this server.";
+export const NO_SAFE_STORAGE = "Plugin secrets need the Botling 3 window's safe storage (the Keychain), which this M1 server does not reach yet; open Botling 2.x for plugins that keep secrets.";
 const DETACHED_ERROR = "The Botling 3 window closed before it answered.";
 const NO_ANSWER_ERROR = "The Botling 3 window did not answer.";
 
@@ -40,6 +44,7 @@ interface Waiting {
 export class ShellBridge {
   private readonly windows: ShellWindow[] = [];
   private readonly waiting = new Map<string, Waiting>();
+  private readonly attachListeners = new Set<() => void>();
   private counter = 0;
 
   constructor(private readonly options: ShellBridgeOptions = {}) {}
@@ -48,6 +53,15 @@ export class ShellBridge {
   attach(window: ShellWindow): void {
     this.detachOnly(window);
     this.windows.push(window);
+    for (const listener of [...this.attachListeners]) {
+      try { listener(); } catch { /* listener failure must not break window attach */ }
+    }
+  }
+
+  /** Called whenever a desktop window attaches to this bridge. */
+  onAttach(listener: () => void): () => void {
+    this.attachListeners.add(listener);
+    return () => { this.attachListeners.delete(listener); };
   }
 
   /** The window's session ended: its unanswered requests fail. */
@@ -75,24 +89,51 @@ export class ShellBridge {
     return { pid: null, dataDir: this.options.appDataDir ?? null, bundle: null, request: (op, args) => this.request(op, args) };
   }
 
+  /** D74 (M6-06): seals and opens plugin secrets through the attached Botling 3 window's safe storage. */
+  sealer(): Sealer {
+    const askSecret = async (build: (req: string) => Message, extract: (data: unknown) => string | null): Promise<string> => {
+      const window = this.windows[this.windows.length - 1];
+      if (!window) throw new Error(NO_SAFE_STORAGE);
+      const answer = await this.sendRequest(window, build, this.options.timeoutMs ?? 30_000);
+      if (!answer.ok) throw new Error(answer.error || NO_ANSWER_ERROR);
+      const value = extract(answer.data);
+      if (value === null) throw new Error("The Botling 3 window returned an invalid secret answer.");
+      return value;
+    };
+    return {
+      seal: (text) => askSecret(
+        (req) => ({ t: "shell.seal", req, text }),
+        (data) => (data && typeof data === "object" && typeof (data as { sealed?: unknown }).sealed === "string" ? (data as { sealed: string }).sealed : null),
+      ),
+      open: (sealed) => askSecret(
+        (req) => ({ t: "shell.open", req, sealed }),
+        (data) => (data && typeof data === "object" && typeof (data as { text?: unknown }).text === "string" ? (data as { text: string }).text : null),
+      ),
+    };
+  }
+
   request(op: AppOp, args?: Record<string, string>): Promise<AppAnswer> {
     const window = this.windows[this.windows.length - 1];
     if (!window) return Promise.resolve({ ok: false, error: NO_WINDOW_ERROR });
-    const req = `shell-${++this.counter}`;
-    return new Promise<AppAnswer>((resolve) => {
-      const wait = op === "installRelease" ? this.options.installTimeoutMs ?? 20 * 60_000 : this.options.timeoutMs ?? 30_000;
-      const timer = setTimeout(() => this.settle(req, { ok: false, error: NO_ANSWER_ERROR }), wait);
-      timer.unref?.();
-      this.waiting.set(req, { window, resolve, timer });
-      const sent = window.send({ t: MESSAGE_OF[op], req, ...(args && Object.keys(args).length ? { args } : {}) } as Message);
-      if (!sent) this.settle(req, { ok: false, error: DETACHED_ERROR });
-    });
+    const wait = op === "installRelease" ? this.options.installTimeoutMs ?? 20 * 60_000 : this.options.timeoutMs ?? 30_000;
+    return this.sendRequest(window, (req) => ({ t: MESSAGE_OF[op], req, ...(args && Object.keys(args).length ? { args } : {}) } as Message), wait);
   }
 
   /** Shutdown: every request fails. */
   close(): void {
     for (const req of [...this.waiting.keys()]) this.settle(req, { ok: false, error: DETACHED_ERROR });
     this.windows.length = 0;
+  }
+
+  private sendRequest(window: ShellWindow, build: (req: string) => Message, wait: number): Promise<AppAnswer> {
+    const req = `shell-${++this.counter}`;
+    return new Promise<AppAnswer>((resolve) => {
+      const timer = setTimeout(() => this.settle(req, { ok: false, error: NO_ANSWER_ERROR }), wait);
+      timer.unref?.();
+      this.waiting.set(req, { window, resolve, timer });
+      const sent = window.send(build(req));
+      if (!sent) this.settle(req, { ok: false, error: DETACHED_ERROR });
+    });
   }
 
   private detachOnly(window: ShellWindow): void {

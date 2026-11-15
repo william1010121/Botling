@@ -111,7 +111,8 @@ export const COMMAND_SCOPES: Record<CommandType, CommandScope> = {
   "plugins.revert": manage,
   "plugins.remove": manage,
   "plugins.setting": manage,
-  "plugins.secret": manage,
+  // Local desktop window only until a non-persisting remote secret path exists (M6-06 F1).
+  "plugins.secret": admin,
   "plugins.command": manage,
   "plugins.linkCommand": manage,
   "plugins.tabCommand": manage,

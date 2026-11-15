@@ -244,6 +244,8 @@ export interface PluginsOptions {
   /** The plugins shipped with the app (out/builtin-plugins, or the app's Resources/builtin-plugins). */
   builtIns?: string | null;
   sealer: Sealer | null;
+  /** Botling 3 binds each sealed secret blob to plugin/key (M6-06 F3); 2.x leaves it unset. */
+  boundSecrets?: boolean;
   timing?: HostTiming;
   /** The plugin host's pid, for the process ledger. */
   onPid?: (pid: number, alive: boolean) => void;
@@ -397,7 +399,7 @@ export class Plugins {
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
     this.markedTabs = new MarkedTabs(dataDir);
-    this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer);
+    this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer, options.boundSecrets ? { bound: true } : undefined);
     this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
     this.dataRoot = join(dataDir, "plugin-data");
     this.held = new PendingTags(join(dataDir, "plugin-pending-tags.json"));
@@ -448,6 +450,13 @@ export class Plugins {
   rowsChanged() {
     if (this.started) this.sync();
     else this.announce();
+  }
+
+  /** D74 (M6-06): re-opens sealed secrets once a window sealer attaches, then reloads the host with them. */
+  async reloadSecrets() {
+    this.secrets.problem = null;
+    await this.secrets.load();
+    this.sync();
   }
 
   /** The library is looked at again (the core's 1.5 s clock). */
