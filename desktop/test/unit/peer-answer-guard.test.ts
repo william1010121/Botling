@@ -9,11 +9,16 @@
 //   `scope`, a hook that throws or is missing included (fail closed).
 // - Devices (a phone, also one forwarded by another server, with the device as origin), the local window and `admin`
 //   are unchanged.
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Command } from "../../src/contract";
+import { saveProjectRow } from "../../src/core/projects";
+import { Core } from "../../src/core/server";
 import type { Slot } from "../../src/protocol";
 import { authorizeRoster } from "../../src/server/botlingd";
 import { slotAuthorize, USER_ONLY_CARD_DETAIL, WAITING_PLAIN_ONLY_DETAIL, WAITING_TARGET_DETAIL, type DeviceRoster } from "../../src/server/session";
+import { tempDir } from "../helpers";
 
 const BOT = "6A0B0000-0000-4000-8000-0000000000B1";
 const OTHER_BOT = "6A0B0000-0000-4000-8000-0000000000B2";
@@ -141,5 +146,38 @@ describe("peer-answer-guard: botlingd wiring", () => {
     const without = slotAuthorize(authorizeRoster(base));
     expect(without(tx, { slot: slot("srv-peer"), cmd: { type: "waiting.ignore", botId: BOT, text: "x" }, scope: "reply" })).toMatchObject({ reason: "scope" });
     expect(without(tx, { slot: slot("srv-peer"), cmd: settling[0]!, scope: "reply" })).toMatchObject({ reason: "origin" });
+  });
+});
+
+describe("peer-answer-guard: Core.peerMayIgnoreWaiting (the hook botlingd wires)", () => {
+  const cores: Core[] = [];
+  afterEach(async () => { for (const core of cores.splice(0)) await core.shutdown().catch(() => {}); });
+
+  /** A core with two projects: the first lists `Which domain?` as a plain waiting item, the second lists `Other`. */
+  function twoProjects(): Core {
+    const dir = tempDir("peer-answer-guard-core");
+    for (const [id, name, item] of [[BOT, "Site", "Which domain?"], [OTHER_BOT, "Docs", "Other"]] as const) {
+      const folder = join(tempDir(`peer-answer-guard-${name}`), name);
+      mkdirSync(join(folder, ".bot"), { recursive: true });
+      writeFileSync(join(folder, ".bot", "memory.md"), `## Current status\n- Fine\n## Waiting on you\n- ${item}\n`);
+      saveProjectRow(dir, { id, name, folder, avatar: "triangle" });
+    }
+    const core = new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true, routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0, log: () => undefined });
+    cores.push(core);
+    return core;
+  }
+
+  it("is per bot: another bot's plain item with the same text does not count, before or after it is set aside", () => {
+    const core = twoProjects();
+    expect(core.waiting().items.map((item) => [item.botId, item.text, item.messageId]).sort()).toEqual([[BOT, "Which domain?", null], [OTHER_BOT, "Other", null]]);
+    expect(core.peerMayIgnoreWaiting(BOT, "Which domain?")).toBe(true);
+    // Review: the key `<OTHER_BOT>-Which domain?` would hide a card of OTHER_BOT whose preview is that text.
+    expect(core.peerMayIgnoreWaiting(OTHER_BOT, "Which domain?")).toBe(false);
+    expect(core.peerMayIgnoreWaiting(BOT, "Which domain? ")).toBe(false);
+    core.ignoreWaiting(BOT, "Which domain?");
+    // The second check (after the handler set it aside) still passes for that bot's key, and for no other bot's.
+    expect(core.peerMayIgnoreWaiting(BOT, "Which domain?")).toBe(true);
+    expect(core.peerMayIgnoreWaiting(OTHER_BOT, "Which domain?")).toBe(false);
+    expect(core.peerMayIgnoreWaiting(OTHER_BOT, "Other")).toBe(true);
   });
 });
