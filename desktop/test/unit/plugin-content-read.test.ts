@@ -19,7 +19,7 @@ import { PluginContentRead } from "../../src/server/content/plugin-read";
 import { ensureStream } from "../../src/server/log";
 import type { PeerSession } from "../../src/server/peer";
 import { openServerStore, type ServerStore } from "../../src/server/store";
-import { tempDir, until } from "../helpers";
+import { expectSameBytes, tempDir, until } from "../helpers";
 
 const MiB = CONTENT_CHUNK_BYTES;
 const PEER_OPTS = { local: false } as const;
@@ -322,10 +322,10 @@ describe("M5-08a: plugin API content.read(ref, offset, length)", () => {
 
     const firstKib = await h.api.content.read(ref, 0, 1024);
     expect(firstKib).toBeInstanceOf(Uint8Array);
-    expect(Buffer.from(firstKib)).toEqual(data.subarray(0, 1024));
+    expectSameBytes(firstKib, data.subarray(0, 1024));
 
     const tail = await h.api.content.read(ref, 3500, 2000);
-    expect(Buffer.from(tail)).toEqual(data.subarray(3500));
+    expectSameBytes(tail, data.subarray(3500));
 
     const pastEnd = await h.api.content.read(ref, 4096, 1024);
     expect(pastEnd.byteLength).toBe(0);
@@ -340,7 +340,7 @@ describe("M5-08a: plugin API content.read(ref, offset, length)", () => {
     const { id, entry } = await postLine(h.serviceA, STREAM_LOCAL, BOT_LOCAL, "l-path", file);
     const ref = { owner: SERVER_A, id, entry };
 
-    expect(Buffer.from(await h.api.content.read(ref, 0, 512))).toEqual(data.subarray(0, 512));
+    expectSameBytes(await h.api.content.read(ref, 0, 512), data.subarray(0, 512));
     truncateSync(file, 100);
     await expect(h.api.content.read(ref, 0, 512)).rejects.toThrow("That file changed or is no longer there.");
   });
@@ -372,12 +372,12 @@ describe("M5-08a: plugin API content.read(ref, offset, length)", () => {
     const ref = { owner: SERVER_B, id, entry };
 
     const slice1 = await h.api.content.read(ref, 0, 1024);
-    expect(Buffer.from(slice1)).toEqual(data.subarray(0, 1024));
+    expectSameBytes(slice1, data.subarray(0, 1024));
     expect(h.peerContent.counts.chunksVerified).toBeGreaterThanOrEqual(1);
 
     // Cross the 1 MiB -> 2 MiB -> 2+ MiB chunk boundaries
     const slice2 = await h.api.content.read(ref, MiB - 500, MiB + 2000);
-    expect(Buffer.from(slice2)).toEqual(data.subarray(MiB - 500, 2 * MiB + 1500));
+    expectSameBytes(slice2, data.subarray(MiB - 500, 2 * MiB + 1500));
     expect(h.peerContent.counts.chunksVerified).toBeGreaterThanOrEqual(2);
     const gets = h.link.upRaw.filter((m) => m.t === "content.get");
     expect(gets.length).toBeGreaterThan(0);
@@ -443,7 +443,7 @@ describe("M5-08a: plugin API content.read(ref, offset, length)", () => {
     expect(empty.byteLength).toBe(0);
 
     const fourMib = await h.api.content.read(ref, 0, 4 * MiB);
-    expect(Buffer.from(fourMib)).toEqual(data.subarray(0, 4 * MiB));
+    expectSameBytes(fourMib, data.subarray(0, 4 * MiB));
 
     await expect(h.api.content.read(ref, 0, 5 * MiB)).rejects.toThrow();
     await expect(h.api.content.read(ref, -1, 10)).rejects.toThrow();

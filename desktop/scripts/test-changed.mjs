@@ -7,6 +7,7 @@
 //     which catches the tests that drive the built core over core-harness.ts instead of importing it;
 //   - a unit test whose text names a changed file (electron-builder.config.cjs, build.mjs, …), for
 //     files that tests read or run rather than import.
+// The typecheck is incremental (.cache/tsc/desktop.tsbuildinfo): a rerun after a small change takes about half as long.
 // out/ is rebuilt first (well under a second) because many unit tests run the built core.
 // The full suite (`npm test`) is for a release candidate, not for every change.
 import { spawnSync } from "node:child_process";
@@ -50,7 +51,7 @@ const step = (label, command, args) => {
 const bin = (name) => join(desktop, "node_modules", ".bin", name);
 
 console.log(`test:changed against ${base}: ${changed.length} changed file(s), ${sources.length} relevant to desktop/`);
-let ok = step("typecheck", bin("tsc"), ["--noEmit", "-p", "tsconfig.json"]);
+let ok = step("typecheck", bin("tsc"), ["--noEmit", "-p", "tsconfig.json", "--incremental", "--tsBuildInfoFile", join(desktop, ".cache", "tsc", "desktop.tsbuildinfo")]);
 
 if (sources.length) {
   const unit = join(desktop, "test", "unit");
