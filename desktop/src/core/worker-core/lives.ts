@@ -41,7 +41,9 @@ export interface Live {
 }
 
 export type Maybe<T> = T | Promise<T>;
-export const then = <T, U>(value: Maybe<T>, next: (value: T) => Maybe<U>): Maybe<U> => (value instanceof Promise ? value.then(next) : next(value));
+const then = <T, U>(value: Maybe<T>, next: (value: T) => Maybe<U>): Maybe<U> => (value instanceof Promise ? value.then(next) : next(value));
+/** Exported as `whenDone`: a module that exports a name `then` is a thenable and `import()` would call it. */
+export { then as whenDone };
 
 export const noReport = (): WorkerLedgerRecord["report"] => ({ state: "none", text: null, status: null, attempts: 0 });
 

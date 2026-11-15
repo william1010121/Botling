@@ -22,7 +22,7 @@ import type { HandoffArgs, HandoffRequest, RecoverResult, WorkerAdapter } from "
 import { classifyRun, ENGINE_NAMES, INTERRUPTED_REPORT } from "./classify";
 import type { WorkerAdapterKind, WorkerEvent } from "./events";
 import type { WorkerLedgerRecord, WorkerStore } from "./ledger";
-import { noReport, specView, then, traceStep, WorkerLives, type Live, type Maybe } from "./lives";
+import { noReport, specView, traceStep, whenDone as then, WorkerLives, type Live, type Maybe } from "./lives";
 import type { LegacySources } from "./migrate";
 import { parseWorkerNote, wireStatus, workerNoteText, type AckPolicy, type WorkerNote, type WorkerReport } from "./report";
 import { reportOwed, workerState, type WorkerStatus } from "./status";
