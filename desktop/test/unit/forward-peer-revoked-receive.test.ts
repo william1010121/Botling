@@ -12,8 +12,13 @@ import type { Command } from "../../src/contract";
 import type { CmdBody, MessageOf, Slot, WireMessage } from "../../src/protocol";
 import { OwnerInbox, type InboxSession } from "../../src/server/forward";
 import { WINDOW_ORIGIN } from "../../src/server/forward/window-scope";
+import { authorizeRoster } from "../../src/server/botlingd-cluster";
+import { effectCheckpointSink } from "../../src/server/effects";
+import { IntentRuntime } from "../../src/server/intents";
+import { LiveChannel } from "../../src/server/live";
 import { slotAuthorize, type DeviceRoster } from "../../src/server/session";
 import { SlotEngine, type ApplyFn } from "../../src/server/slots";
+import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
 import { until } from "../helpers";
 import { FakeLog, memoryStore } from "./server-slots-harness";
 
@@ -38,7 +43,7 @@ async function ownerSide(peerOf: () => string | null) {
     applied.push(slot.n);
     return { result: { n: slot.n } };
   };
-  const roster: DeviceRoster = { memberId: B, device: () => null, server: (member) => member === A && state.peerValid };
+  const roster: DeviceRoster = { memberId: B, device: () => null, server: (member) => (member === A || member === "srv-c") && state.peerValid };
   const engine = new SlotEngine({ submit: (c) => b.writer.submit(c), log: new FakeLog(), apply, authorize: slotAuthorize(roster), basis: { turnRunning: () => true, card: () => ({ open: true, rev: 1 }) } });
   const inbox = new OwnerInbox({ self: B, runtime: { receive: (body: CmdBody, options: never) => engine.receive(body, options), slots: engine, legacy: { receive: (body: CmdBody, options: never) => engine.receive(body, options) } } as never, log: () => undefined });
   const session: InboxSession = {
@@ -121,5 +126,56 @@ describe("M7-12c: slotAuthorize and the peer option", () => {
   it("a roster without a server hook cannot vouch for a peer (fail closed)", () => {
     const noHook: DeviceRoster = { memberId: B, device: () => null };
     expect(slotAuthorize(noHook)(tx, { slot: slot(WINDOW_ORIGIN), cmd: send("x"), scope: "manage", peer: A })).toMatchObject({ reason: "origin" });
+  });
+});
+
+describe("M7-12c review: what the re-check rests on", () => {
+  it("the roster hook vouches only for a valid server other than this one: unknown, revoked, a device or self is no", () => {
+    const view = { self: B, servers: new Set([A, B, "srv-revoked"]), valid: new Set([A, B, "dev-phone"]) };
+    const hook = authorizeRoster({ memberId: B, view, device: () => null } as never).server!;
+    expect(hook(A)).toBe(true);
+    expect(hook("srv-unknown")).toBe(false);
+    expect(hook("srv-revoked")).toBe(false);
+    expect(hook("dev-phone")).toBe(false);
+    expect(hook(B)).toBe(false);
+  });
+
+  it("the delivering peer is not part of the command's hash: the same copy from another valid peer is the stored answer, not a conflict", async () => {
+    let via = A;
+    const w = await ownerSide(() => via);
+    try {
+      w.deliver(frame(WINDOW_ORIGIN, 1, "manage"));
+      await until(() => w.result(1), { what: "the first answer" });
+      expect(w.result(1)!.outcome).toMatchObject({ kind: "applied" });
+      w.results.length = 0;
+      via = "srv-c";
+      w.state.peerValid = true;
+      w.deliver(frame(WINDOW_ORIGIN, 1, "manage"));
+      await until(() => w.result(1), { what: "the repeated answer" });
+      expect(w.result(1)!.outcome).toMatchObject({ kind: "applied" });
+      expect(w.applied).toEqual([1]);
+    } finally { await w.close(); }
+  });
+
+  it("a legacy command's handler does not run for a copy whose delivering peer was revoked (the pre-check sees the peer too)", async () => {
+    const { db, writer } = memoryStore();
+    const engine = new FakeTurnEngine({ bots: [BOT] });
+    const live = new LiveChannel({ sink: effectCheckpointSink(writer), checkpointIntervalMs: 5 });
+    const state = { valid: true };
+    const roster: DeviceRoster = { memberId: B, device: () => null, server: (member) => member === A && state.valid };
+    const runtime = new IntentRuntime({ store: writer, engine, live, log: () => undefined, authorize: slotAuthorize(roster) });
+    await runtime.start();
+    try {
+      const target = `srv:${String(db.prepare("SELECT value FROM meta WHERE key = 'serverId'").get()!.value)}` as Slot["target"];
+      const inc = String(db.prepare("SELECT logId FROM streams WHERE stream = ?").get(target)!.logId) as never;
+      const body = (n: number) => ({ slot: { origin: WINDOW_ORIGIN, originEpoch: EPOCH, target, n }, floor: 1, inc, cmd: { type: "plugins.enable", name: "demo", enabled: true } }) as CmdBody;
+      const first = await runtime.receive(body(1), { scope: "manage", peer: A });
+      expect(first.status === "result" && first.message.outcome.kind).toBe("applied");
+      expect(engine.runs.map((c) => c.type)).toEqual(["plugins.enable"]);
+      state.valid = false;
+      const second = await runtime.receive(body(2), { scope: "manage", peer: A });
+      expect(second.status === "result" && second.message.outcome).toMatchObject({ kind: "refused", reason: "origin" });
+      expect(engine.runs.map((c) => c.type)).toEqual(["plugins.enable"]);
+    } finally { runtime.close(); engine.close(); live.close(); }
   });
 });
