@@ -5,7 +5,8 @@
 //     here as registrations of those plugins (the feed's `{kind: "feed", row}`, shell/plugin-feed.ts). The plugin has no entries of
 //     its own in them yet.
 //   - the views `composer/bar` and `chat/header` (2.x `view/composerBar`, `view/chatHeader`).
-// The old chat frame still draws them; its menu lists are read from these slots (chat-slot.ts), not from `PluginsView.menus`.
+// The old chat frame still draws the menus; their lists are read from these slots (chat-slot.ts), not from `PluginsView.menus`. The header's
+// plugin buttons and the composer bar's view are drawn from `chat/header` and `composer/bar` too (M7-06b: ChatHeaderViews.tsx, ComposerBar.ts).
 import type { PluginDeclaration } from "../../../../../Web/src/plugin-kernel";
 import { isInPageApi } from "../../shell/inpage-host";
 import { CHAT_PLUGIN, CHAT_SLOTS } from "../../chat-names";
