@@ -345,6 +345,12 @@ describe("M6-10a: Botling 3 parity checklist after 2.x fixture import", () => {
     extraEnv: Record<string, string> = {},
     deviceId = "parity-device",
   ): Promise<{ daemon: Botlingd; client: ScriptClient; inc: string; originEpoch: string }> {
+    withEnv({
+      FAKE_CLAUDE_LOG: env.claudeLog,
+      FAKE_CLAUDE_INPUT: env.inputLog,
+      FAKE_CLAUDE_PIDS: env.pidsFile,
+      ...extraEnv,
+    });
     const daemon = await Botlingd.start({
       env: botlingdEnv(env.dataDir, {
         BOTLING_REMOTE_WORKERS: "1",
@@ -451,7 +457,7 @@ describe("M6-10a: Botling 3 parity checklist after 2.x fixture import", () => {
       const res = await client.req({ type: "chat.snapshot", botId: env.mainId });
       if (!res.ok) return null;
       const body = res.result as {
-        components: Record<string, { html?: string }>;
+        components: Record<string, { template?: string }>;
         chat: {
           pluginData?: Record<string, { pins?: Array<{ id: string; name: string; display: { status: string; data: string } }> }>;
           decorations?: Array<{ under?: string; data?: { specs?: Array<{ id: string; name: string }> } }>;
@@ -463,7 +469,7 @@ describe("M6-10a: Botling 3 parity checklist after 2.x fixture import", () => {
       return pin && pin.display.status === "done" && specsDec ? body : null;
     }, { timeout: 30_000, what: "pin rendered live and spec decorated" });
 
-    expect(snap.components[CARD_NAME]?.html).toContain("ccb.data");
+    expect(snap.components[CARD_NAME]?.template).toContain("ccb.data");
     const renderedPin = snap.chat.pluginData!["botling.board"]!.pins!.find((p) => p.id === PIN_ID)!;
     expect(renderedPin.display.data).toBe(`{"summary":"Approved live ok"}`);
 
