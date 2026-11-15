@@ -81,6 +81,22 @@ describe("M5-15: grantAllows (pure)", () => {
     }
   });
 
+  it("review: prototype keys as via.codeHash are no grant (no throw); a read grant that lists requests still refuses", () => {
+    const r = row({ grants: { [H1]: grant("request", ["chat.send"]) } });
+    for (const h of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      expect(grantAllows(r, via("my.plugin", h), send(), NAME), h).toEqual({ ok: false, detail: `plugin my.plugin differs on ${NAME}` });
+    }
+    expect(grantAllows(row({ grants: { [H1]: grant("read", ["chat.send"]) } }), via(), send(), NAME).ok).toBe(false);
+  });
+
+  it("review: a write plugin never runs a command of another installed plugin whose name extends its own", () => {
+    const writeMy = row({ grants: { [H1]: grant("write") } });
+    const command = (id: string) => ({ type: "plugins.command", id }) as unknown as Command;
+    expect(grantAllows(writeMy, via("my", H1), command("my.plugin.go"), NAME, ["my", "my.plugin"]).ok).toBe(false);
+    expect(grantAllows(writeMy, via("my", H1), command("my.go"), NAME, ["my", "my.plugin"])).toEqual({ ok: true });
+    expect(grantAllows(writeMy, via("my", H1), command("my.plugin.go"), NAME, ["my"])).toEqual({ ok: true });
+  });
+
   it("plugin.grant is never allowed, even when a (hand-edited) grant lists it", () => {
     const hostile = row({ grants: { [H1]: grant("write", ["plugin.grant"]) } });
     expect(grantAllows(hostile, via(), { type: "plugin.grant", plugin: "my.plugin", codeHash: H1, tier: "write", reads: [], requests: [] } as Command, NAME).ok).toBe(false);
@@ -214,8 +230,10 @@ describe("M5-15: the owner's grant check in the slot engine", () => {
     while (!sent.some((m) => m.t === "cmd.result") && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 2));
     const result = sent.find((m): m is MessageOf<"cmd.result"> => m.t === "cmd.result")!;
     expect(result.outcome).toEqual({ kind: "refused", reason: "grant", detail: `plugin my.plugin may not do this on ${NAME}` });
-    const applied = owner.runtime.slots.begunCount();
-    expect(applied).toBe(0);
+    // Nothing applied: chat.send is an intent (begunCount counts legacy slots only), so read the bot's log itself.
+    const kinds = (await owner.store.submit((tx) => tx.prepare("SELECT kind FROM entries WHERE stream = ?").all(`bot:${BOT}`))).map((r) => String(r.kind));
+    expect(kinds).toContain("cmd.refused");
+    expect(kinds).not.toContain("cmd.applied");
   });
 
   it("6. a command without via is unaffected, with or without a plugin row", async () => {
@@ -224,6 +242,33 @@ describe("M5-15: the owner's grant check in the slot engine", () => {
     expect((await outcome(s, phone, send(), "reply")).kind).toBe("applied");
     await seed(s, "my.plugin", row({ tier: "read" }));
     expect((await outcome(s, phone, send("2"), "reply")).kind).toBe("applied");
+  });
+
+  it("review: a prototype-key hash is refused grant and the queue moves on; a malformed row is no grant", async () => {
+    const s = await startServer();
+    await seed(s, "my.plugin", row({ tier: "request", requests: ["chat.send"], grants: { [H1]: grant("request", ["chat.send"]) } }));
+    const phone = await device(s, ["read", "reply"]);
+    const n = ++slotN;
+    const first = { slot: { origin: phone, originEpoch: EPOCH, target: `bot:${BOT}`, n }, floor: n, inc: s.inc(), cmd: send("p"), via: via("my.plugin", "constructor") } as CmdBody;
+    expect(await s.runtime.receive(first, { scope: "reply" })).toMatchObject({ status: "result", message: { outcome: { kind: "refused", reason: "grant" } } });
+    const next = { slot: { origin: phone, originEpoch: EPOCH, target: `bot:${BOT}`, n: n + 1 }, floor: n, inc: s.inc(), cmd: send("q") } as CmdBody;
+    expect(await s.runtime.receive(next, { scope: "reply" })).toMatchObject({ status: "result", message: { outcome: { kind: "applied" } } });
+    slotN = n + 1;
+    await s.store.submit((tx) => {
+      const body = JSON.parse(String(tx.prepare("SELECT body FROM rows WHERE stream = ? AND key = 'plugin:my.plugin'").get(s.stream)!.body));
+      body.grants[H1].tier = "admin";
+      tx.prepare("UPDATE rows SET body = ? WHERE stream = ? AND key = 'plugin:my.plugin'").run(JSON.stringify(body), s.stream);
+    });
+    expect(await outcome(s, phone, send("r"), "reply", via())).toEqual({ kind: "refused", reason: "grant", detail: `plugin my.plugin differs on ${NAME}` });
+  });
+
+  it("review: write plugin 'my' cannot run a command of installed plugin 'my.plugin'", async () => {
+    const s = await startServer();
+    await seed(s, "my", row({ tier: "write", grants: { [H1]: grant("write") } }));
+    await seed(s, "my.plugin", row({ codeHash: H2, tier: "write", grants: {} }));
+    const cmd = { type: "plugins.command", id: "my.plugin.go" } as Command;
+    const status = await s.runtime.receive({ slot: { origin: "desktop", originEpoch: EPOCH, target: `bot:${BOT}`, n: ++slotN }, floor: slotN, inc: s.inc(), cmd, via: via("my", H1) } as CmdBody, { scope: "local" });
+    expect(status).toMatchObject({ status: "result", message: { outcome: { kind: "refused", reason: "grant", detail: `plugin my may not do this on ${NAME}` } } });
   });
 
   it("7. plugin.grant with via stays refused (M5-14a F3), also when the row's grant lists it", async () => {

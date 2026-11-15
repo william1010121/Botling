@@ -135,6 +135,15 @@ function readPluginRow(tx: Db, plugin: string): PluginRow | null {
   }
 }
 
+/** The names of this server's live `plugin:` rows (to tell `my.plugin.go` of plugin `my.plugin` from plugin `my`). */
+function installedPlugins(tx: Db): string[] {
+  try {
+    return tx.prepare("SELECT key FROM rows WHERE stream = ? AND deleted = 0 AND substr(key, 1, 7) = 'plugin:'").all(ownTableStream(tx)).map((row) => String(row.key).slice("plugin:".length));
+  } catch {
+    return [];
+  }
+}
+
 /** The name this machine gives itself in its `machine` row, else its server id (never empty). */
 function ownServerName(tx: Db): string {
   try {
@@ -205,7 +214,7 @@ export class SlotEngine {
     if (input.via) {
       // D54 / M5-14a F3: a plugin never sends `plugin.grant`. Kept ahead of the grant lookup on purpose.
       if (input.cmd.type === "plugin.grant") return { reason: "grant", detail: "plugin.grant cannot be sent by a plugin" };
-      const decision = grantAllows(readPluginRow(tx, input.via.plugin), input.via, input.cmd, ownServerName(tx));
+      const decision = grantAllows(readPluginRow(tx, input.via.plugin), input.via, input.cmd, ownServerName(tx), installedPlugins(tx));
       if (!decision.ok) return { reason: "grant", detail: decision.detail };
     }
     return null;
