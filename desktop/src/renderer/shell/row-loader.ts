@@ -87,7 +87,28 @@ export function plansOf(rows: ReadonlyMap<string, unknown> | null | undefined): 
 
 /** A web part's bytes are asked for by the frame's plugin (its row's name) and the reference its row names, nothing else. */
 export interface BundleRequest { plugin: string; ref: string }
-/** The bundle's text, checked against the reference. Rejects when it cannot be had or does not match. */
+/**
+ * The bytes are there but are not the web part the row names (a hash mismatch, over the cap, not UTF-8 text): a refusal, not an outage
+ * (M7-09b-F, FU-6). A loader that meets it runs nothing for that row and never falls back to a source the server offers; any other
+ * rejection only says the bundle could not be had.
+ */
+export class BundleRefusedError extends Error {
+  constructor(message: string) { super(message); this.name = "BundleRefusedError"; }
+}
+
+const sha256Of = (bytes: Uint8Array): string => `sha256:${new Sha256().update(bytes).hex()}`;
+
+/**
+ * Whether `text` is, as UTF-8, exactly the content `ref` names. Every consumer of a `BundleFetcher` asks this of what it got, so a
+ * fetcher that skipped its own check (or a fake) cannot put other bytes in front of a frame.
+ */
+export function bundleMatches(text: string, ref: string): boolean {
+  if (typeof text !== "string" || !WEB_REF.test(ref)) return false;
+  const bytes = new TextEncoder().encode(text);
+  return bytes.byteLength <= MAX_BUNDLE_BYTES && sha256Of(bytes) === ref;
+}
+
+/** The bundle's text, checked against the reference. Rejects when it cannot be had; rejects with `BundleRefusedError` when it does not match. */
 export type BundleFetcher = (request: BundleRequest) => Promise<string>;
 
 /** What the ticket fetcher needs of the link (fe-link `FeLink` has it). */
@@ -123,9 +144,14 @@ export function ticketBundleFetcher(options: TicketFetcherOptions): BundleFetche
     const response = await (options.fetch ?? globalThis.fetch.bind(globalThis))(url, { cache: "no-store" });
     if (!response.ok) throw new Error(`the web part could not be read (${response.status})`);
     const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > MAX_BUNDLE_BYTES) throw new Error("the web part is too large");
-    if (`sha256:${new Sha256().update(bytes).hex()}` !== ref) throw new Error("the bytes are not the web part its row names");
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (bytes.byteLength > MAX_BUNDLE_BYTES) throw new BundleRefusedError("the web part is too large");
+    if (sha256Of(bytes) !== ref) throw new BundleRefusedError("the bytes are not the web part its row names");
+    // The byte order mark stays in the text: the consumers hash it back to the same bytes (`bundleMatches`).
+    try {
+      return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    } catch {
+      throw new BundleRefusedError("the web part is not UTF-8 text");
+    }
   };
   return ({ plugin, ref }) => {
     const server = options.link.server;
@@ -357,10 +383,16 @@ export class RowLoader {
     let source: string | null;
     try {
       source = await Promise.race([this.options.fetch({ plugin: name, ref: plan.ref }), letGo]);
+      // Whatever the fetcher is, these bytes are checked against the row's reference before they can run (FU-6).
+      if (source !== null && !bundleMatches(source, plan.ref)) throw new BundleRefusedError("the bytes are not the web part its row names");
     } catch (error) {
-      // The old code, if any, keeps running: nothing was undone for a web part that could not be had.
+      // The old code, if any, keeps running: nothing was undone for a web part that could not be had or was refused.
+      // A failure that belongs to a row or a server that is gone is not recorded on the plan of the new one.
       if (this.current(name, key, epoch)) this.failed.set(name, key);
-      this.log(`row loader: the web part of ${quoted(name)} was not loaded: ${quoted((error as Error)?.message ?? error)}`);
+      const why = quoted((error as Error)?.message ?? error);
+      this.log(error instanceof BundleRefusedError
+        ? `row loader: the web part of ${quoted(name)} was refused (the old code, if any, keeps running): ${why}`
+        : `row loader: the web part of ${quoted(name)} was not loaded: ${why}`);
       return;
     } finally {
       if (this.fetching.get(name) === held) this.fetching.delete(name);

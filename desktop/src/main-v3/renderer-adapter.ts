@@ -50,6 +50,7 @@ import {
   type AdapterAnswer, type BotModel, type ChatSnapshot, type RendererAdapterOptions, type Snapshot,
 } from "./adapter-types";
 import { AdapterEntries } from "./adapter-entries";
+import { BundleRefusedError } from "../renderer/shell/row-loader";
 import { panelByRef, rowWeb, specsByRef } from "./web-by-ref";
 import { peerActionRefusal } from "./peer-actions";
 
@@ -183,7 +184,15 @@ export class RendererAdapter {
     }
     if (cmd.type === "plugins.web") return { ok: true, result: await this.pluginsWebAnswer() };
     const result = await this.options.link.request(cmd);
-    if (cmd.type === "plugins.panel") return { ok: true, result: await panelByRef(result, this.bySource(), cmd.name, this.webKeys) };
+    if (cmd.type === "plugins.panel") {
+      try {
+        return { ok: true, result: await panelByRef(result, this.bySource(), cmd.name, this.webKeys) };
+      } catch (error) {
+        // Bytes that are not the row's web part: refused, never the server's source in their place (M7-09b-F).
+        if (error instanceof BundleRefusedError) return { ok: false, error: { code: "forbidden", message: "not served: the web part of this plugin is not the one its row names" } };
+        throw error;
+      }
+    }
     if (cmd.type === "plugins.list") return { ok: true, result: this.shownPlugins(result as PluginsViewT) };
     return { ok: true, result };
   }
