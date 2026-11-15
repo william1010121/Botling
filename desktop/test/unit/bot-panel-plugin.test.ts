@@ -191,7 +191,8 @@ describe("the bot-panel plugin as the FE build ships it", () => {
       [BOT_PANEL_PLUGIN, "panel-block", "waiting"], [BOT_PANEL_PLUGIN, "panel-block", "results"], [BOT_PANEL_PLUGIN, "panel-block", "settled"],
     ]);
     expect(PANEL_BLOCKS).toEqual(["waiting", "results", "settled"]);
-    expect(rendererKernel.allContributions().filter(({ plugin }) => plugin === BOT_PANEL_PLUGIN)).toHaveLength(3);
+    // The three blocks, and (M7-03c) the plugin's claim on the shell's `app/side` (the right panel's column; shell-side-bottom.test.ts).
+    expect(rendererKernel.allContributions().filter(({ plugin }) => plugin === BOT_PANEL_PLUGIN).map(({ slot }) => slot)).toEqual([MAIN, MAIN, MAIN, "app/side"]);
     expect(registeredPanelBlocks()).toEqual(["waiting", "results", "settled"]);
     expect(rendererKernel.entries(SECTION)).toEqual([]);
     expect(rendererKernel.entries(TAKEOVER)).toEqual([]);

@@ -21,12 +21,13 @@ import { inPageHost } from "./inpage-host";
 import type { Client } from "../client";
 import { reconcileView, type FeedWeb } from "./plugin-feed";
 import { KernelSlot, type SlotEntry, type SlotFrames } from "./KernelSlot";
+import { ShellRegionsProvider, useShellRegions, type RegionEntry, type ShellRegions } from "./regions";
 
 /** The slot the legacy surface is contributed to. */
 export const LEGACY_SLOT = "app/main";
 
 /** Contributes `entry` to the shell's slot `slot` as `:shell`; returns what takes it back (null: the shell is not up, nothing was added). */
-export function contributeToShell(slot: string, entry: SlotEntry): (() => void) | null {
+export function contributeToShell(slot: string, entry: SlotEntry | RegionEntry): (() => void) | null {
   const registration = rendererKernel.contribute(SHELL_SURFACE, slot, entry);
   return registration ? () => { void registration.dispose(); } : null;
 }
@@ -36,7 +37,8 @@ let framesMade = 0;
 /** How long the first `plugins.web` answer is waited for: after it the feed goes on without the web versions (null) until one comes. */
 export const FIRST_WEB_WAIT_MS = 2000;
 
-export function ShellFrame({ legacy, frames: services, plugins = null, client }: { /** The whole page as App draws it today. */ legacy: ReactNode; frames?: SlotFrames; /** The plugin list App has now (null: none yet). */ plugins?: PluginsView | null;
+export function ShellFrame({ legacy, regions, frames: services, plugins = null, client }: { /** The whole page as App draws it today. */ legacy: ReactNode;
+  /** What the page draws in the right panel (`side`) and the bottom panels (`bottom`): drawn where `legacy` has a `<RegionSlot>` (regions.tsx, M7-03c). */ regions?: ShellRegions; frames?: SlotFrames; /** The plugin list App has now (null: none yet). */ plugins?: PluginsView | null;
   /** Asked for `plugins.web` whenever the list changes: the web parts' versions are part of the feed's fingerprints (M7-02c F3). */ client?: Pick<Client, "request"> }) {
   // A name for this frame's entries (not useId: that would move the ids every other component of the page gets).
   const named = useRef("");
@@ -74,7 +76,9 @@ export function ShellFrame({ legacy, frames: services, plugins = null, client }:
   useEffect(() => () => { reconcileView(null); }, []);
   // The in-page built-in plugins (botling.settings, …) the build shipped are loaded while the frame is up (M7-02c).
   useEffect(() => inPageHost.acquire(), []);
+  // The regions of the page that are slots too (the bottom panels' claim on `app/bottom`; the right panel is botling.bot-panel's on `app/side`).
+  const placed = useShellRegions(scope, regions, !take.current, contributeToShell);
   // The kernel did not take the page (the shell instance is not up): the page is drawn directly rather than not at all.
-  if (!take.current) return <>{legacy}</>;
-  return <>{ROOT_SLOTS.map((slot) => <KernelSlot key={slot} slot={slot} scope={scope} {...(services ? { frames: services } : {})} />)}</>;
+  if (!take.current) return <ShellRegionsProvider value={placed}>{legacy}</ShellRegionsProvider>;
+  return <ShellRegionsProvider value={placed}>{ROOT_SLOTS.map((slot) => <KernelSlot key={slot} slot={slot} scope={scope} {...(services ? { frames: services } : {})} />)}</ShellRegionsProvider>;
 }
