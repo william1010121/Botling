@@ -84,7 +84,7 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   asset(join(root, "builtin-plugins/botling.board/src/board.css"), "plugins/botling.board/board.css");
   // The in-page plugins this build ships (M7-10a): name and folder hash, built from src/renderer/plugins/* (the bundled ones are in the metafile's inputs).
   files.set(join(out, FE_MANIFEST_FILE), feBuildManifestFile(root));
-  sources.add(join(root, "fe-build-manifest.mjs"));
+  for (const file of ["fe-build-manifest.mjs", "fe-shell-manifest.mjs"]) sources.add(join(root, file));
   // The build's id, stamped in index.html and version.json (as the 2.x page does).
   const hash = createHash("sha256");
   for (const [file, contents] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
