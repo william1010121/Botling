@@ -548,11 +548,13 @@ export class Plugins {
       (line) => options.world.log(line),
       options.timing ?? DEFAULT_TIMING,
       options.onPid,
+      owner,
     );
     client.onPluginFailure = (plugin, message, fatal) => {
       // The host may have died: nobody listens until it says so again.
       this.followWorkspace();
-      const target = owner ? (plugin === null ? null : owner) : plugin;
+      // M5-18c + R4: a separate host always belongs to its owner, even when it dies or errors with nothing in flight.
+      const target = owner ?? plugin;
       if (!target) return;
       this.status.delete(target);
       if (this.takeover?.plugin === target) this.takeover = null;
