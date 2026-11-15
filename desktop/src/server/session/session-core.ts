@@ -387,6 +387,7 @@ export abstract class SessionCore {
         return;
       case "content.put": case "content.chunk": this.queueUpload(message); return;
       case "admin": void this.admin(message); return;
+      case "push.subscribe": if (this.kind.local) this.bye("role", "push.subscribe is only for a remote device session"); return;
       case "shell.done": this.host.shell.answer(this.shellWindow(), message); return;
       case "ping": return;
       case "bye": this.close(); return;

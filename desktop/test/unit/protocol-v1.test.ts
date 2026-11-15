@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ENTRY_KINDS, FRAME_LIMIT, FrameSplitter, GENESIS_HASH, MESSAGES, ROLE_TABLE, canonicalJson, decodeFrame, encodeFrame, entryHashInput,
-  outcomeOf, packFrame, queueKey, roleRefusal, slotKey, type Entry, type Message, type MessageType, type Sender, type SessionKind,
+  outcomeOf, packFrame, queueKey, roleRefusal, slotKey, toBase64Url, type Entry, type Message, type MessageType, type Sender, type SessionKind,
 } from "../../src/protocol";
 import { m2Samples, type M2Type } from "./protocol-m2-samples";
 
@@ -72,6 +72,7 @@ const samples: { [T in Exclude<MessageType, M2Type>]: { message: Extract<Message
   "shell.seal": { sender: "server", session: { local: true }, message: { t: "shell.seal", req: "s5", text: "plain" } },
   "shell.open": { sender: "server", session: { local: true }, message: { t: "shell.open", req: "s6", sealed: "c2VhbGVk" } },
   "shell.done": { sender: "fe", session: { local: true }, message: { t: "shell.done", req: "s1", ok: true, file: "/tmp/shot.png" } },
+  "push.subscribe": { sender: "fe", session: { local: false }, message: { t: "push.subscribe", endpoint: "https://push.example/sub/1", keys: { p256dh: toBase64Url(new Uint8Array(65).fill(9).map((b, i) => (i === 0 ? 4 : b))), auth: toBase64Url(new Uint8Array(16).fill(5)) } } },
   ping: { sender: "peer", message: { t: "ping", at: 1 } },
   bye: { sender: "fe", message: { t: "bye", reason: "closing" } },
 };

@@ -28,7 +28,7 @@
 //   more than `maxBuffered` waiting is dropped like a local front end that does not read; it re-attaches from cursors.
 // - Keepalive as the core does it: `ping` after 15 s of our silence, `bye{dead}` after 45 s heard nothing.
 import type { Command } from "../../contract";
-import { decodeFrame, encodeChunkFrame, encodeFrame, fromBase64Url, type CmdBody, type Message, type MessageOf, type Scope, type StreamId, type WireMessage } from "../../protocol";
+import { decodeFrame, encodeChunkFrame, encodeFrame, encodePushSubscription, fromBase64Url, type CmdBody, type Message, type MessageOf, type Scope, type StreamId, type WireMessage } from "../../protocol";
 import {
   BULK_FRAME_LIMIT, RELAY_BULK_FRAME_LIMIT, SessionLink,
   type Lane, type LocalStatic, type PeerClaim, type PeerDecision, type SessionEnd, type SessionInfo, type SessionLinkOptions, type SessionTransport, type TransportKind,
@@ -51,6 +51,7 @@ export interface RemoteRoster extends DeviceRoster {
   readonly clusterId: string | null;
   readonly view?: SessionRosterView;
   onChange(listener: (change: { invalidated: string[] }) => void): () => void;
+  writeProfile?(member: string, field: "push", value: string): Promise<unknown>;
 }
 
 /** The pairing service as remote sessions use it (server/pairing/service.ts). */
@@ -271,6 +272,12 @@ export class RemoteSession extends SessionCore {
       const refused = this.frameRefusal();
       if (refused) { this.bye(refused.reason, refused.detail); return; }
     }
+    if (this.state === "open" && message.t === "push.subscribe") {
+      const refused = this.frameRefusal();
+      if (refused) { this.bye(refused.reason, refused.detail); return; }
+      void this.pushSubscribe(message);
+      return;
+    }
     if (this.state === "open" && (message.t === "content.locate" || message.t === "content.ticket")) {
       const refused = this.frameRefusal();
       if (refused) { this.bye(refused.reason, refused.detail); return; }
@@ -292,6 +299,22 @@ export class RemoteSession extends SessionCore {
       return;
     }
     super.onMessage(message);
+  }
+
+  private async pushSubscribe(message: MessageOf<"push.subscribe">): Promise<void> {
+    const member = this.member;
+    const writeProfile = this.remote.roster.writeProfile;
+    if (!member || this.state !== "open" || !writeProfile) return;
+    try {
+      await writeProfile.call(this.remote.roster, member, "push", encodePushSubscription({ endpoint: message.endpoint, keys: message.keys }));
+    } catch (error) {
+      if (this.state === "open") {
+        const after = this.frameRefusal();
+        if (after) { this.bye(after.reason, after.detail); return; }
+      }
+      const reason = (error as { reason?: unknown })?.reason;
+      this.host.log(`session: push.subscribe not stored${typeof reason === "string" ? ` (${reason})` : ""}`);
+    }
   }
 
   private async remoteContent(message: MessageOf<"content.locate"> | MessageOf<"content.ticket">): Promise<void> {
