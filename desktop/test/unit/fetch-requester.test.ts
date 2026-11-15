@@ -422,6 +422,26 @@ describe("M5-07b: the requester receives a fetch", () => {
     expect(readFileSync(join(env.folderB, result.dest, "big.bin")).equals(payload)).toBe(true);
   });
 
+  it("4b2. the folder cannot be made again on the restart (a .bot/incoming swapped for a link): `local`, not the source's no, and nothing is written outside", async () => {
+    const env = await make({ resumeWindowMs: 5_000 });
+    writeFileSync(join(env.artifactsA, "big.bin"), deterministicBytes("lc2", 2 * FRAME));
+    const outside = join(env.root, "outside-restart");
+    mkdirSync(outside, { recursive: true });
+    let dropped = false;
+    env.setAfterDeliver((m) => {
+      if (m.t !== "fetch.grant" || dropped) return;
+      dropped = true;
+      env.drop();
+      rmSync(env.incoming(), { recursive: true, force: true });
+      symlinkSync(outside, env.incoming());
+    });
+    const pending = env.requester.fetch("bot-b", env.ka.memberId, artifact("big.bin"), "x", 10 * MiB);
+    await until(() => (dropped ? true : null), { timeout: 5_000, what: "drop" });
+    env.reconnect();
+    expect(await pending).toMatchObject({ ok: false, reason: "local" });
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
   it("4c. a session that does not come back within the window ends the fetch as unreachable and removes the partial files", async () => {
     const env = await make({ resumeWindowMs: 80 });
     writeFileSync(join(env.artifactsA, "big.bin"), deterministicBytes("gone", 4 * FRAME));
