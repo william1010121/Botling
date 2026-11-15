@@ -267,6 +267,10 @@ describe("botlingd answers Settings › Phone (in process, a local relay)", () =
     client.cmd(slot, { type: "mobile.pair" }, snap.logId);
     const refused = await client.wait(isResult(slot), "mobile.pair as a slot");
     expect(refused.outcome.kind).toBe("refused");
+    // Even one the 2.x core inside botlingd would answer (its own phone view) never runs under a slot.
+    const viewSlot: Slot = { ...slot, n: 2 };
+    client.cmd(viewSlot, { type: "mobile.view" }, snap.logId);
+    expect((await client.wait(isResult(viewSlot), "mobile.view as a slot")).outcome.kind).toBe("refused");
     const dbText = ["server.db", "server.db-wal"].map((name) => { try { return readFileSync(join(dataDir, name)).toString("latin1"); } catch { return ""; } }).join("");
     expect(dbText).not.toContain("#pair=");
     expect(dbText).not.toContain(parsed.secret);

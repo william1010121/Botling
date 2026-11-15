@@ -790,14 +790,10 @@ export abstract class SessionCore {
       this.send({ t: "res", req: message.req, ok: false, error: refused }, cmd.type);
       return;
     }
-    // A `local` command (botlingd's phone pairing) only from this machine's window (a device was refused above already).
-    const local = routeOf(cmd.type).kind === "local";
-    if (local && !this.kind.local) {
-      this.send({ t: "res", req: message.req, ok: false, error: { code: "forbidden", message: `${cmd.type} needs the desktop window on this machine` } }, cmd.type);
-      return;
-    }
     try {
-      const phone = local ? this.host.phone : undefined;
+      // A `local` command (botlingd's phone pairing) goes to botlingd's own desk only on this machine's socket (a device
+      // was refused above: admin scope).
+      const phone = this.kind.local && routeOf(cmd.type).kind === "local" ? this.host.phone : undefined;
       const result = phone?.handles(cmd.type) ? await phone.run(cmd) : await this.host.engine.run(cmd);
       this.sendRes({ t: "res", req: message.req, ok: true, result: result ?? null }, cmd.type);
     } catch (error) {
