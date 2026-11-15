@@ -18,7 +18,7 @@ import { coreProcessOptions, plainHostNode } from "../core/core-process";
 import { Core } from "../core/server";
 import { MAIN_BOT_ID, MAINTAINER_ID } from "../core/store/records";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "../core/store/data-dir-lock";
-import { fromBase64Url, type StreamId } from "../protocol";
+import { fromBase64Url, slotKey, type Outcome, type Slot, type StreamId } from "../protocol";
 import { backupCheckMs, DailyBackups } from "./backup-schedule";
 import { BotlingdEngine } from "./botlingd-engine";
 import { DbBotStores } from "./botstore";
@@ -252,6 +252,41 @@ export function peerRemoteMembers(roster: Pick<RosterStore, "view">, db: Db): Re
   return result;
 }
 
+/**
+ * This server's own name as its peers show it (M5-04c, U1): the roster member name of this server (what
+ * `peerRemoteMembers` calls a peer), else its machine row's name, else its server id. `SERVER_NAME` is the same
+ * constant on every server, so it alone would make B's bot read "From the main bot on This Mac" about itself.
+ */
+export function ownMachineName(roster: Pick<RosterStore, "memberId" | "view">, serverId: string, machineRowName: string): string {
+  return roster.view.members.get(roster.memberId)?.name?.trim().split(/\r?\n/)[0]?.trim() || machineRowName.trim() || serverId;
+}
+
+/**
+ * M5-04c: `CoreOptions.remoteCommand` on a `ServerOrigin`. `committed` is the slot being queued (`submit`); `outcome`
+ * the first thing the origin hears for that slot. The listener is on before `submit` so an outcome that comes first
+ * (a revoked owner ends at once) is not missed. Before the origin exists (it is built after the core) it rejects.
+ */
+export function remoteCommandVia(origin: Pick<ServerOrigin, "submit" | "on" | "outcome"> | null, target: string, cmd: Command) {
+  type Result = { ok: true } | { ok: false; why: string };
+  if (!origin) return { committed: Promise.reject(new Error("not ready")), outcome: Promise.resolve<Result>({ ok: false, why: "not ready" }) };
+  const answer = (outcome: Outcome): Result => outcome.kind === "applied" ? { ok: true }
+    : { ok: false, why: outcome.kind === "refused" ? outcome.detail ?? outcome.reason : outcome.kind };
+  let slot: Slot | null = null;
+  const early: Array<{ slot: Slot; outcome: Outcome }> = [];
+  let settle!: (result: Result) => void;
+  const outcome = new Promise<Result>((resolve) => { settle = resolve; });
+  const off = origin.on((heard, result) => {
+    if (!slot) { early.push({ slot: heard, outcome: result }); return; }
+    if (slotKey(heard) === slotKey(slot)) { off(); settle(answer(result)); }
+  });
+  const committed = origin.submit(target as Target, cmd).then((made) => {
+    slot = made;
+    const known = early.find((entry) => slotKey(entry.slot) === slotKey(made))?.outcome ?? origin.outcome(made);
+    if (known) { off(); settle(answer(known)); }
+  }, (error: unknown) => { off(); settle({ ok: false, why: (error as Error).message }); throw error; });
+  return { committed, outcome };
+}
+
 export interface BotlingdOptions {
   env: Record<string, string | undefined>;
   /** The built app's out/ folder (host/, agent/, builtin-plugins/). */
@@ -424,6 +459,7 @@ export class Botlingd {
       let pluginRead: PluginContentRead | null = null;
       const pendingBotWrites = new Map<string, { botId: string; at: number }>();
       let syncPlugins: (force?: boolean) => Promise<void> = async () => undefined;
+      let originRef: ServerOrigin | null = null;
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
@@ -447,6 +483,9 @@ export class Botlingd {
           },
         },
         remoteMembers: () => peerRemoteMembers(roster, hub.reader()),
+        // M5-04c: the origin is built below, after the core; a call before then is "not ready".
+        remoteCommand: (target, cmd) => remoteCommandVia(originRef, target, cmd),
+        machineName: () => ownMachineName(roster, serverId, SERVER_NAME),
         pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory, ids.main);
@@ -599,6 +638,7 @@ export class Botlingd {
         isRevoked: (peer) => !roster.view.valid.has(peer),
         subscribeTable: (stream, sink) => feeds.subscribe(stream, null, sink), log,
       });
+      originRef = serverOrigin;
       roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
