@@ -43,7 +43,14 @@ type Obj = Record<string, any>;
 const obj = (v: unknown): Obj => v && typeof v === "object" && !Array.isArray(v) ? v as Obj : {};
 const str = (v: unknown): string => typeof v === "string" ? v : "";
 const json = (v: unknown): string => typeof v === "string" ? v : v === undefined ? "" : JSON.stringify(v);
-type Pending = { resolve(value: Obj): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> };
+type Pending = { method: string; resolve(value: Obj): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> };
+/**
+ * What `session/load` says when the conversation is not in this profile's GEMINI_HOME (ACP error -32002), as the head's
+ * failure text. Unlike any other failed resume (auth, a timeout) the conversation can never come back by itself, so the
+ * bot may start a new one (`isAgyConversationGone`); every other failure keeps the identity and retries it.
+ */
+export const AGY_CONVERSATION_GONE = "Antigravity conversation not found in this profile (ACP -32002).";
+export const isAgyConversationGone = (failure: string) => failure.includes(AGY_CONVERSATION_GONE);
 
 /** Tested independently from process launch: no prompt is sent before the entire handshake. */
 export class AgyAcpProtocol {
@@ -91,7 +98,7 @@ export class AgyAcpProtocol {
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`ACP ${method} timed out.`)); }, timeout);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { method, resolve, reject, timer });
       this.write({ jsonrpc: "2.0", id, method, params });
     });
   }
@@ -244,7 +251,8 @@ export class AgyAcpProtocol {
         if (!pending) throw new Error("Unexpected ACP response.");
         this.pending.delete(message.id); clearTimeout(pending.timer);
         // Avoid relaying authentication URLs/codes or secrets in server error details.
-        if (message.error) pending.reject(new Error(`ACP request failed (${Number(message.error.code) || "protocol error"}). Conversation retained; check ACP authentication and availability.`));
+        if (message.error && pending.method === "session/load" && Number(message.error.code) === -32002) pending.reject(new Error(AGY_CONVERSATION_GONE));
+        else if (message.error) pending.reject(new Error(`ACP request failed (${Number(message.error.code) || "protocol error"}). Conversation retained; check ACP authentication and availability.`));
         else pending.resolve(obj(message.result));
         return;
       }

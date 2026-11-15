@@ -4,6 +4,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { folderHash } from "../../core/plugins/catalog";
 import type { InstalledPlugin } from "../../core/plugins/registry";
+import { bundleOfPlugin, pruneWebBundles } from "../content/plugin-bundle";
 import { carryFactsOf, carryPluginGrant, type CarryFacts } from "./plugin-grant-carry";
 import { RowKey, type AuditRow, type PluginGrant, type PluginRow, type Tier } from "../../protocol/table-rows";
 import type { Db } from "../store";
@@ -37,12 +38,16 @@ export interface InstalledPluginInput {
   writtenBy?: { botId: string; at?: number };
   /** Permissions, parts and source, for carrying a grant across an update (plugin-grant-carry.ts); none: no carry. */
   facts?: CarryFacts;
+  /** M7-09a: the row's `files`: one content reference to the built web part (`web`); none: the row has no `files`. */
+  files?: { web: string };
 }
 
 export interface InstalledFromRegistryOptions {
   log?: (line: string) => void;
   /** Author assigned to non-built-in plugins (defaults to `"user"`; 2.x import passes `"import"`). */
   author?: Exclude<PluginRow["author"], "builtin">;
+  /** M7-09a: where the web bundles are kept (`<dataDir>/plugin-bundles`); none: rows carry no `files.web`. */
+  bundlesDir?: string;
   /** Plugin data root (`<dataDir>/plugin-data`); non-built-ins with non-empty data ask `"write"`. */
   dataRoot?: string;
 }
@@ -156,6 +161,8 @@ export function folderStatSignature(dir: string): string | null {
 export interface PluginHashCacheOptions {
   hashFolder?: (folder: string) => string;
   statSignature?: (folder: string) => string | null;
+  /** M7-09a: where the web bundles are kept (`<dataDir>/plugin-bundles`); none: rows carry no `files.web`. */
+  bundlesDir?: string;
   /** Plugin data root (`<dataDir>/plugin-data`); non-built-ins with non-empty data ask `"write"`. */
   dataRoot?: string;
 }
@@ -175,12 +182,14 @@ export class PluginHashCache {
   private readonly hashFolder: (folder: string) => string;
   private readonly statFolder: (folder: string) => string | null;
   private readonly dataRoot: string | undefined;
+  private readonly bundlesDir: string | undefined;
   private cache = new Map<string, CachedPluginHash>();
 
   constructor(options: PluginHashCacheOptions = {}) {
     this.hashFolder = options.hashFolder ?? folderHash;
     this.statFolder = options.statSignature ?? folderStatSignature;
     this.dataRoot = options.dataRoot;
+    this.bundlesDir = options.bundlesDir;
   }
 
   /** Stat-only signature across `plugins`; returns null if any plugin folder could not be stat-scanned. */
@@ -200,6 +209,7 @@ export class PluginHashCache {
   read(plugins: readonly InstalledPlugin[], log?: (line: string) => void): InstalledPluginInput[] {
     const out: InstalledPluginInput[] = [];
     const nextCache = new Map<string, CachedPluginHash>();
+    let published = false;
     for (const plugin of plugins) {
       const permissions = plugin.manifest.ccb?.permissions ?? [];
       const permissionsKey = JSON.stringify(permissions);
@@ -227,12 +237,15 @@ export class PluginHashCache {
         log?.(`plugin row skipped: failed to hash ${plugin.manifest.name} (${String((error as Error)?.message ?? error)})`);
         continue;
       }
+      const bundle = this.bundlesDir ? bundleOfPlugin(this.bundlesDir, plugin.folder, plugin.manifest.ccb?.web, log) : null;
+      if (bundle) published = true;
       const input: InstalledPluginInput = {
         name: plugin.manifest.name,
         codeHash,
         manifest: manifestAsks(permissions, { hasData }),
         author: plugin.builtIn ? "builtin" : "user",
         facts: carryFactsOf(plugin),
+        ...(bundle ? { files: { web: bundle.ref } } : {}),
       };
       if (statSig !== null) {
         nextCache.set(plugin.manifest.name, {
@@ -248,6 +261,8 @@ export class PluginHashCache {
       out.push(input);
     }
     this.cache = nextCache;
+    // New bundles were kept: those no row names any more go (an old version of a web part).
+    if (published && this.bundlesDir) pruneWebBundles(this.bundlesDir, new Set(out.flatMap((input) => (input.files ? [input.files.web] : []))));
     return out;
   }
 }
@@ -271,12 +286,14 @@ export function installedFromRegistry(
       continue;
     }
     const hasData = !plugin.builtIn && opts.dataRoot ? hasPluginData(opts.dataRoot, plugin.manifest.name) : false;
+    const bundle = opts.bundlesDir ? bundleOfPlugin(opts.bundlesDir, plugin.folder, plugin.manifest.ccb?.web, opts.log) : null;
     out.push({
       name: plugin.manifest.name,
       codeHash,
       manifest: manifestAsks(plugin.manifest.ccb?.permissions ?? [], { hasData }),
       author: plugin.builtIn ? "builtin" : nonBuiltInAuthor,
       facts: carryFactsOf(plugin),
+      ...(bundle ? { files: { web: bundle.ref } } : {}),
     });
   }
   return out;
@@ -371,6 +388,7 @@ export function reconcilePluginRows(
       codeHash: plugin.codeHash,
       manifest: plugin.manifest,
       author,
+      ...(plugin.files ? { files: { web: plugin.files.web } } : {}),
       grants,
     };
     const rev = putRow(tx, stream, key, body);
