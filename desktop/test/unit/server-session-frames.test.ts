@@ -7,8 +7,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  decodeFrame, encodeFrame, encodeResFrames, FRAME_LIMIT, FrameSplitter, packFrame, RES_PART_CHARS, ResAssembler,
-  type Message, type MessageOf,
+  BINARY_FRAME_MARK, CONTENT_CHUNK_BYTES, decodeFrame, encodeFrame, encodeResFrames, FRAME_LIMIT, FrameSplitter,
+  packFrame, RES_PART_CHARS, ResAssembler, type Message, type MessageOf,
 } from "../../src/protocol";
 import { Session, type SessionHost } from "../../src/server/session/session";
 
@@ -24,21 +24,27 @@ class FakeSocket extends EventEmitter {
   write(bytes: Uint8Array): boolean { this.writes.push(bytes); return true; }
   end(): void { /* the session closes itself */ }
   destroy(): void { this.destroyed = true; }
-  /** Every frame written so far, decoded as a front end would (no role or size check skipped). */
-  frames(): Message[] {
+  /** Raw length-prefixed frames written so far, before decoding. */
+  rawFrames(): Uint8Array[] {
     const splitter = new FrameSplitter();
-    const out: Message[] = [];
+    const out: Uint8Array[] = [];
     for (const chunk of this.writes) {
       const split = splitter.push(chunk);
       if (!split.ok) throw new Error(split.detail);
       for (const frame of split.frames) {
         expect(frame.length).toBeLessThanOrEqual(FRAME_LIMIT);
-        const decoded = decodeFrame(frame, "server", LOCAL);
-        if (!decoded.ok) throw new Error(decoded.detail);
-        out.push(decoded.message);
+        out.push(frame);
       }
     }
     return out;
+  }
+  /** Every frame written so far, decoded as a front end would (no role or size check skipped). */
+  frames(): Message[] {
+    return this.rawFrames().map((frame) => {
+      const decoded = decodeFrame(frame, "server", LOCAL);
+      if (!decoded.ok) throw new Error(decoded.detail);
+      return decoded.message;
+    });
   }
   feed(message: Message): void {
     const encoded = encodeFrame(message, "fe", LOCAL);
@@ -48,7 +54,7 @@ class FakeSocket extends EventEmitter {
 }
 
 let hubSend: ((message: Message) => void) | null = null;
-function open(run: (cmd: { type: string }) => Promise<unknown>): { socket: FakeSocket; session: Session; log: string[] } {
+function open(run: (cmd: { type: string }) => Promise<unknown>, extra: Partial<SessionHost> = {}): { socket: FakeSocket; session: Session; log: string[] } {
   const log: string[] = [];
   const host = {
     serverId: "server-1", serverName: "Mac", startedAt: 0, minFeVersion: "3.0.0", token: () => TOKEN,
@@ -57,6 +63,7 @@ function open(run: (cmd: { type: string }) => Promise<unknown>): { socket: FakeS
     runtime: {}, engine: { run }, content: null,
     shell: { attach() {}, detach() {}, answer() {} },
     nextFor: () => ({}), ensureBotStream: async () => false, log: (text: string) => log.push(text),
+    ...extra,
   } as unknown as SessionHost;
   const socket = new FakeSocket();
   const session = new Session(socket as never, host, { helloTimeoutMs: 60_000, pingAfterMs: 60_000, deadAfterMs: 120_000 });
@@ -142,9 +149,81 @@ describe("no frame over the limit is attempted silently", () => {
     const uses = files.flatMap((file) => readFileSync(file, "utf8").split("\n").map((text, i) => ({ file: file.slice(root.length + 1), line: i + 1, text })))
       .filter(({ text }) => /packFrame\(|socket\.(write|end)\([^)]/.test(text) && !text.trim().startsWith("//") && !text.includes("import "));
     expect(uses.map(({ file, text }) => `${file}: ${text.trim()}`)).toEqual([
-      "session/session.ts: packed = texts.map((text) => packFrame(text));",
+      "session/session.ts: packed = frames.map((frame) => packFrame(frame));",
       "session/session.ts: for (const frame of packed) this.socket.write(frame);",
     ]);
+  });
+});
+
+describe("M4-01a: local peer content over Session", () => {
+  it("falls back to peerLocate on content.find ref: null and writes text content.meta + binary content.chunk", async () => {
+    const contentId = `sha256:${"a".repeat(64)}`;
+    const peerRef = { owner: "peer-server-1", id: contentId, type: "text/plain", state: "ready" as const, entry: { stream: "bot:b1" as const, seq: 3 }, size: 10 };
+    const chunkBytes = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const fakeReads = {
+      async get(_session: object, m: MessageOf<"content.get">, sink: { send(msg: Message): boolean; chunk(msg: MessageOf<"content.chunk">): boolean }) {
+        sink.send({ t: "content.meta", req: m.req, id: m.id, size: 10, type: "text/plain", chunkSize: CONTENT_CHUNK_BYTES, variants: [] });
+        sink.chunk({ t: "content.chunk", req: m.req, offset: 0, bytes: chunkBytes });
+      },
+      credit() {},
+      cancel() {},
+      closeSession() {},
+    };
+    const { socket, session } = open(async () => null, {
+      content: { handle: async (m: MessageOf<"content.find">) => ({ t: "content.found", req: m.req, ref: null }) } as SessionHost["content"],
+      peerLocate: async () => peerRef,
+      peerReads: () => fakeReads as never,
+    });
+    socket.feed({ t: "content.find", req: "f1", botId: "b1", line: "line-1", url: "file:///tmp/x.txt" });
+    socket.feed({ t: "content.get", req: "g1", owner: "peer-server-1", id: contentId, variant: "original", offset: 0, length: 10, entry: peerRef.entry });
+    await settle();
+
+    const raws = socket.rawFrames();
+    const decoded = raws.map((raw) => ({ raw, msg: decodeFrame(raw, "server", LOCAL) }));
+    const found = decoded.find((d) => d.msg.ok && d.msg.message.t === "content.found");
+    expect(found?.msg).toEqual({
+      ok: true,
+      message: { t: "content.found", req: "f1", ref: { owner: "peer-server-1", id: contentId, type: "text/plain", state: "ready", entry: peerRef.entry } },
+    });
+
+    const meta = decoded.find((d) => d.msg.ok && d.msg.message.t === "content.meta");
+    expect(meta?.raw[0]).not.toBe(BINARY_FRAME_MARK);
+    expect(meta?.msg).toEqual({
+      ok: true,
+      message: { t: "content.meta", req: "g1", id: contentId, size: 10, type: "text/plain", chunkSize: CONTENT_CHUNK_BYTES, variants: [] },
+    });
+
+    const chunk = decoded.find((d) => d.msg.ok && d.msg.message.t === "content.chunk");
+    expect(chunk?.raw[0]).toBe(BINARY_FRAME_MARK);
+    expect(chunk?.msg).toEqual({
+      ok: true,
+      message: { t: "content.chunk", req: "g1", offset: 0, bytes: chunkBytes },
+    });
+    session.close();
+  });
+
+  it("closes open peer reads on session.close() and answers content.gone{offline} when peerReads is absent", async () => {
+    const closed: object[] = [];
+    const fakeReads = {
+      async get() {},
+      credit() {},
+      cancel() {},
+      closeSession(s: object) { closed.push(s); },
+    };
+    const { session: s1 } = open(async () => null, { peerReads: () => fakeReads as never });
+    s1.close();
+    expect(closed).toEqual([s1]);
+
+    const { socket, session: s2 } = open(async () => null);
+    socket.feed({
+      t: "content.get", req: "g2", owner: "peer-server-1", id: `sha256:${"b".repeat(64)}`,
+      variant: "original", offset: 0, length: 10, entry: { stream: "bot:b1", seq: 1 },
+    });
+    await settle();
+    expect(socket.frames().find((f) => f.t === "content.gone")).toEqual({
+      t: "content.gone", req: "g2", id: `sha256:${"b".repeat(64)}`, reason: "offline",
+    });
+    s2.close();
   });
 });
 

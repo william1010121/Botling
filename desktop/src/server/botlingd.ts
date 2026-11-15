@@ -24,7 +24,8 @@ import { BotlingdEngine } from "./botlingd-engine";
 import { DbBotStores } from "./botstore";
 import { ContentService } from "./content";
 import { ChunkCache, PeerCacheBudget } from "./content/chunk-cache";
-import { PeerContent, PeerContentOwner } from "./content/peer-content";
+import { LocalPeerReads } from "./content/local-peer-read";
+import { LOCAL_WINDOW, PeerContent, PeerContentOwner } from "./content/peer-content";
 import { RemoteContent } from "./content/remote";
 import { Uploads } from "./content/put";
 import { ContentTickets } from "./content/tickets";
@@ -349,6 +350,7 @@ export class Botlingd {
           return true;
         },
       });
+      let localReads: LocalPeerReads | null = null;
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
@@ -392,6 +394,8 @@ export class Botlingd {
           open: (stream, cursor, sink, live) => passThrough.open(stream, cursor, sink, live ?? null),
           history: (request, sink) => passThrough.history(request, sink),
         },
+        peerReads: () => localReads,
+        peerLocate: (m) => peerContent.locate(LOCAL_WINDOW, m),
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
@@ -411,6 +415,7 @@ export class Botlingd {
         readable: deviceReadable,
         followed: (stream) => followed().has(stream),
       });
+      localReads = new LocalPeerReads({ peer: peerContent, self: serverId, log });
       const peerContentOwner = new PeerContentOwner({ service: content, roster, log, corruptId: testCorruptContent(env) });
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
       const remoteContent = new RemoteContent({ service: content, tickets, roster, log, peer: peerContent });
