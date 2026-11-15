@@ -49,6 +49,10 @@ const encoder = new TextEncoder();
 /** The roster as remote sessions use it: devices, the cluster, and changes. */
 export interface RemoteRoster extends DeviceRoster {
   readonly clusterId: string | null;
+  readonly view?: {
+    readonly revoked: ReadonlySet<string>;
+    readonly members: ReadonlyMap<string, { readonly kind: "server" | "device"; readonly keys: { readonly sign: string; readonly dh: string } }>;
+  };
   onChange(listener: (change: { invalidated: string[] }) => void): () => void;
 }
 
@@ -111,11 +115,16 @@ export interface RemoteSessionOptions extends SessionOptions {
 }
 
 /** The roster check of a handshake claim. Reads only: the claim is not proven when it runs. */
-export function devicePeerCheck(roster: DeviceRoster, claim: PeerClaim): PeerDecision {
+export function devicePeerCheck(roster: DeviceRoster | RemoteRoster, claim: PeerClaim): PeerDecision {
   if (claim.mode !== "ik") return { ok: false, detail: "devices dial in IK" };
   const device = roster.device(claim.memberId);
-  if (!device) return { ok: false, detail: "not a valid device" };
-  const dh = fromBase64Url(device.keys.dh);
+  // D73: a known, revoked device key finishes the handshake to prove it holds the key, then gets bye{revoked}.
+  const revokedMember = !device && "view" in roster && roster.view?.revoked.has(claim.memberId)
+    ? roster.view.members.get(claim.memberId)
+    : null;
+  const known = device ?? (revokedMember?.kind === "device" ? revokedMember : null);
+  if (!known) return { ok: false, detail: "not a valid device" };
+  const dh = fromBase64Url(known.keys.dh);
   if (!dh) return { ok: false, detail: "the roster's key is malformed" };
   if (dh.length !== claim.dhPub.length || dh.some((byte, i) => byte !== claim.dhPub[i])) return { ok: false, detail: "another key than the roster's" };
   return { ok: true };
@@ -169,7 +178,11 @@ export class RemoteSession extends SessionCore {
   private onEstablished(info: SessionInfo): void {
     if (info.mode === "pair") { this.adoptPair(info); return; }
     this.adopt(info);
-    if (this.state !== "closed") this.startTimers();
+    if (this.state === "closed") return;
+    // D73: a known, revoked device proved its key in the handshake; send bye{revoked} and close without opening.
+    const refused = this.frameRefusal();
+    if (refused) { this.bye(refused.reason, refused.detail); return; }
+    this.startTimers();
   }
 
   private adopt(info: SessionInfo): void {
@@ -257,6 +270,10 @@ export class RemoteSession extends SessionCore {
   }
 
   protected onMessage(message: Message): void {
+    if (this.state === "hello") {
+      const refused = this.frameRefusal();
+      if (refused) { this.bye(refused.reason, refused.detail); return; }
+    }
     if (this.state === "open" && (message.t === "content.locate" || message.t === "content.ticket")) {
       const refused = this.frameRefusal();
       if (refused) { this.bye(refused.reason, refused.detail); return; }

@@ -200,10 +200,12 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     let media: MediaBroker | null = null;
     let uploads: PageUploads | null = null;
     let bridge: SwBridge | null = null;
-    // This device was removed from the roster (unpaired or revoked on the computer): the server says so with
-    // `bye{revoked}` while connected, and what the page cached goes at once (§9A.6); pairing again is the user's
-    // choice. A revocation made while the page was away is not told: the server refuses the handshake silently.
-    const revoked = (why: string) => { media?.dropCached(); void clearCachedContent(why); };
+    // D73: this device was removed from the roster (unpaired or revoked on the computer): the server says so with
+    // `bye{revoked}` (both while connected and on later handshakes), what the page cached goes at once (§9A.6), the
+    // outbox stays unsent, and the banner tells the user to pair again.
+    let deviceRevoked = false;
+    let updateBanner: (() => void) | null = null;
+    const revoked = (why: string) => { deviceRevoked = true; media?.dropCached(); void clearCachedContent(why); updateBanner?.(); };
     const applyPath = (nextPath: DialPath) => {
       if (cancelled) return;
       setPath(nextPath);
@@ -227,18 +229,21 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       return openConnection(device, diagnostics, location.href, {
         ...(forcedPath ? { forcedPath } : {}),
         onPath: applyPath,
+        onRevoked: () => revoked("revoked (bye)"),
         ...(reprobeIntervalMs !== undefined ? { reprobeIntervalMs } : {}),
       });
     })().then((conn) => {
       if (cancelled) { void conn.close(); return; }
       opened = conn;
-      conn.link.on((event) => { if (event.type === "bye" && event.reason === "revoked") revoked("revoked (bye)"); });
+      if (conn.revoked) deviceRevoked = true;
       const update = () => {
-        const text = bannerText(conn.link.status, conn.link.pending(), conn.link.servers());
+        const text = bannerText(conn.link.status, conn.link.pending(), conn.link.servers(), deviceRevoked);
         const last = diagnostics.banners[diagnostics.banners.length - 1];
         if (text && last !== text) { diagnostics.banners.push(text); if (diagnostics.banners.length > 200) diagnostics.banners.shift(); }
-        setBanner({ text, state: conn.link.status.state === "live" && text ? "peer" : conn.link.status.state });
+        setBanner({ text, state: deviceRevoked ? "needs pairing" : conn.link.status.state === "live" && text ? "peer" : conn.link.status.state });
       };
+      updateBanner = update;
+      conn.link.on((event) => { if (event.type === "bye" && event.reason === "revoked") revoked("revoked (bye)"); });
       conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome" || event.type === "servers") update(); });
       // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
       const frame = () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null;
@@ -279,7 +284,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       if (target.closest?.(".rail .rail-toggle")) { event.preventDefault(); event.stopPropagation(); setNavOpen(false); return; }
       if (target.closest?.(".bot-row, .strip-bot, .subagent-open")) setNavOpen(false);
     }}>
-    {banner.text && <div className="v3-conn" role="status" data-state={banner.state} data-path={path} data-testid="conn-banner">{banner.text}{path === "relay" ? " · via relay" : ""}</div>}
+    {banner.text && <div className="v3-conn" role="status" data-state={banner.state} data-path={path} data-testid="conn-banner">{banner.text}{path === "relay" && banner.state !== "needs pairing" ? " · via relay" : ""}</div>}
     <div id="v3-renderer" className="v3-renderer" ref={rendererRoot} />
     {failure && <div className="banner bottom web-banner" role="alert">{failure}</div>}
     <div className="web-scrim" aria-hidden="true" onClick={() => setNavOpen(false)} />
