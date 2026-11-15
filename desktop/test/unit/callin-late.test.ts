@@ -616,6 +616,7 @@ describe("fu-callin-outbox: a late reply's line is staged with its consume and p
   it("22. rows are keyed by a legal callId only, are swept when expired or damaged, and a damaged row posts nothing", async () => {
     fakeClock();
     const first = await start();
+    await first.h.settle(); // the start-time drain (nothing yet) is over: it would post the rows below through this runtime
     const now = Date.now();
     const put = (key: string, value: unknown) => first.h.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run(key, typeof value === "string" ? value : JSON.stringify(value));
     const good = { chatId: HOST, guestBotId: GUEST, guestName: "build", text: "x", engine: "claude", at: now, until: now + 1_000 };
@@ -626,7 +627,7 @@ describe("fu-callin-outbox: a late reply's line is staged with its consume and p
     put(`${LATE_PREFIX}fine-1`, good);
     const second = await start({ h: await first.h.restart({ bots: ["MAIN", HOST] }) });
     open.push(second.h);
-    await until(() => second.lates.length === 1).catch((error) => { throw new Error(`${(error as Error).message}: lates ${JSON.stringify(second.lates)} rows ${JSON.stringify(lateRows(second.h))} logs ${JSON.stringify(second.h.logs)}`); });
+    await until(() => second.lates.length === 1);
     await second.h.settle();
     expect(second.lates.map((entry) => entry.callId)).toEqual(["fine-1"]);
     expect(lateRows(second.h)).toEqual([]);

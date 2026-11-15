@@ -131,7 +131,7 @@ describe("fu-callin-outbox: an interrupted call-in is not answered before its ho
     first.runtime.callIns.attach(markerSender().sender);
     await first.send(ask("call-7"), { origin: ORIGIN });
     for (let i = 0; i < 200 && first.engine.callIns.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(rowsOf(first)).toEqual([["started", undefined]]);
+    expect(rowsOf(first)).toEqual([["started", false]]);
     // The kill and the restart: the server attaches the guest while `peers.start()` has not run (the directory knows no peer).
     const second = await first.restart({ bots: ["MAIN", GUEST] });
     open.push(second);
@@ -144,7 +144,7 @@ describe("fu-callin-outbox: an interrupted call-in is not answered before its ho
     expect(calls).toBe(0);
     expect(s.done).toEqual([]);
     expect(queued(second)).toEqual([]);
-    expect(rowsOf(second)).toEqual([["interrupted", undefined]]); // not marked answered: nothing lost
+    expect(rowsOf(second)).toEqual([["interrupted", false]]); // not marked answered: nothing lost
     expect(second.logs.filter((line) => /wait for their host's server/.test(line))).toHaveLength(1);
     // The peers come up (the roster changed): the one failed answer goes out, in one transaction with the mark.
     known = true;
