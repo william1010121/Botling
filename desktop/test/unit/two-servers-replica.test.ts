@@ -21,7 +21,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FrameSplitter, packFrame, type Message, type MessageOf, type Slot, type WireMessage } from "../../src/protocol";
 import { decodeWireFrame, encodeFrame } from "../../src/protocol/frame";
 import type { Rows } from "../../src/protocol/table-rows";
-import { MAIN } from "../botlingd-harness";
+import { mainBotOf } from "../botlingd-harness";
 import { until } from "../helpers";
 import type { FaultProxy } from "../support/fault-proxy";
 import { makeCluster, profile, readServerKeys, writeStatements, type MemberKeysInfo } from "../support/peer-cluster";
@@ -207,6 +207,7 @@ afterAll(async () => { await cluster?.cleanup(); }, 60_000);
 
 describe("M3 step 7: summary replication between botlingd", () => {
   it("A holds B's and C's srv: tables equal to theirs; a real turn on B reaches A's copy; FEs on A see the peers", async () => {
+    const MAIN = mainBotOf(b.dataDir); // B's own main bot (each server mints its own, M5-04g)
     const copyB = await copyEqual(a, b, streamB, "A's copy of B");
     expect(Object.keys(copyB)).toEqual(expect.arrayContaining([`bot:${MAIN}`, "machine"]));
     await copyEqual(a, c, streamC, "A's copy of C (third server)");

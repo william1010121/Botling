@@ -102,6 +102,7 @@ describe("M4-43 web-v3 unsettled UI", () => {
           device: DEVICE,
           connection: conn,
           path: "direct",
+          serverId: DEVICE.server.memberId,
           onClose: () => undefined,
           onForget: () => undefined,
         }));
