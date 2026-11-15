@@ -466,7 +466,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (bot && bot.unread > 0) void client.request({ type: "chat.read", botId: bot.id }).catch(() => {});
   }, [client, bot]);
 
-  return <ShellFrame plugins={view.plugins} legacy={(
+  return <ShellFrame plugins={view.plugins} client={client} legacy={(
     <div className={`shell${paneOpen ? " browser-on" : ""}${browserFull ? " browser-full" : ""}${browserDocked ? " browser-mini" : ""}${browserFloat ? " browser-float" : ""}`} data-ready={view.ready ? "1" : "0"}>
       {/* A panel a plugin's program part opened (`ui.openView`). */}
       {!web && view.pluginPanel && (

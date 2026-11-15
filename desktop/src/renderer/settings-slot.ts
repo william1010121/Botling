@@ -1,15 +1,13 @@
-// Where Settings gets its core pages (M7-02c): from the `settings/section` slot of the renderer's kernel, where the settings plugin
-// (plugins/settings/index.ts) registered them. `coreSettings()` answers what Settings draws:
-//   - the plugin is up: the groups its registrations make, in registration order (the slot also holds plugins' own pages as feed
-//     rows; they are not core pages and are left to `settingsNav`'s plugin pages);
-//   - the shell's host refused it, it failed to load or it was unloaded (shell/inpage-host.ts): no pages and `unavailable`: Settings
-//     shows the shell's "unavailable" line, not a blank page;
-//   - the host never touched it (a page drawn without a shell, a component test): the plugin's own data, the same pages.
+// Where Settings gets its core pages (M7-02c, M7-02d): from the `settings/section` slot of the renderer's kernel, where the settings
+// plugin (plugins/settings/index.ts) registered them. `coreSettings()` answers what Settings draws:
+//   - the plugin has registered pages: the groups its registrations make, in registration order (the slot also holds plugins' own
+//     pages as feed rows; they are not core pages: settings-feed.ts gives those);
+//   - none: no pages and `unavailable`: Settings shows the shell's "unavailable" line, not a blank page. This is the answer for every
+//     way the plugin can be away (never loaded, refused, failed to load, unloaded by the host or by the kernel): nothing is drawn from
+//     data the plugin did not register.
 import { useMemo, useSyncExternalStore } from "react";
 import type { Kernel } from "../../../Web/src/plugin-kernel";
 import { rendererKernel, slotsVersion, subscribeSlots } from "./renderer-kernel";
-import { inPageHost, type InPageHost } from "./shell/inpage-host";
-import { SETTINGS_GROUPS } from "./plugins/settings/pages";
 import { SECTION_SLOT, SETTINGS_PLUGIN, type SettingsPageEntry } from "./settings-names";
 import type { SettingsCoreGroup } from "./settings-pages";
 
@@ -28,11 +26,9 @@ export function registeredCoreGroups(kernel: Kernel = rendererKernel): SettingsC
   return groups;
 }
 
-export function coreSettings(kernel: Kernel = rendererKernel, host: Pick<InPageHost, "unavailable"> = inPageHost): CoreSettings {
+export function coreSettings(kernel: Kernel = rendererKernel): CoreSettings {
   const groups = registeredCoreGroups(kernel);
-  if (groups.length) return { groups, unavailable: false };
-  if (host.unavailable(SETTINGS_PLUGIN)) return { groups: [], unavailable: true };
-  return { groups: SETTINGS_GROUPS, unavailable: false };
+  return groups.length ? { groups, unavailable: false } : { groups: [], unavailable: true };
 }
 
 /** `coreSettings()`, drawn again when the kernel's slots or the host's answer change. */

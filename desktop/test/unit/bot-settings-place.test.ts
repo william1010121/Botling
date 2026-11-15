@@ -5,11 +5,16 @@
 // of the Settings sheet, which holds Botling's own settings only.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { RightPanel, type RightPanelProps } from "../../src/renderer/RightPanel";
 import { SettingsSheet } from "../../src/renderer/Settings";
 import type { Client } from "../../src/renderer/client";
 import type { BotView } from "../../src/contract";
+import { loadSettingsShell, type SettingsShell } from "../settings-shell";
+// Settings draws only from the settings plugin's slots (M7-02d): a test that renders it loads the plugin as the shell does.
+let settingsShell: SettingsShell;
+beforeEach(async () => { settingsShell = await loadSettingsShell(); });
+afterEach(async () => { await settingsShell.stop(); });
 
 const bot = {
   id: "main", name: "Main bot", role: "main", heads: ["claude"], phase: "awake", working: false, approvals: 0, unread: 0,
