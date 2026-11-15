@@ -27,7 +27,17 @@ export interface BotlingdEngineOptions {
 export class BotlingdEngine implements TurnEngine {
   private readonly running = new Map<string, RunningLine>();
 
-  constructor(private readonly inner: TurnEngine, private readonly options: BotlingdEngineOptions = {}) {}
+  /**
+   * M5-02b: a guest's turn for a call-in from another server. The wrapper must hand it on: without it `CallInGuest` found no
+   * `callInTurn` on the engine botlingd gave it and answered every call-in "this machine cannot take call-ins" (found by
+   * M5-03b's two-process test; the M5-02b tests drove `CoreEngine` and the fake engine directly). Present only when the
+   * inner engine has it, as the guest's check (`!engine.callInTurn`) needs.
+   */
+  readonly callInTurn?: TurnEngine["callInTurn"];
+
+  constructor(private readonly inner: TurnEngine, private readonly options: BotlingdEngineOptions = {}) {
+    if (inner.callInTurn) this.callInTurn = (guestId, prompt, onBegin, callOptions) => inner.callInTurn!(guestId, prompt, onBegin, callOptions);
+  }
 
   attach(host: EngineHost): void {
     this.inner.attach({
