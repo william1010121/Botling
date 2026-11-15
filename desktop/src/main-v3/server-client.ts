@@ -112,6 +112,24 @@ export class ServerClient {
     return this.link.content(message);
   }
 
+  /** Content reads over the session (§9A.4, M4-01b): `content.get` / `.credit` / `.cancel` and `onContent`. */
+  postContent(message: Parameters<FeLink["postContent"]>[0]): boolean {
+    return this.link?.postContent(message) ?? false;
+  }
+
+  onContent(req: string, listener: Parameters<FeLink["onContent"]>[1]): () => void {
+    if (!this.link) return () => {};
+    return this.link.onContent(req, listener);
+  }
+
+  newReq(): string {
+    return this.link ? this.link.newReq() : `detached.${++this.counter}`;
+  }
+
+  attachedServerId(): string | null {
+    return this.link?.attachedServerId() ?? null;
+  }
+
   get script(): string { return this.options.script; }
   private get clock(): Clock { return this.deps.clock ?? systemClock; }
 

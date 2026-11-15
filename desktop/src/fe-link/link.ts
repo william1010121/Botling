@@ -395,6 +395,8 @@ export class FeLink {
   /** A read on the session (no slot, §11.1). Rejects when the session ends first. */
   /** The id the server told in its last `welcome` (srv: targets need it); null before the first. */
   get server(): string | null { return this.serverId; }
+  /** The server id the link is attached to (M4-01b); null before the first welcome. */
+  attachedServerId(): string | null { return this.serverId; }
 
   request(cmd: Command): Promise<unknown> {
     return this.ask({ t: "req", req: this.nextReq(), cmd }, "res");

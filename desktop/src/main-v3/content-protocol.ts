@@ -19,7 +19,8 @@ import { constants } from "node:fs";
 import { open, stat, type FileHandle } from "node:fs/promises";
 import { basename } from "node:path";
 import { attachmentLine, attachmentTarget } from "../contract/attachment-url";
-import { CONTENT_CHUNK_BYTES, type MessageOf, type StreamId } from "../protocol";
+import type { ContentReadMessage } from "../fe-link";
+import { CONTENT_CHUNK_BYTES, CONTENT_CREDIT_LIMIT, type MessageOf, type StreamId } from "../protocol";
 import { fileHeaders, previewResponse, rangedResponse } from "../main/preview-response";
 
 export const CONTENT_SCHEME = "botling-content";
@@ -34,9 +35,27 @@ type ContentFile = MessageOf<"content.file">;
 type GoneReason = MessageOf<"content.gone">["reason"];
 export type ContentAnswer = MessageOf<"content.found"> | MessageOf<"content.file"> | MessageOf<"content.gone">;
 
-/** What main needs of the server link (src/fe-link FeLink `content`). */
+const PEER_PROBE_BYTES = 65_536;
+const PEER_META_LIMIT = 500;
+const PEER_STREAM_WINDOW = 4 * CONTENT_CHUNK_BYTES;
+
+interface PeerMeta {
+  size: number;
+  type: string;
+  /** First <= 64 KiB for text charset sniffing (fileHeaders); empty for non-text types. */
+  head: Buffer;
+}
+
+const isTextSniffedType = (type: string): boolean =>
+  /^text\//.test(type) || type === "application/javascript" || type === "application/json" || type === "image/svg+xml";
+
+/** What main needs of the server link (src/fe-link FeLink `content` and session reads). */
 export interface ContentLink {
   content(message: Omit<MessageOf<"content.find">, "req"> | Omit<MessageOf<"content.open">, "req">): Promise<ContentAnswer>;
+  postContent(message: MessageOf<"content.get"> | MessageOf<"content.credit"> | MessageOf<"content.cancel">): boolean;
+  onContent(req: string, listener: (message: ContentReadMessage | null) => void): () => void;
+  newReq(): string;
+  attachedServerId(): string | null;
 }
 
 const GONE_TEXT: Record<GoneReason, string> = {
@@ -196,6 +215,8 @@ export interface ContentProtocolOptions {
 /** Serves the renderer's chat media and `botling-content:` URLs from the server's references. */
 export class ContentProtocol {
   readonly grants: FileGrants;
+  /** Probed `(owner, id, variant)` metadata so seeks do not re-probe (oldest dropped at 500). */
+  private readonly peerMeta = new Map<string, PeerMeta>();
 
   constructor(private readonly options: ContentProtocolOptions) {
     this.grants = options.grants ?? fileGrants;
@@ -232,6 +253,7 @@ export class ContentProtocol {
   private async serveFound(link: ContentLink, ref: NonNullable<MessageOf<"content.found">["ref"]>, request: Request, again: { botId: string; line: string; url: string } | null, variant = "original"): Promise<Response> {
     if (ref.state === "changed") return goneResponse("changed");
     if (ref.state === "gone") return goneResponse("deleted");
+    if (ref.owner !== link.attachedServerId()) return this.servePeer(link, ref, request, variant);
     let opened: ContentAnswer;
     try {
       opened = await this.ask(link, { t: "content.open", owner: ref.owner, id: ref.id, variant, entry: ref.entry });
@@ -249,6 +271,196 @@ export class ContentProtocol {
       } catch { /* answered below */ }
     }
     return goneResponse(opened.reason);
+  }
+
+  /**
+   * Serves a reference owned by a peer server over the local socket (`content.get` / `content.meta` / `content.chunk`,
+   * v1 §9A.4). Probes the first 64 KiB once for size, type and text-encoding sniffing, then streams the requested
+   * range with credit flow control; mid-stream refusals error the body rather than truncating it (§9A.3).
+   */
+  private async servePeer(
+    link: ContentLink,
+    ref: NonNullable<MessageOf<"content.found">["ref"]>,
+    request: Request,
+    variant: string,
+  ): Promise<Response> {
+    if (ref.state === "changed") return goneResponse("changed");
+    if (ref.state === "gone") return goneResponse("deleted");
+    if (ref.state !== "ready") return goneResponse("offline");
+
+    const cacheKey = `${ref.owner}\0${ref.id}\0${variant}`;
+    let meta = this.peerMeta.get(cacheKey);
+    if (!meta) {
+      const probed = await this.probePeer(link, ref, variant);
+      if (probed instanceof Response) return probed;
+      meta = probed;
+      if (this.peerMeta.size >= PEER_META_LIMIT) {
+        const oldest = this.peerMeta.keys().next().value;
+        if (oldest !== undefined) this.peerMeta.delete(oldest);
+      }
+      this.peerMeta.set(cacheKey, meta);
+    }
+
+    const known = meta;
+    const handle = {
+      read: async (buffer: Buffer, offset: number, length: number, position: number) => {
+        const bytes = known.head.subarray(position, position + length);
+        bytes.copy(buffer, offset);
+        return { bytesRead: bytes.length, buffer };
+      },
+    } as unknown as FileHandle;
+    const headers = await fileHeaders(handle, known.size, known.type, CHAT_MEDIA_CSP);
+    return rangedResponse(request, known.size, headers, (start, end) =>
+      this.peerStream(link, cacheKey, ref, variant, known.size, start, end),
+    );
+  }
+
+  private probePeer(
+    link: ContentLink,
+    ref: NonNullable<MessageOf<"content.found">["ref"]>,
+    variant: string,
+  ): Promise<PeerMeta | Response> {
+    return new Promise((resolve) => {
+      const req = link.newReq();
+      const ms = this.options.timeoutMs ?? ANSWER_TIMEOUT_MS;
+      let settled = false;
+      let meta: { size: number; type: string } | null = null;
+      let received = 0;
+      let want = 0;
+      const chunks: Uint8Array[] = [];
+      let timer: NodeJS.Timeout | undefined;
+      let off = () => {};
+
+      const done = (result: PeerMeta | Response) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        off();
+        resolve(result);
+      };
+
+      off = link.onContent(req, (message) => {
+        if (message === null) { done(goneResponse("offline")); return; }
+        if (message.t === "content.gone") { done(goneResponse(message.reason)); return; }
+        if (message.t === "content.meta") {
+          if (meta) return;
+          meta = { size: message.size, type: message.type };
+          want = Math.min(message.size, PEER_PROBE_BYTES);
+          if (want === 0) done({ size: meta.size, type: meta.type, head: Buffer.alloc(0) });
+          return;
+        }
+        if (message.t === "content.chunk") {
+          if (!meta || message.offset !== received) { done(goneResponse("offline")); return; }
+          const take = Math.min(message.bytes.byteLength, want - received);
+          if (take > 0) {
+            chunks.push(message.bytes.subarray(0, take));
+            received += take;
+          }
+          if (received >= want) {
+            const head = isTextSniffedType(meta.type) ? Buffer.concat(chunks) : Buffer.alloc(0);
+            done({ size: meta.size, type: meta.type, head });
+          }
+        }
+      });
+
+      timer = setTimeout(() => {
+        link.postContent({ t: "content.cancel", req });
+        done(goneResponse("offline"));
+      }, ms);
+
+      if (!link.postContent({
+        t: "content.get", req, owner: ref.owner, id: ref.id as MessageOf<"content.get">["id"], variant,
+        offset: 0, length: PEER_PROBE_BYTES, entry: ref.entry,
+      })) {
+        done(goneResponse("offline"));
+      }
+    });
+  }
+
+  private peerStream(
+    link: ContentLink,
+    cacheKey: string,
+    ref: NonNullable<MessageOf<"content.found">["ref"]>,
+    variant: string,
+    expectedSize: number,
+    start: number,
+    end: number,
+  ): ReadableStream<Uint8Array> {
+    const length = end - start + 1;
+    const req = link.newReq();
+    let received = 0;
+    let enqueued = 0;
+    let credited = 0;
+    let done = false;
+    let off: () => void = () => {};
+    const peerMeta = this.peerMeta;
+
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        const fail = (reason: string) => {
+          if (done) return;
+          done = true;
+          off();
+          controller.error(new Error(reason));
+        };
+        off = link.onContent(req, (message) => {
+          if (done) return;
+          if (message === null) { fail("offline"); return; }
+          if (message.t === "content.gone") {
+            peerMeta.delete(cacheKey);
+            fail(message.reason);
+            return;
+          }
+          if (message.t === "content.meta") {
+            if (message.size !== expectedSize) {
+              peerMeta.delete(cacheKey);
+              fail("changed");
+            }
+            return;
+          }
+          if (message.t === "content.chunk") {
+            if (message.offset !== start + received) { fail("deleted"); return; }
+            const chunk = message.bytes.subarray(0, Math.min(message.bytes.byteLength, length - received));
+            if (chunk.byteLength > 0) {
+              received += chunk.byteLength;
+              enqueued += chunk.byteLength;
+              controller.enqueue(chunk);
+            }
+            if (received >= length) {
+              done = true;
+              off();
+              try { controller.close(); } catch { /* cancelled */ }
+            }
+          }
+        });
+        if (!link.postContent({
+          t: "content.get", req, owner: ref.owner, id: ref.id as MessageOf<"content.get">["id"], variant,
+          offset: start, length, entry: ref.entry,
+        })) {
+          fail("offline");
+        }
+      },
+      pull(controller) {
+        if (done) return;
+        const queued = PEER_STREAM_WINDOW - (controller.desiredSize ?? 0);
+        const taken = enqueued - queued;
+        const pending = taken - credited;
+        if (pending >= CONTENT_CHUNK_BYTES) {
+          const grant = Math.min(
+            Math.floor(pending / CONTENT_CHUNK_BYTES) * CONTENT_CHUNK_BYTES,
+            CONTENT_CREDIT_LIMIT,
+          );
+          credited += grant;
+          link.postContent({ t: "content.credit", req, bytes: grant });
+        }
+      },
+      cancel() {
+        if (done) return;
+        done = true;
+        off();
+        link.postContent({ t: "content.cancel", req });
+      },
+    }, new ByteLengthQueuingStrategy({ highWaterMark: PEER_STREAM_WINDOW }));
   }
 
   /** `botling-content:` requests. `scope`: "pane" serves only the pane's granted files (web pages share that session). */
