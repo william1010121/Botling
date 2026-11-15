@@ -6,7 +6,6 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { buildRenderer } from "../../build-renderer.mjs";
 import { FE_MANIFEST_FILE } from "../../fe-build-manifest.mjs";
 import { parseFeManifest } from "../../src/renderer/shell/inpage-loader";
 import { desktop } from "../helpers";
@@ -16,6 +15,8 @@ afterAll(() => rmSync(out, { recursive: true, force: true }));
 
 describe("the built renderer.js", () => {
   it("holds the text of fe-build-manifest.json, in the form the bundler printed the string (so the page can read it without fetch)", async () => {
+    // A computed path: build-renderer.mjs has no declaration file (the other tests that build the renderer load it the same way).
+    const { buildRenderer } = await import(join(desktop, "build-renderer.mjs"));
     await buildRenderer({ root: desktop, outdir: out });
     const file = readFileSync(join(out, FE_MANIFEST_FILE), "utf8");
     const manifest = parseFeManifest(JSON.parse(file));
