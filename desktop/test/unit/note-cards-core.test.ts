@@ -143,9 +143,9 @@ describe("cards in a bot's note", () => {
 
   it("freeze to image: main's picture of the card goes into the note's note-assets; none taken, or no \"files\": refused", async () => {
     const dir = tempDir("note-snapshot");
-    notePlugin(dir, "notetest", ["files"]);
+    notePlugin(dir, "notetest", ["files"], true);
     notePlugin(dir, "nosy", []);
-    const c = core(dir);
+    const c = core(dir, true);
     await until(async () => (await c.call({ type: "plugins.list" })).host.running, { timeout: 20_000 });
     const note = (await c.call({ type: "plugins.call", name: "notetest", method: "go", params: { method: "read", args: [MAIN] }, from: "frame" })).result.path as string;
     const rect = { x: 10, y: 20, width: 300, height: 120 };
