@@ -16,6 +16,7 @@ import type { ComponentInfo } from "../../../Web/src/types";
 import type { PluginFrameHost } from "./frame-broker";
 import { openReport } from "./report-opener";
 import { quoteIntoComposer } from "./composer-quote";
+import { shellStorage } from "./shell/storage";
 
 /** The most of a tile's data (as JSON) a frame may give: a whiteboard picture's limit. */
 export const TILE_DATA_MAX = 256_000;
@@ -90,6 +91,12 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       // (composer-quote.ts), called through the renderer's plugin kernel for the frame's plugin.
       if (!bots().some((each) => each.id === botId)) return { inserted: false };
       return { inserted: await quoteIntoComposer(botId, text, focus, plugin).catch(() => false) };
+    },
+    storage(plugin, req) {
+      const store = shellStorage(plugin);
+      if (req.op === "get") return store.get(req.key);
+      if (req.op === "set") return store.set(req.key, req.value);
+      return store.remove(req.key);
     },
     async requestApproval(plugin, { botId, command, folder, card, detail }) {
       const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}), ...(detail ? { detail } : {}) }, undefined, { plugin }).catch(failed);

@@ -144,6 +144,16 @@ const ccb = {
   openLink: (href, opts) => ask({ ccb: "openLink", href: String(href ?? ""), botId: String(opts?.botId ?? "") }),
   /** Asks the user to allow a bot's command in its folder ({ botId, command, folder, card? }); resolves { allowed }. */
   requestApproval: (req) => ask({ ccb: "approval", botId: String(req?.botId ?? ""), command: String(req?.command ?? ""), folder: String(req?.folder ?? ""), ...(req?.card != null ? { card: String(req.card) } : {}), ...(req?.detail != null ? { detail: String(req.detail) } : {}) }),
+  storage: {
+    get: (key) => { const k = String(key ?? ""); return k ? ask({ ccb: "storage", op: "get", key: k }) : Promise.reject(new Error("Storage key must be a non-empty string.")); },
+    set: (key, value) => {
+      const k = String(key ?? "");
+      if (!k) return Promise.reject(new Error("Storage key must be a non-empty string."));
+      if (value === undefined) return Promise.reject(new Error("Storage value must not be undefined."));
+      return ask({ ccb: "storage", op: "set", key: k, value });
+    },
+    remove: (key) => { const k = String(key ?? ""); return k ? ask({ ccb: "storage", op: "remove", key: k }) : Promise.reject(new Error("Storage key must be a non-empty string.")); },
+  },
   // Only the chat page can lend these; in a panel frame they do nothing, except insertQuote: text put into the input box of
   // the bot this frame was opened for (its botId; no other bot), after its draft. Resolves { inserted }.
   composer: {
