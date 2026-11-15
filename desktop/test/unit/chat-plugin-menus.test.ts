@@ -25,6 +25,8 @@ import { desktop } from "../helpers";
 
 const manifest = parseFeManifest(JSON.parse(feBuildManifestFile(desktop).toString("utf8")));
 const shipped = manifest.plugins.find((entry) => entry.name === CHAT_PLUGIN)!;
+// These hosts run only the chat plugin (the build ships botling.settings too; settings-plugin.test.ts covers that one).
+const chatOnly = { plugins: manifest.plugins.filter((entry) => entry.name === CHAT_PLUGIN) };
 const golden = JSON.parse(readFileSync(join(desktop, "test", "fixtures", "chat-menus-golden.json"), "utf8")) as Record<"none" | "zh", { messageMenu: unknown; previewMenu: unknown; linkMenu: unknown }>;
 const fixture = (): PluginsView => JSON.parse(readFileSync(join(desktop, "test", "fixtures", "kernel-goldens", "plugins-list.json"), "utf8")) as PluginsView;
 
@@ -34,7 +36,7 @@ const posted = (plugins: PluginsView | null, lang: string | null = null) => chat
 
 const hosts: InPageHost[] = [];
 function host(options: ConstructorParameters<typeof InPageHost>[0] = {}) {
-  const made = new InPageHost({ manifest, log: () => undefined, ...options });
+  const made = new InPageHost({ manifest: chatOnly, log: () => undefined, ...options });
   hosts.push(made);
   return made;
 }
@@ -75,7 +77,7 @@ describe("the chat plugin as the FE build ships it", () => {
 
   it("is not the `:chat` surface (that name is the stand-in for composer.insertQuote and stays)", async () => {
     await host().start();
-    expect(rendererKernel.state(":chat")).not.toBe("absent");
+    expect(rendererKernel.declaration(":chat")?.provides?.services).toEqual(["composer.insertQuote"]);
     expect(CHAT_PLUGIN).toBe("botling.chat");
   });
 });
@@ -160,7 +162,7 @@ describe("the menu lists of the posted state", () => {
   it("are drawn from the slot by ChatFrame, which asks again when a slot changes", () => {
     const text = readFileSync(join(desktop, "src", "renderer", "chat-frame", "ChatFrame.tsx"), "utf8");
     expect(text).toContain("plugins: chatPlugins(current.plugins)");
-    expect(text).toMatch(/subscribeSlots/);
+    expect(text).toContain("useChatSlotsVersion()");
     expect(text).toMatch(/channel\.schedule\(\); \}, \[channel, view, replying, askAbout, slots\]/);
   });
 });

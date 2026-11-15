@@ -32,10 +32,12 @@ const shipped = manifest.plugins.find((entry) => entry.name === SETTINGS_PLUGIN)
 const golden = JSON.parse(readFileSync(join(desktop, "test", "fixtures", "settings-nav-golden.json"), "utf8")) as { all: unknown; phone: unknown; none: unknown };
 const fixture = (): PluginsView => JSON.parse(readFileSync(join(desktop, "test", "fixtures", "kernel-goldens", "plugins-list.json"), "utf8")) as PluginsView;
 
+// M7-06a: the build ships a second plugin (botling.chat); these tests are about the settings plugin, so their hosts run only that one.
+const settingsOnly = { plugins: manifest.plugins.filter((entry) => entry.name === SETTINGS_PLUGIN) };
 const lines: string[] = [];
 const hosts: InPageHost[] = [];
 function host(options: ConstructorParameters<typeof InPageHost>[0] = {}) {
-  const made = new InPageHost({ manifest, log: (line) => lines.push(line), ...options });
+  const made = new InPageHost({ manifest: settingsOnly, log: (line) => lines.push(line), ...options });
   hosts.push(made);
   return made;
 }
