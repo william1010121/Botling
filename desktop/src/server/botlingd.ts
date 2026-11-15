@@ -70,6 +70,7 @@ import {
 import {
   ensureSoleServerVapidKeys, originTestHookEnabled, startOriginTestHook, testCorruptContent, type VapidSyncState,
 } from "./botlingd-setup";
+import type { Later, StartContext } from "./botlingd-start-context";
 export {
   authorizeRoster, BOTLINGD_VERSION, clusterOrigins, DataDirInUseError, mayRunPluginServerPart, ownMachineName, pairingAddresses, pairingPageUrl,
   peerChatList, peerMachines, peerRemoteMembers, PEERS_FILE, PLACEHOLDER_TAILNET_ORIGIN, PLUGIN_POLL_MS, readPluginAsks, readPluginGrant,
@@ -86,111 +87,7 @@ export type { VapidSyncState } from "./botlingd-setup";
 export const MIN_FE_VERSION = "3.0.0-m1";
 export { NO_SAFE_STORAGE };
 
-
-/**
- * Values that a closure made in an early phase of `Botlingd.start` reads after a later phase has made them. Before then a
- * call finds the empty value and answers "not ready" (fail closed), as it did when `start` was one function.
- */
-interface Later {
-  /** `peers` as a nullable view (machine names): null until the peer sessions exist. */
-  peerSessions: PeerSessions | null;
-  /** M3 step 3: peer servers. Set by `startPeers`; earlier phases use it only in callbacks that run once sessions exist. */
-  peers: PeerSessions;
-  /** Plugin content reads through peers (set by `startSessions`). */
-  pluginRead: PluginContentRead | null;
-  /** M5-07d: `app_fetch` resolves a machine name to a valid peer and uses the requester, which is built after the core. */
-  fetchRequester: FetchRequester | null;
-  /** M5-13b/M5-13c: publishes one plugin:<name> row per installed plugin (plus audit rows for bot writes) and keeps machine.pluginsDigest current. */
-  syncPlugins: (force?: boolean) => Promise<void>;
-  /** M5-04c: this server as its own command origin (a call before the origin is built is "not ready"). */
-  origin: ServerOrigin | null;
-  /** M5-02c: the host's side of call-ins (the runtime owns it; until it is wired a call-in is "not reachable"). */
-  callInHost: CallInHost | null;
-  /** M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores). */
-  summary: SummaryRows | null;
-  /** M4-24: Web Push triggers for owned bots needing the user (wired after remote sessions exist). */
-  pushTriggers: PushTriggers | null;
-  attachedDevices: () => Set<string>;
-  /** fu-callin-outbox review: interrupted call-ins waiting for a host's server are answered when a copy fills (bound once the guest is attached). */
-  copyChanged: () => void;
-  /** The server itself, once it exists (the relay, the listener's port and the token are read through it). */
-  daemon: Botlingd | null;
-}
-
-/** What `Botlingd.start` has made so far. Each phase takes what it reads (`Pick`) and returns what later phases read. */
-interface StartContext {
-  options: BotlingdOptions;
-  env: BotlingdOptions["env"];
-  paths: BotlingdPaths;
-  port: ReturnType<typeof listenPort>;
-  timers: ReturnType<typeof peerTimers>;
-  log: (line: string) => void;
-  later: Later;
-  lock: DataDirLock;
-  store: ServerStore;
-  identity: Awaited<ReturnType<typeof loadOrCreateServerIdentity>>;
-  serverId: string;
-  memberId: string;
-  ids: ReturnType<typeof fixedIds>;
-  roster: RosterStore;
-  clusterSetup: ClusterSetup;
-  prefs: PrefsStore;
-  gossip: Gossip;
-  hub: LogHub;
-  live: LiveChannel;
-  exports: BotExports;
-  stores: DbBotStores;
-  opened: Map<string, string>;
-  coreEngine: CoreEngine;
-  shell: ShellBridge;
-  utilityHost: ReturnType<typeof createUtilityHostLauncher> | null;
-  pdfTextRunner: ReturnType<typeof createUtilityScriptRunner> | undefined;
-  core: Core;
-  pendingBotWrites: Map<string, { botId: string; at: number }>;
-  engine: BotlingdEngine;
-  content: ContentService;
-  media: MediaJobs;
-  feeds: TableFeeds;
-  peerTables: PeerTables;
-  uploads: Uploads;
-  runtime: IntentRuntime;
-  pluginHashCache: PluginHashCache;
-  readInstalledPlugins: () => ReturnType<PluginHashCache["read"]>;
-  machineRow: (pluginsDigest: string | null) => unknown;
-  summary: SummaryRows;
-  push: PushTriggers;
-  deviceReadable: (member: string) => boolean;
-  pluginTimer: NodeJS.Timeout;
-  startedAt: number;
-  origin: string | null;
-  relayRoom: { url: string; key: string; room: string } | null;
-  relayAddress: RelayAddress | null;
-  pairing: PairingService;
-  serverJoin: ServerJoin;
-  directory: Directory;
-  forwarder: Forwarder;
-  serverOrigin: ServerOrigin;
-  inbox: OwnerInbox;
-  followed: () => Set<string>;
-  peerBudget: PeerCacheBudget;
-  peerLogs: PeerLogCache;
-  passThrough: PassThrough;
-  passOwner: PassThroughOwner;
-  pluginAdmin: PluginAdmin;
-  phone: PhoneDesk;
-  server: SessionServer;
-  chunkCache: ChunkCache;
-  peerContent: PeerContent;
-  peerContentOwner: PeerContentOwner;
-  remoteContent: RemoteContent;
-  remote: RemoteSessions;
-  approval: FetchApproval;
-  fetchSource: FetchSource;
-  fetchRequester: FetchRequester;
-  vapidSync: VapidKeySync;
-  peers: PeerSessions;
-  daemon: Botlingd;
-}
+type Ctx = StartContext<Botlingd>;
 
 
 export class Botlingd {
@@ -339,41 +236,7 @@ export class Botlingd {
       const text = `${new Date().toISOString()} ${line}\n`;
       try { appendFileSync(logFile, text, { mode: 0o600 }); } catch { /* the log never stops the server */ }
     });
-    const lock = await Botlingd.claimLock(options, paths);
-    // What a closure made in an early phase reads from a later one (before then it is "not ready", as it was in one function).
-    const later = {
-      peerSessions: null, pluginRead: null, fetchRequester: null, syncPlugins: async () => undefined, origin: null, callInHost: null,
-      summary: null, pushTriggers: null, attachedDevices: () => new Set<string>(), copyChanged: () => {}, daemon: null,
-    } as Later; // `peers` is set by startPeers
-
-    let store: ServerStore | null = null;
-    try {
-      store = await openServerStore(paths.dataDir);
-      const s1 = { options, env, paths, port, timers, log, later, lock, store };
-      const s2 = { ...s1, ...(await Botlingd.openIdentity(s1)) };
-      const s3 = { ...s2, ...(await Botlingd.startCore(s2)) };
-      const s4 = { ...s3, ...(await Botlingd.startRuntime(s3)) };
-      const s5 = { ...s4, ...(await Botlingd.startPush(s4)) };
-      const s6 = { ...s5, ...(await Botlingd.startPlugins(s5)) };
-      await Botlingd.recoverContent(s6);
-      const s7 = { ...s6, ...(await Botlingd.startPairing(s6)) };
-      const s8 = { ...s7, ...(await Botlingd.startForwarding(s7)) };
-      const s9 = { ...s8, ...(await Botlingd.startPassThrough(s8)) };
-      const s10 = { ...s9, ...(await Botlingd.startSessions(s9)) };
-      const s11 = { ...s10, ...(await Botlingd.startFetch(s10)) };
-      const s12 = { ...s11, ...(await Botlingd.startPeers(s11)) };
-      const s13 = { ...s12, ...(await Botlingd.assembleDaemon(s12)) };
-      await Botlingd.listenAll(s13);
-      return s13.daemon;
-    } catch (error) {
-      await store?.close().catch(() => undefined);
-      lock.release();
-      throw error;
-    }
-  }
-
-  /** One server per data folder, before anything is read: claims the data folder lock (waits `lockWaitMs` for another holder to let go). */
-  private static async claimLock(options: BotlingdOptions, paths: BotlingdPaths): Promise<DataDirLock> {
+    // One server per data folder, before anything is read.
     const lock = new DataDirLock(paths.dataDir, { version: BOTLINGD_VERSION, app: "botlingd" });
     const waitUntil = Date.now() + (options.lockWaitMs ?? 3_000);
     let claim = lock.claim();
@@ -382,15 +245,37 @@ export class Botlingd {
       claim = lock.claim();
     }
     if (!claim.ok) throw new DataDirInUseError(paths.dataDir, claim.holder.pid);
-    return lock;
+    // What a closure made in an early phase reads from a later one (before then it is "not ready", as it was in one function).
+    const later = {
+      peerSessions: null, pluginRead: null, fetchRequester: null, syncPlugins: async () => undefined, origin: null, callInHost: null,
+      summary: null, pushTriggers: null, attachedDevices: () => new Set<string>(), copyChanged: () => {}, daemon: null,
+    } as Later<Botlingd>; // `peers` is set by startPeers
+
+    let store: ServerStore | null = null;
+    try {
+      store = await openServerStore(paths.dataDir);
+      const s = { options, env, paths, port, timers, log, later, lock, store } as Ctx;
+      Object.assign(s, await Botlingd.openIdentity(s));
+      Object.assign(s, await Botlingd.startCore(s));
+      Object.assign(s, await Botlingd.startRuntime(s));
+      Object.assign(s, await Botlingd.startPush(s));
+      Object.assign(s, await Botlingd.startContent(s));
+      Object.assign(s, await Botlingd.startPairing(s));
+      Object.assign(s, await Botlingd.startForwarding(s));
+      Object.assign(s, await Botlingd.startSessions(s));
+      Object.assign(s, await Botlingd.startPeers(s));
+      Object.assign(s, await Botlingd.assembleDaemon(s));
+      await Botlingd.listenAll(s);
+      return s.daemon;
+    } catch (error) {
+      await store?.close().catch(() => undefined);
+      lock.release();
+      throw error;
+    }
   }
 
-  /**
-   * The server's keys, the fixed bot ids, the roster, the cluster preferences and the gossip, on the opened server.db.
-   */
-  private static async openIdentity(
-    s: Pick<StartContext, "paths" | "store" | "log">,
-  ) {
+  /** The server's keys, the fixed bot ids, the roster, the cluster preferences and the gossip, on the opened server.db. */
+  private static async openIdentity(s: Ctx): Promise<Partial<Ctx>> {
     const { paths, store, log } = s;
     // M2: the server's keys (made on the first start, server-keys.json 0600) and server.db bound to them before
     // anything reads meta.serverId (a fresh data folder is named by its member id, v1 §3).
@@ -410,14 +295,8 @@ export class Botlingd {
     return { identity, serverId, memberId, ids, roster, clusterSetup, prefs, gossip };
   }
 
-  /**
-   * The log hub, the live channel, the bots' stores and exports, the shell bridge and the 2.x Core on them (plugins through the
-   * Node plugin host). What its closures read from later phases goes through `later`.
-   */
-  private static async startCore(
-    s: Pick<StartContext, "options" | "env" | "paths" | "log" | "later" | "store" | "serverId"
-      | "memberId" | "ids" | "roster" | "prefs">,
-  ) {
+  /** The log hub, the live channel, the bots' stores and exports, the shell bridge and the 2.x Core on them (plugins through the Node plugin host). What its closures read from later phases goes through `later`. */
+  private static async startCore(s: Ctx): Promise<Partial<Ctx>> {
     const { options, env, paths, log, later, store, serverId, memberId, ids, roster, prefs } = s;
     const hub = new LogHub(store, { serverStreams: true });
     const live = new LiveChannel({ sink: effectCheckpointSink(store), onError: (error) => log(`live: ${String((error as Error)?.message ?? error)}`) });
@@ -518,14 +397,8 @@ export class Botlingd {
     return { hub, live, exports, stores, opened, coreEngine, shell, utilityHost, pdfTextRunner, core, pendingBotWrites };
   }
 
-  /**
-   * The engine over the core, the content index and media jobs, the table feeds, uploads and the intent runtime (recovery at start),
-   * and this server's summary rows.
-   */
-  private static async startRuntime(
-    s: Pick<StartContext, "options" | "env" | "paths" | "log" | "later" | "store" | "serverId"
-      | "roster" | "hub" | "live" | "exports" | "core" | "coreEngine" | "pdfTextRunner">,
-  ) {
+  /** The engine over the core, the content index and media jobs, the table feeds, uploads and the intent runtime (recovery at start), and this server's summary rows. */
+  private static async startRuntime(s: Ctx): Promise<Partial<Ctx>> {
     const { options, env, paths, log, later, store, serverId, roster, hub, live, exports, core, coreEngine, pdfTextRunner } = s;
     const engine = new BotlingdEngine(coreEngine, { live, feed: (event) => { void exports.feed(event)?.catch?.(() => undefined); } });
     const content = new ContentService({
@@ -585,13 +458,8 @@ export class Botlingd {
     return { engine, content, media, feeds, peerTables, uploads, runtime, pluginHashCache, readInstalledPlugins, machineRow, summary };
   }
 
-  /**
-   * Web Push for owned bots that need the user, and the summary rows reconciled with what the event tap stored.
-   */
-  private static async startPush(
-    s: Pick<StartContext, "options" | "paths" | "log" | "later" | "roster" | "hub" | "runtime"
-      | "engine" | "summary">,
-  ) {
+  /** Web Push for owned bots that need the user, and the summary rows reconciled with what the event tap stored. */
+  private static async startPush(s: Ctx): Promise<Partial<Ctx>> {
     const { options, paths, log, later, roster, hub, runtime, engine, summary } = s;
     const pushSender = new PushSender({
       dataDir: paths.dataDir,
@@ -620,14 +488,9 @@ export class Botlingd {
     return { push, deviceReadable };
   }
 
-  /**
-   * One `plugin:<name>` row per installed plugin, kept current (`later.syncPlugins`), and the 60 s poll that notices file changes.
-   */
-  private static async startPlugins(
-    s: Pick<StartContext, "log" | "later" | "core" | "runtime" | "feeds" | "pendingBotWrites"
-      | "pluginHashCache" | "readInstalledPlugins" | "machineRow">,
-  ) {
-    const { log, later, core, runtime, feeds, pendingBotWrites, pluginHashCache, readInstalledPlugins, machineRow } = s;
+  /** One `plugin:<name>` row per installed plugin, kept current (`later.syncPlugins`) with a 60 s poll; then the content index, the media jobs and the 2.x exports are brought up to date. */
+  private static async startContent(s: Ctx): Promise<Partial<Ctx>> {
+    const { log, later, core, runtime, feeds, pendingBotWrites, pluginHashCache, readInstalledPlugins, machineRow, content, media, exports, opened } = s;
     // M5-13b/M5-13c: publish one plugin:<name> row per installed plugin (plus audit row for bot writes) and keep machine.pluginsDigest current.
     let lastPluginsSignature = "";
     let lastPluginsStatSignature: string | null = null;
@@ -668,16 +531,6 @@ export class Botlingd {
     // core/server.ts suppresses plugins.updated when only non-manifest plugin files change (codeHash changes without PluginsView changing), so also poll every 60 s using mtime/size stat signatures.
     const pluginTimer = setInterval(() => { void later.syncPlugins(); }, PLUGIN_POLL_MS);
     pluginTimer.unref?.();
-    return { pluginTimer };
-  }
-
-  /**
-   * Pins left by a crash are swept, files still preparing are hashed, the media jobs start and the 2.x exports are brought up to date.
-   */
-  private static async recoverContent(
-    s: Pick<StartContext, "log" | "content" | "media" | "exports" | "opened">,
-  ): Promise<void> {
-    const { log, content, media, exports, opened } = s;
     // Step 13: pins left by a crash are swept and every file still preparing is hashed before front ends attach.
     const recovered = await content.recover();
     log(`content recovery: ${JSON.stringify(recovered)}`);
@@ -685,15 +538,11 @@ export class Botlingd {
     log(`media jobs: ${JSON.stringify({ ...mediaStart, h264: media.tools.h264, found: Object.entries(media.tools.paths).filter(([, at]) => at).map(([name]) => name) })}`);
     for (const note of media.notes()) log(`media note: ${note}`);
     exports.start([...opened.entries()].map(([botId, directory]) => ({ botId, directory })));
+    return { pluginTimer };
   }
 
-  /**
-   * The relay setting and room, device pairing and server pairing (`botlingd join` / `add-machine`).
-   */
-  private static async startPairing(
-    s: Pick<StartContext, "env" | "paths" | "log" | "later" | "roster" | "clusterSetup"
-      | "identity" | "prefs">,
-  ) {
+  /** The relay setting and room, device pairing and server pairing (`botlingd join` / `add-machine`). */
+  private static async startPairing(s: Ctx): Promise<Partial<Ctx>> {
     const { env, paths, log, later, roster, clusterSetup, identity, prefs } = s;
     const startedAt = Date.now();
     const origin = tailnetOrigin(env);
@@ -730,14 +579,9 @@ export class Botlingd {
     return { startedAt, origin, relayRoom, relayAddress, pairing, serverJoin };
   }
 
-  /**
-   * Command forwarding to the servers that own a target, this server as its own command origin, and the host side of call-ins.
-   */
-  private static async startForwarding(
-    s: Pick<StartContext, "log" | "later" | "store" | "roster" | "serverId" | "hub"
-      | "engine" | "runtime" | "feeds" | "core">,
-  ) {
-    const { log, later, store, roster, serverId, hub, engine, runtime, feeds, core } = s;
+  /** Command forwarding to the servers that own a target, this server as its own command origin, the host side of call-ins, the pass-through of a peer's bot to a front end, the CLI's plugin admin and Settings › Phone. */
+  private static async startForwarding(s: Ctx): Promise<Partial<Ctx>> {
+    const { log, later, store, roster, serverId, hub, engine, runtime, feeds, core, env, paths, live, prefs, pairing } = s;
     // M3 step 9: commands for targets a peer owns are queued and forwarded; a peer's forwarded commands for targets
     // this server owns go to the slot engine. A lone server has no peers: every target is its own, as before.
     // (`peers` is made below; these run only once sessions exist.)
@@ -767,17 +611,6 @@ export class Botlingd {
       // The peer sessions' own bookkeeping (live / stale since the last frame / gone): the wait is a liveness wait.
       peerState: (server) => { const state = later.peers.states().find((entry) => entry.member === server); return state ? { state: state.state, since: state.since } : null; },
     });
-    return { directory, forwarder, serverOrigin };
-  }
-
-  /**
-   * The owner inbox, the pass-through of a peer's bot to a front end and the cache it fills, the CLI's plugin admin and Settings › Phone.
-   */
-  private static async startPassThrough(
-    s: Pick<StartContext, "env" | "paths" | "log" | "later" | "store" | "serverId" | "hub"
-      | "live" | "prefs" | "runtime" | "engine" | "directory" | "pairing">,
-  ) {
-    const { env, paths, log, later, store, serverId, hub, live, prefs, runtime, engine, directory, pairing } = s;
     const inbox = new OwnerInbox({ self: serverId, runtime, log });
     // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
     const passSettings = passThroughSettings(env);
@@ -818,22 +651,12 @@ export class Botlingd {
         },
       },
     });
-    return { inbox, followed, peerBudget, peerLogs, passThrough, passOwner, pluginAdmin, phone };
+    return { directory, forwarder, serverOrigin, inbox, followed, peerBudget, peerLogs, passThrough, passOwner, pluginAdmin, phone };
   }
 
-  /**
-   * What a front end or a device reaches: the session host (admin ops, tables, forwarding, pass-through), the Unix socket server, content
-   * tickets, peers' content, remote device sessions, and the fetch approval card.
-   */
-  private static async startSessions(
-    s: Pick<StartContext, "options" | "env" | "paths" | "log" | "later" | "store" | "serverId"
-      | "memberId" | "identity" | "roster" | "prefs" | "hub" | "live" | "runtime" | "engine" | "content" | "shell" | "uploads"
-      | "core" | "startedAt" | "phone" | "pluginAdmin" | "pairing" | "serverJoin" | "feeds" | "directory" | "forwarder"
-      | "passThrough" | "peerTables" | "peerBudget" | "followed" | "deviceReadable">,
-  ) {
-    const { options, env, paths, log, later, store, serverId, memberId, identity, roster, prefs, hub, live, runtime, engine, content,
-      shell, uploads, core, startedAt, phone, pluginAdmin, pairing, serverJoin, feeds, directory, forwarder, passThrough, peerTables,
-      peerBudget, followed, deviceReadable } = s;
+  /** What a front end or a device reaches: the session host (admin ops, tables, forwarding, pass-through), the Unix socket server, content tickets, peers' content, remote device sessions, and the fetch approval card. */
+  private static async startSessions(s: Ctx): Promise<Partial<Ctx>> {
+    const { options, env, paths, log, later, store, serverId, memberId, identity, roster, prefs, hub, live, runtime, engine, content, shell, uploads, core, startedAt, phone, pluginAdmin, pairing, serverJoin, feeds, directory, forwarder, passThrough, peerTables, peerBudget, followed, deviceReadable } = s;
     let localReads: LocalPeerReads | null = null;
     // M5-06c: the fetch approval card and grants (built with the fetch source below; the admin ops read it).
     let fetchApproval: FetchApproval | null = null;
@@ -945,14 +768,9 @@ export class Botlingd {
     return { server, chunkCache, peerContent, peerContentOwner, remoteContent, remote, approval };
   }
 
-  /**
-   * On-demand fetch between servers: the source side, the requester side, and the staging folders a killed process left behind.
-   */
-  private static async startFetch(
-    s: Pick<StartContext, "paths" | "log" | "later" | "store" | "serverId" | "hub" | "roster"
-      | "content" | "engine" | "feeds" | "approval">,
-  ) {
-    const { paths, log, later, store, serverId, hub, roster, content, engine, feeds, approval } = s;
+  /** On-demand fetch between servers (source and requester side), cluster VAPID key distribution and the peer sessions (a lone server has no server in its roster, so it dials nothing). */
+  private static async startPeers(s: Ctx): Promise<Partial<Ctx>> {
+    const { paths, log, later, store, serverId, hub, roster, content, engine, feeds, approval, identity, memberId, timers, gossip, peerTables, forwarder, inbox, followed, passThrough, passOwner, peerContent, peerContentOwner } = s;
     // M5-07a: source side of on-demand fetch between servers.
     const fetchSource = new FetchSource({
       self: serverId,
@@ -991,20 +809,6 @@ export class Botlingd {
       if (removed > 0) log(`fetch: removed ${removed} unfinished staging folder(s) left by an earlier run`);
     } catch (error) { log(`fetch: leftover staging cleanup failed: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 200))}`); }
     later.fetchRequester = fetchRequester;
-    return { fetchSource, fetchRequester };
-  }
-
-  /**
-   * Cluster VAPID key distribution and the peer sessions (a lone server has no server in its roster, so it dials nothing), with the
-   * handlers of every frame a peer sends.
-   */
-  private static async startPeers(
-    s: Pick<StartContext, "paths" | "log" | "later" | "identity" | "memberId" | "roster"
-      | "timers" | "gossip" | "feeds" | "peerTables" | "forwarder" | "inbox" | "followed" | "passThrough" | "passOwner"
-      | "peerContent" | "peerContentOwner" | "fetchSource" | "fetchRequester">,
-  ) {
-    const { paths, log, later, identity, memberId, roster, timers, gossip, feeds, peerTables, forwarder, inbox, followed,
-      passThrough, passOwner, peerContent, peerContentOwner, fetchSource, fetchRequester } = s;
     // M4-26: cluster VAPID key rotation on server revocation & encrypted distribution to valid servers.
     const vapidSync = new VapidKeySync({ dataDir: paths.dataDir, roster, sessions: () => later.peers.all, log });
     // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
@@ -1026,24 +830,12 @@ export class Botlingd {
     peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
     feeds.start();
     gossip.start();
-    return { vapidSync, peers };
+    return { fetchSource, fetchRequester, vapidSync, peers };
   }
 
-  /**
-   * The `Botlingd` itself, with what the phases made: the token, the relay room maker, the chat mirror, the origin test hook.
-   */
-  private static async assembleDaemon(
-    s: Pick<StartContext, "env" | "paths" | "log" | "later" | "lock" | "store" | "serverId"
-      | "identity" | "roster" | "clusterSetup" | "hub" | "live" | "exports" | "stores" | "core" | "runtime" | "content" | "shell"
-      | "server" | "remote" | "pairing" | "summary" | "push" | "peers" | "serverJoin" | "feeds" | "peerTables" | "passThrough"
-      | "peerLogs" | "passOwner" | "remoteContent" | "peerContent" | "peerContentOwner" | "chunkCache" | "serverOrigin"
-      | "fetchSource" | "fetchRequester" | "vapidSync" | "media" | "pluginTimer" | "utilityHost" | "origin" | "relayAddress"
-      | "relayRoom">,
-  ) {
-    const { env, paths, log, later, lock, store, serverId, identity, roster, clusterSetup, hub, live, exports, stores, core, runtime,
-      content, shell, server, remote, pairing, summary, push, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner,
-      remoteContent, peerContent, peerContentOwner, chunkCache, serverOrigin, fetchSource, fetchRequester, vapidSync, media,
-      pluginTimer, utilityHost, origin, relayAddress, relayRoom } = s;
+  /** The `Botlingd` itself, with what the phases made: the token, the relay room maker, the chat mirror, the origin test hook. */
+  private static async assembleDaemon(s: Ctx): Promise<Partial<Ctx>> {
+    const { env, paths, log, later, lock, store, serverId, identity, roster, clusterSetup, hub, live, exports, stores, core, runtime, content, shell, server, remote, pairing, summary, push, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner, remoteContent, peerContent, peerContentOwner, chunkCache, serverOrigin, fetchSource, fetchRequester, vapidSync, media, pluginTimer, utilityHost, origin, relayAddress, relayRoom } = s;
     const daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summary, push, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
     later.daemon = daemon;
     daemon.remoteContent = remoteContent;
@@ -1080,16 +872,9 @@ export class Botlingd {
     return { daemon };
   }
 
-  /**
-   * Goes live: the Unix socket, the loopback listener, the relay room, the peer sessions, the call-in answers, the lock watch and the daily backups.
-   */
-  private static async listenAll(
-    s: Pick<StartContext, "options" | "env" | "paths" | "log" | "port" | "origin" | "later"
-      | "store" | "serverId" | "hub" | "core" | "runtime" | "roster" | "server" | "peers" | "vapidSync" | "forwarder"
-      | "serverOrigin" | "daemon">,
-  ): Promise<void> {
-    const { options, env, paths, log, port, origin, later, store, serverId, hub, core, runtime, roster, server, peers, vapidSync,
-      forwarder, serverOrigin, daemon } = s;
+  /** Goes live: the Unix socket, the loopback listener, the relay room, the peer sessions, the call-in answers, the lock watch and the daily backups. */
+  private static async listenAll(s: Ctx): Promise<void> {
+    const { options, env, paths, log, port, origin, later, store, serverId, hub, core, runtime, roster, server, peers, vapidSync, forwarder, serverOrigin, daemon } = s;
     await server.listen();
     await daemon.listen(port, options.outDir, origin);
     await daemon.relay?.start();
