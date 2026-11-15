@@ -74,6 +74,13 @@ export class CoreWatch {
 
   lastPlugins = "";
 
+  /** The plugin list as text is the one shown now: false when it already was (nothing to announce), true when it changed. */
+  markPluginsShown(text: string): boolean {
+    if (text === this.lastPlugins) return false;
+    this.lastPlugins = text;
+    return true;
+  }
+
   /** The plugins' Claude parts as bots last heard of them (`followClaudeParts`). */
   loadedClaudeParts = "[]";
 

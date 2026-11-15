@@ -242,6 +242,8 @@ export class Core {
   readonly doctor: DoctorModel;
   agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
+  /** The next event number: the one transition that moves `seq` (the collaborators ask for it, they do not set it). */
+  nextSeq() { return ++this.seq; }
   activated = false;
   readonly ledger: ProcessLedger;
   /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
@@ -296,7 +298,6 @@ export class Core {
   private madeEvents?: CoreEvents;
   private get coreEvents(): CoreEvents { return (this.madeEvents ??= new CoreEvents(this)); }
   get seq() { return this.coreEvents.seq; }
-  set seq(value: CoreEvents["seq"]) { this.coreEvents.seq = value; }
   private get inflight() { return this.coreEvents.inflight; }
   get mobileDesk() { return this.coreEvents.mobileDesk; }
   get relay() { return this.coreEvents.relay; }
@@ -325,7 +326,7 @@ export class Core {
   /** The public plugin catalog (Explore, Updates on the Plugins page). */
   readonly pluginStore: PluginStore;
   get lastPlugins() { return this.coreWatch.lastPlugins; }
-  set lastPlugins(value: CoreWatch["lastPlugins"]) { this.coreWatch.lastPlugins = value; }
+  markPluginsShown(...a: Parameters<CoreWatch["markPluginsShown"]>) { return this.coreWatch.markPluginsShown(...a); }
   private get loadedClaudeParts() { return this.coreWatch.loadedClaudeParts; }
   private set loadedClaudeParts(value: CoreWatch["loadedClaudeParts"]) { this.coreWatch.loadedClaudeParts = value; }
   /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
@@ -412,7 +413,7 @@ export class Core {
     this.components.library.rescan();
     this.componentStamp = this.components.library.stamp;
     // What the snapshot shows already is no event (an event comes only when something changes).
-    this.lastPlugins = JSON.stringify(this.plugins.view());
+    this.markPluginsShown(JSON.stringify(this.plugins.view()));
     this.loadedClaudeParts = JSON.stringify(agentStamp(this.plugins.registry));
     // Quota files must be imported before their first in-memory reading.
     this.usage = new UsageBook(options.dataDir, undefined, undefined, options.quotaRetriever);
