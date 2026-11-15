@@ -197,15 +197,17 @@ describe("the bot-panel plugin as the FE build ships it", () => {
 
   it("takes a block only from the bot-panel plugin: another plugin's {kind: panel-block} entry is not a block", async () => {
     await host().start();
+    // The plugin's own `results` block is taken back, then another plugin contributes one with the same shape.
+    await rendererKernel.entries<{ block: string }>(MAIN).find(({ entry }) => entry.block === "results")!.registration.dispose();
     rendererKernel.install({ name: "evil.plugin", contributes: { slots: [MAIN] } });
-    await rendererKernel.load("evil.plugin", (plugin) => { rendererKernel.contribute(plugin, MAIN, { kind: "panel-block", block: "waiting" }); });
-    expect(rendererKernel.entries(MAIN)).toHaveLength(3); // the kernel refuses a contribution to a slot another plugin owns
-    expect(registeredPanelBlocks()).toEqual(["waiting", "results", "settled"]);
+    await rendererKernel.load("evil.plugin", (plugin) => { rendererKernel.contribute(plugin, MAIN, { kind: "panel-block", block: "results" }); });
+    expect(rendererKernel.entries(MAIN).filter(({ plugin }) => plugin === "evil.plugin")).toHaveLength(1);
+    expect(registeredPanelBlocks()).toEqual(["waiting", "settled"]);
     await rendererKernel.requestUnload("evil.plugin");
     rendererKernel.uninstall("evil.plugin");
   });
 
-  it("drops a block whose registration is taken back, and an unknown block id is ignored", async () => {
+  it("drops a block whose registration is taken back", async () => {
     await host().start();
     const results_ = rendererKernel.entries<{ block: string }>(MAIN).find(({ entry }) => entry.block === "results")!;
     await results_.registration.dispose();
@@ -308,6 +310,21 @@ describe("the panel drawn with the plugin loaded", () => {
     expect(view.element.querySelector(".strip-unavailable")?.getAttribute("aria-label")).toBe(UNAVAILABLE);
     expect(view.element.querySelector(".strip-face")).not.toBeNull();
     expect(view.element.querySelector(".strip-settings")).not.toBeNull();
+  });
+
+  it("draws only the blocks the plugin has registered: take the results block back and it is gone from the overview and from the strip (the others stay)", async () => {
+    const one = host();
+    seenBy(one);
+    await one.start();
+    const open = await mount(createElement(RightPanel, props(mainBot)));
+    const folded = await mount(createElement(RightPanel, props(mainBot, { collapsed: true })));
+    expect(open.element.querySelector(".results-section")).not.toBeNull();
+    await rendererKernel.entries<{ block: string }>(MAIN).find(({ entry }) => entry.block === "results")!.registration.dispose();
+    await act(async () => {});
+    expect(open.element.querySelector(".results-section")).toBeNull();
+    expect([...open.element.querySelectorAll(".detail-section h3")].map((h) => h.textContent)).toEqual(["Now", "Waiting on you", "Settled"]);
+    expect([...folded.element.querySelectorAll(".strip-icon")].map((icon) => icon.getAttribute("data-section"))).toEqual(["waiting", "settled"]);
+    expect(open.element.querySelector(".panel-unavailable")).toBeNull();
   });
 
   it("a takeover shows the line, and no frame, while the plugin is away; the frame is back when it returns", async () => {
