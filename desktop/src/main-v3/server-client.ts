@@ -18,6 +18,7 @@ import type { Message } from "../protocol";
 import { FeLink, systemClock, type Clock, type Dial, type FeLinkOptions, type FeStorage } from "../fe-link";
 import type { AppOp, CoreClient as CoreClient2x, CoreClientOptions } from "../main/core-client";
 import { RendererAdapter, type LinkPort } from "./renderer-adapter";
+import { ticketBundleFetcher, type BundleFetcher, type BundleTicketPort } from "../renderer/shell/row-loader";
 import type { RequestVia } from "../renderer/client";
 import { unixDial } from "./unix-dial";
 import { INHERITED_IMPORT_VARS } from "../server/inherited-env";
@@ -110,7 +111,12 @@ export interface ServerClientDeps {
   packaged?: boolean;
   /** Overrides child_process.spawn (tests). */
   spawn?: typeof spawn;
+  /** M7-09b: reads a plugin's web bundle by its row's reference (default: a ticket over the session, bytes from the server's loopback listener); `null`: none, `plugins.web` is the only source. */
+  bundles?: ((link: LinkPort) => BundleFetcher) | null;
 }
+
+/** botlingd writes its loopback listener's port here (server/net/http.ts LISTEN_FILE) in its data folder. */
+const LISTEN_FILE = "botlingd.listen.json";
 
 const SHELL_OPS: Record<string, AppOp> = {
   "shell.screenshot": "screenshot", "shell.browser": "browser", "shell.install": "installRelease", "shell.quit": "quit",
@@ -196,7 +202,11 @@ export class ServerClient {
     const link = await FeLink.open(linkOptions);
     if (this.stopped) { void link.close(); return; }
     this.link = link;
-    const adapter = new RendererAdapter({ link: link as unknown as LinkPort, emit: (envelope) => this.options.onEvent(envelope), clock: this.clock, audit: this.options.audit });
+    const port = link as unknown as LinkPort;
+    const bundles = this.deps.bundles === null ? undefined : this.deps.bundles
+      ? this.deps.bundles(port)
+      : ticketBundleFetcher({ link: link as unknown as BundleTicketPort, base: () => this.listenBase() });
+    const adapter = new RendererAdapter({ link: port, emit: (envelope) => this.options.onEvent(envelope), clock: this.clock, audit: this.options.audit, ...(bundles ? { bundles } : {}) });
     this.adapter = adapter;
     let welcomed = false;
     link.on((event) => {
@@ -206,6 +216,14 @@ export class ServerClient {
     });
     adapter.start();
     link.start();
+  }
+
+  /** The server's loopback listener (`http://127.0.0.1:<port>`), or null when it is off or its port was taken. */
+  private listenBase(): string | null {
+    try {
+      const state = JSON.parse(readFileSync(join(this.paths.serverDir, LISTEN_FILE), "utf8")) as { port?: unknown; error?: unknown };
+      return typeof state.port === "number" && Number.isInteger(state.port) && state.port > 0 && !state.error ? `http://127.0.0.1:${state.port}` : null;
+    } catch { return null; }
   }
 
   private async defaultStorage(): Promise<FeStorage> {

@@ -50,6 +50,7 @@ import {
   type AdapterAnswer, type BotModel, type ChatSnapshot, type RendererAdapterOptions, type Snapshot,
 } from "./adapter-types";
 import { AdapterEntries } from "./adapter-entries";
+import { panelByRef, rowWeb, specsByRef } from "./web-by-ref";
 
 // The names that used to be defined here, still exported from this path.
 export { NOTICE_ID, botViewOfSummary, noticeText, pendingLine, pendingLineId, peerNoticeText, READ_COMMANDS } from "./adapter-types";
@@ -75,6 +76,8 @@ export class RendererAdapter {
    * the library: kept until a `plugins.updated` event, a plugins command, or a new epoch (M1 demo bug 1).
    */
   private pluginsWeb: Promise<unknown> | null = null;
+  /** M7-09b: the row key (code hash and bundle reference) each plugin's web part was last answered from, to tell a row that moved. */
+  private readonly webKeys = new Map<string, string>();
   /** M5-09: the `chat/link` entries the window was last given (`linkMenuKey`), to tell when the shown chat's list changed. */
   private linkMenus: string | null = null;
   /** M5-09: a peer bot's link button already on its way, by bot, line, link and command: a second press joins it (L-007). */
@@ -172,6 +175,7 @@ export class RendererAdapter {
     }
     if (cmd.type === "plugins.web") return { ok: true, result: await this.pluginsWebAnswer() };
     const result = await this.options.link.request(cmd);
+    if (cmd.type === "plugins.panel") return { ok: true, result: await panelByRef(result, this.bySource(), cmd.name, this.webKeys) };
     if (cmd.type === "plugins.list") return { ok: true, result: this.shownPlugins(result as PluginsViewT) };
     return { ok: true, result };
   }
@@ -225,11 +229,41 @@ export class RendererAdapter {
 
   private pluginsWebAnswer(): Promise<unknown> {
     if (this.pluginsWeb) return this.pluginsWeb;
-    const asked = this.options.link.request({ type: "plugins.web" });
+    const asked = this.options.link.request({ type: "plugins.web" }).then((answer) => specsByRef(answer, this.bySource(), this.webKeys));
     this.pluginsWeb = asked;
     // A failed answer is not kept: the next ask goes to the server again.
     asked.catch(() => { if (this.pluginsWeb === asked) this.pluginsWeb = null; });
     return asked;
+  }
+
+  /** M7-09b: where a plugin's web part is read from by its row (the attached server's own rows, the adapter's bundle fetcher). */
+  private bySource() {
+    const server = this.options.link.server;
+    return { fetch: this.options.bundles, rows: server ? this.options.link.table?.(server)?.rows : undefined, log: (line: string) => this.audit(line) };
+  }
+
+  /**
+   * M7-09b: the attached server's own `plugin:` rows changed. The kept `plugins.web` answer is dropped, and when a plugin whose web part
+   * the window was given from its row now has another bundle (or none), the window is told with a `plugins.updated` so its frames ask again.
+   */
+  private onOwnPlugins(table: { changed: string[]; removed: string[] }): void {
+    const keys = [...table.changed, ...table.removed].filter((key) => key.startsWith("plugin:"));
+    if (!keys.length) return;
+    this.pluginsWeb = null;
+    const server = this.options.link.server;
+    const rows = server ? this.options.link.table?.(server)?.rows : undefined;
+    let moved = false;
+    for (const key of keys) {
+      const name = key.slice("plugin:".length);
+      const served = this.webKeys.get(name);
+      if (served === undefined) continue;
+      const now = rowWeb(rows, name)?.key ?? null;
+      if (now === served) continue;
+      moved = true;
+      if (now === null) this.webKeys.delete(name); else this.webKeys.set(name, now);
+    }
+    const full = this.base?.plugins;
+    if (moved && this.served && full) this.emitEvent({ type: "plugins.updated", plugins: full });
   }
 
   /** `serverId`: whose `plugin:` row stamps the hash: the attached server's, or a peer bot's owner for its link button (M5-09). */
@@ -481,6 +515,7 @@ export class RendererAdapter {
 
   /** A peer's table changed: its bots in the list follow; the notice may change with a server's state. */
   private onServers(table?: { stream: string; changed: string[]; removed: string[] }): void {
+    const server = this.options.link.server;
     if (table && this.base) {
       const rows = this.options.link.table?.(table.stream.slice(4))?.rows;
       const own = new Set((this.base.bots ?? []).map((bot) => bot.id));
@@ -498,6 +533,7 @@ export class RendererAdapter {
         if (this.base.bots.some((bot) => bot.id === botId) && !this.peerOf(botId)) this.emitEvent({ type: "bot.removed", botId });
       }
     }
+    if (table && server && table.stream === `srv:${server}`) this.onOwnPlugins(table);
     // M5-09: a peer's plugin rows decide which link buttons its bots' chats offer.
     if (table && [...table.changed, ...table.removed].some((key) => key.startsWith("plugin:"))) this.refreshLinkMenus();
     this.renderNotice();
