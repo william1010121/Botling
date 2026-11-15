@@ -2,6 +2,8 @@
 
 - **Before writing or reviewing code, read `docs/code-standards.md`** (hard rules: breaking one is FIX FIRST; the common-mistakes checklist every handoff includes) and the lessons in `docs/LESSONS.md` tagged for your area.
 
+- **Where is this symbol:** `node desktop/scripts/where.mjs <name>` (definitions with file:line, kind and signature, and up to 40 references; `--exports <file>` for one file's exports; `--json`). Read only, about half a second. Use it before grepping for a symbol.
+
 ## 2.x desktop app (`desktop/`)
 
 - **Default check while working:** `cd desktop && npm run test:changed`. It typechecks, rebuilds
