@@ -5,5 +5,6 @@ export {
 } from "./service";
 export { AdminClient, AdminRefused } from "./admin-client";
 export { addMachineCommand, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./cli";
+export { createStdinIo, type TtyReadable } from "./stdin-io";
 export { qrModules, qrTerminal } from "./qr";
 export { JOIN_CLUSTER, JOIN_HELLO_TIMEOUT_MS, JOIN_REPLY_TIMEOUT_MS, JoinError, ServerJoin, type JoinOfferResult, type MachineAddResult, type MachineCodeResult, type ServerJoinOptions } from "./join";

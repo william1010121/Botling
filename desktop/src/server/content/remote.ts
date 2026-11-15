@@ -1,13 +1,14 @@
-// Content over the tailnet (M2 step 9, protocol v1 §9A.4, §9A.7; brief Q1): a paired device's page reads the bytes of a
-// chat line's file from `/v3/c/<owner>/<id>/<variant>?e=<stream>.<seq>&t=<ticket>` on the loopback listener (published
-// on the tailnet by `tailscale serve`), with HTTP byte ranges answered exactly as M1's local path answers them
-// (main-v3/content-protocol.ts `serveContentFile`, i.e. 2.x preview-response.ts).
+// Content over the tailnet (M2 step 9, protocol v1 §9A.4, §9A.7; brief Q1; M5-17 plugin tickets): a paired device's
+// page reads the bytes of a chat line's file from `/v3/c/<owner>/<id>/<variant>?e=<stream>.<seq>&t=<ticket>[&p=<plugin>]`
+// on the loopback listener (published on the tailnet by `tailscale serve`), with HTTP byte ranges answered exactly as
+// M1's local path answers them (main-v3/content-protocol.ts `serveContentFile`, i.e. 2.x preview-response.ts).
 //
 // - `content.locate` (over the device's session): which reference a line holds for a file, with a ticket once hashed.
 // - `content.ticket` (over the session): a ticket for a known reference; asked again before it expires, it is renewed
 //   under the same text (tickets.ts).
 // - Every HTTP request is checked again, in this order: the URL parses; the ticket is known and unexpired; it was given
-//   for exactly this owner, id and entry; its device is valid in the roster now with the `read` scope; the entry
+//   for exactly this owner, id, entry and plugin claim; its device is valid in the roster now with the `read` scope;
+//   when plugin-bound, the plugin's row on the owner still has a grant ≥ read at its current hash; and the entry
 //   references the id in a stream the device may read (service.ts `open` with `remote`). Then the pinned bytes are
 //   served; a `pin: path` file that no longer matches answers `changed` (and the server appends `content.changed`),
 //   never other bytes.
@@ -18,14 +19,17 @@ import { Readable } from "node:stream";
 import { CHAT_MEDIA_CSP, goneResponse, serveContentFile } from "../../main-v3/content-protocol";
 import { contentUrlForLog, parseContentUrl, type MessageOf } from "../../protocol";
 import type { DeviceRoster } from "../session/remote-reads";
+import type { Db } from "../store";
 import type { PeerContent } from "./peer-content";
 import type { ContentService } from "./service";
-import type { ContentTickets } from "./tickets";
+import { hasPluginReadGrant, type ContentTickets } from "./tickets";
 
 export interface RemoteContentOptions {
   service: Pick<ContentService, "serverId" | "locate" | "open" | "markChanged"> & Partial<Pick<ContentService, "describe">>;
   tickets: ContentTickets;
   roster: Pick<DeviceRoster, "device">;
+  /** Reader for `srv:<owner>` table rows (checked when serving or issuing plugin-bound tickets, §9A.7, M5-17). */
+  reader?: () => Db;
   log?: (text: string) => void;
   /**
    * M3 step 10: content owned by a peer server (peer-content.ts). Lookups of a peer's bot's lines, tickets for a
@@ -35,9 +39,9 @@ export interface RemoteContentOptions {
 }
 
 /** Why an HTTP request was refused before any file was looked at (the `X-Botling-Content` header names it). */
-export type Refusal = "malformed" | "no-ticket" | "ticket" | "binding" | "device";
+export type Refusal = "malformed" | "no-ticket" | "ticket" | "binding" | "device" | "plugin";
 
-const REFUSAL_STATUS: Record<Refusal, number> = { malformed: 404, "no-ticket": 403, ticket: 403, binding: 403, device: 403 };
+const REFUSAL_STATUS: Record<Refusal, number> = { malformed: 404, "no-ticket": 403, ticket: 403, binding: 403, device: 403, plugin: 403 };
 
 export class RemoteContent {
   constructor(private readonly options: RemoteContentOptions) {}
@@ -45,6 +49,11 @@ export class RemoteContent {
   private readable(deviceId: string): boolean {
     const device = this.options.roster.device(deviceId);
     return !!device && (device.scope ?? []).includes("read");
+  }
+
+  private pluginGranted(owner: string, plugin: string): boolean {
+    if (!this.options.reader) return false;
+    return hasPluginReadGrant(this.options.reader(), owner, plugin);
   }
 
   /** `content.locate` from a device's session (its validity was checked for the frame). */
@@ -67,15 +76,23 @@ export class RemoteContent {
   async ticket(deviceId: string, message: MessageOf<"content.ticket">): Promise<MessageOf<"content.granted"> | MessageOf<"content.gone">> {
     const gone = (reason: MessageOf<"content.gone">["reason"]): MessageOf<"content.gone"> => ({ t: "content.gone", req: message.req, id: message.id, reason });
     if (!this.readable(deviceId)) return gone("denied");
+    if (message.plugin !== undefined && !this.pluginGranted(message.owner, message.plugin)) return gone("denied");
+    const binding = {
+      deviceId,
+      owner: message.owner,
+      id: message.id,
+      entry: message.entry,
+      ...(message.plugin !== undefined ? { plugin: message.plugin } : {}),
+    };
     if (message.owner !== this.options.service.serverId && this.options.peer) {
       const checked = await this.options.peer.check(deviceId, message.owner, message.id, message.entry);
       if (checked !== "ok") return gone(checked === "corrupt" || checked === "cancelled" ? "offline" : checked);
-      const { ticket, expiresAt } = this.options.tickets.issue({ deviceId, owner: message.owner, id: message.id, entry: message.entry });
+      const { ticket, expiresAt } = this.options.tickets.issue(binding);
       return { t: "content.granted", req: message.req, ticket, expiresAt };
     }
     const opened = await this.options.service.open({ t: "content.open", req: message.req, owner: message.owner, id: message.id, variant: "original", entry: message.entry }, { remote: true });
     if (opened.t === "content.gone") return gone(opened.reason);
-    const { ticket, expiresAt } = this.options.tickets.issue({ deviceId, owner: message.owner, id: message.id, entry: message.entry });
+    const { ticket, expiresAt } = this.options.tickets.issue(binding);
     return { t: "content.granted", req: message.req, ticket, expiresAt };
   }
 
@@ -86,8 +103,15 @@ export class RemoteContent {
     if (!url.ticket) return refused("no-ticket");
     const grant = this.options.tickets.check(url.ticket);
     if (!grant) return refused("ticket");
-    if (grant.owner !== url.owner || grant.id !== url.id || grant.entry.stream !== url.entry.stream || grant.entry.seq !== url.entry.seq) return refused("binding");
+    if (
+      grant.owner !== url.owner
+      || grant.id !== url.id
+      || grant.entry.stream !== url.entry.stream
+      || grant.entry.seq !== url.entry.seq
+      || grant.plugin !== url.plugin
+    ) return refused("binding");
     if (!this.readable(grant.deviceId)) { this.options.tickets.dropDevice(grant.deviceId); return refused("device"); }
+    if (grant.plugin !== undefined && !this.pluginGranted(grant.owner, grant.plugin)) return refused("plugin");
     // M3 step 10: another server's content passes through this one (checked there and at the owner).
     if (url.owner !== this.options.service.serverId && this.options.peer) return this.options.peer.respond(url, request, grant.deviceId);
     const opened = await this.options.service.open({ t: "content.open", req: "http", owner: url.owner, id: url.id, variant: url.variant, entry: url.entry }, { remote: true });

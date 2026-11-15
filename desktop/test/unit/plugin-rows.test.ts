@@ -3,19 +3,21 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { folderHash } from "../../src/core/plugins/catalog";
 import { PERMISSIONS } from "../../src/core/plugins/manifest";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
 import { EntryHash } from "../../src/protocol/ids";
-import { MachineRow, PluginRow, TableRow } from "../../src/protocol/table-rows";
+import { MachineRow, PluginRow, TableRow, type PluginGrant } from "../../src/protocol/table-rows";
+import { Botlingd, PLUGIN_POLL_MS } from "../../src/server/botlingd";
 import { ownTableStream, putRow, readRowBody, tableRev } from "../../src/server/replica/tables";
 import {
-  installedFromRegistry, manifestAsks, pluginsDigestOf, reconcilePluginRows, tierOf,
+  MAX_PLUGIN_GRANTS, PluginHashCache, folderStatSignature, installedFromRegistry, manifestAsks, pluginsDigestOf,
+  prunePluginGrants, reconcilePluginRows, tierOf,
 } from "../../src/server/replica/plugin-rows";
-import { until } from "../helpers";
-import { desktop, tempDir } from "../helpers";
+import { botlingdEnv, testRoot } from "../botlingd-harness";
+import { desktop, tempDir, until } from "../helpers";
 import { makeCluster, profile, readServerKeys, writeStatements } from "../support/peer-cluster";
 import { startServers, type TestCluster, type TestServer } from "../support/two-servers";
 import { memoryStore } from "./server-slots-harness";
@@ -43,7 +45,7 @@ function writePlugin(root: string, name: string, options: { version?: string; pe
   return folder;
 }
 
-function liveRows(server: TestServer, stream: string): Record<string, { rev: number; body: unknown }> {
+function liveRows(server: { dataDir: string }, stream: string): Record<string, { rev: number; body: unknown }> {
   const db = new DatabaseSync(join(server.dataDir, "server.db"), { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout = 10000");
@@ -232,6 +234,171 @@ describe("M5-13b: reconcilePluginRows and pluginsDigestOf", () => {
     expect(pluginsDigestOf([a, { name: "gamma", codeHash: b.codeHash }])).not.toBe(d1);
     expect(pluginsDigestOf([a])).not.toBe(d1);
   });
+});
+
+describe("M5-13b fix (b): reconcilePluginRows prunes oldest non-current-hash grants above 20", () => {
+  const hashOf = (n: number) => n.toString(16).padStart(64, "0");
+
+  it("prunes the oldest non-current grant when a built-in update adds a 21st grant so schema validation passes", async () => {
+    expect(MAX_PLUGIN_GRANTS).toBe(20);
+    const { db, writer } = memoryStore();
+    const stream = ownTableStream(db);
+    const oldGrants: Record<string, PluginGrant> = {};
+    for (let i = 0; i < 20; i++) {
+      oldGrants[hashOf(i + 1)] = { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: 1_000 + i * 100 };
+    }
+    const oldestHash = hashOf(1);
+    const newestOldHash = hashOf(20);
+    const currentHash = hashOf(99);
+
+    await writer.submit((tx) =>
+      putRow(tx, stream, "plugin:botling.many", {
+        codeHash: newestOldHash,
+        manifest: manifestAsks(["files"]),
+        author: "builtin",
+        grants: oldGrants,
+      }),
+    );
+
+    const res = await writer.submit((tx) =>
+      reconcilePluginRows(tx, stream, [{
+        name: "botling.many",
+        codeHash: currentHash,
+        manifest: manifestAsks(["files"]),
+        author: "builtin",
+      }], 9_000),
+    );
+    expect(res.written).toBe(1);
+
+    const row = PluginRow.parse(readRowBody(db, stream, "plugin:botling.many"));
+    expect(Object.keys(row.grants)).toHaveLength(20);
+    expect(row.grants[oldestHash]).toBeUndefined();
+    expect(row.grants[newestOldHash]).toBeDefined();
+    expect(row.grants[currentHash]).toEqual({ tier: "write", reads: [], requests: [], grantedBy: "builtin", at: 9_000 });
+    await writer.close();
+    db.close();
+  });
+
+  it("never prunes the current codeHash even when its grant is the oldest among >20 grants", async () => {
+    const currentHash = hashOf(100);
+    const grants: Record<string, PluginGrant> = {
+      [currentHash]: { tier: "request", reads: [], requests: ["chat.send"], grantedBy: "user", at: 10 },
+    };
+    for (let i = 1; i <= 21; i++) {
+      grants[hashOf(i)] = { tier: "request", reads: [], requests: ["chat.send"], grantedBy: "user", at: 100 * i };
+    }
+    const direct = prunePluginGrants(grants, currentHash);
+    expect(Object.keys(direct)).toHaveLength(20);
+    expect(direct[currentHash]).toBeDefined();
+    expect(direct[hashOf(1)]).toBeUndefined();
+    expect(direct[hashOf(2)]).toBeUndefined();
+    expect(direct[hashOf(3)]).toBeDefined();
+
+    // Also verify reconcilePluginRows stores a valid <=20-grant row if >20 grants already exist in the table.
+    const { db, writer } = memoryStore();
+    const stream = ownTableStream(db);
+    await writer.submit((tx) => {
+      tx.prepare("INSERT INTO rows (stream, key, rev, body, deleted) VALUES (?, ?, 1, ?, 0)").run(
+        stream,
+        "plugin:user.many",
+        JSON.stringify({ codeHash: currentHash, manifest: manifestAsks(["composer"]), author: "user", grants }),
+      );
+    });
+
+    await writer.submit((tx) =>
+      reconcilePluginRows(tx, stream, [{
+        name: "user.many",
+        codeHash: currentHash,
+        manifest: manifestAsks(["composer"]),
+        author: "user",
+      }], 5_000),
+    );
+
+    const row = PluginRow.parse(readRowBody(db, stream, "plugin:user.many"));
+    expect(Object.keys(row.grants)).toHaveLength(20);
+    expect(row.grants[currentHash]).toBeDefined();
+    expect(row.grants[hashOf(1)]).toBeUndefined();
+    expect(row.grants[hashOf(2)]).toBeUndefined();
+    expect(row.grants[hashOf(21)]).toBeDefined();
+    await writer.close();
+    db.close();
+  });
+});
+
+describe("M5-13b fix (a): stat signature cache avoids repeated folderHash and 60 s poll keeps immediate plugins.updated sync", () => {
+  it("checks mtime/size stat signature first and only recomputes folderHash for plugins that changed", () => {
+    const dir = makeTempDir("plugin-hash-cache");
+    const library = join(dir, "plugins");
+    mkdirSync(library, { recursive: true });
+    const fAlpha = writePlugin(library, "alpha.cached", { webCode: "export const a = 1;\n" });
+    writePlugin(library, "beta.cached", { webCode: "export const b = 1;\n" });
+
+    const registry = new PluginRegistry(library, join(dir, "plugins.json"), new MemorySecretStore(), null);
+    const sig1 = folderStatSignature(fAlpha);
+    expect(sig1).toBeTypeOf("string");
+
+    const hashSpy = vi.fn((folder: string) => folderHash(folder));
+    const cache = new PluginHashCache({ hashFolder: hashSpy });
+
+    const first = cache.read(registry.plugins);
+    expect(first).toHaveLength(2);
+    expect(hashSpy).toHaveBeenCalledTimes(2);
+
+    // Unchanged on disk: statSignature matches -> 0 folderHash calls.
+    const statBefore = cache.statSignature(registry.plugins);
+    const second = cache.read(registry.plugins);
+    expect(hashSpy).toHaveBeenCalledTimes(2);
+    expect(second).toEqual(first);
+    expect(cache.statSignature(registry.plugins)).toBe(statBefore);
+
+    // Edit only alpha.cached -> statSignature changes and only alpha.cached is re-hashed.
+    writeFileSync(join(fAlpha, "dist", "web.js"), "export const a = 2000;\n");
+    registry.rescan();
+    expect(cache.statSignature(registry.plugins)).not.toBe(statBefore);
+    const third = cache.read(registry.plugins);
+    expect(hashSpy).toHaveBeenCalledTimes(3);
+    expect(hashSpy).toHaveBeenLastCalledWith(fAlpha);
+    expect(third.find((p) => p.name === "alpha.cached")?.codeHash).toBe(folderHash(fAlpha));
+    expect(third.find((p) => p.name === "beta.cached")?.codeHash).toBe(first.find((p) => p.name === "beta.cached")?.codeHash);
+  });
+
+  it("uses a 60 s fallback poll interval in botlingd while syncing immediately on plugins.updated", async () => {
+    expect(PLUGIN_POLL_MS).toBe(60_000);
+    const dir = testRoot("poll");
+    createdDirs.push(dir);
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    let daemon: Botlingd | null = null;
+    try {
+      daemon = await Botlingd.start({
+        env: botlingdEnv(dir, { BOTLING_SERVER_PORT: "off", BOTLING_SERVER_BACKUP_CHECK_MS: "0" }),
+        outDir: join(desktop, "out"),
+      });
+      const delays = setIntervalSpy.mock.calls.map(([, delay]) => delay);
+      expect(delays).toContain(60_000);
+
+      const stream = `srv:${daemon.serverId}`;
+      const beforeRows = liveRows({ dataDir: dir }, stream);
+      const beforeDigest = MachineRow.parse(beforeRows.machine?.body).pluginsDigest;
+
+      // Drop a plugin and trigger core.plugins.scan() -> emits plugins.updated -> syncs immediately (< 5 s, well under 60 s).
+      const addedFolder = writePlugin(join(dir, "plugins"), "immediate.sync.plugin", { permissions: ["composer"] });
+      daemon.core.plugins.scan();
+
+      const updatedRows = await until(() => {
+        const rows = liveRows({ dataDir: dir }, stream);
+        return "plugin:immediate.sync.plugin" in rows ? rows : null;
+      }, { timeout: 5_000, every: 50, what: "immediate plugins.updated sync" });
+
+      const row = PluginRow.parse(updatedRows["plugin:immediate.sync.plugin"]!.body);
+      expect(row.codeHash).toBe(folderHash(addedFolder));
+      expect(row.author).toBe("user");
+      expect(row.grants).toEqual({});
+      expect(MachineRow.parse(updatedRows.machine?.body).pluginsDigest).not.toBe(beforeDigest);
+    } finally {
+      setIntervalSpy.mockRestore();
+      await daemon?.stop();
+    }
+  }, 60_000);
 });
 
 describe("M5-13b: two-server replication of plugin:<name> rows and machine.pluginsDigest", () => {

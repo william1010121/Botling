@@ -3,8 +3,9 @@
 // folders (no windows, no network listener).
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
-import { clusterIdFromRecoveryKey, memberIdFromKey, toBase64Url, toHex, type SignedStatement } from "../../src/protocol";
+import { format } from "node:util";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { clusterIdFromRecoveryKey, toBase64Url, toHex } from "../../src/protocol";
 import {
   bindServerIdentity,
   ClusterSetup,
@@ -16,8 +17,8 @@ import {
   recoveryKeyFromCode,
   type ServerIdentity,
 } from "../../src/server/identity";
-import { AdminClient, PairingService, recoveryReplaceCommand, type CliIo } from "../../src/server/pairing";
-import { readAudits, RosterError, RosterStore } from "../../src/server/roster";
+import { AdminClient, AdminRefused, PairingError, PairingService, recoveryReplaceCommand, type CliIo } from "../../src/server/pairing";
+import { readAudits, RECOVERY_REPLACE_TTL_MS, RosterError, RosterStore } from "../../src/server/roster";
 import { effectCheckpointSink } from "../../src/server/effects";
 import { ensureBot } from "../../src/server/effects/log-ops";
 import { IntentRuntime } from "../../src/server/intents";
@@ -53,6 +54,16 @@ interface Node {
   token: string;
   logs: string[];
   close(): Promise<void>;
+}
+
+async function waitFor<T>(probe: () => T | null | undefined | false, what: string, ms = 10_000): Promise<T> {
+  const started = Date.now();
+  for (;;) {
+    const value = probe();
+    if (value) return value;
+    if (Date.now() - started > ms) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
 }
 
 async function makeServer(serverName: string, now: () => number = () => 1_000_000): Promise<Node> {
@@ -98,8 +109,9 @@ async function makeServer(serverName: string, now: () => number = () => 1_000_00
     ensureBotStream: async (botId) => { if (!engine.hasBot(botId)) return false; await store.submit((tx) => { ensureBot(tx, botId); }); return true; },
     log: (line) => logs.push(line),
     admin: {
-      handle: (op) => pairing.admin(op),
+      handle: (op, session) => pairing.admin(op, session),
       onEvent: (listener) => pairing.onEvent(listener),
+      sessionClosed: (session) => pairing.adminClosed(session),
     },
   };
   const remote = new RemoteSessions({ ...host, roster, self: { memberId: identity.memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing });
@@ -197,11 +209,16 @@ function spellingsOf(code: string): string[] {
 function scriptedIo(answers: Array<string | null>) {
   const out: string[] = [];
   const asked: string[] = [];
+  const askOptions: Array<{ secret?: boolean } | undefined> = [];
   const io: CliIo = {
     out: (line) => { out.push(line); },
-    ask: async (prompt) => { asked.push(prompt); return answers.length ? answers.shift()! : null; },
+    ask: async (prompt, options) => {
+      asked.push(prompt);
+      askOptions.push(options);
+      return answers.length ? answers.shift()! : null;
+    },
   };
-  return { io, out, asked };
+  return { io, out, asked, askOptions };
 }
 
 async function connectAdmin(node: Node): Promise<AdminClient> {
@@ -277,13 +294,16 @@ describe("M4-12: botlingd recovery replace", () => {
     expect(s1.roster.statements().map((item) => item.id)).toEqual(beforeIds);
   });
 
-  it("3 & 4. after Root{g+2}, old code fails a reroot, new code works, cluster id is unchanged, and prior revocations stay counting", async () => {
+  it("3 & 4. after Root{g+2}, old code fails a reroot, new code works, cluster id is unchanged, and prior revocations stay counting while dropped ones stay out", async () => {
     const { s1, s2, s3, code: oldCode, clusterId } = await threeServers();
 
-    // Reroot onto s2 with oldRootLost: true -> Root{2} + Revoke{s1, gen: 2}.
+    // Revoke s3 on s1, then reroot onto s2 leaving out revS3 (dropped per D63) and revoking s1.
+    const revS3 = await s1.roster.revokeServer(s3.identity.memberId, false, "old-revoke");
+    await s2.roster.merge(s1.roster.statements().map((item) => item.statement));
     const rerooted = await s2.roster.reroot({ code: oldCode, oldRootLost: true, keep: [] });
     expect(rerooted.gen).toBe(2);
     expect(s2.roster.isValid(s1.identity.memberId)).toBe(false);
+    expect(s2.roster.isValid(s3.identity.memberId)).toBe(true);
 
     // Replace the recovery code on s2 -> Root{3} signed by old recovery key.
     const started = await s2.roster.replaceRecovery(oldCode.toLowerCase().replace(/-/g, " "));
@@ -315,9 +335,14 @@ describe("M4-12: botlingd recovery replace", () => {
       root: s2.identity.memberId,
       prev: rerooted.rootId,
     });
-    // Revoke{s1, gen: 2} must be carried over in Root{3}.keep so s1 stays revoked!
+    // Revoke{s1, gen: 2} must be carried over in Root{3}.keep, while revS3 (dropped at Root{2}) stays out!
+    if (root3.body.type === "root") {
+      expect(root3.body.keep).toEqual([rerooted.revokeId]);
+      expect(root3.body.keep).not.toContain(revS3.revokeId);
+    }
     expect(s2.roster.isValid(s1.identity.memberId)).toBe(false);
-    expect(s2.roster.dropped()).toEqual([]);
+    expect(s2.roster.isValid(s3.identity.memberId)).toBe(true);
+    expect(s2.roster.dropped().map((d) => d.revokeId)).toEqual([revS3.revokeId]);
 
     const audits = readAudits(s2.store.openReader());
     expect(audits[0]).toMatchObject({ act: "root.change", statement: confirmed.rootId, by: "recovery", member: s2.identity.memberId });
@@ -344,9 +369,17 @@ describe("M4-12: botlingd recovery replace", () => {
     expect(reopened.isValid(s1.identity.memberId)).toBe(false);
   });
 
-  it("5. byte scan of disk and logs finds neither the old nor the new code or seed", async () => {
+  it("5. byte scan of disk, logs, and console.* finds neither the old nor the new code or seed (incl. standard base64)", async () => {
     const { s2, code: oldCode } = await threeServers();
     await s2.roster.reroot({ code: oldCode, oldRootLost: true, keep: [] });
+
+    const consoleLines: string[] = [];
+    const consoleMethods = ["log", "info", "warn", "error", "debug"] as const;
+    const consoleSpies = consoleMethods.map((method) =>
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        consoleLines.push(format(...args));
+      }),
+    );
 
     const client = await connectAdmin(s2);
     const started = await client.request({ op: "recovery.replace", code: oldCode }) as { code: string; clusterId: string; expiresAt: number };
@@ -356,9 +389,14 @@ describe("M4-12: botlingd recovery replace", () => {
     const oldSeed = await rawSeedFromCode(oldCode);
     const newSeed = await rawSeedFromCode(newCode);
     try {
+      const seedStrings: string[] = [];
       const patterns: Buffer[] = [];
       for (const seed of [oldSeed, newSeed]) {
-        patterns.push(Buffer.from(seed), Buffer.from(toHex(seed), "utf8"), Buffer.from(toBase64Url(seed), "utf8"));
+        const hex = toHex(seed);
+        const b64u = toBase64Url(seed);
+        const b64 = Buffer.from(seed).toString("base64");
+        seedStrings.push(hex, b64u, b64);
+        patterns.push(Buffer.from(seed), Buffer.from(hex, "utf8"), Buffer.from(b64u, "utf8"), Buffer.from(b64, "utf8"));
       }
       for (const code of [oldCode, newCode]) {
         for (const spelling of spellingsOf(code)) patterns.push(Buffer.from(spelling, "utf8"));
@@ -367,7 +405,9 @@ describe("M4-12: botlingd recovery replace", () => {
       const scanDisk = () => {
         for (const file of walkFiles(s2.dir)) {
           const bytes = readFileSync(file);
-          for (const pat of patterns) expect(bytes.indexOf(pat), `secret pattern found in ${file}`).toBe(-1);
+          for (const pat of patterns) {
+            expect(bytes.indexOf(pat), `secret pattern found in ${file}`).toBe(-1);
+          }
         }
       };
 
@@ -375,17 +415,19 @@ describe("M4-12: botlingd recovery replace", () => {
       await s2.close();
       scanDisk();
 
-      const logText = s2.logs.join("\n");
+      const logText = `${s2.logs.join("\n")}\n${consoleLines.join("\n")}`;
       for (const code of [oldCode, newCode]) {
         for (const spelling of spellingsOf(code)) expect(logText).not.toContain(spelling);
       }
+      for (const seedText of seedStrings) expect(logText).not.toContain(seedText);
     } finally {
+      for (const spy of consoleSpies) spy.mockRestore();
       oldSeed.fill(0);
       newSeed.fill(0);
     }
   });
 
-  it("CLI over local socket: refuses non-root, handles wrong codes, and replaces on root", async () => {
+  it("CLI over local socket: refuses non-root, handles wrong codes, passes secret:true, and replaces on root", async () => {
     const { s1, s2, s3, code: oldCode, clusterId } = await threeServers();
     await s2.roster.reroot({ code: oldCode, oldRootLost: true, keep: [] });
     await s1.roster.mergeRevocations(s2.roster.revocations().map((item) => item.statement));
@@ -403,6 +445,7 @@ describe("M4-12: botlingd recovery replace", () => {
     const ioBadOld = scriptedIo([wrongOld, wrongOld, wrongOld]);
     expect(await recoveryReplaceCommand(c2, ioBadOld.io)).toBe(1);
     expect(ioBadOld.out.join("\n")).toContain("Nothing was changed");
+    expect(ioBadOld.askOptions).toEqual([{ secret: true }, { secret: true }, { secret: true }]);
     expect(s2.roster.view.root?.gen).toBe(2);
 
     // Current root (s2): right old code -> new code printed once -> wrong confirm -> right confirm.
@@ -414,14 +457,16 @@ describe("M4-12: botlingd recovery replace", () => {
         const match = line.match(/^\s*([A-Z2-7]{4}(?:-[A-Z2-7]{4}){5}-[A-Z2-7]{2})\s*$/);
         if (match) printedNewCode = match[1]!;
       },
-      ask: async (prompt) => {
+      ask: async (prompt, options) => {
         ioGood.asked.push(prompt);
+        ioGood.askOptions.push(options);
         if (ioGood.asked.length === 1) return oldCode;
         if (ioGood.asked.length === 2) return "not-valid";
         return printedNewCode.toLowerCase().replace(/-/g, " ");
       },
     };
     expect(await recoveryReplaceCommand(c2, wrappedIo)).toBe(0);
+    expect(ioGood.askOptions).toEqual([{ secret: true }, { secret: true }, { secret: true }]);
     expect(printedNewCode).toMatch(/^([A-Z2-7]{4}-){6}[A-Z2-7]{2}$/);
     expect(s2.roster.view.root?.gen).toBe(3);
     expect(s2.roster.clusterId).toBe(clusterId);
@@ -469,5 +514,110 @@ describe("M4-12: botlingd recovery replace", () => {
     await expect(s2.roster.reroot({ code: step1.code, oldRootLost: false, keep: [] })).rejects.toMatchObject({ reason: "bad-code" });
     const r4 = await s2.roster.reroot({ code: step2.code, oldRootLost: false, keep: [] });
     expect(r4.gen).toBe(4);
+  });
+
+  it("distinguishes errors by PairingError code (not English text) and gives bad-keep its own message", async () => {
+    const { s1, code } = await threeServers();
+    const client = await connectAdmin(s1);
+
+    // AdminRefused exposes code and detail parsed from wire message.
+    const refused = new AdminRefused("bad-keep: keep exceeds the maximum of 1000 revocations");
+    expect((refused as unknown as { code: string | null }).code).toBe("bad-keep");
+    expect((refused as unknown as { detail: string }).detail).toBe("keep exceeds the maximum of 1000 revocations");
+
+    // Step 1: non-bad-code PairingError with custom (non-English) text stops on first try instead of retrying as wrong code.
+    const spyBegin = vi.spyOn(s1.pairing, "beginRecoveryReplace").mockRejectedValueOnce(
+      new PairingError("not-root", "non-english-refusal-text"),
+    );
+    const ioNotRoot = scriptedIo([code, code, code]);
+    expect(await recoveryReplaceCommand(client, ioNotRoot.io)).toBe(1);
+    expect(ioNotRoot.asked).toHaveLength(1);
+    expect(ioNotRoot.out.join("\n")).toContain("non-english-refusal-text");
+    expect(ioNotRoot.out.join("\n")).not.toContain("That is not the recovery code.");
+    spyBegin.mockRestore();
+
+    // Step 1: self-revoked RosterError maps to PairingError("self-revoked") and stops on first try.
+    const spyReplace = vi.spyOn(s1.roster, "replaceRecovery").mockRejectedValueOnce(
+      new RosterError("self-revoked", "this server was removed from the cluster"),
+    );
+    const ioSelfRevoked = scriptedIo([code, code]);
+    expect(await recoveryReplaceCommand(client, ioSelfRevoked.io)).toBe(1);
+    expect(ioSelfRevoked.asked).toHaveLength(1);
+    expect(ioSelfRevoked.out.join("\n")).toContain("this server was removed from the cluster");
+    expect(ioSelfRevoked.out.join("\n")).not.toContain("That is not the recovery code.");
+    spyReplace.mockRestore();
+
+    // Step 2: RosterError("bad-keep") in confirmRecovery maps to PairingError("bad-keep"), prints its own message, cancels pending, and stops immediately.
+    const spyConfirm = vi.spyOn(s1.roster, "confirmRecovery").mockRejectedValueOnce(
+      new RosterError("bad-keep", "keep exceeds the maximum of 1000 revocations"),
+    );
+    let printedNewCode = "";
+    const step2Answers: string[] = [];
+    const ioBadKeep: CliIo = {
+      out: (line) => {
+        step2Answers.push(line);
+        const match = line.match(/^\s*([A-Z2-7]{4}(?:-[A-Z2-7]{4}){5}-[A-Z2-7]{2})\s*$/);
+        if (match) printedNewCode = match[1]!;
+      },
+      ask: async () => (printedNewCode ? printedNewCode : code),
+    };
+    expect(await recoveryReplaceCommand(client, ioBadKeep)).toBe(1);
+    const step2Out = step2Answers.join("\n");
+    expect(step2Out).toContain("Cannot replace the recovery code: keep list exceeds the limit (keep exceeds the maximum of 1000 revocations).");
+    expect(step2Out).not.toContain("That is not a recovery code");
+    expect(step2Out).toContain("nothing was changed");
+    // Pending replacement was cancelled on the server.
+    expect(await s1.roster.confirmRecovery(printedNewCode)).toMatchObject({ ok: false, reason: "no-setup" });
+    spyConfirm.mockRestore();
+  });
+
+  it("clears the old recovery signing handle when the 10-minute TTL expires", async () => {
+    const fixedClock = () => 1_000_000;
+    const { s1, code } = await threeServers(fixedClock);
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const started1 = await s1.roster.replaceRecovery(code);
+      // Halfway through TTL, starting a second replace supersedes the first timer.
+      vi.advanceTimersByTime(RECOVERY_REPLACE_TTL_MS / 2);
+      const started2 = await s1.roster.replaceRecovery(code);
+
+      // Advancing past started1's original deadline must NOT clear started2.
+      vi.advanceTimersByTime(RECOVERY_REPLACE_TTL_MS / 2 + 1);
+      const wrong = started2.code.startsWith("A") ? `B${started2.code.slice(1)}` : `A${started2.code.slice(1)}`;
+      expect(await s1.roster.confirmRecovery(wrong)).toMatchObject({ ok: false, reason: "wrong-code" });
+
+      // Advancing to started2's 10-minute expiry clears pendingReplace even without clock advancing (`now()` is still 1_000_000),
+      // so confirmRecovery sees `no-setup` rather than `expired`.
+      vi.advanceTimersByTime(RECOVERY_REPLACE_TTL_MS / 2);
+      expect(await s1.roster.confirmRecovery(started2.code)).toMatchObject({ ok: false, reason: "no-setup" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the old recovery signing handle when the CLI admin session disconnects", async () => {
+    const { s1, code } = await threeServers();
+
+    const c1 = await connectAdmin(s1);
+    const c2 = await connectAdmin(s1);
+
+    const started = await c1.request({ op: "recovery.replace", code }) as { code: string; clusterId: string; expiresAt: number };
+
+    // Disconnecting an unrelated admin client must NOT clear c1's pending replacement.
+    c2.close();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(await s1.roster.confirmRecovery("not-a-code")).toMatchObject({ ok: false, reason: "malformed" });
+
+    // Disconnecting the client that started recovery.replace without sending recovery.cancel clears the pending handle.
+    c1.close();
+    let cleared = false;
+    await waitFor(() => {
+      void s1.roster.confirmRecovery("not-a-code").then((res) => {
+        if (!res.ok && res.reason === "no-setup") cleared = true;
+      });
+      return cleared;
+    }, "pending recovery replace cleared on CLI disconnect");
+    expect(await s1.roster.confirmRecovery(started.code)).toMatchObject({ ok: false, reason: "no-setup" });
   });
 });

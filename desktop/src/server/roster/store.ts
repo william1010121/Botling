@@ -87,6 +87,7 @@ interface PendingRecoveryReplace {
   newRecoveryPub: string;
   oldPrivateKey: CryptoKey;
   expiresAt: number;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 const memberOf = (body: StatementBody) => (body.type === "root" ? body.root : body.member);
@@ -502,14 +503,21 @@ export class RosterStore {
           newKey = await recoveryKeyFromCode(rawCode);
         }
         try {
+          this.clearPendingReplace();
           const expiresAt = this.now() + RECOVERY_REPLACE_TTL_MS;
-          this.pendingReplace = {
+          const pending: PendingRecoveryReplace = {
             rootId: root.id,
             cluster,
             newRecoveryPub: newKey.recoveryPub,
             oldPrivateKey: oldKey.privateKey,
             expiresAt,
+            timer: undefined as unknown as ReturnType<typeof setTimeout>,
           };
+          pending.timer = setTimeout(() => {
+            if (this.pendingReplace === pending) this.clearPendingReplace();
+          }, RECOVERY_REPLACE_TTL_MS);
+          pending.timer.unref?.();
+          this.pendingReplace = pending;
           return { code: formatRecoveryCode(rawCode), clusterId: cluster, expiresAt };
         } finally {
           newKey.publicKey.fill(0);
@@ -530,21 +538,21 @@ export class RosterStore {
       const cluster = this.cluster;
       const root = this.current.root;
       if (cluster === null || !root) {
-        this.pendingReplace = null;
+        this.clearPendingReplace();
         return { ok: false, reason: "no-cluster" };
       }
       if (root.root !== this.identity.memberId) {
-        this.pendingReplace = null;
+        this.clearPendingReplace();
         return { ok: false, reason: "not-root" };
       }
       const pending = this.pendingReplace;
       if (!pending) return { ok: false, reason: "no-setup" };
       if (pending.expiresAt <= this.now()) {
-        this.pendingReplace = null;
+        this.clearPendingReplace();
         return { ok: false, reason: "expired" };
       }
       if (pending.rootId !== root.id || pending.cluster !== cluster) {
-        this.pendingReplace = null;
+        this.clearPendingReplace();
         return { ok: false, reason: "stale" };
       }
       if (!normalizeRecoveryCode(typed)) return { ok: false, reason: "malformed" };
@@ -571,13 +579,19 @@ export class RosterStore {
       });
       const rootStmt = await signStatement(rootBody, "recovery", signWith(pending.oldPrivateKey));
       await this.commit([rootStmt], cluster, [{ act: "root.change", statement: rootStmt.id, by: "recovery", member: this.identity.memberId }]);
-      this.pendingReplace = null;
+      this.clearPendingReplace();
       return { ok: true, clusterId: cluster, rootId: rootStmt.id, gen };
     });
   }
 
   /** Clears a pending recovery-code replacement (cancelled or failed). */
   cancelRecoveryReplace(): void {
+    this.clearPendingReplace();
+  }
+
+  private clearPendingReplace(): void {
+    if (!this.pendingReplace) return;
+    clearTimeout(this.pendingReplace.timer);
     this.pendingReplace = null;
   }
 
@@ -940,7 +954,7 @@ export class RosterStore {
     this.verified = verified;
     this.cluster = cluster;
     this.current = view;
-    if (this.pendingReplace && view.root?.id !== this.pendingReplace.rootId) this.pendingReplace = null;
+    if (this.pendingReplace && view.root?.id !== this.pendingReplace.rootId) this.clearPendingReplace();
     const invalidated = [...before.valid].filter((member) => !view.valid.has(member));
     for (const listener of this.listeners) {
       try { listener({ view, invalidated }); } catch (error) { this.options.log?.(`roster: a change listener failed: ${String((error as Error)?.message ?? error)}`); }

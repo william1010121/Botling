@@ -11,7 +11,23 @@ import { decodeFrame, encodeFrame, type AdminEvent, type AdminOp, type Message }
 const LOCAL = { local: true } as const;
 
 export class AdminRefused extends Error {
-  constructor(message: string) { super(message); this.name = "AdminRefused"; }
+  /** The `PairingError` / `JoinError` code prefix (`code: detail`) when the server sent one, else null. */
+  readonly code: string | null;
+  /** The refusal detail without the `code: ` prefix when present. */
+  readonly detail: string;
+
+  constructor(message: string, code?: string | null) {
+    super(message);
+    this.name = "AdminRefused";
+    if (code !== undefined) {
+      this.code = code;
+      this.detail = message;
+      return;
+    }
+    const match = /^([a-z][a-z0-9-]*): (.*)$/s.exec(message);
+    this.code = match ? match[1]! : null;
+    this.detail = match ? match[2]! : message;
+  }
 }
 
 export class AdminClient {
@@ -95,7 +111,7 @@ export class AdminClient {
 
   private send(message: Message): void {
     const encoded = encodeFrame(message, "fe", LOCAL);
-    if (!encoded.ok) throw new AdminRefused(encoded.detail);
+    if (!encoded.ok) throw new AdminRefused(encoded.detail, null);
     this.socket?.send(encoded.text);
   }
 

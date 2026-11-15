@@ -31,13 +31,22 @@ import type { JoinOfferResult, MachineAddResult, MachineCodeResult } from "./joi
 
 export interface CliIo {
   out(line: string): void;
-  /** One line typed by the user (null when the input ended). */
-  ask(prompt: string): Promise<string | null>;
+  /** One line typed by the user (null when the input ended). Pass `{ secret: true }` to mute TTY echo. */
+  ask(prompt: string, options?: { secret?: boolean }): Promise<string | null>;
 }
 
 const RECOVERY_TRIES = 3;
 const groupCode = (code: string) => `${code.slice(0, 3)} ${code.slice(3)}`;
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const formatLocalMinute = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+const formatLocalDay = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
 
 /** `botlingd pair`; resolves with the exit code. */
 export async function pairCommand(client: AdminClient, io: CliIo, options: { name?: string; scope?: DeviceScope[]; qr?: boolean } = {}): Promise<number> {
@@ -98,7 +107,7 @@ async function createCluster(client: AdminClient, io: CliIo): Promise<boolean> {
   io.out("");
   io.out("It is needed to replace this machine as the cluster's root if it is ever lost. Type it back to confirm.");
   for (let attempt = 1; attempt <= RECOVERY_TRIES; attempt++) {
-    const typed = await io.ask("Recovery code: ");
+    const typed = await io.ask("Recovery code: ", { secret: true });
     if (typed === null) break;
     let result: { ok: boolean; reason?: string; clusterId?: string };
     try {
@@ -324,7 +333,7 @@ export async function rerootCommand(
   }
 
   io.out(`This makes "${preview.selfName}" the revocation root of your machines.`);
-  const firstCode = await io.ask(CODE_PROMPT);
+  const firstCode = await io.ask(CODE_PROMPT, { secret: true });
   if (firstCode === null) {
     io.out("Nothing was changed.");
     return 1;
@@ -353,9 +362,7 @@ export async function rerootCommand(
     io.out("Removals made by earlier roots (untick any you did not make):");
     const nameWidth = Math.max(12, ...preview.keepCandidates.map((c) => c.memberName.length + 2)) + 3;
     preview.keepCandidates.forEach((c, index) => {
-      const when = c.receivedAt !== null
-        ? new Date(c.receivedAt).toISOString().slice(0, 16).replace("T", " ")
-        : "unknown time";
+      const when = c.receivedAt !== null ? formatLocalMinute(c.receivedAt) : "unknown time";
       const memberLabel = `"${c.memberName}"`.padEnd(nameWidth);
       io.out(`  [x] ${index + 1}  ${memberLabel}removed by ${c.signerName}   ${when}`);
     });
@@ -398,6 +405,10 @@ export async function rerootCommand(
           keep,
         }) as RerootResult;
       } catch (error) {
+        if (error instanceof AdminRefused && error.code === "bad-keep") {
+          io.out(`Cannot reroot: keep list could not be accepted (${error.detail}).`);
+          return 1;
+        }
         io.out(`Cannot reroot: ${errorText(error)}`);
         return 1;
       }
@@ -413,7 +424,7 @@ export async function rerootCommand(
           );
           const width = Math.max(16, ...labels.map((label) => label.length + 3));
           result.oldRootAdded.forEach((item, index) => {
-            const day = new Date(item.at).toISOString().slice(0, 10);
+            const day = formatLocalDay(item.at);
             io.out(`  ${labels[index]!.padEnd(width)}${day}`);
           });
         }
@@ -427,7 +438,7 @@ export async function rerootCommand(
     wrongTries++;
     io.out("That is not the recovery code. Nothing was changed.");
     if (wrongTries >= RECOVERY_TRIES) return 1;
-    const retry = await io.ask(CODE_PROMPT);
+    const retry = await io.ask(CODE_PROMPT, { secret: true });
     if (retry === null) return 1;
     candidateCode = retry;
   }
@@ -575,7 +586,7 @@ export async function recoveryReplaceCommand(client: AdminClient, io: CliIo): Pr
   io.out(`Replace the recovery code for this cluster (current root: "${status.serverName}").`);
   let started: { code: string; clusterId: string; expiresAt: number } | null = null;
   for (let attempt = 1; attempt <= RECOVERY_TRIES; attempt++) {
-    const typed = await io.ask("Type the current recovery code (26 characters; spaces and dashes are fine): ");
+    const typed = await io.ask("Type the current recovery code (26 characters; spaces and dashes are fine): ", { secret: true });
     if (typed === null) {
       io.out("No code given; nothing was changed.");
       return 1;
@@ -585,12 +596,16 @@ export async function recoveryReplaceCommand(client: AdminClient, io: CliIo): Pr
       break;
     } catch (error) {
       if (!(error instanceof AdminRefused)) throw error;
-      const msg = error.message;
-      if (msg.includes("Only the revocation root") || msg.includes("no cluster")) {
-        io.out(msg);
-        return 1;
+      if (error.code === "bad-code") {
+        if (attempt < RECOVERY_TRIES) io.out("That is not the recovery code.");
+        continue;
       }
-      if (attempt < RECOVERY_TRIES) io.out("That is not the recovery code.");
+      io.out(
+        error.code === "bad-keep"
+          ? `Cannot replace the recovery code: keep list exceeds the limit (${error.detail}).`
+          : error.detail,
+      );
+      return 1;
     }
   }
   if (!started) {
@@ -605,14 +620,23 @@ export async function recoveryReplaceCommand(client: AdminClient, io: CliIo): Pr
   io.out("Type the new recovery code back to confirm. The old code stops working only after you confirm.");
 
   for (let attempt = 1; attempt <= RECOVERY_TRIES; attempt++) {
-    const typed = await io.ask("New recovery code: ");
+    const typed = await io.ask("New recovery code: ", { secret: true });
     if (typed === null) break;
     let result: { ok: boolean; reason?: string; gen?: number };
     try {
       result = await client.request({ op: "recovery.confirm", code: typed.slice(0, 64) }) as typeof result;
     } catch (error) {
       if (!(error instanceof AdminRefused)) throw error;
-      result = { ok: false, reason: "malformed" };
+      if (error.code === "bad-code") {
+        result = { ok: false, reason: "malformed" };
+      } else {
+        io.out(
+          error.code === "bad-keep"
+            ? `Cannot replace the recovery code: keep list exceeds the limit (${error.detail}).`
+            : `Cannot replace the recovery code: ${error.detail}`,
+        );
+        break;
+      }
     }
     if (result.ok) {
       io.out(`Recovery code replaced (Root gen ${result.gen}). The old recovery code no longer works.`);

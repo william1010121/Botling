@@ -12,6 +12,9 @@
 //   shared. Which route the user is looking at is never written into the file.
 // - Cards: `<show name="component" …>JSON</show>`, the chat's own syntax (reply.ts), drawn live by
 //   the Note tab; `command="…"` (or none and no JSON: the component's Command) fills it from a command.
+// - PDF quotes: `> 〔PDF · <name> · p. <page>〕` blocks, optionally followed by a `<!-- source: ... -->` comment
+//   so "go to source" can open the same content bytes at that page on any device (§9A.8, D74 Q-C8);
+//   kept in note-pdf-quote.ts (browser-safe) and re-exported here.
 //
 // Markers and cards inside code (fences, `inline`) are text. Nothing here reads or writes a file.
 //
@@ -22,6 +25,7 @@ import { refreshSeconds } from "./components/library";
 import { attributes, masked, showTag } from "./reply";
 
 export * from "./note-cells";
+export { pdfQuoteMarkup, pdfQuotes, type PdfQuote } from "./note-pdf-quote";
 
 export interface NoteRoute {
   /** "<fork key>/<name>" (a second route of one name in the same fork: "…/<name>#2"). */
