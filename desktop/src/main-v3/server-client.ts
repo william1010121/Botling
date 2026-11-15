@@ -18,6 +18,7 @@ import type { Message } from "../protocol";
 import { FeLink, systemClock, type Clock, type Dial, type FeLinkOptions, type FeStorage } from "../fe-link";
 import type { AppOp, CoreClient as CoreClient2x, CoreClientOptions } from "../main/core-client";
 import { RendererAdapter, type LinkPort } from "./renderer-adapter";
+import type { RequestVia } from "../renderer/client";
 import { unixDial } from "./unix-dial";
 import { INHERITED_IMPORT_VARS } from "../server/inherited-env";
 import { isPackagedElectron } from "../server/packaged-electron";
@@ -283,12 +284,12 @@ export class ServerClient {
   }
 
   /** Sends a command; resolves with the response (never rejects), as 2.x. */
-  async request(cmd: Command, id = `main.${++this.counter}`): Promise<ResponseEnvelope> {
+  async request(cmd: Command, id = `main.${++this.counter}`, via?: RequestVia): Promise<ResponseEnvelope> {
     if (!this.adapter) {
       if (this.opening) await this.opening;
       if (!this.adapter) return errorResponse(id, { code: "core_unavailable", message: "The Botling server link is not open." });
     }
-    const answer = await this.adapter.request(cmd);
+    const answer = via !== undefined ? await this.adapter.request(cmd, via) : await this.adapter.request(cmd);
     return answer.ok ? okResponse(id, answer.result) : errorResponse(id, answer.error);
   }
 

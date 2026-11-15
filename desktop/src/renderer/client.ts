@@ -5,9 +5,13 @@ import {
   type Command, type CommandType, type ResultOf, type WireError, type EventEnvelope as EventEnvelopeT,
 } from "../contract";
 
+export interface RequestVia {
+  plugin: string;
+}
+
 export interface Bridge {
   protocol: number;
-  post(envelope: unknown): void;
+  post(envelope: unknown, via?: RequestVia): void;
   subscribe(listener: (message: unknown) => void): () => void;
 }
 
@@ -41,7 +45,11 @@ export class Client {
     else pending.reject(new RequestFailed(response.data.error));
   }
 
-  request<T extends CommandType>(cmd: Extract<Command, { type: T }>, options: { signal?: AbortSignal } = {}): Promise<ResultOf<T>> {
+  request<T extends CommandType>(
+    cmd: Extract<Command, { type: T }>,
+    options: { signal?: AbortSignal } = {},
+    via?: RequestVia,
+  ): Promise<ResultOf<T>> {
     const id = `r${++this.counter}`;
     return new Promise((resolve, reject) => {
       if (options.signal?.aborted) {
@@ -50,7 +58,8 @@ export class Client {
       }
       this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
       options.signal?.addEventListener("abort", () => this.bridge.post({ v: PROTOCOL_VERSION, cancel: id }), { once: true });
-      this.bridge.post({ v: PROTOCOL_VERSION, id, cmd });
+      if (via !== undefined) this.bridge.post({ v: PROTOCOL_VERSION, id, cmd }, via);
+      else this.bridge.post({ v: PROTOCOL_VERSION, id, cmd });
     });
   }
 

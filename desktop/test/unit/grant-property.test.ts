@@ -45,6 +45,7 @@ const HOSTILE_HASHES = ["constructor", "__proto__", "toString", "hasOwnProperty"
 /** Plugin names with dot-prefix relations (`my`, `my.plugin`, `my.plugin.deep`; M5-15 F2) and a name that only starts alike. */
 const PLUGINS = ["my", "my.plugin", "my.plugin.deep", "note", "note-x", "other"];
 const FOUR = ["plugins.command", "plugins.linkCommand", "plugins.tabCommand", "plugins.call"] as const;
+const HELPERS = ["plugins.tileImages", "plugins.noteSnapshot", "plugins.approvalAsk"] as const;
 const SCOPES: readonly DeviceScope[] = ["read", "reply", "approve", "manage"];
 const BOT = "6A0B0000-0000-4000-8000-000000000002";
 const EPOCH = (caseIndex: number) => caseIndex.toString(16).padStart(32, "0");
@@ -76,7 +77,8 @@ function oracle(world: World, origin: Origin, stated: Scope, cmd: Command, via: 
   } else if (origin.id === SELF) {
     return { applied: false, reason: "origin" };
   } else if (world.servers.has(origin.id)) {
-    if (cmd.type === "plugin.grant") return { applied: false, reason: "origin" };
+    if (cmd.type === "plugin.grant" || CARD_COMMANDS.has(cmd.type)) return { applied: false, reason: "origin" };
+    if (cmd.type === "waiting.ignore") return { applied: false, reason: "scope" };
     if (needed === "server") { if (stated !== "read") return { applied: false, reason: "scope" }; }
     else if (!["reply", "manage"].includes(needed) || stated !== honest) return { applied: false, reason: "scope" };
   } else {
@@ -90,9 +92,14 @@ function oracle(world: World, origin: Origin, stated: Scope, cmd: Command, via: 
   const entry = world.table.get(via.plugin);
   const row = entry?.kind === "row" ? entry.row : null;
   const grant = row ? new Map(Object.entries(row.grants)).get(via.codeHash) : undefined; // by the hash the command was written under, never by name
-  if (!grant || grant.tier === "read") return { applied: false, reason: "grant" };
+  if (!grant) return { applied: false, reason: "grant" };
+  const cmdName = (cmd as { name?: unknown }).name;
+  if (cmd.type === "plugins.tileImages" && cmdName === via.plugin) return { applied: true };
+  if (grant.tier === "read") return { applied: false, reason: "grant" };
   if ((grant.requests as string[]).includes(cmd.type)) return { applied: true };
-  if (grant.tier !== "write" || !four(cmd.type)) return { applied: false, reason: "grant" };
+  if (grant.tier !== "write") return { applied: false, reason: "grant" };
+  if ((cmd.type === "plugins.noteSnapshot" || cmd.type === "plugins.approvalAsk") && cmdName === via.plugin) return { applied: true };
+  if (!four(cmd.type)) return { applied: false, reason: "grant" };
   const live = [...world.table.entries()].filter(([, e]) => e.kind !== "tombstone").map(([name]) => name);
   if (cmd.type === "plugins.call") return cmd.name === via.plugin ? { applied: true } : { applied: false, reason: "grant" };
   const id = (cmd as unknown as { id: string }).id;
@@ -118,6 +125,9 @@ function make(r: Random, type: string, plugin: string): Command {
     case "plugins.command": return { type, id: `${plugin}.${pick(r, ["go", "x", "plugin.go", "deep.go"])}`, botId: BOT } as unknown as Command;
     case "plugins.linkCommand": return { type, id: `${plugin}.${pick(r, ["go", "plugin.go"])}`, botId: BOT, messageId: "m1", url: "https://x.test/a.pdf" } as unknown as Command;
     case "plugins.tabCommand": return { type, id: `${plugin}.${pick(r, ["go", "deep.go"])}`, botId: BOT, tabId: "t1", url: "https://x.test/a.pdf" } as unknown as Command;
+    case "plugins.tileImages": return { type, name: plugin, botId: BOT, data: "{}" } as unknown as Command;
+    case "plugins.noteSnapshot": return { type, name: plugin, botId: BOT, rect: { x: 0, y: 0, width: 10, height: 10 } } as unknown as Command;
+    case "plugins.approvalAsk": return { type, name: plugin, botId: BOT, command: "ls", folder: "/tmp" } as unknown as Command;
     case "plugin.grant": return { type, plugin, codeHash: pick(r, HASHES), tier: "write", reads: [], requests: [], botId: BOT } as unknown as Command;
     case "settings.set": return { type, change: { key: pick(r, ["theme", "developerMode", "claudeBypassPermissions", "density"]), value: "x" }, botId: BOT } as unknown as Command;
     default: return { type, botId: BOT, messageId: "m1", turnId: "t1" } as unknown as Command;
@@ -200,8 +210,9 @@ function genCommand(r: Random, world: World, via: Via | undefined): Command {
   const entry = via ? world.table.get(via.plugin) : undefined;
   const grant = entry?.kind === "row" && via ? Object.entries(entry.row.grants).find(([hash]) => hash === via.codeHash)?.[1] : undefined;
   if (via && grant?.requests.length && roll < 0.35) return make(r, pick(r, grant.requests as string[]), via.plugin);
-  if (via && roll < 0.65) return make(r, pick(r, FOUR), pick(r, chance(r, 0.7) ? [via.plugin] : PLUGINS));
-  if (roll < 0.78) return make(r, pick(r, FOUR), pick(r, PLUGINS));
+  if (via && roll < 0.5) return make(r, pick(r, FOUR), pick(r, chance(r, 0.7) ? [via.plugin] : PLUGINS));
+  if (via && roll < 0.74) return make(r, pick(r, HELPERS), pick(r, chance(r, 0.7) ? [via.plugin] : PLUGINS));
+  if (roll < 0.8) return make(r, pick(r, FOUR), pick(r, PLUGINS));
   if (roll < 0.86) return make(r, "plugin.grant", pick(r, PLUGINS));
   if (roll < 0.9) return make(r, "settings.set", "");
   return make(r, pick(r, ALL_TYPES), "");
@@ -337,6 +348,7 @@ async function runCase(h: ReturnType<typeof setup>, seed: number, index: number)
     hit(`outcome:${kind}${want.applied ? "" : `:${want.reason}`}`);
     hit(`cmdscope:${commandScope(cmd)}`);
     if (four(cmd.type)) hit(via ? "plugincmd:via" : "plugincmd:novia");
+    if ((HELPERS as readonly string[]).includes(cmd.type) && via) hit(`helper:${cmd.type}:${kind}`);
     if (cmd.type === "plugin.grant") hit(`plugin.grant:${kind}:${via ? "via" : "novia"}:${origin.kind}`);
     if (kind === "applied" && via) hit("applied:via");
     if (kind === "applied" && !via && origin.kind === "local") hit("applied:local-novia");
@@ -454,6 +466,7 @@ describe("M5-19: nothing is applied outside device scope ∩ the plugin's grant 
       "via:grant-read:current-hash", "via:grant-request:current-hash", "via:grant-write:current-hash", "via:grant-write:other-hash", "via:no-grant-at-hash:current-hash",
       "via:row-malformed", "via:row-tombstone", "via:row-missing", "stated:wrong", "held:decided", "resend:same-outcome", "resend:via-conflict", "hashswap:fresh-slot",
       "applied:via", "applied:local-novia", "applied:server", "applied:device", "applied:tier-request", "applied:tier-write", "applied:tier-write:swapped-hash",
+      "helper:plugins.tileImages:applied", "helper:plugins.approvalAsk:applied",
       "outcome:refused:scope", "outcome:refused:grant", "outcome:refused:origin", "plugincmd:via", "plugincmd:novia", "devicechange", "serverchange",
       "plugin.grant:applied:novia:local", "plugin.grant:refused:via:local", "plugin.grant:refused:novia:server",
       // review: every command scope class, and the read / request tiers at a hash other than the row's current one.
@@ -463,6 +476,8 @@ describe("M5-19: nothing is applied outside device scope ∩ the plugin's grant 
     // Every device scope subset (16) is reached.
     for (let mask = 0; mask < 16; mask++) need(`devicescope:${SCOPES.filter((_, i) => mask & (1 << i)).sort().join("+") || "none"}`, 25);
     // A plugin.grant is applied from a manage device, too.
+    need("applied:tier-read", 15);
+    need("helper:plugins.noteSnapshot:applied", 15);
     expect([...cover.keys()].some((key) => key.startsWith("plugin.grant:applied:novia:device"))).toBe(true);
   });
 });

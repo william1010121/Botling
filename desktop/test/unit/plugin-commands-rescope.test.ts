@@ -22,6 +22,9 @@ import { openServerStore, type ServerStore } from "../../src/server/store";
 import { generateDhKeyPair } from "../../src/session";
 import { testRoot } from "../botlingd-harness";
 import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
+import { FeLink, MemoryFeStorage } from "../../src/fe-link";
+import { RendererAdapter } from "../../src/main-v3/renderer-adapter";
+import { FakeClock, FakeServer, flush, SRV_STREAM } from "./fe-link-harness";
 
 const root = testRoot("plugin-rescope");
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -364,5 +367,60 @@ describe("M5-16: hostile keys and fail-closed grant lookups on a plugin command"
     expect(await asPhone(s, phone, pcall("note"), via("note"))).toMatchObject({ kind: "refused", reason: "grant" });
     expect(await asPhone(s, "not-a-device", pcall("note"), via("note"))).toMatchObject({ kind: "refused", reason: "origin" });
     expect(ran(s)).toEqual([]);
+  });
+});
+
+// --- M5-12b re-review: the frame path end to end ----------------------------------------------------------------------
+// The adapter stamps `via` from the attached server's own `plugin:` row through the real FeLink; those copies then meet
+// the real owner (grant check, legacy apply with `via` in the hash). Joins broker-via.test.ts to the owner side.
+describe("M5-12b: frame commands from the real FeLink at the owner", () => {
+  const HC = "sha256:" + "cd".repeat(32);
+  const frameCmds = (name: string): Command[] => [
+    { type: "plugins.call", name, method: "start", params: {}, from: "frame" },
+    { type: "plugins.command", id: `${name}.go`, from: "frame", name },
+    { type: "plugins.tileImages", name, botId: BOT, data: "{}" },
+    { type: "plugins.noteSnapshot", name, botId: BOT, rect: { x: 0, y: 0, width: 10, height: 10 } },
+    { type: "plugins.approvalAsk", name, botId: BOT, command: "ls", folder: "/tmp" },
+  ] as unknown as Command[];
+  let epoch = 0;
+  async function copiesFromFrame(name: string): Promise<Array<{ cmd: Command; via: Via }>> {
+    const server = new FakeServer();
+    const clock = new FakeClock();
+    const fe = await FeLink.open({ storage: new MemoryFeStorage(), dial: server.dial, deviceId: "desktop", feVersion: "3.0.0", clock, newEpoch: () => (++epoch).toString(16).padStart(32, "0"), local: true });
+    const adapter = new RendererAdapter({ link: fe, clock, emit: () => undefined });
+    fe.start();
+    adapter.start();
+    cleanups.push(async () => { adapter.stop(); await fe.stop(); });
+    await flush();
+    server.sendWire({ t: "rows", stream: SRV_STREAM, logId: "incown01", after: 0, to: 1, rows: [{ key: `plugin:${name}`, rev: 1, body: row({ codeHash: HC }) }], more: false });
+    await flush();
+    for (const cmd of frameCmds(name)) await adapter.request(cmd, { plugin: name });
+    await flush();
+    return server.copies.map((copy) => ({ cmd: copy.cmd as Command, via: copy.via as Via }));
+  }
+
+  it("a built-in (write grant, no requests): all five apply from the local window, and a resend gives the same outcome", async () => {
+    const copies = await copiesFromFrame("note");
+    expect(copies.map((c) => [c.cmd.type, c.via])).toEqual(frameCmds("note").map((cmd) => [cmd.type, { plugin: "note", codeHash: HC }]));
+    const s = await startServer();
+    await seed(s, "note", row({ codeHash: HC, grants: { [HC]: { ...grant("write"), grantedBy: "builtin" } } }));
+    for (const { cmd, via: v } of copies) {
+      const sent = body(s, "desktop", cmd, v);
+      const first = await s.runtime.receive(sent, { scope: "local" });
+      const again = await s.runtime.receive(sent, { scope: "local" });
+      expect(first.status === "result" && first.message.outcome.kind, cmd.type).toBe("applied");
+      expect(again.status === "result" && again.message, cmd.type).toEqual(first.status === "result" && first.message);
+    }
+  });
+
+  it("a read grant: only its own tileImages applies; a via naming another plugin is refused grant", async () => {
+    const copies = await copiesFromFrame("reader");
+    const s = await startServer();
+    await seed(s, "reader", row({ codeHash: HC, tier: "read", grants: { [HC]: grant("read") } }));
+    await seed(s, "note", row({ codeHash: HC, grants: { [HC]: grant("write") } }));
+    const kinds: string[] = [];
+    for (const { cmd, via: v } of copies) kinds.push((await outcome(s, "desktop", cmd, "local", v)).kind);
+    expect(kinds).toEqual(["refused", "refused", "applied", "refused", "refused"]);
+    for (const cmd of frameCmds("note").slice(2)) expect(await outcome(s, "desktop", cmd, "local", via("reader", HC)), cmd.type).toMatchObject({ kind: "refused", reason: "grant" });
   });
 });

@@ -101,6 +101,47 @@ describe("M5-15: grantAllows (pure)", () => {
     const hostile = row({ grants: { [H1]: grant("write", ["plugin.grant"]) } });
     expect(grantAllows(hostile, via(), { type: "plugin.grant", plugin: "my.plugin", codeHash: H1, tier: "write", reads: [], requests: [] } as Command, NAME).ok).toBe(false);
   });
+
+  it("M5-12b F2: helper commands (tileImages for >= read; noteSnapshot & approvalAsk for write) are allowed only when cmd.name === via.plugin", () => {
+    const tile = (name = "my.plugin") => ({ type: "plugins.tileImages", name, botId: BOT, data: "{}" }) as unknown as Command;
+    const snap = (name = "my.plugin") => ({ type: "plugins.noteSnapshot", name, botId: BOT, rect: { x: 0, y: 0, width: 10, height: 10 } }) as unknown as Command;
+    const ask = (name = "my.plugin") => ({ type: "plugins.approvalAsk", name, botId: BOT, command: "ls", folder: "/tmp" }) as unknown as Command;
+    const approvePlugin = (name = "my.plugin") => ({ type: "plugins.approve", name, botId: BOT, command: "ls", folder: "/tmp" }) as unknown as Command;
+
+    // Missing row or missing/hostile grant at hash still refuses every helper.
+    for (const cmd of [tile(), snap(), ask()]) {
+      expect(grantAllows(null, via(), cmd, NAME).ok, cmd.type).toBe(false);
+      expect(grantAllows(row(), via(), cmd, NAME).ok, cmd.type).toBe(false);
+      expect(grantAllows(row({ grants: { [H1]: grant("write") } }), via("my.plugin", "constructor"), cmd, NAME).ok, cmd.type).toBe(false);
+    }
+
+    // read tier: only own tileImages is allowed; noteSnapshot, approvalAsk, other plugin's tileImages, and other commands stay refused.
+    const readRow = row({ grants: { [H1]: grant("read", ["plugins.noteSnapshot", "plugins.approvalAsk"]) } });
+    expect(grantAllows(readRow, via(), tile("my.plugin"), NAME)).toEqual({ ok: true });
+    expect(grantAllows(readRow, via(), tile("other"), NAME).ok).toBe(false);
+    expect(grantAllows(readRow, via(), snap("my.plugin"), NAME).ok).toBe(false);
+    expect(grantAllows(readRow, via(), ask("my.plugin"), NAME).ok).toBe(false);
+    expect(grantAllows(readRow, via(), send(), NAME).ok).toBe(false);
+
+    // request tier (empty requests): own tileImages allowed; noteSnapshot & approvalAsk refused unless granted in requests.
+    const reqRow = row({ grants: { [H1]: grant("request") } });
+    expect(grantAllows(reqRow, via(), tile("my.plugin"), NAME)).toEqual({ ok: true });
+    expect(grantAllows(reqRow, via(), tile("other"), NAME).ok).toBe(false);
+    expect(grantAllows(reqRow, via(), snap("my.plugin"), NAME).ok).toBe(false);
+    expect(grantAllows(reqRow, via(), ask("my.plugin"), NAME).ok).toBe(false);
+
+    // write tier (empty requests, e.g. built-in): own tileImages, noteSnapshot, approvalAsk allowed; wrong name and non-helpers refused.
+    const writeRow = row({ grants: { [H1]: grant("write") } });
+    expect(grantAllows(writeRow, via(), tile("my.plugin"), NAME)).toEqual({ ok: true });
+    expect(grantAllows(writeRow, via(), snap("my.plugin"), NAME)).toEqual({ ok: true });
+    expect(grantAllows(writeRow, via(), ask("my.plugin"), NAME)).toEqual({ ok: true });
+    expect(grantAllows(writeRow, via(), tile("other"), NAME).ok).toBe(false);
+    expect(grantAllows(writeRow, via(), snap("other"), NAME).ok).toBe(false);
+    expect(grantAllows(writeRow, via(), ask("other"), NAME).ok).toBe(false);
+    expect(grantAllows(writeRow, via(), approvePlugin("my.plugin"), NAME).ok).toBe(false);
+    expect(grantAllows(writeRow, via(), send(), NAME).ok).toBe(false);
+    expect(grantAllows(writeRow, via(), react(), NAME).ok).toBe(false);
+  });
 });
 
 interface Server { store: ServerStore; roster: RosterStore; runtime: IntentRuntime; serverId: string; stream: StreamId; inc(): string; valid: Set<string> }
@@ -302,5 +343,36 @@ describe("M5-15: the owner's grant check in the slot engine", () => {
     const cmd = { type: "plugin.grant", plugin: "my.plugin", codeHash: H1, tier: "write", reads: [], requests: [] } as Command;
     const status = await s.runtime.receive({ slot: { origin: "desktop", originEpoch: EPOCH, target: s.stream, n: ++slotN }, floor: slotN, inc: s.inc(), cmd, via: via() } as CmdBody, { scope: "local" });
     expect(status).toMatchObject({ status: "result", message: { outcome: { kind: "refused", reason: "grant", detail: "plugin.grant cannot be sent by a plugin" } } });
+  });
+
+  it("8. M5-12b F2: helper commands with via in the slot engine (read allows tileImages; write allows all three; other commands stay refused)", async () => {
+    const s = await startServer();
+    await seed(s, "builtin-note", row({ tier: "write", grants: { [H1]: grant("write") } }));
+    await seed(s, "reader", row({ tier: "read", grants: { [H1]: grant("read") } }));
+
+    const tile = (name: string) => ({ type: "plugins.tileImages", name, botId: BOT, data: "{}" }) as unknown as Command;
+    const snap = (name: string) => ({ type: "plugins.noteSnapshot", name, botId: BOT, rect: { x: 0, y: 0, width: 10, height: 10 } }) as unknown as Command;
+    const ask = (name: string) => ({ type: "plugins.approvalAsk", name, botId: BOT, command: "ls", folder: "/tmp" }) as unknown as Command;
+    const approvePlugin = (name: string) => ({ type: "plugins.approve", name, botId: BOT, command: "ls", folder: "/tmp" }) as unknown as Command;
+    const deniedByEngine = (cmd: Command, plugin: string) =>
+      s.store.submit((tx) => s.runtime.slots.denies(tx, { slot: { origin: "desktop", originEpoch: EPOCH, target: `bot:${BOT}`, n: ++slotN } as Slot, cmd, scope: "local", via: via(plugin, H1) }));
+
+    // write-tier plugin (empty requests): own tileImages / noteSnapshot / approvalAsk pass grant check; wrong name, plugins.approve, chat.react stay refused.
+    expect(await deniedByEngine(tile("builtin-note"), "builtin-note")).toBeNull();
+    expect(await deniedByEngine(snap("builtin-note"), "builtin-note")).toBeNull();
+    expect(await deniedByEngine(ask("builtin-note"), "builtin-note")).toBeNull();
+    expect(await deniedByEngine(tile("other"), "builtin-note")).toEqual({ reason: "grant", detail: `plugin builtin-note may not do this on ${NAME}` });
+    expect(await deniedByEngine(snap("other"), "builtin-note")).toEqual({ reason: "grant", detail: `plugin builtin-note may not do this on ${NAME}` });
+    expect(await deniedByEngine(ask("other"), "builtin-note")).toEqual({ reason: "grant", detail: `plugin builtin-note may not do this on ${NAME}` });
+    expect(await deniedByEngine(approvePlugin("builtin-note"), "builtin-note")).toEqual({ reason: "grant", detail: `plugin builtin-note may not do this on ${NAME}` });
+    expect(await deniedByEngine(react(), "builtin-note")).toEqual({ reason: "grant", detail: `plugin builtin-note may not do this on ${NAME}` });
+
+    // read-tier plugin: own tileImages passes; noteSnapshot, approvalAsk, plugins.call, chat.send stay refused.
+    expect(await deniedByEngine(tile("reader"), "reader")).toBeNull();
+    expect(await deniedByEngine(snap("reader"), "reader")).toEqual({ reason: "grant", detail: `plugin reader may not do this on ${NAME}` });
+    expect(await deniedByEngine(ask("reader"), "reader")).toEqual({ reason: "grant", detail: `plugin reader may not do this on ${NAME}` });
+    expect(await deniedByEngine({ type: "plugins.call", name: "reader", method: "m", params: {}, from: "frame" } as unknown as Command, "reader"))
+      .toEqual({ reason: "grant", detail: `plugin reader may not do this on ${NAME}` });
+    expect(await deniedByEngine(send(), "reader")).toEqual({ reason: "grant", detail: `plugin reader may not do this on ${NAME}` });
   });
 });

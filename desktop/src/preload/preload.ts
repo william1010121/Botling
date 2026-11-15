@@ -34,8 +34,9 @@ contextBridge.exposeInMainWorld("botling", Object.freeze({
   ...(process.isMainFrame ? { pathForFile: (file: unknown) => { try { return webUtils.getPathForFile(file as File); } catch { return ""; } } } : {}),
   ...(process.isMainFrame&&process.argv.includes("--botling-editor-shell=1")?{editorHost:editorBridge(ipcRenderer,"shell")} : {}),
   platform: process.platform,
-  post(envelope: unknown) {
-    ipcRenderer.send("botling:post", envelope);
+  post(envelope: unknown, via?: { plugin: string }) {
+    if (via !== undefined) ipcRenderer.send("botling:post", envelope, via);
+    else ipcRenderer.send("botling:post", envelope);
   },
   subscribe(listener: (message: unknown) => void) {
     if (typeof listener !== "function") throw new TypeError("subscribe takes a function");

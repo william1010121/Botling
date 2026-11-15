@@ -443,7 +443,21 @@ ipcMain.on(BROWSER_CHANNEL, (event, raw: unknown) => {
   browserFor(event.sender)?.receive(message);
 });
 
-ipcMain.on("botling:post", (event, raw: unknown) => {
+const PLUGIN_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,213}$/;
+
+/** Validates the optional attribution argument carried beside `botling:post` from `PluginFrameHost` (M5-12b). */
+function parseRequestVia(raw: unknown): { plugin: string } | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const proto = Object.getPrototypeOf(raw);
+  if (proto !== Object.prototype && proto !== null) return null;
+  const keys = Reflect.ownKeys(raw);
+  if (keys.length !== 1 || keys[0] !== "plugin") return null;
+  const plugin = (raw as { plugin?: unknown }).plugin;
+  if (typeof plugin !== "string" || !PLUGIN_NAME_RE.test(plugin)) return null;
+  return { plugin };
+}
+
+ipcMain.on("botling:post", (event, raw: unknown, rawVia?: unknown) => {
   if (!fromAppFrame(event)) return;
   const parsed = parseInbound(raw);
   const reply = (response: ResponseEnvelope) => { if (!event.sender.isDestroyed()) event.sender.send("botling:message", response); };
@@ -460,13 +474,23 @@ ipcMain.on("botling:post", (event, raw: unknown) => {
     return;
   }
   const { id, cmd } = message;
+  let validVia: { plugin: string } | undefined;
+  if (rawVia !== undefined) {
+    const parsedVia = parseRequestVia(rawVia);
+    if (!parsedVia) {
+      note(`refused a malformed via for ${cmd.type}`);
+      reply(errorResponse(id, { code: "bad_request", message: "Malformed request attribution (via)." }));
+      return;
+    }
+    validVia = parsedVia;
+  }
   if (!RENDERER_COMMANDS.has(cmd.type)) {
     note(`refused renderer command ${cmd.type}`);
     reply(errorResponse(id, { code: "forbidden", message: `${cmd.type} is not available to the app page.` }));
     return;
   }
   if (MAIN_COMMANDS.has(cmd.type)) {
-    void Promise.resolve().then(() => handleInMain(cmd, event.sender)).then(
+    void Promise.resolve().then(() => handleInMain(cmd, event.sender, validVia)).then(
       (result) => reply(okResponse(id, result)),
       (error) => {
         const code = (error as { code?: string }).code === "not_found" ? "not_found" : "bad_request";
@@ -475,7 +499,8 @@ ipcMain.on("botling:post", (event, raw: unknown) => {
     );
     return;
   }
-  void core.request(cmd, scoped(id)).then((response) => {
+  const coreRequest = core.request as (cmd: Command, id?: string, via?: { plugin: string }) => Promise<ResponseEnvelope>;
+  void (validVia ? coreRequest.call(core, cmd, scoped(id), validVia) : core.request(cmd, scoped(id))).then((response) => {
     if (cmd.type === "chat.snapshot") startup.mark("snapshot.first", { ok: response.ok });
     reply({ ...response, id });
   });
@@ -776,7 +801,7 @@ async function reportComponent(cmd: Extract<Command, { type: "component.report" 
  * A plugin frame's `ccb.snapshot` (the Note tab's "freeze to image"): that part of the app's window, taken here (a page
  * cannot hand in its own), as PNG, or JPEG when the PNG is past what a note takes as bytes; the core keeps it in the note.
  */
-async function noteSnapshot(cmd: Extract<Command, { type: "plugins.noteSnapshot" }>, sender: WebContents): Promise<unknown> {
+async function noteSnapshot(cmd: Extract<Command, { type: "plugins.noteSnapshot" }>, sender: WebContents, via?: { plugin: string }): Promise<unknown> {
   const { picture: _ignored, ...rest } = cmd;
   let picture: { base64: string; name: string } | undefined;
   try {
@@ -789,7 +814,12 @@ async function noteSnapshot(cmd: Extract<Command, { type: "plugins.noteSnapshot"
   } catch (error) {
     note(`note snapshot: no picture (${(error as Error).message})`);
   }
-  return core.call({ ...rest, ...(picture ? { picture } : {}) });
+  const payload = { ...rest, ...(picture ? { picture } : {}) };
+  if (!via) return core.call(payload);
+  const coreRequest = core.request as (cmd: Command, id?: string, via?: { plugin: string }) => Promise<ResponseEnvelope>;
+  const response = await coreRequest.call(core, payload, undefined, via);
+  if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
+  return response.result;
 }
 
 /** "Not right" on a reply: the chat as you saw it (its frame's rect), then the core sends the report. */
@@ -806,7 +836,7 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
   return core.call({ ...rest, ...(screenshot ? { screenshot } : {}) });
 }
 
-async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
+async function handleInMain(cmd: Command, sender: WebContents, via?: { plugin: string }): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
     case "worker.file": {
@@ -840,7 +870,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
       return { opened: true };
     }
     case "component.report": return reportComponent(cmd, sender);
-    case "plugins.noteSnapshot": return noteSnapshot(cmd, sender);
+    case "plugins.noteSnapshot": return noteSnapshot(cmd, sender, via);
     case "plugins.openLink": return openPluginLink(cmd, sender);
     case "chat.feedback": return withScreenshot(cmd, sender);
     case "files.pick": return pickFiles(cmd.botId, sender);
