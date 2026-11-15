@@ -35,7 +35,7 @@ import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
 import { BotExports } from "./exports";
-import type { CallInHost } from "./callin";
+import { callInTimers, type CallInHost } from "./callin";
 import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
@@ -443,6 +443,7 @@ export class Botlingd {
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
         store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster)), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        callHostTimers: callInTimers(env),
         pluginRowsChanged: () => core.pluginGrantsChanged(),
         tapHooks: {
           eventSeen: (event) => {
