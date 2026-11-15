@@ -41,6 +41,18 @@ describe("Core.nextSeq", () => {
   });
 });
 
+describe("a plugin's push to its frames (frameEvent)", () => {
+  it("goes out as its own envelope with the next number, once per push", () => {
+    const { core, sent } = fixture();
+    const world = (core as any).corePluginWorld.pluginOptions().world;
+    const before = core.seq;
+    world.frameEvent("botling.terminal", "terminal", undefined, { type: "data" });
+    world.frameEvent("botling.terminal", "terminal", undefined, { type: "data" });
+    expect(sent.filter((envelope) => envelope.event.type === "plugins.emit").map((envelope) => envelope.seq)).toEqual([before + 1, before + 2]);
+    expect(core.seq).toBe(before + 2);
+  });
+});
+
 describe("Core.markPluginsShown", () => {
   it("says true when the text is new (and keeps it as what is shown), false when it is the same", () => {
     const { core } = fixture();
