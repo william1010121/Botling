@@ -480,4 +480,44 @@ describe.skipIf(!hasGit)("M5-07c: fetch git repositories as git bundles", () => 
     });
     expect(gitSync(clonedDir, ["rev-list", "HEAD"]).trim().split("\n")).toEqual([commit2, commit1]);
   });
+
+  it("7. untrusted repo config runs nothing, and objects from outside the grant are refused", async () => {
+    const env = await setup();
+    cleanups.push(env.cleanup);
+    const repoOutside = join(env.root, "outside-repo");
+    const { commit2: outsideCommit } = initTwoCommitRepo(repoOutside);
+
+    // 7a: a free artifacts repo posing as a partial clone: a lazy fetch would run `remote.origin.uploadpack` (a shell).
+    const marker = join(env.root, "pwned-lazy-fetch");
+    const promisorRepo = join(env.artifactsA, "promisor-repo");
+    initTwoCommitRepo(promisorRepo);
+    for (const [key, value] of [
+      ["core.repositoryformatversion", "1"],
+      ["extensions.partialclone", "origin"],
+      ["remote.origin.url", `file://${repoOutside}`],
+      ["remote.origin.promisor", "true"],
+      ["remote.origin.uploadpack", `touch '${marker}'; git-upload-pack`],
+      ["protocol.file.allow", "always"],
+    ] as const) gitSync(promisorRepo, ["config", key, value]);
+    writeFileSync(join(promisorRepo, ".git", "refs", "heads", "missing"), `${"de".repeat(20)}\n`);
+    const lazy = await env.requester.fetch("bot-b", env.ka.memberId, { kind: "git", path: promisorRepo }, "promisor", 10 * MiB);
+    expect(lazy.ok).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+
+    // 7b: alternates pointing outside the grant would pack the outside repo's objects.
+    const altRepo = join(env.artifactsA, "alternates-repo");
+    initTwoCommitRepo(altRepo);
+    writeFileSync(join(altRepo, ".git", "objects", "info", "alternates"), `${join(repoOutside, ".git", "objects")}\n`);
+    writeFileSync(join(altRepo, ".git", "refs", "heads", "leak"), `${outsideCommit}\n`);
+    const alt = await env.requester.fetch("bot-b", env.ka.memberId, { kind: "git", path: altRepo }, "alternates", 10 * MiB);
+    expect(alt).toMatchObject({ ok: false, reason: "outside" });
+
+    // 7c: a symlinked fan-out folder inside the object store.
+    const linkRepo = join(env.artifactsA, "objects-link-repo");
+    initTwoCommitRepo(linkRepo);
+    symlinkSync(join(repoOutside, ".git", "objects", "pack"), join(linkRepo, ".git", "objects", "zz"));
+    const link = await env.requester.fetch("bot-b", env.ka.memberId, { kind: "git", path: linkRepo }, "objects link", 10 * MiB);
+    expect(link).toMatchObject({ ok: false, reason: "outside" });
+    expect(readdirSync(env.bundleTmpDir)).toEqual([]);
+  });
 });

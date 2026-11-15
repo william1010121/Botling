@@ -40,6 +40,11 @@ const GIT_STRIPPED_ENV_KEYS = [
   "GIT_CONFIG_PARAMETERS",
   "GIT_CONFIG_COUNT",
 ] as const;
+// M5-07c: the repository's own config is untrusted (a free `.bot/artifacts` repo is bot-written). `-c` beats repo
+// config, and GIT_ALLOW_PROTOCOL (set below) overrides every `protocol.*.allow`, so a promisor remote's lazy fetch
+// (which runs `remote.*.uploadpack` / `core.sshCommand`) never starts; no hooks or fsmonitor either.
+const GIT_SAFE_ARGS = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never"] as const;
+const GIT_TIMEOUT_MS = 10 * 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ONCE_GRANT_TTL_MS = 10 * 60_000;
 const FETCH_HIGH_WATER = 1 * 1024 * 1024;
@@ -154,6 +159,27 @@ function safeRealpath(path: string): { ok: true; path: string } | { ok: false; s
 
 function isSymlink(path: string): boolean {
   try { return lstatSync(path).isSymbolicLink(); } catch { return false; }
+}
+
+/** No `info/alternates` / `info/http-alternates`, and no symlink in the object store's top two levels. */
+function objectStoreIsClosed(objectsDir: string): boolean {
+  try {
+    for (const name of ["alternates", "http-alternates"]) {
+      try { lstatSync(join(objectsDir, "info", name)); return false; } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return false;
+      }
+    }
+    for (const top of readdirSync(objectsDir, { withFileTypes: true })) {
+      if (top.isSymbolicLink()) return false;
+      if (!top.isDirectory()) continue;
+      for (const entry of readdirSync(join(objectsDir, top.name), { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function sha256Hex(data: Uint8Array | string): string {
@@ -1019,7 +1045,13 @@ export class FetchSource {
     if (task.cancelled) return { ok: false, reason: null };
     if (isSymlink(join(realTarget, ".git"))) return { ok: false, reason: "outside" };
 
-    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ALLOW_PROTOCOL: "none",
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_NO_REPLACE_OBJECTS: "1",
+    };
     for (const key of GIT_STRIPPED_ENV_KEYS) delete env[key];
     const parent = dirname(realTarget);
     if (parent !== realTarget) env.GIT_CEILING_DIRECTORIES = parent;
@@ -1031,8 +1063,9 @@ export class FetchSource {
     // and ensure .git / common-dir stay inside grantPrefix and outside DENY.
     let revParseOut: string;
     try {
-      const res = await execFileAsync("git", ["-C", realTarget, "rev-parse", "--git-dir", "--git-common-dir"], {
+      const res = await execFileAsync("git", [...GIT_SAFE_ARGS, "-C", realTarget, "rev-parse", "--git-dir", "--git-common-dir", "--git-path", "objects"], {
         env,
+        timeout: GIT_TIMEOUT_MS,
         encoding: "utf8",
         maxBuffer: 1024 * 1024,
         signal: ac.signal,
@@ -1045,14 +1078,16 @@ export class FetchSource {
     }
 
     const lines = revParseOut.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    if (lines.length < 2) return { ok: false, reason: "gone", detail: "not a git repository" };
-    for (const rawDir of lines.slice(0, 2)) {
+    if (lines.length < 3) return { ok: false, reason: "gone", detail: "not a git repository" };
+    for (const rawDir of lines.slice(0, 3)) {
       const absGitDir = resolve(realTarget, rawDir);
       const realGitDir = safeRealpath(absGitDir);
       if (!realGitDir.ok) return { ok: false, reason: realGitDir.symlink ? "outside" : "gone" };
       if (isDeniedPath(realGitDir.path, this.options.dataDir)) return { ok: false, reason: "deny-list" };
       if (!isSubpathOrEqual(grantPrefix, realGitDir.path)) return { ok: false, reason: "outside" };
     }
+    // Alternates or a symlink inside the object store would pack objects from outside the grant into the bundle.
+    if (!objectStoreIsClosed(resolve(realTarget, lines[2]!))) return { ok: false, reason: "outside" };
 
     const repoName = (basename(realTarget) || "repo").normalize("NFC");
     const bundleRelPath = `${repoName}.bundle`.normalize("NFC");
@@ -1071,8 +1106,10 @@ export class FetchSource {
 
     const tmpBundlePath = join(bundleDir, "repo.bundle");
     try {
-      await execFileAsync("git", ["-C", realTarget, "bundle", "create", tmpBundlePath, "--all"], {
+      await execFileAsync("git", [...GIT_SAFE_ARGS, "-C", realTarget, "bundle", "create", tmpBundlePath, "--all"], {
         env,
+        timeout: GIT_TIMEOUT_MS,
+        killSignal: "SIGKILL",
         encoding: "utf8",
         maxBuffer: 1024 * 1024,
         signal: ac.signal,
