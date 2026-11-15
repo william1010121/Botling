@@ -22,6 +22,7 @@ import type { Rows } from "../protocol/table-rows";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";
 import { connReduce, initialConn, versionBelow, writesSent, type ConnEvent, type ConnModel } from "./connection-state";
 import { StreamCursors } from "./cursors";
+import { OwnRows } from "./own-rows";
 import { Outbox, type ResolveResult } from "./outbox";
 import { TableCopies } from "./tables";
 import { SerialWriter, type FeStorage, type OutboxItem, type RetiredLog, type StoredCursor } from "./storage";
@@ -186,6 +187,8 @@ export class FeLink {
   private readonly cancelNoted = new Set<string>();
   /** M3 step 11: the peers' `srv:` tables (tables.ts), every server's state, streams served from a cache. */
   private readonly tables: TableCopies;
+  /** M5-14e: the attached server's own `plugin:` rows, which it sends as `rows` after the log `sub` of its `srv:` stream. */
+  private readonly ownRows = new OwnRows();
   private readonly serverViews = new Map<string, ServerView>();
   private readonly staleStreams = new Map<string, number>();
   /** Delivered items that left the outbox lately (their line was shown): a reset may yet take them away (D50). */
@@ -378,8 +381,12 @@ export class FeLink {
     return this.serverId;
   }
 
-  /** A peer's `srv:` table as this front end holds it (summary rows by key); null when not followed. */
+  /**
+   * A server's `srv:` table as this front end holds it (rows by key); null when not followed. A peer's is its whole table;
+   * the attached server's own holds the rows it sends over its log stream (`plugin:`, M5-14e), and is null until they came.
+   */
   table(serverId: string): { logId: LogId | null; rev: number; rows: ReadonlyMap<string, unknown>; caught: boolean } | null {
+    if (serverId === this.serverId) return this.ownRows.view(serverId);
     const copy = this.tables.get(`srv:${serverId}`);
     return copy ? { logId: copy.logId, rev: copy.rev, rows: copy.rows, caught: copy.caught } : null;
   }
@@ -637,6 +644,7 @@ export class FeLink {
     if (!this.serverViews.has(welcome.serverId)) this.serverViews.set(welcome.serverId, { id: welcome.serverId, name: welcome.serverId, state: "live", since: null, self: true });
     // §13.1 switch: the newly attached server's own srv: stream is followed via cursors, never as a peer table.
     this.tables.remove(`srv:${welcome.serverId}`);
+    this.ownRows.attach(welcome.serverId);
     for (const server of welcome.servers) if (server.id !== welcome.serverId) this.tables.add(`srv:${server.id}`);
     for (const stream of this.streams()) this.send(session, { t: "sub", stream, cursor: this.cursors.subCursor(stream) });
     for (const stream of this.tables.streams()) this.send(session, { t: "sub", stream: stream as StreamId, cursor: this.tables.subCursor(stream, this.clock.now()) });
@@ -818,6 +826,12 @@ export class FeLink {
   // Other servers (M3 step 11)
 
   private onRows(session: Session, batch: Rows): void {
+    if (batch.stream === this.srvStream()) {
+      // M5-14e: the own table's rows (the server sends them after the log sub); not a peer table, so no resub or catch-up.
+      const own = this.ownRows.onRows(batch);
+      if (own) this.emit({ type: "servers", table: { stream: batch.stream, changed: own.changed, removed: own.removed } });
+      return;
+    }
     const decision = this.tables.onRows(batch);
     switch (decision.kind) {
       case "wait": case "drop": return;
@@ -1050,6 +1064,7 @@ export class FeLink {
     this.resParts.drop();
     this.cursors.detach();
     this.tables.detach();
+    this.ownRows.detach();
     for (const stream of this.subs) {
       const view = this.receiver.view(stream);
       if (view && !this.liveStale.has(stream)) { this.liveStale.add(stream); this.emit({ type: "live", stream, view: { ...view }, stale: true }); }

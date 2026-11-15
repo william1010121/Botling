@@ -19,11 +19,8 @@ interface TableLink {
 }
 
 /**
- * The rows provider for the real page: `link.table(id)`, which holds peers' tables only.
- * TODO(M5-14e): the attached server's own `srv:<id>` table is not delivered to the page as rows (fe-link/link.ts drops
- * it from the table cache on welcome; server/session/session-core.ts serves `rows` only for peer tables), so its row
- * set is null here and its plugins are missing until M5-14e gives the page a read path for it. On one machine the list
- * is empty until then.
+ * The rows provider for the real page: `link.table(id)`, which holds the peers' tables and, since M5-14e, the attached
+ * server's own `plugin:` rows (fe-link/own-rows.ts).
  */
 export function linkPluginSource(link: TableLink): PluginSource {
   return {
