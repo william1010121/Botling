@@ -13,7 +13,6 @@
     "desktop/src/core/agent/codex.ts": 2594,
     "desktop/src/core/bot.ts": 6556,
     "desktop/src/core/maintainer.ts": 857,
-    "desktop/src/core/note-db.ts": 1071,
     "desktop/src/core/plugins/index.ts": 1965,
     "desktop/src/core/server.ts": 3861,
     "desktop/src/core/worker-core/core.ts": 943,
