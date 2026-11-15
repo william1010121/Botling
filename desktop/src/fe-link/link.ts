@@ -191,12 +191,14 @@ export class FeLink {
   private stopped = false;
   private final = false;
   private backoff: number;
+  private dialFn: Dial;
   private timers: { reconnect?: unknown; offline?: unknown; ping?: unknown; dead?: unknown } = {};
 
   private constructor(private readonly options: FeLinkOptions, private readonly writer: SerialWriter, private readonly outbox: Outbox, private readonly cursors: StreamCursors, tablesRetired: Record<string, RetiredLog[]> = {}) {
     this.clock = options.clock ?? systemClock;
     this.conn = initialConn(this.clock.now());
     this.backoff = options.reconnectMinMs ?? 250;
+    this.dialFn = options.dial;
     this.tables = new TableCopies(tablesRetired);
   }
 
@@ -227,6 +229,24 @@ export class FeLink {
     if (this.started || this.stopped) return;
     this.started = true;
     this.armOffline();
+    this.dial();
+  }
+
+  /**
+   * Ends any active session cleanly and dials a new socket immediately (optionally replacing `dial`).
+   * The old session is closed before the new dial starts, so two sessions never run at once (D18).
+   */
+  replaceSocket(dial?: Dial): void {
+    if (dial) this.dialFn = dial;
+    if (!this.started || this.stopped || this.final) return;
+    this.clearTimer("reconnect");
+    this.backoff = this.options.reconnectMinMs ?? 250;
+    const session = this.session;
+    if (session) {
+      this.send(session, { t: "bye", reason: "closing" });
+      this.endSession(session, "switching path");
+      this.clearTimer("reconnect");
+    }
     this.dial();
   }
 
@@ -474,7 +494,7 @@ export class FeLink {
       close: (detail) => { if (this.session === session) this.onClosed(session, detail ?? "closed"); },
     };
     try {
-      session.socket = this.options.dial(handlers);
+      session.socket = this.dialFn(handlers);
     } catch (error) {
       this.onClosed(session, String(error));
       return;
