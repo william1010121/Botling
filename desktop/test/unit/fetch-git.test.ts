@@ -518,6 +518,17 @@ describe.skipIf(!hasGit)("M5-07c: fetch git repositories as git bundles", () => 
     symlinkSync(join(repoOutside, ".git", "objects", "pack"), join(linkRepo, ".git", "objects", "zz"));
     const link = await env.requester.fetch("bot-b", env.ka.memberId, { kind: "git", path: linkRepo }, "objects link", 10 * MiB);
     expect(link).toMatchObject({ ok: false, reason: "outside" });
+
+    // 7d: the object store itself is a symlink to another repo's objects (only the `--git-path objects` check sees it).
+    const storeLinkRepo = join(env.artifactsA, "store-link-repo");
+    mkdirSync(storeLinkRepo, { recursive: true });
+    gitSync(storeLinkRepo, ["init"]);
+    gitSync(storeLinkRepo, ["symbolic-ref", "HEAD", "refs/heads/leak"]);
+    rmSync(join(storeLinkRepo, ".git", "objects"), { recursive: true, force: true });
+    symlinkSync(join(repoOutside, ".git", "objects"), join(storeLinkRepo, ".git", "objects"));
+    writeFileSync(join(storeLinkRepo, ".git", "refs", "heads", "leak"), `${outsideCommit}\n`);
+    const store = await env.requester.fetch("bot-b", env.ka.memberId, { kind: "git", path: storeLinkRepo }, "store link", 10 * MiB);
+    expect(store).toMatchObject({ ok: false, reason: "outside" });
     expect(readdirSync(env.bundleTmpDir)).toEqual([]);
   });
 });
