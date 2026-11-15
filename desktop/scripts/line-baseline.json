@@ -8,7 +8,7 @@
     "desktop/src/core/agent/codex.ts": 2594,
     "desktop/src/core/bot.ts": 6556,
     "desktop/src/core/plugins/index.ts": 1557,
-    "desktop/src/core/server.ts": 3861,
+    "desktop/src/core/server.ts": 3395,
     "desktop/src/fe-link/link.ts": 1172,
     "desktop/src/main/main.ts": 1169,
     "desktop/src/renderer/App.tsx": 1036,

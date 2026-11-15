@@ -4,7 +4,6 @@ import { configureNotes, noteService, setNoteBots } from "./note-tools";
 import { ROUTINE_TICK_MS } from "./routines";
 import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
 import { discoveryFailure } from "./agent/model-discovery";
-import { ProjectFiles } from "./project-files";
 import { RestartJournal, restartPausedNotice } from './restart-continuation';
 import { specTrace } from './spec-trace';
 import { AgyRuntimeInstaller } from './agy-runtime-install';
@@ -21,34 +20,25 @@ import type { RelayConnector } from '../mobile-relay/connector';
 //
 // Its data folder has the Swift app's layout (store/workspace.ts). On the first start with an
 // empty folder it imports a 1.x folder when one is given (read-only; store/importer.ts).
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve as resolvePath, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { basename, dirname, join, sep } from "node:path";
 import { commandGuidePath } from "./plugins/app-command";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { writeFileAtomic } from "./durable/atomic";
 import { rmSync } from "node:fs";
 import { linkIncoming, PendingFiles, servedType, writeIncoming } from "./attachments";
-import { safeName } from "./components/library";
 import { studioWorld } from "./studio-world";
 import type { StudioWorld } from "./plugins/studio-seam";
 import type { CodexModel } from "./agent/codex-models";
-import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
-import { archiveEntry } from "./briefing";
-import { fileURLToPath } from "node:url";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
 import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { claudeAutoCompactWindow, codexConfigFile } from "./engine-files";
 import { attachmentFile as attachmentLinkFile } from "../contract/attachment-url";
 import { lineHasLink } from "../browser-tab-menu";
-import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, updateProjectRow, type BriefingRow, type PeerBriefingRow } from "./projects";
+import { HANDED_OUT, botName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, removeProjectRow, saveProjectRow, updateProjectRow } from "./projects";
 import { answerLabel } from "./attachments";
-import {
-  ContractError, MESSAGE_TEXT_LIMIT, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
-  type BotView, type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
-  type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView, type PluginView,
-} from "../contract";
+import { ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound, type BotView, type Command, type Event, type Outbound, type ResultOf, type WaitingView, type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView, type PluginView } from "../contract";
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
 import { agyWorkerList } from "./agy-usage-db";
 import { AgentStore, migrationRecords } from "./store/agent-store";
@@ -71,7 +61,6 @@ import { BotStore, readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
-import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
 import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
 import { botFace } from "./faces";
 import { status, statusText } from "../contract/bot-status";
@@ -84,9 +73,8 @@ import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff,
 import { Conversations, type ConversationsDeps, type RemoteMember } from "./conversations";
 import { answeredNote, guestCardAnswerNote, pickedNote, relayedAnswerNote, type GROUP_TIMING } from "./groups";
 import { ComponentsContext } from "./components/service";
-import { lstatSync, readdirSync, realpathSync } from "node:fs";
-import { FolderWatch, type WatchTarget } from "./folder-watch";
-import { probeNetwork } from "./network-resume";
+import { readdirSync } from "node:fs";
+import { FolderWatch } from "./folder-watch";
 import { agentContributions, agentStamp, claudeWiring, skillRootsWiring } from "./plugins/agent-contributions";
 import { claudeSkillFolders, placedSkillRoot } from "./plugins/engine-skills";
 import { Plugins, type BotInfo, type EngineCli, type PluginWorld } from "./plugins";
@@ -99,6 +87,9 @@ import { maintainerInstructions, maintainerVisualToolRules } from "./maintainer-
 import { siteToolsFolder } from "./site-tools-guard";
 import type { ChatRecord } from "./store/records";
 import { ReleaseNotices, confirmHealthyWhen, devWorkRoot, installAndQuit } from "./self-update";
+import { CoreWatch } from "./server/watch";
+import { CorePeerInbox } from "./server/peer-inbox";
+import { CoreProjects } from "./server/projects";
 
 /** What the core asks of main (self-update.ts, plugins/app-seam.ts). */
 export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
@@ -108,7 +99,7 @@ import { MACHINE_NAME } from "../remote/machines";
 import { machineNameFrom } from "../remote/relay/wire";
 
 /** An id from a peer's rows that is safe as a path part and as a stream key (M5-04c F2). */
-const PEER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export const PEER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 /** The longest `bots.create` job and `waiting.ignore` text the contract takes (`contract/index.ts`, counted in characters as zod does). */
 const BOT_JOB_LIMIT = 4_000;
 const WAITING_TEXT_LIMIT = 400;
@@ -134,7 +125,7 @@ function plainMarkdown(text: string): string {
 }
 
 /** Text from a peer or a model as one clean line for a note, a log or a report: control characters gone, runs of spaces one, at most 300 characters, no closing full stop (the note adds its own). */
-function oneLine(text: string): string {
+export function oneLine(text: string): string {
   const line = text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
   const characters = [...line];
   return characters.length > 300 ? `${characters.slice(0, 299).join("")}…` : line || "no reason given";
@@ -291,25 +282,36 @@ export class Core {
   readonly epoch = randomUUID().slice(0, 18);
   private seq = 0;
   private activated = false;
-  private bots = new Map<string, Bot>();
+  bots = new Map<string, Bot>();
   private order: string[] = [];
   private inflight = new Map<string, AbortController>();
   private readonly ledger: ProcessLedger;
   /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
   private readonly usage: UsageBook;
-  private imported: ImportView | null = null;
-  private routineClock: NodeJS.Timeout | null = null;
-  private watchClock: NodeJS.Timeout | null = null;
-  private readonly components: ComponentsContext;
-  private componentStamp = 0;
+  private get imported() { return this.coreProjects.imported; }
+  // The collaborators (core/server/*.ts) are made on first use, not in the constructor: a core made without its constructor, as
+  // tests make one (`Object.create(Core.prototype)`), reads and writes the moved fields through them too.
+  private madeWatch?: CoreWatch;
+  private get coreWatch(): CoreWatch { return (this.madeWatch ??= new CoreWatch(this)); }
+  private madePeerInbox?: CorePeerInbox;
+  private get corePeerInbox(): CorePeerInbox { return (this.madePeerInbox ??= new CorePeerInbox(this)); }
+  private madeProjects?: CoreProjects;
+  private get coreProjects(): CoreProjects { return (this.madeProjects ??= new CoreProjects(this)); }
+  private get routineClock() { return this.coreWatch.routineClock; }
+  private set routineClock(value: CoreWatch["routineClock"]) { this.coreWatch.routineClock = value; }
+  private get watchClock() { return this.coreWatch.watchClock; }
+  private set watchClock(value: CoreWatch["watchClock"]) { this.coreWatch.watchClock = value; }
+  private get components() { return this.coreWatch.components; }
+  private set components(value: CoreWatch["components"]) { this.coreWatch.components = value; }
+  private get componentStamp() { return this.coreWatch.componentStamp; }
+  private set componentStamp(value: CoreWatch["componentStamp"]) { this.coreWatch.componentStamp = value; }
   /** Newer signed releases, announced in the main bot's chat in developer mode (the developer tools are botling.dev). */
   readonly releases: ReleaseNotices;
-  /** The plugin and component library, watched (`scanComponents` on a change, and every `componentScanMs`). */
-  private libraryWatch: FolderWatch | null = null;
-  /** Bots' memory files, watched (`refreshWaiting` on a change, and every `waitingScanMs`). */
-  private memoryWatch: FolderWatch | null = null;
-  /** memory.md files, read again only when they change (what waits on you). */
-  private readonly memoryFiles = new MemoryFiles();
+  private get libraryWatch() { return this.coreWatch.libraryWatch; }
+  private set libraryWatch(value: CoreWatch["libraryWatch"]) { this.coreWatch.libraryWatch = value; }
+  private get memoryWatch() { return this.coreWatch.memoryWatch; }
+  private set memoryWatch(value: CoreWatch["memoryWatch"]) { this.coreWatch.memoryWatch = value; }
+  private get memoryFiles() { return this.coreWatch.memoryFiles; }
   /** Plugins' workspace changes (`workspace.onChange`): the watch while some plugin listens, its next check, and its clock. */
   private workspaceWatch: WorkspaceWatch | null = null;
   private workspaceTimer: NodeJS.Timeout | null = null;
@@ -318,11 +320,9 @@ export class Core {
   private shownChat: ShownChat | null = null;
   readonly plugins: Plugins;
   /** Every bot's profile, in the left column's order (Maintainer last). */
-  private profiles: BotProfile[] = [];
-  private readonly projectFiles = new ProjectFiles();
+  profiles: BotProfile[] = [];
+  private get projectFiles() { return this.coreProjects.projectFiles; }
   private newBot!: (profile: BotProfile) => Bot;
-  /** "Add as project?" cards waiting for your pick, by their line in the main chat. */
-  private projectQuestions = new Map<string, { folder: string; task: string }[]>();
   /** What waits on you as the windows were last told, and the timers that look again. */
   private lastWaiting = "";
   private waitingTimer: NodeJS.Timeout | null = null;
@@ -333,16 +333,17 @@ export class Core {
   readonly maintainer: MaintainerDesk;
   /** The public plugin catalog (Explore, Updates on the Plugins page). */
   readonly pluginStore: PluginStore;
-  private lastPlugins = "";
+  private get lastPlugins() { return this.coreWatch.lastPlugins; }
+  private set lastPlugins(value: CoreWatch["lastPlugins"]) { this.coreWatch.lastPlugins = value; }
   private settlingMaintainer = false;
-  /** The plugins' Claude parts as bots last heard of them (`followClaudeParts`). */
-  private loadedClaudeParts = "[]";
+  private get loadedClaudeParts() { return this.coreWatch.loadedClaudeParts; }
+  private set loadedClaudeParts(value: CoreWatch["loadedClaudeParts"]) { this.coreWatch.loadedClaudeParts = value; }
   /** Whether the first chat.snapshot was held already (`firstSnapshotDelayMs`). */
   private snapshotHeld = false;
   /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
   readonly conversations: Conversations;
   /** Bots taken out of the left column: what they still say goes nowhere. */
-  private removed = new Set<string>();
+  removed = new Set<string>();
   /** M5-06c: open `serverAsk` cards by the id of their chat line (the bot they are in, and how to end the wait). */
   private serverAsks = new Map<string, { botId: string; close: (index: number | null) => void }>();
   /** Bots plugins made that you removed (`plugin/name`, lower case; removed-bots.json), so they stay removed. */
@@ -385,7 +386,7 @@ export class Core {
     this.plugins.rowsChanged();
   }
 
-  constructor(private options: CoreOptions) {
+  constructor(readonly options: CoreOptions) {
     this.mainBotId = options.mainBotId ?? MAIN_BOT_ID;
     this.maintainerId = options.maintainerId ?? MAINTAINER_ID;
     this.runMainBot = options.runMainBot !== false;
@@ -848,239 +849,44 @@ export class Core {
     }
   }
 
-  /** What the library watch looks at: the plugin library (with every plugin's components), and plugins linked in from elsewhere. */
-  private libraryTargets(): WatchTarget[] {
-    const plugins = join(this.options.dataDir, "plugins");
-    const targets: WatchTarget[] = [{ path: plugins, recursive: true }];
-    let names: string[] = [];
-    try { names = readdirSync(plugins); } catch { return targets; }
-    for (const name of names) {
-      if (name.startsWith(".")) continue;
-      try {
-        // A recursive watch does not follow a symbolic link: its target is watched on its own.
-        if (lstatSync(join(plugins, name)).isSymbolicLink()) targets.push({ path: realpathSync(join(plugins, name)), recursive: true });
-      } catch { /* a dangling link: nothing to watch */ }
-    }
-    return targets;
-  }
+  private libraryTargets(...a: Parameters<CoreWatch["libraryTargets"]>) { return this.coreWatch.libraryTargets(...a); }
 
-  /** What the memory watch looks at: each bot's memory.md (not the main bot's: its memory is not on the list). */
-  private memoryTargets(): WatchTarget[] {
-    return this.profiles.filter((profile) => profile.role !== "main" && !profile.parent && !profile.problem).map((profile) => ({ path: join(profile.folder, profile.memoryPath), file: true }));
-  }
+  private memoryTargets(...a: Parameters<CoreWatch["memoryTargets"]>) { return this.coreWatch.memoryTargets(...a); }
 
-  /** The library's state changed in the app (being worked on, reverted): the page hears it now. */
-  componentsTick() {
-    if (this.components.library.stamp === this.componentStamp) return;
-    this.componentStamp = this.components.library.stamp;
-    this.event({ type: "components.updated", components: this.componentInfos() });
-    this.plugins.event("componentsChanged", {});
-  }
+  componentsTick(...a: Parameters<CoreWatch["componentsTick"]>) { return this.coreWatch.componentsTick(...a); }
 
-  /** A template or about.md changed on disk: the page draws it anew; bots hear what changed with their next message. */
-  scanComponents() {
-    this.plugins.scan();
-    const before = this.components.library.names.join("\n");
-    const catalogChanged = this.components.library.rescan();
-    if (catalogChanged) for (const bot of this.bots.values()) bot.componentsChanged();
-    // Components bots asked Maintainer for that are in the library now go on their lists.
-    if (catalogChanged || before !== this.components.library.names.join("\n")) {
-      this.maintainer.deliverAsked();
-      this.plugins.event("libraryChanged", {});
-    }
-    if (this.components.library.stamp !== this.componentStamp) {
-      this.componentStamp = this.components.library.stamp;
-      this.event({ type: "components.updated", components: this.componentInfos() });
-    }
-  }
+  scanComponents(...a: Parameters<CoreWatch["scanComponents"]>) { return this.coreWatch.scanComponents(...a); }
 
-  /** A pin's owner, as botling.board says it (`pin.owner`): its bot, the author its links are its, how it refreshes and when its data is from; null: none (or the plugin is off). */
-  private async pinOwner(botId: string, pinId: string | undefined, name: string | null): Promise<{ botId: string; linkAuthor: string; words: string; when: number | null } | null> {
-    const answer = await this.plugins.askBuiltIn("botling.board", "pin.owner", { botId, ...(pinId ? { id: pinId } : {}), ...(name ? { name } : {}) });
-    if (!answer || typeof answer !== "object") return null;
-    const { botId: owner, linkAuthor, words, when } = answer as Record<string, unknown>;
-    return typeof owner === "string" && typeof linkAuthor === "string" && typeof words === "string" ? { botId: owner, linkAuthor, words, when: typeof when === "number" ? when : null } : null;
-  }
+  private pinOwner(...a: Parameters<CoreWatch["pinOwner"]>) { return this.coreWatch.pinOwner(...a); }
 
-  /**
-   * A component card's report (1.x's ChatSurface `componentReport`): "Report a problem…" goes to Maintainer
-   * as the card's own bot's (a floating card may be another bot's), with its pin and the screenshot kept with
-   * that bot; otherwise the user's change request, the screenshot first among the pictures.
-   */
-  private async reportComponent(cmd: Extract<Command, { type: "component.report" }>): Promise<boolean> {
-    const incoming = join(this.options.dataDir, "incoming");
-    const pictures = cmd.images.flatMap((image) => writeIncoming(incoming, image.name, image.base64) ?? []);
-    const shot = cmd.screenshot ? writeIncoming(incoming, `${safeName(cmd.name) || "component"}.png`, cmd.screenshot) : null;
-    try {
-      if (cmd.problem) {
-        // A pin is botling.board's: whose it is, how it refreshes and when its data is from (its card by that id, else by the component's name).
-        const pin = await this.pinOwner(cmd.botId, cmd.pinId, cmd.name);
-        const owner = (pin ? this.bots.get(pin.botId) : undefined) ?? this.bot(cmd.botId);
-        return this.maintainer.reportProblem(cmd.name, cmd.text, owner, pin ? { words: pin.words, when: pin.when } : null, shot, pictures);
-      }
-      const files = [...(shot ? [shot] : []), ...pictures];
-      if (!cmd.text.trim() && !files.length) return false;
-      this.maintainer.requestComponentChange(cmd.name, cmd.text, "The user", null, files);
-      return true;
-    } finally {
-      for (const file of [...pictures, ...(shot ? [shot] : [])]) rmSync(file, { force: true });
-      this.componentsTick();
-    }
-  }
+  private reportComponent(...a: Parameters<CoreWatch["reportComponent"]>) { return this.coreWatch.reportComponent(...a); }
 
-  /**
-   * Plugins' Claude parts changed (1.x's `followClaudeParts`): awake bots restart (once they are free: no
-   * turn and no subagent at work) so they get the new skills, agents and MCP servers.
-   */
-  private followClaudeParts() {
-    const now = JSON.stringify(agentStamp(this.plugins.registry));
-    if (now === this.loadedClaudeParts) return;
-    this.loadedClaudeParts = now;
-    for (const bot of this.bots.values()) bot.reloadPlugins();
-  }
+  private followClaudeParts(...a: Parameters<CoreWatch["followClaudeParts"]>) { return this.coreWatch.followClaudeParts(...a); }
 
-  /** 1.x's `checkStalls`: each bot (not a partner head) is reminded of a quiet run once per quiet spell. */
-  checkStalls(now = Date.now()) {
-    const minutes = settingsView(readSettings(Layout.settings(this.options.dataDir))).stallReminderMinutes;
-    for (const bot of this.bots.values()) bot.checkStall(now, minutes * (this.options.stallMinuteMs ?? 60_000));
-  }
+  checkStalls(...a: Parameters<CoreWatch["checkStalls"]>) { return this.coreWatch.checkStalls(...a); }
 
-  private watchRuns() {
-    void this.checkNetwork();
-    this.checkStalls();
-  }
+  private watchRuns(...a: Parameters<CoreWatch["watchRuns"]>) { return this.coreWatch.watchRuns(...a); }
 
-  private probing = false;
 
-  /** 1.x's `checkNetwork`: asks the probe only while a bot waits for the network; once it answers, they carry on. */
-  async checkNetwork(now?: number) {
-    const waiting = [...this.bots.values()].filter((bot) => bot.outage || bot.peers.some(peer => peer.outage));
-    if (!waiting.length || this.probing) return;
-    this.probing = true;
-    try {
-      if (!(await (this.options.networkProbe ?? probeNetwork)())) return;
-    } finally {
-      this.probing = false;
-    }
-    const date = now ?? Date.now();
-    for (const bot of waiting) bot.networkRestored(date);
-  }
+  checkNetwork(...a: Parameters<CoreWatch["checkNetwork"]>) { return this.coreWatch.checkNetwork(...a); }
 
-  /** What the developer project's manager is told on top of a manager's usual instructions (`developerBriefing`; botling.dev wrote it). */
-  private developerBriefing(botId: string): string {
-    if (this.developerProject()?.id !== botId) return "";
-    return this.plugins.devBriefing(botId, this.plugins.sessionFolder(botId) !== null);
-  }
+  private developerBriefing(...a: Parameters<CoreWatch["developerBriefing"]>) { return this.coreWatch.developerBriefing(...a); }
 
-  /** The project that is Botling's own source, while developer mode is on (`developerProject`). */
-  developerProject(): Bot | null {
-    const view = settingsView(readSettings(Layout.settings(this.options.dataDir)));
-    if (!view.developerMode || !view.developerProject) return null;
-    const profile = this.profiles.find((candidate) => candidate.id === view.developerProject && candidate.role === "manager" && candidate.id !== this.maintainerId);
-    return profile && !this.removed.has(profile.id) ? this.bots.get(profile.id) ?? null : null;
-  }
+  developerProject(...a: Parameters<CoreWatch["developerProject"]>) { return this.coreWatch.developerProject(...a); }
 
-  /**
-   * You flagged a reply as not right (`reportFeedback`): it goes to the developer project with the chat around
-   * it, to become a test and a fix; the screenshot (the chat as you saw it) and your pictures are kept in its
-   * attachments and listed. Every report is also kept in <data>/feedback.md.
-   */
-  reportFeedback(text: string, messageId: string, chat: Bot, screenshot: string | null, files: string[]): boolean {
-    const developer = this.developerProject();
-    const lines = chat.lines();
-    const index = lines.findIndex((line) => line.id === messageId);
-    if (!developer || index < 0) return false;
-    const message = lines[index]!;
-    const around = lines.slice(Math.max(0, index - 12), index + 1).flatMap((line) => archiveEntry(line) ?? []).join("\n");
-    const steps = message.steps ? "\n\nWhat it did on the way: " + (message.steps as { title?: string }[]).map((step) => step.title ?? "").join(" → ") : "";
-    const words = text.trim();
-    const pictures: string[] = [];
-    if (screenshot) pictures.push("The first attachment is a screenshot of the chat as the user saw it, centered on that reply.");
-    if (files.length) pictures.push(`With it the user added ${files.length} picture${files.length === 1 ? "" : "s"} of their own.`);
-    const seen = pictures.length ? "\n\n" + pictures.join(" ") : "";
-    const name = chat.profile.name;
-    const report = `Feedback: the user flagged a reply of ${name} as not right.
-What is wrong, in their words: ${words || FEEDBACK_NO_WORDS}
+  reportFeedback(...a: Parameters<CoreWatch["reportFeedback"]>) { return this.coreWatch.reportFeedback(...a); }
 
-The chat up to that reply, oldest first:
-${around}${steps}${seen}
+  private componentInfos(...a: Parameters<CoreWatch["componentInfos"]>) { return this.coreWatch.componentInfos(...a); }
 
-First write a test that shows this, then fix it.`;
-    developer.relay(report, { files: [...(screenshot ? [screenshot] : []), ...files], feedback: { about: name, words } });
-    const kept = (developer.lines().findLast((line) => line.role === "relay")?.attachments ?? []).map((file) => { try { return fileURLToPath(file.url); } catch { return file.url; } });
-    appendFeedback(kept.length ? report + "\n\nAttachments:\n" + kept.map((path) => "- " + path).join("\n") : report, this.options.dataDir);
-    chat.appNotice(`Sent to ${developer.profile.name} as feedback.`, undefined, undefined, { sourceID: developer.id });
-    return true;
-  }
+  checkRoutines(...a: Parameters<CoreWatch["checkRoutines"]>) { return this.coreWatch.checkRoutines(...a); }
 
-  /** Every library component as the page draws it. */
-  private componentInfos(): ResultOf<"chat.snapshot">["components"] {
-    const out: ResultOf<"chat.snapshot">["components"] = {};
-    for (const name of this.components.library.names) {
-      const info = this.components.library.info(name);
-      if (info) out[name] = { ...info, template: info.template.slice(0, 1_000_000), sizes: info.sizes.slice(0, 16), title: info.title?.slice(0, 200) ?? null };
-    }
-    return out;
-  }
+  projectBriefing(...a: Parameters<CorePeerInbox["projectBriefing"]>) { return this.corePeerInbox.projectBriefing(...a); }
 
-  /** Every bot's routines that are due run now (`Workspace.checkRoutines`). */
-  checkRoutines(now = Date.now()) {
-    for (const bot of this.bots.values()) {
-      try { bot.checkRoutines(now); } catch (error) { this.log(`routines of ${bot.profile.name}: ${(error as Error).message}`); }
-    }
-  }
+  private peerBots(...a: Parameters<CorePeerInbox["peerBots"]>) { return this.corePeerInbox.peerBots(...a); }
 
-  /**
-   * The project list the main bot wakes with and its routines get (`Workspace.projectBriefing`): each
-   * project's and bot's memory and inbox file and a question waiting in its own chat, Maintainer's, the
-   * <open-question> note when one asks.
-   */
-  projectBriefing(): string {
-    const row = (profile: BotProfile, about: string): BriefingRow => ({
-      name: profile.name, about, memory: join(profile.folder, profile.memoryPath), inbox: join(profile.folder, ".bot", "inbox.md"),
-      question: this.bots.get(profile.id)?.openQuestion()?.text ?? null,
-    });
-    const maintainer = this.profiles.find((profile) => profile.id === this.maintainerId) ?? maintainerProfile(this.options.dataDir, "", this.maintainerId);
-    const peers: PeerBriefingRow[] = this.peerBots().map((peer) => {
-      const inbox = this.peerInbox(peer.id);
-      mkdirSync(dirname(inbox), { recursive: true });
-      return { name: peer.name, machine: peer.serverName, about: "", inbox, chat: this.peerChatCopy(peer.id) };
-    });
-    return projectBriefingText({
-      peers,
-      projects: this.profiles.filter((profile) => profile.role === "manager" && profile.id !== this.maintainerId).map((profile) => row(profile, `folder ${profile.folder}`)),
-      bots: this.profiles.filter((profile) => profile.role === "bot" && !profile.parent).map((profile) => row(profile, firstLine(profile.job ?? ""))),
-      maintainer: row(maintainer, "plugin-library extensions and in-chat components only"),
-    });
-  }
 
-  /**
-   * Bots on other machines the main bot can hand work to (M5-04c): `remoteMembers` (bots and managers of valid peers),
-   * leaving out a peer's old 2.x main bot, which the importer turned into an ordinary bot named "Main (old)" (D26).
-   */
-  private peerBots(): RemoteMember[] {
-    if (!this.options.remoteCommand || !this.options.remoteMembers) return [];
-    // Names and ids come from a peer's rows (schema-checked only): one clean line each, and an id that is one path part.
-    return this.options.remoteMembers()
-      .map((peer) => ({ ...peer, name: botName(peer.name), serverName: botName(peer.serverName) || peer.server }))
-      .filter((peer) => peer.name && peer.name !== "Main (old)" && PEER_ID.test(peer.id));
-  }
 
-  /** The file the main bot appends to for a peer's bot; it lives next to the main bot's, never on the peer's machine. */
-  private peerInbox(botId: string): string {
-    const main = this.profiles.find((profile) => profile.role === "main");
-    return join(main?.folder ?? Layout.mainBot(this.options.dataDir), ".bot", "peers", botId, "inbox.md");
-  }
-
-  /** M5-04e: the read-only copy of a peer bot's last lines; botlingd's `PeerChatMirror` writes it, never the core. */
-  private peerChatCopy(botId: string): string {
-    return join(dirname(this.peerInbox(botId)), "chat.md");
-  }
-
-  /** An awake main bot hears about bots made or removed with its next message (`briefAwakeMainBot`). */
-  private briefAwakeMainBot() {
-    this.mainBot()?.queueNote("(App: The list of projects and bots changed.)\n" + this.projectBriefing());
-  }
+  private briefAwakeMainBot(...a: Parameters<CorePeerInbox["briefAwakeMainBot"]>) { return this.corePeerInbox.briefAwakeMainBot(...a); }
 
   /**
    * Makes a bot of its own (`Workspace.makeBot`): a folder under <data>/bots/, a row in the left column,
@@ -1222,7 +1028,7 @@ First write a test that shows this, then fix it.`;
    * folder, on the worker's engine when the project bot has it, and handed the file. A request that cannot be done says
    * why in the chat, never silently.
    */
-  private async subBotRequested(bot: Bot, request: { name: string; subagent: string; note: string; engine?: string; subagents?: string[] }): Promise<void> {
+  async subBotRequested(bot: Bot, request: { name: string; subagent: string; note: string; engine?: string; subagents?: string[] }): Promise<void> {
     const profile = bot.profile;
     const refuse = (why: string) => {
       bot.appNotice(`No sub bot was made: ${why}`);
@@ -1289,7 +1095,7 @@ First write a test that shows this, then fix it.`;
   }
 
   /** A project bot's <remove-sub-bot name="…"/>: one of its own sub bots is closed exactly as the UI's "Close sub bot" does. */
-  private async removeSubBotRequested(bot: Bot, request: { name: string }): Promise<void> {
+  async removeSubBotRequested(bot: Bot, request: { name: string }): Promise<void> {
     const refuse = (why: string) => { bot.appNotice(`No sub bot was removed: ${why}`); bot.queueNote(`(App: No sub bot was removed: ${why})`); };
     const wanted = request.name.trim().toLowerCase();
     const sub = this.profiles.find((profile) => profile.parent === bot.id && !this.removed.has(profile.id) && profile.name.trim().toLowerCase() === wanted);
@@ -1303,7 +1109,7 @@ First write a test that shows this, then fix it.`;
    * main bot or Maintainer) is found by name, and by folder when names repeat. The user is asked on a card in the asker's
    * chat; only "Remove" runs `removeBot`, exactly what the left column's Remove does (nothing on disk is deleted).
    */
-  private removeBotRequested(bot: Bot, request: { name: string; path?: string }): void {
+  removeBotRequested(bot: Bot, request: { name: string; path?: string }): void {
     const refuse = (why: string) => { bot.appNotice(`No bot was removed: ${why}`); bot.queueNote(`(App: No bot was removed: ${why})`); };
     const wanted = request.name.trim().toLowerCase();
     const named = this.profiles.filter((profile) => !this.removed.has(profile.id) && profile.name.trim().toLowerCase() === wanted);
@@ -1867,7 +1673,7 @@ First write a test that shows this, then fix it.`;
   }
 
   /** A bot's `<agent-message>` / `<agent-stop>`: as the commands, with what went wrong told to it and the chat, never silently. */
-  private async agentTag(bot: Bot, request: Extract<BotRequest, { kind: "agentMessage" | "agentStop" }>) {
+  async agentTag(bot: Bot, request: Extract<BotRequest, { kind: "agentMessage" | "agentStop" }>) {
     const owner = this.bots.get(bot.id) ?? bot;
     try {
       const done = await this.commandAgent(owner.id, request.to, request.kind === "agentMessage" ? { kind: "message", text: request.text } : { kind: "stop" });
@@ -1972,13 +1778,13 @@ First write a test that shows this, then fix it.`;
   }
 
   /** The app's engine defaults saved into a new bot's bot.json before it is made (`seedEngineDefaults`). */
-  private seedEngineDefaults(id: string) {
+  seedEngineDefaults(id: string) {
     const store = this.storeOf(Layout.bot(this.options.dataDir, id));
     seedEngineDefaults(readSettings(Layout.settings(this.options.dataDir)), (key, value) => store.saveSetting(key, value));
   }
 
   /** A new project's or bot's row in the left column, before Maintainer (who stays last). */
-  private attach(profile: BotProfile): Bot {
+  attach(profile: BotProfile): Bot {
     const at = this.profiles.findIndex((candidate) => candidate.id === this.maintainerId);
     this.profiles.splice(at < 0 ? this.profiles.length : at, 0, profile);
     const bot = this.newBot(profile);
@@ -1999,7 +1805,7 @@ First write a test that shows this, then fix it.`;
    * this machine, one peer, none, or more than one with that name. The peer list needs a way to send, and an id that is
    * not a plain id is never a target (a peer's rows are schema-checked only).
    */
-  private machineNamed(raw: string): { kind: "here" } | { kind: "peer"; id: string; name: string } | { kind: "ambiguous"; name: string } | { kind: "unknown"; name: string } {
+  machineNamed(raw: string): { kind: "here" } | { kind: "peer"; id: string; name: string } | { kind: "ambiguous"; name: string } | { kind: "unknown"; name: string } {
     const name = botName(raw);
     const key = name.toLowerCase();
     const peers = this.options.remoteCommand ? (this.options.machines?.() ?? []).map((machine) => ({ id: machine.id, name: botName(machine.name) }))
@@ -2016,7 +1822,7 @@ First write a test that shows this, then fix it.`;
    * `(App: …)` note with its next message. The line is what keeps it: `queueNote` holds one note and none for a bot that is
    * not awake, and an outcome from another machine can come late (after a sleep, or two in one turn).
    */
-  private tellMain(words: (part: (text: string) => string) => string) {
+  tellMain(words: (part: (text: string) => string) => string) {
     const main = this.mainBot();
     // The chat line is markdown: a peer's name or reason such as `[x](https://…)` must stay text, never a link (review
     // M5-04d); the note goes to the model as written.
@@ -2028,7 +1834,7 @@ First write a test that shows this, then fix it.`;
    * The main bot's <new-bot name="…" machine="…">job</new-bot> (M5-04d, D26, Q-C3): `bots.create` on that peer's server, this
    * server as origin (scope `manage`). The bot is made there, never here; the outcome comes back to the main bot as a note.
    */
-  private botRequestedOn(machineName: string, rawName: string, rawJob: string, sentOnce: Set<string>) {
+  botRequestedOn(machineName: string, rawName: string, rawJob: string, sentOnce: Set<string>) {
     const machine = this.machineNamed(machineName);
     if (machine.kind === "here") { this.botRequested(rawName, rawJob, null); return; }
     if (machine.kind === "unknown") { this.tellMain((p) => `There is no machine named "${p(machine.name)}"; the bot was not made.`); return; }
@@ -2080,7 +1886,7 @@ First write a test that shows this, then fix it.`;
   }
 
   /** The main bot's (or Maintainer's) <new-bot name="…">job</new-bot>: made and set up, or why not. */
-  private botRequested(name: string, job: string, by: string | null) {
+  botRequested(name: string, job: string, by: string | null) {
     const main = this.mainBot();
     const made = this.makeBot(name, job, { setUp: true, by });
     if (made.kind === "existing") {
@@ -2148,7 +1954,7 @@ First write a test that shows this, then fix it.`;
    * The main bot's <open-question from="name"/> (`showOpenQuestion`): the card a project or bot already
    * shows in its own chat shows here too, a copy kept in step with it; a pick or words on it go there.
    */
-  private showOpenQuestion(name: string) {
+  showOpenQuestion(name: string) {
     const main = this.mainBot();
     if (!main) return;
     const wanted = name.replace(/^[\t ]+|[\t ]+$/g, "").toLowerCase();
@@ -2235,97 +2041,9 @@ First write a test that shows this, then fix it.`;
     }
   }
 
-  /** Hands what the main bot wrote into an inbox.md to that bot, emptying the file (`deliverInboxes`). */
-  deliverInboxes() {
-    if (!this.mainBot()) return;
-    for (const profile of this.profiles) {
-      // A sub bot shares its project bot's folder, so that folder's inbox is the project bot's alone.
-      if (profile.role === "main" || profile.parent || profile.problem) continue;
-      const file = join(profile.folder, ".bot", "inbox.md");
-      let text: string;
-      try { text = readFileSync(file, "utf8"); } catch { continue; }
-      if (!text.trim()) continue;
-      const bot = this.bots.get(profile.id);
-      if (!bot) continue;
-      // Handed over first, then emptied: a bot that cannot take it now (read-only, closing) keeps it for later.
-      try { bot.relay(text); } catch (error) { this.log(`inbox of ${profile.name} kept: ${(error as Error).message}`); continue; }
-      try { writeFileSync(file, ""); } catch (error) { this.log(`inbox of ${profile.name} not emptied: ${(error as Error).message}`); }
-    }
-    this.deliverPeerInboxes();
-  }
+  deliverInboxes(...a: Parameters<CorePeerInbox["deliverInboxes"]>) { return this.corePeerInbox.deliverInboxes(...a); }
 
-  /** Peer bots whose inbox is in flight (committed not settled yet): never sent twice (M5-04c). */
-  private peerSending = new Set<string>();
-  /** Peers whose over-limit inbox the main bot was told about (M5-04d, U3). */
-  private peerOverTold = new Set<string>();
-  /** Gone peers whose kept inbox was already logged: once is enough. */
-  private peerGoneLogged = new Set<string>();
 
-  /**
-   * M5-04c: what the main bot appended to a peer bot's inbox goes out as `chat.send` with this server as origin. The
-   * file is emptied only after the slot is committed (a crash or a refusal before that keeps the text, so it is sent
-   * again); text added meanwhile stays. No inbox.md is ever written on the peer's machine.
-   */
-  private deliverPeerInboxes() {
-    const remoteCommand = this.options.remoteCommand;
-    if (!remoteCommand) return;
-    const peers = this.peerBots();
-    const listed = new Set(peers.map((peer) => peer.id));
-    for (const peer of peers) {
-      if (this.peerSending.has(peer.id)) continue;
-      const file = this.peerInbox(peer.id);
-      let text: string;
-      try { text = readFileSync(file, "utf8"); } catch { continue; }
-      if (!text.trim()) continue;
-      const who = `${peer.name} on ${peer.serverName}`;
-      const machine = typeof this.options.machineName === "function" ? this.options.machineName() : this.options.machineName;
-      const wrapped = `From the main bot on ${machine || "this machine"}:\n${text}`;
-      const tooLong = wrapped.length > MESSAGE_TEXT_LIMIT ? `the text is longer than ${MESSAGE_TEXT_LIMIT} characters`
-        : Buffer.byteLength(JSON.stringify(wrapped), "utf8") > PEER_MESSAGE_BYTES ? `the text is bigger than ${PEER_MESSAGE_BYTES} bytes on the wire` : null;
-      if (tooLong) {
-        this.log(`inbox of ${who} kept: ${tooLong}`);
-        // U3: the file is kept and logged on every turn, but the main bot is told once (again after it fits and went).
-        if (!this.peerOverTold.has(peer.id)) {
-          this.peerOverTold.add(peer.id);
-          this.tellMain((p) => `The message for "${p(peer.name)}" on ${p(peer.serverName)} is too long to send, so it was not sent. Cut it down in its inbox file.`);
-        }
-        continue;
-      }
-      this.peerOverTold.delete(peer.id);
-      let sent: ReturnType<typeof remoteCommand>;
-      try { sent = remoteCommand(`bot:${peer.id}`, { type: "chat.send", botId: peer.id, text: wrapped }); } catch (error) { this.log(`inbox of ${who} kept: ${(error as Error).message}`); continue; }
-      this.peerSending.add(peer.id);
-      sent.committed.then(() => {
-        this.peerSending.delete(peer.id);
-        // Only what was sent goes; a line appended while it was on its way stays for the next turn.
-        let now: string;
-        try { now = readFileSync(file, "utf8"); } catch { return; }
-        try { writeFileSync(file, now.startsWith(text) ? now.slice(text.length) : now); } catch (error) { this.log(`inbox of ${who} not emptied: ${(error as Error).message}`); }
-      }, (error: unknown) => {
-        this.peerSending.delete(peer.id);
-        this.log(`inbox of ${who} kept: ${(error as Error).message}`);
-      });
-      // The slot committed but the owner refused it (the bot is gone, the server was removed): told to the main bot, once per slot.
-      sent.outcome.then((outcome) => {
-        if (outcome.ok) return;
-        const why = oneLine(outcome.why);
-        this.log(`message to ${who} was not delivered: ${why}`);
-        this.tellMain((p) => `The message to "${p(peer.name)}" on ${p(peer.serverName)} was not delivered: ${p(why)}.`);
-      }, () => undefined);
-    }
-    // A bot that left (its server was removed): its text stays in the file, and the log says so once.
-    const root = join(dirname(this.peerInbox("x")), "..");
-    let folders: string[] = [];
-    try { folders = readdirSync(root); } catch { /* no peers yet */ }
-    for (const id of folders) {
-      if (listed.has(id) || this.peerGoneLogged.has(id)) continue;
-      let text = "";
-      try { text = readFileSync(join(root, id, "inbox.md"), "utf8"); } catch { continue; }
-      if (!text.trim()) continue;
-      this.peerGoneLogged.add(id);
-      this.log(`inbox of ${id} kept: that bot is no longer on a machine of this cluster`);
-    }
-  }
 
   /**
    * What waits on you (`refreshWaiting`): each bot's latest open question in its own chat, else its
@@ -2632,199 +2350,15 @@ First write a test that shows this, then fix it.`;
     return !items.length && readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting).includes(`${botId}-${text}`);
   }
 
-  /**
-   * Adds a folder as a project with a manager (`Workspace.addProject`); a folder that is one already
-   * gives that project. Its row goes into projects.json, its `.bot/` is made, its bot joins the list.
-   */
-  addProject(path: string): { botId: string; added: boolean } {
-    const folder = folderPath(path);
-    if (!folder || !existsSync(folder) || !statSync(folder).isDirectory()) throw new ContractError("not_found", `There is no folder at ${path}.`);
-    const existing = this.profiles.find((profile) => profile.role !== "main" && !profile.parent && profile.folder === folder);
-    if (existing) return { botId: existing.id, added: false };
-    const id = randomUUID().toUpperCase();
-    const row = { id, name: defaultName(folder), folder, avatar: nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== this.maintainerId).map((profile) => profile.avatar)) };
-    prepareNotesFolder(folder);
-    this.seedEngineDefaults(id);
-    saveProjectRow(this.options.dataDir, row);
-    this.attach(projectProfile(this.options.dataDir, { id, name: row.name, folder: folderURLText(folder), avatar: row.avatar }));
-    this.log(`added project ${row.name} (${folder})`);
-    return { botId: id, added: true };
-  }
+  addProject(...a: Parameters<CoreProjects["addProject"]>) { return this.coreProjects.addProject(...a); }
 
-  /**
-   * The main bot's <new-project folder="…">task</new-project> (`proposeProjects`): folders found (`/*`,
-   * `/**`), ones that are projects already get the task, the rest are asked about on one card.
-   */
-  private projectRequests(bot: Bot, requests: BotRequest[]): BotRequest[] {
-    // New bots and <open-question> (`Workspace.handle`): only the main bot
-    // shows other bots' cards; it makes bots when you ask it, and Maintainer may too. From anyone else
-    // they are left out, as in 1.x. They act once the reply is in.
-    const main = bot.profile.role === "main";
-    const later: (() => void)[] = [];
-    const rest: BotRequest[] = [];
-    // M5-04d: one bots.create per machine and name in a reply, however often the tag was written.
-    const elsewhere = new Set<string>();
-    for (const request of requests) {
-      if (request.kind === "newBot" && request.machine) {
-        // Only the main bot acts on another machine (D26); from anyone else the tag is left out, as a tag from a bot that may not make bots.
-        if (main) later.push(() => this.botRequestedOn(request.machine!, request.name, request.job, elsewhere));
-        else if (bot.id === this.maintainerId && this.machineNamed(request.machine).kind === "here") later.push(() => this.botRequested(request.name, request.job, bot.profile.name));
-      }
-      else if (request.kind === "newBot") { if (main || bot.id === this.maintainerId) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
-      else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
-      else if (request.kind === "subBot") later.push(() => { void this.subBotRequested(bot, request); });
-      else if (request.kind === "removeSubBot") later.push(() => { void this.removeSubBotRequested(bot, request); });
-      else if (request.kind === "removeBot") later.push(() => this.removeBotRequested(bot, request));
-      else if (request.kind === "agentMessage" || request.kind === "agentStop") later.push(() => { void this.agentTag(bot, request); });
-      else rest.push(request);
-    }
-    if (later.length) setImmediate(() => { for (const act of later) { try { act(); } catch (error) { this.log(`request: ${(error as Error).message}`); } } });
-    return this.newProjectRequests(bot, rest);
-  }
+  private projectRequests(...a: Parameters<CoreProjects["projectRequests"]>) { return this.coreProjects.projectRequests(...a); }
 
-  /** The main bot's <new-project> requests: found, asked about on one card (the rest are passed on). */
-  private newProjectRequests(bot: Bot, requests: BotRequest[]): BotRequest[] {
-    const asked = requests.filter((request): request is Extract<BotRequest, { kind: "newProject" }> => request.kind === "newProject");
-    if (!asked.length) return requests;
-    // Only the main bot adds projects; anyone else's <new-project> is left out silently, as in 1.x (`Workspace.handle`).
-    if (bot.profile.role !== "main") return requests.filter((request) => request.kind !== "newProject");
-    const main = bot;
-    const home = homedir();
-    const own = resolvePath(this.options.dataDir);
-    // M5-04d: `projects.add` is never sent. A project on another machine is that machine's own window's to add.
-    const told = new Set<string>();
-    const here = asked.filter((request) => {
-      if (!request.machine) return true;
-      const machine = this.machineNamed(request.machine);
-      if (machine.kind === "here") return true;
-      if (machine.kind === "unknown") {
-        this.tellMain((p) => `There is no machine named "${p(machine.name)}"; the project was not added.`);
-      } else if (!told.has(machine.name.toLowerCase())) {
-        told.add(machine.name.toLowerCase());
-        this.tellMain((p) => `Adding a project on ${p(machine.name)} needs ${p(machine.name)}'s own window.`);
-      }
-      return false;
-    });
-    const adding: { folder: string; task: string }[] = [];
-    const missing: string[] = [];
-    const tooBroad: string[] = [];
-    const handed: string[] = [];
-    const expanded: { path: string; task: string }[] = [];
-    for (const { folder: path, task } of here) {
-      const trimmed = path.trim();
-      if (trimmed.endsWith("/**")) {
-        const parent = folderPath(trimmed.slice(0, -3));
-        if (!parent || !existsSync(parent)) { missing.push(trimmed.slice(0, -3)); continue; }
-        const found = projectFolders(parent);
-        if (!found.length) missing.push(trimmed);
-        expanded.push(...found.map((folder) => ({ path: folder, task })));
-        continue;
-      }
-      if (!trimmed.endsWith("/*")) { expanded.push({ path, task }); continue; }
-      const parent = folderPath(trimmed.slice(0, -2));
-      const inside = parent ? childFolders(parent) : null;
-      if (!inside) { missing.push(trimmed.slice(0, -2)); continue; }
-      if (!inside.length) missing.push(trimmed);
-      expanded.push(...inside.map((folder) => ({ path: folder, task })));
-    }
-    for (const { path, task: raw } of expanded) {
-      const task = raw.trim();
-      const folder = folderPath(path);
-      if (!folder || !existsSync(folder) || !statSync(folder).isDirectory()) { missing.push(path); continue; }
-      if (folder === "/" || folder === home || folder === own || folder.startsWith(own + "/")) { tooBroad.push(folder); continue; }
-      const existing = this.profiles.find((profile) => profile.role !== "main" && !profile.parent && profile.folder === folder);
-      if (existing) {
-        if (task) { try { this.bots.get(existing.id)?.relay(task); } catch { /* read-only */ } }
-        handed.push(existing.name);
-        continue;
-      }
-      if (!adding.some((entry) => entry.folder === folder)) adding.push({ folder, task });
-    }
-    const notes: string[] = [];
-    if (missing.length) {
-      main.appNotice(`Couldn't add a project: there is no folder at ${missing.join(", ")}.`);
-      notes.push(`There is no folder at ${missing.join(", ")}; nothing was added for it. Ask the user for the full path.`);
-    }
-    if (tooBroad.length) {
-      main.appNotice(`Couldn't add ${tooBroad.join(", ")} as a project: a manager there could change far more than one project.`);
-      notes.push(`${tooBroad.join(", ")} was not added: a whole disk, the home folder or Botling's own folder cannot be a project. Ask for the project's own folder.`);
-    }
-    if (handed.length) main.appNotice(handed.length === 1 ? `${handed[0]} is already a project; any task went to its manager.` : `${handed.join(", ")} are already projects; any task went to their managers.`);
-    if (adding.length) {
-      let text: string;
-      let add: string;
-      if (adding.length === 1) {
-        const only = adding[0]!;
-        text = `Add **${basename(only.folder)}** as a project?\n\n\`${only.folder}\`\n\nIts manager can read and change the files in this folder.${only.task ? `\n\nThen its manager starts on: ${only.task}` : ""}`;
-        add = "Add as project";
-      } else {
-        const tasks = new Set(adding.map((entry) => entry.task));
-        const shared = tasks.size === 1 ? [...tasks][0]! : null;
-        const list = adding.map((entry) => `- **${basename(entry.folder)}** \`${entry.folder}\`${shared !== null || !entry.task ? "" : ` — then: ${entry.task}`}`);
-        const then = shared ? `\n\nThen each manager starts on: ${shared}` : "";
-        text = `Add these ${adding.length} folders as projects?\n\n${list.join("\n")}${then}\n\nEach gets a manager that can read and change the files in its folder. To leave some out, tell the main bot instead.`;
-        add = `Add all ${adding.length}`;
-      }
-      const question = main.appNotice(text, [{ label: add, recommended: true }, { label: "Don't add" }], (index) => this.answerProjects(question, index === 0));
-      this.projectQuestions.set(question, adding);
-      notes.push(`The user now sees a card asking to add ${adding.length === 1 ? "this folder" : `these ${adding.length} folders`} as projects: ${adding.map((entry) => entry.folder).join(", ")}. Nothing is added until they pick.`);
-    }
-    if (notes.length) main.queueNote(`(App: ${notes.join(" ")})`);
-    return requests.filter((request) => request.kind !== "newProject");
-  }
 
-  /** Your pick on an "Add as project?" card (`answerProjects`). */
-  private answerProjects(question: string, add: boolean) {
-    const folders = this.projectQuestions.get(question);
-    this.projectQuestions.delete(question);
-    const main = this.mainBot();
-    if (!folders || !main) return;
-    const paths = folders.map((entry) => entry.folder).join(", ");
-    if (!add) { main.queueNote(`(App: The user chose not to add ${paths} as projects.)`); return; }
-    const names: string[] = [];
-    for (const { folder, task } of folders) {
-      try {
-        const { botId } = this.addProject(folder);
-        names.push(this.bots.get(botId)!.profile.name);
-        if (task) this.bots.get(botId)?.relay(task);
-      } catch (error) {
-        this.log(`adding ${folder}: ${(error as Error).message}`);
-      }
-    }
-    if (!names.length) { main.appNotice(`Couldn't add ${paths} as ${folders.length === 1 ? "a project" : "projects"}.`); return; }
-    const list = names.join(", ");
-    const anyTask = folders.some((entry) => entry.task);
-    main.appNotice(names.length === 1
-      ? (anyTask ? `Added ${list} as a project; the managers with a task are on it.` : `Added ${list} as a project.`)
-      : (anyTask ? `Added ${list} as projects; the managers with a task are on it.` : `Added ${list} as projects.`));
-    main.queueNote(`(App: The user added ${list} as projects (${paths}); they are in the project list now.)`);
-  }
 
-  private importOnce() {
-    const source = this.options.importFrom;
-    const root = this.options.dataDir;
-    if (source && needsImport(root)) {
-      if (looksLike1x(source)) {
-        try {
-          const report = importFrom1x(source, root);
-          this.log(`imported ${report.bots.length} bot(s) and ${report.messages} message(s) from ${source} (read-only); skipped ${report.skipped.length}`);
-        } catch (error) {
-          this.log(`import from ${source} failed: ${(error as Error).message}`);
-        }
-      } else {
-        this.log(`nothing to import: ${source} is not a Botling 1.x data folder`);
-      }
-    }
-    const report = importRecord(root);
-    if (report) {
-      this.imported = {
-        source: report.source.slice(0, 4_000), at: report.at, bots: report.bots.length, messages: report.messages,
-        skipped: report.skipped.slice(0, 200).map((entry) => entry.slice(0, 2_000)),
-      };
-    }
-  }
+  private importOnce(...a: Parameters<CoreProjects["importOnce"]>) { return this.coreProjects.importOnce(...a); }
 
-  private log(line: string) {
+  log(line: string) {
     this.options.log?.(line);
   }
 
@@ -3164,7 +2698,7 @@ First write a test that shows this, then fix it.`;
     return commandGuidePath({ ...command, docs: command.docs! }, join(this.options.dataDir, "plugin-guides"), this.options.pluginOverrides ?? null);
   }
 
-  private event(event: Event) {
+  event(event: Event) {
     // A removed bot (still stopping) is heard no more.
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     if (event.type === "bot.updated" && event.bot.id === this.maintainerId && event.bot.maintainer !== true) {
@@ -3387,7 +2921,7 @@ First write a test that shows this, then fix it.`;
     return result;
   }
 
-  private bot(id: string): Bot {
+  bot(id: string): Bot {
     if (id === "main") {
       const main = this.mainBot();
       if (!main) throw new ContractError("not_found", this.noMainBotMessage());
