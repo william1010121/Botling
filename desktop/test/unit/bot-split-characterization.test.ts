@@ -377,21 +377,25 @@ describe("orders that must not change", () => {
   it("next() does nothing while a turn, the tidy, a switch or a drain is under way, and sends the waiting message once all are over", async () => {
     const r = rig();
     r.b.send("first"); await r.sent(0, 1); r.reply(0, "Hi"); await flush();
+    let release = () => {};
     const blockers: [string, () => void, () => void][] = [
       ["a turn", () => { r.peek.turn = { origin: "user", open: true }; }, () => { r.peek.turn = null; }],
       ["the tidy", () => { r.peek.tidying = true; }, () => { r.peek.tidying = false; }],
       ["a switch", () => { r.peek.switching = true; }, () => { r.peek.switching = false; }],
-      ["a drain", () => { r.peek.draining = { head: r.head(0), resolve() {}, promise: Promise.resolve() }; }, () => { r.peek.draining = null; }],
+      // The drain's promise stays pending until off() (as a real one does until the stopped turn ends): deliver() waits on it
+      // in a `while (this.draining)` loop, which spins forever (microtasks, no timeout can fire) on a promise that is already resolved.
+      ["a drain", () => { r.peek.draining = { head: r.head(0), resolve() {}, promise: new Promise<void>((done) => { release = done; }) }; }, () => { r.peek.draining = null; release(); }],
     ];
     for (const [name, on, off] of blockers) {
       // A real turn made by the bot (not a hand-made object: next() runs begin() on it when a blocker is wrongly ignored).
       const waiting = r.peek.newTurn("app", "waiting", null);
       r.peek.queue.push(waiting);
-      on(); r.peek.next(); await flush();
-      expect(r.peek.queue.length, `queue length while ${name}`).toBe(1);
-      expect(r.peek.queue[0] === waiting, `the waiting message is still first while ${name}`).toBe(true);
-      expect(r.head(0).sent, `while ${name}`).toHaveLength(1);
-      off(); r.peek.queue.splice(0);
+      try {
+        on(); r.peek.next(); await flush();
+        expect(r.peek.queue.length, `queue length while ${name}`).toBe(1);
+        expect(r.peek.queue[0] === waiting, `the waiting message is still first while ${name}`).toBe(true);
+        expect(r.head(0).sent, `while ${name}`).toHaveLength(1);
+      } finally { off(); r.peek.queue.splice(0); }
     }
     const sent = r.b.send("one more"); await r.sent(0, 2);
     expect(r.peek.turn.id).toBe(sent.turnId);
