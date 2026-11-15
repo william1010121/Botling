@@ -182,6 +182,14 @@ describe("a plugin already installed with a dotted name", () => {
     expect(board?.builtIn).toBe(true);
     expect(registry.problems).toEqual({});
     expect(registry.plugin("botling.evil")?.builtIn).toBe(false);
+    // a built-in's dotted name is never warned about (only a library plugin's is)
+    const warned: string[] = [];
+    registry.onNameWarning = (name) => warned.push(name);
+    plugin(builtIns, "botling.note");
+    plugin(library, "your.plugin");
+    registry.rescan(true);
+    expect(registry.plugin("botling.note")?.builtIn).toBe(true);
+    expect(warned).toEqual(["your.plugin"]);
     // the real shipped folder (source tree) loads as a built-in with its dotted name and no problem
     const shipped = join(__dirname, "..", "..", "builtin-plugins");
     const dotted = readdirSync(shipped).filter((n) => n.startsWith("botling."));
