@@ -1,9 +1,9 @@
-// HTTP + WebSocket front of the relay: /healthz, the optional phone web app under /mobile/, and the WebSocket at /ws.
+// HTTP + WebSocket front of the relay: /healthz, optional static apps (/mobile/, /v3/), and the WebSocket at /ws.
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { RelayConfig } from './config.ts';
 import { CLOSE, Relay } from './relay.ts';
-import { serveStatic } from './static.ts';
+import { serveStatic, serveStaticV3 } from './static.ts';
 
 const STATUS = { 403: 'Forbidden', 404: 'Not Found', 429: 'Too Many Requests', 503: 'Service Unavailable' } as const;
 
@@ -33,17 +33,28 @@ export function startRelay(config: RelayConfig): Promise<RelayServer> {
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+    const rawPath = (req.url ?? '/').split(/[?#]/, 1)[0]!;
+    let decodedRaw: string;
+    try { decodedRaw = decodeURIComponent(rawPath); } catch { res.writeHead(400, { 'Content-Type': 'text/plain' }); res.end('Bad request'); return; }
+    // Reject dot-segments before URL normalization so /v3/../mobile/… never falls through to /mobile/.
+    if (decodedRaw.includes('\0') || decodedRaw.includes('\\') || decodedRaw.split('/').some(part => part === '..')) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end(req.method === 'HEAD' ? undefined : 'Not found'); return;
+    }
     const url = new URL(req.url ?? '/', 'http://relay');
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return; }
     if (url.pathname === '/healthz' || url.pathname === '/readyz') {
-      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true })); return;
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ ok: true })); return;
     }
     if (config.staticDir) {
       if (url.pathname === '/' || url.pathname === '/mobile') { res.writeHead(302, { Location: '/mobile/' }); res.end(); return; }
       const origin = config.publicOrigin ?? `https://${req.headers.host ?? 'localhost'}`;
       if (await serveStatic(config.staticDir, origin, req, res, url.pathname)) return;
     }
-    res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found');
+    if (config.staticV3Dir) {
+      if (url.pathname === '/v3') { res.writeHead(302, { Location: '/v3/' }); res.end(); return; }
+      if (await serveStaticV3(config.staticV3Dir, req, res, url.pathname)) return;
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end(req.method === 'HEAD' ? undefined : 'Not found');
   });
   server.headersTimeout = 10_000;
   server.requestTimeout = 15_000;
