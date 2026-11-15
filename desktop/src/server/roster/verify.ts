@@ -9,7 +9,9 @@
 // - Root (signed by the recovery key): every recovery public key named by some Root of the set is tried; the one that
 //   verifies is recorded with the cluster id it derives (§3). Whether that key may sign this Root is the chain rule in
 //   validity.ts (R2).
-// A statement no key verifies is left out of the result (it stays stored; a later Add may name its signer's key).
+// - K8 (D66, proposed): a Revoke carrying `seen` is refused when verified Adds in the same cluster identify its
+//   `member` as a device (the wire schema alone cannot know a member's kind).
+// A statement no key verifies (or a device Revoke with `seen`) is left out of the result.
 import { canonicalJson, clusterIdFromRecoveryKey, fromBase64Url, memberIdFromKey, SignedStatement, statementBytes, statementId, toBase64Url, type StatementBody } from "../../protocol";
 import type { VerifiedStatement } from "./validity";
 
@@ -86,6 +88,48 @@ export interface StoredStatement {
 }
 
 /**
+ * Devices in `cluster` according to verified statements (R3 + device Adds): a member named by a server-signed device
+ * Add that is not itself a known server of that cluster. Used only to refuse `seen` on device revocations (K8).
+ */
+function deviceMembersForCluster(verified: readonly VerifiedStatement[], selfId: string, cluster: string): Set<string> {
+  const rootKeys = new Set<string>();
+  const roots = verified.filter((s): s is VerifiedStatement & { body: Extract<StatementBody, { type: "root" }> } =>
+    s.body.type === "root" && s.body.cluster === cluster);
+  for (const s of roots) {
+    if (s.body.gen === 1 && s.body.prev === null && s.recoveryKey === s.body.recoveryPub && s.recoveryKeyCluster === cluster) {
+      rootKeys.add(s.body.recoveryPub);
+    }
+  }
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const s of roots) {
+      if (s.recoveryKey !== undefined && rootKeys.has(s.recoveryKey) && !rootKeys.has(s.body.recoveryPub)) {
+        rootKeys.add(s.body.recoveryPub);
+        changed = true;
+      }
+    }
+  }
+  const servers = new Set<string>([selfId]);
+  for (const s of roots) if (s.recoveryKey !== undefined && rootKeys.has(s.recoveryKey)) servers.add(s.body.root);
+  const adds = verified.filter((s): s is VerifiedStatement & { body: Extract<StatementBody, { type: "add" }> } =>
+    s.body.type === "add" && s.body.cluster === cluster);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const s of adds) {
+      if (s.body.kind === "server" && servers.has(s.body.by) && !servers.has(s.body.member)) {
+        servers.add(s.body.member);
+        changed = true;
+      }
+    }
+  }
+  const devices = new Set<string>();
+  for (const s of adds) {
+    if (s.body.kind === "device" && servers.has(s.body.by) && !servers.has(s.body.member)) devices.add(s.body.member);
+  }
+  return devices;
+}
+
+/**
  * The verified subset of `statements`: each with the key that checked it (see the file comment). `self` is the
  * evaluating server (its own key is known without an Add).
  */
@@ -117,5 +161,15 @@ export async function verifyStatements(statements: Iterable<StoredStatement>, se
     const pub = signKeys.get(statement.signer);
     if (pub && (await checked(id, statement, pub))) out.push({ id, body: statement.body, signer: statement.signer });
   }
-  return out;
+  if (!out.some((s) => s.body.type === "revoke" && s.body.seen !== undefined)) return out;
+  const devicesByCluster = new Map<string, Set<string>>();
+  return out.filter((s) => {
+    if (s.body.type !== "revoke" || s.body.seen === undefined) return true;
+    let devices = devicesByCluster.get(s.body.cluster);
+    if (!devices) {
+      devices = deviceMembersForCluster(out, self.memberId, s.body.cluster);
+      devicesByCluster.set(s.body.cluster, devices);
+    }
+    return !devices.has(s.body.member);
+  });
 }
