@@ -231,6 +231,7 @@ CREATE INDEX grants_by_requester ON grants (requester, requesterServer, kind);
 // v13 (src/server/forward): `forwarddead` keeps a forward-queue row that could never be sent (it does not parse, its frame is too
 // large, or the encoder throws) after the forwarder moved it out of `forwardq`: same key, the raw envelope as it was, and why.
 // A kept row is also the "hole" in its queue: later rows of that queue go out with a `floor` above it (forwarder.ts).
+// A row stays only while something can still need it and is then deleted (`pruneDead`, forward-queue.ts), so the table stays small.
 const V13 = `
 CREATE TABLE forwarddead (
   origin TEXT NOT NULL, originEpoch TEXT NOT NULL, target TEXT NOT NULL, n INTEGER NOT NULL, owner TEXT NOT NULL,
