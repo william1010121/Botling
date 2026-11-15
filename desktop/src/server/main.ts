@@ -60,6 +60,7 @@ import { ImportError, runImport } from "./import/run";
 import { RestoreError, restoreBackup } from "./restore";
 import { serviceCommand, ServiceError } from "./service";
 import { AdminClient, addMachineCommand, createStdinIo, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./pairing";
+import { fetchCommand } from "./fetch/cli";
 import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
@@ -470,6 +471,11 @@ async function main(argv: string[]): Promise<void> {
       try { process.exitCode = await revokeDeviceCommand(client, { out, ask: async () => null }, id!, flag(rest, "--reason")); } finally { client.close(); }
       return;
     }
+    case "fetch": {
+      const client = await adminSession(paths);
+      try { process.exitCode = await fetchCommand(client, { out, err: (line) => process.stderr.write(`${line}\n`) }, rest); } finally { client.close(); }
+      return;
+    }
     case "service": {
       try {
         await serviceCommand(rest, process.env, out);
@@ -524,7 +530,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     default:
-      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device, fetch)`, 2);
   }
 }
 

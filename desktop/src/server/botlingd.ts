@@ -30,6 +30,7 @@ import { PluginContentRead } from "./content/plugin-read";
 import { RemoteContent } from "./content/remote";
 import { Uploads } from "./content/put";
 import { ContentTickets } from "./content/tickets";
+import { clusterNames, FetchApproval } from "./fetch/approval";
 import { FetchRequester } from "./fetch/requester";
 import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
@@ -127,9 +128,10 @@ export function clusterOrigins(
  * Device & peer-server roster view passed to `slotAuthorize` (M5-04b): a peer server is accepted only when it is in
  * `view.servers` AND `view.valid` (not root-revoked and not unvouched/not-yet-effective).
  */
-export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">): DeviceRoster {
+export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">, userOnlyCard?: (messageId: string) => boolean): DeviceRoster {
   return {
     memberId: roster.memberId,
+    ...(userOnlyCard ? { userOnlyCard } : {}),
     device: (member) => roster.device(member),
     server: (member) => {
       const view = roster.view;
@@ -511,7 +513,7 @@ export class Botlingd {
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster)), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, (messageId) => core.serverAskOpen(messageId))), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
         // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
         // may run and re-announces its list once (core.pluginGrantsChanged).
         pluginRowsChanged: () => {
@@ -666,6 +668,8 @@ export class Botlingd {
         },
       });
       let localReads: LocalPeerReads | null = null;
+      // M5-06c: the fetch approval card and grants (built with the fetch source below; the admin ops read it).
+      let fetchApproval: FetchApproval | null = null;
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
@@ -691,6 +695,10 @@ export class Botlingd {
               return { row: await prefs.set(op.key, op.value) };
             }
             if (op.op === "prefs.list") return { rows: prefs.rows() };
+            if (op.op === "fetch.grants" || op.op === "fetch.revoke") {
+              if (!fetchApproval) throw new Error("fetch is not ready yet");
+              return op.op === "fetch.grants" ? { rows: fetchApproval.grants() } : { revoked: await fetchApproval.revoke(op.grantId) };
+            }
             if (op.op === "machine.removePreview" || op.op === "machine.remove") return pairing.admin(op, session);
             return op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op, session) : pairing.admin(op, session);
           },
@@ -744,6 +752,12 @@ export class Botlingd {
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
       const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), log, peer: peerContent });
       const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner }, options.session);
+      // M5-06c: a fetch that asks puts a card into the Maintainer's chat; asks left open by the last run are `gone`.
+      const approval = new FetchApproval({
+        core, store, reader: () => hub.reader(), self: serverId, names: clusterNames(roster, () => hub.reader()), log,
+      });
+      await approval.recover();
+      fetchApproval = approval;
       // M5-07a: source side of on-demand fetch between servers.
       const fetchSource = new FetchSource({
         self: serverId,
@@ -760,6 +774,8 @@ export class Botlingd {
           }
           return map;
         },
+        ask: approval.ask,
+        gone: (fetchId) => approval.gone(fetchId),
         onAudit: () => feeds.notify(feeds.ownStream),
         log,
       });

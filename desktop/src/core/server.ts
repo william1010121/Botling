@@ -293,6 +293,8 @@ export class Core {
   readonly conversations: Conversations;
   /** Bots taken out of the left column: what they still say goes nowhere. */
   private removed = new Set<string>();
+  /** M5-06c: open `serverAsk` cards by the id of their chat line (the bot they are in, and how to end the wait). */
+  private serverAsks = new Map<string, { botId: string; close: (index: number | null) => void }>();
   /** Bots plugins made that you removed (`plugin/name`, lower case; removed-bots.json), so they stay removed. */
   private removedPluginBots = new Set<string>();
   /** <open-question> copies in the main bot's chat: the copy's id → the question it copies. */
@@ -2161,6 +2163,50 @@ First write a test that shows this, then fix it.`;
    * What waits on you (`refreshWaiting`): each bot's latest open question in its own chat, else its
    * memory's "Waiting on you"; then the main bot's own questions; without what you set aside.
    */
+  /**
+   * M5-06c (D74): a question card from this server itself (a fetch that asks, `server/fetch/approval.ts`) in `botId`'s
+   * chat (the Maintainer's). It is a normal app question: the pick comes from any device through `chat.choose`, and the
+   * answer is the choice's index. It is `null` whenever there is no pick: the card is ignored, closed after a restart
+   * ("No longer needed"), the core shuts down, `cancelled` settles first (the ask it belongs to is over: the card is then
+   * closed "No longer needed" so nobody answers a dead question), the bot is missing or there is nothing to choose.
+   * A caller must treat anything but a valid index as "no".
+   */
+  serverAsk(botId: string, ask: { text: string; choices: string[] }, cancelled?: Promise<void>): Promise<number | null> {
+    const bot = this.bots.get(botId);
+    if (!bot || this.removed.has(botId) || !ask.choices.length) return Promise.resolve(null);
+    return new Promise<number | null>((resolve) => {
+      let id = "";
+      let settled = false;
+      const finish = (index: number | null) => {
+        if (settled) return;
+        settled = true;
+        this.serverAsks.delete(id);
+        resolve(index);
+      };
+      id = bot.appNotice(ask.text, ask.choices.map((label) => ({ label })), (index) => finish(Number.isInteger(index) && index >= 0 && index < ask.choices.length ? index : null));
+      this.serverAsks.set(id, { botId, close: finish });
+      void cancelled?.then(() => {
+        if (settled) return;
+        // Close the card first (a pick after this finds nothing open), then end the wait.
+        try { bot.settleAppQuestion(id, {}); } catch (error) { this.log(`serverAsk: closing the card failed: ${(error as Error).message}`); }
+        finish(null);
+      });
+    });
+  }
+
+  /** M5-06c: whether `messageId` is an open `serverAsk` card (only a user answers it: botlingd refuses a peer server's pick). */
+  serverAskOpen(messageId: string): boolean {
+    return this.serverAsks.has(messageId);
+  }
+
+  /** A `serverAsk` card that is no longer open and was not picked: ignored (the pick, if any, reaches its own callback). */
+  private serverAskClosed(messageId: string): void {
+    const pending = this.serverAsks.get(messageId);
+    if (!pending) return;
+    const line = this.bots.get(pending.botId)?.line(messageId) ?? null;
+    if (!line || (line.chosen == null && !isOpenQuestion(line))) pending.close(null);
+  }
+
   waiting(): WaitingView {
     // When a question was asked (its line's time), for the whiteboard's "2h ago".
     const asked = (chat: Bot | null | undefined, id: string): { at?: string } => {
@@ -2200,6 +2246,13 @@ First write a test that shows this, then fix it.`;
       else for (const item of this.memoryFiles.items(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
     }
     for (const question of this.mainBot()?.openQuestions() ?? []) addQuestion(this.mainBotId, this.mainBot(), question);
+    // M5-06c: the server's own open questions (a fetch waiting for its card). The Maintainer is a manager and its
+    // `openQuestion()` sees only `role: "bot"` lines, so these app questions would be missing from the summary.
+    for (const [id, pending] of this.serverAsks) {
+      const chat = this.bots.get(pending.botId);
+      const line = chat?.line(id);
+      if (line && isOpenQuestion(line)) addQuestion(pending.botId, chat, { id, text: line.text });
+    }
     const acked = [...ignored].filter((key) => key.includes("-task:")).slice(-200);
     return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing, ...(acked.length ? { acked } : {}) };
   }
@@ -2878,6 +2931,7 @@ First write a test that shows this, then fix it.`;
       event = { ...event, bot: { ...event.bot, maintainer: true } };
     }
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    if (event.type === "message.updated" && this.serverAsks.size) this.serverAskClosed(event.message.id);
     this.pluginEvent(event);
     this.checkWorkspaceSoon();
     // An agent another bot owns: its owner's view of it follows too.
@@ -3524,6 +3578,8 @@ First write a test that shows this, then fix it.`;
   }
 
   async shutdown() {
+    // M5-06c: no pick will come: a fetch waiting for its card is told "no" (the card itself stays for the next start to close).
+    for (const pending of [...(this.serverAsks?.values() ?? [])]) pending.close(null);
     // Re-snapshot synchronously: completion/cancellation after confirmation wins over intent.
     const journal=new RestartJournal(this.options.dataDir);
     if(this.restarting)journal.checkpoint([...this.bots.values()].flatMap(bot=>bot.restartEntries()));
