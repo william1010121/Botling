@@ -952,6 +952,27 @@ describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
     expect(s.roster.pushSubscription(dev.member)).toBeNull();
   });
 
+  it("F1 server (re-review probe): resending the stored value does not start a new window", async () => {
+    const clock = new RateClock();
+    const s = await makeRealServer({ clock, windowMs: 60_000 });
+    const dev = await makeDevice();
+    await s.roster.addDevice({ keys: dev.keys, name: "Phone" });
+    const c = dialReal(s, dev);
+    await c.hello();
+    const settle = async () => { await new Promise((r) => setTimeout(r, 30)); await s.roster.idle(); };
+    const sub1 = { endpoint: "https://push.example/same/1", keys: { p256dh: makeP256Pub(6), auth: makeAuth(6) } };
+    const sub2 = { endpoint: "https://push.example/same/2", keys: { p256dh: makeP256Pub(7), auth: makeAuth(7) } };
+    c.sendPush(sub1);
+    await settle();
+    await clock.advance(61_000);
+    c.sendPush(sub1); // same value: writeProfile returns null, the window must not restart here
+    await settle();
+    c.sendPush(sub2);
+    await settle();
+    expect(clock.pendingCount).toBe(0);
+    expect(s.roster.pushSubscription(dev.member)).toEqual(sub2);
+  });
+
   it("F1 page: re-subscribes at most once per key on mismatch and never flips back between server keys", async () => {
     const keyA = makeVapidPub(60);
     const keyB = makeVapidPub(61);
