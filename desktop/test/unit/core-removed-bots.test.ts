@@ -33,8 +33,10 @@ describe("removed-bots.json", () => {
     const started = core(dir);
     expect(started.makeBot("Reader", "Read the news", { plugin: "weather" }).kind).toBe("made");
     expect(started.makeBot("Writer", "Write the news", { plugin: "news" }).kind).toBe("made");
-    // Made by the user (no plugin): the list is about plugins' bots only.
-    expect(core(dir).makeBot("Reader", "Read for me", {}).kind).toBe("made");
+    // Made by the user (no plugin), in a data folder of its own (the two bots above are saved in this one): the list is about plugins' bots only.
+    const other = tempDir("core-removed-bots-user");
+    writeFileSync(join(other, "removed-bots.json"), JSON.stringify(["news/reader"]));
+    expect(core(other).makeBot("Reader", "Read for me", {}).kind).toBe("made");
   });
 
   it("a missing or unreadable file starts a core with nothing removed", () => {
