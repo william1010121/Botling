@@ -1,9 +1,8 @@
 import { CodexRequestTracker } from "../token-speed";
-import { settingsChange, type HotSettings } from "./hot-settings";
+import { type HotSettings } from "./hot-settings";
 import { type ClaudeRestartOutcome } from '../claude-restart';
 import { RESTART_NOTE } from '../restart-continuation';
 import { monitorHandback } from "./monitor-policy";
-import { codexAutoRiskConfig } from "./auto-risk-policy";
 // A bot's Codex head: one long-lived `codex app-server` (JSON-RPC, one JSON object a line on
 // stdio), ported from the Swift app's CodexAgentProcess.swift (checked against codex-cli 0.163.0).
 //
@@ -39,58 +38,46 @@ import { codexAutoRiskConfig } from "./auto-risk-policy";
 // Codex's own native subagents (off in a coordinator anyway),
 // images in messages.
 import { isolatedGitOwnership, type IsolatedGitOwnership } from "./isolated-git";
-import { type WorkerDependency, codexEffort, type CodexItem, type CodexOutput, type WorkerRecord, type CodexConfig, writableRootsConfig, type Call, type Input, type Turn, type Approval, COORDINATOR_CONFIG, MANAGED_TOOLS, MAX_HANDOFF, isolatedGitOwners, shell, handbackFallback, firstLine, message, key, json, ADOPTED_RUN, syncResult, codexToolStarted } from "./codex-types";
+import { type WorkerDependency, codexEffort, type CodexItem, type CodexOutput, type WorkerRecord, type CodexConfig, type Call, type Input, type Turn, type Approval, MAX_HANDOFF, isolatedGitOwners, shell, handbackFallback, firstLine, message, key, json, ADOPTED_RUN, syncResult } from "./codex-types";
 export { type WorkerDependency, codexEffort, type CodexItem, type CodexOutput, type WorkerRecord, type CodexConfig, MANAGED_TOOLS, MANAGED_TOOL_SIGNATURE, WORKER_TOOLS, handbackFallback, firstLine, codexCommand, codexToolStarted } from "./codex-types";
-import { CodexThreadAdapter, codexToolCompleted, reviewerOf, decline } from "./codex-thread";
+import { CodexThreadAdapter, codexToolCompleted } from "./codex-thread";
 export { codexToolCompleted, type CodexWire, type CodexWorkerOptions, CodexThreadAdapter } from "./codex-thread";
 import { reply } from "./codex-head";
 export { reply, CodexThreads, type CodexHeadConfig, CodexHead, codexWorkerHost } from "./codex-head";
+import { CodexSessionRpc } from "./codex-session-rpc";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import type { StreamItem } from "./stream";
 import { movedTaskError, type WorkerInfo, type WorkerOwner, type WorkerSendResult } from "./workers";
-import { ComponentEditorAdapter, EditorTransport } from "./component-editor";
+import { ComponentEditorAdapter } from "./component-editor";
 import { isBotTool } from "../bot-tools";
 import { EFFORTS_BY_ENGINE } from "../../contract/efforts";
 import { readCodexModels, resolveCodexModel } from "./codex-models";
 import { appRoutinesCall } from "../routines";
 import { bounded, isActive as monitorActive, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, type CommandMonitor } from "./monitors";
 import { toSwiftDate } from "../store/records";
-import { codexRateLimits, codexTokens, isEmptyLimits, minusTokens, noTokens, totalTokens, type TokenUsage } from "../usage";
-import {
-  CodexLegacyStore, INTERRUPTED_REPORT, reportPayload, STOPPED_REPORT, toLegacyCodex, wireStatus, WorkerCore,
-  type CodexJournal, type CoordinatorPort, type RunEnd,
-  type WorkerCoreOptions, type WorkerReport} from "../worker-core";
+import { minusTokens, noTokens, totalTokens, type TokenUsage } from "../usage";
+import { CodexLegacyStore, reportPayload, STOPPED_REPORT, toLegacyCodex, wireStatus, WorkerCore, type CodexJournal, type CoordinatorPort, type RunEnd, type WorkerCoreOptions, type WorkerReport } from "../worker-core";
 
 export class CodexSession implements CoordinatorPort {
   private nextId = 1;
-  private calls = new Map<number, Call>();
+  calls = new Map<number, Call>();
   threadId: string | null = null;
-  private turn: Turn | null = null;
-  private completedTurns = new Set<string>();
+  turn: Turn | null = null;
+  completedTurns = new Set<string>();
   /** The coordinator thread's tokens so far, and when the last turn ended (Phase 5c, 1.x's `tokensTotal`). */
-  private tokensTotal: TokenUsage = noTokens();
+  tokensTotal: TokenUsage = noTokens();
   private tokensAtTurnStart: TokenUsage = noTokens();
-  private inbox: Input[] = [];
-  private approvals = new Map<string, Approval>();
-  private changedFiles = new Map<string, string[]>();
-  /** Commands the user allowed after Codex's reviewer refused them: asked again, they go through. */
-  private allowedCommands = new Set<string>();
-  /** The coordinator's next turn asks the app instead of the reviewer, once (1.x `reviewerNext`). */
-  private reviewerNext: string | null = null;
-  /** Reviewer refusals shown as cards: what was refused, and whose. */
-  private reviews = new Map<string, { command: string; task: string | null; thread: string; cwd: string }>();
-  private finishing = false;
-  private stopped = false;
+  inbox: Input[] = [];
+  changedFiles = new Map<string, string[]>();
+  finishing = false;
+  stopped = false;
   /** Workers whose turn under way when the app restarted is being checked (thread/read, the editor's transcript). */
-  private restartPending = new Map<string, WorkerRecord>();
-  private restartCoordinatorPending = false;
+  restartPending = new Map<string, WorkerRecord>();
+  restartCoordinatorPending = false;
   private toolReplies = new Map<string, { intent: string; response: Record<string, unknown> }>();
   private pending = false;
-  private monitors = new Map<string, CommandMonitor>();
-  private activeMonitor: string | null = null;
-  /** A model switched to in place: every coordinator turn/start carries it (it holds for later turns too). */
-  private turnModel: string | null = null;
+  monitors = new Map<string, CommandMonitor>();
+  activeMonitor: string | null = null;
   /**
    * Its app-managed workers (shared-core spec 3.3): their state, runs, reports and approvals. The Codex threads and the
    * Maintainer's component editor are its two adapters; codex-threads/<session>.workers.json stays their journal
@@ -101,13 +88,15 @@ export class CodexSession implements CoordinatorPort {
   readonly editor: ComponentEditorAdapter;
   private journal: WorkerRecord[];
   /** What the core, the adapters and the report port said since the last call returned (in order). */
-  private out: CodexOutput[] = [];
+  out: CodexOutput[] = [];
   /** The report turn under way: whose report the coordinator is shown now. */
-  private report: { id: string; run: number } | null = null;
+  report: { id: string; run: number } | null = null;
   /** A coordinator turn is ending: a report waits for next(), which decides what goes first. */
   private settling = false;
   /** The task id the next hand-off gets (its receipt is written before the core has made it). */
   private nextTask: string | null = null;
+  /** The RPC half: what the bot sends in and what codex sends back (codex-session-rpc.ts). */
+  private readonly rpc = new CodexSessionRpc(this);
 
   constructor(readonly config: CodexConfig) {
     for (const record of config.restoredMonitors ?? []) {
@@ -126,7 +115,7 @@ export class CodexSession implements CoordinatorPort {
         item: (item) => this.out.push(this.workerItem(item)),
       },
       reviewed: (params, worker) => this.out.push(...this.reviewed(params, worker)),
-      allowedRetry: (key) => this.allowedCommands.delete(key),
+      allowedRetry: (key) => this.rpc.allowedCommands.delete(key),
       followUp: (id, text) => { void this.core.sendToWorker(id, text); },
     });
     this.threads.strictResume = !!config.restartWorkers || config.restartRecovery !== undefined;
@@ -157,462 +146,29 @@ export class CodexSession implements CoordinatorPort {
     for (const record of this.core.all()) if (record.report.state === "dispatching" && !record.owner) this.core.retryUncertain(record.id, record.run);
   }
 
-  /** A worker's item (the core's, its adapters', a restart check's): for the bot's worker entry. */
-  private workerItem(item: CodexItem): CodexOutput {
-    return { kind: "item", item, worker: true };
-  }
+  // The RPC half (from the bot, from codex) is CodexSessionRpc; these forward to it so every caller stays as it was.
+  private workerItem(item: CodexItem): CodexOutput { return this.rpc.workerItem(item); }
+  private take(): CodexOutput[] { return this.rpc.take(); }
+  private get managed() { return this.rpc.managed; }
+  private turnSettings(params: Record<string, unknown>) { this.rpc.turnSettings(params); }
+  private nextReviewer(params: Record<string, unknown>) { this.rpc.nextReviewer(params); }
+  private reviewed(params: any, worker: { id: string; name: string } | null): CodexOutput[] { return this.rpc.reviewed(params, worker); }
+  private closeApprovals(matches: (approval: Approval) => boolean, deny = false): CodexOutput[] { return this.rpc.closeApprovals(matches, deny); }
+  start(): CodexOutput[] { return this.rpc.start(); }
+  send(text: string, images: string[] = []): CodexOutput[] { return this.rpc.send(text, images); }
+  applySettings(target: HotSettings): boolean { return this.rpc.applySettings(target); }
+  canApplySettings(target: HotSettings): boolean { return this.rpc.canApplySettings(target); }
+  steer(text: string): { joined: boolean; out: CodexOutput[] } { return this.rpc.steer(text); }
+  interrupt(): CodexOutput[] { return this.rpc.interrupt(); }
+  answerWorker(requestId: string, allow: boolean, why?: string): { answered: boolean; out: CodexOutput[] } { return this.rpc.answerWorker(requestId, allow, why); }
+  closeWorkers(): CodexOutput[] { return this.rpc.closeWorkers(); }
+  answer(requestId: string, allow: boolean, why?: string): CodexOutput[] { return this.rpc.answer(requestId, allow, why); }
+  finish(): CodexOutput[] { return this.rpc.finish(); }
+  stop(): CodexOutput[] { return this.rpc.stop(); }
+  receive(line: string): CodexOutput[] { return this.rpc.receive(line); }
 
-  /** What the core, the adapters and the port said since the last call, in order. */
-  private take(): CodexOutput[] {
-    const out = this.out;
-    this.out = [];
-    return out;
-  }
 
-  private get managed() { return this.config.workerInstructions !== null; }
-
-  // ------------------------------------------------------------------------------------------
-  // From the bot
-
-  start(): CodexOutput[] {
-    return [this.request("initialize", { clientInfo: { name: "claudecodebot", title: "Botling", version: "1" }, capabilities: { experimentalApi: true } }, { kind: "initialize" })];
-  }
-
-  /** A message: a turn of its own (now, or once the one under way ends). */
-  send(text: string, images: string[] = []): CodexOutput[] {
-    const input: Input = { text, token: randomUUID(), ...(images.length ? { images } : {}) };
-    if (!this.threadId || this.turn || this.restartCoordinatorPending) {
-      this.inbox.push(input);
-      return [];
-    }
-    return this.startTurn(input);
-  }
-
-  /**
-   * Its model and effort from its next turn on, without a new thread: `turn/start` overrides them for that
-   * turn and the ones after it; new workers start on them too. False (nothing changed): going back to the
-   * default, which an override cannot say, or it is stopping.
-   */
-  applySettings(target: HotSettings): boolean {
-    if (!this.canApplySettings(target)) return false;
-    const change = settingsChange(target, this.config);
-    if (change.model) { this.config.model = change.model; this.turnModel = change.model; }
-    if (change.effort) this.config.effort = change.effort;
-    return true;
-  }
-
-  canApplySettings(target: HotSettings): boolean {
-    const change = settingsChange(target, this.config);
-    return !this.stopped && !this.finishing && !("model" in change && !change.model) && !("effort" in change && !change.effort);
-  }
-
-  /** The coordinator's settings on a turn/start: its effort, and a model it was switched to in place. */
-  private turnSettings(params: Record<string, unknown>) {
-    if (this.turnModel) params.model = this.turnModel;
-    if (this.config.effort) params.effort = this.config.effort;
-  }
-
-  /** Words that join the turn under way (`turn/steer`); false when no turn runs. */
-  steer(text: string): { joined: boolean; out: CodexOutput[] } {
-    const turn = this.turn;
-    if (!turn || !this.threadId) return { joined: false, out: [] };
-    const input = { text, token: randomUUID() };
-    if (!turn.id) {
-      turn.waitingSteers.push(input);
-      return { joined: true, out: [] };
-    }
-    return { joined: true, out: [this.steerCall(input, turn.id)] };
-  }
-
-  interrupt(): CodexOutput[] {
-    const turn = this.turn;
-    if (!turn || turn.interruptAsked) return [];
-    turn.interruptAsked = true;
-    if (turn.id && this.threadId) {
-      turn.interruptSent = true;
-      return [this.request("turn/interrupt", { threadId: this.threadId, turnId: turn.id }, { kind: "interrupt" })];
-    }
-    return [];
-  }
-
-  /** A worker's approval (worker:<task>:<run>:<its own id>): the core's table, then its adapter. */
-  answerWorker(requestId: string, allow: boolean, why?: string): { answered: boolean; out: CodexOutput[] } {
-    const answered = !this.stopped && this.core.answer(requestId, allow, {}, why);
-    return { answered, out: this.take() };
-  }
-
-  /** The app is quitting: workers at work are interrupted (resumable later, never replayed); the coordinator is left. */
-  closeWorkers(): CodexOutput[] {
-    void this.core.close();
-    return [...this.take(), ...this.pendingChanged()];
-  }
-
-  answer(requestId: string, allow: boolean, why?: string): CodexOutput[] {
-    if (requestId.startsWith("worker:")) return this.answerWorker(requestId, allow, why).out;
-    if (requestId.startsWith("monitor:")) return this.approveMonitor(requestId.slice(8), allow);
-    if (requestId.startsWith("codex-review:")) return this.answerReview(requestId, allow);
-    const approval = this.approvals.get(requestId);
-    if (!approval) return [];
-    this.approvals.delete(requestId);
-    if (!this.approvalCurrent(approval)) return [this.item({ kind: "permissionCancelled", requestId })];
-    const result = approval.kind === "command" || approval.kind === "fileChange"
-      ? { decision: allow ? "accept" : "decline" }
-      : allow ? { permissions: approval.kind.permissions, scope: "turn" } : { permissions: {} };
-    const out: CodexOutput[] = [{ kind: "write", value: { jsonrpc: "2.0", id: approval.rpcId, result } }];
-    // A refusal carries no words in Codex's protocol: why goes to the turn as a message.
-    if (!allow && why && this.turn?.id) out.push(this.steerCall({ text: `(App: ${why})`, token: randomUUID() }, this.turn.id));
-    return out;
-  }
-
-  /** Stdin closes once the turn under way (and anything waiting) is done. */
-  finish(): CodexOutput[] {
-    this.finishing = true;
-    return !this.turn && !this.inbox.length && !this.hasManagedWork ? [{ kind: "close" }] : [];
-  }
-
-  /**
-   * The head goes away (the app quits, the bot stops): workers at work are interrupted with it (resumable later, never
-   * replayed); an interrupt of the coordinator alone leaves them.
-   */
-  stop(): CodexOutput[] {
-    const monitors = this.cancelMonitors();
-    this.stopped = true;
-    this.allowedCommands.clear();
-    this.reviews.clear();
-    this.inbox = [];
-    const out = [...this.restartPending.keys()].map((id) => this.workerItem({ kind: "subagentEnded", id, status: "interrupted", summary: INTERRUPTED_REPORT.quit }));
-    this.restartPending.clear();
-    void this.core.close();
-    return [...out, ...this.take(), ...this.closeApprovals(() => true, true), ...monitors, ...this.pendingChanged()];
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // From codex
-
-  receive(line: string): CodexOutput[] {
-    let value: any;
-    try { value = JSON.parse(line); } catch { return []; }
-    if (!value || typeof value !== "object") return [];
-    const method = typeof value.method === "string" ? value.method : null;
-    const params = value.params && typeof value.params === "object" ? value.params : {};
-    if (method && value.id !== undefined) return [...this.serverRequest(method, value.id, params), ...this.take()];
-    if (method) {
-      // A worker's thread: its adapter turns it into the core's events.
-      if (this.threads.receive(method, params)) return [...this.take(), ...this.pendingChanged()];
-      const out=this.notification(method, params);
-      out.push(...this.requests(method, params));
-      return [...out, ...this.take()];
-    }
-    if (typeof value.id === "number") {
-      const call = this.calls.get(value.id);
-      if (!call) return [];
-      this.calls.delete(value.id);
-      const out = this.response(call, value.result ?? null, value.error ?? null);
-      return [...out, ...this.take(), ...(call.kind === "adapter" ? this.pendingChanged() : [])];
-    }
-    return [];
-  }
-
-  private response(call: Call, result: any, error: any): CodexOutput[] {
-    switch (call.kind) {
-      case "restartCoordinatorRead": {
-        this.restartCoordinatorPending=false;
-        if(this.stopped)return [];
-        const turns=result?.thread?.turns;
-        const turn=Array.isArray(turns)?turns.find((t:any)=>t.id===call.turn):null;
-        const uncertain=turn?.status==="interrupted" && (!Array.isArray(turn.items) || turn.items.some((i:any)=>
-          !["agentMessage","reasoning","plan","contextCompaction"].includes(i.type) && !["completed","failed","declined"].includes(i.status)));
-        if(error || result?.thread?.id!==this.threadId || !turn || turns.at(-1)?.id!==call.turn || uncertain || !["completed","interrupted"].includes(turn.status)){
-          this.inbox.shift();
-          return [this.result(false,"Restart continuation paused: the original coordinator turn outcome is unconfirmed. No prompt was replayed."),...this.next()];
-        }
-        if(turn.status==="completed"){
-          this.inbox.shift();
-          const report=Array.isArray(turn.items)?turn.items.findLast((i:any)=>i.type==="agentMessage"&&i.phase!=="commentary")?.text:null;
-          return [this.result(!!report,report||"The original turn completed without a recoverable final report; it was not replayed."),...this.next()];
-        }
-        return this.inbox.length?this.startTurn(this.inbox.shift()!):this.next();
-      }
-      case "restartWorkerRead": {
-        const record = this.restartPending.get(call.task);
-        this.restartPending.delete(call.task);
-        const worker = this.core.get(call.task);
-        if (!worker || !record || worker.status !== "interrupted" || this.stopped) return this.pendingChanged();
-        const turns=result?.thread?.turns;
-        const turn=Array.isArray(turns)?turns.find((t:any)=>t.id===call.turn):null;
-        const unresolvedItems = turn?.status === "interrupted" && (!Array.isArray(turn.items) || turn.items.some((item:any) =>
-          !["agentMessage", "reasoning", "plan", "contextCompaction"].includes(item.type)
-          && !["completed", "failed", "declined"].includes(item.status)));
-        if(error || result?.thread?.id!==worker.conversationId || !turn || turns.at(-1)?.id!==call.turn || unresolvedItems || !["completed","interrupted"].includes(turn.status)){
-          return [this.item({kind:"subagentEnded",id:worker.id,status:"interrupted",summary:"Restart recovery could not confirm the original worker turn outcome. No task was replayed; reconcile this task and thread."}),...this.pendingChanged()];
-        }
-        if(turn.status==="completed"){
-          this.threads.adopt(worker.id,(turn.items??[]).filter((i:any)=>i.type==="agentMessage").map((i:any)=>({text:i.text??"",phase:i.phase??null})),call.turn);
-          return [...this.restartRun(worker.id,ADOPTED_RUN),...this.pendingChanged()];
-        }
-        this.threads.continueAfterRestart(worker.id);
-        return [...this.restartRun(worker.id,RESTART_NOTE+"\nOriginal assignment (scope remains unchanged):\n"+(record.ownershipInstructions??record.instructions)),...this.pendingChanged()];
-      }
-      case "initialize": {
-        if (error) return [{ kind: "failed", message: message(error) }];
-        const initialized: CodexOutput = { kind: "write", value: { jsonrpc: "2.0", method: "initialized" } };
-        const roots = this.config.skillRoots ?? [];
-        // The plugins' skills first, so the thread starts with them (the answer, or a refusal, starts it).
-        if (roots.length) return [initialized, this.request("skills/extraRoots/set", { extraRoots: [...roots] }, { kind: "skillRoots" })];
-        return [initialized, this.startThread()];
-      }
-      case "skillRoots":
-        // An app-server that does not know the method (an older Codex): the thread starts without the plugins' skills.
-        return [this.startThread()];
-      case "thread": {
-        const thread = result?.thread?.id;
-        if (error || typeof thread !== "string") return [{ kind: "failed", message: message(error) }];
-        if(this.config.strictResume && thread!==this.config.resumeThread)return [{kind:"failed",message:"Restart resume returned a different thread. No prompt was sent."}];
-        if (this.config.resumeThread && this.managed) return [this.refreshInstructions(this.config.instructions, thread, { kind: "coordinatorInstructions", thread })];
-        return this.coordinatorReady(thread);
-      }
-      case "coordinatorInstructions":
-        if (error) return [{ kind: "failed", message: `Could not refresh coordinator instructions: ${message(error)}` }];
-        return this.coordinatorReady(call.thread);
-      case "monitorCommand":
-        return this.completeMonitor(call.id, result, error);
-      case "turn": {
-        const monitor = this.activeMonitor ? this.monitors.get(this.activeMonitor) : undefined;
-        if (monitor) monitor.wake = error ? "uncertain" : "delivered";
-        if (error) {
-          // The turn never started: its message gets an error reply, and the next goes.
-          this.turn = null;
-          const shown = this.report;
-          const evidence = shown ? this.evidence(shown) : null;
-          const text = monitor ? `Monitor callback could not start: ${json(monitorPayload(monitor))}\n${message(error)}`
-            : evidence ? handbackFallback(evidence, message(error)) : message(error);
-          this.report = null;
-          this.activeMonitor = null;
-          return [this.result(false, text), ...this.settleReport(shown, false), ...this.next()];
-        }
-        const id = result?.turn?.id;
-        return typeof id === "string" ? this.learnTurn(id) : [];
-      }
-      case "steer":
-        // A steer the turn did not take (it had just ended): it goes as a turn of its own.
-        if (!error) return [];
-        if (!this.turn) return this.startTurn(call.input);
-        this.inbox.push(call.input);
-        return [];
-      case "adapter":
-        call.reply(result, error);
-        return [];
-      default:
-        return [];
-    }
-  }
-
-  private notification(method: string, params: any): CodexOutput[] {
-    // Codex's own limits (not a thread's): kept apart from Claude's (`.codexRateLimits`).
-    if (method === "account/rateLimits/updated") {
-      if (!params.rateLimits || typeof params.rateLimits !== "object") return [];
-      const limits = codexRateLimits(params.rateLimits);
-      return isEmptyLimits(limits) ? [] : [this.item({ kind: "rateLimits", engine: "codex", limits })];
-    }
-    // Another thread that is not one of its workers' (they went to their adapter): not this coordinator's.
-    const thread = typeof params.threadId === "string" ? params.threadId : null;
-    if (thread && this.threadId && thread !== this.threadId) return [];
-    switch (method) {
-      case "item/autoApprovalReview/completed":
-        return this.reviewed(params, null);
-      case "turn/started": {
-        const id = params.turn?.id;
-        return typeof id === "string" ? this.learnTurn(id) : [];
-      }
-      case "item/started": {
-        const step = codexToolStarted(params.item, this.changedFiles);
-        return step ? [this.item({ kind: "toolUse", ...step, parent: null })] : [];
-      }
-      case "item/completed":
-        return this.completed(params.item).map((item) => this.item(item));
-      case "serverRequest/resolved": {
-        return this.resolveApproval(params);
-      }
-      case "turn/completed":
-        return params.turn ? this.turnCompleted(params.turn) : [];
-      case "error":
-        return this.retrying(params);
-      case "thread/tokenUsage/updated":
-        if (params.tokenUsage?.total && typeof params.tokenUsage.total === "object") this.tokensTotal = codexTokens(params.tokenUsage.total);
-        return [];
-      default:
-        return [];
-    }
-  }
-
-  /** An `error` Codex will retry on the coordinator's turn (one it gives up on ends the turn: `turn/completed`). */
-  private retrying(params: any): CodexOutput[] {
-    if (params.willRetry !== true || !this.threadId || params.threadId !== this.threadId) return [];
-    const error = params.error && typeof params.error === "object" ? params.error : {};
-    const count = /(\d+)\s*\/\s*(\d+)/.exec(typeof error.message === "string" ? error.message : "");
-    const info = error.codexErrorInfo;
-    const variant = info && typeof info === "object" ? Object.values(info)[0] as { httpStatusCode?: unknown } | undefined : undefined;
-    const limited = variant?.httpStatusCode === 429 || info === "rateLimitExceeded" || info === "serverOverloaded";
-    return [this.item({
-      kind: "apiRetry", thread: this.threadId, attempt: count ? Number(count[1]) : 1, max: count ? Number(count[2]) : 0,
-      reason: limited ? "rateLimited" : "connection", retryAt: null,
-    })];
-  }
-
-  private serverRequest(method: string, rpcId: unknown, params: any): CodexOutput[] {
-    if (method === "item/tool/call") return this.managedTool(rpcId, params);
-    // A worker's approvals are its adapter's (through the core's table).
-    if (this.threads.serverRequest(method, rpcId, params)) return [];
-    const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
-    switch (method) {
-      case "item/commandExecution/requestApproval": {
-        // A manual override covers one retry in its exact thread and working directory.
-        const retryKey = JSON.stringify([params.threadId, params.cwd, params.command]);
-        const current = this.approvalCurrent({ rpcId, kind: "command", thread: params.threadId, turn: params.turnId ?? null });
-        if (current && params.environmentId === "local" && !params.networkApprovalContext
-          && (params.kind === undefined || params.kind === "command")
-          && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"))
-          && this.allowedCommands.delete(retryKey)) {
-          return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } } }];
-        }
-        let summary = typeof params.command === "string" ? params.command : "";
-        if (reason) summary += (summary ? "\n\n" : "") + reason;
-        return this.askApproval(rpcId, "command", params, "Bash", summary);
-      }
-      case "item/fileChange/requestApproval": {
-        const files = typeof params.itemId === "string" ? this.changedFiles.get(params.itemId) ?? [] : [];
-        let summary = files.join("\n");
-        if (typeof params.grantRoot === "string" && params.grantRoot) summary += (summary ? "\n" : "") + params.grantRoot;
-        if (reason) summary += (summary ? "\n\n" : "") + reason;
-        return this.askApproval(rpcId, "fileChange", params, "Edit", summary);
-      }
-      case "item/permissions/requestApproval": {
-        const asked = params.permissions && typeof params.permissions === "object" ? params.permissions : {};
-        const summary = [reason, JSON.stringify(asked, Object.keys(asked).sort())].filter(Boolean).join("\n\n");
-        return this.askApproval(rpcId, { permissions: asked }, params, "Permissions", summary);
-      }
-      case "mcpServer/elicitation/request":
-        // A form the app cannot show: declined, so nothing waits on it.
-        return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { action: "decline" } } }];
-      default:
-        // Bots ask in the chat (<choices>); anything else is not the app's to answer.
-        return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, error: { code: -32601, message: "Not supported by Botling." } } }];
-    }
-  }
-
-  private get reviewer(): string { return reviewerOf(this.config); }
-
-  private nextReviewer(params: Record<string, unknown>) {
-    if (!this.reviewerNext) return;
-    params.approvalsReviewer = this.reviewerNext;
-    this.reviewerNext = this.reviewerNext === "user" ? "auto_review" : null;
-  }
-
-  /** Codex's reviewer refused a call: a card with its reason (1.x `reviewed`). Allow lets it through next time. */
-  private reviewed(params: any, worker: { id: string; name: string } | null): CodexOutput[] {
-    const review = params.review && typeof params.review === "object" ? params.review : {};
-    if (review.status === "approved") return [];
-    const action = params.action && typeof params.action === "object" ? params.action : {};
-    const command = typeof action.command === "string" ? action.command
-      : Array.isArray(action.argv) ? action.argv.filter((a: unknown) => typeof a === "string").join(" ") : "";
-    const what = command || (typeof action.type === "string" ? action.type : "a call");
-    const risk = typeof review.riskLevel === "string" ? `[${review.riskLevel} risk] ` : "";
-    const why = typeof review.rationale === "string" && review.rationale ? review.rationale
-      : review.status === "denied" ? "Auto review denied this action."
-      : `Auto review did not approve this action (${typeof review.status === "string" ? review.status : "unknown result"}). No automatic approval was granted.`;
-    const requestId = `codex-review:${randomUUID()}`;
-    this.reviews.set(requestId, { command, task: worker?.id ?? null,
-      thread: typeof params.threadId === "string" ? params.threadId : "", cwd: typeof action.cwd === "string" ? action.cwd : "" });
-    // The bot shows it as auto mode's blocked-call card (the reason apart from the call) and tells the head after the pick.
-    const input = { reviewRefused: true, reason: `${risk}${why}`.trim(), ...(worker ? { worker: worker.name || worker.id } : {}) };
-    return [this.item({ kind: "permission", requestId, tool: action.type === "applyPatch" ? "Edit" : "Bash", summary: what, input, ...(worker ? { workerId: worker.id } : {}) })];
-  }
-
-  private answerReview(requestId: string, allow: boolean): CodexOutput[] {
-    const review = this.reviews.get(requestId);
-    if (!review) return [];
-    this.reviews.delete(requestId);
-    if (!allow || this.stopped) return [];
-    if (review.command && review.thread && review.cwd) this.allowedCommands.add(JSON.stringify([review.thread, review.cwd, review.command]));
-    // The next turn of the refused call's thread asks the app (which accepts the allowed call), once.
-    if (this.config.autoMode !== false) { if (review.task) this.threads.askAppNext(review.task); else this.reviewerNext = "user"; }
-    return [];
-  }
-
-  private approvalCurrent(approval: Approval): boolean {
-    if (this.stopped) return false;
-    return approval.thread === this.threadId && !!this.turn
-      && (!approval.turn || !this.completedTurns.has(approval.turn))
-      && !this.turn.interruptAsked && (!this.turn.id || !approval.turn || this.turn.id === approval.turn);
-  }
-
-  private askApproval(rpcId: unknown, kind: Approval["kind"], params: any, tool: string, summary: string): CodexOutput[] {
-    const thread = typeof params.threadId === "string" ? params.threadId : "";
-    const turn = typeof params.turnId === "string" ? params.turnId : this.turn?.id ?? null;
-    const approval: Approval = { rpcId, kind, thread, turn };
-    if (!this.approvalCurrent(approval)) return [this.declineApproval(approval)];
-    if ([...this.approvals.values()].some((pending) => pending.rpcId === rpcId && pending.thread === thread && pending.turn === turn)) return [];
-    // UI decisions use a fresh local identity, never a reusable/string-coerced RPC id.
-    const requestId = `codex-approval:${randomUUID()}`;
-    this.approvals.set(requestId, approval);
-    return [this.item({ kind: "permission", requestId, tool, summary, input: {} })];
-  }
-
-  private declineApproval(approval: Approval): CodexOutput {
-    return { kind: "write", value: { jsonrpc: "2.0", id: approval.rpcId,
-      result: typeof approval.kind === "string" ? { decision: "decline" } : { permissions: {} } } };
-  }
-
-  /** Terminal owner cleanup removes unanswered requests only; accepted decisions are already gone. */
-  private closeApprovals(matches: (approval: Approval) => boolean, deny = false): CodexOutput[] {
-    const out: CodexOutput[] = [];
-    for (const [requestId, approval] of this.approvals) {
-      if (!matches(approval)) continue;
-      this.approvals.delete(requestId);
-      if (deny) out.push(this.declineApproval(approval));
-      out.push(this.item({ kind: "permissionCancelled", requestId }));
-    }
-    return out;
-  }
-
-  private resolveApproval(params: any): CodexOutput[] {
-    return this.closeApprovals((approval) => approval.rpcId === params.requestId && approval.thread === params.threadId
-      && (typeof params.turnId !== "string" || approval.turn === params.turnId));
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // Turns
-
-  private startThread(): CodexOutput {
-    const params: Record<string, unknown> = {
-      cwd: this.config.cwd, approvalPolicy: this.config.bypassPermissions ? "never" : "on-request", approvalsReviewer: this.reviewer, sandbox: this.config.bypassPermissions ? "danger-full-access" : "workspace-write", developerInstructions: this.config.instructions,
-    };
-    params.config = codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions);
-    if (this.managed) {
-      params.environments = [];
-      params.dynamicTools = MANAGED_TOOLS;
-      params.config = { ...COORDINATOR_CONFIG, ...codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions) };
-    }
-    if (this.config.model) params.model = this.config.model;
-    // Its other folders are writable too, as in 1.x (`sandbox_workspace_write.writable_roots`).
-    if (this.config.writableRoots?.length) params.config = { ...(params.config as Record<string, unknown> | undefined), ...writableRootsConfig(this.config.writableRoots) };
-    if (this.config.resumeThread) {
-      // Tools are fixed when a thread starts; resume cannot change them.
-      delete params.dynamicTools;
-      delete params.environments;
-      params.threadId = this.config.resumeThread;
-      params.excludeTurns = true;
-      return this.request("thread/resume", params, { kind: "thread" });
-    }
-    return this.request("thread/start", params, { kind: "thread" });
-  }
-
-  /** Resume alone can leave the rollout's old developer policy in force: the current one is appended. */
-  private refreshInstructions(text: string, thread: string, call: Call): CodexOutput {
-    return this.request("thread/inject_items", { threadId: thread, items: [{ type: "message", role: "developer", content: [{ type: "input_text", text }] }] }, call);
-  }
-
-  private coordinatorReady(thread: string): CodexOutput[] {
+  coordinatorReady(thread: string): CodexOutput[] {
     if (this.stopped) return [];
     this.threadId = thread;
     const out: CodexOutput[] = [{ kind: "thread", id: thread }];
@@ -630,7 +186,7 @@ export class CodexSession implements CoordinatorPort {
     return out;
   }
 
-  private startTurn(input: Input): CodexOutput[] {
+  startTurn(input: Input): CodexOutput[] {
     if (!this.threadId) {
       this.inbox.unshift(input);
       return [];
@@ -644,7 +200,7 @@ export class CodexSession implements CoordinatorPort {
     return [this.request("turn/start", params, { kind: "turn" })];
   }
 
-  private learnTurn(id: string): CodexOutput[] {
+  learnTurn(id: string): CodexOutput[] {
     const turn = this.turn;
     if (!turn || turn.id || this.completedTurns.has(id)) return [];
     turn.id = id;
@@ -657,7 +213,7 @@ export class CodexSession implements CoordinatorPort {
     return out;
   }
 
-  private turnCompleted(finished: any): CodexOutput[] {
+  turnCompleted(finished: any): CodexOutput[] {
     const current = this.turn;
     if (!current) return [];
     if (typeof finished.id === "string" && this.completedTurns.has(finished.id)) return [];
@@ -714,7 +270,7 @@ export class CodexSession implements CoordinatorPort {
   }
 
   /** What a report turn's fallback keeps of the report it showed. */
-  private evidence(shown: { id: string; run: number }): { name: string; task: string; status: string; report: string } | null {
+  evidence(shown: { id: string; run: number }): { name: string; task: string; status: string; report: string } | null {
     const r = this.core.get(shown.id);
     return r ? { name: r.name, task: r.id, status: wireStatus(r.report.status ?? "failed"), report: r.report.text ?? "" } : null;
   }
@@ -724,7 +280,7 @@ export class CodexSession implements CoordinatorPort {
    * evidence also went to the chat) or never started. The coordinator has no reconcile tool, so each is one attempt
    * without a decision: shown once more, then unresolved (the core's rule). Never taken as handed over.
    */
-  private settleReport(shown: { id: string; run: number } | null, _completed: boolean): CodexOutput[] {
+  settleReport(shown: { id: string; run: number } | null, _completed: boolean): CodexOutput[] {
     if (!shown) return [];
     this.settling = true;
     try { this.core.finishReport(shown.id, shown.run, true); } catch { /* settled meanwhile */ } finally { this.settling = false; }
@@ -760,7 +316,7 @@ export class CodexSession implements CoordinatorPort {
   }
 
   /** The next waiting message's turn, a monitor's wake, a worker's report, or the end once `finish` asked for it. */
-  private next(): CodexOutput[] {
+  next(): CodexOutput[] {
     if(this.restartCoordinatorPending)return [];
     if (this.turn) return [];
     if (this.inbox.length) return this.startTurn(this.inbox.shift()!);
@@ -783,22 +339,22 @@ export class CodexSession implements CoordinatorPort {
     return this.finishing && !this.hasManagedWork ? [...out, { kind: "close" }] : out;
   }
 
-  private steerCall(input: Input, turnId: string): CodexOutput {
+  steerCall(input: Input, turnId: string): CodexOutput {
     return this.request("turn/steer", { threadId: this.threadId ?? "", expectedTurnId: turnId, input: [{ type: "text", text: input.text }] }, { kind: "steer", input });
   }
 
-  private request(method: string, params: Record<string, unknown>, call: Call): CodexOutput {
+  request(method: string, params: Record<string, unknown>, call: Call): CodexOutput {
     const id = this.nextId++;
     this.calls.set(id, call);
     return { kind: "write", value: { jsonrpc: "2.0", id, method, params } };
   }
 
-  private item(item: CodexItem): CodexOutput {
+  item(item: CodexItem): CodexOutput {
     return { kind: "item", item };
   }
 
   /** A turn's end; `how` is how Codex ended it (classifyRun reads it: interrupted is "cancelled"). */
-  private result(ok: boolean, text: string, how: RunEnd["how"] = ok ? "normal" : "error"): CodexOutput {
+  result(ok: boolean, text: string, how: RunEnd["how"] = ok ? "normal" : "error"): CodexOutput {
     return this.item({ kind: "result", ok, text: ok ? text : "", error: ok ? "" : text, subtype: ok ? "success" : "error", how });
   }
 
@@ -890,7 +446,7 @@ export class CodexSession implements CoordinatorPort {
     return { payload: { error: "Invalid monitor arguments. Use command (nonempty, at most 16384 bytes), or an owned monitor_id." }, success: false, out: [] };
   }
 
-  private approveMonitor(id: string, allow: boolean): CodexOutput[] {
+  approveMonitor(id: string, allow: boolean): CodexOutput[] {
     const record = this.monitors.get(id);
     if (this.stopped || !record || record.state !== "awaitingApproval") return [];
     if (!allow) return this.cancelMonitors(new Set([id]));
@@ -906,7 +462,7 @@ export class CodexSession implements CoordinatorPort {
     ];
   }
 
-  private completeMonitor(id: string, result: any, error: any): CodexOutput[] {
+  completeMonitor(id: string, result: any, error: any): CodexOutput[] {
     const record = this.monitors.get(id);
     if (!record || (record.state !== "running" && record.state !== "cancelling") || this.stopped) return [];
     const exit = typeof result?.exitCode === "number" ? result.exitCode : null;
@@ -985,14 +541,14 @@ export class CodexSession implements CoordinatorPort {
     return { result, out: [...this.take(), ...this.pendingChanged()] };
   }
 
-  private pendingChanged(): CodexOutput[] {
+  pendingChanged(): CodexOutput[] {
     const pending = this.hasManagedWork;
     if (pending === this.pending) return [];
     this.pending = pending;
     return [this.item({ kind: "managedPending", pending })];
   }
 
-  private managedTool(rpcId: unknown, params: any): CodexOutput[] {
+  managedTool(rpcId: unknown, params: any): CodexOutput[] {
     const id = key(rpcId);
     const reply = (payload: unknown, success: boolean) => ({ jsonrpc: "2.0", id: rpcId, result: { success, contentItems: [{ type: "inputText", text: json(payload) }] } });
     const tool = typeof params.tool === "string" ? params.tool : null;
@@ -1129,7 +685,7 @@ export class CodexSession implements CoordinatorPort {
    * A restart check came back: its interrupted run goes on as the same run (continued or adopted). A worker from an old
    * restart journal (no ledger record of the restart) starts its next run instead.
    */
-  private restartRun(id: string, words: string): CodexOutput[] {
+  restartRun(id: string, words: string): CodexOutput[] {
     const same = this.core.get(id)?.interruptedBy === "restart";
     const sent = syncResult(same ? this.core.resumeRun(id, words) : this.core.sendToWorker(id, words), { ok: false, reason: "Restart recovery could not resume this worker." });
     const out = this.take();
@@ -1182,7 +738,7 @@ export class CodexSession implements CoordinatorPort {
 
   /** One finished model request per `thread/tokenUsage/updated` of the coordinator's (workers': their adapter's). */
   private speed = new CodexRequestTracker();
-  private requests(method: string, params: any): CodexOutput[] {
+  requests(method: string, params: any): CodexOutput[] {
     if (typeof params.threadId !== "string" || params.threadId !== this.threadId) return [];
     return this.speed.observe(null, method, params, Date.now()).map(request => this.item({ kind: "request", request }));
   }
@@ -1210,7 +766,7 @@ export class CodexSession implements CoordinatorPort {
   // Items
 
   /** An item of the coordinator's turn done: words it said (commentary is a step, the final answer the reply), or a tool's result. */
-  private completed(item: any): CodexItem[] {
+  completed(item: any): CodexItem[] {
     if (item?.type === "agentMessage" && typeof item.id === "string") {
       const text = typeof item.text === "string" ? item.text : "";
       const phase = typeof item.phase === "string" ? item.phase : null;
