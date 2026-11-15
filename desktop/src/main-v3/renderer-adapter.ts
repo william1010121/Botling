@@ -36,13 +36,18 @@ import {
   EventEnvelope, MESSAGE_TEXT_LIMIT, PROTOCOL_VERSION,
   type BotView, type Command, type CommandType, type Event, type EventEnvelope as EventEnvelopeT, type MessageView, type ResultOf, type WireError,
 } from "../contract";
+import { z } from "zod";
 import {
   BotSnapView, interruptedLine, ProtocolEntryEvent, REFUSE_REASON_TEXT, slotKey,
-  type ConnectionState, type Cursor, type Entry, type MessageOf, type Outcome, type Slot, type StreamId, type Target,
+  type ConnectionState, type Cursor, type Entry, type MessageOf, type Outcome, type Slot, type StreamId, type Target, type Via,
 } from "../protocol";
+import { PluginName } from "../protocol/content-url";
+import { PluginRow, type SummaryRow } from "../protocol/table-rows";
 import type { Clock, ConnModel, FeLinkEvent, OutboxItem, PendingView, ServerView, StoredCursor } from "../fe-link";
-import type { SummaryRow } from "../protocol/table-rows";
+import type { RequestVia } from "../renderer/client";
 import { apply, type ChatView, type WorkspaceView } from "../renderer/store";
+
+export const RequestViaSchema = z.strictObject({ plugin: PluginName });
 
 /** What the adapter needs of the front-end link (src/fe-link FeLink has it all). */
 export interface LinkPort {
@@ -53,7 +58,7 @@ export interface LinkPort {
   subscribe(stream: StreamId): void;
   unsubscribe(stream: StreamId): void;
   dropCache(stream: StreamId): Promise<void>;
-  submit(target: Target, cmd: Command, basis?: Cursor): Promise<OutboxItem>;
+  submit(target: Target, cmd: Command, basis?: Cursor, via?: Via): Promise<OutboxItem>;
   dismiss(slot: Slot): Promise<void>;
   dismissRestored(): void;
   pending(target?: Target): PendingView[];
@@ -298,8 +303,18 @@ export class RendererAdapter {
   // -------------------------------------------------------------------------------------------
   // Renderer requests
 
-  async request(cmd: Command): Promise<AdapterAnswer> {
+  async request(cmd: Command, via?: RequestVia): Promise<AdapterAnswer> {
     try {
+      let validVia: RequestVia | undefined;
+      if (via !== undefined) {
+        const parsed = RequestViaSchema.safeParse(via);
+        if (!parsed.success) return { ok: false, error: { code: "bad_request", message: "Malformed request attribution (via)." } };
+        validVia = parsed.data;
+        if (cmd.type === "chat.snapshot" || cmd.type === "chat.history" || READ_COMMANDS.has(cmd.type)) {
+          return { ok: false, error: { code: "forbidden", message: "not sent: read commands cannot carry plugin attribution" } };
+        }
+        return await this.command(cmd, validVia);
+      }
       if (cmd.type === "chat.snapshot") return { ok: true, result: await this.snapshot(cmd.botId) };
       if (cmd.type === "chat.history") return { ok: true, result: await this.history(cmd) };
       if (cmd.type === "chat.shown" && cmd.botId) this.show(cmd.botId);
@@ -346,7 +361,19 @@ export class RendererAdapter {
     return asked;
   }
 
-  private async command(cmd: Command): Promise<AdapterAnswer> {
+  private resolveVia(via: RequestVia): Via | null {
+    const serverId = this.options.link.server;
+    const table = serverId ? this.options.link.table?.(serverId) ?? null : null;
+    const rawRow = table?.rows.get(`plugin:${via.plugin}`);
+    const parsedRow = rawRow ? PluginRow.safeParse(rawRow) : null;
+    if (!parsedRow?.success) return null;
+    return { plugin: via.plugin, codeHash: parsedRow.data.codeHash };
+  }
+
+  private async command(cmd: Command, via?: RequestVia): Promise<AdapterAnswer> {
+    if (via && !this.resolveVia(via)) {
+      return { ok: false, error: { code: "forbidden", message: "not sent: the plugin is not installed on this machine" } };
+    }
     if (cmd.type.startsWith("plugins.")) this.pluginsWeb = null;
     const botId = botIdOf(cmd);
     let target: Target;
@@ -361,8 +388,18 @@ export class RendererAdapter {
       if (link.status.state === "history restored") link.dismissRestored();
       for (const item of link.pending(target)) if (item.state === "not sent" || item.lost) await link.dismiss(item.slot);
     }
+    // Authority at use (L-008): re-read the plugin row after any await so hot swaps or uninstalls never stamp a stale hash.
+    let resolvedVia: Via | undefined;
+    if (via) {
+      const fresh = this.resolveVia(via);
+      if (!fresh) return { ok: false, error: { code: "forbidden", message: "not sent: the plugin is not installed on this machine" } };
+      resolvedVia = fresh;
+    }
     const basis = botId && CARD_COMMANDS.has(cmd.type) ? link.cursor(target) : null;
-    const item = await link.submit(target, cmd, basis ? { logId: basis.logId, seq: basis.seq } : undefined);
+    const basisArg = basis ? { logId: basis.logId, seq: basis.seq } : undefined;
+    const item = resolvedVia
+      ? await link.submit(target, cmd, basisArg, resolvedVia)
+      : await link.submit(target, cmd, basisArg);
     if (cmd.type === "chat.send" && botId) {
       this.reconcile();
       return { ok: true, result: { messageId: pendingLineId(item.slot), turnId: null } };

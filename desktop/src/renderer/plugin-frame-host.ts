@@ -39,8 +39,8 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
     throw new Error(String(error?.error?.message ?? error?.message ?? failure));
   };
   return {
-    call: (name, method, params) => client.request({ type: "plugins.call", name, method, params, from: "frame" }).then((answer) => answer.result, failed),
-    command: (name, id, args) => client.request({ type: "plugins.command", id, from: "frame", name, ...(args?.length ? { args } : {}) }),
+    call: (name, method, params) => client.request({ type: "plugins.call", name, method, params, from: "frame" }, undefined, { plugin: name }).then((answer) => answer.result, failed),
+    command: (name, id, args) => client.request({ type: "plugins.command", id, from: "frame", name, ...(args?.length ? { args } : {}) }, undefined, { plugin: name }),
     async tile(plugin, { component, data, size, botId }) {
       const info = components()[component];
       if (!info) throw new Error(`No component "${component}" in the library.`);
@@ -48,10 +48,10 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       const json = JSON.stringify(data ?? null);
       if (json.length > TILE_DATA_MAX) throw new Error("The tile's data is too big.");
       // The pictures its data names are the core's to find (the bot's folder): a tile never reads a path itself.
-      const { images } = await client.request({ type: "plugins.tileImages", name: plugin, botId, data: json }).catch(failed);
+      const { images } = await client.request({ type: "plugins.tileImages", name: plugin, botId, data: json }, undefined, { plugin }).catch(failed);
       const { componentPage } = await import("../../../Web/src/components");
       const page = componentPage(info.template, json, images, size, "board", true, false);
-      return (await client.request({ type: "card.page", html: page })).url;
+      return (await client.request({ type: "card.page", html: page }, undefined, { plugin })).url;
     },
     async card(plugin, { component, data, botId }) {
       const info = components()[component];
@@ -59,11 +59,11 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       if (!knownBot(bots(), botId)) throw new Error("No such bot.");
       const json = JSON.stringify(data ?? null);
       if (json.length > TILE_DATA_MAX) throw new Error("The card's data is too big.");
-      const { images } = await client.request({ type: "plugins.tileImages", name: plugin, botId, data: json }).catch(failed);
+      const { images } = await client.request({ type: "plugins.tileImages", name: plugin, botId, data: json }, undefined, { plugin }).catch(failed);
       const { componentPage, chatSize } = await import("../../../Web/src/components");
       // As in a chat reply (chatSize reads only its sizes): at its widest size, its height its content's; it can neither answer nor save there.
       const page = componentPage(info.template, json, images, chatSize({ sizes: info.sizes } as ComponentInfo), "chat", false, false);
-      return (await client.request({ type: "card.page", html: page })).url;
+      return (await client.request({ type: "card.page", html: page }, undefined, { plugin })).url;
     },
     async snapshot(plugin, frame, { botId, rect }) {
       // Only inside the frame that asked, and only what is on screen of it: never another part of the window.
@@ -73,7 +73,7 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       const x = Math.max(box.left + left, 0), y = Math.max(box.top + top, 0);
       const width = Math.min(box.left + right, window.innerWidth) - x, height = Math.min(box.top + bottom, window.innerHeight) - y;
       if (!(width >= 1 && height >= 1)) throw new Error("That part of the frame is not on screen.");
-      return client.request({ type: "plugins.noteSnapshot", name: plugin, botId, rect: { x, y, width, height } }).catch(failed);
+      return client.request({ type: "plugins.noteSnapshot", name: plugin, botId, rect: { x, y, width, height } }, undefined, { plugin }).catch(failed);
     },
     async openLink(plugin, { botId, href }) {
       // The core decides what the href names and main opens it as a chat link (plugin-link.ts); a Markdown file comes
@@ -81,7 +81,7 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       const bot = bots().find((each) => each.id === botId || (botId === "main" && each.role === "main"));
       if (!bot) throw new Error("No such bot.");
       // The bot by its own id (not "main"): a web link opens in that bot's browser tabs.
-      const result = await client.request({ type: "plugins.openLink", name: plugin, botId: bot.id, href }).catch(failed);
+      const result = await client.request({ type: "plugins.openLink", name: plugin, botId: bot.id, href }, undefined, { plugin }).catch(failed);
       if (result.previewURL && !openReport(bot.id, result.previewURL)) throw new Error("This page shows no report preview.");
       return { opened: result.opened };
     },
@@ -92,7 +92,7 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       return { inserted: await quoteIntoComposer(botId, text, focus, plugin).catch(() => false) };
     },
     async requestApproval(plugin, { botId, command, folder, card, detail }) {
-      const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}), ...(detail ? { detail } : {}) }).catch(failed);
+      const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}), ...(detail ? { detail } : {}) }, undefined, { plugin }).catch(failed);
       if (!asked.needsApproval) return { allowed: true };
       const view = asked.needsApproval;
       return new Promise((resolve) => ask(view, { type: "plugins.approve", name: plugin, botId, command: view.command, folder: view.folder, ...(view.detail ? { detail: view.detail } : {}) }, (allowed) => resolve({ allowed })));

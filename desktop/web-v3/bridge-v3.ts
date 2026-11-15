@@ -19,9 +19,9 @@ import {
 } from "../src/contract";
 import { commandScope, REMOTE_READS, remoteCmdRefusal, type DeviceScope } from "../src/protocol";
 import type { Clock } from "../src/fe-link";
-import { READ_COMMANDS, RendererAdapter, type LinkPort } from "../src/main-v3/renderer-adapter";
+import { READ_COMMANDS, RendererAdapter, RequestViaSchema, type LinkPort } from "../src/main-v3/renderer-adapter";
 import { App, type WebChrome } from "../src/renderer/App";
-import { Client, type Bridge } from "../src/renderer/client";
+import { Client, type Bridge, type RequestVia } from "../src/renderer/client";
 import { WorkspaceStore } from "../src/renderer/store";
 import { phoneLayout } from "../mobile/layout";
 import type { PendingFileView } from "../src/contract";
@@ -51,7 +51,7 @@ export const NOT_AVAILABLE = "Not available on this device. Use the Botling desk
 
 type Snapshot = ResultOf<"chat.snapshot">;
 /** The adapter's request port (RendererAdapter has it). */
-export interface AdapterPort { request(cmd: Command): ReturnType<RendererAdapter["request"]> }
+export interface AdapterPort { request(cmd: Command, via?: RequestVia): ReturnType<RendererAdapter["request"]> }
 
 /** Why the page answers `cmd` itself with "not available", or null when it goes to the server. */
 export function pageRefusal(cmd: Command, capabilities: Pick<PageCapabilities, "scopes" | "remoteReads">): string | null {
@@ -89,7 +89,7 @@ export class BridgeV3 implements Bridge {
     for (const listener of [...this.listeners]) listener(envelope);
   }
 
-  post(envelope: unknown): void {
+  post(envelope: unknown, via?: RequestVia): void {
     if (this.closed) return;
     const cancel = CancelEnvelope.safeParse(envelope);
     if (cancel.success) {
@@ -101,7 +101,7 @@ export class BridgeV3 implements Bridge {
     const request = RequestEnvelope.safeParse(envelope);
     if (!request.success) return;
     const { id, cmd } = request.data;
-    void this.handle(id, cmd).then((response) => {
+    void this.handle(id, cmd, via).then((response) => {
       if (this.cancelled.delete(id)) return;
       this.emit(response);
     });
@@ -118,7 +118,23 @@ export class BridgeV3 implements Bridge {
     this.listeners.clear();
   }
 
-  private async handle(id: string, cmd: Command): Promise<ResponseEnvelope> {
+  private async handle(id: string, cmd: Command, via?: RequestVia): Promise<ResponseEnvelope> {
+    let validVia: RequestVia | undefined;
+    if (via !== undefined) {
+      const parsedVia = RequestViaSchema.safeParse(via);
+      if (!parsedVia.success) return errorResponse(id, { code: "bad_request", message: "Malformed request attribution (via)." });
+      validVia = parsedVia.data;
+    }
+    const uploads = this.capabilities.uploads;
+    if (validVia) {
+      if (
+        (cmd.type === "settings.set" && (LOCAL_SETTINGS as readonly string[]).includes(cmd.change.key)) ||
+        cmd.type === "link.open" ||
+        (cmd.type === "files.remove" && uploads?.owns(cmd.botId, cmd.id))
+      ) {
+        return errorResponse(id, { code: "forbidden", message: "not sent: plugins cannot invoke local page shortcuts" });
+      }
+    }
     if (cmd.type === "settings.set" && (LOCAL_SETTINGS as readonly string[]).includes(cmd.change.key)) {
       this.local[cmd.change.key as LocalKey] = cmd.change.value;
       queueMicrotask(() => this.onLocalChange());
@@ -128,7 +144,6 @@ export class BridgeV3 implements Bridge {
       if (!cmd.reveal && /^https?:\/\//i.test(cmd.url)) { this.capabilities.openLink(cmd.url); return okResponse(id, {}); }
       return errorResponse(id, { code: "forbidden", message: NOT_AVAILABLE });
     }
-    const uploads = this.capabilities.uploads;
     if (cmd.type === "files.remove" && uploads?.owns(cmd.botId, cmd.id)) {
       uploads.remove(cmd.botId, cmd.id);
       return okResponse(id, { files: this.pendingOf(cmd.botId) });
@@ -144,7 +159,7 @@ export class BridgeV3 implements Bridge {
       if (taken.length) cmd = { ...cmd, files: taken };
     }
     let answer: Awaited<ReturnType<AdapterPort["request"]>>;
-    try { answer = await this.adapter.request(cmd); } catch (error) {
+    try { answer = validVia ? await this.adapter.request(cmd, validVia) : await this.adapter.request(cmd); } catch (error) {
       if (taken.length && cmd.type === "chat.send") uploads?.untake(cmd.botId, taken);
       throw error;
     }
