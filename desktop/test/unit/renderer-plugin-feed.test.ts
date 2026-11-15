@@ -236,13 +236,17 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     expect(feed.rows("view/mainTab")).toEqual([]);
     expect(() => feed.reconcile(view)).not.toThrow();
     await kernel.load(SHELL);
-    // Each plugin's own rows, in order. The plugins that contribute only to a slot another plugin owns (the settings slots) did not wait for
-    // the shell, so they are not reloaded in the list's order; the order across plugins is registration order (see the file header).
-    const byPlugin = (rows: unknown[]) => { const list = rows as { plugin: string }[]; return [...new Set(list.map((row) => row.plugin))].sort().map((plugin) => list.filter((row) => row.plugin === plugin)); };
+    // Registration order (P2), exactly: a plugin whose rows are all in slots another plugin owns (the settings slots) did not wait for the shell,
+    // so it was registered first; every other plugin loaded when the shell came back, in the list's order. Within each of the two groups the
+    // order is the list's. (A stable partition of the array, not "any order": a plugin's rows must still be in the array's order.)
+    const owned = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
+    const plugin = (row: unknown) => (row as { plugin: string }).plugin;
+    const early = (name: string) => allSlots().filter((slot) => expectedRows(view, slot).some((row) => plugin(row) === name)).every((slot) => owned.has(canonicalSlot(slot)));
     for (const slot of allSlots()) {
-      expect(feed.rows(slot), slot).toHaveLength(expectedRows(view, slot).length);
-      expect(byPlugin(feed.rows(slot)), slot).toEqual(byPlugin(expectedRows(view, slot)));
+      const rows = expectedRows(view, slot);
+      expect(feed.rows(slot), slot).toEqual([...rows.filter((row) => early(plugin(row))), ...rows.filter((row) => !early(plugin(row)))]);
     }
+    expect(allSlots().some((slot) => expectedRows(view, slot).some((row) => early(plugin(row)))), "the fixture has a plugin whose rows are all in the settings slots").toBe(true);
     feed.reconcile(null);
     expect(kernel.plugins().filter((name) => !name.startsWith(":"))).toEqual([]);
   });
