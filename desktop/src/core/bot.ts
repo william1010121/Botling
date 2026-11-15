@@ -332,7 +332,7 @@ export class Bot {
   private get ctx(): BotContext { return this.botContext ??= new BotContext(this); }
   /** Made on first use too (M7-S44): it owns the approvals and the allow rules. */
   private botQuestions: BotQuestions | null = null;
-  private get questions(): BotQuestions { return this.botQuestions ??= new BotQuestions(this); }
+  private get questions(): BotQuestions { return this.botQuestions ??= new BotQuestions(this, this.ctx); }
 
   constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
     const primary = options.primary;
@@ -406,10 +406,10 @@ export class Bot {
   }
 
   private get chat(): ChatRecord[] { return this.ctx.chat; }
-  get sharesChat(): boolean { return this.ctx.sharesChat; }
+  private get sharesChat(): boolean { return this.ctx.sharesChat; }
   get heads(): Heads { return this.ctx.heads; }
   private peerEngine(head: Engine): Engine { return this.ctx.peerEngine(head); }
-  get singleActionApprovals(): boolean { return this.ctx.singleActionApprovals; }
+  private get singleActionApprovals(): boolean { return this.ctx.singleActionApprovals; }
   private allowsEngineRoute(head: Engine, from?: Engine): boolean { return this.ctx.allowsEngineRoute(head, from); }
   private requireEngineRoute(head: Engine, from?: Engine): void { this.ctx.requireEngineRoute(head, from); }
   private botFor(head: Engine): Bot | null { return this.ctx.botFor(head); }

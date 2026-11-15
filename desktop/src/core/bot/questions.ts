@@ -3,7 +3,9 @@
 // "allow" rules, a worker's approval routed to its owner, and the user's pick (`choose`) or words (`answer`,
 // `answerQuestions`) on any question line. It owns the approvals and the rules the user has given; every other name its
 // bodies read is borrowed from the `Bot` it belongs to through the bridge block below (the convention of context.ts).
-// `tellHead` stays in `Bot` (tests replace it on an instance), so the bridge forwards it.
+// What every part of a bot shares (`options`, `store`, `owner`, `peers`, `profile`, `sharesChat` ...) is forwarded to the
+// BotContext, `Bot`'s own state and methods to the `Bot`. `log` and `tellHead` go to the `Bot` on purpose: tests replace
+// both on an instance (`Object.assign(fake, { log, tellHead })`, `vi.spyOn(bot, "tellHead")`), and `tellHead` stays in `Bot`.
 import { answerLabel } from "../attachments";
 import { type ApprovalAnswerer, type WorkerApproval } from "../agent-registry";
 import { ContractError, type ResultOf } from "../../contract";
@@ -18,22 +20,23 @@ import type { HostFacts } from "../agent-registry";
 import type { SubagentBook } from "../subagents";
 import type { BotStore } from "../store/bot-store";
 import type { Bot } from "../bot";
+import type { BotContext } from "./context";
 import type { BotOptions, Denial } from "./types";
 
 export class BotQuestions {
-  constructor(private readonly host: Bot) {}
+  constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
 
   // ---- Bridge: the names borrowed from `Bot` (one line each) ----
-  get options(): BotOptions { return this.host.options; }
-  get store(): BotStore { return this.host.store; }
-  get subagents(): SubagentBook { return this.host.subagents; }
-  get owner(): Bot { return this.host.owner; }
-  get members(): Bot[] { return this.host.members; }
-  get peers(): Bot[] { return this.host.peers; }
-  get profile() { return this.host.profile; }
-  get engine(): Engine { return this.host.engine; }
-  get sharesChat(): boolean { return this.host.sharesChat; }
-  get singleActionApprovals(): boolean { return this.host.singleActionApprovals; }
+  get options(): BotOptions { return this.ctx.options; }
+  get store(): BotStore { return this.ctx.store; }
+  get subagents(): SubagentBook { return this.ctx.subagents; }
+  get owner(): Bot { return this.ctx.owner; }
+  get members(): Bot[] { return this.ctx.members; }
+  get peers(): Bot[] { return this.ctx.peers; }
+  get profile() { return this.ctx.profile; }
+  get engine(): Engine { return this.ctx.engine; }
+  get sharesChat(): boolean { return this.ctx.sharesChat; }
+  get singleActionApprovals(): boolean { return this.ctx.singleActionApprovals; }
   get records(): ChatRecord[] { return this.host.records; }
   get head(): AgentHead | null { return this.host.head; }
   get problem(): string | null { return this.host.problem; }
