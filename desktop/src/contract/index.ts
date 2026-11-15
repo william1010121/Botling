@@ -42,8 +42,11 @@ const id = ContractId;
 export const RequestId = id;
 /** A bot: the Swift app's ids (UUIDs, upper case) are kept, so imported chats keep theirs. */
 export const BotId = id;
-/** Maintainer's fixed id (1.x's `Workspace.maintainerID`): it cannot be removed. */
+/** Maintainer's fixed 2.x id (`Workspace.maintainerID`), kept for the 2.x fallback in `isMaintainer`. */
 export const MAINTAINER_BOT_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
+
+/** True when a BotView is marked as Maintainer, or matches the 2.x id when the core does not send the flag. */
+export const isMaintainer = (bot: { id: string; maintainer?: true }): boolean => bot.maintainer === true || bot.id === MAINTAINER_BOT_ID;
 
 // ---------------------------------------------------------------------------------------------
 // Shared views
@@ -483,6 +486,8 @@ export const BotView = z.strictObject({
   name: z.string().max(200),
   /** main: the front desk; manager: works in a project folder; bot: a bot of its own. */
   role: z.enum(["main", "manager", "bot"]),
+  /** True on the Maintainer bot only (absent on every other bot). */
+  maintainer: z.literal(true).optional(),
   /** An avatar shape (`AvatarShape` in the Swift app: circle, square, …). */
   avatar: z.string().max(40),
   folder: z.string().max(4_000),

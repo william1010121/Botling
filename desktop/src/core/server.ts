@@ -1833,7 +1833,7 @@ First write a test that shows this, then fix it.`;
     const bot = this.newBot(profile);
     const orderAt = this.order.indexOf(this.maintainerId);
     this.order.splice(orderAt < 0 ? this.order.length : orderAt, 0, profile.id);
-    this.event({ type: "bot.updated", bot: bot.view() });
+    this.event({ type: "bot.updated", bot: this.botView(bot) });
     return bot;
   }
 
@@ -2524,8 +2524,14 @@ First write a test that shows this, then fix it.`;
   }
 
   /** Botling 3's server: a bot's current view (its summary row in the server's srv: table), or null. */
+  private botView(bot: Bot): BotView {
+    const view = bot.view();
+    return bot.id === this.maintainerId ? { ...view, maintainer: true } : view;
+  }
+
   serverBotView(botId: string): BotView | null {
-    return this.bots.get(botId)?.view() ?? null;
+    const bot = this.bots.get(botId);
+    return bot ? this.botView(bot) : null;
   }
 
   /** Botling 3's server: the bots the core has now. */
@@ -2712,6 +2718,9 @@ First write a test that shows this, then fix it.`;
   private event(event: Event) {
     // A removed bot (still stopping) is heard no more.
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
+    if (event.type === "bot.updated" && event.bot.id === this.maintainerId && event.bot.maintainer !== true) {
+      event = { ...event, bot: { ...event.bot, maintainer: true } };
+    }
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
     this.pluginEvent(event);
     this.checkWorkspaceSoon();
@@ -3202,7 +3211,7 @@ First write a test that shows this, then fix it.`;
   snapshot(botId?: string): ResultOf<"chat.snapshot"> {
     const bot = this.bots.get(botId ?? this.mainBotId);
     if (botId && !bot) throw new ContractError("not_found", "No such bot.");
-    const views = this.order.map((id) => this.bots.get(id)!.view());
+    const views = this.order.map((id) => this.botView(this.bots.get(id)!));
     return {
       epoch: this.epoch,
       seq: this.seq,
