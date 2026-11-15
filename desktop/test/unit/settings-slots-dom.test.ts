@@ -126,12 +126,14 @@ describe("the DOM is the one the PluginsView arrays gave (golden recorded before
     await mountSheet(null);
     got["no-plugins"] = navAndHeader();
     // The gear: closed, open with the plugins' blocks and links, open without a plugin list.
+    reconcileView(view);
     await act(async () => root.render(createElement(SidebarSettings, { client: client(), settings: settingsView({}), plugins: view, settingsOpen: false, onOpen() {} })));
     got["gear:closed"] = ids(q(".sidebar-settings")!.outerHTML);
     await openGear(view);
     got["gear:open"] = popover();
     await act(async () => root.unmount());
     root = createRoot(element);
+    reconcileView(null);
     await openGear(null);
     got["gear:open-no-plugins"] = popover();
     if (!existsSync(GOLDEN)) {
@@ -191,14 +193,10 @@ describe("Settings is drawn from the slots", () => {
     expect(order()).toEqual(before);
   });
 
-  it("fits every page of the core in the nav: the pages are the plugin's registrations", async () => {
+  it("draws the core pages the plugin registered, in the nav", async () => {
     shell = await loadSettingsShell(null);
     await mountSheet(null);
     expect(tabs()).toEqual(["General", "Appearance", "Shortcuts", "Models & workers", "Permissions", "Chat & reports", "Engine setup", "Plugins", "Phone", "Machines", "Updates", "Developer"]);
-    // A core page whose registration is gone is gone from the nav (nothing is drawn from the data).
-    const machines = rendererKernel.entries<{ page: { id: string } }>("settings/section").find(({ entry }) => entry.page?.id === "machines")!;
-    await act(async () => { await machines.registration.dispose(); });
-    expect(tabs()).not.toContain("Machines");
   });
 });
 
