@@ -302,6 +302,6 @@ describe("botling.note (built in since 2.7.0: the Note tab every download has)",
     const source = join(desktop, "builtin-plugins", "botling.note");
     expect(existsSync(join(source, "src", "note-cells.ts"))).toBe(false);
     expect(existsSync(join(source, "sync-note-cells.sh"))).toBe(false);
-    for (const file of ["cells.js", "branch.js", "table.js", "cardsrc.js", "ui.js"]) expect(readFileSync(join(source, "src", file), "utf8"), file).toContain('from "../../../src/core/note-cells.ts"');
+    for (const file of ["cells.js", "branch.js", "table.js", "cardsrc.js", "ui-text.js"]) expect(readFileSync(join(source, "src", file), "utf8"), file).toContain('from "../../../src/core/note-cells.ts"');
   });
 });
