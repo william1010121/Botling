@@ -289,9 +289,14 @@ export class Core {
   /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
   private readonly usage: UsageBook;
   private get imported() { return this.coreProjects.imported; }
-  private readonly coreWatch = new CoreWatch(this);
-  private readonly corePeerInbox = new CorePeerInbox(this);
-  private readonly coreProjects = new CoreProjects(this);
+  // The collaborators (core/server/*.ts) are made on first use, not in the constructor: a core made without its constructor, as
+  // tests make one (`Object.create(Core.prototype)`), reads and writes the moved fields through them too.
+  private madeWatch?: CoreWatch;
+  private get coreWatch(): CoreWatch { return (this.madeWatch ??= new CoreWatch(this)); }
+  private madePeerInbox?: CorePeerInbox;
+  private get corePeerInbox(): CorePeerInbox { return (this.madePeerInbox ??= new CorePeerInbox(this)); }
+  private madeProjects?: CoreProjects;
+  private get coreProjects(): CoreProjects { return (this.madeProjects ??= new CoreProjects(this)); }
   private get routineClock() { return this.coreWatch.routineClock; }
   private set routineClock(value: CoreWatch["routineClock"]) { this.coreWatch.routineClock = value; }
   private get watchClock() { return this.coreWatch.watchClock; }

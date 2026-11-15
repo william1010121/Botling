@@ -15,7 +15,7 @@
 //     and the private names tests reach by casting (`core-private-names.test.ts`) stay where they were.
 //   * The members `Core` and the other collaborators reach are public in the collaborator (the `private` of the old class is dropped);
 //     what the collaborator borrows from `Core` is public on `Core` for the same reason, because a type cannot reach a private member.
-//   * A collaborator does not touch `host` while it is being built (`Core` makes it in a field initializer, before its own constructor
+//   * A collaborator does not touch `host` while it is being built (`Core` makes it on first use, which may be before its own constructor
 //     body runs): the forwarders read `host` only when a method runs.
 //
 // `CoreWatch`: what the core looks at on a clock or a file watch: the plugin and component library, the plugins' Claude parts,

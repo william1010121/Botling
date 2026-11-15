@@ -12,7 +12,7 @@
     "desktop/src/core/agent/codex.ts": 2594,
     "desktop/src/core/bot.ts": 6556,
     "desktop/src/core/plugins/index.ts": 1557,
-    "desktop/src/core/server.ts": 3390,
+    "desktop/src/core/server.ts": 3395,
     "desktop/src/core/worker-core/core.ts": 943,
     "desktop/src/fe-link/link.ts": 1172,
     "desktop/src/main-v3/renderer-adapter.ts": 1103,
