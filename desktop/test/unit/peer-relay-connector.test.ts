@@ -648,7 +648,8 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     await until(() => session.state === "closed" && end !== null && dialerMeter.connections[dialerConnsBefore]?.relayClosed !== null, { timeout: 10_000, what: "mismatched transport session closed by relay kick" });
     expect(end!.opened).toBe(false);
     expect(dialerMeter.connections[dialerConnsBefore]?.relayClosed?.code).toBe(4403);
-    expect(b.log.slice(bLogFrom)).not.toMatch(/peer ${ka.memberId}: (live|exchange only)/);
+    // A RegExp built from the id (a /…${…}…/ literal never interpolates and could not fail; review R2).
+    expect(b.log.slice(bLogFrom)).not.toMatch(new RegExp(`peer ${ka.memberId}: (live|exchange only)`));
   }, 30_000);
 
   it("7: two real botlingd processes with listeners off connect through the relay and forward commands", async () => {
@@ -701,11 +702,11 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     writeStatements(two.b.dataDir, made.clusterId, profiles1);
 
     await Promise.all([two.a.start(), two.b.start()]);
-    const smaller = k1.memberId < k2.memberId ? k1.memberId : k2.memberId;
     await until(() => {
       const p1 = readPeerFile(two.a)[0];
       const p2 = readPeerFile(two.b)[0];
-      return p1?.state === "live" && p2?.state === "live" && p1.sessionId && p1.sessionId === p2.sessionId && p1.initiator === smaller;
+      // Either server may have dialled the one session (review R1): "smaller serverId wins" only when both dial.
+      return p1?.state === "live" && p2?.state === "live" && p1.sessionId && p1.sessionId === p2.sessionId && p1.initiator === p2.initiator;
     }, { timeout: 30_000, what: "two real botlingd live on one relay session" });
 
     expect(readPeerFile(two.a)[0]?.path).toBe("relay");

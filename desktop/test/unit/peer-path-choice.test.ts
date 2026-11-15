@@ -229,14 +229,15 @@ describe("M4-15: peer path choice, staggering, and 60 s re-probing", () => {
     expect(a1.peers!.states()[0]?.path).toBe("loopback");
     expect(netFast.dials.map((d) => d.path)).toEqual(["loopback"]);
 
-    // 1b: loopback takes > staggerMs (120ms > 80ms) so tailnet starts at 80ms, but loopback finishes handshake first
-    // (tailnet delayed 250ms); tailnet is closed and relay is never started.
+    // 1b: loopback takes > staggerMs (320ms > 300ms) so tailnet starts at 300ms, but loopback finishes its handshake
+    // first (tailnet answers at 300 + 900ms); tailnet is closed and relay (due at 600ms) is never started. The 280ms
+    // between loopback's connect and the relay's start is the handshake's margin on a loaded machine (review R3).
     const netSlow = new PathNet();
-    const { a: a2, b: b2 } = await setupPair(netSlow, { startA: false, startB: false });
+    const { a: a2, b: b2 } = await setupPair(netSlow, { startA: false, startB: false, timersA: { ...TIMERS, staggerMs: 300 } });
     netSlow.setBehavior(b2.identity.memberId, {
-      loopback: { mode: "ok", delayMs: 120 },
-      tailnet: { mode: "ok", delayMs: 250 },
-      relay: { mode: "ok", delayMs: 250 },
+      loopback: { mode: "ok", delayMs: 320 },
+      tailnet: { mode: "ok", delayMs: 900 },
+      relay: { mode: "ok", delayMs: 900 },
     });
     a2.peers!.start();
     await until(() => a2.peers!.states()[0]?.state === "live", { timeout: 10_000, what: "1b A live with B" });
@@ -343,17 +344,31 @@ describe("M4-15: peer path choice, staggering, and 60 s re-probing", () => {
 
     // Start both with loopback still partitioned -> both stagger and connect through the relay.
     await Promise.all([two.a.start(), two.b.start()]);
-    const smaller = ka.memberId < kb.memberId ? ka.memberId : kb.memberId;
-    const dialerServer = smaller === ka.memberId ? two.a : two.b;
+    // One session over the relay. Either server may have dialled it: "the smaller serverId wins" applies only when both
+    // dial, and at start one side's relay join can be refused (4403) before the peer's room sent its allow list, while
+    // the other side's dial goes live (review R1). The dialler is whoever the session names as initiator.
+    let dialerServer: TestServer = two.a;
     const relaySessionId = await until(() => {
       const s1 = readPeerFile(two.a)[0];
       const s2 = readPeerFile(two.b)[0];
-      if (s1?.state === "live" && s2?.state === "live" && s1.sessionId && s1.sessionId === s2.sessionId && s1.initiator === smaller) {
+      if (s1?.state === "live" && s2?.state === "live" && s1.sessionId && s1.sessionId === s2.sessionId && s1.initiator === s2.initiator) {
+        dialerServer = s1.initiator === ka.memberId ? two.a : two.b;
         return s1.sessionId;
       }
       return null;
     }, { timeout: 30_000, what: "both live over relay" });
     expect(readPeerFile(dialerServer)[0]?.path).toBe("relay");
+    // Which path carries the pair's one session right now. Pinned by path, not by session id: the session may be
+    // replaced on the same path (a late relay dial of the smaller id wins the pair rule; after the move both sides
+    // re-probe and one new session replaces the other), which is allowed and loses nothing.
+    const pairPath = (): "relay" | "direct" | null => {
+      const p = readPeerFile(two.a)[0];
+      const q = readPeerFile(two.b)[0];
+      if (p?.state !== "live" || q?.state !== "live" || !p.sessionId || p.sessionId !== q.sessionId) return null;
+      if (p.path === "relay" && q.path === "relay") return "relay";
+      if (p.path !== "relay" && q.path !== "relay" && (p.path === "loopback" || q.path === "loopback")) return "direct";
+      return null;
+    };
 
     // Create a bot on B, wait for A to replicate srv:B.
     const cB = await two.b.client("script", "d".repeat(32));
@@ -380,8 +395,7 @@ describe("M4-15: peer path choice, staggering, and 60 s re-probing", () => {
     await until(() => ph.welcomed, { timeout: 15_000, what: "phone welcomed on A" });
     const phoneEpoch = "e".repeat(32);
 
-    // Send 20 commands over relay, heal loopback mid-flight, then send 30 more across the reprobe transition.
-    for (let n = 1; n <= 20; n++) {
+    const sendCmd = (n: number) => {
       expect(ph.send({
         t: "cmd",
         slot: { origin: phone.keys.member, originEpoch: phoneEpoch, target: `bot:${botId}`, n } as Slot,
@@ -389,32 +403,38 @@ describe("M4-15: peer path choice, staggering, and 60 s re-probing", () => {
         inc,
         cmd: { type: "chat.send", botId, text: `/say cmd-${n}` },
       } as Message)).toBe(true);
-    }
-    pa.heal();
-    pb.heal();
-    for (let n = 21; n <= 50; n++) {
-      expect(ph.send({
-        t: "cmd",
-        slot: { origin: phone.keys.member, originEpoch: phoneEpoch, target: `bot:${botId}`, n } as Slot,
-        floor: 1,
-        inc,
-        cmd: { type: "chat.send", botId, text: `/say cmd-${n}` },
-      } as Message)).toBe(true);
-    }
-
-    // Wait for reprobe upgrade to loopback and all 50 results.
-    await until(() => {
-      const p = readPeerFile(dialerServer)[0];
-      return p?.state === "live" && p.path === "loopback" && p.sessionId !== relaySessionId;
-    }, { timeout: 20_000, what: "dialer upgraded to loopback on reprobe" });
-
+    };
     const results = new Map<number, MessageOf<"cmd.result">>();
-    await until(() => {
+    const answered = (from: number, to: number): boolean => {
       for (const m of ph.got) {
         if (m.t === "cmd.result" && m.slot.target === `bot:${botId}`) results.set(m.slot.n, m);
       }
-      return results.size === 50;
-    }, { timeout: 30_000, what: "all 50 forwarded commands answered across move" });
+      for (let n = from; n <= to; n++) if (!results.has(n)) return false;
+      return true;
+    };
+
+    // Review R7: the 50 commands must really cross the switch point, so each phase is pinned to a session.
+    // (1) Slots 1–20 are sent and answered while loopback is partitioned and the tailnet address does not resolve:
+    //     the relay is the only path, so the relay carried them.
+    expect(pairPath()).toBe("relay");
+    for (let n = 1; n <= 20; n++) sendCmd(n);
+    await until(() => answered(1, 20), { timeout: 30_000, what: "slots 1-20 answered over the relay" });
+    await until(() => pairPath() === "relay", { timeout: 10_000, what: "still on the relay after slots 1-20" });
+    // (2) Slots 21–35 are sent, then loopback heals at once: whichever of them are still held when the re-probe opens
+    //     the loopback session (the relay session then gets bye{closing}) are re-sent on the new session by the
+    //     forwarder, and the owner applies each slot once. (The next re-probe waits for the pending loopback dial to
+    //     time out, so how many are still in flight varies; phases 1 and 3 pin a session each.)
+    for (let n = 21; n <= 35; n++) sendCmd(n);
+    pa.heal();
+    pb.heal();
+    // Upgraded: one new session on both sides (either side may have dialled it: both re-probe), loopback on one side
+    // (an acceptor reports "tailnet" for a loopback session, it cannot tell them apart).
+    await until(() => pairPath() === "direct" && readPeerFile(two.a)[0]?.sessionId !== relaySessionId, { timeout: 30_000, what: "upgraded to loopback on re-probe" });
+    // (3) Slots 36–50 are sent only after the pair moved off the relay on both sides: a direct session carried them
+    //     (loopback stays healed, so nothing moves back to the relay; checked again once they are answered).
+    for (let n = 36; n <= 50; n++) sendCmd(n);
+    await until(() => answered(1, 50), { timeout: 30_000, what: "all 50 forwarded commands answered across the move" });
+    await until(() => pairPath() === "direct", { timeout: 10_000, what: "still direct after slots 36-50" });
     for (let n = 1; n <= 50; n++) {
       expect(results.get(n)?.outcome.kind).toBe("applied");
     }
