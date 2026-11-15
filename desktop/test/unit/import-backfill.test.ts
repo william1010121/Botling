@@ -2,23 +2,26 @@
 // (the import refuses those two bots: `hasBotling3History` in server/import/chats.ts counts any entry of the bot's
 // stream, and Botling 3 writes one, a `chat.pluginData`, the first time it opens empty). Fixture folders only.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { messageView } from "../../src/core/bot";
-import { DataDirLock } from "../../src/core/store/data-dir-lock";
+import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock } from "../../src/core/store/data-dir-lock";
 import { MAIN_BOT_ID, MAINTAINER_ID, toSwiftDate, type ChatRecord } from "../../src/core/store/records";
 import { DbBotStores } from "../../src/server/botstore";
+import { fitBody } from "../../src/server/effects/fit";
 import { ensureBot } from "../../src/server/effects/log-ops";
 import { TxScope } from "../../src/server/effects/scope";
 import { EventTap } from "../../src/server/effects/tap";
 import { read2x } from "../../src/server/import";
-import { backfillHistory, backfillMetaKey, mergeByTime, runBackfill } from "../../src/server/import/backfill";
+import { backfillHistory, backfillMetaKey, mergeByTime, runBackfill, type BackfillOptions } from "../../src/server/import/backfill";
 import { importBotMetaKey, importChats } from "../../src/server/import/chats";
-import { mapIds } from "../../src/server/import/id-map";
+import { mapIds, saveIdMap } from "../../src/server/import/id-map";
 import { appendEntries, verifyStream } from "../../src/server/log";
 import { openServerStore, type ServerStore } from "../../src/server/store";
+import { openReaderDb } from "../../src/server/store/connection";
+import { botlingdCommand } from "../botlingd-harness";
 import { make2xFolder } from "../support/fixture-2x";
 
 const dirs: string[] = [];
@@ -155,6 +158,32 @@ async function makeFixture(): Promise<Fixture & { store: ServerStore }> {
 
 function idsBySeq(store: ServerStore, botId: string): string[] {
   return botState(store, botId).messages.map((row) => row.msgId);
+}
+
+/** What a backfill changes in a server.db file (the live one or a backup copy), read without opening a store. */
+function fileState(dbFile: string) {
+  const db = openReaderDb(dbFile);
+  try {
+    const bot = (botId: string) => ({
+      entries: db.prepare("SELECT seq, kind, hash FROM entries WHERE stream = ? ORDER BY seq").all(`bot:${botId}`)
+        .map((row) => `${String(row.seq)} ${String(row.kind)} ${String(row.hash)}`),
+      messages: db.prepare("SELECT msgId, seq, body FROM messages WHERE botId = ? ORDER BY seq").all(botId)
+        .map((row) => `${String(row.msgId)} ${String(row.seq)} ${String(row.body)}`),
+    });
+    const markers = db.prepare("SELECT key, value FROM meta WHERE key LIKE 'backfill:%' ORDER BY key").all()
+      .map((row) => `${String(row.key)}=${String(row.value)}`);
+    return { main: bot(MAIN), maint: bot(MAINT), markers };
+  } finally {
+    db.close();
+  }
+}
+
+/** The fixture with its store closed, as `botlingd backfill-history` finds the folder (botlingd stopped). */
+async function closedFixture(): Promise<Fixture> {
+  const fx = await makeFixture();
+  await fx.store.close();
+  stores.splice(stores.indexOf(fx.store), 1);
+  return fx;
 }
 
 describe("2.x history backfill for the Main bot and the Maintainer", () => {
@@ -310,11 +339,21 @@ describe("runBackfill (botlingd backfill-history)", () => {
     await expect(runBackfill({ sourceDir: fx.src, targetDir: fx.dataDir })).rejects.toThrow(/botlingd is running/);
     lock.release();
 
+    const dbFile = join(fx.dataDir, "server.db");
+    const before = fileState(dbFile);
+    expect(before.markers).toEqual([]);
+
     const result = await runBackfill({ sourceDir: fx.src, targetDir: fx.dataDir });
     expect(result.dryRun).toBe(false);
     expect(result.backupPath).toBeTruthy();
     expect(statSync(result.backupPath!).isFile()).toBe(true);
     expect(result.bots.map((bot) => [bot.state, bot.add])).toEqual([["added", 3], ["added", 3]]);
+    // F3: the backup holds the folder as it was before the backfill (a backup taken after the writes would hold the
+    // added lines and the markers, and `botlingd restore` could not undo the backfill).
+    expect(fileState(result.backupPath!)).toEqual(before);
+    const after = fileState(dbFile);
+    expect(after.markers).toHaveLength(2);
+    expect(after.main.messages.length).toBe(before.main.messages.length + 3);
     expect(snapshotTree(fx.src)).toEqual(srcBefore);
 
     const store = await openServerStore(fx.dataDir);
@@ -328,5 +367,159 @@ describe("runBackfill (botlingd backfill-history)", () => {
     mkdirSync(join(fx.dataDir, "x"), { recursive: true }); // unrelated change: the second run still finds nothing to do
     const again = await runBackfill({ sourceDir: fx.src, targetDir: fx.dataDir, dryRun: true });
     expect(again.bots.map((bot) => bot.state)).toEqual(["already", "already"]);
+  });
+});
+
+describe("backfill fails closed: a bot is backfilled whole or not at all", () => {
+  it("F1: a Botling 3 line that cannot be put back below stops the bot's backfill; nothing is removed, added or marked", async () => {
+    const fx = await makeFixture();
+    const data = read2x(fx.src);
+    const idMap = mapIds(data.bots, { mainId: MAIN, maintainerId: MAINT, designated: true });
+    const mainBefore = botState(fx.store, MAIN);
+    const maintBefore = botState(fx.store, MAINT);
+    // Every Main bot Botling 3 line moves below the 2.x lines; appending the moved copy of the cut one fails (here its
+    // content note throws). Its `message.removed` is already in the same command, so only a rollback keeps the line.
+    const content = {
+      noteLine: (_tx: unknown, _botId: string, line: { id: string }) => {
+        if (line.id === id(900, 2)) throw new Error("injected failure on the moved line");
+        return null;
+      },
+      afterCommit: async () => [],
+    } as unknown as BackfillOptions["content"];
+
+    await expect(backfillHistory(fx.store, data.bots, idMap, { source: "src-hash", content })).rejects.toThrow(/injected failure/);
+
+    expect(botState(fx.store, MAIN)).toEqual(mainBefore);
+    expect(botState(fx.store, MAINT)).toEqual(maintBefore); // the Main bot comes first: the Maintainer was not reached
+    expect(idsBySeq(fx.store, MAIN)).toEqual(fx.mainNew.map((r) => r.id));
+    expect(fx.store.meta(backfillMetaKey("src-hash", MAIN_BOT_ID))).toBeUndefined();
+  });
+
+  it("F2: a Botling 3 line whose stored view would change when moved stops the bot's backfill", async () => {
+    const fx = await makeFixture();
+    // An interrupted turn rewrote a Botling 3 line in place (read-model.ts `turn.interrupted`): the stored view now holds
+    // the turn's cut text plus the note, more than one `message.added` may carry, so a moved copy would be cut again.
+    await fx.store.submit((tx) => {
+      const stream = ensureBot(tx, MAIN);
+      const body = fitBody("turn.interrupted", { botId: MAIN, turnId: id(950, 1), messageId: id(900, 1), text: "長".repeat(200_000) }).body;
+      appendEntries(tx, stream, [{ kind: "turn.interrupted", body }]);
+    });
+    const data = read2x(fx.src);
+    const idMap = mapIds(data.bots, { mainId: MAIN, maintainerId: MAINT, designated: true });
+    const mainBefore = botState(fx.store, MAIN);
+    const maintBefore = botState(fx.store, MAINT);
+    const stored = mainBefore.messages.find((row) => row.msgId === id(900, 1))!;
+    expect(fitBody("message.added", { botId: MAIN, message: JSON.parse(stored.body) as Record<string, unknown> }).full).not.toBeNull();
+
+    await expect(backfillHistory(fx.store, data.bots, idMap, { source: "src-hash" })).rejects.toThrow(/would change when moved/);
+
+    expect(botState(fx.store, MAIN)).toEqual(mainBefore);
+    expect(botState(fx.store, MAINT)).toEqual(maintBefore);
+    expect(fx.store.meta(backfillMetaKey("src-hash", MAIN_BOT_ID))).toBeUndefined();
+  });
+});
+
+describe("runBackfill never writes the 2.x folder through a link in the Botling 3 folder (F4)", () => {
+  const cases: [string, (fx: Fixture) => string][] = [
+    ["backups", (fx) => fx.src],
+    ["backfill-report.md", (fx) => join(fx.src, "projects", MAINTAINER_ID, "chat.json")],
+  ];
+  for (const [name, targetOf] of cases) {
+    it(`refuses before anything is written when ${name} leads into the 2.x folder`, async () => {
+      const fx = await closedFixture();
+      const link = join(fx.dataDir, name);
+      rmSync(link, { recursive: true, force: true });
+      symlinkSync(targetOf(fx), link);
+      const srcBefore = snapshotTree(fx.src);
+      const dbFile = join(fx.dataDir, "server.db");
+      const dbBefore = fileState(dbFile);
+
+      await expect(runBackfill({ sourceDir: fx.src, targetDir: fx.dataDir })).rejects.toThrow(/leads into the Botling 2 folder/);
+
+      expect(snapshotTree(fx.src)).toEqual(srcBefore);
+      expect(fileState(dbFile)).toEqual(dbBefore); // refused up front, not after the lines went in
+      expect(readlinkSync(link)).toBe(targetOf(fx));
+    });
+  }
+});
+
+describe("runBackfill report", () => {
+  it("says why the 2.x Main bot is not backfilled when the import brought it over as a bot of its own", async () => {
+    const fx = await closedFixture();
+    const { sourceHash } = await runBackfill({ sourceDir: fx.src, targetDir: fx.dataDir, dryRun: true });
+    const store = await openServerStore(fx.dataDir);
+    await store.submit((tx) => saveIdMap(tx, sourceHash, [{ oldId: MAIN_BOT_ID, newId: id(940, 1), kind: "main-as-bot" }]));
+    await store.close();
+
+    const result = await runBackfill({ sourceDir: fx.src, targetDir: fx.dataDir, dryRun: true });
+
+    expect(result.bots.map((bot) => bot.name)).toEqual(["Maintainer"]);
+    const line = `Main bot: the import brought it over as a bot of its own (${id(940, 1)}, main-as-bot), not into this folder's Main bot`;
+    expect(result.problems.some((problem) => problem.startsWith(line))).toBe(true);
+    expect(result.reportText).toContain(`  - ${line}`);
+  });
+});
+
+describe("botlingd backfill-history (CLI, F5)", () => {
+  it("rejects a bad command line with exit 2 and touches nothing", async () => {
+    const fx = await closedFixture();
+    const dbFile = join(fx.dataDir, "server.db");
+    const before = fileState(dbFile);
+    const notTwoX = tempDir("botling-backfill-not2x-");
+
+    const unknown = botlingdCommand(fx.dataDir, ["backfill-history", fx.src, "--force"]);
+    expect([unknown.code, unknown.stderr]).toEqual([2, expect.stringContaining('unknown option "--force"')]);
+    const none = botlingdCommand(fx.dataDir, ["backfill-history"]);
+    expect([none.code, none.stderr]).toEqual([2, expect.stringContaining("needs one 2.x data folder")]);
+    const two = botlingdCommand(fx.dataDir, ["backfill-history", fx.src, notTwoX]);
+    expect([two.code, two.stderr]).toEqual([2, expect.stringContaining("needs one 2.x data folder")]);
+    const bad = botlingdCommand(fx.dataDir, ["backfill-history", notTwoX]);
+    expect([bad.code, bad.stderr]).toEqual([2, expect.stringContaining("does not look like a Botling 2 data folder")]);
+
+    expect(fileState(dbFile)).toEqual(before);
+    expect(existsSync(join(fx.dataDir, "backfill-report.md"))).toBe(false);
+  });
+
+  it("exits with the data-folder-in-use code while botlingd holds the folder, and changes nothing", async () => {
+    const fx = await closedFixture();
+    const dbFile = join(fx.dataDir, "server.db");
+    const before = fileState(dbFile);
+    const lock = new DataDirLock(fx.dataDir, { version: "test", app: "botlingd" });
+    expect(lock.claim().ok).toBe(true);
+    try {
+      const res = botlingdCommand(fx.dataDir, ["backfill-history", fx.src]);
+      expect(res.code).toBe(CORE_EXIT_DATA_DIR_IN_USE);
+      expect(res.stderr).toContain("botlingd is running");
+    } finally {
+      lock.release();
+    }
+    expect(fileState(dbFile)).toEqual(before);
+    expect(existsSync(join(fx.dataDir, "backups"))).toBe(false);
+  });
+
+  it("dry run prints the plan; the real run adds the lines, writes the report; a second run adds nothing", async () => {
+    const fx = await closedFixture();
+    const srcBefore = snapshotTree(fx.src);
+    const dbFile = join(fx.dataDir, "server.db");
+    const before = fileState(dbFile);
+
+    const dry = botlingdCommand(fx.dataDir, ["backfill-history", fx.src, "--dry-run"]);
+    expect(dry.code).toBe(0);
+    expect(dry.stdout).toContain("Dry run");
+    expect(dry.stdout).toMatch(/Main bot[^\n]*\n\s+add 3 lines from Botling 2/);
+    expect(fileState(dbFile)).toEqual(before);
+
+    const run = botlingdCommand(fx.dataDir, ["backfill-history", fx.src]);
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain("Added Botling 2 history to the Main bot and the Maintainer.");
+    expect(run.stdout).toContain("Lines: 6 added");
+    expect(readFileSync(join(fx.dataDir, "backfill-report.md"), "utf8")).toBe(run.stdout);
+    expect(fileState(dbFile).markers).toHaveLength(2);
+
+    const again = botlingdCommand(fx.dataDir, ["backfill-history", fx.src]);
+    expect(again.code).toBe(0);
+    expect(again.stdout).toContain("Lines: 0 added");
+    expect(again.stdout.match(/already backfilled from this folder/g)).toHaveLength(2);
+    expect(snapshotTree(fx.src)).toEqual(srcBefore);
   });
 });
