@@ -7,20 +7,28 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Kernel, ROOT_SLOTS, canonicalSlot, slotName, type KernelEvent } from "../../../Web/src/plugin-kernel";
 import type { PluginsView } from "../../src/contract";
-import { FEED_MENU_SLOTS, FEED_SLOTS, FEED_VIEWS } from "../../src/renderer/shell/feed-slots";
+import { FEED_MENU_SLOTS, FEED_SLOTS, FEED_VIEWS, PLUGIN_OWNED_SLOTS } from "../../src/renderer/shell/feed-slots";
 import { PluginFeed, type FeedEntry } from "../../src/renderer/shell/plugin-feed";
 import { desktop, envCount } from "../helpers";
 
 const SHELL = ":shell";
 const CHAT = ":chat";
+/** Stands in for `botling.settings` (M7-02c): the plugin that owns the two settings slots now, not `:shell`. */
+const SETTINGS = ":settings";
 
-/** A kernel like the renderer's (`:shell` owns the root and the feed's slots, `:chat` is up) and a feed on it. */
-function setup() {
+const startSettings = (kernel: Kernel) => {
+  kernel.install({ name: SETTINGS, provides: { slots: PLUGIN_OWNED_SLOTS } });
+  void kernel.load(SETTINGS, (plugin) => { for (const slot of PLUGIN_OWNED_SLOTS) kernel.provideSlot(plugin, slot); });
+};
+
+/** A kernel like the renderer's (`:shell` owns the root and the feed's slots, `:settings` the settings slots, `:chat` is up) and a feed on it. */
+function setup({ settings = true } = {}) {
   const events: KernelEvent[] = [];
   const kernel = new Kernel({ slotName: canonicalSlot, log: (event) => events.push(event) });
   const slots = [...ROOT_SLOTS, ...FEED_SLOTS];
   kernel.install({ name: SHELL, provides: { slots } });
   void kernel.load(SHELL, (plugin) => { for (const slot of slots) kernel.provideSlot(plugin, slot); });
+  if (settings) startSettings(kernel);
   kernel.install({ name: CHAT, provides: { services: ["composer.insertQuote"] } });
   void kernel.load(CHAT, (plugin) => { kernel.provide(plugin, "composer.insertQuote", () => undefined); });
   return { kernel, events, feed: new PluginFeed(kernel) };
@@ -174,12 +182,12 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     } as unknown as PluginsView;
     feed.reconcile(view);
     expect(feed.loaded()).toEqual(["constructor"]);
-    expect(kernel.plugins().sort()).toEqual([CHAT, SHELL, "constructor"].sort());
+    expect(kernel.plugins().sort()).toEqual([CHAT, SETTINGS, SHELL, "constructor"].sort());
     expect(feed.rows<{ plugin: string }>("view/quickSettings")).toEqual([row("constructor", "q")]);
     expect(kernel.allContributions().map(({ plugin }) => plugin)).toEqual(["constructor"]);
     expect(kernel.state(SHELL)).toBe("active");
     feed.reconcile(null);
-    expect(kernel.plugins().sort()).toEqual([CHAT, SHELL]);
+    expect(kernel.plugins().sort()).toEqual([CHAT, SETTINGS, SHELL]);
   });
 
   it("skips a menu row whose menu is not a menu slot", () => {
@@ -193,6 +201,31 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     expect(events.filter((event) => event.note?.startsWith("refused"))).toEqual([]);
   });
 
+  it("registers again the rows a settings slot refused while its owner was away, when `refresh` says the owner is back, and touches no other plugin", () => {
+    const { feed, kernel, events } = setup({ settings: false });
+    const view = fixture();
+    feed.reconcile(view);
+    // No owner: the kernel refuses the contributions to the settings slots (the plugins' other rows are held as always).
+    expect(feed.rows("view/settings.section")).toEqual([]);
+    expect(feed.rows("view/quickSettings")).toEqual([]);
+    expect(feed.rows("view/mainTab")).toEqual(view.mainTabs);
+    const settingsOwners = new Set([...(view.settingsSections ?? []), ...(view.quickSettings ?? [])].map((row) => row.plugin));
+    const quiet = view.plugins.map((plugin) => plugin.name).filter((name) => !settingsOwners.has(name));
+    expect(quiet.length).toBeGreaterThan(2);
+    startSettings(kernel);
+    // The kernel does not ask again by itself: nothing is registered until the feed is told.
+    expect(feed.rows("view/settings.section")).toEqual([]);
+    const before = events.length;
+    feed.refresh(["settings/section", "settings/quick"]);
+    expect(feed.rows("view/settings.section")).toEqual(view.settingsSections);
+    expect(feed.rows("settings/quick")).toEqual(view.quickSettings);
+    expect(new Set(events.slice(before).map((event) => event.plugin).filter((name) => quiet.includes(name)))).toEqual(new Set());
+    // A slot nobody here contributes to: no step at all.
+    const steady = events.length;
+    feed.refresh(["app/rail"]);
+    expect(events.length).toBe(steady);
+  });
+
   it("holds the rows again when the shell goes away and comes back", async () => {
     const { feed, kernel } = setup();
     const view = fixture();
@@ -203,7 +236,17 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     expect(feed.rows("view/mainTab")).toEqual([]);
     expect(() => feed.reconcile(view)).not.toThrow();
     await kernel.load(SHELL);
-    for (const slot of allSlots()) expect(feed.rows(slot), slot).toEqual(expectedRows(view, slot));
+    // Registration order (P2), exactly: a plugin whose rows are all in slots another plugin owns (the settings slots) did not wait for the shell,
+    // so it was registered first; every other plugin loaded when the shell came back, in the list's order. Within each of the two groups the
+    // order is the list's. (A stable partition of the array, not "any order": a plugin's rows must still be in the array's order.)
+    const owned = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
+    const plugin = (row: unknown) => (row as { plugin: string }).plugin;
+    const early = (name: string) => allSlots().filter((slot) => expectedRows(view, slot).some((row) => plugin(row) === name)).every((slot) => owned.has(canonicalSlot(slot)));
+    for (const slot of allSlots()) {
+      const rows = expectedRows(view, slot);
+      expect(feed.rows(slot), slot).toEqual([...rows.filter((row) => early(plugin(row))), ...rows.filter((row) => !early(plugin(row)))]);
+    }
+    expect(allSlots().some((slot) => expectedRows(view, slot).some((row) => early(plugin(row)))), "the fixture has a plugin whose rows are all in the settings slots").toBe(true);
     feed.reconcile(null);
     expect(kernel.plugins().filter((name) => !name.startsWith(":"))).toEqual([]);
   });
@@ -261,8 +304,8 @@ describe("the plugin feed over seeded random view sequences", () => {
         expect(kernel.plugins().filter((name) => !name.startsWith(":")).sort(), where).toEqual(feed.loaded().sort());
       }
       feed.reconcile({ plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null });
-      expect(kernel.plugins().sort(), `seed ${seed} after an empty view`).toEqual([CHAT, SHELL]);
-      expect(kernel.installed().sort(), `seed ${seed} declarations`).toEqual([CHAT, SHELL]);
+      expect(kernel.plugins().sort(), `seed ${seed} after an empty view`).toEqual([CHAT, SETTINGS, SHELL]);
+      expect(kernel.installed().sort(), `seed ${seed} declarations`).toEqual([CHAT, SETTINGS, SHELL]);
       expect(kernel.allContributions(), `seed ${seed} contributions`).toEqual([]);
     }
   });

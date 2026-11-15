@@ -6,7 +6,7 @@ import { ClaudeHead } from "../agent/head";
 import type { CodexItem } from "../agent/codex";
 import type { StreamItem } from "../agent/stream";
 import { isWorkerHost, isWorkerType, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "../agent/workers";
-import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "../agent/claude-workers";
+import { ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "../agent/claude-workers";
 import { hostKind, type ApprovalAnswerer, type HostFacts, type StartupHost } from "../agent-registry";
 import type { BackgroundKind } from "../background-tasks";
 import type { Bot, Status } from "../bot";

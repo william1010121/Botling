@@ -1,11 +1,6 @@
-import { readImagePaths } from "./read-images";
-import { isBotTool, type BotToolName, type ToolCaller } from "./bot-tools";
-import {nativeRestartContext} from './claude-restart';
-import {claudeConfigFolder} from './claude-files';
-import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from './restart-continuation';
+import type { BotToolName, ToolCaller } from "./bot-tools";
+import type { RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
-import { AgyAcpHead } from "./agent/agy-acp";
-import { AGY_EXECUTION_BLOCKED } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
 // claude process), the turn under way, the tool approvals it is waiting on, and its subagents
 // (subagents.json).
@@ -52,48 +47,38 @@ import { AGY_EXECUTION_BLOCKED } from "./agent/agy";
 //   A user message goes once to the selected primary; peer commentary never broadcasts work.
 //   Explicit handoff tags use the conductor's budgets and correlated return routes. A shared
 //   decision retains one owner, and a pick on any copy is applied exactly once.
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { LinkedFile } from "./storage";
-import { attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
-import { lineMediaCopy } from "./chat-media";
 import type { ApprovalAnswerer, HostFacts, StartupHost, WorkerApproval } from "./agent-registry";
-import { ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type ChatSnapshot, type Event, type HeadsView, type MessageView, type ResultOf, type BotSettingsView, type ResultView } from "../contract";
+import type { ApprovalAskView, RoutineView, BotView, SubagentRowView, ChatSnapshot, Event, HeadsView, MessageView, ResultOf, BotSettingsView, ResultView } from "../contract";
 import type { EngineEfforts } from "./engine-defaults";
-import { ClaudeHead, type HeadExit } from "./agent/head";
-import type { HotSettings } from "./agent/hot-settings";
-import { CodexHead, type CodexItem } from "./agent/codex";
-import { Conductor, displayName, fitted, hasTwo, isActive, otherHead, readHeads, resolvePrimary, roundsText, type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress } from "./heads";
-import { isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
+import type { HeadExit } from "./agent/head";
+import type { CodexItem } from "./agent/codex";
+import { Conductor, readHeads, type AnswerTarget, type ConductorAction, type Engine, type Handoff, type Heads } from "./heads";
+import type { ScheduleCancellation } from "./session-schedules";
 import type { RequestEvent, SpeedTotals } from "./token-speed";
-import { commandEnded, ReplyText, type CommandState, type StreamItem } from "./agent/stream";
-import { archiveAll, archiveLine, reactionIntro, reactionUpdate, recentChat, seenReactions, type SeenReactions } from "./briefing";
-import { isPlainOK, PARTS_NOTE, withoutPartsNote, type BotPrompts } from "./prompts";
-import { parseReply, unsupportedRequest, type BotRequest, Display } from "./reply";
+import type { CommandState, StreamItem } from "./agent/stream";
+import { archiveAll, type SeenReactions } from "./briefing";
+import type { BotPrompts } from "./prompts";
+import type { BotRequest } from "./reply";
 import { SubagentBook, readSubagent, type SubagentRecord } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
 import type { ComponentsContext, DisplayData } from "./components/service";
-import { BUILT_INS, spelledSize, type ComponentKnowledge } from "./components/library";
-import { savedQuestions, type QuestionPick } from "./questions";
-import { headTurnContent, headTurnEnd } from "./head-turn";
+import type { ComponentKnowledge } from "./components/library";
+import type { QuestionPick } from "./questions";
 import type { WorkerCoreFactory, WorkerLedgerRecord, WorkerNote } from "./worker-core";
-import { projectWorker } from "./worker-projection";
 import type { Routine, ScheduledRoutine, ScheduledRoutineStore } from "./routines";
 import { BotRoutines } from "./bot/bot-routines";
 import { CallInWorkBook, type CallInRelay } from "./call-in-work";
-import { PAGE_COMPONENT } from "./page-preview";
-import { totalTokens } from "./usage";
 import { BotStore, type HeadState } from "./store/bot-store";
-import { connectionErrorLine, type Outage } from "./network-resume";
-import { apiRetryDelays } from "./api-retry";
-import { CONTINUE_NOTE, type SwapEntry } from "./hot-swap";
-import { stopBackgroundTasks, type BackgroundKind, type BackgroundTask } from "./background-tasks";
-import { fromSwiftDate as fromSwiftDateMs, isOpenQuestion, newId, toSwiftDate, type ChatRecord, type StepRecord } from "./store/records";
-import { isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./agent/workers";
-import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, claudeWorkersFile } from "./agent/claude-workers";
-import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
+import type { Outage } from "./network-resume";
+import type { SwapEntry } from "./hot-swap";
+import type { BackgroundKind, BackgroundTask } from "./background-tasks";
+import type { ChatRecord } from "./store/records";
+import type { WorkerHost, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./agent/workers";
+import { ClaudeWorkers, claudeWorkersFile } from "./agent/claude-workers";
 import { BotContext } from "./bot/context";
 import { BotQuestions } from "./bot/questions";
 import { BotCards } from "./bot/cards";
@@ -101,26 +86,15 @@ import { BotProgress } from "./bot/progress";
 import { BotTasks } from "./bot/tasks";
 import { BotGuests } from "./bot/guests";
 import { BotSettings } from "./bot/settings";
-import { NO_LONGER_NEEDED, PLUGINS_RESTART, PROMPT_SESSION_DIVIDER, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
-import { union, sleep, preview, streamingText, subagentOf, isRule, allowRule, permissionText, clip, stepView, iso, subagentView, messageView } from "./bot/view-functions";
+import { NO_LONGER_NEEDED, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
+import { sleep, preview, streamingText, isRule, allowRule, permissionText, stepView, subagentView, messageView } from "./bot/view-functions";
 import { BotRecords } from "./bot/records";
 import { BotSubagentRows } from "./bot/subagent-rows";
 import { BotGroup } from "./bot/group";
 import { BotDelivery } from "./bot/delivery";
 import { BotViews } from "./bot/views";
 import { BotDecisions } from "./bot/decisions";
-import { sameJSON } from "./same-json";
-import { parseFeedback } from "./feedback";
-import { detailValues, type CommandStatus } from "./components/commands";
-import { fromRoutineWatches, nextWatchState, runWatch, watchCommand, watchPrompt, type WatchState } from "./routine-watch";
-import { specTrace } from "./spec-trace";
-import { codexWorkerDefaults, codexWorkersJSON } from "./settings";
-import { alwaysAllows } from "./permission-rules";
-import { MAX_PAGE_BYTES, PAGE_BYTES, pageBack, sliceViews } from "./history-page";
 import { BotWorkers } from "./bot/workers";
-import { isBrowserTool } from "../browser-bot";
-import { runBrowserTool } from "./browser-tools";
-import { isNoteTool, runNoteTool } from "./note-tools";
 import { BotRestart } from "./bot/restart";
 import { BotHead } from "./bot/head";
 import { TurnControl } from "./bot/turn-control";
@@ -170,7 +144,7 @@ export class Bot {
   ownsTurn(id: string): boolean { return this.ctx.ownsTurn(id); }
 
   get conductor() { return this.group.conductor; }
-  set conductor(v) { this.group.conductor = v; }
+  private set conductor(v) { this.group.conductor = v; }
   /** Read by BotContext (M7-S41). */
   get claimHold() { return this.group.claimHold; }
   set claimHold(v) { this.group.claimHold = v; }
@@ -182,11 +156,11 @@ export class Bot {
   set pendingAbout(v) { this.delivery.pendingAbout = v; }
   /** The conductor's cards waiting for a pick: what each button does. */
   get cardPicks() { return this.guests.cardPicks; }
-  set cardPicks(v) { this.guests.cardPicks = v; }
+  private set cardPicks(v) { this.guests.cardPicks = v; }
   get handoffDecisions() { return this.group.handoffDecisions; }
-  set handoffDecisions(v) { this.group.handoffDecisions = v; }
+  private set handoffDecisions(v) { this.group.handoffDecisions = v; }
   get rounds() { return this.group.rounds; }
-  set rounds(v) { this.group.rounds = v; }
+  private set rounds(v) { this.group.rounds = v; }
   /** Codex: workers at work or their reports waiting (the bot stays awake). */
   get managedPending() { return this.workers.managedPending; }
   set managedPending(value: boolean) { this.workers.managedPending = value; }
@@ -210,10 +184,10 @@ export class Bot {
   /** Results still to come from turns ended early (a tidy or a guest turn that ran late): they belong to nobody. */
   /** The app's own questions in this chat (installing a plugin): what a pick does. */
   get appQuestions() { return this.guests.appQuestions; }
-  set appQuestions(v) { this.guests.appQuestions = v; }
+  private set appQuestions(v) { this.guests.appQuestions = v; }
   /** …and what words typed on one do instead of going to the bot (a copy of another bot's question). */
   get appAnswers() { return this.guests.appAnswers; }
-  set appAnswers(v) { this.guests.appAnswers = v; }
+  private set appAnswers(v) { this.guests.appAnswers = v; }
   /** The subagent rows as the windows last saw them (a change sends bot.updated). */
   get lastRows(): string { return this.recordsBook.lastRows; }
   set lastRows(value: string) { this.recordsBook.lastRows = value; }
@@ -272,13 +246,13 @@ export class Bot {
   set switchTo(v: Engine | null) { this.settings.switchTo = v; }
   /** Writing that handoff (1.x's `.switching(.writing)`). */
   get switching() { return this.settings.switching; }
-  set switching(v: boolean) { this.settings.switching = v; }
+  private set switching(v: boolean) { this.settings.switching = v; }
   get idleTimer(): NodeJS.Timeout | null { return this.headRun.idleTimer; }
   set idleTimer(v: NodeJS.Timeout | null) { this.headRun.idleTimer = v; }
   private get alwaysAllowed(): string[] { return this.questions.alwaysAllowed; }
   private set alwaysAllowed(value: string[]) { this.questions.alwaysAllowed = value; }
   get denialAsks(): Map<string, Denial> { return this.questions.denialAsks; }
-  set denialAsks(value: Map<string, Denial>) { this.questions.denialAsks = value; }
+  private set denialAsks(value: Map<string, Denial>) { this.questions.denialAsks = value; }
   private get sessionRules(): string[] { return this.questions.sessionRules; }
   private set sessionRules(value: string[]) { this.questions.sessionRules = value; }
   private get rulesGivenAfter(): Map<string, string | null> { return this.questions.rulesGivenAfter; }
@@ -286,7 +260,7 @@ export class Bot {
   get scheduleCalls() { return this.tasks.scheduleCalls; }
   /** Owned by BotQuestions (M7-S44); an accessor each, so a test that assigns or reads one on a Bot still works. */
   get toolCalls(): Map<string, { tool: string; detail: string; parent: string | null }> { return this.questions.toolCalls; }
-  set toolCalls(value: Map<string, { tool: string; detail: string; parent: string | null }>) { this.questions.toolCalls = value; }
+  private set toolCalls(value: Map<string, { tool: string; detail: string; parent: string | null }>) { this.questions.toolCalls = value; }
   private get deniedFrames(): Map<string, { tool: string | null; reason: string }> { return this.questions.deniedFrames; }
   private set deniedFrames(value: Map<string, { tool: string | null; reason: string }>) { this.questions.deniedFrames = value; }
   private get deniedCalls(): Set<string> { return this.questions.deniedCalls; }
@@ -375,7 +349,7 @@ export class Bot {
   set deferred(turn: Turn | null) { this.turns.deferred = turn; }
   get finished(): Map<string, Status> { return this.turns.finished; }
   get draining() { return this.turns.draining; }
-  set draining(draining: TurnControl["draining"]) { this.turns.draining = draining; }
+  private set draining(draining: TurnControl["draining"]) { this.turns.draining = draining; }
   get ignoreResults(): number { return this.turns.ignoreResults; }
   set ignoreResults(count: number) { this.turns.ignoreResults = count; }
   get paused() { return this.turns.paused; }
@@ -511,7 +485,7 @@ export class Bot {
   // Turns in other chats (1.x's `groupTurn`, `post`, `keepCallIn`)
 
   get guestTurn() { return this.guests.guestTurn; }
-  set guestTurn(v: boolean) { this.guests.guestTurn = v; }
+  private set guestTurn(v: boolean) { this.guests.guestTurn = v; }
   /** The core is being swapped: no turn begins (hot-swap.ts). */
   get swapHold(): boolean { return this.restarts.swapHold; }
   set swapHold(v: boolean) { this.restarts.swapHold = v; }
@@ -570,8 +544,6 @@ export class Bot {
   /** Claude's app-managed workers (claude-workers.ts), made when first needed; they belong to this bot, not to its head process. */
   get claudeWorkerHost() { return this.workers.claudeWorkerHost; }
   set claudeWorkerHost(value: ClaudeWorkers | null) { this.workers.claudeWorkerHost = value; }
-  /** Answers worker approval cards through this member's worker host (the bot's approvals keep the head that asked; a worker's is its manager). */
-  private readonly workerApprovals = { running: true, answer: (requestId: string, allow: boolean, input: Record<string, unknown>, message?: string) => { this.workerHost?.answer(requestId, allow, input, message); } } as unknown as AgentHead;
 
   private get workerLedgerFile() { return this.workers.workerLedgerFile; }
   /** What each of its workers' ledger records last said (the registry's and the rows' state come from it). */
@@ -926,8 +898,6 @@ export class Bot {
   forgetReturnRoutes(handoffId?: string) { this.workers.forgetReturnRoutes(handoffId); }
 
   private afterTurn() { return this.headEvents.afterTurn(); }
-
-  private get deferredStartMs(): number { return this.options.deferredStartMs ?? 90_000; }
 
   clearUnbegun() { this.turns.clearUnbegun(); }
 

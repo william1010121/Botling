@@ -19,10 +19,9 @@ import { displayName, type Engine } from "../heads";
 import { CONTINUE_NOTE, type SwapEntry } from "../hot-swap";
 import { PLUGINS_RESTART, type AgentHead, type BotOptions, type Origin, type Turn } from "./types";
 import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from "../restart-continuation";
-import { newId, toSwiftDate, type ChatRecord } from "../store/records";
+import { newId, toSwiftDate } from "../store/records";
 import type { BotStore } from "../store/bot-store";
 import type { SubagentBook } from "../subagents";
-import type { WorkerLedgerRecord } from "../worker-core";
 
 export class BotRestart {
   constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
