@@ -164,9 +164,17 @@ export function createPushTransport(options: PushTransportOptions = {}): PushTra
       throw new Error("push refused: endpoint is not a public https URL");
     }
     const parsed = new URL(req.url);
-    const hostname = parsed.hostname.replace(/\.$/, "");
-
-    const resolved = await lookup(hostname);
+    const hostname = parsed.hostname.replace(/\.+$/, "");
+    // One deadline for the whole send (DNS, connect, TLS, headers): a socket idle timeout alone lets a hostile endpoint
+    // trickle bytes forever, and getaddrinfo has no timeout of its own.
+    const deadlineAt = Date.now() + req.timeoutMs;
+    let dnsTimer: NodeJS.Timeout | undefined;
+    const resolved = await Promise.race([
+      lookup(hostname),
+      new Promise<never>((_, reject) => {
+        dnsTimer = setTimeout(() => reject(new Error("push refused: endpoint lookup timed out")), req.timeoutMs);
+      }),
+    ]).finally(() => clearTimeout(dnsTimer));
     if (!resolved.length) {
       throw new Error("push refused: endpoint hostname resolved to no addresses");
     }
@@ -192,9 +200,11 @@ export function createPushTransport(options: PushTransportOptions = {}): PushTra
 
     return new Promise<PushHttpResponse>((resolve, reject) => {
       let settled = false;
+      let deadline: NodeJS.Timeout | undefined;
       const done = (fn: () => void) => {
         if (settled) return;
         settled = true;
+        clearTimeout(deadline);
         fn();
       };
 
@@ -202,11 +212,15 @@ export function createPushTransport(options: PushTransportOptions = {}): PushTra
         req.url,
         { method: "POST", headers: req.headers, lookup: pinnedLookup },
         (res) => {
-          res.resume();
-          res.on("end", () => done(() => resolve({ status: res.statusCode ?? 0 })));
-          res.on("error", (err) => done(() => reject(new Error(`push response failed: ${err.message}`))));
+          // Only the status matters: never read the body (no size or time it can grow to), drop the connection.
+          done(() => resolve({ status: res.statusCode ?? 0 }));
+          res.destroy();
         },
       );
+      deadline = setTimeout(() => {
+        clientReq.destroy(new Error("push request timed out"));
+        done(() => reject(new Error("push request timed out")));
+      }, Math.max(1, deadlineAt - Date.now()));
       clientReq.setTimeout(req.timeoutMs, () => {
         clientReq.destroy(new Error("push request timed out"));
       });

@@ -286,7 +286,8 @@ describe("M4-23 send-time SSRF guard", () => {
       req.setTimeout = () => {};
       req.destroy = () => {};
       req.end = () => {
-        const res = new EventEmitter() as EventEmitter & { statusCode: number; headers: Record<string, string>; resume(): void };
+        const res = new EventEmitter() as EventEmitter & { statusCode: number; headers: Record<string, string>; resume(): void; destroy(): void };
+        res.destroy = () => {};
         res.statusCode = 201;
         res.headers = {};
         res.resume = () => {};
@@ -308,6 +309,78 @@ describe("M4-23 send-time SSRF guard", () => {
     });
     expect(res.status).toBe(201);
     expect(pinnedLookupAddr).toBe("142.250.185.78");
+  });
+});
+
+describe("M4-23 review: send-time names, deadline and response handling", () => {
+  type FakeReq = EventEmitter & { end(b?: Uint8Array): void; destroy(e?: Error): void; setTimeout(ms: number, fn: () => void): void };
+  const body = new Uint8Array([1]);
+
+  it("refuses public-looking names that resolve to private addresses (nip.io, .lan, .corp, localhost.localdomain)", async () => {
+    const answers: Record<string, string> = {
+      "127.0.0.1.nip.io": "127.0.0.1", "printer.lan": "192.168.1.20", "intranet.corp": "10.1.2.3",
+      "localhost.localdomain": "::1", "meta.example": "::ffff:169.254.169.254", "tail.example": "100.100.1.1",
+    };
+    const asked: string[] = [];
+    let dialed = 0;
+    const transport = createPushTransport({
+      lookup: async (host) => { asked.push(host); return [{ address: answers[host] ?? "1.1.1.1", family: answers[host]?.includes(":") ? 6 : 4 }]; },
+      request: () => { dialed++; throw new Error("must not dial"); },
+    });
+    for (const host of Object.keys(answers)) {
+      await expect(transport({ url: `https://${host}/p`, headers: {}, body, timeoutMs: 1_000 }), host).rejects.toThrow(/private|non-public/i);
+    }
+    expect(asked).toEqual(Object.keys(answers)); // the schema let them through; the address check refused them
+    expect(dialed).toBe(0);
+  });
+
+  it("gives the pinned address on the single-answer lookup path too", async () => {
+    let got: unknown = null;
+    const transport = createPushTransport({
+      lookup: async () => [{ address: "2606:4700:4700::1111", family: 6 }],
+      request: ((_u: unknown, opts: { lookup: (h: string, o: unknown, cb: (...a: unknown[]) => void) => void }, cb?: (r: unknown) => void) => {
+        opts.lookup("push.example", {}, (...a) => { got = a; });
+        const req = new EventEmitter() as FakeReq;
+        req.setTimeout = () => {}; req.destroy = () => {};
+        req.end = () => cb?.({ statusCode: 201, destroy() {} });
+        return req;
+      }) as unknown as HttpsRequestFn,
+    });
+    expect((await transport({ url: "https://push.example/p", headers: {}, body, timeoutMs: 1_000 })).status).toBe(201);
+    expect(got).toEqual([null, "2606:4700:4700::1111", 6]);
+  });
+
+  it("ends a send that hangs in DNS, before headers, or while the body trickles, within the deadline", async () => {
+    const hangingDns = createPushTransport({ lookup: () => new Promise(() => {}), request: () => { throw new Error("must not dial"); } });
+    await expect(hangingDns({ url: "https://push.example/p", headers: {}, body, timeoutMs: 50 })).rejects.toThrow(/timed out/);
+
+    let destroyed = 0;
+    const silent = createPushTransport({
+      lookup: async () => [{ address: "1.1.1.1", family: 4 }],
+      request: (() => {
+        const req = new EventEmitter() as FakeReq;
+        req.setTimeout = () => {}; // an idle timer that never fires: only the overall deadline can end it
+        req.destroy = () => { destroyed++; };
+        req.end = () => {};
+        return req;
+      }) as unknown as HttpsRequestFn,
+    });
+    await expect(silent({ url: "https://push.example/p", headers: {}, body, timeoutMs: 50 })).rejects.toThrow(/timed out/);
+    expect(destroyed).toBeGreaterThan(0);
+
+    let resDestroyed = 0;
+    const trickle = createPushTransport({
+      lookup: async () => [{ address: "1.1.1.1", family: 4 }],
+      request: ((_u: unknown, _o: unknown, cb?: (r: unknown) => void) => {
+        const req = new EventEmitter() as FakeReq;
+        req.setTimeout = () => {}; req.destroy = () => {};
+        // headers arrive, the body never ends
+        req.end = () => cb?.(Object.assign(new EventEmitter(), { statusCode: 201, resume() {}, destroy() { resDestroyed++; } }));
+        return req;
+      }) as unknown as HttpsRequestFn,
+    });
+    expect((await trickle({ url: "https://push.example/p", headers: {}, body, timeoutMs: 1_000 })).status).toBe(201);
+    expect(resDestroyed).toBe(1);
   });
 });
 
