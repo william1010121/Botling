@@ -291,7 +291,9 @@ describe("20 swaps during the airplane script lose and double nothing", () => {
     // Nothing lost: every command has an outcome; nothing doubled: one outcome each, and the owner applied each command at most once.
     expect([...outcomes.keys()].sort()).toEqual([...submitted].sort());
     expect([...outcomes.values()].every((count) => count === 1)).toBe(true);
-    expect(page.link.pending().filter((item) => !item.lost)).toEqual([]);
+    // What the shell still lists are the ten refusals ("not sent: grant", kept to be read); nothing waits, nothing is held, nothing is lost.
+    expect(page.link.pending().filter((item) => item.state !== "not sent" || item.lost)).toEqual([]);
+    expect(page.link.pending().filter((item) => item.reason === "grant")).toHaveLength(10);
     expect(server.applied).toHaveLength(10);
     expect(new Set(server.applied.map((applied) => slotKey(applied.slot))).size).toBe(10);
     // The items of plugin a were placed once each (on its live instance: it never stopped running), with the hash they were written under.
@@ -416,6 +418,7 @@ describe("the window on a server switch", () => {
     const clock = new FakeClock();
     const serverA = new HotServer("srvA");
     const serverB = new HotServer("srvB");
+    answerRequests(serverB);
     const win = await openWindow(serverA, clock, fetcher(clock, 50));
     serverA.publish({ a: row(A(1)), b: row(B1) });
     await until(clock, () => false, 300);
