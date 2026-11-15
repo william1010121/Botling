@@ -1,0 +1,311 @@
+/* A plugin's block in the app page's own surface (Settings page, gear popover): as tall as its content, no frame of its own. */
+.plugin-slot-frame { display: block; width: 100%; border: 0; background: transparent; color-scheme: dark; }
+:root[data-theme="light"] .plugin-slot-frame { color-scheme: light; }
+/* The two numbers on a bot row (blue unread, orange needs you) and the Idle corner button: a 20 pt clock at the
+   row's top-right corner while the pointer is on it (the settle clock's icon); in Idle, a back arrow. The pin
+   moves under it, and the numbers move down so the two never overlap. */
+.bot-counts { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.bot-idle {
+  position: absolute; right: 6px; top: 4px; width: 20px; height: 20px; border: 0; border-radius: 6px; background: var(--chip); color: var(--text);
+  display: none; align-items: center; justify-content: center; padding: 0; cursor: pointer; -webkit-app-region: no-drag;
+}
+.bot-row-wrap.idleable:hover .bot-idle, .bot-idle:focus-visible, .bot-row-wrap.idleable:focus-within .bot-idle { display: inline-flex; }
+.bot-row-wrap.idleable .bot-pin { top: auto; bottom: 4px; right: 6px; width: 20px; height: 20px; }
+.bot-row-wrap.idleable:hover .bot-row { padding-right: 32px; }
+.bot-row-wrap.idleable:hover .bot-counts { margin-top: 14px; }
+/* Idle: the collapsed group at the bottom of the bots (30 pt, as a subagent row), its bots as normal rows when open. */
+.rail-idle { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; border-top: 1px solid var(--line); padding-top: 2px; }
+.rail-idle-row {
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 0; border-radius: 10px; background: none;
+  color: var(--faint); font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; -webkit-app-region: no-drag;
+}
+.rail-idle-row:hover { background: var(--hover); color: var(--text); }
+.rail-idle-count { font-weight: 500; }
+.rail-idle-chevron, .rail-peek-chevron { display: inline-flex; transform: rotate(180deg); transition: transform .12s; }
+.rail-idle-chevron.open, .rail-peek-chevron.open { transform: rotate(270deg); }
+/* A bot's status card beside the column (PeekCard), drawn as the folded column's peek. */
+.rail-peek {
+  position: fixed; z-index: 40; width: 276px; max-height: calc(100vh - 16px); overflow-y: auto; scrollbar-width: none; padding: 8px;
+  background: var(--bubble); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px rgb(0 0 0 / calc(0.5 * var(--shade, 1)));
+  display: flex; flex-direction: column; gap: 4px; -webkit-app-region: no-drag;
+}
+.rail-peek-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 2px 4px 4px; }
+.rail-peek-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-peek-count { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.rail-peek-row { display: flex; align-items: center; border-radius: 6px; }
+.rail-peek-row:hover, .rail-peek-row.open { background: var(--hover); }
+.rail-peek-row:hover .subagent-more-menu, .rail-peek-row .subagent-more-menu:focus-visible { display: inline-flex; }
+.rail-peek-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 6px; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; }
+.rail-peek-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.rail-peek-title { display: flex; align-items: center; font-size: 13px; min-width: 0; }
+.rail-peek-doing { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-peek-doing.waiting { color: var(--orange); }
+.rail-peek-time { font-size: 11px; color: var(--faint); flex-shrink: 0; }
+.peek-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--faint); }
+.peek-dot.running { background: var(--blue); }
+.peek-dot.waiting { background: var(--orange); }
+.rail-peek-agents { display: flex; flex-direction: column; margin: 0 0 2px 10px; padding-left: 8px; border-left: 1px solid var(--selected); }
+.rail-peek-agent { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 0 6px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12px; text-align: left; cursor: pointer; }
+.rail-peek-agent:hover, .rail-peek-agent:focus-visible { background: var(--hover); color: var(--text); }
+.rail-peek-state { font-size: 11px; flex-shrink: 0; color: var(--faint); }
+.rail-peek-state.running { color: var(--blue); }
+.rail-peek-none { font-size: 11px; color: var(--faint); padding: 4px 6px; }
+.rail-peek-group { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px; border: 0; border-radius: 6px; background: none; color: var(--faint); font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; }
+.rail-peek-group:hover, .rail-peek-group:focus-visible { background: var(--hover); color: var(--text); }
+.rail-peek-group-count { margin-left: auto; font-weight: 500; }
+.rail-peek-link { align-self: flex-start; border: 0; background: none; padding: 4px 6px; border-radius: 6px; color: var(--blue); font-size: 12px; cursor: pointer; }
+.rail-peek-link:hover, .rail-peek-link:focus-visible { background: var(--hover); }
+/* The light look (data-theme="light", Settings → Appearance → App) for what has no token. */
+:root[data-theme="light"] .badge.waiting { color: #fff; }
+
+/* Navigation v5, part 2: the "<owner>'s workers" badge on the right of the Chat / Board bar and its menu (the room's
+   workers by owner). A worker opens in the main area, read only, with "Ask <owner>" under it (Workers.tsx). */
+.board-switch-bar { position: relative; }
+/* The transform makes the slot a stacking context, so .wk-menu's z-index only counts inside it: the slot itself sits at the
+   menus' level, or the native chat's placeholder (#chat-frame, positioned and opaque, later in the page) paints over the menu. */
+.workers-badge-slot { position: absolute; right: 16px; top: 50%; transform: translateY(calc(-50% + 2px)); display: flex; z-index: 40; }
+.workers-badge { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--soft-text); font-size: 12.5px; white-space: nowrap; cursor: pointer; -webkit-app-region: no-drag; }
+.workers-badge b { color: var(--text); font-weight: 600; }
+.workers-badge .cnt { font-weight: 600; font-variant-numeric: tabular-nums; }
+.workers-badge:hover { background: var(--hover); }
+.workers-badge.on { background: var(--accent-bg); box-shadow: 0 0 0 1.5px var(--blue); }
+.workers-badge[data-tone="failed"] .cnt { color: var(--error); }
+.workers-badge[data-tone="today"] { color: var(--muted); }
+.workers-badge[data-tone="today"] b { color: var(--muted); }
+.workers-badge:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+
+.wk-list { display: flex; flex-direction: column; overflow-y: auto; scrollbar-width: none; flex: 1; min-height: 0; padding-bottom: 12px; }
+.wk-owner { display: flex; align-items: center; gap: 7px; padding: 10px 12px 4px; font-size: 12px; font-weight: 700; color: var(--text); border: 0; background: transparent; text-align: left; width: 100%; }
+button.wk-owner { cursor: pointer; border-radius: 8px; margin: 0 4px; width: calc(100% - 8px); padding: 8px 8px; }
+button.wk-owner:hover { background: var(--hover); }
+.wk-mu { font-weight: 400; color: var(--muted); }
+.wk-gap { flex: 1; }
+.wk-sq { width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: var(--text); background: var(--raised); }
+.wk-sq.root { border-radius: 50%; background: color-mix(in srgb, var(--green) 30%, var(--raised)); }
+.wk-sum { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.wk-sum.running { color: var(--link); }
+.wk-sum.failed { color: var(--error); }
+.wk-rule { border-top: 1px solid var(--line); margin: 8px 0 2px; }
+.wk-sec { font-size: 10.5px; font-weight: 700; color: var(--muted); padding: 8px 14px 2px; letter-spacing: .04em; text-transform: uppercase; }
+.wk-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin: 0 4px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: 12.5px; text-align: left; width: calc(100% - 8px); cursor: pointer; }
+.wk-row:hover { background: var(--hover); }
+.wk-row:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.wk-nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.wk-nt { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.wk-row[data-status="failed"] .wk-nt { color: var(--error); }
+.wk-tm { font-size: 11px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wk-more { margin: 2px 4px; padding: 6px 10px 6px 30px; border: 0; border-radius: 8px; background: transparent; color: var(--faint); font-size: 11.5px; text-align: left; cursor: pointer; }
+.wk-more:hover { background: var(--hover); color: var(--text); }
+.wk-empty { margin: 10px 12px; padding: 18px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bubble); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; font-size: 12px; color: var(--muted); }
+.wk-empty b { color: var(--text); font-size: 13px; }
+
+.wk-s { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 800; color: #fff; line-height: 1; }
+.wk-s.running { border: 2px solid var(--blue); border-right-color: var(--accent-line); animation: wk-spin 1s linear infinite; }
+.wk-s.completed { background: var(--green); }
+.wk-s.failed { background: var(--error); color: #1A0E0D; }
+.wk-s.stopped { background: var(--faint); }
+@keyframes wk-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .wk-s.running { animation: none; } }
+:root[data-theme="light"] .wk-s.failed { color: #fff; }
+.wk-e { font-size: 9.5px; font-weight: 700; border-radius: 4px; padding: 0 4px; line-height: 14px; flex-shrink: 0; }
+.wk-e.claude { color: var(--claude); background: color-mix(in srgb, var(--claude) 16%, transparent); }
+.wk-e.codex { color: var(--codex); background: color-mix(in srgb, var(--codex) 16%, transparent); }
+.wk-e.agy { color: #3FB8A8; background: color-mix(in srgb, #3FB8A8 16%, transparent); }
+
+.wk-ro { font-size: 9.5px; color: var(--muted); border: 1px dashed var(--strong-line); border-radius: 4px; padding: 0 4px; line-height: 14px; white-space: nowrap; }
+.wk-fc { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wk-lf { border-top: 1px solid var(--line); padding: 10px 14px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.wk-hint { white-space: normal; line-height: 1.35; }
+@media (max-width: 860px) { .workers-badge-slot { right: 8px; } }
+/* The badge's menu: the workers list under the badge (a row opens the worker in the main area). */
+.wk-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; width: 380px; max-width: calc(100vw - 32px); max-height: calc(100vh - 140px); display: flex; flex-direction: column; overflow: hidden; padding: 4px 0; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 14px 36px rgb(0 0 0 / calc(0.4 * var(--shade, 1))); animation: sbn-in 120ms ease-out; text-align: left; -webkit-app-region: no-drag; }
+.wk-menu .wk-list { padding-bottom: 4px; }
+/* Under a worker watched in the main area: read only, its files, "Ask <owner>". */
+.wk-askbar { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding: 8px 16px 10px; }
+.wk-askbar .wk-lf { border-top: 0; padding: 0; }
+.wk-ro { font-size: 9.5px; color: var(--muted); border: 1px dashed var(--strong-line); border-radius: 4px; padding: 0 4px; line-height: 14px; white-space: nowrap; }
+.wk-files { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wk-lab { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.wk-askbar .wk-fc { max-width: 260px; border: 0; border-radius: 6px; padding: 2px 7px; background: var(--chip); color: var(--soft-text); cursor: default; }
+.wk-askbar button.wk-fc { color: var(--link); cursor: pointer; }
+.wk-askbar button.wk-fc:hover { background: var(--hover-strong); color: var(--text); }
+.wk-ask { margin-left: auto; border: 0; background: var(--blue); color: #fff; border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.wk-ask:disabled { opacity: .45; cursor: default; }
+/* Navigation v5, sub bots (SubBotNav.tsx): "Sub bots · N ▾" left of Chat | Board, its menu, and inside a
+   sub bot the breadcrumb "‹ botling / Release ▾". The switch stays in the middle; the workers' badge (.workers-badge-slot) sits at the right.
+   With no sub bots the bar looks as before. Colours are the tokens (dark by default, data-theme="light"). */
+.board-switch-bar > .board-switch { grid-column: 2; }
+.board-switch-left { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.sbn-anchor { position: relative; display: inline-flex; align-items: center; gap: 6px; min-width: 0; -webkit-app-region: no-drag; }
+.sbn-button { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px 0 8px; border: 0; border-radius: 8px; background: var(--card); color: var(--text); box-shadow: 0 0 0 1px var(--border); font-size: 12.5px; white-space: nowrap; cursor: pointer; transition: box-shadow 120ms ease-out; }
+.sbn-button:hover { background: var(--chip); }
+.sbn-button.on { background: var(--accent-bg); box-shadow: 0 0 0 1.5px var(--blue); }
+.sbn-button.flash { box-shadow: 0 0 0 2px var(--blue); }
+.sbn-button:focus-visible, .sbn-back:focus-visible, .sbn-current:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--blue); }
+.sbn-caret { color: var(--muted); font-weight: 400; }
+.sbn-split { display: inline-flex; gap: 2px; }
+.sbn-split-name { border-radius: 8px 0 0 8px; }
+.sbn-split-caret { border-radius: 0 8px 8px 0; padding: 0 7px; color: var(--muted); }
+.sbn-stack { display: inline-flex; align-items: center; }
+.sbn-stack .sbn-face { box-shadow: 0 0 0 1.5px var(--card); }
+.sbn-stack .sbn-face + .sbn-face { margin-left: -5px; }
+.sbn-face { width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0; position: relative; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #FFF; background: #6A5A8A; }
+.sbn-face[data-tint="0"] { background: #8A5A45; }
+.sbn-face[data-tint="1"] { background: #6A5A8A; }
+.sbn-face[data-tint="2"] { background: #45658A; }
+.sbn-face[data-tint="3"] { background: #8A6A2A; }
+.sbn-face[data-tint="4"] { background: #8A4E6A; }
+.sbn-face[data-tint="5"] { background: #4E6B3A; }
+.sbn-face.parent { border-radius: 50%; background: #4E6B3A; }
+:root[data-theme="light"] .sbn-face { color: var(--text); }
+:root[data-theme="light"] .sbn-face[data-tint="0"] { background: #F6D9C6; }
+:root[data-theme="light"] .sbn-face[data-tint="1"] { background: #E7DDF6; }
+:root[data-theme="light"] .sbn-face[data-tint="2"] { background: #D8E9F7; }
+:root[data-theme="light"] .sbn-face[data-tint="3"] { background: #FBE6B5; }
+:root[data-theme="light"] .sbn-face[data-tint="4"] { background: #F3D6E4; }
+:root[data-theme="light"] .sbn-face[data-tint="5"] { background: #DCEFD9; }
+:root[data-theme="light"] .sbn-face.parent { background: #CFE8B8; }
+.sbn-dot { position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--card); box-sizing: content-box; background: #A0A0A8; }
+.sbn-dot[data-dot="working"] { background: var(--blue); }
+.sbn-dot[data-dot="new"] { background: var(--green); }
+.sbn-dot[data-dot="asks"] { background: var(--orange); }
+.sbn-dot[data-dot="error"] { background: var(--error); }
+.sbn-pill { font-size: 10.5px; font-weight: 700; border-radius: 999px; padding: 1px 7px; white-space: nowrap; line-height: 1.5; }
+.sbn-pill[data-kind="new"] { color: var(--green); background: var(--done-bg); }
+.sbn-pill[data-kind="asks"] { color: var(--orange-text); background: var(--waiting-bg); }
+.sbn-pill[data-kind="error"] { color: var(--error); background: var(--stale-bg); }
+.sbn-alert { width: 10px; height: 10px; border-radius: 50%; background: var(--error); color: #FFF; font-size: 8px; font-weight: 800; line-height: 1; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.sbn-time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sbn-forward { margin-left: 2px; }
+/* Inside a sub bot: ‹ botling / [R] Release ▾ */
+.sbn-crumb { gap: 2px; font-size: 12.5px; white-space: nowrap; }
+.sbn-back { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+.sbn-back:hover { background: var(--chip); color: var(--text); }
+.sbn-unread { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); flex-shrink: 0; }
+.sbn-sep { color: var(--muted); }
+.sbn-current { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; border: 0; border-radius: 8px; background: var(--card); color: var(--text); box-shadow: 0 0 0 1px var(--border); font-size: 12.5px; font-weight: 600; cursor: pointer; min-width: 0; }
+.sbn-current:hover { background: var(--chip); }
+.sbn-current.on { background: var(--accent-bg); box-shadow: 0 0 0 1.5px var(--blue); }
+/* The menu: drops from the button (120 ms fade + 4 px), 420 px, scrolls when the window is short. */
+.sbn-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 420px; max-height: calc(100vh - 140px); display: flex; flex-direction: column; overflow: hidden; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 14px 36px rgb(0 0 0 / calc(0.4 * var(--shade, 1))); animation: sbn-in 120ms ease-out; text-align: left; }
+@keyframes sbn-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.sbn-list { overflow-y: auto; padding-bottom: 4px; }
+.sbn-head { font-size: 10.5px; font-weight: 700; color: var(--muted); padding: 9px 12px 3px; letter-spacing: .04em; text-transform: uppercase; }
+.sbn-row { display: flex; align-items: flex-start; gap: 9px; padding: 7px 10px; margin: 0 4px; width: calc(100% - 8px); border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: 12.5px; text-align: left; cursor: pointer; box-sizing: border-box; }
+.sbn-row:hover { background: var(--chip); }
+.sbn-row:focus-visible { outline: none; background: var(--chip); box-shadow: inset 2px 0 0 var(--blue); }
+.sbn-row.current { background: var(--accent-bg); }
+.sbn-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.sbn-line1 { display: flex; align-items: center; gap: 7px; }
+.sbn-line1 .sbn-time, .sbn-check { margin-left: auto; }
+.sbn-check { color: var(--link); }
+.sbn-purpose { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sbn-status { font-size: 11.5px; color: var(--soft-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; }
+.sbn-spin { width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--blue); border-right-color: var(--active); flex-shrink: 0; }
+.sbn-search { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; margin: 8px 8px 2px; border: 1.5px solid var(--blue); border-radius: 8px; font-size: 12.5px; color: var(--muted); flex-shrink: 0; }
+.sbn-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; padding: 0; }
+.sbn-empty { padding: 10px 12px; font-size: 12.5px; color: var(--text); display: flex; flex-direction: column; gap: 2px; }
+.sbn-empty span { font-size: 11.5px; color: var(--muted); }
+.sbn-foot { border-top: 1px solid var(--line); padding: 8px 12px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); flex-shrink: 0; }
+.sbn-keys { margin-left: auto; }
+.sbn-foot kbd { font: inherit; font-size: 10.5px; border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; color: var(--soft-text); background: var(--ground); white-space: nowrap; }
+/* Navigation v5, part 3: ☆ Pin on hover, the Pinned section's ⋮⋮ drag handle, the footer's actions, New sub bot. */
+.sbn-item { position: relative; }
+.sbn-item.drop::before { content: ""; position: absolute; left: 12px; right: 12px; top: -1px; height: 2px; border-radius: 1px; background: var(--blue); }
+.sbn-pin { position: absolute; top: 5px; right: 12px; height: 20px; padding: 0 7px; border: 0; border-radius: 6px; background: var(--card); color: var(--muted); box-shadow: 0 0 0 1px var(--border); font-size: 11px; white-space: nowrap; cursor: pointer; opacity: 0; }
+.sbn-pin.on { color: var(--link); }
+.sbn-item:hover .sbn-pin, .sbn-item:focus-within .sbn-pin, .sbn-pin:focus-visible { opacity: 1; }
+.sbn-item:hover .sbn-line1 > :last-child:not(b) { visibility: hidden; }
+.sbn-pin:hover { color: var(--text); background: var(--chip); }
+.sbn-pin:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--blue); }
+.sbn-handle { position: absolute; left: 0; top: 10px; width: 8px; color: var(--muted); font-size: 10px; letter-spacing: -2px; line-height: 1; cursor: grab; opacity: 0; }
+.sbn-row { position: relative; }
+.sbn-item:hover .sbn-handle { opacity: 1; }
+.sbn-act { border: 0; padding: 0; background: none; color: var(--link); font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.sbn-act:hover { text-decoration: underline; }
+.sbn-act:focus-visible { outline: none; text-decoration: underline; }
+.sbn-archive { color: var(--muted); font-weight: 400; }
+.sbn-new { border-top: 1px solid var(--line); padding: 2px 12px 10px; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; flex-shrink: 0; }
+.sbn-new .sbn-head { padding: 9px 0 0; }
+.sbn-list:empty { display: none; }
+.sbn-list:empty + .sbn-new { border-top: 0; padding-top: 4px; }
+.sbn-new input, .sbn-new textarea { background: var(--ground); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; font: inherit; font-size: 13px; resize: none; }
+.sbn-new input:focus, .sbn-new textarea:focus { outline: none; border-color: rgba(76, 141, 255, 0.6); }
+.sbn-new-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.sbn-new-actions .sbn-time { margin-right: auto; }
+.sbn-error { color: var(--error); font-size: 12px; }
+/* No sub bots yet: the place stays empty (the header as before) until hovered or opened. */
+.sbn-add { color: var(--muted); background: transparent; box-shadow: 0 0 0 1px var(--line); padding: 0 10px; opacity: 0; }
+.board-switch-bar:hover .sbn-add, .sbn-add:focus-visible, .sbn-add.on { opacity: 1; }
+.sbn-empty-slot .sbn-menu { width: 340px; }
+/* The title inside a sub bot: [R] Release  sub bot of botling */
+.chat-title .sbn-face { width: 20px; height: 20px; margin-right: 6px; vertical-align: -5px; }
+.chat-sub-of { font-weight: 400; color: var(--muted); margin-left: 8px; }
+.chat-sub-of .chat-parent { opacity: 1; }
+/* The left column: the project bot's row while one of its sub bots is on screen. */
+.bot-inside { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+/* Narrow chat area (its own width, not the window's): words fold first, the entry stays where it is. */
+@container chatbar (max-width: 999px) {
+  .sbn-button .sbn-word, .sbn-anchor > .sbn-pill, .sbn-forward { display: none; }
+}
+@container chatbar (max-width: 759px) {
+  .sbn-crumb .sbn-word, .sbn-split-name .sbn-word { display: none; }
+  .sbn-menu { width: calc(100cqw - 32px); }
+  .sbn-menu .sbn-purpose { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sbn-menu { animation: sbn-fade 120ms ease-out; }
+  /* The coming-back ring stays still for 1.2 s (App: flashMs) instead of fading in and out. */
+  .sbn-button, .sbn-button.flash { transition: none; }
+}
+@keyframes sbn-fade { from { opacity: 0; } to { opacity: 1; } }
+button.wk-fc:hover { text-decoration: underline; }
+.wk-ask:disabled { opacity: .45; cursor: default; }
+.workers-badge .cnt-short { display: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+@container chatbar (max-width: 700px) {
+  .workers-badge b, .workers-badge .cnt, .workers-badge .wk-mu { display: none; }
+  .workers-badge .cnt-short { display: inline; }
+  .workers-badge[data-tone="failed"] .cnt-short { color: var(--error); }
+}
+.task-details-sheet > .detail-panel.workers-panel { padding: 16px 0 0; }
+.task-details-sheet > .detail-panel.workers-panel .panel-tabs, .task-details-sheet > .detail-panel .panel-tabs { margin-top: 0; }
+
+/* The in-app browser pane beside the chat (BrowserPane.tsx; design "Botling in-app browser" v4). The web page is a
+   native view main lays over `.bp-page`; nothing here may sit on that box. */
+.browser-pane { position: relative; flex: 0 1 var(--browser-w, 50%); min-width: 320px; display: flex; flex-direction: column; background: var(--side); border-left: 1px solid var(--line); }
+.browser-pane.full { flex: 1 1 auto; border-left: 0; }
+.shell.browser-on:not(.browser-full) > .chat-pane { min-width: 360px; }
+/* The page (a native view over .bp-page) starts past the divider's grab strip, so the divider is never under it. */
+.browser-pane:not(.full) > .bp-body { padding-left: 6px; }
+.bp-tabs { height: 40px; flex-shrink: 0; display: flex; align-items: flex-end; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--line); }
+.browser-pane.full .bp-tabs { padding-left: 84px; align-items: center; padding-top: 0; }
+.bp-tab { height: 32px; min-width: 0; flex: 0 1 230px; display: flex; align-items: center; gap: 7px; padding: 0 6px 0 10px; border-radius: 9px 9px 0 0; color: var(--muted); font-size: 12.5px; cursor: default; -webkit-app-region: no-drag; }
+.browser-pane.full .bp-tab { align-self: flex-end; }
+.bp-tab:hover { color: var(--text); }
+.bp-tab.on { background: var(--ground); color: var(--text); }
+.bp-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+/* A PDF dragged over the tab strip, the toolbar or an empty pane (it opens in a tab, browser-pdf.ts). */
+.browser-pane.dropping .bp-tabs { box-shadow: inset 0 -2px 0 var(--blue); }
+.browser-pane.dropping .bp-page { outline: 2px dashed var(--blue); outline-offset: -6px; }
+.bp-tab-icon { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; object-fit: contain; }
+.bp-tab-letter { display: inline-flex; align-items: center; justify-content: center; background: var(--chip); color: var(--muted); font-size: 9px; font-weight: 700; }
+.bp-tab-spinner { width: 12px; height: 12px; margin: 1px; flex-shrink: 0; border-radius: 50%; border: 1.6px solid var(--chip); border-top-color: var(--blue); animation: bp-spin 0.8s linear infinite; }
+@keyframes bp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bp-tab-spinner { animation-duration: 2.4s; } }
+.bp-tab-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bp-tab-close { width: 18px; height: 18px; flex-shrink: 0; border: 0; border-radius: 5px; background: transparent; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; opacity: 0; cursor: pointer; padding: 0; }
+.bp-tab:hover .bp-tab-close, .bp-tab.on .bp-tab-close, .bp-tab-close:focus-visible { opacity: 1; }
+.bp-tab-close:hover { background: var(--hover); color: var(--text); }
+.bp-new { width: 28px; height: 28px; margin-bottom: 2px; flex-shrink: 0; border: 0; border-radius: 7px; background: transparent; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; -webkit-app-region: no-drag; }
+.bp-new:hover { background: var(--hover); color: var(--text); }
+.bp-gap { flex: 1; }
+.bp-exit { height: 26px; margin-bottom: 7px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font-size: 12px; cursor: pointer; -webkit-app-region: no-drag; flex-shrink: 0; }
+.bp-exit:hover { color: var(--text); }
+.bp-bubble { position: relative; width: 34px; height: 34px; margin: 0 2px 3px 8px; flex-shrink: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--bubble); display: inline-flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; -webkit-app-region: no-drag; }
+.bp-bubble.on { background: var(--selected); }
+.bp-bubble img { width: 24px; height: 24px; }
+.bp-bubble-dot { position: absolute; right: 0; bottom: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); border: 2px solid var(--bubble); }
+.bp-bubble-dot[data-status="working"] { background: var(--blue); }
+.bp-bubble-dot[data-status="waiting"] { background: var(--orange); }
+.bp-bubble-badge { position: absolute; right: -6px; top: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--blue); color: #fff; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }

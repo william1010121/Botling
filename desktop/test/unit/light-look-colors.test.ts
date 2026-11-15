@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readChatCss } from "../../../Web/test/helpers/chat-css";
+import { readStylesCss } from "./helpers/styles-css";
 
 const desktop = join(__dirname, "../..");
 const repo = join(desktop, "..");
@@ -101,7 +102,7 @@ describe("the light look: no dark colours written into the app's stylesheets", (
 
   for (const path of sheets) {
     it(path, () => {
-      const css = path === "Web/src/chat.css" ? readChatCss() : readFileSync(join(repo, path), "utf8");
+      const css = path === "Web/src/chat.css" ? readChatCss() : path === "desktop/src/renderer/styles.css" ? readStylesCss() : readFileSync(join(repo, path), "utf8");
       const found = darkColours(css).filter(({ selector }) => !selector.split(",").some((one) => `${path}: ${one.trim()}` in allowed));
       expect(found, `${relative(repo, join(repo, path))}: use a token from Web/src/tokens.css (or the file's own :root variables with a light value), or --shade for black shadows`).toEqual([]);
     });

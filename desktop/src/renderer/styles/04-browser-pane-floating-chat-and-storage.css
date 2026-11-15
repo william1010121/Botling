@@ -1,0 +1,298 @@
+/* The top strip: a grip while the toolbar hides, the toolbar row while it shows (the page moves down under it). */
+.bp-top { flex-shrink: 0; }
+.bp-edge { height: 8px; display: flex; justify-content: center; align-items: center; background: var(--ground); }
+.bp-grip { width: 40px; height: 4px; border-radius: 2px; background: var(--chip); }
+.bp-edge:hover .bp-grip { background: var(--faint); }
+.bp-toolbar-row { height: 46px; padding: 6px 12px; background: var(--ground); }
+.bp-toolbar { height: 34px; display: flex; align-items: center; gap: 4px; padding: 2px; border-radius: 999px; background: var(--popover); border: 1px solid var(--border); box-shadow: 0 10px 30px rgb(0 0 0 / calc(0.3 * var(--shade, 1))); }
+.bp-round { width: 30px; height: 30px; flex-shrink: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.bp-round:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+.bp-round:disabled { opacity: 0.4; cursor: default; }
+.bp-round.on { background: var(--selected); color: var(--text); }
+.bp-round:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.bp-url { position: relative; flex: 1 1 160px; min-width: 0; height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border-radius: 15px; background: var(--chip); font-size: 13px; cursor: text; }
+.bp-url-lock { color: var(--faint); display: inline-flex; flex-shrink: 0; }
+.bp-url input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; padding: 0; }
+.bp-url input::placeholder { color: var(--faint); }
+.bp-url:focus-within { box-shadow: 0 0 0 2px var(--accent-line, var(--blue)); }
+.bp-url-shown { position: absolute; left: 31px; right: 12px; top: 0; bottom: 0; display: flex; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--faint); pointer-events: none; }
+.bp-url-shown b { color: var(--text); font-weight: 400; }
+.bp-body { flex: 1; min-height: 0; display: flex; }
+.bp-page { position: relative; flex: 1; min-width: 0; background: var(--ground); display: flex; align-items: center; justify-content: center; }
+.bp-page-hint { color: var(--faint); font-size: 12.5px; }
+.bp-page-empty { max-width: 320px; padding: 0 16px; text-align: center; line-height: 1.5; }
+.bp-sheet { width: 272px; flex-shrink: 0; background: var(--side); border-left: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 14px; font-size: 13px; }
+.bp-sheet-head { display: flex; align-items: center; gap: 8px; }
+.bp-sheet-head span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.bp-sheet-head button { width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.bp-sheet-head button:hover { background: var(--hover); color: var(--text); }
+.bp-sheet-empty { margin: 0; padding: 12px; border-radius: 12px; background: var(--bubble); color: var(--muted); }
+.bp-round { position: relative; }
+.bp-round-badge { position: absolute; right: -1px; top: -1px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--blue); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 14px; text-align: center; pointer-events: none; }
+.bp-plugin-letter { font-size: 12px; font-weight: 700; line-height: 1; }
+.bp-tools { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.bp-tool { padding: 12px; border-radius: 12px; background: var(--bubble); display: flex; flex-direction: column; gap: 10px; }
+.bp-tool.off .bp-tool-name { color: var(--muted); }
+.bp-tool-toggle { padding: 0 12px; gap: 0; }
+.bp-tool-toggle .bp-tool-row { height: 44px; }
+.bp-tool-toggle .bp-tool-status { padding-bottom: 10px; }
+.bp-tool-row { display: flex; align-items: center; gap: 10px; }
+.bp-tool-name { flex: 1; min-width: 0; font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-tool-toggle .bp-tool-name { font-weight: 400; font-size: 13px; }
+.bp-tool-about { margin-top: -4px; font-size: 12px; color: var(--faint); }
+.bp-switch { position: relative; width: 28px; height: 16px; flex-shrink: 0; border: 0; border-radius: 8px; background: var(--chip); padding: 0; cursor: pointer; transition: background 0.15s; }
+.bp-switch span { position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left 0.15s; }
+.bp-switch.on { background: var(--blue); }
+.bp-switch.on span { left: 14px; }
+.bp-switch:disabled { opacity: 0.5; cursor: default; }
+.bp-switch:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .bp-switch, .bp-switch span { transition: none; } }
+.bp-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+.bp-field-label { color: var(--faint); }
+.bp-field-check { flex-direction: row; align-items: center; gap: 7px; color: var(--text); font-size: 12.5px; }
+.bp-field-check input { accent-color: var(--blue); margin: 0; }
+.bp-field-text { height: 28px; padding: 0 9px; border: 1px solid var(--chip); border-radius: 8px; background: var(--ground); color: var(--text); font: inherit; font-size: 12.5px; outline: 0; }
+.bp-field-text:focus { border-color: var(--blue); }
+.bp-segments { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--chip); border-radius: 9px; background: var(--ground); }
+.bp-segments button { flex: 1; min-width: 0; height: 24px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-segments button.on { background: var(--selected); color: var(--text); }
+.bp-segments button:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
+.bp-tool-run { height: 32px; border: 0; border-radius: 9px; background: var(--blue); color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.bp-tool-run:disabled { opacity: 0.6; cursor: default; }
+.bp-tool-run:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.bp-tool-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
+.bp-tool-status.failed { color: var(--error); }
+.bp-tool-problems { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; }
+.bp-tool-problems > span:first-child { font-weight: 600; }
+.bp-tool-problems b { color: var(--muted); font-weight: 600; }
+.bp-tool-request { flex-shrink: 0; display: flex; flex-direction: column; gap: 5px; font-size: 12px; margin-bottom: -6px; }
+.bp-tool-request-text { height: auto; min-height: 60px; max-height: 160px; padding: 6px 9px; line-height: 1.4; resize: vertical; }
+.bp-tool-request-text::placeholder { color: var(--faint); }
+.bp-tool-request-text:disabled { opacity: 0.6; }
+.bp-tool-ask { flex-shrink: 0; min-height: 36px; padding: 6px 10px; border: 1px dashed var(--border); border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.bp-tool-ask:hover:not(:disabled) { color: var(--text); border-color: var(--faint); }
+.bp-tool-ask:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+/* Full screen: only the pane, and the chat docked at its right when the bubble opens it. */
+.shell.browser-full > .rail, .shell.browser-full > .rail-strip, .shell.browser-full > .detail-panel, .shell.browser-full > .right-strip,
+.shell.browser-full > .takeover-panel, .shell.browser-full .right-toggle, .shell.browser-full .task-details-entry { display: none; }
+.shell.browser-full:not(.browser-mini) > .chat-pane { display: none; }
+.shell.browser-mini > .chat-pane { order: 2; flex: 0 0 380px; border-left: 1px solid var(--line); }
+.shell.browser-mini > .chat-pane .board-switch-bar { display: none; }
+
+/* A bot reading a browser tab (phase 2): its face and a quiet word in the tab. */
+.bp-tab-reading { display: inline-flex; align-items: center; gap: 3px; flex: none; font-size: 10px; color: var(--muted); }
+.bp-tab-reading img { width: 12px; height: 12px; border-radius: 50%; }
+
+/* The dividers between the window's columns (ColumnDivider.tsx, column-resize.ts): a zero-width flex child on the
+   boundary whose grab strip (::before, HANDLE = 6px plus the 1px border) reaches into its own column only, never over
+   the native chat (#chat-frame) or the browser's page (.bp-page, inset by the same 6px). A thin blue line on hover. */
+.col-handle { position: relative; flex: none; width: 0; align-self: stretch; z-index: 6; cursor: col-resize; -webkit-app-region: no-drag; outline: none; touch-action: none; }
+.col-handle::before { content: ""; position: absolute; top: 0; bottom: 0; width: 7px; cursor: col-resize; -webkit-app-region: no-drag; }
+.col-handle[data-side="left"]::before { right: 0; }
+.col-handle[data-side="right"]::before { left: 0; }
+.col-handle::after { content: ""; position: absolute; top: 0; bottom: 0; width: 2px; background: var(--blue); opacity: 0; transition: opacity 120ms ease-out; pointer-events: none; }
+.col-handle[data-side="left"]::after { right: 0; }
+.col-handle[data-side="right"]::after { left: 0; }
+.col-handle:hover::after, .col-handle.dragging::after, .col-handle:focus-visible::after { opacity: 1; transition-delay: 80ms; }
+.col-handle.dragging::after { transition-delay: 0s; }
+html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-select: none !important; }
+.shell.browser-full > .col-handle { display: none; }
+/* The Note's chat divider reaches into the Note (a frame of this page), never over the native chat on its right. */
+.col-handle[data-column="noteChat"]::before, .col-handle[data-column="noteChat"]::after { left: auto; right: 0; }
+@media (max-width: 860px) { .shell > .col-handle[data-column="right"] { display: none; } }
+@media (prefers-reduced-motion: reduce) { .col-handle::after { transition: none; } }
+
+/* The worker list under a bot row (RailWorkers.tsx): each worker a 2-line item, 26 pt in,
+   its name over its state and time (no blue dot: the bot row's count is where news shows); the settle clock on a
+   finished one; a sub bot's worker has its sub bot's tag before its state. The bot row's count (a pill at its end)
+   folds the list. Marks as the workers menu's (.wk-s). */
+.bot-row-wrap.has-workers .bot-row { padding-right: 64px; }
+.bot-row-wrap.has-workers.idleable:hover .bot-row, .bot-row-wrap.has-workers.pinnable:hover .bot-row { padding-right: 92px; }
+.rail-wk-pill {
+  position: absolute; right: 10px; top: 15px; display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px 0 7px;
+  border: 0; border-radius: 9px; background: var(--info-bg); color: var(--link); font-size: 11px; line-height: 18px; cursor: pointer; -webkit-app-region: no-drag;
+}
+.rail-wk-pill:hover { background: var(--accent-bg); }
+.bot-row-wrap.idleable:hover .rail-wk-pill { right: 32px; }
+.bot-row-wrap.pinnable:not(.idleable):hover .rail-wk-pill { right: 38px; }
+.rail-wk-count {
+  min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--blue); color: #fff; font-size: 10.5px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.rail-wk-pill .rail-wk-count { margin-left: 2px; height: 14px; min-width: 14px; font-size: 10px; }
+.rail-wk-chevron { display: inline-flex; transform: rotate(180deg); transition: transform .12s; }
+.rail-wk-chevron.open { transform: rotate(270deg); }
+.rail-wk { display: flex; flex-direction: column; }
+.rail-wk-row { display: flex; align-items: center; border-radius: 10px; -webkit-app-region: no-drag; }
+.rail-wk-row:hover { background: var(--hover); }
+.rail-wk-row.selected, .rail-wk-row.selected:hover { background: var(--selected); }
+.rail-wk-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 3px 4px 3px 26px;
+  background: none; border: 0; color: var(--text); text-align: left; cursor: pointer;
+}
+.rail-wk-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.rail-wk-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-wk-meta { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-wk-row.viewed .rail-wk-open { color: var(--muted); }
+.rail-wk-row.running .rail-wk-state { color: var(--link); }
+/* Its words wait for its process to finish background work: the reason truncates, the time it has waited stays. */
+.rail-wk-row.waiting .rail-wk-meta { display: flex; align-items: baseline; }
+.rail-wk-row.waiting .rail-wk-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--orange-text, var(--link)); }
+.rail-wk-row.done:not(.viewed) .rail-wk-state { color: var(--green); }
+.rail-wk-row.failed .rail-wk-state { color: var(--error); }
+/* One job's workers as one item: a dot per worker, its workers indented under it once opened (no blue dot). */
+.rail-wk-job .rail-wk-state { color: var(--faint); }
+.rail-wk-job .rail-wk-failed { color: var(--error); }
+.rail-wk-jobline { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rail-wk-job .rail-wk-chevron { color: var(--faint); margin-right: 4px; }
+.rail-wk-pips { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.rail-wk-pip { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.rail-wk-pip.running { background: var(--blue); }
+.rail-wk-pip.done { background: var(--green); }
+.rail-wk-pip.failed { background: var(--error); }
+.rail-wk-members { display: flex; flex-direction: column; padding-left: 14px; }
+.rail-wk-mark { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 800; color: #fff; line-height: 1; }
+.rail-wk-mark.running { border: 2px solid var(--blue); border-right-color: var(--accent-line); animation: wk-spin 1s linear infinite; }
+.rail-wk-mark.done { background: var(--green); }
+.rail-wk-mark.done.viewed { background: var(--faint); }
+.rail-wk-mark.failed { background: var(--error); color: #1A0E0D; }
+.rail-wk-mark.stopped { background: var(--faint); font-size: 6px; }
+@media (prefers-reduced-motion: reduce) { .rail-wk-mark.running { animation: none; } }
+:root[data-theme="light"] .rail-wk-mark.failed { color: #fff; }
+.rail-wk-settle {
+  width: 24px; height: 30px; margin-right: 6px; flex-shrink: 0; border: 0; border-radius: 6px; background: none; padding: 0;
+  color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.rail-wk-row:hover .rail-wk-settle { background: var(--chip); color: var(--text); }
+.rail-wk-more {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px 0 45px; border: 0; border-radius: 6px;
+  background: none; color: var(--faint); font-size: 12px; cursor: pointer; -webkit-app-region: no-drag;
+}
+.rail-wk-more:hover { color: var(--text); }
+.rail-wk-more .rail-wk-chevron { transform: rotate(270deg); }
+.rail-wk-more .rail-wk-chevron.open { transform: rotate(90deg); }
+.rail-wk-machine { margin-right: 5px; color: var(--muted); }
+.rail-wk-machine.offline { color: var(--orange); }
+.rail-wk-tag { display: inline-flex; align-items: center; gap: 3px; margin-right: 5px; color: var(--muted); vertical-align: top; }
+.rail-wk-subface {
+  width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; background: var(--chip); color: var(--text);
+  font-size: 8.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* The floating chat (design B; FloatingChat.tsx, floating-chat.ts). Closed: the strip in a corner of the page (the bot's
+   face, its newest line, the unread count, a chevron), dragged to another corner by its six dots. Open: the chat's
+   placeholder moves to the panel's box (the native chat follows it) over a backdrop that gives the panel its shadow
+   and rounded edge; the chat page draws the header and the corner grip (chat-frame/float-chrome.ts). */
+.bot-strip {
+  display: flex; align-items: center; height: 44px; max-width: min(360px, calc(100vw - 48px)); box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 22px; background: var(--bubble); color: var(--text);
+  box-shadow: 0 6px 22px rgb(0 0 0 / calc(0.32 * var(--shade, 1))); -webkit-app-region: no-drag;
+}
+.bot-strip.unread { border-color: color-mix(in srgb, var(--blue) 55%, var(--border)); }
+.bot-strip-grab { display: inline-flex; align-items: center; justify-content: center; align-self: stretch; padding: 0 4px 0 12px; color: var(--faint); cursor: grab; touch-action: none; }
+.float-strip-holder.dragging .bot-strip-grab { cursor: grabbing; }
+.bot-strip-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; height: 100%; padding: 0 12px 0 6px; border: 0;
+  background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; border-radius: 0 22px 22px 0;
+}
+.bot-strip:not(:has(.bot-strip-grab)) .bot-strip-open { padding-left: 6px; border-radius: 22px; }
+.bot-strip-open:hover { background: var(--hover); }
+.bot-strip-open:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.bot-strip-face { position: relative; flex: none; width: 28px; height: 28px; display: inline-flex; }
+.bot-strip-face img { width: 28px; height: 28px; }
+.bot-strip-face .bp-bubble-dot { border-color: var(--bubble); }
+.bot-strip-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); text-align: left; }
+.bot-strip.unread .bot-strip-line { color: var(--text); font-weight: 600; }
+.bot-strip-badge { flex: none; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px; background: var(--blue); color: #fff; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.bot-strip-chevron { flex: none; display: inline-flex; color: var(--faint); }
+.float-strip-holder { position: absolute; z-index: 5; }
+.float-strip-holder[data-corner="br"] { right: 16px; bottom: 16px; }
+.float-strip-holder[data-corner="bl"] { left: 16px; bottom: 16px; }
+.float-strip-holder[data-corner="tr"] { right: 16px; top: 16px; }
+.float-strip-holder[data-corner="tl"] { left: 16px; top: 16px; }
+.float-strip-holder.dragging { z-index: 20; transition: none; }
+/* In the browser's tab row: a short strip in place of the round bubble. */
+.bot-strip.inline { height: 32px; max-width: 280px; margin: 0 2px 3px 8px; flex: 0 1 280px; box-shadow: none; border-radius: 16px; }
+.bot-strip.inline .bot-strip-open { padding: 0 10px 0 3px; gap: 7px; font-size: 12px; border-radius: 16px; }
+.bot-strip.inline .bot-strip-face, .bot-strip.inline .bot-strip-face img { width: 24px; height: 24px; }
+.bot-strip.inline[aria-expanded="true"], .bot-strip.inline:has([aria-expanded="true"]) { background: var(--selected); }
+.bot-strip.inline:has([aria-expanded="true"]) .bot-strip-chevron { transform: rotate(180deg); }
+/* The panel: the backdrop under the native chat, and the chat's placeholder moved onto it. */
+.float-backdrop {
+  position: fixed; z-index: 3; box-sizing: border-box; border-radius: 12px; pointer-events: none;
+  outline: 1px solid var(--border); outline-offset: 0; background: var(--ground);
+  box-shadow: 0 16px 44px rgb(0 0 0 / calc(0.32 * var(--shade, 1))), 0 2px 8px rgb(0 0 0 / calc(0.18 * var(--shade, 1)));
+}
+#chat-frame.chat-floating {
+  display: block !important; position: fixed !important; z-index: 4; flex: none !important; max-width: none !important;
+  left: var(--float-left); top: var(--float-top); width: var(--float-width) !important; height: var(--float-height) !important;
+  border: 0 !important; border-radius: 12px; overflow: hidden;
+}
+/* Under the app's sheets and menus (an occluded native chat leaves its snapshot here), but over the report preview it
+   floats on. */
+.float-backdrop[data-place="preview"] { z-index: 1001; }
+#chat-frame.chat-floating[data-float-place="preview"] { z-index: 1002; }
+/* The browser's full screen with the chat floating: the chat pane stays laid out (so its placeholder has a box) but
+   shows nothing of its own; only the placeholder, moved onto the panel, is seen. */
+.shell.browser-full.browser-float > .chat-pane { display: flex; position: fixed; inset: 0; visibility: hidden; pointer-events: none; z-index: 0; }
+.shell.browser-full.browser-float > .chat-pane #chat-frame.chat-floating { visibility: visible; pointer-events: auto; }
+
+/* The Storage tab (檔案庫, StorageTab.tsx): layout A, a list like Finder's list view. The bar (search, sort, Add files),
+   the type chips with counts, the rows (thumbnail badge, name, from, size, date, ⋯), the drop hint at the bottom. */
+.storage-main { border-top: 1px solid var(--line); }
+.storage-tab { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 10px 18px 14px; font-size: 13px; color: var(--text); }
+.storage-bar { display: flex; align-items: center; gap: 8px; }
+.storage-search { flex: 1; min-width: 0; height: 32px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 9px; background: var(--bubble); border: 1px solid var(--border); color: var(--faint); }
+.storage-search:focus-within { border-color: var(--accent-line); }
+.storage-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
+.storage-search input::placeholder { color: var(--faint); }
+.storage-sort { height: 32px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; padding: 0 4px 0 10px; border-radius: 9px; border: 1px solid var(--border); color: var(--soft-text); font-size: 12.5px; white-space: nowrap; }
+.storage-sort select { border: 0; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; outline: 0; }
+.storage-sort select option { background: var(--popover); color: var(--text); }
+.storage-button { height: 32px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; border: 0; border-radius: 9px; background: var(--chip); color: var(--text); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer; }
+.storage-button:hover { background: var(--hover-strong); }
+.storage-button:focus-visible, .storage-chip:focus-visible, .storage-more:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.storage-chips { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.storage-chip { height: 26px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--muted); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.storage-chip:hover { color: var(--text); }
+.storage-chip[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent-line); color: var(--link); }
+.storage-count { color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.storage-chip[aria-pressed="true"] .storage-count { color: var(--link); }
+.storage-list { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--side); }
+.storage-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(56px, 120px) 64px 64px 28px; align-items: center; gap: 10px; height: 46px; padding: 0 10px; border-top: 1px solid var(--hover); outline: 0; cursor: default; user-select: none; }
+.storage-row:first-child { border-top: 0; }
+.storage-row:not(.storage-head):hover { background: var(--hover); }
+.storage-row.selected { background: var(--accent-bg); }
+.storage-row:focus-visible { box-shadow: inset 0 0 0 2px var(--blue); }
+.storage-row[draggable="true"] { cursor: grab; }
+.storage-head { position: sticky; top: 0; z-index: 1; height: 30px; font-size: 11.5px; color: var(--faint); background: var(--notice); }
+.storage-thumb { width: 32px; height: 32px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 700; letter-spacing: .3px; overflow: hidden; background: var(--chip); color: var(--soft-text); }
+.storage-thumb.kind-image { background: var(--accent-bg-hover); color: var(--link); }
+.storage-thumb.kind-pdf { background: var(--stale-bg); color: var(--error); }
+.storage-thumb.kind-doc, .storage-thumb.kind-page { background: var(--accent-bg); color: var(--link); }
+.storage-thumb.kind-sheet { background: var(--done-bg); color: var(--green); }
+.storage-thumb.kind-video, .storage-thumb.kind-audio { background: color-mix(in srgb, #A879F0 18%, transparent); color: #A879F0; }
+.storage-name { min-width: 0; display: flex; align-items: baseline; gap: 6px; overflow: hidden; }
+.storage-file { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-folder { flex: none; max-width: 40%; color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-source { min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-num { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+.storage-row.missing .storage-file { color: var(--faint); text-decoration: line-through; }
+.storage-row.missing .storage-thumb { opacity: .5; }
+.storage-missing { color: var(--orange-text); font-size: 11.5px; }
+.storage-more-slot { position: relative; display: inline-flex; justify-content: center; }
+.storage-more { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--faint); cursor: pointer; opacity: 0; }
+.storage-more svg { stroke-width: 2.6; }
+.storage-row:hover .storage-more, .storage-row.selected .storage-more, .storage-more[aria-expanded="true"], .storage-more:focus-visible { opacity: 1; }
+.storage-more:hover { background: var(--selected); color: var(--text); }
+.storage-menu { position: absolute; top: 28px; right: 0; z-index: 5; min-width: 190px; padding: 4px; display: flex; flex-direction: column; border-radius: 10px; background: var(--popover); border: 1px solid var(--border); box-shadow: 0 10px 28px rgb(0 0 0 / calc(.5 * var(--shade))); }
+.storage-menu button { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.storage-menu button:hover, .storage-menu button:focus-visible { background: var(--selected); outline: 0; }
+.storage-menu button.danger { color: var(--error); }
+.storage-menu button small { color: var(--faint); font-size: 11px; }
+.storage-menu-note { margin: 4px 10px 6px; color: var(--faint); font-size: 11px; line-height: 1.45; }
+.storage-empty { margin: 0; padding: 28px 20px; color: var(--faint); font-size: 13px; line-height: 1.6; text-align: center; }
+.storage-hint { flex: none; height: 40px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px dashed var(--strong-line); border-radius: 10px; color: var(--faint); font-size: 12.5px; padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-drop { position: absolute; inset: 6px; z-index: 6; display: flex; align-items: center; justify-content: center; gap: 8px; border: 2px dashed var(--blue); border-radius: 14px; background: rgba(76, 141, 255, 0.10); color: var(--link); font-size: 14px; pointer-events: none; }
+@container chatbar (width < 520px) { .storage-switch svg { display: none; } }
+@media (width < 640px) { .storage-row { grid-template-columns: 34px minmax(0, 1fr) 64px 28px; } .storage-row > :nth-child(3), .storage-row > :nth-child(5) { display: none; } }
