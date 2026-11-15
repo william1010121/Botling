@@ -604,6 +604,7 @@ export class Botlingd {
           onPeer: (listener) => peers.onState((state) => listener({ id: state.member, state: state.state, since: state.since })),
           // Only a server this roster names as a peer (a lone server serves srv: streams from its log hub as before).
           isPeerTable: (stream) => peerTables.isPeerTable(stream) && peers.states().some((state) => `srv:${state.member}` === stream),
+          isOwnTable: (stream) => stream === feeds.ownStream,
           subscribe: (stream, cursor, sink) => feeds.subscribe(stream, cursor, sink),
         },
         forward: {
