@@ -236,6 +236,7 @@ describe("Forwarder.pump does not stall on a row that can never be sent", () => 
         owner.db.prepare("UPDATE slots SET next = 4").run();
         expect(admit(owner.db as Db, log, input(h.cmds()[2]!))).toMatchObject({ kind: "ready" });
         // The old floor would have left the owner holding row 3 for slot 2.
+        owner.db.prepare("UPDATE slots SET next = 2").run();
         expect(admit(owner.db as Db, log, input({ ...h.cmds()[1]!, floor: 1 }))).toMatchObject({ kind: "hold" });
       } finally {
         await owner.writer.close();
