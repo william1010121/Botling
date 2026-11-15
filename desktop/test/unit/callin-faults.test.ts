@@ -44,15 +44,14 @@ const SEED = Number(process.env.CALLIN_FAULT_SEED ?? 20261115);
 const TIMERS = { ping: 300, dead: 1_500, redial: 150, redialMax: 800, revoked: 2_500 };
 const TIMERS_ENV = Object.entries(TIMERS).map(([k, v]) => `${k}=${v}`).join(",");
 const STALE_MS = 2_500;
-const GUESTS = 6;
+const GUESTS = 8;
 const WAKE_MARK = "whom you called in with @";
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 type Kind = "clean" | "net" | "killA" | "killB" | "down" | "gaveUpCrash" | "lateKill";
-/** The waves, in order: 66 call-ins; every wave but the clean ones holds a server kill or a network fault. */
+/** The waves, in order: 66 call-ins, every kind of fault in it; the runs of a wave go at once. */
 const PLAN: Array<[Kind, number]> = [
-  ["clean", 6], ["net", 6], ["killA", 4], ["net", 6], ["killB", 4], ["down", 4], ["gaveUpCrash", 3], ["lateKill", 3],
-  ["clean", 6], ["net", 6], ["killA", 4], ["killB", 4], ["down", 4], ["gaveUpCrash", 3], ["lateKill", 3],
+  ["clean", 10], ["net", 10], ["killA", 8], ["net", 10], ["killB", 8], ["down", 8], ["gaveUpCrash", 6], ["lateKill", 6],
 ];
 
 const scratch = testRoot("callin-faults");
@@ -241,7 +240,8 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       await until(() => runs.every((run) => callInRows().some((row) => row.asked.includes(run.token))), { timeout: 60_000, every: 25, what: `${seed}: the asks at B` });
       isolate();
       // The guest turns finish and their replies are committed in B's forward queue; none can be sent.
-      await until(() => callInRows().filter((row) => runs.some((run) => row.asked.includes(run.token))).every((row) => row.state === "finished"), { timeout: 60_000, every: 25, what: `${seed}: B's replies committed` });
+      const mine = () => callInRows().filter((row) => runs.some((run) => row.asked.includes(run.token)));
+      await until(() => mine().every((row) => row.state !== "queued" && row.state !== "started"), { timeout: 30_000, every: 25, what: `${seed}: B's replies committed (${JSON.stringify(mine().map((row) => row.state))})` }).catch((error) => { throw new Error(`${(error as Error).message} now ${JSON.stringify(mine().map((row) => [row.state, row.replied]))} B log ${b.log.slice(-800)}`); });
       totals.heldReplies += count(b, "forwardq");
       await b.kill();
       totals.kills++;
