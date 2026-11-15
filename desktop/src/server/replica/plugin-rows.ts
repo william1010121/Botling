@@ -2,7 +2,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import type { CommandType } from "../../contract";
 import { folderHash } from "../../core/plugins/catalog";
 import type { InstalledPlugin } from "../../core/plugins/registry";
 import { RowKey, type AuditRow, type PluginGrant, type PluginRow, type Tier } from "../../protocol/table-rows";
@@ -12,7 +11,10 @@ import { deleteRow, putRow, readRowBody } from "./tables";
 const WRITE_PERMISSIONS = new Set(["network", "files", "exec", "sessions", "routines", "cards", "app", "studio"]);
 const REQUEST_PERMISSIONS = new Set(["composer", "bots", "claude"]);
 
-const PERMISSION_REQUESTS: Readonly<Record<string, readonly CommandType[]>> = {
+/** A command a plugin may request: every command except the server-scope ones (the row schema's type). */
+type PluginCommand = PluginRow["manifest"]["requests"][number];
+
+const PERMISSION_REQUESTS: Readonly<Record<string, readonly PluginCommand[]>> = {
   composer: ["chat.send"],
   bots: ["bots.create", "chat.send"],
   claude: ["chat.send"],
@@ -71,8 +73,8 @@ export function tierOf(permissions: readonly string[], options: TierOptions = {}
  * - `bots` -> `bots.create`, `chat.send`
  * - `claude` -> `chat.send`
  */
-export function requestsOf(permissions: readonly string[]): CommandType[] {
-  const out = new Set<CommandType>();
+export function requestsOf(permissions: readonly string[]): PluginCommand[] {
+  const out = new Set<PluginCommand>();
   for (const permission of permissions) {
     const commands = PERMISSION_REQUESTS[permission];
     if (!commands) continue;
