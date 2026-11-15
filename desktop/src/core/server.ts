@@ -27,7 +27,7 @@ import { linkIncoming, PendingFiles, servedType, writeIncoming } from "./attachm
 import { studioWorld } from "./studio-world";
 import type { StudioWorld } from "./plugins/studio-seam";
 import type { CodexModel } from "./agent/codex-models";
-import { claudeWorkersMode, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
+import { claudeWorkersMode, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { botName, firstLine, MemoryFiles } from "./projects";
 import { answerLabel } from "./attachments";
 import { ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound, type BotView, type Command, type Event, type Outbound, type ResultOf, type WaitingView, type SubagentRowView, type AgentTargetView, type MachinesView, type PluginView } from "../contract";
@@ -50,7 +50,7 @@ import { StorageBook } from "./storage";
 import { BotStore, readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
-import { UsageBook, usageView } from "./usage";
+import { UsageBook } from "./usage";
 import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
 import { botFace } from "./faces";
 import { status, statusText } from "../contract/bot-status";
@@ -75,11 +75,12 @@ import { INDEX_URL_SETTING } from "./plugins/catalog";
 import { maintainerInstructions, maintainerVisualToolRules } from "./maintainer-text";
 import { siteToolsFolder } from "./site-tools-guard";
 import type { ChatRecord } from "./store/records";
-import { ReleaseNotices, confirmHealthyWhen, devWorkRoot, installAndQuit } from "./self-update";
+import { ReleaseNotices, confirmHealthyWhen } from "./self-update";
 import { CoreWatch } from "./server/watch";
 import { CorePeerInbox } from "./server/peer-inbox";
 import { CoreProjects } from "./server/projects";
 import { CoreBots } from "./server/bots";
+import { CorePluginWorld } from "./server/plugin-world";
 import { CoreSubBots } from "./server/sub-bots";
 import { CoreCommands } from "./server/commands";
 
@@ -259,7 +260,7 @@ export class Core {
   seq = 0;
   activated = false;
   private inflight = new Map<string, AbortController>();
-  private readonly ledger: ProcessLedger;
+  readonly ledger: ProcessLedger;
   /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
   readonly usage: UsageBook;
   get imported() { return this.coreProjects.imported; }
@@ -273,6 +274,8 @@ export class Core {
   private get coreProjects(): CoreProjects { return (this.madeProjects ??= new CoreProjects(this)); }
   private madeBots?: CoreBots;
   private get coreBots(): CoreBots { return (this.madeBots ??= new CoreBots(this)); }
+  private madePluginWorld?: CorePluginWorld;
+  private get corePluginWorld(): CorePluginWorld { return (this.madePluginWorld ??= new CorePluginWorld(this)); }
   private madeSubBots?: CoreSubBots;
   private get coreSubBots(): CoreSubBots { return (this.madeSubBots ??= new CoreSubBots(this)); }
   get bots() { return this.coreBots.bots; }
@@ -317,8 +320,8 @@ export class Core {
   readonly maintainer: MaintainerDesk;
   /** The public plugin catalog (Explore, Updates on the Plugins page). */
   readonly pluginStore: PluginStore;
-  private get lastPlugins() { return this.coreWatch.lastPlugins; }
-  private set lastPlugins(value: CoreWatch["lastPlugins"]) { this.coreWatch.lastPlugins = value; }
+  get lastPlugins() { return this.coreWatch.lastPlugins; }
+  set lastPlugins(value: CoreWatch["lastPlugins"]) { this.coreWatch.lastPlugins = value; }
   private settlingMaintainer = false;
   private get loadedClaudeParts() { return this.coreWatch.loadedClaudeParts; }
   private set loadedClaudeParts(value: CoreWatch["loadedClaudeParts"]) { this.coreWatch.loadedClaudeParts = value; }
@@ -404,166 +407,8 @@ export class Core {
       if (note) this.plugins.event("noteCardChanged", { botId: note[1], key: `note/${note[2]}` });
       else this.plugins.event("cardChanged", { card });
     };
-    // The plugins (their host starts later, in start()); the world they see is read when they ask.
-    const host = options.plugins ?? null;
-    const self = this;
-    this.plugins = new Plugins({
-      dataDir: options.dataDir,
-      node: host?.node ?? null,
-      hostScript: host?.hostScript ?? "",
-      builtIns: host?.builtIns ?? null,
-      sealer: host?.sealer ?? null,
-      boundSecrets: host?.boundSecrets,
-      timing: host?.timing,
-      onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
-      ...(options.mayRunServerPart ? { mayRunServerPart: options.mayRunServerPart } : {}),
-      ...(options.separateHosts !== undefined ? { separateHosts: options.separateHosts } : {}),
-      ...(options.pluginGrant ? { pluginGrant: options.pluginGrant } : {}),
-      ...(options.pluginAsks ? { pluginAsks: options.pluginAsks } : {}),
-      world: {
-        bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
-        send: (botId, text, via) => {
-          const bot = this.pluginBot(botId);
-          if (!bot) throw new Error("No such bot.");
-          return { messageId: bot.send(text, via ? { via } : {}).messageId };
-        },
-        interrupt: async (botId) => {
-          const bot = this.pluginBot(botId);
-          if (!bot) return null;
-          // Every turn under way, as the stop button sends them (with two heads, both may work).
-          const stopped = await Promise.all(bot.snapshot().runs.map((run) => bot.stop(run.turnId)));
-          return stopped.some((outcome) => outcome.stopped);
-        },
-        notice: (text, actions) => {
-          this.mainBot()?.appNotice(text, actions?.map((action) => ({ label: action.label })), actions ? (index) => actions[index]?.run() : undefined);
-        },
-        ask: (question) => new Promise((resolve) => {
-          const main = this.mainBot();
-          if (!main) { resolve({ index: Math.max(0, question.choices.length - 1) }); return; }
-          // The last choice is Cancel: null, as the plugin sees it (Plugins' ui.quickPick / ui.input).
-          const id: string = main.appNotice(question.text, question.choices, (index) => resolve({ index }), question.typed ? {
-            onAnswer: (words) => {
-              if (!words) return false;
-              main.settleAppQuestion(id, { answer: words });
-              resolve({ text: words });
-              return true;
-            },
-          } : {});
-        }),
-        openPanel: (plugin, panel, title) => this.event({ type: "plugins.open", plugin, panel, title }),
-        openTab: (plugin, view, botId) => this.event({ type: "plugins.openTab", plugin, view, botId }),
-        // Straight to the app page, not through `event()`: no plugin, workspace or phone listener has anything to do with it.
-        frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? (this.mainBot()?.id ?? botId) : botId } : {}), data } }),
-        botFolder: (botId) => this.pluginBot(botId)?.profile.folder ?? null,
-        botNote: (botId) => {
-          const bot = this.pluginBot(botId);
-          return bot ? notePath(bot.profile) : null;
-        },
-        imageUrl: (path, type) => this.components.images.register(path, type),
-        appSettings: () => {
-          const settings = settingsView(readSettings(Layout.settings(this.options.dataDir)));
-          return { language: settings.effectiveLanguage, botLook: settings.botLook, workerLimit: settings.claudeWorkerLimit };
-        },
-        shortcutOverrides: () => settingsView(readSettings(Layout.settings(this.options.dataDir))).shortcuts,
-        createBot: (plugin, title, name, job, avatar, more) => this.createPluginBot(plugin, title, { name, job, ...(avatar ? { avatar } : {}), ...more }),
-        commandApproval: (botId, command) => this.pluginBot(botId)?.commandApproval(command) ?? null,
-        commandRun: (botId, key, command, run) => this.pluginBot(botId)?.pluginCommand(key, command, run) ?? null,
-        component: (botId, name, data, command) => this.pluginBot(botId)?.libraryEntry(name, data, command) ?? null,
-        imageUrls: (botId, data) => this.pluginBot(botId)?.imageUrls(data) ?? null,
-        cardAsk: (botId, card, command, component) => this.pluginBot(botId)?.cardAskFor(card, command, component) ?? null,
-        cardApprove: (botId, command, component, folder, detail) => this.pluginBot(botId)?.cardApproveFor(command, component, folder, detail) ?? false,
-        noteCards: {
-          components: (botId) => this.pluginBot(botId)?.noteComponents() ?? null,
-          states: (botId, cards) => this.pluginBot(botId)?.noteCardStates(cards) ?? null,
-          run: (botId, key, command, force) => this.pluginBot(botId)?.noteCardRun(key, command, force) ?? null,
-        },
-        cards: {
-          library: (botId) => this.pluginBot(botId)?.cardLibrary() ?? null,
-          shown: (botId) => this.pluginBot(botId)?.cardsShown() ?? null,
-          states: (botId, cards) => this.pluginBot(botId)?.cardStates(cards) ?? null,
-          run: (botId, card, command, force) => this.pluginBot(botId)?.cardRun(card, command, force) ?? null,
-          ask: (botId, card, command, component) => this.pluginBot(botId)?.cardAskFor(card, command, component) ?? null,
-          setNotes: (botId, notes) => { const bot = this.pluginBot(botId); if (!bot) return false; bot.setCardNotes(notes); return true; },
-          legacyPins: (botId) => this.pluginBot(botId)?.legacyPins() ?? null,
-        },
-        dataChanged: (botId, plugin, data) => { if (this.bots.has(botId)) this.event({ type: "chat.pluginData", botId, plugin, data }); },
-        approveCommand: (botId, command) => this.pluginBot(botId)?.approveCommand(command) ?? false,
-        chat: (botId, limit) => {
-          const bot = this.pluginBot(botId);
-          if (!bot) return null;
-          const chat = bot.pluginChat(limit);
-          return { ...chat, botId: this.outId(chat.botId) };
-        },
-        botId: (botId) => this.pluginBot(botId)?.id ?? null,
-        decorated: (botId) => { if (this.bots.has(botId)) this.event({ type: "chat.decorations", botId, decorations: this.plugins.decorations(botId) }); },
-        engineCli: (engine) => options.engineCli?.(engine) ?? null,
-        addRoutine: (botId, cron, task) => {
-          const bot = botId === "main" ? this.mainBot() : this.bots.get(botId);
-          if (!bot) return "no-bot";
-          return bot.addRoutine(cron, task) ? "added" : "bad-schedule";
-        },
-        routinesList: (botId) => this.pluginBot(botId)?.routinesView() ?? null,
-        routinesChange: (botId, operation, id) => {
-          const bot = this.pluginBot(botId);
-          // Not `ContractError`'s wording to a plugin: the store's own message, as the app's panel showed it.
-          return bot ? bot.changeRoutine({ operation, id }) : null;
-        },
-        changed: (view) => {
-          this.followClaudeParts();
-          // A built-in plugin turned on or off brings or takes away its cards (botling.cards).
-          if (this.components.library.rescan()) for (const bot of this.bots.values()) bot.componentsChanged();
-          this.componentsTick();
-          const text = JSON.stringify(view);
-          if (text === this.lastPlugins) return;
-          this.lastPlugins = text;
-          this.event({ type: "plugins.updated", plugins: view });
-        },
-        pluginWritten: (name) => { const botId = this.activePluginWriter(); if (botId) options.pluginWritten?.(name, botId); },
-        broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
-        log: (line) => this.log(line),
-        app: {
-          state: () => ({
-            pid: options.app?.pid ?? null, dataDir: options.dataDir, appDataDir: options.app?.dataDir ?? null, bundle: options.app?.bundle ?? null,
-            server: options.app?.server ?? null,
-            developerMode: settingsView(readSettings(Layout.settings(options.dataDir))).developerMode,
-            developer: (() => { const bot = this.developerProject(); return bot ? { id: bot.id, name: bot.profile.name, folder: bot.profile.folder } : null; })(),
-          }),
-          // Running work resumes on the new build (restart-continuation.ts); a failed checkpoint stops the install.
-          installAndRestart: (command, log) => installAndQuit(command, log, {
-            prepareRestart: () => this.prepareRestart(), cancelRestart: () => this.cancelRestart(), app: options.app, log: (line) => this.log(line),
-          }),
-          captureWindow: async () => {
-            if (!options.app) return null;
-            try { const answer = await options.app.request("screenshot"); return answer.ok && answer.file ? answer.file : null; } catch { return null; }
-          },
-          card: (text, choices, source) => new Promise((resolve) => {
-            const main = this.mainBot();
-            if (!main) { resolve(null); return; }
-            main.appNotice(text, choices, choices ? (index) => resolve(index) : undefined, source ? { sourceID: source } : {});
-            if (!choices) resolve(null);
-          }),
-          tell: (botId, kind, text, files) => {
-            const bot = this.pluginBot(botId);
-            if (!bot) return false;
-            if (kind === "note") bot.queueNote(text); else bot.relay(text, files.length ? { files } : {});
-            return true;
-          },
-        },
-        // The component studio's seam (plugins/studio-seam.ts); built when first asked, once Maintainer and the library exist.
-        get studio() { return self.studioNow(); },
-        sessionMoved: (botId, reason) => this.bots.get(botId)?.folderMoved(reason),
-        sessionBots: () => this.profiles.filter((profile) => profile.role !== "main" && profile.id !== this.maintainerId && !this.removed.has(profile.id)).map((profile) => ({
-          id: profile.id, name: profile.name, role: profile.role as "manager" | "bot", parent: profile.parent ?? null, folder: profile.folder,
-          memoryPath: profile.memoryPath, storeDir: profile.storeDir, problem: profile.problem,
-          workRoot: this.developerProject()?.id === profile.id ? devWorkRoot() : null,
-        })),
-        usageView: async () => { await this.usage.refresh(); return usageView(this.usage.view()); },
-        workspace: this.workspaceSource(),
-        workspaceWatch: (on) => this.watchWorkspace(on),
-        ...(options.content ? { content: options.content } : {}),
-        ...(options.lineContent ? { lineContent: options.lineContent } : {}),
-      },
-    });
+    // The plugins (their host starts later, in start()); the world they see is read when they ask (core/server/plugin-world.ts).
+    this.plugins = new Plugins(this.corePluginWorld.pluginOptions());
     // Settings that are a built-in plugin's now (the paste limits: botling.chat-extras) move to its settings once.
     moveSettingsToPlugins(Layout.settings(options.dataDir), (plugin, key, value) => this.plugins.registry.set(plugin, key, value));
     moveShortcutsToPlugins(Layout.settings(options.dataDir));
@@ -602,7 +447,6 @@ export class Core {
     const profiles = [...baseProfiles, appMaintainer];
     const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig, this.maintainerId);
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
-    const codexConfig = options.codexConfig;
     this.profiles = profiles;
     // The agent registry, before any bot: the first start adopts every host book (running ones were cut off with the app).
     (this as { agents: AgentRegistry }).agents = new AgentRegistry(new AgentStore(options.dataDir, (line) => this.log(line)));
@@ -612,78 +456,8 @@ export class Core {
     }
     this.agents.onChange((record, previous) => this.agentChanged(record, previous));
     this.newBot = (profile) => {
-      const bot = build(profile);
+      const bot = this.coreBots.build(profile, threads, editorBinding);
       this.bots.set(profile.id, bot);
-      return bot;
-    };
-    const build = (profile: BotProfile): Bot => {
-      const bot: Bot = new Bot({
-        profile,
-        ...(options.fetch ? { fetch: options.fetch } : {}),
-        deferStartup: options.deferStartup && !this.activated,
-        headConfig: options.headConfig,
-        agyConfig: options.agyConfig,
-        codexConfig: codexConfig ? (p, session) => ({
-          ...codexConfig(p, session, threads),
-          componentEditor: editorBinding(p, session),
-          editorStarted: (pid) => { if (pid > 0) this.ledger.record(pid); },
-        }) : null,
-        claimWaitMs: options.claimWaitMs,
-        prompts: (engine, heads) => this.prompts(profile, engine, heads, profile.role === "main" || profile.id === this.maintainerId ? null : this.plugins.sessionFolder(profile.id)?.cwd ?? profile.folder),
-        // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
-        tidyTimeoutMs: options.tidyTimeoutMs,
-        quitTidyMs: options.quitTidyMs,
-        ledger: this.ledger,
-        emit: (event) => this.event(event),
-        log: (line) => this.log(line),
-        approvalTimeoutMs: options.approvalTimeoutMs ?? 10 * 60_000,
-        idleMs: options.idleMs ?? 50 * 60_000,
-        interruptGraceMs: options.interruptGraceMs ?? 2_000,
-        projectBriefing: profile.role === "main" ? () => this.projectBriefing() : undefined,
-        // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
-        wakeNote: profile.role === "main" ? () => this.projectBriefing()
-          // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
-          : profile.id !== this.maintainerId
-            ? () => [profile.role === "manager" ? this.developerBriefing(profile.id) : "", this.plugins.sessionFolder(profile.id)?.note ?? "", this.subBotNote(profile), this.ownedAgentsNote(profile)].filter(Boolean).join("\n\n")
-            : undefined,
-        // A plugin may decide where a project's or bot's session starts (an app-made worktree: botling.git); the main bot and Maintainer never move.
-        worktree: profile.role === "main" || profile.id === this.maintainerId ? undefined : () => {
-          const folder = this.plugins.sessionFolder(profile.id);
-          return folder && folder.cwd !== profile.folder ? { cwd: folder.cwd, addDirs: folder.addDirs } : null;
-        },
-        addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.parent && !other.problem).map((other) => join(other.folder, ".bot"))
-          // Maintainer: the folders you let it read (<need-folder>).
-          // and the browser's site tools, which are its alone.
-          : profile.id === this.maintainerId ? () => [siteToolsFolder(options.dataDir, options.app?.dataDir), ...this.maintainer.approvedFolders()] : undefined,
-        // Every other bot's Claude head and workers are refused writes into the site tools folder (site-tools-guard.ts).
-        siteToolsFolder: profile.id === this.maintainerId ? undefined : siteToolsFolder(options.dataDir, options.app?.dataDir),
-        remoteWorkers: () => options.remoteWorkers ?? null,
-        subBotRows: profile.role === "main" || profile.id === this.maintainerId ? undefined : () => this.subBotRows(profile.id),
-        components: this.components,
-        onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
-        // What each turn used, by bot, and the subscriptions' limits (1.x's `record`, `note`).
-        usage: (name, spent, tokens) => this.usage.record(spent, tokens, name),
-        rateLimits: (engine, limits) => this.usage.note(engine, limits),
-        // What a line shows besides itself for the component studio (botling.component-studio, through its seam): the library component a
-        // reply already is. The studio draws its chips under replies itself (chat.decorate).
-        lineExtras: (_bot, record) => this.plugins.studioLineExtras(record),
-        replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
-        replied: (bot, record) => this.replied(bot, record),
-        pluginTags: (bot, tags) => this.plugins.replyTags(this.botInfo(bot), tags),
-        plugins: () => this.agentWiring(),
-        pluginStamp: () => agentStamp(this.plugins.registry),
-        launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
-        // (Asked while the bots are made, before the conversations exist.)
-        guest: () => this.conversations?.speakers.get(profile.id) ?? null,
-        callIns: () => this.conversations?.callIns(profile.id) ?? [],
-        answeringIn: () => this.conversations?.answeringIn(profile.id) ?? null,
-        callInNote: () => this.conversations?.callInStatus(profile.id) ?? null,
-        callInFollowUp: (caller, asked, record, by) => this.conversations?.callInFollowUp(caller, bot, asked, record, by),
-        callInFollowUpMissed: (caller, asked, why, by) => this.conversations?.callInFollowUpMissed(caller, bot, asked, why, by),
-        agents: this.agentPort(profile),
-        ...(options.deferTurn ? { deferTurn: options.deferTurn } : {}),
-        ...(options.botStore ? { botStore: options.botStore } : {}),
-      });
       return bot;
     };
     for (const profile of profiles) {
@@ -839,7 +613,7 @@ export class Core {
 
   reportComponent(...a: Parameters<CoreWatch["reportComponent"]>) { return this.coreWatch.reportComponent(...a); }
 
-  private followClaudeParts(...a: Parameters<CoreWatch["followClaudeParts"]>) { return this.coreWatch.followClaudeParts(...a); }
+  followClaudeParts(...a: Parameters<CoreWatch["followClaudeParts"]>) { return this.coreWatch.followClaudeParts(...a); }
 
   checkStalls(...a: Parameters<CoreWatch["checkStalls"]>) { return this.coreWatch.checkStalls(...a); }
 
@@ -848,7 +622,7 @@ export class Core {
 
   checkNetwork(...a: Parameters<CoreWatch["checkNetwork"]>) { return this.coreWatch.checkNetwork(...a); }
 
-  private developerBriefing(...a: Parameters<CoreWatch["developerBriefing"]>) { return this.coreWatch.developerBriefing(...a); }
+  developerBriefing(...a: Parameters<CoreWatch["developerBriefing"]>) { return this.coreWatch.developerBriefing(...a); }
 
   developerProject(...a: Parameters<CoreWatch["developerProject"]>) { return this.coreWatch.developerProject(...a); }
 
@@ -872,7 +646,7 @@ export class Core {
 
   writeInstructions(...a: Parameters<CoreBots["writeInstructions"]>) { return this.coreBots.writeInstructions(...a); }
 
-  private isSubBot(...a: Parameters<CoreBots["isSubBot"]>) { return this.coreBots.isSubBot(...a); }
+  isSubBot(...a: Parameters<CoreBots["isSubBot"]>) { return this.coreBots.isSubBot(...a); }
 
   private subBotRows(...a: Parameters<CoreBots["subBotRows"]>) { return this.coreBots.subBotRows(...a); }
 
@@ -915,7 +689,7 @@ export class Core {
   }
 
   /** The registry as one bot's heads see it (a partner head shares its primary's). */
-  private agentPort(profile: BotProfile): AgentPort {
+  agentPort(profile: BotProfile): AgentPort {
     const id = profile.id;
     return {
       observed: (host, rec, worker) => { this.agents.observe(host, rec, worker); },
@@ -1037,7 +811,7 @@ export class Core {
   }
 
   /** The wake note's part for agents it owns that run on another bot. */
-  private ownedAgentsNote(profile: BotProfile): string {
+  ownedAgentsNote(profile: BotProfile): string {
     return ownedAgentsBriefing(this.agents.movedIn(profile.id).filter((record) => !TERMINAL_STATES.has(record.state) || record.ownerView.settledAt === null).map((record) => ({
       title: record.summary.description || "Subagent", id: record.nativeId, engine: record.engine, host: this.agentBotName(record.host.botId), state: record.state, statusFile: record.summary.statusFile,
     })));
@@ -1724,7 +1498,7 @@ export class Core {
     };
   }
 
-  private workspaceSource(): WorkspaceSource {
+  workspaceSource(): WorkspaceSource {
     return {
       bots: () => {
         const pinned = new Set(settingsView(readSettings(Layout.settings(this.options.dataDir))).pinnedBots);
@@ -1786,7 +1560,7 @@ export class Core {
    * Some plugin listens for workspace changes, or none does any more (Plugins, as soon as the host says so).
    * Listening: what is there now is the start; a change is looked for soon after any event, and every 5 s.
    */
-  private watchWorkspace(on: boolean) {
+  watchWorkspace(on: boolean) {
     if (!on) {
       this.workspaceWatch?.stop();
       if (this.workspaceTimer) { clearTimeout(this.workspaceTimer); this.workspaceTimer = null; }
@@ -1877,7 +1651,7 @@ export class Core {
 
   addProject(...a: Parameters<CoreProjects["addProject"]>) { return this.coreProjects.addProject(...a); }
 
-  private projectRequests(...a: Parameters<CoreProjects["projectRequests"]>) { return this.coreProjects.projectRequests(...a); }
+  projectRequests(...a: Parameters<CoreProjects["projectRequests"]>) { return this.coreProjects.projectRequests(...a); }
 
 
 
@@ -1890,7 +1664,7 @@ export class Core {
   /** How plugins see a bot (`Workspace.info(for:)`): "main", or its id. */
   /** The bot a plugin names ("main": the main bot), unless it was taken out of the column. */
   private studioCache: StudioWorld | null = null;
-  private studioNow(): StudioWorld {
+  studioNow(): StudioWorld {
     return (this.studioCache ??= studioWorld({
       // Every chat a spec can be in (`chatsWithPins`).
       chats: () => [...this.order.flatMap((id) => (this.removed.has(id) ? [] : [this.bots.get(id)!]))],
@@ -1936,7 +1710,7 @@ export class Core {
     }
   }
 
-  private activePluginWriter(): string | null {
+  activePluginWriter(): string | null {
     if (this.settlingMaintainer) return this.maintainerId;
     const maintainer = this.bots.get(this.maintainerId);
     if (maintainer && (maintainer.view().working || maintainer.subagentsAtWork)) return this.maintainerId;
@@ -1955,7 +1729,7 @@ export class Core {
   }
 
   /** A reply showed: plugins listening hear it; Maintainer's settles the component changes bots asked for. */
-  private replied(bot: Bot, record: ChatRecord) {
+  replied(bot: Bot, record: ChatRecord) {
     if (record.text) this.plugins.replied(this.botInfo(bot), record.text);
     if (bot.profile.parent) this.subBotReplied(bot);
     // A line of its reply that starts with @ and another bot's name calls that bot in (`receiveBotMention`).
@@ -2206,7 +1980,7 @@ export class Core {
    * and one made for each skill folder outside them, under `<data>/plugin-skills/claude`), the secrets' environment, the MCP
    * tools, and the skill folders Codex and Antigravity are pointed at. Skill folders go through `skillPlace`.
    */
-  private agentWiring(): { dirs: string[]; env: Record<string, string>; tools: string[]; skillRoots: string[] } {
+  agentWiring(): { dirs: string[]; env: Record<string, string>; tools: string[]; skillRoots: string[] } {
     const contributions = agentContributions(this.plugins.registry);
     const place = (plugin: string, root: string) => this.skillPlace(plugin, root);
     const own = contributions.skillRoots.filter((entry) => !entry.claude).map((entry) => ({ plugin: entry.plugin, root: place(entry.plugin, entry.root) }));
