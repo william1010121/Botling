@@ -38,6 +38,7 @@ export const COMMAND_ROUTES: Record<CommandType, CommandRoute> = {
   "bots.create": intent,
   "bots.remove": intent,
   "settings.set": intent,
+  "plugin.grant": intent,
 
   // Reads.
   "project.files": read,

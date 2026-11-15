@@ -199,7 +199,7 @@ export class FeLink {
   private readonly unsettledStopped = new Set<string>();
   private backoff: number;
   private dialFn: Dial;
-  private timers: { reconnect?: unknown; offline?: unknown; ping?: unknown; dead?: unknown } = {};
+  private timers: { reconnect?: unknown; offline?: unknown; ping?: unknown; dead?: unknown; absentTable?: unknown } = {};
 
   private constructor(private readonly options: FeLinkOptions, private readonly writer: SerialWriter, private readonly outbox: Outbox, private readonly cursors: StreamCursors, tablesRetired: Record<string, RetiredLog[]> = {}) {
     this.clock = options.clock ?? systemClock;
@@ -614,7 +614,9 @@ export class FeLink {
     if (welcome.protocol.min > PROTOCOL_VERSION || welcome.protocol.max < PROTOCOL_VERSION) { this.updateRequired(session, welcome.minFeVersion); return; }
     if (versionBelow(this.options.feVersion, welcome.minFeVersion)) { this.updateRequired(session, welcome.minFeVersion); return; }
     session.welcomed = true;
+    const prevServerId = this.serverId;
     this.serverId = welcome.serverId;
+    if (prevServerId !== null && prevServerId !== welcome.serverId) this.staleStreams.clear();
     if (!this.lastByeUnsettled) this.backoff = this.options.reconnectMinMs ?? 250;
     this.lastByeUnsettled = false;
     this.clearTimer("offline");
@@ -633,13 +635,19 @@ export class FeLink {
       });
     }
     if (!this.serverViews.has(welcome.serverId)) this.serverViews.set(welcome.serverId, { id: welcome.serverId, name: welcome.serverId, state: "live", since: null, self: true });
+    // §13.1 switch: the newly attached server's own srv: stream is followed via cursors, never as a peer table.
+    this.tables.remove(`srv:${welcome.serverId}`);
     for (const server of welcome.servers) if (server.id !== welcome.serverId) this.tables.add(`srv:${server.id}`);
     for (const stream of this.streams()) this.send(session, { t: "sub", stream, cursor: this.cursors.subCursor(stream) });
     for (const stream of this.tables.streams()) this.send(session, { t: "sub", stream: stream as StreamId, cursor: this.tables.subCursor(stream, this.clock.now()) });
     this.emit({ type: "servers" });
+    this.clearTimer("absentTable");
     if (this.tables.streams().length) {
       // A table the attached server has no copy of stops holding the outbox after a while (tablesCaught).
-      this.clock.setTimeout(() => { if (this.session === session && !session.closed) { this.updateCatching(); this.sendOutbox(session); } }, (this.options.absentTableMs ?? 5_000) + 1);
+      this.timers.absentTable = this.clock.setTimeout(() => {
+        this.timers.absentTable = undefined;
+        if (this.session === session && !session.closed) { this.updateCatching(); this.sendOutbox(session); }
+      }, (this.options.absentTableMs ?? 5_000) + 1);
     }
     this.reduce({ type: "welcome", catching: this.catchingNow() });
     this.sendOutbox(session);
@@ -1036,6 +1044,7 @@ export class FeLink {
     if (this.session === session) this.session = null;
     this.clearTimer("ping");
     this.clearTimer("dead");
+    this.clearTimer("absentTable");
     for (const [req, pending] of this.requests) { this.requests.delete(req); pending.reject(new Error("fe-link: the session ended")); }
     for (const [req, reader] of [...this.contentReaders]) { this.contentReaders.delete(req); reader(null); }
     this.resParts.drop();

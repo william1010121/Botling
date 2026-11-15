@@ -20,7 +20,7 @@ import { cardImageOf } from "../contract/attachment-url";
 import { status, statusText } from "../contract/bot-status";
 import { actionForEvent, bindingsFor, commandBindings, commandForEvent, formatCombo } from "../contract/shortcuts";
 import { say, setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
-import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultView, type RoutineView, type SubagentRowView } from "../contract";
+import { isMaintainer, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultView, type RoutineView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { DELIVERY_UNCONFIRMED } from "./delivery";
 import { WorkspaceStore } from "./store";
@@ -152,7 +152,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   }, [store, toggleRail]);
   const pinned = useMemo(() => {
     const ids = view.settings?.pinnedBots ?? [];
-    return ids.filter((id) => view.bots.some((candidate) => candidate.id === id && candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID));
+    return ids.filter((id) => view.bots.some((candidate) => candidate.id === id && candidate.role !== "main" && !isMaintainer(candidate)));
   }, [view.settings?.pinnedBots, view.bots]);
   const togglePin = useCallback((botId: string) => {
     const now = (store.getView().settings?.pinnedBots ?? []).filter((id) => store.getView().bots.some((candidate) => candidate.id === id));
@@ -664,7 +664,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                       pinned={!away && canIdle(candidate) ? pinned.includes(candidate.id) : undefined}
                       onTogglePin={() => togglePin(candidate.id)}
                       idle={canIdle(candidate) ? { away, onToggle: () => setIdle(candidate.id, !away) } : undefined}
-                      onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
+                      onMenu={candidate.role !== "main" && !isMaintainer(candidate) ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
                     />
                     {list.items.length > 0 && <RailWorkerList botId={candidate.id} list={list} name={candidate.name} now={now} lang={lang} actions={workerActions} />}
                   </>);
@@ -701,7 +701,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             title="A bot of its own, with its own memory and routines (a morning news bot, say)"><Icon name="sparkles" size={13} />New bot</button>
         </div>
         <UpdateEntry client={client} />
-        <PluginsButton client={client} plugins={view.plugins} lang={view.settings?.effectiveLanguage ?? null} onAsked={() => { void store.select(MAINTAINER_BOT_ID); }}
+        <PluginsButton client={client} plugins={view.plugins} bots={view.bots} lang={view.settings?.effectiveLanguage ?? null} onAsked={() => { const maintainer = store.getView().bots.find(isMaintainer); if (maintainer) void store.select(maintainer.id); }}
           onShowMain={() => { const main = view.bots.find((one) => one.role === "main"); if (main) void store.select(main.id); }} />
         <div className="rail-settings">
           <SidebarSettings client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />
@@ -1015,7 +1015,7 @@ export function RailStrip({ bots, pinned, idle = [], look, shown, waiting, onSel
                 onFocus={(event) => { if (!quiet.current) show(event.currentTarget); }}
                 onBlur={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.parentElement?.contains(event.relatedTarget))) hide(true); }}
                 onKeyDown={(event) => { if (event.key === "Escape" && open) { event.preventDefault(); hide(false); } }}
-                onContextMenu={bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
+                onContextMenu={bot.role !== "main" && !isMaintainer(bot) ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
                 <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
                 {bot.connection && <span className="strip-disconnected" aria-hidden="true">!</span>}
                 {unread && <span className="strip-unread" aria-hidden="true" />}

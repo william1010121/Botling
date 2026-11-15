@@ -118,6 +118,7 @@ export const COMMAND_SCOPES: Record<CommandType, CommandScope> = {
   "plugins.call": manage,
   "plugins.approvalAsk": manage,
   "plugins.tileImages": manage,
+  "plugin.grant": manage,
 
   // The roster and 2.x pairing (phones, machines): only the desktop window on its own server (§4.3).
   "mobile.view": admin,
