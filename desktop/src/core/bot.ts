@@ -446,11 +446,9 @@ export class Bot {
 
   get id() { return this.ctx.id; }
   get profile() { return this.ctx.profile; }
-  /** Read by BotViews on `this.owner` (another Bot), so not private. */
-  get paths() { return this.ctx.paths; }
+  get paths() { return this.ctx.paths; } // public: BotViews calls it on `this.owner`, another Bot
   private log(line: string) { this.ctx.log(line); }
-  /** Called by BotDecisions on `this.owner` (another Bot), so not private. */
-  emit(event: Event) { this.ctx.emit(event); }
+  emit(event: Event) { this.ctx.emit(event); } // public: BotDecisions calls it on `this.owner`, another Bot
 
   /** What the partner's chat did, in this chat (`mirror`): its lines are this chat's lines too. */
   /** Called by BotContext.emit (M7-S41). */
