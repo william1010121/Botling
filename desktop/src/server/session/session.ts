@@ -14,7 +14,7 @@
 // This file stays the only place in botlingd that writes frames to a socket (test/unit/server-session-frames.test.ts).
 import type { Socket } from "node:net";
 import type { Command } from "../../contract";
-import { decodeFrame, FrameSplitter, packFrame, type CmdBody, type MessageOf, type Scope } from "../../protocol";
+import { decodeFrame, encodeChunkFrame, FrameSplitter, packFrame, type CmdBody, type MessageOf, type Scope } from "../../protocol";
 import type { ShellWindow } from "../shell-bridge";
 import { sameToken } from "./paths";
 import { errorText, MAX_BUFFERED, servedAsReq, SessionCore, type SessionHost, type SessionOptions, type ShellRefusal } from "./session-core";
@@ -43,6 +43,20 @@ export class Session extends SessionCore implements ShellWindow {
    * of frames goes whole or not at all, and one over the limit is logged and refused, never attempted.
    */
   protected writeTexts(texts: string[], t: string, what?: string): boolean {
+    return this.writeFrames(texts, t, what);
+  }
+
+  protected writeChunk(message: MessageOf<"content.chunk">): boolean {
+    if (this.state === "closed" || this.socket.destroyed) return false;
+    const encoded = encodeChunkFrame(message, "server", SESSION_KIND);
+    if (!encoded.ok) {
+      this.host.log(`session: cannot send content.chunk (${message.req}): ${encoded.detail}`);
+      return false;
+    }
+    return this.writeFrames([encoded.bytes], "content.chunk", message.req);
+  }
+
+  private writeFrames(frames: Array<string | Uint8Array>, t: string, what?: string): boolean {
     if (this.state === "closed" || this.socket.destroyed) return false;
     if (this.socket.writableLength > (this.options.maxBuffered ?? MAX_BUFFERED)) {
       this.host.log(`session ${this.deviceId ?? "?"}: dropped, it does not read (${this.socket.writableLength} bytes waiting)`);
@@ -51,7 +65,7 @@ export class Session extends SessionCore implements ShellWindow {
     }
     let packed: Uint8Array[];
     try {
-      packed = texts.map((text) => packFrame(text));
+      packed = frames.map((frame) => packFrame(frame));
     } catch (error) {
       this.host.log(`session: cannot send ${t}${what ? ` (${what})` : ""}: ${errorText(error)}`);
       return false;

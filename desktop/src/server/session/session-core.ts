@@ -41,6 +41,8 @@ import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
 import { cancelAnswer } from "../slots";
 import { readStream, type LogHub, type LogReader } from "../log";
+import type { LocalPeerReads, LocalPeerReadSink } from "../content/local-peer-read";
+import type { LocatedRef } from "../content/peer-content";
 import type { LiveChannel, LiveSubscription } from "../live";
 import type { ShellBridge } from "../shell-bridge";
 import { LiveGate, type LiveGateClock } from "./live-gate";
@@ -101,6 +103,10 @@ export interface SessionHost {
   passThrough?: SessionPassThrough;
   /** M2 step 12: uploads (`content.put` + chunks); a `chat.send` naming files waits for their bytes (held). */
   uploads?: SessionUploads;
+  /** M4-01a: local socket reads of a peer's content (`content.get` / `.credit` / `.cancel`). */
+  peerReads?: () => LocalPeerReads | null;
+  /** M4-01a: local socket `content.find` fallback for a peer bot's line (`LOCAL_WINDOW`). */
+  peerLocate?: (message: MessageOf<"content.locate">) => Promise<LocatedRef | null>;
 }
 
 /** server/content/put.ts `Uploads` as a session uses it. */
@@ -219,6 +225,8 @@ export abstract class SessionCore {
   protected abstract get writable(): boolean;
   /** Writes encoded text frames in order, whole or not at all; false when they were not written. */
   protected abstract writeTexts(texts: string[], t: string, what?: string): boolean;
+  /** Writes one binary `content.chunk` frame (local socket only); false when it was not written. */
+  protected writeChunk?(_message: MessageOf<"content.chunk">): boolean;
   /** After a `bye`: lets what was written leave, then ends the transport. */
   protected abstract endTransport(): void;
   /** On close: drops the transport (unless endTransport is already letting it go). */
@@ -314,6 +322,7 @@ export abstract class SessionCore {
     this.gate.close();
     this.reader?.close();
     this.reader = null;
+    if (this.kind.local) this.host.peerReads?.()?.closeSession(this);
     this.closing();
     const uploads = this.host.uploads;
     if (uploads) void this.uploadChain.then(() => uploads.ended(this.uploadOwner)).catch(() => undefined);
@@ -351,6 +360,10 @@ export abstract class SessionCore {
       case "cancel": this.queueCancel(message); return;
       case "req": void this.req(message); return;
       case "content.find": case "content.open": void this.content(message); return;
+      case "content.get": case "content.credit": case "content.cancel":
+        if (!this.kind.local) { this.host.log(`session: ${message.t} is not served here`); return; }
+        this.peerRead(message);
+        return;
       case "content.put": case "content.chunk": this.queueUpload(message); return;
       case "admin": void this.admin(message); return;
       case "shell.done": this.host.shell.answer(this.shellWindow(), message); return;
@@ -653,6 +666,25 @@ export abstract class SessionCore {
     }
   }
 
+  private peerRead(message: MessageOf<"content.get"> | MessageOf<"content.credit"> | MessageOf<"content.cancel">): void {
+    const reads = this.host.peerReads?.();
+    if (!reads) {
+      if (message.t === "content.get") this.send({ t: "content.gone", req: message.req, id: message.id, reason: "offline" }, "content.get");
+      return;
+    }
+    if (message.t === "content.get") {
+      const sink: LocalPeerReadSink = {
+        send: (msg) => this.send(msg, msg.t),
+        chunk: (msg) => this.writeChunk?.(msg) ?? false,
+      };
+      void reads.get(this, message, sink);
+    } else if (message.t === "content.credit") {
+      reads.credit(this, message);
+    } else {
+      reads.cancel(this, message);
+    }
+  }
+
   private async content(message: MessageOf<"content.find"> | MessageOf<"content.open">): Promise<void> {
     const content = this.host.content;
     let answer: Message;
@@ -664,6 +696,20 @@ export abstract class SessionCore {
       answer = message.t === "content.find"
         ? { t: "content.found", req: message.req, ref: null }
         : { t: "content.gone", req: message.req, id: message.id, reason: "offline" };
+    }
+    if (this.kind.local && message.t === "content.find" && answer.t === "content.found" && !answer.ref && this.host.peerLocate) {
+      try {
+        const located = await this.host.peerLocate({ t: "content.locate", req: message.req, botId: message.botId, line: message.line, url: message.url });
+        if (located) {
+          answer = {
+            t: "content.found",
+            req: message.req,
+            ref: { owner: located.owner, id: located.id, type: located.type, state: located.state, entry: located.entry },
+          };
+        }
+      } catch (error) {
+        this.host.log(`session: ${message.t} peer: ${errorText(error)}`);
+      }
     }
     // The answer carries the request's own `req` (the service echoes it; kept here whatever it says).
     this.send({ ...answer, req: message.req } as Message, message.t);

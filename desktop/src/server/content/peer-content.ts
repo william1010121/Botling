@@ -41,6 +41,8 @@ export const PEER_CONTENT_WINDOW = 4 * MiB;
 export const PEER_CONTENT_FRAME = 64 * 1024;
 /** The owner's answer (located, meta, next chunk) must come within this time, or the read fails as offline. */
 export const PEER_CONTENT_TIMEOUT_MS = 15_000;
+/** D69 (Q-C1): a server's own local desktop window reads as that server, so the peer wire omits `device`. */
+export const LOCAL_WINDOW = null;
 const HASHES_TEXT_LIMIT = 240_000;
 /** How many owner descriptions (size, variants) of peer files are kept in memory (M3 step 12). */
 const DESCRIBED_KEPT = 2_000;
@@ -98,7 +100,7 @@ interface Upstream {
 interface Reader {
   key: ChunkKey;
   entry: EntryRef;
-  deviceId: string;
+  deviceId: string | null;
   start: number;
   end: number;
   pos: number;
@@ -242,7 +244,7 @@ export class PeerContent {
     if (this.described.size > DESCRIBED_KEPT) this.described.delete(this.described.keys().next().value!);
   }
 
-  async locate(deviceId: string, message: MessageOf<"content.locate">): Promise<LocatedRef | null> {
+  async locate(deviceId: string | null, message: MessageOf<"content.locate">): Promise<LocatedRef | null> {
     const owner = this.ownerOfBot(message.botId);
     if (!owner) return null;
     const session = this.options.session(owner);
@@ -253,7 +255,7 @@ export class PeerContent {
       timer.unref?.();
       this.locates.set(req, { owner, done, timer });
       this.counts.locates++;
-      if (session.sendWire({ t: "content.locate", req, botId: message.botId, line: message.line, url: message.url, device: deviceId } as WireMessage)) {
+      if (session.sendWire({ t: "content.locate", req, botId: message.botId, line: message.line, url: message.url, ...(deviceId === null ? {} : { device: deviceId }) } as WireMessage)) {
         const answer = await done.promise;
         if (answer) {
           const ref = answer.ref && answer.ref.owner === owner && answer.ref.entry.stream === `bot:${message.botId}` ? answer.ref : null;
@@ -283,8 +285,8 @@ export class PeerContent {
    * Whether a ticket may be given for (owner, id, entry): the entry's bot is the owner's (this server's copy), and the
    * owner confirmed the reference, now (a get when it is reachable and has not confirmed it yet) or before.
    */
-  async check(deviceId: string, owner: string, id: string, entry: EntryRef, variant = "original"): Promise<"ok" | PeerReadFailure> {
-    if (!this.options.readable(deviceId)) return "denied";
+  async check(deviceId: string | null, owner: string, id: string, entry: EntryRef, variant = "original"): Promise<"ok" | PeerReadFailure> {
+    if (deviceId !== null && !this.options.readable(deviceId)) return "denied";
     if (this.options.ownerOf(entry.stream) !== owner) return "denied";
     const key = { owner, id, variant };
     if (this.isConfirmed(owner, id, entry) && this.meta(key)) return "ok";
@@ -300,7 +302,7 @@ export class PeerContent {
   // -------------------------------------------------------------------------------------------
   // HTTP ranges (remote.ts `respond`, after the ticket and device checks)
 
-  async respond(url: ContentUrl, request: Request, deviceId: string): Promise<Response> {
+  async respond(url: ContentUrl, request: Request, deviceId: string | null): Promise<Response> {
     const { owner, id, variant, entry } = url;
     if (this.options.ownerOf(entry.stream) !== owner) return goneResponse("denied");
     const key = { owner, id, variant };
@@ -359,8 +361,8 @@ export class PeerContent {
         try {
           if (reader.closed) throw reader.failure ?? new PeerReadError("cancelled");
           if (reader.pos > reader.end) { this.closeReader(reader); controller.close(); return; }
-          // §9A.7: checked on every chunk; a device revoked mid-file gets nothing more.
-          if (!this.options.readable(reader.deviceId)) throw new PeerReadError("denied", "the device may no longer read");
+          // §9A.7: checked on every chunk; a device revoked mid-file gets nothing more (D69: LOCAL_WINDOW skips roster check).
+          if (reader.deviceId !== null && !this.options.readable(reader.deviceId)) throw new PeerReadError("denied", "the device may no longer read");
           const idx = Math.floor(reader.pos / MiB);
           let bytes: Buffer;
           if (reader.primed && idx === Math.floor(reader.start / MiB)) { bytes = reader.primed; reader.primed = null; } else bytes = await this.chunk(reader, idx);
@@ -451,7 +453,7 @@ export class PeerContent {
     return up;
   }
 
-  private openUpstream(session: PeerSession, key: ChunkKey, entry: EntryRef, deviceId: string, start: number, end: number, meta: Meta | null): Upstream {
+  private openUpstream(session: PeerSession, key: ChunkKey, entry: EntryRef, deviceId: string | null, start: number, end: number, meta: Meta | null): Upstream {
     const req = this.newReq("g");
     const up: Upstream = {
       req, owner: key.owner, key, entry, session, start, end, next: start, parts: [], partBytes: 0, received: 0,
@@ -469,7 +471,7 @@ export class PeerContent {
     const length = meta ? Math.min(meta.size, (end + 1) * MiB) - offset : (end + 1) * MiB - offset;
     up.length = length;
     this.counts.gets++;
-    if (length <= 0 || !session.sendWire({ t: "content.get", req, owner: key.owner, id: key.id, variant: key.variant, offset, length, entry, device: deviceId } as WireMessage)) {
+    if (length <= 0 || !session.sendWire({ t: "content.get", req, owner: key.owner, id: key.id, variant: key.variant, offset, length, entry, ...(deviceId === null ? {} : { device: deviceId }) } as WireMessage)) {
       this.failUpstream(up, new PeerReadError("offline", "the get could not be sent"));
     }
     return up;
@@ -488,7 +490,7 @@ export class PeerContent {
   }
 
   /** The owner's meta for a file, with its confirmation of the entry (a get of chunk 0, which also warms the cache). */
-  private async fetchMeta(key: ChunkKey, entry: EntryRef, deviceId: string): Promise<Meta> {
+  private async fetchMeta(key: ChunkKey, entry: EntryRef, deviceId: string | null): Promise<Meta> {
     const session = this.options.session(key.owner);
     if (!session) throw new PeerReadError("offline", "the owner is unreachable");
     const up = this.openUpstream(session, key, entry, deviceId, 0, 0, null);
