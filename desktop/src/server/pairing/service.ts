@@ -22,7 +22,7 @@
 // window) first runs `cluster.create` (the recovery code is shown once) and `cluster.confirm` (typed back). Admin
 // requests come only from the local socket (the role table keeps `admin` off every other session) or the CLI over it.
 import {
-  DeviceScope, fromBase64Url, memberFingerprint, pairLink, PAIR_OFFER_TTL_MS, PAIR_PENDING_LIMIT, PairOffer, toBase64Url,
+  addJoins, DeviceScope, fromBase64Url, memberFingerprint, pairLink, PAIR_OFFER_TTL_MS, PAIR_PENDING_LIMIT, PairOffer, toBase64Url,
   type AdminEvent, type AdminOp, type Message, type MessageOf, type SignedStatement,
 } from "../../protocol";
 import { verifyPairProof, type PeerClaim, type PeerDecision, type SessionInfo } from "../../session";
@@ -98,10 +98,44 @@ export interface DroppedListResult {
   rootName: string | null;
   rows: DroppedListRow[];
 }
+export interface RerootKeepCandidate {
+  revokeId: string;
+  member: string;
+  memberName: string;
+  signer: string;
+  signerName: string;
+  gen: number;
+  receivedAt: number | null;
+}
+export type RerootPreview =
+  | { isRoot: true; selfMember: string; selfName: string }
+  | {
+      isRoot: false;
+      selfMember: string;
+      selfName: string;
+      oldRootMember: string;
+      oldRootName: string;
+      keepCandidates: RerootKeepCandidate[];
+    };
+export interface RerootAddedMember {
+  member: string;
+  kind: "server" | "device";
+  name: string;
+  at: number;
+}
+export type RerootResult =
+  | {
+      ok: true;
+      rootId: string;
+      revokeId: string | null;
+      gen: number;
+      oldRootAdded: RerootAddedMember[];
+    }
+  | { ok: false; reason: "bad-code" };
 
 export class PairingError extends Error {
   constructor(
-    readonly code: "no-cluster" | "limit" | "unknown" | "state" | "no-address" | "not-a-device" | "bad-request" | "not-root" | "cannot-revoke-root" | "not-a-server" | "ambiguous",
+    readonly code: "no-cluster" | "limit" | "unknown" | "state" | "no-address" | "not-a-device" | "bad-request" | "not-root" | "cannot-revoke-root" | "not-a-server" | "ambiguous" | "already-root" | "bad-keep",
     message: string,
   ) {
     super(message);
@@ -257,6 +291,8 @@ export class PairingService {
       case "machine.remove": return this.removeMachine(op.member, op.cascade, op.reason);
       case "roster.dropped": return this.droppedList();
       case "roster.dismiss": return this.dismissDropped(op.revokeId);
+      case "roster.rerootPreview": return this.rerootPreview();
+      case "roster.reroot": return this.reroot(op.code, op.oldRootLost, op.keep);
       default: throw new PairingError("bad-request", `${op.op} is not a device pairing request`);
     }
   }
@@ -466,6 +502,83 @@ export class PairingService {
       }
       throw error;
     }
+  }
+
+  /** Preview for `botlingd reroot` (§4.8, M4-11): names self, old root, and pending revocations to keep/untick. */
+  rerootPreview(): RerootPreview {
+    const view = this.options.roster.view;
+    const root = view.root;
+    if (this.options.roster.clusterId === null || !root) {
+      throw new PairingError("no-cluster", "there is no cluster yet");
+    }
+    const selfMember = this.options.roster.memberId;
+    const selfName = this.serverDisplayName(selfMember, view);
+    if (root.root === selfMember) {
+      return { isRoot: true, selfMember, selfName };
+    }
+    const keepCandidates: RerootKeepCandidate[] = this.options.roster.keepCandidates()
+      .map((c) => ({
+        revokeId: c.revokeId,
+        member: c.member,
+        memberName: this.serverDisplayName(c.member, view),
+        signer: c.signer,
+        signerName: this.serverDisplayName(c.signer, view),
+        gen: c.gen,
+        receivedAt: c.receivedAt,
+      }))
+      .sort((a, b) => (a.receivedAt ?? 0) - (b.receivedAt ?? 0) || (a.revokeId < b.revokeId ? -1 : a.revokeId > b.revokeId ? 1 : 0));
+    return {
+      isRoot: false,
+      selfMember,
+      selfName,
+      oldRootMember: root.root,
+      oldRootName: this.serverDisplayName(root.root, view),
+      keepCandidates,
+    };
+  }
+
+  /**
+   * Reroots the cluster onto this server from the recovery code (§4.8, D48, D62, M4-11).
+   * Never logs or returns the recovery code; returns `oldRootAdded` (newest first) when `oldRootLost` is true.
+   */
+  async reroot(code: string, oldRootLost: boolean, keep: string[]): Promise<RerootResult> {
+    const oldRoot = this.options.roster.view.root?.root ?? null;
+    try {
+      const res = await this.options.roster.reroot({ code, oldRootLost, keep });
+      this.options.log?.(`pairing: rerooted to this server (gen ${res.gen}, oldRootLost=${oldRootLost}, keep=${keep.length})`);
+      const oldRootAdded = oldRootLost && oldRoot ? this.addedByOldRoot(oldRoot) : [];
+      return { ok: true, rootId: res.rootId, revokeId: res.revokeId, gen: res.gen, oldRootAdded };
+    } catch (error) {
+      if (error instanceof RosterError) {
+        if (error.reason === "bad-code") {
+          this.options.log?.("pairing: reroot refused (bad-code)");
+          return { ok: false, reason: "bad-code" };
+        }
+        if (error.reason === "no-cluster") throw new PairingError("no-cluster", error.message);
+        if (error.reason === "already-root") throw new PairingError("already-root", error.message);
+        if (error.reason === "bad-keep") throw new PairingError("bad-keep", error.message);
+      }
+      throw error;
+    }
+  }
+
+  /** Valid members staying in the cluster whose joining Add was signed by `oldRoot`, newest first (§4.8). */
+  private addedByOldRoot(oldRoot: string): RerootAddedMember[] {
+    const view = this.options.roster.view;
+    const self = this.options.roster.memberId;
+    const byMember = new Map<string, RerootAddedMember>();
+    for (const { statement: { body } } of this.options.roster.statements()) {
+      if (body.type !== "add" || body.by !== oldRoot || !addJoins(body)) continue;
+      if (body.member === oldRoot || body.member === self || !view.valid.has(body.member)) continue;
+      const info = view.members.get(body.member);
+      const kind: "server" | "device" = view.servers.has(body.member) ? "server" : body.kind;
+      const name = kind === "server" ? this.serverDisplayName(body.member, view) : (info?.name ?? body.name);
+      const prev = byMember.get(body.member);
+      if (!prev || body.at > prev.at) {
+        byMember.set(body.member, { member: body.member, kind, name, at: body.at });
+      }
+    }
+    return [...byMember.values()].sort((a, b) => b.at - a.at || (a.member < b.member ? -1 : a.member > b.member ? 1 : 0));
   }
 
   private serverDisplayName(id: string, view: RosterView): string {

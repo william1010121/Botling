@@ -102,6 +102,9 @@ export const AdminOp = z.discriminatedUnion("op", [
   // Dropped server revocations (D63, §4.8, M4-10). Local socket only.
   z.strictObject({ op: z.literal("roster.dropped") }),
   z.strictObject({ op: z.literal("roster.dismiss"), revokeId: StatementId }),
+  // Reroot from the recovery code (§4.8, D48, D62, M4-11). Local socket only; code from stdin only.
+  z.strictObject({ op: z.literal("roster.rerootPreview") }),
+  z.strictObject({ op: z.literal("roster.reroot"), code: RecoveryCode, oldRootLost: z.boolean(), keep: z.array(StatementId).max(1_000) }),
   // Cluster preferences (§17, M3 step 5): a write from the window or CLI on this machine (LWW per key, gossiped to
   // every peer server) and the current registers.
   z.strictObject({ op: z.literal("prefs.set"), key: PrefKey, value: z.unknown() }),
