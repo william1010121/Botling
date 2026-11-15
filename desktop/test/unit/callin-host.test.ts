@@ -611,3 +611,28 @@ describe("M5-02c: the guest's line in the host chat (Core + CallInHost)", () => 
     expect(second.notices).toEqual([]);
   });
 });
+
+describe("M5-02c review: the wait ends after the reply's commit", () => {
+  it("34. callin.reply's handler only checks inside the transaction; the wait ends when afterCommit runs, never before", async () => {
+    const { callInReply } = await import("../../src/server/callin");
+    const sender = fakeSender();
+    const host = hostOf();
+    host.attach(sender.sender);
+    let answer: unknown = null;
+    void host.remoteTurn(request()).then((value) => { answer = value; });
+    await until(() => sender.asks.length === 1);
+    const actions: Array<() => void> = [];
+    const scope = { afterCommit: (action: () => void) => { actions.push(action); } } as unknown as Parameters<typeof callInReply>[0]["scope"];
+    const context = { slot: { origin: SERVER_B } } as unknown as Parameters<typeof callInReply>[1];
+    callInReply({ scope, callHost: host }, context, replyCmd(nextAsk(sender.asks).callId, { kind: "reply", text: "ok", engine: "claude" }) as Reply);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(answer).toBeNull();
+    expect(host.waiting).toBe(1);
+    expect(actions).toHaveLength(1);
+    actions[0]!();
+    await until(() => answer !== null);
+    expect(answer).toMatchObject({ kind: "reply", text: "ok" });
+    expect(host.waiting).toBe(0);
+    host.close();
+  });
+});
