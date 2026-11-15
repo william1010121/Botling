@@ -15,8 +15,8 @@
 // Pure TypeScript: no Electron, no core, no Node built-ins; time comes from an injected clock.
 import type { Command } from "../contract";
 import {
-  decodeWireFrame, encodeChunkFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, REFUSE_REASON_TEXT, ResAssembler, slotKey,
-  type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type ServerAddresses, type ServerState, type Slot, type StreamId, type Target, type Via,
+  decodeWireFrame, encodeChunkFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, PushSubscribe, REFUSE_REASON_TEXT, ResAssembler, slotKey,
+  type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type ServerAddresses, type ServerState, type Slot, type StreamId, type Target, type VapidKeyId, type Via,
 } from "../protocol";
 import type { Rows } from "../protocol/table-rows";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";
@@ -172,6 +172,8 @@ export class FeLink {
   private readonly listeners = new Set<(event: FeLinkEvent) => void>();
   private session: Session | null = null;
   private serverId: string | null = null;
+  private serverVapidPublicKey: string | null = null;
+  private serverVapidId: VapidKeyId | null = null;
   private readonly subs = new Set<StreamId>();
   private readonly receiver = new LiveReceiver();
   private readonly liveStale = new Set<string>();
@@ -432,6 +434,22 @@ export class FeLink {
   get server(): string | null { return this.serverId; }
   /** The server id the link is attached to (M4-01b); null before the first welcome. */
   attachedServerId(): string | null { return this.serverId; }
+  /** The cluster VAPID public key from the last `welcome` (§18.4, M4-25), or null. */
+  get vapidPublicKey(): string | null { return this.serverVapidPublicKey; }
+  /** Version `(gen, id)` of `vapidPublicKey` from the last `welcome` (§18.4, M4-26 F3), or null. */
+  get vapidId(): VapidKeyId | null { return this.serverVapidId; }
+
+  /**
+   * Sends this device's Web Push subscription live over the attached remote session (M4-25, §18.4).
+   * Never queued in the durable outbox: returns false when unattached, local, or invalid.
+   */
+  sendPushSubscribe(subscription: { endpoint: string; keys: { p256dh: string; auth: string } }): boolean {
+    const session = this.session;
+    if (this.local || !session?.welcomed || session.closed) return false;
+    const parsed = PushSubscribe.safeParse({ t: "push.subscribe", endpoint: subscription.endpoint, keys: subscription.keys });
+    if (!parsed.success) return false;
+    return this.send(session, parsed.data);
+  }
 
   request(cmd: Command): Promise<unknown> {
     return this.ask({ t: "req", req: this.nextReq(), cmd }, "res");
@@ -623,6 +641,8 @@ export class FeLink {
     session.welcomed = true;
     const prevServerId = this.serverId;
     this.serverId = welcome.serverId;
+    this.serverVapidPublicKey = welcome.vapidPublicKey ?? null;
+    this.serverVapidId = welcome.vapidPublicKey ? (welcome.vapidId ?? null) : null;
     if (prevServerId !== null && prevServerId !== welcome.serverId) this.staleStreams.clear();
     if (!this.lastByeUnsettled) this.backoff = this.options.reconnectMinMs ?? 250;
     this.lastByeUnsettled = false;

@@ -52,9 +52,11 @@ export interface Diagnostics {
   bridge: BridgeDiagnostics;
   /** The player over the page (step 14): first frame, seeks, switches. */
   video: VideoDiagnostics;
+  /** M4-25 Web Push opt-in state (never holds endpoint or key bytes). */
+  push: { state: "idle" | "subscribing" | "subscribed" | "error"; sends: number; error?: string };
 }
 
-export function newDiagnostics(): Diagnostics { return { live: [], states: {}, words: {}, servers: [], banners: [], conn: [], frames: 0, ends: [], media: {}, player: newPlayerDiagnostics("tailnet"), uploads: {}, bridge: newBridgeDiagnostics(), video: newVideoDiagnostics() }; }
+export function newDiagnostics(): Diagnostics { return { live: [], states: {}, words: {}, servers: [], banners: [], conn: [], frames: 0, ends: [], media: {}, player: newPlayerDiagnostics("tailnet"), uploads: {}, bridge: newBridgeDiagnostics(), video: newVideoDiagnostics(), push: { state: "idle", sends: 0 } }; }
 
 export interface Connection {
   link: FeLink;

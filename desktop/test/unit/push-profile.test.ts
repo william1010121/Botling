@@ -112,7 +112,7 @@ async function startServer(withCluster = true): Promise<TestServer> {
     self: { dhPub: identity.dhPub },
   };
   const host: RemoteHost = { ...sessionHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey } };
-  const remote = new RemoteSessions(host);
+  const remote = new RemoteSessions(host, { pushWindowMs: 0 });
   cleanups.push(async () => {
     remote.close();
     await runtime.scope.submit(() => undefined);

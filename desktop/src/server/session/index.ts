@@ -4,6 +4,6 @@ export { LiveGate, type LiveGateClock } from "./live-gate";
 export { botlingdPaths, PathsError, readToken, refuse2xData, sameToken, SOCKET_PATH_LIMIT, writeToken, type BotlingdPaths } from "./paths";
 export { REQ_ALSO, servedAsReq, Session, type ContentHandler, type SessionHost, type SessionOptions } from "./session";
 export { DEAD_AFTER_MS, PING_AFTER_MS, SessionCore, type AdminHost } from "./session-core";
-export { devicePeerCheck, LIVE_SOFT_BYTES, RemoteSession, RemoteSessions, type PairingHook, type RemoteHost, type RemoteRoster, type RemoteSessionOptions } from "./remote-session";
+export { devicePeerCheck, LIVE_SOFT_BYTES, PUSH_PROFILE_WINDOW_MS, PushProfileLimiter, RemoteSession, RemoteSessions, type PairingHook, type RemoteHost, type RemoteRoster, type RemoteSessionOptions } from "./remote-session";
 export { REMOTE_READS, remoteReadRefusal, slotAuthorize, statedScope, USER_ONLY_CARD_DETAIL, WAITING_PLAIN_ONLY_DETAIL, WAITING_TARGET_DETAIL, type DeviceRoster } from "./remote-reads";
 export { SessionServer, socketAnswers } from "./socket-server";

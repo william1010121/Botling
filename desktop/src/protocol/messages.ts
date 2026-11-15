@@ -102,7 +102,7 @@ export const Welcome = msg("welcome", {
   /** The owner's `next` for this front end's current epoch, per target this server owns (§11.4). */
   next: z.record(Target, z.number().int().min(1)),
   views: z.record(z.string().max(100), z.unknown()),
-  /** Current cluster Web Push VAPID public key (§18.4, M4-26), so devices learn rotated keys on attach. */
+  /** Current cluster Web Push VAPID public key (§18.4, M4-25 / M4-26), so devices learn rotated keys on attach. */
   vapidPublicKey: VapidPublicKey.optional(),
   /** Version `(gen, id)` of `vapidPublicKey` so devices only advance to newer keys (M4-26 review F3). */
   vapidId: VapidKeyId.optional(),
