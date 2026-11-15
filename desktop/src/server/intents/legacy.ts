@@ -91,7 +91,7 @@ export class LegacyApply {
 
   /** The apply step for a legacy command: the result its handler gave, kept by `receive`. */
   apply(context: ApplyContext): { result?: unknown } {
-    const ran = this.ran.get(keyOf(context.slot, cmdHash({ cmd: context.cmd, scope: context.scope, basis: context.basis })));
+    const ran = this.ran.get(keyOf(context.slot, cmdHash({ cmd: context.cmd, scope: context.scope, basis: context.basis, via: context.via })));
     if (!ran) throw new Error(`legacy: ${context.cmd.type} reached apply without its handler's result (re-send it)`);
     if (!ran.ok) throw new SlotRefusal("invalid", ran.detail);
     return ran.result === undefined ? {} : { result: ran.result };
