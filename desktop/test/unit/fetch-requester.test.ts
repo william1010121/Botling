@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { decodeWireFrame, encodeChunkFrame, encodeWireFrame, type WireMessage } from "../../src/protocol";
 import { FetchRequester, incomingDirName, type FetchPeer, type FetchResult } from "../../src/server/fetch/requester";
 import { FetchSource, type FetchAskHook, type FetchSink } from "../../src/server/fetch/source";
@@ -15,6 +15,28 @@ import { RosterStore } from "../../src/server/roster";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import { until } from "../helpers";
 import { makeCluster, readServerKeys, writeStatements } from "../support/peer-cluster";
+
+// Independent check of the M5-07b review fixes: a bot racing the requester is simulated by hooks on the requester's
+// own `realpathSync` / `lstatSync` / `open` calls (pass-through unless a test sets one), so the swap lands exactly in
+// the window between two of its checks.
+const race = vi.hoisted(() => ({
+  afterRealpath: null as ((path: string) => void) | null,
+  beforeOpen: null as ((path: string) => void) | null,
+  afterLstat: null as ((path: string) => void) | null,
+}));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const realpathSync = Object.assign((path: string, ...rest: unknown[]) => { const out = (actual.realpathSync as (...a: unknown[]) => string)(path, ...rest); race.afterRealpath?.(String(path)); return out; }, {
+    native: (path: string, ...rest: unknown[]) => { const out = (actual.realpathSync.native as (...a: unknown[]) => string)(path, ...rest); race.afterRealpath?.(String(path)); return out; },
+  });
+  const lstatSync = (path: string, ...rest: unknown[]) => { const out = (actual.lstatSync as (...a: unknown[]) => unknown)(path, ...rest); race.afterLstat?.(String(path)); return out; };
+  return { ...actual, realpathSync, lstatSync };
+});
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const open = (path: string, ...rest: unknown[]) => { race.beforeOpen?.(String(path)); return (actual.open as (...a: unknown[]) => unknown)(path, ...rest); };
+  return { ...actual, open };
+});
 
 const PEER = { local: false } as const;
 const MiB = 1024 * 1024;
@@ -199,7 +221,7 @@ const ok = (result: FetchResult): Extract<FetchResult, { ok: true }> => {
 
 describe("M5-07b: the requester receives a fetch", () => {
   const cleanups: Array<() => Promise<void>> = [];
-  afterEach(async () => { for (const fn of cleanups.splice(0)) await fn(); });
+  afterEach(async () => { race.afterRealpath = null; race.beforeOpen = null; race.afterLstat = null; for (const fn of cleanups.splice(0)) await fn(); });
   const make = async (options?: Parameters<typeof setup>[0]) => { const env = await setup(options); cleanups.push(env.cleanup); return env; };
 
   it("names the folder after the source's safe name and the first 8 characters of its id", () => {
@@ -574,6 +596,80 @@ describe("M5-07b: the requester receives a fetch", () => {
       const result = await pending;
       expect(result).toMatchObject({ ok: false, reason: "corrupt" });
       if (!result.ok) expect(result.detail).toMatch(/differs only by case/);
+    });
+
+    // ---- independent check (bot racing the requester) ----
+    const realFs = () => vi.importActual<typeof import("node:fs")>("node:fs");
+
+    it("check: a staging folder swapped for a symlink right after prepare's realpath check is refused (its inode is not a folder's)", async () => {
+      const env = await make();
+      const fs = await realFs();
+      const outside = join(env.root, "outside-prepare");
+      mkdirSync(outside);
+      let fired = false;
+      race.afterRealpath = (path) => {
+        if (!/\.[0-9a-f-]{36}\.partial$/.test(path)) return;
+        race.afterRealpath = null;
+        fired = true;
+        fs.renameSync(path, `${path}.moved`);
+        fs.symlinkSync(outside, path);
+      };
+      env.muteSource();
+      const before = env.asks.length;
+      const pending = env.requester.fetch("bot-b", env.ka.memberId, artifact("x"), "x", MiB);
+      const ask = await Promise.race([until(() => env.asks[before] ?? null, { timeout: 2_000, what: "ask" }), pending.then(() => null)]);
+      if (ask) {
+        const send = (m: WireMessage) => env.requester.onMessage(env.current()!, m);
+        send(grant(ask.fetchId, 7, 1));
+        send(chunk(ask.fetchId, 0, "evil.plist", "PAYLOAD"));
+        send(done(ask.fetchId, [{ rel: "evil.plist", text: "PAYLOAD" }]));
+      }
+      expect((await pending).ok).toBe(false);
+      expect(fired).toBe(true);
+      expect(readdirSync(outside)).toEqual([]);
+    });
+
+    it("check: a sub folder swapped to a symlink for the open and back before the folder re-check gets no file and no byte outside", async () => {
+      const env = await make();
+      const fs = await realFs();
+      const outside = join(env.root, "outside-swap");
+      mkdirSync(outside);
+      const { pending, id, staging, send } = await start(env);
+      // the requester works on real paths (the temp folder is under a symlinked /var on macOS)
+      const sub = join(fs.realpathSync(staging), "sub");
+      let swapped = false;
+      race.beforeOpen = (path) => {
+        if (path !== join(sub, "evil.plist")) return;
+        race.beforeOpen = null;
+        swapped = true;
+        fs.renameSync(sub, `${sub}.real`);
+        fs.symlinkSync(outside, sub);
+        race.afterLstat = (p) => {
+          if (p !== join(sub, "evil.plist")) return;
+          race.afterLstat = null;
+          fs.unlinkSync(sub);
+          fs.renameSync(`${sub}.real`, sub);
+        };
+      };
+      send(grant(id, 7, 1));
+      send(chunk(id, 0, "sub/evil.plist", "PAYLOAD"));
+      send(done(id, [{ rel: "sub/evil.plist", text: "PAYLOAD" }]));
+      expect(await pending).toMatchObject({ ok: false, reason: "corrupt" });
+      expect(swapped).toBe(true);
+      if (process.platform === "darwin") expect(readdirSync(outside)).toEqual([]);
+      else for (const name of readdirSync(outside)) expect(readFileSync(join(outside, name), "utf8")).toBe("");
+    });
+
+    it("check: a sub folder that is a symlink makes no folder outside (folders are made one at a time, each checked)", async () => {
+      const env = await make();
+      const outside = join(env.root, "outside-mkdir");
+      mkdirSync(outside);
+      const { pending, id, staging, send } = await start(env);
+      symlinkSync(outside, join(staging, "sub"));
+      send(grant(id, 3, 1));
+      send(chunk(id, 0, "sub/deep/er/x", "abc"));
+      expect(await pending).toMatchObject({ ok: false, reason: "corrupt" });
+      expect(readdirSync(outside)).toEqual([]);
     });
   });
 });

@@ -8,11 +8,14 @@
 //   `fetch.done`'s manifest equals the one recomputed from what arrived (size + SHA-256 per file, counted here, not
 //   taken from the source), by ONE rename of the staging folder inside the same parent folder.
 // - The bot may write its own folder (`.bot/incoming` included) while this server writes, and may plant symlinks
-//   there. So: the staging folder is checked by inode and every folder under it by `lstat` before a file is opened;
-//   after `open(wx)` and before a byte is written, the opened file must be the one at its path (same inode, one link,
-//   regular); no file is ever renamed across folders. Remaining risk (no `openat` in Node): a bot that swaps a staging
-//   sub folder in the microseconds between the check and the open can make this server create one EMPTY file
-//   outside; no byte is written into it and nothing is overwritten.
+//   there. So: the staging folder is checked by inode (and must be a plain folder) and folders under it are made one at
+//   a time, each checked by `lstat`, before a file is opened. The file is opened with `O_EXCL` and, on macOS,
+//   `O_NOFOLLOW_ANY` (no symlink anywhere on the path, so a racing swap cannot redirect the open); on Linux the opened
+//   file's real path (`/proc/self/fd`) must be the target. After the open and before a byte is written, the opened file
+//   must be the one at its path (same inode, one link, regular). No file is ever renamed across folders. Remaining risk
+//   (no `openat`/`mkdirat` in Node): a bot that swaps a staging sub folder in the microseconds between a check and a
+//   `mkdir` (both systems) or the open (Linux only) can make this server create one EMPTY folder or file outside; no
+//   byte is written into it and nothing is overwritten.
 // - A lost session: back within `resumeWindowMs` (10 minutes) the same `fetch.ask` goes out again with `from` = the
 //   last verified chunk; after the window the fetch ends `unreachable`. `from.index` means "after this chunk" (07a), so
 //   a session lost before chunk 0 cannot resume: the fetch starts again under a NEW fetchId (for an ask grant the
@@ -22,7 +25,7 @@
 // - One audit row (`audit:<fetchId>`, `act: "fetch.receive"`) in this server's `srv:` table after the files are in
 //   place (the source wrote its `fetch.serve` row before the first byte).
 import { createHash, randomUUID, type Hash } from "node:crypto";
-import { lstatSync, mkdirSync, realpathSync, renameSync, rmSync, rmdirSync, type Stats } from "node:fs";
+import { constants, existsSync, lstatSync, mkdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, type Stats } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import type { WireMessage, WireMessageOf } from "../../protocol";
@@ -33,6 +36,12 @@ import type { ServerStore } from "../store";
 const realpath = realpathSync.native ?? realpathSync;
 export const FETCH_RESUME_WINDOW_MS = 10 * 60_000;
 const PARTIAL = ".partial";
+/** macOS `O_NOFOLLOW_ANY` (open fails with ELOOP if any part of the path is a symlink); not in `fs.constants`. */
+const O_NOFOLLOW_ANY = process.platform === "darwin" ? 0x20000000 : 0;
+// (macOS refuses O_NOFOLLOW together with O_NOFOLLOW_ANY with EINVAL; ANY covers the last part too.)
+const NEW_FILE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (O_NOFOLLOW_ANY || constants.O_NOFOLLOW);
+/** Linux: the real path of an open file, to check where an open really landed. */
+const PROC_FD = process.platform === "linux" && existsSync("/proc/self/fd") ? "/proc/self/fd" : null;
 
 /** What `FetchRequester` needs from a peer session (`PeerSession` has all of it). */
 export interface FetchPeer {
@@ -216,7 +225,11 @@ export class FetchRequester {
     p.partial = join(srvReal, `.${p.fetchId}${PARTIAL}`);
     if (realpath(parts[3]!) !== p.partial) throw new Error("the incoming folder is not inside the bot folder");
     if (exists(p.dest)) throw new Error("the fetch folder already exists");
-    p.partialId = idOf(lstatSync(p.partial));
+    // the inode kept is a plain folder's (a symlink swapped in after the realpath check would otherwise be "the
+    // staging folder" from then on, and every later check would pass through it).
+    const staged = lstatSync(p.partial);
+    if (staged.isSymbolicLink() || !staged.isDirectory()) throw new Error("the fetch folder is not a plain folder");
+    p.partialId = idOf(staged);
   }
 
   private sendAsk(p: Pending, from?: { file: string; index: number }): boolean {
@@ -285,16 +298,17 @@ export class FetchRequester {
       if (p.seen.has(folded)) return this.corrupt(p, `file ${rel} comes twice (or differs only by case)`);
       if (p.done.length + 1 > FETCH_MAX_FILES || (p.grant && p.done.length + 1 > p.grant.files)) return this.corrupt(p, "more files than the grant names");
       p.seen.add(folded);
-      mkdirSync(dirname(target), { recursive: true });
-      // the staging folder is still the one made for this fetch, and every folder under it on the way to
-      // the file is a plain folder (no symlink planted by the bot). Compared by inode / lstat, never realpath vs realpath.
-      if (!this.stagingIntact(p, rel)) return this.corrupt(p, "a chunk's folder leads out of the fetch folder");
-      // `wx`: the file is new (fails on anything there, a symlink included).
-      const handle = await open(target, "wx", 0o600);
+      // the staging folder is still the one made for this fetch, and every folder under it on the way to the file is
+      // made here one at a time and is a plain folder (no symlink planted by the bot; a recursive mkdir would follow
+      // one and make folders outside). Compared by inode / lstat, never realpath vs realpath.
+      if (!this.makeFolders(p, rel) || !this.stagingIntact(p, rel)) return this.corrupt(p, "a chunk's folder leads out of the fetch folder");
+      // O_EXCL: the file is new (fails on anything there, a symlink included); O_NOFOLLOW_ANY (macOS): no symlink on the way.
+      const handle = await open(target, NEW_FILE_FLAGS, 0o600);
       // the file opened is the one at `target` (a folder swapped between the check and the open would
-      // put it elsewhere): same inode, one link, regular. Checked before a byte is written.
+      // put it elsewhere): same inode, one link, regular, and (Linux) its real path is `target`. Checked before a byte
+      // is written.
       let placed = false;
-      try { const st = await handle.stat(); const at = lstatSync(target); placed = st.isFile() && at.isFile() && st.nlink === 1 && idOf(st) === idOf(at) && this.stagingIntact(p, rel); } catch { /* not placed */ }
+      try { const st = await handle.stat(); const at = lstatSync(target); placed = st.isFile() && at.isFile() && st.nlink === 1 && idOf(st) === idOf(at) && (!PROC_FD || readlinkSync(`${PROC_FD}/${handle.fd}`) === target) && this.stagingIntact(p, rel); } catch { /* not placed */ }
       if (!placed) { await handle.close().catch(() => undefined); return this.corrupt(p, "a chunk's file did not land in the fetch folder"); }
       p.cur = { rel, handle, hash: createHash("sha256"), size: 0 };
     }
@@ -331,7 +345,7 @@ export class FetchRequester {
     // already write; `<dest>` must not exist (an empty folder or a link the bot made there is refused).
     if (exists(p.dest)) return this.corrupt(p, "something already sits where the fetch folder goes");
     let intact = false;
-    try { intact = idOf(lstatSync(p.partial)) === p.partialId; } catch { /* gone */ }
+    try { const st = lstatSync(p.partial); intact = st.isDirectory() && !st.isSymbolicLink() && idOf(st) === p.partialId; } catch { /* gone */ }
     if (!intact) return this.corrupt(p, "the staging folder was replaced");
     renameSync(p.partial, p.dest);
     const absDest = p.dest;
@@ -372,10 +386,28 @@ export class FetchRequester {
   /** The staging folder is the one made for this fetch and every folder from it down to `rel`'s folder is plain. */
   private stagingIntact(p: Pending, rel: string): boolean {
     try {
-      if (idOf(lstatSync(p.partial)) !== p.partialId) return false;
+      const staged = lstatSync(p.partial);
+      if (staged.isSymbolicLink() || !staged.isDirectory() || idOf(staged) !== p.partialId) return false;
       const parts = rel.split("/").slice(0, -1);
       for (let i = 1; i <= parts.length; i++) {
         const st = lstatSync(join(p.partial, ...parts.slice(0, i)));
+        if (st.isSymbolicLink() || !st.isDirectory()) return false;
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  /** Makes the folders from the staging folder down to `rel`'s folder one at a time; each must be a plain folder. */
+  private makeFolders(p: Pending, rel: string): boolean {
+    try {
+      const staged = lstatSync(p.partial);
+      if (staged.isSymbolicLink() || !staged.isDirectory() || idOf(staged) !== p.partialId) return false;
+      const parts = rel.split("/").slice(0, -1);
+      for (let i = 1; i <= parts.length; i++) {
+        const dir = join(p.partial, ...parts.slice(0, i));
+        let st: Stats | null = null;
+        try { st = lstatSync(dir); } catch (error) { if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return false; }
+        if (!st) { mkdirSync(dir); st = lstatSync(dir); }
         if (st.isSymbolicLink() || !st.isDirectory()) return false;
       }
       return true;
