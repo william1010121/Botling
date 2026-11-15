@@ -1217,7 +1217,7 @@ describe("M5-07a: two-server botlingd wiring", () => {
 
   afterAll(async () => { await cluster?.cleanup(); }, 60_000);
 
-  it("serves free artifact over live PeerSession and denies ask-gated path with default hook", async () => {
+  it("serves free artifact over live PeerSession and holds an ask-gated path for its approval card", async () => {
     const artifact = deterministicBytes("two-server-art", 90 * 1024);
     writeFileSync(join(botFolderA, ".bot", "artifacts", "r.html"), artifact);
     writeFileSync(join(botFolderA, "src", "private.txt"), "private");
@@ -1304,10 +1304,13 @@ describe("M5-07a: two-server botlingd wiring", () => {
     }, "peer", PEER);
     if (!ask2.ok) throw new Error(ask2.detail);
     link.send("control", encoder.encode(ask2.text));
-    const denied2 = await until(() => received.find((m) => m.t === "fetch.denied" && m.fetchId === "two-srv-ask") ?? null, {
-      timeout: 10_000, what: "two-srv-ask denied",
-    });
-    expect(denied2).toEqual({ t: "fetch.denied", fetchId: "two-srv-ask", reason: "denied" });
+    // M5-06c: botlingd now wires the approval card, so an ask-gated path waits for the user (the card is in the
+    // Maintainer's chat; fetch-approval-botlingd.test.ts answers it). Nothing is sent until then.
+    await until(() => {
+      const db = new DatabaseSync(join(a.dataDir, "server.db"), { readOnly: true });
+      try { return db.prepare("SELECT 1 FROM meta WHERE key = 'fetch:pending:two-srv-ask'").get() ?? null; } finally { db.close(); }
+    }, { timeout: 10_000, what: "pending approval for two-srv-ask" });
+    expect(received.filter((m) => "fetchId" in m && m.fetchId === "two-srv-ask")).toEqual([]);
 
     link.close();
   }, 60_000);
