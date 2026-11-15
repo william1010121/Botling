@@ -1081,6 +1081,46 @@ describe("M5-07a: fetch source", () => {
     expect(Number(grants.n)).toBe(0); // no grant row for either refused fetch
   });
 
+  it("F-a2. a too-deep link to a file outside the target but inside the grant prefix is `limit` before the grant", async () => {
+    const env = await setupInProcessCluster(async () => "once" as const);
+    cleanups.push(env.cleanup);
+    // The artifact grant prefix is the whole artifacts folder; the target is one folder in it. The scan only counts
+    // links that stay inside the target, the collect step serves any link inside the prefix: it must refuse too.
+    writeFileSync(join(env.artifactsA, "outside-target.txt"), "x");
+    const folders = Array.from({ length: FETCH_MAX_DEPTH + 1 }, (_, i) => `f${i}`);
+    mkdirSync(join(env.artifactsA, "gap65", ...folders), { recursive: true });
+    symlinkSync(join(env.artifactsA, "outside-target.txt"), join(env.artifactsA, "gap65", ...folders, "leaf.txt"));
+    const sink = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sink.sink, { t: "fetch.ask", fetchId: "fa2-gap", requester: { bot: env.botB }, source: env.ka.memberId, what: { kind: "artifact", botId: "bot-a", path: "gap65" }, purpose: "deep", maxBytes: 10 * MiB });
+    const end = await until(() => sink.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "fa2-gap" });
+    expect(end).toMatchObject({ t: "fetch.denied", fetchId: "fa2-gap", reason: "limit" });
+    expect(sink.sent.some((m) => m.t === "fetch.grant" || m.t === "fetch.chunk")).toBe(false);
+    const grants = env.readerA.prepare("SELECT COUNT(*) AS n FROM grants WHERE fetchId = ?").get("fa2-gap") as { n: number };
+    expect(Number(grants.n)).toBe(0);
+  });
+
+  it("F-a3. a tree made deeper while the approval card waits is `limit` before the grant", async () => {
+    let target = "";
+    const env = await setupInProcessCluster(async () => {
+      // The scan passed (the tree was shallow); while the card waits a 65-deep file appears.
+      const folders = Array.from({ length: FETCH_MAX_DEPTH + 1 }, (_, i) => `f${i}`);
+      mkdirSync(join(target, ...folders), { recursive: true });
+      writeFileSync(join(target, ...folders, "leaf.txt"), "late");
+      return "once" as const;
+    });
+    cleanups.push(env.cleanup);
+    target = join(env.srcA, "grows");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, "top.txt"), "top");
+    const sink = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sink.sink, { t: "fetch.ask", fetchId: "fa3-grows", requester: { bot: env.botB }, source: env.ka.memberId, what: { kind: "path", path: target }, purpose: "deep", maxBytes: 10 * MiB });
+    const end = await until(() => sink.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "fa3-grows" });
+    expect(end).toMatchObject({ t: "fetch.denied", fetchId: "fa3-grows", reason: "limit" });
+    expect(sink.sent.some((m) => m.t === "fetch.grant" || m.t === "fetch.chunk")).toBe(false);
+    const grants = env.readerA.prepare("SELECT COUNT(*) AS n FROM grants WHERE fetchId = ?").get("fa3-grows") as { n: number };
+    expect(Number(grants.n)).toBe(0);
+  });
+
   it("L-a. a cancelled serve ends without the approval hook answering (session closed, then source closed)", async () => {
     const asked: string[] = [];
     // The hook never answers, like an approval card nobody clicks.

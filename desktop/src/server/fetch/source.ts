@@ -994,6 +994,8 @@ export class FetchSource {
             if (!targetSt.isFile()) continue;
             if (!isBlob && !isSubpathOrEqual(grantPrefix, real.path)) continue;
             if (!isBlob && (isDeniedPath(full, this.options.dataDir) || isDeniedPath(real.path, this.options.dataDir))) continue;
+            // F-a again here: the scan counts only links inside the target, this walk serves any link inside the prefix.
+            if (rel.split("/").length - 1 > FETCH_MAX_DEPTH) return "limit";
             if (entries.length >= Limits.PER_REQUEST_FILES) return "limit";
             estimatedBytes += Number(targetSt.size);
             if (estimatedBytes > Limits.PER_REQUEST_BYTES) return "limit";
@@ -1010,6 +1012,7 @@ export class FetchSource {
           } else if (lst.isFile()) {
             if (!isBlob && !isSubpathOrEqual(grantPrefix, full)) continue;
             if (!isBlob && isDeniedPath(full, this.options.dataDir)) continue;
+            if (rel.split("/").length - 1 > FETCH_MAX_DEPTH) return "limit";
             if (entries.length >= Limits.PER_REQUEST_FILES) return "limit";
             estimatedBytes += Number(lst.size);
             if (estimatedBytes > Limits.PER_REQUEST_BYTES) return "limit";
