@@ -11,7 +11,7 @@
 // Real server.db (in memory), real log, slot engine and legacy apply; a fake engine whose `run` answers a big result.
 import { afterEach, describe, expect, it } from "vitest";
 import type { Command } from "../../src/contract";
-import { KeptResultMarker, REMOTE_READS, type CmdBody, type Slot } from "../../src/protocol";
+import { KeptResultMarker, REMOTE_READS, remoteReqRefusal, type CmdBody, type Slot } from "../../src/protocol";
 import { ENTRY_BYTES_LIMIT } from "../../src/server/log";
 import { KEPT_RESULT_MAX_BYTES, keepResult, keptResult } from "../../src/server/slots";
 import { entriesOf, harness, outcomeOf, type Harness } from "./server-intents-harness";
@@ -105,7 +105,14 @@ describe("a slot whose result does not fit one entry", () => {
     expect(h.db.prepare("SELECT COUNT(*) AS c FROM receipts").get()!.c).toBe(0);
   });
 
-  it("slot.result is local only: a remote front end may not ask for it (review probe)", () => {
-    expect(REMOTE_READS.has("slot.result")).toBe(false);
+  // M7-04c reversed the N2 review's "local only": a remote page must get a big plugin result (the Note's read) back. What keeps
+  // it private is the session's origin check (session-commands `slotResult`: a slot is answered only to the device that sent it);
+  // server-remote-session.test.ts tests that end to end (another device's slot, the window's slot, an unknown one).
+  it("slot.result is a read a remote front end may ask for, with the read scope (M7-04c; it was local only after N2's review)", () => {
+    expect(REMOTE_READS.has("slot.result")).toBe(true);
+    const cmd = { type: "slot.result", slot: slotOf({ serverStream: "srv:x" } as Harness, 1) } as Command;
+    expect(remoteReqRefusal(cmd, ["read"])).toBeNull();
+    expect(remoteReqRefusal(cmd, ["reply", "approve", "manage"])).toMatch(/needs the read scope/);
+    expect(remoteReqRefusal(cmd, [])).toMatch(/needs the read scope/);
   });
 });

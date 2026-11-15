@@ -12,7 +12,7 @@ describe('public origin and independent private listener', () => {
   it('uses public443/private8443 and preserves TLS minimum without opening a socket', () => {
     startBridge(options(), vi.fn());
     expect(createServer).toHaveBeenCalledWith(expect.objectContaining({ minVersion: 'TLSv1.2' }), expect.any(Function));
-    expect(listenWithHandover).toHaveBeenCalledWith(expect.anything(), 8443, '127.0.0.1', expect.any(Function));
+    expect(listenWithHandover).toHaveBeenCalledWith(expect.anything(), 8443, '127.0.0.1', expect.any(Function), undefined);
   });
   it.each([0, -1, 65536, 1.5, NaN])('rejects invalid private listener port %s', port => {
     expect(() => startBridge({ ...options(), port }, vi.fn())).toThrow(); expect(createServer).not.toHaveBeenCalled();

@@ -415,13 +415,19 @@ export function activate(ccb) {
     const original = core.event.bind(core);
     core.event = (event) => { if (event.type === "plugins.updated") sent.push(event.plugins!); original(event); };
     const entry = (view: PluginsView) => view.plugins.find((p) => p.name === "once.tool");
-    // The held-back state may still be on its way to `core.event` (the list already answers before the announcement is sent), and a
-    // late one is not this grant's. Wait until what the core last announced is what it lists now, then count only what follows.
+    // What the plugin's own start sends is not this grant's. It comes in several steps, each a real and different list, and none has
+    // a fixed time: the held-back state, the shared host of the built-in plugins starting (`host.running`, their commands
+    // registered: a process spawn, slow on a loaded host) and the server's plugin sync writing the `plugin:once.tool` row (the same
+    // list with its `asks`). The list already answers before an announcement is sent, so wait until it shows all of them and is
+    // what the core last announced, then count only what follows. (Waiting for the held-back state alone let a later step fall into
+    // the count when the host was slow: two events, the second one a different list, not a repeat.)
     const lastAnnounced = () => (core as unknown as { lastPlugins: string }).lastPlugins;
     await until(async () => {
       const res = await client.req({ type: "plugins.list" });
-      return res.ok && JSON.stringify(res.result) === lastAnnounced();
-    }, { timeout: 10_000, what: "held-back state announced" });
+      if (!res.ok) return false;
+      const view = res.result as PluginsView;
+      return view.host.running && entry(view)?.asks?.codeHash === codeHash && JSON.stringify(view) === lastAnnounced();
+    }, { timeout: 10_000, what: "plugin start announced (host running, row written)" });
     sent.length = 0;
     const grant = async (n: number, tier: "request" | "write") => {
       const slot: Slot = { origin: "script", originEpoch, target: client.srv, n };

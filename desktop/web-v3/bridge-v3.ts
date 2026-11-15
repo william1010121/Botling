@@ -21,6 +21,8 @@ import { commandScope, REMOTE_READS, remoteCmdRefusal, type DeviceScope } from "
 import type { Clock } from "../src/fe-link";
 import { READ_COMMANDS, RendererAdapter, RequestViaSchema, type LinkPort } from "../src/main-v3/renderer-adapter";
 import { App, type WebChrome } from "../src/renderer/App";
+import { configureShellStorage } from "../src/renderer/shell/storage";
+import { createWebShellStorageBackend } from "./shell/device-store";
 import { Client, type Bridge, type RequestVia } from "../src/renderer/client";
 import { WorkspaceStore } from "../src/renderer/store";
 import { phoneLayout } from "../mobile/layout";
@@ -206,6 +208,7 @@ export interface MountedRenderer {
 /** Mounts the unchanged 2.x renderer into `root` (the one element the shell gives it). Call before the link starts. */
 export function mountRenderer(root: HTMLElement, options: MountOptions): MountedRenderer {
   let bridge: BridgeV3 | null = null;
+  const releaseStorage = configureShellStorage(createWebShellStorageBackend());
   const adapter = new RendererAdapter({ link: options.link, emit: (envelope) => bridge?.emit(envelope), clock: options.clock, audit: options.audit });
   bridge = new BridgeV3(adapter, options.capabilities);
   const client = new Client(bridge);
@@ -220,6 +223,6 @@ export function mountRenderer(root: HTMLElement, options: MountOptions): Mounted
   void store.resync().catch((error) => options.audit?.(`first snapshot: ${String((error as Error)?.message ?? error)}`));
   return {
     adapter, store, render,
-    unmount() { offChips(); adapter.stop(); bridge?.close(); reactRoot.unmount(); },
+    unmount() { offChips(); releaseStorage(); adapter.stop(); bridge?.close(); reactRoot.unmount(); },
   };
 }

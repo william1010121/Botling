@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeFileAtomic } from "../durable/atomic";
-import { readSettings, seedEngineDefaults } from "../settings";
+import { launchSettings, readSettings, seedEngineDefaults } from "../settings";
 import { HANDED_OUT, botName, firstLine, folderURLText, nextAvatar, prepareNotesFolder, removeProjectRow, saveProjectRow, updateProjectRow } from "../projects";
 import { ContractError, PROTOCOL_VERSION, type SubagentRowView } from "../../contract";
 import { Bot } from "../bot";
@@ -17,30 +17,48 @@ import { isOpenQuestion } from "../store/records";
 import { Layout, projectProfile, type BotProfile } from "../store/workspace";
 import { progressFile, progressStatus, subBotBriefing } from "../sub-bots";
 import { type BotInfo } from "../plugins";
+import { agentStamp } from "../plugins/agent-contributions";
+import { siteToolsFolder } from "../site-tools-guard";
+import type { CodexThreads } from "../agent/codex";
+import type { maintainerEditorBinding } from "../agent/component-editor";
 
 export class CoreBots {
   constructor(private readonly host: Core) {}
 
   // The bridge: everything this class borrows from `Core`.
+  private get activated() { return this.host.activated; }
+  private agentPort(...a: Parameters<Core["agentPort"]>) { return this.host.agentPort(...a); }
   private agentsOfRemovedBot(...a: Parameters<Core["agentsOfRemovedBot"]>) { return this.host.agentsOfRemovedBot(...a); }
+  private get agents() { return this.host.agents; }
+  private agentWiring(...a: Parameters<Core["agentWiring"]>) { return this.host.agentWiring(...a); }
   private botInfo(...a: Parameters<Core["botInfo"]>) { return this.host.botInfo(...a); }
   private botView(...a: Parameters<Core["botView"]>) { return this.host.botView(...a); }
   private briefAwakeMainBot(...a: Parameters<Core["briefAwakeMainBot"]>) { return this.host.briefAwakeMainBot(...a); }
   private checkBot(...a: Parameters<Core["checkBot"]>) { return this.host.checkBot(...a); }
+  private get components() { return this.host.components; }
+  private get conversations() { return this.host.conversations; }
   private get copies() { return this.host.copies; }
+  private developerBriefing(...a: Parameters<Core["developerBriefing"]>) { return this.host.developerBriefing(...a); }
   private get epoch() { return this.host.epoch; }
   private event(...a: Parameters<Core["event"]>) { return this.host.event(...a); }
+  private get ledger() { return this.host.ledger; }
   private log(...a: Parameters<Core["log"]>) { return this.host.log(...a); }
   private mainBot(...a: Parameters<Core["mainBot"]>) { return this.host.mainBot(...a); }
+  private get maintainer() { return this.host.maintainer; }
   private get mainBotId() { return this.host.mainBotId; }
   private get maintainerId() { return this.host.maintainerId; }
   private makeSubBot(...a: Parameters<Core["makeSubBot"]>) { return this.host.makeSubBot(...a); }
+  private nextSeq(...a: Parameters<Core["nextSeq"]>) { return this.host.nextSeq(...a); }
   private get options() { return this.host.options; }
+  private ownedAgentsNote(...a: Parameters<Core["ownedAgentsNote"]>) { return this.host.ownedAgentsNote(...a); }
   private pluginBot(...a: Parameters<Core["pluginBot"]>) { return this.host.pluginBot(...a); }
   private get plugins() { return this.host.plugins; }
+  private projectBriefing(...a: Parameters<Core["projectBriefing"]>) { return this.host.projectBriefing(...a); }
+  private projectRequests(...a: Parameters<Core["projectRequests"]>) { return this.host.projectRequests(...a); }
+  private prompts(...a: Parameters<Core["prompts"]>) { return this.host.prompts(...a); }
   private refreshWaiting(...a: Parameters<Core["refreshWaiting"]>) { return this.host.refreshWaiting(...a); }
-  private get seq() { return this.host.seq; }
-  private set seq(value: Core["seq"]) { this.host.seq = value; }
+  private replied(...a: Parameters<Core["replied"]>) { return this.host.replied(...a); }
+  private get usage() { return this.host.usage; }
 
   bots = new Map<string, Bot>();
 
@@ -50,6 +68,80 @@ export class CoreBots {
   profiles: BotProfile[] = [];
 
   newBot!: (profile: BotProfile) => Bot;
+
+  /** Makes the `Bot` for a profile (`newBot` adds it to `bots`): what it is given from the core's options and the plugins, every callback reading the core when asked. */
+  build(profile: BotProfile, threads: CodexThreads, editorBinding: ReturnType<typeof maintainerEditorBinding>): Bot {
+    const options = this.options;
+    const codexConfig = options.codexConfig;
+    const bot: Bot = new Bot({
+      profile,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+      deferStartup: options.deferStartup && !this.activated,
+      headConfig: options.headConfig,
+      agyConfig: options.agyConfig,
+      codexConfig: codexConfig ? (p, session) => ({
+        ...codexConfig(p, session, threads),
+        componentEditor: editorBinding(p, session),
+        editorStarted: (pid) => { if (pid > 0) this.ledger.record(pid); },
+      }) : null,
+      claimWaitMs: options.claimWaitMs,
+      prompts: (engine, heads) => this.prompts(profile, engine, heads, profile.role === "main" || profile.id === this.maintainerId ? null : this.plugins.sessionFolder(profile.id)?.cwd ?? profile.folder),
+      // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
+      tidyTimeoutMs: options.tidyTimeoutMs,
+      quitTidyMs: options.quitTidyMs,
+      ledger: this.ledger,
+      emit: (event) => this.event(event),
+      log: (line) => this.log(line),
+      approvalTimeoutMs: options.approvalTimeoutMs ?? 10 * 60_000,
+      idleMs: options.idleMs ?? 50 * 60_000,
+      interruptGraceMs: options.interruptGraceMs ?? 2_000,
+      projectBriefing: profile.role === "main" ? () => this.projectBriefing() : undefined,
+      // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
+      wakeNote: profile.role === "main" ? () => this.projectBriefing()
+        // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
+        : profile.id !== this.maintainerId
+          ? () => [profile.role === "manager" ? this.developerBriefing(profile.id) : "", this.plugins.sessionFolder(profile.id)?.note ?? "", this.subBotNote(profile), this.ownedAgentsNote(profile)].filter(Boolean).join("\n\n")
+          : undefined,
+      // A plugin may decide where a project's or bot's session starts (an app-made worktree: botling.git); the main bot and Maintainer never move.
+      worktree: profile.role === "main" || profile.id === this.maintainerId ? undefined : () => {
+        const folder = this.plugins.sessionFolder(profile.id);
+        return folder && folder.cwd !== profile.folder ? { cwd: folder.cwd, addDirs: folder.addDirs } : null;
+      },
+      addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.parent && !other.problem).map((other) => join(other.folder, ".bot"))
+        // Maintainer: the folders you let it read (<need-folder>).
+        // and the browser's site tools, which are its alone.
+        : profile.id === this.maintainerId ? () => [siteToolsFolder(options.dataDir, options.app?.dataDir), ...this.maintainer.approvedFolders()] : undefined,
+      // Every other bot's Claude head and workers are refused writes into the site tools folder (site-tools-guard.ts).
+      siteToolsFolder: profile.id === this.maintainerId ? undefined : siteToolsFolder(options.dataDir, options.app?.dataDir),
+      remoteWorkers: () => options.remoteWorkers ?? null,
+      subBotRows: profile.role === "main" || profile.id === this.maintainerId ? undefined : () => this.subBotRows(profile.id),
+      components: this.components,
+      onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
+      // What each turn used, by bot, and the subscriptions' limits (1.x's `record`, `note`).
+      usage: (name, spent, tokens) => this.usage.record(spent, tokens, name),
+      rateLimits: (engine, limits) => this.usage.note(engine, limits),
+      // What a line shows besides itself for the component studio (botling.component-studio, through its seam): the library component a
+      // reply already is. The studio draws its chips under replies itself (chat.decorate).
+      lineExtras: (_bot, record) => this.plugins.studioLineExtras(record),
+      replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
+      replied: (bot, record) => this.replied(bot, record),
+      pluginTags: (bot, tags) => this.plugins.replyTags(this.botInfo(bot), tags),
+      plugins: () => this.agentWiring(),
+      pluginStamp: () => agentStamp(this.plugins.registry),
+      launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
+      // (Asked while the bots are made, before the conversations exist.)
+      guest: () => this.conversations?.speakers.get(profile.id) ?? null,
+      callIns: () => this.conversations?.callIns(profile.id) ?? [],
+      answeringIn: () => this.conversations?.answeringIn(profile.id) ?? null,
+      callInNote: () => this.conversations?.callInStatus(profile.id) ?? null,
+      callInFollowUp: (caller, asked, record, by) => this.conversations?.callInFollowUp(caller, bot, asked, record, by),
+      callInFollowUpMissed: (caller, asked, why, by) => this.conversations?.callInFollowUpMissed(caller, bot, asked, why, by),
+      agents: this.agentPort(profile),
+      ...(options.deferTurn ? { deferTurn: options.deferTurn } : {}),
+      ...(options.botStore ? { botStore: options.botStore } : {}),
+    });
+    return bot;
+  }
 
   /** Bots taken out of the left column: what they still say goes nowhere. */
   removed = new Set<string>();
@@ -306,7 +398,7 @@ export class CoreBots {
         }
       }
     }
-    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "bot.removed", botId: id } });
+    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: this.nextSeq(), event: { type: "bot.removed", botId: id } });
     this.plugins.event("botRemoved", { botId: id });
     this.briefAwakeMainBot();
     this.refreshWaiting();
