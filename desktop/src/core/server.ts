@@ -203,6 +203,8 @@ export interface CoreOptions {
   maintainerId?: string;
   /** Botling 3's server only (2.x leaves it unset): content read/fetch for plugins (`content.read`, `content.fetch`). */
   content?: PluginWorld["content"];
+  /** Botling 3's server only (2.x leaves it unset): whether a plugin's program part may start at `codeHash` (M5-18a). */
+  mayRunServerPart?: (name: string, codeHash: string) => boolean;
   /** Botling 3's server only (2.x leaves it unset): a bot created or edited a plugin in `<data>/plugins`. */
   pluginWritten?: (name: string, botId: string) => void;
   /** Botling 3's server only (2.x leaves it unset): peer bots callable with @. */
@@ -292,13 +294,13 @@ export class Core {
 
   mainBot(): Bot | null { return this.bots.get(this.mainBotId) ?? null; }
 
-  /** Botling 3's server only: a plugin row changed (a grant, or the running hash); tells front ends when the list now reads differently. */
+  /**
+   * Botling 3's server only: a plugin row changed (a grant, or the running hash). The one path for both M5-14d (front
+   * ends see the grant at the running hash) and M5-18a (which program parts may run is decided again): the plugins
+   * sync and announce their list through `changed`, which sends `plugins.updated` only when it reads differently.
+   */
   pluginGrantsChanged(): void {
-    const view = this.plugins.view();
-    const text = JSON.stringify(view);
-    if (text === this.lastPlugins) return;
-    this.lastPlugins = text;
-    this.event({ type: "plugins.updated", plugins: view });
+    this.plugins.rowsChanged();
   }
 
   constructor(private options: CoreOptions) {
@@ -351,6 +353,7 @@ export class Core {
       sealer: host?.sealer ?? null,
       timing: host?.timing,
       onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
+      ...(options.mayRunServerPart ? { mayRunServerPart: options.mayRunServerPart } : {}),
       ...(options.pluginGrant ? { pluginGrant: options.pluginGrant } : {}),
       world: {
         bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
