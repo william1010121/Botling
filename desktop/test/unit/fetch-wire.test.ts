@@ -47,7 +47,7 @@ const jsonSamples: WireMessage[] = [
 ];
 
 const chunkSample: WireMessage & { t: "fetch.chunk" } = {
-  t: "fetch.chunk", fetchId: "fetch-1", index: 0, sha256: hex("c"), bytes: new Uint8Array([10, 20, 30, 40]),
+  t: "fetch.chunk", fetchId: "fetch-1", index: 0, file: "out/a.txt", sha256: hex("c"), bytes: new Uint8Array([10, 20, 30, 40]),
 };
 
 describe("M5-05: fetch.* schemas and round-trips", () => {
@@ -124,7 +124,7 @@ describe("M5-05: fetch.* schemas and round-trips", () => {
     const extraEntry = { ...askSamples[2], what: { kind: "blob", id: contentId, entry: { ...entry, extra: 1 } } };
     expect(decodeWireFrame(json(extraEntry), "peer", remote)).toMatchObject({ ok: false, reason: "malformed" });
 
-    const badHeader = JSON.stringify({ t: "fetch.chunk", fetchId: "fetch-1", index: 0, sha256: hex("c"), extra: 1 });
+    const badHeader = JSON.stringify({ t: "fetch.chunk", fetchId: "fetch-1", index: 0, file: "a.txt", sha256: hex("c"), extra: 1 });
     const badHeaderBytes = new TextEncoder().encode(badHeader);
     const frame = new Uint8Array([BINARY_FRAME_MARK, badHeaderBytes.length >> 8, badHeaderBytes.length & 0xff, ...badHeaderBytes, 1, 2]);
     expect(decodeWireFrame(frame, "peer", remote)).toMatchObject({ ok: false, reason: "malformed" });
@@ -164,9 +164,35 @@ describe("M5-05: fetch.* schemas and round-trips", () => {
 
     const tooBigChunk = { ...chunkSample, bytes: new Uint8Array(CONTENT_FRAME_CHUNK_LIMIT + 1).fill(1) };
     expect(encodeChunkFrame(tooBigChunk, "peer", remote)).toMatchObject({ ok: false, reason: "malformed" });
-    const header = new TextEncoder().encode(JSON.stringify({ t: "fetch.chunk", fetchId: "fetch-1", index: 0, sha256: hex("c") }));
+    const header = new TextEncoder().encode(JSON.stringify({ t: "fetch.chunk", fetchId: "fetch-1", index: 0, file: "a.txt", sha256: hex("c") }));
     const rawTooBig = new Uint8Array([BINARY_FRAME_MARK, header.length >> 8, header.length & 0xff, ...header, ...new Uint8Array(CONTENT_FRAME_CHUNK_LIMIT + 1)]);
     expect(decodeWireFrame(rawTooBig, "peer", remote)).toMatchObject({ ok: false, reason: "malformed" });
+  });
+});
+
+describe("M5-07b: fetch.chunk names its file", () => {
+  const encodeBytes = (header: Record<string, unknown>) => {
+    const text = new TextEncoder().encode(JSON.stringify({ t: "fetch.chunk", fetchId: "fetch-1", index: 0, sha256: hex("c"), ...header }));
+    return new Uint8Array([BINARY_FRAME_MARK, text.length >> 8, text.length & 0xff, ...text, 1, 2]);
+  };
+
+  it("round-trips the file path (nested, unicode in NFC) through the binary header", () => {
+    for (const file of ["a.txt", "dir/sub/b.bin", "caf\u00e9/\u6a94\u6848.txt", `${"d/".repeat(1_000)}x`]) {
+      const encoded = encodeChunkFrame({ ...chunkSample, file }, "peer", remote);
+      if (!encoded.ok) throw new Error(encoded.detail);
+      const decoded = decodeWireFrame(encoded.bytes, "peer", remote);
+      if (!decoded.ok) throw new Error(decoded.detail);
+      expect(decoded.message).toMatchObject({ t: "fetch.chunk", file });
+    }
+  });
+
+  it("refuses a chunk without file, and a file that is empty, absolute, has NUL, a . or .. segment, an empty segment, is not NFC or is over 4096 bytes", () => {
+    expect(decodeWireFrame(encodeBytes({}), "peer", remote)).toMatchObject({ ok: false, reason: "malformed" });
+    const bad = ["", "/etc/passwd", "a\0b", "../escape.txt", "a/../b", "a/./b", ".", "..", "a//b", "a/", "cafe\u0301.txt", "x".repeat(4_097), "\u00e9".repeat(2_049)];
+    for (const file of bad) {
+      expect(decodeWireFrame(encodeBytes({ file }), "peer", remote), JSON.stringify(file.slice(0, 20))).toMatchObject({ ok: false, reason: "malformed" });
+      expect(encodeChunkFrame({ ...chunkSample, file }, "peer", remote), JSON.stringify(file.slice(0, 20))).toMatchObject({ ok: false });
+    }
   });
 });
 

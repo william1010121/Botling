@@ -217,6 +217,8 @@ describe("M5-07a: fetch source", () => {
     expect(chunks[1]!.bytes.length).toBe(DIRECT_FRAME);
     expect(chunks[2]!.bytes.length).toBe(payload.length - 2 * DIRECT_FRAME);
     for (const c of chunks) expect(c.sha256).toBe(sha256Hex(c.bytes));
+    // M5-07b: every chunk names its file (relative to the target).
+    for (const c of chunks) expect(c.file).toBe("r.html");
 
     const reassembled = Buffer.concat(chunks.map((c) => c.bytes));
     expect(reassembled.equals(payload)).toBe(true);
@@ -1311,4 +1313,41 @@ describe("M5-07a: two-server botlingd wiring", () => {
 
     link.close();
   }, 60_000);
+});
+
+
+describe("M5-07b: fetch chunks name their file", () => {
+  const cleanups: Array<() => Promise<void>> = [];
+  afterEach(async () => { for (const fn of cleanups.splice(0)) await fn(); });
+
+  it("a folder sends its files in sorted order, each chunk with its relative path, an empty file as one empty chunk, names in NFC", async () => {
+    const env = await setupInProcessCluster();
+    cleanups.push(env.cleanup);
+    const dir = join(env.artifactsA, "pack");
+    mkdirSync(join(dir, "sub"), { recursive: true });
+    const nfd = "cafe\u0301.txt"; // decomposed on disk (APFS keeps what it is given, other file systems too)
+    const big = deterministicBytes("big", DIRECT_FRAME + 10);
+    writeFileSync(join(dir, "b.bin"), big);
+    writeFileSync(join(dir, "empty.txt"), "");
+    writeFileSync(join(dir, "sub", "c.txt"), "hello");
+    writeFileSync(join(dir, nfd), "accent");
+
+    const { sink, sent } = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sink, {
+      t: "fetch.ask", fetchId: "fetch-names-1", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "pack" }, purpose: "names", maxBytes: 10 * MiB,
+    });
+    const end = await until(() => sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "fetch end" });
+    expect(end.t).toBe("fetch.done");
+    const chunks = sent.filter((m): m is WireMessage & { t: "fetch.chunk" } => m.t === "fetch.chunk");
+    const names = chunks.map((c) => c.file);
+    expect(names.every((n) => n === n.normalize("NFC"))).toBe(true);
+    const order = [...new Set(names)];
+    expect(order).toEqual([...order].sort());
+    expect(order).toContain("caf\u00e9.txt");
+    expect(order).toContain("sub/c.txt");
+    expect(names.filter((n) => n === "b.bin")).toHaveLength(2);
+    expect(chunks.find((c) => c.file === "empty.txt")!.bytes.length).toBe(0);
+    expect(chunks.map((c) => c.index)).toEqual(chunks.map((_, i) => i));
+  });
 });
