@@ -1139,6 +1139,23 @@ describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
     expect(s1.roster.pushSubscription(dev.member)).toEqual(sub);
   });
 
+  it("F4 re-review: the sole server mints with the root gen and covers, as the first server pairing does", async () => {
+    const dir = testRoot("m4-25-f4-gen");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const roster = {
+      clusterId: "C".repeat(43),
+      memberId: "S",
+      view: { servers: new Set(["S"]), revoked: new Set<string>(), root: { root: "S", gen: 3 } },
+    } as unknown as Parameters<typeof ensureSoleServerVapidKeys>[1];
+    const state: VapidSyncState = { known: false, warnedMissing: false };
+    expect(await ensureSoleServerVapidKeys(dir, roster, () => undefined, state)).toBe(true);
+    const record = readVapidKeyRecord(dir);
+    expect(record?.gen).toBe(3);
+    expect(record?.id).toBe(0);
+    expect(record?.covers).toEqual([]);
+  });
+
   it("F6: cleanPushText strips bidi overrides and zero-width characters", () => {
     expect(cleanPushText("Alpha​Beta‮Gamma⁦Delta‏")).toBe("Alpha Beta Gamma Delta");
   });

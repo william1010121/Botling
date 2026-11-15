@@ -46,7 +46,7 @@ import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type DeviceRoster, type SessionHost, type SessionOptions } from "./session";
 import { fixedIds } from "./fixed-ids";
-import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeyRecord, readVapidKeys } from "./identity";
+import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeyRecord, readVapidKeys, revokedServerIds } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
@@ -1215,7 +1215,8 @@ export async function ensureSoleServerVapidKeys(
     return true;
   }
   if (isSoleServerInRoster(roster)) {
-    await ensureVapidKeys(dataDir);
+    // Same (gen, covers) as the first server pairing (pairing/join.ts), so VapidKeySync does not rotate it again.
+    await ensureVapidKeys(dataDir, { gen: roster.view.root?.gen ?? 1, covers: revokedServerIds(roster.view) });
     state.known = true;
     state.warnedMissing = false;
     return true;
