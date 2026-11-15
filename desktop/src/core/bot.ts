@@ -229,21 +229,16 @@ export class Bot {
   set briefing(v: boolean) { this.headRun.briefing = v; }
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
   get restartPending(): boolean { return this.restarts.restartPending; }
-  set restartPending(v: boolean) { this.restarts.restartPending = v; }
   get modelSettingsPending(): boolean { return this.restarts.modelSettingsPending; }
-  set modelSettingsPending(v: boolean) { this.restarts.modelSettingsPending = v; }
   /**
    * The restart waiting is for a new working folder (a plugin's `sessions.folder`): your message never goes to the process
    * still in the old one; while its own work runs it waits, as for a model change (spec/models/folders TurnStartsCurrent).
    */
   get folderPending(): boolean { return this.restarts.folderPending; }
-  set folderPending(v: boolean) { this.restarts.folderPending = v; }
   /** The restart waiting is also for something other than its model or effort (plugins, folders, subagents' model): a hot switch cannot stand in for it. */
   get restartNonModel(): boolean { return this.restarts.restartNonModel; }
-  set restartNonModel(v: boolean) { this.restarts.restartNonModel = v; }
   /** Counts model/effort changes, so a hot switch that finishes after a newer one leaves that one waiting. */
   get settingsGeneration(): number { return this.restarts.settingsGeneration; }
-  set settingsGeneration(v: number) { this.restarts.settingsGeneration = v; }
   /**
    * Your message waits for this head's own work (its subagents, workers, background tasks) to finish, so a
    * model or effort change that needs a restart can be applied first; it is sent then, never on the old
@@ -253,16 +248,13 @@ export class Bot {
   set settingsHold(v: { noticeId: string; timer: ReturnType<typeof setInterval> } | null) { this.restarts.settingsHold = v; }
   /** Why it starts again before its next message (1.x's `RestartReason`): what it is told, what its divider says. */
   get restartReason(): { told: string; shown: string } | null { return this.restarts.restartReason; }
-  set restartReason(v: { told: string; shown: string } | null) { this.restarts.restartReason = v; }
   /** The restart waiting is only for plugins: when they changed back, it is not needed (1.x's `pendingRestartForPluginsOnly`). */
   get restartForPluginsOnly(): boolean { return this.restarts.restartForPluginsOnly; }
-  set restartForPluginsOnly(v: boolean) { this.restarts.restartForPluginsOnly = v; }
   /** The plugins' Claude parts its process started with (1.x's `loadedPluginStamp`). */
   get loadedPluginStamp(): string[] | null { return this.headRun.loadedPluginStamp; }
   set loadedPluginStamp(v: string[] | null) { this.headRun.loadedPluginStamp = v; }
   /** A head ended for such a restart: its session carries on. */
   get restarting(): AgentHead | null { return this.restarts.restarting; }
-  set restarting(v: AgentHead | null) { this.restarts.restarting = v; }
   /** What its process has cost so far (claude's `total_cost_usd`, a running total; 1.x's `sessionCost`). */
   get sessionCost(): { last: number } { return this.headRun.sessionCost; }
   set sessionCost(v: { last: number }) { this.headRun.sessionCost = v; }
@@ -839,7 +831,7 @@ export class Bot {
 
   folderMoved(reason: { told: string; shown: string }) { this.restarts.folderMoved(reason); }
 
-  restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) { this.restarts.restartFor(reason, modelSettings, folder); }
+  restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) { this.restarts.request(reason, modelSettings, folder); }
 
   restartNow(): { restart: "next-message" | "asleep" } { return this.restarts.restartNow(); }
 
@@ -860,6 +852,13 @@ export class Bot {
   hasCurrentPlugins(): boolean { return this.restarts.hasCurrentPlugins(); }
 
   reloadPlugins() { this.restarts.reloadPlugins(); }
+
+  /** The restart flags change only through these (M7-S58); BotRestart owns them. */
+  consumeRestart(old: AgentHead) { return this.restarts.consumed(old); }
+  restartEnded() { this.restarts.ended(); }
+  dropPluginsOnlyRestart() { this.restarts.dropPluginsOnly(); }
+  releaseRestart() { this.restarts.release(); }
+  restartSwitchedInPlace(): string { return this.restarts.switchedInPlace(); }
 
   async deliver(turn: Turn, given?: AgentHead) { return this.delivery.deliver(turn, given); }
   turnImages(turn: Turn): string[] { return this.delivery.turnImages(turn); }
