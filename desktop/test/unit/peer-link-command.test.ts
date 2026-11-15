@@ -13,6 +13,7 @@ import { Plugins, type LineContentRef, type PluginWorld } from "../../src/core/p
 import type { HostCommand, HostHandlers } from "../../src/core/plugins/host-client";
 import { testSealer } from "../../src/core/plugins/secrets";
 import { FeLink, MemoryFeStorage } from "../../src/fe-link";
+import { ownerHasPlugin, withOwnerLinkMenus } from "../../src/main-v3/peer-link-menu";
 import { RendererAdapter, type LinkPort } from "../../src/main-v3/renderer-adapter";
 import type { Message, StreamId } from "../../src/protocol";
 import type { PluginRow, SummaryRow } from "../../src/protocol/table-rows";
@@ -384,5 +385,19 @@ describe("pressing the button on a peer bot's line runs at its owner, as the con
     const copies = sentTo("bot:b1");
     expect(copies).toHaveLength(1);
     expect("via" in copies[0]).toBe(false);
+  });
+});
+
+describe("ownerHasPlugin: a plugin is there only with a valid row of that name", () => {
+  it("a row that is not a plugin row, a missing row, a missing table, or a built-in's name does not count", () => {
+    const rows = new Map<string, unknown>([["plugin:coach", pluginRow(HASH_B)], ["plugin:broken", { codeHash: 5 }], ["plugin:empty", {}]]);
+    expect(ownerHasPlugin(rows, "coach")).toBe(true);
+    expect(ownerHasPlugin(rows, "broken")).toBe(false);
+    expect(ownerHasPlugin(rows, "empty")).toBe(false);
+    expect(ownerHasPlugin(rows, "reader")).toBe(false);
+    for (const name of ["constructor", "__proto__", "toString", "plugin:coach"]) expect(ownerHasPlugin(rows, name)).toBe(false);
+    expect(ownerHasPlugin(null, "coach")).toBe(false);
+    expect(ownerHasPlugin(undefined, "coach")).toBe(false);
+    expect(linkKeys(withOwnerLinkMenus(VIEW, new Map([["plugin:coach", { codeHash: 5 }]])))).toEqual([]);
   });
 });
