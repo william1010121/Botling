@@ -218,6 +218,16 @@ CREATE TABLE import_ids (
 ) WITHOUT ROWID;
 `;
 
+// v12 (M5-05, src/server/fetch): `grants` gains the §16 columns (`requesterServer`, `kind`, `fetchId`, `revokedAt`).
+// ALTER TABLE ADD COLUMN preserves any existing rows without ever dropping the table.
+const V12 = `
+ALTER TABLE grants ADD COLUMN requesterServer TEXT NOT NULL DEFAULT '';
+ALTER TABLE grants ADD COLUMN kind TEXT NOT NULL DEFAULT 'always';
+ALTER TABLE grants ADD COLUMN fetchId TEXT;
+ALTER TABLE grants ADD COLUMN revokedAt INTEGER;
+CREATE INDEX grants_by_requester ON grants (requester, requesterServer, kind);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -298,6 +308,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "2.x -> 3.x import id mapping (src/server/import/id-map.ts)",
     up(db) {
       db.exec(V11);
+    },
+  },
+  {
+    version: 12,
+    description: "fetch grants (src/server/fetch): requesterServer, kind, fetchId and revokedAt on grants",
+    up(db) {
+      db.exec(V12);
     },
   },
 ];

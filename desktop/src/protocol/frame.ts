@@ -6,12 +6,13 @@
 // ones (`decodeFrame`, `encodeFrame`) refuse them as unsupported, so their callers only ever see `Message`. The
 // forwarded-subscription tag `via` (M3, §10.3) may be stated by a peer server only. A `cmd`'s `via` is something else:
 // the plugin the command came from (D53, plan change N1), written by the front end's shell, so any sender may carry it.
-// One message is binary: `content.chunk` (§9A.4). Its frame is the byte 0x01, the header's length as 2 bytes big-endian,
-// the header `{t, req, offset}` as JSON, then the raw bytes. A text frame is JSON and never starts with 0x01.
+// Two messages are binary: `content.chunk` (§9A.4) and `fetch.chunk` (§16, M5-05). Each frame is the byte 0x01, the
+// header's length as 2 bytes big-endian, the header JSON (`{t, req, offset}` or `{t, fetchId, index, sha256}`), then
+// the raw bytes. A text frame is JSON and never starts with 0x01.
 import type { z } from "zod";
 import { describeIssues } from "../contract";
 import { MESSAGES, RES_PART_CHARS, RES_PARTS_MAX, type Message, type MessageOf, type MessageType } from "./messages";
-import { M3_MESSAGES, WIRE_MESSAGES, type WireMessage } from "./messages-m3";
+import { M3_MESSAGES, WIRE_MESSAGES, type WireMessage, type WireMessageOf } from "./messages-m3";
 import { knownType, roleRefusal, type Sender, type SessionKind } from "./roles";
 
 /** The most a frame's plaintext may be (§5.2, §20). */
@@ -99,17 +100,25 @@ function decodeBinary(frame: Uint8Array, sender: Sender, session: SessionKind, r
   let header: unknown;
   try { header = JSON.parse(decoder.decode(frame.subarray(3, 3 + headerLength))); } catch { return refuse("malformed", "a binary frame's header is JSON"); }
   if (!header || typeof header !== "object" || Array.isArray(header)) return refuse("malformed", "a binary frame's header is a JSON object");
-  if ((header as { t?: unknown }).t !== "content.chunk") return refuse("malformed", "only content.chunk is a binary frame");
+  const binaryType = (header as { t?: unknown }).t;
+  if (binaryType !== "content.chunk" && binaryType !== "fetch.chunk") return refuse("malformed", "only content.chunk and fetch.chunk are binary frames");
   if ("bytes" in header) return refuse("malformed", "the bytes follow the header");
   return check({ ...header, bytes: frame.slice(3 + headerLength) }, sender, session, registry);
 }
 
-/** Encodes a `content.chunk` as a binary frame; refuses one that is malformed, outside the role or too large. */
-export function encodeChunkFrame(message: MessageOf<"content.chunk">, sender: Sender, session: SessionKind): EncodedBytes {
-  const checked = checkMessage(message, sender, session);
+export type ChunkMessage = MessageOf<"content.chunk"> | WireMessageOf<"fetch.chunk">;
+
+/** Encodes a `content.chunk` or `fetch.chunk` as a binary frame; refuses one that is malformed, outside the role or too large. */
+export function encodeChunkFrame(message: ChunkMessage, sender: Sender, session: SessionKind): EncodedBytes {
+  const type = (message as { t?: unknown }).t;
+  if (type !== "content.chunk" && type !== "fetch.chunk") return { ok: false, reason: "malformed", detail: "only content.chunk and fetch.chunk are binary frames" };
+  const checked = type === "content.chunk" ? checkMessage(message, sender, session) : checkWireMessage(message, sender, session);
   if (!checked.ok) return { ok: false, reason: checked.reason, detail: checked.detail };
-  const chunk = checked.message as MessageOf<"content.chunk">;
-  const header = encoder.encode(JSON.stringify({ t: chunk.t, req: chunk.req, offset: chunk.offset }));
+  const chunk = checked.message as ChunkMessage;
+  const headerObj = chunk.t === "content.chunk"
+    ? { t: chunk.t, req: chunk.req, offset: chunk.offset }
+    : { t: chunk.t, fetchId: chunk.fetchId, index: chunk.index, sha256: chunk.sha256 };
+  const header = encoder.encode(JSON.stringify(headerObj));
   if (header.length > BINARY_HEADER_LIMIT) return { ok: false, reason: "malformed", detail: "the header is too long" };
   const out = new Uint8Array(3 + header.length + chunk.bytes.length);
   if (out.length > FRAME_LIMIT) return { ok: false, reason: "too-large", detail: `a frame is at most ${FRAME_LIMIT} bytes` };
@@ -122,7 +131,7 @@ export function encodeChunkFrame(message: MessageOf<"content.chunk">, sender: Se
 }
 
 function encode(message: WireMessage, sender: Sender, session: SessionKind, registry: Registry): Encoded {
-  if (message.t === "content.chunk") return { ok: false, reason: "malformed", detail: "a content.chunk is a binary frame (encodeChunkFrame)" };
+  if (message.t === "content.chunk" || message.t === "fetch.chunk") return { ok: false, reason: "malformed", detail: `a ${message.t} is a binary frame (encodeChunkFrame)` };
   const checked = check(message, sender, session, registry);
   if (!checked.ok) return { ok: false, reason: checked.reason, detail: checked.detail };
   let text: string;
