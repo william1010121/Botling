@@ -10,15 +10,18 @@
 //   ignored    blank lines, import statements and `export ... from` re-exports, on both sides; never counted
 // Lines move in runs: consecutive added lines equal to consecutive deleted lines of one hunk, in the same order. A line is
 // matched once. So these are NOT moves and count as changed: a reordered run (two statements swapped, a statement moved
-// out of its block), a run of fewer than 3 lines that moves inside its own file, and an added line between two lines that
-// were next to each other in the base (an insertion or a doubled line inside moved code). A line with no letter or digit
-// (`}`, `});`) counts as moved only beside a moved line it followed or preceded in the base.
+// out of its block), a run of fewer than 3 lines that moves inside its own file, and one or more added lines between two
+// lines that were next to each other in the base (an insertion or a doubled line inside moved code; a line taken from
+// another moved block too, when it is 1 or 2 lines and neither neighbour is a brace or comment line). A line with no letter
+// or digit (`}`, `});`) counts as moved only beside a moved line it followed or preceded in the base.
 // Exits 1 when the total of "changed" is above --max-changed (default 0: a card that edits moved code states how many
 // lines it may change). "added" is reported, never gated: the reviewer reads those lines.
-// Known limits, by design or cost: indentation is ignored, also inside a multi-line template literal; an import line may
-// change to another module (the typecheck, not this check, catches a missing name); a reordered pair of whole blocks of 3
-// lines or more that git shows as separate hunks reads as a move. Renames are read as a delete plus an add
-// (--no-renames), which is what makes a moved file show as moved.
+// Known limits, by design or cost: indentation and blank lines are ignored, also inside a multi-line template literal (a
+// prompt that loses a blank line reads as unchanged); a line deleted from a moved block that is added anywhere else (a
+// delegate or wrapper file) reads as moved there, so its edit shows as "added", never as "changed": reviewers must read
+// the added lines; an import line may change to another module (the typecheck, not this check, catches a missing name); a
+// reordered pair of whole blocks of 3 lines or more that git shows as separate hunks reads as a move. Renames are read as
+// a delete plus an add (--no-renames), which is what makes a moved file show as moved.
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -214,6 +217,23 @@ export function analyze(files, oldLines, newLines) {
         const d = after && !after.matched && after.text === a.text ? after : before && !before.matched && before.text === a.text ? before : null;
         if (d) { link(a, d); again = true; }
       });
+    }
+  }
+
+  // 3b. One or two moved lines put between two lines that were next to each other in the base are an insertion into that
+  // block, whichever hunk they came from (a line taken from another moved function). Not at a boundary: a brace or comment.
+  for (const h of hunks) {
+    const segs = []; // consecutive matched adds that were consecutive lines of one deleted hunk
+    for (let i = 0; i < h.add.length;) {
+      let j = i + 1;
+      if (h.add[i].matched) while (j < h.add.length && h.add[j].matched && h.add[j].src.hunk === h.add[i].src.hunk && h.add[j].src.i === h.add[j - 1].src.i + 1) j += 1;
+      segs.push({ from: i, to: j });
+      i = j;
+    }
+    for (let k = 1; k + 1 < segs.length; k += 1) {
+      const s = segs[k], b = h.add[segs[k - 1].to - 1], c = h.add[segs[k + 1].from];
+      if (!h.add[s.from].matched || !b.matched || !c.matched || s.to - s.from > 2) continue;
+      if (b.src.hunk === c.src.hunk && c.src.i === b.src.i + 1 && !trivial(b.text) && !trivial(c.text)) for (let t = s.from; t < s.to; t += 1) unlink(h.add[t]);
     }
   }
 

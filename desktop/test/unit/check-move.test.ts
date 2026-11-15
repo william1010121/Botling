@@ -259,6 +259,61 @@ describe("check-move", () => {
     expect(check(`${from}..${to}`, "--json").json!.total).toMatchObject({ changed: 0, added: 0, movedIn: 8 });
   });
 
+  it("a line taken from one moved function and put into another is a change, also when the two were separate hunks in the base", () => {
+    const P = (audit: string) => `export function p() {\n  const p1 = load();\n  const p2 = parse(p1);\n${audit}  const p3 = send(p2);\n  return p3;\n}\n`;
+    const Q = (audit: string) => `export function q() {\n  const q1 = open();\n  const q2 = read(q1);\n${audit}  const q3 = close(q2);\n  return q3;\n}\n`;
+    const KEEP = "export function keep() {\n  return 1;\n}\n";
+    put("src/a.ts", P("  audit();\n") + KEEP + Q(""));
+    const from = commit();
+    put("src/a.ts", KEEP);
+    put("src/p.ts", P(""));
+    put("src/q.ts", Q("  audit();\n"));
+    const to = commit();
+    const r = check(`${from}..${to}`, "--json");
+    expect(r.json!.total.changed).toBe(2); // the line is gone from p() and new in q()
+    expect(r.code).toBe(1);
+  });
+
+  describe("real-move shapes stay at 0 changed", () => {
+    const body = (name: string, n: number) => `  ${name}(): number {\n${Array.from({ length: n }, (_, i) => `    this.step${i}(${name});`).join("\n")}\n    return ${n};\n  }\n`;
+    const cls = (...parts: string[]) => `export class A {\n${parts.join("\n")}}\n`;
+    const none = (from: string, to: string) => { const r = check(`${from}..${to}`, "--json"); expect(r.json!.total.changed).toBe(0); expect(r.code).toBe(0); return r; };
+
+    it("two separate regions gathered into a new file in the other order, with a glue line between", () => {
+      put("src/b.ts", cls(body("one", 6), body("keep", 3), body("two", 5), body("last", 4)));
+      const from = commit();
+      put("src/b.ts", cls(body("keep", 3), body("last", 4)));
+      put("src/parts.ts", `export class Parts {\n${body("two", 5)}  glue(): void {}\n${body("one", 6)}}\n`);
+      none(from, commit());
+    });
+
+    it("a block moved to a new file with a delegate left in place", () => {
+      put("src/b.ts", cls(body("one", 8), body("keep", 3)));
+      const from = commit();
+      put("src/b.ts", cls("  one(): number {\n    return new Moved().one();\n  }\n", body("keep", 3)));
+      put("src/moved.ts", `export class Moved {\n${body("one", 8)}}\n`);
+      const r = none(from, commit());
+      expect(r.json!.total.movedIn).toBeGreaterThan(8);
+    });
+
+    it("a stretch of a method taken out into a helper below it, with a call left behind", () => {
+      put("src/b.ts", cls(body("one", 8), body("keep", 3)));
+      const from = commit();
+      const lines = body("one", 8).split("\n");
+      const taken = lines.slice(2, 6);
+      const rest = [...lines.slice(0, 2), "    this.helper();", ...lines.slice(6)].join("\n");
+      put("src/b.ts", cls(rest, `  helper(): void {\n${taken.join("\n")}\n  }\n`, body("keep", 3)));
+      none(from, commit());
+    });
+
+    it("two short methods swapped", () => {
+      put("src/b.ts", cls(body("one", 2), body("two", 3), body("keep", 3)));
+      const from = commit();
+      put("src/b.ts", cls(body("two", 3), body("one", 2), body("keep", 3)));
+      none(from, commit());
+    });
+  });
+
   it("refuses a bad range, a revision that is an option, and an unknown revision", () => {
     expect(check("HEAD").code).toBe(2);
     expect(check(`${base}..no-such-branch`).code).toBe(2);
