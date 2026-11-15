@@ -56,13 +56,13 @@ import { AGY_EXECUTION_BLOCKED } from "./agent/agy";
 //   Explicit handoff tags use the conductor's budgets and correlated return routes. A shared
 //   decision retains one owner, and a pick on any copy is applied exactly once.
 import { createHash, randomUUID } from "node:crypto";
-import { backgroundTaskOutput, backgroundOutputFile } from "./background-work";
+import { backgroundTaskOutput } from "./background-work";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { linkedFiles, type LinkedFile } from "./storage";
 import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
-import { dropLineMedia, keepLineMedia, lineMediaCopy } from "./chat-media";
+import { dropLineMedia, lineMediaCopy } from "./chat-media";
 import { sameJSON } from "./same-json";
 import { parseFeedback } from "./feedback";
 import { hostKind, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
@@ -72,24 +72,23 @@ import { ClaudeHead, type HeadExit } from "./agent/head";
 import type { HotSettings } from "./agent/hot-settings";
 import { CodexHead, type CodexItem } from "./agent/codex";
 import {
-  Conductor, displayName, fitted, hasTwo, headsJSON, isActive, otherHead, parseHeadTags, readHeads, resolvePrimary, roundsText,
+  Conductor, displayName, fitted, hasTwo, headsJSON, isActive, otherHead, readHeads, resolvePrimary, roundsText,
   type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
 } from "./heads";
-import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
+import { matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
 import { addSample, speedView, type RequestEvent, type SpeedTotals } from "./token-speed";
 import { commandEnded, ReplyText, type CommandState, type StreamItem } from "./agent/stream";
 import { applyingReaction, archiveAll, archiveLine, compareReactions, reactionIntro, reactionUpdate, recentChat, REACTION_PALETTE, reportNote, seenReactions, type SeenReactions } from "./briefing";
 import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, RESUME_NOTE, withoutPartsNote, type BotPrompts } from "./prompts";
 import { parseReply, unsupportedRequest, type BotRequest } from "./reply";
-import { SubagentBook, readSubagent, SUBAGENT_TOOLS, type SubagentRecord } from "./subagents";
+import { SubagentBook, readSubagent, type SubagentRecord } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "./components/service";
 import { BUILT_INS, COMPONENT_LIMIT, componentKnowledgeFor, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
 import { detailValues, type CommandStatus } from "./components/commands";
 import type { Display } from "./reply";
 import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
-import { headTurnContent, headTurnEnd } from "./head-turn";
-import { costDelta, hasVisibleContent, WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "./worker-core";
+import { WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "./worker-core";
 import { projectWorker } from "./worker-projection";
 import {
   appRoutinesCall, CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
@@ -104,10 +103,10 @@ import { totalTokens } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import { alwaysAllows } from "./permission-rules";
 import {
-  WARM_WINDOW_MS, connectionErrorLine, isConnectionError, lostText, mentionsConnectionError, restoredText, resumeMode, resumeNote,
+  WARM_WINDOW_MS, connectionErrorLine, isConnectionError, restoredText, resumeMode, resumeNote,
   type CutOff, type Outage,
 } from "./network-resume";
-import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "./api-retry";
+import { API_RETRY_NOTE, apiRetryDelays, apiRetryText } from "./api-retry";
 import { CONTINUE_NOTE, type SwapEntry } from "./hot-swap";
 import { MAX_PAGE_BYTES, PAGE_BYTES, pageBack, sliceViews } from "./history-page";
 import {
@@ -119,7 +118,8 @@ import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type Wor
 import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
 import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
 import { BotContext } from "./bot/context";
-import { RECENT_TOOL_CALLS, NO_LONGER_NEEDED, NO_ANSWER, NEVER_ALWAYS, PLUGINS_RESTART, PROMPT_SESSION_DIVIDER, NEW_SESSION_DIVIDER, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
+import { HeadEvents } from "./bot/head-events";
+import { RECENT_TOOL_CALLS, NO_LONGER_NEEDED, NO_ANSWER, NEVER_ALWAYS, PLUGINS_RESTART, PROMPT_SESSION_DIVIDER, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
 import { keepable, resolvePath, union, firstLine, sleep, turnCommandId, preview, streamingText, subagentOf, isReviewRefusal, isRule, allowRule, permissionText, clip, stepView, routinesKey, iso, subagentView, messageView, approvalSummary } from "./bot/view-functions";
 export type Status = "done" | "stopped" | "failed";
 export { NO_LONGER_NEEDED } from "./bot/types";
@@ -135,8 +135,8 @@ export class Bot {
    * handed-over work owns that hand-off; the coordinator's turn that only accepted it does not hand back,
    * the worker's report turn does.
    */
-  private managedTaskHandoffs = new Map<string, string>();
-  private managedHandbacks = new Set<string>();
+  managedTaskHandoffs = new Map<string, string>();
+  managedHandbacks = new Set<string>();
   /** Components being made from its replies (specs.json, 1.x's format; the primary's): the component studio's records, kept as they are. */
   private specList: StoredSpec[] = [];
   /** Read by BotContext (M7-S41). */
@@ -150,7 +150,7 @@ export class Bot {
   private subagentSaveTimer: NodeJS.Timeout | null = null;
   private subagentsDirty = false;
   private subagentSaveRetryMs = 1_000;
-  private head: AgentHead | null = null;
+  head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
   readonly engine: Engine;
   /** Its heads (bot.json `heads`, 1.x's format). Kept by the primary; a partner reads it. */
@@ -167,7 +167,7 @@ export class Bot {
   get members(): Bot[] { return [this, ...this.peers]; }
   private ownsTurn(id: string): boolean { return this.ctx.ownsTurn(id); }
 
-  private conductor: Conductor;
+  conductor: Conductor;
   /** A message to both, kept from the head that does not lead until the lead says what it takes on. */
   /** Read by BotContext (M7-S41). */
   claimHold: { id: string; lead: Engine; held: Engine; turn: Turn; timer: NodeJS.Timeout } | null = null;
@@ -181,34 +181,34 @@ export class Bot {
   private handoffDecisions = new Map<string, Set<string>>();
   private rounds: RoundsProgress | null = null;
   /** Codex: workers at work or their reports waiting (the bot stays awake). */
-  private managedPending = false;
+  managedPending = false;
   /** Cut off by the network (1.x's `outage`): it waits for the network to come back (`networkRestored`) to carry on. */
   outage: Outage | null = null;
-  private retryingConnection = false;
+  retryingConnection = false;
   /** Turns tried again in a row after an API error that passes (api-retry.ts), and the wait before the next try. */
-  private apiRetries = 0;
+  apiRetries = 0;
   private apiRetryTimer: NodeJS.Timeout | null = null;
   /** Its Codex head waits to try a refused request again (BotView.codexRetry): until its next item, or the turn's end. */
-  private codexRetry: NonNullable<BotView["codexRetry"]> | null = null;
+  codexRetry: NonNullable<BotView["codexRetry"]> | null = null;
   /** Subagents whose last line was claude's connection error (1.x's `cutOffByNetwork`). */
-  private cutOffByNetwork = new Set<string>();
+  cutOffByNetwork = new Set<string>();
   /** When the turn under way last showed a step (1.x's `lastProgress`, ms), and each subagent's (`subagentProgress`). */
   private lastProgress: number | null = null;
   private subagentProgress = new Map<string, number>();
   /** Quiet spells already reminded of ("": its own turn; else a subagent's id), once each (`stallReminded`). */
   private stallReminded = new Set<string>();
   /** Tidying memory.md before it sleeps. */
-  private tidying = false;
+  tidying = false;
   /** Read by BotContext (M7-S41). */
   turn: Turn | null = null;
   /** Messages that wait for the turn under way (or the tidy) to end. */
   /** Read by BotContext (M7-S41). */
   queue: Turn[] = [];
-  private finished = new Map<string, Status>();
-  private approvals = new Map<string, Approval>();
-  private draining: { head: AgentHead; resolve: () => void; promise: Promise<void> } | null = null;
+  finished = new Map<string, Status>();
+  approvals = new Map<string, Approval>();
+  draining: { head: AgentHead; resolve: () => void; promise: Promise<void> } | null = null;
   /** Results still to come from turns ended early (a tidy or a guest turn that ran late): they belong to nobody. */
-  private ignoreResults = 0;
+  ignoreResults = 0;
   /** The app's own questions in this chat (installing a plugin): what a pick does. */
   private appQuestions = new Map<string, (index: number) => void>();
   /** …and what words typed on one do instead of going to the bot (a copy of another bot's question). */
@@ -218,11 +218,11 @@ export class Bot {
   /** What the app tells it with its next message (`queueNote`). */
   private queuedNote: string | null = null;
   /** Work paused for the user's message (1.x's `pausedWork`): carried on once the user has been answered. */
-  private paused: { conducted: boolean; handoffId: string | null } | null = null;
+  paused: { conducted: boolean; handoffId: string | null } | null = null;
   /** Read by BotContext (M7-S41). */
   session: HeadState;
   /** The next head is a new session: its first message carries the wake briefing. */
-  private briefing = true;
+  briefing = true;
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
   private restartPending = false;
   private modelSettingsPending = false;
@@ -248,9 +248,9 @@ export class Bot {
   /** The plugins' Claude parts its process started with (1.x's `loadedPluginStamp`). */
   private loadedPluginStamp: string[] | null = null;
   /** A head ended for such a restart: its session carries on. */
-  private restarting: AgentHead | null = null;
+  restarting: AgentHead | null = null;
   /** What its process has cost so far (claude's `total_cost_usd`, a running total; 1.x's `sessionCost`). */
-  private sessionCost = { last: 0 };
+  sessionCost = { last: 0 };
   /** Its head runs on another CLI from its next message on (1.x's `switchEngine`): a handoff through memory.md first. */
   /** Read by BotContext (M7-S41). */
   switchTo: Engine | null = null;
@@ -265,34 +265,34 @@ export class Bot {
   /** Rules given to claude while it runs, with the last call it had made then: a block of a call up to that one is no news. */
   private rulesGivenAfter = new Map<string, string | null>();
   /** Session schedule calls waiting for their structured results, and the next due clock. */
-  private scheduleCalls = new Map<string, ScheduleCall>();
+  scheduleCalls = new Map<string, ScheduleCall>();
   private scheduleDueAt: number | null = null;
   /** Recent tool calls by id, oldest first: to show and allow a blocked one. */
-  private toolCalls = new Map<string, { tool: string; detail: string; parent: string | null }>();
+  toolCalls = new Map<string, { tool: string; detail: string; parent: string | null }>();
   /** `permission_denied` frames waiting for their tool result; blocked calls already shown. */
   private deniedFrames = new Map<string, { tool: string | null; reason: string }>();
   private deniedCalls = new Set<string>();
   private unread: number;
-  private shuttingDown = false;
+  shuttingDown = false;
   /** What this head's session has been told of the chat's reactions (null: tell it from scratch). */
   private reactionsSeen: SeenReactions | null = null;
   /** Finished subagents a silent turn has already been asked to report, once. */
   private reportAsked = new Set<string>();
   /** Subagents that ended between turns: the next turn claude starts itself reports them. */
-  private pendingEnded: string[] = [];
+  pendingEnded: string[] = [];
   /** While tidying, a Codex worker's report turn on the memory update (`internalReply` kept open in 1.x). */
-  private tidyFollowUp: ((text: string) => void) | null = null;
+  tidyFollowUp: ((text: string) => void) | null = null;
   /** Heads being ended (a Stop it did not listen to, quitting): nothing they print counts any more. */
-  private ending = new WeakSet<AgentHead>();
+  ending = new WeakSet<AgentHead>();
   /** The other head's words written to claude mid-turn, by message uuid: one that gets a turn of its own is the app's. */
-  private contextSent = new Set<string>();
+  contextSent = new Set<string>();
   /** Your lines written to claude while its turn ran, by message uuid: one claude begins a turn of its own for is answered there. */
-  private steered = new Map<string, Turn>();
+  steered = new Map<string, Turn>();
   /**
    * claude has a turn under way: it said "started" for a line, or its turn said something, and no result came since.
    * A "started" for a line then means claude read it into that turn (3353d2d9), never a turn of its own.
    */
-  private claudeMidTurn = new WeakSet<AgentHead>();
+  claudeMidTurn = new WeakSet<AgentHead>();
   /** Your lines offered into an Antigravity turn (`offerInsert`), by id: in the queue ("Queued") until it reads them. */
   private inserting = new Map<string, Turn>();
   /** Our turn that claude has not begun yet, set aside while it answers the other head's words first. */
@@ -302,7 +302,7 @@ export class Bot {
    * The deferred turn back as the turn under way that claude has not begun yet (no "started", no output), and the clock
    * that ends it if claude never does: its words were taken into the turn that just ended, so nothing more comes for it.
    */
-  private unbegun: { turn: Turn; head: AgentHead; timer: ReturnType<typeof setTimeout> } | null = null;
+  unbegun: { turn: Turn; head: AgentHead; timer: ReturnType<typeof setTimeout> } | null = null;
   /** Its routines (the primary's): routines.cron, the app-owned schedules, when each cron job last ran. */
   private routineFile: RoutineFile | null = null;
   private scheduledStore: ScheduledRoutineStore | null = null;
@@ -326,6 +326,10 @@ export class Bot {
   /** Made on first use, from this bot: a fake `Object.create(Bot.prototype)` has one too. */
   private botContext: BotContext | null = null;
   private get ctx(): BotContext { return this.botContext ??= new BotContext(this); }
+
+  /** What a head says and what becomes of it (M7-S53): made on first use, from this bot. */
+  private botHeadEvents: HeadEvents | null = null;
+  private get headEvents(): HeadEvents { return this.botHeadEvents ??= new HeadEvents(this, this.ctx); }
 
   constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
     const primary = options.primary;
@@ -539,7 +543,7 @@ export class Bot {
     if (changed) this.persist();
   }
 
-  private persist(soon = false) {
+  persist(soon = false) {
     if (this.readOnly) return;
     if (soon) {
       this.saveTimer ??= setTimeout(() => { this.saveTimer = null; this.persist(); }, 500);
@@ -549,7 +553,7 @@ export class Bot {
     this.store.saveMessages(this.records);
   }
 
-  private messageView(record: ChatRecord): MessageView {
+  messageView(record: ChatRecord): MessageView {
     const lookup = { get: (id: string) => this.members.map(bot => bot.subagents.get(id)).find(Boolean) };
     const view = messageView(record, this.members.map(bot => bot.approvals.get(record.id)).find(Boolean), lookup, this.owner.displayViews(record));
     // Your line a head could not take into its turn under way waits in a queue: it says so until it is sent.
@@ -605,19 +609,19 @@ export class Bot {
   }
 
   /** A new line; `archive: false` for a reply still being written (it is archived when it ends). */
-  private add(record: ChatRecord, { archive = true } = {}) {
+  add(record: ChatRecord, { archive = true } = {}) {
     this.records.push(record);
     this.persist();
     if (archive) archiveLine(this.paths.archive, record);
     this.emit({ type: "message.added", botId: this.id, message: this.messageView(record) });
   }
 
-  private changed(record: ChatRecord) {
+  changed(record: ChatRecord) {
     this.persist();
     this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
   }
 
-  private remove(record: ChatRecord) {
+  remove(record: ChatRecord) {
     const at = this.records.indexOf(record);
     if (at < 0) return;
     this.records.splice(at, 1);
@@ -626,7 +630,7 @@ export class Bot {
     this.emit({ type: "message.removed", botId: this.id, messageId: record.id });
   }
 
-  private notice(text: string) {
+  notice(text: string) {
     this.add({ id: newId(), role: "notice", text, date: toSwiftDate() });
   }
 
@@ -1140,13 +1144,13 @@ export class Bot {
   }
 
   /** `turn` takes a worker's report or note: if that worker was started for a bot's @, its reply goes back there too. */
-  private relayIfCallInWork(turn: Turn, workerId: string | null | undefined, news: CallInRelay["news"]) {
+  relayIfCallInWork(turn: Turn, workerId: string | null | undefined, news: CallInRelay["news"]) {
     const relay = this.callInWork.relay(workerId, news);
     if (relay && turn.open && turn.origin !== "tidy") turn.relayTo = relay;
   }
 
   /** `turn` ended (`record`: its line, null when it showed nothing): a worker's news it was on goes back to the asking bot. */
-  private relayFollowUp(turn: Turn, status: Status, record: ChatRecord | null, error?: string) {
+  relayFollowUp(turn: Turn, status: Status, record: ChatRecord | null, error?: string) {
     const relay = turn.relayTo;
     if (!relay) return;
     const told = this.callInWork.followUp(relay, { status: status === "done" ? "done" : status === "stopped" ? "stopped" : "failed", visible: !!record, error: error ?? null });
@@ -1224,7 +1228,7 @@ export class Bot {
   }
 
   /** Whether a Codex or Antigravity head keeps work it must stay awake for (its workers, a report turn to come). */
-  private onItemPending(pending: boolean) {
+  onItemPending(pending: boolean) {
     this.managedPending = pending;
     if (!pending && !this.turn && !this.queue.length) this.scheduleIdle();
     if (!pending) this.checkSettingsHold();
@@ -1355,7 +1359,7 @@ export class Bot {
   }
 
   /** A worker another bot owns asks for an approval: the owner's chat shows the card (the host's own standing rules still answer what they cover). */
-  private routeWorkerApproval(head: ApprovalAnswerer, item: Extract<StreamItem, { kind: "permission" }>): boolean {
+  routeWorkerApproval(head: ApprovalAnswerer, item: Extract<StreamItem, { kind: "permission" }>): boolean {
     const port = this.options.agents;
     if (!item.workerId || !port?.approval || isReviewRefusal(item.requestId) || !port.movedOut(this.engine).has(item.workerId)) return false;
     if (!this.singleActionApprovals && item.tool !== "Monitored command" && item.tool !== "Permissions" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
@@ -1468,7 +1472,7 @@ export class Bot {
   }
 
   /** Plugins' afterReply hooks may change the reply that just showed; `bots.onReply` listeners hear it. */
-  private afterReplyHooks(record: ChatRecord) {
+  afterReplyHooks(record: ChatRecord) {
     const filter = this.options.replyFilter?.();
     const shown = record.text;
     if (!filter) { this.options.replied?.(this.owner, record); return; }
@@ -1515,7 +1519,7 @@ export class Bot {
   private readonly dirtySubagents = new Set<string>();
   private allSubagentsDirty = false;
 
-  private saveSubagents(progress = false, changed?: SubagentRecord) {
+  saveSubagents(progress = false, changed?: SubagentRecord) {
     if (this.readOnly) return;
     this.subagentsDirty = true;
     if (changed) {
@@ -1609,7 +1613,7 @@ export class Bot {
   }
 
   /** A finished model request of this head (scope null) or of one of its subagents. */
-  private noteRequest(event: RequestEvent) {
+  noteRequest(event: RequestEvent) {
     if (event.scope === null) {
       const before = this.mainSpeed?.timed ?? 0;
       this.mainSpeed = addSample(this.mainSpeed, event.sample, event.estimated === true);
@@ -1663,7 +1667,7 @@ export class Bot {
     this.options.emit({ type: "heads.updated", botId: this.id, heads: this.headsView() });
   }
 
-  private updated() {
+  updated() {
     this.emit({ type: "bot.updated", bot: this.view() });
   }
 
@@ -1917,7 +1921,7 @@ export class Bot {
     return { turnId: turn.id, done: turn.done };
   }
 
-  private newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn {
+  newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn {
     // Your message (or the app's) goes on with the session: the try waiting after an API error is not needed.
     if (origin === "user" || origin === "app") this.clearApiRetry();
     let resolve!: Turn["resolve"];
@@ -1970,7 +1974,7 @@ export class Bot {
   }
 
   /** A head's turn ended without words for the other (silent, failed, stopped): a message it led goes on now. */
-  private headStopped(head: Engine) {
+  headStopped(head: Engine) {
     const owner = this.owner;
     if (owner.claimHold?.lead === head) owner.releaseClaim();
   }
@@ -2014,13 +2018,13 @@ export class Bot {
   }
 
   /** What it said between its tool calls, while the other head may work too (`headWords`). */
-  private headWords(words: string) {
+  headWords(words: string) {
     // Only explicit, correlated handoffs deliver peer input. Streaming commentary from an
     // independent task must not become a new provider request or steer another task.
   }
 
   /** A head showed a reply: the other head hears it, and the conductor carries any hand-off (`headReplied`). */
-  private headReplied(record: ChatRecord, head: Engine, handoff: Handoff | null, handed: boolean, handoffId: string | null) {
+  headReplied(record: ChatRecord, head: Engine, handoff: Handoff | null, handed: boolean, handoffId: string | null) {
     if (!this.allowsEngineRoute(head) || (handoff && !this.allowsEngineRoute(handoff.to, head))) {
       this.notice("Requested collaboration route is unavailable; nothing was routed.");
       return;
@@ -2045,7 +2049,7 @@ export class Bot {
   }
 
   /** Does what the conductor says: work for a head, lines and cards in the chat, the rounds line. */
-  private conduct(actions: ConductorAction[]): void {
+  conduct(actions: ConductorAction[]): void {
     if (this.options.primary) return this.options.primary.conduct(actions);
     for (const action of actions) {
       switch (action.type) {
@@ -2429,7 +2433,7 @@ export class Bot {
    * What the app does itself stays: new bots and projects (asked on a card). <suggest-component> and
    * Maintainer's <component-spec> belong to the built-in plugin botling.component-studio (replyTags).
    */
-  private handleRequests(requests: BotRequest[]): BotRequest[] {
+  handleRequests(requests: BotRequest[]): BotRequest[] {
     const unavailable = new Set(["component", "plugin"]);
     const blocked = this.engine === "agy" ? requests.filter(request => unavailable.has(request.kind)) : [];
     const supported = requests.filter(request => !blocked.includes(request));
@@ -2451,7 +2455,7 @@ export class Bot {
     if (changed) owner.persist(true);
   }
 
-  private bumpUnread() {
+  bumpUnread() {
     const owner = this.owner;
     owner.unread += 1;
     owner.store.saveSetting("unread", owner.unread);
@@ -2488,7 +2492,7 @@ export class Bot {
   }
 
   /** A reply that only refers to a shared decision (<decision-ref/>) shows that decision's options (`associateDecision`). */
-  private associateDecision(record: ChatRecord, reference: string | null, turn: Turn) {
+  associateDecision(record: ChatRecord, reference: string | null, turn: Turn) {
     const owner = this.owner;
     if (!reference || record.choices) return;
     const fromHandoff = !!turn.handoffId && !!owner.handoffDecisions.get(turn.handoffId)?.has(reference);
@@ -2694,7 +2698,7 @@ export class Bot {
   }
 
   /** Antigravity read your line with a tool result of its turn: it joins that turn, as a steered line does. */
-  private insertDelivered(head: AgentHead, id: string) {
+  insertDelivered(head: AgentHead, id: string) {
     const next = this.inserting.get(id);
     if (!next) return;
     this.inserting.delete(id);
@@ -2768,7 +2772,7 @@ export class Bot {
    * claude begins a turn of its own for a line of yours it was sent mid-turn (the turn under way ended
    * before it read it in): that turn answers you. Our turn sent after it and not begun waits for it.
    */
-  private steeredStarted(head: AgentHead, next: Turn) {
+  steeredStarted(head: AgentHead, next: Turn) {
     if (head !== this.head || this.ignoreResults || this.draining || this.ending.has(head)) return;
     const waiting = this.turn;
     // Read into the turn under way after all.
@@ -2791,7 +2795,7 @@ export class Bot {
    * set aside for it (deferred) would otherwise wait for a turn that never comes, and everything after it with it.
    * A turn under way that it ends is left to the result that follows (that result is its answer).
    */
-  private commandEnded(head: AgentHead, id: string, state: CommandState) {
+  commandEnded(head: AgentHead, id: string, state: CommandState) {
     // Words steered into a turn, or the other head's words: read in there, nothing more comes for them.
     this.steered.delete(id);
     this.contextSent.delete(id);
@@ -2923,7 +2927,7 @@ export class Bot {
   }
 
   /** Writes the turn's message to a head (starting one, in a new session, if the bot is asleep). */
-  private async deliver(turn: Turn, given?: AgentHead) {
+  async deliver(turn: Turn, given?: AgentHead) {
     // A stopped turn's head may still be ending it: its result line must not land in this turn.
     while (this.draining) await this.draining.promise;
     if (this.turn !== turn || !turn.open) return;
@@ -3021,7 +3025,7 @@ export class Bot {
 
   /** A file this bot's chat shows as an attachment (the chat origin serves only these). */
   /** The chat's copies of the pictures its lines show (chat-media.ts): the main bot's store, whichever head wrote the line. */
-  private get lineMediaStore(): string {
+  get lineMediaStore(): string {
     return (this.options.primary ?? this).store.directory;
   }
 
@@ -3292,7 +3296,7 @@ export class Bot {
   }
 
   /** A new session for the next wake (after a sleep, or a resume claude no longer had). */
-  private newSession() {
+  newSession() {
     if (this.engine === "agy" && !this.readOnly) {
       this.store.saveSetting("agyConversation", undefined);
       this.store.saveSetting("agyRecovery", undefined);
@@ -3306,7 +3310,7 @@ export class Bot {
   }
 
   /** The turn's reply line, put in the chat once it has something to show. */
-  private place(turn: Turn): ChatRecord {
+  place(turn: Turn): ChatRecord {
     if (turn.record) return turn.record;
     const record: ChatRecord = { id: turn.messageId, role: "bot", text: "", date: toSwiftDate(), turnID: turn.id, state: "streaming", engine: this.engine };
     if (this.sharesChat) record.seenBy = [this.engine];
@@ -3315,270 +3319,14 @@ export class Bot {
     return record;
   }
 
-  /** Claude started a turn of its own (a background subagent told it something; `app`: the other head's words it answers). */
-  private backgroundTurn(head: AgentHead, origin: "background" | "app" = "background"): Turn {
-    // While tidying, the app's own turns (a Codex worker's report on the memory file) are the tidy's.
-    const turn = this.newTurn(this.tidying ? "tidy" : origin, "", null);
-    if (this.tidying) turn.onReply = (text) => this.tidyFollowUp?.(text);
-    turn.head = head;
-    turn.sent = true;
-    this.turn = turn;
-    this.clearIdle();
-    if (turn.origin !== "tidy") {
-      this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
-      this.updated();
-    }
-    return turn;
-  }
+  private backgroundTurn(head: AgentHead, origin?: "background" | "app"): Turn { return this.headEvents.backgroundTurn(head, origin); }
 
-  private onItem(head: AgentHead, item: CodexItem) {
-    if (head !== this.head || this.ending.has(head)) return;
-    // Workers' own items come through `onWorkerOutput` only.
-    if (item.kind === "workerReport" || item.kind === "workerNote") return;
-    if (item.kind === "request") { this.noteRequest(item.request); return; }
-    this.settleSessionSchedules();
-    // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
-    if (item.kind === "connectionTrouble") {
-      if (!this.retryingConnection) { this.retryingConnection = true; this.updated(); }
-      return;
-    }
-    // Codex waiting on a retry is no step either; the bot shows it until the turn moves on.
-    if (item.kind === "apiRetry") return this.noteCodexRetry(item);
-    if (!subagentOf(item) && item.kind !== "managedPending" && item.kind !== "rateLimits") this.clearCodexRetry();
-    if (item.kind === "connectionLost") {
-      if (item.parent) this.cutOffByNetwork.add(item.parent);
-      else if (this.turn?.open && this.turn.head === head) this.turn.lostConnection = true;
-      return;
-    }
-    if (item.kind === "inserted") return this.insertDelivered(head, item.id);
-    if (item.kind !== "rateLimits") this.noteProgressOf(item);
-    if (item.kind === "managedPending") return this.onItemPending(item.pending);
-    if (item.kind === "monitorState") return this.monitorState(item.record);
-    if (item.kind === "monitorEnded") return this.monitorEnded(item.id, item.output, item.failed);
-    if (item.kind === "routinesChanged") return this.routinesEdited();
-    if (item.kind === "backgroundTurn") {
-      // A Codex worker's report: the app's own turn on the coordinator, which claude-style turns start on their first line.
-      if (!this.turn && !this.ignoreResults) {
-        const turn = this.backgroundTurn(head);
-        // The app's worker id is authoritative even when the report is not a hand-off.
-        if (item.taskId) turn.ended.push(item.taskId);
-        this.relayIfCallInWork(turn, item.taskId, "report");
-        // The report of a worker that owns a hand-off goes back as that hand-off's reply (`managedWorkerReportStarted`).
-        const handoff = item.taskId ? this.managedTaskHandoffs.get(item.taskId) : undefined;
-        if (item.taskId && handoff) {
-          this.managedTaskHandoffs.delete(item.taskId);
-          if (this.managedHandbacks.delete(handoff)) { turn.conducted = true; turn.handoffId = handoff; }
-        }
-      }
-      return;
-    }
-    if (item.kind === "init") {
-      if (this.engine === "agy") this.store.saveSetting("agyRecovery", undefined);
-      let save = false;
-      if (!this.session.started) { this.session.started = true; save = true; }
-      if (item.sessionId && item.sessionId !== this.session.sessionId && /^[0-9a-f-]{36}$/i.test(item.sessionId)) { this.session.sessionId = item.sessionId; save = true; }
-      if (save) { this.store.saveHead(this.session); if (this.engine === "agy") this.store.saveSetting("agyConversation", this.session.sessionId); }
-      return;
-    }
-    if (item.kind === "controlResponse") return;
-    if (item.kind === "usage") {
-      // Claude's cost is a running total for its process: this turn's is the difference.
-      const spent = costDelta(this.sessionCost, item.totalCost);
-      if (spent > 0 || totalTokens(item.tokens) > 0) this.options.usage?.(this.owner.profile.name, spent, item.tokens);
-      return;
-    }
-    if (item.kind === "rateLimits") { this.options.rateLimits?.(item.engine, item.limits); return; }
-    if (item.kind === "command") {
-      if (commandEnded(item.state)) { this.commandEnded(head, item.id, item.state); return; }
-      const mid = this.claudeMidTurn.has(head);
-      if (item.state === "started") this.claudeMidTurn.add(head);
-      // claude begins a turn: the one set aside is under way after all (or another first, whose result tells).
-      if (item.state === "started" && this.unbegun?.head === head) this.clearUnbegun();
-      const steered = this.steered.get(item.id);
-      if (steered) {
-        if (item.state === "started") { this.steered.delete(item.id); if (!mid) this.steeredStarted(head, steered); }
-        return;
-      }
-      // The other head's words, read too late for the turn they were meant for: claude answers them
-      // in a turn of its own, the app's (its words show; <no-reply/> shows nothing). A message of
-      // ours sent after them but not begun yet waits for that turn to end.
-      if (item.state !== "started" || !this.contextSent.delete(item.id) || mid || this.ignoreResults || this.draining) return;
-      const waiting = this.turn;
-      if (waiting && (!waiting.open || waiting.head !== head || waiting.reply.text || waiting.steps.length || waiting.record)) return;
-      if (waiting) { this.turn = null; this.deferred = waiting; }
-      this.backgroundTurn(head, "app");
-      return;
-    }
-    if (item.kind === "permissionCancelled") {
-      for (const [id, approval] of this.approvals) if (approval.head === head && approval.requestId === item.requestId) this.settle(id, NO_LONGER_NEEDED, false);
-      if (item.requestId.startsWith("worker:")) this.options.agents?.approvalCancelled?.(this.hostFacts(), item.requestId);
-      return;
-    }
-    if (item.kind === "toolUse") this.noteToolCall(item);
-    if (item.kind === "permissionDenied") { this.showDenial(item); return; }
-    // A managed worker owns its own turn. Its approval must neither create a phantom
-    // coordinator turn nor be denied by an unrelated coordinator's cleanup/drain/tidy.
-    if (item.kind === "permission" && item.workerId) { if (this.routeWorkerApproval(head, item)) return; return this.ask(head, item, null); }
-    if (item.kind === "backgroundStarted") {
-      // A Monitor running a command is a background shell task too.
-      const call = this.toolCalls.get(item.id);
-      const monitor = item.monitor || (call ? call.tool === "Monitor" : this.turn?.steps.findLast((step) => step.id === item.id)?.tool === "Monitor");
-      if (call?.parent) this.addSubagentTask(call.parent, item.id, monitor ? "monitor" : "command", item.description || call.detail, call.detail);
-      else this.addBackgroundTask(item.id, monitor ? "monitor" : "command", item.description);
-      return;
-    }
-    // A subagent's own background work: a command claude moved to the background after its timeout, a wake-up, a cron job.
-    if (item.kind === "toolResult" && item.parent && item.launch?.background && !item.failed) {
-      const call = this.toolCalls.get(item.id);
-      if (call?.tool === "Bash") {
-        this.addSubagentTask(item.parent, item.id, "command", "", call.detail);
-        const task = this.findTask(item.id);
-        if (task) { task.outputFile = item.launch.outputFile ?? backgroundOutputFile(item.output) ?? task.outputFile; this.touchTask(item.id); }
-      }
-    }
-    if (item.kind === "toolUse" && item.parent) {
-      const call = scheduleCall(item.tool, item.input);
-      if (call) this.scheduleCalls.set(item.id, call);
-    }
-    if (item.kind === "scheduleResult" && item.parent) {
-      const call = this.scheduleCalls.get(item.id);
-      this.scheduleCalls.delete(item.id);
-      const task = call ? scheduledTask(item.id, call, item.result) : null;
-      if (task) this.placeSubagentTask(item.parent, task);
-      const tool = this.toolCalls.get(item.id)?.tool;
-      const cancellation = tool ? scheduleCancellation(tool, item.result) : null;
-      if (cancellation) this.cancelScheduled(cancellation, this.turn);
-      this.refreshScheduleDue();
-      return;
-    }
-    // Subagents are followed whoever's turn it is; their own lines stop here.
-    if (this.onSubagentItem(item)) return;
-    if (item.kind === "result") this.claudeMidTurn.delete(head);
-    else this.claudeMidTurn.add(head);
-    // Output of a turn: claude began the one set aside after all.
-    if (item.kind !== "result" && this.unbegun?.head === head) this.clearUnbegun();
-    // The tail of a turn that was cut off: it belongs to nobody.
-    if (this.ignoreResults > 0) {
-      if (item.kind === "permission") head.answer(item.requestId, false, item.input, "Not now: that turn has ended.");
-      if (item.kind === "result") this.ignoreResults -= 1;
-      return;
-    }
-    let turn = this.turn;
-    if (!turn || !turn.open || turn.head !== head) {
-      // The tail of a stopped turn: only its end matters, to know the head is free again.
-      if (this.draining?.head === head) {
-        // Not while its tree is being ended (stop's grace ran out): what waits goes once the process is gone.
-        if (item.kind === "result" && !this.ending.has(head)) this.drained(head);
-        if (item.kind === "permission") head.answer(item.requestId, false, item.input, "Not now: the user stopped this turn.");
-        return;
-      }
-      if (turn) return; // A turn of ours waits to be sent: nothing of claude's can be for it yet.
-      // Nothing of ours under way: claude started a turn itself.
-      if (item.kind === "result" && !item.text) return;
-      if (item.kind === "textBlock") return;
-      turn = this.backgroundTurn(head);
-    }
-    if (item.kind === "permission") return this.ask(head, item, turn);
-    if (item.kind === "scheduleResult") {
-      const call = this.scheduleCalls.get(item.id);
-      this.scheduleCalls.delete(item.id);
-      const task = call ? scheduledTask(item.id, call, item.result) : null;
-      if (task && !turn.tasks?.some((candidate) => candidate.id === task.id)) (turn.tasks ??= []).push(task);
-      const tool = this.toolCalls.get(item.id)?.tool;
-      const cancellation = tool ? scheduleCancellation(tool, item.result) : null;
-      if (cancellation) this.cancelScheduled(cancellation, turn);
-      this.refreshScheduleDue();
-      return;
-    }
-    switch (item.kind) {
-      case "stepText":
-        // Codex's commentary: a step, and what the other head hears it say.
-        turn.steps.push({ id: `${turn.id}:text:${turn.steps.length}`, kind: "text", title: item.text, failed: false, done: true });
-        if (turn.origin !== "tidy") this.headWords(item.text);
-        this.emitSteps(turn);
-        return;
-      case "toolUse": {
-        const call = scheduleCall(item.tool, item.input);
-        if (call) this.scheduleCalls.set(item.id, call);
-        // The words claude said before this call: the other head hears them now.
-        const said = turn.reply.text.slice(turn.told).trim();
-        if (said && turn.origin !== "tidy") { turn.told = turn.reply.text.length; this.headWords(streamingText(said)); }
-        const isSubagent = SUBAGENT_TOOLS.has(item.tool);
-        turn.steps.push({ id: item.id, kind: isSubagent ? "subagent" : "tool", tool: item.tool, title: item.title, detail: item.detail, failed: false, done: false });
-        this.emitSteps(turn);
-        return;
-      }
-      case "toolResult": {
-        this.scheduleCalls.delete(item.id);
-        const step = turn.steps.find((candidate) => candidate.id === item.id);
-        if (!step) return;
-        // A subagent's step is done when the subagent is, not when its call returns.
-        if (step.kind !== "subagent" || this.subagents.get(item.id)?.status !== "running") step.done = true;
-        step.failed = item.failed;
-        if (item.output) step.output = item.output;
-        // A Bash call claude moved to the background itself (it outlived its timeout) said `is_backgrounded: false`
-        // at `task_started`; only this result (`backgroundTaskId`) tells, so it is background work from here.
-        if (item.launch?.background && step.tool === "Bash" && !item.failed && !item.parent) this.addBackgroundTask(item.id, "command", "");
-        const task = turn.tasks?.find((task) => task.id === item.id);
-        if (task) task.outputFile = item.launch?.outputFile ?? backgroundOutputFile(item.output) ?? task.outputFile;
-        this.emitSteps(turn);
-        return;
-      }
-      case "result": {
-        if (item.ok) turn.reply.add(item);
-        const end = headTurnEnd(item, turn.reply.text, this.engine);
-        // Its turn ended with claude's connection error: say so, and wait for the network instead of going to sleep (`showNetworkLoss`).
-        if (end.status === "failed" && turn.lostConnection && turn.origin !== "tidy") {
-          turn.reply = new ReplyText();
-          this.recordOutage({ turnFailed: true });
-          this.finishTurn(turn, "failed", lostText(item.error || item.text));
-          this.bumpUnread();
-          return;
-        }
-        // An API error that passes (a Cloudflare block, an overload): the turn is tried again in the same session after a
-        // wait, with a short line instead of claude's words; once every try failed, one plain failed line.
-        if (end.status === "failed" && item.apiPassing && turn.origin !== "tidy") {
-          if (this.retryApiLater(turn)) return;
-          this.apiRetries = 0;
-          turn.reply = new ReplyText();
-          this.finishTurn(turn, "failed", apiGaveUpText(apiRetryDelays().length, item.error || item.text));
-          return;
-        }
-        if (turn.origin !== "tidy") this.apiRetries = 0;
-        // claude cut this turn off to take your line (priority "now"): the app's doing, not an error. It ends stopped,
-        // with the words it wrote so far or, with none, no bubble at all; the raw subtype never shows.
-        if (!item.ok && item.subtype === "error_during_execution" && turn.steeredNow) { this.finishTurn(turn, "stopped"); return; }
-        this.finishTurn(turn, end.status, end.error);
-        return;
-      }
-      default: {
-        const piece = turn.reply.add(item);
-        if (!piece) return;
-        // claude's own turns show only once they end (or never); the tidy never.
-        if (turn.origin === "background" || turn.origin === "tidy") return;
-        this.showSoFar(turn);
-      }
-    }
-  }
+  private onItem(head: AgentHead, item: CodexItem) { return this.headEvents.onItem(head, item); }
 
-  /** The reply so far, without the app's tags (a tag still being written is held back). */
-  private showSoFar(turn: Turn) {
-    const shown = streamingText(turn.reply.text);
-    if (!shown && !turn.record) return;
-    const record = this.place(turn);
-    const before = record.text;
-    if (shown === before) return;
-    record.text = shown;
-    this.persist(true);
-    if (shown.startsWith(before)) {
-      this.emit({ type: "turn.delta", botId: this.id, turnId: turn.id, messageId: turn.messageId, text: shown.slice(before.length) });
-    } else {
-      this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
-    }
-  }
+  private showSoFar(turn: Turn) { return this.headEvents.showSoFar(turn); }
 
   /** Only app-owned coordinator records can update a coordinator's monitor chip. */
-  private monitorState(monitor: CommandMonitor) {
+  monitorState(monitor: CommandMonitor) {
     if (monitor.owner.toLowerCase() !== this.session.sessionId.toLowerCase()) return;
     const task = monitorTask(monitor);
     if (!task) return;
@@ -3599,25 +3347,10 @@ export class Bot {
     this.changed(record);
   }
 
-  /** A monitored command ended: its step, in the reply of the turn that started it, is done. */
-  private monitorEnded(id: string, output: string, failed: boolean) {
-    const mark = (steps: StepRecord[] | undefined) => {
-      const step = steps?.findLast((candidate) => candidate.id === id);
-      if (!step) return false;
-      step.done = true;
-      step.failed = failed;
-      step.output = output.slice(0, 10_000);
-      return true;
-    };
-    if (this.turn && mark(this.turn.steps)) { this.emitSteps(this.turn); return; }
-    for (let i = this.records.length - 1; i >= Math.max(0, this.records.length - 80); i--) {
-      const record = this.records[i]!;
-      if (mark(record.steps)) { this.changed(record); return; }
-    }
-  }
+  private monitorEnded(id: string, output: string, failed: boolean) { return this.headEvents.monitorEnded(id, output, failed); }
 
   /** Subagent bookkeeping (subagents.json). True when the item was the subagent's own (not the turn's). */
-  private onSubagentItem(item: CodexItem): boolean {
+  onSubagentItem(item: CodexItem): boolean {
     switch (item.kind) {
       case "toolUse":
         if (this.subagents.toolUse(item)) this.subagentChanged(this.subagents.get(item.parent ?? item.id));
@@ -3733,128 +3466,12 @@ export class Bot {
     this.checkSettingsHold();
   }
 
-  private emitSteps(turn: Turn) {
-    if (turn.origin === "tidy" || turn !== this.turn) return;
-    this.emit({ type: "turn.steps", botId: this.id, turnId: turn.id, messageId: turn.messageId, steps: turn.steps.slice(-500).map((step) => stepView(step, this.subagents)) });
-  }
+  private emitSteps(turn: Turn) { return this.headEvents.emitSteps(turn); }
 
-  private finishTurn(turn: Turn, status: Status, error?: string) {
-    if (this.unbegun?.turn === turn) this.clearUnbegun();
-    if (!turn.open) return;
-    turn.open = false;
-    if (this.turn === turn) this.turn = null;
-    this.clearCodexRetry();
-    if (turn.origin === "tidy") {
-      if (turn.callIn) this.updated();
-      turn.onReply?.(status === "done" ? turn.reply.text : "");
-      this.finished.set(turn.id, status);
-      turn.resolve(status);
-      this.settleTurnApprovals();
-      return; // sleep() goes on from here.
-    }
-    const raw = turn.reply.text;
-    const parsed = parseReply(raw);
-    // A hand-off to the other head is the app's, not the chat's.
-    const tags = status === "done" ? parseHeadTags(parsed.body) : { body: parsed.body, handoff: null };
-    const ended = turn.origin === "background" ? [...this.pendingEnded.splice(0), ...turn.ended] : turn.ended;
-    if (status === "done") this.applyReactions(parsed.reactions);
-    if (status === "done" && parsed.pluginTags) this.options.pluginTags?.(this.owner, parsed.pluginTags);
-    // Nothing for the user, whoever started the turn: no bubble (`headTurnContent` says what the head keeps out).
-    const content = headTurnContent({ status, origin: turn.origin, sharesChat: this.sharesChat, raw, parsed, body: tags.body, handoff: !!tags.handoff, steps: turn.steps.length, error: error ?? null });
-    // A turn cut off with no words of its own (`steeredNow`) shows nothing either: an interrupted reply has no bubble.
-    if (!hasVisibleContent(content) || (status === "stopped" && !tags.body.trim())) {
-      if (turn.record) this.remove(turn.record);
-      this.keepTasks(turn, null);
-      this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: "" });
-      this.finished.set(turn.id, status);
-      turn.resolve(status);
-      this.relayFollowUp(turn, status, null, error);
-      this.afterTurn();
-      // Handed work done with nothing to say still goes back to the head that handed it.
-      if (this.sharesChat) {
-        const owner = this.owner;
-        owner.conduct(owner.conductor.replied(this.engine, "", null, this.takeHandback(turn), turn.handoffId));
-        this.headStopped(this.engine);
-      }
-      // A finished subagent's result always reaches the user: ask once, then say it ourselves.
-      if (turn.origin !== "user" && ended.length) this.reportFinished(ended);
-      else this.next();
-      return;
-    }
-    const fresh = !turn.record;
-    const record: ChatRecord = turn.record ?? { id: turn.messageId, role: "bot", text: "", date: toSwiftDate(), turnID: turn.id, engine: this.engine };
-    if (this.sharesChat) record.seenBy = union(record.seenBy, [this.engine]);
-    turn.record = record;
-    this.keepTasks(turn, record);
-    let text = tags.body;
-    if (status === "done") {
-      if (parsed.choices) record.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
-      if (parsed.questions) record.questions = parsed.questions;
-      if (parsed.displays.length) {
-        record.displays = parsed.displays;
-        // A library component it drew without having it goes on its list, if there is room (`countComponents`).
-        this.owner.drewComponents((parsed.displays as Display[]).map((display) => display.name));
-      }
-      this.associateDecision(record, parsed.decisionReference, turn);
-      // <show id="tests"> updates that card in place; a reply that is only that shows no line of its own.
-      if (record.displays?.some((display) => (display as Display).id)) {
-        record.text = text;
-        if (this.owner.updateCards(record) && !turn.steps.length) {
-          if (!fresh) this.remove(record);
-          this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: "" });
-          this.finished.set(turn.id, status);
-          turn.resolve(status);
-          this.afterTurn();
-          if (this.sharesChat) this.headStopped(this.engine);
-          this.next();
-          return;
-        }
-      }
-    }
-    if (status === "failed" && !text && error) text = error;
-    record.text = text;
-    record.state = status;
-    // The pictures it shows by path, as they are now: a later reply that rewrites the file leaves this one's alone (chat-media.ts).
-    keepLineMedia(this.lineMediaStore, record.id, text);
-    record.session = this.session.sessionId.toUpperCase();
-    if (turn.steps.length) record.steps = turn.steps;
-    if (status !== "done") record.interrupted = true;
-    if (error) record.error = error.slice(0, 2_000);
-    if (fresh) this.add(record);
-    else {
-      this.persist();
-      archiveLine(this.paths.archive, record);
-    }
-    this.emit({
-      type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: record.text,
-      ...(error ? { error: error.slice(0, 2_000) } : {}),
-    });
-    this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
-    this.finished.set(turn.id, status);
-    turn.resolve(status);
-    if (status === "done") {
-      this.bumpUnread();
-      const left = this.handleRequests(parsed.requests);
-      if (left.length) {
-        const what = [...new Set(left.map(unsupportedRequest))];
-        this.notice(`Botling 2.0 cannot do this yet, so nothing happened: ${what.join("; ")}.`);
-      }
-      this.afterReplyHooks(record);
-      // What it said covers the subagents that ended so far.
-      this.pendingEnded = [];
-    }
-    this.relayFollowUp(turn, status, record, error);
-    this.afterTurn();
-    // The other head hears the reply; a hand-off in it goes on (`headReplied`).
-    // A bot with one head may hand work to the other CLI too (1.x: `sharesChat || tags.handoff`): its
-    // other head is made for it (`makePartner`), and the reply comes back.
-    if (status === "done" && (this.sharesChat || tags.handoff)) this.owner.headReplied(record, this.engine, tags.handoff, this.takeHandback(turn), turn.handoffId);
-    else if (this.sharesChat) this.headStopped(this.engine);
-    this.next();
-  }
+  private finishTurn(turn: Turn, status: Status, error?: string) { return this.headEvents.finishTurn(turn, status, error); }
 
   /** Whether this turn hands its work back now (`takeHandback`): not while a worker it started for the hand-off owns it. */
-  private takeHandback(turn: Turn): boolean {
+  takeHandback(turn: Turn): boolean {
     const id = turn.handoffId;
     if ((this.engine === "codex" || this.engine === "agy") && turn.conducted && id && [...this.managedTaskHandoffs.values()].includes(id)) {
       this.managedHandbacks.add(id);
@@ -3869,11 +3486,7 @@ export class Bot {
     if (handoffId) this.managedHandbacks.delete(handoffId); else this.managedHandbacks.clear();
   }
 
-  /** claude waits on nothing once its turn ended: no approval stays open. */
-  private afterTurn() {
-    this.settleTurnApprovals();
-    this.updated();
-  }
+  private afterTurn() { return this.headEvents.afterTurn(); }
 
   /**
    * `turn`, set aside while claude answered a line first, is the turn under way again: claude begins it now, as a rule at
@@ -3896,14 +3509,14 @@ export class Bot {
 
   private get deferredStartMs(): number { return this.options.deferredStartMs ?? 90_000; }
 
-  private clearUnbegun() {
+  clearUnbegun() {
     if (!this.unbegun) return;
     clearTimeout(this.unbegun.timer);
     this.unbegun = null;
   }
 
   /** The next waiting message, if any; else the idle clock starts. */
-  private next(): void {
+  next(): void {
     // While a stopped turn drains nothing begins (not even the turn set aside): stop() goes on here once it ended.
     if (this.turn || this.tidying || this.switching || this.draining) return;
     const deferred = this.deferred;
@@ -3930,7 +3543,7 @@ export class Bot {
   }
 
   /** `Bot.reportFinishedSubagents`: the bot answered a finished subagent's news with nothing. */
-  private reportFinished(ids: string[]) {
+  reportFinished(ids: string[]) {
     // Codex: a worker's report turn is on its way (or under way); it says what came of it.
     if ((this.engine === "codex" || this.engine === "agy") && this.managedPending) return this.next();
     const moved = this.options.agents?.movedOut(this.engine);
@@ -4052,7 +3665,7 @@ export class Bot {
   }
 
   /** A stopped turn has drained (claude ended it, or its process is gone): the turn that waited is sent now. */
-  private drained(head: AgentHead) {
+  drained(head: AgentHead) {
     const draining = this.draining;
     if (draining?.head !== head) return;
     this.draining = null;
@@ -4076,87 +3689,7 @@ export class Bot {
     return { status };
   }
 
-  private onExit(head: AgentHead, exit: HeadExit) {
-    if (head.pid > 0) this.options.ledger.forget(head.pid);
-    this.drained(head);
-    if (head !== this.head) return;
-    // Gone because of the network (or gone while waiting for it): its session and the subagents still
-    // at work are picked up again when the network is back (1.x's `lostToNetwork`).
-    const lostToNetwork = !exit.expected && !this.shuttingDown && (this.outage !== null || (exit.code !== 0 && mentionsConnectionError(exit.stderr)));
-    const cutOff = lostToNetwork ? this.inHeadSubagents.map((subagent) => subagent.id) : [];
-    const lostSession = this.session.started ? this.session.sessionId : null;
-    this.head = null;
-    this.retryingConnection = false;
-    this.codexRetry = null;
-    this.clearIdle();
-    this.ignoreResults = 0;
-    // Paused work went with the process (1.x drops `pausedWork` when the process exits).
-    this.paused = null;
-    this.contextSent.clear();
-    this.steered.clear();
-    for (const [id, approval] of [...this.approvals]) if (approval.head === head) this.settle(id, NO_LONGER_NEEDED, false);
-    // Its subagents (and Codex's workers) run inside its process: they went with it.
-    this.managedPending = false;
-    if (this.subagents.stopRunning()) this.saveSubagents();
-    const why = `${exit.signal ?? exit.code}`;
-    const turn = this.turn;
-    let failedTurn = false;
-    if (turn?.open && turn.head === head) {
-      // A resume of a session claude no longer has: start a new session and send the message again, once.
-      if (!this.restartRecovery && this.engine !== "agy" && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
-        this.log(`resuming session ${this.session.sessionId} failed (${why}: ${exit.stderr.slice(0, 200)}); starting a new session`);
-        this.newSession();
-        this.store.saveHead(this.session);
-        this.add({ id: newId(), role: "divider", text: NEW_SESSION_DIVIDER, date: toSwiftDate() });
-        turn.retried = true;
-        turn.head = null;
-        turn.sent = false;
-        void this.deliver(turn);
-        return;
-      }
-      this.finishTurn(turn, "failed", `The agent exited (${why}) without finishing. ${exit.stderr.slice(-1_000)}`.trim());
-      failedTurn = true;
-    }
-    const deferred = this.deferred;
-    this.deferred = null;
-    if (deferred?.open) this.finishTurn(deferred, "failed", `The agent exited (${why}) before it began this message.`);
-    // What it left running in the background went with its process.
-    this.stopTasks();
-    this.log(`head exited (${why})${exit.expected ? "" : " unexpectedly"}`);
-    if (exit.expected && this.restarting === head) {
-      // Ended to start again before a message: the same session goes on (`--resume`).
-      this.restarting = null;
-    } else if (this.restartRecovery || (exit.expected && this.engine === "agy")) {
-      // agy resumes by its actual conversation ID after cancel, sleep or shutdown.
-      this.briefing = !this.session.started;
-    } else if (exit.expected) {
-      // It went to sleep: the next wake is a new session, briefed from memory.md and the chat.
-      this.newSession();
-    } else if (!this.shuttingDown) {
-      // Nobody asked it to exit (1.x's `.exited`): it is asleep, and the next message wakes a new
-      // session, briefed from memory.md and the chat. A non-zero exit is said in the chat (1.x:
-      // its stderr, else "claude exited unexpectedly"); a failed turn already says it.
-      if (this.engine === "agy") {
-        // Preserve identity across failed resumes, the next explicit message and app restart.
-        this.store.saveSetting("agyRecovery", { sessionId: this.session.sessionId, state: "resume-required", reason: exit.stderr.slice(-1000) || why });
-        this.briefing = !this.session.started;
-      } else this.newSession();
-      this.store.saveHead(this.session);
-      if (lostToNetwork) {
-        const shown = this.outage !== null;
-        this.recordOutage({ subagents: cutOff, lostSession });
-        if (!shown) {
-          this.add({ id: newId(), role: "error", text: lostText(connectionErrorLine(exit.stderr)), date: toSwiftDate() });
-          this.bumpUnread();
-        }
-      } else if (exit.code !== 0 && !failedTurn) {
-        const stderr = exit.stderr.trim();
-        this.add({ id: newId(), role: "error", text: stderr ? stderr.slice(-2_000) : `${this.engine === "agy" ? "Antigravity ACP" : this.engine === "codex" ? "codex" : "claude"} exited unexpectedly (${why})`, date: toSwiftDate() });
-        this.bumpUnread();
-      }
-    }
-    this.updated();
-  }
+  private onExit(head: AgentHead, exit: HeadExit) { return this.headEvents.onExit(head, exit); }
 
   // ------------------------------------------------------------------------------------------
   // The network (1.x's NetworkResume: `recordOutage`, `noteSubagentEnd`, `networkRestored`)
@@ -4169,7 +3702,7 @@ export class Bot {
     this.recordOutage({ subagents: [id] });
   }
 
-  private recordOutage({ turnFailed = false, subagents = [], lostSession = null }: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) {
+  recordOutage({ turnFailed = false, subagents = [], lostSession = null }: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) {
     const record: Outage = this.outage ? { ...this.outage, subagents: [...this.outage.subagents] } : { since: Date.now(), turnFailed: false, subagents: [], lostSession: null };
     if (turnFailed) record.turnFailed = true;
     for (const id of subagents) if (!record.subagents.includes(id)) record.subagents.push(id);
@@ -4219,7 +3752,7 @@ export class Bot {
    * takes over its call-in relay. Claude already did the turn's tools; it goes on from there and redoes none. False:
    * no try left (or a turn in another chat, which is not tried again here).
    */
-  private retryApiLater(turn: Turn): boolean {
+  retryApiLater(turn: Turn): boolean {
     const delays = apiRetryDelays();
     const attempt = this.apiRetries + 1;
     if (attempt > delays.length || turn.guest || turn.callIn) return false;
@@ -4251,13 +3784,13 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Background work (1.x's BackgroundTask: a chip in the reply, and what a wake is told was cut off)
 
-  private refreshScheduleDue() {
+  refreshScheduleDue() {
     const due = [...this.records.flatMap((record) => Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : []), ...(this.turn?.tasks ?? [])]
       .flatMap((task) => { const time = scheduleDue(task); return time === null ? [] : [time]; });
     this.scheduleDueAt = due.length ? Math.min(...due) : null;
   }
 
-  private settleSessionSchedules() {
+  settleSessionSchedules() {
     const now = Date.now();
     if (this.scheduleDueAt === null || now < this.scheduleDueAt) return;
     if (this.turn?.tasks) settleSchedules(this.turn.tasks, now);
@@ -4268,7 +3801,7 @@ export class Bot {
   }
 
   /** Background work the bot itself started in the turn under way (not one of its subagents'), once (`addTask`). */
-  private addBackgroundTask(id: string, kind: BackgroundKind, title: string) {
+  addBackgroundTask(id: string, kind: BackgroundKind, title: string) {
     const turn = this.turn;
     const step = turn?.open ? turn.steps.findLast((candidate) => candidate.id === id) : undefined;
     if (!turn || !step || turn.tasks?.some((task) => task.id === id)) return;
@@ -4284,7 +3817,7 @@ export class Bot {
   }
 
   /** A wake-up or cron job was cancelled: out of the turn under way and of the replies that kept it. */
-  private cancelScheduled(cancellation: ScheduleCancellation, turn: Turn | null) {
+  cancelScheduled(cancellation: ScheduleCancellation, turn: Turn | null) {
     if (turn?.tasks) turn.tasks = turn.tasks.filter((task) => !matchesCancellation(task, cancellation));
     for (const record of this.records) {
       const tasks = record.backgroundTasks as BackgroundTask[] | undefined;
@@ -4297,26 +3830,26 @@ export class Bot {
   }
 
   /** A kept task by its call's id: in the turn under way, or in a reply. */
-  private findTask(id: string): BackgroundTask | undefined {
+  findTask(id: string): BackgroundTask | undefined {
     return this.turn?.tasks?.find((task) => task.id === id)
       ?? this.records.flatMap((record) => Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : []).find((task) => task.id === id);
   }
 
-  private touchTask(id: string) {
+  touchTask(id: string) {
     if (this.turn?.tasks?.some((task) => task.id === id)) return;
     const record = this.records.findLast((candidate) => Array.isArray(candidate.backgroundTasks) && (candidate.backgroundTasks as BackgroundTask[]).some((task) => task.id === id));
     if (record) this.changed(record);
   }
 
   /** Background work a subagent started (the row labels it with the subagent), once. */
-  private addSubagentTask(ownerId: string, id: string, kind: BackgroundKind, title: string, detail: string) {
+  addSubagentTask(ownerId: string, id: string, kind: BackgroundKind, title: string, detail: string) {
     const owner = this.subagents.get(ownerId);
     const call = owner?.steps.findLast((step) => step.id === id);
     this.placeSubagentTask(ownerId, backgroundTask(id, kind, title || call?.title || detail, detail || call?.detail));
   }
 
   /** Keeps a task of a subagent: in the turn under way, else in the reply that has the subagent's step (or the head's latest). */
-  private placeSubagentTask(ownerId: string, task: BackgroundTask) {
+  placeSubagentTask(ownerId: string, task: BackgroundTask) {
     const owner = this.subagents.get(ownerId);
     if (!owner || owner.status !== "running" || this.findTask(task.id)) return;
     task.owner = { id: owner.id, label: owner.description || owner.name || owner.type || "Subagent" };
@@ -4353,7 +3886,7 @@ export class Bot {
   }
 
   /** The turn's background work goes in its reply (`message.backgroundTasks = trace.takeTasks()`). */
-  private keepTasks(turn: Turn, record: ChatRecord | null) {
+  keepTasks(turn: Turn, record: ChatRecord | null) {
     const tasks = turn.tasks;
     if (!tasks?.length) return;
     turn.tasks = [];
@@ -4365,7 +3898,7 @@ export class Bot {
   }
 
   /** Its process went away: whatever had not reported never will (`stopBackgroundTasks(as: .stopped)`). */
-  private stopTasks() {
+  stopTasks() {
     this.scheduleCalls.clear();
     this.scheduleDueAt = null;
     // Only this head's: a partner head's tasks run in its own process, which goes on.
@@ -4397,7 +3930,7 @@ export class Bot {
   }
 
   /** Its subagents at work inside its head's process (a Claude worker is a process of its own: a restart or sleep leaves it be). */
-  private get inHeadSubagents(): SubagentRecord[] {
+  get inHeadSubagents(): SubagentRecord[] {
     return this.subagents.running.filter((subagent) => !ownProcessWorker(subagent.type));
   }
 
@@ -4470,7 +4003,7 @@ export class Bot {
   // Quiet runs (1.x's `checkStall`, `noteProgress`)
 
   /** Something happened in the turn under way (or one starts). */
-  private noteCodexRetry(item: Extract<CodexItem, { kind: "apiRetry" }>) {
+  noteCodexRetry(item: Extract<CodexItem, { kind: "apiRetry" }>) {
     const shown = this.codexRetry;
     // A late time for an attempt no longer shown (the turn moved on, or a newer attempt came) is dropped.
     if (item.retryAt !== null && (!shown || shown.attempt !== item.attempt || shown.retryAt !== null)) return;
@@ -4479,7 +4012,7 @@ export class Bot {
     this.updated();
   }
 
-  private clearCodexRetry() {
+  clearCodexRetry() {
     if (!this.codexRetry) return;
     this.codexRetry = null;
     this.updated();
@@ -4490,7 +4023,7 @@ export class Bot {
     this.stallReminded.delete("");
   }
 
-  private noteProgressOf(item: CodexItem) {
+  noteProgressOf(item: CodexItem) {
     const id = subagentOf(item);
     if (id) { this.subagentProgress.set(id, Date.now()); this.stallReminded.delete(id); }
     this.noteProgress();
@@ -4543,7 +4076,7 @@ export class Bot {
     }, this.options.idleMs);
   }
 
-  private clearIdle() {
+  clearIdle() {
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
   }
 
@@ -4889,7 +4422,7 @@ export class Bot {
     this.store.saveSetting("components", this.componentList);
   }
 
-  private drewComponents(names: string[]) {
+  drewComponents(names: string[]) {
     const context = this.context;
     const list = this.componentList;
     if (!context || !list) return;
@@ -5350,7 +4883,7 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Approvals
 
-  private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) {
+  ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) {
     if (isReviewRefusal(item.requestId)) return this.showReviewRefusal(head, item);
     // A bare tool name or a 1.x rule ("Bash(npm test)", "Edit(//…)", "WebFetch(domain:…)"): permission-rules.ts.
     if (!this.singleActionApprovals && item.tool !== "Monitored command" && item.tool !== "Permissions" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
@@ -5414,7 +4947,7 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Calls auto mode blocked (1.x's `showDenial` / `decideDenial`)
 
-  private noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) {
+  noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) {
     const value = item.tool === "Bash" ? item.input.command : item.tool === "WebFetch" ? item.input.url : item.input.file_path ?? item.input.notebook_path;
     this.toolCalls.delete(item.id);
     this.toolCalls.set(item.id, { tool: item.tool, detail: typeof value === "string" ? value : "", parent: item.parent });
@@ -5431,7 +4964,7 @@ export class Bot {
    * Auto mode's classifier refused a call: the same card as a tool question, for that very call and the
    * classifier's reason. Allowing it adds a rule that lets exactly that through, then tells claude to retry.
    */
-  private showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) {
+  showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) {
     // The frame comes first; the tool result says whether it was a block.
     if (!denial.confirmed) {
       if (this.deniedFrames.size > 100) this.deniedFrames.clear();
@@ -5523,7 +5056,7 @@ export class Bot {
   }
 
   /** The coordinator turn ended/stopped; a monitor or managed worker may still be waiting. */
-  private settleTurnApprovals() {
+  settleTurnApprovals() {
     for (const [id, approval] of [...this.approvals]) if (!approval.lasting) this.settle(id, NO_LONGER_NEEDED, true);
   }
 
@@ -5536,7 +5069,7 @@ export class Bot {
   }
 
   /** Closes an approval without the user's pick (`answer` says why); `deny` tells claude no. */
-  private settle(id: string, answer: string, deny: boolean) {
+  settle(id: string, answer: string, deny: boolean) {
     const approval = this.approvals.get(id);
     if (!approval) return;
     clearTimeout(approval.timer);
@@ -5729,7 +5262,7 @@ export class Bot {
     return true;
   }
 
-  private applyReactions(actions: { messageId: string; emoji: string; present: boolean }[]) {
+  applyReactions(actions: { messageId: string; emoji: string; present: boolean }[]) {
     const actor = `head:${this.engine}`;
     for (const action of actions) {
       try {
@@ -5916,7 +5449,7 @@ export class Bot {
     else if(entry.workers?.some(w=>w.wasActive||w.reportPending)||(bot.engine!=="claude"&&restarted.length))bot.ensureHead();
   }
 
-  private restartRecovery = false;
+  restartRecovery = false;
   private restartProviderTurn?: string;
   private restartWorkerRecords?: import('./agent/codex').WorkerRecord[];
   /** The restart's time: its next Codex head checks and resumes the workers its ledger says that restart interrupted. */
