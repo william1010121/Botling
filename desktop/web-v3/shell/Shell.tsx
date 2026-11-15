@@ -11,7 +11,7 @@ import { Icon } from "../../src/renderer/icons";
 import { QrScanner, cameraError, openCamera } from "../../mobile/QrScanner";
 import { PHONE_QUERY, phoneWidth } from "../../mobile/layout";
 import { mountRenderer, type MountedRenderer, type PageCapabilities } from "../bridge-v3";
-import { forgetDevice, loadDevice, loadPref, saveDevice, saveDeviceServers, savePref, type DeviceRecord } from "./device-store";
+import { forgetDevice, loadDevice, loadPref, saveDevice, saveDeviceServers, savePref, type DeviceRecord, type StoredServer } from "./device-store";
 import { makePairKeys, pair, pairingSupported, PairingError, type PairAttempt, type PairKeys } from "./pairing";
 import { MediaBroker } from "./media";
 import { SwBridge } from "./sw-bridge";
@@ -19,7 +19,7 @@ import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
 import { askedPath, bannerText, FE_VERSION, itemWords, newDiagnostics, openConnection, UNSETTLED_LEGACY_WARNING, type Connection, type Diagnostics, type DialPath } from "./connection";
-import type { DeviceScope } from "../../src/protocol";
+import type { DeviceScope, ServerState } from "../../src/protocol";
 
 /** Diagnostics for the headless harness and support (not a capability; the renderer never sees it). */
 export const diagnostics: Diagnostics = newDiagnostics();
@@ -171,7 +171,14 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
   const [sheet, setSheet] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [path, setPath] = useState<DialPath>("direct");
+  const [serverId, setServerId] = useState<string>(device.server.memberId);
+  const [deviceServers, setDeviceServers] = useState<StoredServer[]>(() => device.servers ?? []);
   const mounted = useRef<MountedRenderer | null>(null);
+
+  useEffect(() => {
+    setServerId(device.server.memberId);
+    setDeviceServers(device.servers ?? []);
+  }, [device]);
 
   const capabilities = useMemo<Omit<PageCapabilities, "uploads">>(() => ({
     openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer"); },
@@ -229,6 +236,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       return openConnection(device, diagnostics, location.href, {
         ...(forcedPath ? { forcedPath } : {}),
         onPath: applyPath,
+        onServer: (nextServerId) => { if (!cancelled) setServerId(nextServerId); },
         onRevoked: () => revoked("revoked (bye)"),
         ...(reprobeIntervalMs !== undefined ? { reprobeIntervalMs } : {}),
       });
@@ -236,6 +244,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       if (cancelled) { void conn.close(); return; }
       opened = conn;
       if (conn.revoked) deviceRevoked = true;
+      if (conn.serverId) setServerId(conn.serverId);
       const update = () => {
         const text = bannerText(conn.link.status, conn.link.pending(), conn.link.servers(), deviceRevoked);
         const last = diagnostics.banners[diagnostics.banners.length - 1];
@@ -246,8 +255,14 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       conn.link.on((event) => { if (event.type === "bye" && event.reason === "revoked") revoked("revoked (bye)"); });
       conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome" || event.type === "servers") update(); });
       conn.link.on((event) => {
+        if (event.type === "attached" && event.attached) {
+          const nextId = conn.serverId ?? conn.link.attachedServerId();
+          if (nextId) setServerId(nextId);
+        }
         if ((event.type === "attached" && event.attached) || (event.type === "message" && event.message.t === "peer")) {
-          void saveDeviceServers(conn.link.servers()).catch(() => undefined);
+          void saveDeviceServers(conn.link.servers()).then((merged) => {
+            if (!cancelled && Array.isArray(merged)) setDeviceServers(merged);
+          }, () => undefined);
         }
       });
       // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
@@ -293,21 +308,84 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     <div id="v3-renderer" className="v3-renderer" ref={rendererRoot} />
     {failure && <div className="banner bottom web-banner" role="alert">{failure}</div>}
     <div className="web-scrim" aria-hidden="true" onClick={() => setNavOpen(false)} />
-    {sheet && <ThisDevice device={device} connection={connection} path={path} onClose={() => setSheet(false)} onForget={() => void forget()} />}
+    {sheet && <ThisDevice device={device} connection={connection} path={path} serverId={serverId} knownServers={deviceServers} onClose={() => setSheet(false)} onForget={() => void forget()} />}
   </div>;
 }
 
+interface PickerServer {
+  id: string;
+  name: string;
+  state?: ServerState;
+}
+
 /** Settings › This device: who this device is, which server it is paired with, and forgetting it. */
-export function ThisDevice({ device, connection, path, onClose, onForget }: { device: DeviceRecord; connection: Connection | null; path: DialPath; onClose: () => void; onForget: () => void }) {
+export function ThisDevice({
+  device,
+  connection,
+  path,
+  serverId,
+  knownServers,
+  onClose,
+  onForget,
+}: {
+  device: DeviceRecord;
+  connection: Connection | null;
+  path: DialPath;
+  serverId?: string;
+  knownServers?: readonly StoredServer[];
+  onClose: () => void;
+  onForget: () => void;
+}) {
   const [confirm, setConfirm] = useState(false);
   const [pendingItems, setPendingItems] = useState(() => connection?.link.pending() ?? []);
+  const [attached, setAttached] = useState(() => connection?.link.attached ?? false);
+  const [liveServers, setLiveServers] = useState<PickerServer[]>(() => (connection?.link.attached ? connection.link.servers() : []));
+  const [selectedServerId, setSelectedServerId] = useState<string>(
+    () => serverId ?? connection?.serverId ?? connection?.link.attachedServerId() ?? device.server.memberId,
+  );
+
   useEffect(() => {
-    if (!connection) { setPendingItems([]); return; }
+    if (serverId !== undefined) setSelectedServerId(serverId);
+    else setSelectedServerId(connection?.serverId ?? connection?.link.attachedServerId() ?? device.server.memberId);
+  }, [serverId, connection, device.server.memberId]);
+
+  useEffect(() => {
+    if (!connection) {
+      setPendingItems([]);
+      setAttached(false);
+      setLiveServers([]);
+      return;
+    }
+    const syncLink = (attachedOverride?: boolean) => {
+      const isAttached = attachedOverride ?? connection.link.attached;
+      setAttached(isAttached);
+      setLiveServers(isAttached ? connection.link.servers() : []);
+    };
     setPendingItems(connection.link.pending());
+    syncLink();
     return connection.link.on((event) => {
       if (event.type === "pending" || event.type === "outcome") setPendingItems(connection.link.pending());
+      if (event.type === "state") {
+        syncLink();
+      } else if (event.type === "attached") {
+        syncLink(event.attached);
+        if (event.attached && serverId === undefined) {
+          setSelectedServerId(connection.serverId ?? connection.link.attachedServerId() ?? device.server.memberId);
+        }
+      } else if (event.type === "servers" || (event.type === "message" && event.message.t === "peer")) {
+        syncLink();
+      }
     });
-  }, [connection]);
+  }, [connection, serverId, device.server.memberId]);
+
+  const offlineServers = knownServers ?? device.servers ?? [];
+  const baseServers: readonly PickerServer[] = attached
+    ? liveServers
+    : (offlineServers.length > 0 ? offlineServers : [{ id: device.server.memberId, name: device.server.name }]);
+  const serverOptions: readonly PickerServer[] = baseServers.some((s) => s.id === selectedServerId)
+    ? baseServers
+    : [...baseServers, { id: selectedServerId, name: selectedServerId }];
+
   const pending = pendingItems.length;
   const stoppedItems = pendingItems.filter((item) => item.stopped);
   return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
@@ -317,6 +395,28 @@ export function ThisDevice({ device, connection, path, onClose, onForget }: { de
         <dt>Name</dt><dd>{device.name}</dd>
         <dt>Device id</dt><dd><code>{device.memberId}</code></dd>
         <dt>Paired with</dt><dd>{device.server.name}</dd>
+        <dt><label htmlFor="v3-server-picker">Server</label></dt>
+        <dd>
+          <select
+            id="v3-server-picker"
+            data-testid="server-picker"
+            aria-label="Server"
+            value={selectedServerId}
+            disabled={!connection?.pickServer || serverOptions.length === 0}
+            onChange={(event) => {
+              const nextId = event.target.value;
+              if (!nextId || nextId === selectedServerId) return;
+              // D72: M4-20a owns server switching and preference persistence; M4-20b only invokes pickServer.
+              if (connection?.pickServer?.(nextId)) setSelectedServerId(nextId);
+            }}
+          >
+            {serverOptions.map((server) => (
+              <option key={server.id} value={server.id} disabled={server.state === "gone"}>
+                {server.state === "gone" ? `${server.name} (removed)` : server.state === "stale" ? `${server.name} (offline)` : server.name}
+              </option>
+            ))}
+          </select>
+        </dd>
         <dt>Allowed</dt><dd>{device.scope.join(", ")}</dd>
         <dt>Paired</dt><dd>{new Date(device.pairedAt).toLocaleString()}</dd>
         <dt>Waiting to send</dt><dd>{pending}</dd>
