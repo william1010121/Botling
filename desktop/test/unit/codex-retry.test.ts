@@ -84,6 +84,35 @@ describe("Codex's retry log (logs_2.sqlite, read-only)", () => {
     expect(await codexRetryAt({ file: join(tempDir("codex-retry-none"), "logs_2.sqlite"), thread: THREAD, attempt: 1, since })).toBeNull();
     expect(await codexRetryAt({ file, thread: "x'; DROP TABLE logs; --", attempt: 1, since })).toBeNull();
   });
+
+  it("a file that is not codex's log, a log with no logs table, or one codex holds locked: unknown at once, and the file is left as it was", async () => {
+    const since = 1_793_004_860_000;
+    const garbage = join(tempDir("codex-retry-garbage"), "logs_2.sqlite");
+    writeFileSync(garbage, "not a database, just text that is long enough to be read as a header\n".repeat(20));
+    const before = readFileSync(garbage);
+    expect(await codexRetryAt({ file: garbage, thread: THREAD, attempt: 1, since })).toBeNull();
+    expect(readFileSync(garbage).equals(before)).toBe(true);
+
+    const empty = join(tempDir("codex-retry-empty"), "logs_2.sqlite");
+    const made = new DatabaseSync(empty);
+    made.exec("CREATE TABLE other (id INTEGER)");
+    made.close();
+    expect(await codexRetryAt({ file: empty, thread: THREAD, attempt: 1, since })).toBeNull();
+
+    // Codex writing: an exclusive lock (rollback journal) keeps readers out; the read gives up without waiting.
+    const file = db([{ ts: 1_793_004_861, nanos: 250_000_000, body: body(1, "40.000123s"), thread: THREAD }]);
+    const writer = new DatabaseSync(file);
+    try {
+      writer.exec("BEGIN EXCLUSIVE; INSERT INTO logs (ts, ts_nanos, level, target) VALUES (1, 0, 'INFO', 'x');");
+      const started = performance.now();
+      expect(await codexRetryAt({ file, thread: THREAD, attempt: 1, since })).toBeNull();
+      expect(performance.now() - started).toBeLessThan(1_000);
+      writer.exec("ROLLBACK");
+    } finally {
+      writer.close();
+    }
+    expect(await codexRetryAt({ file, thread: THREAD, attempt: 1, since })).toBe(1_793_004_861_250 + 40_000);
+  });
 });
 
 describe("the chat page hears of it", () => {
