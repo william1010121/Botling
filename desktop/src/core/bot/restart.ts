@@ -48,7 +48,6 @@ export class BotRestart {
   private get switching(): boolean { return this.host.switching; }
   private get turn(): Turn | null { return this.host.turn; }
   private get paused() { return this.host.paused; }
-  private set paused(v) { this.host.paused = v; }
   private get ownWorkRunning(): boolean { return this.host.ownWorkRunning; }
   private ownWorkWords(): string { return this.host.ownWorkWords(); }
   private appNotice(text: string, choices?: { label: string; recommended?: boolean; detail?: string }[], onPick?: (index: number) => void): string { return this.host.appNotice(text, choices, onPick); }
@@ -283,7 +282,7 @@ export class BotRestart {
 
   /** Stops what is under way for a swap; the session goes on (the new core resumes it). */
   async swapInterrupt(): Promise<void> {
-    this.paused = null;
+    this.host.turns.endPause();
     const stops: Promise<unknown>[] = [];
     for (const bot of this.members) {
       if (bot.turn && bot.turn.origin !== "tidy") stops.push(bot.stop(bot.turn.id));

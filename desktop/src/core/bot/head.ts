@@ -60,7 +60,6 @@ export class BotHead {
   private get turn(): Turn | null { return this.host.turn; }
   private get turns() { return this.host.turns; }
   private get ignoreResults(): number { return this.host.ignoreResults; }
-  private set ignoreResults(v: number) { this.host.ignoreResults = v; }
   private get switchTo(): Engine | null { return this.host.switchTo; }
   private set switchTo(v: Engine | null) { this.host.switchTo = v; }
   private get queuedNote(): string | null { return this.host.queuedNote; }
@@ -384,7 +383,7 @@ export class BotHead {
           if (this.turn === turn) this.turns.close();
           turn.resolve("stopped");
           // Its result, if it comes, belongs to nobody.
-          if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }
+          if (turn.sent && turn.head?.running) { this.turns.ignoreNext(); turn.head.interrupt(); }
         }
         settle(null);
       }, timeoutMs) : undefined;
