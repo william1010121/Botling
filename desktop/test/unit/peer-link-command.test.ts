@@ -332,8 +332,7 @@ describe("pressing the button on a peer bot's line runs at its owner, as the con
     const { adapter, press, sentTo } = await rig({ coach: pluginRow(HASH_B) });
     await adapter.snapshot();
     await adapter.snapshot(FAR);
-    const answer = await press();
-    expect(answer.ok).toBe(true);
+    expect(await press()).toMatchObject({ ok: true });
     const copies = sentTo(FAR_STREAM);
     expect(copies).toHaveLength(1);
     expect(copies[0].cmd).toMatchObject({ type: "plugins.linkCommand", id: "coach.start", botId: FAR, messageId: "L1", url: "file:///srv/b/paper.pdf" });
@@ -343,7 +342,7 @@ describe("pressing the button on a peer bot's line runs at its owner, as the con
   it("the plugin is the one that contributes the button, whatever else is named", async () => {
     const { adapter, press, sentTo } = await rig({ coach: pluginRow(HASH_B), reader: pluginRow(HASH_B2) });
     await adapter.snapshot();
-    expect((await press({ id: "reader.open" })).ok).toBe(true);
+    expect(await press({ id: "reader.open" })).toMatchObject({ ok: true });
     expect(sentTo(FAR_STREAM)[0].via).toEqual({ plugin: "reader", codeHash: HASH_B2 });
   });
 
@@ -368,7 +367,7 @@ describe("pressing the button on a peer bot's line runs at its owner, as the con
     const { adapter, press, sentTo } = await rig({ coach: pluginRow(HASH_B) });
     await adapter.snapshot();
     const [first, second] = await Promise.all([press(), press()]);
-    expect(first.ok && second.ok).toBe(true);
+    expect([first, second]).toEqual([expect.objectContaining({ ok: true }), expect.objectContaining({ ok: true })]);
     expect(sentTo(FAR_STREAM)).toHaveLength(1);
     await press();
     expect(sentTo(FAR_STREAM)).toHaveLength(2);
@@ -380,7 +379,7 @@ describe("pressing the button on a peer bot's line runs at its owner, as the con
   it("A's own bot: as today, no via (the window needs none), no lookup in any table", async () => {
     const { adapter, press, sentTo } = await rig({});
     await adapter.snapshot();
-    expect((await press({ botId: "b1" })).ok).toBe(true);
+    expect(await press({ botId: "b1" })).toMatchObject({ ok: true });
     const copies = sentTo("bot:b1");
     expect(copies).toHaveLength(1);
     expect("via" in copies[0]).toBe(false);
