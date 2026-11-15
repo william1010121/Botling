@@ -119,13 +119,28 @@ function isInside(child: string, parent: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+const FIRMLINK_DATA = "/System/Volumes/Data";
+
 /**
  * The real path as the file system spells it. The OS realpath (`realpathSync.native`), not Node's JS one: on a
  * case-insensitive volume (the Mac's default) the JS one keeps the caller's case, so `/x/V2` and `/x/v2` would look like
  * two folders. Every path used to compare or identify folders here goes through it.
  */
 function realPath(path: string): string {
-  return realpathSync.native(path);
+  const real = realpathSync.native(path);
+  // A macOS firmlink spelling (/System/Volumes/Data/Users/... for /Users/...) is not folded by any realpath: fold it
+  // when the short spelling is the same folder, so one folder has one identity (`sourceHash`) and one spelling.
+  if (process.platform === "darwin" && real.startsWith(`${FIRMLINK_DATA}/`)) {
+    const short = real.slice(FIRMLINK_DATA.length);
+    try {
+      const a = statSync(real);
+      const b = statSync(short);
+      if (a.dev === b.dev && a.ino === b.ino) return short;
+    } catch {
+      // the short spelling is not there: keep the long one
+    }
+  }
+  return real;
 }
 
 /** The ancestors of `path` (itself first) that exist, with their device and inode. */
@@ -180,6 +195,82 @@ function realPathOrNearest(path: string): string {
   }
 }
 
+/** Throws before a write that would land in the 2.x folder. Every write of the import goes through one. */
+type WriteGuard = (path: string) => void;
+
+/**
+ * Where a write to `path` lands: its real path, or its nearest existing parent's real path plus the rest. A symbolic
+ * link on the way that points nowhere is refused: creating a file through it would create the link's target, wherever
+ * that is.
+ */
+function writeDestination(path: string): string {
+  const tail: string[] = [];
+  let current = resolve(path);
+  for (;;) {
+    let isLink = false;
+    let present = true;
+    try {
+      isLink = lstatSync(current).isSymbolicLink();
+    } catch {
+      present = false;
+    }
+    if (present) {
+      if (isLink && !existsSync(current)) {
+        throw new ImportError(`${current} is a broken symbolic link; the import does not write through it.`, 2);
+      }
+      return join(realPath(current), ...tail);
+    }
+    const parent = dirname(current);
+    if (parent === current) return join(current, ...tail);
+    tail.unshift(basename(current));
+    current = parent;
+  }
+}
+
+/**
+ * The guard for one import: a write is refused when its destination is the 2.x folder or inside it, by real path or by
+ * device and inode (a symlink, another case, a firmlink, a bind mount). The 2.x folder is never written, even through a
+ * link the user made in botlingd's folder.
+ */
+function makeWriteGuard(sourceReal: string): WriteGuard {
+  const source = statSync(sourceReal);
+  return (path) => {
+    const real = writeDestination(path);
+    const inside =
+      isInside(real, sourceReal) ||
+      existingChain(real).some((node) => node.dev === source.dev && node.ino === source.ino);
+    if (inside) {
+      throw new ImportError(`${path} leads into the Botling 2 folder, which the import never changes; nothing was written there.`, 2);
+    }
+  };
+}
+
+/** The target folder and each entry at its top, checked before the lock, server.db and the identity are written. */
+function guardTargetTop(targetDir: string, guard: WriteGuard): void {
+  guard(targetDir);
+  let names: string[] = [];
+  try {
+    names = readdirSync(targetDir);
+  } catch {
+    return;
+  }
+  for (const name of names.sort()) guard(join(targetDir, name));
+}
+
+/** The 2.x plugin-secrets.json's device and inode, so a hard link to it is not copied either. */
+function secretsNode(sourceReal: string): { dev: number; ino: number } | null {
+  try {
+    const stat = statSync(join(sourceReal, "plugin-secrets.json"));
+    return { dev: stat.dev, ino: stat.ino };
+  } catch {
+    return null;
+  }
+}
+
+function sameNode(stat: { dev: number; ino: number }, node: { dev: number; ino: number } | null): boolean {
+  return node !== null && stat.dev === node.dev && stat.ino === node.ino;
+}
+
 function sha256Text(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
@@ -217,7 +308,8 @@ function readFileReadOnly(file: string): Buffer | null {
   }
 }
 
-function writeBytesAtomic(file: string, data: Buffer): void {
+function writeBytesAtomic(file: string, data: Buffer, guard: WriteGuard): void {
+  guard(file);
   const dir = dirname(file);
   mkdirSync(dir, { recursive: true });
   const temp = join(dir, `.${basename(file)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
@@ -236,7 +328,7 @@ function writeBytesAtomic(file: string, data: Buffer): void {
   }
 }
 
-function copyTreeReadOnly(srcDir: string, dstDir: string, srcBoundary: string): void {
+function copyTreeReadOnly(srcDir: string, dstDir: string, srcBoundary: string, guard: WriteGuard): void {
   if (!existsSync(srcDir)) return;
   let rootStat;
   try {
@@ -246,6 +338,8 @@ function copyTreeReadOnly(srcDir: string, dstDir: string, srcBoundary: string): 
   }
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return;
   const srcRootReal = realPath(srcBoundary);
+  const secrets = secretsNode(srcRootReal);
+  guard(dstDir);
   mkdirSync(dstDir, { recursive: true });
   for (const entry of readdirSync(srcDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (entry.name === ".git" || entry.name === "node_modules") continue;
@@ -263,29 +357,33 @@ function copyTreeReadOnly(srcDir: string, dstDir: string, srcBoundary: string): 
         const real = realPath(srcPath);
         if (!isInside(real, srcRootReal)) continue;
         if (real === join(srcRootReal, "plugin-secrets.json")) continue;
-        if (statSync(real).isDirectory()) continue;
+        const realStat = statSync(real);
+        if (realStat.isDirectory() || sameNode(realStat, secrets)) continue;
         const data = readFileReadOnly(real);
-        if (data !== null) writeBytesAtomic(dstPath, data);
-      } catch {
+        if (data !== null) writeBytesAtomic(dstPath, data, guard);
+      } catch (error) {
+        if (error instanceof ImportError) throw error;
         continue;
       }
       continue;
     }
     if (stat.isDirectory()) {
-      copyTreeReadOnly(srcPath, dstPath, srcBoundary);
+      copyTreeReadOnly(srcPath, dstPath, srcBoundary, guard);
     } else if (stat.isFile()) {
+      if (sameNode(stat, secrets)) continue; // a hard link to plugin-secrets.json
       const data = readFileReadOnly(srcPath);
-      if (data !== null) writeBytesAtomic(dstPath, data);
+      if (data !== null) writeBytesAtomic(dstPath, data, guard);
     }
   }
 }
 
-function copyIfMissing(srcFile: string, dstFile: string): void {
+function copyIfMissing(srcFile: string, dstFile: string, guard: WriteGuard): void {
   if (existsSync(dstFile)) return;
   const data = readFileReadOnly(srcFile);
   if (data !== null) {
+    guard(dstFile);
     mkdirSync(dirname(dstFile), { recursive: true });
-    writeBytesAtomic(dstFile, data);
+    writeBytesAtomic(dstFile, data, guard);
   }
 }
 
@@ -422,6 +520,7 @@ function writeImportedWorkspaceFiles(
   mainId: string,
   maintainerId: string,
   problems: string[],
+  guard: WriteGuard,
 ): void {
   const mapByOld = new Map(idMap.map((row) => [row.oldId.toUpperCase(), row]));
   const botsRoot = join(sourceReal, "bots");
@@ -430,17 +529,18 @@ function writeImportedWorkspaceFiles(
   if (mainRow?.kind === "main") {
     const srcMain = Layout.mainBot(sourceReal);
     const dstMain = Layout.mainBot(targetDir);
-    copyIfMissing(join(srcMain, "memory.md"), join(dstMain, "memory.md"));
-    copyIfMissing(join(srcMain, "routines.cron"), join(dstMain, "routines.cron"));
+    copyIfMissing(join(srcMain, "memory.md"), join(dstMain, "memory.md"), guard);
+    copyIfMissing(join(srcMain, "routines.cron"), join(dstMain, "routines.cron"), guard);
   }
 
   const importedProjects: ProjectRecord[] = [];
   if (mainRow?.kind === "main-as-bot") {
     const ownDir = Layout.standalone(targetDir, mainRow.newId);
+    guard(join(ownDir, ".bot"));
     mkdirSync(join(ownDir, ".bot"), { recursive: true });
     const srcMain = Layout.mainBot(sourceReal);
-    copyIfMissing(join(srcMain, "memory.md"), join(ownDir, ".bot", "memory.md"));
-    copyIfMissing(join(srcMain, "routines.cron"), join(ownDir, ".bot", "routines.cron"));
+    copyIfMissing(join(srcMain, "memory.md"), join(ownDir, ".bot", "memory.md"), guard);
+    copyIfMissing(join(srcMain, "routines.cron"), join(ownDir, ".bot", "routines.cron"), guard);
     importedProjects.push({
       id: mainRow.newId,
       name: mainRow.name,
@@ -458,24 +558,29 @@ function writeImportedWorkspaceFiles(
     let nextFolder = project.folder;
     let resolvedFolder: string | null = null;
     try {
-      resolvedFolder = resolve(project.folder.startsWith("file:") ? fileURLToPath(project.folder) : project.folder);
+      // The real spelling: 2.x stored the folder as it spelled its data folder (through a symlink, in another case),
+      // which need not be `sourceReal`'s spelling. A folder inside the 2.x folder must be found whatever the spelling.
+      resolvedFolder = realPathOrNearest(
+        resolve(project.folder.startsWith("file:") ? fileURLToPath(project.folder) : project.folder),
+      );
     } catch {
       resolvedFolder = null;
     }
 
     if (resolvedFolder && isInside(resolvedFolder, botsRoot) && resolvedFolder !== botsRoot) {
       const ownDir = Layout.standalone(targetDir, mapped.newId);
-      copyTreeReadOnly(resolvedFolder, ownDir, sourceReal);
+      copyTreeReadOnly(resolvedFolder, ownDir, sourceReal, guard);
       nextFolder = pathToFileURL(ownDir + sep).toString();
-    } else if (resolvedFolder && realPathOrNearest(resolvedFolder) === sourceReal) {
+    } else if (resolvedFolder && resolvedFolder === sourceReal) {
       // A bot that worked in the 2.x data folder itself: never copy that folder (chats, settings, plugin-secrets.json).
       const ownDir = Layout.standalone(targetDir, mapped.newId);
+      guard(ownDir);
       mkdirSync(ownDir, { recursive: true });
       nextFolder = pathToFileURL(ownDir + sep).toString();
       problems.push(`${project.name}: its folder was the Botling 2 data folder; it was not copied (the bot gets an empty folder)`);
     } else if (resolvedFolder && isInside(resolvedFolder, sourceReal)) {
       const remapped = remapApprovalPath(resolvedFolder, sourceReal, targetDir, idMap);
-      copyTreeReadOnly(resolvedFolder, remapped, sourceReal);
+      copyTreeReadOnly(resolvedFolder, remapped, sourceReal, guard);
       nextFolder = pathToFileURL(remapped + sep).toString();
     }
 
@@ -495,6 +600,7 @@ function writeImportedWorkspaceFiles(
       merged.push(project);
     }
   }
+  guard(Layout.projectsFile(targetDir));
   mkdirSync(targetDir, { recursive: true });
   writeFileAtomic(Layout.projectsFile(targetDir), JSON.stringify(merged, null, 2));
 }
@@ -706,7 +812,9 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
     };
   }
 
-  // Non-dry-run: hold the data-folder lock for the whole run.
+  // Non-dry-run: nothing may lead into the 2.x folder (a link in botlingd's folder included), then hold the lock.
+  const guard = makeWriteGuard(sourceReal);
+  guardTargetTop(targetResolved, guard);
   mkdirSync(targetResolved, { recursive: true, mode: 0o700 });
   const lock = new DataDirLock(targetResolved, { version: BOTLINGD_VERSION, app: "botlingd import" });
   const claim = lock.claim();
@@ -829,6 +937,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         mainId,
         maintainerId,
         problems,
+        guard,
       );
 
       // 5. Approvals
@@ -841,6 +950,8 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
           chatDir: bot.chatDir,
         };
       });
+      guard(join(targetResolved, "folders.json"));
+      guard(join(targetResolved, "approved-commands.json"));
       let approvalReport;
       {
         const reader = store.openReader();
@@ -869,10 +980,17 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
       }
       const existingSettings: RawSettings = readSettings(Layout.settings(targetResolved));
       const mergedMachine: RawSettings = { ...mappedSettings.machine, ...existingSettings };
+      guard(Layout.settings(targetResolved));
       writeSettings(Layout.settings(targetResolved), mergedMachine);
 
       // 7. Plugins + 8. Tiers
-      const pluginResult = importPlugins(sourceReal, targetResolved, { builtInsDir });
+      guard(join(targetResolved, "plugins.json"));
+      const secrets = secretsNode(sourceReal);
+      const pluginResult = importPlugins(sourceReal, targetResolved, {
+        builtInsDir,
+        guardWrite: guard,
+        skipSourceFile: (stat) => sameNode(stat, secrets),
+      });
       problems.push(...pluginResult.problems);
       for (const mismatch of pluginResult.hashMismatches) {
         problems.push(`plugin ${mismatch.name}: folderHash mismatch (${mismatch.sourceHash} != ${mismatch.targetHash})`);
@@ -941,6 +1059,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         reportHash,
       });
       // The report file first: if it cannot be written the meta mark stays unset and a second run can redo it.
+      guard(reportPath);
       writeFileAtomic(reportPath, reportText);
       await store.submit((tx) => {
         tx.prepare(

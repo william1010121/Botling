@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, linkSync, unlinkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { CORE_EXIT_DATA_DIR_IN_USE, readLockHolder } from "../../src/core/store/data-dir-lock";
 import { MAIN_BOT_ID, MAINTAINER_ID, toSwiftDate, type ChatRecord } from "../../src/core/store/records";
@@ -540,5 +540,122 @@ describe("botlingd import CLI & run.ts (M6-01d)", () => {
     );
     expect(collectFiles(src)).toEqual(before);
     void firmlinkTmp;
+  }, 60_000);
+
+  it.skipIf(!firmlinkTmp)("16. the source spelled through a macOS firmlink keeps one identity: a second import is refused", async () => {
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "import-cli-firmlink-id-")));
+    roots.push(dir);
+    const src = join(dir, "v2");
+    make2xFolder(src);
+    const dataDir = join(dir, "v3");
+    const first = await runImport({ sourceDir: `/System/Volumes/Data${src}`, targetDir: dataDir });
+    expect(first.sourceRealPath).toBe(src);
+    const projectsBefore = readFileSync(Layout.projectsFile(dataDir), "utf8");
+    await expect(runImport({ sourceDir: src, targetDir: dataDir })).rejects.toThrow(
+      /This folder was imported on .+\. Nothing was changed\./,
+    );
+    expect(readFileSync(Layout.projectsFile(dataDir), "utf8")).toBe(projectsBefore);
+  }, 60_000);
+
+  it("17. a bot folder 2.x stored through another spelling of its data folder (a symlink) is copied, never kept pointing into 2.x", async () => {
+    const root = makeRoot("spelled-folders");
+    const src = join(root, "v2");
+    const fx = make2xFolder(src);
+    symlinkSync(src, join(root, "link2x"));
+    // 2.x ran with its data folder given through the symlink, so it stored the folders with that spelling.
+    const projects = JSON.parse(readFileSync(Layout.projectsFile(src), "utf8")) as Array<{ id: string; folder: string }>;
+    for (const project of projects) {
+      const folder = fileURLToPath(project.folder);
+      if (folder.startsWith(src + sep)) {
+        project.folder = pathToFileURL(join(root, "link2x", relative(src, folder)) + sep).toString();
+      }
+    }
+    writeFileSync(Layout.projectsFile(src), JSON.stringify(projects));
+    const before = collectFiles(src);
+
+    const dataDir = join(root, "v3");
+    await runImport({ sourceDir: src, targetDir: dataDir });
+    const imported = JSON.parse(readFileSync(Layout.projectsFile(dataDir), "utf8")) as Array<{ id: string; folder: string }>;
+    const srcReal = realpathSync.native(src);
+    for (const project of imported) {
+      const folder = realpathSync.native(fileURLToPath(project.folder));
+      expect(folder === srcReal || folder.startsWith(srcReal + sep), `${project.id} -> ${folder}`).toBe(false);
+    }
+    const ownDir = Layout.standalone(dataDir, fx.standaloneIds[0]!);
+    expect(existsSync(join(ownDir, ".bot", "memory.md"))).toBe(true);
+    expect(collectFiles(src)).toEqual(before);
+  }, 60_000);
+
+  it("18. a link at the top of botlingd's folder into the 2.x folder is refused before anything is written", async () => {
+    const root = makeRoot("top-link");
+    const src = join(root, "v2");
+    make2xFolder(src);
+    const before = collectFiles(src);
+    const dataDir = join(root, "v3");
+    mkdirSync(dataDir);
+    symlinkSync(join(src, "bots"), join(dataDir, "bots"));
+
+    await expect(runImport({ sourceDir: src, targetDir: dataDir })).rejects.toThrow(/leads into the Botling 2 folder/);
+    expect(collectFiles(src)).toEqual(before);
+    expect(readdirSync(dataDir)).toEqual(["bots"]); // no lock, no server.db, no identity
+  }, 60_000);
+
+  it("19. a link deeper in botlingd's folder (a bot folder, a plugin folder) stops the import before it writes through it; a rerun finishes", async () => {
+    const root = makeRoot("deep-link");
+    const src = join(root, "v2");
+    const fx = make2xFolder(src);
+    const before = collectFiles(src);
+    const dataDir = join(root, "v3");
+    const standaloneId = fx.standaloneIds[0]!;
+    mkdirSync(join(dataDir, "bots"), { recursive: true });
+    symlinkSync(Layout.standalone(src, standaloneId), Layout.standalone(dataDir, standaloneId));
+
+    await expect(runImport({ sourceDir: src, targetDir: dataDir })).rejects.toThrow(/leads into the Botling 2 folder/);
+    expect(collectFiles(src)).toEqual(before);
+    expect(readLockHolder(dataDir)).toBeNull();
+
+    unlinkSync(Layout.standalone(dataDir, standaloneId));
+    mkdirSync(join(dataDir, "plugins"), { recursive: true });
+    symlinkSync(join(src, "plugins", fx.pluginName), join(dataDir, "plugins", fx.pluginName));
+    await expect(runImport({ sourceDir: src, targetDir: dataDir })).rejects.toThrow(/leads into the Botling 2 folder/);
+    expect(collectFiles(src)).toEqual(before);
+
+    unlinkSync(join(dataDir, "plugins", fx.pluginName));
+    const done = await runImport({ sourceDir: src, targetDir: dataDir });
+    expect(done.bots).toHaveLength(5);
+    expect(existsSync(join(Layout.standalone(dataDir, standaloneId), ".bot", "memory.md"))).toBe(true);
+    expect(collectFiles(src)).toEqual(before);
+  }, 90_000);
+
+  it("20. a broken link where the import writes a file is refused, so nothing is created at its target in the 2.x folder", async () => {
+    const root = makeRoot("broken-link");
+    const src = join(root, "v2");
+    const fx = make2xFolder(src);
+    const before = collectFiles(src);
+    const dataDir = join(root, "v3");
+    const dstPlugin = join(dataDir, "plugins", fx.pluginName);
+    mkdirSync(dstPlugin, { recursive: true });
+    // writeFileSync would follow this link and create the file it names inside the 2.x plugin folder.
+    symlinkSync(join(src, "plugins", fx.pluginName, "created-by-import.js"), join(dstPlugin, "web.js"));
+
+    await expect(runImport({ sourceDir: src, targetDir: dataDir })).rejects.toThrow(/broken symbolic link/);
+    expect(existsSync(join(src, "plugins", fx.pluginName, "created-by-import.js"))).toBe(false);
+    expect(collectFiles(src)).toEqual(before);
+  }, 60_000);
+
+  it("21. a hard link to plugin-secrets.json in a bot folder or a plugin folder is not copied", async () => {
+    const root = makeRoot("secrets-hardlink");
+    const src = join(root, "v2");
+    const fx = make2xFolder(src);
+    linkSync(join(src, "plugin-secrets.json"), join(fx.standaloneDirs[0]!, "notes.json"));
+    linkSync(join(src, "plugin-secrets.json"), join(src, "plugins", fx.pluginName, "config.json"));
+    const dataDir = join(root, "v3");
+
+    await runImport({ sourceDir: src, targetDir: dataDir });
+    const ownDir = Layout.standalone(dataDir, fx.standaloneIds[0]!);
+    expect(existsSync(join(ownDir, ".bot", "memory.md"))).toBe(true);
+    expect(existsSync(join(ownDir, "notes.json"))).toBe(false);
+    expect(existsSync(join(dataDir, "plugins", fx.pluginName, "web.js"))).toBe(true);
+    expect(existsSync(join(dataDir, "plugins", fx.pluginName, "config.json"))).toBe(false);
   }, 60_000);
 });
