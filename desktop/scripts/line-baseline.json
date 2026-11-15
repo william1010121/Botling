@@ -18,7 +18,6 @@
     "desktop/src/server/content/peer-content.ts": 878,
     "desktop/src/server/fetch/source.ts": 1054,
     "desktop/src/server/import/run.ts": 1142,
-    "desktop/src/server/roster/store.ts": 1048,
-    "desktop/web-v3/shell/connection.ts": 905
+    "desktop/src/server/roster/store.ts": 1048
   }
 }
