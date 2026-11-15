@@ -31,6 +31,7 @@ import type { Db } from "../store";
 import { cmdHash } from "../slots";
 import { commitCancel, commitRow, deadToPrune, dropOwner, failRow, isRetired, ownerHasHole, ownerWork, pruneDead, queueStats, serverOriginPending, takeNoted, takeResult, takeRetry, type DroppedRow, type OwnerQueue, type QueuedRow } from "./forward-queue";
 import type { Directory } from "./directory";
+import { windowForward } from "./window-scope";
 
 /** A peer session as the forwarder uses it (server/peer PeerSession). */
 export interface ForwardSession {
@@ -89,14 +90,30 @@ export class Forwarder {
   }
 
   /** Commits a front end's command for `owner` (resolves after the commit: only then may `held` go), then sends it. */
-  async commit(envelope: CmdBody, owner: string): Promise<void> {
-    if (!envelope.scope) throw new TypeError("forward: the accepting server states the scope before it forwards");
+  async commit(stated: CmdBody, owner: string): Promise<void> {
+    if (!stated.scope) throw new TypeError("forward: the accepting server states the scope before it forwards");
+    // M7-12a: a window's `local` goes out as `manage`; a machine-only command is refused here (a dead row, like an unsendable one).
+    const forward = windowForward(stated);
+    if ("refusal" in forward) { await this.refuseMachineOnly(stated, owner, forward.refusal); return; }
+    const envelope = forward.envelope;
     if (this.options.isRevoked?.(owner)) {
       this.relay(envelope.slot.origin, this.refusedRevoked(envelope.slot, envelope.inc));
       return;
     }
     const hash = cmdHash({ cmd: envelope.cmd, scope: envelope.scope, basis: envelope.basis, via: envelope.via });
     await this.options.submit((tx) => commitRow(tx, envelope, hash, owner, this.now()));
+    this.pump(owner);
+  }
+
+  /** A machine-only command of the window (M7-12a): the row is kept as dead (its queue goes on above it) and its origin hears `refused scope`. */
+  private async refuseMachineOnly(envelope: CmdBody, owner: string, detail: string): Promise<void> {
+    const hash = cmdHash({ cmd: envelope.cmd, scope: envelope.scope, basis: envelope.basis, via: envelope.via });
+    const raw = JSON.stringify(envelope);
+    await this.options.submit((tx) => {
+      commitRow(tx, envelope, hash, owner, this.now());
+      failRow(tx, { slot: envelope.slot, owner, cmdHash: hash, raw }, "machine-only command", this.now());
+    });
+    this.relay(envelope.slot.origin, { t: "cmd.result", slot: envelope.slot, outcome: { kind: "refused", reason: "scope", detail }, logId: envelope.inc, seq: null });
     this.pump(owner);
   }
 
