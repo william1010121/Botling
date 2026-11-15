@@ -93,7 +93,9 @@ describe("a Codex head", () => {
   it("hands work to an app-managed worker; its report wakes the coordinator, which says what came of it", async () => {
     const dir = tempDir("codex");
     codexOnly(dir);
-    const c = core(dir, { FAKE_CODEX_WORKER_MS: "400" });
+    // The worker reports only when the gate file exists: no time window the assertions have to beat.
+    const gate = join(dir, "worker.gate");
+    const c = core(dir, { FAKE_CODEX_WORKER_GATE: gate });
     const { event, messageId } = await turn(c, "/worker Build the parser");
     expect(event.text).toBe("A worker has it.");
     const handed = (await c.chat()).messages.find((m: any) => m.id === messageId);
@@ -103,6 +105,7 @@ describe("a Codex head", () => {
     // The worker's own conversation, as a subagent's.
     const running = (await c.call({ type: "subagent.view", botId: MAIN, subagentId: step.id })).subagent;
     expect(running).toMatchObject({ type: "codex-worker", status: "running", prompt: "Build the parser" });
+    writeFileSync(gate, "");
     // Its report: the app's own turn on the coordinator, shown as Codex's reply.
     const report = await until(async () => (await c.chat()).messages.find((m: any) => m.role === "bot" && m.text.startsWith("The worker finished")), { timeout: 10_000 });
     expect(report.text).toBe("The worker finished: Worker did: Build the parser");
@@ -146,13 +149,17 @@ describe("timing as 1.x", () => {
   it("a message to a Codex head at work joins its turn (turn/steer): one reply, after your new line", async () => {
     const dir = tempDir("codex");
     codexOnly(dir);
-    const c = core(dir, { FAKE_CODEX_TURN_MS: "900" });
+    // The reply waits for the gate file, which opens once "second" has been sent: no time window to beat.
+    const gate = join(dir, "turn.gate");
+    const c = core(dir, { FAKE_CODEX_TURN_GATE: gate });
     const first = await c.call({ type: "chat.send", botId: MAIN, text: "first" });
     await until(() => codexInputs(dir).some((text) => text.endsWith("first")), { timeout: 5_000 });
     const second = await c.call({ type: "chat.send", botId: MAIN, text: "second" });
     // It is the turn under way that answers it.
     expect(second.turnId).toBe(first.turnId);
     expect(second.messageId).toBe(first.messageId);
+    await until(() => codexInputs(dir, "steer").length === 1, { timeout: 5_000 });
+    writeFileSync(gate, "");
     expect((await finishedFor(c, first.turnId)).event).toMatchObject({ status: "done", text: "Codex says: first (also heard: second)" });
     expect(codexInputs(dir, "steer")).toEqual([expect.stringMatching(/^second/)]);
     // (Not a turn of its own: no input ends with it. Its components note says "every 2 seconds".)

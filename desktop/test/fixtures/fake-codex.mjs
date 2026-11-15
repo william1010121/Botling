@@ -36,6 +36,7 @@
 // A worker's task: "/slowworker" runs until interrupted; "/failworker" fails; "/failtool": its command fails, it reports anyway; else it reports
 // "Worker did: <first line>" after FAKE_CODEX_WORKER_MS (default 300), or — FAKE_CODEX_WORKER_GATE=<file>
 // — once that file exists (a test opens the gate when it has seen the worker at work).
+// FAKE_CODEX_TURN_GATE=<file>: a plain reply ("Codex says: …") waits until that file exists before it is said.
 // FAKE_CODEX_INPUT: a file it appends {thread, kind, text} to for every turn input and steer.
 // FAKE_CODEX_LOG: a file it appends {pid, args, cwd} to per start.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -259,8 +260,11 @@ async function coordinatorTurn(thread, turn, text) {
   const reply = directive === "say" ? rest
     : directive === "choices" ? "Which way?\n<choices>\n* Fast | done today\n- Slow | costs a week\n</choices>"
     : `Codex says: ${rest}`;
-  // A steer that came while it "thought" joins the answer, as Codex's would.
-  await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));
+  // A steer that came while it "thought" joins the answer, as Codex's would. FAKE_CODEX_TURN_GATE=<file>:
+  // it thinks until that file exists (or it is interrupted), not for a fixed time.
+  const turnGate = process.env.FAKE_CODEX_TURN_GATE;
+  if (turnGate) while (!existsSync(turnGate) && !state.turn?.interrupted) await sleep(20);
+  else await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));
   const steers = state.turn?.steers ?? [];
   say(thread, turn, steers.length ? `${reply} (also heard: ${steers.map((s) => words(s).all || s).join(" | ")})` : reply);
   return complete(thread, turn);
