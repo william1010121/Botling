@@ -172,6 +172,21 @@ describe("M7-12a: a window command forwarded by a peer", () => {
     } finally { await w.close(); }
   });
 
+  it("a local manage command under another valid server's origin is not applied at B (no borrowed server origin)", async () => {
+    // B knows a third server C. Stamped `manage`, `bot.restart` (a manage command) would pass B's server-origin rule
+    // under C's name; A forwards it as stated `local`, B decides it as `read` and refuses it.
+    const C = "srv-c";
+    const w = await world({ server: (member) => member === A || member === C });
+    const atC: Array<MessageOf<"cmd.result">> = [];
+    w.forwarder.attach(C, (m) => { if (m.t === "cmd.result") atC.push(m); return true; });
+    try {
+      await w.fromWindow(1, { type: "bot.restart", botId: BOT }, { origin: C });
+      await until(() => atC.length > 0, { what: "B's answer" });
+      expect(atC[0]!.outcome).toMatchObject({ kind: "refused", reason: "scope" });
+      expect(w.applied).toEqual([]);
+    } finally { await w.close(); }
+  });
+
   it("a local call-in under a server's origin is refused at A and never reaches B (F2)", async () => {
     const w = await world();
     const atA: Array<MessageOf<"cmd.result">> = [];
