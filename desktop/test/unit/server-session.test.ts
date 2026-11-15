@@ -172,10 +172,11 @@ describe("data folder, socket and token", () => {
   });
 
   it("keys bot stores by bot id, and a second head's by <id>/partner-<engine>", () => {
-    expect(storeKeyOf("/d", "/d/main")).toBe("6A0B0000-0000-4000-8000-000000000002");
-    expect(storeKeyOf("/d", "/d/projects/B1")).toBe("B1");
-    expect(storeKeyOf("/d", "/d/projects/B1/partner-codex")).toBe("B1/partner-codex");
-    expect(storeKeyOf("/d", "/d/main/partner-codex")).toBe("6A0B0000-0000-4000-8000-000000000002/partner-codex");
+    const mainId = "0F0F0000-0000-4000-8000-000000000001";
+    expect(storeKeyOf("/d", "/d/main", mainId)).toBe(mainId);
+    expect(storeKeyOf("/d", "/d/projects/B1", mainId)).toBe("B1");
+    expect(storeKeyOf("/d", "/d/projects/B1/partner-codex", mainId)).toBe("B1/partner-codex");
+    expect(storeKeyOf("/d", "/d/main/partner-codex", mainId)).toBe(`${mainId}/partner-codex`);
   });
 });
 

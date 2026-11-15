@@ -16,7 +16,6 @@ import { dirname, join, relative, sep } from "node:path";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
 import type { Sealer } from "../core/plugins/secrets";
 import { Core } from "../core/server";
-import { MAIN_BOT_ID } from "../core/store/records";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "../core/store/data-dir-lock";
 import { fromBase64Url, type StreamId } from "../protocol";
 import { backupCheckMs, DailyBackups } from "./backup-schedule";
@@ -38,6 +37,7 @@ import { LogHub } from "./log";
 import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type SessionHost, type SessionOptions } from "./session";
+import { fixedIds } from "./fixed-ids";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
@@ -161,12 +161,12 @@ export function relayAllowList(options: {
 }
 
 /** The key of the bot store kept in `directory`: the bot's id, or `<id>/partner-<engine>` for a second head's store. */
-export function storeKeyOf(dataDir: string, directory: string): string {
+export function storeKeyOf(dataDir: string, directory: string, mainId: string): string {
   const rel = relative(dataDir, directory).split(sep).join("/");
-  if (rel === "main") return MAIN_BOT_ID;
-  if (rel.startsWith("main/")) return `${MAIN_BOT_ID}/${rel.slice(5)}`;
+  if (rel === "main") return mainId;
+  if (rel.startsWith("main/")) return `${mainId}/${rel.slice(5)}`;
   if (rel.startsWith("projects/")) return rel.slice("projects/".length);
-  return rel || MAIN_BOT_ID;
+  return rel || mainId;
 }
 
 export interface BotlingdOptions {
@@ -292,6 +292,11 @@ export class Botlingd {
       // anything reads meta.serverId (a fresh data folder is named by its member id, v1 §3).
       const identity = await loadOrCreateServerIdentity(paths.dataDir, { create: store.meta("memberId") === undefined });
       const { serverId, memberId } = await store.submit((tx) => bindServerIdentity(tx, identity));
+      const hadFixedIds = store.meta("ids.main") !== undefined;
+      const ids = await store.submit((tx) => fixedIds(tx, { created: identity.created }));
+      if (!ids.minted && !hadFixedIds) {
+        log("ids: this data folder keeps the 2.x ids for its main bot and Maintainer (made before Botling 3 M5); a new folder gets its own.");
+      }
       const roster = await RosterStore.open(store, identity, { log });
       const clusterSetup = new ClusterSetup(roster);
       // M3 step 5: cluster preferences (LWW per key) and the gossip of statements and preferences between servers.
@@ -320,6 +325,8 @@ export class Botlingd {
           node: plainHostNode(env as NodeJS.ProcessEnv), sealer: noSafeStorage, app: shell.appBridge(),
         }),
         deferTurn,
+        mainBotId: ids.main,
+        maintainerId: ids.maintainer,
         pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
           read: async (ref, offset, length) => {
@@ -332,7 +339,7 @@ export class Botlingd {
           },
         },
         botStore: (directory) => {
-          const key = storeKeyOf(paths.dataDir, directory);
+          const key = storeKeyOf(paths.dataDir, directory, ids.main);
           opened.set(key, directory);
           return stores.open(key, directory);
         },
