@@ -218,7 +218,8 @@ export class CallinReference {
   stepProperties(before: CallinState, a: CallinAction, after: CallinState): string[] {
     const broken: string[] = [];
     const top = this.config.top;
-    if (top.some((c) => this.turns(after, c) > this.turns(before, c) && !(a.name === "UserLine" && a.c === c))) broken.push("NoRoundWithoutUser");
+    // Turns grow only with a user line in that chat, or an old reply heard again (at most once per reply).
+    if (top.some((c) => this.turns(after, c) > this.turns(before, c) && !(a.name === "UserLine" && a.c === c) && a.name !== "Rehear")) broken.push("NoRoundWithoutUser");
     if (top.some((c) => before.followUp[c] === this.config.maxDepth - 1 && after.own[c]! < before.own[c]! && !(this.turns(after, c) < this.turns(before, c)))) broken.push("LastLevelSpends");
     return broken;
   }
