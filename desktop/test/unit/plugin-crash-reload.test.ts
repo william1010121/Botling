@@ -5,6 +5,7 @@ import { appendFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync 
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Plugins } from "../../src/core/plugins";
+import { PluginHostClient, type HostHandlers } from "../../src/core/plugins/host-client";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { SealedSecretStore, testSealer } from "../../src/core/plugins/secrets";
 import { WorkspaceSource } from "../../src/core/workspace";
@@ -457,6 +458,40 @@ describe("M5-18c: per-plugin crash blame, real reload, and R4 bounded restarts",
       () => unit.plugins.view().plugins.find((p) => p.name === "user.double")?.enabled === false,
       { timeout: 10_000, what: "user.double disabled on 3rd crash" },
     );
+  });
+
+  it("an answer to a dead host's request never reaches the host started after it (review probe)", async () => {
+    const root = makeRoot("late-answer");
+    const hosts: { handlers: HostHandlers; written: any[] }[] = [];
+    const client = new PluginHostClient("unused", {
+      command: "",
+      launch: (_script, _cwd, _env, handlers) => {
+        const host = { handlers, written: [] as any[] };
+        hosts.push(host);
+        return { pid: 5000 + hosts.length, write: (line) => { host.written.push(JSON.parse(line)); }, terminate: async () => {} };
+      },
+    }, join(root, "client"), () => {}, { hook: 500, call: 500, load: 500, ready: 500, restartDelay: 10 }, () => {}, "user.x");
+    const failures: (string | null)[] = [];
+    client.onPluginFailure = (plugin) => { failures.push(plugin); };
+    const releases: ((value: unknown) => void)[] = [];
+    client.onRequest = () => new Promise((resolve) => { releases.push(resolve); });
+    client.update([{ name: "user.x", version: "1", main: "", fingerprint: "1", settings: {}, storageDir: join(root, "x") }]);
+    // The first host asks the core for something (id 1), then dies before the core answers.
+    hosts[0]!.handlers.data(JSON.stringify({ id: 1, method: "bots.list", params: {} }) + "\n");
+    await until(() => releases.length === 1, { timeout: 2_000, what: "the core took the first host's request" });
+    hosts[0]!.handlers.exit(1, null);
+    expect(failures).toEqual(["user.x"]);
+    await until(() => hosts.length === 2, { timeout: 2_000, what: "the second host started" });
+    // The second host's own request 1 is outstanding when the core's answer for the first host's request 1 is ready.
+    hosts[1]!.handlers.data(JSON.stringify({ id: 1, method: "secrets.get", params: {} }) + "\n");
+    await until(() => releases.length === 2, { timeout: 2_000, what: "the core took the second host's request" });
+    releases[0]!(["answer meant for the first host"]);
+    await sleep(10);
+    expect(hosts[1]!.written.filter((message) => message.id === 1 && message.method === undefined)).toEqual([]);
+    // The second host's own answer still reaches it.
+    releases[1]!("its own answer");
+    await until(() => hosts[1]!.written.some((message) => message.id === 1 && message.result === "its own answer"), { timeout: 2_000, what: "the second host's answer" });
+    client.stop();
   });
 
   it("PluginRegistry.recordHostFailure turns a plugin off only on the 3rd crash within 10 minutes", () => {

@@ -390,11 +390,14 @@ export class PluginHostClient {
     if (message.method !== undefined) {
       if (message.id !== undefined) {
         const id = message.id;
-        // The host asks the core for something: the core decides (index.ts), and answers once.
+        // The host asks the core for something: the core decides (index.ts), and answers once, to the process that
+        // asked (M5-18c review: a host started after it died reuses the ids and would take the answer as its own).
+        const asker = this.process;
+        const answer = (reply: HostMessage) => { if (this.process === asker) this.write(reply); };
         void Promise.resolve()
           .then(() => this.onRequest(message.method!, message.params ?? null))
-          .then((result) => this.write({ id, result: result ?? null }))
-          .catch((error) => this.write({ id, error: { message: String((error as Error)?.message ?? error).slice(0, 2_000) } }));
+          .then((result) => answer({ id, result: result ?? null }))
+          .catch((error) => answer({ id, error: { message: String((error as Error)?.message ?? error).slice(0, 2_000) } }));
       } else {
         this.notified(message.method, message.params ?? null);
       }
