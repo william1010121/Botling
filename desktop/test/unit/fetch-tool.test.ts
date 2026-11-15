@@ -9,7 +9,7 @@ import { isBotTool } from "../../src/core/bot-tools";
 import type { Bot } from "../../src/core/bot";
 import { botName, saveProjectRow } from "../../src/core/projects";
 import { Core, type CoreOptions } from "../../src/core/server";
-import { createAppFetch, fetchResultText, machineName, type AppFetchRequest } from "../../src/server/fetch/app-fetch";
+import { createAppFetch, fetchResultText, machineLabel, machineName, type AppFetchRequest } from "../../src/server/fetch/app-fetch";
 import type { FetchResult } from "../../src/server/fetch/requester";
 import { testRoot } from "../botlingd-harness";
 import { tempDir } from "../helpers";
@@ -212,6 +212,22 @@ describe("3. botlingd's resolver", () => {
     const empty = resolver([{ id: BOX, name: '"@<>' }]);
     await expect(empty.appFetch(BOT_A, request('"@<>'))).resolves.toBe('There is no machine named "" in this cluster.');
     expect(empty.fetch).not.toHaveBeenCalled();
+  });
+
+  it("review: a peer's control characters and bidi / zero-width marks are escaped in every text (code-standards 4), and match as escaped", async () => {
+    const hostile = "‮build-box\u0007​\u001b[31m\u0000⁦";
+    const shown = "\\u202ebuild-box\\x07\\u200b\\x1b[31m\\x00\\u2066";
+    expect(machineLabel(hostile)).toBe(shown);
+    for (const result of [okResult(), { ok: false, reason: "denied" } as FetchResult, { ok: false, reason: "gone" } as FetchResult]) {
+      const { appFetch, fetch } = resolver([{ id: BOX, name: hostile }], result);
+      const text = await appFetch(BOT_A, request(hostile));
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(text).toContain(shown);
+      expect(text).not.toMatch(/[\u0000-\u001f\u007f-\u009f؜​-‏‪-‮⁠-⁤⁦-⁩﻿]/);
+    }
+    // The name a bot typed, echoed back when no machine has it: escaped too.
+    const { appFetch } = resolver(BOXES);
+    await expect(appFetch(BOT_A, request("no‮where\u0007"))).resolves.toBe('There is no machine named "no\\u202ewhere\\x07" in this cluster.');
   });
 
   it("the requester not built yet (the server is starting) is a clear failure, not a crash", async () => {

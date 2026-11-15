@@ -2,10 +2,11 @@
 // server and asks M5-07b's requester for the files, then turns the answer into the one line the bot reads.
 //
 // - The machine is found only among the cluster's valid servers other than this one, by its name as the roster has it,
-//   cleaned the way every name in 3.0 is (`machineName`, the same rule as core/projects.ts `botName`). A name that no
+//   cleaned the way every name in 3.0 is (`machineName`, the same rule as core/projects.ts `botName`) with its control
+//   characters and bidi / zero-width marks escaped (`machineLabel`). A name that no
 //   valid peer has, one that two peers have (never guess which machine a file comes from) or one that cleans to nothing
 //   is "no machine named".
-// - Every name that reaches the text (the one the bot typed, a peer's) is cleaned first (L-004): a peer chooses its own
+// - Every name that reaches the text (the one the bot typed, a peer's) is `machineLabel`ed first (L-004): a peer chooses its own
 //   name, and the text goes to a model.
 // - The text names the folder relative to the bot's folder, built from the last two parts of `dest` (`<source>/<fetchId>`),
 //   so no absolute path can get in. A failure's `detail` is never put in (it may name a path of this machine).
@@ -25,6 +26,17 @@ export function machineName(name: string): string {
   const cleaned = [...line].filter((character) => !"\"@<>`".includes(character)).join("").replace(SPACES, "");
   // Whole characters as a person sees them (an emoji family is one), as botName counts.
   return [...SEGMENTER.segment(cleaned)].slice(0, 40).map((part) => part.segment).join("").replace(SPACES, "");
+}
+
+// botName keeps control characters (ESC, BEL, NUL, a tab inside) and the bidi / zero-width marks; a roster name is any
+// text up to 100 characters. The rule for text from a peer (code-standards 4, L-004): control characters escaped.
+const UNSEEN = /[\u0000-\u001f\u007f-\u009f؜​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+/** `machineName`, then every control character and bidi / zero-width mark as `\xNN` / `\uNNNN`: the name the text shows and the match uses. */
+export function machineLabel(name: string): string {
+  return machineName(name).replace(UNSEEN, (character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0xff ? `\\x${code.toString(16).padStart(2, "0")}` : `\\u${code.toString(16).padStart(4, "0")}`;
+  });
 }
 
 /** `12 MB`: under 1,000,000 bytes `<n> KB` (at least `1 KB`), under 10^9 `<n> MB` (rounded), else `<n.n> GB` (the M5-06b rule, bytes). */
@@ -61,10 +73,10 @@ export interface AppFetchDeps {
 /** The `fetch` option of the core (`CoreOptions.fetch`). */
 export function createAppFetch(deps: AppFetchDeps): (botId: string, request: AppFetchRequest) => Promise<string> {
   return async (botId, request) => {
-    const wanted = machineName(request.machine);
+    const wanted = machineLabel(request.machine);
     const view = deps.roster.view;
     const peers = [...view.valid].filter((member) => member !== view.self && view.servers.has(member))
-      .filter((member) => wanted !== "" && machineName(view.members.get(member)?.name ?? "") === wanted);
+      .filter((member) => wanted !== "" && machineLabel(view.members.get(member)?.name ?? "") === wanted);
     if (peers.length !== 1) return `There is no machine named "${wanted}" in this cluster.`;
     const source = peers[0]!;
     try {
