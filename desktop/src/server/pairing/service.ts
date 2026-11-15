@@ -98,10 +98,17 @@ export interface DroppedListResult {
   rootName: string | null;
   rows: DroppedListRow[];
 }
+export interface RecoveryStatusResult {
+  hasCluster: boolean;
+  isRoot: boolean;
+  rootMember: string | null;
+  rootName: string | null;
+  serverName: string;
+}
 
 export class PairingError extends Error {
   constructor(
-    readonly code: "no-cluster" | "limit" | "unknown" | "state" | "no-address" | "not-a-device" | "bad-request" | "not-root" | "cannot-revoke-root" | "not-a-server" | "ambiguous",
+    readonly code: "no-cluster" | "limit" | "unknown" | "state" | "no-address" | "not-a-device" | "bad-request" | "not-root" | "cannot-revoke-root" | "not-a-server" | "ambiguous" | "bad-code",
     message: string,
   ) {
     super(message);
@@ -257,6 +264,10 @@ export class PairingService {
       case "machine.remove": return this.removeMachine(op.member, op.cascade, op.reason);
       case "roster.dropped": return this.droppedList();
       case "roster.dismiss": return this.dismissDropped(op.revokeId);
+      case "recovery.status": return this.recoveryStatus();
+      case "recovery.replace": return this.beginRecoveryReplace(op.code);
+      case "recovery.confirm": return this.confirmRecoveryReplace(op.code);
+      case "recovery.cancel": this.options.roster.cancelRecoveryReplace(); return { ok: true };
       default: throw new PairingError("bad-request", `${op.op} is not a device pairing request`);
     }
   }
@@ -468,6 +479,55 @@ export class PairingService {
     }
   }
 
+  /** Whether this server can replace the recovery code (exists and is the current revocation root). */
+  recoveryStatus(): RecoveryStatusResult {
+    const view = this.options.roster.view;
+    const root = view.root;
+    const serverName = this.serverDisplayName(this.options.roster.memberId, view);
+    if (this.options.roster.clusterId === null || !root) {
+      return { hasCluster: false, isRoot: false, rootMember: null, rootName: null, serverName };
+    }
+    return {
+      hasCluster: true,
+      isRoot: root.root === this.options.roster.memberId,
+      rootMember: root.root,
+      rootName: this.serverDisplayName(root.root, view),
+      serverName,
+    };
+  }
+
+  /** Starts replacing the recovery code on the current root; never logs either code. */
+  async beginRecoveryReplace(oldCode: string) {
+    try {
+      const started = await this.options.roster.replaceRecovery(oldCode);
+      this.options.log?.(`pairing: a new recovery code was shown for cluster ${started.clusterId} (not stored; waiting to be typed back)`);
+      return started;
+    } catch (error) {
+      if (error instanceof RosterError) {
+        if (error.reason === "no-cluster") throw new PairingError("no-cluster", error.message);
+        if (error.reason === "not-root") {
+          const view = this.options.roster.view;
+          const rootId = view.root?.root;
+          const rootLabel = rootId ? this.serverDisplayName(rootId, view) : "the revocation root";
+          throw new PairingError("not-root", `Only the revocation root (${rootLabel}) can replace the recovery code. Run this there.`);
+        }
+        if (error.reason === "bad-code") throw new PairingError("bad-code", error.message);
+      }
+      throw error;
+    }
+  }
+
+  /** Confirms the new recovery code and commits the new Root statement; never logs any code. */
+  async confirmRecoveryReplace(newCode: string) {
+    const result = await this.options.roster.confirmRecovery(newCode);
+    this.options.log?.(
+      result.ok
+        ? `pairing: recovery code replaced (Root gen ${result.gen})`
+        : `pairing: new recovery code not confirmed (${result.reason})`,
+    );
+    return result;
+  }
+
   private serverDisplayName(id: string, view: RosterView): string {
     return this.options.roster.profile(id, "name")
       ?? view.members.get(id)?.name
@@ -483,6 +543,7 @@ export class PairingService {
   /** botlingd stops: every offer is forgotten, every pairing session ends. */
   close(): void {
     this.closedAll = true;
+    this.options.roster.cancelRecoveryReplace();
     for (const offer of [...this.offers.values()]) this.burn(offer, "cancelled");
   }
 
