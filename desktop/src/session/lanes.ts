@@ -8,8 +8,11 @@ export type Lane = "control" | "bulk";
 
 /** The most a frame's plaintext may be (§5.2; the same as protocol/frame.ts FRAME_LIMIT). */
 export const SESSION_FRAME_LIMIT = 256 * 1024;
-/** A binary `content.chunk` frame's header room (protocol/frame.ts: mark, length, header ≤ 1 KiB). */
-const CHUNK_HEADER_ROOM = 3 + 1024;
+/**
+ * A binary chunk frame's header room (protocol/frame.ts: mark, length, header ≤ BINARY_HEADER_LIMIT = 32 KiB). A
+ * `fetch.chunk` header carries a file path of up to 4096 bytes (M5-07b), so a 64 KiB fetch chunk must still fit.
+ */
+const CHUNK_HEADER_ROOM = 3 + 32 * 1024;
 /** Bulk frames on a direct session: ≤ 64 KiB of payload (a 64 KiB content chunk with its header fits). */
 export const BULK_FRAME_LIMIT = 64 * 1024 + CHUNK_HEADER_ROOM;
 /** Bulk frames on a relay session: content chunks are 128 KiB there (§5.3, D36). */
