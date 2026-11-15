@@ -67,7 +67,8 @@ export function readRelaySetting(dataDir: string): string | null {
   if (Buffer.byteLength(text) > MAX_SETTING_BYTES) throw new RelaySettingError(`${RELAY_SETTING_FILE} is larger than ${MAX_SETTING_BYTES} bytes.`);
   let parsed: z.infer<typeof Setting>;
   try { parsed = Setting.parse(JSON.parse(text)); } catch { throw new RelaySettingError(`${RELAY_SETTING_FILE} is not {"url": "wss://…/ws"}.`); }
-  const url = relaySettingUrl(parsed.url);
+  let url: string;
+  try { url = relaySettingUrl(parsed.url); } catch { throw new RelaySettingError(`${RELAY_SETTING_FILE} holds an address that is not wss://…/ws.`); }
   if (url !== parsed.url) throw new RelaySettingError(`${RELAY_SETTING_FILE} holds an address that is not in its plain form.`);
   return url;
 }
