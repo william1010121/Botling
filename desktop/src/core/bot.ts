@@ -60,13 +60,11 @@ import { backgroundTaskOutput, backgroundOutputFile } from "./background-work";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { linkedFiles, type LinkedFile } from "./storage";
+import type { LinkedFile } from "./storage";
 import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
-import { dropLineMedia, keepLineMedia, lineMediaCopy } from "./chat-media";
-import { sameJSON } from "./same-json";
-import { parseFeedback } from "./feedback";
+import { keepLineMedia, lineMediaCopy } from "./chat-media";
 import { hostKind, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
-import { ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type ChatSnapshot, type Event, type HeadsView, type MessageView, type ResultOf, type BotSettingsView, type ResultView, resultLinks } from "../contract";
+import { ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type ChatSnapshot, type Event, type HeadsView, type MessageView, type ResultOf, type BotSettingsView, type ResultView } from "../contract";
 import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
 import { ClaudeHead, type HeadExit } from "./agent/head";
 import type { HotSettings } from "./agent/hot-settings";
@@ -78,8 +76,8 @@ import {
 import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
 import { addSample, speedView, type RequestEvent, type SpeedTotals } from "./token-speed";
 import { commandEnded, ReplyText, type CommandState, type StreamItem } from "./agent/stream";
-import { applyingReaction, archiveAll, archiveLine, compareReactions, reactionIntro, reactionUpdate, recentChat, REACTION_PALETTE, reportNote, seenReactions, type SeenReactions } from "./briefing";
-import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, RESUME_NOTE, withoutPartsNote, type BotPrompts } from "./prompts";
+import { archiveAll, archiveLine, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions, type SeenReactions } from "./briefing";
+import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RESUME_NOTE, withoutPartsNote, type BotPrompts } from "./prompts";
 import { parseReply, unsupportedRequest, type BotRequest } from "./reply";
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, type SubagentRecord } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
@@ -101,7 +99,7 @@ import { CallInWorkBook, type CallInRelay } from "./call-in-work";
 import { codexWorkerDefaults, codexWorkersJSON } from "./settings";
 import { cardData, PAGE_COMPONENT, previewCards } from "./page-preview";
 import { totalTokens } from "./usage";
-import { BotStore, StoreError, type HeadState } from "./store/bot-store";
+import { BotStore, type HeadState } from "./store/bot-store";
 import { alwaysAllows } from "./permission-rules";
 import {
   WARM_WINDOW_MS, connectionErrorLine, isConnectionError, lostText, mentionsConnectionError, restoredText, resumeMode, resumeNote,
@@ -111,14 +109,16 @@ import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "./a
 import { CONTINUE_NOTE, type SwapEntry } from "./hot-swap";
 import { MAX_PAGE_BYTES, PAGE_BYTES, pageBack, sliceViews } from "./history-page";
 import {
-  backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
+  backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, stopBackgroundTasks,
   type BackgroundKind, type BackgroundTask,
 } from "./background-tasks";
-import { HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord } from "./store/records";
+import { fromSwiftDate as fromSwiftDateMs, isOpenQuestion, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord } from "./store/records";
 import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./agent/workers";
 import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
 import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
 import { BotContext } from "./bot/context";
+import { BotRecords } from "./bot/records";
+import { BotSubagentRows } from "./bot/subagent-rows";
 import { RECENT_TOOL_CALLS, NO_LONGER_NEEDED, NO_ANSWER, NEVER_ALWAYS, PLUGINS_RESTART, PROMPT_SESSION_DIVIDER, NEW_SESSION_DIVIDER, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
 import { keepable, resolvePath, union, firstLine, sleep, turnCommandId, preview, streamingText, subagentOf, isReviewRefusal, isRule, allowRule, permissionText, clip, stepView, routinesKey, iso, subagentView, messageView, approvalSummary } from "./bot/view-functions";
 export type Status = "done" | "stopped" | "failed";
@@ -137,20 +137,15 @@ export class Bot {
    */
   private managedTaskHandoffs = new Map<string, string>();
   private managedHandbacks = new Set<string>();
-  /** Components being made from its replies (specs.json, 1.x's format; the primary's): the component studio's records, kept as they are. */
-  private specList: StoredSpec[] = [];
+  get specList(): StoredSpec[] { return this.recordsBook.specList; }
+  set specList(value: StoredSpec[]) { this.recordsBook.specList = value; }
   /** Read by BotContext (M7-S41). */
-  records: ChatRecord[] = [];
+  get records(): ChatRecord[] { return this.recordsBook.records; }
+  set records(value: ChatRecord[]) { this.recordsBook.records = value; }
   /** Set when its chat file could not be read: nothing is written over it then. */
-  private problem: string | null = null;
-  private readOnly = false;
-  /** Who else has this bot's project open, when someone does: shown once as a notice, never a block. */
-  private saveTimer: NodeJS.Timeout | null = null;
-  // At most one pending write, retaining the book itself rather than queued snapshots.
-  private subagentSaveTimer: NodeJS.Timeout | null = null;
-  private subagentsDirty = false;
-  private subagentSaveRetryMs = 1_000;
-  private head: AgentHead | null = null;
+  problem: string | null = null;
+  readOnly = false;
+  head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
   readonly engine: Engine;
   /** Its heads (bot.json `heads`, 1.x's format). Kept by the primary; a partner reads it. */
@@ -205,7 +200,7 @@ export class Bot {
   /** Read by BotContext (M7-S41). */
   queue: Turn[] = [];
   private finished = new Map<string, Status>();
-  private approvals = new Map<string, Approval>();
+  approvals = new Map<string, Approval>();
   private draining: { head: AgentHead; resolve: () => void; promise: Promise<void> } | null = null;
   /** Results still to come from turns ended early (a tidy or a guest turn that ran late): they belong to nobody. */
   private ignoreResults = 0;
@@ -213,10 +208,10 @@ export class Bot {
   private appQuestions = new Map<string, (index: number) => void>();
   /** …and what words typed on one do instead of going to the bot (a copy of another bot's question). */
   private appAnswers = new Map<string, (text: string, files: string[]) => boolean>();
-  /** The subagent rows as the windows last saw them (a change sends bot.updated). */
-  private lastRows = "";
+  get lastRows(): string { return this.recordsBook.lastRows; }
+  set lastRows(value: string) { this.recordsBook.lastRows = value; }
   /** What the app tells it with its next message (`queueNote`). */
-  private queuedNote: string | null = null;
+  queuedNote: string | null = null;
   /** Work paused for the user's message (1.x's `pausedWork`): carried on once the user has been answered. */
   private paused: { conducted: boolean; handoffId: string | null } | null = null;
   /** Read by BotContext (M7-S41). */
@@ -272,10 +267,11 @@ export class Bot {
   /** `permission_denied` frames waiting for their tool result; blocked calls already shown. */
   private deniedFrames = new Map<string, { tool: string | null; reason: string }>();
   private deniedCalls = new Set<string>();
-  private unread: number;
-  private shuttingDown = false;
-  /** What this head's session has been told of the chat's reactions (null: tell it from scratch). */
-  private reactionsSeen: SeenReactions | null = null;
+  get unread(): number { return this.recordsBook.unread; }
+  set unread(value: number) { this.recordsBook.unread = value; }
+  shuttingDown = false;
+  private get reactionsSeen(): SeenReactions | null { return this.recordsBook.reactionsSeen; }
+  private set reactionsSeen(value: SeenReactions | null) { this.recordsBook.reactionsSeen = value; }
   /** Finished subagents a silent turn has already been asked to report, once. */
   private reportAsked = new Set<string>();
   /** Subagents that ended between turns: the next turn claude starts itself reports them. */
@@ -326,6 +322,10 @@ export class Bot {
   /** Made on first use, from this bot: a fake `Object.create(Bot.prototype)` has one too. */
   private botContext: BotContext | null = null;
   private get ctx(): BotContext { return this.botContext ??= new BotContext(this); }
+  private botRecords: BotRecords | null = null;
+  private get recordsBook(): BotRecords { return this.botRecords ??= new BotRecords(this, this.ctx); }
+  private botSubagentRows: BotSubagentRows | null = null;
+  private get subagentRowBook(): BotSubagentRows { return this.botSubagentRows ??= new BotSubagentRows(this, this.ctx); }
 
   constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
     const primary = options.primary;
@@ -443,192 +443,24 @@ export class Bot {
   get profile() { return this.ctx.profile; }
   private get paths() { return this.ctx.paths; }
   private log(line: string) { this.ctx.log(line); }
-  private emit(event: Event) { this.ctx.emit(event); }
+  emit(event: Event) { this.ctx.emit(event); }
 
-  /** What the partner's chat did, in this chat (`mirror`): its lines are this chat's lines too. */
-  /** Called by BotContext.emit (M7-S41). */
-  fromPartner(partner: Bot, event: Event) {
-    switch (event.type) {
-      case "bot.updated":
-        return this.updated();
-      case "message.added":
-      case "message.updated": {
-        let record = this.records.find((candidate) => candidate.id === event.message.id);
-        if (!record) {
-          // A change to a line this chat no longer holds (an old one past its window, while the partner's own file
-          // still has it, e.g. an old worker's step re-drawn when its head starts) is no new line: only an added one
-          // joins the chat. Pushing it here put weeks-old replies after your newest line, where catch-up read them as new.
-          if (event.type !== "message.added") return;
-          const theirs = partner.records.find((candidate) => candidate.id === event.message.id);
-          if (!theirs) return;
-          record = theirs;
-          record.seenBy = union(record.seenBy, record.engine ? [record.engine] : undefined);
-          this.records.push(record);
-          this.persist();
-          return this.options.emit({ type: "message.added", botId: this.id, message: this.messageView(record) });
-        }
-        this.persist(true);
-        return this.options.emit({ type: event.type, botId: this.id, message: this.messageView(record) });
-      }
-      case "message.removed": {
-        const at = this.records.findIndex((candidate) => candidate.id === event.messageId);
-        if (at >= 0) { this.records.splice(at, 1); this.persist(); }
-        return this.options.emit({ ...event, botId: this.id });
-      }
-      case "subagent.updated":
-        return this.options.emit({ ...event, botId: this.id });
-      default:
-        return this.options.emit({ ...event, botId: this.id } as Event);
-    }
-  }
-
-  private readList<T>(name: "subagents.json" | "specs.json", read: (value: unknown) => T | null): T[] {
-    try {
-      return this.store.loadList(name).map(read).filter((value): value is T => value !== null);
-    } catch (error) {
-      this.log(`${name} cannot be read (${(error as Error).message}); it is left as it is`);
-      return [];
-    }
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // The chat file
-
-  private load() {
-    let records: ChatRecord[];
-    try {
-      const loaded = this.store.loadMessages();
-      records = loaded.records;
-      if (loaded.dropped) this.log(`${loaded.dropped} chat line(s) in chat.json are not readable and are left out`);
-    } catch (error) {
-      if (!(error instanceof StoreError)) throw error;
-      this.problem = `Its chat file cannot be read, so it is left as it is: ${error.message}`;
-      this.readOnly = true;
-      this.log(this.problem);
-      this.records = [];
-      return;
-    }
-    let changed = false;
-    // Background work that ran when the app went away went with it (`stopBackgroundTasks(as: .interrupted)`).
-    if (stopBackgroundTasks(records, "interrupted").length) changed = true;
-    for (const record of records) {
-      // An answer that waited to reach a called-in bot when the core stopped never got there: its card is open again.
-      if (record.pendingAnswer) {
-        record.notDelivered = record.pendingAnswer.to;
-        delete record.pendingAnswer;
-        delete record.picks;
-        changed = true;
-      }
-      // A turn that was streaming when the core died is not resumed or re-sent: it is marked.
-      if (record.state === "streaming") {
-        record.state = "failed";
-        record.interrupted = true;
-        record.text += (record.text ? "\n\n" : "") + "(Interrupted: the core restarted during this reply. It was not sent again.)";
-        changed = true;
-      }
-      // A tool question (or the app's own question) from before a restart has nobody waiting for it any more.
-      if ((record.permissionTool || record.appQuestion) && isOpenQuestion(record)) {
-        // A copied question can later inherit its source's Ignore. Keep this system transition
-        // separate from answer: user words (even "No longer needed") must never be reclassified.
-        if (!record.permissionTool && record.appQuestion && record.sourceID && record.sourceMessageID) record.questionInvalidatedAt = new Date().toISOString();
-        else record.answer = NO_LONGER_NEEDED;
-        changed = true;
-      }
-    }
-    this.records = records;
-    if (changed) this.persist();
-  }
-
-  private persist(soon = false) {
-    if (this.readOnly) return;
-    if (soon) {
-      this.saveTimer ??= setTimeout(() => { this.saveTimer = null; this.persist(); }, 500);
-      return;
-    }
-    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
-    this.store.saveMessages(this.records);
-  }
-
-  private messageView(record: ChatRecord): MessageView {
-    const lookup = { get: (id: string) => this.members.map(bot => bot.subagents.get(id)).find(Boolean) };
-    const view = messageView(record, this.members.map(bot => bot.approvals.get(record.id)).find(Boolean), lookup, this.owner.displayViews(record));
-    // Your line a head could not take into its turn under way waits in a queue: it says so until it is sent.
-    if (record.role === "user" && this.members.some(bot => bot.waitsFor(record.id))) view.queued = true;
-    // A card's answer that waits to reach the bot that asked: shown as given, "Queued" (`holdCardAnswer`).
-    if (record.pendingAnswer) {
-      if (record.pendingAnswer.chosen !== undefined) view.chosen = record.pendingAnswer.chosen;
-      else view.answer = (record.pendingAnswer.answer ?? "").slice(0, 4_000);
-      view.queued = true;
-    }
-    if (record.notDelivered && isOpenQuestion(record)) view.notDelivered = record.notDelivered;
-    // The result pages it links to, as preview cards, when the library has the card (Phase 5c).
-    const previews = this.owner.previews(record);
-    if (previews) view.previews = previews.map((data) => ({ name: PAGE_COMPONENT, data }));
-    // The component it already is (Phase 5a), from the component studio's seam; the studio draws the specs made from it itself (chat.decorate).
-    const extras = this.owner.options.lineExtras?.(this.owner, record);
-    if (extras?.component) view.component = extras.component;
-    // A "not right" report shows short (1.x's `FeedbackNote`, read back from the text for older ones).
-    if (record.role === "relay") {
-      const note = record.feedback && typeof record.feedback === "object" ? record.feedback as { about?: unknown; words?: unknown } : null;
-      const feedback = note && typeof note.about === "string" && typeof note.words === "string" ? { about: note.about, words: note.words } : parseFeedback(record.text);
-      if (feedback) view.feedback = { about: feedback.about.slice(0, 400), words: feedback.words.slice(0, 20_000) };
-    }
-    return view;
-  }
+  fromPartner(partner: Bot, event: Event) { return this.recordsBook.fromPartner(partner, event); }
+  private readList<T>(name: "subagents.json" | "specs.json", read: (value: unknown) => T | null): T[] { return this.recordsBook.readList(name, read); }
+  private load() { return this.recordsBook.load(); }
+  persist(soon = false) { return this.recordsBook.persist(soon); }
+  messageView(record: ChatRecord): MessageView { return this.recordsBook.messageView(record); }
 
   // ------------------------------------------------------------------------------------------
   // Component specs (1.x's `specs`, `editSpecs`)
 
-  /** The specs made from its replies. */
-  get specs(): readonly StoredSpec[] {
-    return this.owner.specList;
-  }
-
-  /** Changes its specs and saves them, if anything changed (`editSpecs`); the lines they belong to are drawn again. */
-  editSpecs(change: (specs: StoredSpec[]) => void): boolean {
-    const owner = this.owner;
-    const edited = structuredClone(owner.specList);
-    change(edited);
-    if (sameJSON(edited, owner.specList)) return false;
-    const touched = new Set([...owner.specList, ...edited].flatMap((spec) => (spec.messageID ? [spec.messageID] : [])));
-    owner.specList = edited;
-    if (!owner.readOnly) owner.store.saveList("specs.json", edited);
-    for (const id of touched) owner.refreshLine(id);
-    return true;
-  }
-
-  /** A line is drawn again (its chips changed). */
-  refreshLine(messageId: string) {
-    const owner = this.owner;
-    const record = owner.records.find((candidate) => candidate.id === messageId);
-    if (record) owner.emit({ type: "message.updated", botId: owner.id, message: owner.messageView(record) });
-  }
-
-  /** A new line; `archive: false` for a reply still being written (it is archived when it ends). */
-  private add(record: ChatRecord, { archive = true } = {}) {
-    this.records.push(record);
-    this.persist();
-    if (archive) archiveLine(this.paths.archive, record);
-    this.emit({ type: "message.added", botId: this.id, message: this.messageView(record) });
-  }
-
-  private changed(record: ChatRecord) {
-    this.persist();
-    this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
-  }
-
-  private remove(record: ChatRecord) {
-    const at = this.records.indexOf(record);
-    if (at < 0) return;
-    this.records.splice(at, 1);
-    this.persist();
-    dropLineMedia(this.lineMediaStore, record.id);
-    this.emit({ type: "message.removed", botId: this.id, messageId: record.id });
-  }
-
-  private notice(text: string) {
-    this.add({ id: newId(), role: "notice", text, date: toSwiftDate() });
-  }
+  get specs(): readonly StoredSpec[] { return this.recordsBook.specs; }
+  editSpecs(change: (specs: StoredSpec[]) => void): boolean { return this.recordsBook.editSpecs(change); }
+  refreshLine(messageId: string) { return this.recordsBook.refreshLine(messageId); }
+  private add(record: ChatRecord, options?: { archive?: boolean }) { return this.recordsBook.add(record, options); }
+  private changed(record: ChatRecord) { return this.recordsBook.changed(record); }
+  private remove(record: ChatRecord) { return this.recordsBook.remove(record); }
+  private notice(text: string) { return this.recordsBook.notice(text); }
 
   /**
    * A line from the app in this chat (`Workspace.tell`): a plugin's notice, Maintainer's news. With
@@ -656,34 +488,8 @@ export class Bot {
     return record.id;
   }
 
-  /**
-   * Work handed over by the app (`Bot.relay`): a "Handed to you" line, and the words to the head with
-   * 1.x's relay prefix, as a message the reply answers.
-   */
-  relay(text: string, { files = [], feedback }: { files?: string[]; feedback?: { about: string; words: string } } = {}): ResultOf<"chat.send"> {
-    if (this.options.primary) return this.options.primary.relay(text, { files, ...(feedback ? { feedback } : {}) });
-    this.refuseIfClosed();
-    const words = text.trim();
-    if (!words) throw new ContractError("bad_request", "Nothing to send.");
-    // Its files are kept in the bot's own attachments folder (pictures go to the head as pictures).
-    const kept = files.flatMap((file) => keep(file, attachmentsFolder(this.profile)) ?? []);
-    const line: ChatRecord = { id: newId(), role: "relay", text: words, date: toSwiftDate() };
-    if (kept.length) line.attachments = kept.map((file) => ({ url: file.url, kind: file.kind }));
-    // A "not right" report shows short in the chat (1.x's `FeedbackNote`).
-    if (feedback) line.feedback = feedback;
-    this.add(line);
-    const turn = this.deliverTo(this.engine, (this.profile.parent ? SUB_BOT_RELAY_PREFIX : RELAY_PREFIX) + words + (kept.length ? `\n\n${attachmentList(kept.map((file) => file.path))}` : ""), line.id);
-    return { messageId: turn.messageId, turnId: turn.id };
-  }
-
-  /** Something only the app says (no line in the chat): wakes it like a message (`Bot.appMessage`). */
-  /** Its turn's id (null: not delivered: it cannot run now). */
-  appMessage(text: string): string | null {
-    if (this.options.primary) return this.options.primary.appMessage(text);
-    const words = text.trim();
-    if (!words || this.problem || this.profile.problem || this.shuttingDown) return null;
-    return this.deliverTo(this.engine, words, null, { origin: "app" }).id;
-  }
+  relay(text: string, options?: { files?: string[]; feedback?: { about: string; words: string } }): ResultOf<"chat.send"> { return this.recordsBook.relay(text, options); }
+  appMessage(text: string): string | null { return this.recordsBook.appMessage(text); }
 
   // ------------------------------------------------------------------------------------------
   // Turns in other chats (1.x's `groupTurn`, `post`, `keepCallIn`)
@@ -789,10 +595,7 @@ export class Bot {
     }
   }
 
-  /** Marks the chat read when you are looking at it (`markRead`). */
-  markRead() {
-    void this.read();
-  }
+  markRead() { return this.recordsBook.markRead(); }
 
   /** Its latest question still waiting for you (1.x's `openQuestion`), if any (not tool approvals). */
   openQuestion(): { id: string; text: string; choices: { label: string; detail?: string; recommended: boolean }[]; questions?: NonNullable<ChatRecord["questions"]> } | null {
@@ -1378,66 +1181,13 @@ export class Bot {
   }
 
 
-  /** Its subagents' rows (and its partner's, with the head that sent each). */
-  private subagentRows(): SubagentRowView[] {
-    const agents = this.options.agents;
-    // 1.x shows the owning head's navigation avatar even for a single-head bot. Ones another bot owns now are listed there instead.
-    const rows = this.members.flatMap(bot => {
-      const out = agents?.movedOut(bot.engine);
-      return bot.subagents.rows(bot.engine).filter((row) => !out?.has(row.id)).map((row) => ({ row, bot }));
-    });
-    const remote = this.options.remoteWorkers?.() ?? null;
-    const remoteStatus = (id: string) => { try { return remote?.status?.(id) ?? null; } catch { return null; } };
-    const own: SubagentRowView[] = rows.slice(-100).map(({ row, bot }) => {
-      const info = agents?.rowInfo?.(bot.engine, row.id);
-      const machine = row.head === "claude" ? remoteStatus(row.id) : null;
-      return {
-        ...row,
-        waitingForNetwork: bot.outage?.subagents.includes(row.id) ?? false,
-        ...(machine ? { machine: { name: machine.machine.slice(0, 64), connected: machine.conn === "up" } } : {}),
-        ...(info?.agentId ? { agentId: info.agentId } : {}),
-        ...(info?.movable ? { movable: info.movable } : {}),
-      };
-    });
-    // Agents it owns that run on another bot, then its sub bots (hidden bots of their own under it: rows that open as a chat with an input box).
-    return [...own, ...(agents?.movedInRows() ?? []), ...(this.options.subBotRows?.() ?? [])].slice(-100);
-  }
-
-  /** The rows changed: the windows hear of it once (`force`: always). */
-  private rowsChanged(force = false) {
-    const primary = this.options.primary ?? this;
-    const text = JSON.stringify(primary.subagentRows());
-    if (!force && text === primary.lastRows) return;
-    primary.lastRows = text;
-    primary.updated();
-  }
-
-  /** Its workers' rows may show something new (a remote worker's connection): told only if they changed. */
-  workerRowsChanged() { if (!this.options.primary) this.rowsChanged(); }
-
-  /** Every question in its chat still waiting for you. */
-  openQuestions(): { id: string; text: string; sourceID?: string }[] {
-    // Copies of other bots' questions (<open-question>) are theirs, not this chat's.
-    return this.owner.records.filter((candidate) => isOpenQuestion(candidate) && !candidate.permissionTool && !candidate.sourceMessageID)
-      .map((record) => ({ id: record.id, text: record.text, ...(typeof record.sourceID === "string" ? { sourceID: record.sourceID } : {}) }));
-  }
-
-  /** The links handed over in this chat, newest first (`Bot.results`). */
-  results(): ResultView[] {
-    return resultLinks(this.records);
-  }
-
-  /** The local files its replies handed over, newest first (its Storage lists them; core/storage.ts). */
-  linkedFiles(): LinkedFile[] {
-    return linkedFiles(this.records);
-  }
-
-  /** Told with its next message when it is awake (`Bot.queueNote`; a later note replaces an earlier one). An asleep bot reads it all at its wake. */
-  queueNote(note: string) {
-    const bot = this.options.primary ?? this;
-    if (!bot.head?.running) return;
-    bot.queuedNote = note;
-  }
+  subagentRows(): SubagentRowView[] { return this.subagentRowBook.subagentRows(); }
+  private rowsChanged(force = false) { return this.subagentRowBook.rowsChanged(force); }
+  workerRowsChanged() { return this.subagentRowBook.workerRowsChanged(); }
+  openQuestions(): { id: string; text: string; sourceID?: string }[] { return this.subagentRowBook.openQuestions(); }
+  results(): ResultView[] { return this.subagentRowBook.results(); }
+  linkedFiles(): LinkedFile[] { return this.subagentRowBook.linkedFiles(); }
+  queueNote(note: string) { return this.subagentRowBook.queueNote(note); }
 
   /** Its own components (bot.json `components`), null when it keeps no list. */
   get components(): string[] | null {
@@ -1512,50 +1262,10 @@ export class Bot {
     return out.sort((a, b) => a.date - b.date).slice(0, 20).map(({ tool, text, at }) => ({ tool, text, at }));
   }
 
-  private readonly dirtySubagents = new Set<string>();
-  private allSubagentsDirty = false;
-
-  private saveSubagents(progress = false, changed?: SubagentRecord) {
-    if (this.readOnly) return;
-    this.subagentsDirty = true;
-    if (changed) {
-      this.dirtySubagents.add(changed.id);
-      if (changed.parentID) this.dirtySubagents.add(changed.parentID);
-    } else this.allSubagentsDirty = true;
-    // Only running text/token/runtime progress may lag disk by 500 ms. Starts, tool events,
-    // execution identity, terminal states and explicit user changes are appended before returning.
-    if (progress && !this.shuttingDown) this.scheduleSubagentSave(500);
-    else this.flushSubagents();
-  }
-
-  private scheduleSubagentSave(delay: number) {
-    if (this.subagentSaveTimer || this.shuttingDown) return;
-    this.subagentSaveTimer = setTimeout(() => {
-      this.subagentSaveTimer = null;
-      try { this.flushSubagents(true); }
-      catch (error) { this.log(`subagents save failed; retry pending: ${String(error)}`); }
-    }, delay);
-    this.subagentSaveTimer.unref?.();
-  }
-
-  /** A failed write stays dirty. Critical callers see the error; background retries are bounded. */
-  private flushSubagents(progress = false) {
-    if (this.subagentSaveTimer) { clearTimeout(this.subagentSaveTimer); this.subagentSaveTimer = null; }
-    if (this.readOnly || !this.subagentsDirty) return;
-    try {
-      const changed = this.allSubagentsDirty ? undefined : this.dirtySubagents;
-      this.store.commitSubagents(this.subagents.list, changed);
-      this.dirtySubagents.clear();
-      this.allSubagentsDirty = false;
-      this.subagentsDirty = false;
-      this.subagentSaveRetryMs = 1_000;
-    } catch (error) {
-      this.subagentsDirty = true;
-      this.scheduleSubagentSave(this.subagentSaveRetryMs);
-      this.subagentSaveRetryMs = Math.min(this.subagentSaveRetryMs * 2, 30_000);
-      throw error;
-    }
-  }
+  private get dirtySubagents(): Set<string> { return this.subagentRowBook.dirtySubagents; }
+  private saveSubagents(progress = false, changed?: SubagentRecord) { return this.subagentRowBook.saveSubagents(progress, changed); }
+  private scheduleSubagentSave(delay: number) { return this.subagentRowBook.scheduleSubagentSave(delay); }
+  private flushSubagents(progress = false) { return this.subagentRowBook.flushSubagents(progress); }
 
   // ------------------------------------------------------------------------------------------
   // Views
@@ -1663,7 +1373,7 @@ export class Bot {
     this.options.emit({ type: "heads.updated", botId: this.id, heads: this.headsView() });
   }
 
-  private updated() {
+  updated() {
     this.emit({ type: "bot.updated", bot: this.view() });
   }
 
@@ -1709,9 +1419,7 @@ export class Bot {
     return { messages: page.views, hasMore: page.start > 0, older: page.start, found };
   }
 
-  get messageCount() {
-    return this.records.length;
-  }
+  get messageCount() { return this.recordsBook.messageCount; }
 
   /** What a plugin may read of this chat (`chat.messages`): its newest `limit` lines as kept. */
   pluginChat(limit: number) {
@@ -1722,10 +1430,7 @@ export class Bot {
     };
   }
 
-  /** Where you read it up to (`chatRead`): how many lines were unread, and its newest line. */
-  readMark(): { unread: number; through: string | null } {
-    return { unread: this.unread, through: this.records.at(-1)?.id ?? null };
-  }
+  readMark(): { unread: number; through: string | null } { return this.recordsBook.readMark(); }
 
   async taskOutput(messageId: string, taskId: string): Promise<ResultOf<"task.output">> {
     // One of its routines in the background-work row (`routineChips`): what it does, when, and where it is kept.
@@ -1778,7 +1483,7 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Sending, and the turn
 
-  private refuseIfClosed(): void {
+  refuseIfClosed(): void {
     if (this.options.primary) return this.options.primary.refuseIfClosed();
     if (this.problem) throw new ContractError("conflict", this.problem);
     if (this.profile.problem) throw new ContractError("conflict", this.profile.problem);
@@ -1876,7 +1581,7 @@ export class Bot {
   }
 
   /** A turn for `head` (this bot's or its partner's), routed there now. */
-  private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds } = {}): Turn {
+  deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds } = {}): Turn {
     // Work for a head the bot does not have (a hand-off from a bot with one head): made when first needed (1.x's `bot(for:)`).
     this.requireEngineRoute(head);
     const bot = this.botFor(head) ?? this.owner.makePartner(head);
@@ -2436,27 +2141,8 @@ export class Bot {
     return [...blocked, ...(supported.length && this.options.onRequests ? this.options.onRequests(this.owner, supported) : supported)];
   }
 
-  /** These lines reached `head` (they are in its context): the chat marks them (`markSeen`). */
-  private markSeen(ids: string[], head: Engine) {
-    const owner = this.owner;
-    if (!owner.partner || !ids.length) return;
-    let changed = false;
-    for (const id of new Set(ids)) {
-      const record = owner.records.findLast((candidate) => candidate.id === id);
-      if (!record || record.seenBy?.includes(head)) continue;
-      record.seenBy = union(record.seenBy, [head]);
-      changed = true;
-      owner.emit({ type: "message.updated", botId: owner.id, message: owner.messageView(record) });
-    }
-    if (changed) owner.persist(true);
-  }
-
-  private bumpUnread() {
-    const owner = this.owner;
-    owner.unread += 1;
-    owner.store.saveSetting("unread", owner.unread);
-    owner.updated();
-  }
+  private markSeen(ids: string[], head: Engine) { return this.recordsBook.markSeen(ids, head); }
+  private bumpUnread() { return this.recordsBook.bumpUnread(); }
 
   // ------------------------------------------------------------------------------------------
   // Shared decisions (a question handed over between the heads)
@@ -2550,7 +2236,7 @@ export class Bot {
   }
 
   /** Your line `id` is in this head's queue and not sent. */
-  private waitsFor(id: string): boolean {
+  waitsFor(id: string): boolean {
     return this.queue.some((turn) => turn.open && !turn.sent && turn.origin === "user" && turn.userId === id);
   }
 
@@ -3021,7 +2707,7 @@ export class Bot {
 
   /** A file this bot's chat shows as an attachment (the chat origin serves only these). */
   /** The chat's copies of the pictures its lines show (chat-media.ts): the main bot's store, whichever head wrote the line. */
-  private get lineMediaStore(): string {
+  get lineMediaStore(): string {
     return (this.options.primary ?? this).store.directory;
   }
 
@@ -4378,14 +4064,7 @@ export class Bot {
     return hasBackgroundWorkRunning(this.ownRecords);
   }
 
-  /**
-   * The chat lines whose background tasks are this head's. A shared chat holds the partner head's replies
-   * too (their tasks, e.g. an Antigravity worker, run in the partner's process): they are left out.
-   */
-  private get ownRecords(): ChatRecord[] {
-    if (!this.sharesChat) return this.records;
-    return this.records.filter((record) => (record.engine ?? "claude") === this.engine);
-  }
+  private get ownRecords(): ChatRecord[] { return this.recordsBook.ownRecords; }
 
   /**
    * Work in this head's own process that a restart would end: its subagents or workers (hosted ones count,
@@ -4458,13 +4137,7 @@ export class Bot {
     if (!this.turn && !this.tidying && !this.switching) this.next();
   }
 
-  /** The interrupted-work note for a wake, once: those tasks count as told from now on (`takeInterruptedNote`). */
-  private takeInterruptedNote(): string {
-    const note = interruptedNote(this.records);
-    if (!note) return "";
-    for (const record of markCutOffTasksTold(this.records)) this.changed(record);
-    return note;
-  }
+  private takeInterruptedNote(): string { return this.recordsBook.takeInterruptedNote(); }
 
   // ------------------------------------------------------------------------------------------
   // Quiet runs (1.x's `checkStall`, `noteProgress`)
@@ -5709,45 +5382,10 @@ export class Bot {
     return result;
   }
 
-  /** The user's own reaction on a line (`Bot.setReaction`, actor "user"). */
-  react(messageId: string, emoji: string, present: boolean): ResultOf<"chat.react"> {
-    if (!REACTION_PALETTE.includes(emoji)) throw new ContractError("bad_request", "Not one of the reactions.");
-    if (this.readOnly) throw new ContractError("conflict", this.problem ?? "Read-only.");
-    return { changed: this.setReaction(messageId, emoji, present, "user") };
-  }
-
-  private setReaction(messageId: string, emoji: string, present: boolean, actor: string): boolean {
-    const record = this.records.slice(-HISTORY_LIMIT).find((candidate) => candidate.id === messageId && candidate.role !== "divider");
-    if (!record) throw new ContractError("not_found", "No such line.");
-    const before = JSON.stringify(record.reactions ?? []);
-    const reactions = (record.reactions ?? []).filter((r) => !(r.emoji === emoji && r.actor === actor));
-    if (present) reactions.push({ emoji, actor });
-    reactions.sort(compareReactions);
-    if (JSON.stringify(reactions) === before) return false;
-    record.reactions = reactions;
-    this.changed(record);
-    return true;
-  }
-
-  private applyReactions(actions: { messageId: string; emoji: string; present: boolean }[]) {
-    const actor = `head:${this.engine}`;
-    for (const action of actions) {
-      try {
-        this.owner.setReaction(action.messageId, action.emoji, action.present, actor);
-        // Its own reaction is not news to this head's session.
-        if (this.reactionsSeen) this.reactionsSeen = applyingReaction(this.reactionsSeen, action.messageId, action.emoji, action.present, actor);
-      } catch { /* A line it named that is not in the chat. */ }
-    }
-  }
-
-  read(): ResultOf<"chat.read"> {
-    if (this.unread !== 0) {
-      this.unread = 0;
-      if (!this.readOnly) this.store.saveSetting("unread", 0);
-      this.updated();
-    }
-    return { read: true };
-  }
+  react(messageId: string, emoji: string, present: boolean): ResultOf<"chat.react"> { return this.recordsBook.react(messageId, emoji, present); }
+  setReaction(messageId: string, emoji: string, present: boolean, actor: string): boolean { return this.recordsBook.setReaction(messageId, emoji, present, actor); }
+  private applyReactions(actions: { messageId: string; emoji: string; present: boolean }[]) { return this.recordsBook.applyReactions(actions); }
+  read(): ResultOf<"chat.read"> { return this.recordsBook.read(); }
 
   // ------------------------------------------------------------------------------------------
   // Core hot swap (hot-swap.ts): this bot and its partner head as one.
