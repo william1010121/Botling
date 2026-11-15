@@ -19,6 +19,8 @@
 //                                        first, so the owner never holds a copy for a slot nobody sends. A refused send
 //                                        (`sendWire` false: the link, not the row) never settles a row; it is tried again
 //                                        on the next pump.
+//   a dead row nothing needs        → deleted (`pruneDead`, forward-queue.ts): once no row, unanswered slot or ServerOrigin
+//                                        submit of its queue can still need the raised floor, so `forwarddead` stays small.
 //
 // It never answers a command with an outcome of its own (F3): no scope or grant check (only the owner's decision
 // counts); the front end hears `held`, then the owner's answer. The two exceptions settle a row no owner can ever
@@ -27,7 +29,7 @@
 import { encodeWireFrame, LogId, queueKey, type CmdBody, type Message, type MessageOf, type Slot, type WireMessage } from "../../protocol";
 import type { Db } from "../store";
 import { cmdHash } from "../slots";
-import { commitCancel, commitRow, dropOwner, failRow, isRetired, ownerWork, queueStats, serverOriginPending, takeNoted, takeResult, takeRetry, type ForwardRow, type OwnerQueue, type QueuedRow } from "./forward-queue";
+import { commitCancel, commitRow, deadToPrune, dropOwner, failRow, isRetired, ownerHasHole, ownerWork, pruneDead, queueStats, serverOriginPending, takeNoted, takeResult, takeRetry, type DroppedRow, type OwnerQueue, type QueuedRow } from "./forward-queue";
 import type { Directory } from "./directory";
 
 /** A peer session as the forwarder uses it (server/peer PeerSession). */
@@ -71,6 +73,8 @@ export class Forwarder {
   private readonly encode: (message: WireMessage) => { ok: true } | { ok: false; reason: string };
   /** Dead rows being moved out right now (slot key + command hash), so a second pump does not submit them again. */
   private readonly settling = new Set<string>();
+  /** Owners whose dead rows are being pruned right now (one prune at a time per owner). */
+  private readonly pruning = new Set<string>();
   /** Per owner: failed attempts to move a dead row out, and the timer for the next one. */
   private readonly settleRetries = new Map<string, { tries: number; timer: ReturnType<typeof setTimeout> | null }>();
 
@@ -106,7 +110,7 @@ export class Forwarder {
   /** Drops every queued command and cancel for each revoked `owner` and relays `cmd.refused{revoked}` (§4.6). */
   async revoked(owners: readonly string[]): Promise<void> {
     for (const owner of owners) {
-      let dropped: ForwardRow[];
+      let dropped: DroppedRow[];
       try {
         dropped = await this.options.submit((tx) => dropOwner(tx, owner));
       } catch (error) {
@@ -115,7 +119,7 @@ export class Forwarder {
       }
       const session = this.options.session(owner);
       if (session) this.sent.delete(session);
-      for (const row of dropped) this.relay(row.slot.origin, this.refusedRevoked(row.slot, row.envelope.inc));
+      for (const row of dropped) this.relay(row.slot.origin, this.refusedRevoked(row.slot, row.envelope && LogId.safeParse(row.envelope.inc).success ? row.envelope.inc : UNKNOWN_INC));
       if (dropped.length) this.options.log(`forward: dropped ${dropped.length} queued command(s) for revoked peer ${owner}`);
     }
   }
@@ -164,6 +168,7 @@ export class Forwarder {
    */
   pump(owner: string): void {
     if (this.options.isRevoked?.(owner)) return;
+    this.prune(owner);
     const session = this.options.session(owner);
     if (!session || session.state !== "open") return;
     let sent = this.sent.get(session);
@@ -279,10 +284,24 @@ export class Forwarder {
     this.settleRetries.set(owner, state);
   }
 
-  /** Pumps `owner` when a dead slot is waiting in its queues: an answer may have freed the rows above it. */
+  /**
+   * Deletes the dead rows of `owner` that nothing needs any more (async, one commit; decided again inside it). A failed
+   * read or commit leaves them: the next pump tries again, and nothing is lost by waiting.
+   */
+  private prune(owner: string): void {
+    if (this.pruning.has(owner)) return;
+    try { if (deadToPrune(this.options.reader(), owner).length === 0) return; } catch { return; }
+    this.pruning.add(owner);
+    this.options.submit((tx) => pruneDead(tx, owner)).then(() => { this.pruning.delete(owner); }, (error: unknown) => {
+      this.pruning.delete(owner);
+      this.options.log(`forward: pruning dead rows for ${owner} failed: ${errorText(error)}`);
+    });
+  }
+
+  /** Pumps `owner` when a dead slot has a row above it: an answer may have freed that row (a dead row with nothing above it has nothing to free). */
   private pumpAfterAnswer(owner: string): void {
     try {
-      if (!this.options.reader().prepare("SELECT 1 AS x FROM forwarddead WHERE owner = ? LIMIT 1").get(owner)) return;
+      if (!ownerHasHole(this.options.reader(), owner)) return;
     } catch { return; }
     this.pump(owner);
   }

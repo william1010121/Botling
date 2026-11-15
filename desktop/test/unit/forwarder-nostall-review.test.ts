@@ -82,7 +82,8 @@ describe("forwarder-nostall review probes", () => {
       // A command for another bot of the same owner comes in after the dead row moved out.
       await h.forwarder.commit(env(1, `bot:${BOT_B2}`), PEER);
       await until(() => h.cmds().some((c) => c.slot.target === `bot:${BOT_B2}`), { timeout: 2_000 });
-      await until(() => Number(h.db.prepare("SELECT COUNT(*) AS n FROM forwarddead").get()!.n) === 2, { timeout: 2_000 });
+      // Slot 3 ends in forwarddead too; slot 2 (dead below it, nothing above or below it) is pruned then, so the table holds the newest dead slot only.
+      await until(() => h.db.prepare("SELECT 1 AS x FROM forwarddead WHERE target = ? AND n = 3").get(`bot:${BOT_B1}`), { timeout: 2_000 });
     } finally {
       await h.close();
     }
