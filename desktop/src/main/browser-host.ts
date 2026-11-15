@@ -21,7 +21,7 @@ import { BROWSER_CHANNEL, isWebUrl, urlFromInput, type BrowserDown, type Browser
 import { runOptions, siteOf, toolIsOn, toolsFor, type RunFile, type SiteToolOptions } from "../browser-site-tools";
 import { NetCapture } from "../browser-bot";
 import { droppedPdfPaths, fileNavigation, isOpenablePdf, localPdfPath, pdfFileUrl, pdfTabFileUrl } from "../browser-pdf";
-import { captureFor, paneUserAgent, popupWay, type Debuggee } from "../browser-auth";
+import { captureFor, followNavigation, paneUserAgent, popupWay, type Debuggee } from "../browser-auth";
 import { HintAsks, acceptLanguages, withHints, type HintFacts } from "../browser-hints";
 import type { BotBrowserWindow } from "./browser-bot-host";
 import { BrowserTabs, type TabPage } from "./browser-tabs";
@@ -265,9 +265,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
       },
       detach: () => { try { cdp.detach(); } catch { /* already off */ } },
     };
-    const follow = (details: { url: string; isMainFrame: boolean; isSameDocument?: boolean }) => {
-      if (details.isMainFrame && !details.isSameDocument) captureFor(details.url, debuggee);
-    };
+    const follow = (details: { url: string; isMainFrame: boolean; isSameDocument?: boolean }) => followNavigation(details, debuggee);
     contents.on("did-start-navigation", follow);
     contents.on("did-redirect-navigation", follow);
     // A navigation that never committed (cancelled, a download, a 204) leaves the page where it was.

@@ -2,7 +2,7 @@
 // Electron), and a sign-in popup stays a popup of its page (it reports back to window.opener) while target=_blank
 // still opens a tab.
 import { describe, expect, it } from "vitest";
-import { captureFor, isSignInPage, paneUserAgent, popupWay, type Debuggee } from "../../src/browser-auth";
+import { captureFor, followNavigation, isSignInPage, paneUserAgent, popupWay, type Debuggee } from "../../src/browser-auth";
 
 describe("pane user agent", () => {
   it("drops the app name and Electron, keeping the platform and Chrome's major version", () => {
@@ -59,6 +59,11 @@ describe("sign-in pages", () => {
       "https://accounts.google.com.evil.com/",
       "https://evil.com/accounts.google.com",
       "http://accounts.google.com.example/",
+      // Three-letter gTLDs anyone can register under (com.xyz, co.xyz, google.top): not Google's country hosts.
+      "https://accounts.google.com.xyz/",
+      "https://accounts.google.co.xyz/",
+      "https://accounts.google.top/",
+      "https://accounts.google.com./",
       "about:blank",
       "not a url",
     ]) expect(isSignInPage(url), url).toBe(false);
@@ -94,5 +99,13 @@ describe("a tab's capture around sign-in pages", () => {
     expect(captureFor("https://github.com/login", debuggee)).toBe(true);
     expect(captureFor("about:blank", debuggee)).toBe(true);
     expect(calls).toEqual([]);
+  });
+  it("moves only on a new document in the top frame", () => {
+    const { debuggee, calls } = fake();
+    followNavigation({ url: "https://accounts.google.com/gsi/iframe/select", isMainFrame: false }, debuggee);
+    followNavigation({ url: "https://accounts.google.com/#x", isMainFrame: true, isSameDocument: true }, debuggee);
+    expect(calls).toEqual([]);
+    followNavigation({ url: "https://accounts.google.com/v3/signin/identifier", isMainFrame: true, isSameDocument: false }, debuggee);
+    expect(calls).toEqual(["detach"]);
   });
 });

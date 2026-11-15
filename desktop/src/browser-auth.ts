@@ -29,11 +29,13 @@ export function popupWay(url: string, disposition: string): PopupWay {
   return url === "about:blank" ? "refuse" : "tab";
 }
 
-/** Google's sign-in pages: accounts.google.com, the country hosts and accounts.youtube.com it sets cookies through. */
+/** Google's sign-in pages: accounts.google.com, the country hosts and accounts.youtube.com it sets cookies through.
+ * Country hosts are two letters (ccTLDs): a three-letter gTLD would let anyone who registers com.xyz or google.xyz
+ * drop a tab's capture on their own page. */
 export function isSignInPage(url: string): boolean {
   let host: string;
   try { const u = new URL(url); if (u.protocol !== "https:" && u.protocol !== "http:") return false; host = u.hostname.toLowerCase(); } catch { return false; }
-  return host === "accounts.youtube.com" || /^accounts\.google\.(?:com?\.)?[a-z]{2,3}$/.test(host);
+  return host === "accounts.youtube.com" || /^accounts\.google\.(?:com|(?:com?\.)?[a-z]{2})$/.test(host);
 }
 
 /** A tab's DevTools protocol client, as the capture sees it. */
@@ -46,6 +48,12 @@ export function captureFor(url: string, debuggee: Debuggee): boolean {
     if (want) debuggee.attach(); else debuggee.detach();
   }
   return debuggee.isAttached();
+}
+
+/** A navigation of the tab: only a new document in the top frame moves the capture (a Google sign-in iframe on another
+ * page, or a same-document hop, leaves it where it is). */
+export function followNavigation(details: { url: string; isMainFrame: boolean; isSameDocument?: boolean }, debuggee: Debuggee): void {
+  if (details.isMainFrame && !details.isSameDocument) captureFor(details.url, debuggee);
 }
 
 function isHttp(url: string): boolean {
