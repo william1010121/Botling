@@ -18,12 +18,18 @@
 // - A ready PDF (step 15) carries its prepared text's URL (the owner's `text` variant) besides its own; a tap in the
 //   frame (`media.open`) opens the viewer (pdf-overlay.ts) over the page with both.
 // - Nothing about permissions is stored: tickets live in memory only, and a new page asks again.
+// - The relay path (step 14): with the page's service worker in control (sw-bridge.ts), every URL handed out is a bridge
+//   URL (`sw=1`), which the worker answers over the session; posters, images and PDFs are read from the page (or its
+//   same-origin viewer), which the worker controls. A video is played in the page's own player (video-overlay.ts): the
+//   chat frame, which no worker controls, shows its poster and opens the player on a tap (`open: "player"`).
 import type { FeLink, RemoteContentAnswer } from "../../src/fe-link";
 import { contentUrlPath, type ContentVariant, type EntryRef } from "../../src/protocol";
 import { kindOfType, type FrameMediaMessage, type MediaAnswer, type MediaKind, type MediaState, type MediaWant, type ShellMediaMessage } from "../media-wire";
 import { chooseVariant, PATH_LABEL, RateMeter, type Choice, type PathKind, type VariantName } from "../player";
 import { CONTENT_ITEM_MAX, type ContentCache } from "./content-cache";
 import { openPdfViewer } from "./pdf-overlay";
+import type { SwBridge } from "./sw-bridge";
+import { newVideoDiagnostics, openVideoPlayer, type VideoDiagnostics } from "./video-overlay";
 
 /** How often a ready file's ticket is renewed (the server keeps one 10 minutes). */
 export const RENEW_MS = 4 * 60 * 1000;
@@ -74,6 +80,10 @@ export interface MediaBrokerOptions {
   player?: PlayerDiagnostics;
   fetch?: typeof fetch;
   storage?: PrefStore | null;
+  /** The content bridge on the relay path (step 14). */
+  bridge?: SwBridge | null;
+  /** The player over the page (step 14). */
+  video?: VideoDiagnostics;
 }
 
 export function newPlayerDiagnostics(path: PathKind): PlayerDiagnostics {
@@ -81,9 +91,9 @@ export function newPlayerDiagnostics(path: PathKind): PlayerDiagnostics {
 }
 
 /** A file URL's last path part, decoded ("report.pdf"). */
-function nameOf(url: string): string {
+function nameOf(url: string, fallback = "document.pdf"): string {
   const path = url.replace(/^file:\/\//i, "").split(/[?#]/)[0] ?? "";
-  const last = path.split("/").pop() || "document.pdf";
+  const last = path.split("/").pop() || fallback;
   try { return decodeURIComponent(last); } catch { return last; }
 }
 
@@ -109,6 +119,10 @@ export class MediaBroker {
   private readonly fetchImpl: typeof fetch;
   private readonly storage: PrefStore | null;
   private readonly player: PlayerDiagnostics;
+  private readonly bridge: SwBridge | null;
+  /** Whether bridge URLs are handed out (the worker controls the page); null until known. */
+  private bridgeOn: boolean | null = null;
+  readonly video: VideoDiagnostics;
 
   constructor(private readonly link: FeLink, private readonly frame: () => Window | null, private readonly diag?: MediaDiagnostics, options: MediaBrokerOptions = {}) {
     this.cache = options.cache ?? null;
@@ -116,6 +130,10 @@ export class MediaBroker {
     this.player = options.player ?? newPlayerDiagnostics(this.meter.path);
     this.fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
     this.storage = options.storage ?? null;
+    this.bridge = options.bridge ?? null;
+    this.video = options.video ?? newVideoDiagnostics();
+    if (!this.bridge) this.bridgeOn = false;
+    else void this.bridge.ready.then((on) => { this.bridgeOn = on; });
     this.syncPlayer();
     // The kept choice arrives a moment later; videos answered meanwhile are answered again.
     void this.storage?.load(CHOICE_KEY).then((saved) => {
@@ -175,17 +193,10 @@ export class MediaBroker {
       if (this.meter.sample(data.bytes, data.ms)) this.syncPlayer();
     } else if (data.botling3 === "media.switched" && typeof data.key === "string") {
       const known = this.known.get(data.key);
-      if (!known) return;
-      const original = known.answer.sources?.original;
-      if (original?.bitrate) this.meter.stalledAt(original.bitrate);
-      known.switched = true;
-      this.player.switches += 1;
-      this.player.switchedBy.push(data.why === "slow-start" ? "slow-start" : "stalls");
-      if (this.player.switchedBy.length > 20) this.player.switchedBy.shift();
-      this.syncPlayer();
-      void this.answerReady(known);
+      if (known) this.switchedToPreview(known, data.why === "slow-start" ? "slow-start" : "stalls");
     } else if (data.botling3 === "media.open" && typeof data.key === "string") {
       const known = this.known.get(data.key);
+      if (known?.answer.state === "ready" && known.answer.kind === "video" && known.answer.open === "player") { this.openVideo(known); return; }
       if (!known || known.answer.state !== "ready" || known.answer.kind !== "pdf" || !known.answer.url) return;
       const answer = known.answer;
       openPdfViewer({ src: answer.url!, ...(answer.textUrl ? { text: answer.textUrl } : {}), name: nameOf(known.want.url), ...(answer.size !== undefined ? { size: answer.size } : {}), relay: this.meter.path === "relay" });
@@ -194,6 +205,33 @@ export class MediaBroker {
       void this.storage?.save(CHOICE_KEY, data.choice).catch(() => undefined);
       this.applyChoice(data.choice);
     }
+  }
+
+  /** A playing original gave way to the preview (two stalls, or slow start): the session's rate is capped below it. */
+  private switchedToPreview(known: Known, why: "stalls" | "slow-start"): void {
+    const original = known.answer.sources?.original;
+    if (original?.bitrate) this.meter.stalledAt(original.bitrate);
+    known.switched = true;
+    this.player.switches += 1;
+    this.player.switchedBy.push(why);
+    if (this.player.switchedBy.length > 20) this.player.switchedBy.shift();
+    this.syncPlayer();
+    void this.answerReady(known);
+  }
+
+  /** The relay path's player over the page for a ready video (step 14), with the step 11 rules. */
+  private openVideo(known: Known): void {
+    const answer = known.answer;
+    if (!answer.src || !answer.sources) return;
+    openVideoPlayer({
+      key: answer.key, name: nameOf(known.want.url, "video"), src: answer.src, variant: answer.variant ?? "original", sources: answer.sources,
+      ...(answer.poster ? { poster: answer.poster } : {}), ...(answer.pathLabel ? { pathLabel: answer.pathLabel } : {}),
+    }, {
+      rate: (bytes, ms) => { if (this.meter.sample(bytes, ms)) this.syncPlayer(); },
+      switched: (key, why) => { const k = this.known.get(key); if (k) this.switchedToPreview(k, why); },
+      failed: (key, reason) => { const k = this.known.get(key); if (!k) return; if (reason === "stalled") this.checkStalled(k); else this.failed(k); },
+    }, this.video);
+    if (this.diag?.[answer.key]) this.diag[answer.key]!.opened = (this.diag[answer.key]!.opened ?? 0) + 1;
   }
 
   /** This device's choice in the player menu: every ready video is answered again under it. */
@@ -264,13 +302,16 @@ export class MediaBroker {
 
   private url(known: Known, variant: string): string {
     const ref = known.ref!;
-    return contentUrlPath({ owner: ref.owner, id: ref.id, variant, entry: ref.entry, ticket: known.ticket! });
+    const url = contentUrlPath({ owner: ref.owner, id: ref.id, variant, entry: ref.entry, ticket: known.ticket! });
+    return this.bridge && this.bridgeOn ? this.bridge.url(url) : url;
   }
 
   /** Builds and posts the answer of a ready file from its reference, variants, the cache and the player rule. */
   private async answerReady(known: Known): Promise<void> {
     const ref = known.ref;
     if (!ref || !known.ticket) return;
+    // The relay path: wait until the worker controls the page (or failed to), so the URLs are the bridge's.
+    if (this.bridge && this.bridgeOn === null) this.bridgeOn = await this.bridge.ready;
     const key = known.want.key;
     const kind: MediaKind = kindOfType(ref.type);
     const byName = new Map(known.variants.map((v) => [v.name, v]));
@@ -283,6 +324,7 @@ export class MediaBroker {
       const decision = known.switched && preview ? { variant: "preview" as const, reason: "switched", badge: "preview" } : chooseVariant({ original: { ...(original?.bitrate ? { bitrate: original.bitrate } : {}) }, ...(preview ? { preview: { ...(preview.bitrate ? { bitrate: preview.bitrate } : {}) } } : {}) }, this.meter.bps, this.choice);
       const sources: MediaAnswer["sources"] = { original: { src: this.url(known, "original"), ...(original?.bitrate ? { bitrate: original.bitrate } : {}) } };
       if (preview) sources.preview = { src: this.url(known, "preview"), ...(preview.bitrate ? { bitrate: preview.bitrate } : {}) };
+      if (this.bridgeOn) base.open = "player";
       Object.assign(base, { src: sources[decision.variant]!.src, variant: decision.variant, sources, choice: this.choice, ...(decision.badge ? { badge: decision.badge } : {}), ...(original?.durationMs ? { durationMs: original.durationMs } : {}) });
       Object.assign(extra, { variant: decision.variant, reason: decision.reason, ...(decision.badge ? { badge: decision.badge } : {}), ...(original?.durationMs ? { durationMs: original.durationMs } : {}) });
       const poster = byName.get("poster");

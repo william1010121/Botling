@@ -43,6 +43,11 @@ export interface MediaAnswer {
   pathLabel?: string;
   /** This device's choice in the player menu. */
   choice?: Choice;
+  /**
+   * `player` (the relay path, step 14): the video plays in the page's own player, which the page's service worker
+   * serves; the frame shows the poster and asks for it with `media.open` on a tap instead of loading `src` itself.
+   */
+  open?: "player";
 }
 
 export type FrameMediaMessage =
@@ -59,7 +64,8 @@ export type FrameMediaMessage =
   | { botling3: "media.switched"; key: string; why?: "stalls" | "slow-start" }
   /** The device's choice in the player menu (kept per device by the shell). */
   | { botling3: "media.choice"; choice: Choice }
-  /** The person tapped a ready PDF (its page-1 thumbnail or its card): the shell opens the viewer (step 15). */
+  /** The person tapped a ready PDF (its page-1 thumbnail or its card): the shell opens the viewer (step 15); or a video
+   *  whose answer says `open: "player"` (the relay path, step 14): the shell opens its player over the page. */
   | { botling3: "media.open"; key: string };
 
 export type ShellMediaMessage = { botling3: "media"; items: MediaAnswer[] };

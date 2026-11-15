@@ -720,6 +720,8 @@ export interface ContentSink {
 interface Serving {
   req: string;
   credit: number;
+  /** Bytes sent so far (the cancel log line). */
+  sent: number;
   cancelled: boolean;
   wake: (() => void) | null;
 }
@@ -759,7 +761,7 @@ export class PeerContentOwner {
         if (!map) { map = new Map(); this.serving.set(session, map); }
         const prior = map.get(m.req);
         if (prior) { prior.cancelled = true; prior.wake?.(); }
-        const serving: Serving = { req: m.req, credit: session.contentWindow ?? PEER_CONTENT_WINDOW, cancelled: false, wake: null };
+        const serving: Serving = { req: m.req, credit: session.contentWindow ?? PEER_CONTENT_WINDOW, sent: 0, cancelled: false, wake: null };
         map.set(m.req, serving);
         this.counts.gets++;
         void this.serve(session, m, serving).catch((error) => {
@@ -777,7 +779,11 @@ export class PeerContentOwner {
       case "content.cancel": {
         const m = message as MessageOf<"content.cancel">;
         const serving = this.serving.get(session)?.get(m.req);
-        if (serving) { serving.cancelled = true; this.counts.cancelled++; serving.wake?.(); }
+        if (serving) {
+          serving.cancelled = true; this.counts.cancelled++; serving.wake?.();
+          // Seen in the log (M2 step 14: a player that seeks away through the page's service worker cancels its read).
+          this.log(`content: cancel ${m.req} from ${session.peer ?? "?"} after ${serving.sent} bytes`);
+        }
         return true;
       }
       default:
@@ -857,6 +863,7 @@ export class PeerContentOwner {
           if (this.options.corruptId && this.options.corruptId === m.id && pos % MiB === 0) bytes[Math.min(100, bytes.length - 1)]! ^= 0xff;
           if (!session.sendChunk({ t: "content.chunk", req: m.req, offset: pos, bytes })) return;
           serving.credit -= piece;
+          serving.sent += piece;
           this.counts.chunksSent++;
           this.counts.bytesSent += piece;
           pos += piece;

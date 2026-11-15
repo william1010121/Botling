@@ -4,6 +4,7 @@
 // check passed, so nothing the link sends leaves before that, and nothing is handed to it unopened.
 //
 // Isomorphic: the WebSocket constructor is the global one (browsers, Node 22+) or injected; WebCrypto only.
+import { BINARY_FRAME_MARK } from "../protocol";
 import type { Dial, FeSocket, SocketHandlers } from "./link";
 import { SessionLink, type DhKeyPair, type SessionEnd, type SessionTransport } from "../session";
 
@@ -81,7 +82,8 @@ export function wsDial(options: WsDialOptions): Dial {
       self: { memberId: identity.memberId, dhPub: identity.dh.publicKey, dhKey: identity.dh.privateKey },
       responder: { memberId: identity.server.memberId, dhPub: identity.server.dhPub },
     }, {
-      onFrame: (plaintext) => { if (!closed) handlers.frame(decoder.decode(plaintext)); },
+      // A binary frame (a content read's `content.chunk`, M2 step 14) stays bytes; every other frame is JSON text.
+      onFrame: (plaintext) => { if (!closed) handlers.frame(plaintext[0] === BINARY_FRAME_MARK ? plaintext : decoder.decode(plaintext)); },
       onEnd: (end) => { options.onEnd?.(end); finish(`${end.reason}: ${end.detail}`); },
     });
     network?.events.addEventListener("offline", onOffline);

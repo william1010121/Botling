@@ -200,7 +200,8 @@ function onOpen(event: Event): void {
   if (event instanceof KeyboardEvent && event.key !== "Enter" && event.key !== " ") return;
   const target = (event.target as Element | null)?.closest?.("[data-botling3-open]") as HTMLElement | null;
   const key = target?.dataset.botling3Open;
-  if (!key || answers.get(key)?.kind !== "pdf" || answers.get(key)?.state !== "ready") return;
+  const answer = key ? answers.get(key) : undefined;
+  if (!key || answer?.state !== "ready" || !(answer.kind === "pdf" || (answer.kind === "video" && answer.open === "player"))) return;
   event.preventDefault();
   event.stopImmediatePropagation();
   post({ botling3: "media.open", key });
@@ -221,6 +222,45 @@ function chip(video: HTMLVideoElement, answer: MediaAnswer): void {
   const text = parts.join(" · ");
   if (span.textContent !== text) span.textContent = text;
   holder.style.visibility = video.dataset.botling3Played ? "hidden" : "visible";
+}
+
+/**
+ * A video the page's player shows (the relay path, step 14): the element stays hidden with its placeholder source (it
+ * never loads from here), and a card in its place shows the poster, the duration, size and badge, and a play mark; a
+ * tap opens the player over the page (`media.open`).
+ */
+function posterCard(video: HTMLVideoElement, answer: MediaAnswer, key: string): void {
+  removeBox(video, "wait", "before");
+  removeBox(video, "note", "after");
+  removeBox(video, "chip", "before");
+  removeBox(video, "quality", "after");
+  const src = video.getAttribute("src") ?? "";
+  if (src && !src.startsWith(PLACEHOLDER)) { video.removeAttribute("src"); video.load(); }
+  hide(video);
+  const card = box(video, "poster", "before", "media-poster",
+    "position:relative;display:block;width:100%;max-width:360px;aspect-ratio:16/9;margin:4px 0;border-radius:10px;overflow:hidden;background:#000 center/cover no-repeat");
+  card.setAttribute("aria-label", `Play ${nameOf(video.dataset.botling3Url ?? "") || "video"}`);
+  const poster = answer.poster ? `url("${answer.poster}")` : "";
+  if (card.style.backgroundImage !== poster) card.style.backgroundImage = poster;
+  let mark = card.querySelector<HTMLElement>("[data-role=play]");
+  if (!mark) {
+    mark = document.createElement("span");
+    mark.dataset.role = "play";
+    mark.setAttribute("aria-hidden", "true");
+    mark.style.cssText = "position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:22px;line-height:56px;text-align:center;padding-left:4px;box-sizing:border-box";
+    mark.textContent = "▶";
+    card.append(mark);
+  }
+  let chipEl = card.querySelector<HTMLElement>("[data-testid=media-duration]");
+  const parts = [answer.durationMs ? formatDuration(answer.durationMs) : "", answer.size ? formatSize(answer.size) : "", answer.badge ?? ""].filter(Boolean);
+  if (parts.length && !chipEl) {
+    chipEl = document.createElement("span");
+    chipEl.dataset.testid = "media-duration";
+    chipEl.style.cssText = "position:absolute;left:8px;top:8px;padding:2px 7px;border-radius:6px;background:rgba(0,0,0,.62);color:#fff;font-size:12px;line-height:18px;font-variant-numeric:tabular-nums;white-space:nowrap";
+    card.append(chipEl);
+  }
+  if (chipEl) chipEl.textContent = parts.join(" · ");
+  openable(card, key);
 }
 
 const CHOICES: Choice[] = ["auto", "original", "preview"];
@@ -295,11 +335,14 @@ function apply(element: Element): void {
       if (card && answer.kind === "pdf") openable(card, key);
       return;
     }
+    // The relay path (step 14): the video plays in the page's player (no worker controls this frame); here, its poster.
+    if (element instanceof HTMLVideoElement && answer.open === "player") { posterCard(element, answer, key); return; }
     // This element failed on the answer it has: it waits (no retry loop) until the shell answers again.
     if (html.dataset.botling3FailedGen === String(gens.get(key) ?? 0)) return;
     delete html.dataset.botling3FailedGen;
     removeBox(host, "wait", "before");
     removeBox(host, "note", "after");
+    removeBox(host, "poster", "before");
     unhide(host);
     if (element instanceof HTMLVideoElement) {
       playback(element, key);
@@ -325,6 +368,7 @@ function apply(element: Element): void {
       if (element instanceof HTMLMediaElement) element.load();
     }
     removeBox(host, "wait", "before");
+    removeBox(host, "poster", "before");
     removeBox(host, "chip", "before");
     removeBox(host, "quality", "after");
     hide(host);

@@ -33,6 +33,9 @@ export interface FeSocket {
   sendBytes?(frame: Uint8Array): void;
   close(): void;
 }
+/** What a content read hears from the server (M2 step 14). */
+export type ContentReadMessage = MessageOf<"content.meta"> | MessageOf<"content.chunk"> | MessageOf<"content.gone">;
+
 export interface SocketHandlers {
   open(): void;
   frame(frame: string | Uint8Array): void;
@@ -170,6 +173,8 @@ export class FeLink {
   private readonly requests = new Map<string, PendingRequest>();
   /** M2 step 12: the answers to uploads, by req. */
   private readonly uploadListeners = new Map<string, (message: MessageOf<"content.stored"> | MessageOf<"content.credit"> | MessageOf<"content.gone">) => void>();
+  /** Content reads by `req` (M2 step 14): the server's `content.meta` / `content.chunk` / `content.gone`, and `null` when the session ends. */
+  private readonly contentReaders = new Map<string, (message: ContentReadMessage | null) => void>();
   /** `res` answers too large for one frame, joined from their `res.part`s. */
   private readonly resParts = new ResAssembler();
   private readonly visibleAt = new Map<string, number>();
@@ -419,6 +424,23 @@ export class FeLink {
     return () => { if (this.uploadListeners.get(req) === listener) this.uploadListeners.delete(req); };
   }
 
+  /**
+   * A content read over the session (M2 step 14, v1 §9A.4: the page's service worker on the relay path): `content.get`
+   * for a byte range of a reference, then `content.credit` as the player reads and `content.cancel` when it seeks away
+   * or closes. The answers come to `onContent(req, …)`. False when no session is attached.
+   */
+  postContent(message: MessageOf<"content.get"> | MessageOf<"content.credit"> | MessageOf<"content.cancel">): boolean {
+    const session = this.session;
+    if (!session?.welcomed || session.closed) return false;
+    return this.send(session, message);
+  }
+
+  /** Hears the server's answers to the content read `req` (`null`: the session ended, the read is over). */
+  onContent(req: string, listener: (message: ContentReadMessage | null) => void): () => void {
+    this.contentReaders.set(req, listener);
+    return () => { if (this.contentReaders.get(req) === listener) this.contentReaders.delete(req); };
+  }
+
   /** A fresh request id (uploads name their own). */
   newReq(): string { return this.nextReq(); }
 
@@ -516,7 +538,12 @@ export class FeLink {
       case "res": case "history.page": this.onAnswer(message); return;
       case "res.part": this.onResPart(message); return;
       case "content.stored": case "content.credit": this.uploadListeners.get(message.req)?.(message); return;
-      case "content.gone": { const upload = this.uploadListeners.get(message.req); if (upload) { upload(message); return; } this.onContentAnswer(message); return; }
+      case "content.meta": case "content.chunk": { const reader = this.contentReaders.get(message.req); if (reader) { reader(message); return; } this.emit({ type: "message", message }); return; }
+      case "content.gone": {
+        const upload = this.uploadListeners.get(message.req); if (upload) { upload(message); return; }
+        const reader = this.contentReaders.get(message.req); if (reader) { reader(message); return; }
+        this.onContentAnswer(message); return;
+      }
       case "content.found": case "content.file": case "content.located": case "content.granted": this.onContentAnswer(message); return;
       case "bye":
         if (message.reason === "version") this.updateRequired(session, "a newer version");
@@ -901,6 +928,7 @@ export class FeLink {
     this.clearTimer("ping");
     this.clearTimer("dead");
     for (const [req, pending] of this.requests) { this.requests.delete(req); pending.reject(new Error("fe-link: the session ended")); }
+    for (const [req, reader] of [...this.contentReaders]) { this.contentReaders.delete(req); reader(null); }
     this.resParts.drop();
     this.cursors.detach();
     this.tables.detach();
