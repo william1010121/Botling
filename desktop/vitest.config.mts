@@ -22,9 +22,10 @@ const skipHeavy = process.platform === "darwin" && !process.env.CI && process.en
 // Reads the packaged helper, which only a macOS arm64 build whose clang output matches the reviewed pin produces.
 const needsHelper = existsSync("out/core/agy-file-helper.base64") ? [] : ["test/unit/agy-runtime-install.test.ts"];
 
-// Tests kept beside their code (most co-located tests are not run yet; add a file here once it passes, and to
-// package.json's test:unit, which CI runs).
-const colocated = ["src/mobile-bridge/pairing.test.ts", "src/mobile-bridge/bridge.test.ts", "mobile/pair.test.ts"];
+// Tests kept beside their code: all of src/mobile-bridge, plus mobile/pair.test.ts. The rest of mobile/*.test.{ts,tsx}
+// runs under mobile/vitest.config.ts (Web mode define); test/acceptance, test/record and test/provider-validation have
+// their own configs or are manual. Keep package.json's test:unit (which CI runs) in step.
+const colocated = ["src/mobile-bridge/**/*.test.ts", "mobile/pair.test.ts"];
 
 // relay/src (the relay server some tests start) imports `ws`. relay/ has no install of its own in a checkout made with
 // `npm ci` here (link-deps.sh links one in a worktree), so Node would look up the folders above it and could find
