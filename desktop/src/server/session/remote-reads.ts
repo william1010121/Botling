@@ -9,12 +9,13 @@
 //   is decided, so it holds for a copy held ahead and applied later, and for one whose device or server was revoked in
 //   between: `local` (the desktop window on its own server) and `admin` pass as in M1; a valid peer server passes for
 //   `reply` and `manage` (and the `server` call-in commands) when its stated scope matches, except that it never settles
-//   a card (`chat.choose`, `chat.answer`, `chat.ignoreQuestion`, `component.approve`: only a user does) and sets aside
-//   only a plain waiting item with `waiting.ignore` (peer-answer-guard); a device scope passes only when the origin is a valid device
+//   a card (`chat.choose`, `chat.answer`, `chat.ignoreQuestion`, `component.approve`: only a user does), never runs a
+//   plugin's method or button (`plugins.call|command|linkCommand|tabCommand`) and sets aside only a plain waiting item
+//   with `waiting.ignore` (peer-answer-guard); a device scope passes only when the origin is a valid device
 //   now and its roster scope allows the command (and the stated scope is the one it needs).
 import type { Command } from "../../contract";
 import { commandScope, remoteCmdRefusal, remoteReqRefusal, REMOTE_READS, type DeviceScope, type Scope } from "../../protocol";
-import { CARD_COMMANDS, type Authorize } from "../slots";
+import { CARD_COMMANDS, OWN_PLUGIN_COMMANDS, type Authorize } from "../slots";
 
 export { REMOTE_READS };
 
@@ -39,6 +40,13 @@ export interface DeviceRoster {
  * peer-answer-guard covers every card (a 2.x tool-permission card, a question, an approval).
  */
 export const USER_ONLY_CARD_DETAIL = "this card is answered only by a user (a device or this machine's window), never by another server";
+
+/**
+ * The refusal detail for a peer server's plugin method or button (`plugins.call|command|linkCommand|tabCommand`). They
+ * need only `reply`, and a write grant lets a plugin reach anything it owns (the whiteboard's `ignore` reaches
+ * `Core.ignoreWaiting`), so a server origin would be a way round the card and waiting rules above.
+ */
+export const PLUGIN_ORIGIN_DETAIL = "a plugin's method or button is run only by a user (a device or this machine's window), never by another server";
 
 /** The refusal detail for a peer server's `waiting.ignore` of anything but a plain waiting item. */
 export const WAITING_PLAIN_ONLY_DETAIL = "waiting.ignore from another server sets aside only a plain waiting item";
@@ -82,6 +90,11 @@ export function slotAuthorize(roster: DeviceRoster): Authorize {
       // peer-answer-guard (generalises M5-06c, which refused only an open `serverAsk` card): a card is the user's to
       // settle, whatever kind it is. Refused before any lookup, so there is nothing to throw or to fail open.
       if (CARD_COMMANDS.has(cmd.type)) return { reason: "origin", detail: USER_ONLY_CARD_DETAIL };
+      // fu-plugin-call-server-origin: no honest flow sends a plugin method or button with a server origin (a phone's
+      // forwarded command keeps the phone as its origin; a server's own commands are bots.create, waiting.ignore,
+      // chat.send and the call-ins). Refused before any grant is read, so a plugin's write grant is no way round
+      // the two rules above.
+      if (OWN_PLUGIN_COMMANDS.has(cmd.type)) return { reason: "origin", detail: PLUGIN_ORIGIN_DETAIL };
       // `waiting.ignore` keys on text, so it is an allowlist: the slot's target is this bot, and the owner's list
       // holds a plain item of it with exactly this text now. Otherwise a peer could ignore a card's predictable text
       // before the card appears, or hide a question. A hook that throws or is missing refuses.

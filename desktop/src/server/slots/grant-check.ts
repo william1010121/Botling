@@ -11,7 +11,7 @@ import type { PluginRow } from "../../protocol/table-rows";
 export type GrantDecision = { ok: true } | { ok: false; detail: string };
 
 /** Plugin commands a `write` grant lets a plugin send for itself (C6): the plugin's own server part and buttons. */
-const OWN_PLUGIN_COMMANDS: ReadonlySet<string> = new Set(["plugins.call", "plugins.command", "plugins.linkCommand", "plugins.tabCommand"]);
+export const OWN_PLUGIN_COMMANDS: ReadonlySet<string> = new Set(["plugins.call", "plugins.command", "plugins.linkCommand", "plugins.tabCommand"]);
 /**
  * Frame-broker helper commands a `write` plugin may send for itself (`cmd.name === via.plugin`): freezing a Note
  * picture (needs `files`, a write permission) and asking the ApprovalSheet about a command (M5-12b F2).
@@ -23,7 +23,7 @@ const OWN_HELPER_COMMANDS: ReadonlySet<string> = new Set(["plugins.noteSnapshot"
  */
 const RENDER_HELPER_COMMANDS: ReadonlySet<string> = new Set(["plugins.tileImages"]);
 
-/** M5-16: what a device (or a peer server) reads when it sends a plugin command with no `via`. */
+/** M5-16: what a device reads when it sends a plugin command with no `via` (a peer server is refused `origin` before this). */
 export const PLUGIN_COMMAND_NEEDS_GRANT = "plugin commands from a device need the plugin's grant";
 
 /**
