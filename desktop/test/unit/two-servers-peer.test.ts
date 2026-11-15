@@ -69,10 +69,25 @@ afterAll(async () => { await cluster?.cleanup(); }, 60_000);
 
 describe("M3 step 3: peer sessions between two botlingd", () => {
   it("KK opens with both keys valid in both rosters; one session, dialled by the smaller server id; loopback only", async () => {
-    const session = await bothLive();
+    // Both servers dial at start (each after a random 0–150 ms). When the larger id's dial opens first, both report its
+    // session live for a moment, until the smaller id's session opens and replaces it (§6.2). Reading the first live
+    // session was the flake (seen under load): wait until both sides agree on one session and keep it.
     const smaller = ka.memberId < kb.memberId ? ka.memberId : kb.memberId;
-    expect(peerState(a)!.initiator).toBe(smaller);
-    expect(peerState(b)!.initiator).toBe(smaller);
+    const small = smaller === ka.memberId ? a : b;
+    let held = { id: "", since: 0 };
+    const session = await until(() => {
+      const sa = peerState(a), sb = peerState(b);
+      const id = sa?.state === "live" && sb?.state === "live" && sa.sessionId && sa.sessionId === sb.sessionId ? sa.sessionId : "";
+      if (id !== held.id) held = { id, since: Date.now() };
+      // The smaller side dialled: its session is the one that must stay (no other dial is in flight once it is kept).
+      const settled = id && sa!.initiator === smaller ? 0 : 1_500;
+      return id && Date.now() - held.since >= settled ? id : null;
+    }, { timeout: 20_000, every: 50, what: "one session both sides keep" });
+    // The smaller id dialled (it always does unless the larger's session was live before its first try): its session
+    // won. Every "two sessions" decision on either side kept the smaller id's session.
+    if (logLines(small, /: dialling/).length > 0) expect(peerState(a)!.initiator).toBe(smaller);
+    expect(peerState(b)!.initiator).toBe(peerState(a)!.initiator);
+    for (const line of [...logLines(a, /two sessions; keeping/), ...logLines(b, /two sessions; keeping/)]) expect(line).toContain(`dialled by ${smaller}`);
     expect(peerState(a)!.member).toBe(kb.memberId);
     expect(peerState(b)!.member).toBe(ka.memberId);
     expect(session).toMatch(/^[A-Za-z0-9_-]{22}$/);

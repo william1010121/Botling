@@ -118,7 +118,10 @@ export function goneStatus(reason: BridgeGone): number {
 
 /** The refusal rule for WebKit's media loader (`mediaLoaderRefusal`): true when the status goes in a header of an empty 200. */
 export function loaderRefusal(status: number, headers: { get(name: string): string | null }): boolean {
-  return status >= 400 && !!headers.get("x-playback-session-id") && !!headers.get("range");
+  // Same rule as the server's `mediaLoaderRefusal`: WebKit's opening probe (`bytes=0-1`) keeps its real status, so a
+  // source refused from the start errors at once instead of stalling until the watchdog.
+  const range = headers.get("range");
+  return status >= 400 && !!headers.get("x-playback-session-id") && !!range && range !== "bytes=0-1";
 }
 
 // --- Messages ------------------------------------------------------------------------------------------------------
