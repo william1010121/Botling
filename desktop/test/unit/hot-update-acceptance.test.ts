@@ -41,7 +41,7 @@ class HotServer extends FakeServer {
   rev = 0;
   /** The names `plugins.web` lists (the server's own answer; a framed plugin's source there is the fallback). */
   specNames: string[] = ["a", "b"];
-  private readonly held = new Map<string, unknown>();
+  private readonly held = new Map<string, { body: unknown; rev: number }>();
   constructor(readonly id: string) { super(); }
   override send(message: Message): void {
     super.send(message.t === "welcome" ? { ...message, serverId: this.id } : message);
@@ -53,11 +53,12 @@ class HotServer extends FakeServer {
   publish(change: Table): void {
     for (const [name, body] of Object.entries(change)) {
       const key = `plugin:${name}`;
-      if (body === null) this.held.delete(key); else this.held.set(key, body);
+      this.rev += 1;
+      if (body === null) this.held.delete(key); else this.held.set(key, { body, rev: this.rev });
     }
     this.rev += 1;
-    const rows = [...this.held].map(([key, body]) => ({ key, rev: this.rev, body }));
-    this.sendWire({ t: "rows", stream: `srv:${this.id}`, logId: `inc${this.id}`, after: 0, to: this.rev, rows, more: false });
+    const rows = [...this.held].map(([key, held]) => ({ key, rev: held.rev, body: held.body })).sort((x, y) => x.rev - y.rev);
+    this.sendWire({ t: "rows", stream: `srv:${this.id}`, logId: `incown-${this.id}`, after: 0, to: this.rev, rows, more: false });
   }
 }
 
