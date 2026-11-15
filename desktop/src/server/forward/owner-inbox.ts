@@ -16,6 +16,8 @@
 // command is a read (the owner's refusal, stored; the forwarder never refuses, F3).
 // M7-12a: a window command the attached server stamped `manage` passes through this unchanged (window-scope.ts: the
 // owner's slotAuthorize decides it as a user); only a stated `local`, `admin` or none still means `read`.
+// M7-12c: every copy is received with `peer` (the delivering session's peer id), and `slotAuthorize` re-checks it is still a
+// valid server where the slot is decided (a held copy too), so a peer revoked after its frame came in decides nothing.
 // A target this server does not own is not forwarded again (no loops, §11.2 step 5): a `srv:` target of another server
 // ends the session (`bye{role}`: the forwarder's directory is wrong); a `bot:` target goes to the slot engine, which
 // refuses a bot this server does not have.
@@ -96,9 +98,12 @@ export class OwnerInbox {
     const reply = (message: Message) => { if (session.state === "open") session.sendWire(message as WireMessage); };
     const route = routeOf(body.cmd.type).kind;
     const runtime = this.options.runtime;
+    // M7-12c (R1): the delivering peer goes with the copy, so the owner's decision (a held copy's too) checks it is still
+    // a valid server; a session that names no peer is `null` and refused there.
+    const options = { scope, reply, peer: session.peer ?? null };
     const status = route === "intent" || route === "legacy"
-      ? await runtime.receive(body, { scope, reply })
-      : await runtime.legacy.receive(body, { scope, reply });
+      ? await runtime.receive(body, options)
+      : await runtime.legacy.receive(body, options);
     if (status.status === "dropped") this.unsettled(session, `cmd ${body.cmd.type} (slot ${body.slot.n}) came before an earlier slot of its queue (D58)`);
   }
 

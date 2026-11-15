@@ -2,7 +2,7 @@
 // claim holds, and user message entry (`send`, `presetUserLine`, `startPresetTurn`).
 // Follows the M7-S41 bridge convention.
 import { randomUUID } from "node:crypto";
-import { ContractError, type Event, type ResultOf } from "../../contract";
+import { ContractError, type ResultOf } from "../../contract";
 import { AgyAcpHead } from "../agent/agy-acp";
 import { CodexHead } from "../agent/codex";
 import { ReplyText } from "../agent/stream";
@@ -11,7 +11,7 @@ import { archiveLine } from "../briefing";
 import { Bot, type Status } from "../bot";
 import {
   Conductor, displayName, fitted, hasTwo, isActive, otherHead, resolvePrimary,
-  type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
+  type AnswerTarget, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
 } from "../heads";
 import { isOpenQuestion, newId, toSwiftDate, type ChatRecord } from "../store/records";
 import type { BotContext } from "./context";

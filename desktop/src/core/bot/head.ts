@@ -20,7 +20,7 @@ import { isBotTool, type BotToolName, type ToolCaller } from "../bot-tools";
 import type { SeenReactions } from "../briefing";
 import type { ComponentKnowledge } from "../components/library";
 import type { BotContext } from "./context";
-import { displayName, type Engine, type Heads } from "../heads";
+import type { Engine, Heads } from "../heads";
 import type { Outage } from "../network-resume";
 import { isPlainOK, type BotPrompts } from "../prompts";
 import type { BotSettingsView } from "../../contract";
