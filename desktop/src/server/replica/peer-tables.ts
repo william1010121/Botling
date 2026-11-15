@@ -205,6 +205,8 @@ export interface PeerTablesOptions {
   /** A reader connection (sees every committed write). */
   reader: () => Db;
   feeds: TableFeeds;
+  /** A peer's `srv:` copy changed (rows applied, or reset): who owns which bot may have changed (`Directory.peerOwner`). */
+  copyChanged?: (stream: string) => void;
   log?: (line: string) => void;
   now?: () => number;
 }
@@ -328,6 +330,7 @@ export class PeerTables {
       // A first copy made after its session already ended starts stale, not live.
       if (session.state !== "open") await this.setState(peer, "stale", now);
       this.options.feeds.notify(stream);
+      this.options.copyChanged?.(stream);
       return;
     }
     if (result === "retired") { this.droppedRetired += 1; this.log(`tables: rows of ${stream} of a retired logId dropped (D50)`); return; }
@@ -347,6 +350,7 @@ export class PeerTables {
     if (receiving) receiving.parts = [];
     this.log(`tables: ${peer} was ${reset.reason}${reset.restoredTo ? ` to ${new Date(reset.restoredTo).toISOString()}` : ""}: copy of ${stream} reset (${reset.retired.length} retired logId(s))`);
     this.options.feeds.notify(stream);
+    this.options.copyChanged?.(stream);
   }
 
   private resubscribe(session: TablePeerSession, stream: string): void {
