@@ -113,8 +113,8 @@ async function makeFixture(): Promise<Fixture & { store: ServerStore }> {
     { id: id(900, 2), role: "bot", text: longText, date: at(T0 + 86_400_000 + 5_000), state: "done" },
     {
       id: id(900, 3), role: "bot", text: "pick one", date: at(T0 + 86_400_000 + 9_000), state: "done",
-      choices: ["a", "b"],
-    } as ChatRecord,
+      choices: [{ label: "a", recommended: true }, { label: "b", recommended: false }],
+    },
   ];
   const maintNew: ChatRecord[] = [
     { id: id(910, 1), role: "user", text: "new maintainer before all 2.x", date: at(T0 - 60_000) },
