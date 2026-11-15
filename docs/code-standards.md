@@ -32,9 +32,10 @@ reviews; the lesson ids point at the evidence in `LESSONS.md`.
 Before you say "done" (mistakes found in reviews since 2026-11-15; answer each in your note's
 "Standards check" as done or n/a; reviewers check each one):
 1. Paths: compare real paths from fs.realpathSync.native (nearest existing ancestor for a new path),
-   never typed strings or the JS realpathSync. Mac volumes are case-insensitive, /var is
-   /private/var, /System/Volumes/Data is a firmlink. Path tests pass under the default macOS temp
-   folder. (L-001)
+   never typed strings or the JS realpathSync (it keeps the case you typed). Mac volumes are
+   case-insensitive, /var is /private/var, /System/Volumes/Data is a firmlink that even .native does
+   not fold: also compare dev:ino, or fold that prefix (realPath() in import/run.ts), before a path
+   becomes a key or a hash. Path tests pass under the default macOS temp folder. (L-001)
 2. Symlink-safe files: stage beside the target (same parent), open with O_NOFOLLOW / "wx", after
    open require fstat = regular file with the same dev:ino as lstat, one same-parent rename at the
    end; reads anchor dev:ino after open; never follow a symlinked folder without a visited set. (L-002)

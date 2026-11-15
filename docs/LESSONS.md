@@ -54,7 +54,10 @@ Three kinds of mistakes, one category per evidence line:
   which keeps the case it was given. Tests that compare paths must pass under the default macOS temp folder.
 - Why: the Mac's default volume is case-insensitive (`V2` and `v2` are one folder), `/var` is `/private/var`, and
   `/System/Volumes/Data/...` is a firmlink to the same folder. String compares let an import write into the 2.x data
-  folder and let one folder get two "imported once" keys.
+  folder and let one folder get two "imported once" keys. `realpathSync.native` fixes the case and the `/var` link
+  (the JS `realpathSync` also resolves `/var`, but keeps the case), but it does **not** fold a firmlink spelling, so
+  also compare dev:ino, or fold the `/System/Volumes/Data` prefix as `realPath()` in `import/run.ts` does, before a path
+  becomes a key or a hash.
 - Tags: fs, import, test
 - Status: open · days 1 of 3 (2026-11-15)
 - Evidence:
@@ -178,7 +181,7 @@ Three kinds of mistakes, one category per evidence line:
 - Evidence:
   - 2026-11-15 | thin-check | `M5-07b-review.md` F2 (nine guards survive mutation, the wrong-peer guard included) | tests in `3ed7e622`
   - 2026-11-15 | thin-check | `M5-15-review.md` F3 (mutants M1 and M9 survive; test 5's assertion is vacuous) | fix `912d34c5`
-  - 2026-11-15 | thin-check | `M5-18a-review.md` F5 (four mutants survive, "the check throws → allowed" among them) | fix `1e4f4f30`
+  - 2026-11-15 | thin-check | `M5-18a-review.md` F5 (7 of 12 mutants survive the branch's tests, "the check throws → allowed" among them; with the fix 4 redundant guards still survive) | fix `1e4f4f30`
   - 2026-11-15 | thin-check | `M5-14d-review.md` F2 (`catch` → `write`, fail open, survives) | fix `6887f7cc`
   - 2026-11-15 | thin-check | `M5-04c-review.md` N1 (mutant M9 survives) | fix in merge `4685c93a`
 
