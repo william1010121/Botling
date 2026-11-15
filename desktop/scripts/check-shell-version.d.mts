@@ -4,6 +4,7 @@ export type ChangeKind = "plugin-only" | "other" | "none";
 export interface ChangeResult { kind: ChangeKind; problems: string[] }
 export interface RangeResult extends ChangeResult { commit: string; subject: string }
 export type ShellHashFn = (tree: FeTree) => string;
+export function resolveBase(repo: string, base: string): string;
 export function classifyChange(paths: readonly string[]): ChangeKind;
 export function shellAt(repo: string, ref: string, hash?: ShellHashFn): ShellManifest;
 export function checkChange(repo: string, from: string, to: string, paths: readonly string[], options?: { hash?: ShellHashFn }): ChangeResult;

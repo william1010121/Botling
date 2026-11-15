@@ -40,7 +40,8 @@
     "release:check": "node scripts/release-check.mjs",
     "test:release": "node --test scripts/release-check.test.mjs",
     "check:lines": "node scripts/check-lines.mjs",
-    "check:move": "node scripts/check-move.mjs"
+    "check:move": "node scripts/check-move.mjs",
+    "check:shell-version": "node scripts/check-shell-version.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.9.0",

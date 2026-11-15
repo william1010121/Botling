@@ -11,8 +11,8 @@
 //     received it, one instance per plugin (shell/plugin-feed.ts), until a plugin owns a place itself.
 // Slots have the new names and the 2.x names as aliases (slot-names.ts): the kernel holds one registration and finds it under both.
 import { Kernel, ROOT_SLOTS, canonicalSlot } from "../../../Web/src/plugin-kernel";
-import { FEED_SLOTS } from "./shell/feed-slots";
 import { SHELL_STORAGE, provideShellStorage } from "./shell/storage";
+import { FEED_SLOTS } from "./shell/feed-slots";
 
 /** The chat surface's instance in the renderer's kernel. */
 export const CHAT_SURFACE = ":chat";

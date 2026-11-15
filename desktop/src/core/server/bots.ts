@@ -48,6 +48,7 @@ export class CoreBots {
   private get mainBotId() { return this.host.mainBotId; }
   private get maintainerId() { return this.host.maintainerId; }
   private makeSubBot(...a: Parameters<Core["makeSubBot"]>) { return this.host.makeSubBot(...a); }
+  private nextSeq(...a: Parameters<Core["nextSeq"]>) { return this.host.nextSeq(...a); }
   private get options() { return this.host.options; }
   private ownedAgentsNote(...a: Parameters<Core["ownedAgentsNote"]>) { return this.host.ownedAgentsNote(...a); }
   private pluginBot(...a: Parameters<Core["pluginBot"]>) { return this.host.pluginBot(...a); }
@@ -57,8 +58,6 @@ export class CoreBots {
   private prompts(...a: Parameters<Core["prompts"]>) { return this.host.prompts(...a); }
   private refreshWaiting(...a: Parameters<Core["refreshWaiting"]>) { return this.host.refreshWaiting(...a); }
   private replied(...a: Parameters<Core["replied"]>) { return this.host.replied(...a); }
-  private get seq() { return this.host.seq; }
-  private set seq(value: Core["seq"]) { this.host.seq = value; }
   private get usage() { return this.host.usage; }
 
   bots = new Map<string, Bot>();
@@ -399,7 +398,7 @@ export class CoreBots {
         }
       }
     }
-    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "bot.removed", botId: id } });
+    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: this.nextSeq(), event: { type: "bot.removed", botId: id } });
     this.plugins.event("botRemoved", { botId: id });
     this.briefAwakeMainBot();
     this.refreshWaiting();
