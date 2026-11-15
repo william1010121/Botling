@@ -57,7 +57,7 @@ describe("ShellFrame and the plugin feed", () => {
     const view = fixture();
     const shown = await mount(createElement(ShellFrame, { legacy: page, plugins: view }));
     // As the core sends it for a plugin that is off: gone from the list's `enabled` and from every array.
-    const off = Object.fromEntries(Object.entries(view).map(([key, value]) => [key, Array.isArray(value) ? value.filter((row) => row.plugin !== "zed.tools" && row.name !== "zed.tools") : value])) as unknown as PluginsView;
+    const off = Object.fromEntries(Object.entries(view).map(([key, value]) => [key, Array.isArray(value) ? (value as { plugin?: string; name?: string }[]).filter((row) => row.plugin !== "zed.tools" && row.name !== "zed.tools") : value])) as unknown as PluginsView;
     await shown.render(createElement(ShellFrame, { legacy: page, plugins: off }));
     expect(held()).not.toContain("zed.tools");
     expect(pluginFeed.rows("main/tab")).toEqual(off.mainTabs);
