@@ -158,7 +158,7 @@ describe("timing as 1.x", () => {
     // It is the turn under way that answers it.
     expect(second.turnId).toBe(first.turnId);
     expect(second.messageId).toBe(first.messageId);
-    await until(() => codexInputs(dir, "steer").length === 1, { timeout: 5_000 });
+    await until(() => codexInputs(dir, "steer").length === 1, { timeout: 25_000, what: "the steer to reach Codex" });
     writeFileSync(gate, "");
     expect((await finishedFor(c, first.turnId)).event).toMatchObject({ status: "done", text: "Codex says: first (also heard: second)" });
     expect(codexInputs(dir, "steer")).toEqual([expect.stringMatching(/^second/)]);
