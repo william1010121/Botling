@@ -18,7 +18,7 @@
 import { queueKey, type CmdBody, type Message, type MessageOf, type Slot, type WireMessage } from "../../protocol";
 import type { Db } from "../store";
 import { cmdHash } from "../slots";
-import { commitCancel, commitRow, isRetired, ownerWork, queueStats, takeNoted, takeResult, takeRetry } from "./forward-queue";
+import { commitCancel, commitRow, dropOwner, isRetired, ownerWork, queueStats, takeNoted, takeResult, takeRetry, type ForwardRow } from "./forward-queue";
 import type { Directory } from "./directory";
 
 /** A peer session as the forwarder uses it (server/peer PeerSession). */
@@ -35,6 +35,8 @@ export interface ForwarderOptions {
   directory: Directory;
   /** The live session with a peer, if any. */
   session(peer: string): ForwardSession | null;
+  /** True when a peer server is no longer valid in the roster (§4.6). */
+  isRevoked?(owner: string): boolean;
   log(line: string): void;
   now?: () => number;
 }
@@ -64,6 +66,10 @@ export class Forwarder {
   /** Commits a front end's command for `owner` (resolves after the commit: only then may `held` go), then sends it. */
   async commit(envelope: CmdBody, owner: string): Promise<void> {
     if (!envelope.scope) throw new TypeError("forward: the accepting server states the scope before it forwards");
+    if (this.options.isRevoked?.(owner)) {
+      this.relay(envelope.slot.origin, this.refusedRevoked(envelope.slot, envelope.inc));
+      return;
+    }
     const hash = cmdHash({ cmd: envelope.cmd, scope: envelope.scope, basis: envelope.basis, via: envelope.via });
     await this.options.submit((tx) => commitRow(tx, envelope, hash, owner, this.now()));
     this.pump(owner);
@@ -71,8 +77,26 @@ export class Forwarder {
 
   /** Commits a front end's cancel for `owner`, then sends it (after its row). */
   async cancel(slot: Slot, owner: string): Promise<void> {
+    if (this.options.isRevoked?.(owner)) return;
     await this.options.submit((tx) => commitCancel(tx, slot, owner, this.now()));
     this.pump(owner);
+  }
+
+  /** Drops every queued command and cancel for each revoked `owner` and relays `cmd.refused{revoked}` (§4.6). */
+  async revoked(owners: readonly string[]): Promise<void> {
+    for (const owner of owners) {
+      let dropped: ForwardRow[];
+      try {
+        dropped = await this.options.submit((tx) => dropOwner(tx, owner));
+      } catch (error) {
+        this.options.log(`forward: dropping work for revoked ${owner} failed: ${errorText(error)}`);
+        continue;
+      }
+      const session = this.options.session(owner);
+      if (session) this.sent.delete(session);
+      for (const row of dropped) this.relay(row.slot.origin, this.refusedRevoked(row.slot, row.envelope.inc));
+      if (dropped.length) this.options.log(`forward: dropped ${dropped.length} queued command(s) for revoked peer ${owner}`);
+    }
   }
 
   /** A front end session of `origin` hears the owners' answers for its slots while it is open. */
@@ -116,6 +140,7 @@ export class Forwarder {
    * reads the committed queue and writes frames in one turn, so nothing interleaves.
    */
   pump(owner: string): void {
+    if (this.options.isRevoked?.(owner)) return;
     const session = this.options.session(owner);
     if (!session || session.state !== "open") return;
     let sent = this.sent.get(session);
@@ -178,6 +203,10 @@ export class Forwarder {
       forget(s);
       this.relay(s.origin, { t: "cmd.retry", slot: s, inc: message.inc });
     }
+  }
+
+  private refusedRevoked(slot: Slot, inc: CmdBody["inc"]): MessageOf<"cmd.result"> {
+    return { t: "cmd.result", slot, outcome: { kind: "refused", reason: "revoked", detail: "the target server was removed from the roster" }, logId: inc, seq: null };
   }
 
   private relay(origin: string, message: Message): void {
