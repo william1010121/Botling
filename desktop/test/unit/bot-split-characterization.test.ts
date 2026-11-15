@@ -246,7 +246,7 @@ describe("golden transcripts of an unchanged Bot", () => {
     check("stop while working", r);
   });
 
-  it("stop while working, head does not answer in time: its tree is ended, the next message starts it again", async () => {
+  it("stop while working, head does not answer in time: its tree is ended, the next message wakes a new head", async () => {
     const r = rig();
     const sent = r.b.send("work please"); await r.sent(0, 1);
     r.delta(0, "Starting"); await flush();
@@ -268,7 +268,7 @@ describe("golden transcripts of an unchanged Bot", () => {
     check("stop while draining", r);
   });
 
-  it("stop a set-aside turn, then the head dies and is resumed: ignoreResults, restart, one transcript", async () => {
+  it("stop a set-aside turn, then the head dies and the next message wakes a new one: ignoreResults, restart, one transcript", async () => {
     const r = rig();
     r.b.send("first"); await r.sent(0, 1);
     r.b.send("second"); await r.sent(0, 2);
@@ -284,31 +284,31 @@ describe("golden transcripts of an unchanged Bot", () => {
     expect(r.peek.ignoreResults).toBe(0);
     r.b.send("third"); await r.sent(0, 4);
     r.head(0).handlers.onExit({ code: 1, signal: null, stderr: "", expected: false, silent: false }); await flush(); r.mark("head died mid-turn");
-    r.b.send("fourth"); await r.sent(1, 1); r.reply(1, "Fourth answered"); await flush(); r.mark("resumed on a new head");
+    r.b.send("fourth"); await r.sent(1, 1); r.reply(1, "Fourth answered"); await flush(); r.mark("woke on a new head");
     check("stop set-aside restart", r);
   });
 
-  it("head exit mid-turn: the turn fails with what is known; the next message starts the head again in the same session", async () => {
+  it("head exit mid-turn: the turn fails with what is known; the next message wakes a new session, briefed again (1.x: an unexpected exit is a sleep)", async () => {
     const r = rig();
     r.b.send("first"); await r.sent(0, 1);
     r.delta(0, "Working on it"); await flush();
     r.head(0).handlers.onExit({ code: 1, signal: null, stderr: "boom", expected: false, silent: false }); await flush(); r.mark("exited mid-turn");
-    r.b.send("again"); await r.sent(1, 1); r.mark("resumed");
+    r.b.send("again"); await r.sent(1, 1); r.mark("woke again");
     r.reply(1, "Done"); await flush(); r.mark("done");
     check("head exit and resume", r);
   });
 
-  it("a resume of a session claude no longer has: a new session, and the message is sent again once", async () => {
+  it("a head that dies silently under a started session (a resume claude no longer has): a new session, and the message is sent again once", async () => {
     const r = rig();
     r.b.send("first"); await r.sent(0, 1); r.reply(0, "Hi"); await flush();
     r.head(0).finish(); await flush(); r.mark("asleep");
-    r.b.send("second"); await r.sent(1, 1); r.mark("woke on a resume");
+    r.b.send("second"); await r.sent(1, 1); r.mark("woke");
     r.head(1).handlers.onExit({ code: 1, signal: null, stderr: "No conversation found", expected: false, silent: true }); await r.sent(2, 1); r.mark("new session, sent again");
     r.reply(2, "Second answered"); await flush(); r.mark("done");
     check("resume refused", r);
   });
 
-  it("network outage and networkRestored: the head is lost to the network; when it is back the same session carries on", async () => {
+  it("network outage and networkRestored: the head is lost to the network; when it is back the bot says so and answers in a turn of the app's", async () => {
     const r = rig();
     r.b.send("first"); await r.sent(0, 1);
     r.delta(0, "Looking"); await flush();
