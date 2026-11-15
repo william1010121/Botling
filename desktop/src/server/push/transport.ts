@@ -19,6 +19,8 @@ export interface PushHttpRequest {
 
 export interface PushHttpResponse {
   status: number;
+  /** Optional `Retry-After` response header value (used for 429/503 backoff). */
+  retryAfter?: string;
 }
 
 export type PushTransport = (request: PushHttpRequest) => Promise<PushHttpResponse>;
@@ -212,8 +214,13 @@ export function createPushTransport(options: PushTransportOptions = {}): PushTra
         req.url,
         { method: "POST", headers: req.headers, lookup: pinnedLookup },
         (res) => {
-          // Only the status matters: never read the body (no size or time it can grow to), drop the connection.
-          done(() => resolve({ status: res.statusCode ?? 0 }));
+          const rawRetryAfter = res.headers?.["retry-after"];
+          const retryAfterHeader = Array.isArray(rawRetryAfter) ? rawRetryAfter[0] : rawRetryAfter;
+          const retryAfter = typeof retryAfterHeader === "string"
+            ? retryAfterHeader.trim().slice(0, 64) || undefined
+            : undefined;
+          // Only the status (and optional Retry-After header) matters: never read the body, drop the connection.
+          done(() => resolve(retryAfter ? { status: res.statusCode ?? 0, retryAfter } : { status: res.statusCode ?? 0 }));
           res.destroy();
         },
       );

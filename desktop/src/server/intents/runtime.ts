@@ -10,7 +10,7 @@
 // command's transaction and LogHub hears about every stream a commit touched.
 import type { Event as ContractEvent } from "../../contract";
 import type { CmdBody } from "../../protocol";
-import { CallInGuest, CallInHost } from "../callin";
+import { CallInGuest, CallInHost, type CallInHostOptions } from "../callin";
 import { contentLineHook, type ContentService } from "../content";
 import { ensureStream, type LogHub } from "../log";
 import { ContractLiveFeed, type LiveChannel } from "../live";
@@ -47,6 +47,8 @@ export interface IntentRuntimeOptions {
   tapHooks?: Pick<TapHooks, "eventSeen" | "eventStored">;
   /** Botling 3's server: called after a commit that changed a `plugin:` row's grants (`plugin.grant`). */
   pluginRowsChanged?: () => void;
+  /** M5-03b test knob: the host's wait timers (botlingd: `callInTimers(env)`, only with the fake agent). */
+  callHostTimers?: Pick<CallInHostOptions, "staleMs" | "capMs" | "tickMs">;
 }
 
 export class NotASlotCommandError extends Error {
@@ -74,7 +76,7 @@ export class IntentRuntime {
     this.now = options.now ?? Date.now;
     this.scope = new TxScope(options.store, (streams) => options.hub?.committed(streams), (error) => log?.(`intents: an after-commit step failed (${error instanceof Error ? error.message : String(error)})`));
     this.callIns = new CallInGuest({ scope: this.scope, engine: options.engine, now: this.now, log });
-    this.callHost = new CallInHost({ log, scope: this.scope, now: this.now });
+    this.callHost = new CallInHost({ log, scope: this.scope, now: this.now, ...(options.callHostTimers ?? {}) });
     this.worker = new EffectWorker({ scope: this.scope, engine: options.engine, now: this.now, log, callIns: this.callIns });
     this.tap = new EventTap({
       scope: this.scope,
