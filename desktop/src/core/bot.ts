@@ -328,9 +328,9 @@ export class Bot {
   private botContext: BotContext | null = null;
   private get ctx(): BotContext { return this.botContext ??= new BotContext(this); }
   private botViews: BotViews | null = null;
-  private get views(): BotViews { return this.botViews ??= new BotViews(this); }
+  private get views(): BotViews { return this.botViews ??= new BotViews(this, this.ctx); }
   private botDecisions: BotDecisions | null = null;
-  private get decisions(): BotDecisions { return this.botDecisions ??= new BotDecisions(this); }
+  private get decisions(): BotDecisions { return this.botDecisions ??= new BotDecisions(this, this.ctx); }
 
   constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
     const primary = options.primary;
@@ -403,8 +403,8 @@ export class Bot {
     return this.options.primary ?? this;
   }
 
-  get chat(): ChatRecord[] { return this.ctx.chat; }
-  get sharesChat(): boolean { return this.ctx.sharesChat; }
+  private get chat(): ChatRecord[] { return this.ctx.chat; }
+  private get sharesChat(): boolean { return this.ctx.sharesChat; }
   get heads(): Heads { return this.ctx.heads; }
   private peerEngine(head: Engine): Engine { return this.ctx.peerEngine(head); }
   private get singleActionApprovals(): boolean { return this.ctx.singleActionApprovals; }
@@ -446,9 +446,9 @@ export class Bot {
 
   get id() { return this.ctx.id; }
   get profile() { return this.ctx.profile; }
-  get paths() { return this.ctx.paths; }
-  log(line: string) { this.ctx.log(line); }
-  emit(event: Event) { this.ctx.emit(event); }
+  private get paths() { return this.ctx.paths; }
+  private log(line: string) { this.ctx.log(line); }
+  private emit(event: Event) { this.ctx.emit(event); }
 
   /** What the partner's chat did, in this chat (`mirror`): its lines are this chat's lines too. */
   /** Called by BotContext.emit (M7-S41). */

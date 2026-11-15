@@ -6,6 +6,7 @@ import { ContractError, type BotView, type ChatSnapshot, type Event, type HeadsV
 import { backgroundTaskOutput } from "../background-work";
 import type { BackgroundTask } from "../background-tasks";
 import type { Bot } from "../bot";
+import type { BotContext } from "./context";
 import { displayName, hasTwo, resolvePrimary, roundsText, type Engine } from "../heads";
 import { MAX_PAGE_BYTES, PAGE_BYTES, pageBack, sliceViews } from "../history-page";
 import type { BotStore } from "../store/bot-store";
@@ -21,21 +22,21 @@ export class BotViews {
   mainSpeed: SpeedTotals | undefined;
   mainSpeedAt = 0;
 
-  constructor(private readonly host: Bot) {}
+  constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
 
   // ---- Bridge: the names borrowed from `Bot` (one line each) ----
-  private get options(): BotOptions { return this.host.options; }
-  private get store(): BotStore { return this.host.store; }
-  private get engine(): Engine { return this.host.engine; }
-  private get subagents(): SubagentBook { return this.host.subagents; }
-  private get id() { return this.host.id; }
-  private get profile() { return this.host.profile; }
-  private get paths() { return this.host.paths; }
-  private get owner(): Bot { return this.host.owner; }
-  private get peers(): Bot[] { return this.host.peers; }
-  private get members(): Bot[] { return this.host.members; }
-  private get chat(): ChatRecord[] { return this.host.chat; }
-  private get sharesChat(): boolean { return this.host.sharesChat; }
+  private get options(): BotOptions { return this.ctx.options; }
+  private get store(): BotStore { return this.ctx.store; }
+  private get engine(): Engine { return this.ctx.engine; }
+  private get subagents(): SubagentBook { return this.ctx.subagents; }
+  private get id() { return this.ctx.id; }
+  private get profile() { return this.ctx.profile; }
+  private get paths() { return this.ctx.paths; }
+  private get owner(): Bot { return this.ctx.owner; }
+  private get peers(): Bot[] { return this.ctx.peers; }
+  private get members(): Bot[] { return this.ctx.members; }
+  private get chat(): ChatRecord[] { return this.ctx.chat; }
+  private get sharesChat(): boolean { return this.ctx.sharesChat; }
   private get records(): ChatRecord[] { return this.host.records; }
   private get problem() { return this.host.problem; }
   private get head() { return this.host.head; }
@@ -48,8 +49,8 @@ export class BotViews {
   private get unread() { return this.host.unread; }
   private get components() { return this.host.components; }
   private get routineStorePath() { return this.host.routineStorePath; }
-  private log(line: string) { this.host.log(line); }
-  private emit(event: Event) { this.host.emit(event); }
+  private log(line: string) { this.ctx.log(line); }
+  private emit(event: Event) { this.ctx.emit(event); }
   private changed(record: ChatRecord) { this.host.changed(record); }
   private messageView(record: ChatRecord): MessageView { return this.host.messageView(record); }
   private subagentRows(): SubagentRowView[] { return this.host.subagentRows(); }

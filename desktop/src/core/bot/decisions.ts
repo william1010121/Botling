@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import type { Event, MessageView } from "../../contract";
 import type { Bot } from "../bot";
+import type { BotContext } from "./context";
 import { recentChat } from "../briefing";
 import type { Engine } from "../heads";
 import { parseReply, unsupportedRequest, type BotRequest } from "../reply";
@@ -11,20 +12,20 @@ import type { BotOptions, Turn } from "./types";
 import { preview } from "./view-functions";
 
 export class BotDecisions {
-  constructor(private readonly host: Bot) {}
+  constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
 
   // ---- Bridge: the names borrowed from `Bot` (one line each) ----
-  private get options(): BotOptions { return this.host.options; }
-  private get engine(): Engine { return this.host.engine; }
-  private get id() { return this.host.id; }
-  private get paths() { return this.host.paths; }
-  private get owner(): Bot { return this.host.owner; }
-  private get peers(): Bot[] { return this.host.peers; }
-  private get chat(): ChatRecord[] { return this.host.chat; }
+  private get options(): BotOptions { return this.ctx.options; }
+  private get engine(): Engine { return this.ctx.engine; }
+  private get id() { return this.ctx.id; }
+  private get paths() { return this.ctx.paths; }
+  private get owner(): Bot { return this.ctx.owner; }
+  private get peers(): Bot[] { return this.ctx.peers; }
+  private get chat(): ChatRecord[] { return this.ctx.chat; }
   private get records(): ChatRecord[] { return this.host.records; }
   private get headsSettings() { return this.host.headsSettings; }
   private get queue() { return this.host.queue; }
-  private emit(event: Event) { this.host.emit(event); }
+  private emit(event: Event) { this.ctx.emit(event); }
   private persist(soon = false) { this.host.persist(soon); }
   private add(record: ChatRecord, opts?: { archive?: boolean }) { this.host.add(record, opts); }
   private notice(text: string) { this.host.notice(text); }
