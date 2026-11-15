@@ -72,7 +72,8 @@ describe("the manifest the build writes", () => {
     const after = feBuildManifest(root).plugins;
     expect(after.find((p) => p.name === "botling.settings")!.codeHash).not.toBe(before.find((p) => p.name === "botling.settings")!.codeHash);
     expect(after.find((p) => p.name === "botling.chat")!.codeHash).toBe(before.find((p) => p.name === "botling.chat")!.codeHash);
-    expect(JSON.parse(feBuildManifestFile(root).toString())).toEqual({ version: 1, plugins: after });
+    // The fake root has no shell files (M7-10b adds the `shell` part; test/unit/shell-version-check.test.ts covers it): its repo root is the fake root itself.
+    expect(JSON.parse(feBuildManifestFile(root, root).toString())).toEqual({ version: 1, shell: { minFeVersion: null, codeHash: expect.stringMatching(/^[0-9a-f]{64}$/) }, plugins: after });
   });
 
   it("is written by the renderer build next to the page (and the loader reads what the build wrote)", async () => {

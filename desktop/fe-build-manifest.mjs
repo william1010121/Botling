@@ -1,5 +1,5 @@
 // The FE build's manifest of the in-page built-in plugins it ships (M7-10a; plan-change D56, C14):
-// `fe-build-manifest.json` = { version: 1, plugins: [{ name, codeHash }] }, sorted by name. The shell's in-page loader
+// `fe-build-manifest.json` = { version: 1, shell: { minFeVersion, codeHash }, plugins: [{ name, codeHash }] }, sorted by name. The shell's in-page loader
 // (src/renderer/shell/inpage-loader.ts) runs a plugin's code in the page only when its name and hash are listed here.
 //
 // The list is built from the folder src/renderer/plugins/*: every sub-folder with an index.ts is one
@@ -7,7 +7,8 @@
 // `folderHash`, core/plugins/catalog.ts). A card that adds a plugin adds its folder and nothing else; no shared list.
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
+import { fsTree, shellManifest } from "./fe-shell-manifest.mjs";
 
 export const FE_MANIFEST_FILE = "fe-build-manifest.json";
 export const INPAGE_PLUGINS_DIR = "src/renderer/plugins";
@@ -35,10 +36,11 @@ export function inpagePluginFolders(root) {
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-/** The manifest object for the build rooted at `root` (desktop/). */
-export function feBuildManifest(root) {
-  return { version: 1, plugins: inpagePluginFolders(root).map(({ name, folder }) => ({ name, codeHash: folderHash(folder) })) };
+/** The manifest object for the build rooted at `root` (desktop/). `shell` (M7-10b) names the shell alone: `MIN_FE_VERSION` and the hash of
+ * the shell's files, neither of which a plugin-only change moves (fe-shell-manifest.mjs, scripts/check-shell-version.mjs). */
+export function feBuildManifest(root, repoRoot = resolve(root, "..")) {
+  return { version: 1, shell: shellManifest(fsTree(repoRoot)), plugins: inpagePluginFolders(root).map(({ name, folder }) => ({ name, codeHash: folderHash(folder) })) };
 }
 
 /** The manifest as the file's bytes (a build puts these at FE_MANIFEST_FILE next to its page). */
-export const feBuildManifestFile = (root) => Buffer.from(`${JSON.stringify(feBuildManifest(root), null, 2)}\n`);
+export const feBuildManifestFile = (root, repoRoot) => Buffer.from(`${JSON.stringify(feBuildManifest(root, repoRoot), null, 2)}\n`);
