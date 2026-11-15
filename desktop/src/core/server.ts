@@ -2,13 +2,11 @@ import { agyPermissionSessions, changeAgyPermissions } from "./agent/agy-permiss
 import { setBrowserBridge } from "./browser-tools";
 import { configureNotes, noteService, setNoteBots } from "./note-tools";
 import { ROUTINE_TICK_MS } from "./routines";
-import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
 import { discoveryFailure } from "./agent/model-discovery";
 import { RestartJournal, restartPausedNotice } from './restart-continuation';
 import { specTrace } from './spec-trace';
 import { AgyRuntimeInstaller } from './agy-runtime-install';
 import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings";
-import type { AgyConfig } from "./agent/agy";
 import { mobileCommand } from '../mobile-bridge/adapter';
 import { ALL_BOTS } from '../mobile-bridge/scope';
 import { MobileDesk, OFF as MOBILE_OFF } from '../mobile-bridge/desk';
@@ -20,41 +18,37 @@ import type { RelayConnector } from '../mobile-relay/connector';
 //
 // Its data folder has the Swift app's layout (store/workspace.ts). On the first start with an
 // empty folder it imports a 1.x folder when one is given (read-only; store/importer.ts).
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { commandGuidePath } from "./plugins/app-command";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
-import { writeFileAtomic } from "./durable/atomic";
 import { rmSync } from "node:fs";
 import { linkIncoming, PendingFiles, servedType, writeIncoming } from "./attachments";
 import { studioWorld } from "./studio-world";
 import type { StudioWorld } from "./plugins/studio-seam";
-import type { CodexModel } from "./agent/codex-models";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
 import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { claudeAutoCompactWindow, codexConfigFile } from "./engine-files";
 import { attachmentFile as attachmentLinkFile } from "../contract/attachment-url";
 import { lineHasLink } from "../browser-tab-menu";
-import { HANDED_OUT, botName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, removeProjectRow, saveProjectRow, updateProjectRow } from "./projects";
+import { botName, firstLine, MemoryFiles } from "./projects";
 import { answerLabel } from "./attachments";
-import { ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound, type BotView, type Command, type Event, type Outbound, type ResultOf, type WaitingView, type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView, type PluginView } from "../contract";
+import { ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound, type BotView, type Command, type Event, type ResultOf, type WaitingView, type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView } from "../contract";
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
 import { agyWorkerList } from "./agy-usage-db";
 import { AgentStore, migrationRecords } from "./store/agent-store";
 import { planMove, unmovable, type BotFacts, type MoveFacts, type MoveTarget } from "./agent-moves";
-import { agentMessageNotice, agentNoteTail, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotClosedNotice, subBotGroupFirstMessage } from "./agent-relay";
+import { agentMessageNotice, agentNoteTail, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotGroupFirstMessage } from "./agent-relay";
 import { workerNoteText } from "./worker-core";
 import type { WorkerOwner } from "./agent/workers";
 import { AgentStatusWriter } from "./agent-status";
 import { filePath, pageInCard } from "./page-preview";
 import { PAGE_COMPONENT } from "./preview-url";
-import { Bot, NO_LONGER_NEEDED, type DeferredTurn, type GuestAnswer, type PresetTurnIds, type SessionStart, type SessionStartCodex, type Status as TurnStatus } from "./bot";
-import type { FetchRequest } from "./bot-tools";
-import type { HeadConfig } from "./agent/head";
-import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
+import { Bot, NO_LONGER_NEEDED, type GuestAnswer, type PresetTurnIds, type Status as TurnStatus } from "./bot";
+import { CodexThreads } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
-import { headsJSON, singleHead, type Engine, type Heads } from "./heads";
+import { type Engine, type Heads } from "./heads";
 import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, profilePaths, savedLanguage, withPluginSections, type BotPrompts } from "./prompts";
 import { StorageBook, storageItems } from "./storage";
 import { BotStore, readJSON } from "./store/bot-store";
@@ -65,21 +59,18 @@ import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "
 import { botFace } from "./faces";
 import { status, statusText } from "../contract/bot-status";
 import { currentChat, WorkspaceWatch, type BotSummary, type CurrentChat, type ShownChat, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
-import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
+import { Layout, loadProfiles, type BotProfile } from "./store/workspace";
 import { notePath } from "./bot-note";
 import { unsupportedRequest, type BotRequest } from "./reply";
 import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
-import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
-import { Conversations, type ConversationsDeps, type RemoteMember } from "./conversations";
-import { answeredNote, guestCardAnswerNote, pickedNote, relayedAnswerNote, type GROUP_TIMING } from "./groups";
+import { Conversations, type RemoteMember } from "./conversations";
+import { answeredNote, guestCardAnswerNote, pickedNote, relayedAnswerNote } from "./groups";
 import { ComponentsContext } from "./components/service";
 import { readdirSync } from "node:fs";
 import { FolderWatch } from "./folder-watch";
 import { agentContributions, agentStamp, claudeWiring, skillRootsWiring } from "./plugins/agent-contributions";
 import { claudeSkillFolders, placedSkillRoot } from "./plugins/engine-skills";
-import { Plugins, type BotInfo, type EngineCli, type PluginWorld } from "./plugins";
-import type { HostCommand, HostTiming } from "./plugins/host-client";
-import type { Sealer } from "./plugins/secrets";
+import { Plugins, type BotInfo } from "./plugins";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
 import { PluginStore } from "./plugin-store";
 import { INDEX_URL_SETTING } from "./plugins/catalog";
@@ -90,6 +81,10 @@ import { ReleaseNotices, confirmHealthyWhen, devWorkRoot, installAndQuit } from 
 import { CoreWatch } from "./server/watch";
 import { CorePeerInbox } from "./server/peer-inbox";
 import { CoreProjects } from "./server/projects";
+import { CoreBots } from "./server/bots";
+import { CoreSubBots } from "./server/sub-bots";
+import type { ApplyNowCommand, BotMaking, CoreOptions } from "./server/types";
+export type { ApplyNowCommand, BotMaking, CoreOptions } from "./server/types";
 
 /** What the core asks of main (self-update.ts, plugins/app-seam.ts). */
 export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
@@ -110,168 +105,12 @@ const WAITING_TEXT_LIMIT = 400;
  */
 export const PEER_MESSAGE_BYTES = 240 * 1024;
 
-/**
- * Text from a peer as plain text in a markdown chat line (Web/src/markdown.ts renders notices): the punctuation that
- * makes links, autolinks, images, code or emphasis is backslash-escaped, which markdown shows as the character itself.
- * A piece can also open the line (`# Big did not make the bot`), so what is special only at the start of a line is
- * escaped at the start of the piece: `#` (heading), `-` and `+` (list, `---` rule) and `1.` (ordered list); `>` and
- * the fence characters are in the set above. Leading spaces go (four of them would make a code block).
- */
-function plainMarkdown(text: string): string {
-  return text
-    .replace(/^\s+/, "")
-    .replace(/[\\`*_[\]()<>!|~]/g, "\\$&")
-    .replace(/^(?:([#+-])|(\d{1,9})\.)/, (_all, mark: string | undefined, digits: string | undefined) => (mark ? `\\${mark}` : `${digits}\\.`));
-}
-
 /** Text from a peer or a model as one clean line for a note, a log or a report: control characters gone, runs of spaces one, at most 300 characters, no closing full stop (the note adds its own). */
 export function oneLine(text: string): string {
   const line = text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
   const characters = [...line];
   return characters.length > 300 ? `${characters.slice(0, 299).join("")}…` : line || "no reason given";
 }
-
-export interface CoreOptions {
-  /** Workers on other machines (src/remote/service.ts): app_handoff's `machine`; absent: refused. */
-  remoteWorkers?: import("../remote/service").RemoteWorkers | null;
-  quotaRetriever?: import("./quota").QuotaRetriever;
-  /** Read-only CLI self-check; production starts it offline after activation. */
-  doctor?: Doctor;
-  /** The public plugin catalog: production checks its index once a day after activation (`autoRefresh`); tests give a fake fetch or none. */
-  pluginCatalog?: { autoRefresh?: boolean; fetcher?: import("./plugins/catalog").Fetch };
-  dataDir: string;
-  /** Update candidate: startup writes are snapshotted; external work waits for commit. */
-  deferStartup?: boolean;
-  /** How long a bot answering in another chat waits for a busy one and may take (tests shorten it; 1.x's `groupTiming`). */
-  groupTiming?: typeof GROUP_TIMING;
-  /** How to run a bot's head for a session. */
-  headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig;
-  /** How to run a Codex head (threads: <data>/codex-threads); null when Codex is not available. */
-  agyConfig?: ((profile: BotProfile, config: AgyConfig) => AgyConfig) | null;
-  codexConfig?: ((profile: BotProfile, session: SessionStartCodex, threads: CodexThreads) => CodexHeadConfig) | null;
-  /** How long the second head waits for the lead's first words (1.x: 20 s). */
-  claimWaitMs?: number;
-  emit: (message: Outbound) => void;
-  log?: (line: string) => void;
-  /** A Botling 1.x data folder to import from on the first start (read-only). */
-  importFrom?: string | null;
-  approvalTimeoutMs?: number;
-  idleMs?: number;
-  interruptGraceMs?: number;
-  tidyTimeoutMs?: number;
-  /** How long an awake bot may tidy when the app quits (0: not at all). */
-  quitTidyMs?: number;
-  /** The system's preferred languages, best first (for bots' reply language when settings name none). */
-  languages?: string[];
-  /** How often routines are checked (ROUTINE_TICK_MS, 15 s; 1.x: 30 s); 0: never (tests drive `checkRoutines`). */
-  routineTickMs?: number;
-  /** How often quiet runs (and, in 1.x, the network) are looked at (1.x: 20 s; 0: never). */
-  watchMs?: number;
-  /** How long one of Settings' reminder minutes is (tests shorten it; 60 s). */
-  stallMinuteMs?: number;
-  /** Whether Claude's API answers again (1.x's `networkProbe`; tests replace it). */
-  networkProbe?: () => Promise<boolean>;
-  /** How an engine's CLI is started here, for a plugin's one-shot model call (`engines.cli`); null: none. */
-  engineCli?: (engine: "claude" | "codex") => EngineCli | null;
-  /** The models the local Codex offers (`model/list`); null: none known. */
-  engineModels?: (engine: ModelEngine, profile: BotProfile) => Promise<ModelDiscovery>;
-  codexModels?: (() => Promise<CodexModel[]>) | null;
-  /**
-   * The component and plugin library is watched for changes on disk (folder-watch.ts); this is how often it is
-   * looked at anyway, to catch what a watcher missed (0: neither watched nor looked at; default 60 s; 1.x polled every 1.5 s).
-   */
-  componentScanMs?: number;
-  /** Bots' memory files are watched for what waits on you; this is how often they are looked at anyway (0: never; chat changes always look; default 60 s). */
-  waitingScanMs?: number;
-  /** How long the sub-bot hand-off waits for the subagent to end before it stops the turn (tests shorten it). */
-  subBotWaitMs?: number;
-  /** The plugin host (null: plugins' program parts do not run) and how secrets are sealed. */
-  /** `builtIns`: the plugins shipped with the app (out/builtin-plugins; none when left out). */
-  plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; boundSecrets?: boolean; timing?: HostTiming; builtIns?: string | null } | null;
-  /** Maintainer's `ccb plugin check` command (null: none this time). */
-  checkCommand?: string | null;
-  /** The component-shot command Maintainer is given (Phase 5a; null: none, it reads the template). */
-  shotCommand?: string | null;
-  /**
-   * How a bot runs a command a shipped plugin gives it (`agentCommands`: botling.report's `--render-report`): the command line
-   * for its script and the app's `flag`, null when this core has no way to (a section that names the command is then not told).
-   */
-  runCommand?: ((command: { script: string; flag: string }) => string | null) | null;
-  /**
-   * Where rebuilt shipped plugins go (`<data dir>/plugin-overrides`, app-command.ts) when the command `runCommand` gives runs the
-   * app's own flag, which takes an override's script from there; a command's guide then comes from there too (null: shipped only).
-   */
-  pluginOverrides?: string | null;
-  /** Tests: how long the first chat.snapshot is held (the page then shows its input box before any state). */
-  firstSnapshotDelayMs?: number;
-  /**
-   * The app around the core, for the developer tools (botling.dev, plugins/app-seam.ts) and release notices (self-update.ts):
-   * main's pid and data folder, the app bundle it runs from (null: not a bundle), and what main does on
-   * request: a picture of its window, or quitting so the install script can swap the build. Null: no app.
-   */
-  app?: {
-    pid: number | null;
-    dataDir: string | null;
-    bundle: string | null;
-    request: (op: AppOp, args?: Record<string, string>) => Promise<AppAnswer>;
-    /** Botling 3 (server/shell-bridge.ts): botlingd runs this core; `pid` is then its pid, the process an install waits for. */
-    server?: { dataDir: string } | null;
-    /** Botling 3: for an install the window quits itself, then botlingd stops (2.x asks main to quit). */
-    quitForInstall?: () => Promise<void>;
-    /** Botling 3: resolves once a window stayed attached for `ms` (a new build counts as up only then). */
-    windowHeld?: (ms: number) => Promise<void>;
-  } | null;
-  /** Botling 3's server only (2.x leaves it unset): turns it keeps aside in its effect outbox (bot.ts `deferTurn`). */
-  deferTurn?: (turn: DeferredTurn) => boolean;
-  /**
-   * Botling 3's server only (2.x leaves it unset, so every bot keeps 2.x's files, `FileBotStore`): the store of the bot
-   * kept in `directory` (its folder, or a second head's partner-<engine>/ in it), on server.db rows.
-   */
-  botStore?: (directory: string) => BotStore;
-  /** Botling 3's server only (default: the 2.x `MAIN_BOT_ID`): UUID of the main bot. */
-  mainBotId?: string;
-  /** Botling 3's server only (default: the 2.x `MAINTAINER_ID`): UUID of Maintainer. */
-  maintainerId?: string;
-  /** Botling 3's server only (default: true): whether this server runs a main bot. */
-  runMainBot?: boolean;
-  /** Botling 3's server only: designated server name when `runMainBot` is false. */
-  mainBotMachine?: () => string | null;
-  /** Botling 3's server only (2.x leaves it unset): content read/fetch for plugins (`content.read`, `content.fetch`). */
-  content?: PluginWorld["content"];
-  /** Botling 3's server only (2.x leaves it unset): the content reference of a chat line's file, for `plugins.linkCommand` (M5-09). */
-  lineContent?: PluginWorld["lineContent"];
-  /** Botling 3's server only (2.x leaves it unset): `app_fetch`, files from another machine into the bot's folder (M5-07d). */
-  fetch?: (botId: string, request: FetchRequest) => Promise<string>;
-  /** Botling 3's server only (2.x leaves it unset): whether a plugin's program part may start at `codeHash` (M5-18a). */
-  mayRunServerPart?: (name: string, codeHash: string) => boolean;
-  /** Botling 3's server only (2.x leaves it unset): run each non-built-in plugin's program part in its own host process (M5-18b). */
-  separateHosts?: boolean;
-  /** Botling 3's server only (2.x leaves it unset): a bot created or edited a plugin in `<data>/plugins`. */
-  pluginWritten?: (name: string, botId: string) => void;
-  /** Botling 3's server only (2.x leaves it unset): peer bots callable with @. */
-  remoteMembers?: () => RemoteMember[];
-  /** Botling 3's server only (2.x leaves it unset): runs a cross-server call-in turn (M5-02c). */
-  remoteTurn?: ConversationsDeps["remoteTurn"];
-  /**
-   * Botling 3's server only (2.x leaves it unset; M5-04c): sends `cmd` to the server that owns `target` with this
-   * server as origin. `committed` settles when the slot is durably queued; `outcome` when the owner has decided.
-   */
-  remoteCommand?(target: string, cmd: Command): { committed: Promise<void>; outcome: Promise<{ ok: true } | { ok: false; why: string }> };
-  /** Botling 3's server only: this machine's name, for "From the main bot on <name>" in what a peer's bot is sent (M5-04c); read at each send. */
-  machineName?: string | (() => string);
-  /** Botling 3's server only (M5-04d): the other machines of this cluster (valid peers, not this server), named as the main bot's tags name them; read at each use. */
-  machines?(): Array<{ id: string; name: string }>;
-  /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash. */
-  pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
-  /** Botling 3's server only: what this plugin asks at its running hash, for the window's approval (`PluginView.asks`). */
-  pluginAsks?: (name: string) => PluginView["asks"] | null;
-}
-
-/** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
-export type ApplyNowCommand = Extract<Command, { type: "chat.react" | "chat.choose" | "chat.answer" | "chat.ignoreQuestion" | "component.approve" | "settings.set" | "bots.create" }>;
-
-/** What asking for a bot came to (`Workspace.BotMaking`). */
-export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; botId: string } | { kind: "empty" } | { kind: "taken" } | { kind: "removedByUser" };
 
 export class Core {
   readonly mainBotId: string;
@@ -280,10 +119,8 @@ export class Core {
   readonly doctor: DoctorModel;
   private agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
-  private seq = 0;
+  seq = 0;
   private activated = false;
-  bots = new Map<string, Bot>();
-  private order: string[] = [];
   private inflight = new Map<string, AbortController>();
   private readonly ledger: ProcessLedger;
   /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
@@ -297,6 +134,21 @@ export class Core {
   private get corePeerInbox(): CorePeerInbox { return (this.madePeerInbox ??= new CorePeerInbox(this)); }
   private madeProjects?: CoreProjects;
   private get coreProjects(): CoreProjects { return (this.madeProjects ??= new CoreProjects(this)); }
+  private madeBots?: CoreBots;
+  private get coreBots(): CoreBots { return (this.madeBots ??= new CoreBots(this)); }
+  private madeSubBots?: CoreSubBots;
+  private get coreSubBots(): CoreSubBots { return (this.madeSubBots ??= new CoreSubBots(this)); }
+  get bots() { return this.coreBots.bots; }
+  set bots(value: CoreBots["bots"]) { this.coreBots.bots = value; }
+  private get order() { return this.coreBots.order; }
+  private set order(value: CoreBots["order"]) { this.coreBots.order = value; }
+  get profiles() { return this.coreBots.profiles; }
+  set profiles(value: CoreBots["profiles"]) { this.coreBots.profiles = value; }
+  private get newBot() { return this.coreBots.newBot; }
+  private set newBot(value: CoreBots["newBot"]) { this.coreBots.newBot = value; }
+  get removed() { return this.coreBots.removed; }
+  private get removedPluginBots() { return this.coreBots.removedPluginBots; }
+  private get subBotsReported() { return this.coreSubBots.subBotsReported; }
   private get routineClock() { return this.coreWatch.routineClock; }
   private set routineClock(value: CoreWatch["routineClock"]) { this.coreWatch.routineClock = value; }
   private get watchClock() { return this.coreWatch.watchClock; }
@@ -319,10 +171,7 @@ export class Core {
   /** The chat the main window shows now, as it last said (`chat.shown`); null: none, or not said yet. */
   private shownChat: ShownChat | null = null;
   readonly plugins: Plugins;
-  /** Every bot's profile, in the left column's order (Maintainer last). */
-  profiles: BotProfile[] = [];
   private get projectFiles() { return this.coreProjects.projectFiles; }
-  private newBot!: (profile: BotProfile) => Bot;
   /** What waits on you as the windows were last told, and the timers that look again. */
   private lastWaiting = "";
   private waitingTimer: NodeJS.Timeout | null = null;
@@ -342,14 +191,10 @@ export class Core {
   private snapshotHeld = false;
   /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
   readonly conversations: Conversations;
-  /** Bots taken out of the left column: what they still say goes nowhere. */
-  removed = new Set<string>();
   /** M5-06c: open `serverAsk` cards by the id of their chat line (the bot they are in, and how to end the wait). */
   private serverAsks = new Map<string, { botId: string; close: (index: number | null) => void }>();
-  /** Bots plugins made that you removed (`plugin/name`, lower case; removed-bots.json), so they stay removed. */
-  private removedPluginBots = new Set<string>();
   /** <open-question> copies in the main bot's chat: the copy's id → the question it copies. */
-  private copies = new Map<string, { botId: string; questionId: string }>();
+  copies = new Map<string, { botId: string; questionId: string }>();
   /** The app-wide agent registry (agents.json, A1): who owns each agent apart from who runs it. */
   readonly agents!: AgentRegistry;
   private readonly agentStatus = new AgentStatusWriter();
@@ -886,298 +731,30 @@ export class Core {
 
 
 
-  private briefAwakeMainBot(...a: Parameters<CorePeerInbox["briefAwakeMainBot"]>) { return this.corePeerInbox.briefAwakeMainBot(...a); }
+  briefAwakeMainBot(...a: Parameters<CorePeerInbox["briefAwakeMainBot"]>) { return this.corePeerInbox.briefAwakeMainBot(...a); }
 
-  /**
-   * Makes a bot of its own (`Workspace.makeBot`): a folder under <data>/bots/, a row in the left column,
-   * its own memory, inbox and routines like a manager. One by the same name (ignoring case) is given
-   * back as it is; a plugin gets back only one it made itself, and never one you removed. `setUp` sends
-   * it its job at once, so it introduces itself and writes its routines.
-   */
-  makeBot(rawName: string, rawJob: string, options: { avatar?: string; setUp?: boolean; by?: string | null; plugin?: string | null; delegation?: "onRequest"; instructions?: string } = {}): BotMaking {
-    const name = botName(rawName);
-    const job = rawJob.trim();
-    if (!name || !job) return { kind: "empty" };
-    const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-    const existing = this.profiles.find((profile) => profile.role === "bot" && !profile.parent && same(profile.name, name));
-    if (existing) return !options.plugin || existing.plugin === options.plugin ? { kind: "existing", botId: existing.id } : { kind: "taken" };
-    // A name that would pass for someone else in a group chat or in an @.
-    const others = ["Main bot", "Maintainer", "User", "App", "Notice", ...this.profiles.filter((profile) => profile.role === "manager").map((profile) => profile.name)];
-    if (others.some((other) => same(other, name))) return { kind: "taken" };
-    if (options.plugin && this.removedPluginBots.has(`${options.plugin}/${name}`.toLowerCase())) return { kind: "removedByUser" };
-    const id = randomUUID().toUpperCase();
-    const folder = Layout.standalone(this.options.dataDir, id);
-    mkdirSync(folder, { recursive: true });
-    const avatar = options.avatar && HANDED_OUT.includes(options.avatar) ? options.avatar : nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== this.maintainerId).map((profile) => profile.avatar));
-    prepareNotesFolder(folder);
-    this.seedEngineDefaults(id);
-    // A plugin's bot that does its work itself runs on Claude, the engine whose coordinator has tools of its own.
-    if (options.delegation) this.singleEngine(id, "claude");
-    const instructionsFile = this.writeInstructions(folder, id, false, options.instructions);
-    const extras = { ...(options.plugin ? { plugin: options.plugin } : {}), ...(options.delegation ? { delegation: options.delegation } : {}), ...(instructionsFile ? { instructionsFile } : {}) };
-    saveProjectRow(this.options.dataDir, { id, name, folder, avatar, job, ...extras });
-    const profile = projectProfile(this.options.dataDir, { id, name, folder: folderURLText(folder), avatar, job, ...extras });
-    this.attach(profile);
-    this.mainBot()?.appNotice(`${options.by ? `New bot "${name}" (made by ${options.by})` : `New bot "${name}"`}: ${firstLine(job)}`, undefined, undefined, { sourceID: id });
-    this.briefAwakeMainBot();
-    if (options.setUp) {
-      try {
-        this.bots.get(id)?.relay(`(App) You were just created. Your job: ${job}\nIf it should happen at fixed times, add those jobs to your routines file now; if it is a report, also do the first one now. Then introduce yourself to the user in one sentence.`);
-      } catch (error) { this.log(`new bot ${name}: ${(error as Error).message}`); }
-    }
-    this.log(`made the bot ${name} (${folder})`);
-    return { kind: "made", botId: id };
-  }
+  makeBot(...a: Parameters<CoreBots["makeBot"]>) { return this.coreBots.makeBot(...a); }
 
-  /**
-   * A plugin's `bots.create`: a bot of its own in the left column, or with `parent` a hidden sub bot under that project bot (or bot
-   * of its own), in its folder. `instructions` (any length) go to a file the bot is told to read; `delegation: "onRequest"` makes it
-   * do its work itself, starting subagents or workers only when the user asks (on Claude, the engine that can). Asked again by the
-   * same plugin with the same name, the same bot comes back, its instructions and delegation set anew when given. Throws why not.
-   */
-  createPluginBot(plugin: string, title: string, input: { name: string; job: string; avatar?: string; parent?: string; instructions?: string; delegation?: "default" | "onRequest" }): BotInfo & { created: boolean } {
-    const delegation = input.delegation === "onRequest" ? "onRequest" as const : undefined;
-    const info = (id: string, created: boolean) => {
-      const bot = this.bots.get(id);
-      if (!bot) throw new Error("The bot could not be started.");
-      return { ...this.botInfo(bot), created };
-    };
-    if (input.parent !== undefined) {
-      const parent = this.pluginBot(input.parent)?.profile;
-      if (!parent) throw new Error("No such bot.");
-      if (parent.role === "main" || parent.id === this.maintainerId) throw new Error("A sub bot's parent is a project bot or a bot of its own, not the main bot or Maintainer.");
-      if (parent.parent) throw new Error("A sub bot cannot have a sub bot of its own; name its project bot as the parent.");
-      const name = botName(input.name);
-      if (!name || !input.job.trim()) throw new Error("A bot needs a name and a job.");
-      const existing = this.profiles.find((profile) => profile.parent === parent.id && !this.removed.has(profile.id) && profile.name.toLowerCase() === name.toLowerCase());
-      if (existing) {
-        if (existing.plugin !== plugin) throw new Error(`The name "${name}" is taken by another sub bot of "${parent.name}".`);
-        this.setPluginBotExtras(existing, input.instructions, input.delegation);
-        return info(existing.id, false);
-      }
-      const id = this.makeSubBot(parent, name, input.job.trim().slice(0, 1_000), undefined, delegation ? "claude" : undefined, { plugin, delegation, instructions: input.instructions });
-      const progress = progressFile(parent.folder, id);
-      mkdirSync(join(progress, ".."), { recursive: true });
-      writeFileAtomic(progress, "Status: working\n");
-      this.bots.get(parent.id)?.appNotice(`New sub bot "${name}" (made by plugin "${title}").`, undefined, undefined, { sourceID: id });
-      return info(id, true);
-    }
-    const made = this.makeBot(input.name, input.job, { avatar: input.avatar, by: `plugin "${title}"`, plugin, delegation, instructions: input.instructions });
-    if (made.kind === "empty") throw new Error("A bot needs a name and a job.");
-    if (made.kind === "taken") throw new Error(`The name "${input.name}" is taken (by another bot, a project, or the app).`);
-    if (made.kind === "removedByUser") throw new Error(`The user removed the bot "${input.name}"; it is not made again.`);
-    if (made.kind === "existing") {
-      const profile = this.profiles.find((candidate) => candidate.id === made.botId);
-      if (profile) this.setPluginBotExtras(profile, input.instructions, input.delegation);
-    }
-    return info(made.botId, made.kind === "made");
-  }
+  createPluginBot(...a: Parameters<CoreBots["createPluginBot"]>) { return this.coreBots.createPluginBot(...a); }
 
-  /** Where a plugin's instructions for a bot are kept: its own notes folder (a sub bot's under the shared .bot/sub-bots/<id>/). */
-  private instructionsPath(folder: string, id: string, parent: boolean): string {
-    return parent ? join(folder, ".bot", "sub-bots", id, "instructions.md") : join(folder, ".bot", "instructions.md");
-  }
+  writeInstructions(...a: Parameters<CoreBots["writeInstructions"]>) { return this.coreBots.writeInstructions(...a); }
 
-  /** Writes a plugin's instructions for a new bot; the path for its projects.json row (undefined: none given). */
-  private writeInstructions(folder: string, id: string, parent: boolean, instructions: string | undefined): string | undefined {
-    if (instructions === undefined || !instructions.trim()) return undefined;
-    const file = this.instructionsPath(folder, id, parent);
-    mkdirSync(join(file, ".."), { recursive: true });
-    writeFileAtomic(file, instructions);
-    return file;
-  }
+  private isSubBot(...a: Parameters<CoreBots["isSubBot"]>) { return this.coreBots.isSubBot(...a); }
 
-  /** The same plugin asked again for a bot it made: new instructions and delegation, when given, in its file, row and profile. */
-  private setPluginBotExtras(profile: BotProfile, instructions: string | undefined, delegation: "default" | "onRequest" | undefined) {
-    const patch: Record<string, unknown> = {};
-    const file = this.writeInstructions(profile.folder, profile.id, Boolean(profile.parent), instructions);
-    if (file && profile.instructionsFile !== file) { profile.instructionsFile = file; patch.instructionsFile = file; }
-    if (delegation === "onRequest" && profile.delegation !== "onRequest") { profile.delegation = "onRequest"; patch.delegation = "onRequest"; }
-    if (delegation === "default" && profile.delegation) { delete profile.delegation; patch.delegation = undefined; }
-    if (Object.keys(patch).length) updateProjectRow(this.options.dataDir, profile.id, patch);
-  }
+  private subBotRows(...a: Parameters<CoreBots["subBotRows"]>) { return this.coreBots.subBotRows(...a); }
 
-  /** A sub bot (a hidden bot under a project bot) as opposed to a bot in the left column. */
-  private isSubBot(id: string): boolean {
-    return Boolean(this.profiles.find((profile) => profile.id === id)?.parent);
-  }
+  private subBotNote(...a: Parameters<CoreBots["subBotNote"]>) { return this.coreBots.subBotNote(...a); }
 
-  /** The rows a project bot's subagent list shows for its sub bots: each opens as a chat with an input box. */
-  private subBotRows(parentId: string): SubagentRowView[] {
-    return this.profiles.filter((profile) => profile.parent === parentId && !this.removed.has(profile.id)).map((profile) => ({
-      id: profile.id, title: profile.name.slice(0, 400), status: "running" as const, head: "claude" as const, outputTokens: null,
-      startedAt: profile.createdAt ?? 0, endedAt: null, unsettledAt: null, settled: false, prompt: (profile.job ?? "").slice(0, 1_000), subBot: profile.id,
-    }));
-  }
+  subBotRequested(...a: Parameters<CoreSubBots["subBotRequested"]>) { return this.coreSubBots.subBotRequested(...a); }
 
-  /** The note a project bot wakes with when it has sub bots: who, and the progress file to read instead of waking them. */
-  private subBotNote(profile: BotProfile): string {
-    return subBotBriefing(this.profiles.filter((sub) => sub.parent === profile.id && !this.removed.has(sub.id)).map((sub) => {
-      const file = progressFile(profile.folder, sub.handoff ?? sub.id);
-      let status: string | null = null;
-      try { status = progressStatus(readFileSync(file, "utf8")); } catch { /* not written yet */ }
-      return { name: sub.name, progress: file, working: Boolean(this.bots.get(sub.id)?.view().working), status };
-    }), profile.role === "main" ? "Main bot" : profile.name);
-  }
+  removeSubBotRequested(...a: Parameters<CoreSubBots["removeSubBotRequested"]>) { return this.coreSubBots.removeSubBotRequested(...a); }
 
-  /**
-   * A project bot's <sub-bot name="…" subagent="id"/>: the subagent (a Claude subagent, a Codex worker or an Antigravity
-   * worker) is asked to write handoff.md and end (Claude: by the project bot's own SendMessage; a Codex worker: by the app,
-   * joined into its turn; an Antigravity worker takes no message while it works, so it is stopped at once) and waited for
-   * (and stopped, with the file written here, only if it does not end in time); then a hidden sub bot is made in the same
-   * folder, on the worker's engine when the project bot has it, and handed the file. A request that cannot be done says
-   * why in the chat, never silently.
-   */
-  async subBotRequested(bot: Bot, request: { name: string; subagent: string; note: string; engine?: string; subagents?: string[] }): Promise<void> {
-    const profile = bot.profile;
-    const refuse = (why: string) => {
-      bot.appNotice(`No sub bot was made: ${why}`);
-      bot.queueNote(`(App: No sub bot was made: ${why})`);
-    };
-    if (profile.role === "main" || profile.id === this.maintainerId) return refuse("only a project's or a bot's own subagents can become sub bots.");
-    if (profile.parent) return refuse("a sub bot cannot make another sub bot; it starts subagents of its own instead.");
-    const name = botName(request.name);
-    if (!name) return refuse("it needs a name.");
-    // App-managed workers (any engine) are pulled in: the new sub bot owns them, they keep running where they are.
-    const keys = [...new Set([request.subagent, ...(request.subagents ?? [])].filter(Boolean))];
-    if (keys.length && this.agentFlags().agentMoves) {
-      const records = keys.map((key) => this.tagAgent(bot, key));
-      const missing = keys.filter((_, i) => !records[i]);
-      if (records.every((record) => record && record.host.kind !== "claude-sidechain")) {
-        try { await this.moveOwners(records as AgentRecord[], { kind: "newSubBot", name, ...(request.note.trim() ? { note: request.note } : {}) }, { task: request.note.trim() || undefined }); }
-        catch (error) { refuse((error as Error).message); }
-        return;
-      }
-      if (keys.length > 1) return refuse(missing.length ? `there is no worker ${missing.map((key) => `"${key}"`).join(", ")} of yours here.` : "only app-managed workers can be pulled into one sub bot together.");
-    } else if (keys.length > 1) return refuse("moving several workers at once needs agentMoves on.");
-    const key = keys[0] ?? "";
-    if (!key) return this.subBotMade(bot, name, request);
-    const found = bot.findSubagent(key);
-    if (!found) return refuse(`there is no subagent "${key}" here.`);
-    // One that already ended can still move if the app has a record of what it did; with none there is nothing to hand over.
-    if (found.status !== "running" && !found.steps.length && !found.result.trim()) return refuse(`the subagent "${key}" has already ended and left no record of its work, so there is nothing to hand over.`);
-    const token = safeToken(key);
-    if (this.profiles.some((sub) => sub.parent === profile.id && sub.handoff === token) || this.movingSubagents.has(`${profile.id}:${token}`)) return refuse(`"${key}" was already moved to a sub bot.`);
-    this.movingSubagents.add(`${profile.id}:${token}`);
-    try {
-      const file = handoffFile(profile.folder, token);
-      mkdirSync(join(file, ".."), { recursive: true });
-      const mode = bot.handoffMode(found.id);
-      const result = await runHandoff({
-        status: () => bot.findSubagent(key)?.status ?? "missing",
-        ...(mode === "steer" ? { ask: () => { bot.askForHandoff(found.id, wrapUpMessage(file)); } } : {}),
-        ...(mode === "stop" ? { stopAtOnce: true } : {}),
-        forceStop: () => bot.stopForHandoff(found.id),
-        fallbackText: (reason) => {
-          const now = bot.findSubagent(key) ?? found;
-          return fallbackHandoff({ name, description: now.description, prompt: now.prompt, steps: now.steps, status: now.status, result: now.result, reason, engine: now.engine, id: now.id, threadId: now.threadId, run: now.run });
-        },
-        written: () => { try { return readFileSync(file, "utf8").trim().length > 0; } catch { return false; } },
-        write: (text) => writeFileAtomic(file, text),
-        sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-        now: () => Date.now(),
-        waitMs: this.options.subBotWaitMs ?? SUB_BOT_WAIT_MS,
-        pollMs: Math.min(500, Math.max(5, Math.floor((this.options.subBotWaitMs ?? SUB_BOT_WAIT_MS) / 10))),
-      });
-      const chosen = subBotEngine(found.engine, { engine: bot.engine, heads: bot.headEngines });
-      const subId = this.makeSubBot(profile, name, `Continue the work moved out of a subagent: ${found.description || found.prompt.slice(0, 200)}`, token, chosen.engine);
-      this.agents.succeed(profile.id, found.id, { kind: "subBot", botId: subId }, file);
-      const progress = progressFile(profile.folder, token);
-      if (!existsSync(progress)) writeFileAtomic(progress, "Status: working\n");
-      bot.appNotice(`Moved "${found.description || key}" to the sub bot "${name}".${result.outcome === "forced" ? (mode === "stop" ? " The worker cannot take a message while it works, so it was stopped at once and the handoff was written from its recorded steps." : " The subagent did not end in time, so it was stopped and the handoff was written from its recorded steps.") : ""}${chosen.note ? ` ${chosen.note}` : ""}`, undefined, undefined, { sourceID: subId });
-      this.bots.get(subId)?.relay(subBotFirstMessage({ parentName: profile.name, name, handoff: file, progress, note: request.note }));
-      this.log(`sub bot ${name} made under ${profile.name} (${result.outcome}${result.wroteFallback ? ", handoff written by the app" : ""})`);
-    } catch (error) {
-      refuse(`${(error as Error).message}`);
-    } finally {
-      this.movingSubagents.delete(`${profile.id}:${token}`);
-    }
-  }
-
-  /** A project bot's <remove-sub-bot name="…"/>: one of its own sub bots is closed exactly as the UI's "Close sub bot" does. */
-  async removeSubBotRequested(bot: Bot, request: { name: string }): Promise<void> {
-    const refuse = (why: string) => { bot.appNotice(`No sub bot was removed: ${why}`); bot.queueNote(`(App: No sub bot was removed: ${why})`); };
-    const wanted = request.name.trim().toLowerCase();
-    const sub = this.profiles.find((profile) => profile.parent === bot.id && !this.removed.has(profile.id) && profile.name.trim().toLowerCase() === wanted);
-    if (!sub) return refuse(`you have no sub bot named "${request.name}".`);
-    try { await this.closeSubBot(sub.id); this.log(`sub bot ${sub.name} removed by ${bot.profile.name}`); }
-    catch (error) { refuse((error as Error).message); }
-  }
-
-  /**
-   * A bot's <remove-bot name="…" path="…"/>: a project or bot (never a sub bot, the asker itself or what it hangs under, the
-   * main bot or Maintainer) is found by name, and by folder when names repeat. The user is asked on a card in the asker's
-   * chat; only "Remove" runs `removeBot`, exactly what the left column's Remove does (nothing on disk is deleted).
-   */
-  removeBotRequested(bot: Bot, request: { name: string; path?: string }): void {
-    const refuse = (why: string) => { bot.appNotice(`No bot was removed: ${why}`); bot.queueNote(`(App: No bot was removed: ${why})`); };
-    const wanted = request.name.trim().toLowerCase();
-    const named = this.profiles.filter((profile) => !this.removed.has(profile.id) && profile.name.trim().toLowerCase() === wanted);
-    const protectedBot = named.find((profile) => profile.role === "main" || profile.id === this.maintainerId);
-    if (protectedBot && named.length === 1) return refuse(`"${protectedBot.name}" is ${protectedBot.role === "main" ? "the main bot" : "Maintainer"}, which cannot be removed.`);
-    let found = named.filter((profile) => profile.role !== "main" && profile.id !== this.maintainerId && !profile.parent);
-    if (!found.length) {
-      return refuse(named.some((profile) => profile.parent)
-        ? `"${request.name}" is a sub bot; a sub bot is closed by its own project bot (<remove-sub-bot>).`
-        : `there is no project or bot named "${request.name}".`);
-    }
-    if (request.path) {
-      const want = folderPath(request.path);
-      const at = (folder: string) => folderPath(folder) ?? folder;
-      const exact = found.filter((profile) => want !== null && at(profile.folder) === want);
-      found = exact.length ? exact : found.filter((profile) => want !== null && at(profile.folder).toLowerCase() === want.toLowerCase());
-      if (!found.length) return refuse(`no project or bot named "${request.name}" is at ${request.path}.`);
-    }
-    if (found.length > 1) {
-      return refuse(`more than one project or bot is named "${request.name}" (${found.map((profile) => profile.folder).join(", ")}); add path="its folder" to say which.`);
-    }
-    const target = found[0]!;
-    if (target.id === bot.id || target.id === bot.profile.parent) return refuse(target.id === bot.id ? "a bot cannot remove itself." : `"${target.name}" is the project bot you belong to.`);
-    const project = target.role !== "bot";
-    bot.appNotice(
-      `Remove **${target.name}** from Botling?\n\n\`${target.folder}\`\n\nIt stops at once${this.profiles.some((profile) => profile.parent === target.id && !this.removed.has(profile.id)) ? ", with its sub bots" : ""}. Nothing on disk is deleted: its folder, notes in .bot/ and chat files stay.`,
-      [{ label: project ? "Remove project" : "Remove bot" }, { label: "Keep" }],
-      (index) => {
-        if (index !== 0) { bot.queueNote(`(App: The user chose to keep "${target.name}"; nothing was removed.)`); return; }
-        if (!this.profiles.some((profile) => profile.id === target.id) || this.removed.has(target.id)) { bot.queueNote(`(App: "${target.name}" was already removed.)`); return; }
-        this.removeBot(target.id).then(
-          () => { bot.queueNote(`(App: The user confirmed; "${target.name}" was removed from Botling. Its folder stays at ${target.folder}.)`); this.log(`${target.name} removed by ${bot.profile.name}, confirmed by the user`); },
-          (error: Error) => refuse(error.message));
-      },
-      { sourceID: target.id });
-    bot.queueNote(`(App: The user now sees a card asking to remove "${target.name}" (${target.folder}). Nothing is removed until they confirm.)`);
-  }
-
-  /** An agent a bot names in a tag (its agent id, its task id, or the id it reaches it by), if that bot owns it. */
-  private tagAgent(bot: Bot, key: string): AgentRecord | undefined {
-    const record = this.agents.get(key) ?? this.agents.byHostBot(bot.id, key) ?? this.agents.movedIn(bot.id).find((candidate) => candidate.nativeId === key);
-    return record && record.owner.botId === bot.id ? record : undefined;
-  }
-
-  /** A <sub-bot> with no subagent: a new empty sub bot under the project bot, sent the words inside the tag as its first task. */
-  private subBotMade(bot: Bot, name: string, request: { note: string; engine?: string }): void {
-    const profile = bot.profile;
-    const task = request.note.trim();
-    const refuse = (why: string) => { bot.appNotice(`No sub bot was made: ${why}`); bot.queueNote(`(App: No sub bot was made: ${why})`); };
-    if (!task) return refuse("it needs a task (the words inside the tag) or a subagent to move.");
-    try {
-      const chosen = directSubBotEngine(request.engine, { engine: bot.engine, heads: bot.headEngines });
-      const subId = this.makeSubBot(profile, name, task.slice(0, 1_000), undefined, chosen.engine);
-      const progress = progressFile(profile.folder, subId);
-      mkdirSync(join(progress, ".."), { recursive: true });
-      writeFileAtomic(progress, "Status: working\n");
-      bot.appNotice(`Made the sub bot "${name}" and gave it its first task.${chosen.note ? ` ${chosen.note}` : ""}`, undefined, undefined, { sourceID: subId });
-      this.bots.get(subId)?.relay(subBotDirectFirstMessage({ parentName: profile.name, name, task, progress }));
-      this.log(`sub bot ${name} made directly under ${profile.name}`);
-    } catch (error) {
-      refuse((error as Error).message);
-    }
-  }
+  removeBotRequested(...a: Parameters<CoreSubBots["removeBotRequested"]>) { return this.coreSubBots.removeBotRequested(...a); }
 
   // ---- Agents (A1): the registry, "Move to…", notices, status files ----
 
   /** settings.json's agent flags (read at most every 2 s: rows ask often). */
-  private agentFlags(): { agentMoves: boolean; claudeOwnerMoves: boolean } {
+  agentFlags(): { agentMoves: boolean; claudeOwnerMoves: boolean } {
     const now = Date.now();
     if (!this.flagCache || now - this.flagCache.at > 2_000) {
       const raw = readSettings(Layout.settings(this.options.dataDir)) as Record<string, unknown>;
@@ -1192,7 +769,7 @@ export class Core {
   }
 
   /** A bot's name as agent notices say it. */
-  private agentBotName(id: string): string {
+  agentBotName(id: string): string {
     const profile = this.profiles.find((candidate) => candidate.id === id);
     return !profile ? "a removed bot" : profile.role === "main" ? "Main bot" : profile.name;
   }
@@ -1311,7 +888,7 @@ export class Core {
   }
 
   /** `removeBot`'s part: reconcile rules 4 and 5 for that bot, before it leaves the profiles. */
-  private agentsOfRemovedBot(id: string) {
+  agentsOfRemovedBot(id: string) {
     const name = this.agentBotName(id);
     const gone = this.agents.botRemoved(id, (other) => other !== id && this.bots.has(other) && !this.removed.has(other));
     for (const record of gone.hostLost) {
@@ -1445,7 +1022,7 @@ export class Core {
    * Owner moves of one or more agents to one target, all or none: intents first, the sub bot (once), each host told the new
    * owner (a refusal undoes the ones before it and the sub bot), then the commits and the notices.
    */
-  private async moveOwners(records: AgentRecord[], to: MoveTarget, options: { notifyAgent?: boolean; note?: string; task?: string }): Promise<string> {
+  async moveOwners(records: AgentRecord[], to: MoveTarget, options: { notifyAgent?: boolean; note?: string; task?: string }): Promise<string> {
     if (!records.length) throw new ContractError("bad_request", "No agents to move.");
     const plans = records.map((record) => {
       const plan = planMove(record, to, this.moveFacts(record, to));
@@ -1688,147 +1265,23 @@ export class Core {
     }
   }
 
-  /**
-   * "Close sub bot": the agents it owns go back to the bot that runs them (or, when that bot is gone, are only listed as stopped),
-   * the ones it runs itself are stopped, then it is removed. Its project bot's chat says which went where.
-   */
-  async closeSubBot(id: string): Promise<ResultOf<"subbot.close">> {
-    this.checkBot(id);
-    const profile = this.profiles.find((candidate) => candidate.id === id);
-    if (!profile || this.removed.has(id)) throw new ContractError("not_found", "No such bot.");
-    if (!profile.parent) throw new ContractError("bad_request", "Only a sub bot can be closed.");
-    const parentId = profile.parent;
-    const returned: { title: string; to: string }[] = [];
-    const stopped: { title: string; why: string }[] = [];
-    for (const record of this.agents.movedIn(id)) {
-      const title = record.summary.description || "Agent";
-      const host = this.removed.has(record.host.botId) ? undefined : this.bots.get(record.host.botId);
-      if (!host || record.state === "lost") { stopped.push({ title, why: "the bot that ran it is gone" }); continue; }
-      try { await this.moveOwners([record], { kind: "back" }, {}); returned.push({ title, to: this.agentBotName(record.host.botId) }); }
-      catch (error) {
-        // It cannot go back now (its report is being handed over this very moment): stopped instead, never left without an owner.
-        await host.commandWorker(record.nativeId, { kind: "stop" }).catch(() => undefined);
-        stopped.push({ title, why: `it could not go back: ${(error as Error).message}` });
-      }
-    }
-    const sub = this.bots.get(id);
-    for (const record of this.agents.all.filter((candidate) => candidate.host.botId === id && candidate.state === "running")) {
-      const stoppedNow = await sub?.commandWorker(record.nativeId, { kind: "stop" }).catch(() => null);
-      if (stoppedNow?.ok) stopped.push({ title: record.summary.description || "Agent", why: "it ran on this sub bot" });
-    }
-    await this.removeBot(id, { quiet: true });
-    const parent = this.removed.has(parentId) ? undefined : this.bots.get(parentId);
-    const words = subBotClosedNotice({ name: profile.name, returned, stopped });
-    parent?.appNotice(words, undefined, undefined, { sourceID: id });
-    parent?.queueNote(`(App: ${words})`);
-    parent?.refresh();
-    return { closed: true, parentBotId: parentId, returned: returned.length, stopped: stopped.length };
-  }
+  closeSubBot(...a: Parameters<CoreSubBots["closeSubBot"]>) { return this.coreSubBots.closeSubBot(...a); }
 
-  private movingSubagents = new Set<string>();
-  /** Sub bots that already told their project bot they were done. */
-  private subBotsReported = new Set<string>();
+  makeSubBot(...a: Parameters<CoreSubBots["makeSubBot"]>) { return this.coreSubBots.makeSubBot(...a); }
 
-  /** Makes the hidden sub bot: a Bot of its own (head, chat.json, subagents.json) under `parent`, in the same folder, no worktree. */
-  makeSubBot(parent: BotProfile, rawName: string, job: string, handoff: string | undefined, engine?: Engine, extras: { plugin?: string; delegation?: "onRequest"; instructions?: string } = {}): string {
-    const taken = new Set(this.profiles.filter((profile) => profile.parent === parent.id).map((profile) => profile.name.toLowerCase()));
-    let name = botName(rawName) || "Sub bot";
-    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${botName(rawName) || "Sub bot"} ${n}`;
-    const id = randomUUID().toUpperCase();
-    mkdirSync(join(parent.folder, ".bot", "sub-bots", id), { recursive: true });
-    this.seedEngineDefaults(id);
-    // It runs on the engine of the worker it took over (`subBotEngine`), as a single head: the app's defaults would otherwise decide.
-    if (engine) this.singleEngine(id, engine);
-    const instructionsFile = this.writeInstructions(parent.folder, id, true, extras.instructions);
-    const row = { id, name, folder: parent.folder, avatar: parent.avatar, job, parent: parent.id, createdAt: Date.now(), ...(handoff ? { handoff } : {}),
-      ...(extras.plugin ? { plugin: extras.plugin } : {}), ...(extras.delegation ? { delegation: extras.delegation } : {}), ...(instructionsFile ? { instructionsFile } : {}) };
-    saveProjectRow(this.options.dataDir, row);
-    this.attach(projectProfile(this.options.dataDir, { ...row, folder: folderURLText(parent.folder) }));
-    // The project bot's subagent list gains the row.
-    this.bots.get(parent.id)?.refresh();
-    return id;
-  }
+  private subBotReplied(...a: Parameters<CoreSubBots["subBotReplied"]>) { return this.coreSubBots.subBotReplied(...a); }
 
-  /** A sub bot's reply showed: when its progress file says it is done, its project bot hears of it once. */
-  private subBotReplied(bot: Bot) {
-    const sub = bot.profile;
-    if (!sub.parent || this.subBotsReported.has(sub.id)) return;
-    let status: string | null = null;
-    try { status = progressStatus(readFileSync(progressFile(sub.folder, sub.handoff ?? sub.id), "utf8")); } catch { return; }
-    if (!status?.startsWith("done")) return;
-    this.subBotsReported.add(sub.id);
-    const parent = this.bots.get(sub.parent);
-    if (!parent) return;
-    const words = `The sub bot "${sub.name}" finished its job. Progress file: ${progressFile(sub.folder, sub.handoff ?? sub.id)}`;
-    parent.appNotice(words, undefined, undefined, { sourceID: sub.id });
-    parent.queueNote(`(App: ${words})`);
-    parent.refresh();
-  }
+  private storeOf(...a: Parameters<CoreBots["storeOf"]>) { return this.coreBots.storeOf(...a); }
 
-  /** The store of the bot kept in `directory`: 2.x's files, or Botling 3's server store (`CoreOptions.botStore`). */
-  private storeOf(directory: string): BotStore {
-    return this.options.botStore ? this.options.botStore(directory) : new BotStore(directory);
-  }
+  singleEngine(...a: Parameters<CoreBots["singleEngine"]>) { return this.coreBots.singleEngine(...a); }
 
-  /** A new bot runs on one engine, as a single head (saved before it is made). */
-  private singleEngine(id: string, engine: Engine) {
-    const store = this.storeOf(Layout.bot(this.options.dataDir, id));
-    store.saveSetting("heads", headsJSON(singleHead(engine)));
-    store.saveSetting("engine", engine);
-  }
+  seedEngineDefaults(...a: Parameters<CoreBots["seedEngineDefaults"]>) { return this.coreBots.seedEngineDefaults(...a); }
 
-  /** The app's engine defaults saved into a new bot's bot.json before it is made (`seedEngineDefaults`). */
-  seedEngineDefaults(id: string) {
-    const store = this.storeOf(Layout.bot(this.options.dataDir, id));
-    seedEngineDefaults(readSettings(Layout.settings(this.options.dataDir)), (key, value) => store.saveSetting(key, value));
-  }
+  attach(...a: Parameters<CoreBots["attach"]>) { return this.coreBots.attach(...a); }
 
-  /** A new project's or bot's row in the left column, before Maintainer (who stays last). */
-  attach(profile: BotProfile): Bot {
-    const at = this.profiles.findIndex((candidate) => candidate.id === this.maintainerId);
-    this.profiles.splice(at < 0 ? this.profiles.length : at, 0, profile);
-    const bot = this.newBot(profile);
-    const orderAt = this.order.indexOf(this.maintainerId);
-    this.order.splice(orderAt < 0 ? this.order.length : orderAt, 0, profile.id);
-    this.event({ type: "bot.updated", bot: this.botView(bot) });
-    return bot;
-  }
+  machineNamed(...a: Parameters<CoreBots["machineNamed"]>) { return this.coreBots.machineNamed(...a); }
 
-  /** This machine's name as the main bot's tags name it (`machineName`, M5-04c), one clean line; "" when none is given. */
-  private ownMachine(): string {
-    const name = typeof this.options.machineName === "function" ? this.options.machineName() : this.options.machineName;
-    return botName(name ?? "");
-  }
-
-  /**
-   * The machine a tag's `machine="…"` names (M5-04d), matched without case against the peers' names (one clean line each):
-   * this machine, one peer, none, or more than one with that name. The peer list needs a way to send, and an id that is
-   * not a plain id is never a target (a peer's rows are schema-checked only).
-   */
-  machineNamed(raw: string): { kind: "here" } | { kind: "peer"; id: string; name: string } | { kind: "ambiguous"; name: string } | { kind: "unknown"; name: string } {
-    const name = botName(raw);
-    const key = name.toLowerCase();
-    const peers = this.options.remoteCommand ? (this.options.machines?.() ?? []).map((machine) => ({ id: machine.id, name: botName(machine.name) }))
-      .filter((machine) => machine.name && PEER_ID.test(machine.id)) : [];
-    const found = peers.filter((machine) => machine.name.toLowerCase() === key);
-    const own = this.ownMachine();
-    if (own && own.toLowerCase() === key) return found.length ? { kind: "ambiguous", name } : { kind: "here" };
-    if (found.length === 1) return { kind: "peer", id: found[0]!.id, name: found[0]!.name };
-    return { kind: found.length ? "ambiguous" : "unknown", name };
-  }
-
-  /**
-   * What the main bot is told about its acts on other machines (M5-04d): a line in its chat, and the same words as an
-   * `(App: …)` note with its next message. The line is what keeps it: `queueNote` holds one note and none for a bot that is
-   * not awake, and an outcome from another machine can come late (after a sleep, or two in one turn).
-   */
-  tellMain(words: (part: (text: string) => string) => string) {
-    const main = this.mainBot();
-    // The chat line is markdown: a peer's name or reason such as `[x](https://…)` must stay text, never a link (review
-    // M5-04d); the note goes to the model as written.
-    main?.appNotice(words(plainMarkdown));
-    main?.queueNote(`(App: ${words((text) => text)})`);
-  }
+  tellMain(...a: Parameters<CoreBots["tellMain"]>) { return this.coreBots.tellMain(...a); }
 
   /**
    * The main bot's <new-bot name="…" machine="…">job</new-bot> (M5-04d, D26, Q-C3): `bots.create` on that peer's server, this
@@ -1885,70 +1338,9 @@ export class Core {
     sent.outcome.then((outcome) => { if (outcome.ok) this.peerIgnoring.delete(key); else failed(outcome.why); }, (error: unknown) => failed((error as Error).message));
   }
 
-  /** The main bot's (or Maintainer's) <new-bot name="…">job</new-bot>: made and set up, or why not. */
-  botRequested(name: string, job: string, by: string | null) {
-    const main = this.mainBot();
-    const made = this.makeBot(name, job, { setUp: true, by });
-    if (made.kind === "existing") {
-      const old = this.bots.get(made.botId)!;
-      main?.appNotice(`There is already a bot called "${old.profile.name}"; nothing new was made. To change its job, tell it, or remove it from its menu first.`, undefined, undefined, { sourceID: made.botId });
-    } else if (made.kind === "taken") {
-      main?.appNotice(`No bot was made: the name "${botName(name)}" is already used by a project or the app.`);
-    }
-  }
+  botRequested(...a: Parameters<CoreBots["botRequested"]>) { return this.coreBots.botRequested(...a); }
 
-  /**
-   * Takes a bot of its own (`Workspace.removeBot`) — or, in 2.0, a project — out of the left column and
-   * stops it. Nothing on disk is deleted: its folder (memory, results; a project's own files and .bot/)
-   * and its chat files stay. Its questions copied into the main bot's chat can no longer be answered.
-   */
-  async removeBot(id: string, { quiet = false }: { quiet?: boolean } = {}): Promise<{ removed: boolean }> {
-    this.checkBot(id);
-    const profile = this.profiles.find((candidate) => candidate.id === id);
-    if (!profile) throw new ContractError("not_found", "No such bot.");
-    if (profile.role === "main" || id === this.mainBotId || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
-    // Its sub bots go with it (they hang under it, in its folder).
-    for (const sub of this.profiles.filter((candidate) => candidate.parent === id)) await this.removeBot(sub.id);
-    const bot = this.bots.get(id);
-    // Its agents (reconcile rules 4 and 5, at once): ones it ran for another owner are lost; ones it owned go back to their host.
-    this.agentsOfRemovedBot(id);
-    this.removed.add(id);
-    this.profiles = this.profiles.filter((candidate) => candidate.id !== id);
-    this.order = this.order.filter((candidate) => candidate !== id);
-    this.bots.delete(id);
-    removeProjectRow(this.options.dataDir, id);
-    if (profile.plugin) {
-      this.removedPluginBots.add(`${profile.plugin}/${profile.name}`.toLowerCase());
-      writeFileAtomic(join(this.options.dataDir, "removed-bots.json"), JSON.stringify([...this.removedPluginBots].sort()));
-    }
-    const main = this.mainBot();
-    for (const [copy, source] of [...this.copies]) {
-      if (source.botId !== id) continue;
-      this.copies.delete(copy);
-      main?.settleAppQuestion(copy, { answer: "No longer needed" });
-    }
-    for (const copy of main?.openCopies(id) ?? []) main?.settleAppQuestion(copy.id, { answer: "No longer needed" });
-    // Its cards relayed into the chat that called it in (`callInFollowUp`: a copy naming its original) go the same way:
-    // their original is gone with it (spec/models/callin/RelayedCard.tla, NoCopyOfGone).
-    for (const chat of this.bots.values()) {
-      for (const copy of chat.lines()) {
-        if (copy.role === "bot" && copy.sourceID === id && typeof copy.sourceMessageID === "string" && isOpenQuestion(copy)) {
-          chat.settleAppQuestion(copy.id, { answer: "No longer needed" });
-        }
-      }
-    }
-    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "bot.removed", botId: id } });
-    this.plugins.event("botRemoved", { botId: id });
-    this.briefAwakeMainBot();
-    this.refreshWaiting();
-    if (!quiet) main?.appNotice(profile.role === "bot"
-      ? `Removed the bot "${profile.name}". Its folder stays at ${profile.folder}.`
-      : `Removed the project "${profile.name}" from Botling. Its folder stays at ${profile.folder}, with its notes in .bot/.`);
-    this.log(`removed ${profile.role === "bot" ? "the bot" : "the project"} ${profile.name} (${profile.folder} kept)`);
-    // It stops at once (no tidy); its chat files stay where they are.
-    await bot?.shutdown({ tidy: false }).catch((error) => this.log(`stopping ${profile.name}: ${(error as Error).message}`));
-    return { removed: true };
-  }
+  removeBot(...a: Parameters<CoreBots["removeBot"]>) { return this.coreBots.removeBot(...a); }
 
   /**
    * The main bot's <open-question from="name"/> (`showOpenQuestion`): the card a project or bot already
@@ -2381,7 +1773,7 @@ export class Core {
     }));
   }
 
-  private pluginBot(botId: string): Bot | null {
+  pluginBot(botId: string): Bot | null {
     const id = botId === "main" ? (this.mainBot()?.id ?? "") : botId;
     return !id || this.removed.has(id) ? null : this.bots.get(id) ?? null;
   }
@@ -2425,7 +1817,7 @@ export class Core {
     return null;
   }
 
-  private botInfo(bot: Bot): BotInfo {
+  botInfo(bot: Bot): BotInfo {
     return { id: this.outId(bot.id), name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
   }
 
@@ -2501,7 +1893,7 @@ export class Core {
   }
 
   /** Botling 3's server: a bot's current view (its summary row in the server's srv: table), or null. */
-  private botView(bot: Bot): BotView {
+  botView(bot: Bot): BotView {
     const view = bot.view();
     return bot.id === this.maintainerId ? { ...view, maintainer: true } : view;
   }

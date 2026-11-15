@@ -14,6 +14,8 @@
 // allows the command) decide. `local` and `admin` mean "the desktop window on its own server" and are never taken from
 // a peer: a forwarded copy stating one (or none) is decided as stated `read`, which the owner refuses unless the
 // command is a read (the owner's refusal, stored; the forwarder never refuses, F3).
+// M7-12a: a window command the attached server stamped `manage` passes through this unchanged (window-scope.ts: the
+// owner's slotAuthorize decides it as a user); only a stated `local`, `admin` or none still means `read`.
 // A target this server does not own is not forwarded again (no loops, §11.2 step 5): a `srv:` target of another server
 // ends the session (`bye{role}`: the forwarder's directory is wrong); a `bot:` target goes to the slot engine, which
 // refuses a bot this server does not have.

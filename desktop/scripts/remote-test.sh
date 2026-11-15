@@ -38,7 +38,11 @@
 #   BOTLING_REMOTE_LOGS     local folder for the saved output (default <main checkout>/.bot/remote-test-logs)
 #   BOTLING_REMOTE_KEEP=1   keep the host worktree after the run (for poking at a failure; remove it by hand)
 #
-# Exit status: the typecheck's or test command's status; 2 for a usage or setup error.
+# Test filters (vitest args that are file names): one argument per file, relative to desktop/ ("test/unit/a.test.ts" or the
+# short name "a"). A leading "desktop/" or "./" is stripped; an argument with a space or comma is refused (exit 2). After the
+# run, a filter that matched no test file fails the run (exit 1) and is named in the summary.
+#
+# Exit status: the typecheck's or test command's status; 1 when a test filter matched no test file; 2 for a usage or setup error.
 set -euo pipefail
 
 NODE_VERSION=v24.22.3 # the Node 24 that --setup installs (CI's desktop jobs use Node 24)
@@ -98,6 +102,27 @@ if [ "$tc" = only ]; then
   [ $# -eq 0 ] || { echo "remote-test: --typecheck-only takes no further arguments" >&2; usage; }
   mode=typecheck
 elif [ "$mode" = changed ]; then tc=0 # test:changed typechecks already
+fi
+
+# Test filters. vitest runs in desktop/ and matches a filter as a substring of the file's path relative to desktop/, so a
+# leading "desktop/" or "./" matches nothing (and the other filters would silently run alone): strip it. One argument
+# holding several names ("a b", "a,b") is one filter that matches nothing: refuse it. Values of options are left alone.
+if [ "$mode" = vitest ] || [ "$mode" = unit ]; then
+  valopt=" -t --testNamePattern -c --config -r --root --dir --project --reporter --shard --maxWorkers --pool --outputFile "
+  fargs=(); isval=0
+  for a in "$@"; do
+    if [ "$isval" = 1 ]; then isval=0
+    elif [[ $a == -* ]]; then [[ $a != *=* && $valopt == *" $a "* ]] && isval=1
+    else
+      o=$a
+      while :; do case "$a" in ./*) a=${a#./} ;; desktop/*) a=${a#desktop/} ;; *) break ;; esac; done
+      case "$a" in
+        ""|*[[:space:],]*) echo "remote-test: test filter '$o' has a space or comma (or is empty): pass one argument per test file, e.g. test/unit/a.test.ts test/unit/b.test.ts (in zsh expand an array: \"\${files[@]}\")" >&2; exit 2 ;;
+      esac
+    fi
+    fargs+=("$a")
+  done
+  set -- "${fargs[@]+"${fargs[@]}"}"
 fi
 
 host=$BOTLING_TEST_HOST
@@ -308,11 +333,21 @@ SECS=$secs RC=$rc JSON=$json MODE=$mode node - "$@" <<'NODE'
 const fs = require("node:fs"), path = require("node:path");
 const { SECS, RC, JSON: file, MODE } = process.env, args = process.argv.slice(2);
 const line = (s) => console.log(`remote-test: ${s}`);
-line(`${RC === "0" ? "PASS" : "FAIL"} (exit ${RC}) in ${SECS}s`);
 let report = null;
 try { report = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
-if (!report) { if (MODE !== "changed") line("no vitest JSON report (build or startup failed?); see the output above"); process.exit(0); }
 const rel = (f) => path.relative(process.cwd(), f);
+// Filters (arguments that are not options or option values) that matched no test file: vitest runs the others and still
+// passes, so a review could claim tests ran that never did. A macOnly file counts as matched (it is listed below).
+const valopt = new Set(["-t", "--testNamePattern", "-c", "--config", "-r", "--root", "--dir", "--project", "--reporter", "--shard", "--maxWorkers", "--pool", "--outputFile"]);
+const filters = []; let isval = false;
+for (const a of args) { if (isval) isval = false; else if (a.startsWith("-")) isval = !a.includes("=") && valopt.has(a); else filters.push(a); }
+let macOnlyFiles = [];
+try { macOnlyFiles = ((/const macOnly = \[([\s\S]*?)\]/.exec(fs.readFileSync("vitest.config.mts", "utf8"))?.[1] ?? "").match(/"[^"]+"/g) ?? []).map((n) => `test/unit/${n.slice(1, -1)}.test.ts`); } catch {}
+const unmatched = !report || MODE === "changed" ? [] : filters.filter((f) => !report.testResults.some((r) => rel(r.name).includes(f)) && !macOnlyFiles.some((m) => m.includes(f)));
+const rc = unmatched.length && RC === "0" ? "1" : RC;
+line(`${rc === "0" ? "PASS" : "FAIL"} (exit ${rc}) in ${SECS}s`);
+if (!report) { if (MODE !== "changed") line("no vitest JSON report (build or startup failed?); see the output above"); process.exit(0); }
+if (unmatched.length) line(`FAIL: ${unmatched.length} of ${filters.length} test filter(s) matched no test file that vitest ran here (typo, not in the include list, excluded, or a desktop/ prefix): ${unmatched.join(" ")}`);
 const files = report.testResults, bad = files.filter((r) => r.status === "failed").length;
 line(`files ${files.length - bad} passed, ${bad} failed; tests ${report.numPassedTests} passed, ${report.numFailedTests} failed, ${report.numPendingTests + (report.numTodoTests || 0)} skipped`);
 const marker = /process\.platform\s*[!=]==?\s*["']darwin["']|caseInsensitive|case-insensitive|process\.env\.DISPLAY/;
@@ -346,5 +381,7 @@ if (mac.length) {
   for (const m of mac) line(`  ${m}`);
   line(`  cd desktop && npm run build && npx vitest run ${[...new Set(mac.map((m) => path.basename(m.split(" ")[0], ".test.ts")))].join(" ")}`);
 }
+process.exit(unmatched.length ? 3 : 0);
 NODE
+nrc=$?; [ "$rc" = 0 ] && [ "$nrc" = 3 ] && rc=1   # 3: a filter matched no test file
 exit "$rc"
