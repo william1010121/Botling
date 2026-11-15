@@ -72,9 +72,10 @@ describe("the settings plugin as the FE build ships it", () => {
     expect(rendererKernel.slotOwner("settings/section")).toBe(SETTINGS_PLUGIN);
     expect(rendererKernel.declaration(SHELL_SURFACE)?.provides?.slots).not.toEqual(expect.arrayContaining([SECTION]));
     expect(rendererKernel.declaration(SHELL_SURFACE)?.provides?.slots).not.toEqual(expect.arrayContaining([QUICK]));
-    // The two lists agree: what the plugin provides is what left FEED_SLOTS.
-    expect(rendererKernel.declaration(SETTINGS_PLUGIN)?.provides?.slots?.slice().sort()).toEqual(PLUGIN_OWNED_SLOTS.map(canonicalSlot).sort());
-    expect(settingsDeclaration.provides?.slots?.map(canonicalSlot).sort()).toEqual([...PLUGIN_OWNED_SLOTS].sort());
+    // The lists agree: what the plugin provides left FEED_SLOTS (PLUGIN_OWNED_SLOTS also holds the other built-ins' slots, e.g. the sidebar's `menu/bot/context`).
+    const mine = [SECTION, QUICK].sort();
+    expect(rendererKernel.declaration(SETTINGS_PLUGIN)?.provides?.slots?.slice().sort()).toEqual(mine.map(canonicalSlot).sort());
+    expect(settingsDeclaration.provides?.slots?.map(canonicalSlot).sort()).toEqual(mine);
     for (const slot of PLUGIN_OWNED_SLOTS) expect(FEED_SLOTS, slot).not.toContain(slot);
   });
 
