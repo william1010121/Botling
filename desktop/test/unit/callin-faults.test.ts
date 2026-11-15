@@ -13,6 +13,8 @@
 //           with no session to send them; A is SIGKILLed there, restarted, and the proxies heal. A's waits are lost.
 //   killB   "after commit, before send" on B: the proxies cut and partition once B holds the asks; B's guest turns finish
 //           and their replies are committed in B's forward queue with no session; B is SIGKILLed there, restarted, healed.
+//   killBmid  B is SIGKILLed while a guest turn runs (its row `started`), restarted, and killed again soon after: an
+//           interrupted row is never run again and gets one failed answer.
 //   down    B is SIGKILLed before the asks and stays down until A gave up on each (the host's stale window is 2.5 s here)
 //           and queued the cancel; then B restarts and gets the ask, then the cancel, in order.
 //   gaveUpCrash  A dies after it wrote the `callin:gaveup` record and before `callin.cancel` was submitted (M5-03a review,
@@ -50,10 +52,10 @@ const GUESTS = 8;
 const WAKE_MARK = "whom you called in with @";
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-type Kind = "clean" | "net" | "killA" | "killB" | "down" | "gaveUpCrash" | "lateKill";
-/** The waves, in order: 66 call-ins, every kind of fault in it; the runs of a wave go at once. */
+type Kind = "clean" | "net" | "killA" | "killB" | "killBmid" | "down" | "gaveUpCrash" | "lateKill";
+/** The waves, in order: 74 call-ins, every kind of fault in it; the runs of a wave go at once. */
 const PLAN: Array<[Kind, number]> = [
-  ["clean", 10], ["net", 10], ["killA", 8], ["net", 10], ["killB", 8], ["down", 8], ["gaveUpCrash", 6], ["lateKill", 6],
+  ["clean", 10], ["net", 10], ["killA", 8], ["net", 10], ["killB", 8], ["killBmid", 8], ["down", 8], ["gaveUpCrash", 6], ["lateKill", 6],
 ];
 
 const scratch = testRoot("callin-faults");
@@ -251,6 +253,19 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       await b.start();
       await sleep(pick(0, 1_500));
       heal();
+    } else if (kind === "killBmid") {
+      // B dies while a guest turn runs: its started row becomes `interrupted`, is never run again, and is answered once
+      // (failed "its machine restarted"); B dies a second time soon after, while that answer may be committed and unsent.
+      await sendAll(a, sends);
+      const running = () => runs.some((run) => inputLines(bInput).some((text) => text.includes(run.token) && text.includes("called you in"))
+        && callInRows().some((row) => row.asked.includes(run.token) && row.state === "started"));
+      await until(running, { timeout: 60_000, every: 5, what: `${seed}: a guest turn running at B` });
+      await b.kill();
+      await b.start();
+      await sleep(pick(0, 300));
+      await b.kill();
+      totals.kills += 2;
+      await b.start();
     } else if (kind === "down") {
       await b.kill();
       totals.kills++;
@@ -311,6 +326,7 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       expect(chatOf(run.hostId).filter((entry) => entry.text.startsWith("Late answer from ")).length, `seed ${seed}: ${run.token}: late notice`).toBe(1);
     }
     if (kind === "lateKill" && got.turns === 1 && got.line === 0) totals.lostLate++;
+    if (kind === "killBmid" && got.turns === 1 && callInRows().some((row) => row.asked.includes(run.token) && row.state === "interrupted")) totals.interruptedTurns++;
     totals.runs++;
     totals.lines += got.line;
     totals.wakes += got.wake;
@@ -361,7 +377,7 @@ afterAll(async () => {
 describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => {
   it(`${PLAN.reduce((sum, [, n]) => sum + n, 0)} seeded call-ins: never two guest turns, never two lines, never two wakes (seed ${SEED})`, async () => {
     console.log(`callin-faults: seed ${SEED} (CALLIN_FAULT_SEED); ${PLAN.length} waves`);
-    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0 };
+    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, interruptedTurns: 0 };
     for (let index = 0; index < PLAN.length; index++) await wave(index, PLAN[index]![0], PLAN[index]![1], totals);
     console.log(`callin-faults: ${JSON.stringify(totals)}`);
     expect(totals.runs, `seed ${SEED}: runs`).toBeGreaterThanOrEqual(50);
@@ -371,5 +387,6 @@ describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => 
     expect(totals.kills, `seed ${SEED}: kills`).toBeGreaterThanOrEqual(6);
     expect(totals.faults, `seed ${SEED}: network faults`).toBeGreaterThan(0);
     expect(totals.lateKills, `seed ${SEED}: A killed right after a late reply used its record up`).toBeGreaterThan(0);
+    expect(totals.interruptedTurns, `seed ${SEED}: guest turns B was killed in`).toBeGreaterThan(0);
   }, 600_000);
 });
