@@ -192,6 +192,73 @@ describe("check-move", () => {
     expect(r.json!.total).toMatchObject({ changed: 1, added: 0, ignored: 0 }); // the old line is changed; its new text replaces it in the same hunk
   });
 
+  // A moved block must keep its lines in order and its lines together: the lines match as a multiset otherwise, and a
+  // swap, a statement moved out of its block, an inserted or a doubled line all read as "moved, 0 changed".
+  const RUN = `  run(items: number[]): number {
+    let total = 0;
+    const limit = this.limit();
+    for (const it of items) {
+      if (it > limit) {
+        total += it;
+      }
+    }
+    this.save(total);
+    this.notify(total);
+    return total;
+  }
+`;
+  const withRun = (a: string) => `export class A {\n${a}\n  other(): void {\n    this.log("a");\n  }\n}\n`;
+  function moveRun(newRun: string): Out {
+    put("src/r.ts", withRun(RUN));
+    const from = commit();
+    put("src/r.ts", withRun("").replace("\n\n", "\n"));
+    put("src/r2.ts", `export class B {\n${newRun}}\n`);
+    const to = commit();
+    return check(`${from}..${to}`, "--json");
+  }
+  const edit = (f: (lines: string[]) => void) => { const l = RUN.split("\n").slice(0, -1); f(l); return l.join("\n") + "\n"; };
+
+  it("the block moved in order, with its blank-line and indentation changes only: nothing changed (the control of the cases below)", () => {
+    const r = moveRun(RUN);
+    expect(r.json!.total.changed).toBe(0);
+    expect(r.code).toBe(0);
+  });
+
+  it.each([
+    ["two statements swapped", (l: string[]) => { [l[8], l[9]] = [l[9], l[8]]; }],
+    ["two declarations swapped", (l: string[]) => { [l[1], l[2]] = [l[2], l[1]]; }],
+    ["a statement moved out of its if block", (l: string[]) => { [l[5], l[6]] = [l[6], l[5]]; }],
+    ["a statement moved into the loop", (l: string[]) => { l.splice(8, 1); l.splice(6, 0, "      this.save(total);"); }],
+    ["a line inserted", (l: string[]) => { l.splice(9, 0, "    this.reset();"); }],
+    ["a line inserted before the closing brace", (l: string[]) => { l.splice(l.length - 1, 0, "    this.reset();"); }],
+    ["a line doubled", (l: string[]) => { l.splice(5, 0, l[5]); }],
+  ])("%s inside a moved block is a change", (_name, mutate) => {
+    const r = moveRun(edit(mutate));
+    expect(r.json!.total.changed).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+  });
+
+  it("two lines swapped inside one file are a change; a block of three or more lines moved inside a file is a move", () => {
+    put("src/s.ts", "function f() {\n  a();\n  b();\n  c();\n}\nfunction g() {\n  d1();\n  d2();\n  d3();\n}\n");
+    const from = commit();
+    put("src/s.ts", "function f() {\n  a();\n  c();\n  b();\n}\nfunction g() {\n  d1();\n  d2();\n  d3();\n}\n");
+    const swapped = commit();
+    expect(check(`${from}..${swapped}`).code).toBe(1);
+    put("src/s.ts", "function g() {\n  d1();\n  d2();\n  d3();\n}\nfunction f() {\n  a();\n  b();\n  c();\n}\n");
+    const reordered = commit();
+    const r = check(`${from}..${reordered}`, "--json");
+    expect(r.json!.total.changed).toBe(0);
+  });
+
+  it("members taken from two places of a file and put in the other order in the new file are a move", () => {
+    put("src/m1.ts", "function f() {\n  a();\n  b();\n}\nconst keep = 1;\nfunction g() {\n  c();\n  d();\n}\n");
+    const from = commit();
+    put("src/m1.ts", "const keep = 1;\n");
+    put("src/m2.ts", "function g() {\n  c();\n  d();\n}\nfunction f() {\n  a();\n  b();\n}\n");
+    const to = commit();
+    expect(check(`${from}..${to}`, "--json").json!.total).toMatchObject({ changed: 0, added: 0, movedIn: 8 });
+  });
+
   it("refuses a bad range, a revision that is an option, and an unknown revision", () => {
     expect(check("HEAD").code).toBe(2);
     expect(check(`${base}..no-such-branch`).code).toBe(2);

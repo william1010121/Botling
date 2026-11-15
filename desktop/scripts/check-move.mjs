@@ -5,13 +5,20 @@
 // not counted; --all counts every file):
 //   moved-in   an added line that was deleted somewhere in the range (same text, indentation ignored)
 //   moved-out  a deleted line that was added somewhere in the range
-//   changed    deleted lines that were not moved: edited or dropped (per hunk)
-//   added      added lines that were not moved and replace no deleted line (per hunk)
+//   changed    deleted lines that were not moved (edited or dropped), plus added lines put inside a moved block (per hunk)
+//   added      added lines that were not moved and replace no deleted line (per hunk): wrappers, bridge blocks, delegates
 //   ignored    blank lines, import statements and `export ... from` re-exports, on both sides; never counted
-// A line is matched once: the same text deleted twice and added once moves once. A line with no letter or digit (`}`,
-// `});`) counts as moved only next to a moved line, so a lone brace does not hide an edit. Exits 1 when the total of
-// "changed" is above --max-changed (default 0: a card that edits moved code states how many lines it may change).
-// Renames are read as a delete plus an add (--no-renames), which is what makes a moved file show as moved.
+// Lines move in runs: consecutive added lines equal to consecutive deleted lines of one hunk, in the same order. A line is
+// matched once. So these are NOT moves and count as changed: a reordered run (two statements swapped, a statement moved
+// out of its block), a run of fewer than 3 lines that moves inside its own file, and an added line between two lines that
+// were next to each other in the base (an insertion or a doubled line inside moved code). A line with no letter or digit
+// (`}`, `});`) counts as moved only beside a moved line it followed or preceded in the base.
+// Exits 1 when the total of "changed" is above --max-changed (default 0: a card that edits moved code states how many
+// lines it may change). "added" is reported, never gated: the reviewer reads those lines.
+// Known limits, by design or cost: indentation is ignored, also inside a multi-line template literal; an import line may
+// change to another module (the typecheck, not this check, catches a missing name); a reordered pair of whole blocks of 3
+// lines or more that git shows as separate hunks reads as a move. Renames are read as a delete plus an add
+// (--no-renames), which is what makes a moved file show as moved.
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -102,9 +109,17 @@ export function parseDiff(text) {
 const norm = (text) => text.trim().replace(/\r$/, '');
 const trivial = (text) => !/[\p{L}\p{N}]/u.test(text);
 
+/** A run of moved lines inside one file counts only from this many lines: a swapped or re-placed line stays "changed". */
+const MIN_SAME_FILE_RUN = 3;
+
 /**
  * `files` from parseDiff; `oldLines(path)` and `newLines(path)` give a file's lines at the base and at the head.
  * Returns { rows: [{ path, movedIn, movedOut, changed, added, ignored }], total }.
+ *
+ * Lines are matched in runs, not one by one: a run is consecutive added lines (blank and import lines left out) equal to
+ * consecutive deleted lines of one deleted hunk, in the same order. A reordered run, a line moved inside its own file
+ * (a run shorter than MIN_SAME_FILE_RUN) and a line put between two lines that were next to each other in the base are
+ * not moves: they count as changed.
  */
 export function analyze(files, oldLines, newLines) {
   const hunks = [];
@@ -122,45 +137,106 @@ export function analyze(files, oldLines, newLines) {
       const del = [], add = [];
       for (const d of hunk.del) { if (oldFlags[d.n - 1]) r.ignored += 1; else del.push({ text: norm(d.text), matched: false }); }
       for (const a of hunk.add) { if (newFlags[a.n - 1]) r.ignored += 1; else add.push({ text: norm(a.text), matched: false }); }
-      hunks.push({ row: r, del, add });
+      const h = { row: r, oldPath: file.oldPath, newPath: file.newPath, del, add, inserted: 0 };
+      del.forEach((d, i) => { d.hunk = h; d.i = i; });
+      hunks.push(h);
     }
   }
-  const pool = new Map(); // text -> deleted lines not yet matched
-  for (const h of hunks) for (const d of h.del) pool.set(d.text, (pool.get(d.text) ?? 0) + 1);
-  const take = (line) => {
-    const left = pool.get(line.text) ?? 0;
-    if (left === 0) return false;
-    pool.set(line.text, left - 1);
-    line.matched = true;
-    return true;
-  };
-  for (const h of hunks) for (const a of h.add) if (!trivial(a.text)) take(a);
-  for (let changedAny = true; changedAny;) { // a brace joins the move of the line next to it, which can free the next brace
-    changedAny = false;
-    for (const h of hunks) {
-      h.add.forEach((a, idx) => {
-        if (a.matched || !trivial(a.text)) return;
-        if ((h.add[idx - 1]?.matched || h.add[idx + 1]?.matched) && take(a)) changedAny = true;
+  const byText = new Map(); // text -> deleted lines, in range order
+  for (const h of hunks) for (const d of h.del) { const list = byText.get(d.text); if (list) list.push(d); else byText.set(d.text, [d]); }
+  const link = (a, d) => { a.src = d; a.matched = true; d.matched = true; };
+  const unlink = (a) => { a.src.matched = false; a.src = null; a.matched = false; };
+
+  // 1. Runs that contain at least one line with a letter or digit; the longest candidate wins, one in order wins a tie.
+  const runs = [];
+  for (const h of hunks) {
+    let last = null;
+    for (let i = 0; i < h.add.length; i += 1) {
+      const a = h.add[i];
+      if (a.matched || trivial(a.text)) continue;
+      let best = null;
+      for (const d of byText.get(a.text) ?? []) {
+        if (d.matched) continue;
+        let len = 0;
+        while (i + len < h.add.length && d.i + len < d.hunk.del.length) {
+          const x = h.add[i + len], y = d.hunk.del[d.i + len];
+          if (x.matched || y.matched || x.text !== y.text) break;
+          len += 1;
+        }
+        if (d.hunk.oldPath === h.newPath && len < MIN_SAME_FILE_RUN) continue;
+        const inOrder = last !== null && d.hunk === last.hunk && d.i >= last.end;
+        if (!best || len > best.len || (len === best.len && inOrder && !best.inOrder)) best = { d, len, inOrder };
+      }
+      if (!best) continue;
+      for (let t = 0; t < best.len; t += 1) link(h.add[i + t], best.d.hunk.del[best.d.i + t]);
+      runs.push({ add: h, start: i, del: best.d.hunk, di: best.d.i, len: best.len });
+      last = { hunk: best.d.hunk, end: best.d.i + best.len };
+      i += best.len - 1;
+    }
+  }
+
+  // 2. Within one pair of hunks the runs must keep their order; keep the heaviest ordered set, the others are not moves.
+  const pairs = new Map();
+  for (const run of runs) {
+    let byDel = pairs.get(run.add);
+    if (!byDel) pairs.set(run.add, (byDel = new Map()));
+    const list = byDel.get(run.del);
+    if (list) list.push(run); else byDel.set(run.del, [run]);
+  }
+  for (const byDel of pairs.values()) {
+    for (const list of byDel.values()) {
+      const best = list.map(() => 0);
+      const from = list.map(() => -1);
+      let top = -1;
+      list.forEach((run, i) => {
+        best[i] = run.len;
+        for (let j = 0; j < i; j += 1) if (list[j].di + list[j].len <= run.di && best[j] + run.len > best[i]) { best[i] = best[j] + run.len; from[i] = j; }
+        if (top < 0 || best[i] > best[top]) top = i;
+      });
+      const keep = new Set();
+      for (let i = top; i >= 0; i = from[i]) keep.add(i);
+      list.forEach((run, i) => {
+        if (keep.has(i)) return;
+        for (let t = 0; t < run.len; t += 1) unlink(run.add.add[run.start + t]);
       });
     }
   }
-  // Which deleted lines were used: for each text, as many as were taken, first come first.
-  const takenCount = new Map();
-  for (const h of hunks) for (const a of h.add) if (a.matched) takenCount.set(a.text, (takenCount.get(a.text) ?? 0) + 1);
-  for (const h of hunks) {
-    for (const d of h.del) {
-      const left = takenCount.get(d.text) ?? 0;
-      if (left > 0) { takenCount.set(d.text, left - 1); d.matched = true; }
+
+  // 3. A brace or other line with no letter or digit is moved only beside a moved line it followed or preceded in the base.
+  for (let again = true; again;) {
+    again = false;
+    for (const h of hunks) {
+      h.add.forEach((a, i) => {
+        if (a.matched || !trivial(a.text)) return;
+        const prev = h.add[i - 1], next = h.add[i + 1];
+        const after = prev?.matched ? prev.src.hunk.del[prev.src.i + 1] : undefined;
+        const before = next?.matched ? next.src.hunk.del[next.src.i - 1] : undefined;
+        const d = after && !after.matched && after.text === a.text ? after : before && !before.matched && before.text === a.text ? before : null;
+        if (d) { link(a, d); again = true; }
+      });
     }
   }
+
+  // 4. New lines between two lines that were next to each other in the base are an edit of the moved code, not a wrapper.
+  for (const h of hunks) {
+    for (let i = 1; i < h.add.length; i += 1) {
+      if (h.add[i].matched || !h.add[i - 1].matched) continue;
+      let j = i;
+      while (j < h.add.length && !h.add[j].matched) j += 1;
+      const before = h.add[i - 1].src, after = h.add[j]?.src;
+      if (after && after.hunk === before.hunk && after.i === before.i + 1) h.inserted += j - i;
+      i = j;
+    }
+  }
+
   for (const h of hunks) {
     const r = h.row;
     r.movedIn += h.add.filter((a) => a.matched).length;
     r.movedOut += h.del.filter((d) => d.matched).length;
     const unDel = h.del.filter((d) => !d.matched).length;
     const unAdd = h.add.filter((a) => !a.matched).length;
-    r.changed += unDel;
-    r.added += Math.max(0, unAdd - unDel);
+    r.changed += unDel + h.inserted;
+    r.added += Math.max(0, unAdd - h.inserted - unDel);
   }
   const list = [...rows.values()].sort((a, b) => (a.path < b.path ? -1 : 1));
   const total = { movedIn: 0, movedOut: 0, changed: 0, added: 0, ignored: 0 };
