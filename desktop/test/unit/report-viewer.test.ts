@@ -68,5 +68,5 @@ it("lets the chat show while it is open, and Esc hides it before closing the pre
 it("is given the chat's bot by the app", async () => {
   const { readFileSync } = await import("node:fs");
   const { join } = await import("node:path");
-  expect(readFileSync(join(__dirname, "../../src/renderer/App.tsx"), "utf8")).toMatch(/<ReportViewer url=\{report.url\}[^\n]*\n\s*bubble=\{bubble \?/);
+  expect(readFileSync(join(__dirname, "../../src/renderer/chat-frame/ChatFrame.tsx"), "utf8")).toMatch(/<ReportViewer url=\{report.url\}[^\n]*\n\s*bubble=\{bubble \?/);
 });

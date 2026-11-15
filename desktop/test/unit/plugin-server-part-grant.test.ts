@@ -415,6 +415,14 @@ export function activate(ccb) {
     const original = core.event.bind(core);
     core.event = (event) => { if (event.type === "plugins.updated") sent.push(event.plugins!); original(event); };
     const entry = (view: PluginsView) => view.plugins.find((p) => p.name === "once.tool");
+    // The held-back state may still be on its way to `core.event` (the list already answers before the announcement is sent), and a
+    // late one is not this grant's. Wait until what the core last announced is what it lists now, then count only what follows.
+    const lastAnnounced = () => (core as unknown as { lastPlugins: string }).lastPlugins;
+    await until(async () => {
+      const res = await client.req({ type: "plugins.list" });
+      return res.ok && JSON.stringify(res.result) === lastAnnounced();
+    }, { timeout: 10_000, what: "held-back state announced" });
+    sent.length = 0;
     const grant = async (n: number, tier: "request" | "write") => {
       const slot: Slot = { origin: "script", originEpoch, target: client.srv, n };
       client.cmd(slot, { type: "plugin.grant", plugin: "once.tool", codeHash, tier, reads: [], requests: ["chat.send"] }, inc);
