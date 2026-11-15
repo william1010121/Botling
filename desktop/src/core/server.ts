@@ -197,6 +197,10 @@ export interface CoreOptions {
    * kept in `directory` (its folder, or a second head's partner-<engine>/ in it), on server.db rows.
    */
   botStore?: (directory: string) => BotStore;
+  /** Botling 3's server only (default: the 2.x `MAIN_BOT_ID`): UUID of the main bot. */
+  mainBotId?: string;
+  /** Botling 3's server only (default: the 2.x `MAINTAINER_ID`): UUID of Maintainer. */
+  maintainerId?: string;
   /** Botling 3's server only (2.x leaves it unset): content read for plugins (`content.read`). */
   content?: PluginWorld["content"];
 }
@@ -208,6 +212,8 @@ export type ApplyNowCommand = Extract<Command, { type: "chat.react" | "chat.choo
 export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; botId: string } | { kind: "empty" } | { kind: "taken" } | { kind: "removedByUser" };
 
 export class Core {
+  readonly mainBotId: string;
+  readonly maintainerId: string;
   readonly doctor: DoctorModel;
   private agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
@@ -275,7 +281,11 @@ export class Core {
   private agentReconcile: ReconcileReport | null = null;
   private flagCache: { at: number; agentMoves: boolean; claudeOwnerMoves: boolean } | null = null;
 
+  mainBot(): Bot | null { return this.bots.get(this.mainBotId) ?? null; }
+
   constructor(private options: CoreOptions) {
+    this.mainBotId = options.mainBotId ?? MAIN_BOT_ID;
+    this.maintainerId = options.maintainerId ?? MAINTAINER_ID;
     this.doctor = new DoctorModel(options.doctor ?? new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(options.dataDir)), options.dataDir) }), doctor => this.event({ type: "doctor.updated", doctor }));
     mkdirSync(options.dataDir, { recursive: true });
     this.storage = new StorageBook(join(options.dataDir, "storage.json"));
@@ -338,10 +348,11 @@ export class Core {
           return stopped.some((outcome) => outcome.stopped);
         },
         notice: (text, actions) => {
-          this.bots.get(MAIN_BOT_ID)?.appNotice(text, actions?.map((action) => ({ label: action.label })), actions ? (index) => actions[index]?.run() : undefined);
+          this.mainBot()?.appNotice(text, actions?.map((action) => ({ label: action.label })), actions ? (index) => actions[index]?.run() : undefined);
         },
         ask: (question) => new Promise((resolve) => {
-          const main = this.bots.get(MAIN_BOT_ID)!;
+          const main = this.mainBot();
+          if (!main) { resolve({ index: Math.max(0, question.choices.length - 1) }); return; }
           // The last choice is Cancel: null, as the plugin sees it (Plugins' ui.quickPick / ui.input).
           const id: string = main.appNotice(question.text, question.choices, (index) => resolve({ index }), question.typed ? {
             onAnswer: (words) => {
@@ -355,7 +366,7 @@ export class Core {
         openPanel: (plugin, panel, title) => this.event({ type: "plugins.open", plugin, panel, title }),
         openTab: (plugin, view, botId) => this.event({ type: "plugins.openTab", plugin, view, botId }),
         // Straight to the app page, not through `event()`: no plugin, workspace or phone listener has anything to do with it.
-        frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? MAIN_BOT_ID : botId } : {}), data } }),
+        frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? this.mainBotId : botId } : {}), data } }),
         botFolder: (botId) => this.pluginBot(botId)?.profile.folder ?? null,
         botNote: (botId) => {
           const bot = this.pluginBot(botId);
@@ -394,13 +405,13 @@ export class Core {
           const bot = this.pluginBot(botId);
           if (!bot) return null;
           const chat = bot.pluginChat(limit);
-          return { ...chat, botId: chat.botId === MAIN_BOT_ID ? "main" : chat.botId };
+          return { ...chat, botId: chat.botId === this.mainBotId ? "main" : chat.botId };
         },
         botId: (botId) => this.pluginBot(botId)?.id ?? null,
         decorated: (botId) => { if (this.bots.has(botId)) this.event({ type: "chat.decorations", botId, decorations: this.plugins.decorations(botId) }); },
         engineCli: (engine) => options.engineCli?.(engine) ?? null,
         addRoutine: (botId, cron, task) => {
-          const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
+          const bot = this.bots.get(botId === "main" ? this.mainBotId : botId);
           if (!bot) return "no-bot";
           return bot.addRoutine(cron, task) ? "added" : "bad-schedule";
         },
@@ -440,7 +451,8 @@ export class Core {
             try { const answer = await options.app.request("screenshot"); return answer.ok && answer.file ? answer.file : null; } catch { return null; }
           },
           card: (text, choices, source) => new Promise((resolve) => {
-            const main = this.bots.get(MAIN_BOT_ID)!;
+            const main = this.mainBot();
+            if (!main) { resolve(null); return; }
             main.appNotice(text, choices, choices ? (index) => resolve(index) : undefined, source ? { sourceID: source } : {});
             if (!choices) resolve(null);
           }),
@@ -454,7 +466,7 @@ export class Core {
         // The component studio's seam (plugins/studio-seam.ts); built when first asked, once Maintainer and the library exist.
         get studio() { return self.studioNow(); },
         sessionMoved: (botId, reason) => this.bots.get(botId)?.folderMoved(reason),
-        sessionBots: () => this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID && !this.removed.has(profile.id)).map((profile) => ({
+        sessionBots: () => this.profiles.filter((profile) => profile.role !== "main" && profile.id !== this.maintainerId && !this.removed.has(profile.id)).map((profile) => ({
           id: profile.id, name: profile.name, role: profile.role as "manager" | "bot", parent: profile.parent ?? null, folder: profile.folder,
           memoryPath: profile.memoryPath, storeDir: profile.storeDir, problem: profile.problem,
           workRoot: this.developerProject()?.id === profile.id ? devWorkRoot() : null,
@@ -479,16 +491,16 @@ export class Core {
     this.loadedClaudeParts = JSON.stringify(agentStamp(this.plugins.registry));
     // Quota files must be imported before their first in-memory reading.
     this.usage = new UsageBook(options.dataDir, undefined, undefined, options.quotaRetriever);
-    const loaded = loadProfiles(options.dataDir);
+    const loaded = loadProfiles(options.dataDir, { mainBotId: this.mainBotId, maintainerId: this.maintainerId });
     if (loaded.problem) this.log(`projects: ${loaded.problem}`);
     try {
       const removed = readJSON(join(options.dataDir, "removed-bots.json"));
       if (Array.isArray(removed)) for (const key of removed) if (typeof key === "string") this.removedPluginBots.add(key);
     } catch { /* none */ }
     const appMaintainer = maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, options.shotCommand ?? null)
-      + "\n" + maintainerVisualToolRules(siteToolsFolder(options.dataDir, options.app?.dataDir)));
+      + "\n" + maintainerVisualToolRules(siteToolsFolder(options.dataDir, options.app?.dataDir)), this.maintainerId);
     const profiles = [...loaded.profiles, appMaintainer];
-    const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig);
+    const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig, this.maintainerId);
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;
     this.profiles = profiles;
@@ -516,7 +528,7 @@ export class Core {
           editorStarted: (pid) => { if (pid > 0) this.ledger.record(pid); },
         }) : null,
         claimWaitMs: options.claimWaitMs,
-        prompts: (engine, heads) => this.prompts(profile, engine, heads, profile.role === "main" || profile.id === MAINTAINER_ID ? null : this.plugins.sessionFolder(profile.id)?.cwd ?? profile.folder),
+        prompts: (engine, heads) => this.prompts(profile, engine, heads, profile.role === "main" || profile.id === this.maintainerId ? null : this.plugins.sessionFolder(profile.id)?.cwd ?? profile.folder),
         // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
         tidyTimeoutMs: options.tidyTimeoutMs,
         quitTidyMs: options.quitTidyMs,
@@ -530,22 +542,22 @@ export class Core {
         // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
         wakeNote: profile.role === "main" ? () => this.projectBriefing()
           // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
-          : profile.id !== MAINTAINER_ID
+          : profile.id !== this.maintainerId
             ? () => [profile.role === "manager" ? this.developerBriefing(profile.id) : "", this.plugins.sessionFolder(profile.id)?.note ?? "", this.subBotNote(profile), this.ownedAgentsNote(profile)].filter(Boolean).join("\n\n")
             : undefined,
         // A plugin may decide where a project's or bot's session starts (an app-made worktree: botling.git); the main bot and Maintainer never move.
-        worktree: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => {
+        worktree: profile.role === "main" || profile.id === this.maintainerId ? undefined : () => {
           const folder = this.plugins.sessionFolder(profile.id);
           return folder && folder.cwd !== profile.folder ? { cwd: folder.cwd, addDirs: folder.addDirs } : null;
         },
         addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.parent && !other.problem).map((other) => join(other.folder, ".bot"))
           // Maintainer: the folders you let it read (<need-folder>).
           // and the browser's site tools, which are its alone.
-          : profile.id === MAINTAINER_ID ? () => [siteToolsFolder(options.dataDir, options.app?.dataDir), ...this.maintainer.approvedFolders()] : undefined,
+          : profile.id === this.maintainerId ? () => [siteToolsFolder(options.dataDir, options.app?.dataDir), ...this.maintainer.approvedFolders()] : undefined,
         // Every other bot's Claude head and workers are refused writes into the site tools folder (site-tools-guard.ts).
-        siteToolsFolder: profile.id === MAINTAINER_ID ? undefined : siteToolsFolder(options.dataDir, options.app?.dataDir),
+        siteToolsFolder: profile.id === this.maintainerId ? undefined : siteToolsFolder(options.dataDir, options.app?.dataDir),
         remoteWorkers: () => options.remoteWorkers ?? null,
-        subBotRows: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => this.subBotRows(profile.id),
+        subBotRows: profile.role === "main" || profile.id === this.maintainerId ? undefined : () => this.subBotRows(profile.id),
         components: this.components,
         onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
         // What each turn used, by bot, and the subscriptions' limits (1.x's `record`, `note`).
@@ -587,7 +599,7 @@ export class Core {
       // A project bot's own sub bots answer @ in its chat (its reply's or yours), nowhere else.
       subBots: () => this.profiles.flatMap((profile) => (profile.parent && !this.removed.has(profile.id) ? [{ id: profile.id, name: profile.name, parent: profile.parent }] : [])),
       bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
-      mainBotId: MAIN_BOT_ID,
+      mainBotId: this.mainBotId,
       mentionNote: (text) => this.components.library.mentionNote(text),
       replied: (bot, line) => this.replied(bot, line),
       replyFilter: (bot) => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
@@ -603,8 +615,9 @@ export class Core {
     });
     this.maintainer = new MaintainerDesk({
       root: options.dataDir,
-      maintainer: () => this.bots.get(MAINTAINER_ID) ?? null,
-      mainBot: () => this.bots.get(MAIN_BOT_ID)!,
+      maintainerId: this.maintainerId,
+      maintainer: () => this.bots.get(this.maintainerId) ?? null,
+      mainBot: () => this.mainBot(),
       bots: () => [...this.bots.values()],
       library: this.components.library,
       plugins: () => this.plugins,
@@ -631,14 +644,14 @@ export class Core {
       watch: true, log: (line) => this.log(line),
       conflict: (note, kept, reason) => {
         const entry = [...this.bots.entries()].find(([id, bot]) => !this.removed.has(id) && notePath(bot.profile) === note);
-        if (entry) this.plugins.event("noteConflict", { botId: entry[0] === MAIN_BOT_ID ? "main" : entry[0], file: kept, reason });
+        if (entry) this.plugins.event("noteConflict", { botId: entry[0] === this.mainBotId ? "main" : entry[0], file: kept, reason });
       },
     });
     setNoteBots(() => [...this.bots.entries()].filter(([id]) => !this.removed.has(id)).map(([id, bot]) => ({ id, name: bot.profile.name, folder: bot.profile.folder, note: notePath(bot.profile) })));
     this.releases = new ReleaseNotices({
       root: options.dataDir,
       developerMode: () => settingsView(readSettings(Layout.settings(options.dataDir))).developerMode,
-      mainBot: () => this.bots.get(MAIN_BOT_ID)!,
+      mainBot: () => this.mainBot() ?? { appNotice: () => "" },
       installRelease: app ? () => app.request("installRelease") : undefined,
       log: (line) => this.log(line),
     });
@@ -659,11 +672,11 @@ export class Core {
     }, (entry,reason) => {
       const bot=this.bots.get(entry.botId);
       try { bot?.retainRestartIdentity(entry); } catch(error) { this.log(`restart identity: ${String(error)}`); }
-      if (bot) bot.restartPaused(entry, reason); else this.bots.get(MAIN_BOT_ID)?.appNotice(restartPausedNotice(entry, reason));
+      if (bot) bot.restartPaused(entry, reason); else this.mainBot()?.appNotice(restartPausedNotice(entry, reason));
       this.log(`restart ${entry.botId}: ${reason}`);
     }); } catch(error){
       this.log(String(error));
-      this.bots.get(MAIN_BOT_ID)?.appNotice("Restart continuation could not be read. The checkpoint is preserved; no recovery prompt was sent. Reconcile it before retrying.");
+      this.mainBot()?.appNotice("Restart continuation could not be read. The checkpoint is preserved; no recovery prompt was sent. Reconcile it before retrying.");
     }
     // After restart recovery: the registry again, and what it found told (moves cut short finish their notices).
     try { this.reconcileAgents(true); } catch (error) { this.log(`agents reconcile: ${(error as Error).message}`); }
@@ -838,7 +851,7 @@ export class Core {
   developerProject(): Bot | null {
     const view = settingsView(readSettings(Layout.settings(this.options.dataDir)));
     if (!view.developerMode || !view.developerProject) return null;
-    const profile = this.profiles.find((candidate) => candidate.id === view.developerProject && candidate.role === "manager" && candidate.id !== MAINTAINER_ID);
+    const profile = this.profiles.find((candidate) => candidate.id === view.developerProject && candidate.role === "manager" && candidate.id !== this.maintainerId);
     return profile && !this.removed.has(profile.id) ? this.bots.get(profile.id) ?? null : null;
   }
 
@@ -902,9 +915,9 @@ First write a test that shows this, then fix it.`;
       name: profile.name, about, memory: join(profile.folder, profile.memoryPath), inbox: join(profile.folder, ".bot", "inbox.md"),
       question: this.bots.get(profile.id)?.openQuestion()?.text ?? null,
     });
-    const maintainer = this.profiles.find((profile) => profile.id === MAINTAINER_ID) ?? maintainerProfile(this.options.dataDir, "");
+    const maintainer = this.profiles.find((profile) => profile.id === this.maintainerId) ?? maintainerProfile(this.options.dataDir, "", this.maintainerId);
     return projectBriefingText({
-      projects: this.profiles.filter((profile) => profile.role === "manager" && profile.id !== MAINTAINER_ID).map((profile) => row(profile, `folder ${profile.folder}`)),
+      projects: this.profiles.filter((profile) => profile.role === "manager" && profile.id !== this.maintainerId).map((profile) => row(profile, `folder ${profile.folder}`)),
       bots: this.profiles.filter((profile) => profile.role === "bot" && !profile.parent).map((profile) => row(profile, firstLine(profile.job ?? ""))),
       maintainer: row(maintainer, "plugin-library extensions and in-chat components only"),
     });
@@ -912,7 +925,7 @@ First write a test that shows this, then fix it.`;
 
   /** An awake main bot hears about bots made or removed with its next message (`briefAwakeMainBot`). */
   private briefAwakeMainBot() {
-    this.bots.get(MAIN_BOT_ID)?.queueNote("(App: The list of projects and bots changed.)\n" + this.projectBriefing());
+    this.mainBot()?.queueNote("(App: The list of projects and bots changed.)\n" + this.projectBriefing());
   }
 
   /**
@@ -935,7 +948,7 @@ First write a test that shows this, then fix it.`;
     const id = randomUUID().toUpperCase();
     const folder = Layout.standalone(this.options.dataDir, id);
     mkdirSync(folder, { recursive: true });
-    const avatar = options.avatar && HANDED_OUT.includes(options.avatar) ? options.avatar : nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID).map((profile) => profile.avatar));
+    const avatar = options.avatar && HANDED_OUT.includes(options.avatar) ? options.avatar : nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== this.maintainerId).map((profile) => profile.avatar));
     prepareNotesFolder(folder);
     this.seedEngineDefaults(id);
     // A plugin's bot that does its work itself runs on Claude, the engine whose coordinator has tools of its own.
@@ -945,8 +958,7 @@ First write a test that shows this, then fix it.`;
     saveProjectRow(this.options.dataDir, { id, name, folder, avatar, job, ...extras });
     const profile = projectProfile(this.options.dataDir, { id, name, folder: folderURLText(folder), avatar, job, ...extras });
     this.attach(profile);
-    const main = this.bots.get(MAIN_BOT_ID)!;
-    main.appNotice(`${options.by ? `New bot "${name}" (made by ${options.by})` : `New bot "${name}"`}: ${firstLine(job)}`, undefined, undefined, { sourceID: id });
+    this.mainBot()?.appNotice(`${options.by ? `New bot "${name}" (made by ${options.by})` : `New bot "${name}"`}: ${firstLine(job)}`, undefined, undefined, { sourceID: id });
     this.briefAwakeMainBot();
     if (options.setUp) {
       try {
@@ -973,7 +985,7 @@ First write a test that shows this, then fix it.`;
     if (input.parent !== undefined) {
       const parent = this.pluginBot(input.parent)?.profile;
       if (!parent) throw new Error("No such bot.");
-      if (parent.role === "main" || parent.id === MAINTAINER_ID) throw new Error("A sub bot's parent is a project bot or a bot of its own, not the main bot or Maintainer.");
+      if (parent.role === "main" || parent.id === this.maintainerId) throw new Error("A sub bot's parent is a project bot or a bot of its own, not the main bot or Maintainer.");
       if (parent.parent) throw new Error("A sub bot cannot have a sub bot of its own; name its project bot as the parent.");
       const name = botName(input.name);
       if (!name || !input.job.trim()) throw new Error("A bot needs a name and a job.");
@@ -1062,7 +1074,7 @@ First write a test that shows this, then fix it.`;
       bot.appNotice(`No sub bot was made: ${why}`);
       bot.queueNote(`(App: No sub bot was made: ${why})`);
     };
-    if (profile.role === "main" || profile.id === MAINTAINER_ID) return refuse("only a project's or a bot's own subagents can become sub bots.");
+    if (profile.role === "main" || profile.id === this.maintainerId) return refuse("only a project's or a bot's own subagents can become sub bots.");
     if (profile.parent) return refuse("a sub bot cannot make another sub bot; it starts subagents of its own instead.");
     const name = botName(request.name);
     if (!name) return refuse("it needs a name.");
@@ -1141,9 +1153,9 @@ First write a test that shows this, then fix it.`;
     const refuse = (why: string) => { bot.appNotice(`No bot was removed: ${why}`); bot.queueNote(`(App: No bot was removed: ${why})`); };
     const wanted = request.name.trim().toLowerCase();
     const named = this.profiles.filter((profile) => !this.removed.has(profile.id) && profile.name.trim().toLowerCase() === wanted);
-    const protectedBot = named.find((profile) => profile.role === "main" || profile.id === MAINTAINER_ID);
+    const protectedBot = named.find((profile) => profile.role === "main" || profile.id === this.maintainerId);
     if (protectedBot && named.length === 1) return refuse(`"${protectedBot.name}" is ${protectedBot.role === "main" ? "the main bot" : "Maintainer"}, which cannot be removed.`);
-    let found = named.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID && !profile.parent);
+    let found = named.filter((profile) => profile.role !== "main" && profile.id !== this.maintainerId && !profile.parent);
     if (!found.length) {
       return refuse(named.some((profile) => profile.parent)
         ? `"${request.name}" is a sub bot; a sub bot is closed by its own project bot (<remove-sub-bot>).`
@@ -1229,7 +1241,7 @@ First write a test that shows this, then fix it.`;
     const profile = this.profiles.find((candidate) => candidate.id === id);
     const bot = this.bots.get(id);
     if (!profile || !bot || this.removed.has(id)) return null;
-    return { id, name: this.agentBotName(id), role: profile.role, parent: profile.parent ?? null, maintainer: id === MAINTAINER_ID, problem: profile.problem, folder: profile.folder, engine: bot.engine, heads: bot.headEngines };
+    return { id, name: this.agentBotName(id), role: profile.role, parent: profile.parent ?? null, maintainer: id === this.maintainerId, problem: profile.problem, folder: profile.folder, engine: bot.engine, heads: bot.headEngines };
   }
 
   /** The registry as one bot's heads see it (a partner head shares its primary's). */
@@ -1423,7 +1435,7 @@ First write a test that shows this, then fix it.`;
     targets.push(view("newSubBot", { kind: "newSubBot", name: "New sub bot" }, null, "New sub bot…", (handoff ? base.owner.folder : base.project?.folder) ?? base.owner.folder, base));
     // Its project's own family first (the project bot and its sub bots), then every other bot that can take one.
     const project = base.project?.id ?? null;
-    const candidates = this.profiles.filter((profile) => !this.removed.has(profile.id) && profile.role !== "main" && profile.id !== MAINTAINER_ID && profile.id !== record.owner.botId && !(isDetached(record) && profile.id === record.host.botId));
+    const candidates = this.profiles.filter((profile) => !this.removed.has(profile.id) && profile.role !== "main" && profile.id !== this.maintainerId && profile.id !== record.owner.botId && !(isDetached(record) && profile.id === record.host.botId));
     const family = (profile: BotProfile) => profile.id === project || (project !== null && profile.parent === project) ? 0 : 1;
     for (const profile of [...candidates].sort((a, b) => family(a) - family(b))) {
       const facts = { ...base, target: this.botFacts(profile.id) };
@@ -1812,10 +1824,10 @@ First write a test that shows this, then fix it.`;
 
   /** A new project's or bot's row in the left column, before Maintainer (who stays last). */
   private attach(profile: BotProfile): Bot {
-    const at = this.profiles.findIndex((candidate) => candidate.id === MAINTAINER_ID);
+    const at = this.profiles.findIndex((candidate) => candidate.id === this.maintainerId);
     this.profiles.splice(at < 0 ? this.profiles.length : at, 0, profile);
     const bot = this.newBot(profile);
-    const orderAt = this.order.indexOf(MAINTAINER_ID);
+    const orderAt = this.order.indexOf(this.maintainerId);
     this.order.splice(orderAt < 0 ? this.order.length : orderAt, 0, profile.id);
     this.event({ type: "bot.updated", bot: bot.view() });
     return bot;
@@ -1823,13 +1835,13 @@ First write a test that shows this, then fix it.`;
 
   /** The main bot's (or Maintainer's) <new-bot name="…">job</new-bot>: made and set up, or why not. */
   private botRequested(name: string, job: string, by: string | null) {
-    const main = this.bots.get(MAIN_BOT_ID)!;
+    const main = this.mainBot();
     const made = this.makeBot(name, job, { setUp: true, by });
     if (made.kind === "existing") {
       const old = this.bots.get(made.botId)!;
-      main.appNotice(`There is already a bot called "${old.profile.name}"; nothing new was made. To change its job, tell it, or remove it from its menu first.`, undefined, undefined, { sourceID: made.botId });
+      main?.appNotice(`There is already a bot called "${old.profile.name}"; nothing new was made. To change its job, tell it, or remove it from its menu first.`, undefined, undefined, { sourceID: made.botId });
     } else if (made.kind === "taken") {
-      main.appNotice(`No bot was made: the name "${botName(name)}" is already used by a project or the app.`);
+      main?.appNotice(`No bot was made: the name "${botName(name)}" is already used by a project or the app.`);
     }
   }
 
@@ -1841,7 +1853,7 @@ First write a test that shows this, then fix it.`;
   async removeBot(id: string, { quiet = false }: { quiet?: boolean } = {}): Promise<{ removed: boolean }> {
     const profile = this.profiles.find((candidate) => candidate.id === id);
     if (!profile) throw new ContractError("not_found", "No such bot.");
-    if (profile.role === "main" || id === MAINTAINER_ID) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
+    if (profile.role === "main" || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
     // Its sub bots go with it (they hang under it, in its folder).
     for (const sub of this.profiles.filter((candidate) => candidate.parent === id)) await this.removeBot(sub.id);
     const bot = this.bots.get(id);
@@ -1856,13 +1868,13 @@ First write a test that shows this, then fix it.`;
       this.removedPluginBots.add(`${profile.plugin}/${profile.name}`.toLowerCase());
       writeFileAtomic(join(this.options.dataDir, "removed-bots.json"), JSON.stringify([...this.removedPluginBots].sort()));
     }
-    const main = this.bots.get(MAIN_BOT_ID)!;
+    const main = this.mainBot();
     for (const [copy, source] of [...this.copies]) {
       if (source.botId !== id) continue;
       this.copies.delete(copy);
-      main.settleAppQuestion(copy, { answer: "No longer needed" });
+      main?.settleAppQuestion(copy, { answer: "No longer needed" });
     }
-    for (const copy of main.openCopies(id)) main.settleAppQuestion(copy.id, { answer: "No longer needed" });
+    for (const copy of main?.openCopies(id) ?? []) main?.settleAppQuestion(copy.id, { answer: "No longer needed" });
     // Its cards relayed into the chat that called it in (`callInFollowUp`: a copy naming its original) go the same way:
     // their original is gone with it (spec/models/callin/RelayedCard.tla, NoCopyOfGone).
     for (const chat of this.bots.values()) {
@@ -1876,7 +1888,7 @@ First write a test that shows this, then fix it.`;
     this.plugins.event("botRemoved", { botId: id });
     this.briefAwakeMainBot();
     this.refreshWaiting();
-    if (!quiet) main.appNotice(profile.role === "bot"
+    if (!quiet) main?.appNotice(profile.role === "bot"
       ? `Removed the bot "${profile.name}". Its folder stays at ${profile.folder}.`
       : `Removed the project "${profile.name}" from Botling. Its folder stays at ${profile.folder}, with its notes in .bot/.`);
     this.log(`removed ${profile.role === "bot" ? "the bot" : "the project"} ${profile.name} (${profile.folder} kept)`);
@@ -1890,7 +1902,8 @@ First write a test that shows this, then fix it.`;
    * shows in its own chat shows here too, a copy kept in step with it; a pick or words on it go there.
    */
   private showOpenQuestion(name: string) {
-    const main = this.bots.get(MAIN_BOT_ID)!;
+    const main = this.mainBot();
+    if (!main) return;
     const wanted = name.replace(/^[\t ]+|[\t ]+$/g, "").toLowerCase();
     const profile = this.profiles.find((candidate) => candidate.role !== "main" && !candidate.parent && candidate.name.toLowerCase() === wanted);
     if (!profile) { main.queueNote(`(App: There is no project or bot called "${name}"; no card was shown.)`); return; }
@@ -1944,15 +1957,15 @@ First write a test that shows this, then fix it.`;
   private answerOnCopy(copy: string, text: string, files: string[]): boolean {
     const source = this.copies.get(copy);
     const bot = source ? this.bots.get(source.botId) : undefined;
-    if (!source || !bot) { this.bots.get(MAIN_BOT_ID)?.settleAppQuestion(copy, { answer: "No longer needed" }); return false; }
+    if (!source || !bot) { this.mainBot()?.settleAppQuestion(copy, { answer: "No longer needed" }); return false; }
     let accepted = false;
     // A question group answered on its copy: the original gets the same picks (its line shows them too).
-    const copyLine = this.bots.get(MAIN_BOT_ID)?.line(copy);
+    const copyLine = this.mainBot()?.line(copy);
     const picks = copyLine?.picks && bot.line(source.questionId)?.questions ? copyLine.picks : undefined;
     try { accepted = bot.answer(source.questionId, text, files, picks).accepted; } catch { /* gone */ }
     if (!accepted && copyLine) delete copyLine.picks;
     this.copies.delete(copy);
-    this.bots.get(MAIN_BOT_ID)?.settleAppQuestion(copy, accepted ? { answer: answerLabel(text, files.length) } : { answer: "No longer needed" });
+    this.mainBot()?.settleAppQuestion(copy, accepted ? { answer: answerLabel(text, files.length) } : { answer: "No longer needed" });
     this.refreshWaiting();
     return true;
   }
@@ -1971,7 +1984,7 @@ First write a test that shows this, then fix it.`;
       const line = this.bots.get(botId)?.line(messageId);
       if (line && line.chosen == null && line.answer == null) continue;
       this.copies.delete(copy);
-      this.bots.get(MAIN_BOT_ID)?.settleAppQuestion(copy, line?.chosen != null ? { chosen: line.chosen } : { answer: line?.answer ?? "No longer needed" });
+      this.mainBot()?.settleAppQuestion(copy, line?.chosen != null ? { chosen: line.chosen } : { answer: line?.answer ?? "No longer needed" });
     }
   }
 
@@ -2034,7 +2047,7 @@ First write a test that shows this, then fix it.`;
       if (question) addQuestion(profile.id, this.bots.get(profile.id), question);
       else for (const item of this.memoryFiles.items(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
     }
-    for (const question of this.bots.get(MAIN_BOT_ID)?.openQuestions() ?? []) addQuestion(MAIN_BOT_ID, this.bots.get(MAIN_BOT_ID), question);
+    for (const question of this.mainBot()?.openQuestions() ?? []) addQuestion(this.mainBotId, this.mainBot(), question);
     const acked = [...ignored].filter((key) => key.includes("-task:")).slice(-200);
     return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing, ...(acked.length ? { acked } : {}) };
   }
@@ -2056,7 +2069,7 @@ First write a test that shows this, then fix it.`;
   // one method each, read only. The main bot is "main" to plugins, as in `bots.list`.
 
   private outId(id: string) {
-    return id === MAIN_BOT_ID ? "main" : id;
+    return id === this.mainBotId ? "main" : id;
   }
 
   /** The bot a plugin names, with its profile; throws when there is none. */
@@ -2090,7 +2103,7 @@ First write a test that shows this, then fix it.`;
   /** What waits on you with plugins' bot ids. */
   private workspaceWaiting(): WaitingView {
     const view = this.waiting();
-    const main = `${MAIN_BOT_ID}-`;
+    const main = `${this.mainBotId}-`;
     return {
       items: view.items.map((item) => ({ ...item, botId: this.outId(item.botId) })),
       doing: Object.fromEntries(Object.entries(view.doing).map(([id, text]) => [this.outId(id), text])),
@@ -2227,7 +2240,7 @@ First write a test that shows this, then fix it.`;
     const existing = this.profiles.find((profile) => profile.role !== "main" && !profile.parent && profile.folder === folder);
     if (existing) return { botId: existing.id, added: false };
     const id = randomUUID().toUpperCase();
-    const row = { id, name: defaultName(folder), folder, avatar: nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID).map((profile) => profile.avatar)) };
+    const row = { id, name: defaultName(folder), folder, avatar: nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== this.maintainerId).map((profile) => profile.avatar)) };
     prepareNotesFolder(folder);
     this.seedEngineDefaults(id);
     saveProjectRow(this.options.dataDir, row);
@@ -2244,11 +2257,11 @@ First write a test that shows this, then fix it.`;
     // New bots and <open-question> (`Workspace.handle`): only the main bot
     // shows other bots' cards; it makes bots when you ask it, and Maintainer may too. From anyone else
     // they are left out, as in 1.x. They act once the reply is in.
-    const main = bot.id === MAIN_BOT_ID;
+    const main = bot.id === this.mainBotId;
     const later: (() => void)[] = [];
     const rest: BotRequest[] = [];
     for (const request of requests) {
-      if (request.kind === "newBot") { if (main || bot.id === MAINTAINER_ID) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
+      if (request.kind === "newBot") { if (main || bot.id === this.maintainerId) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
       else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
       else if (request.kind === "subBot") later.push(() => { void this.subBotRequested(bot, request); });
       else if (request.kind === "removeSubBot") later.push(() => { void this.removeSubBotRequested(bot, request); });
@@ -2265,7 +2278,7 @@ First write a test that shows this, then fix it.`;
     const asked = requests.filter((request): request is Extract<BotRequest, { kind: "newProject" }> => request.kind === "newProject");
     if (!asked.length) return requests;
     // Only the main bot adds projects; anyone else's <new-project> is left out silently, as in 1.x (`Workspace.handle`).
-    if (bot.id !== MAIN_BOT_ID) return requests.filter((request) => request.kind !== "newProject");
+    if (bot.id !== this.mainBotId) return requests.filter((request) => request.kind !== "newProject");
     const main = bot;
     const home = homedir();
     const own = resolvePath(this.options.dataDir);
@@ -2341,7 +2354,7 @@ First write a test that shows this, then fix it.`;
   private answerProjects(question: string, add: boolean) {
     const folders = this.projectQuestions.get(question);
     this.projectQuestions.delete(question);
-    const main = this.bots.get(MAIN_BOT_ID);
+    const main = this.mainBot();
     if (!folders || !main) return;
     const paths = folders.map((entry) => entry.folder).join(", ");
     if (!add) { main.queueNote(`(App: The user chose not to add ${paths} as projects.)`); return; }
@@ -2403,15 +2416,15 @@ First write a test that shows this, then fix it.`;
       library: this.components.library,
       commands: this.components.commands,
       maintainer: this.maintainer,
-      maintainerBot: () => this.bots.get(MAINTAINER_ID) ?? null,
-      componentBots: () => this.order.filter((id) => id !== MAINTAINER_ID && !this.removed.has(id) && !this.isSubBot(id)).map((id) => this.bots.get(id)!),
+      maintainerBot: () => this.bots.get(this.maintainerId) ?? null,
+      componentBots: () => this.order.filter((id) => id !== this.maintainerId && !this.removed.has(id) && !this.isSubBot(id)).map((id) => this.bots.get(id)!),
       componentsChanged: () => this.componentsTick(),
-      mainId: MAIN_BOT_ID,
+      mainId: this.mainBotId,
     }));
   }
 
   private pluginBot(botId: string): Bot | null {
-    const id = botId === "main" ? MAIN_BOT_ID : botId;
+    const id = botId === "main" ? this.mainBotId : botId;
     return this.removed.has(id) ? null : this.bots.get(id) ?? null;
   }
 
@@ -2421,7 +2434,7 @@ First write a test that shows this, then fix it.`;
   /** What plugins listening with `events.on` hear of a core event. */
   private pluginEvent(event: Event) {
     if (!("botId" in event)) return;
-    const botId = event.botId === MAIN_BOT_ID ? "main" : event.botId;
+    const botId = event.botId === this.mainBotId ? "main" : event.botId;
     if (event.type === "message.added" && event.message.role === "user") {
       this.plugins.event("messagePosted", { botId, role: "user", text: event.message.text, id: event.message.id });
     } else if (event.type === "turn.started") {
@@ -2441,7 +2454,7 @@ First write a test that shows this, then fix it.`;
   }
 
   private botInfo(bot: Bot): BotInfo {
-    return { id: bot.id === MAIN_BOT_ID ? "main" : bot.id, name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
+    return { id: bot.id === this.mainBotId ? "main" : bot.id, name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
   }
 
   /** A reply showed: plugins listening hear it; Maintainer's settles the component changes bots asked for. */
@@ -2451,8 +2464,8 @@ First write a test that shows this, then fix it.`;
     // A line of its reply that starts with @ and another bot's name calls that bot in (`receiveBotMention`).
     this.conversations.receiveBotMention(record, bot);
     // What the main bot wrote into an inbox goes to that bot now (1.x: after every main-bot reply).
-    if (bot.id === MAIN_BOT_ID) this.deliverInboxes();
-    if (bot.id === MAINTAINER_ID) {
+    if (bot.id === this.mainBotId) this.deliverInboxes();
+    if (bot.id === this.maintainerId) {
       this.maintainer.settle(record);
       this.plugins.event("libraryChanged", {});
       // After the reply's own tags are acted on: a change from a spec panel that did not land is said there.
@@ -2510,7 +2523,7 @@ First write a test that shows this, then fix it.`;
   checkRemoveBot(id: string): void {
     const profile = this.profiles.find((candidate) => candidate.id === id);
     if (!profile) throw new ContractError("not_found", "No such bot.");
-    if (profile.role === "main" || id === MAINTAINER_ID) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
+    if (profile.role === "main" || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
   }
 
   /**
@@ -3125,7 +3138,7 @@ First write a test that shows this, then fix it.`;
       case "chat.read": {
         // You read it up to its newest line: plugins hear how much was unread before (`chatRead`).
         const bot = this.bot(cmd.botId);
-        this.plugins.event("chatRead", { botId: bot.id === MAIN_BOT_ID ? "main" : bot.id, ...bot.readMark() });
+        this.plugins.event("chatRead", { botId: bot.id === this.mainBotId ? "main" : bot.id, ...bot.readMark() });
         return bot.read();
       }
       case "component.command": return this.bot(cmd.botId).componentCommand(cmd.messageId, cmd.index, cmd);
@@ -3147,7 +3160,7 @@ First write a test that shows this, then fix it.`;
       case "codex.models": return { models: ((await this.options.codexModels?.()) ?? []).slice(0, 200).map((model) => ({ id: model.id.slice(0, 200), name: model.name.slice(0, 200), isDefault: model.isDefault, efforts: model.efforts?.slice(0, 10) ?? null })) };
       case "component.revert": {
         const problem = this.components.library.revert(cmd.name);
-        if (problem) this.bots.get(MAIN_BOT_ID)?.appNotice(`Couldn't revert component "${cmd.name}": ${problem}`);
+        if (problem) this.mainBot()?.appNotice(`Couldn't revert component "${cmd.name}": ${problem}`);
         this.componentsTick();
         return { reverted: !problem, problem };
       }
@@ -3168,7 +3181,7 @@ First write a test that shows this, then fix it.`;
   }
 
   snapshot(botId?: string): ResultOf<"chat.snapshot"> {
-    const bot = this.bots.get(botId ?? MAIN_BOT_ID);
+    const bot = this.bots.get(botId ?? this.mainBotId);
     if (botId && !bot) throw new ContractError("not_found", "No such bot.");
     const views = this.order.map((id) => this.bots.get(id)!.view());
     return {
