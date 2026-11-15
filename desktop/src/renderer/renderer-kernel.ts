@@ -2,8 +2,8 @@
 // plugin frames as services, and (M7-02a) the slots the page is drawn from. Two instances of the page's own live here, with names
 // no plugin can have:
 //   - `:chat` provides `composer.insertQuote` while App is up (composer-quote.ts); a frame's call reaches it through the frame
-//     broker (plugin-frame-host.ts) as a kernel call carrying the frame's plugin. The Note declares that it uses it (soft: with no
-//     provider the quote is not inserted).
+//     broker (plugin-frame-host.ts, shell/frame-services.ts) as a kernel call carrying the frame's plugin. The Note declares that it uses
+//     it in its manifest (soft: with no provider the quote is not inserted); the plugin feed installs that declaration (M7-04b).
 //   - `:shell` owns the shell's root slots (`ROOT_SLOTS`: app/rail, app/main, app/side, app/bottom, app/overlay). Whatever is
 //     drawn in one is a contribution to it: today the whole page, as one contribution to `app/main` ("the legacy surface",
 //     shell/ShellFrame.tsx). shell/KernelSlot.tsx draws a slot; it re-draws when `subscribeSlots` says the kernel changed.
