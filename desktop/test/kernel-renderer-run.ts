@@ -240,7 +240,10 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
         if (kernel.missing(name).length) fail(`${name} active without ${kernel.missing(name).join(", ")}`);
         for (const slot of kernel.declaration(name)?.contributes?.slots ?? []) {
           const owner = kernel.declaredOwner(slot);
-          if (owner && owner !== name && kernel.state(owner) !== "active") fail(`${name} active while ${slot}'s owner ${owner} is ${kernel.state(owner)}`);
+          // An owner that is installed after its contributors loaded (the settings plugin comes up with feed plugins already
+          // active: K2 looks at the declared owner at StartLoad, and there was none) is loading while they are active; the host
+          // then calls `feed.refresh`, which loads them again with the owner active. Any other state of the owner is an error.
+          if (owner && owner !== name && kernel.state(owner) !== "active" && !(kernel.state(owner) === "loading" && PLUGIN_OWNED_SLOTS.map(canonicalSlot).includes(canonicalSlot(slot)))) fail(`${name} active while ${slot}'s owner ${owner} is ${kernel.state(owner)}`);
         }
       }
     }
@@ -299,14 +302,29 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   };
 
   const loads: Promise<unknown>[] = [];
-  const unloadSettings = () => kernel.requestUnload(SETTINGS).then(() => {
-    if (kernel.state(SETTINGS) === "absent") kernel.uninstall(SETTINGS);
-    feed.refresh(PLUGIN_OWNED_SLOTS);
-  });
+  // Like the host's `define`: a load waits for the unload of the same name, and refuses a plugin the kernel already holds.
+  let settingsUnloading: Promise<unknown> | undefined;
+  const unloadSettings = () => {
+    const done: Promise<unknown> = kernel.requestUnload(SETTINGS).then(() => {
+      if (kernel.state(SETTINGS) === "absent") kernel.uninstall(SETTINGS);
+      feed.refresh(PLUGIN_OWNED_SLOTS);
+    });
+    settingsUnloading = done;
+    void done.finally(() => { if (settingsUnloading === done) settingsUnloading = undefined; });
+    return done;
+  };
   const loadSettings = async () => {
-    if (!kernel.installed().includes(SETTINGS)) kernel.install({ name: SETTINGS, provides: { slots: PLUGIN_OWNED_SLOTS.map(form) } });
+    await settingsUnloading;
+    if (kernel.state(SETTINGS) !== "absent" || kernel.installed().includes(SETTINGS)) return;
+    kernel.install({ name: SETTINGS, provides: { slots: PLUGIN_OWNED_SLOTS.map(form) } });
     const outcome = await kernel.load(SETTINGS, settingsLoader);
     if (outcome.status === "active") feed.refresh(PLUGIN_OWNED_SLOTS);
+  };
+  const swapSettings = async () => {
+    await settingsUnloading;
+    if (kernel.state(SETTINGS) !== "active") return;
+    await kernel.swap(SETTINGS, settingsLoader);
+    feed.refresh(PLUGIN_OWNED_SLOTS);
   };
   const lower = [...PAGE_PLUGINS, ...FRAMED_PLUGINS];
   for (let index = 0; index < maxActions; index += 1) {
@@ -326,7 +344,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
         // and the feed is told after each, so the rows refused while the owner was away are registered again.
         if (what < 5) { action = `unload ${name}`; if (kernel.state(name) === "active") result.settingsUnloads += 1; loads.push(unloadSettings()); }
         else if (what < 9) { action = `load ${name}`; loads.push(loadSettings()); }
-        else { action = `swap ${name}`; loads.push(kernel.swap(name, settingsLoader).then(() => { feed.refresh(PLUGIN_OWNED_SLOTS); })); }
+        else { action = `swap ${name}`; loads.push(swapSettings()); }
       } else {
         const loader = name === SHELL ? shellLoader : chatLoader;
         if (what < 5) { action = `unload ${name}`; if (kernel.state(name) === "active") result[name === SHELL ? "shellUnloads" : "chatUnloads"] += 1; loads.push(kernel.requestUnload(name)); }
@@ -375,10 +393,14 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   const converged = () => !last.view || ([...read.names].sort().join() === feed.loaded().sort().join() && [...read.names].every((name) => kernel.state(name) === "active"));
   for (let step = 0; step < 4; step += 1) {
     await settle(() => true);
+    // The settings plugin is the owner of the plugin-owned places: until it is up the feed cannot hold their rows, and the host
+    // asks the feed again (`refresh`) only once it is.
+    if (kernel.state(SETTINGS) !== "active") { void loadSettings(); await settle(() => true); }
+    const ownerUp = kernel.state(SETTINGS) === "active";
     if (last.view) reconcile(last.view);
     feed.refresh(PLUGIN_OWNED_SLOTS);
     await flush();
-    if (converged() && !gates.length && !loaderGates.length) break;
+    if (ownerUp && converged() && !gates.length && !loaderGates.length) break;
   }
   await settle(() => true);
   if (last.view) {
@@ -390,7 +412,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
       for (const name of expected) {
         const mine = feedRows(rows, name);
         const wantedRows = read.rows.get(name)?.get(slot) ?? [];
-        if (!sameRows(mine, wantedRows)) throw new Error(`seed ${seed}: after settling ${name} holds ${mine.length} row(s) in ${slot}, the view has ${wantedRows.length}`);
+        if (!sameRows(mine, wantedRows)) throw new Error(`seed ${seed}: after settling ${name} holds ${mine.length} row(s) in ${slot}, the view has ${wantedRows.length} (owner ${kernel.slotOwner(slot)} is ${kernel.state(kernel.slotOwner(slot) ?? "")}, ${name} is ${kernel.state(name)}, declares [${kernel.declaration(name)?.contributes?.slots}])`);
       }
       const total = [...read.rows.values()].reduce((sum, bySlot) => sum + (bySlot.get(slot)?.length ?? 0), 0);
       if (rows.length !== total) throw new Error(`seed ${seed}: after settling ${slot} holds ${rows.length} feed row(s), the view has ${total}`);
