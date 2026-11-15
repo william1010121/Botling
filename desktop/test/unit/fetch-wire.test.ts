@@ -243,7 +243,8 @@ describe("M5-05: grants schema migration", () => {
 
     const store = await openServerStore(dir);
     stores.push(store);
-    expect(store.migrated).toEqual([12]);
+    expect(store.migrated).toEqual(MIGRATIONS.slice(11).map((m) => m.version));
+    expect(store.migrated[0]).toBe(12);
     const reader = store.openReader();
     try {
       expect(schemaVersion(reader)).toBe(LATEST_SCHEMA_VERSION);
@@ -283,7 +284,8 @@ describe("M5-05: grants schema migration", () => {
 
     const store = await openServerStore(dir);
     stores.push(store);
-    expect(store.migrated).toEqual([12]);
+    expect(store.migrated).toEqual(MIGRATIONS.slice(11).map((m) => m.version));
+    expect(store.migrated[0]).toBe(12);
     const reader = store.openReader();
     try {
       expect(schemaVersion(reader)).toBe(LATEST_SCHEMA_VERSION);

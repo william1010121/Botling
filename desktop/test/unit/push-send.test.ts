@@ -558,4 +558,51 @@ describe("M4-23 PushSender with RosterStore, vapid-keys.json, and local fake pus
     expect(joinedLogs).not.toContain(d1.sub.keys.p256dh);
     expect(joinedLogs).not.toContain("phone1-secret-cap");
   });
+
+  it("captures Retry-After on 429 in createPushTransport without reading body and parses retryAfterMs in PushSender", async () => {
+    const res = new EventEmitter() as unknown as import("node:http").IncomingMessage;
+    res.statusCode = 429;
+    res.headers = { "retry-after": "12" };
+    let destroyed = false;
+    (res as unknown as { destroy: () => void }).destroy = () => { destroyed = true; };
+    const reqObj = new EventEmitter() as unknown as import("node:http").ClientRequest;
+    (reqObj as unknown as { setTimeout: () => void }).setTimeout = () => {};
+    (reqObj as unknown as { destroy: () => void }).destroy = () => {};
+    (reqObj as unknown as { end: () => void }).end = () => {};
+
+    const transport = createPushTransport({
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      request: (_url, _opts, cb) => {
+        queueMicrotask(() => cb?.(res));
+        return reqObj;
+      },
+    });
+
+    const out = await transport({
+      url: "https://push.example/sub/retry-after",
+      headers: {},
+      body: new Uint8Array([1]),
+      timeoutMs: 1_000,
+    });
+    expect(out).toEqual({ status: 429, retryAfter: "12" });
+    expect(destroyed).toBe(true);
+
+    const { dir, roster, addDevice } = await setupCluster();
+    const d1 = await addDevice("phone-ra", 49);
+    writeVapidKeys(dir, generateTestVapidKeys());
+    const sender = new PushSender({
+      dataDir: dir,
+      ownsBot: () => true,
+      roster,
+      transport,
+    });
+    const report = await sender.notify({ botId: "6A0B0000-0000-4000-8000-000000000001", botName: "Bot" });
+    expect(report.results[0]).toMatchObject({
+      device: d1.memberId,
+      ok: false,
+      status: 429,
+      retryable: true,
+      retryAfterMs: 12_000,
+    });
+  });
 });

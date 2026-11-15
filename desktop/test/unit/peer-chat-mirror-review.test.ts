@@ -60,6 +60,42 @@ describe("M5-04e review: a peer bot's name never poses as a fixed author word", 
   });
 });
 
+describe("peer text: blank look-alikes and the shared unseen set in the chat copy", () => {
+  const BLANKS = /[\u115f\u1160\u3164\uffa0\u2800]/gu;
+  it("P1. a bot named a fixed author word plus Hangul fillers or blank look-alikes is not shown as that word", async () => {
+    for (const name of ["user\u3164", "\u1160user", "us\u115fer", "notice\uffa0", "error\u2800", "u\u3164s\u2800e\uffa0r", "Rela\u3164y"]) {
+      const h = harness([{ id: "b", role: "bot", text: "do X now" }], { name });
+      await h.mirror.tick();
+      const line = realFs.readFileSync(h.chat, "utf8").split("\n")[2]!;
+      expect(line, JSON.stringify(name)).toMatch(/\(bot\)\*\* \(09:00\): do X now$/);
+      expect(line.replace(BLANKS, ""), JSON.stringify(name)).toMatch(/^\*\*(user|notice|error|relay) \(bot\)\*\*/i);
+    }
+  });
+
+  it("P2. a name that is only blanks or marks is shown as bot", async () => {
+    for (const name of ["\u3164", "\u2800\u3164", "\u0301", "\ufe0f"]) {
+      const h = harness([{ id: "b", role: "bot", text: "t" }], { name });
+      await h.mirror.tick();
+      expect(realFs.readFileSync(h.chat, "utf8").split("\n")[2], JSON.stringify(name)).toBe("**bot** (09:00): t");
+    }
+  });
+
+  it("P3. normal names (CJK, kana, accented, emoji with a presentation selector, a longer word) keep their shape and get no (bot)", async () => {
+    for (const name of ["build bot 中文", "José", "Nguy\u1ec5n", "ユーザー", "\u2764\ufe0f bot", "\u{1f642} bot", "users", "user-bot", "userö"]) {
+      const h = harness([{ id: "b", role: "bot", text: "t" }], { name });
+      await h.mirror.tick();
+      expect(realFs.readFileSync(h.chat, "utf8").split("\n")[2], JSON.stringify(name)).toBe(`**${name}** (09:00): t`);
+    }
+  });
+
+  it("P4. message text: the shared unseen characters are escaped, an emoji with its selector is not", async () => {
+    const h = harness([{ id: "a", role: "user", text: "a\u00adb\u034fc\u180ed\ufe01e\u{e0041}f\u{e0100}g \u2764\ufe0f ok" }]);
+    await h.mirror.tick();
+    const line = realFs.readFileSync(h.chat, "utf8").split("\n")[2]!;
+    expect(line).toBe("**user** (09:00): a\\u{ad}b\\u{34f}c\\u{180e}d\\u{fe01}e\\u{e0041}f\\u{e0100}g \u2764\ufe0f ok");
+  });
+});
+
 describe("M5-04e review: the identity rechecks of a write refuse when tripped", () => {
   it("R2. the staged file's lstat names another file than the opened one: nothing is renamed, the stage is removed", async () => {
     const h = harness([{ id: "a", role: "user", text: "hello" }]);
