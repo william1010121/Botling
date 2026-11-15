@@ -424,6 +424,7 @@ export class Botlingd {
         mainBotId: ids.main,
         maintainerId: ids.maintainer,
         mayRunServerPart: (name, codeHash) => mayRunPluginServerPart(() => hub.reader(), `srv:${serverId}`, name, codeHash),
+        separateHosts: true,
         pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
           read: async (ref, offset, length) => {
