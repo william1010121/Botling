@@ -63,11 +63,14 @@ export class RemoteContent {
     }
   }
 
-  /** Whether `id` is the web bundle of `plugin` on this server now (its row names it); never another server's, never a line's entry. */
-  private bundleAllowed(owner: string, stream: string, plugin: string, id: string): boolean {
+  /**
+   * Whether `id` is the web bundle of `plugin` on this server now (its row names it); never another server's, never a line's entry.
+   * The entry of a bundle is the plugin's row: one canonical entry, `seq: 1` (M7-09b-F, FU-3).
+   */
+  private bundleAllowed(owner: string, entry: { stream: string; seq: number }, plugin: string, id: string): boolean {
     const self = this.options.service.serverId;
     try {
-      return !!this.options.pluginBundlesDir && !!this.options.reader && owner === self && stream === `srv:${self}`
+      return !!this.options.pluginBundlesDir && !!this.options.reader && owner === self && entry.stream === `srv:${self}` && entry.seq === 1
         && isPluginWebRef(this.options.reader(), self, plugin, id);
     } catch {
       return false;
@@ -79,8 +82,8 @@ export class RemoteContent {
   }
 
   /** The bytes of a plugin's web bundle (checked against the row again), or a refusal: never other bytes than the hash's. */
-  private respondBundle(owner: string, stream: string, plugin: string, id: string, variant: string): Response {
-    if (variant !== "original" || !this.bundleAllowed(owner, stream, plugin, id)) return goneResponse("denied");
+  private respondBundle(owner: string, entry: { stream: string; seq: number }, plugin: string, id: string, variant: string): Response {
+    if (variant !== "original" || !this.bundleAllowed(owner, entry, plugin, id)) return goneResponse("denied");
     const bytes = this.bundleBytes(id);
     if (!bytes) return goneResponse("deleted");
     return new Response(new Uint8Array(bytes), {
@@ -117,7 +120,7 @@ export class RemoteContent {
     if (message.plugin !== undefined && !this.pluginGranted(message.owner, message.plugin)) return gone("denied");
     // M7-09a: a plugin's web bundle (its row's `files.web`): its entry is the plugin's row in `srv:<this server>`, not a line.
     if (message.plugin !== undefined && message.entry.stream.startsWith("srv:")) {
-      if (!this.bundleAllowed(message.owner, message.entry.stream, message.plugin, message.id) || !this.bundleBytes(message.id)) return gone("denied");
+      if (!this.bundleAllowed(message.owner, message.entry, message.plugin, message.id) || !this.bundleBytes(message.id)) return gone("denied");
       const { ticket, expiresAt } = this.options.tickets.issue({ deviceId, owner: message.owner, id: message.id, entry: message.entry, plugin: message.plugin });
       return { t: "content.granted", req: message.req, ticket, expiresAt };
     }
@@ -156,7 +159,7 @@ export class RemoteContent {
     ) return refused("binding");
     if (!this.readable(grant.deviceId)) { this.options.tickets.dropDevice(grant.deviceId); return refused("device"); }
     if (grant.plugin !== undefined && !this.pluginGranted(grant.owner, grant.plugin)) return refused("plugin");
-    if (grant.plugin !== undefined && url.entry.stream.startsWith("srv:")) return this.respondBundle(grant.owner, url.entry.stream, grant.plugin, url.id, url.variant);
+    if (grant.plugin !== undefined && url.entry.stream.startsWith("srv:")) return this.respondBundle(grant.owner, url.entry, grant.plugin, url.id, url.variant);
     // M3 step 10: another server's content passes through this one (checked there and at the owner).
     if (url.owner !== this.options.service.serverId && this.options.peer) return this.options.peer.respond(url, request, grant.deviceId);
     const opened = await this.options.service.open({ t: "content.open", req: "http", owner: url.owner, id: url.id, variant: url.variant, entry: url.entry }, { remote: true });

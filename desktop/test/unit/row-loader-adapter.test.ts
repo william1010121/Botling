@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Command, EventEnvelope } from "../../src/contract";
 import { FeLink, MemoryFeStorage } from "../../src/fe-link";
 import { RendererAdapter } from "../../src/main-v3/renderer-adapter";
-import type { BundleFetcher, BundleRequest } from "../../src/renderer/shell/row-loader";
+import { BundleRefusedError, type BundleFetcher, type BundleRequest } from "../../src/renderer/shell/row-loader";
+import { sourceByRef } from "../../src/main-v3/web-by-ref";
 import type { Message } from "../../src/protocol";
 import { FakeClock, FakeServer, flush, SRV_STREAM } from "./fe-link-harness";
 
@@ -192,5 +193,70 @@ describe("a row that moves to another bundle", () => {
     r.rows(0, 2, [{ key: "plugin:a", rev: 2, body: plugin("h-a1", refOf(A1)) }]);
     await flush();
     expect(r.updated()).toBe(before);
+  });
+});
+
+// M7-09b-F (FU-6): bytes that are not the web part the row names are refused; the server's own source is never the fallback for them.
+describe("a bundle that does not match its row is refused", () => {
+  const evil = (fetched: BundleRequest[]): BundleFetcher => async (request) => { fetched.push(request); return request.ref === refOf(A1) ? "evil();" : BUNDLES[request.ref]!; };
+  const refusing = (fetched: BundleRequest[]): BundleFetcher => async (request) => {
+    fetched.push(request);
+    if (request.ref === refOf(A1)) throw new BundleRefusedError("the bytes are not the web part its row names");
+    return BUNDLES[request.ref]!;
+  };
+
+  for (const [how, bundles] of [["a fetcher that did not check", evil], ["a fetcher that refused", refusing]] as const) {
+    it(`plugins.web carries no source for it (${how}): neither the wrong bytes nor the server's source; other plugins are as before`, async () => {
+      const r = await rig({ bundles });
+      r.rows(0, 3, [{ key: "plugin:a", rev: 2, body: plugin("h-a1", refOf(A1)) }, { key: "plugin:b", rev: 3, body: plugin("h-b1") }]);
+      await flush();
+      const specs = await r.web();
+      expect(specs.map((entry) => entry.name)).toEqual(["b"]);
+      expect(JSON.stringify(specs)).not.toContain("evil");
+      expect(JSON.stringify(specs)).not.toContain("SERVER-A");
+      expect(specs[0]!.source).toBe("SERVER-B");
+    });
+
+    it(`plugins.panel is refused for it (${how}), and still answers another plugin from the server`, async () => {
+      const r = await rig({ bundles });
+      r.rows(0, 3, [{ key: "plugin:a", rev: 2, body: plugin("h-a1", refOf(A1)) }, { key: "plugin:b", rev: 3, body: plugin("h-b1") }]);
+      await flush();
+      const a = await r.adapter.request({ type: "plugins.panel", name: "a", panel: "main" });
+      expect(a.ok).toBe(false);
+      expect(JSON.stringify(a)).not.toContain("SERVER-PANEL-a");
+      expect(JSON.stringify(a)).not.toContain("evil");
+      expect(await r.adapter.request({ type: "plugins.panel", name: "b", panel: "main" })).toEqual({ ok: true, result: { title: "t", source: "SERVER-PANEL-b", settings: {} } });
+    });
+  }
+
+  it("a row that then moves to a good bundle tells the window once, and the next ask has the good code", async () => {
+    const r = await rig({ bundles: evil });
+    r.rows(0, 2, [{ key: "plugin:a", rev: 2, body: plugin("h-a1", refOf(A1)) }]);
+    await flush();
+    expect((await r.web()).map((entry) => entry.name)).toEqual(["b"]);
+    const before = r.updated();
+    r.rows(2, 3, [{ key: "plugin:a", rev: 3, body: plugin("h-a2", refOf(A2)) }]);
+    await flush();
+    expect(r.updated()).toBe(before + 1);
+    expect((await r.web()).find((entry) => entry.name === "a")?.source).toBe(A2);
+  });
+
+  it("still falls back to the server's source when the bundle only could not be had (the old trust path)", async () => {
+    const r = await rig({ bundles: bySource({}) });
+    r.rows(0, 2, [{ key: "plugin:a", rev: 2, body: plugin("h-a1", refOf(A1)) }]);
+    await flush();
+    expect((await r.web()).find((entry) => entry.name === "a")?.source).toBe("SERVER-A");
+  });
+
+  it("sourceByRef says it refused (not that the server's source is used), and a row that moved on is read again before refusing", async () => {
+    const lines: string[] = [];
+    const row = (web: string) => new Map<string, unknown>([["plugin:a", plugin("h", web)]]);
+    let rows = row(refOf(A1));
+    const by = { fetch: (async () => { rows = row(refOf(A2)); return "evil();"; }) as BundleFetcher, rows: () => rows, log: (line: string) => lines.push(line) };
+    // The first fetch is of a row that moves meanwhile: its (wrong) bytes are dropped, the new row is fetched again (and is wrong too).
+    const answer = await sourceByRef(by, "a");
+    expect(answer).toEqual({ refused: expect.stringMatching(/./), key: expect.stringContaining(refOf(A2)) });
+    expect(lines.join("\n")).toMatch(/refused/);
+    expect(lines.join("\n")).not.toMatch(/server's source is used/);
   });
 });

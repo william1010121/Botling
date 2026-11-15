@@ -2,12 +2,14 @@
 // frame's specs) and `plugins.panel` (a panel's `source`). When the plugin's row in the attached server's own table names its web
 // bundle (`files.web`, M7-09a), the adapter answers with the bytes of that reference instead: the same bytes the kernel's row loader
 // runs (renderer/shell/row-loader.ts), hash-checked. A row with no reference, a bundle that cannot be had, or an adapter with no
-// fetcher leaves the server's own answer as it was (`plugins.web` stays the fallback).
+// fetcher leaves the server's own answer as it was (`plugins.web` stays the fallback). Bytes that are NOT the row's reference (a hash
+// mismatch) are refused instead (M7-09b-F, FU-6): `plugins.web` carries no entry for that plugin and `plugins.panel` is refused; the
+// server's source is never offered in place of bytes that did not verify.
 //
 // The plugin whose bundle is asked for is the one the frame's own spec (or panel command) names, checked as a plugin name; its row is
 // read at that moment. Pure TypeScript: no Electron, no Node built-ins.
 import { PluginRow } from "../protocol/table-rows";
-import { webRefOf, type BundleFetcher } from "../renderer/shell/row-loader";
+import { BundleRefusedError, bundleMatches, webRefOf, type BundleFetcher } from "../renderer/shell/row-loader";
 
 const PLUGIN_NAME = /^[a-z0-9][a-z0-9._-]{0,213}$/;
 
@@ -28,29 +30,49 @@ export interface BySource {
   log: (line: string) => void;
 }
 
-/** The bundle of plugin `name` by its row's reference, and the row's key (code hash and reference); null when the server's source stays. */
+/** What a row's reference gave: the bundle, or a refusal of the bytes (with the row's key either way). */
+export type ByRef = { source: string; key: string } | { refused: string; key: string };
+
+/**
+ * The bundle of plugin `name` by its row's reference, and the row's key (code hash and reference); `{ refused }` when the bytes are not
+ * the ones the row names (never the server's source then); null when the server's source stays (no row, no reference, not had).
+ */
 // A row that moves while its bundle is read is read again (L-008): a slower fetch of the old bundle never answers for the new row.
 const MOVES_FOLLOWED = 3;
 
-export async function sourceByRef(by: BySource, name: string): Promise<{ source: string; key: string } | null> {
+export async function sourceByRef(by: BySource, name: string): Promise<ByRef | null> {
   if (!by.fetch) return null;
+  const shown = JSON.stringify(name.slice(0, 80));
   for (let tries = 0; tries < MOVES_FOLLOWED; tries++) {
     const web = rowWeb(by.rows(), name);
     if (!web) return null;
-    let source: string;
+    let outcome: { source: string } | { refused: string };
     try {
-      source = await by.fetch({ plugin: name, ref: web.ref });
+      const source = await by.fetch({ plugin: name, ref: web.ref });
+      outcome = bundleMatches(source, web.ref) ? { source } : { refused: "the bytes are not the web part its row names" };
     } catch (error) {
-      by.log(`the web part of ${JSON.stringify(name.slice(0, 80))} was not read by its reference; the server's source is used: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 120))}`);
-      return null;
+      const why = String((error as Error)?.message ?? error).slice(0, 120);
+      if (!(error instanceof BundleRefusedError)) {
+        by.log(`the web part of ${shown} was not read by its reference; the server's source is used: ${JSON.stringify(why)}`);
+        return null;
+      }
+      outcome = { refused: why };
     }
-    if (rowWeb(by.rows(), name)?.key === web.key) return { source, key: web.key };
+    if (rowWeb(by.rows(), name)?.key !== web.key) continue;
+    if ("refused" in outcome) {
+      by.log(`the web part of ${shown} was refused, nothing is served for it: ${JSON.stringify(outcome.refused)}`);
+      return { refused: outcome.refused, key: web.key };
+    }
+    return { source: outcome.source, key: web.key };
   }
-  by.log(`the row of ${JSON.stringify(name.slice(0, 80))} kept moving while its web part was read; the server's source is used`);
+  by.log(`the row of ${shown} kept moving while its web part was read; the server's source is used`);
   return null;
 }
 
-/** The `plugins.web` answer with each spec's `source` from its row's bundle where the row names one; `served` gets the key of each. */
+/**
+ * The `plugins.web` answer with each entry's `source` from its row's bundle where the row names one; `served` gets the key of each (also
+ * of a refused one, so the window is told when its row moves on). An entry whose bytes were refused is left out.
+ */
 export async function specsByRef(answer: unknown, by: BySource, served: Map<string, string>): Promise<unknown> {
   const specs = (answer as { specs?: unknown } | null)?.specs;
   if (!Array.isArray(specs)) return answer;
@@ -60,16 +82,18 @@ export async function specsByRef(answer: unknown, by: BySource, served: Map<stri
     const found = await sourceByRef(by, name);
     if (!found) return spec;
     served.set(name, found.key);
+    if ("refused" in found) return undefined;
     return { ...(spec as object), source: found.source };
   }));
-  return { ...(answer as object), specs: next };
+  return { ...(answer as object), specs: next.filter((spec) => spec !== undefined) };
 }
 
-/** The `plugins.panel` answer with its `source` from the row's bundle where the row names one. */
+/** The `plugins.panel` answer with its `source` from the row's bundle where the row names one. Throws `BundleRefusedError` when the bytes were refused. */
 export async function panelByRef(answer: unknown, by: BySource, name: string, served: Map<string, string>): Promise<unknown> {
   if (!answer || typeof answer !== "object" || typeof (answer as { source?: unknown }).source !== "string") return answer;
   const found = await sourceByRef(by, name);
   if (!found) return answer;
   served.set(name, found.key);
+  if ("refused" in found) throw new BundleRefusedError(found.refused);
   return { ...(answer as object), source: found.source };
 }
