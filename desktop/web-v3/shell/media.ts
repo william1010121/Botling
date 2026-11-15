@@ -23,7 +23,8 @@
 //   same-origin viewer), which the worker controls. A video is played in the page's own player (video-overlay.ts): the
 //   chat frame, which no worker controls, shows its poster and opens the player on a tap (`open: "player"`).
 import type { FeLink, RemoteContentAnswer } from "../../src/fe-link";
-import { contentUrlPath, type ContentVariant, type EntryRef } from "../../src/protocol";
+import { contentUrlPath, parseContentUrl, type ContentVariant, type EntryRef } from "../../src/protocol";
+import { unmarkBridge } from "../sw-wire";
 import { kindOfType, type FrameMediaMessage, type MediaAnswer, type MediaKind, type MediaState, type MediaWant, type ShellMediaMessage } from "../media-wire";
 import { chooseVariant, PATH_LABEL, RateMeter, type Choice, type PathKind, type VariantName } from "../player";
 import { CONTENT_ITEM_MAX, type ContentCache } from "./content-cache";
@@ -216,7 +217,9 @@ export class MediaBroker {
       if (known?.answer.state === "ready" && known.answer.kind === "video" && known.answer.open === "player") { this.openVideo(known); return; }
       if (!known || known.answer.state !== "ready" || known.answer.kind !== "pdf" || !known.answer.url) return;
       const answer = known.answer;
-      openPdfViewer({ src: answer.url!, ...(answer.textUrl ? { text: answer.textUrl } : {}), name: nameOf(known.want.url), ...(answer.size !== undefined ? { size: answer.size } : {}), relay: this.meter.path === "relay" });
+      const parsed = parseContentUrl(unmarkBridge(answer.url!) ?? answer.url!);
+      const ref = parsed ? { owner: parsed.owner, id: parsed.id, entry: parsed.entry } : undefined;
+      openPdfViewer({ src: answer.url!, ...(answer.textUrl ? { text: answer.textUrl } : {}), name: nameOf(known.want.url), ...(answer.size !== undefined ? { size: answer.size } : {}), ...(ref ? { ref } : {}), relay: this.meter.path === "relay" });
       if (this.diag?.[data.key]) this.diag[data.key]!.opened = (this.diag[data.key]!.opened ?? 0) + 1;
     } else if (data.botling3 === "media.choice" && (data.choice === "auto" || data.choice === "original" || data.choice === "preview")) {
       void this.storage?.save(CHOICE_KEY, data.choice).catch(() => undefined);

@@ -1,4 +1,6 @@
-// Tests for PDF quote markup in Notes (core/note-format.ts: PdfQuote, pdfQuoteMarkup, pdfQuotes).
+// Tests for PDF quote markup in Notes (core/note-pdf-quote.ts, re-exported by core/note-format.ts).
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   noteBranches,
@@ -9,6 +11,11 @@ import {
   pdfQuotes,
   type PdfQuote,
 } from "../../src/core/note-format";
+import {
+  pdfQuoteMarkup as directMarkup,
+  pdfQuotes as directQuotes,
+  type PdfQuote as DirectPdfQuote,
+} from "../../src/core/note-pdf-quote";
 
 const OWNER = "srv-mac-1";
 const CONTENT_ID = `sha256:${"a".repeat(64)}`;
@@ -199,5 +206,17 @@ describe("pdfQuoteMarkup and pdfQuotes", () => {
     expect(parsed!.text.length).toBe(4_000);
     expect(parsed!.text.endsWith("…")).toBe(true);
     expect(parsed!.text).toBe(`${"a".repeat(3_999)}…`);
+  });
+
+  it("lives in browser-safe core/note-pdf-quote.ts with only protocol id schemas and is re-exported by note-format.ts", () => {
+    const q: DirectPdfQuote = { name: "paper.pdf", page: 2, text: "quoted", source: SOURCE };
+    expect(directMarkup).toBe(pdfQuoteMarkup);
+    expect(directQuotes).toBe(pdfQuotes);
+    expect(directQuotes(directMarkup(q))).toEqual([{ ...q, line: 0 }]);
+
+    const src = readFileSync(resolve(import.meta.dirname, "../../src/core/note-pdf-quote.ts"), "utf8");
+    const imports = [...src.matchAll(/^\s*import\s+[\s\S]*?\sfrom\s+["']([^"']+)["']/gm)].map((m) => m[1]!);
+    expect(imports.every((mod) => mod.startsWith("../protocol/"))).toBe(true);
+    expect(src).not.toMatch(/["']node:/);
   });
 });
