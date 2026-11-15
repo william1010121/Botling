@@ -18,7 +18,7 @@
 // → adding → paired, or declined (codes differ, expired, cancelled); an `ack lost` makes the offer wait again (the phone
 // retries with the same link). At most 10 are kept, finished ones for 2 minutes.
 import { ContractError, type Command, type CommandType, type MobileClusterView, type MobileDeskView, type MobilePairView, type MobileV3View } from "../../contract";
-import { AdminOp, type AdminEvent } from "../../protocol";
+import { AdminOp, parsePairLink, type AdminEvent } from "../../protocol";
 import { relayPageOrigin } from "../../session";
 import { RelaySettingError } from "../net/relay-setting";
 import { PairingError, type DeviceRow, type PairOfferResult } from "./service";
@@ -127,7 +127,8 @@ export class PhoneDesk {
     if (cmd.botIds) throw new ContractError("bad_request", "A Botling 3 phone gets every bot; a bot list is not taken.");
     const made = await this.admin({ op: "pair.offer" }) as PairOfferResult;
     const origin = new URL(made.link).origin;
-    const relay = this.options.relay.view().url;
+    // The link opens the relay's page when the offer's relay serves it (no tailnet origin): a "relay" route.
+    const relay = parsePairLink(made.link)?.addresses.relay?.url ?? null;
     let viaRelay = false;
     try { viaRelay = relay !== null && relayPageOrigin(relay) === origin; } catch { viaRelay = false; }
     this.offers.set(made.offer, { view: { offer: made.offer, state: "waiting", expiresAt: made.expiresAt }, at: this.now(), confirming: false });
