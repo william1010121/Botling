@@ -175,9 +175,9 @@ describe("the window: a 1 MiB note read through plugin-frame-host, the adapter a
     const r = await rig({ bytes: 1_100_000, kept: true });
     const text = bigNote();
     r.answer((message, server) => sendBig(server, message.req, { result: { text, mtime: 1 } }));
-    const answer = await host(r.client).call("botling.note", "read", { botId: "b1" }) as { result: { text: string; mtime: number } };
-    expect(answer.result.text === text).toBe(true);
-    expect(answer.result.text.length).toBe(text.length);
+    const answer = await host(r.client).call("botling.note", "read", { botId: "b1" }) as { text: string; mtime: number };
+    expect(answer.text === text).toBe(true);
+    expect(answer.text.length).toBe(text.length);
     expect(r.calls.map((cmd) => cmd.type)).toEqual(["plugins.call"]);
     expect(r.server.copies[0].via).toEqual({ plugin: "botling.note", codeHash: HASH });
     expect(r.fetches).toEqual([r.server.copies[0].slot]);
@@ -187,8 +187,8 @@ describe("the window: a 1 MiB note read through plugin-frame-host, the adapter a
     const r = await rig({ bytes: 1_100_000, kept: true });
     const text = bigNote();
     r.answer((message, server) => sendBig(server, message.req, { result: { saved: false, text, mtime: 9 } }));
-    const answer = await host(r.client).call("botling.note", "write", { botId: "b1", text: "mine", base: 1 }) as { result: { text: string } };
-    expect(answer.result.text === text).toBe(true);
+    const answer = await host(r.client).call("botling.note", "write", { botId: "b1", text: "mine", base: 1 }) as { text: string };
+    expect(answer.text === text).toBe(true);
     expect(r.calls).toHaveLength(1);
     expect(r.server.copies[0].via).toEqual({ plugin: "botling.note", codeHash: HASH });
   });
