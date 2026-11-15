@@ -18,6 +18,7 @@ import { closeSync, constants, type Stats, fstatSync, lstatSync, mkdirSync, open
 import { join, relative, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import { botName } from "../../core/projects";
+import { mapUnseen, stripBlanks, stripUnseen } from "../unseen";
 import type { Cursor, Message } from "../../protocol";
 import type { PeerLogCache } from "./peer-log-cache";
 
@@ -68,14 +69,15 @@ interface Tracked {
 
 interface Folder { path: string; dev: number; ino: number }
 
-/** One clean line: control characters, line and paragraph separators and bidi marks are shown as escapes. */
+/** One clean line: control characters, line and paragraph separators and unseen characters (`server/unseen.ts`) are shown as escapes. */
 function escapeLine(text: string): string {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g, (character) => {
+  const escape = (character: string): string => {
     if (character === "\n") return "\\n";
     if (character === "\r") return "\\r";
     if (character === "\t") return "\\t";
     return `\\u{${character.codePointAt(0)!.toString(16)}}`;
-  });
+  };
+  return mapUnseen(text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, escape), true, escape);
 }
 
 /** The first `max` characters (code points, never half a pair) and `…` when something was cut. */
@@ -97,16 +99,17 @@ function clock(time: unknown): string {
 }
 
 /**
- * A peer bot's name as the author word of its lines: no bold markers (`*`) and no format characters (zero-width, soft
- * hyphen, bidi overrides: `\p{Cf}`), and never one of the fixed words. The comparison uses NFKD (compatibility forms
- * folded, and a precomposed `\u0155` split so its mark goes) with format characters and combining marks removed, in any
- * case: `user`, `us\u00ader`, `\u202euser` and `use\u0155` cannot pose as the user of its chat. Look-alikes from other
- * scripts (Cyrillic `\u0443ser`) are not folded: a known residual risk.
+ * A peer bot's name as the author word of its lines: no bold markers (`*`) and no unseen characters (format characters,
+ * selectors, tags: `server/unseen.ts`, and `\p{Cf}`), and never one of the fixed words. The comparison uses NFKD
+ * (compatibility forms folded, and a precomposed `\u0155` split so its mark goes) with format characters, combining
+ * marks and the blank look-alikes (Hangul fillers, braille blank) removed, in any case: `user`, `us\u00ader`,
+ * `\u202euser`, `use\u0155` and `user\u3164` cannot pose as the user of its chat. A name with nothing left to see is `bot`.
+ * Look-alikes from other scripts (Cyrillic `\u0443ser`) are not folded: a known residual risk.
  */
 function botAuthor(name: string): string {
-  const plain = name.replace(/[*\p{Cf}]/gu, "").trim();
-  if (!plain) return "bot";
-  const word = plain.normalize("NFKD").replace(/[\p{Cf}\p{M}]/gu, "").trim().toLowerCase();
+  const plain = stripUnseen(name.replace(/[*\p{Cf}]/gu, ""), true).trim();
+  const word = stripBlanks(plain.normalize("NFKD").replace(/[\p{Cf}\p{M}]/gu, "")).trim().toLowerCase();
+  if (!word) return "bot";
   return Object.values(AUTHORS).includes(word) ? `${plain} (bot)` : plain;
 }
 

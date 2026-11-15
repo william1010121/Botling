@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, sep } from "node:path";
 import type { RosterView } from "../roster";
 import type { Db, ServerStore } from "../store";
+import { stripUnseen } from "../unseen";
 import { Limits } from "./policy";
 import type { FetchAskHook, FetchAskRequest } from "./source";
 
@@ -43,12 +44,11 @@ export interface FetchNames {
 
 /**
  * One line of text: control characters and line breaks (a peer's words must not fake more card lines) become a space;
- * invisible format characters (bidi overrides and isolates, zero-width marks) go, so a peer's name cannot reorder or
+ * unseen characters (bidi overrides and isolates, zero-width marks, soft hyphen, selectors, tags: `server/unseen.ts`) go, so a peer's name cannot reorder or
  * hide the rest of the line (the path, the machine) in the card or the terminal.
  */
 export function oneLine(text: string, limit = 4_096): string {
-  return text
-    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g, "")
+  return stripUnseen(text, true)
     .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim().slice(0, limit);
 }
 

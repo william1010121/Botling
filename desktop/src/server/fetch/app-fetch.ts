@@ -13,6 +13,7 @@
 // - Fail closed: a requester that is not built yet, or that throws, is "not reachable"; never a stack.
 import { botName } from "../../core/projects";
 import type { RosterStore } from "../roster";
+import { mapUnseen } from "../unseen";
 import { formatSize } from "./approval";
 import type { FetchResult } from "./requester";
 
@@ -20,15 +21,19 @@ import type { FetchResult } from "./requester";
 export interface AppFetchRequest { machine: string; path: string; purpose: string; maxBytes?: number }
 const DEFAULT_MAX_BYTES = 524_288_000;
 
-// botName keeps control characters (ESC, BEL, NUL, a tab inside) and the bidi / zero-width marks; a roster name is any
-// text up to 100 characters. The rule for text from a peer (code-standards 4, L-004): control characters escaped.
-const UNSEEN = /[\u0000-\u001f\u007f-\u009f؜​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
-/** `botName`, then every control character and bidi / zero-width mark as `\xNN` / `\uNNNN`: the name the text shows and the match uses. */
+// botName keeps control characters (ESC, BEL, NUL, a tab inside) and the unseen characters (bidi and zero-width marks,
+// soft hyphen, selectors, tags: server/unseen.ts); a roster name is any text up to 100 characters. The rule for text from
+// a peer (code-standards 4, L-004): all of them escaped. ZWJ and ZWNJ too, because the label is a match key and must
+// show every difference between two names.
+const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/g;
+const escapeCharacter = (character: string): string => {
+  const code = character.codePointAt(0)!;
+  if (code <= 0xff) return `\\x${code.toString(16).padStart(2, "0")}`;
+  return code <= 0xffff ? `\\u${code.toString(16).padStart(4, "0")}` : `\\u{${code.toString(16)}}`;
+};
+/** `botName`, then every control character and unseen character as `\xNN` / `\uNNNN` / `\u{N}`: the name the text shows and the match uses. */
 export function machineLabel(name: string): string {
-  return botName(name).replace(UNSEEN, (character) => {
-    const code = character.charCodeAt(0);
-    return code <= 0xff ? `\\x${code.toString(16).padStart(2, "0")}` : `\\u${code.toString(16).padStart(4, "0")}`;
-  });
+  return mapUnseen(botName(name).replace(CONTROLS, escapeCharacter), true, escapeCharacter);
 }
 
 /** The line the bot reads for a finished fetch (`name` is already clean). Every reason of `FetchResult` has its text. */
