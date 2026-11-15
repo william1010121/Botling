@@ -7,9 +7,10 @@ export interface RelayConfig {
   /** Browser origins allowed to open the WebSocket. Empty: only the relay's own origin (Origin host == Host). A client
    * without an Origin header (the desktop app) is always allowed: Origin is a browser control, not authentication. */
   allowedOrigins: string[];
-  /** Optional folder with the phone web app (desktop/mobile/dist), served under /mobile/. */
+  /** Optional folder with the 2.x phone web app (desktop/mobile/dist), served under /mobile/ only while STATIC_V3_DIR is unset. */
   staticDir: string | null;
-  /** Optional folder with the Botling 3 web app (desktop/web-v3/dist), served under /v3/. */
+  /** Optional folder with the Botling 3 web app (desktop/web-v3/dist), served under /v3/. When set it is THE phone page:
+   * / and every /mobile address redirect to /v3/ and STATIC_DIR is not served. */
   staticV3Dir: string | null;
   /** Public https origin, used in the chat page's CSP. Default: https://<Host header>. */
   publicOrigin: string | null;

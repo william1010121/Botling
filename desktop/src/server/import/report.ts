@@ -48,6 +48,8 @@ export interface ImportReportData {
     machineKeys: readonly string[];
     layoutKeys: readonly string[];
     oversizedKeys: readonly string[];
+    /** The phone relay line (import/relay.ts), when 2.x had a relay. */
+    relayLine?: string | null;
   };
   approvals: {
     folders: number;
@@ -247,6 +249,7 @@ export function formatImportReport(data: ImportReportData): string {
   if (data.settings.oversizedKeys.length > 0) {
     settingsLines.push(`  Oversized preferences dropped: ${formatList(data.settings.oversizedKeys)}`);
   }
+  if (data.settings.relayLine) settingsLines.push(`  ${data.settings.relayLine}`);
 
   const approvalsLines = [
     "Approvals",

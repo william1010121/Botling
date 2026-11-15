@@ -49,8 +49,8 @@ import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthori
 import { fixedIds } from "./fixed-ids";
 import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeyRecord, readVapidKeys, revokedServerIds } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
-import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
-import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
+import { defaultPageDir, effectiveRelayUrl, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, redact, RELAY_KEY_FILE, RELAY_SETTING_FILE, RELAY_URL_ENV, relayConnectOrigin, RelayConnector, relayTestOptions } from "./net";
+import { relayDeviceToken, relayPageOrigin, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
 import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "./push";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
@@ -102,6 +102,23 @@ export function tailnetOrigin(env: Record<string, string | undefined>): string |
   } catch {
     return null;
   }
+}
+
+/**
+ * The page a pairing link opens (§1 decision 3, the relay serving the 3.x page): this server's tailnet page when it has a
+ * tailnet origin, else the relay's page when a relay is set (the relay's root also sends a phone there), else the
+ * placeholder tailnet page the person has to fix.
+ */
+export function pairingPageUrl(tailnet: string | null, relay: string | null): string {
+  if (tailnet) return `${tailnet}/v3/`;
+  if (relay) return `${relayPageOrigin(relay)}/v3/`;
+  return `${PLACEHOLDER_TAILNET_ORIGIN}/v3/`;
+}
+
+/** Where an offer says the device reaches this server: the placeholder tailnet address only when nothing else is there. */
+export function pairingAddresses(tailnet: string | null, relay: RelayAddress | null): { tailnet?: string; relay?: RelayAddress } {
+  if (tailnet) return { tailnet, ...(relay ? { relay } : {}) };
+  return relay ? { relay } : { tailnet: PLACEHOLDER_TAILNET_ORIGIN };
 }
 
 /**
@@ -706,15 +723,18 @@ export class Botlingd {
       const startedAt = Date.now();
       let daemon: Botlingd | null = null;
       const origin = tailnetOrigin(env);
-      // M2 step 13: the relay path (off unless BOTLING_SERVER_RELAY_URL names a relay): botlingd's own room, named in offers.
-      const relayAt = relayUrl(env);
+      // M2 step 13: the relay path (off unless `botlingd relay set` kept an address, or BOTLING_SERVER_RELAY_URL names a
+      // relay): botlingd's own room, named in offers.
+      const relaySetting = effectiveRelayUrl(env, paths.dataDir, log);
+      const relayAt = relaySetting.url;
+      if (relayAt) log(`relay: ${redact(relayAt)} (from ${relaySetting.source === "env" ? RELAY_URL_ENV : RELAY_SETTING_FILE})`);
       const relayRoom = relayAt ? await (async () => { const key = loadRelayRoomKey(join(paths.dataDir, RELAY_KEY_FILE)); return { url: relayAt, key, room: await relayRoomOf(key) }; })() : null;
       const relayAddress: RelayAddress | null = relayRoom ? { url: relayRoom.url, room: relayRoom.room } : null;
       const pairing = new PairingService({
         roster, cluster: clusterSetup, identity, serverName: SERVER_NAME, log,
-        addresses: () => ({ tailnet: origin ?? PLACEHOLDER_TAILNET_ORIGIN, ...(relayAddress ? { relay: relayAddress } : {}) }),
-        pageUrl: () => `${origin ?? PLACEHOLDER_TAILNET_ORIGIN}/v3/`,
-        addressNote: () => (origin ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), so the link names a placeholder."),
+        addresses: () => pairingAddresses(origin, relayAddress),
+        pageUrl: () => pairingPageUrl(origin, relayAddress?.url ?? null),
+        addressNote: () => (origin || relayAddress ? null : "no tailnet address or relay is set yet (BOTLING_SERVER_TAILNET_ORIGIN once tailscale serve publishes this server, or botlingd relay set <url>), so the link names a placeholder."),
       });
       // M3 step 4: server pairing (`botlingd join` / `add-machine`), reached at the loopback listener's `/v3/ws`.
       const listenerPort = () => daemon?.listener?.port ?? null;

@@ -172,6 +172,16 @@ describe("botlingd relay (CLI)", () => {
     expect(cleared.stdout).toContain("relay: off");
     expect(readRelaySetting(dir)).toBeNull();
   }, 60_000);
+
+  it("never writes into a Botling 2.x data folder", () => {
+    const base = root("relay-cli-2x");
+    const src = join(base, "v2");
+    make2xFolder(src);
+    const refused = botlingdCommand(src, ["relay", "set", RELAY]);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain("2.x");
+    expect(existsSync(join(src, RELAY_SETTING_FILE))).toBe(false);
+  }, 60_000);
 });
 
 describe("import carries the 2.x relay address (never its keys)", () => {

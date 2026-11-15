@@ -53,6 +53,8 @@ import { importBotChat, type ImportChatsOptions, type ImportedBotLists } from ".
 import { liveBotIds, mapIds, readIdMap, saveIdMap, type IdMapRow } from "./id-map";
 import { copyMedia, mediaDryRunReport, mediaReport, planMedia } from "./media";
 import { importPlugins } from "./plugins";
+import { planRelayImport } from "./relay";
+import { RELAY_SETTING_FILE, writeRelaySetting } from "../net/relay-setting";
 import { looksLike2x, read2x, readChat, type Read2xBot } from "./reader-2x";
 import {
   formatImportReport,
@@ -792,6 +794,8 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
     const totalPins = botReports.reduce((sum, b) => sum + b.pins, 0);
     const totalMissingPinLines = botReports.reduce((sum, b) => sum + b.missingPinLines, 0);
 
+    const relayPlan = planRelayImport(sourceReal, targetResolved, true);
+    if (relayPlan.problem) problems.push(relayPlan.problem);
     const reportText = formatImportReport({
       dryRun: true,
       reportPath,
@@ -806,6 +810,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         machineKeys: Object.keys(mappedSettings.machine).sort(),
         layoutKeys: [...mappedSettings.layoutKeys].sort(),
         oversizedKeys: [...mappedSettings.oversizedKeys].sort(),
+        relayLine: relayPlan.line,
       },
       approvals,
       plugins: pluginEntries,
@@ -1021,6 +1026,13 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
       const mergedMachine: RawSettings = { ...mappedSettings.machine, ...existingSettings };
       guard(Layout.settings(targetResolved));
       writeSettings(Layout.settings(targetResolved), mergedMachine);
+      // The 2.x phone relay's address (only the address) becomes botlingd's relay setting, unless one is already set.
+      const relayPlan = planRelayImport(sourceReal, targetResolved, false);
+      if (relayPlan.problem) problems.push(relayPlan.problem);
+      if (relayPlan.write) {
+        guard(join(targetResolved, RELAY_SETTING_FILE));
+        writeRelaySetting(targetResolved, relayPlan.write);
+      }
 
       // 7. Plugins + 8. Tiers
       guard(join(targetResolved, "plugins.json"));
@@ -1078,6 +1090,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
           machineKeys: Object.keys(mappedSettings.machine).sort(),
           layoutKeys: [...mappedSettings.layoutKeys].sort(),
           oversizedKeys: [...mappedSettings.oversizedKeys].sort(),
+          relayLine: relayPlan.line,
         },
         approvals: {
           folders: approvalReport.folders.length,
