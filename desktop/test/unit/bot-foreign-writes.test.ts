@@ -136,11 +136,11 @@ describe("named transitions on the owner of the field", () => {
     clearTimeout(hold.timer);
   });
 
-  it("stop(turnId) of a held message: the claim is dropped first, then the turn is closed, announced and resolved", () => {
+  it("stop(turnId) of a held message: the claim is dropped first, then the turn is closed, announced and resolved", async () => {
     const A = rig("claude"); const { peek } = A; const order: string[] = [];
     const hold = claim(order, peek); peek.claimHold = hold;
     const seen = A.events.length;
-    const result = peek.stop("held-turn");
+    const result = await peek.stop("held-turn");
     expect(result).toMatchObject({ stopped: true });
     // `resolve` ran after the claim was dropped and the turn was closed.
     expect(order).toEqual(["resolve:stopped claimHold=null open=false"]);
@@ -272,10 +272,12 @@ describe("the places that write another bot's state, in their old order", () => 
   });
 
   it("adoptSwap: no cut-off note leaves the queued note alone; a 'continue' entry marks the session adopted", () => {
-    const A = rig("claude"); watchSave(A);
+    const A = rig("claude"); const saved = watchSave(A);
     A.peek.delivery.queueNote("older"); A.peek.takeInterruptedNote = () => "";
-    A.peek.adoptSwap([{ engine: "claude", sessionId: "sess-5", continue: true, queued: [] }]);
-    expect(A.peek.delivery.queuedNote).toBe("older"); expect(A.peek.headRun.adoptedSession).toBe(true);
+    A.peek.adoptSwap([{ engine: "claude", sessionId: "sess-5", continue: false, queued: [] }]);
+    expect(A.peek.delivery.queuedNote).toBe("older");
+    A.peek.adoptSwap([{ engine: "claude", sessionId: "sess-6", continue: true, queued: [] }]);
+    expect(saved.map((s) => [s.session.sessionId, s.adopted])).toEqual([["sess-5", false], ["sess-6", true]]);
   });
 
   it("restartNow: a claude head asks for a fresh session, a codex one does not", () => {
