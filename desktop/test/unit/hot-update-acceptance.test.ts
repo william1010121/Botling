@@ -395,8 +395,12 @@ describe("a server switch (Q-M7-C1)", () => {
     await until(clock, () => page.lines.some((line) => line.includes("was not loaded")));
     expect(page.runs("a")).toBeNull();
     gone.clear();
+    const asked = f.calls.length;
     page.link.replaceSocket(serverB.dial);
-    await flush();
+    await until(clock, () => false, 500);
+    // Attached to the new server before its rows came: the old server's failed plan is not asked of the new server.
+    expect(f.calls).toHaveLength(asked);
+    expect(page.runs("a")).toBeNull();
     serverB.publish({ a: row(A(1)) });
     await until(clock, () => page.runs("a") === A(1));
     expect(page.runs("a")).toBe(A(1));
