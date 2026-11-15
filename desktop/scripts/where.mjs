@@ -84,7 +84,7 @@ function listFiles(root) {
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
-      if (e.isSymbolicLink()) continue;
+      // a Dirent from readdir is lstat-based: a symlink is neither isDirectory() nor isFile(), so no link is followed
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
         if (!e.name.startsWith(".") && !SKIP_DIRS.has(e.name)) stack.push(full);
