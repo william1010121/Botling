@@ -1,0 +1,94 @@
+{
+  "none": {
+    "messageMenu": [
+      {
+        "command": "botling.component-studio.make",
+        "title": "Make into component",
+        "icon": "cube",
+        "quick": true,
+        "alt": "Add to another bot…",
+        "hint": "Maintainer builds it from this reply right away"
+      },
+      {
+        "command": "zed.tools.clip",
+        "title": "Clip it",
+        "icon": "scissors",
+        "quick": true,
+        "alt": "Clip again",
+        "hint": "Keeps it"
+      }
+    ],
+    "previewMenu": [
+      {
+        "command": "botling.component-studio.make",
+        "title": "Make into component",
+        "icon": "cube",
+        "quick": true
+      },
+      {
+        "command": "zed.tools.clip",
+        "title": "Clip",
+        "icon": "doc",
+        "quick": true
+      }
+    ],
+    "linkMenu": [
+      {
+        "command": "zed.tools.run",
+        "title": "Read with Zed",
+        "when": {
+          "ext": [
+            "pdf",
+            "md"
+          ]
+        }
+      }
+    ]
+  },
+  "zh": {
+    "messageMenu": [
+      {
+        "command": "botling.component-studio.make",
+        "title": "做成元件",
+        "icon": "cube",
+        "quick": true,
+        "alt": "加到其他 Bot…",
+        "hint": "Maintainer 會馬上用這則回覆做出來"
+      },
+      {
+        "command": "zed.tools.clip",
+        "title": "剪下",
+        "icon": "scissors",
+        "quick": true,
+        "alt": "Clip again",
+        "hint": "保留"
+      }
+    ],
+    "previewMenu": [
+      {
+        "command": "botling.component-studio.make",
+        "title": "做成元件",
+        "icon": "cube",
+        "quick": true
+      },
+      {
+        "command": "zed.tools.clip",
+        "title": "Clip",
+        "icon": "doc",
+        "quick": true
+      }
+    ],
+    "linkMenu": [
+      {
+        "command": "zed.tools.run",
+        "title": "Read with Zed",
+        "when": {
+          "ext": [
+            "pdf",
+            "md"
+          ]
+        }
+      }
+    ]
+  }
+}
