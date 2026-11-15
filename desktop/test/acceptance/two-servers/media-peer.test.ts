@@ -343,10 +343,11 @@ async function run(engine: string, type: BrowserType) {
     // plays used to retarget the element mid-test, more often in WebKit on a loaded machine).
     const previews = ++bigPreviews;
     await until(() => previewsOnB() >= previews, { timeout: 180_000, what: `B's preview of ${name}` });
-    await expect.poll(async () => (await mediaOf(page, name))?.variant ?? "", { timeout: 30_000 }).toBe("original");
+    // B's entry reaches A's page a moment later (replication); until then the page decides with the original only
+    // (`only-original`). Once it knows the preview, the rate rule keeps the original.
+    await expect.poll(async () => { const m = await mediaOf(page, name); return `${m?.variant}/${m?.reason}`; }, { timeout: 60_000 }).toBe("original/rate");
     const big = (await mediaOf(page, name))!;
     result.big = { variant: big.variant, reason: big.reason, badge: big.badge ?? "" };
-    expect(big.reason).toBe("rate");
     const bigPlay = await playTimed(frame, big.src!);
     expect(bigPlay.error, JSON.stringify(bigPlay)).toBeUndefined();
     await expect.poll(async () => (await videoState(frame, big.src!))?.time ?? 0, { timeout: 30_000 }).toBeGreaterThan(0.3);
