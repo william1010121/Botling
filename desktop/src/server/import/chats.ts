@@ -4,7 +4,9 @@
 // 1. A `bot:<newId>` log stream whose first entries are `message.added` items with `{botId: newId, message:
 //    messageView(record)}` — identical to what EventTap writes — appended in batches of 500 lines per writer
 //    transaction. A crash mid-bot leaves the bot marked "unfinished" in `meta` so a retry resets its partial log and
-//    redoes it from empty; only after all batches and the core copy commit is it marked "done".
+//    redoes it from empty; only after all batches and the core copy commit is it marked "done". If the target bot
+//    already has Botling 3 history before any import meta mark exists, importing that bot is refused without modifying
+//    or deleting any existing rows (Q-M6-C1).
 // 2. The core's own 2.x-shaped copy via `DbBotStore` (`bot.json` settings and newest HISTORY_LIMIT chat lines).
 //    `DbBotStores` owns its own writer backend and does not accept an external `tx`, so the core copy runs right after
 //    the log batches commit (before the bot is marked "done").
@@ -69,6 +71,26 @@ const SQL = {
     "INSERT INTO fulltext (stream, key, seq, text) VALUES (?, ?, ?, ?) " +
     "ON CONFLICT (stream, key) DO UPDATE SET seq = excluded.seq, text = excluded.text",
 } as const;
+
+function historyProblem(name: string): string {
+  return `${name} already has Botling 3 history; import it into an empty server`;
+}
+
+function hasBotling3History(db: Db, botId: string): boolean {
+  const stream = botStream(botId);
+  const streamRow = db.prepare("SELECT head, tail FROM streams WHERE stream = ?").get(stream);
+  if (streamRow && (Number(streamRow.head) > 0 || Number(streamRow.tail) > 0)) return true;
+  if (db.prepare("SELECT 1 FROM entries WHERE stream = ? LIMIT 1").get(stream)) return true;
+  if (db.prepare("SELECT 1 FROM fulltext WHERE stream = ? LIMIT 1").get(stream)) return true;
+  if (db.prepare("SELECT 1 FROM retired WHERE stream = ? LIMIT 1").get(stream)) return true;
+  if (db.prepare("SELECT 1 FROM messages WHERE botId = ? LIMIT 1").get(botId)) return true;
+  if (db.prepare("SELECT 1 FROM cards WHERE botId = ? LIMIT 1").get(botId)) return true;
+  if (db.prepare("SELECT 1 FROM rows WHERE stream = ? AND deleted = 0 LIMIT 1").get(`chat:${botId}`)) return true;
+  if (db.prepare("SELECT 1 FROM bots WHERE botId = ? AND (head > 0 OR liveTurnId IS NOT NULL) LIMIT 1").get(botId)) {
+    return true;
+  }
+  return false;
+}
 
 function resetUnfinishedBot(tx: Db, botId: string): void {
   const stream = botStream(botId);
@@ -174,7 +196,8 @@ export async function importBotChat(
 ): Promise<ImportedBotChat> {
   const source = options.source ?? "default";
   const metaKey = importBotMetaKey(source, bot.id);
-  if (store.meta(metaKey) === "done") {
+  const currentMeta = store.meta(metaKey);
+  if (currentMeta === "done") {
     return {
       oldId: bot.id,
       newId: mapped.newId,
@@ -186,6 +209,32 @@ export async function importBotChat(
       alreadyDone: true,
       problems: [],
     };
+  }
+
+  const stream = botStream(mapped.newId);
+  if (currentMeta !== "unfinished") {
+    const reader = store.openReader();
+    let hasHistory = false;
+    try {
+      hasHistory = hasBotling3History(reader, mapped.newId);
+    } finally {
+      reader.close();
+    }
+    if (hasHistory) {
+      const problem = historyProblem(mapped.name);
+      options.log?.(`${stream}: refused import (${problem})`);
+      return {
+        oldId: bot.id,
+        newId: mapped.newId,
+        kind: mapped.kind,
+        name: mapped.name,
+        lines: 0,
+        skipped: 0,
+        batches: 0,
+        alreadyDone: false,
+        problems: [problem],
+      };
+    }
   }
 
   // Strictly read-only read of chat.json and bot.json (head.json is intentionally never imported).
@@ -201,7 +250,7 @@ export async function importBotChat(
   let importedLines = 0;
   let appendSkipped = 0;
   let batchCount = 0;
-  const stream = botStream(mapped.newId);
+  let rejected = false;
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i]!;
@@ -216,15 +265,52 @@ export async function importBotChat(
         const prev = tx.prepare(SQL.getMeta).get(metaKey);
         if (prev?.value === "unfinished") {
           resetUnfinishedBot(tx, mapped.newId);
+        } else if (prev?.value === "done") {
+          return { imported: 0, skipped: 0, rejected: false, alreadyDone: true };
+        } else if (hasBotling3History(tx, mapped.newId)) {
+          return { imported: 0, skipped: 0, rejected: true, alreadyDone: false };
         }
         ensureBot(tx, mapped.newId);
         tx.prepare(SQL.setMeta).run(metaKey, "unfinished");
       }
-      return appendPreparedBatch(tx, stream, batch, options.now, options.log);
+      return { ...appendPreparedBatch(tx, stream, batch, options.now, options.log), rejected: false, alreadyDone: false };
     });
+    if (outcome.alreadyDone) {
+      return {
+        oldId: bot.id,
+        newId: mapped.newId,
+        kind: mapped.kind,
+        name: mapped.name,
+        lines: 0,
+        skipped: 0,
+        batches: 0,
+        alreadyDone: true,
+        problems: [],
+      };
+    }
+    if (outcome.rejected) {
+      rejected = true;
+      break;
+    }
     importedLines += outcome.imported;
     appendSkipped += outcome.skipped;
     batchCount += 1;
+  }
+
+  if (rejected) {
+    const problem = historyProblem(mapped.name);
+    options.log?.(`${stream}: refused import (${problem})`);
+    return {
+      oldId: bot.id,
+      newId: mapped.newId,
+      kind: mapped.kind,
+      name: mapped.name,
+      lines: 0,
+      skipped: 0,
+      batches: 0,
+      alreadyDone: false,
+      problems: [problem],
+    };
   }
 
   // Core's 2.x-shaped copy via DbBotStore (bot.json settings + newest HISTORY_LIMIT lines).
