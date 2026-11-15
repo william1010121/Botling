@@ -21,10 +21,11 @@
 // (GRANT_PROPERTY_SEED alone runs every case of that one seed; GRANT_PROPERTY_CASES changes the cases per seed).
 import { afterAll, describe, expect, it } from "vitest";
 import type { Command } from "../../src/contract";
-import { canonicalJson, COMMAND_SCOPES, commandScope, type CmdBody, type DeviceScope, type Scope, type Slot, type Via } from "../../src/protocol";
+import { canonicalJson, COMMAND_SCOPES, commandScope, type CmdBody, type DeviceScope, type MessageOf, type Scope, type Slot, type Via, type WireMessage } from "../../src/protocol";
 import type { PluginRow } from "../../src/protocol/table-rows";
+import { OwnerInbox, type InboxSession } from "../../src/server/forward/owner-inbox";
 import { deleteRow, ownTableStream, putRow, tableRev } from "../../src/server/replica/tables";
-import { slotAuthorize, type DeviceRoster } from "../../src/server/session";
+import { slotAuthorize, statedScope, type DeviceRoster } from "../../src/server/session";
 import { CARD_COMMANDS, SlotEngine, type ApplyFn, type ReceiveStatus } from "../../src/server/slots";
 import type { Db } from "../../src/server/store";
 import { FakeLog, memoryStore, rng } from "./server-slots-harness";
@@ -454,13 +455,112 @@ describe("M5-19: nothing is applied outside device scope ∩ the plugin's grant 
       "via:row-malformed", "via:row-tombstone", "via:row-missing", "stated:wrong", "held:decided", "resend:same-outcome", "resend:via-conflict", "hashswap:fresh-slot",
       "applied:via", "applied:local-novia", "applied:server", "applied:device", "applied:tier-request", "applied:tier-write", "applied:tier-write:swapped-hash",
       "outcome:refused:scope", "outcome:refused:grant", "outcome:refused:origin", "plugincmd:via", "plugincmd:novia", "devicechange", "serverchange",
-      "plugin.grant:applied:novia:local", "plugin.grant:refused:via:local", "plugin.grant:refused:novia:server"]) need(key, 25);
+      "plugin.grant:applied:novia:local", "plugin.grant:refused:via:local", "plugin.grant:refused:novia:server",
+      // review: every command scope class, and the read / request tiers at a hash other than the row's current one.
+      "cmdscope:read", "cmdscope:reply", "cmdscope:approve", "cmdscope:manage", "cmdscope:admin", "cmdscope:machine", "cmdscope:server",
+      "via:grant-read:other-hash", "via:grant-request:other-hash"]) need(key, 25);
     for (const change of ["regen", "swap-keep-grants", "swap-drop-grants", "widen", "narrow", "remove", "malform"]) need(`tablechange:${change}`, 100);
     // Every device scope subset (16) is reached.
     for (let mask = 0; mask < 16; mask++) need(`devicescope:${SCOPES.filter((_, i) => mask & (1 << i)).sort().join("+") || "none"}`, 25);
     // A plugin.grant is applied from a manage device, too.
     expect([...cover.keys()].some((key) => key.startsWith("plugin.grant:applied:novia:device"))).toBe(true);
   });
+});
+
+// --- review (open point 2): a remote claim of `local` / `admin` ------------------------------------------------------------------
+// `slotAuthorize` trusts a stated `local` / `admin` (the desktop window on its own server), so the main generator never
+// states one for a remote origin. Remote commands reach the engine only two ways, and neither can carry one:
+//   - a device's session (tailnet or relay, `RemoteSession.cmdScope`) ignores the frame and states `statedScope(cmd)`;
+//   - a peer server's forwarded `cmd` frame goes through the owner's inbox, which decides a claimed `local` / `admin`
+//     (or none) as `read` (`OwnerInbox.cmd`, `peerScope`).
+// These cases let every remote origin claim `local` or `admin` on a forwarded frame, through the REAL `OwnerInbox` in front
+// of the same engine, and check the outcome against the rule "a peer's `local` / `admin` is decided as stated `read`"
+// (written here as the constant, not by calling `peerScope`).
+describe("M5-19 review: a remote origin claiming local or admin is decided as read (real OwnerInbox)", () => {
+  it("statedScope never states local or admin for any command a device session sends", () => {
+    for (const type of ALL_TYPES) expect(["local", "admin"]).not.toContain(statedScope(make(rng(1), type, "my")));
+    for (const key of ["theme", "developerMode", "claudeBypassPermissions", "density"]) {
+      expect(["local", "admin"]).not.toContain(statedScope({ type: "settings.set", change: { key, value: "x" } } as unknown as Command));
+    }
+  });
+
+  it(`${SEEDS.length} seeds × 600 forwarded frames claiming local/admin from devices, peer servers, unknown and self origins`, async () => {
+    const claimCover = new Map<string, number>();
+    const tick = (key: string) => claimCover.set(key, (claimCover.get(key) ?? 0) + 1);
+    const SERVER_CMDS = ALL_TYPES.filter((type) => COMMAND_SCOPES[type] === "server");
+    for (const seed of SEEDS) {
+      const h = setup();
+      const inbox = new OwnerInbox({
+        self: SELF,
+        runtime: { receive: (b: CmdBody, o: never) => h.engine.receive(b, o), slots: h.engine, legacy: { receive: (b: CmdBody, o: never) => h.engine.receive(b, o) } } as never,
+        log: () => {},
+      });
+      let waiting: { n: number; epoch: string; resolve: (m: MessageOf<"cmd.result">) => void; reject: (e: Error) => void } | null = null;
+      const session: InboxSession = {
+        peer: PEER,
+        state: "open",
+        sendWire: (m) => {
+          if (m.t === "cmd.result" && waiting && (m as MessageOf<"cmd.result">).slot.originEpoch === waiting.epoch) waiting.resolve(m as MessageOf<"cmd.result">);
+          return true;
+        },
+        bye: (reason, detail) => waiting?.reject(new Error(`bye ${reason}: ${detail}`)),
+      };
+      try {
+        for (let index = 0; index < 600; index++) {
+          if (ONLY_CASE !== null && index !== ONLY_CASE) continue;
+          const r = rng(Math.imul(seed ^ 0x5eed, 2246822519) ^ Math.imul(index + 1, 3266489917));
+          h.world.table = genTable(r);
+          const roll = r();
+          const origin: Origin = roll < 0.45 ? { kind: "device", id: "dev-a", scope: chance(r, 0.5) ? [...SCOPES] : subset(r, SCOPES) }
+            : roll < 0.8 ? { kind: "server", id: PEER, scope: [] }
+            : roll < 0.9 ? { kind: "unknown", id: "desktop", scope: [] }
+            : { kind: "self", id: SELF, scope: [] };
+          h.world.devices = new Map(origin.kind === "device" ? [[origin.id, origin.scope]] : []);
+          h.world.servers = new Set([PEER]);
+          await writeTable(h);
+          const via = genVia(r, h.world);
+          const cmd = chance(r, 0.15) ? make(r, pick(r, SERVER_CMDS), "") : chance(r, 0.1) ? make(r, "plugin.grant", pick(r, PLUGINS)) : genCommand(r, h.world, via);
+          const claimed = pick(r, ["local", "admin", "local", "admin", undefined] as Array<Scope | undefined>);
+          const epoch = `c${seed.toString(16)}`.padEnd(16, "0") + index.toString(16).padStart(16, "0");
+          const slot = { origin: origin.id, originEpoch: epoch, target: `bot:${BOT}`, n: 1 } as Slot;
+          const before = h.applied.length;
+          const result = await new Promise<MessageOf<"cmd.result">>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("no cmd.result within 10 s")), 10_000);
+            waiting = { n: 1, epoch, resolve: (m) => { clearTimeout(timer); resolve(m); }, reject: (e) => { clearTimeout(timer); reject(e); } };
+            const frame = { t: "cmd", slot, floor: 1, inc: INC, cmd, ...(claimed ? { scope: claimed } : {}), ...(via ? { via } : {}) } as unknown as WireMessage;
+            if (!inbox.onMessage(session, frame)) reject(new Error("the inbox did not take a cmd frame"));
+          });
+          waiting = null;
+          const ran = h.applied.slice(before);
+          const want = oracle(h.world, origin, "read", cmd, via); // a peer's local/admin (or none) is decided as stated read
+          const info = JSON.stringify({ seed, index, origin, claimed, cmd, via, outcome: result.outcome, want, ran });
+          const replay = `replay: GRANT_PROPERTY_SEED=${seed} GRANT_PROPERTY_CASE=${index}`;
+          // Never, whatever the oracle says: the window-only powers through a claim.
+          if (ran.some((a) => a.type === "plugin.grant")) throw new Violation(`plugin.grant applied from a remote claim of ${claimed}. ${replay}\n${info}`);
+          if (ran.some((a) => ["admin", "machine"].includes(commandScope(cmd)))) throw new Violation(`an ${commandScope(cmd)} command applied from a remote claim. ${replay}\n${info}`);
+          if (!via && four(cmd.type) && ran.length) throw new Violation(`a plugin command without via applied from a remote claim of ${claimed}. ${replay}\n${info}`);
+          if (ran.some((a) => a.scope === "local" || a.scope === "admin")) throw new Violation(`apply saw scope local/admin from a remote origin. ${replay}\n${info}`);
+          // And exactly the oracle's decision under stated read.
+          if (want.applied !== (result.outcome.kind === "applied")) throw new Violation(`claim ${claimed}: outcome ${result.outcome.kind} but the rules (decided as read) say ${want.applied ? "apply" : want.reason}. ${replay}\n${info}`);
+          if (!want.applied && result.outcome.kind === "refused" && result.outcome.reason !== want.reason) throw new Violation(`claim ${claimed}: refused for the wrong layer. ${replay}\n${info}`);
+          tick(`origin:${origin.kind}`); tick(`claim:${claimed ?? "none"}`); tick(via ? "via:present" : "via:absent"); tick(`cmdscope:${commandScope(cmd)}`);
+          if (four(cmd.type) && !via && origin.kind === "device" && origin.scope.includes("manage")) tick("plugincmd:novia:manage-device");
+          if (cmd.type === "plugin.grant" && origin.kind === "device" && origin.scope.includes("manage")) tick("plugin.grant:manage-device");
+          if (cmd.type === "plugin.grant" && origin.kind === "server") tick("plugin.grant:server");
+          if (["admin", "machine"].includes(commandScope(cmd))) tick("cmd:window-only");
+          tick(`outcome:${result.outcome.kind}${result.outcome.kind === "refused" ? `:${result.outcome.reason}` : ""}`);
+          if (result.outcome.kind === "applied") tick(`applied:${origin.kind}:${commandScope(cmd)}`);
+        }
+      } finally {
+        h.db.close();
+      }
+    }
+    if (ONLY_CASE !== null || process.env.GRANT_PROPERTY_SEED) return;
+    console.log(`grant-property (remote claims):\n${[...claimCover.entries()].sort().map(([k, v]) => `  ${k} ${v}`).join("\n")}`);
+    const need = (key: string, min: number) => expect(claimCover.get(key) ?? 0, `coverage ${key}`).toBeGreaterThanOrEqual(min);
+    for (const key of ["origin:device", "origin:server", "origin:unknown", "origin:self", "claim:local", "claim:admin", "claim:none", "via:present", "via:absent",
+      "plugincmd:novia:manage-device", "plugin.grant:manage-device", "plugin.grant:server", "cmd:window-only", "outcome:refused:scope", "outcome:refused:origin", "applied:server:server"]) need(key, 20);
+  }, 300_000);
 });
 
 afterAll(() => { cover.clear(); });
