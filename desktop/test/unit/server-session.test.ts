@@ -200,6 +200,18 @@ describe("BotlingdEngine: a step boundary keeps the text so far in the reply lin
     expect(seen[2]).toEqual({ type: "message.updated", botId: "B", message: { ...line, text: "Looking at it." } });
     expect(fed).toEqual(["turn.started", "message.added", "turn.steps", "turn.steps"]);
   });
+
+  it("hands callInTurn on to the inner engine, and has none when the inner engine has none (M5-02b guest check)", async () => {
+    const calls: unknown[][] = [];
+    const answer = { kind: "reply", text: "hi", steps: [] };
+    const inner = { callInTurn: async (...args: unknown[]) => { calls.push(args); return answer; } } as unknown as TurnEngine;
+    const engine = new BotlingdEngine(inner);
+    const onBegin = () => undefined;
+    const options = { host: { botId: "H", name: "Host" }, asked: "q", by: "bot" } as unknown as Parameters<NonNullable<TurnEngine["callInTurn"]>>[3];
+    expect(await engine.callInTurn!("G", "prompt", onBegin, options)).toBe(answer);
+    expect(calls).toEqual([["G", "prompt", onBegin, options]]);
+    expect(new BotlingdEngine({} as unknown as TurnEngine).callInTurn).toBeUndefined();
+  });
 });
 
 describe("the srv: stream and a restore", () => {
