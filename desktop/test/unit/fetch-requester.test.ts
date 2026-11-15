@@ -23,6 +23,7 @@ const race = vi.hoisted(() => ({
   afterRealpath: null as ((path: string) => void) | null,
   beforeOpen: null as ((path: string) => void) | null,
   afterLstat: null as ((path: string) => void) | null,
+  noProc: false, // true: this machine has no /proc (existsSync says no, readlink fails)
 }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -30,7 +31,13 @@ vi.mock("node:fs", async (importOriginal) => {
     native: (path: string, ...rest: unknown[]) => { const out = (actual.realpathSync.native as (...a: unknown[]) => string)(path, ...rest); race.afterRealpath?.(String(path)); return out; },
   });
   const lstatSync = (path: string, ...rest: unknown[]) => { const out = (actual.lstatSync as (...a: unknown[]) => unknown)(path, ...rest); race.afterLstat?.(String(path)); return out; };
-  return { ...actual, realpathSync, lstatSync };
+  const isProc = (path: unknown) => String(path) === "/proc/self/fd" || String(path).startsWith("/proc/self/fd/");
+  const existsSync = (path: string) => (race.noProc && isProc(path) ? false : actual.existsSync(path));
+  const readlinkSync = (path: string, ...rest: unknown[]) => {
+    if (race.noProc && isProc(path)) throw Object.assign(new Error(`ENOENT: no such file or directory, readlink '${path}'`), { code: "ENOENT" });
+    return (actual.readlinkSync as (...a: unknown[]) => unknown)(path, ...rest);
+  };
+  return { ...actual, realpathSync, lstatSync, existsSync, readlinkSync };
 });
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -221,7 +228,7 @@ const ok = (result: FetchResult): Extract<FetchResult, { ok: true }> => {
 
 describe("M5-07b: the requester receives a fetch", () => {
   const cleanups: Array<() => Promise<void>> = [];
-  afterEach(async () => { race.afterRealpath = null; race.beforeOpen = null; race.afterLstat = null; for (const fn of cleanups.splice(0)) await fn(); });
+  afterEach(async () => { race.afterRealpath = null; race.beforeOpen = null; race.afterLstat = null; race.noProc = false; for (const fn of cleanups.splice(0)) await fn(); });
   const make = async (options?: Parameters<typeof setup>[0]) => { const env = await setup(options); cleanups.push(env.cleanup); return env; };
 
   it("names the folder after the source's safe name and the first 8 characters of its id", () => {
@@ -670,6 +677,38 @@ describe("M5-07b: the requester receives a fetch", () => {
       send(chunk(id, 0, "sub/deep/er/x", "abc"));
       expect(await pending).toMatchObject({ ok: false, reason: "corrupt" });
       expect(readdirSync(outside)).toEqual([]);
+    });
+
+    // ---- second check: the Linux real-path check fails closed ----
+    it("check 2: on Linux without a readable /proc/self/fd the file is refused (the real-path check is never skipped)", async () => {
+      const env = await make();
+      env.muteSource();
+      // a requester module loaded as on Linux on a machine with no /proc (its flags are fixed when it loads)
+      race.noProc = true;
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+      let Fresh: typeof FetchRequester;
+      try {
+        vi.resetModules();
+        ({ FetchRequester: Fresh } = await import("../../src/server/fetch/requester"));
+      } finally { Object.defineProperty(process, "platform", platform); }
+      const requester = new Fresh({
+        store: env.storeB,
+        session: (member) => (member === env.ka.memberId ? env.current() : null),
+        botFolder: (botId) => (botId === "bot-b" ? env.folderB : null),
+        serverName: (member) => (member === env.ka.memberId ? SOURCE_NAME : null),
+      });
+      cleanups.unshift(async () => { requester.close(); await requester.flushed(); });
+      const before = env.asks.length;
+      const pending = requester.fetch("bot-b", env.ka.memberId, artifact("x"), "x", MiB);
+      const ask = await until(() => env.asks[before] ?? null, { timeout: 2_000, what: "ask" });
+      const send = (m: WireMessage) => requester.onMessage(env.current()!, m);
+      send(grant(ask.fetchId, 3, 1));
+      send(chunk(ask.fetchId, 0, "a.txt", "abc"));
+      send(done(ask.fetchId, [{ rel: "a.txt", text: "abc" }]));
+      const result = await pending;
+      expect(result).toMatchObject({ ok: false, reason: "corrupt" });
+      if (!result.ok) expect(result.detail).toMatch(/did not land/);
     });
   });
 });

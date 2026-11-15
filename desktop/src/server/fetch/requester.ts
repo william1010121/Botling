@@ -25,7 +25,7 @@
 // - One audit row (`audit:<fetchId>`, `act: "fetch.receive"`) in this server's `srv:` table after the files are in
 //   place (the source wrote its `fetch.serve` row before the first byte).
 import { createHash, randomUUID, type Hash } from "node:crypto";
-import { constants, existsSync, lstatSync, mkdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, type Stats } from "node:fs";
+import { constants, lstatSync, mkdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, type Stats } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import type { WireMessage, WireMessageOf } from "../../protocol";
@@ -40,8 +40,9 @@ const PARTIAL = ".partial";
 const O_NOFOLLOW_ANY = process.platform === "darwin" ? 0x20000000 : 0;
 // (macOS refuses O_NOFOLLOW together with O_NOFOLLOW_ANY with EINVAL; ANY covers the last part too.)
 const NEW_FILE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (O_NOFOLLOW_ANY || constants.O_NOFOLLOW);
-/** Linux: the real path of an open file, to check where an open really landed. */
-const PROC_FD = process.platform === "linux" && existsSync("/proc/self/fd") ? "/proc/self/fd" : null;
+/** Linux: the real path of an open file, to check where an open really landed. Without `/proc` the check fails, so
+ * the file is refused (fail closed: the check is never skipped). */
+const PROC_FD = process.platform === "linux" ? "/proc/self/fd" : null;
 
 /** What `FetchRequester` needs from a peer session (`PeerSession` has all of it). */
 export interface FetchPeer {
