@@ -595,7 +595,7 @@ describe("fu-callin-outbox: a late reply's line is staged with its consume and p
     await send(first.h, replyCmd(callId, text("kept")));
     await first.h.settle();
     expect(lateRows(first.h)).toHaveLength(1);
-    expect(logs.join("\n")).toMatch(/could not be posted, it stays queued/);
+    expect(first.h.logs.join("\n")).toMatch(/could not be posted, it stays queued/);
     const second = await start({ h: await first.h.restart({ bots: ["MAIN", HOST] }) });
     open.push(second.h);
     await until(() => second.lates.length === 1);
@@ -626,7 +626,7 @@ describe("fu-callin-outbox: a late reply's line is staged with its consume and p
     put(`${LATE_PREFIX}fine-1`, good);
     const second = await start({ h: await first.h.restart({ bots: ["MAIN", HOST] }) });
     open.push(second.h);
-    await until(() => second.lates.length === 1);
+    await until(() => second.lates.length === 1).catch((error) => { throw new Error(`${(error as Error).message}: lates ${JSON.stringify(second.lates)} rows ${JSON.stringify(lateRows(second.h))} logs ${JSON.stringify(second.h.logs)}`); });
     await second.h.settle();
     expect(second.lates.map((entry) => entry.callId)).toEqual(["fine-1"]);
     expect(lateRows(second.h)).toEqual([]);

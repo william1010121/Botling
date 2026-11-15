@@ -373,8 +373,17 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
     }
     // B's one answer for an interrupted row reached a wait (else A gave up while B was down, or a kill between B's mark and its
     // queue lost the answer and A's wait ended at the cap).
-    if (kind === "killBmid" && inputLines(aInput).some((text) => text.includes(run.token) && text.includes(WAKE_MARK) && text.includes("restarted during the answer"))) totals.restartAnswers++;
-    if (kind === "killBmid" && got.turns === 1 && callInRows().some((row) => row.asked.includes(run.token) && row.state === "interrupted")) totals.interruptedTurns++;
+    const restartAnswered = inputLines(aInput).some((text) => text.includes(run.token) && text.includes(WAKE_MARK) && text.includes("restarted during the answer"));
+    if (kind === "killBmid" && restartAnswered) totals.restartAnswers++;
+    if (kind === "killBmid" && got.turns === 1 && callInRows().some((row) => row.asked.includes(run.token) && row.state === "interrupted")) {
+      totals.interruptedTurns++;
+      // The answer B owes for an interrupted turn reached A (the receipt, checked above) and the asker was told it: either B's
+      // "restarted during the answer", or A had given up while B was down ("not reachable"). The cap (a lost answer) shows up as
+      // "not reachable" too, which is why the receipt check and this count both stand.
+      const woken = inputLines(aInput).filter((text) => text.includes(run.token) && text.includes(WAKE_MARK));
+      if (!restartAnswered && !woken.some((text) => text.includes("is not reachable"))) throw new SeedFailure(seed, `${run.token}: an interrupted guest turn whose asker heard neither B's restart answer nor a give-up`);
+      if (!restartAnswered) totals.interruptedGaveUp++;
+    }
     totals.runs++;
     totals.lines += got.line;
     totals.wakes += got.wake;
@@ -430,7 +439,7 @@ afterAll(async () => {
 describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => {
   it(`${PLAN.reduce((sum, [, n]) => sum + n, 0)} seeded call-ins: never two guest turns, never two lines, never two wakes (seed ${SEED})`, async () => {
     console.log(`callin-faults: seed ${SEED} (CALLIN_FAULT_SEED); ${PLAN.length} waves`);
-    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, guestHits: 0, guestAnswersKept: 0, interruptedTurns: 0, restartAnswers: 0 };
+    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, guestHits: 0, guestAnswersKept: 0, interruptedTurns: 0, interruptedGaveUp: 0, restartAnswers: 0 };
     for (let index = 0; index < PLAN.length; index++) await wave(index, PLAN[index]![0], PLAN[index]![1], totals);
     console.log(`callin-faults: ${JSON.stringify(totals)}`);
     expect(totals.runs, `seed ${SEED}: runs`).toBeGreaterThanOrEqual(50);
@@ -444,5 +453,7 @@ describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => 
     expect(totals.guestHits, `seed ${SEED}: B killed right after an answer committed`).toBeGreaterThan(0);
     expect(totals.guestAnswersKept, `seed ${SEED}: the answers B had committed when it died, all kept`).toBe(totals.guestHits);
     expect(totals.interruptedTurns, `seed ${SEED}: guest turns B was killed in`).toBeGreaterThan(0);
+    // B's restart answer reached an asker's wait at least once (the rest were given up on while B was down; each one's receipt is checked per run).
+    expect(totals.restartAnswers, `seed ${SEED}: restart answers that reached a wait`).toBeGreaterThan(0);
   }, 600_000);
 });

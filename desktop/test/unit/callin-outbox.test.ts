@@ -123,6 +123,45 @@ describe("fu-callin-outbox: the guest's answer is one durable step", () => {
   });
 });
 
+describe("fu-callin-outbox: an interrupted call-in is not answered before its host's server is known", () => {
+  it("7. attached while the peer directory knows no peer: nothing is sent, nothing is marked answered; once the peer is known it is answered once", async () => {
+    const first = await harness({ bots: ["MAIN", GUEST] });
+    open.push(first);
+    first.engine.callInMode = "hold";
+    first.runtime.callIns.attach(markerSender().sender);
+    await first.send(ask("call-7"), { origin: ORIGIN });
+    for (let i = 0; i < 200 && first.engine.callIns.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(rowsOf(first)).toEqual([["started", undefined]]);
+    // The kill and the restart: the server attaches the guest while `peers.start()` has not run (the directory knows no peer).
+    const second = await first.restart({ bots: ["MAIN", GUEST] });
+    open.push(second);
+    let known = false;
+    const s = markerSender();
+    let calls = 0;
+    const sender: CallInGuestSender = { ...s.sender, ownerOf: (target) => (known && target === HOST_TARGET ? ORIGIN : null), submitIn: (...args) => { calls += 1; return s.sender.submitIn(...args); } };
+    second.runtime.callIns.attach(sender);
+    await second.settle();
+    expect(calls).toBe(0);
+    expect(s.done).toEqual([]);
+    expect(queued(second)).toEqual([]);
+    expect(rowsOf(second)).toEqual([["interrupted", undefined]]); // not marked answered: nothing lost
+    expect(second.logs.filter((line) => /wait for their host's server/.test(line))).toHaveLength(1);
+    // The peers come up (the roster changed): the one failed answer goes out, in one transaction with the mark.
+    known = true;
+    second.runtime.callIns.retry();
+    await second.settle();
+    expect(calls).toBe(1);
+    expect(queued(second)).toEqual([["queued:call-7", { kind: "failed", why: "its machine restarted during the answer" }]]);
+    expect(rowsOf(second)).toEqual([["interrupted", true]]);
+    expect(s.done.map((reply) => reply.callId)).toEqual(["call-7"]);
+    // A second poke (another roster change) answers nothing again.
+    second.runtime.callIns.retry();
+    await second.settle();
+    expect(s.done).toHaveLength(1);
+    expect(calls).toBe(1);
+  });
+});
+
 describe("fu-callin-outbox: the crash hook is a fake-agent test knob", () => {
   afterEach(() => { vi.restoreAllMocks(); });
   const file = () => join(tempDir("callin-crash"), "crash.txt");

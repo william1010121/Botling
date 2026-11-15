@@ -198,16 +198,33 @@ export class CallInGuest implements CallInRunner {
     try { await this.options.scope.submit((tx) => { if (open(tx)) end(tx); }); } catch (error) { this.options.log?.(`callin: the call-in ${payload.callId} could not be ended (${errorText(error)})`); }
   }
 
-  /** At start: each call-in a crash interrupted gets its one `failed` answer, each in its own transaction. */
+  /**
+   * At start: each call-in a crash interrupted gets its one `failed` answer, each in its own transaction. A row whose host
+   * bot no peer owns YET (the directory knows no peer before `peers.start()`, or the roster has not caught up) is left alone:
+   * not sent and not marked answered, so nothing is lost; `retry` answers it once the peer is known.
+   */
   private async resume(): Promise<void> {
     if (this.resumed) return;
     this.resumed = true;
     try {
       const rows = await this.options.scope.submit((tx) => effectsIn(tx, "interrupted").filter((row) => row.kind === "callin" && !(row.payload as CallInPayload).replied));
-      for (const row of rows) await this.finish(row, "interrupted", { kind: "failed", why: RESTARTED });
+      let waiting = 0;
+      for (const row of rows) {
+        const host = (row.payload as CallInPayload).host.botId;
+        if (!this.sender?.ownerOf(`bot:${host}` as Target)) { waiting += 1; continue; }
+        await this.finish(row, "interrupted", { kind: "failed", why: RESTARTED });
+      }
+      if (waiting) this.options.log?.(`callin: ${waiting} interrupted call-in(s) wait for their host's server to be known before they are answered`);
     } catch (error) {
       this.options.log?.(`callin: answering interrupted call-ins failed (${errorText(error)})`);
     }
+  }
+
+  /** The roster or the peers changed: answers the interrupted call-ins that were waiting for their host's server (none: nothing happens). */
+  retry(): void {
+    if (!this.sender) return;
+    this.resumed = false;
+    void this.resume();
   }
 
   /**

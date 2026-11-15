@@ -940,6 +940,7 @@ export class Botlingd {
       // the directory knows no peer, so every such answer was refused and lost (marked sent, never queued). Until here an ask
       // is refused "not ready" (fail closed) and a queued call-in waits.
       runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd), submitIn: (tx, target, cmd) => serverOrigin.submitIn(tx, target, cmd) });
+      roster.onChange(() => { runtime.callIns.retry(); }); // interrupted call-ins waiting for a host's server
       daemon.chatMirror.start();
       daemon.watchLock();
       const schedule = backupCheckMs(env);
