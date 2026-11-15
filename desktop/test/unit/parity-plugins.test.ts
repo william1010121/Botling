@@ -115,7 +115,7 @@ const isResultOrRetry = (slot: Slot) => (m: Message): m is MessageOf<"cmd.result
   (m.t === "cmd.result" || m.t === "cmd.retry") && m.slot.target === slot.target && m.slot.n === slot.n && m.slot.originEpoch === slot.originEpoch;
 
 async function sendCmd(client: ScriptClient, target: string, n: number, inc: string, cmd: unknown, via?: Via): Promise<MessageOf<"cmd.result">> {
-  const slot: Slot = { origin: "script", originEpoch: client.originEpoch, target: target as Slot["target"], n };
+  const slot: Slot = { origin: client.deviceId, originEpoch: client.originEpoch, target: target as Slot["target"], n };
   client.send({ t: "cmd", slot, floor: n, inc, cmd, ...(via ? { via } : {}) } as Message);
   const msg = await client.wait(isResultOrRetry(slot), `cmd ${target}#${n}`);
   if (msg.t === "cmd.retry") throw new Error(`unexpected cmd.retry for ${target}#${n} (expected inc ${msg.inc})`);
