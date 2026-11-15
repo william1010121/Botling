@@ -8,7 +8,6 @@
     "desktop/src/core/server.ts": 3395,
     "desktop/src/main/main.ts": 1169,
     "desktop/src/renderer/App.tsx": 819,
-    "desktop/src/server/botlingd.ts": 950,
-    "desktop/src/server/roster/store.ts": 1048
+    "desktop/src/server/botlingd.ts": 950
   }
 }
