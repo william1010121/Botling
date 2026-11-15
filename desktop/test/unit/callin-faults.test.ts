@@ -165,11 +165,18 @@ async function converge(runs: Run[], what: string): Promise<void> {
     && runs.every((run) => callInRows().some((row) => row.asked.includes(run.token)));
   let last = "";
   let since = Date.now();
-  await until(() => {
-    const now = snapshot();
-    if (now !== last) { last = now; since = Date.now(); return false; }
-    return quiet() && Date.now() - since >= 1_800;
-  }, { timeout: 90_000, every: 100, what: `${what}: the call-ins to end` });
+  const why = () => JSON.stringify({
+    forwardq: [count(a, "forwardq"), count(b, "forwardq")], fwdcancels: [count(a, "fwdcancels"), count(b, "fwdcancels")],
+    callin: callInRows().map((row) => row.state), missing: runs.filter((run) => !callInRows().some((row) => row.asked.includes(run.token))).map((run) => run.token),
+    aAlive: a.alive, bAlive: b.alive, aLog: a.log.slice(-1_200), bLog: b.log.slice(-1_200),
+  });
+  try {
+    await until(() => {
+      const now = snapshot();
+      if (now !== last) { last = now; since = Date.now(); return false; }
+      return quiet() && Date.now() - since >= 1_800;
+    }, { timeout: 45_000, every: 100, what: `${what}: the call-ins to end` });
+  } catch (error) { throw new Error(`${(error as Error).message}: ${why()}`); }
 }
 
 /** The properties of one call-in. `aKilled`: A lost its waits, so no wake is owed. */
