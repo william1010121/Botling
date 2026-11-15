@@ -59,7 +59,7 @@ import type { WorkerOwner } from "./agent/workers";
 import { AgentStatusWriter } from "./agent-status";
 import { filePath, pageInCard } from "./page-preview";
 import { PAGE_COMPONENT } from "./preview-url";
-import { Bot, NO_LONGER_NEEDED, type DeferredTurn, type PresetTurnIds, type SessionStart, type SessionStartCodex, type Status as TurnStatus } from "./bot";
+import { Bot, NO_LONGER_NEEDED, type DeferredTurn, type GuestAnswer, type PresetTurnIds, type SessionStart, type SessionStartCodex, type Status as TurnStatus } from "./bot";
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
@@ -71,7 +71,7 @@ import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
-import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, toSwiftDate } from "./store/records";
+import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
 import { botFace } from "./faces";
 import { status, statusText } from "../contract/bot-status";
 import { currentChat, WorkspaceWatch, type BotSummary, type CurrentChat, type ShownChat, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
@@ -2896,6 +2896,29 @@ First write a test that shows this, then fix it.`;
   /** Botling 3's server: a turn it recorded before a restart (a routine's run, an answer's message), started now. */
   serverTurn(botId: string, spec: Parameters<Bot["startPresetTurn"]>[0]): { turnId: string; done: Promise<TurnStatus> } {
     return this.bot(botId).startPresetTurn(spec);
+  }
+
+  /**
+   * Botling 3's server (M5-02b): the guest's turn of a call-in from a bot on another server, run in the guest's own
+   * session (`Bot.groupTurn`, as a 2.x call-in is) and kept in the guest's own chat afterwards (`Bot.keepCallIn`), as
+   * 2.x does. `prompt` and `note` are built and cleaned by the caller (they carry peer text). `signal` ends the wait and
+   * the turn (the host gave up, D51); the answer is then `failed` with why "cancelled".
+   */
+  async serverCallIn(guestId: string, prompt: string, call: {
+    host: { botId: string; name: string }; asked: string; by: "user" | "bot"; note: string;
+    busyWaitMs: number; answerMs: number; onBegin: () => void; signal?: AbortSignal;
+  }): Promise<GuestAnswer> {
+    const bot = this.bots.get(guestId);
+    if (!bot) return { kind: "failed", why: "It is not running." };
+    const askedAt = toSwiftDate();
+    const answer = await bot.groupTurn(prompt, call.busyWaitMs, call.answerMs, {
+      callIn: call.host.botId, asked: call.asked, ...(call.by === "user" ? { by: "user" as const } : {}), onBegin: call.onBegin, ...(call.signal ? { signal: call.signal } : {}),
+    });
+    if (answer.kind === "reply") {
+      const line: ChatRecord = { id: newId(), role: "bot", text: answer.text, date: toSwiftDate(), steps: answer.steps, engine: answer.engine };
+      bot.keepCallIn(call.note, askedAt, line);
+    }
+    return answer;
   }
 
   /** Botling 3's server: whether `botId` is one of the core's bots. */

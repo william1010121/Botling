@@ -8,10 +8,14 @@
 //   worker's report) are written `started` when their `turn.started` event is stored, so a crash interrupts them too.
 // - A `remove` row removes a bot through the core after the intent committed (the core's removal is asynchronous);
 //   removing is idempotent, so a crash while it is started puts it back to `queued`.
+// - A `callin` row is a guest's turn for a bot on another server (M5-02b): `queued` → `started` (the turn begins at most
+//   once) → `finished` (answered) | `interrupted` (a crash: recovery.ts; the answer is "its machine restarted during the
+//   answer", sent once at the next start), or `queued` → `cancelled` (the host gave up before it began).
 type Engine = import("zod").infer<typeof import("../../contract").Engine>;
+import { createHash } from "node:crypto";
 import type { Db, SqlRow } from "../store";
 
-export type EffectKind = "turn" | "remove";
+export type EffectKind = "turn" | "remove" | "callin";
 export type EffectState = "queued" | "started" | "finished" | "interrupted" | "cancelled";
 /** Who asked for a turn: `chat.send`, another core-set command (an answer that became the user's message, a new bot's first turn), a routine's run, or the core itself. */
 export type TurnOrigin = "chat" | "command" | "routine" | "core";
@@ -33,7 +37,25 @@ export interface TurnPayload {
 
 export interface RemovePayload { kind: "remove" }
 
-export type EffectPayload = TurnPayload | RemovePayload;
+/**
+ * A call-in from another server (M5-02b): what `callin.ask` carried, keyed by (sender, guest, callId) so one call-in is
+ * one row and at most one guest turn (D51). `replied`: the answer (or the failure) was handed to the server origin; set
+ * in the same transaction that ends the row, so a call-in is answered once, never twice, across a crash.
+ */
+export interface CallInPayload {
+  kind: "callin";
+  callId: string;
+  /** The sender: the host's server (slot.origin). */
+  origin: string;
+  host: { server: string; botId: string; name: string };
+  transcript: string;
+  asked: string;
+  by: "user" | "bot";
+  depth: number;
+  replied: boolean;
+}
+
+export type EffectPayload = TurnPayload | RemovePayload | CallInPayload;
 
 export interface EffectRow {
   effectId: string;
@@ -81,6 +103,22 @@ export function readEffect(db: Db, effectId: string): EffectRow | null {
 export function findTurnEffect(db: Db, botId: string, turnId: string): EffectRow | null {
   const row = db.prepare(`SELECT ${COLUMNS} FROM effects WHERE botId = ? AND turnId = ? ORDER BY seq DESC LIMIT 1`).get(botId, turnId);
   return row ? toRow(row) : null;
+}
+
+/** The effect row of one call-in: one id for one (sender, guest, callId), so the primary key makes a second one impossible. */
+export function callInEffectId(origin: string, botId: string, callId: string): string {
+  return `callin-${createHash("sha256").update(JSON.stringify([origin, botId, callId])).digest("hex")}`;
+}
+
+/** A row's payload replaced (the call-in's `replied` mark). Returns false when no row in `states` has that id. */
+export function setEffectPayload(tx: Db, effectId: string, payload: EffectPayload, states: readonly EffectState[]): boolean {
+  const marks = states.map(() => "?").join(", ");
+  return Number(tx.prepare(`UPDATE effects SET payload = ? WHERE effectId = ? AND state IN (${marks})`).run(JSON.stringify(payload), effectId, ...states).changes) > 0;
+}
+
+/** Call-in rows of a bot that are queued or started (the owner takes only a few at once). */
+export function openCallIns(db: Db, botId: string): number {
+  return Number((db.prepare("SELECT COUNT(*) AS c FROM effects WHERE kind = 'callin' AND botId = ? AND state IN ('queued', 'started')").get(botId) as { c: number }).c);
 }
 
 /** Queued rows, each bot's in the order they were queued. */

@@ -703,6 +703,8 @@ export class Botlingd {
       });
       originRef = serverOrigin;
       roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
+      // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
+      runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);
