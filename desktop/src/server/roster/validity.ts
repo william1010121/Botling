@@ -51,6 +51,8 @@ export interface VerifiedStatement {
   recoveryKey?: string;
   /** Root only: the cluster id derived from `recoveryKey` (§3). */
   recoveryKeyCluster?: string;
+  /** Local receipt time (`roster.receivedAt`), when passed from the store. */
+  receivedAt?: number;
 }
 
 export interface CurrentRoot {
@@ -74,6 +76,16 @@ export interface MemberInfo {
   at: number;
 }
 
+/** A server revocation from an earlier root that did not carry over across a reroot (D63, §4.8). */
+export interface DroppedRow {
+  revokeId: string;
+  member: string;
+  signer: string;
+  gen: number;
+  receivedAt: number | null;
+  why: "left-out" | "arrived-after";
+}
+
 export interface RosterView {
   self: string;
   cluster: string | null;
@@ -88,6 +100,8 @@ export interface RosterView {
   members: ReadonlyMap<string, MemberInfo>;
   /** Ids of the counting revokes (R4), sorted. */
   countingRevokes: readonly string[];
+  /** D63: earlier roots' server revocations that did not carry over across a reroot, sorted by revokeId. */
+  dropped: readonly DroppedRow[];
 }
 
 const byId = <T extends { id: string }>(a: T, b: T) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -223,7 +237,31 @@ export function computeRoster(self: string, cluster: string | null, statements: 
     if (better) members.set(add.member, info);
   }
 
-  return { self, cluster, root, servers, revoked, valid, members, countingRevokes };
+  // D63: earlier roots' server revocations signed by the chain's root of their gen, not in the current `keep`, whose
+  // target is still a valid server and is not the current root. Only strict `revoke.receivedAt < currentRoot.receivedAt`
+  // is "left-out"; equal or missing receipt time is "arrived-after". Sorted by revokeId (`revokes` comes from `all`).
+  const dropped: DroppedRow[] = [];
+  if (current && root) {
+    const rootAt = current.receivedAt;
+    for (const s of revokes) {
+      const r = s.body;
+      if (r.gen >= root.gen || root.keep.has(s.id)) continue;
+      if (chainRoot.get(r.gen) !== r.by || s.signer !== r.by) continue;
+      if (!servers.has(r.member) || !valid.has(r.member) || r.member === root.root) continue;
+      const why: DroppedRow["why"] =
+        s.receivedAt !== undefined && rootAt !== undefined && s.receivedAt < rootAt ? "left-out" : "arrived-after";
+      dropped.push({
+        revokeId: s.id,
+        member: r.member,
+        signer: r.by,
+        gen: r.gen,
+        receivedAt: s.receivedAt ?? null,
+        why,
+      });
+    }
+  }
+
+  return { self, cluster, root, servers, revoked, valid, members, countingRevokes, dropped };
 }
 
 /** A device's info when it is valid, else null (what a session asks on every frame, M2 step 4). */

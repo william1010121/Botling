@@ -58,6 +58,15 @@ export interface RosterStoreOptions {
   log?: (line: string) => void;
 }
 
+/** A pending server revocation offered for `keep` at reroot (§4.8). */
+export interface KeepCandidate {
+  revokeId: string;
+  member: string;
+  signer: string;
+  gen: number;
+  receivedAt: number | null;
+}
+
 const memberOf = (body: StatementBody) => (body.type === "root" ? body.root : body.member);
 
 /** The most statements one gossip set (`roster.statements` chunks up to the short last one) may carry. */
@@ -101,11 +110,13 @@ export class RosterStore {
   static async open(backend: RosterBackend, identity: RosterIdentity, options: RosterStoreOptions = {}): Promise<RosterStore> {
     const reader = backend.openReader();
     let cluster: string | null;
-    const rows: Array<{ id: string; bytes: Uint8Array }> = [];
+    const rows: Array<{ id: string; bytes: Uint8Array; receivedAt: number }> = [];
     try {
       const meta = reader.prepare("SELECT value FROM meta WHERE key = 'clusterId'").get();
       cluster = meta ? String(meta.value) : null;
-      for (const row of reader.prepare("SELECT id, bytes FROM roster").all()) rows.push({ id: String(row.id), bytes: row.bytes as Uint8Array });
+      for (const row of reader.prepare("SELECT id, bytes, receivedAt FROM roster").all()) {
+        rows.push({ id: String(row.id), bytes: row.bytes as Uint8Array, receivedAt: Number(row.receivedAt) });
+      }
     } finally {
       reader.close();
     }
@@ -114,7 +125,7 @@ export class RosterStore {
     for (const row of rows) {
       const statement = parseStored(row.bytes);
       if (!statement || (await statementId(statement.body)) !== row.id) { skipped++; continue; }
-      roster.stored.set(row.id, { id: row.id, statement });
+      roster.stored.set(row.id, { id: row.id, statement, receivedAt: row.receivedAt });
     }
     if (skipped) options.log?.(`roster: ${skipped} stored statements are malformed and were skipped`);
     roster.verified = await verifyStatements(roster.stored.values(), roster.self());
@@ -132,6 +143,24 @@ export class RosterStore {
   device(member: string): MemberInfo | null { return validDevice(this.current, member); }
   /** Every stored statement, by id. */
   statements(): StoredStatement[] { return [...this.stored.values()].sort((a, b) => (a.id < b.id ? -1 : 1)); }
+
+  /**
+   * Pending server revocations (§4.8) a reroot offers to `keep`: counting server revocations signed by the current or
+   * carried-over earlier roots, minus any against this server itself, sorted by revokeId. Read-only.
+   */
+  keepCandidates(): KeepCandidate[] {
+    if (!this.current.root) return [];
+    const counting = new Set(this.current.countingRevokes);
+    const self = this.identity.memberId;
+    const out: KeepCandidate[] = [];
+    for (const item of this.verified) {
+      if (item.body.type !== "revoke" || !counting.has(item.id)) continue;
+      const { member, by, gen } = item.body;
+      if (!this.current.servers.has(member) || member === self) continue;
+      out.push({ revokeId: item.id, member, signer: by, gen, receivedAt: item.receivedAt ?? null });
+    }
+    return out.sort((a, b) => (a.revokeId < b.revokeId ? -1 : a.revokeId > b.revokeId ? 1 : 0));
+  }
   /** `roster.have` / `welcome.rosterDigest` (§4.7). */
   digest(): Promise<string> { return rosterDigest(this.stored.keys()); }
 
@@ -550,11 +579,11 @@ export class RosterStore {
   }
 
   private async commit(fresh: StoredStatement[], cluster: string, audits: Array<Omit<AuditBody, "at">>, extra?: (tx: Db) => void): Promise<RosterView> {
+    const at = this.now();
     const stored = new Map(this.stored);
-    for (const item of fresh) stored.set(item.id, item);
+    for (const item of fresh) stored.set(item.id, { ...item, receivedAt: at });
     const verified = await verifyStatements(stored.values(), this.self());
     const view = computeRoster(this.identity.memberId, cluster, verified);
-    const at = this.now();
     await this.backend.submit((tx) => {
       extra?.(tx);
       const insert = tx.prepare("INSERT INTO roster (id, kind, member, bytes, receivedAt) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET bytes = excluded.bytes, receivedAt = excluded.receivedAt");
