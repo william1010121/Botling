@@ -35,21 +35,18 @@ export function confirmHealthy(root: string, afterMs = HEALTHY_AFTER_MS): NodeJS
 }
 
 /**
- * Botling 3 (core/server.ts with botlingd's `app`): the new build counts as up only once a window attached to its botlingd
- * (`ready`), then after `afterMs`. Whether an install is under way is read now, at start: botling.dev may finish the state
- * before a window attaches. Without `ready` it is `confirmHealthy`.
+ * Botling 3 (core/server.ts with botlingd's `app`): the new build counts as up only once a window stayed attached to its
+ * botlingd for `afterMs` without a break (`held`, ShellBridge.windowHeld). Whether an install is under way is read now, at
+ * start: botling.dev may finish the state before a window attaches. Without `held` it is `confirmHealthy`.
  */
-export function confirmHealthyWhen(root: string, ready: (() => Promise<void>) | undefined, afterMs = HEALTHY_AFTER_MS, log: (line: string) => void = () => {}): void {
-  if (!ready) { confirmHealthy(root, afterMs); return; }
+export function confirmHealthyWhen(root: string, held: ((ms: number) => Promise<void>) | undefined, afterMs = HEALTHY_AFTER_MS, log: (line: string) => void = () => {}): void {
+  if (!held) { confirmHealthy(root, afterMs); return; }
   if (!installUnderWay(root)) return;
-  void ready().then(() => {
-    const timer = setTimeout(() => {
-      try {
-        mkdirSync(updateFolder(root), { recursive: true });
-        writeFileSync(healthyFile(root), "ok\n");
-      } catch (error) { log(`self-update: could not write healthy: ${(error as Error).message}`); }
-    }, afterMs);
-    timer.unref?.();
+  void held(afterMs).then(() => {
+    try {
+      mkdirSync(updateFolder(root), { recursive: true });
+      writeFileSync(healthyFile(root), "ok\n");
+    } catch (error) { log(`self-update: could not write healthy: ${(error as Error).message}`); }
   }, (error) => log(`self-update: ${(error as Error)?.message ?? String(error)}`));
 }
 

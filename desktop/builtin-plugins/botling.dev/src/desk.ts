@@ -180,7 +180,7 @@ ${appWorktree
       };
       if (this.v3) {
         // Botling 3: botlingd (and so this plugin) starts before a window attaches; the build is up only once the core wrote
-        // `healthy` (a window attached, core/self-update.ts `confirmHealthyWhen`). Without it nothing is said: the script
+        // `healthy` (a window stayed attached 8 s, core/self-update.ts `confirmHealthyWhen`). Without it nothing is said: the script
         // rolls the build back and the old one tells.
         let elapsed = 0;
         const limit = healthyAfterMs + (HEALTH_WAIT_S_V3 + 30) * 1_000;

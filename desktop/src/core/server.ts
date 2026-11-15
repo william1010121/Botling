@@ -227,8 +227,8 @@ export interface CoreOptions {
     server?: { dataDir: string } | null;
     /** Botling 3: for an install the window quits itself, then botlingd stops (2.x asks main to quit). */
     quitForInstall?: () => Promise<void>;
-    /** Botling 3: resolves once a window is attached (a new build counts as up only then). */
-    windowAttached?: () => Promise<void>;
+    /** Botling 3: resolves once a window stayed attached for `ms` (a new build counts as up only then). */
+    windowHeld?: (ms: number) => Promise<void>;
   } | null;
   /** Botling 3's server only (2.x leaves it unset): turns it keeps aside in its effect outbox (bot.ts `deferTurn`). */
   deferTurn?: (turn: DeferredTurn) => boolean;
@@ -807,8 +807,8 @@ export class Core {
     const options = this.options;
     // How an install of a developer build went (`checkSelfUpdate`).
     // The new build says it came up (the install script waits for that); botling.dev tells the bot that asked.
-    // Botling 3: only once a window attached to this botlingd (`windowAttached`).
-    try { confirmHealthyWhen(options.dataDir, options.app?.windowAttached, undefined, (line) => this.log(line)); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
+    // Botling 3: only once a window stayed attached to this botlingd (`windowHeld`).
+    try { confirmHealthyWhen(options.dataDir, options.app?.windowHeld, undefined, (line) => this.log(line)); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
     void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
     if (options.pluginCatalog?.autoRefresh) this.pluginStore.startup();
     // Checking a wall-clock time every 15 s (rather than sleeping until it) survives the computer

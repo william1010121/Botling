@@ -166,7 +166,9 @@ function scriptRig(dir: string) {
 [ -n "$MAKE_HEALTHY" ] && touch "$MAKE_HEALTHY"
 if [ -n "$START_APP" ] && [ ! -e "${started}" ]; then nohup "$2/Contents/MacOS/Botling 3" 60 >/dev/null 2>&1 & echo $! > "${started}"; fi
 exit 0`),
-    BOTLING_TEST_DITTO: tool("ditto", `cp -R "$1" "$2"`),
+    // DITTO_FAIL: a copy that stops halfway (part of the bundle written, then an error).
+    BOTLING_TEST_DITTO: tool("ditto", `if [ -n "$DITTO_FAIL" ]; then mkdir -p "$2/Contents"; echo partial > "$2/Contents/half"; exit 1; fi
+cp -R "$1" "$2"`),
     BOTLING_TEST_CODESIGN: tool("codesign", `echo "$*" >> "${signed}"; exit "\${CODESIGN_EXIT:-0}"`),
     BOTLING_TEST_XATTR: tool("xattr", "exit 0"),
   };
@@ -248,6 +250,22 @@ describe("the Botling 3 install script", () => {
     expect(existsSync(`${running.path}.failed`)).toBe(false);
     expect(rig.opened()).toEqual([`-n ${running.path} --env BOTLING_DATA_DIR=/data --env BOTLING_SERVER_DATA_DIR=/srv`]);
     expect(installOutcome(join(dir, "server"))).toMatchObject({ kind: "rolledBack", reason: "the copied build's signature does not check out" });
+  });
+
+  it("a copy that fails halfway is removed and the old app put back; the new one is never opened or signed", async () => {
+    const dir = tempDir("self-update-v3-script");
+    const { running, build, command } = prepare(dir);
+    const rig = scriptRig(dir);
+    const args = command(standIn(SLEEP, ["0"]).pid!, "2");
+    const result = await rig.run(args, { DITTO_FAIL: "1", MAKE_HEALTHY: join(dir, "never") });
+    expect(result.status, result.out).toBe(1);
+    expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
+    expect(existsSync(join(running.path, "Contents", "half"))).toBe(false);
+    expect(existsSync(args[3]!)).toBe(false);
+    expect(readBuild(build.path)?.commit).toBe("bbbbbbb2222");
+    expect(rig.signed()).toEqual([]);
+    expect(rig.opened()).toEqual([`-n ${running.path} --env BOTLING_DATA_DIR=/data --env BOTLING_SERVER_DATA_DIR=/srv`]);
+    expect(installOutcome(join(dir, "server"))).toMatchObject({ kind: "rolledBack", reason: "could not copy the new build" });
   });
 
   it("a botlingd that does not stop (not even on SIGTERM) changes nothing; the old window is opened again", async () => {

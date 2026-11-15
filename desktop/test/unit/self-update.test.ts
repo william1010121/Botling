@@ -103,21 +103,22 @@ describe("the healthy handshake in Botling 3", () => {
     writeFileSync(join(updateFolder(root), "state.json"), JSON.stringify({ from: { path: "/a.app" }, to: { path: "/b.app" }, requesterID: "DEV", note: "" }));
   };
 
-  it("counts the time only once a window attached, and reads the install state at start (botling.dev may finish it first)", async () => {
+  it("counts only a window that stayed attached, and reads the install state at start (botling.dev may finish it first)", async () => {
     vi.useFakeTimers();
     const root = tempDir("self-update");
     install(root);
     let attach!: () => void;
     const attached = new Promise<void>((resolve) => { attach = resolve; });
-    confirmHealthyWhen(root, () => attached, 8_000);
+    const asked: number[] = [];
+    confirmHealthyWhen(root, (ms) => { asked.push(ms); return attached; }, 8_000);
+    expect(asked).toEqual([8_000]);
     // botling.dev finishing the state before the window attached must not stop `healthy`.
     rmSync(join(updateFolder(root), "state.json"));
     await vi.advanceTimersByTimeAsync(60_000);
     expect(existsSync(join(updateFolder(root), "healthy"))).toBe(false);
+    // The gate resolves once a window stayed attached that long (ShellBridge.windowHeld): `healthy` follows at once.
     attach();
-    await vi.advanceTimersByTimeAsync(7_999);
-    expect(existsSync(join(updateFolder(root), "healthy"))).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
     expect(existsSync(join(updateFolder(root), "healthy"))).toBe(true);
   });
 

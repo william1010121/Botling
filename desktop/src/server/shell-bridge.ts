@@ -18,7 +18,8 @@
 //   botlingd's pid, bundle and data folder (the install script waits for botlingd and reopens the window on that folder).
 //   `quitForInstall` asks every attached window to quit from inside its own process (`shell.quit`, main's `app.quit()`;
 //   never an AppleEvent), waits until they have gone (at most `quitWaitMs`), then stops botlingd (`stopServer`, the same
-//   SIGTERM as `botlingd stop`). `windowAttached` resolves once a window is here: a new build counts as up only then.
+//   SIGTERM as `botlingd stop`). `windowHeld(ms)` resolves once a window stayed attached for `ms` without a break: a new
+//   build counts as up only then (a window that attaches and crashes at once does not).
 import type { Sealer } from "../core/plugins/secrets";
 import type { AppAnswer, AppOp } from "../core/server";
 import type { Message, MessageOf } from "../protocol";
@@ -123,7 +124,7 @@ export class ShellBridge {
     pid: number | null; dataDir: string | null; bundle: string | null; server: { dataDir: string } | null;
     request: (op: AppOp, args?: Record<string, string>) => Promise<AppAnswer>;
     quitForInstall: () => Promise<void>;
-    windowAttached: () => Promise<void>;
+    windowHeld: (ms: number) => Promise<void>;
   } {
     const serverDataDir = this.options.serverDataDir ?? null;
     return {
@@ -131,7 +132,7 @@ export class ShellBridge {
       server: serverDataDir ? { dataDir: serverDataDir } : null,
       request: (op, args) => this.request(op, args),
       quitForInstall: () => this.quitForInstall(),
-      windowAttached: () => this.windowAttached(),
+      windowHeld: (ms) => this.windowHeld(ms),
     };
   }
 
@@ -152,11 +153,19 @@ export class ShellBridge {
     this.options.stopServer?.();
   }
 
-  /** Resolves once a window is attached (at once when one is). */
-  windowAttached(): Promise<void> {
-    if (this.windows.length) return Promise.resolve();
+  /** Resolves once some window has stayed attached for `ms` without a moment with none (the clock restarts when the last goes). */
+  windowHeld(ms: number): Promise<void> {
     return new Promise((resolve) => {
-      const off = this.onAttach(() => { off(); resolve(); });
+      let timer: NodeJS.Timeout | null = null;
+      const arm = () => {
+        if (timer || !this.windows.length) return;
+        timer = setTimeout(() => { offAttach(); this.detachListeners.delete(lost); resolve(); }, ms);
+        timer.unref?.();
+      };
+      const lost = () => { if (timer && !this.windows.length) { clearTimeout(timer); timer = null; } };
+      const offAttach = this.onAttach(arm);
+      this.detachListeners.add(lost);
+      arm();
     });
   }
 

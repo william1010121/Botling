@@ -78,15 +78,31 @@ describe("the shell bridge in an install (server/shell-bridge.ts)", () => {
     expect(lone).toHaveBeenCalledTimes(1);
   });
 
-  it("`windowAttached` waits for a window (a new build is up only with one)", async () => {
+  it("`windowHeld` waits for a window that stays attached the whole time (one that attaches and goes at once does not count)", async () => {
+    vi.useFakeTimers();
     const bridge = new ShellBridge();
-    let attached = false;
-    void bridge.appBridge().windowAttached!().then(() => { attached = true; });
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(attached).toBe(false);
-    bridge.attach(fakeWindow(bridge).window);
-    await vi.waitFor(() => expect(attached).toBe(true));
-    await expect(bridge.appBridge().windowAttached!()).resolves.toBeUndefined();
+    let held = false;
+    void bridge.appBridge().windowHeld!(8_000).then(() => { held = true; });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(held).toBe(false);
+    // A window that crashes 3 s after attaching: the clock starts again with the next one.
+    const crashing = fakeWindow(bridge).window;
+    bridge.attach(crashing);
+    await vi.advanceTimersByTimeAsync(3_000);
+    bridge.detach(crashing);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(held).toBe(false);
+    const one = fakeWindow(bridge).window;
+    const two = fakeWindow(bridge).window;
+    bridge.attach(one);
+    await vi.advanceTimersByTimeAsync(4_000);
+    // A second window comes and the first goes: one was attached all along, so the clock keeps running.
+    bridge.attach(two);
+    bridge.detach(one);
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(held).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(held).toBe(true);
   });
 
   it("botlingd's bundle is the .app around its program, only for a packaged macOS run", () => {
