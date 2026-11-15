@@ -119,6 +119,21 @@ export class PluginFeed {
   }
 
   /**
+   * `slot`'s rows in the plugin list's order (the order of the `PluginsView` arrays they mirror), each plugin's rows in the order it
+   * registered them. `rows` gives registration order, where a plugin that was switched off and on, or reloaded for an owner that
+   * came back, comes after the ones that stayed (P2): a surface that draws the rows reads them here, so the same view always gives
+   * the same page (F1 of the 02c review).
+   */
+  rowsInListOrder<Row = unknown>(slot: string): Row[] {
+    const place = new Map([...planOf(this.last.view, this.last.web).keys()].map((name, index) => [name, index] as const));
+    return this.kernel.entries<Partial<FeedEntry<Row>>>(slot)
+      .map((one, index) => ({ one, index }))
+      .filter(({ one }) => one.entry.kind === "feed")
+      .sort((a, b) => (place.get(a.one.plugin) ?? place.size) - (place.get(b.one.plugin) ?? place.size) || a.index - b.index)
+      .map(({ one }) => one.entry.row as Row);
+  }
+
+  /**
    * Unloads one plugin's instance (its registrations are undone newest first). `forget`: also forget the declaration and the plugin
    * (false when it is about to be installed again). False when the unload has not finished: the plugin stays held, and is tried again
    * on the next reconcile.

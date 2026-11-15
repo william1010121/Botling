@@ -24,6 +24,7 @@ import { parseFeManifest, type InPageSource } from "../../src/renderer/shell/inp
 import { ShellFrame } from "../../src/renderer/shell/ShellFrame";
 import { pluginFeed, reconcileView } from "../../src/renderer/shell/plugin-feed";
 import { desktop } from "../helpers";
+import { loadSettingsShell } from "../settings-shell";
 
 const SECTION = "view/settings.section";
 const QUICK = "view/quickSettings";
@@ -92,18 +93,18 @@ describe("the settings plugin as the FE build ships it", () => {
 describe("settingsNav over the slot", () => {
   it("returns exactly what it did before the pages moved (the golden of the old code) for '' and 'phone'", async () => {
     await host().start();
-    const { groups, unavailable } = coreSettings(rendererKernel, hosts[0]);
+    const { groups, unavailable } = coreSettings(rendererKernel);
     expect(unavailable).toBe(false);
     expect(groups).toEqual(SETTINGS_GROUPS);
     const view = fixture();
-    expect(settingsNav(view, "", groups)).toEqual(golden.all);
-    expect(settingsNav(view, "phone", groups)).toEqual(golden.phone);
-    expect(settingsNav(null, "", groups)).toEqual(golden.none);
+    expect(settingsNav(view.settingsSections ?? [], "", groups)).toEqual(golden.all);
+    expect(settingsNav(view.settingsSections ?? [], "phone", groups)).toEqual(golden.phone);
+    expect(settingsNav([], "", groups)).toEqual(golden.none);
     // The plugin pages are indented under Plugins, the legacy ids still resolve (settings-redesign-ui-model.test.ts, unedited).
-    const titles = settingsNav(view, "", groups).find((group) => group.title === "Connect")!.pages.map((page) => page.title);
+    const titles = settingsNav(view.settingsSections ?? [], "", groups).find((group) => group.title === "Connect")!.pages.map((page) => page.title);
     expect(titles.slice(titles.indexOf("Plugins"), titles.indexOf("Plugins") + 4)).toEqual(["Plugins", "Worktrees", "Usage", "Zed settings"]);
-    // No shell around (the default): the plugin's own data, the same pages.
-    expect(settingsNav(view, "")).toEqual(golden.all);
+    // The nav alone (no slot read: the default is the core pages as data): the same pages.
+    expect(settingsNav(view.settingsSections ?? [], "")).toEqual(golden.all);
   });
 
   it("is drawn from the registrations, not from the data: a page the plugin did not register is not in the nav", async () => {
@@ -113,7 +114,7 @@ describe("settingsNav over the slot", () => {
     // Take one registration back: the page is gone from what the slot gives (and from the nav drawn from it).
     const some = rendererKernel.entries<{ page: { id: string } }>(SECTION).find(({ entry }) => entry.page?.id === "machines")!;
     await some.registration.dispose();
-    const ids = settingsNav(null, "", registeredCoreGroups()).flatMap((group) => group.pages.map((page) => page.id));
+    const ids = settingsNav([], "", registeredCoreGroups()).flatMap((group) => group.pages.map((page) => page.id));
     expect(ids).toEqual(allPageIds.filter((id) => id !== "machines"));
   });
 
@@ -171,7 +172,7 @@ describe("plugins' pages in the same slot", () => {
     expect(rendererKernel.entries(SECTION)).toEqual([]);
     expect(pageIds()).toEqual([]);
     expect(registeredCoreGroups()).toEqual([]);
-    expect(coreSettings(rendererKernel, one)).toEqual({ groups: [], unavailable: true });
+    expect(coreSettings(rendererKernel)).toEqual({ groups: [], unavailable: true });
     expect(rendererKernel.declaration(SETTINGS_PLUGIN)).toBeUndefined();
     // The plugins stay registered: they are loaded, and every row that does not need the settings slots is still there.
     for (const name of ["botling.git", "botling.usage", "zed.tools"]) expect(rendererKernel.state(name), name).toBe("active");
@@ -180,7 +181,7 @@ describe("plugins' pages in the same slot", () => {
     expect(rows()).toEqual([]);
     // Back: core pages first, the plugins' pages after them.
     await one.start();
-    expect(coreSettings(rendererKernel, one).unavailable).toBe(false);
+    expect(coreSettings(rendererKernel).unavailable).toBe(false);
     expect(pageIds()).toEqual(allPageIds);
     expect(rows()).toEqual(view.settingsSections);
     expect(rendererKernel.entries(SECTION).map(({ plugin }) => plugin).slice(0, 12)).toEqual(Array(12).fill(SETTINGS_PLUGIN));
@@ -294,12 +295,19 @@ describe("Settings when the settings plugin is refused", () => {
   const sheet = () => createElement(SettingsSheet, { client, settings: null, bot: null, plugins: null, onClose() {} });
   const tabs = (element: HTMLElement) => [...element.querySelectorAll(".settings-tab")].map((button) => button.textContent);
 
-  it("draws the core pages from the data while no shell has touched the plugin (a component test, a page without the shell)", async () => {
+  it("shows the 'unavailable' line while no shell has loaded the plugin (nothing is drawn from data the plugin did not register), and the pages once a host has", async () => {
     const view = await mount(sheet());
     try {
-      expect(tabs(view.element)).toEqual(SETTINGS_GROUPS.flatMap((group) => group.pages.map((page) => page.title)));
-      expect(view.element.querySelector(".settings-unavailable")).toBeNull();
+      expect(tabs(view.element)).toEqual([]);
+      expect(view.element.querySelector(".settings-unavailable")?.textContent).toBe("Settings are unavailable.");
     } finally { await view.unmount(); }
+    // With a host (the stand-in a component test uses) the same sheet draws every page.
+    const shell = await loadSettingsShell();
+    const loaded = await mount(sheet());
+    try {
+      expect(tabs(loaded.element)).toEqual(SETTINGS_GROUPS.flatMap((group) => group.pages.map((page) => page.title)));
+      expect(loaded.element.querySelector(".settings-unavailable")).toBeNull();
+    } finally { await loaded.unmount(); await shell.stop(); }
   });
 
   it("shows the shell's 'unavailable' line, not a blank page, when the loader refuses it (a hash the manifest does not list)", async () => {

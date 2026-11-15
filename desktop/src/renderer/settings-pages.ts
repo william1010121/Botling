@@ -4,6 +4,9 @@
 import type { PluginsView } from "../contract";
 import { SETTINGS_GROUPS } from "./plugins/settings/pages";
 
+/** A plugin's page of Settings: one `settings.section` view row (the settings plugin's slot holds them, settings-feed.ts). */
+export type PluginSettingsRow = NonNullable<PluginsView["settingsSections"]>[number];
+
 export type CoreSection = "general" | "appearance" | "shortcuts" | "models" | "permissions" | "chat" | "setup" | "plugins" | "phone" | "machines" | "updates" | "developer";
 /** Page ids from before the pages were grouped, still accepted (links, plugins' `after`). */
 export type LegacySection = "engines" | "doctor";
@@ -28,11 +31,12 @@ export function resolveSection(id: SettingsSection): CoreSection | `${string}/${
 /**
  * The groups with their pages, plugins' pages under Plugins (indented), filtered by `search` (a page's title or
  * terms; a group with no page left is left out). `core` is the core pages: what the settings plugin registered in the
- * `settings/section` slot (settings-slot.ts `coreSettings`), or the plugin's own data (the default; no shell around).
+ * `settings/section` slot (settings-slot.ts `coreSettings`); `rows` the plugins' pages from the same slot
+ * (settings-feed.ts `pluginSettings`). The default is the core pages as data, for a test of the nav alone.
  */
-export function settingsNav(plugins: PluginsView | null, search = "", core: readonly SettingsCoreGroup[] = SETTINGS_GROUPS): SettingsGroup[] {
+export function settingsNav(rows: readonly PluginSettingsRow[] = [], search = "", core: readonly SettingsCoreGroup[] = SETTINGS_GROUPS): SettingsGroup[] {
   const words = search.trim().toLowerCase();
-  const pluginPages: SettingsPage[] = (plugins?.settingsSections ?? []).map((entry) => ({ id: `${entry.plugin}/${entry.id}`, title: entry.title, terms: entry.terms, plugin: entry.plugin, view: entry.id, indent: true }));
+  const pluginPages: SettingsPage[] = rows.map((entry) => ({ id: `${entry.plugin}/${entry.id}`, title: entry.title, terms: entry.terms, plugin: entry.plugin, view: entry.id, indent: true }));
   return core.map((group) => ({
     title: group.title,
     pages: group.pages.flatMap((page) => (page.id === "plugins" ? [page, ...pluginPages] : [page]))

@@ -7,13 +7,18 @@ import { createRoot } from "react-dom/client";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, beforeEach } from "vitest";
 import { SettingsChange, SettingsView } from "../../src/contract";
 import { applySetting, launchSettings, readSettings, settingsView, writeSettings } from "../../src/core/settings";
 import { SettingsSheet } from "../../src/renderer/Settings";
 import { workerLimitWords } from "../../src/renderer/worker-limit-text";
 import type { Client } from "../../src/renderer/client";
 import { claudeHarness } from "../claude-workers-fake";
+import { loadSettingsShell, type SettingsShell } from "../settings-shell";
+// Settings draws only from the settings plugin's slots (M7-02d): a test that renders it loads the plugin as the shell does.
+let settingsShell: SettingsShell;
+beforeEach(async () => { settingsShell = await loadSettingsShell(); });
+afterEach(async () => { await settingsShell.stop(); });
 
 const harnesses: ReturnType<typeof claudeHarness>[] = [];
 afterEach(async () => { for (const h of harnesses.splice(0)) await h.workers.close(); });
