@@ -33,6 +33,7 @@ import { RemoteContent } from "./content/remote";
 import { Uploads } from "./content/put";
 import { ContentTickets } from "./content/tickets";
 import { clusterNames, FetchApproval } from "./fetch/approval";
+import { createAppFetch } from "./fetch/app-fetch";
 import { FetchRequester } from "./fetch/requester";
 import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
@@ -421,7 +422,7 @@ export class Botlingd {
   serverOrigin: ServerOrigin | null = null;
   private originHookStop: (() => void) | null = null;
   fetchSource: FetchSource | null = null;
-  /** M5-07b: requester side of on-demand fetch (nothing calls `fetch` before M5-07d adds `app_fetch`). */
+  /** M5-07b: requester side of on-demand fetch (`app_fetch`, M5-07d, calls `fetch`). */
   fetchRequester: FetchRequester | null = null;
   /** M5-04e: the read-only copies of peer bots' chats in the main bot's folder. */
   chatMirror: PeerChatMirror | null = null;
@@ -514,6 +515,8 @@ export class Botlingd {
         ? createUtilityScriptRunner(options.electronUtility.utilityProcess)
         : undefined;
       let pluginRead: PluginContentRead | null = null;
+      // M5-07d: `app_fetch` resolves a machine name to a valid peer and uses the requester, which is built after the core.
+      let fetchRequesterRef: FetchRequester | null = null;
       const pendingBotWrites = new Map<string, { botId: string; at: number }>();
       let syncPlugins: (force?: boolean) => Promise<void> = async () => undefined;
       let originRef: ServerOrigin | null = null;
@@ -545,6 +548,7 @@ export class Botlingd {
         // M5-04c: the origin is built below, after the core; a call before then is "not ready".
         remoteCommand: (target, cmd) => remoteCommandVia(originRef, target, cmd),
         machineName: () => ownMachineName(roster, serverId, SERVER_NAME),
+        fetch: createAppFetch({ roster, requester: () => fetchRequesterRef }),
         pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory, ids.main);
@@ -855,6 +859,7 @@ export class Botlingd {
         onAudit: () => feeds.notify(feeds.ownStream),
         log,
       });
+      fetchRequesterRef = fetchRequester;
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
       const peers: PeerSessions = new PeerSessions({
         roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log,
