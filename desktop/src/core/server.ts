@@ -2052,11 +2052,6 @@ First write a test that shows this, then fix it.`;
     });
   }
 
-  /** M5-06c: whether `messageId` is an open `serverAsk` card (only a user answers it: botlingd refuses a peer server's pick). */
-  serverAskOpen(messageId: string): boolean {
-    return this.serverAsks.has(messageId);
-  }
-
   /** A `serverAsk` card that is no longer open and was not picked: ignored (the pick, if any, reaches its own callback). */
   private serverAskClosed(messageId: string): void {
     const pending = this.serverAsks.get(messageId);

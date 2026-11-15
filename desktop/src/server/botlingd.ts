@@ -105,10 +105,10 @@ export function clusterOrigins(
  * Device & peer-server roster view passed to `slotAuthorize` (M5-04b): a peer server is accepted only when it is in
  * `view.servers` AND `view.valid` (not root-revoked and not unvouched/not-yet-effective).
  */
-export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">, userOnlyCard?: (messageId: string) => boolean): DeviceRoster {
+export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">, hooks: Pick<DeviceRoster, "plainWaiting"> = {}): DeviceRoster {
   return {
     memberId: roster.memberId,
-    ...(userOnlyCard ? { userOnlyCard } : {}),
+    ...(hooks.plainWaiting ? { plainWaiting: hooks.plainWaiting } : {}),
     device: (member) => roster.device(member),
     server: (member) => {
       const view = roster.view;
@@ -427,7 +427,7 @@ export class Botlingd {
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, (messageId) => core.serverAskOpen(messageId))), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, { plainWaiting: (botId, text) => core.waiting().items.some((item) => item.messageId === null && item.botId === botId && item.text === text) })), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
         tapHooks: {
           eventSeen: (event) => {
             summary?.seen(event);

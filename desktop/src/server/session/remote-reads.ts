@@ -8,7 +8,9 @@
 // - `slotAuthorize` is the owner's check (§11.3 "origin invalid or scope forbids"), run by the slot engine as each slot
 //   is decided, so it holds for a copy held ahead and applied later, and for one whose device or server was revoked in
 //   between: `local` (the desktop window on its own server) and `admin` pass as in M1; a valid peer server passes for
-//   `reply` and `manage` when its stated scope matches; a device scope passes only when the origin is a valid device
+//   `reply` and `manage` when its stated scope matches, except that it never settles a card (`chat.choose`,
+//   `chat.answer`, `chat.ignoreQuestion`, `component.approve`: only a user does) and sets aside only a plain waiting
+//   item with `waiting.ignore` (peer-answer-guard); a device scope passes only when the origin is a valid device
 //   now and its roster scope allows the command (and the stated scope is the one it needs).
 import type { Command } from "../../contract";
 import { commandScope, remoteCmdRefusal, remoteReqRefusal, REMOTE_READS, type DeviceScope, type Scope } from "../../protocol";
@@ -24,14 +26,23 @@ export interface DeviceRoster {
   /** This server's own member id, so a slot naming itself gets a dedicated origin refusal. */
   readonly memberId?: string;
   /**
-   * M5-06c (§16): true for a card this server put up itself and only a user may answer (a fetch approval in the
-   * Maintainer's chat, `Core.serverAsk`). A peer server is the side that asks; it must never pick, answer or dismiss it.
+   * peer-answer-guard: true when this server's waiting list holds, right now, a plain item (no card: `messageId` null)
+   * of `botId` with exactly `text`. A peer server's `waiting.ignore` is accepted only for such an item; no hook, or one
+   * that throws, means no.
    */
-  userOnlyCard?(messageId: string): boolean;
+  plainWaiting?(botId: string, text: string): boolean;
 }
 
-/** The refusal detail for a peer server's answer to a card only a user answers (M5-06c). */
+/**
+ * The refusal detail for a peer server's answer to a card only a user answers. M5-06c set it for the fetch card;
+ * peer-answer-guard covers every card (a 2.x tool-permission card, a question, an approval).
+ */
 export const USER_ONLY_CARD_DETAIL = "this card is answered only by a user (a device or this machine's window), never by another server";
+
+/** The refusal detail for a peer server's `waiting.ignore` of anything but a plain waiting item. */
+export const WAITING_PLAIN_ONLY_DETAIL = "waiting.ignore from another server sets aside only a plain waiting item";
+/** The refusal detail for a peer server's `waiting.ignore` whose slot does not target the bot it names. */
+export const WAITING_TARGET_DETAIL = "waiting.ignore from another server must be sent to the bot it names (bot:<botId>)";
 
 const DEVICE_SCOPES: ReadonlySet<Scope> = new Set<Scope>(["read", "reply", "approve", "manage"]);
 
@@ -63,12 +74,17 @@ export function slotAuthorize(roster: DeviceRoster): Authorize {
       if (cmd.type === "plugin.grant") {
         return { reason: "origin", detail: "plugin.grant is only from a user (a device or this machine's window)" };
       }
-      // M5-06c: a fetch approval is the user's decision on the asking server's request; fail closed if the check throws.
-      const cardId = CARD_COMMANDS.has(cmd.type) ? (cmd as { messageId?: unknown }).messageId : undefined;
-      if (typeof cardId === "string" && roster.userOnlyCard) {
-        let userOnly = true;
-        try { userOnly = roster.userOnlyCard(cardId); } catch { userOnly = true; }
-        if (userOnly) return { reason: "origin", detail: USER_ONLY_CARD_DETAIL };
+      // peer-answer-guard (generalises M5-06c, which refused only an open `serverAsk` card): a card is the user's to
+      // settle, whatever kind it is. Refused before any lookup, so there is nothing to throw or to fail open.
+      if (CARD_COMMANDS.has(cmd.type)) return { reason: "origin", detail: USER_ONLY_CARD_DETAIL };
+      // `waiting.ignore` keys on text, so it is an allowlist: the slot's target is this bot, and the owner's list
+      // holds a plain item of it with exactly this text now. Otherwise a peer could ignore a card's predictable text
+      // before the card appears, or hide a question. A hook that throws or is missing refuses.
+      if (cmd.type === "waiting.ignore") {
+        if (slot.target !== `bot:${cmd.botId}`) return { reason: "scope", detail: WAITING_TARGET_DETAIL };
+        let plain = false;
+        try { plain = roster.plainWaiting?.(cmd.botId, cmd.text) === true; } catch { plain = false; }
+        if (!plain) return { reason: "scope", detail: WAITING_PLAIN_ONLY_DETAIL };
       }
       const needed = commandScope(cmd);
       if (needed === "read") return { reason: "scope", detail: `${cmd.type} is a read: send it as a req` };
