@@ -510,7 +510,7 @@ export interface BotlingApi {
   commands: { register(id: string, run: (...args: unknown[]) => unknown): Dispose };
   /**
    * Each bot's note: one Markdown file the user keeps for that bot (the Note tab), where Botling says (<project>/.bot/note.md,
-   * a sub bot's under .bot/sub-bots/<id>/, the main bot's in its own folder); the bots are told it is there. Needs "files".
+   * a sub bot's under .bot/sub-bots/<id>/, the main bot's in its own folder); the bots are told it is there. Needs "files"; write, importAsset, localizeImages and mode(set) only for the built-in Note (`ccb.owns`: ["note"]).
    * A note this plugin reads or saves is watched: `events.on("noteChanged", …)` hears when it changes on disk.
    */
   notes: {

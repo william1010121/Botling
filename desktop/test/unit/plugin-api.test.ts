@@ -10,8 +10,9 @@ import type { HostCommand, HostHandlers } from "../../src/core/plugins/host-clie
 import { testSealer } from "../../src/core/plugins/secrets";
 import { conversation, generation, usage } from "./agy-db-fixture";
 
-function plugin(dir: string, name: string, ccb: Record<string, unknown> = {}) {
-  const folder = join(dir, "plugins", name);
+/** `root` "builtin": shipped with Botling (a plugin there may own data, M7-04a); "plugins": the library. */
+function plugin(dir: string, name: string, ccb: Record<string, unknown> = {}, root: "plugins" | "builtin" = "plugins") {
+  const folder = join(dir, root, name);
   mkdirSync(join(folder, "dist"), { recursive: true });
   writeFileSync(join(folder, "package.json"), JSON.stringify({ name, displayName: `${name[0]!.toUpperCase()}${name.slice(1)}`, version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { host: "dist/host.mjs", ...ccb } }));
   writeFileSync(join(folder, "dist", "host.mjs"), "export function activate() {}");
@@ -107,7 +108,7 @@ async function setup(dir: string, adjust?: (world: PluginWorld) => void) {
       };
     },
   };
-  const plugins = new Plugins({ dataDir: dir, world: fake.world, node, hostScript: "host.mjs", sealer: testSealer("test-key") });
+  const plugins = new Plugins({ dataDir: dir, world: fake.world, node, hostScript: "host.mjs", sealer: testSealer("test-key"), builtIns: join(dir, "builtin") });
   running.push(plugins);
   await plugins.start();
   await until(() => plugins.host.running);
@@ -614,7 +615,7 @@ const withoutIds = (text: string) => text.replace(/^<!-- cell: [A-Za-z0-9_-]+ --
 describe("a bot's note for plugins (the Note tab)", () => {
   it("notes.read makes and reads only that bot's note; notes.write saves it, refusing a stale base; both need \"files\"", async () => {
     const dir = tempDir("plugin-api");
-    plugin(dir, "note", { permissions: ["files"] });
+    plugin(dir, "note", { permissions: ["files"], owns: ["note"] }, "builtin");
     plugin(dir, "nosy");
     const { ask, world } = await setup(dir);
     const project = join(dir, "project");
@@ -638,7 +639,7 @@ describe("a bot's note for plugins (the Note tab)", () => {
 
   it("note pictures: importAsset copies only a picture the note links (or bytes), assetUrls shows only its own refs, localizeImages rewrites links; all need \"files\"", async () => {
     const dir = tempDir("plugin-api");
-    plugin(dir, "note", { permissions: ["files"] });
+    plugin(dir, "note", { permissions: ["files"], owns: ["note"] }, "builtin");
     plugin(dir, "nosy");
     const { ask, world } = await setup(dir);
     const note = join(dir, "project", ".bot", "note.md");
@@ -684,7 +685,7 @@ describe("a bot's note for plugins (the Note tab)", () => {
 
   it("a note read by a plugin is watched: a change on disk is the noteChanged event (bot and mtime, never the words)", async () => {
     const dir = tempDir("plugin-api");
-    plugin(dir, "note", { permissions: ["files"] });
+    plugin(dir, "note", { permissions: ["files"], owns: ["note"] }, "builtin");
     const { ask, world, tell, plugins, sent } = await setup(dir);
     const file = join(dir, "project", ".bot", "note.md");
     world.botNote = (botId) => (botId === "main" ? file : null);
