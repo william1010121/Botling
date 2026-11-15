@@ -23,7 +23,7 @@ import { rightPanelSectionsFor } from "../../src/renderer/main-tabs";
 import { BOT_PANEL_PLUGIN, MAIN_SLOT, SECTION_SLOT, TAKEOVER_SLOT, PANEL_BLOCKS } from "../../src/renderer/panel-names";
 import { panelState, registeredPanelBlocks } from "../../src/renderer/panel-slot";
 import { botPanelDeclaration } from "../../src/renderer/plugins/bot-panel";
-import { rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
+import { notifySlots, rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
 import { RightPanel, type RightPanelProps } from "../../src/renderer/RightPanel";
 import { FEED_SLOTS, PLUGIN_OWNED_SLOTS } from "../../src/renderer/shell/feed-slots";
 import { InPageHost, inPageHost } from "../../src/renderer/shell/inpage-host";
@@ -320,7 +320,8 @@ describe("the panel drawn with the plugin loaded", () => {
     const folded = await mount(createElement(RightPanel, props(mainBot, { collapsed: true })));
     expect(open.element.querySelector(".results-section")).not.toBeNull();
     await rendererKernel.entries<{ block: string }>(MAIN).find(({ entry }) => entry.block === "results")!.registration.dispose();
-    await act(async () => {});
+    // An owner taking one registration back early is not a kernel step (no log line): tell the page's listeners as the host does after its own changes.
+    await act(async () => { notifySlots(); });
     expect(open.element.querySelector(".results-section")).toBeNull();
     expect([...open.element.querySelectorAll(".detail-section h3")].map((h) => h.textContent)).toEqual(["Now", "Waiting on you", "Settled"]);
     expect([...folded.element.querySelectorAll(".strip-icon")].map((icon) => icon.getAttribute("data-section"))).toEqual(["waiting", "settled"]);
