@@ -5,13 +5,15 @@
 // The bundle is copied to `<temp>/host/` so its default built-ins folder (`<its folder>/../builtin-plugins`) is a temp
 // folder with a made-up "shipped" plugin; BOTLING_BUILTIN_PLUGINS is removed from the child's environment so the
 // default is what is used. Needs `npm run build` first (the test commands in AGENTS.md build before they run).
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../helpers";
 
 const BUILT = join(__dirname, "..", "..", "out", "host", "check-plugin.cjs");
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 /** A plugin folder `<root>/<folder>` whose manifest says `name`. */
 function plugin(root: string, name: string, folder = name): string {
@@ -25,6 +27,7 @@ function plugin(root: string, name: string, folder = name): string {
 function setup() {
   if (!existsSync(BUILT)) throw new Error("out/host/check-plugin.cjs is missing: run `npm run build` in desktop/ first");
   const root = tempDir("check-cli");
+  roots.push(root);
   mkdirSync(join(root, "host"), { recursive: true });
   copyFileSync(BUILT, join(root, "host", "check-plugin.cjs"));
   const builtIns = join(root, "builtin-plugins");
