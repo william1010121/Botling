@@ -2,19 +2,13 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import type { EntryRef } from "../../protocol";
+import type { FetchWhat } from "../../protocol/fetch";
+
+export type { FetchWhat };
 
 const realpath = realpathSync.native ?? realpathSync;
 
 export type BotId = string;
-
-/**
- * Local FetchWhat definition until M5-05 (`protocol/fetch.ts`) merges; switch to the protocol import when M5-05 lands.
- */
-export type FetchWhat =
-  | { kind: "path"; path: string }
-  | { kind: "artifact"; botId: BotId; path: string }
-  | { kind: "blob"; id: string; entry: EntryRef }
-  | { kind: "git"; path: string };
 
 /** Fetch limits (§16). `PER_DAY_BYTES_PER_BOT` defaults to 2 GiB (v1 names the limit without a number). */
 export const Limits = {
@@ -37,16 +31,28 @@ export const DENY: readonly DenyPattern[] = [
   { kind: "segment", name: ".aws" },
   { kind: "segment", name: ".kube" },
   { kind: "segment", name: ".mozilla" },
+  { kind: "segment", name: ".docker" },
+  { kind: "segment", name: ".netrc" },
   { kind: "subpath", parts: ["Library", "Keychains"] },
   { kind: "segment-glob", pattern: /\.keychain$/i, glob: "*.keychain" },
   { kind: "segment-glob", pattern: /\.keychain-db$/i, glob: "*.keychain-db" },
   { kind: "subpath", parts: ["Library", "Application Support", "Google", "Chrome"] },
   { kind: "subpath", parts: ["Library", "Application Support", "Firefox"] },
   { kind: "subpath", parts: ["Library", "Application Support", "Safari"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "BraveSoftware", "Brave-Browser"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Microsoft Edge"] },
+  { kind: "subpath", parts: ["Library", "Application Support", "Arc"] },
   { kind: "subpath", parts: [".config", "google-chrome"] },
   { kind: "subpath", parts: [".config", "chromium"] },
+  { kind: "subpath", parts: [".config", "BraveSoftware", "Brave-Browser"] },
+  { kind: "subpath", parts: [".config", "microsoft-edge"] },
+  { kind: "subpath", parts: [".config", "gcloud"] },
+  { kind: "file-glob", pattern: /^\.env$/i, glob: ".env" },
+  { kind: "file-glob", pattern: /^\.env\./i, glob: ".env.*" },
   { kind: "file-glob", pattern: /^id_rsa/i, glob: "id_rsa*" },
   { kind: "file-glob", pattern: /^id_ed25519/i, glob: "id_ed25519*" },
+  { kind: "file-glob", pattern: /^id_ecdsa/i, glob: "id_ecdsa*" },
+  { kind: "file-glob", pattern: /^id_dsa/i, glob: "id_dsa*" },
   { kind: "file-glob", pattern: /\.pem$/i, glob: "*.pem" },
   { kind: "file-glob", pattern: /\.key$/i, glob: "*.key" },
   { kind: "marker-dir", file: "server.db" },
@@ -62,6 +68,16 @@ export interface ClassifyInput {
 export type ClassifyResult =
   | { kind: "free" | "ask"; prefix: string }
   | { kind: "denied"; reason: "deny-list" | "outside" };
+
+function isErrnoCode(err: unknown, code: string): boolean {
+  return typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === code;
+}
+
+function assertAbsoluteDataDir(dataDir: string): void {
+  if (!isAbsolute(dataDir)) {
+    throw new Error(`dataDir must be an absolute path: ${JSON.stringify(dataDir)}`);
+  }
+}
 
 function isSubpathOrEqual(realPrefix: string, realTarget: string): boolean {
   if (realPrefix.endsWith(sep)) return realTarget.startsWith(realPrefix);
@@ -82,19 +98,22 @@ export function realInside(prefix: string, targetPath: string): boolean {
   return isSubpathOrEqual(realPrefix, realTarget);
 }
 
-/** Resolves an absolute path to its canonical real path, failing closed on dangling symlinks or unresolvable `..`. */
+/** Resolves an absolute path to its canonical real path, using the walk-up fallback only for ENOENT. */
 function resolveCanonicalPath(targetPath: string): string | null {
   if (!targetPath || targetPath.includes("\0") || !isAbsolute(targetPath)) return null;
   try {
     return realpath(targetPath);
-  } catch {
+  } catch (err) {
+    // Use the walk-up fallback only for ENOENT; EACCES/EPERM/ENOTDIR/etc. must fail closed.
+    if (!isErrnoCode(err, "ENOENT")) return null;
     // Do not resolve `..` or `.` lexically when the OS cannot canonicalize the path.
     const rawParts = targetPath.split(sep);
     if (rawParts.some((part) => part === ".." || part === ".")) return null;
     try {
-      if (lstatSync(targetPath).isSymbolicLink()) return null;
-    } catch {
-      // Missing target: walk up to the nearest existing ancestor to resolve symlinked parents (e.g. /var -> /private/var).
+      lstatSync(targetPath);
+      return null;
+    } catch (lstatErr) {
+      if (!isErrnoCode(lstatErr, "ENOENT")) return null;
     }
     const tail: string[] = [];
     let cur = targetPath;
@@ -105,8 +124,9 @@ function resolveCanonicalPath(targetPath: string): string | null {
       cur = parent;
       try {
         lstatSync(cur);
-      } catch {
-        continue;
+      } catch (curErr) {
+        if (isErrnoCode(curErr, "ENOENT")) continue;
+        return null;
       }
       try {
         return join(realpath(cur), ...tail);
@@ -144,9 +164,10 @@ function hasMarkerFileInAncestors(realPath: string, markerFile: string): boolean
 }
 
 function isDeniedRealPath(realPath: string, dataDir?: string): boolean {
-  if (dataDir) {
+  if (dataDir !== undefined) {
+    assertAbsoluteDataDir(dataDir);
     const realDataDir = resolveCanonicalPath(dataDir);
-    if (realDataDir && isSubpathOrEqual(realDataDir, realPath)) return true;
+    if (!realDataDir || isSubpathOrEqual(realDataDir, realPath)) return true;
   }
   const segments = realPath.split(sep).filter(Boolean);
   const lowerSegments = segments.map((s) => s.toLowerCase());
@@ -174,16 +195,18 @@ function isDeniedRealPath(realPath: string, dataDir?: string): boolean {
   return false;
 }
 
-/** Checks a path's real target against `DENY` and `dataDir`. */
+/** Checks a path's real target against `DENY` and `dataDir` (fails closed on resolution failure). */
 export function isDeniedPath(targetPath: string, dataDir?: string): boolean {
+  if (dataDir !== undefined) assertAbsoluteDataDir(dataDir);
   const realPath = resolveCanonicalPath(targetPath);
-  if (!realPath) return false;
+  if (!realPath) return true;
   return isDeniedRealPath(realPath, dataDir);
 }
 
 /** Classifies a fetch request at the source as free, ask, or denied (deny-list checked before everything else). */
 export function classify(input: ClassifyInput): ClassifyResult {
   const { what, botFolders, referenced, dataDir } = input;
+  assertAbsoluteDataDir(dataDir);
 
   if (what.kind === "blob") {
     return referenced(what.id, what.entry)
@@ -195,8 +218,11 @@ export function classify(input: ClassifyInput): ClassifyResult {
     if (what.path.includes("\0")) return { kind: "denied", reason: "outside" };
     const botFolder = botFolders.get(what.botId);
     if (!botFolder) {
-      if (isAbsolute(what.path) && isDeniedPath(what.path, dataDir)) {
-        return { kind: "denied", reason: "deny-list" };
+      if (isAbsolute(what.path)) {
+        const realTarget = resolveCanonicalPath(what.path);
+        if (realTarget && isDeniedRealPath(realTarget, dataDir)) {
+          return { kind: "denied", reason: "deny-list" };
+        }
       }
       return { kind: "denied", reason: "outside" };
     }
@@ -210,8 +236,25 @@ export function classify(input: ClassifyInput): ClassifyResult {
     const realTarget = resolveCanonicalPath(targetPath);
     if (!realTarget) return { kind: "denied", reason: "outside" };
     if (isDeniedRealPath(realTarget, dataDir)) return { kind: "denied", reason: "deny-list" };
-    if (!realInside(artifactsDir, targetPath)) return { kind: "denied", reason: "outside" };
-    return { kind: "free", prefix: realpath(artifactsDir) };
+
+    let realBotFolder: string;
+    let realArtifactsDir: string;
+    let realExistingTarget: string;
+    try {
+      realBotFolder = realpath(botFolder);
+      realArtifactsDir = realpath(artifactsDir);
+      realExistingTarget = realpath(targetPath);
+    } catch {
+      return { kind: "denied", reason: "outside" };
+    }
+    if (!isSubpathOrEqual(realArtifactsDir, realExistingTarget)) {
+      return { kind: "denied", reason: "outside" };
+    }
+    // Require real artifactsDir to live inside the real bot folder so symlinked .bot/artifacts cannot widen `free`.
+    if (!isSubpathOrEqual(realBotFolder, realArtifactsDir)) {
+      return { kind: "ask", prefix: realExistingTarget };
+    }
+    return { kind: "free", prefix: realArtifactsDir };
   }
 
   // kind: "path" | "git"
@@ -224,8 +267,19 @@ export function classify(input: ClassifyInput): ClassifyResult {
 
   for (const folder of botFolders.values()) {
     const artifactsDir = join(folder, ".bot", "artifacts");
-    if (realInside(artifactsDir, realTarget)) {
-      return { kind: "free", prefix: realpath(artifactsDir) };
+    let realBotFolder: string;
+    let realArtifactsDir: string;
+    try {
+      realBotFolder = realpath(folder);
+      realArtifactsDir = realpath(artifactsDir);
+    } catch {
+      continue;
+    }
+    if (
+      isSubpathOrEqual(realBotFolder, realArtifactsDir) &&
+      isSubpathOrEqual(realArtifactsDir, realTarget)
+    ) {
+      return { kind: "free", prefix: realArtifactsDir };
     }
   }
 
