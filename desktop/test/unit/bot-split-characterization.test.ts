@@ -22,8 +22,9 @@ import { join } from "node:path";
 
 const fixture = vi.hoisted(() => {
   const heads: any[] = [];
-  const state = { sink: (_line: string) => {}, snapshot: () => "", insertOk: false };
-  const cut = (text: string, n = 70) => (text.length > n ? `${text.slice(0, n)}…` : text);
+  const state = { sink: (_line: string) => {}, snapshot: () => "", insertOk: false, scrub: (text: string) => text };
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  const cut = (raw: string, n = 70) => { const text = state.scrub(raw).replace(UUID, "<uuid>"); return text.length > n ? `${text.slice(0, n)}…` : text; };
   class Head {
     running = false; pid = 0; exited = Promise.resolve(); completionDependencies: any[] = [];
     sent: { text: string; id: string; now: boolean }[] = []; steered: string[] = []; offered: string[] = [];
@@ -31,7 +32,7 @@ const fixture = vi.hoisted(() => {
     readonly n: number;
     constructor(readonly config: any, readonly handlers: any) { this.n = heads.length; heads.push(this); }
     private say(line: string) { state.sink(`h${this.n} ${line}`); }
-    start() { this.running = true; this.say("start"); queueMicrotask(() => this.handlers.onItem({ kind: "init", sessionId: this.config.sessionId })); }
+    start() { this.running = true; this.say(`start resume=${!!this.config.resume} model=${this.config.model ?? "-"}`); queueMicrotask(() => this.handlers.onItem({ kind: "init", sessionId: this.config.sessionId })); }
     send(text: string, id: string, _images?: string[], options?: any) { this.sent.push({ text, id, now: !!options?.now }); this.say(`send ${JSON.stringify(cut(text))}${options?.now ? " now" : ""}`); }
     steer(text: string) { this.steered.push(text); this.say(`steer ${JSON.stringify(cut(text))}`); return true; }
     offerInsert(id: string, text: string) { this.say(`offerInsert ${JSON.stringify(cut(text))} -> ${state.insertOk}`); if (state.insertOk) this.offered.push(id); return state.insertOk; }
@@ -58,7 +59,7 @@ const bots: Bot[] = [];
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(T0); });
 afterEach(async () => {
   for (const b of bots.splice(0)) await b.shutdown({ tidy: false }).catch(() => {});
-  fixture.heads.length = 0; fixture.state.sink = () => {}; fixture.state.snapshot = () => ""; fixture.state.insertOk = false;
+  fixture.heads.length = 0; fixture.state.sink = () => {}; fixture.state.snapshot = () => ""; fixture.state.insertOk = false; fixture.state.scrub = (text) => text;
   vi.useRealTimers();
 });
 
@@ -91,7 +92,8 @@ function rig(engine: Engine = "claude", options: RigOptions = {}) {
   const peek = b as any;
   const state = () => `turn=${peek.turn ? `${peek.turn.origin}${peek.turn.open ? "" : "/closed"}` : "-"} queue=[${peek.queue.map((t: any) => t.origin + (t.sent ? "/sent" : "")).join(",")}] deferred=${peek.deferred ? peek.deferred.origin : "-"} draining=${peek.draining ? "yes" : "no"} ignore=${peek.ignoreResults} paused=${peek.paused ? "yes" : "no"}`;
   fixture.state.snapshot = state;
-  const names = [folder, (() => { try { return realpathSync(folder); } catch { return folder; } })()];
+  const names = [...new Set([folder, (() => { try { return realpathSync(folder); } catch { return folder; } })()])].sort((a, b) => b.length - a.length);
+  fixture.state.scrub = (text) => names.reduce((t, name) => t.split(name).join("<dir>"), text);
   const R = {
     b, peek, lines, events, folder, names, state,
     mark(label: string) {
@@ -103,7 +105,7 @@ function rig(engine: Engine = "claude", options: RigOptions = {}) {
     delta(n: number, text: string) { fixture.heads[n].item({ kind: "delta", text }); },
     reply(n: number, text: string, subtype = "success") { fixture.heads[n].item({ kind: "result", ok: true, text, subtype }); },
     /** The user's lines in the chat, as the bot keeps them, for a closing look. */
-    chat() { return peek.records.map((r: any) => `${r.role}${r.state ? `/${r.state}` : ""}${r.interrupted ? "/interrupted" : ""}${r.queued ? "/queued" : ""}: ${String(r.text).slice(0, 60)}`); },
+    chat() { return b.snapshot().messages.map((r: any) => `${r.role}${r.state ? `/${r.state}` : ""}${r.interrupted ? "/interrupted" : ""}${r.queued ? "/queued" : ""}: ${String(r.text).slice(0, 60)}`); },
   };
   return R;
 }
@@ -250,7 +252,6 @@ describe("golden transcripts of an unchanged Bot", () => {
     r.delta(0, "Starting"); await flush();
     await r.b.stop(sent.turnId!); await flush(); r.mark("stopped, head ended");
     r.b.send("after the stop"); await r.sent(1, 1); r.reply(1, "Fine"); await flush(); r.mark("next message on a new head");
-    expect(r.head(1).config.resume).toBe(true);
     check("stop with no answer", r);
   });
 
@@ -293,7 +294,6 @@ describe("golden transcripts of an unchanged Bot", () => {
     r.delta(0, "Working on it"); await flush();
     r.head(0).handlers.onExit({ code: 1, signal: null, stderr: "boom", expected: false, silent: false }); await flush(); r.mark("exited mid-turn");
     r.b.send("again"); await r.sent(1, 1); r.mark("resumed");
-    expect(r.head(1).config.resume).toBe(true);
     r.reply(1, "Done"); await flush(); r.mark("done");
     check("head exit and resume", r);
   });
@@ -304,7 +304,6 @@ describe("golden transcripts of an unchanged Bot", () => {
     r.head(0).finish(); await flush(); r.mark("asleep");
     r.b.send("second"); await r.sent(1, 1); r.mark("woke on a resume");
     r.head(1).handlers.onExit({ code: 1, signal: null, stderr: "No conversation found", expected: false, silent: true }); await r.sent(2, 1); r.mark("new session, sent again");
-    expect(r.head(2).config.resume).toBe(false);
     r.reply(2, "Second answered"); await flush(); r.mark("done");
     check("resume refused", r);
   });
@@ -314,10 +313,8 @@ describe("golden transcripts of an unchanged Bot", () => {
     r.b.send("first"); await r.sent(0, 1);
     r.delta(0, "Looking"); await flush();
     r.head(0).handlers.onExit({ code: 1, signal: null, stderr: "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)", expected: false, silent: false }); await flush(); r.mark("lost to the network");
-    expect(r.b.view().connection).toBe("disconnected");
     vi.setSystemTime(new Date(T0.getTime() + 10 * 60_000));
     r.b.networkRestored(Date.now()); await r.sent(1, 1); r.mark("network back after 10 minutes");
-    expect(r.head(1).config.resume).toBe(true);
     r.reply(1, "Carrying on"); await flush(); r.mark("done");
     check("network outage", r);
   });
@@ -345,7 +342,6 @@ describe("golden transcripts of an unchanged Bot", () => {
     expect(r.peek.settingsHold).not.toBeNull();
     expect(r.head(0).sent).toHaveLength(1);
     r.peek.endBackground("own-task", "completed", null); await r.sent(1, 1); r.mark("work ended: restarted, message sent");
-    expect(r.head(1).config.model).toBe("new-model");
     r.reply(1, "On the new model"); await flush(); r.mark("done");
     check("settings hold", r);
   });
@@ -493,11 +489,12 @@ describe("orders that must not change", () => {
     r.b.send("the message"); await r.sent(0, 2);
     r.reply(0, "OK."); await r.sent(1, 1); r.reply(1, "OK."); await r.sent(1, 2);
     const handoff = index(r, "h0 send \"(App: The model is about to change");
-    const resumed = index(r, "h1 send \"(App: You just took over");
-    const message = index(r, "h1 send \"the message");
+    const toNewHead = r.lines.map((line, i) => (line.startsWith("h1 send") ? i : -1)).filter((i) => i >= 0);
     expect(handoff).toBeGreaterThan(-1);
-    expect(resumed).toBeGreaterThan(handoff);
-    expect(message).toBeGreaterThan(resumed);
+    expect(toNewHead).toHaveLength(2);
+    expect(toNewHead[0]).toBeGreaterThan(handoff);
+    expect(r.head(1).sent[0].text).toContain("You just took over with a new model");
+    expect(r.head(1).sent[1].text).toContain("the message");
     expect(r.lines.some((line) => line.includes("Handoff → Codex"))).toBe(true);
     expect(r.head(0).sent.some((s: any) => s.text.includes("the message"))).toBe(false);
   });
