@@ -22,7 +22,7 @@
 import type { Command } from "../../contract";
 import { ContractError } from "../../contract";
 import { queueKey, type CmdBody } from "../../protocol";
-import { admit, checkTarget, cmdHash, SlotRefusal, statedScope, type ApplyContext, type BegunEnd, type ReceiveOptions, type ReceiveStatus, type SlotEngine, type SlotLog } from "../slots";
+import { admit, checkTarget, cmdHash, SlotRefusal, requiredSlotScope, type ApplyContext, type BegunEnd, type ReceiveOptions, type ReceiveStatus, type SlotEngine, type SlotLog } from "../slots";
 import type { TxScope, TurnEngine } from "../effects";
 
 type Ran = { ok: true; result: unknown } | { ok: false; detail: string };
@@ -56,7 +56,7 @@ export class LegacyApply {
 
   async receive(body: CmdBody, options: ReceiveOptions): Promise<ReceiveStatus> {
     // The caller's stated scope, never the frame's own `body.scope` (M5-19 I1); a missing one throws before anything is stored.
-    const scope = statedScope(options, "legacy");
+    const scope = requiredSlotScope(options, "legacy");
     const hash = cmdHash({ cmd: body.cmd, scope, basis: body.basis, via: body.via });
     // Set inside the admission transaction when the slot is marked begun (SlotEngine.begin).
     const begun: { end?: (how: BegunEnd) => void } = {};

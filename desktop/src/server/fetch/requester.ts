@@ -58,7 +58,8 @@ export interface FetchPeer {
   sendWire(message: WireMessage): boolean;
 }
 
-export type FetchFailure = FetchDenyReason | "corrupt" | "unreachable";
+/** `local`: this server failed before or while setting up (no such bot, the incoming folder cannot be made); the source said nothing. */
+export type FetchFailure = FetchDenyReason | "corrupt" | "unreachable" | "local";
 
 export type FetchResult =
   | { ok: true; fetchId: string; /** relative to the bot's folder: `.bot/incoming/<source>/<fetchId>` */ dest: string; absDest: string; files: number; bytes: number; manifest: string }
@@ -140,7 +141,7 @@ export class FetchRequester {
   fetch(botId: string, source: string, what: FetchWhat, purpose: string, maxBytes: number): Promise<FetchResult> {
     const folder = this.options.botFolder(botId);
     if (this.closed) return Promise.resolve({ ok: false, reason: "unreachable", detail: "this server is stopping" });
-    if (!folder) return Promise.resolve({ ok: false, reason: "denied", detail: "this server has no such bot" });
+    if (!folder) return Promise.resolve({ ok: false, reason: "local", detail: "this server has no such bot" });
     const session = this.options.session(source);
     if (!session || session.state !== "open") return Promise.resolve({ ok: false, reason: "unreachable" });
 
@@ -156,7 +157,7 @@ export class FetchRequester {
         this.prepare(p);
       } catch (error) {
         this.removeDest(p);
-        resolve({ ok: false, reason: "denied", detail: `cannot prepare the incoming folder: ${String((error as Error)?.message ?? error)}`.slice(0, 500) });
+        resolve({ ok: false, reason: "local", detail: `cannot prepare the incoming folder: ${String((error as Error)?.message ?? error)}`.slice(0, 500) });
         return;
       }
       this.pending.set(p.fetchId, p);
@@ -267,7 +268,7 @@ export class FetchRequester {
       try { this.prepare(p); } catch (error) {
         this.pending.delete(oldId);
         this.removeDest(p);
-        this.settle(p, { ok: false, reason: "denied", detail: `cannot prepare the incoming folder: ${String((error as Error)?.message ?? error)}`.slice(0, 500) });
+        this.settle(p, { ok: false, reason: "local", detail: `cannot prepare the incoming folder: ${String((error as Error)?.message ?? error)}`.slice(0, 500) });
         return;
       }
       this.pending.delete(oldId);
