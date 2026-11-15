@@ -1,0 +1,11 @@
+{
+  "name": "builtin.beta",
+  "version": "1.0.0",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "host": "lib/host.mjs",
+    "contributes": {
+      "commands": [{ "id": "builtin.beta.info", "title": "Beta Info" }]
+    }
+  }
+}
