@@ -46,7 +46,8 @@ import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
-import { followedStreams, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, SummaryRows, TableFeeds } from "./replica";
+import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, SummaryRows, TableFeeds } from "./replica";
+import { installedFromRegistry, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
 import { Directory, Forwarder, OwnerInbox } from "./forward";
 import { release as osRelease } from "node:os";
 
@@ -179,6 +180,7 @@ export interface BotlingdOptions {
 export class Botlingd {
   private stopping: Promise<void> | null = null;
   private lockTimer: NodeJS.Timeout | null = null;
+  private pluginTimer: NodeJS.Timeout | null = null;
   private tokenValue = "";
   private backups: DailyBackups | null = null;
   /** M2 step 6: the loopback listener (page, `/v3/ws`), or null when it is off or its port was taken. */
@@ -339,6 +341,7 @@ export class Botlingd {
       const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
       // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
       let summary: SummaryRows | null = null;
+      let syncPlugins: (force?: boolean) => Promise<void> = async () => undefined;
       // M2 step 12: uploads from pages (`content.put`), kept in <data>/uploads; a chat.send naming them waits for them.
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
@@ -348,13 +351,27 @@ export class Botlingd {
           device: (member) => roster.device(member),
           server: (member) => { const view = roster.view; return member !== view.self && view.servers.has(member) && view.valid.has(member); },
         }), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
-        tapHooks: { eventSeen: (event) => summary?.seen(event), eventStored: (tx, event) => summary?.stored(tx, event) },
+        tapHooks: {
+          eventSeen: (event) => {
+            summary?.seen(event);
+            if (event.type === "plugins.updated") void syncPlugins();
+          },
+          eventStored: (tx, event) => summary?.stored(tx, event),
+        },
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
       });
+      const readInstalledPlugins = () => installedFromRegistry(core.plugins.registry.plugins, log);
+      const machineRow = (pluginsDigest: string | null) => ({
+        name: SERVER_NAME,
+        os: `${process.platform} ${osRelease()}`.slice(0, 100),
+        versions: { botlingd: BOTLINGD_VERSION, node: process.versions.node },
+        addresses: [],
+        pluginsDigest,
+      });
       summary = new SummaryRows({
         scope: runtime.scope, engine, live, log, onWritten: () => feeds.notify(feeds.ownStream),
-        machine: () => ({ name: SERVER_NAME, os: `${process.platform} ${osRelease()}`.slice(0, 100), versions: { botlingd: BOTLINGD_VERSION, node: process.versions.node }, addresses: [], pluginsDigest: null }),
+        machine: () => machineRow(pluginsDigestOf(readInstalledPlugins().filter((plugin) => plugin.name.length <= 64))),
       });
       const report = await runtime.start();
       log(`recovery: ${JSON.stringify(report)}`);
@@ -362,6 +379,29 @@ export class Botlingd {
       const reconciled = await runtime.scope.submit((tx) => summaries.reconcile(tx));
       log(`summary rows: ${JSON.stringify({ ...reconciled, unknown: reconciled.unknown.length })}`);
       summaries.startPurging();
+      // M5-13b: publish one plugin:<name> row per installed plugin and keep machine.pluginsDigest current.
+      let lastPluginsSignature = "";
+      let pluginSyncQueue: Promise<void> = Promise.resolve();
+      syncPlugins = (force = false) => {
+        pluginSyncQueue = pluginSyncQueue.then(async () => {
+          const installed = readInstalledPlugins();
+          const signature = JSON.stringify(installed);
+          if (!force && signature === lastPluginsSignature) return;
+          await runtime.scope.submit((tx) => {
+            const stream = ownTableStream(tx);
+            let touched = false;
+            const pluginResult = reconcilePluginRows(tx, stream, installed, Date.now(), { log, onWritten: () => { touched = true; } });
+            const machineRev = putRow(tx, stream, "machine", machineRow(pluginResult.digest));
+            if (touched || machineRev != null) runtime.scope.afterCommit(() => feeds.notify(feeds.ownStream));
+          });
+          lastPluginsSignature = signature;
+        }).catch((error) => { log(`plugin rows: ${String((error as Error)?.message ?? error)}`); });
+        return pluginSyncQueue;
+      };
+      await syncPlugins(true);
+      // core/server.ts suppresses plugins.updated when only non-manifest plugin files change (codeHash changes without PluginsView changing), so also poll every 5 s.
+      const pluginTimer = setInterval(() => { void syncPlugins(); }, 5_000);
+      pluginTimer.unref?.();
       // Step 13: pins left by a crash are swept and every file still preparing is hashed before front ends attach.
       const recovered = await content.recover();
       log(`content recovery: ${JSON.stringify(recovered)}`);
@@ -528,6 +568,7 @@ export class Botlingd {
       daemon.peerContentOwner = peerContentOwner;
       daemon.chunkCache = chunkCache;
       daemon.media = media;
+      daemon.pluginTimer = pluginTimer;
       daemon.tailnetOrigins = origin ? [origin] : [];
       daemon.relayAddress = relayAddress;
       daemon.tokenValue = writeToken(paths.token);
@@ -609,6 +650,7 @@ export class Botlingd {
 
   private async doStop(): Promise<void> {
     if (this.lockTimer) clearInterval(this.lockTimer);
+    if (this.pluginTimer) clearInterval(this.pluginTimer);
     const failures: unknown[] = [];
     const step = async (what: string, run: () => unknown) => {
       try { await run(); } catch (error) { failures.push(error); this.log(`stop: ${what}: ${String((error as Error)?.message ?? error)}`); }
