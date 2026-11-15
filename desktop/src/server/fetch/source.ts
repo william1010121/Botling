@@ -22,9 +22,10 @@ import { PEER_CONTENT_FRAME } from "../content/peer-content";
 import { sameSig, statSig, type StatSig } from "../content/pin";
 import { ownTableStream, putRow, readRowBody } from "../replica/tables";
 import type { Db } from "../store";
+import { DailyLimit } from "./daily-limit";
 import { classify, isDeniedPath, Limits, type BotId, type FetchWhat } from "./policy";
 import {
-  DAILY_FLUSH_INTERVAL, DAY_MS, execFileAsync, FETCH_HIGH_WATER, GIT_SAFE_ARGS, GIT_STRIPPED_ENV_KEYS, GIT_TIMEOUT_MS,
+  DAILY_FLUSH_INTERVAL, execFileAsync, FETCH_HIGH_WATER, GIT_SAFE_ARGS, GIT_STRIPPED_ENV_KEYS, GIT_TIMEOUT_MS,
   hashRegularFile, isSubpathOrEqual, isSymlink, newServe, objectStoreIsClosed, ONCE_GRANT_TTL_MS, parseStatSig, realpath,
   safeRealpath, sha256Hex, sleep,
   type ActiveServe, type FetchAskHook, type FetchAskRequest, type FetchSink, type FetchSourceOptions, type FileEntry,
@@ -41,9 +42,7 @@ export class FetchSource {
   private readonly dailyLimitBytes: number;
   private readonly active = new Map<FetchSink, Set<ActiveServe>>();
   private readonly inflight = new Map<string, InflightEntry>();
-  private readonly dailyBytes = new Map<number, Map<string, number>>();
-  private readonly pendingDaily = new Map<number, Map<string, number>>();
-  private dailyFlushQueue: Promise<void> = Promise.resolve();
+  private readonly daily: DailyLimit;
   private closed = false;
 
   constructor(private readonly options: FetchSourceOptions) {
@@ -51,6 +50,7 @@ export class FetchSource {
     this.log = options.log ?? (() => undefined);
     this.now = options.now ?? Date.now;
     this.dailyLimitBytes = options.dailyLimitBytes ?? Limits.PER_DAY_BYTES_PER_BOT;
+    this.daily = new DailyLimit({ store: options.store, reader: options.reader, log: this.log });
   }
 
   onMessage(session: FetchSink, message: WireMessage): boolean {
@@ -117,78 +117,7 @@ export class FetchSource {
   /** Resolves once every active fetch stopped and pending daily byte increments committed to `server.db`. */
   async flushed(): Promise<void> {
     await Promise.allSettled([...this.inflight.values()].map((entry) => entry.done));
-    await this.flushDailyBytes();
-  }
-
-  private loadDay(day: number): Map<string, number> {
-    let map = this.dailyBytes.get(day);
-    if (map) return map;
-    map = new Map();
-    try {
-      const row = this.options.reader().prepare("SELECT value FROM meta WHERE key = ?").get(`fetchDailyBytes:${day}`) as
-        | { value?: string }
-        | undefined;
-      if (row?.value) {
-        const parsed = JSON.parse(String(row.value)) as Record<string, unknown>;
-        if (parsed && typeof parsed === "object") {
-          for (const [k, v] of Object.entries(parsed)) {
-            if (typeof v === "number" && Number.isFinite(v) && v >= 0) map.set(k, v);
-          }
-        }
-      }
-    } catch { /* ignore malformed meta */ }
-    this.dailyBytes.set(day, map);
-    return map;
-  }
-
-  private getDailyBytes(key: string, at: number): number {
-    const day = Math.floor(at / DAY_MS);
-    return this.loadDay(day).get(key) ?? 0;
-  }
-
-  private addDailyBytes(key: string, at: number, delta: number): void {
-    const day = Math.floor(at / DAY_MS);
-    const dayMap = this.loadDay(day);
-    dayMap.set(key, (dayMap.get(key) ?? 0) + delta);
-    let pending = this.pendingDaily.get(day);
-    if (!pending) { pending = new Map(); this.pendingDaily.set(day, pending); }
-    pending.set(key, (pending.get(key) ?? 0) + delta);
-  }
-
-  private flushDailyBytes(): Promise<void> {
-    const snapshot = new Map<number, Map<string, number>>();
-    for (const [day, map] of this.pendingDaily) {
-      if (map.size > 0) snapshot.set(day, new Map(map));
-    }
-    this.pendingDaily.clear();
-    if (snapshot.size === 0) return this.dailyFlushQueue;
-    this.dailyFlushQueue = this.dailyFlushQueue.then(async () => {
-      await this.options.store.submit((tx) => {
-        for (const [day, deltas] of snapshot) {
-          const metaKey = `fetchDailyBytes:${day}`;
-          const existing = tx.prepare("SELECT value FROM meta WHERE key = ?").get(metaKey) as { value?: string } | undefined;
-          const counts: Record<string, number> = {};
-          if (existing?.value) {
-            try {
-              const parsed = JSON.parse(String(existing.value)) as Record<string, unknown>;
-              if (parsed && typeof parsed === "object") {
-                for (const [k, v] of Object.entries(parsed)) {
-                  if (typeof v === "number" && Number.isFinite(v) && v >= 0) counts[k] = v;
-                }
-              }
-            } catch { /* overwrite corrupt value */ }
-          }
-          for (const [k, delta] of deltas) {
-            counts[k] = (counts[k] ?? 0) + delta;
-          }
-          tx.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
-            .run(metaKey, JSON.stringify(counts));
-        }
-      });
-    }).catch((error) => {
-      this.log(`fetch: persisting daily byte counts failed: ${String((error as Error)?.message ?? error)}`);
-    });
-    return this.dailyFlushQueue;
+    await this.daily.flush();
   }
 
   private deny(session: FetchSink, fetchId: string, reason: FetchDenyReason, detail?: string): void {
@@ -245,7 +174,7 @@ export class FetchSource {
     };
     const terminalDeny = async (reason: FetchDenyReason, detail?: string) => {
       cleanupBundle();
-      await this.flushDailyBytes();
+      await this.daily.flush();
       if (task.cancelled || session.state !== "open") return;
       await revokeOnce();
       if (!task.cancelled) this.deny(session, message.fetchId, reason, detail);
@@ -539,14 +468,14 @@ export class FetchSource {
             await sleep(2);
           }
           if (task.cancelled || session.state !== "open") {
-            await this.flushDailyBytes();
+            await this.daily.flush();
             return;
           }
 
           const check = this.checkBeforeChunk(session, task, message.requester, requesterServer, grantId!, grantPrefix!, file.absPath, isBlob, gitTarget);
           if (!check.ok) {
             if (check.reason) await terminalDeny(check.reason, check.detail);
-            else await this.flushDailyBytes();
+            else await this.daily.flush();
             return;
           }
 
@@ -563,7 +492,7 @@ export class FetchSource {
 
           if (bytesSent + read.bytes.length > effectiveMaxBytes) { await terminalDeny("limit"); return; }
           const nowAt = this.now();
-          if (this.getDailyBytes(botDailyKey, nowAt) + read.bytes.length > this.dailyLimitBytes) {
+          if (this.daily.get(botDailyKey, nowAt) + read.bytes.length > this.dailyLimitBytes) {
             await terminalDeny("limit");
             return;
           }
@@ -580,15 +509,15 @@ export class FetchSource {
           if (!sent) {
             // L5: while session is open, an unsent chunk is a terminal error rather than a silent hang.
             if (!task.cancelled && session.state === "open") await terminalDeny("gone");
-            else await this.flushDailyBytes();
+            else await this.daily.flush();
             return;
           }
 
           bytesSent += read.bytes.length;
-          this.addDailyBytes(botDailyKey, nowAt, read.bytes.length);
+          this.daily.add(botDailyKey, nowAt, read.bytes.length);
           if (++sentSinceFlush >= DAILY_FLUSH_INTERVAL) {
             sentSinceFlush = 0;
-            void this.flushDailyBytes();
+            void this.daily.flush();
           }
 
           await this.options.onChunk?.(message.fetchId, index);
@@ -597,7 +526,7 @@ export class FetchSource {
         }
       }
 
-      await this.flushDailyBytes();
+      await this.daily.flush();
       if (task.cancelled || session.state !== "open") return;
       if (grantKind! === "once") {
         onceGrantToRevoke = null;
