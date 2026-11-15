@@ -37,7 +37,7 @@ describe("the built-in plugins as shipped", () => {
   it("are ccb-latex, botling.board, botling.cards, botling.catchup, botling.chat-extras, botling.component-studio, botling.design, botling.dev, botling.git, botling.note, botling.report, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
     expect(readdirSync(built).sort()).toEqual(["botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.component-studio", "botling.design", "botling.dev", "botling.git", "botling.note", "botling.report", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     for (const name of readdirSync(built)) {
-      expect(checkPlugin(join(built, name)), name).toEqual([]);
+      expect(checkPlugin(join(built, name), "builtIn"), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);
     }
     expect(existsSync(join(built, "ccb-latex", "dist", "web.js"))).toBe(true);
@@ -283,7 +283,7 @@ describe("botling.note (built in since 2.7.0: the Note tab every download has)",
     expect(plugins.webPart("botling.note")!.source).toContain("activate");
     // What `Botling --check-plugin <folder>` prints for it (check-report.ts, the same code).
     // engines ^2.6.0 and nothing newer than 2.0 in its manifest: passes, with the API each contribution needs.
-    expect(checkReport(join(built, "botling.note"))).toEqual({ code: 0, stdout: `✓ ${join(built, "botling.note")} passes the checks.\nPlugin API each contribution needs (this Botling: 2.7):\n  · view botling.note.tab (mainTab): API 2.0\n  · agent part: API 2.0\n`, stderr: "" });
+    expect(checkReport(join(built, "botling.note"), "builtIn")).toEqual({ code: 0, stdout: `✓ ${join(built, "botling.note")} passes the checks.\nPlugin API each contribution needs (this Botling: 2.7):\n  · view botling.note.tab (mainTab): API 2.0\n  · agent part: API 2.0\n`, stderr: "" });
     // Only what runs ships: the bundles, the manifest and the skill (src/, test/, build.json stay behind; no copy of note-cells.ts or a sync script).
     const files = (folder: string, base = folder): string[] => readdirSync(folder, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? files(join(folder, entry.name), base) : [join(folder, entry.name).slice(base.length + 1)]));
     expect(files(join(built, "botling.note")).sort()).toEqual(["dist/host.js", "dist/web.js", "package.json", "skills/note/SKILL.md"]);
