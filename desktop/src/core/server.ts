@@ -2355,8 +2355,8 @@ First write a test that shows this, then fix it.`;
       results: (botId, limit) => this.resultLinks(this.workspaceBot(botId).bot, limit),
       waiting: () => this.workspaceWaiting(),
       ignoreWaiting: (botId, text) => {
-        // A bot of this machine first ("main" is the local main bot whatever a peer's rows say), then a peer's (M5-04d).
-        const peer = this.pluginBot(botId) ? null : this.peerBotFor(botId);
+        // A bot of this machine first ("main" is the local main bot whatever a peer's rows say: `peerBotFor`), then a peer's (M5-04d).
+        const peer = this.peerBotFor(botId);
         this.ignoreWaiting(peer ? peer.id : this.workspaceBot(botId).bot.id, text);
       },
       pendingApprovals: (botId) => this.workspaceBot(botId).bot.pendingApprovals(),

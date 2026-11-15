@@ -205,6 +205,19 @@ describe("M5-04d 2/3/6: <new-bot machine> makes a bot on a peer", () => {
   });
 });
 
+describe("M5-04d 2 (no way to send): machines without remoteCommand", () => {
+  it("a machine that is listed but cannot be reached (no remoteCommand) is unknown: nothing is sent, nothing is made", async () => {
+    const dir = tempDir("peer-acts-nosend-tag");
+    const core = new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true, routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0, log: () => undefined, machines: () => [{ id: SERVER_B, name: "build-box" }] });
+    cores.push(core);
+    const notes: string[] = [];
+    vi.spyOn(core.mainBot()!, "queueNote").mockImplementation((note: string) => { notes.push(note); });
+    (core as unknown as { projectRequests(bot: unknown, requests: unknown[]): unknown[] }).projectRequests(core.mainBot(), parseReply('<new-bot name="x" machine="build-box">job</new-bot>').requests);
+    await until(() => notes.length === 1);
+    expect(notes[0]).toBe('(App: There is no machine named "build-box"; the bot was not made.)');
+  });
+});
+
 describe("M5-04d 4: <new-project machine> is answered in the chat, never sent", () => {
   it("a peer machine: the exact notice in the main chat, no project, no command", async () => {
     const h = fixture();
@@ -300,6 +313,10 @@ describe("M5-04d 5: ignoring a waiting item of a peer's bot", () => {
     workspace(h.core).ignoreWaiting("main", "local item");
     expect(h.sent).toEqual([]);
     expect(settingsText(h.dir)).toContain(`${h.core.mainBotId}-local item`);
+    // The command path takes the id as it comes: "main" is still the local main bot, never a peer's row.
+    h.core.ignoreWaiting("main", "command item");
+    expect(h.sent).toEqual([]);
+    expect(settingsText(h.dir)).toContain("command item");
   });
 
   it("a local bot, or an id no machine has, is set aside here as before", () => {
@@ -365,7 +382,7 @@ describe("M5-04d (U3 and the refused-after-commit notice from M5-04c)", () => {
     expect(h.notes).toEqual([]);
   });
 
-  it("an inbox over the limit tells the main bot once, not on every turn; the file keeps its text", () => {
+  it("an inbox over the limit tells the main bot once, not on every turn; the file keeps its text", async () => {
     const h = fixture();
     h.core.projectBriefing();
     const big = "x".repeat(100_001);
@@ -382,6 +399,12 @@ describe("M5-04d (U3 and the refused-after-commit notice from M5-04c)", () => {
     h.core.deliverInboxes();
     expect(h.sent).toHaveLength(1);
     h.sent[0]!.settle({ ok: true });
+    // A later over-limit text is told again (the flag was cleared when a send went out).
+    await until(() => readFileSync(h.inbox(PEER_BUILD), "utf8").trim() === "");
+    writeFileSync(h.inbox(PEER_BUILD), big);
+    h.core.deliverInboxes();
+    expect(h.sent).toHaveLength(1);
+    expect(h.notes).toHaveLength(2);
   });
 
   it("the wire size counts, not only characters: CJK under the character limit but over the frame is kept and told once; the largest that fits goes", () => {
