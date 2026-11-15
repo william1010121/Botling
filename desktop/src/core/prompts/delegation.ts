@@ -58,7 +58,7 @@ export const WORKER_NOTIFY_RULE = "While you work, the app_notify_owner tool sen
  * found with desktop/scripts/where.mjs before grepping. Research 2026-11-16: about half of a worker's tool calls only find
  * or read, at 1.04 calls per turn, and each turn re-reads the whole context. Workers only; the coordinator text is frozen.
  */
-export const WORKER_LOOKUP_RULE = "Send independent lookups (searches, file reads, symbol lookups) together in one turn; go one at a time only when a lookup needs the result of the one before. To find where a symbol is defined or used, run `node desktop/scripts/where.mjs <name>` first.";
+export const WORKER_LOOKUP_RULE = "Send independent lookups (searches, file reads, symbol lookups) together in one turn; go one at a time only when a lookup needs the result of the one before. In a checkout that has `desktop/scripts/where.mjs` (Botling's own source), run `node desktop/scripts/where.mjs <name>` from the checkout root first to find where a symbol is defined or used.";
 
 /**
  * What every engine's worker ends its final report with (M7-F03): the files it touched, why, and where to start reading.

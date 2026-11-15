@@ -138,7 +138,8 @@ describe("prompts: the Swift app's strings", () => {
       expect(count(text, WORKER_LOOKUP_RULE), engine).toBe(1);
     }
     expect(WORKER_LOOKUP_RULE).toContain("Send independent lookups (searches, file reads, symbol lookups) together in one turn; go one at a time only when a lookup needs the result of the one before.");
-    expect(WORKER_LOOKUP_RULE).toContain("run `node desktop/scripts/where.mjs <name>` first.");
+    // conditional: other users' project folders have no where.mjs, so a worker there must not run it blind
+    expect(WORKER_LOOKUP_RULE).toContain("In a checkout that has `desktop/scripts/where.mjs` (Botling's own source), run `node desktop/scripts/where.mjs <name>` from the checkout root first to find where a symbol is defined or used.");
     // workers only: no coordinator text gets it
     for (const engine of ["claude", "codex", "agy"] as const) {
       const prompts = botPrompts({ profile, engine, heads: null, language: "en" });
