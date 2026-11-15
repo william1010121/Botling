@@ -227,6 +227,9 @@ describe.skipIf(!HAVE)("media jobs (ffmpeg found)", () => {
     expect((await loader.arrayBuffer()).byteLength).toBe(0);
     expect(mediaLoaderRefusal(await fetchVariant(lo, seq, "preview", "bytes=5000-"), { range: "bytes=5000-" }).status).toBe(410);
     expect(mediaLoaderRefusal(await fetchVariant(hi, seq, "preview", "bytes=0-9"), { "x-playback-session-id": "S", range: "bytes=0-9" }).status).toBe(206);
+    // The loader's opening probe keeps the real status: WebKit then fires the element's error at once, with no storm.
+    const opening = mediaLoaderRefusal(await fetchVariant(lo, seq, "preview", "bytes=0-1"), { "x-playback-session-id": "S", range: "bytes=0-1" });
+    expect(opening.status).toBe(410);
     expect((await fetchVariant(hi, seq, "preview", undefined, "x".repeat(43))).status).toBe(403); // unknown ticket
     // A ticket for lo does not open hi's preview (binding), and an entry that does not reference hi is refused.
     const loTicket = tickets.issue({ deviceId: DEVICE, owner: content.serverId, id: lo, entry: { stream: STREAM, seq } }).ticket;

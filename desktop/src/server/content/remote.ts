@@ -123,9 +123,19 @@ export class RemoteContent {
  * element then waits, and the page's stall watch asks the server once (`content.ticket`) and hides it. So a refusal of
  * such a request keeps its reason (`X-Botling-Content`, and the status in `X-Botling-Status`) but is sent as an empty
  * 200 with no `Content-Range` (never bytes). Everyone else, Chromium's loader included, gets the status itself.
+ *
+ * Except the loader's opening probe (`Range: bytes=0-1`, the first request of every new source): refused there, WebKit
+ * makes exactly one request and fires the element's `error` (MEDIA_ERR_SRC_NOT_SUPPORTED) within ~40 ms, with no storm
+ * (M3 step 14, headless WebKit: 1 request for 410/502/503, against ~5,500 in 4 s for the same refusal after 300 KB had
+ * played). So the probe keeps its real status: a file that is refused from the start (a peer's corrupt chunk, an owner
+ * offline, a ticket gone) errors at once on WebKit as on Chromium, instead of stalling until the page's 5 s watchdog.
  */
+/** WebKit's media loader opens every source with this range (a 2-byte probe), before any byte has played. */
+const OPENING_PROBE = "bytes=0-1";
+
 export function mediaLoaderRefusal(answer: Response, headers: { [name: string]: string | string[] | undefined }): Response {
   if (answer.status < 400 || !headers["x-playback-session-id"] || !headers.range) return answer;
+  if (headers.range === OPENING_PROBE) return answer;
   const out = new Headers({ "Content-Type": "text/plain; charset=utf-8", "Content-Length": "0", "Cache-Control": "no-store", "X-Botling-Status": String(answer.status) });
   const why = answer.headers.get("X-Botling-Content");
   if (why) out.set("X-Botling-Content", why);
