@@ -77,8 +77,6 @@ export class Core {
   readonly doctor: DoctorModel;
   agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
-  /** The next event number: the one transition that moves `seq` (the collaborators ask for it, they do not set it). */
-  nextSeq() { return ++this.coreEvents.seq; }
   activated = false;
   readonly ledger: ProcessLedger;
   /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
@@ -133,6 +131,7 @@ export class Core {
   private madeEvents?: CoreEvents;
   private get coreEvents(): CoreEvents { return (this.madeEvents ??= new CoreEvents(this)); }
   get seq() { return this.coreEvents.seq; }
+  nextSeq(...a: Parameters<CoreEvents["nextSeq"]>) { return this.coreEvents.nextSeq(...a); }
   private get inflight() { return this.coreEvents.inflight; }
   get mobileDesk() { return this.coreEvents.mobileDesk; }
   get relay() { return this.coreEvents.relay; }

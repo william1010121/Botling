@@ -1,7 +1,7 @@
 // M7-S66 review (serverwave 5e78e3d2): `Core.event` (moved to `CoreEvents`, core/server/events.ts) sends the envelope with the next
 // event number, then plugins hear the event, then the change listeners, in that order; a `turn.started` reaches `reportStarts`.
-// The event number lives in `CoreEvents.seq`: `Core.seq` reads it, `Core.nextSeq()` (M7-S69) and `event` move the same counter,
-// and each Core has its own. The phone and machines views go through the same owner. No other test in the repo catches these.
+// The event number lives in `CoreEvents.seq` and only `CoreEvents.nextSeq()` moves it: `event` asks it, `Core.nextSeq()` (M7-S69)
+// forwards to it, `Core.seq` reads the field, and each Core has its own. The phone and machines views go through the same owner. No other test in the repo catches these.
 // Made from the review probe .bot/artifacts/v3-split/probe-s66-event.test.ts; Core has no `seq` setter any more (M7-S70b).
 import { afterEach, describe, expect, it } from "vitest";
 import { join } from "node:path";
@@ -46,7 +46,7 @@ describe("Core.event", () => {
     expect([...core.reportStarts]).toEqual(["T9"]);
   });
 
-  it("the seq is CoreEvents' field: Core.seq reads it, nextSeq and event move the same counter, and a second Core has its own", () => {
+  it("the seq is CoreEvents' field, moved only by CoreEvents.nextSeq (event and Core.nextSeq ask it); a second Core has its own", () => {
     const out: any[] = [];
     const a = open([], out) as any, b = open([], []) as any;
     const other = b.seq;
@@ -58,8 +58,14 @@ describe("Core.event", () => {
     expect(out.map((m) => m.seq)).toEqual([43]);
     expect([a.seq, a.coreEvents.seq]).toEqual([43, 43]);
     expect(b.seq).toBe(other);
-    expect(() => { a.seq = 7; }).toThrow(TypeError); // no setter on Core: only the owner and its transitions move it
-    expect(a.seq).toBe(43);
+    // The one place that moves it: `event` and `Core.nextSeq` both ask CoreEvents.nextSeq, once each.
+    const events = a.coreEvents; const real = events.nextSeq.bind(events); let asked = 0;
+    events.nextSeq = () => { asked += 1; return real(); };
+    a.event({ type: "turn.started", botId: "B1", turnId: "T2" });
+    expect(a.nextSeq()).toBe(45);
+    expect([asked, a.seq, out[out.length - 1].seq]).toEqual([2, 45, 44]);
+    expect(() => { a.seq = 7; }).toThrow(TypeError); // no setter on Core: only the owner and its transition move it
+    expect(a.seq).toBe(45);
   });
 
   it("mobileView/machinesView/attachMobile/attachRelay go through the owner", () => {
