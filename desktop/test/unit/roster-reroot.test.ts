@@ -2,7 +2,8 @@
 // Uses real WebCrypto keys and real server.db stores in temp folders (no windows, loopback-only / in-memory).
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { format } from "node:util";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { memberIdFromKey, toBase64Url, toHex, type SignedStatement, type WireMessage } from "../../src/protocol";
 import {
   bindServerIdentity,
@@ -12,6 +13,7 @@ import {
   normalizeRecoveryCode,
   RECOVERY_INFO,
   RECOVERY_SALT,
+  recoveryKeyFromCode,
 } from "../../src/server/identity";
 import { Gossip, PrefsStore, readAudits, RosterError, RosterStore, type GossipSession, type RosterChange } from "../../src/server/roster";
 import { openServerStore, type ServerStore } from "../../src/server/store";
@@ -273,10 +275,17 @@ describe("M4-08: reroot from the recovery code", () => {
     }
   });
 
-  it("6. byte scan of the data folder after reroot finds neither the code (in 5 spellings) nor the private key", async () => {
+  it("6. byte scan of the data folder after reroot finds neither the code (in 6 spellings) nor the private key", async () => {
     const { s2, code } = await clusterWithThreeServers();
     const raw = normalizeRecoveryCode(code)!;
     const seed = await rawSeedFromCode(code);
+    const consoleLines: string[] = [];
+    const consoleMethods = ["log", "info", "warn", "error", "debug"] as const;
+    const consoleSpies = consoleMethods.map((method) =>
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        consoleLines.push(format(...args));
+      }),
+    );
     try {
       await s2.roster.reroot({ code, oldRootLost: true, keep: [] });
       const spellings = [
@@ -287,10 +296,14 @@ describe("M4-08: reroot from the recovery code", () => {
         raw.toLowerCase().match(/.{1,4}/g)!.join("-"), // 5. lowercase dashes
         raw.toLowerCase().match(/.{1,4}/g)!.join(" "), // 6. lowercase spaces
       ];
+      const seedStrings = [
+        toHex(seed),
+        toBase64Url(seed),
+        Buffer.from(seed).toString("base64"), // standard base64 (+/=)
+      ];
       const keyPatterns: Buffer[] = [
         Buffer.from(seed),
-        Buffer.from(toHex(seed), "utf8"),
-        Buffer.from(toBase64Url(seed), "utf8"),
+        ...seedStrings.map((s) => Buffer.from(s, "utf8")),
         ...spellings.map((s) => Buffer.from(s, "utf8")),
       ];
 
@@ -309,10 +322,11 @@ describe("M4-08: reroot from the recovery code", () => {
       open.splice(open.indexOf(s2.store), 1);
       scan();
 
-      // Nothing sensitive in logs either.
-      const logText = s2.logs.join("\n");
-      for (const s of spellings) expect(logText).not.toContain(s);
+      // Nothing sensitive in logs or console.* either.
+      const logText = `${s2.logs.join("\n")}\n${consoleLines.join("\n")}`;
+      for (const s of [...spellings, ...seedStrings]) expect(logText).not.toContain(s);
     } finally {
+      for (const spy of consoleSpies) spy.mockRestore();
       seed.fill(0);
     }
   });
@@ -389,5 +403,72 @@ describe("M4-08: reroot from the recovery code", () => {
     await expect(s2.roster.reroot({ code, oldRootLost: false, keep: [devRevoke.revokeId] })).rejects.toMatchObject({ reason: "bad-keep" });
 
     expect(s2.roster.statements().map((item) => item.id)).toEqual(beforeS2);
+  });
+
+  it("refuses keep entries already dropped by an earlier reroot (D63, s1/s2/s3 scenario)", async () => {
+    const { s1, s2, s3, code } = await clusterWithThreeServers();
+    const revS3 = await s1.roster.revokeServer(s3.identity.memberId, false, "old-revoke");
+    await s2.roster.merge(s1.roster.statements().map((item) => item.statement));
+
+    // s2 reroots with keep: [], dropping revS3 so s3 becomes valid again.
+    const r2 = await s2.roster.reroot({ code, oldRootLost: false, keep: [] });
+    const root2 = s2.roster.statements().find((item) => item.id === r2.rootId)!.statement;
+    await s1.roster.merge([root2]);
+    expect(s1.roster.isValid(s3.identity.memberId)).toBe(true);
+    expect(s1.roster.keepCandidates().some((c) => c.revokeId === revS3.revokeId)).toBe(false);
+
+    // s1 cannot revive the dropped revocation in a later reroot.
+    const beforeS1 = s1.roster.statements().map((item) => item.id);
+    await expect(s1.roster.reroot({ code, oldRootLost: false, keep: [revS3.revokeId] })).rejects.toMatchObject({ reason: "bad-keep" });
+    expect(s1.roster.statements().map((item) => item.id)).toEqual(beforeS1);
+    expect(s1.roster.view.root?.gen).toBe(2);
+    expect(s1.roster.isValid(s3.identity.memberId)).toBe(true);
+  });
+
+  it("refuses a revocation against this server itself in keep (§4.8)", async () => {
+    const { s1, s2, code } = await clusterWithThreeServers();
+    const revS2 = await s1.roster.revokeServer(s2.identity.memberId, false, "self-revoke");
+    await s2.roster.merge(s1.roster.statements().map((item) => item.statement));
+    expect(s2.roster.keepCandidates().some((c) => c.revokeId === revS2.revokeId)).toBe(false);
+
+    const beforeS2 = s2.roster.statements().map((item) => item.id);
+    await expect(s2.roster.reroot({ code, oldRootLost: false, keep: [revS2.revokeId] })).rejects.toMatchObject({ reason: "bad-keep" });
+    expect(s2.roster.statements().map((item) => item.id)).toEqual(beforeS2);
+    expect(s2.roster.view.root?.gen).toBe(1);
+  });
+
+  it("recoveryKeyFromCode zeroes the HKDF input buffer and derives publicKey without exporting private JWK", async () => {
+    const code = newRecoveryCode();
+    const hkdfInputs: Uint8Array[] = [];
+    const origImportKey = globalThis.crypto.subtle.importKey;
+    const importSpy = vi.spyOn(globalThis.crypto.subtle, "importKey").mockImplementation(async function (
+      this: SubtleCrypto,
+      ...args: Parameters<SubtleCrypto["importKey"]>
+    ) {
+      if (args[0] === "raw" && args[2] === "HKDF" && ArrayBuffer.isView(args[1])) {
+        hkdfInputs.push(new Uint8Array(args[1].buffer, args[1].byteOffset, args[1].byteLength));
+      }
+      return origImportKey.apply(this, args);
+    });
+    const exportSpy = vi.spyOn(globalThis.crypto.subtle, "exportKey");
+    try {
+      const key = await recoveryKeyFromCode(code);
+      expect(exportSpy).not.toHaveBeenCalled();
+      expect(hkdfInputs).toHaveLength(1);
+      expect(hkdfInputs[0].every((b) => b === 0)).toBe(true);
+      expect(key.publicKey).toHaveLength(32);
+      expect(key.recoveryPub).toBe(toBase64Url(key.publicKey));
+
+      // Derived key pair signs and verifies cleanly, and privateKey remains non-extractable.
+      const payload = new TextEncoder().encode("reroot-verify");
+      const sig = new Uint8Array(await globalThis.crypto.subtle.sign({ name: "Ed25519" }, key.privateKey, payload));
+      const verifyKey = await origImportKey.call(globalThis.crypto.subtle, "raw", key.publicKey as Uint8Array<ArrayBuffer>, { name: "Ed25519" }, false, ["verify"]);
+      expect(await globalThis.crypto.subtle.verify({ name: "Ed25519" }, verifyKey, sig, payload)).toBe(true);
+
+      await expect(globalThis.crypto.subtle.exportKey("pkcs8", key.privateKey)).rejects.toThrow();
+    } finally {
+      importSpy.mockRestore();
+      exportSpy.mockRestore();
+    }
   });
 });
