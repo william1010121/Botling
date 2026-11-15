@@ -13,26 +13,33 @@
 //
 // The contribution reads the page through a ref the frame keeps current, so it is registered once, not on every render of App;
 // it is registered while the frame renders (the first draw already holds it) and taken back when the frame unmounts.
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ROOT_SLOTS } from "../../../../Web/src/plugin-kernel";
 import type { PluginsView } from "../../contract";
 import { rendererKernel, SHELL_SURFACE } from "../renderer-kernel";
 import { inPageHost } from "./inpage-host";
-import { reconcileView } from "./plugin-feed";
+import type { Client } from "../client";
+import { reconcileView, type FeedWeb } from "./plugin-feed";
 import { KernelSlot, type SlotEntry, type SlotFrames } from "./KernelSlot";
+import { ShellRegionsProvider, useShellRegions, type RegionEntry, type ShellRegions } from "./regions";
 
 /** The slot the legacy surface is contributed to. */
 export const LEGACY_SLOT = "app/main";
 
 /** Contributes `entry` to the shell's slot `slot` as `:shell`; returns what takes it back (null: the shell is not up, nothing was added). */
-export function contributeToShell(slot: string, entry: SlotEntry): (() => void) | null {
+export function contributeToShell(slot: string, entry: SlotEntry | RegionEntry): (() => void) | null {
   const registration = rendererKernel.contribute(SHELL_SURFACE, slot, entry);
   return registration ? () => { void registration.dispose(); } : null;
 }
 
 let framesMade = 0;
 
-export function ShellFrame({ legacy, frames: services, plugins = null }: { /** The whole page as App draws it today. */ legacy: ReactNode; frames?: SlotFrames; /** The plugin list App has now (null: none yet). */ plugins?: PluginsView | null }) {
+/** How long the first `plugins.web` answer is waited for: after it the feed goes on without the web versions (null) until one comes. */
+export const FIRST_WEB_WAIT_MS = 2000;
+
+export function ShellFrame({ legacy, regions, frames: services, plugins = null, client }: { /** The whole page as App draws it today. */ legacy: ReactNode;
+  /** What the page draws in the right panel (`side`) and the bottom panels (`bottom`): drawn where `legacy` has a `<RegionSlot>` (regions.tsx, M7-03c). */ regions?: ShellRegions; frames?: SlotFrames; /** The plugin list App has now (null: none yet). */ plugins?: PluginsView | null;
+  /** Asked for `plugins.web` whenever the list changes: the web parts' versions are part of the feed's fingerprints (M7-02c F3). */ client?: Pick<Client, "request"> }) {
   // A name for this frame's entries (not useId: that would move the ids every other component of the page gets).
   const named = useRef("");
   const scope = (named.current ||= `shell-${++framesMade}`);
@@ -47,11 +54,31 @@ export function ShellFrame({ legacy, frames: services, plugins = null }: { /** T
     take.current ??= contributeToShell(LEGACY_SLOT, { kind: "component", scope, render: () => page.current });
     return () => { take.current?.(); take.current = null; };
   }, [scope]);
-  useEffect(() => { reconcileView(plugins); }, [plugins]);
+  // The `plugins.web` answer (undefined: not answered yet; null: it failed). With a client the feed waits for the first answer (at most
+  // FIRST_WEB_WAIT_MS), so the web parts' versions do not reload (and reorder) the plugins that have one right after the first load.
+  const [web, setWeb] = useState<FeedWeb>(client ? undefined : null);
+  useEffect(() => {
+    if (!client) return;
+    let live = true;
+    const answer = (next: FeedWeb) => { if (live) setWeb((held) => (JSON.stringify(held) === JSON.stringify(next) ? held : next)); };
+    void (async () => {
+      try { answer({ specs: (await client.request({ type: "plugins.web" })).specs.map(({ name, version }) => ({ name, version })) }); } catch { answer(null); }
+    })();
+    return () => { live = false; };
+  }, [client, plugins]);
+  // A request that never settles must not keep the feed empty (the plugins' own Settings pages are read from it).
+  useEffect(() => {
+    if (!client) return;
+    const late = setTimeout(() => setWeb((held) => (held === undefined ? null : held)), FIRST_WEB_WAIT_MS);
+    return () => clearTimeout(late);
+  }, [client]);
+  useEffect(() => { if (web !== undefined) reconcileView(plugins, web); }, [plugins, web]);
   useEffect(() => () => { reconcileView(null); }, []);
   // The in-page built-in plugins (botling.settings, …) the build shipped are loaded while the frame is up (M7-02c).
   useEffect(() => inPageHost.acquire(), []);
+  // The regions of the page that are slots too (the bottom panels' claim on `app/bottom`; the right panel is botling.bot-panel's on `app/side`).
+  const placed = useShellRegions(scope, regions, !take.current, contributeToShell);
   // The kernel did not take the page (the shell instance is not up): the page is drawn directly rather than not at all.
-  if (!take.current) return <>{legacy}</>;
-  return <>{ROOT_SLOTS.map((slot) => <KernelSlot key={slot} slot={slot} scope={scope} {...(services ? { frames: services } : {})} />)}</>;
+  if (!take.current) return <ShellRegionsProvider value={placed}>{legacy}</ShellRegionsProvider>;
+  return <ShellRegionsProvider value={placed}>{ROOT_SLOTS.map((slot) => <KernelSlot key={slot} slot={slot} scope={scope} {...(services ? { frames: services } : {})} />)}</ShellRegionsProvider>;
 }

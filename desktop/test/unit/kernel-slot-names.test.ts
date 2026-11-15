@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { Kernel, ROOT_SLOTS, SLOT_ALIASES, canonicalSlot, legacySlotId, slotForms, slotName } from "../../../Web/src/plugin-kernel";
 import { CORE_PLUGIN, CORE_SLOTS, ContributionKernel, slotNameOf, slotOf } from "../../src/core/plugins/kernel-list";
-import { HOOKS, MENU_SLOTS, STATUS_SLOTS, VIEW_SLOTS, type Contribution } from "../../src/core/plugins/contributions";
+import { HOOKS, MENU_SLOTS, STATUS_SLOTS, TILE_SURFACES, VIEW_SLOTS, type Contribution } from "../../src/core/plugins/contributions";
 
 const everyTwoX = [
   ...VIEW_SLOTS.map((where) => ({ group: "view", where })),
@@ -13,12 +13,14 @@ const everyTwoX = [
 ];
 
 describe("the alias table", () => {
-  it("names every 2.x view place, menu and status place exactly once, and nothing else", () => {
+  it("names every 2.x view place, menu and status place exactly once, and nothing else but the tile surfaces", () => {
     for (const { group, where } of everyTwoX) {
       const rows = SLOT_ALIASES.filter((alias) => alias.group === group && alias.legacy === where);
       expect(rows, `${group}/${where}`).toHaveLength(1);
     }
-    expect(SLOT_ALIASES).toHaveLength(everyTwoX.length);
+    // M7-03b: one row per tile surface (`tile/board` = `panel/tile/board`, …): slots of the bot-panel plugin, not the core's.
+    for (const surface of TILE_SURFACES) expect(SLOT_ALIASES.filter((alias) => alias.group === "tile" && alias.legacy === surface), surface).toHaveLength(1);
+    expect(SLOT_ALIASES).toHaveLength(everyTwoX.length + TILE_SURFACES.length);
   });
 
   it("gives each slot one new name, no two slots the same name, and `commandPalette` is `app/palette`", () => {
@@ -36,7 +38,9 @@ describe("the alias table", () => {
   it("goes from the 2.x id to the new name and back for each slot, and every 2.x id is a slot the core owns", () => {
     for (const alias of SLOT_ALIASES) {
       const id = legacySlotId(alias);
-      expect(CORE_SLOTS, id).toContain(id);
+      // The tile surfaces are the bot-panel plugin's slots (M7-03b), not the core's: the contribution list keeps its one `tile` slot.
+      if (alias.group === "tile") expect(CORE_SLOTS, id).not.toContain(id);
+      else expect(CORE_SLOTS, id).toContain(id);
       expect(slotName(id)).toBe(alias.name);
       expect(canonicalSlot(alias.name)).toBe(id);
       expect(canonicalSlot(id)).toBe(id);

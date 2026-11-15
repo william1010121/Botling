@@ -237,6 +237,8 @@ export class Core {
     };
     // The plugins (their host starts later, in start()); the world they see is read when they ask (core/server/plugin-world.ts).
     this.plugins = new Plugins(this.corePluginWorld.pluginOptions());
+    // The page puts each tile into its surfaces' slots (bot-panel's `panel/tile/*`, M7-03b).
+    this.plugins.tilesInView = true;
     // Settings that are a built-in plugin's now (the paste limits: botling.chat-extras) move to its settings once.
     moveSettingsToPlugins(Layout.settings(options.dataDir), (plugin, key, value) => this.plugins.registry.set(plugin, key, value));
     moveShortcutsToPlugins(Layout.settings(options.dataDir));

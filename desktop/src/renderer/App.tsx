@@ -1,11 +1,12 @@
 import { BottomPanels } from "./BottomPanels";
 import { ChatHeaderViews } from "./ChatHeaderViews";
-import { useComposerBar } from "./ComposerBar";
+import { useComposerBar, useComposerBarView } from "./ComposerBar";
 // The app page: React chrome around the reused chat page, drawn inside shell/ShellFrame as the legacy surface of `app/main`.
 // The left column lists the bots (as the Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin
 // frame (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts what the user does
 // (send, a pick on an approval, Stop); this page turns that into contract commands. Only this page has the bridge to main.
 import { ShellFrame } from "./shell/ShellFrame";
+import { RegionSlot } from "./shell/regions";
 import { openReport } from "./report-opener";
 import { askChatToQuote, setComposerQuoter } from "./composer-quote";
 import { shellOverlayActive } from "./ShellOverlay";
@@ -21,7 +22,7 @@ import { browserTabActions, browserTabAddress, keybindingsOf, menuItems } from "
 import { sameHeldColors, setBotColors } from "./avatars";
 import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
-import { composerBarFor, mainTabsFor, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { mainTabsFor, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { StorageTab } from "./StorageTab";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
@@ -370,7 +371,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     runBuiltin(asked.plugin, { id: "botling.openTab", botId: asked.botId, plugin: asked.plugin, view: asked.view });
   }, [openTabSeq]);
   // A plugin's view at the right end of the row above the input box (`composerBar`), drawn in the chat page.
-  useComposerBar({ client, view: bot && !web ? composerBarFor(view.plugins, bot) : null, botId: bot?.id ?? null, onBuiltin: runBuiltin, components: view.components, bots: view.bots, ask: approval.ask });
+  useComposerBar({ client, view: useComposerBarView(view.plugins, bot && !web ? bot : null), botId: bot?.id ?? null, onBuiltin: runBuiltin, components: view.components, bots: view.bots, ask: approval.ask });
 
   // A result opens in the browser, the app's Markdown preview or with its own app; main checks it is one of this chat's links.
   const openResult = useCallback((result: ResultView) => {
@@ -466,7 +467,41 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (bot && bot.unread > 0) void client.request({ type: "chat.read", botId: bot.id }).catch(() => {});
   }, [client, bot]);
 
-  return <ShellFrame plugins={view.plugins} legacy={(
+  // The two regions of the page that are slots of the shell (shell/regions.tsx): drawn where the page places its `<RegionSlot>`.
+  const bottomRegion = web ? null : (
+    <BottomPanels client={client} panels={view.plugins?.bottomPanels ?? []} toggleHost={bottomControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)}
+      shortcutFor={(command) => (command && pluginKeys[command] ? formatCombo(pluginKeys[command]!, shellPlatform()) : "")} onBuiltin={runBuiltin} onKey={forwardKey} components={view.components} bots={view.bots} ask={approval.ask} />
+  );
+  const sideRegion = (
+    <>
+    {bot && takeover && takeoverView && (
+      <TakeoverPage key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}
+        plugins={view.plugins} onError={fail} onAsk={approval.ask} />
+    )}
+    {bot && !(takeover && takeoverView) && (
+      <TaskDetails
+        onDrawerSettings={() => setBotSettings(true)}
+        bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
+        status={{ key: status(bot), text: statusText(bot) }}
+        results={results} watching={watching} collapsed={rightFolded}
+        onSelect={selectBot}
+        onIgnore={(item) => void client.request(item.messageId ? { type: "chat.ignoreQuestion", botId: item.botId, messageId: item.messageId } : { type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
+        onOpenResult={openResult}
+        onOpenSubagent={(row) => openSubagent(bot.id, row)}
+        onUnsettle={(row) => settleSubagent(bot.id, row, false)}
+        onAgentMenu={(row, at) => openAgentMenu(bot.id, row, at)}
+        onSettings={openBotSettings}
+        showingSettings={botSettings}
+        settingsPage={botSettings ? <BotSettings client={client} bot={bot} settings={view.settings} onOpenAppSettings={() => openSettings("models")} /> : undefined}
+        pluginSections={rightPanelSectionsFor(view.plugins, bot).map((block) => <SlotFrame key={`${bot.id}/${block.plugin}/${block.id}`} client={client} plugin={block.plugin} view={block.id} title={block.title} fontSize={13} botId={bot.id} onBuiltin={runBuiltin} />)}
+        onCloseSettings={() => setBotSettings(false)}
+        onExpand={toggleRightHere}
+      />
+    )}
+    </>
+  );
+
+  return <ShellFrame plugins={view.plugins} client={client} regions={{ side: sideRegion, bottom: bottomRegion }} legacy={(
     <div className={`shell${paneOpen ? " browser-on" : ""}${browserFull ? " browser-full" : ""}${browserDocked ? " browser-mini" : ""}${browserFloat ? " browser-float" : ""}`} data-ready={view.ready ? "1" : "0"}>
       {/* A panel a plugin's program part opened (`ui.openView`). */}
       {!web && view.pluginPanel && (
@@ -660,8 +695,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           <WorkerAskBar key={shownWorker.id} owner={bot} worker={shownWorker} files={filesChanged(view.subagent.steps)} onAsk={askOwner}
             onOpenFile={(path) => { void client.request({ type: "worker.file", botId: bot.id, subagentId: shownWorker.id, path }).catch(fail); }} />
         )}
-        {!web && <BottomPanels client={client} panels={view.plugins?.bottomPanels ?? []} toggleHost={bottomControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)}
-          shortcutFor={(command) => (command && pluginKeys[command] ? formatCombo(pluginKeys[command]!, shellPlatform()) : "")} onBuiltin={runBuiltin} onKey={forwardKey} components={view.components} bots={view.bots} ask={approval.ask} />}
+        {/* The bottom panels: drawn from `app/bottom` (shell/regions.tsx), where the page hands them in (`regions.bottom`). */}
+        <RegionSlot region="bottom" />
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
@@ -674,30 +709,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             .map((action) => ({ ...action, icon: action.icon && isIconName(action.icon) ? <Icon name={action.icon} size={15} /> : undefined }))}
           onTabAction={(command, tab) => { void client.request({ type: "plugins.tabCommand", id: command, botId: bot.id, tabId: tab.id, url: browserTabAddress(tab) ?? tab.url }).catch(fail); }} />
       )}
-      {bot && takeover && takeoverView && (
-        <TakeoverPage key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}
-          plugins={view.plugins} onError={fail} onAsk={approval.ask} />
-      )}
-      {bot && !(takeover && takeoverView) && (
-        <TaskDetails
-          onDrawerSettings={() => setBotSettings(true)}
-          bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
-          status={{ key: status(bot), text: statusText(bot) }}
-          results={results} watching={watching} collapsed={rightFolded}
-          onSelect={selectBot}
-          onIgnore={(item) => void client.request(item.messageId ? { type: "chat.ignoreQuestion", botId: item.botId, messageId: item.messageId } : { type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
-          onOpenResult={openResult}
-          onOpenSubagent={(row) => openSubagent(bot.id, row)}
-          onUnsettle={(row) => settleSubagent(bot.id, row, false)}
-          onAgentMenu={(row, at) => openAgentMenu(bot.id, row, at)}
-          onSettings={openBotSettings}
-          showingSettings={botSettings}
-          settingsPage={botSettings ? <BotSettings client={client} bot={bot} settings={view.settings} onOpenAppSettings={() => openSettings("models")} /> : undefined}
-          pluginSections={rightPanelSectionsFor(view.plugins, bot).map((block) => <SlotFrame key={`${bot.id}/${block.plugin}/${block.id}`} client={client} plugin={block.plugin} view={block.id} title={block.title} fontSize={13} botId={bot.id} onBuiltin={runBuiltin} />)}
-          onCloseSettings={() => setBotSettings(false)}
-          onExpand={toggleRightHere}
-        />
-      )}
+      {/* The right panel (or a takeover in its place): the column of botling.bot-panel's `app/side` (shell/regions.tsx), handed in as `regions.side`. */}
+      <RegionSlot region="side" />
       {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)}
         onRemove={() => { setRemoving(menu.bot); setMenu(null); }}
         pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }}

@@ -50,6 +50,7 @@ import {
   type AdapterAnswer, type BotModel, type ChatSnapshot, type RendererAdapterOptions, type Snapshot,
 } from "./adapter-types";
 import { AdapterEntries } from "./adapter-entries";
+import { BundleRefusedError } from "../renderer/shell/row-loader";
 import { panelByRef, rowWeb, specsByRef } from "./web-by-ref";
 import { peerActionRefusal } from "./peer-actions";
 
@@ -183,7 +184,15 @@ export class RendererAdapter {
     }
     if (cmd.type === "plugins.web") return { ok: true, result: await this.pluginsWebAnswer() };
     const result = await this.options.link.request(cmd);
-    if (cmd.type === "plugins.panel") return { ok: true, result: await panelByRef(result, this.bySource(), cmd.name, this.webKeys) };
+    if (cmd.type === "plugins.panel") {
+      try {
+        return { ok: true, result: await panelByRef(result, this.bySource(), cmd.name, this.webKeys) };
+      } catch (error) {
+        // Bytes that are not the row's web part: refused, never the server's source in their place (M7-09b-F).
+        if (error instanceof BundleRefusedError) return { ok: false, error: { code: "forbidden", message: "not served: the web part of this plugin is not the one its row names" } };
+        throw error;
+      }
+    }
     if (cmd.type === "plugins.list") return { ok: true, result: this.shownPlugins(result as PluginsViewT) };
     return { ok: true, result };
   }
@@ -257,13 +266,15 @@ export class RendererAdapter {
    */
   private onOwnPlugins(table: { changed: string[]; removed: string[] }): void {
     const keys = [...table.changed, ...table.removed].filter((key) => key.startsWith("plugin:"));
-    if (!keys.length) return;
-    this.pluginsWeb = null;
+    // M7-09c (Q-M7-C1): the first rows of a newly attached server replace the copy without naming what the OLD server had and this one
+    // lacks (`removed` is empty then), so every plugin the window was given from a row is compared with the rows as they are now.
+    if (!keys.length && !this.webKeys.size) return;
     const server = this.options.link.server;
     const rows = server ? this.options.link.table?.(server)?.rows : undefined;
+    const names = new Set([...keys.map((key) => key.slice("plugin:".length)), ...this.webKeys.keys()]);
+    if (keys.length) this.pluginsWeb = null;
     let moved = false;
-    for (const key of keys) {
-      const name = key.slice("plugin:".length);
+    for (const name of names) {
       const served = this.webKeys.get(name);
       if (served === undefined) continue;
       const now = rowWeb(rows, name)?.key ?? null;
@@ -271,6 +282,7 @@ export class RendererAdapter {
       moved = true;
       if (now === null) this.webKeys.delete(name); else this.webKeys.set(name, now);
     }
+    if (moved) this.pluginsWeb = null;
     const full = this.base?.plugins;
     if (moved && this.served && full) this.emitEvent({ type: "plugins.updated", plugins: full });
   }

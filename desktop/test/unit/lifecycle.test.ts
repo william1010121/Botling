@@ -194,19 +194,24 @@ describe("subagents", () => {
 
   it("a background one reports later in claude's own turn, which shows in the chat; the bot waits for it before sleeping", async () => {
     const dir = tempDir("sub");
-    const c = core(dir, { BOTLING_IDLE_MS: "100", FAKE_CLAUDE_BG_DELAY_MS: "600" });
+    // The subagent ends only when the gate file exists: no time window the assertions have to beat.
+    const gate = join(dir, "bg.gate");
+    const c = core(dir, { BOTLING_IDLE_MS: "100", FAKE_CLAUDE_BG_GATE: gate });
     const { messageId, event } = await turn(c, "/bgagent");
     expect(event.text).toBe("Sending one to the background. \n\nIt is at work.");
     let reply = (await c.chat()).messages.find((m: { id: string }) => m.id === messageId);
     expect(reply.steps[0]).toMatchObject({ kind: "subagent", status: "running", done: false });
     expect((await c.call({ type: "chat.snapshot" })).bots[0].subagents).toBe(1);
-    // Not asleep while it works (idle is 100 ms).
-    const news = await until(() => (c.of("message.added").map((e) => (e.event as { message: any }).message).find((m) => m.text === "The background research finished: Found 3 things.")), { what: "the background report" });
+    // Not asleep while it works: wait well past the idle time (100 ms) with the subagent still running.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect((await c.call({ type: "chat.snapshot" })).bots[0].subagents).toBe(1);
+    writeFileSync(gate, "");
+    const news = await until(() => (c.of("message.added").map((e) => (e.event as { message: any }).message).find((m) => m.text === "The background research finished: Found 3 things.")), { what: "the background report", timeout: 25_000 }); // an "eventually" wait now: nothing races it
     expect(news.role).toBe("bot");
     reply = (await c.chat()).messages.find((m: { id: string }) => m.id === messageId);
     expect(reply.steps[0]).toMatchObject({ status: "completed", count: 1, done: true });
     expect(c.events.some((e) => e.event.type === "bot.updated" && (e.event as any).bot.phase === "tidying" && e.seq < c.of("message.added").find((m) => (m.event as any).message.id === news.id)!.seq)).toBe(false);
-  });
+  }, 60_000); // no timer to beat any more; on a starved host the steps just take long
 
   it("claude's own turn that says only <no-reply/> shows nothing; a finished subagent's news is then asked for once", async () => {
     const dir = tempDir("sub");

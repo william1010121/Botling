@@ -1,7 +1,7 @@
 // M5-04h: Core marks Maintainer on BotView (`maintainer: true`) and renderer uses `isMaintainer` / `role === "main"` instead of fixed id constants.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, beforeEach } from "vitest";
 import { join } from "node:path";
 import { Core, type CoreOptions } from "../../src/core/server";
 import { coreProcessOptions } from "../../src/core/core-process";
@@ -12,6 +12,11 @@ import { canIdle, railSplit } from "../../src/renderer/rail-idle";
 import { SettingsSheet } from "../../src/renderer/Settings";
 import type { Client } from "../../src/renderer/client";
 import { fakeCli, tempDir } from "../helpers";
+import { loadSettingsShell, type SettingsShell } from "../settings-shell";
+// Settings draws only from the settings plugin's slots (M7-02d): a test that renders it loads the plugin as the shell does.
+let settingsShell: SettingsShell;
+beforeEach(async () => { settingsShell = await loadSettingsShell(); });
+afterEach(async () => { await settingsShell.stop(); });
 
 const CUSTOM_MAIN = "0F0F0000-0000-4000-8000-000000000011";
 const CUSTOM_MAINTAINER = "0F0F0000-0000-4000-8000-000000000022";
