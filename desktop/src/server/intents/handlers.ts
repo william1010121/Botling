@@ -26,7 +26,7 @@
 import { randomUUID } from "node:crypto";
 import { ContractError, type Command } from "../../contract";
 import { PluginRow, RowKey, type PluginGrant } from "../../protocol/table-rows";
-import { callInAsk, callInCancel, type CallInGuest } from "../callin";
+import { callInAsk, callInCancel, callInReply, type CallInGuest, type CallInHost } from "../callin";
 import { ownTableStream, putRow, readRowBody, RowBodyError } from "../replica/tables";
 import { readStream } from "../log";
 import { dbBasisReader, SlotRefusal, type ApplyContext, type BasisReader } from "../slots";
@@ -54,6 +54,8 @@ export interface IntentDeps {
   uploads?: UploadedFiles | null;
   /** M5-02b: the guest's side of call-ins from other servers (none: `callin.ask` is refused). */
   callIns?: CallInGuest;
+  /** M5-02c: the host's side (waits for `callin.reply`; none: it is refused). */
+  callHost?: CallInHost;
   /** Botling 3's server: a `plugin:` row's grants changed (after the commit), so the window's plugin list is redrawn. */
   pluginRowsChanged?: () => void;
 }
@@ -308,11 +310,10 @@ export function applyIntent(deps: IntentDeps, context: ApplyContext): { result?:
     case "turn.stop": return stop(deps, context, cmd);
     case "bots.remove": return remove(deps, context, cmd);
     case "plugin.grant": return grantPlugin(deps, context, cmd);
-    // M5-02b: the guest's side. `callin.reply` is the host's (M5-02c).
+    // M5-02b: the guest's side. M5-02c: `callin.reply`, the host's side.
     case "callin.ask": return callInAsk(callInDeps(deps), context, cmd);
     case "callin.cancel": return callInCancel(callInDeps(deps), context, cmd);
-    case "callin.reply":
-      throw new SlotRefusal("invalid", "call-in replies arrive with M5-02c");
+    case "callin.reply": return callInReply(deps, context, cmd);
     case "chat.react":
     case "chat.choose":
     case "chat.answer":
