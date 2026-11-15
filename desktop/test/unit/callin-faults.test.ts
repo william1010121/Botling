@@ -20,7 +20,9 @@
 //           queued the cancel, A is SIGKILLed and, while it is stopped, the cancel's forward-queue row is deleted and the
 //           target's slot counter stepped back (exactly what a crash before the submit's transaction leaves). B then gets
 //           the ask alone, finishes its turn and replies: A posts it once, marked late, and wakes nobody more.
-//   lateKill  A is SIGKILLed the moment the late reply's transaction consumed the `callin:gaveup` record (crash point 2:
+//   lateKill  B has the asks and runs its turns, then the network is cut both ways: B's replies wait in its queue, A gives up
+//           (record written, cancel queued); on heal the replies and the cancels cross. A is SIGKILLed the moment a late
+//           reply's transaction consumed the `callin:gaveup` record (crash point 2:
 //           after the commit, before `postLate` ran). The line may be lost (the record is used up in the reply's
 //           transaction, the line is posted after it: "at most once beats delivery", M5-03a); it is never posted twice
 //           and nobody is woken for it. The test counts the lost lines and prints them.
@@ -257,7 +259,7 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       await until(() => count(a, "fwdcancels") + count(a, "forwardq") >= size * 2, { timeout: 30_000, every: 50, what: `${seed}: the cancels queued` }).catch(() => undefined);
       await sleep(pick(0, 1_000));
       await b.start();
-    } else if (kind === "gaveUpCrash" || kind === "lateKill") {
+    } else if (kind === "gaveUpCrash") {
       const base = gaveUpRows();
       await b.kill();
       totals.kills++;
@@ -265,26 +267,33 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       // A gives up on each: the record is written, the asker woken once, the cancel queued behind the ask.
       await until(() => runs.every((run) => inputLines(aInput).some((text) => text.includes(run.token) && text.includes(WAKE_MARK))), { timeout: 60_000, every: 50, what: `${seed}: A to give up` });
       await until(() => gaveUpRows() >= base + size && count(a, "forwardq") >= size * 2, { timeout: 30_000, every: 25, what: `${seed}: the records written and the cancels queued` });
-      if (kind === "gaveUpCrash") {
-        await a.kill();
-        aKilled = true;
-        totals.kills++;
-        expect(dropQueuedCancels(), `seed ${seed}: cancels taken back`).toBe(size);
-        await a.start();
-        // Nothing puts a cancel back while B is still down: A's queue holds the asks alone.
-        await sleep(1_500);
-        const kinds = withDb(a, (db) => (db.prepare("SELECT envelope FROM forwardq").all() as Array<{ envelope: string }>).map((row) => (/callin\.(ask|cancel)/.exec(row.envelope) ?? ["other"])[0]));
-        expect(kinds, `seed ${seed}: A's forward queue after the restart`).toEqual(Array(size).fill("callin.ask"));
-        await b.start();
-      } else {
-        await b.start();
-        // The first late reply that used its record up: A dies there, before (or just after) the line is posted.
-        await until(() => gaveUpRows() < base + size, { timeout: 60_000, every: 5, what: `${seed}: a late reply to use a record up` });
-        await a.kill();
-        aKilled = true;
-        totals.kills++;
-        await a.start();
-      }
+      await a.kill();
+      aKilled = true;
+      totals.kills++;
+      expect(dropQueuedCancels(), `seed ${seed}: cancels taken back`).toBe(size);
+      await a.start();
+      // Nothing puts a cancel back while B is still down: A's queue holds the asks alone.
+      await sleep(1_500);
+      const kinds = withDb(a, (db) => (db.prepare("SELECT envelope FROM forwardq").all() as Array<{ envelope: string }>).map((row) => (/callin\.(ask|cancel)/.exec(row.envelope) ?? ["other"])[0]));
+      expect(kinds, `seed ${seed}: A's forward queue after the restart`).toEqual(Array(size).fill("callin.ask"));
+      await b.start();
+    } else if (kind === "lateKill") {
+      const base = gaveUpRows();
+      await sendAll(a, sends);
+      await until(() => runs.every((run) => callInRows().some((row) => row.asked.includes(run.token))), { timeout: 60_000, every: 5, what: `${seed}: the asks at B` });
+      // B has the asks (and is running its guest turns); from here nothing crosses, so its replies wait in its queue while A gives up.
+      isolate();
+      await until(() => gaveUpRows() >= base + size, { timeout: 30_000, every: 25, what: `${seed}: the records written` }).catch(() => undefined);
+      const written = gaveUpRows();
+      heal();
+      // B's held replies and A's cancels cross now. The first late reply that uses its record up: A dies there, before (or just
+      // after) the line is posted (crash point 2).
+      const consumed = await until(() => gaveUpRows() < written, { timeout: 30_000, every: 5, what: `${seed}: a late reply to use a record up` }).then(() => true, () => false);
+      if (consumed) totals.lateKills++;
+      await a.kill();
+      aKilled = true;
+      totals.kills++;
+      await a.start();
     } else {
       await sendAll(a, sends);
     }
@@ -348,7 +357,7 @@ afterAll(async () => {
 describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => {
   it(`${PLAN.reduce((sum, [, n]) => sum + n, 0)} seeded call-ins: never two guest turns, never two lines, never two wakes (seed ${SEED})`, async () => {
     console.log(`callin-faults: seed ${SEED} (CALLIN_FAULT_SEED); ${PLAN.length} waves`);
-    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0 };
+    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0 };
     for (let index = 0; index < PLAN.length; index++) await wave(index, PLAN[index]![0], PLAN[index]![1], totals);
     console.log(`callin-faults: ${JSON.stringify(totals)}`);
     expect(totals.runs, `seed ${SEED}: runs`).toBeGreaterThanOrEqual(50);
@@ -357,5 +366,6 @@ describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => 
     expect(totals.lines, `seed ${SEED}: guest lines in H`).toBeGreaterThan(20);
     expect(totals.kills, `seed ${SEED}: kills`).toBeGreaterThanOrEqual(6);
     expect(totals.faults, `seed ${SEED}: network faults`).toBeGreaterThan(0);
+    expect(totals.lateKills, `seed ${SEED}: A killed right after a late reply used its record up`).toBeGreaterThan(0);
   }, 600_000);
 });
