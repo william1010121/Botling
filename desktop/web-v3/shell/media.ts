@@ -113,13 +113,13 @@ export class MediaBroker {
   private readonly offs: Array<() => void> = [];
   /** Data URLs of cached items by hash (this page's life), so a re-render does not read the cache again. */
   private readonly dataUrls = new Map<string, Promise<string | null>>();
-  readonly meter: RateMeter;
+  meter: RateMeter;
   private choice: Choice = "auto";
   private readonly cache: ContentCache | null;
   private readonly fetchImpl: typeof fetch;
   private readonly storage: PrefStore | null;
   private readonly player: PlayerDiagnostics;
-  private readonly bridge: SwBridge | null;
+  private bridge: SwBridge | null;
   /** Whether bridge URLs are handed out (the worker controls the page); null until known. */
   private bridgeOn: boolean | null = null;
   readonly video: VideoDiagnostics;
@@ -158,6 +158,23 @@ export class MediaBroker {
     this.timers.clear();
     if (this.renewTimer) clearInterval(this.renewTimer);
     this.renewTimer = null;
+  }
+
+  /** Updates the active transport path and bridge when the connection moves between direct and relay (M4-17). */
+  setPath(path: PathKind, bridge?: SwBridge | null): void {
+    if (this.meter.path !== path) {
+      this.meter = new RateMeter(path);
+      this.player.path = path;
+      this.syncPlayer();
+    }
+    if (bridge !== undefined && bridge !== this.bridge) {
+      this.bridge = bridge;
+      if (!this.bridge) this.bridgeOn = false;
+      else {
+        this.bridgeOn = null;
+        void this.bridge.ready.then((on) => { if (this.bridge === bridge) this.bridgeOn = on; });
+      }
+    }
   }
 
   /** Forgets what this page holds in memory of cached bytes (after the cache was cleared). */

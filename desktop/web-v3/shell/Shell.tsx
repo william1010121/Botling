@@ -38,6 +38,11 @@ function contentCap(): number {
 }
 export const contentCache = new ContentCache({ cap: contentCap() });
 
+function reprobeMs(): number | undefined {
+  const asked = Number((globalThis as { botling3ReprobeMs?: unknown }).botling3ReprobeMs);
+  return Number.isFinite(asked) && asked > 0 ? asked : undefined;
+}
+
 /** Deletes everything the page cached (sign-out, unpairing, revocation), and says why in the diagnostics. */
 export async function clearCachedContent(why: string): Promise<void> {
   await contentCache.clear();
@@ -199,15 +204,31 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     // `bye{revoked}` while connected, and what the page cached goes at once (§9A.6); pairing again is the user's
     // choice. A revocation made while the page was away is not told: the server refuses the handshake silently.
     const revoked = (why: string) => { media?.dropCached(); void clearCachedContent(why); };
+    const applyPath = (nextPath: DialPath) => {
+      if (cancelled) return;
+      setPath(nextPath);
+      const kind = nextPath === "relay" ? "relay" : pathOfPage(location.hostname);
+      diagnostics.player.path = kind;
+      if (nextPath === "relay" && opened && !bridge) {
+        bridge = new SwBridge(opened.link, diagnostics.bridge);
+        bridge.start();
+      }
+      media?.setPath(kind, nextPath === "relay" ? bridge : null);
+    };
     void (async () => {
-      // The path: asked in the address (and then kept as this device's choice), else the saved choice; the relay only
-      // when the pairing offer named the server's room.
-      if (ASKED_PATH) await savePref("path", ASKED_PATH).catch(() => undefined);
-      const wanted = ASKED_PATH ?? await loadPref("path").catch(() => null);
-      const chosen: DialPath = wanted === "relay" && device.relay ? "relay" : "direct";
-      if (chosen === "relay") diagnostics.player.path = "relay";
-      if (!cancelled) setPath(chosen);
-      return openConnection(device, diagnostics, location.href, chosen);
+      // `?via=` forces one path for this page load; otherwise saved manual "relay" override or automatic fallback.
+      const saved = ASKED_PATH ? null : await loadPref("path").catch(() => null);
+      const wanted = ASKED_PATH ?? (saved === "relay" ? "relay" : null);
+      const forcedPath: DialPath | undefined = wanted === "relay" && device.relay ? "relay" : wanted === "tailnet" ? "direct" : undefined;
+      const initialPath: DialPath = forcedPath ?? "direct";
+      diagnostics.player.path = initialPath === "relay" ? "relay" : pathOfPage(location.hostname);
+      if (!cancelled) setPath(initialPath);
+      const reprobeIntervalMs = reprobeMs();
+      return openConnection(device, diagnostics, location.href, {
+        ...(forcedPath ? { forcedPath } : {}),
+        onPath: applyPath,
+        ...(reprobeIntervalMs !== undefined ? { reprobeIntervalMs } : {}),
+      });
     })().then((conn) => {
       if (cancelled) { void conn.close(); return; }
       opened = conn;
@@ -222,10 +243,11 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
       const frame = () => (rendererRoot.current?.ownerDocument.querySelector("iframe[src*='/v3/chat.html']") as HTMLIFrameElement | null)?.contentWindow ?? null;
       // The relay path (step 14): the page's service worker answers its content URLs over this session.
-      if (diagnostics.player.path === "relay") { bridge = new SwBridge(conn.link, diagnostics.bridge); bridge.start(); }
+      if (conn.path === "relay") { bridge = new SwBridge(conn.link, diagnostics.bridge); bridge.start(); }
       media = new MediaBroker(conn.link, frame, diagnostics.media,
         { cache: contentCache, path: diagnostics.player.path, player: diagnostics.player, storage: { load: loadPref, save: savePref }, bridge, video: diagnostics.video });
       media.start();
+      applyPath(conn.path);
       // Attachments (step 12): the chat frame hands its files over, they are uploaded over the session.
       uploads = new PageUploads(conn.link, frame, diagnostics.uploads);
       uploads.start();
@@ -282,7 +304,7 @@ function ThisDevice({ device, connection, path, onClose, onForget }: { device: D
         <dt>Connected</dt><dd data-testid="dial-path">{path === "relay" ? "via relay" : diagnostics.player.path === "local" ? "on this computer" : "via tailnet"}</dd>
       </dl>
       {device.relay && <div className="v3-sheet-actions">
-        <button type="button" className="web-secondary" data-testid="switch-path" onClick={() => void savePref("path", path === "relay" ? "tailnet" : "relay").then(() => location.reload())}>
+        <button type="button" className="web-secondary" data-testid="switch-path" onClick={() => void savePref("path", path === "relay" ? "auto" : "relay").then(() => location.reload())}>
           {path === "relay" ? "Connect directly" : "Connect via relay"}</button>
       </div>}
       {confirm
