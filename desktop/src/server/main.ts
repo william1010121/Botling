@@ -34,6 +34,7 @@
 //                             (M4-05) on the revocation root: previews what it added, asks once, and revokes it
 //   botlingd machines dropped [--json]
 //                             (M4-10) lists dropped server revocations; on the root offers revoke again or dismiss
+//   botlingd recovery replace (M4-12) on the revocation root: verifies the old recovery code and replaces it
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
@@ -47,7 +48,7 @@ import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
-import { AdminClient, addMachineCommand, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, removeMachineCommand, revokeDeviceCommand, type CliIo } from "./pairing";
+import { AdminClient, addMachineCommand, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, recoveryReplaceCommand, removeMachineCommand, revokeDeviceCommand, type CliIo } from "./pairing";
 import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
@@ -374,6 +375,21 @@ async function main(argv: string[]): Promise<void> {
       }
       return;
     }
+    case "recovery": {
+      if (rest[0] !== "replace") fail(`unknown recovery command "${rest[0] ?? ""}" (use: botlingd recovery replace)`, 2);
+      if (rest.length > 1) fail("recovery replace takes no arguments (recovery codes are read from stdin)", 2);
+      const client = await adminSession(paths);
+      const io = stdinIo();
+      let code = 1;
+      try {
+        code = await recoveryReplaceCommand(client, io);
+      } finally {
+        io.close();
+        client.close();
+      }
+      process.exit(code);
+      return;
+    }
     case "devices": {
       const client = await adminSession(paths);
       try { process.exitCode = await devicesCommand(client, { out, ask: async () => null }, { json: rest.includes("--json") }); } finally { client.close(); }
@@ -414,7 +430,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     default:
-      fail(`unknown command "${command}" (start, stop, status, backup, restore, pair, join, add-machine, machines, devices, revoke-device)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, backup, restore, pair, join, add-machine, machines, recovery, devices, revoke-device)`, 2);
   }
 }
 

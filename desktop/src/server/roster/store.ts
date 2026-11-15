@@ -11,7 +11,7 @@
 //   current revocation root (D46, D61), and `Endorse` of a member it finds valid that it neither added nor endorsed yet.
 // - Listeners hear which members stopped being valid (sessions close, M2 step 4).
 import { addJoins, clusterIdFromRecoveryKey, DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, revokeCascades, RootStatement, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
-import { normalizeRecoveryCode, recoveryKeyFromCode } from "../identity/recovery";
+import { formatRecoveryCode, newRecoveryCode, normalizeRecoveryCode, recoveryKeyFromCode } from "../identity/recovery";
 import type { Command, Db } from "../store";
 import { computeRoster, validDevice, type DroppedRow, type MemberInfo, type RosterView, type VerifiedStatement } from "./validity";
 import { parseStored, signStatement, signWith, storedBytes, verifySignature, verifyStatements, type StoredStatement } from "./verify";
@@ -30,7 +30,7 @@ export interface RosterIdentity {
 
 export type RosterRefusal =
   | "no-cluster" | "cluster-exists" | "bad-root" | "self-revoked" | "bad-keys" | "revoked" | "not-a-device" | "server-revoke-root-only"
-  | "cannot-revoke-root" | "not-a-server" | "bad-join" | "bad-code" | "already-root" | "bad-keep" | "not-dropped";
+  | "cannot-revoke-root" | "not-a-server" | "bad-join" | "bad-code" | "already-root" | "not-root" | "bad-keep" | "not-dropped";
 
 export class RosterError extends Error {
   constructor(readonly reason: RosterRefusal, message: string) { super(message); this.name = "RosterError"; }
@@ -68,6 +68,27 @@ export interface KeepCandidate {
   receivedAt: number | null;
 }
 
+export const RECOVERY_REPLACE_TTL_MS = 10 * 60 * 1000;
+
+export interface RecoveryReplaceStarted {
+  /** The new recovery code, formatted in groups of four. Show it once; it is not kept. */
+  code: string;
+  clusterId: string;
+  expiresAt: number;
+}
+
+export type RecoveryConfirmResult =
+  | { ok: true; clusterId: string; rootId: string; gen: number }
+  | { ok: false; reason: "no-cluster" | "not-root" | "no-setup" | "expired" | "stale" | "malformed" | "wrong-code" };
+
+interface PendingRecoveryReplace {
+  rootId: string;
+  cluster: string;
+  newRecoveryPub: string;
+  oldPrivateKey: CryptoKey;
+  expiresAt: number;
+}
+
 const memberOf = (body: StatementBody) => (body.type === "root" ? body.root : body.member);
 
 /** The most statements one gossip set (`roster.statements` chunks up to the short last one) may carry. */
@@ -102,6 +123,7 @@ export class RosterStore {
   private gossipCache: { view: RosterView; items: StoredStatement[] } | null = null;
   private readonly dismissed = new Set<string>();
   private readonly auditedDropped = new Set<string>();
+  private pendingReplace: PendingRecoveryReplace | null = null;
 
   private constructor(private readonly backend: RosterBackend, private readonly identity: RosterIdentity, private readonly options: RosterStoreOptions, cluster: string | null) {
     this.now = options.now ?? Date.now;
@@ -451,6 +473,112 @@ export class RosterStore {
         recovery.publicKey.fill(0);
       }
     });
+  }
+
+  /**
+   * Begins replacing the recovery code on the current revocation root (§4.8, M4-12): verifies `oldCode` against the
+   * current `recoveryPub`, creates a new recovery code (returned once, formatted), and holds only the pending public
+   * key and non-extractable old signing handle in memory. Writes nothing until `confirmRecovery` succeeds.
+   */
+  replaceRecovery(oldCode: string): Promise<RecoveryReplaceStarted> {
+    return this.serial(async () => {
+      const cluster = this.cluster;
+      const root = this.current.root;
+      if (cluster === null || !root) throw new RosterError("no-cluster", "there is no cluster yet (it is made at the first pairing)");
+      if (this.current.revoked.has(this.identity.memberId)) throw new RosterError("self-revoked", "this server was removed from the cluster");
+      if (root.root !== this.identity.memberId) throw new RosterError("not-root", "only the revocation root can replace the recovery code");
+
+      if (!normalizeRecoveryCode(oldCode)) throw new RosterError("bad-code", "the recovery code is malformed");
+      const oldKey = await recoveryKeyFromCode(oldCode);
+      try {
+        if (oldKey.recoveryPub !== root.recoveryPub) {
+          throw new RosterError("bad-code", "the recovery code does not match this cluster");
+        }
+        let rawCode = newRecoveryCode();
+        let newKey = await recoveryKeyFromCode(rawCode);
+        while (newKey.recoveryPub === root.recoveryPub) {
+          newKey.publicKey.fill(0);
+          rawCode = newRecoveryCode();
+          newKey = await recoveryKeyFromCode(rawCode);
+        }
+        try {
+          const expiresAt = this.now() + RECOVERY_REPLACE_TTL_MS;
+          this.pendingReplace = {
+            rootId: root.id,
+            cluster,
+            newRecoveryPub: newKey.recoveryPub,
+            oldPrivateKey: oldKey.privateKey,
+            expiresAt,
+          };
+          return { code: formatRecoveryCode(rawCode), clusterId: cluster, expiresAt };
+        } finally {
+          newKey.publicKey.fill(0);
+        }
+      } finally {
+        oldKey.publicKey.fill(0);
+      }
+    });
+  }
+
+  /**
+   * Finishes replacing the recovery code once the user types the new code back (§4.8, M4-12): signs `Root{g+1}` with
+   * the old recovery key, carrying forward all currently-counting server revocations in `keep`, and commits it with a
+   * `root.change` audit row in one transaction.
+   */
+  confirmRecovery(typed: string): Promise<RecoveryConfirmResult> {
+    return this.serial(async () => {
+      const cluster = this.cluster;
+      const root = this.current.root;
+      if (cluster === null || !root) {
+        this.pendingReplace = null;
+        return { ok: false, reason: "no-cluster" };
+      }
+      if (root.root !== this.identity.memberId) {
+        this.pendingReplace = null;
+        return { ok: false, reason: "not-root" };
+      }
+      const pending = this.pendingReplace;
+      if (!pending) return { ok: false, reason: "no-setup" };
+      if (pending.expiresAt <= this.now()) {
+        this.pendingReplace = null;
+        return { ok: false, reason: "expired" };
+      }
+      if (pending.rootId !== root.id || pending.cluster !== cluster) {
+        this.pendingReplace = null;
+        return { ok: false, reason: "stale" };
+      }
+      if (!normalizeRecoveryCode(typed)) return { ok: false, reason: "malformed" };
+      const newKey = await recoveryKeyFromCode(typed);
+      let matched = false;
+      try {
+        matched = newKey.recoveryPub === pending.newRecoveryPub;
+      } finally {
+        newKey.publicKey.fill(0);
+      }
+      if (!matched) return { ok: false, reason: "wrong-code" };
+
+      const keep = this.keepCandidates().map((item) => item.revokeId);
+      if (keep.length > 1_000) throw new RosterError("bad-keep", "keep exceeds the maximum of 1000 revocations");
+      const gen = root.gen + 1;
+      const rootBody = RootStatement.parse({
+        type: "root",
+        cluster,
+        gen,
+        root: this.identity.memberId,
+        recoveryPub: pending.newRecoveryPub,
+        keep,
+        prev: root.id,
+      });
+      const rootStmt = await signStatement(rootBody, "recovery", signWith(pending.oldPrivateKey));
+      await this.commit([rootStmt], cluster, [{ act: "root.change", statement: rootStmt.id, by: "recovery", member: this.identity.memberId }]);
+      this.pendingReplace = null;
+      return { ok: true, clusterId: cluster, rootId: rootStmt.id, gen };
+    });
+  }
+
+  /** Clears a pending recovery-code replacement (cancelled or failed). */
+  cancelRecoveryReplace(): void {
+    this.pendingReplace = null;
   }
 
   /**
@@ -812,6 +940,7 @@ export class RosterStore {
     this.verified = verified;
     this.cluster = cluster;
     this.current = view;
+    if (this.pendingReplace && view.root?.id !== this.pendingReplace.rootId) this.pendingReplace = null;
     const invalidated = [...before.valid].filter((member) => !view.valid.has(member));
     for (const listener of this.listeners) {
       try { listener({ view, invalidated }); } catch (error) { this.options.log?.(`roster: a change listener failed: ${String((error as Error)?.message ?? error)}`); }

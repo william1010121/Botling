@@ -20,10 +20,11 @@
 //   revoke-device <id> [--reason …]   revokes a device; its sessions end at once
 //   machines remove <name-or-id> [--yes | --only]
 //                                     (on the revocation root, §4.3) previews what it added, asks once, and revokes it
+//   recovery replace                  (on the revocation root, §4.8) verifies the old code and replaces it
 import { memberFingerprint, parseJoinLink, type AdminEvent, type DeviceScope } from "../../protocol";
 import { AdminRefused, type AdminClient } from "./admin-client";
 import { qrTerminal } from "./qr";
-import type { DeviceRow, DroppedListResult, MachineRemovePreview, PairOfferResult } from "./service";
+import type { DeviceRow, DroppedListResult, MachineRemovePreview, PairOfferResult, RecoveryStatusResult } from "./service";
 import type { JoinOfferResult, MachineAddResult, MachineCodeResult } from "./join";
 
 export interface CliIo {
@@ -379,5 +380,80 @@ export async function addMachineCommand(client: AdminClient, io: CliIo, linkArg:
         : `The pairing ended: ${result.reason}${result.detail ? ` (${result.detail})` : ""}.`);
     return 1;
   }
+  return 1;
+}
+
+/** `botlingd recovery replace` (§4.8, M4-12): replaces the recovery code on the current revocation root via stdin only. */
+export async function recoveryReplaceCommand(client: AdminClient, io: CliIo): Promise<number> {
+  let status: RecoveryStatusResult;
+  try {
+    status = await client.request({ op: "recovery.status" }) as RecoveryStatusResult;
+  } catch (error) {
+    io.out(`Cannot check recovery status: ${errorText(error)}`);
+    return 1;
+  }
+  if (!status.hasCluster) {
+    io.out("There is no cluster yet. Run botlingd pair first.");
+    return 1;
+  }
+  if (!status.isRoot) {
+    io.out(`Only the revocation root (${status.rootName ?? status.rootMember}) can replace the recovery code. Run this there.`);
+    return 1;
+  }
+
+  io.out(`Replace the recovery code for this cluster (current root: "${status.serverName}").`);
+  let started: { code: string; clusterId: string; expiresAt: number } | null = null;
+  for (let attempt = 1; attempt <= RECOVERY_TRIES; attempt++) {
+    const typed = await io.ask("Type the current recovery code (26 characters; spaces and dashes are fine): ");
+    if (typed === null) {
+      io.out("No code given; nothing was changed.");
+      return 1;
+    }
+    try {
+      started = await client.request({ op: "recovery.replace", code: typed.slice(0, 64) }) as { code: string; clusterId: string; expiresAt: number };
+      break;
+    } catch (error) {
+      if (!(error instanceof AdminRefused)) throw error;
+      const msg = error.message;
+      if (msg.includes("Only the revocation root") || msg.includes("no cluster")) {
+        io.out(msg);
+        return 1;
+      }
+      if (attempt < RECOVERY_TRIES) io.out("That is not the recovery code.");
+    }
+  }
+  if (!started) {
+    io.out("That is not the recovery code. Nothing was changed.");
+    return 1;
+  }
+
+  io.out("Your new recovery code (shown once; write it down or keep it in a password manager, never in Botling):");
+  io.out("");
+  io.out(`    ${started.code}`);
+  io.out("");
+  io.out("Type the new recovery code back to confirm. The old code stops working only after you confirm.");
+
+  for (let attempt = 1; attempt <= RECOVERY_TRIES; attempt++) {
+    const typed = await io.ask("New recovery code: ");
+    if (typed === null) break;
+    let result: { ok: boolean; reason?: string; gen?: number };
+    try {
+      result = await client.request({ op: "recovery.confirm", code: typed.slice(0, 64) }) as typeof result;
+    } catch (error) {
+      if (!(error instanceof AdminRefused)) throw error;
+      result = { ok: false, reason: "malformed" };
+    }
+    if (result.ok) {
+      io.out(`Recovery code replaced (Root gen ${result.gen}). The old recovery code no longer works.`);
+      return 0;
+    }
+    if (result.reason === "expired" || result.reason === "no-setup" || result.reason === "stale" || result.reason === "not-root" || result.reason === "no-cluster") {
+      break;
+    }
+    io.out(result.reason === "malformed" ? "That is not a recovery code (26 letters and digits)." : "That is not the new code shown above.");
+  }
+
+  await client.request({ op: "recovery.cancel" }).catch(() => undefined);
+  io.out("The new recovery code was not confirmed, so nothing was changed.");
   return 1;
 }

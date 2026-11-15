@@ -102,6 +102,11 @@ export const AdminOp = z.discriminatedUnion("op", [
   // Dropped server revocations (D63, §4.8, M4-10). Local socket only.
   z.strictObject({ op: z.literal("roster.dropped") }),
   z.strictObject({ op: z.literal("roster.dismiss"), revokeId: StatementId }),
+  // Recovery code replacement (§4.8, M4-12). Local socket only.
+  z.strictObject({ op: z.literal("recovery.status") }),
+  z.strictObject({ op: z.literal("recovery.replace"), code: z.string().max(64) }),
+  z.strictObject({ op: z.literal("recovery.confirm"), code: z.string().max(64) }),
+  z.strictObject({ op: z.literal("recovery.cancel") }),
   // Cluster preferences (§17, M3 step 5): a write from the window or CLI on this machine (LWW per key, gossiped to
   // every peer server) and the current registers.
   z.strictObject({ op: z.literal("prefs.set"), key: PrefKey, value: z.unknown() }),
