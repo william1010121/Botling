@@ -655,7 +655,7 @@ export class Core {
 
   agentBotName(...a: Parameters<CoreAgents["agentBotName"]>) { return this.coreAgents.agentBotName(...a); }
 
-  private agentPort(...a: Parameters<CoreAgents["agentPort"]>) { return this.coreAgents.agentPort(...a); }
+  agentPort(...a: Parameters<CoreAgents["agentPort"]>) { return this.coreAgents.agentPort(...a); }
 
   private agentChanged(...a: Parameters<CoreAgents["agentChanged"]>) { return this.coreAgents.agentChanged(...a); }
 
@@ -663,7 +663,7 @@ export class Core {
 
   agentsOfRemovedBot(...a: Parameters<CoreAgents["agentsOfRemovedBot"]>) { return this.coreAgents.agentsOfRemovedBot(...a); }
 
-  private ownedAgentsNote(...a: Parameters<CoreAgents["ownedAgentsNote"]>) { return this.coreAgents.ownedAgentsNote(...a); }
+  ownedAgentsNote(...a: Parameters<CoreAgents["ownedAgentsNote"]>) { return this.coreAgents.ownedAgentsNote(...a); }
 
   agentView(...a: Parameters<CoreAgents["agentView"]>) { return this.coreAgents.agentView(...a); }
 
