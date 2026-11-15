@@ -3,7 +3,6 @@
   "files": {
     "desktop/builtin-plugins/botling.note/src/ui.js": 2190,
     "desktop/src/core/bot.ts": 5991,
-    "desktop/src/core/plugins/index.ts": 1030,
     "desktop/src/core/server.ts": 2787,
     "desktop/src/main/main.ts": 1169,
     "desktop/src/server/botlingd.ts": 950
