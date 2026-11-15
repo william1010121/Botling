@@ -329,11 +329,11 @@ export class RosterStore {
 
       const keep = [...new Set(input.keep)].sort();
       if (keep.length > 1_000) throw new RosterError("bad-keep", "keep exceeds the maximum of 1000 revocations");
-      const verifiedById = new Map(this.verified.map((item) => [item.id, item]));
+      // §4.8, D63: keep must be a subset of pending server revocations (excludes dropped and self-revocations).
+      const candidates = new Set(this.keepCandidates().map((c) => c.revokeId));
       for (const id of keep) {
-        const item = verifiedById.get(id);
-        if (!item || item.body.type !== "revoke" || !this.current.servers.has(item.body.member)) {
-          throw new RosterError("bad-keep", "keep may list only server revocations this server holds");
+        if (!candidates.has(id)) {
+          throw new RosterError("bad-keep", "keep may list only pending server revocations this server holds");
         }
       }
 

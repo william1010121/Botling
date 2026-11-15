@@ -4,8 +4,10 @@
 // - The recovery key: Ed25519 whose 32-byte seed is HKDF-SHA256 of the code (normalised: upper case, no separators),
 //   salt `RECOVERY_SALT`, info `RECOVERY_INFO`. The same code gives the same key on any machine, so the code alone
 //   brings the key back for a reroot (M4); no server stores either.
-// - WebCrypto only. The private key is used once (to sign a Root) and dropped; nothing here writes or logs the code.
-import { fromBase64Url, RecoveryCode, toBase32, toBase64Url } from "../../protocol";
+// - WebCrypto for HKDF/signing and Node crypto KeyObject for public-key derivation (no extractable private JWK).
+//   The private key is used once (to sign a Root) and dropped; nothing here writes or logs the code.
+import { createPrivateKey, createPublicKey } from "node:crypto";
+import { RecoveryCode, toBase32, toBase64Url } from "../../protocol";
 
 export const RECOVERY_SALT = "botling/3 recovery v1";
 export const RECOVERY_INFO = "ed25519 seed";
@@ -51,19 +53,25 @@ export interface RecoveryKey {
 export async function recoveryKeyFromCode(typed: string): Promise<RecoveryKey> {
   const code = normalizeRecoveryCode(typed);
   if (!code) throw new RangeError("not a recovery code");
-  const ikm = await subtle().importKey("raw", buf(utf8.encode(code)), "HKDF", false, ["deriveBits"]);
-  const seed = new Uint8Array(await subtle().deriveBits({ name: "HKDF", hash: "SHA-256", salt: buf(utf8.encode(RECOVERY_SALT)), info: buf(utf8.encode(RECOVERY_INFO)) }, ikm, 256));
+  const codeBytes = utf8.encode(code);
+  let seed: Uint8Array | null = null;
   const pkcs8 = new Uint8Array(ED25519_PKCS8_PREFIX.length + 32);
-  pkcs8.set(ED25519_PKCS8_PREFIX, 0);
-  pkcs8.set(seed, ED25519_PKCS8_PREFIX.length);
   try {
-    const probe = await subtle().importKey("pkcs8", buf(pkcs8), { name: "Ed25519" }, true, ["sign"]);
-    const x = (await subtle().exportKey("jwk", probe)).x!;
+    const ikm = await subtle().importKey("raw", buf(codeBytes), "HKDF", false, ["deriveBits"]);
+    codeBytes.fill(0);
+    seed = new Uint8Array(await subtle().deriveBits({ name: "HKDF", hash: "SHA-256", salt: buf(utf8.encode(RECOVERY_SALT)), info: buf(utf8.encode(RECOVERY_INFO)) }, ikm, 256));
+    pkcs8.set(ED25519_PKCS8_PREFIX, 0);
+    pkcs8.set(seed, ED25519_PKCS8_PREFIX.length);
+    // Derive the public key via KeyObject + SPKI rather than exporting an extractable JWK (which would allocate `d`).
+    const keyObj = createPrivateKey({ key: Buffer.from(pkcs8.buffer, pkcs8.byteOffset, pkcs8.byteLength), format: "der", type: "pkcs8" });
+    const pubSpki = createPublicKey(keyObj).export({ format: "der", type: "spki" });
+    if (pubSpki.length !== 44) throw new Error("unexpected Ed25519 SPKI length");
+    const publicKey = new Uint8Array(pubSpki.subarray(12));
     const privateKey = await subtle().importKey("pkcs8", buf(pkcs8), { name: "Ed25519" }, false, ["sign"]);
-    const publicKey = fromBase64Url(x)!;
     return { publicKey, recoveryPub: toBase64Url(publicKey), privateKey };
   } finally {
-    seed.fill(0);
+    codeBytes.fill(0);
+    seed?.fill(0);
     pkcs8.fill(0);
   }
 }
