@@ -2,7 +2,7 @@
 // within its tier, the fixture's user plugin has its web part loaded while its program part stays off with the
 // M5-18a notice until `plugin.grant{tier: "write"}` starts it on its M6-03a copied data folder, and a
 // request-tier plugin's command is refused `grant` before its grant and applied within its granted tier after.
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PluginsView, WebPluginSpecView } from "../../src/contract";
@@ -60,6 +60,26 @@ function readBuiltinManifests(builtInsDir: string): BuiltinManifestInfo[] {
       slash: (contributes.slash ?? []).map((s) => s.name),
     };
   });
+}
+
+/** Every entry under `dir` (path, kind, size, mtime, mode): the 2.x folder must be exactly as it was after the import. */
+function treeSnapshot(dir: string, rel = ""): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(join(dir, rel)).sort()) {
+    const path = rel ? `${rel}/${name}` : name;
+    const st = lstatSync(join(dir, path));
+    out.push(`${path} ${st.isDirectory() ? "d" : st.isSymbolicLink() ? "l" : "f"} ${st.size} ${st.mtimeMs} ${st.mode}`);
+    if (st.isDirectory()) out.push(...treeSnapshot(dir, path));
+  }
+  return out;
+}
+
+/** The import report's line for one plugin in its "Plugins" table (name, author, status). */
+function reportPluginLine(reportText: string, name: string): string | undefined {
+  const lines = reportText.split("\n");
+  const start = lines.indexOf("Plugins");
+  if (start < 0) return undefined;
+  return lines.slice(start + 1).find((line) => line.startsWith("  ") && line.trimStart().startsWith(`${name} `));
 }
 
 let largeReqSeq = 0;
@@ -194,7 +214,7 @@ export function activate(ccb) {
 
     const sampleHash = folderHash(sampleSrcDir);
     const reqHash = folderHash(reqSrcDir);
-    const srcStateStatBefore = statSync(join(src, "plugin-data", fx.pluginName, "state.json"));
+    const srcTreeBefore = treeSnapshot(src);
 
     const imported = await runImport({
       sourceDir: src,
@@ -208,10 +228,18 @@ export function activate(ccb) {
     expect(imported.reportText).toContain("plugins: 17 (2 read only until you approve them)");
     expect(existsSync(join(dataDir, "plugin-secrets.json"))).toBe(false);
     expect(imported.reportText).toContain("request-helper");
+    // B-20(a): each imported third-party plugin has its own "approve to restore" line; no built-in has one.
+    for (const name of [fx.pluginName, reqPluginName]) {
+      expect(reportPluginLine(imported.reportText, name), `${name} report line`).toMatch(/· approve to restore$/);
+    }
+    for (const name of EXPECTED_BUILTINS) {
+      const line = reportPluginLine(imported.reportText, name);
+      expect(line, `${name} report line`).toBeDefined();
+      expect(line, `${name} report line`).not.toContain("approve to restore");
+    }
 
-    const srcStateStatAfter = statSync(join(src, "plugin-data", fx.pluginName, "state.json"));
-    expect(srcStateStatAfter.size).toBe(srcStateStatBefore.size);
-    expect(srcStateStatAfter.mtimeMs).toBe(srcStateStatBefore.mtimeMs);
+    // The 2.x folder is left exactly as it was (no file added, removed or touched).
+    expect(treeSnapshot(src)).toEqual(srcTreeBefore);
 
     const daemon = await Botlingd.start({
       env: botlingdEnv(dataDir, {
@@ -366,6 +394,8 @@ export function activate(ccb) {
       id: "sample-plugin.readState",
     });
     expect(readBeforeGrant.outcome.kind).toBe("refused");
+    // Its program part did not run at all before the grant (activate() writes started.json first).
+    expect(existsSync(join(sampleDataDir, "started.json"))).toBe(false);
 
     // 3. After `plugin.grant{tier: "write"}` from the local window, its program part starts and reads
     // the data folder copied by M6-03a (not the 2.x source folder).
