@@ -60,16 +60,18 @@ const via = (plugin = "note", codeHash = H1): Via => ({ plugin, codeHash });
 describe("M5-16: the scope table (nothing but the four moved)", () => {
   it("the four plugin commands need `reply`; the rest of the plugin family still needs `manage`", () => {
     for (const type of PLUGIN_COMMANDS) expect(COMMAND_SCOPES[type], type).toBe("reply");
-    for (const type of ["plugins.enable", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.approvalAsk", "plugins.tileImages", "plugin.grant"] as const) {
+    for (const type of ["plugins.enable", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.approvalAsk", "plugins.tileImages", "plugin.grant"] as const) {
       expect(COMMAND_SCOPES[type], type).toBe("manage");
     }
+    // M6-06 F1: a secret goes only from the local desktop window, so `admin` (not part of M5-16).
+    expect(COMMAND_SCOPES["plugins.secret"]).toBe("admin");
     expect(COMMAND_SCOPES["plugins.approve"]).toBe("approve");
   });
 
-  it("every other command keeps the scope it had at the base (hash of the table without the four, taken at bb212ac7)", () => {
+  it("every other command keeps the scope it had at the base (hash of the table without the four, taken at bb212ac7; plugins.secret is admin since M6-06 F1)", () => {
     const rest = Object.entries(COMMAND_SCOPES).filter(([type]) => !(PLUGIN_COMMANDS as readonly string[]).includes(type)).map(([type, scope]) => `${type}:${scope}`).sort();
     expect(rest).toHaveLength(119);
-    expect(createHash("sha256").update(rest.join("\n")).digest("hex")).toBe("fe1c68fea62cf028df0a976bf2a1913f4b757422f5bf5be3ceee25204a79ca99");
+    expect(createHash("sha256").update(rest.join("\n")).digest("hex")).toBe("eda24bb93e9f8bae76864196a08c3e30cca88ff545ca23b8f798e142b01f8c1a");
     // The `reply` list read as words, so a diff is readable: the old reply commands plus exactly the four.
     const reply = Object.entries(COMMAND_SCOPES).filter(([, scope]) => scope === "reply").map(([type]) => type).sort();
     expect(reply).toEqual([
@@ -87,13 +89,17 @@ describe("M5-16: the scope table (nothing but the four moved)", () => {
     }
     const others: Command[] = [
       { type: "plugins.enable", name: "note", enabled: true }, { type: "plugins.remove", name: "note" }, { type: "plugins.setting", name: "note", key: "k", value: "v" },
-      { type: "plugins.secret", name: "note", key: "k", value: "v" }, { type: "plugins.storeInstall", name: "note" }, { type: "plugins.approvalAsk", botId: BOT } as never,
+      { type: "plugins.storeInstall", name: "note" }, { type: "plugins.approvalAsk", botId: BOT } as never,
       { type: "plugin.grant", plugin: "note", codeHash: H1, tier: "write", reads: [], requests: [] },
     ] as unknown as Command[];
     for (const cmd of others) {
       expect(commandScope(cmd), cmd.type).toBe("manage");
       expect(remoteCmdRefusal(cmd, DEFAULT), cmd.type).toBe(`${cmd.type} needs the manage scope`);
     }
+    // M6-06 F1: `plugins.secret` needs admin (the desktop window), which a default device never has.
+    const secret = { type: "plugins.secret", name: "note", key: "k", value: "v" } as unknown as Command;
+    expect(commandScope(secret)).toBe("admin");
+    expect(remoteCmdRefusal(secret, DEFAULT)).toBe("plugins.secret needs the desktop window on this machine (admin)");
   });
 });
 
