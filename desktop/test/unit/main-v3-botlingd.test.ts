@@ -343,7 +343,7 @@ describe("M6-07c main-v3 --botlingd flag path", () => {
     return probeFile;
   }
 
-  it("bundled main-v3 runs --botlingd status and start under Electron without BrowserWindow, single-instance lock, or Dock", async () => {
+  it.skipIf(process.platform !== "darwin")("bundled main-v3 runs --botlingd status and start under Electron without BrowserWindow, single-instance lock, or Dock", async () => {
     const work = tempDir("main-v3-electron");
     const bundleFile = join(desktopRoot, "out/main-v3/main.cjs");
     const { buildMainV3 } = await import("../../build.mjs" as string) as {
