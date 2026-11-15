@@ -534,6 +534,27 @@ describe("M5-07a: fetch source", () => {
     expect(full.equals(payload)).toBe(true);
   });
 
+  it("7b. M5-06c: a resume after the approved file got a second name is refused (the card never said so; resume asks nobody)", async () => {
+    const env = await setupInProcessCluster(async () => "once");
+    cleanups.push(env.cleanup);
+    const payload = deterministicBytes("resume-hl", 4 * DIRECT_FRAME);
+    const bigPath = join(env.srcA, "hl.bin");
+    writeFileSync(bigPath, payload);
+    const ask = { t: "fetch.ask", fetchId: "fetch-resume-hl", requester: { bot: env.botB }, source: env.ka.memberId, what: { kind: "path", path: bigPath }, purpose: "resume test", maxBytes: 10 * MiB } as const;
+    const { sink: sink1, sent: sent1 } = makeFakeSink(env.kb.memberId, "tailnet", (msg) => {
+      if (msg.t === "fetch.chunk" && msg.index === 0) sink1.open = false;
+    });
+    env.source.onMessage(sink1, ask);
+    await until(() => sent1.some((m) => m.t === "fetch.chunk"), { timeout: 5_000, what: "first chunk" });
+    env.source.sessionClosed(sink1);
+    linkSync(bigPath, join(env.outsideDir, "second-name.bin"));
+    const { sink: sink2, sent: sent2 } = makeFakeSink(env.kb.memberId, "tailnet");
+    env.source.onMessage(sink2, { ...ask, from: { file: "hl.bin", index: 0 } });
+    const end = await until(() => sent2.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "resume end" });
+    expect(end).toMatchObject({ t: "fetch.denied", reason: "denied" });
+    expect(sent2.some((m) => m.t === "fetch.chunk")).toBe(false);
+  });
+
   it("8. Relay transport sends fixed 64 KiB chunks; unknown requester bot is refused", async () => {
     const env = await setupInProcessCluster();
     cleanups.push(env.cleanup);
