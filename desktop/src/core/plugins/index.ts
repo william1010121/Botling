@@ -17,7 +17,7 @@
 // web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). Since step M11 ccb-latex
 // is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { z } from "zod";
@@ -289,13 +289,17 @@ function readPluginSnapshot(dir: string): { codeHash: string; files: SnapshotFil
  * Materializes a verified content-addressed copy of `files` at `<snapshotRoot>/<codeHash>` so lazy `import()`
  * and `api.plugin.dir` read only the bytes that were hashed.
  */
-function materializeSnapshot(snapshotRoot: string, codeHash: string, files: readonly SnapshotFile[]): string {
+function materializeSnapshot(snapshotRoot: string, codeHash: string, files: readonly SnapshotFile[]): { dir: string; repaired: boolean } {
   const dest = join(snapshotRoot, codeHash);
-  if (existsSync(dest)) {
+  let repaired = false;
+  if (lstatSync(dest, { throwIfNoEntry: false })) {
+    // The copy is the same user's files: reuse it only as a real folder, with no links, holding exactly these bytes
+    // (M5-18b review: an edit or a link planted in it is replaced, and the caller starts that host afresh).
     try {
-      if (folderHash(dest) === codeHash) return dest;
+      if (!lstatSync(dest).isSymbolicLink() && readPluginSnapshot(dest).codeHash === codeHash) return { dir: dest, repaired };
     } catch { /* corrupt snapshot: replace below */ }
     rmSync(dest, { recursive: true, force: true });
+    repaired = true;
   }
   mkdirSync(snapshotRoot, { recursive: true });
   const tmp = join(snapshotRoot, `.tmp-${codeHash}-${randomUUID()}`);
@@ -312,11 +316,11 @@ function materializeSnapshot(snapshotRoot: string, codeHash: string, files: read
     } catch (error) {
       if (existsSync(dest) && folderHash(dest) === codeHash) {
         rmSync(tmp, { recursive: true, force: true });
-        return dest;
+        return { dir: dest, repaired };
       }
       throw error;
     }
-    return dest;
+    return { dir: dest, repaired };
   } catch (error) {
     rmSync(tmp, { recursive: true, force: true });
     throw error;
@@ -564,11 +568,15 @@ export class Plugins {
   }
 
   private commandHost(id: string): PluginHostClient | null {
-    const owners = [...this.hosts.entries()].sort((a, b) => b[0].length - a[0].length);
-    for (const [owner, client] of owners) {
-      if (id.startsWith(`${owner}.`)) return client.running && client.commands.includes(id) ? client : null;
+    // The longest plugin name the id starts with owns it, built-ins included (M5-18b review: a plugin named "botling"
+    // must not take "botling.terminal.…" from the built-in in the shared host).
+    let owner = "";
+    for (const plugin of this.registry.plugins) {
+      const name = plugin.manifest.name;
+      if (name.length > owner.length && id.startsWith(`${name}.`)) owner = name;
     }
-    return this.host.running && this.host.commands.includes(id) ? this.host : null;
+    const client = owner && this.options.separateHosts && !this.registry.plugin(owner)?.builtIn ? this.hosts.get(owner) : this.host;
+    return client?.running && client.commands.includes(id) ? client : null;
   }
 
   private retireHost(client: PluginHostClient) {
@@ -604,6 +612,8 @@ export class Plugins {
     const sharedSpecs: HostSpec[] = [];
     const separateSpecs = new Map<string, HostSpec>();
     const activeSnapshots = new Set<string>();
+    /** Plugins whose snapshot folder had changed in place: what their host imported from it may not be what was hashed. */
+    const repaired = new Set<string>();
     for (const spec of this.registry.hostSpecs(this.dataRoot)) {
       const plugin = this.registry.plugin(spec.name);
       const isSeparate = !!this.options.separateHosts && !!plugin && !plugin.builtIn;
@@ -621,7 +631,9 @@ export class Plugins {
         }
         let snapDir: string;
         try {
-          snapDir = materializeSnapshot(this.snapshotRoot, snapshot.codeHash, snapshot.files);
+          const made = materializeSnapshot(this.snapshotRoot, snapshot.codeHash, snapshot.files);
+          snapDir = made.dir;
+          if (made.repaired) repaired.add(spec.name);
         } catch {
           nextHeldBack.add(spec.name);
           continue;
@@ -656,7 +668,7 @@ export class Plugins {
         client = this.createHostClient(name);
         this.hosts.set(name, client);
         client.update([spec]);
-      } else if (prev && (prev.main !== spec.main || prev.dir !== spec.dir || prev.fingerprint !== spec.fingerprint)) {
+      } else if (repaired.has(name) || (prev && (prev.main !== spec.main || prev.dir !== spec.dir || prev.fingerprint !== spec.fingerprint))) {
         client.replace([spec]);
       } else {
         client.update([spec]);

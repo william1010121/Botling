@@ -1,6 +1,6 @@
 // Botling 3 M5-18b: each non-built-in plugin's server (program) part runs in its own host process,
 // from a content-addressed copy of the hashed folder; built-ins keep sharing one host (D56, §18.3).
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PluginsView } from "../../src/contract";
@@ -308,6 +308,70 @@ describe("M5-18b: per-plugin host processes and content-addressed execution", ()
     expect(lazy2.label).toBe("tampered-ungranted");
     expect(lazy2.note).toBe("tampered-data");
     expect(lazy2.pid).not.toBe(info1.pid);
+  });
+
+  // Review probes (M5-18b review R1, R2, R4, R5).
+  const registered = (unit: ReturnType<typeof createUnit>, names: string[]) => until(() => names.every((name) =>
+    unit.plugins.view().plugins.find((p) => p.name === name)?.commands.every((c) => c.registered)), { timeout: 15_000, what: `${names.join(", ")} registered` });
+
+  it("a user plugin named like a built-in's prefix neither takes nor blocks the built-in's commands", async () => {
+    const unit = createUnit({ separateHosts: true });
+    copyFixture("builtin.alpha", unit.builtIns!);
+    mkdirSync(join(unit.dataDir, "plugins", "builtin", "lib"), { recursive: true });
+    writeFileSync(join(unit.dataDir, "plugins", "builtin", "package.json"), JSON.stringify({ name: "builtin", version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { host: "lib/host.mjs", contributes: { commands: [{ id: "builtin.own", title: "Own" }] } } }));
+    writeFileSync(join(unit.dataDir, "plugins", "builtin", "lib", "host.mjs"), `export function activate(ccb) { ccb.commands.register("builtin.own", () => "own"); ccb.commands.register("builtin.alpha.info", () => "hijacked"); }\n`);
+    unit.plugins.scan();
+    await unit.plugins.start();
+    await registered(unit, ["builtin.alpha", "builtin"]);
+    expect(await unit.plugins.command("builtin.own")).toBe("own");
+    expect(await unit.plugins.command("builtin.alpha.info")).toMatchObject({ name: "builtin.alpha" });
+  });
+
+  it("granted code changing to other granted code gets a fresh process, not a load into the old one", async () => {
+    const unit = createUnit({ separateHosts: true, builtIns: null });
+    const xFolder = copyFixture("user.x", join(unit.dataDir, "plugins"));
+    unit.plugins.scan();
+    await unit.plugins.start();
+    await registered(unit, ["user.x"]);
+    const before = await unit.plugins.command("user.x.info") as { pid: number };
+    writeFileSync(join(xFolder, "lib", "lazy.mjs"), `export const label = "v2";\n`);
+    unit.plugins.rowsChanged();
+    await until(() => !alive(before.pid), { timeout: 10_000, what: "the old process ended" });
+    await registered(unit, ["user.x"]);
+    expect(await unit.plugins.command("user.x.lazy")).toMatchObject({ label: "v2" });
+  });
+
+  it("a snapshot planted or edited in place is replaced, and the host that read it starts afresh", async () => {
+    const unit = createUnit({ separateHosts: true, builtIns: null, mayRunServerPart: () => true });
+    const xFolder = copyFixture("user.x", join(unit.dataDir, "plugins"));
+    const snapshot = join(unit.dataDir, "plugin-snapshots", folderHash(xFolder));
+    cpSync(xFolder, snapshot, { recursive: true });
+    writeFileSync(join(snapshot, "lib", "lazy.mjs"), `export const label = "planted";\n`);
+    unit.plugins.scan();
+    await unit.plugins.start();
+    await registered(unit, ["user.x"]);
+    const first = await unit.plugins.command("user.x.lazy") as { label: string; pid: number };
+    expect(first.label).toBe("granted-v1");
+    unlinkSync(join(snapshot, "lib", "lazy.mjs"));
+    writeFileSync(join(snapshot, "lib", "lazy.mjs"), `export const label = "edited";\n`);
+    unit.plugins.rowsChanged();
+    await until(() => !alive(first.pid), { timeout: 10_000, what: "the host that could read the edit ended" });
+    await registered(unit, ["user.x"]);
+    expect(await unit.plugins.command("user.x.lazy")).toMatchObject({ label: "granted-v1" });
+  });
+
+  it("a separate host cannot blame another plugin for a failure (it is blamed itself)", async () => {
+    const unit = createUnit({ separateHosts: true, builtIns: null });
+    copyFixture("user.x", join(unit.dataDir, "plugins"));
+    copyFixture("user.y", join(unit.dataDir, "plugins"));
+    unit.plugins.scan();
+    await unit.plugins.start();
+    await registered(unit, ["user.x", "user.y"]);
+    const xHost = (unit.plugins as unknown as { hosts: Map<string, { onPluginFailure: (p: string | null, m: string, f: boolean) => void }> }).hosts.get("user.x")!;
+    xHost.onPluginFailure("user.y", "forged", true);
+    const view = unit.plugins.view();
+    expect(view.plugins.find((p) => p.name === "user.y")?.failure ?? null).toBeNull();
+    expect(view.plugins.find((p) => p.name === "user.x")?.failure).toBeTruthy();
   });
 
   it("botlingd enables separateHosts so granted user plugins run in distinct processes from snapshots", async () => {
