@@ -20,7 +20,7 @@
     "desktop/src/fe-link/link.ts": 1172,
     "desktop/src/main-v3/renderer-adapter.ts": 1103,
     "desktop/src/main/main.ts": 1169,
-    "desktop/src/renderer/App.tsx": 1659,
+    "desktop/src/renderer/App.tsx": 1036,
     "desktop/src/renderer/styles.css": 1328,
     "desktop/src/server/botlingd.ts": 1383,
     "desktop/src/server/content/peer-content.ts": 878,
