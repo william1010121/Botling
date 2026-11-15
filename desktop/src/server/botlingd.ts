@@ -39,7 +39,7 @@ import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
 import { BotExports } from "./exports";
-import type { CallInHost } from "./callin";
+import { callInTimers, type CallInHost } from "./callin";
 import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
@@ -51,6 +51,7 @@ import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
+import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "./push";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
 import { PluginRow, RowKey } from "../protocol/table-rows";
@@ -337,6 +338,10 @@ export interface BotlingdOptions {
   /** Packaged Electron run: launch child Node work (plugin host, pdf-text) via utilityProcess.fork. */
   packaged?: boolean;
   electronUtility?: ElectronUtilityContext;
+  /** Optional Web Push transport override (used by tests to point at a local fake push server). */
+  pushTransport?: PushTransport;
+  /** Optional per-bot push coalescing window override in ms (defaults to 60,000 ms). */
+  pushCoalesceMs?: number;
 }
 
 export class Botlingd {
@@ -372,6 +377,8 @@ export class Botlingd {
     readonly pairing: PairingService,
     /** M3 step 6: this server's summary rows (`srv:` table). */
     readonly summary: SummaryRows,
+    /** M4-24: Web Push triggers for owned bots needing the user. */
+    readonly pushTriggers: PushTriggers,
     /** M3 step 3: peer servers (KK sessions over `/v3/ws`, one per pair, the D47 exchange). */
     readonly peers: PeerSessions,
     /** M3 step 4: server pairing (join offers on this server, add-machine attempts from it). */
@@ -578,11 +585,15 @@ export class Botlingd {
       const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
       // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
       let summary: SummaryRows | null = null;
+      // M4-24: Web Push triggers for owned bots needing the user (wired after remote sessions exist).
+      let pushTriggers: PushTriggers | null = null;
+      let attachedDevices = (): Set<string> => new Set();
       // M2 step 12: uploads from pages (`content.put`), kept in <data>/uploads; a chat.send naming them waits for them.
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
         store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, { plainWaiting: (botId, text) => core.peerMayIgnoreWaiting(botId, text) })), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        callHostTimers: callInTimers(env),
         // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
         // may run and re-announces its list once (core.pluginGrantsChanged).
         pluginRowsChanged: () => {
@@ -594,7 +605,7 @@ export class Botlingd {
             summary?.seen(event);
             if (event.type === "plugins.updated") void syncPlugins();
           },
-          eventStored: (tx, event) => summary?.stored(tx, event),
+          eventStored: (tx, event) => { summary?.stored(tx, event); pushTriggers?.stored(tx, event); },
         },
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
@@ -614,8 +625,28 @@ export class Botlingd {
       });
       const report = await runtime.start();
       log(`recovery: ${JSON.stringify(report)}`);
+      const pushSender = new PushSender({
+        dataDir: paths.dataDir,
+        ownsBot: (botId) => engine.hasBot(botId),
+        roster,
+        log,
+        ...(options.pushTransport ? { transport: options.pushTransport } : {}),
+      });
+      const deviceReadable = (member: string) => { const device = roster.device(member); return !!device && (device.scope ?? []).includes("read"); };
+      const push = new PushTriggers({
+        scope: runtime.scope,
+        sender: pushSender,
+        roster,
+        canPushDevice: deviceReadable,
+        reader: () => hub.reader(),
+        botName: (botId) => engine.botView(botId)?.name ?? null,
+        attachedDevices: () => attachedDevices(),
+        ...(options.pushCoalesceMs !== undefined ? { coalesceMs: options.pushCoalesceMs } : {}),
+        log,
+      });
+      pushTriggers = push;
       const summaries = summary;
-      const reconciled = await runtime.scope.submit((tx) => summaries.reconcile(tx));
+      const reconciled = await runtime.scope.submit((tx) => { push.seed(tx); return summaries.reconcile(tx); });
       log(`summary rows: ${JSON.stringify({ ...reconciled, unknown: reconciled.unknown.length })}`);
       summaries.startPurging();
       // M5-13b/M5-13c: publish one plugin:<name> row per installed plugin (plus audit row for bot writes) and keep machine.pluginsDigest current.
@@ -711,8 +742,6 @@ export class Botlingd {
       });
       originRef = serverOrigin;
       roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
-      // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
-      runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
       // M5-02c: the host's side asks through the same origin, and hears how each ask ended (a refused ask ends its wait at once).
       hostCallIns = runtime.callHost;
       // M5-03a (D51): a reply after the host gave up is appended marked late and wakes nobody.
@@ -819,7 +848,6 @@ export class Botlingd {
       const tickets = new ContentTickets();
       roster.onChange((change) => { for (const member of change.invalidated) tickets.dropDevice(member); });
       // M3 step 10: content owned by a peer, passed through and verified per chunk; this server's content read by peers.
-      const deviceReadable = (member: string) => { const device = roster.device(member); return !!device && (device.scope ?? []).includes("read"); };
       const chunkCache: ChunkCache = new ChunkCache({
         store, reader: () => hub.reader(), dataDir: paths.dataDir, budget: peerBudget, log,
         priority: (key, stream) => peerContent.priority(key, stream),
@@ -837,6 +865,7 @@ export class Botlingd {
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
       const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), log, peer: peerContent });
       const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner }, options.session);
+      attachedDevices = () => attachedDeviceIds(remote.open);
       // M5-06c: a fetch that asks puts a card into the Maintainer's chat; asks left open by the last run are `gone`.
       const approval = new FetchApproval({
         core, store, reader: () => hub.reader(), self: serverId, names: clusterNames(roster, () => hub.reader()), log,
@@ -899,7 +928,7 @@ export class Botlingd {
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
       feeds.start();
       gossip.start();
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, push, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
       daemon.remoteContent = remoteContent;
       daemon.peerContent = peerContent;
       daemon.peerContentOwner = peerContentOwner;
@@ -935,6 +964,11 @@ export class Botlingd {
       await daemon.relay?.start();
       await daemon.writeOwnProfile((at) => advertisedPort(env, at));
       peers.start();
+      // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
+      // Bound only now (M5-03b review): `attach` answers the call-ins a crash interrupted at once, and before `peers.start()`
+      // the directory knows no peer, so every such answer was refused and lost (marked sent, never queued). Until here an ask
+      // is refused "not ready" (fail closed) and a queued call-in waits.
+      runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
       daemon.chatMirror.start();
       daemon.watchLock();
       const schedule = backupCheckMs(env);
@@ -1037,6 +1071,8 @@ export class Botlingd {
     await step("events", () => this.runtime.scope.submit(() => undefined));
     await step("summary rows", () => this.summary.flush());
     this.summary.close();
+    this.pushTriggers.close();
+    await step("push triggers", () => this.pushTriggers.idle());
     await step("runtime", () => this.runtime.close());
     await step("media jobs", () => this.media?.close());
     await step("content", () => this.content.close());

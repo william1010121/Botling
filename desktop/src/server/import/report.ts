@@ -257,9 +257,12 @@ export function formatImportReport(data: ImportReportData): string {
 
   const pluginsSection = formatPluginsReportSection(data.plugins);
 
-  const mediaLines = data.mediaLines && data.mediaLines.length > 0
-    ? ["Media", ...data.mediaLines.map((line) => `  ${line}`)]
-    : ["Media", "  not imported yet (M6-05)."];
+  // `mediaLines` undefined: the media step did not run (a caller without it). Empty: it ran and had nothing to say.
+  const mediaLines = data.mediaLines === undefined
+    ? ["Media", "  not imported yet (M6-05)."]
+    : data.mediaLines.length > 0
+      ? ["Media", ...data.mediaLines.map((line) => `  ${line}`)]
+      : ["Media", "  No attachments needed copying."];
 
   const secretLines = data.secretLines && data.secretLines.length > 0
     ? ["Secrets", ...data.secretLines.map((line) => `  ${line}`)]

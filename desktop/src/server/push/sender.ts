@@ -48,12 +48,36 @@ export interface PushNotificationPayload {
 
 export type PushDeviceResult =
   | { device: string; ok: true; status: number }
-  | { device: string; ok: false; status?: number; gone?: boolean; retryable?: boolean; reason: string };
+  | {
+    device: string;
+    ok: false;
+    status?: number;
+    gone?: boolean;
+    retryable?: boolean;
+    retryAfterMs?: number;
+    reason: string;
+  };
 
 export interface PushSendReport {
   sent: number;
   skipped?: "not-owned" | "no-vapid-keys" | "no-subscriptions";
   results: PushDeviceResult[];
+}
+
+/** Parses an RFC 9110 `Retry-After` header (delay-seconds or HTTP-date) into non-negative milliseconds. */
+export function parseRetryAfterMs(header: string | undefined, nowMs: number): number | undefined {
+  if (!header) return undefined;
+  const trimmed = header.trim();
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const secs = Number(trimmed);
+    return Number.isFinite(secs) ? Math.max(0, secs * 1000) : undefined;
+  }
+  const timestamp = Date.parse(trimmed);
+  if (Number.isFinite(timestamp)) {
+    return Math.max(0, timestamp - nowMs);
+  }
+  return undefined;
 }
 
 function safeOrigin(endpoint: string): string {
@@ -113,6 +137,7 @@ export class PushSender {
     };
     const plaintext = JSON.stringify(payload);
     const subject = this.options.subject ?? DEFAULT_VAPID_SUBJECT;
+    const nowFn = this.options.now ?? Date.now;
 
     const results = await Promise.all(targets.map(async ({ device, subscription }): Promise<PushDeviceResult> => {
       const origin = safeOrigin(subscription.endpoint);
@@ -148,8 +173,17 @@ export class PushSender {
         }
         const gone = status === 404 || status === 410;
         const retryable = status === 429 || status >= 500;
+        const retryAfterMs = retryable ? parseRetryAfterMs(response.retryAfter, nowFn()) : undefined;
         this.options.log?.(`push: delivery to ${device} (${origin}) failed with HTTP ${status}`);
-        return { device, ok: false, status, ...(gone ? { gone: true } : {}), ...(retryable ? { retryable: true } : {}), reason: `http-${status}` };
+        return {
+          device,
+          ok: false,
+          status,
+          ...(gone ? { gone: true } : {}),
+          ...(retryable ? { retryable: true } : {}),
+          ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+          reason: `http-${status}`,
+        };
       } catch (error) {
         const rawMessage = error instanceof Error ? error.message : String(error);
         const safeMessage = rawMessage.split(subscription.endpoint).join(origin);
