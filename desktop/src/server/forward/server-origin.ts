@@ -3,7 +3,8 @@
 //
 // - `submit(target, cmd)` allocates `n` from `myorigins (target, originEpoch, nextN)` and commits the `forwardq` row in
 //   one writer transaction, with `floor` = the smallest `n` still unresolved for `(originEpoch, target)` and `inc` = this
-//   server's copy of `srv:<owner>` (`tableLogId`). Targets this server owns (`ownerOf === null`) throw TypeError. If the
+//   server's copy of `srv:<owner>` (`tableLogId`). The target is a `bot:` of a peer or, since M5-04d, a peer's own `srv:<id>`
+//   (the main bot's `bots.create`, scope `manage`; `Directory.peerOwner` resolves both). Targets this server owns (`ownerOf === null`) throw TypeError. If the
 //   owner is already revoked in the roster (`isRevoked`), it ends immediately with `refused{revoked}` without queueing.
 // - Outcomes arrive from `Forwarder.attach(self, ...)`: kept in memory for `outcome(slot)` and delivered to listeners.
 // - `slot conflict` (§11.4, D30): allocates a new `originEpoch` (once per conflict wave), moves the refused item to
