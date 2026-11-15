@@ -279,6 +279,20 @@ export function incomingNameIssues(name: string): { code: "NAME_DOTTED" | "NAME_
   return [];
 }
 
+/**
+ * Whether `name` is the name of a plugin the app ships in `builtIns` (the folder `<builtIns>/<name>` whose manifest says
+ * exactly that name). A library copy of it overrides the built-in (the documented way Maintainer changes one), so
+ * Maintainer's own check (`checkReport`) does not refuse that name. Only the shipped names: `botling.evil` is not one.
+ */
+export function isShippedBuiltIn(builtIns: string | null | undefined, name: string): boolean {
+  if (!builtIns || !/^[a-z0-9][a-z0-9._-]*$/.test(name)) return false;
+  try {
+    return (JSON.parse(readFileSync(join(builtIns, name, "package.json"), "utf8")) as { name?: unknown }).name === name;
+  } catch {
+    return false;
+  }
+}
+
 /** An installed plugin whose name a new plugin could not take: the log line (it stays installed). Null: nothing to say. */
 export function presentNameWarning(name: string): string | null {
   const [issue] = incomingNameIssues(name);

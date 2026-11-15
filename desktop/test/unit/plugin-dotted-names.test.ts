@@ -102,6 +102,21 @@ describe("every install path goes through the shared check", () => {
     expect(report.stdout).toContain(`→ next [NAME_RESERVED]: ${CHECK_NEXT_STEPS.NAME_RESERVED}`);
   });
 
+  it("the check Maintainer runs passes its library copy of a shipped built-in (the documented way to change one), and only the shipped names", () => {
+    const root = tempDir("maintainer-override");
+    const builtIns = join(root, "builtin-plugins"), library = join(root, "library");
+    plugin(builtIns, "botling.board");
+    plugin(builtIns, "botling.note", { folder: "botling.other" }); // a folder whose manifest says another name names nothing
+    expect(checkReport(plugin(library, "botling.board", { version: "1.0.1" }), "incoming", builtIns)).toMatchObject({ code: 0 });
+    for (const name of ["botling.evil", "botling.other", "botling.note", "botling", "my.plugin"]) {
+      expect(checkReport(plugin(library, name), "incoming", builtIns).code, name).toBe(1);
+    }
+    // a claimed name that is not lowercase never matches a shipped folder (a case-insensitive disk would open it)
+    expect(checkReport(plugin(library, "Botling.board"), "incoming", builtIns).code).toBe(1);
+    // without the built-ins folder the rule stays strict
+    expect(checkReport(plugin(library, "botling.board"))).toMatchObject({ code: 1 });
+  });
+
   it("the 2.x import: a dotted or reserved plugin is not copied and the source is untouched; valid names still import", () => {
     const root = tempDir("import");
     const src = join(root, "v2"), dst = join(root, "v3");
