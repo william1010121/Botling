@@ -21,6 +21,7 @@ import { contentUrlForLog, parseContentUrl, type MessageOf } from "../../protoco
 import type { DeviceRoster } from "../session/remote-reads";
 import type { Db } from "../store";
 import type { PeerContent } from "./peer-content";
+import { isPluginWebRef, readWebBundle } from "./plugin-bundle";
 import type { ContentService } from "./service";
 import { hasPluginReadGrant, type ContentTickets } from "./tickets";
 
@@ -30,6 +31,8 @@ export interface RemoteContentOptions {
   roster: Pick<DeviceRoster, "device">;
   /** Reader for `srv:<owner>` table rows (checked when serving or issuing plugin-bound tickets, §9A.7, M5-17). */
   reader?: () => Db;
+  /** M7-09a: where the plugins' web bundles are kept (`<dataDir>/plugin-bundles`); none: no bundle is served. */
+  pluginBundlesDir?: string;
   log?: (text: string) => void;
   /**
    * M3 step 10: content owned by a peer server (peer-content.ts). Lookups of a peer's bot's lines, tickets for a
@@ -60,6 +63,37 @@ export class RemoteContent {
     }
   }
 
+  /** Whether `id` is the web bundle of `plugin` on this server now (its row names it); never another server's, never a line's entry. */
+  private bundleAllowed(owner: string, stream: string, plugin: string, id: string): boolean {
+    const self = this.options.service.serverId;
+    try {
+      return !!this.options.pluginBundlesDir && !!this.options.reader && owner === self && stream === `srv:${self}`
+        && isPluginWebRef(this.options.reader(), self, plugin, id);
+    } catch {
+      return false;
+    }
+  }
+
+  private bundleBytes(id: string): Buffer | null {
+    return this.options.pluginBundlesDir ? readWebBundle(this.options.pluginBundlesDir, id) : null;
+  }
+
+  /** The bytes of a plugin's web bundle (checked against the row again), or a refusal: never other bytes than the hash's. */
+  private respondBundle(owner: string, stream: string, plugin: string, id: string, variant: string): Response {
+    if (variant !== "original" || !this.bundleAllowed(owner, stream, plugin, id)) return goneResponse("denied");
+    const bytes = this.bundleBytes(id);
+    if (!bytes) return goneResponse("deleted");
+    return new Response(new Uint8Array(bytes), {
+      status: 200,
+      headers: {
+        "Content-Type": "text/javascript; charset=utf-8",
+        "Content-Length": String(bytes.byteLength),
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+      },
+    });
+  }
+
   /** `content.locate` from a device's session (its validity was checked for the frame). */
   async locate(deviceId: string, message: MessageOf<"content.locate">): Promise<MessageOf<"content.located">> {
     const none: MessageOf<"content.located"> = { t: "content.located", req: message.req, ref: null };
@@ -81,6 +115,12 @@ export class RemoteContent {
     const gone = (reason: MessageOf<"content.gone">["reason"]): MessageOf<"content.gone"> => ({ t: "content.gone", req: message.req, id: message.id, reason });
     if (!this.readable(deviceId)) return gone("denied");
     if (message.plugin !== undefined && !this.pluginGranted(message.owner, message.plugin)) return gone("denied");
+    // M7-09a: a plugin's web bundle (its row's `files.web`): its entry is the plugin's row in `srv:<this server>`, not a line.
+    if (message.plugin !== undefined && message.entry.stream.startsWith("srv:")) {
+      if (!this.bundleAllowed(message.owner, message.entry.stream, message.plugin, message.id) || !this.bundleBytes(message.id)) return gone("denied");
+      const { ticket, expiresAt } = this.options.tickets.issue({ deviceId, owner: message.owner, id: message.id, entry: message.entry, plugin: message.plugin });
+      return { t: "content.granted", req: message.req, ticket, expiresAt };
+    }
     const binding = {
       deviceId,
       owner: message.owner,
@@ -116,6 +156,7 @@ export class RemoteContent {
     ) return refused("binding");
     if (!this.readable(grant.deviceId)) { this.options.tickets.dropDevice(grant.deviceId); return refused("device"); }
     if (grant.plugin !== undefined && !this.pluginGranted(grant.owner, grant.plugin)) return refused("plugin");
+    if (grant.plugin !== undefined && url.entry.stream.startsWith("srv:")) return this.respondBundle(grant.owner, url.entry.stream, grant.plugin, url.id, url.variant);
     // M3 step 10: another server's content passes through this one (checked there and at the owner).
     if (url.owner !== this.options.service.serverId && this.options.peer) return this.options.peer.respond(url, request, grant.deviceId);
     const opened = await this.options.service.open({ t: "content.open", req: "http", owner: url.owner, id: url.id, variant: url.variant, entry: url.entry }, { remote: true });
