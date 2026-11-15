@@ -29,7 +29,13 @@ async function page(template: string, data: unknown = {}, size: Parameters<typeo
   const settle = () => new Promise((resolve) => win.setTimeout(resolve, 30));
   await settle();
   const send = async (message: unknown) => { win.dispatchEvent(new win.MessageEvent("message", { data: message, source: win })); await settle(); };
-  return { win, doc: win.document, posted, errors, settle, send };
+  // A frame's useEffect runs after the next animation frame and its postMessage arrives a timer later, so under host
+  // load a fixed 30 ms is not always enough: wait until the message is there, not for a fixed time.
+  const posts = async (expected: Record<string, unknown>, timeoutMs = 5000) => {
+    const end = Date.now() + timeoutMs;
+    while (!posted.some((m) => Object.entries(expected).every(([k, v]) => m[k] === v)) && Date.now() < end) await new Promise((resolve) => win.setTimeout(resolve, 10));
+  };
+  return { win, doc: win.document, posted, errors, settle, send, posts };
 }
 const app = (body: string) => `${kitMeta}<div id="app"></div><script>
 const { html, render, useData, useSize, useSurface, Card, Stat, Ring, Bar, Spark, List, Chips, Button, Choices, Empty } = ccb.kit;
@@ -115,9 +121,10 @@ render(html\`<\${Show} />\`, document.getElementById("app"));`), null);
   });
 
   it("shows an error card, and the pin's status, when a component throws", async () => {
-    const { doc, posted } = await page(app(`
+    const { doc, posted, posts } = await page(app(`
 function Broken() { const d = useData(); return html\`<b>\${d.missing.deep}</b>\`; }
 render(html\`<\${Card} title="ok"><\${Broken} /></\${Card}>\`, document.getElementById("app"));`));
+    await posts({ ccb: "status", tone: "bad" });
     const error = doc.querySelector(".ccb-error")!;
     expect(error).not.toBeNull();
     expect(error.getAttribute("role")).toBe("alert");
@@ -132,7 +139,8 @@ render(html\`<\${Card} title="ok"><\${Broken} /></\${Card}>\`, document.getEleme
       ["html`<Card title=\"x\">a</Card>`", /<\$\{Card\}>/],
       ["html`<div title=\"abc>x</div>`", /quote|unterminated|unfinished/i],
     ] as const) {
-      const { doc, posted } = await page(app(`render(${markup}, document.getElementById("app"));`));
+      const { doc, posted, posts } = await page(app(`render(${markup}, document.getElementById("app"));`));
+      await posts({ ccb: "status", tone: "bad" });
       const error = doc.querySelector(".ccb-error");
       expect(error, markup).not.toBeNull();
       expect(error!.textContent, markup).toMatch(said);
@@ -148,13 +156,14 @@ render(html\`<\${Card} title="ok"><\${Broken} /></\${Card}>\`, document.getEleme
   });
 
   it("Choices answers with the option's index or the typed text, then locks", async () => {
-    const { doc, posted, settle } = await page(app(`
+    const { doc, posted, settle, posts } = await page(app(`
 render(html\`<\${Choices} options=\${["Plan A", { label: "Plan B", description: "safer" }]} other="Something else" />\`, document.getElementById("app"));`));
     const options = [...doc.querySelectorAll("button.ccb-choice")] as HTMLButtonElement[];
     expect(options).toHaveLength(2);
     expect(options[1].querySelector(".ccb-choice__detail")!.textContent).toBe("safer");
     options[1].click();
     await settle();
+    await posts({ ccb: "answer", index: 1 });
     expect(posted).toContainEqual({ ccb: "answer", index: 1 });
     expect((doc.querySelector("button.ccb-choice") as HTMLButtonElement).disabled).toBe(true);
     expect(doc.querySelector(".ccb-choice.is-chosen")!.textContent).toContain("Plan B");
@@ -166,6 +175,7 @@ render(html\`<\${Choices} options=\${["Plan A", { label: "Plan B", description: 
     await second.settle();
     (second.doc.querySelector(".ccb-choices__send") as HTMLButtonElement).click();
     await second.settle();
+    await second.posts({ ccb: "answer", text: "my own" });
     expect(second.posted).toContainEqual({ ccb: "answer", text: "my own" });
   });
 
@@ -184,7 +194,8 @@ describe("the example to copy (Web/kit/examples/system-load)", () => {
     const about = readFileSync(`${dir}/about.md`, "utf8");
     const data = JSON.parse(about.match(/```json\n([\s\S]*?)```/)![1]);
     for (const size of ["1x1", "2x1", "2x2", "4x2"] as const) {
-      const { doc, posted } = await page(template, data, size, "board");
+      const { doc, posted, posts } = await page(template, data, size, "board");
+      await posts({ ccb: "status", text: "CPU 72%", tone: "warning" });
       expect(doc.querySelector(".ccb-error"), size).toBeNull();
       expect(doc.querySelector(".ccb-ring"), size).not.toBeNull();
       expect(posted, size).toContainEqual({ ccb: "status", text: "CPU 72%", tone: "warning" });
