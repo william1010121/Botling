@@ -85,6 +85,16 @@ describe("chat.send: intent, effect row, turn", () => {
     expect(effectRows(h.db)[0].state).toBe("finished");
   });
 
+  it("a turn the engine refused with no words of its own still ends with an error (the renderer shows it)", async () => {
+    const h = await start();
+    h.engine.failNext = new Error("");
+    const { turnId } = outcomeOf(await h.send({ type: "chat.send", botId: "B1", text: "x" })).result as { turnId: string };
+    await h.settle();
+    const finished = entriesOf(h.db, B1).filter((entry) => entry.kind === "turn.finished");
+    expect(finished).toHaveLength(1);
+    expect(finished[0].body).toMatchObject({ turnId, status: "failed", error: "The turn could not start." });
+  });
+
   it("a turn another turn read in ends when that turn ends", async () => {
     const h = await start({ hold: true });
     const running = h.engine.coreTurn("B1");

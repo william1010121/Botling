@@ -346,6 +346,37 @@ describe("a reply with nothing to show (2.x draws no line for it)", () => {
     expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ role: "bot", state: "failed" });
   });
 
+  it("turns absorbed into a failed main turn end failed with no text and no error: no empty failed bubble for them", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t2", messageId: "r2" });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "failed", text: "", error: "the engine went away" });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t2", messageId: "r2", status: "failed", text: "" });
+    await flush();
+    expect(r.ids()).toEqual(["r1"]);
+    expect((await r.adapter.snapshot("b1")).chat?.messages.map((m) => m.id)).toEqual(["r1"]);
+  });
+
+  it("a failed turn with no text and no error still shows when the server log holds a line for it", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    r.server.append(BOT, "message.added", { botId: "b1", message: line("r1", "", { turnId: "t1", state: "failed" }) });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "failed", text: "" });
+    await flush();
+    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ role: "bot", state: "failed" });
+  });
+
+  it("a failed turn that carries text still shows (the ordinary failed reply)", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "failed", text: "half an answer" });
+    await flush();
+    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ role: "bot", state: "failed", text: "half an answer" });
+  });
+
   it("your message answered with words and choices, a tool call, then a last <no-reply/>: the words and choices show, the tag does not", async () => {
     const said = "Both are not done yet.";
     const choices = '<choices question="Phone">\n* Deploy now | it changes the live relay\n- Wait | phone keeps 2.x\n</choices>';

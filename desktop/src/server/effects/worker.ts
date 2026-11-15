@@ -177,7 +177,9 @@ export class EffectWorker {
       this.starting.delete(turnId);
       this.stops.delete(turnId);
       this.options.log?.(`effects: turn ${turnId} of ${row.botId} did not start (${errorText(error)})`);
-      await this.closeRow(row, "failed", errorText(error));
+      // A failure always says why: the renderer draws no bubble for a failed turn with no error, no text and no line
+      // (a turn read into a failed one), so an error with no words of its own must not end that way.
+      await this.closeRow(row, "failed", errorText(error) || "The turn could not start.");
       return;
     }
     this.starting.delete(turnId);
