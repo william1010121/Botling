@@ -242,7 +242,7 @@ describe("protocol M2: scopes", () => {
       const scope = COMMAND_SCOPES[type];
       if (route === "app") expect(scope, type).toBe("machine");
       if (route === "read") expect(["read", "admin", "machine"], type).toContain(scope);
-      if (route === "intent") expect(["reply", "approve", "manage"], type).toContain(scope);
+      if (route === "intent") expect(["reply", "approve", "manage", "server"], type).toContain(scope);
     }
   });
 

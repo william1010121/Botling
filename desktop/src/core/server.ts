@@ -3222,6 +3222,11 @@ First write a test that shows this, then fix it.`;
         const { type: _type, botId: _bot, requestId, ...rest } = cmd;
         return this.bot(cmd.botId).changeRoutine({ ...rest, ...(requestId ? { request_id: requestId } : {}) });
       }
+      // M5-01: call-ins between servers are Botling 3's server only; the 2.x core never takes them.
+      case "callin.ask":
+      case "callin.reply":
+      case "callin.cancel":
+        throw new ContractError("bad_request", "Botling 3 only.");
       default: throw new ContractError("not_found", `The core does not handle ${cmd.type}.`);
     }
   }

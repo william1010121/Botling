@@ -95,6 +95,16 @@ describe("M5-13a: plugin:<name> row schema", () => {
       grants: { [hash]: { ...baseGrant, requests: ["not.a.command"] } },
     })).success).toBe(false);
 
+    // Server-only commands (call-ins, M5-01) are never a plugin's request: refused in the manifest and in a grant.
+    for (const type of ["callin.ask", "callin.reply", "callin.cancel"]) {
+      expect(PluginRow.safeParse(sampleRow({
+        manifest: { ...(base.manifest as Record<string, unknown>), requests: ["chat.send", type] },
+      })).success, `manifest ${type}`).toBe(false);
+      expect(PluginRow.safeParse(sampleRow({
+        grants: { [hash]: { ...baseGrant, requests: [type] } },
+      })).success, `grant ${type}`).toBe(false);
+    }
+
     // Invalid codeHash (root or grant key) and negative/float `at` are refused.
     expect(PluginRow.safeParse(sampleRow({ codeHash: "bad hash!" })).success).toBe(false);
     expect(PluginRow.safeParse(sampleRow({ grants: { "bad key!": baseGrant } })).success).toBe(false);

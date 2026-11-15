@@ -286,7 +286,7 @@ function applyNow(deps: IntentDeps, cmd: ApplyNowCommand) {
 export const INTENT_TYPES: ReadonlySet<string> = new Set([
   "chat.send", "turn.stop", "bots.remove",
   "chat.react", "chat.choose", "chat.answer", "chat.ignoreQuestion", "component.approve", "settings.set", "bots.create",
-  "plugin.grant",
+  "plugin.grant", "callin.ask", "callin.reply", "callin.cancel",
 ]);
 
 /** The core set's apply step (the slot engine's `apply` for `kind: "intent"` commands). */
@@ -297,6 +297,11 @@ export function applyIntent(deps: IntentDeps, context: ApplyContext): { result?:
     case "turn.stop": return stop(deps, context, cmd);
     case "bots.remove": return remove(deps, context, cmd);
     case "plugin.grant": return grantPlugin(deps, context, cmd);
+    // M5-01: accepted on the wire, not run yet (the handlers are M5-02b / M5-02c).
+    case "callin.ask":
+    case "callin.reply":
+    case "callin.cancel":
+      throw new SlotRefusal("invalid", "call-ins arrive with M5-02");
     case "chat.react":
     case "chat.choose":
     case "chat.answer":
