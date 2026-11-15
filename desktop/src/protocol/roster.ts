@@ -75,8 +75,8 @@ export const RevokeStatement = z.strictObject({
   cascade: z.union([z.boolean(), z.array(MemberId).length(0)]),
   /**
    * K8 (D66, proposed): on a server revocation, the joining Adds signed by the revoked server that the root held when
-   * it signed. Optional with no default so old revocations without it keep their canonical bytes and ids; device
-   * revocations carrying `seen` are refused in verify.ts (the schema cannot tell a member's kind). Validity ignores it.
+   * it signed. Optional with no default so old revocations without it keep their canonical bytes and ids. Ignored on
+   * device revocations and by validity until D66 is adopted (B-01 in validity.ts; revocations never fail open).
    */
   seen: z.array(StatementId).max(1_000).refine(uniqueItems, { message: "each statement is listed once" }).optional(),
 });

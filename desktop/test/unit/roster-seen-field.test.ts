@@ -1,7 +1,8 @@
 // Botling 3 M4-02 (K8, pending D66): reserve the optional `seen` field on a server revocation.
 // - A Revoke without `seen` keeps its exact M3 canonical bytes and id (no default `[]` injected).
 // - A server Revoke with `seen` parses and verifies; its id changes because `seen` enters the canonical bytes.
-// - Duplicate ids in `seen` are refused at parse; a device revocation carrying `seen` is refused at verify.
+// - Duplicate ids in `seen` are refused at parse; a device revocation carrying `seen` still revokes (fail-closed)
+//   and `seen` is ignored until D66 is adopted (B-01 in validity.ts).
 // - `computeRoster` ignores `seen` until D66 is adopted.
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -148,52 +149,66 @@ describe("M4-02 (K8): Revoke.seen wire reservation", () => {
     expect(RevokeStatement.safeParse({ ...base, seen: [STMT_1, STMT_2] }).success).toBe(true);
   });
 
-  it("4. a device revocation carrying seen is refused at verify", async () => {
-    const s = await withCluster();
-    const phone = await memberKeys();
-    const added = await s.roster.addDevice({ keys: phone.keys, name: "Phone" });
-    const addStored = s.roster.statements().find((item) => item.id === added.addId)!;
+  it("4. a device revocation carrying seen still revokes the device (fail-closed) and matches computeRoster without seen", async () => {
+    const s1 = await withCluster();
+    const phone1 = await memberKeys();
+    await s1.roster.addDevice({ keys: phone1.keys, name: "Phone" });
+    expect(s1.roster.isValid(phone1.member)).toBe(true);
+
     const base = {
       type: "revoke" as const,
-      cluster: s.clusterId,
-      member: phone.member,
+      cluster: s1.clusterId,
+      member: phone1.member,
       reason: "",
-      by: s.identity.memberId,
+      by: s1.identity.memberId,
       gen: 1,
       cascade: false,
     };
-    const revokeWithIds = await signStatement({ ...base, seen: [STMT_1] }, s.identity.memberId, (b) => s.identity.sign(b));
-    const revokeWithEmpty = await signStatement({ ...base, seen: [] }, s.identity.memberId, (b) => s.identity.sign(b));
+    const revokeWithoutSeen = await signStatement(base, s1.identity.memberId, (b) => s1.identity.sign(b));
+    const revokeWithIds = await signStatement({ ...base, seen: [STMT_1] }, s1.identity.memberId, (b) => s1.identity.sign(b));
+    const revokeWithEmpty = await signStatement({ ...base, seen: [] }, s1.identity.memberId, (b) => s1.identity.sign(b));
 
-    const self = { memberId: s.identity.memberId, signPub: s.identity.keys.sign };
-    const v1 = await verifyStatements([addStored, revokeWithIds], self);
-    expect(v1.map((item) => item.id)).toEqual([addStored.id]);
-    const v2 = await verifyStatements([addStored, revokeWithEmpty], self);
-    expect(v2.map((item) => item.id)).toEqual([addStored.id]);
+    const self1 = { memberId: s1.identity.memberId, signPub: s1.identity.keys.sign };
+    const storedBase = s1.roster.statements();
+    const vWithout = await verifyStatements([...storedBase, revokeWithoutSeen], self1);
+    const vWithIds = await verifyStatements([...storedBase, revokeWithIds], self1);
+    const vWithEmpty = await verifyStatements([...storedBase, revokeWithEmpty], self1);
+    expect(vWithIds.map((item) => item.id)).toContain(revokeWithIds.id);
+    expect(vWithEmpty.map((item) => item.id)).toContain(revokeWithEmpty.id);
 
-    // Merging into the store also ignores it, leaving the device valid.
-    await s.roster.merge([revokeWithIds.statement, revokeWithEmpty.statement]);
-    expect(s.roster.isValid(phone.member)).toBe(true);
+    const rWithout = computeRoster(s1.identity.memberId, s1.clusterId, vWithout);
+    const rWithIds = computeRoster(s1.identity.memberId, s1.clusterId, vWithIds);
+    const rWithEmpty = computeRoster(s1.identity.memberId, s1.clusterId, vWithEmpty);
 
-    // A bogus device Add signed by a device cannot make a server revocation with seen look like a device revocation.
-    const peer = await memberKeys();
-    const addPeer = await signStatement(
-      { type: "add", cluster: s.clusterId, member: peer.member, kind: "server", keys: peer.keys, name: "Peer", by: s.identity.memberId, at: 2, joined: true },
-      s.identity.memberId,
-      (b) => s.identity.sign(b),
+    for (const view of [rWithout, rWithIds, rWithEmpty]) {
+      expect(view.valid.has(phone1.member)).toBe(false);
+      expect(view.revoked.has(phone1.member)).toBe(true);
+      expect([...view.valid].sort()).toEqual([...rWithout.valid].sort());
+      expect([...view.revoked].sort()).toEqual([...rWithout.revoked].sort());
+      expect([...view.servers].sort()).toEqual([...rWithout.servers].sort());
+      expect([...view.members.keys()].sort()).toEqual([...rWithout.members.keys()].sort());
+      expect(view.root?.id).toEqual(rWithout.root?.id);
+      expect(view.countingRevokes.length).toBe(rWithout.countingRevokes.length);
+    }
+
+    // Merging a device revocation carrying `seen: [id]` into RosterStore revokes the phone (never fail-open).
+    await s1.roster.merge([revokeWithIds.statement]);
+    expect(s1.roster.isValid(phone1.member)).toBe(false);
+    expect(s1.roster.view.revoked.has(phone1.member)).toBe(true);
+
+    // Same for a device revocation carrying `seen: []` on an independent RosterStore.
+    const s2 = await withCluster();
+    const phone2 = await memberKeys();
+    await s2.roster.addDevice({ keys: phone2.keys, name: "Phone2" });
+    expect(s2.roster.isValid(phone2.member)).toBe(true);
+    const revokePhone2Empty = await signStatement(
+      { type: "revoke", cluster: s2.clusterId, member: phone2.member, reason: "", by: s2.identity.memberId, gen: 1, cascade: false, seen: [] },
+      s2.identity.memberId,
+      (b) => s2.identity.sign(b),
     );
-    const bogusDeviceAdd = await signStatement(
-      { type: "add", cluster: s.clusterId, member: peer.member, kind: "device", keys: peer.keys, name: "Fake", scope: ["read"], by: phone.member, at: 3 },
-      phone.member,
-      phone.signer,
-    );
-    const revokePeer = await signStatement(
-      { type: "revoke", cluster: s.clusterId, member: peer.member, reason: "", by: s.identity.memberId, gen: 1, cascade: false, seen: [STMT_1] },
-      s.identity.memberId,
-      (b) => s.identity.sign(b),
-    );
-    const v3 = await verifyStatements([addStored, addPeer, bogusDeviceAdd, revokePeer], self);
-    expect(v3.map((item) => item.id)).toContain(revokePeer.id);
+    await s2.roster.merge([revokePhone2Empty.statement]);
+    expect(s2.roster.isValid(phone2.member)).toBe(false);
+    expect(s2.roster.view.revoked.has(phone2.member)).toBe(true);
   });
 
   it("5. computeRoster gives the same result with and without seen on a revocation", async () => {
