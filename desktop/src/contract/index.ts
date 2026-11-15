@@ -1302,8 +1302,9 @@ const BASE_COMMANDS = [
   z.strictObject({ type: z.literal("mobile.relay"), url: z.string().max(300).nullable() }),
   /** Botling 3 only: the first pairing's cluster (no code: show a new recovery code once; a code: the one typed back). */
   z.strictObject({ type: z.literal("mobile.cluster"), code: z.string().max(64).optional() }),
-  /** Botling 3 only: the person compared the phone's 6-digit code with the window's (accept adds the phone). */
-  z.strictObject({ type: z.literal("mobile.confirm"), offer: z.string().min(1).max(64), accept: z.boolean() }),
+  /** Botling 3 only: the person compared the phone's 6-digit code with the window's (accept adds the phone). An accept
+   * names the code it was shown: a different phone that took the offer since (a new code) is not added. */
+  z.strictObject({ type: z.literal("mobile.confirm"), offer: z.string().min(1).max(64), accept: z.boolean(), code: z.string().regex(/^[0-9]{6}$/).optional() }),
   /** Settings › Machines: the list; ~/.ssh/config's hosts; add an ssh host (its key is read, to approve next); a relay
    * install line (a one-time secret); approve (ssh: its key; relay: the code it shows); decline; revoke; remove; check. */
   z.strictObject({ type: z.literal("machines.view") }),

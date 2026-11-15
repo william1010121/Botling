@@ -107,7 +107,7 @@ describe("Settings › Phone in Botling 3", () => {
       expect(m.host.textContent).toContain("iPhone");
       const accept = button(m.host, v3.accept)!;
       await act(async () => { accept.click(); accept.click(); });
-      expect(calls.filter((c) => c.type === "mobile.confirm")).toEqual([{ type: "mobile.confirm", offer: OFFER, accept: true }]);
+      expect(calls.filter((c) => c.type === "mobile.confirm")).toEqual([{ type: "mobile.confirm", offer: OFFER, accept: true, code: "042917" }]);
       await act(async () => { release!(); });
       await settle();
       expect(m.host.textContent).toContain(v3.paired("iPhone"));
@@ -125,7 +125,7 @@ describe("Settings › Phone in Botling 3", () => {
       await click(button(r.host, mobileWords("en").create));
       await settle(1_200);
       await click(button(r.host, v3.reject));
-      expect(rejects.filter((c) => c.type === "mobile.confirm")).toEqual([{ type: "mobile.confirm", offer: OFFER, accept: false }]);
+      expect(rejects.filter((c) => c.type === "mobile.confirm")).toEqual([{ type: "mobile.confirm", offer: OFFER, accept: false, code: "111222" }]);
     } finally { await r.done(); }
   });
 

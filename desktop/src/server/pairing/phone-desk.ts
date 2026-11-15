@@ -73,7 +73,7 @@ export class PhoneDesk {
       case "mobile.view": return this.view();
       case "mobile.cluster": return this.cluster(cmd.code);
       case "mobile.pair": return this.pair(cmd);
-      case "mobile.confirm": return this.confirm(cmd.offer, cmd.accept);
+      case "mobile.confirm": return this.confirm(cmd.offer, cmd.accept, cmd.code);
       case "mobile.revoke": {
         const op = AdminOp.safeParse({ op: "device.revoke", deviceId: cmd.deviceId });
         if (!op.success) throw new ContractError("bad_request", "That is not a paired phone's id.");
@@ -140,10 +140,14 @@ export class PhoneDesk {
     };
   }
 
-  private async confirm(offer: string, accept: boolean): Promise<MobileDeskView> {
+  private async confirm(offer: string, accept: boolean, code: string | undefined): Promise<MobileDeskView> {
     const entry = this.offers.get(offer);
     if (!entry || entry.confirming || entry.view.state !== "compare" || this.now() >= entry.view.expiresAt) {
       throw new ContractError("conflict", "That pairing is not waiting for a code check any more.");
+    }
+    // An accept is for the code the person compared: if another phone took the offer since (its own code), it is refused.
+    if (accept && (code === undefined || code !== entry.view.code)) {
+      throw new ContractError("conflict", "The code to compare changed; compare the new code before adding the phone.");
     }
     const op = AdminOp.safeParse({ op: "pair.confirm", offer, accept });
     if (!op.success) throw new ContractError("bad_request", "That is not a pairing offer.");

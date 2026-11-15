@@ -18,7 +18,7 @@ import { servedAsReq } from "../../src/server/session/session-core";
 import { COMMAND_ROUTES } from "../../src/server/intents";
 import { Botlingd } from "../../src/server/botlingd";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "../../src/server/identity";
-import { changeRelaySetting, RELAY_SETTING_FILE, RelaySettingError } from "../../src/server/net/relay-setting";
+import { changeRelaySetting, RELAY_SETTING_FILE, RelaySettingError, writeRelaySetting } from "../../src/server/net/relay-setting";
 import { PairingService } from "../../src/server/pairing";
 import { PHONE_COMMANDS, PhoneDesk, type PhonePairing, type PhoneRelay } from "../../src/server/pairing/phone-desk";
 import { RosterStore } from "../../src/server/roster";
@@ -165,7 +165,7 @@ describe("PhoneDesk: Settings › Phone over the v3 pairing", () => {
     cleanups.push(() => desk.close());
     const { offer } = await run(desk, { type: "mobile.pair" }) as { offer: string };
     emit({ kind: "pair.code", offer, code: "123456", deviceId: DEVICE, deviceName: "iPhone" });
-    const twice = await Promise.allSettled([run(desk, { type: "mobile.confirm", offer, accept: true }), run(desk, { type: "mobile.confirm", offer, accept: true })]);
+    const twice = await Promise.allSettled([run(desk, { type: "mobile.confirm", offer, accept: true, code: "123456" }), run(desk, { type: "mobile.confirm", offer, accept: true, code: "123456" })]);
     expect(twice.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
     expect(ops.filter((op) => op.op === "pair.confirm")).toEqual([{ op: "pair.confirm", offer, accept: true }]);
     expect((await run(desk, { type: "mobile.view" }) as any).v3.offers[0]).toMatchObject({ offer, state: "adding" });
@@ -173,7 +173,12 @@ describe("PhoneDesk: Settings › Phone over the v3 pairing", () => {
     emit({ kind: "pair.declined", offer, reason: "ack lost" });
     expect((await run(desk, { type: "mobile.view" }) as any).v3.offers[0]).toEqual({ offer, state: "waiting", expiresAt: expect.any(Number) });
     emit({ kind: "pair.code", offer, code: "654321", deviceId: DEVICE, deviceName: "iPhone" });
-    await run(desk, { type: "mobile.confirm", offer, accept: true });
+    // An accept for the code shown before the retry (or none) is not this phone's: refused, nothing sent.
+    const sent = ops.filter((op) => op.op === "pair.confirm").length;
+    await expect(run(desk, { type: "mobile.confirm", offer, accept: true, code: "123456" })).rejects.toThrow(/code to compare changed/);
+    await expect(run(desk, { type: "mobile.confirm", offer, accept: true })).rejects.toThrow(/code to compare changed/);
+    expect(ops.filter((op) => op.op === "pair.confirm").length).toBe(sent);
+    await run(desk, { type: "mobile.confirm", offer, accept: true, code: "654321" });
     emit({ kind: "pair.done", offer, deviceId: DEVICE, addId: "A".repeat(43) });
     const done = await run(desk, { type: "mobile.view" }) as any;
     expect(done.v3.offers[0]).toMatchObject({ offer, state: "paired", device: "iPhone" });
@@ -280,5 +285,30 @@ describe("botlingd answers Settings › Phone (in process, a local relay)", () =
     expect(existsSync(join(dataDir, RELAY_SETTING_FILE))).toBe(false);
     expect((await req({ type: "mobile.view" })).relay).toEqual({ url: null, state: "off" });
     expect(daemon.relay).toBeNull();
+  }, 90_000);
+  it("a relay botlingd started with and the window turned off is gone from new pairing links", async () => {
+    const relay = await new LocalRelay().ready();
+    cleanups.push(() => relay.stop());
+    const dataDir = root("phone-botlingd-off");
+    writeRelaySetting(dataDir, relay.url);
+    const daemon = await Botlingd.start({ env: botlingdEnv(dataDir, { BOTLING_SERVER_PORT: "off", BOTLING_SERVER_BACKUP_CHECK_MS: "0", BOTLING_SERVER_RELAY_BACKOFF_MS: "50,200" }), outDir: join(desktop, "out") });
+    cleanups.push(() => daemon.stop());
+    const client = new ScriptClient("desktop");
+    cleanups.push(() => client.close());
+    await client.connect(daemon.paths.socket, daemon.token);
+    const req = async (cmd: unknown) => {
+      const res = await client.req(cmd);
+      if (!res.ok) throw new Error(`${(cmd as { type: string }).type}: ${res.error.message}`);
+      return res.result as any;
+    };
+    expect((await req({ type: "mobile.view" })).relay.url).toBe(relay.url);
+    const made = await req({ type: "mobile.cluster" });
+    await req({ type: "mobile.cluster", code: made.code });
+    expect(parsePairLink((await req({ type: "mobile.pair" })).url)!.addresses.relay?.url).toBe(relay.url);
+    await req({ type: "mobile.relay", url: null });
+    const offer = await req({ type: "mobile.pair" });
+    expect(parsePairLink(offer.url)!.addresses.relay).toBeUndefined();
+    expect(offer.url.startsWith(`http://127.0.0.1:${relay.port}/`)).toBe(false);
+    expect(offer.note).toBeDefined();
   }, 90_000);
 });

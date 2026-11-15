@@ -129,10 +129,10 @@ export function PhoneSettingsV3({ client, lang, view, setView, refresh }: Props)
     catch (failure) { setFailed(why(failure)); }
     finally { busy.current.pair = false; setCreating(false); }
   };
-  const answer = async (accept: boolean) => {
+  const answer = async (accept: boolean, code: string) => {
     if (busy.current.confirm || !offer) return;
     busy.current.confirm = true; setFailed(null);
-    try { setView(await client.request({ type: "mobile.confirm", offer: offer.offer!, accept })); }
+    try { setView(await client.request({ type: "mobile.confirm", offer: offer.offer!, accept, code })); }
     catch (failure) { setFailed(why(failure)); void refresh(); }
     finally { busy.current.confirm = false; }
   };
@@ -231,8 +231,8 @@ export function PhoneSettingsV3({ client, lang, view, setView, refresh }: Props)
                   <p className="settings-hint">{t.compareNote(followed.device || words.unnamed)}</p>
                   <p><strong className="phone-compare-code">{grouped(followed.code)}</strong></p>
                   <div className="settings-actions">
-                    <button type="button" onClick={() => void answer(true)}>{t.accept}</button>
-                    <button type="button" className="task-report" onClick={() => void answer(false)}>{t.reject}</button>
+                    <button type="button" onClick={() => void answer(true, followed.code!)}>{t.accept}</button>
+                    <button type="button" className="task-report" onClick={() => void answer(false, followed.code!)}>{t.reject}</button>
                   </div>
                 </div>
               )}

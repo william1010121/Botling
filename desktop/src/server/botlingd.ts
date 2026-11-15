@@ -801,12 +801,14 @@ export class Botlingd {
       if (relayAt) log(`relay: ${redact(relayAt)} (from ${relaySetting.source === "env" ? RELAY_URL_ENV : RELAY_SETTING_FILE})`);
       const relayRoom = relayAt ? await (async () => { const key = loadRelayRoomKey(join(paths.dataDir, RELAY_KEY_FILE)); return { url: relayAt, key, room: await relayRoomOf(key) }; })() : null;
       const relayAddress: RelayAddress | null = relayRoom ? { url: relayRoom.url, room: relayRoom.room } : null;
+      const relayNow = (): RelayAddress | null => (daemon ? daemon.relayAddress : relayAddress);
       const pairing = new PairingService({
         roster, cluster: clusterSetup, identity, serverName: SERVER_NAME, log,
-        // The relay in use now (Settings › Phone may switch it while botlingd runs: Botlingd.useRelay).
-        addresses: () => pairingAddresses(origin, daemon?.relayAddress ?? relayAddress),
-        pageUrl: () => pairingPageUrl(origin, (daemon?.relayAddress ?? relayAddress)?.url ?? null),
-        addressNote: () => (origin || (daemon?.relayAddress ?? relayAddress) ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), and no relay (botlingd relay set <url>), so the link names a placeholder."),
+        // The relay in use now (Settings › Phone may switch it while botlingd runs: Botlingd.useRelay). Once the daemon
+        // exists its address is the only truth: null there means off, never the address botlingd started with.
+        addresses: () => pairingAddresses(origin, relayNow()),
+        pageUrl: () => pairingPageUrl(origin, relayNow()?.url ?? null),
+        addressNote: () => (origin || relayNow() ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), and no relay (botlingd relay set <url>), so the link names a placeholder."),
       });
       // M3 step 4: server pairing (`botlingd join` / `add-machine`), reached at the loopback listener's `/v3/ws`.
       const listenerPort = () => daemon?.listener?.port ?? null;
@@ -815,9 +817,9 @@ export class Botlingd {
         ownAddresses: () => {
           const at = listenerPort();
           const portArg = at === null ? null : advertisedPort(env, at);
-          const relayNow = daemon?.relayAddress ?? relayAddress;
-          if (portArg === null && !relayNow) return null;
-          return addressesValue(portArg, { tailnet: origin, relay: relayNow });
+          const relay = relayNow();
+          if (portArg === null && !relay) return null;
+          return addressesValue(portArg, { tailnet: origin, relay });
         },
         joinAddresses: () => { const at = listenerPort(); return at === null ? [] : [`ws://${LISTEN_HOST}:${at}/v3/ws`]; },
         prefs,
