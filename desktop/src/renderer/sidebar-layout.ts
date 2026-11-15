@@ -8,7 +8,9 @@
 //   - a change made in the column is written to the storage and also to the old key, because the core still reads them (a message to
 //     an idle bot takes it out of Idle, core/server/send.ts; the waiting list orders by pinnedBots; the phone page's snapshot);
 //   - a change that arrives in the old key from someone else (that same send, another window) is taken over into the storage; a value this
-//     store wrote itself coming back is not a change;
+//     store wrote itself coming back is not a change. The storage also keeps the old keys as this store last took them in (`seen`, inside
+//     the stored value), so a change made while no store was watching (the window was closed, the sidebar was unloaded) is told from the
+//     stored layout at the next start and taken over then too. A layout stored without that record (an older run) is trusted as it is;
 //   - when no plugin is attached (a page without the shell, the sidebar unloaded or refused, the storage unreadable) the old keys are the
 //     layout, as they were before. A page of Botling Web keeps them too: its layout is the bridge's (phone layout), not this store's.
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
@@ -51,11 +53,19 @@ export function layoutOfSettings(settings: Partial<Record<LayoutKey, unknown>> |
   return { railCollapsed: settings?.railCollapsed === true, pinnedBots: idList(settings?.pinnedBots) ?? [], idleBots: idList(settings?.idleBots) ?? [] };
 }
 
+/** The old keys as the store last took them in, which the storage keeps beside the layout (`seen` in the stored value); null when absent. */
+export function readSeen(value: unknown): RailLayout | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || !Object.hasOwn(value, "seen")) return null;
+  return readLayout((value as { seen: unknown }).seen);
+}
+
 export class RailLayoutStore {
   private storage: Storage | null = null;
   private layout: RailLayout | null = null;
   /** What the storage held: undefined until it answered, null when it held no layout. */
   private stored: RailLayout | null | undefined;
+  /** The `seen` record that came with the stored layout (null: none). */
+  private storedSeen: RailLayout | null = null;
   private failed = false;
   /** The old keys as the page has them now, and as this store last took them in. */
   private legacy: RailLayout | null = null;
@@ -82,6 +92,7 @@ export class RailLayoutStore {
     storage.get(LAYOUT_STORAGE_KEY).then((value) => {
       if (this.storage !== storage) return;
       this.stored = readLayout(value);
+      this.storedSeen = this.stored ? readSeen(value) : null;
       this.settle();
     }, (error: unknown) => {
       if (this.storage !== storage) return;
@@ -102,18 +113,35 @@ export class RailLayoutStore {
   observe(legacy: RailLayout): void {
     this.legacy = legacy;
     if (!this.layout) { this.settle(); return; }
-    const seen = this.seen ?? legacy;
-    let layout = this.layout;
+    if (this.reconcile(legacy)) { this.persist(); this.notify(); }
+  }
+
+  /**
+   * Takes in what the old keys hold that this store has not seen yet: a key that differs from `seen` is a change, unless it is this store's
+   * own write coming back. True when the layout or `seen` changed (the caller stores and redraws).
+   */
+  private reconcile(legacy: RailLayout): boolean {
+    const base = this.seen ?? legacy;
+    let seen = base;
+    let layout = this.layout!;
     for (const key of LAYOUT_KEYS) {
-      if (same(legacy[key], seen[key])) continue;
-      this.seen = { ...(this.seen ?? seen), [key]: legacy[key] };
+      if (same(legacy[key], base[key])) continue;
+      seen = { ...seen, [key]: legacy[key] };
       // Our own write coming back is not a change; everything we wrote before it has come back too.
       const written = this.mine.get(key) ?? [];
       const at = written.indexOf(JSON.stringify(legacy[key]));
-      if (at >= 0) { written.splice(0, at + 1); continue; }
+      if (at >= 0) {
+        written.splice(0, at + 1);
+        // Once all our writes are back the old key has the last word (a foreign write may have landed between ours and their echo).
+        if (written.length === 0 && !same(legacy[key], layout[key])) layout = { ...layout, [key]: legacy[key] };
+        continue;
+      }
       if (!same(legacy[key], layout[key])) layout = { ...layout, [key]: legacy[key] };
     }
-    if (layout !== this.layout) { this.layout = layout; this.persist(); this.notify(); }
+    const moved = seen !== base || layout !== this.layout;
+    this.seen = seen;
+    this.layout = layout;
+    return moved;
   }
 
   /**
@@ -137,22 +165,31 @@ export class RailLayoutStore {
   }
 
   private reset(): void {
-    this.storage = null; this.layout = null; this.stored = undefined; this.failed = false; this.seen = null; this.mine.clear(); this.warned = false;
+    this.storage = null; this.layout = null; this.stored = undefined; this.storedSeen = null; this.failed = false; this.seen = null; this.mine.clear(); this.warned = false;
   }
 
-  /** The storage has answered and the page has handed its old keys: the stored layout wins; with none stored the old keys are copied in. */
+  /**
+   * The storage has answered and the page has handed its old keys: the stored layout wins, except for what the old keys changed since this
+   * store last took them in (`seen`, stored beside the layout); with none stored the old keys are copied in.
+   */
   private settle(): void {
     if (!this.storage || this.layout || this.failed || this.stored === undefined || !this.legacy) return;
-    this.seen = this.legacy;
-    if (this.stored) this.layout = this.stored;
-    else { this.layout = this.legacy; this.persist(); }
+    if (this.stored) {
+      this.layout = this.stored;
+      this.seen = this.storedSeen ?? this.legacy;
+      if (this.storedSeen && this.reconcile(this.legacy)) this.persist();
+    } else {
+      this.layout = this.legacy;
+      this.seen = this.legacy;
+      this.persist();
+    }
     this.notify();
   }
 
   private persist(): void {
-    const { storage, layout } = this;
+    const { storage, layout, seen } = this;
     if (!storage || !layout) return;
-    storage.set(LAYOUT_STORAGE_KEY, layout).catch((error: unknown) => this.problem("write", error));
+    storage.set(LAYOUT_STORAGE_KEY, seen ? { ...layout, seen } : layout).catch((error: unknown) => this.problem("write", error));
   }
 
   /** A storage refusal (quota, a bad key) is logged once; the layout stays what it is in memory and in the old keys. */

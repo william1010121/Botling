@@ -20,8 +20,15 @@ export type FeedViewKey = (typeof FEED_VIEWS)[number][0];
 export const FEED_MENU_SLOTS: readonly string[] = SLOT_ALIASES.filter((alias) => alias.group === "menu").map(legacySlotId);
 
 const ROOT_IDS = new Set(ROOT_SLOTS.map(canonicalSlot));
-/** The places a built-in plugin owns now, so `:shell` does not (M7-02c: `botling.settings` provides `settings/section` and `settings/quick`). */
-export const PLUGIN_OWNED_SLOTS: readonly string[] = ["view/settings.section", "view/quickSettings"];
+/** The places a built-in plugin owns now, so `:shell` does not, by 2.x id, one block per plugin. */
+export const PLUGIN_OWNED_SLOTS: readonly string[] = [
+  // botling.settings (M7-02c): settings/section, settings/quick
+  "view/settings.section",
+  "view/quickSettings",
+
+  // botling.sidebar (M7-05a): bot/row, not in FEED_SLOTS: no feed rows go there yet
+  "statusItem/botRow",
+];
 const OWNED_ELSEWHERE = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 
 /**

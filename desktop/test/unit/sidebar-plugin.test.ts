@@ -70,9 +70,16 @@ async function page(options: PageOptions = {}) {
 }
 /** Seeds the plugin's storage namespace with a layout (what an earlier run left). */
 const seed = (layout: unknown) => backend.save(SIDEBAR_PLUGIN, serializeNamespaceMap(new Map([[LAYOUT_STORAGE_KEY, layout]])));
-const stored = async (): Promise<unknown> => {
+const storedRecord = async (): Promise<Record<string, unknown> | undefined> => {
   const raw = await backend.load(SIDEBAR_PLUGIN);
-  return raw === null ? undefined : (JSON.parse(raw) as Record<string, unknown>)[LAYOUT_STORAGE_KEY];
+  return raw === null ? undefined : (JSON.parse(raw) as Record<string, unknown>)[LAYOUT_STORAGE_KEY] as Record<string, unknown> | undefined;
+};
+/** The stored layout without the `seen` record beside it (sidebar-layout.test.ts checks the record itself). */
+const stored = async (): Promise<unknown> => {
+  const record = await storedRecord();
+  if (!record) return record;
+  const { seen: _seen, ...rest } = record;
+  return rest;
 };
 /** After the storage answered and the store settled against the page's settings. */
 const settled = () => act(async () => { await vi.waitFor(() => { expect(railLayout.current()).not.toBeNull(); }); });
@@ -298,6 +305,41 @@ describe("the layout in the shell storage", () => {
     // An older value is a change again once our writes have all come back.
     await mounted.settings({ idleBots: [] });
     expect(railLayout.current()?.idleBots).toEqual([]);
+  });
+
+  it("takes over what the core changed in an old key while no window was open (F1): the stored layout does not bring it back", async () => {
+    // The last run left idle [Delta, Gamma], and saw exactly that in the old key. Then the core's send.ts took Delta out of Idle.
+    const before = layout({ idleBots: [ID.delta, ID.gamma] });
+    await seed({ ...before, seen: before });
+    await shell();
+    const mounted = await page({ settings: { idleBots: [ID.gamma] }, shown: ID.alpha });
+    await settled();
+    expect(railLayout.current()).toEqual(layout({ idleBots: [ID.gamma] }));
+    expect(mounted.rail()).toContain("Idle, 1 bot");
+    await vi.waitFor(async () => { expect(await storedRecord()).toEqual({ ...layout({ idleBots: [ID.gamma] }), seen: layout({ idleBots: [ID.gamma] }) }); });
+    // The next change in the column mirrors the right list, not the stale one.
+    await click(mounted, '[aria-label="Send Delta to Idle"]');
+    expect(layoutWrites(mounted)).toEqual([{ key: "idleBots", value: [ID.gamma, ID.delta] }]);
+  });
+
+  it("a kernel that refuses the rail makes the plugin fail to load, and the layout is not attached", async () => {
+    const real = rendererKernel as unknown as Record<string | symbol, unknown>;
+    const refusing = new Proxy(rendererKernel, {
+      get(target, property) {
+        if (property === "contribute") return (...args: unknown[]) => (args[1] === RAIL_SLOT ? null : (real.contribute as (...a: unknown[]) => unknown).apply(target, args));
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const made = new InPageHost({ manifest, kernel: refusing, log: (line) => lines.push(line) });
+    hosts.push(made);
+    const [result] = await made.start([shipped!]);
+    expect(result?.status).toBe("failed");
+    expect(made.unavailable(SIDEBAR_PLUGIN)).toBe(true);
+    expect(rendererKernel.entries(RAIL_SLOT)).toEqual([]);
+    await act(async () => { await Promise.resolve(); });
+    expect(railLayout.current()).toBeNull();
+    expect(await backend.load(SIDEBAR_PLUGIN)).toBeNull(); // nothing was stored: the layout never attached
   });
 
   it("a page of Botling Web keeps its layout in the settings (the bridge's), and leaves the storage alone", async () => {
