@@ -226,6 +226,24 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     expect(events.length).toBe(steady);
   });
 
+  it("keeps every slot's order as a fresh load gives it after `refresh` (a plugin with a settings row is reloaded; its other slots must not move)", () => {
+    const { feed, kernel } = setup({ settings: false });
+    const view = fixture();
+    // botling.note comes before botling.whiteboard in `view/mainTab`; give it a settings row, so the refresh reloads it (and botling.git, botling.usage, zed.tools).
+    view.settingsSections = [...view.settingsSections!, { ...view.settingsSections![0]!, plugin: "botling.note", id: "botling.note.settings", title: "Note" }];
+    feed.reconcile(view);
+    startSettings(kernel);
+    feed.refresh(["settings/section", "settings/quick"]);
+    const fresh = setup().feed;
+    fresh.reconcile(view);
+    expect(fresh.rows("view/mainTab").map((row) => (row as { plugin: string }).plugin).slice(0, 2)).toEqual(["botling.note", "botling.whiteboard"]);
+    for (const slot of allSlots()) expect(feed.rows(slot), slot).toEqual(fresh.rows(slot));
+    expect(feed.loaded().sort()).toEqual(fresh.loaded().sort());
+    // And a second refresh, and a refresh after a reconcile with a changed view, keep it too.
+    feed.refresh(["settings/section"]);
+    for (const slot of allSlots()) expect(feed.rows(slot), slot).toEqual(fresh.rows(slot));
+  });
+
   it("holds the rows again when the shell goes away and comes back", async () => {
     const { feed, kernel } = setup();
     const view = fixture();

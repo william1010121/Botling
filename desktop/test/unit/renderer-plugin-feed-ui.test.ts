@@ -70,6 +70,29 @@ describe("ShellFrame and the plugin feed", () => {
     expect(pluginFeed.loaded()).toEqual([]);
   });
 
+  it("passes the plugins.web answer to the feed: a version change reloads that plugin only, and the first answer does not reorder the rows", async () => {
+    const view = fixture();
+    let version = "1";
+    const request = vi.fn(async (command: { type: string }) => (command.type === "plugins.web" ? { specs: [{ name: "botling.note", version }] } : null));
+    const client = { request } as unknown as Client;
+    const ids = (slot: string) => rendererKernel.entries<{ row: { plugin: string } }>(slot).map(({ entry, registration }) => [entry.row.plugin, registration.id]);
+    const shown = await mount(createElement(ShellFrame, { legacy: page, plugins: view, client }));
+    expect(request).toHaveBeenCalledWith({ type: "plugins.web" });
+    expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
+    const first = ids("view/mainTab");
+    // The same answer for a new list object: nothing is touched.
+    await shown.render(createElement(ShellFrame, { legacy: page, plugins: { ...view }, client }));
+    expect(ids("view/mainTab")).toEqual(first);
+    // The note plugin's web part has a new version: it is loaded again, the others keep their registrations.
+    version = "2";
+    await shown.render(createElement(ShellFrame, { legacy: page, plugins: { ...view }, client }));
+    const second = ids("view/mainTab");
+    const of = (list: unknown[][], plugin: string) => list.find(([name]) => name === plugin)![1];
+    expect(of(second, "botling.note")).not.toBe(of(first, "botling.note"));
+    expect(of(second, "botling.whiteboard")).toBe(of(first, "botling.whiteboard"));
+    expect(of(second, "zed.tools")).toBe(of(first, "zed.tools"));
+  });
+
   it("holds nothing for a frame given no plugin list", async () => {
     await mount(createElement(ShellFrame, { legacy: page }));
     expect(rendererKernel.plugins()).toEqual([SHELL_SURFACE]);
