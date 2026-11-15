@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -177,6 +177,7 @@ describe("where.mjs", () => {
   it("is read only: no file in the fixture changes, none is added, and a symlinked folder is not followed", () => {
     const snapshot = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
       const p = join(dir, e.name);
+      if (e.isSymbolicLink()) return [`${p}|link|${readlinkSync(p)}`];
       if (e.isDirectory()) return snapshot(p);
       const st = statSync(p);
       return [`${p}|${st.size}|${st.mtimeMs}|${createHash("sha1").update(readFileSync(p)).digest("hex")}`];
