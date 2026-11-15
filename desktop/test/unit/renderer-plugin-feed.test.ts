@@ -209,7 +209,8 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     expect(feed.rows("view/settings.section")).toEqual([]);
     expect(feed.rows("view/quickSettings")).toEqual([]);
     expect(feed.rows("view/mainTab")).toEqual(view.mainTabs);
-    const quiet = view.plugins.map((plugin) => plugin.name).filter((name) => !(view.settingsSections ?? []).concat(view.quickSettings ?? []).some((row) => row.plugin === name));
+    const settingsOwners = new Set([...(view.settingsSections ?? []), ...(view.quickSettings ?? [])].map((row) => row.plugin));
+    const quiet = view.plugins.map((plugin) => plugin.name).filter((name) => !settingsOwners.has(name));
     expect(quiet.length).toBeGreaterThan(2);
     startSettings(kernel);
     // The kernel does not ask again by itself: nothing is registered until the feed is told.

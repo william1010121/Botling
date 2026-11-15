@@ -19,9 +19,8 @@ import { coreSettings, registeredCoreGroups } from "../../src/renderer/settings-
 import { rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
 import { settingsDeclaration } from "../../src/renderer/plugins/settings";
 import { FEED_SLOTS, PLUGIN_OWNED_SLOTS } from "../../src/renderer/shell/feed-slots";
-import { InPageHost, type InPageApi } from "../../src/renderer/shell/inpage-host";
+import { InPageHost, inPageHost, type InPageApi } from "../../src/renderer/shell/inpage-host";
 import { parseFeManifest, type InPageSource } from "../../src/renderer/shell/inpage-loader";
-import { inPageHost } from "../../src/renderer/shell/inpage-host";
 import { pluginFeed, reconcileView } from "../../src/renderer/shell/plugin-feed";
 import { desktop } from "../helpers";
 
@@ -148,7 +147,7 @@ describe("plugins' pages in the same slot", () => {
     // Core pages first, then each plugin's own registration: the order of the slot is registration order.
     const owners = rendererKernel.entries(SECTION).map(({ plugin }) => plugin);
     expect(owners.slice(0, 12)).toEqual(Array(12).fill(SETTINGS_PLUGIN));
-    expect(owners.slice(12)).toEqual(view.settingsSections!.map((row) => row.plugin).sort((a, b) => owners.slice(12).indexOf(a) - owners.slice(12).indexOf(b)));
+    expect(new Set(owners.slice(12))).toEqual(new Set(view.settingsSections!.map((row) => row.plugin)));
     expect(rendererKernel.entries(SECTION)).toHaveLength(12 + view.settingsSections!.length);
   });
 
@@ -230,9 +229,9 @@ describe("what the host refuses", () => {
     const one = host({ source: source({ activate: (api) => (api as InPageApi).define(settingsDeclaration, (kernel, plugin) => { kernel.provideSlot(plugin, "settings/section"); throw new Error("boom"); }) }) });
     const [result] = await one.start();
     expect(result).toMatchObject({ status: "failed", message: "boom" });
-    await settled();
+    await vi.waitFor(() => { expect(rendererKernel.declaration(SETTINGS_PLUGIN)).toBeUndefined(); });
+    expect(rendererKernel.state(SETTINGS_PLUGIN)).toBe("absent");
     expect(rendererKernel.slotOwner(SECTION)).toBeNull();
-    expect(rendererKernel.declaration(SETTINGS_PLUGIN)).toBeUndefined();
   });
 
   it("reads the manifest from the bundle, never over the network", async () => {
