@@ -7,7 +7,7 @@
 // forwarded-subscription tag `via` (M3, §10.3) may be stated by a peer server only. A `cmd`'s `via` is something else:
 // the plugin the command came from (D53, plan change N1), written by the front end's shell, so any sender may carry it.
 // Two messages are binary: `content.chunk` (§9A.4) and `fetch.chunk` (§16, M5-05). Each frame is the byte 0x01, the
-// header's length as 2 bytes big-endian, the header JSON (`{t, req, offset}` or `{t, fetchId, index, sha256}`), then
+// header's length as 2 bytes big-endian, the header JSON (`{t, req, offset}` or `{t, fetchId, index, file, sha256}`), then
 // the raw bytes. A text frame is JSON and never starts with 0x01.
 import type { z } from "zod";
 import { describeIssues } from "../contract";
@@ -27,7 +27,8 @@ export type EncodedBytes = { ok: true; bytes: Uint8Array } | { ok: false; reason
 
 /** The first byte of a binary frame. */
 export const BINARY_FRAME_MARK = 0x01;
-const BINARY_HEADER_LIMIT = 1024;
+// A `fetch.chunk` header carries a file path of up to 4096 bytes (JSON escapes can double or sextuple it, M5-07b).
+const BINARY_HEADER_LIMIT = 32 * 1024;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -117,7 +118,7 @@ export function encodeChunkFrame(message: ChunkMessage, sender: Sender, session:
   const chunk = checked.message as ChunkMessage;
   const headerObj = chunk.t === "content.chunk"
     ? { t: chunk.t, req: chunk.req, offset: chunk.offset }
-    : { t: chunk.t, fetchId: chunk.fetchId, index: chunk.index, sha256: chunk.sha256 };
+    : { t: chunk.t, fetchId: chunk.fetchId, index: chunk.index, file: chunk.file, sha256: chunk.sha256 };
   const header = encoder.encode(JSON.stringify(headerObj));
   if (header.length > BINARY_HEADER_LIMIT) return { ok: false, reason: "malformed", detail: "the header is too long" };
   const out = new Uint8Array(3 + header.length + chunk.bytes.length);

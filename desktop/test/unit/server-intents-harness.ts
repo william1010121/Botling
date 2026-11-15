@@ -36,7 +36,7 @@ export interface Harness {
   serverStream: string;
   /** The next slot per target (each target is its own queue); shared with a restarted harness. */
   slots: Map<string, number>;
-  send(cmd: Command, options?: { basis?: Cursor; n?: number; target?: string }): Promise<ReceiveStatus>;
+  send(cmd: Command, options?: { basis?: Cursor; n?: number; target?: string; origin?: string }): Promise<ReceiveStatus>;
   /** Waits until the worker, the engine's turns and the tap's waiting events are all done. */
   settle(): Promise<void>;
   /** A new runtime and engine on the same server.db (what a restart after a crash finds). */
@@ -59,9 +59,11 @@ export async function harness(options: FakeTurnEngineOptions = {}, shared?: { db
     send(cmd, opts = {}) {
       const botId = (cmd as { botId?: string }).botId;
       const target = opts.target ?? (botId ? `bot:${botId}` : serverStream);
-      const n = opts.n ?? (h.slots.get(target) ?? 0) + 1;
-      if (n > (h.slots.get(target) ?? 0)) h.slots.set(target, n);
-      const body = { slot: { origin: "desktop", originEpoch: EPOCH_A, target, n }, floor: 1, inc: h.inc, cmd, ...(opts.basis ? { basis: opts.basis } : {}) } as CmdBody;
+      // Each origin has its own slot counter per target.
+      const key = `${opts.origin ?? "desktop"}|${target}`;
+      const n = opts.n ?? (h.slots.get(key) ?? 0) + 1;
+      if (n > (h.slots.get(key) ?? 0)) h.slots.set(key, n);
+      const body = { slot: { origin: opts.origin ?? "desktop", originEpoch: EPOCH_A, target, n }, floor: 1, inc: h.inc, cmd, ...(opts.basis ? { basis: opts.basis } : {}) } as CmdBody;
       return runtime.receive(body, { scope: "local" });
     },
     async settle() {

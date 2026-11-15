@@ -35,6 +35,7 @@ import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../../co
 import { MAIN_BOT_ID, MAINTAINER_ID, type ProjectRecord } from "../../core/store/records";
 import { Layout, loadProjects } from "../../core/store/workspace";
 import { canonicalJson } from "../../protocol";
+import { RowKey } from "../../protocol/table-rows";
 import { DbBotStores } from "../botstore";
 import { BOTLINGD_VERSION } from "../botlingd";
 import { fitBody } from "../effects/fit";
@@ -765,12 +766,20 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
       dataRoot: join(sourceReal, "plugin-data"),
       log: options.log,
     });
-    const pluginEntries: PluginReportDryRunEntry[] = inputs.map((item) => ({
-      name: item.name,
-      author: item.author,
-      ask: item.manifest.tier,
-      granted: item.author === "builtin" ? "write" : "read",
-    }));
+    const pluginEntries: PluginReportDryRunEntry[] = inputs
+      .filter((item) => item.name.length <= 64 && RowKey.safeParse(`plugin:${item.name}`).success)
+      .map((item) => ({
+        name: item.name,
+        author: item.author,
+        ask: item.manifest.tier,
+        granted: (item.author === "builtin" ? "write" : "read") as PluginReportDryRunEntry["granted"],
+      }))
+      .sort((a, b) => {
+        const aBuiltIn = a.author === "builtin" ? 0 : 1;
+        const bBuiltIn = b.author === "builtin" ? 0 : 1;
+        if (aBuiltIn !== bBuiltIn) return aBuiltIn - bBuiltIn;
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      });
 
     const totalLines = botReports.reduce((sum, b) => sum + b.lines, 0);
     const totalSkipped = botReports.reduce((sum, b) => sum + b.skipped, 0);

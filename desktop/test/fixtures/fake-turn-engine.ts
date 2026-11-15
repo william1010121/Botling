@@ -4,7 +4,7 @@
 // (an answer starts a turn through `deferTurn`); reactions; bots made and removed; routines that defer their run.
 import { randomUUID } from "node:crypto";
 import { ContractError, type Command, type Event as ContractEvent, type MessageView } from "../../src/contract";
-import type { ApplyNowCommand, DeferredTurnRequest, EngineHost, TurnEngine, TurnRunning, TurnStart, TurnStatus } from "../../src/server/effects";
+import type { ApplyNowCommand, CallInAnswer, CallInOptions, DeferredTurnRequest, EngineHost, TurnEngine, TurnRunning, TurnStart, TurnStatus } from "../../src/server/effects";
 
 export interface FakeTurnEngineOptions {
   bots?: string[];
@@ -52,6 +52,14 @@ export class FakeTurnEngine implements TurnEngine {
   absorbInto: string | null = null;
   /** The next startTurn rejects with this. */
   failNext: Error | null = null;
+  /** M5-02b: every guest turn of a call-in the server asked for (`callInTurn`), in order. */
+  readonly callIns: Array<{ guestId: string; prompt: string; options: CallInOptions; begun: boolean; aborted: boolean; settle(answer: CallInAnswer): void }> = [];
+  /** What the next call-in turns answer; "hold": they wait for `settle` or an abort (cancelled). */
+  callInMode: "reply" | "hold" | "busy" | "failed" = "reply";
+  callInText = "All green.";
+  /** Bots `botView` reports as the Maintainer or as a sub bot (not callable from another server). */
+  readonly maintainers = new Set<string>();
+  readonly subBots = new Set<string>();
 
   constructor(private readonly options: FakeTurnEngineOptions = {}) {
     this.botSet = new Set(options.bots ?? ["MAIN", "B1"]);
@@ -61,6 +69,25 @@ export class FakeTurnEngine implements TurnEngine {
   bots(): string[] { return [...this.botSet]; }
   hasBot(botId: string): boolean { return this.botSet.has(botId); }
   pendingFiles(): number { return 0; }
+
+  botView(botId: string): import("../../src/contract").BotView | null {
+    if (!this.botSet.has(botId)) return null;
+    return { id: botId, name: `bot ${botId}`, role: "bot", ...(this.maintainers.has(botId) ? { maintainer: true } : {}), ...(this.subBots.has(botId) ? { parent: "MAIN" } : {}) } as unknown as import("../../src/contract").BotView;
+  }
+
+  callInTurn(guestId: string, prompt: string, onBegin: () => void, options: CallInOptions): Promise<CallInAnswer> {
+    return new Promise((resolve) => {
+      const entry = { guestId, prompt, options, begun: false, aborted: false, settle: (answer: CallInAnswer) => resolve(answer) };
+      this.callIns.push(entry);
+      options.signal.addEventListener("abort", () => { entry.aborted = true; resolve({ kind: "failed", why: "cancelled" }); }, { once: true });
+      if (options.signal.aborted) { entry.aborted = true; resolve({ kind: "failed", why: "cancelled" }); return; }
+      entry.begun = true;
+      onBegin();
+      if (this.callInMode === "reply") resolve({ kind: "reply", text: this.callInText, engine: "claude" });
+      else if (this.callInMode === "busy") resolve({ kind: "busy" });
+      else if (this.callInMode === "failed") resolve({ kind: "failed", why: "It could not answer." });
+    });
+  }
 
   checkRemove(botId: string): void {
     if (!this.botSet.has(botId)) throw new ContractError("not_found", "No such bot.");

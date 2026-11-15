@@ -51,6 +51,7 @@ export interface UpdaterLike {
   autoInstallOnAppQuit: boolean;
   allowPrerelease: boolean;
   allowDowngrade: boolean;
+  channel: string | null;
   checkForUpdates(): Promise<{ isUpdateAvailable?: boolean; updateInfo: UpdateInfoLike } | null>;
   downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
@@ -58,8 +59,20 @@ export interface UpdaterLike {
   on(event: "download-progress", listener: (progress: { percent: number }) => void): unknown;
 }
 
+/** The channels a build may follow besides `latest` (D74: Botling 3's `v3`); any other name is ignored. */
+const UPDATE_CHANNELS: ReadonlySet<string> = new Set(["v3"]);
+
+/** The channel to follow: only the Botling 3 window, whose guard (main-v3/guard.ts) ran in this process, names one.
+ * The environment alone never moves an app off `latest`: 2.x started from a Botling 3 bot's shell inherits
+ * BOTLING_UPDATE_CHANNEL=v3. */
+export function updateChannel(env: Record<string, string | undefined>, v3Window: boolean): string | undefined {
+  const channel = env.BOTLING_UPDATE_CHANNEL;
+  return v3Window && channel && UPDATE_CHANNELS.has(channel) ? channel : undefined;
+}
+
 export interface UpdaterOptions {
   current: string;
+  channel?: string;
   updater: UpdaterLike;
   /** Whether Settings has the check on (asked each time: the core keeps settings.json). */
   enabled: () => Promise<boolean>;
@@ -100,6 +113,12 @@ export class Updater {
     updater.allowDowngrade = false;
     // A prerelease build (a trial) follows prereleases; a stable one does not.
     updater.allowPrerelease = (parseVersion(options.current)?.pre.length ?? 0) > 0;
+    if (options.channel && UPDATE_CHANNELS.has(options.channel)) {
+      updater.channel = options.channel;
+      // electron-updater turns allowDowngrade on when a channel is set; keep downgrades off.
+      updater.allowDowngrade = false;
+      updater.allowPrerelease = true;
+    }
     updater.on("update-downloaded", (info) => { this.downloaded = info.version; });
     updater.on("download-progress", (progress) => {
       this.percent = Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, Math.round(progress.percent))) : null;

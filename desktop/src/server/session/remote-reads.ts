@@ -8,11 +8,11 @@
 // - `slotAuthorize` is the owner's check (§11.3 "origin invalid or scope forbids"), run by the slot engine as each slot
 //   is decided, so it holds for a copy held ahead and applied later, and for one whose device or server was revoked in
 //   between: `local` (the desktop window on its own server) and `admin` pass as in M1; a valid peer server passes for
-//   `reply` and `manage` when its stated scope matches; a device scope passes only when the origin is a valid device
+//   `reply` and `manage` (and the `server` call-in commands) when its stated scope matches; a device scope passes only when the origin is a valid device
 //   now and its roster scope allows the command (and the stated scope is the one it needs).
 import type { Command } from "../../contract";
 import { commandScope, remoteCmdRefusal, remoteReqRefusal, REMOTE_READS, type DeviceScope, type Scope } from "../../protocol";
-import type { Authorize } from "../slots";
+import { CARD_COMMANDS, type Authorize } from "../slots";
 
 export { REMOTE_READS };
 
@@ -23,7 +23,15 @@ export interface DeviceRoster {
   server?(member: string): boolean;
   /** This server's own member id, so a slot naming itself gets a dedicated origin refusal. */
   readonly memberId?: string;
+  /**
+   * M5-06c (§16): true for a card this server put up itself and only a user may answer (a fetch approval in the
+   * Maintainer's chat, `Core.serverAsk`). A peer server is the side that asks; it must never pick, answer or dismiss it.
+   */
+  userOnlyCard?(messageId: string): boolean;
 }
+
+/** The refusal detail for a peer server's answer to a card only a user answers (M5-06c). */
+export const USER_ONLY_CARD_DETAIL = "this card is answered only by a user (a device or this machine's window), never by another server";
 
 const DEVICE_SCOPES: ReadonlySet<Scope> = new Set<Scope>(["read", "reply", "approve", "manage"]);
 
@@ -41,6 +49,10 @@ export function remoteReadRefusal(cmd: Command, scope: readonly DeviceScope[]): 
 /** The owner's scope and origin check for a slot (SlotEngine `authorize`). */
 export function slotAuthorize(roster: DeviceRoster): Authorize {
   return (_tx, { slot, cmd, scope }) => {
+    // M5-01 (Q-C1): a call-in is sent by a server only; the window (`local`) and `admin` are refused like a device.
+    if (commandScope(cmd) === "server" && (scope === "local" || scope === "admin")) {
+      return { reason: "scope", detail: `${cmd.type} is only sent by another server` };
+    }
     if (scope === "local" || scope === "admin") return null;
     // M5-04b (§11.7, D13, D58): server origins.
     // - origin is this server itself -> refused origin ("a server does not send commands to itself").
@@ -55,7 +67,18 @@ export function slotAuthorize(roster: DeviceRoster): Authorize {
       if (cmd.type === "plugin.grant") {
         return { reason: "origin", detail: "plugin.grant is only from a user (a device or this machine's window)" };
       }
+      // M5-06c: a fetch approval is the user's decision on the asking server's request; fail closed if the check throws.
+      const cardId = CARD_COMMANDS.has(cmd.type) ? (cmd as { messageId?: unknown }).messageId : undefined;
+      if (typeof cardId === "string" && roster.userOnlyCard) {
+        let userOnly = true;
+        try { userOnly = roster.userOnlyCard(cardId); } catch { userOnly = true; }
+        if (userOnly) return { reason: "origin", detail: USER_ONLY_CARD_DETAIL };
+      }
       const needed = commandScope(cmd);
+      // `server` commands (M5-01) are stated as `read` (statedScope: not a device scope), so only that statement passes.
+      if (needed === "server") {
+        return statedScope(cmd) === scope ? null : { reason: "scope", detail: `${cmd.type} was stated with the ${scope} scope, it needs ${needed}` };
+      }
       if (needed === "read") return { reason: "scope", detail: `${cmd.type} is a read: send it as a req` };
       if (needed !== "reply" && needed !== "manage") {
         return { reason: "scope", detail: `${cmd.type} is not allowed from another server (${needed})` };
