@@ -9,6 +9,7 @@ import {
   FETCH_GRANT_BYTES_LIMIT, FETCH_MAX_BYTES, FETCH_MAX_FILES, FETCH_MESSAGES, FrameSplitter, packFrame, ROLE_TABLE,
   type Sender, type SessionKind, type WireMessage,
 } from "../../src/protocol";
+import { BULK_FRAME_LIMIT, LaneQueue, RELAY_BULK_FRAME_LIMIT } from "../../src/session/lanes";
 import { LATEST_SCHEMA_VERSION, MIGRATIONS, openServerStore, schemaVersion, type ServerStore } from "../../src/server/store";
 import { botStream, contentId, hex, serverA, serverB } from "./protocol-m2-samples";
 
@@ -192,6 +193,19 @@ describe("M5-07b: fetch.chunk names its file", () => {
     for (const file of bad) {
       expect(decodeWireFrame(encodeBytes({ file }), "peer", remote), JSON.stringify(file.slice(0, 20))).toMatchObject({ ok: false, reason: "malformed" });
       expect(encodeChunkFrame({ ...chunkSample, file }, "peer", remote), JSON.stringify(file.slice(0, 20))).toMatchObject({ ok: false });
+    }
+  });
+});
+
+describe("M5-07b review R3: a 64 KiB fetch.chunk with a long file path fits the bulk lane", () => {
+  it("fits the direct and relay bulk limits with paths up to 4096 bytes (and JSON escapes)", () => {
+    const bytes = new Uint8Array(64 * 1024).fill(7);
+    const paths = ["a.txt", `${"d/".repeat(449)}f`, `${"d/".repeat(2_047)}f`, `${"\u00e9".repeat(2_048)}`, `${'"\\'.repeat(1_365)}x`];
+    for (const file of paths) {
+      const encoded = encodeChunkFrame({ ...chunkSample, fetchId: "00000000-0000-4000-8000-000000000000", file, sha256: hex("c"), bytes }, "peer", remote);
+      if (!encoded.ok) throw new Error(encoded.detail);
+      expect(() => new LaneQueue(BULK_FRAME_LIMIT).push("bulk", encoded.bytes), `${file.length}`).not.toThrow();
+      expect(() => new LaneQueue(RELAY_BULK_FRAME_LIMIT).push("bulk", encoded.bytes)).not.toThrow();
     }
   });
 });

@@ -4,18 +4,25 @@
 //   bot's folder, under `.bot/incoming/<source name, made safe>-<first 8 of its id>/<fetchId>/` and nowhere else.
 // - Every chunk is checked before a byte is kept: its index is the next one, its SHA-256 matches, its `file` is a
 //   relative path that cannot leave the folder (the requester never trusts the wire: the schema is checked again here).
-//   Bytes go to `<dest>/.partial/<file>`; nothing reaches `<dest>` until `fetch.done`'s manifest equals the one
-//   recomputed from what arrived (size + SHA-256 per file, counted here, not taken from the source).
+//   Bytes go to a staging folder NEXT TO `<dest>` (`<source>/.<fetchId>.partial/<file>`); `<dest>` appears only when
+//   `fetch.done`'s manifest equals the one recomputed from what arrived (size + SHA-256 per file, counted here, not
+//   taken from the source), by ONE rename of the staging folder inside the same parent folder.
+// - The bot may write its own folder (`.bot/incoming` included) while this server writes, and may plant symlinks
+//   there. So: the staging folder is checked by inode and every folder under it by `lstat` before a file is opened;
+//   after `open(wx)` and before a byte is written, the opened file must be the one at its path (same inode, one link,
+//   regular); no file is ever renamed across folders. Remaining risk (no `openat` in Node): a bot that swaps a staging
+//   sub folder in the microseconds between the check and the open can make this server create one EMPTY file
+//   outside; no byte is written into it and nothing is overwritten.
 // - A lost session: back within `resumeWindowMs` (10 minutes) the same `fetch.ask` goes out again with `from` = the
 //   last verified chunk; after the window the fetch ends `unreachable`. `from.index` means "after this chunk" (07a), so
 //   a session lost before chunk 0 cannot resume: the fetch starts again under a NEW fetchId (for an ask grant the
 //   source's user is asked again) and the old folder is removed (L-c).
-// - Every failure removes `<dest>` (`.partial` and anything else). A fetch lives in memory only: a restart of this
+// - Every failure removes the staging folder and `<dest>`. A fetch lives in memory only: a restart of this
 //   server ends it (the folder, if any, is left to the user; nothing resumes).
 // - One audit row (`audit:<fetchId>`, `act: "fetch.receive"`) in this server's `srv:` table after the files are in
 //   place (the source wrote its `fetch.serve` row before the first byte).
 import { createHash, randomUUID, type Hash } from "node:crypto";
-import { lstatSync, mkdirSync, realpathSync, renameSync, rmSync, rmdirSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync, renameSync, rmSync, rmdirSync, type Stats } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import type { WireMessage, WireMessageOf } from "../../protocol";
@@ -72,6 +79,8 @@ interface Pending {
   srvDir: string;
   dest: string;
   partial: string;
+  /** dev:ino of the staging folder when it was made. */
+  partialId: string;
   session: FetchPeer;
   state: "asking" | "lost" | "finishing" | "ended";
   /** The next chunk index (also: how many chunks are verified). */
@@ -113,7 +122,7 @@ export class FetchRequester {
       const p: Pending = {
         fetchId: randomUUID(), botId, source, what, purpose: purpose.slice(0, 500),
         maxBytes: Math.max(1, Math.min(FETCH_MAX_BYTES, Math.floor(Number.isFinite(maxBytes) ? maxBytes : FETCH_MAX_BYTES))),
-        botFolder: folder, srvDir: incomingDirName(this.options.serverName(source), source), dest: "", partial: "",
+        botFolder: folder, srvDir: incomingDirName(this.options.serverName(source), source), dest: "", partial: "", partialId: "",
         session, state: "asking", expected: 0, lastFile: null, grant: null, done: [], seen: new Set(), cur: null, total: 0,
         timer: null, chain: Promise.resolve(), resolve,
       };
@@ -182,26 +191,32 @@ export class FetchRequester {
     void next.finally(() => this.running.delete(next));
   }
 
-  /** Makes `<bot>/.bot/incoming/<source>/<fetchId>` step by step; an existing part must be a real folder (never a symlink). */
+  /**
+   * Makes `<bot>/.bot/incoming/<source>/` step by step (an existing part must be a real folder, never a symlink) and the
+   * staging folder `<source>/.<fetchId>.partial` NEXT TO `<dest>`: `<dest>` itself appears only at
+   * `fetch.done`, by one rename inside the same parent, so no file is ever moved across a folder the bot could swap.
+   */
   private prepare(p: Pending): void {
     const incoming = join(p.botFolder, ".bot", "incoming");
-    const parts = [join(p.botFolder, ".bot"), incoming, join(incoming, p.srvDir), join(incoming, p.srvDir, p.fetchId)];
-    p.dest = parts[3]!; // so a failure half way still cleans up what was made
+    const parts = [join(p.botFolder, ".bot"), incoming, join(incoming, p.srvDir), join(incoming, p.srvDir, `.${p.fetchId}${PARTIAL}`)];
+    p.dest = join(incoming, p.srvDir, p.fetchId); // so a failure half way still cleans up what was made
+    p.partial = parts[3]!;
     for (const part of parts) {
       let existing = null;
       try { existing = lstatSync(part); } catch { /* not there yet */ }
       if (existing) {
         if (existing.isSymbolicLink() || !existing.isDirectory()) throw new Error(`${part} is not a plain folder`);
-        // The fetch folder is new: nothing else may be in it.
         if (part === parts[3]) throw new Error("the fetch folder already exists");
         continue;
       }
       mkdirSync(part);
     }
-    // The real path of the new folder must be the expected one under the bot's real folder (no link in the chain).
-    p.dest = join(realpath(p.botFolder), ".bot", "incoming", p.srvDir, p.fetchId);
-    if (realpath(parts[3]!) !== p.dest) throw new Error("the incoming folder is not inside the bot folder");
-    p.partial = join(p.dest, PARTIAL);
+    const srvReal = join(realpath(p.botFolder), ".bot", "incoming", p.srvDir);
+    p.dest = join(srvReal, p.fetchId);
+    p.partial = join(srvReal, `.${p.fetchId}${PARTIAL}`);
+    if (realpath(parts[3]!) !== p.partial) throw new Error("the incoming folder is not inside the bot folder");
+    if (exists(p.dest)) throw new Error("the fetch folder already exists");
+    p.partialId = idOf(lstatSync(p.partial));
   }
 
   private sendAsk(p: Pending, from?: { file: string; index: number }): boolean {
@@ -252,6 +267,8 @@ export class FetchRequester {
   }
 
   private async chunk(p: Pending, message: WireMessageOf<"fetch.chunk">): Promise<void> {
+    // the source sends fetch.grant (its audit receipt) before chunk 0; a chunk before it is not a fetch.
+    if (!p.grant) return this.corrupt(p, "a chunk came before fetch.grant");
     if (message.index !== p.expected) return this.corrupt(p, `chunk ${message.index} came where ${p.expected} was due`);
     const bytes = message.bytes;
     if (createHash("sha256").update(bytes).digest("hex") !== message.sha256) return this.corrupt(p, `chunk ${message.index} does not match its SHA-256`);
@@ -259,7 +276,6 @@ export class FetchRequester {
     const file = FetchRelPath.safeParse(message.file);
     if (!file.success) return this.corrupt(p, "a chunk names a file path that is not allowed");
     const rel = file.data;
-    if (rel === PARTIAL || rel.startsWith(`${PARTIAL}/`)) return this.corrupt(p, "a chunk names a file in the scratch folder");
     const target = join(p.partial, ...rel.split("/"));
     if (!target.startsWith(p.partial + sep)) return this.corrupt(p, "a chunk names a path outside the fetch folder");
 
@@ -270,10 +286,17 @@ export class FetchRequester {
       if (p.done.length + 1 > FETCH_MAX_FILES || (p.grant && p.done.length + 1 > p.grant.files)) return this.corrupt(p, "more files than the grant names");
       p.seen.add(folded);
       mkdirSync(dirname(target), { recursive: true });
-      // After the folders exist, the real folder must still be inside `.partial` (no link planted in between).
-      if (!(realpath(dirname(target)) + sep).startsWith(realpath(p.partial) + sep)) return this.corrupt(p, "a chunk's folder leads out of the fetch folder");
+      // the staging folder is still the one made for this fetch, and every folder under it on the way to
+      // the file is a plain folder (no symlink planted by the bot). Compared by inode / lstat, never realpath vs realpath.
+      if (!this.stagingIntact(p, rel)) return this.corrupt(p, "a chunk's folder leads out of the fetch folder");
       // `wx`: the file is new (fails on anything there, a symlink included).
-      p.cur = { rel, handle: await open(target, "wx", 0o600), hash: createHash("sha256"), size: 0 };
+      const handle = await open(target, "wx", 0o600);
+      // the file opened is the one at `target` (a folder swapped between the check and the open would
+      // put it elsewhere): same inode, one link, regular. Checked before a byte is written.
+      let placed = false;
+      try { const st = await handle.stat(); const at = lstatSync(target); placed = st.isFile() && at.isFile() && st.nlink === 1 && idOf(st) === idOf(at) && this.stagingIntact(p, rel); } catch { /* not placed */ }
+      if (!placed) { await handle.close().catch(() => undefined); return this.corrupt(p, "a chunk's file did not land in the fetch folder"); }
+      p.cur = { rel, handle, hash: createHash("sha256"), size: 0 };
     }
     if (p.total + bytes.length > p.maxBytes) {
       return this.end(p, { ok: false, reason: "limit", detail: "more bytes than the request allows" });
@@ -301,15 +324,16 @@ export class FetchRequester {
     const manifest = createHash("sha256").update(files.map((f) => `${f.rel}\t${f.size}\t${f.sha256}\n`).join("")).digest("hex");
     if (manifest !== message.manifest) return this.corrupt(p, "the manifest does not match what arrived");
     if (message.bytes !== p.total) return this.corrupt(p, "the byte count does not match what arrived");
-    if (p.grant && (p.grant.files !== files.length || p.grant.bytes !== p.total)) return this.corrupt(p, "what arrived is not what the grant named");
+    if (!p.grant || (p.grant.files !== files.length || p.grant.bytes !== p.total)) return this.corrupt(p, "what arrived is not what the grant named");
     p.state = "finishing";
-    // Verified: move into place (rename inside the same fetch folder), then drop the scratch folder.
-    for (const f of files) {
-      const to = join(p.dest, ...f.rel.split("/"));
-      mkdirSync(dirname(to), { recursive: true });
-      renameSync(join(p.partial, ...f.rel.split("/")), to);
-    }
-    rmSync(p.partial, { recursive: true, force: true });
+    // verified, so the staging folder becomes `<dest>` in ONE rename inside the same parent folder.
+    // Both names go through the same parent, so a swapped parent cannot carry the files anywhere the bot could not
+    // already write; `<dest>` must not exist (an empty folder or a link the bot made there is refused).
+    if (exists(p.dest)) return this.corrupt(p, "something already sits where the fetch folder goes");
+    let intact = false;
+    try { intact = idOf(lstatSync(p.partial)) === p.partialId; } catch { /* gone */ }
+    if (!intact) return this.corrupt(p, "the staging folder was replaced");
+    renameSync(p.partial, p.dest);
     const absDest = p.dest;
     const at = this.now();
     try {
@@ -345,12 +369,29 @@ export class FetchRequester {
     p.resolve(result);
   }
 
+  /** The staging folder is the one made for this fetch and every folder from it down to `rel`'s folder is plain. */
+  private stagingIntact(p: Pending, rel: string): boolean {
+    try {
+      if (idOf(lstatSync(p.partial)) !== p.partialId) return false;
+      const parts = rel.split("/").slice(0, -1);
+      for (let i = 1; i <= parts.length; i++) {
+        const st = lstatSync(join(p.partial, ...parts.slice(0, i)));
+        if (st.isSymbolicLink() || !st.isDirectory()) return false;
+      }
+      return true;
+    } catch { return false; }
+  }
+
   /** Removes the fetch folder, and the source folder and `.bot/incoming` when that leaves them empty. */
   private removeDest(p: Pending): void {
     if (!p.dest) return;
+    if (p.partial) rmSync(p.partial, { recursive: true, force: true });
     rmSync(p.dest, { recursive: true, force: true });
     for (const dir of [dirname(p.dest), dirname(dirname(p.dest))]) {
       try { rmdirSync(dir); } catch { break; }
     }
   }
 }
+
+const idOf = (st: Pick<Stats, "dev" | "ino">): string => `${st.dev}:${st.ino}`;
+const exists = (path: string): boolean => { try { lstatSync(path); return true; } catch { return false; } };

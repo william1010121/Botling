@@ -3,7 +3,7 @@
 // round-trips every frame through the real codec and can flip bytes, drop the session or reconnect. Temp folders only,
 // no window, loopback not even needed (no socket).
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -293,14 +293,14 @@ describe("M5-07b: the requester receives a fetch", () => {
     await hostile((id) => [chunk(id, 0, "a.txt", "one"), chunk(id, 2, "a.txt", "three")], "corrupt");
     await hostile((id) => [chunk(id, 0, "a.txt", "one"), chunk(id, 1, "b.txt", "two"), chunk(id, 2, "a.txt", "again")], "corrupt");
     await hostile((id) => [{ t: "fetch.grant", fetchId: id, prefix: "/p", mode: "read", bytes: 3, files: 1, expires: null }, chunk(id, 0, "a.txt", "four")], "corrupt");
-    await hostile((id) => [chunk(id, 0, "a.txt", "0123456789")], "limit", 4);
+    await hostile((id) => [{ t: "fetch.grant", fetchId: id, prefix: "/p", mode: "read", bytes: 10, files: 1, expires: null }, chunk(id, 0, "a.txt", "0123456789")], "limit", 4);
     expect(listTree(env.incoming()).filter((p) => !p.endsWith("/"))).toEqual([]);
   });
 
   it("3. a source that sends ../escape.txt, an absolute path or a NUL ends the fetch as corrupt and writes nothing outside <dest>", async () => {
     const env = await make();
     env.muteSource();
-    const bad = ["../escape.txt", "a/../../escape.txt", "/tmp/botling-escape.txt", "a\0b", "", ".partial/x", "./a", "a//b", "a/"];
+    const bad = ["../escape.txt", "a/../../escape.txt", "/tmp/botling-escape.txt", "a\0b", "", "./a", "a//b", "a/"];
     for (const file of bad) {
       const before = env.asks.length;
       const pending = env.requester.fetch("bot-b", env.ka.memberId, artifact("x"), "x", MiB);
@@ -429,14 +429,151 @@ describe("M5-07b: the requester receives a fetch", () => {
     env.muteSource();
     const pending = env.requester.fetch("bot-b", env.ka.memberId, artifact("x"), "x", MiB);
     const ask = await until(() => env.asks[0] ?? null, { timeout: 2_000, what: "ask" });
-    const bytes = new Uint8Array(Buffer.from("zzz"));
     const stranger: FetchPeer = { peer: env.kb.memberId, state: "open", sendWire: () => true };
-    const mine = { t: "fetch.chunk", fetchId: ask.fetchId, index: 0, file: "a.txt", sha256: sha256Hex(bytes), bytes } as WireMessage;
-    expect(env.requester.onMessage(stranger, mine)).toBe(true);
-    expect(env.requester.onMessage(env.current()!, { ...mine, fetchId: "other-fetch" } as WireMessage)).toBe(true);
+    const frame = (text: string, fetchId = ask.fetchId) => {
+      const bytes = new Uint8Array(Buffer.from(text));
+      return { t: "fetch.chunk", fetchId, index: 0, file: "a.txt", sha256: sha256Hex(bytes), bytes } as WireMessage;
+    };
+    const grantFrame = { t: "fetch.grant", fetchId: ask.fetchId, prefix: "/p", mode: "read", bytes: 3, files: 1, expires: null } as WireMessage;
+    expect(env.requester.onMessage(stranger, grantFrame)).toBe(true);
+    expect(env.requester.onMessage(stranger, frame("zzz"))).toBe(true);
+    expect(env.requester.onMessage(env.current()!, frame("yyy", "other-fetch"))).toBe(true);
     expect(env.requester.onMessage(env.current()!, { t: "fetch.ask", fetchId: "x", requester: { bot: "b" }, source: env.ka.memberId, what: artifact("x"), purpose: "", maxBytes: 1 } as WireMessage)).toBe(false);
-    env.requester.close();
-    expect(await pending).toMatchObject({ ok: false, reason: "unreachable" });
-    expect(listTree(env.incoming()).filter((p) => !p.endsWith("/"))).toEqual([]);
+    // The source's own frames still make a whole fetch: nothing above was taken (chunk 0 is still due, a.txt is new).
+    env.requester.onMessage(env.current()!, grantFrame);
+    env.requester.onMessage(env.current()!, frame("abc"));
+    env.requester.onMessage(env.current()!, { t: "fetch.done", fetchId: ask.fetchId, manifest: manifestOf([{ rel: "a.txt", bytes: Buffer.from("abc") }]), bytes: 3 } as WireMessage);
+    const result = ok(await pending);
+    expect(readFileSync(join(env.folderB, result.dest, "a.txt"), "utf8")).toBe("abc");
+  });
+
+  describe("review fixes (M5-07b review R1-R4 and the guards mutation found untested)", () => {
+    const chunk = (fetchId: string, index: number, file: string, text: string): WireMessage => {
+      const bytes = new Uint8Array(Buffer.from(text));
+      return { t: "fetch.chunk", fetchId, index, file, sha256: sha256Hex(bytes), bytes };
+    };
+    const grant = (fetchId: string, bytes: number, files: number): WireMessage =>
+      ({ t: "fetch.grant", fetchId, prefix: "/p", mode: "read", bytes, files, expires: null } as WireMessage);
+    const done = (fetchId: string, files: Array<{ rel: string; text: string }>, bytes?: number): WireMessage => ({
+      t: "fetch.done", fetchId, manifest: manifestOf(files.map((f) => ({ rel: f.rel, bytes: Buffer.from(f.text) }))),
+      bytes: bytes ?? files.reduce((n, f) => n + Buffer.byteLength(f.text), 0),
+    } as WireMessage);
+    /** Starts a fetch the test answers by hand; `staging` is `<source>/.<fetchId>.partial`, `dest` is not made yet. */
+    const start = async (env: Awaited<ReturnType<typeof setup>>) => {
+      env.muteSource();
+      const before = env.asks.length;
+      const pending = env.requester.fetch("bot-b", env.ka.memberId, artifact("x"), "x", MiB);
+      const ask = await until(() => env.asks[before] ?? null, { timeout: 2_000, what: "ask" });
+      const srv = join(env.incoming(), env.srvDir());
+      const send = (m: WireMessage) => env.requester.onMessage(env.current()!, m);
+      return { pending, id: ask.fetchId, staging: join(srv, `.${ask.fetchId}.partial`), dest: join(srv, ask.fetchId), send };
+    };
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+    it("R1: files are staged next to <dest>, and <dest> appears only after fetch.done", async () => {
+      const env = await make();
+      const { pending, id, staging, dest, send } = await start(env);
+      expect(lstatSync(staging).isDirectory()).toBe(true);
+      expect(existsSync(dest)).toBe(false);
+      send(grant(id, 3, 1));
+      send(chunk(id, 0, "a.txt", "abc"));
+      await settle();
+      expect(existsSync(dest)).toBe(false);
+      send(done(id, [{ rel: "a.txt", text: "abc" }]));
+      ok(await pending);
+      expect(existsSync(staging)).toBe(false);
+      expect(listTree(dest)).toEqual(["a.txt"]);
+    });
+
+    it("R1: a staging folder the bot swapped for a symlink gets nothing written through it", async () => {
+      const env = await make();
+      const outside = join(env.root, "outside-staging");
+      mkdirSync(outside);
+      const { pending, id, staging, send } = await start(env);
+      rmSync(staging, { recursive: true, force: true });
+      symlinkSync(outside, staging);
+      send(grant(id, 7, 1));
+      send(chunk(id, 0, "evil.plist", "PAYLOAD"));
+      expect(await pending).toMatchObject({ ok: false, reason: "corrupt" });
+      expect(readdirSync(outside)).toEqual([]);
+    });
+
+    it("R1: a staging sub folder swapped for a symlink between two files gets nothing written through it", async () => {
+      const env = await make();
+      const outside = join(env.root, "outside-sub");
+      mkdirSync(outside);
+      const { pending, id, staging, send } = await start(env);
+      send(grant(id, 6, 2));
+      send(chunk(id, 0, "sub/a", "AAA"));
+      await settle();
+      renameSync(join(staging, "sub"), join(staging, "moved"));
+      symlinkSync(outside, join(staging, "sub"));
+      send(chunk(id, 1, "sub/b", "BBB"));
+      expect(await pending).toMatchObject({ ok: false, reason: "corrupt" });
+      expect(readdirSync(outside)).toEqual([]);
+    });
+
+    it("R1: a <dest> the bot planted (a symlink out) before fetch.done: nothing moves there, nothing is overwritten", async () => {
+      const env = await make();
+      const outside = join(env.root, "outside-dest");
+      mkdirSync(join(outside, "sub"), { recursive: true });
+      writeFileSync(join(outside, "sub", "x.txt"), "ORIGINAL");
+      const { pending, id, dest, send } = await start(env);
+      send(grant(id, 8, 1));
+      send(chunk(id, 0, "sub/x.txt", "REPLACED"));
+      await settle();
+      symlinkSync(outside, dest);
+      send(done(id, [{ rel: "sub/x.txt", text: "REPLACED" }]));
+      expect(await pending).toMatchObject({ ok: false, reason: "corrupt" });
+      expect(readFileSync(join(outside, "sub", "x.txt"), "utf8")).toBe("ORIGINAL");
+      expect(readdirSync(outside)).toEqual(["sub"]);
+    });
+
+    it("R2: a source folder named .partial / .PARTIAL next to a file arrives intact (no reserved name inside <dest>)", async () => {
+      const env = await make();
+      const files = [{ rel: ".PARTIAL/x", text: "AAA" }, { rel: ".partial-not/y", text: "CC" }, { rel: "x", text: "BBB" }];
+      const { pending, id, send } = await start(env);
+      send(grant(id, 8, 3));
+      files.forEach((f, i) => send(chunk(id, i, f.rel, f.text)));
+      send(done(id, files));
+      const result = ok(await pending);
+      const base = join(env.folderB, result.dest);
+      expect(result.files).toBe(3);
+      for (const f of files) expect(readFileSync(join(base, f.rel), "utf8")).toBe(f.text);
+    });
+
+    it("R4: a chunk before fetch.grant is corrupt", async () => {
+      const env = await make();
+      const { pending, id, send } = await start(env);
+      send(chunk(id, 0, "a", "A"));
+      expect(await pending).toMatchObject({ ok: false, reason: "corrupt" });
+      expect(listTree(env.incoming()).filter((p) => !p.endsWith("/"))).toEqual([]);
+    });
+
+    it("more files than the grant names, a fetch.done byte count or grant totals that differ: each is corrupt", async () => {
+      const env = await make();
+      const cases: Array<(id: string) => WireMessage[]> = [
+        (id) => [grant(id, 6, 1), chunk(id, 0, "a.txt", "aaa"), chunk(id, 1, "b.txt", "bbb")],
+        (id) => [grant(id, 3, 1), chunk(id, 0, "a.txt", "aaa"), done(id, [{ rel: "a.txt", text: "aaa" }], 4)],
+        (id) => [grant(id, 6, 2), chunk(id, 0, "a.txt", "aaa"), done(id, [{ rel: "a.txt", text: "aaa" }])],
+      ];
+      for (const frames of cases) {
+        const { pending, id, send } = await start(env);
+        for (const frame of frames(id)) send(frame);
+        expect(await pending).toMatchObject({ ok: false, reason: "corrupt" });
+      }
+      expect(listTree(env.incoming()).filter((p) => !p.endsWith("/"))).toEqual([]);
+    });
+
+    it("two names that differ only by case are corrupt (they would be one file on a case-insensitive disk)", async () => {
+      const env = await make();
+      const { pending, id, send } = await start(env);
+      send(grant(id, 6, 2));
+      send(chunk(id, 0, "Read.me", "aaa"));
+      send(chunk(id, 1, "read.ME", "bbb"));
+      const result = await pending;
+      expect(result).toMatchObject({ ok: false, reason: "corrupt" });
+      if (!result.ok) expect(result.detail).toMatch(/differs only by case/);
+    });
   });
 });
