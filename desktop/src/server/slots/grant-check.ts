@@ -12,6 +12,16 @@ export type GrantDecision = { ok: true } | { ok: false; detail: string };
 
 /** Plugin commands a `write` grant lets a plugin send for itself (C6): the plugin's own server part and buttons. */
 const OWN_PLUGIN_COMMANDS: ReadonlySet<string> = new Set(["plugins.call", "plugins.command", "plugins.linkCommand", "plugins.tabCommand"]);
+/**
+ * Frame-broker helper commands a `write` plugin may send for itself (`cmd.name === via.plugin`): freezing a Note
+ * picture (needs `files`, a write permission) and asking the ApprovalSheet about a command (M5-12b F2).
+ */
+const OWN_HELPER_COMMANDS: ReadonlySet<string> = new Set(["plugins.noteSnapshot", "plugins.approvalAsk"]);
+/**
+ * Frame-broker rendering helper allowed for any grant at `via.codeHash` (`read`, `request`, or `write`, D54) when
+ * `cmd.name === via.plugin`: resolving image URLs for a Board tile or Note card (M5-12b F2).
+ */
+const RENDER_HELPER_COMMANDS: ReadonlySet<string> = new Set(["plugins.tileImages"]);
 
 /** M5-16: what a device (or a peer server) reads when it sends a plugin command with no `via`. */
 export const PLUGIN_COMMAND_NEEDS_GRANT = "plugin commands from a device need the plugin's grant";
@@ -54,9 +64,14 @@ export function grantAllows(row: PluginRow | null, via: Via, cmd: Command, serve
     return { ok: false, detail: `plugin ${via.plugin} ${same ? "may not do this" : "differs"} on ${serverName}` };
   }
   const refused: GrantDecision = { ok: false, detail: `plugin ${via.plugin} may not do this on ${serverName}` };
-  // A read-tier plugin sends no command at all.
+  // Rendering helper: any existing grant (>= read) lets a plugin resolve images for its own tiles/cards (D54, M5-12b F2).
+  if (RENDER_HELPER_COMMANDS.has(cmd.type) && (cmd as { name?: unknown }).name === via.plugin) return { ok: true };
+  // A read-tier plugin sends no other command at all.
   if (grant.tier === "read") return refused;
   if (grant.requests.includes(cmd.type as never)) return { ok: true };
-  if (grant.tier === "write" && namesPlugin(cmd, via.plugin, installed)) return { ok: true };
+  if (grant.tier === "write") {
+    if (namesPlugin(cmd, via.plugin, installed)) return { ok: true };
+    if (OWN_HELPER_COMMANDS.has(cmd.type) && (cmd as { name?: unknown }).name === via.plugin) return { ok: true };
+  }
   return refused;
 }

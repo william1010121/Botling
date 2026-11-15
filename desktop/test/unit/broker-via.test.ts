@@ -17,7 +17,7 @@ import { Client, type Bridge } from "../../src/renderer/client";
 import { FrameBroker, registerPluginFrame } from "../../src/renderer/frame-broker";
 import { pluginFrameHost } from "../../src/renderer/plugin-frame-host";
 import { BridgeV3 } from "../../web-v3/bridge-v3";
-import { FakeClock, FakeServer, flush, SERVER_ID } from "./fe-link-harness";
+import { FakeClock, FakeServer, flush, SERVER_ID, SRV_STREAM } from "./fe-link-harness";
 
 const BOT = "6A0B0000-0000-4000-8000-000000000021";
 const BOTS = [{ id: BOT, role: "main", name: "Main" }] as BotView[];
@@ -476,5 +476,106 @@ describe("M5-12b: frame broker attribution -> via on outbox items", () => {
       { plugin: "valid" },
     );
     expect(readWithVia).toMatchObject({ ok: false, error: { code: "forbidden" } });
+  });
+
+  it("M5-14e + M5-12b: real FeLink own-rows frames populate link.table(own) for RendererAdapter without a mocked table()", async () => {
+    const server = new FakeServer();
+    const clock = new FakeClock();
+    const link = await FeLink.open({
+      storage: new MemoryFeStorage(),
+      dial: server.dial,
+      deviceId: "desktop",
+      feVersion: "3.0.0",
+      clock,
+      newEpoch: nextEpoch,
+      local: true,
+    });
+    const adapter = new RendererAdapter({ link, clock, emit: () => undefined });
+    link.start();
+    adapter.start();
+    cleanups.push(async () => { adapter.stop(); await link.stop(); });
+    await flush();
+
+    // Before the attached server's own rows arrive, resolveVia refuses locally.
+    const beforeRows = await (adapter as unknown as { request(cmd: Command, via?: { plugin: string }): Promise<unknown> }).request(
+      { type: "plugins.tileImages", name: "notes-helper", botId: BOT, data: "{}" },
+      { plugin: "notes-helper" },
+    );
+    expect(beforeRows).toEqual({
+      ok: false,
+      error: { code: "forbidden", message: "not sent: the plugin is not installed on this machine" },
+    });
+    expect(server.copies).toHaveLength(0);
+
+    // Server sends its own plugin: row over srv:<own> rows frame (M5-14e).
+    server.sendWire({
+      t: "rows",
+      stream: SRV_STREAM,
+      logId: "incown01",
+      after: 0,
+      to: 2,
+      rows: [{ key: "plugin:notes-helper", rev: 2, body: pluginRow(HASH_1) }],
+      more: false,
+    });
+    await flush();
+
+    // tileImages, approvalAsk, and noteSnapshot carry { plugin, codeHash: HASH_1 } through real FeLink.
+    await (adapter as unknown as { request(cmd: Command, via?: { plugin: string }): Promise<unknown> }).request(
+      { type: "plugins.tileImages", name: "notes-helper", botId: BOT, data: "{}" },
+      { plugin: "notes-helper" },
+    );
+    await (adapter as unknown as { request(cmd: Command, via?: { plugin: string }): Promise<unknown> }).request(
+      { type: "plugins.approvalAsk", name: "notes-helper", botId: BOT, command: "ls", folder: "/tmp" },
+      { plugin: "notes-helper" },
+    );
+    await (adapter as unknown as { request(cmd: Command, via?: { plugin: string }): Promise<unknown> }).request(
+      { type: "plugins.noteSnapshot", name: "notes-helper", botId: BOT, rect: { x: 0, y: 0, width: 10, height: 10 } },
+      { plugin: "notes-helper" },
+    );
+    expect(server.copies).toHaveLength(3);
+    expect(server.copies.map((c) => c.cmd.type)).toEqual(["plugins.tileImages", "plugins.approvalAsk", "plugins.noteSnapshot"]);
+    expect(server.copies.map((c) => c.via)).toEqual([
+      { plugin: "notes-helper", codeHash: HASH_1 },
+      { plugin: "notes-helper", codeHash: HASH_1 },
+      { plugin: "notes-helper", codeHash: HASH_1 },
+    ]);
+
+    // A delta rows frame hot-swaps the hash -> next command stamps HASH_2; tombstone refuses again.
+    server.sendWire({
+      t: "rows",
+      stream: SRV_STREAM,
+      logId: "incown01",
+      after: 2,
+      to: 3,
+      rows: [{ key: "plugin:notes-helper", rev: 3, body: pluginRow(HASH_2) }],
+      more: false,
+    });
+    await flush();
+    await (adapter as unknown as { request(cmd: Command, via?: { plugin: string }): Promise<unknown> }).request(
+      { type: "plugins.call", name: "notes-helper", method: "ping", params: null, from: "frame" },
+      { plugin: "notes-helper" },
+    );
+    expect(server.copies).toHaveLength(4);
+    expect(server.copies[3].via).toEqual({ plugin: "notes-helper", codeHash: HASH_2 });
+
+    server.sendWire({
+      t: "rows",
+      stream: SRV_STREAM,
+      logId: "incown01",
+      after: 3,
+      to: 4,
+      rows: [{ key: "plugin:notes-helper", rev: 4, deleted: true }],
+      more: false,
+    });
+    await flush();
+    const afterTombstone = await (adapter as unknown as { request(cmd: Command, via?: { plugin: string }): Promise<unknown> }).request(
+      { type: "plugins.call", name: "notes-helper", method: "ping", params: null, from: "frame" },
+      { plugin: "notes-helper" },
+    );
+    expect(afterTombstone).toEqual({
+      ok: false,
+      error: { code: "forbidden", message: "not sent: the plugin is not installed on this machine" },
+    });
+    expect(server.copies).toHaveLength(4);
   });
 });
