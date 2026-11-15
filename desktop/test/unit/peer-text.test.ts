@@ -13,6 +13,10 @@ const UNSEEN: Array<[string, string]> = [
   ["\u200b", "\\u200b"], ["\u200e", "\\u200e"], ["\u200f", "\\u200f"], ["\u202e", "\\u202e"], ["\u2060", "\\u2060"], ["\u2066", "\\u2066"],
   ["\ufeff", "\\ufeff"], ["\ufe00", "\\ufe00"], ["\ufe01", "\\ufe01"], ["\ufe0f", "\\ufe0f"],
   ["\u{e0000}", "\\u{e0000}"], ["\u{e0041}", "\\u{e0041}"], ["\u{e007f}", "\\u{e007f}"], ["\u{e0100}", "\\u{e0100}"], ["\u{e01ef}", "\\u{e01ef}"],
+  // The rest of Default_Ignorable_Code_Point (review): Khmer inherent vowels, Mongolian selectors, U+2065, the
+  // deprecated format characters, shorthand format controls, musical format controls, the rest of plane 14.
+  ["\u17b4", "\\u17b4"], ["\u17b5", "\\u17b5"], ["\u180b", "\\u180b"], ["\u180f", "\\u180f"], ["\u2065", "\\u2065"], ["\u206a", "\\u206a"],
+  ["\u206f", "\\u206f"], ["\u{1bca0}", "\\u{1bca0}"], ["\u{1d173}", "\\u{1d173}"], ["\u{1d17a}", "\\u{1d17a}"], ["\u{e0080}", "\\u{e0080}"], ["\u{e0fff}", "\\u{e0fff}"],
 ];
 
 describe("one shared unseen set", () => {
@@ -37,7 +41,7 @@ describe("one shared unseen set", () => {
   });
 
   it("normal names keep their shape: CJK, kana, accented, decomposed accents, emoji, emoji with a presentation selector, keycap", () => {
-    for (const name of ["build bot 中文", "ユーザー", "José", "José", "Nguyễn", "\u{1f600} Mac", "❤\ufe0f Mac", "☺\ufe0e Mac", "1\ufe0f⃣ Mac", "\u{1f1e8}\u{1f1ed}"]) {
+    for (const name of ["build bot 中文", "ユーザー", "José", "Jose\u0301", "Nguyễn", "\u{1f600} Mac", "❤\ufe0f Mac", "☺\ufe0e Mac", "1\ufe0f⃣ Mac", "\u{1f1e8}\u{1f1ed}"]) {
       expect(machineLabel(name), name).toBe(name);
       expect(oneLine(name), name).toBe(name);
       expect(stripControls(name), name).toBe(name);
@@ -61,6 +65,18 @@ describe("one shared unseen set", () => {
     expect(machineLabel(family)).toBe("\u{1f468}\\u200d\u{1f469}\\u200d\u{1f467}");
     expect(stripUnseen(family)).toBe(family);
     expect(stripUnseen(family, true)).toBe("\u{1f468}\u{1f469}\u{1f467}");
+  });
+
+  it("a joiner next to ASCII goes from the prompt text: it cannot split the fence, a tag or a speaker label (review)", () => {
+    expect(cleanLine(">\u200d>\u200d>", 100)).toBe("> > >");
+    expect(cleanLine("<\u200c<\u200c<", 100)).toBe("< < <");
+    expect(cleanLine("a >>\u200d> b", 100)).toBe("a > > > b");
+    expect(stripControls("<\u200dchoices>")).toBe("<choices>");
+    expect(stripControls("U\u200dser: hi")).toBe("User: hi");
+    expect(stripControls("\u200d\u{1f600}\u200c")).toBe("\u{1f600}");
+    expect(stripControls("\u{1f468}\u200d\u200d\u{1f469}")).toBe("\u{1f468}\u{1f469}");
+    expect(stripControls("\u{1f3f3}\ufe0f\u200d\u{1f308}")).toBe("\u{1f3f3}\ufe0f\u200d\u{1f308}");
+    expect(stripControls(">\u200b\u200d>")).toBe(">>");
   });
 
   it("controls are still handled as before in each place", () => {
