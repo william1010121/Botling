@@ -242,6 +242,20 @@ Three kinds of mistakes, one category per evidence line:
   - 2026-11-15 | thin-check | `M6-01d-review.md` #3 (a broken secrets file quoted into stdout and the report) | fix `c9212f98`
   - 2026-11-15 | thin-check | `M6-06-review.md` F1 (a typed secret lands in plaintext in the window's durable outbox) | fix `0d68b87d`
 
+## L-016 · A snapshot that proves a folder was not changed records every item's kind, content hash and link target
+- Rule: a test that proves a folder (for example the 2.x folder after an import) was not changed snapshots every item,
+  not just regular files: its kind (file, folder, symlink), a content hash for each file, and the target for each
+  symlink (links are not followed). The test has two mutation checks that the snapshot catches: creating an empty
+  folder in the folder, and rewriting a file with the same bytes. Fixture files get an old fixed mtime, so a rewrite
+  always shows in the snapshot.
+- Why: the M6-10b snapshot compared only sizes and mtimes, so a same-size rewrite with restored mtime went unseen; the
+  M6-09 snapshot listed only regular files, so an empty folder or a link added to the 2.x root passed (mutant M3).
+- Tags: 2.x, import, tests
+- Status: open · days 1 of 3 (2026-11-15)
+- Evidence:
+  - 2026-11-15 | thin-check | `M6-10b` fix check (snapshot compared size and mtime, not content) | fix `dd6823ac`
+  - 2026-11-15 | thin-check | `M6-09-review.md` F1 (snapshot skipped folders and symlinks; mutant M3 survived) | fix `c833a081`
+
 ## Watch list (seen once, not a lesson yet)
 
 - Plugin names matched by prefix: a `write` plugin `my` could run `my.plugin`'s commands
