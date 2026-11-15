@@ -46,13 +46,14 @@ import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type DeviceRoster, type SessionHost, type SessionOptions } from "./session";
 import { fixedIds } from "./fixed-ids";
-import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
+import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity, readVapidKeyRecord } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
 import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "./push";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
+import { VapidKeySync } from "./push";
 import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
 import { PluginRow, RowKey } from "../protocol/table-rows";
 import { openServerStore, type Db, type ServerStore } from "./store";
@@ -434,6 +435,8 @@ export class Botlingd {
   fetchRequester: FetchRequester | null = null;
   /** M5-04e: the read-only copies of peer bots' chats in the main bot's folder. */
   chatMirror: PeerChatMirror | null = null;
+  /** M4-26: cluster VAPID key rotation & distribution over full peer sessions after server revocation. */
+  vapidSync: VapidKeySync | null = null;
 
   get token(): string { return this.tokenValue; }
 
@@ -841,6 +844,7 @@ export class Botlingd {
         },
         peerReads: () => localReads,
         peerLocate: (m) => peerContent.locate(LOCAL_WINDOW, m),
+        vapidKey: () => { const rec = readVapidKeyRecord(paths.dataDir); return rec ? { publicKey: rec.keys.publicKey, id: { gen: rec.gen, id: rec.id } } : null; },
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
@@ -910,18 +914,21 @@ export class Botlingd {
         if (removed > 0) log(`fetch: removed ${removed} unfinished staging folder(s) left by an earlier run`);
       } catch (error) { log(`fetch: leftover staging cleanup failed: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 200))}`); }
       fetchRequesterRef = fetchRequester;
+      // M4-26: cluster VAPID key rotation on server revocation & encrypted distribution to valid servers.
+      let peers!: PeerSessions;
+      const vapidSync = new VapidKeySync({ dataDir: paths.dataDir, roster, sessions: () => peers.all, log });
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
-      const peers: PeerSessions = new PeerSessions({
+      peers = new PeerSessions({
         roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log,
         // M3 step 7: every peer's srv: table is subscribed while its session is open (§10.1).
         // M3 step 5: gossip frames first (roster sync is the first exchange, §4.6), then the tables.
         // M3 step 9: forwarded commands (owner side) and the owners' answers (forwarding side).
         // M3 step 8: forwarded front-end subscriptions (owner side) and the frames that answer them (attached side).
         // M3 step 10: content gets and their answers (bulk lane), both sides.
-        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || peerContent.onMessage(session, message) || peerContentOwner.onMessage(session, message) || fetchSource.onMessage(session, message) || fetchRequester.onMessage(session, message)
+        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || vapidSync.onMessage(session, message) || peerContent.onMessage(session, message) || peerContentOwner.onMessage(session, message) || fetchSource.onMessage(session, message) || fetchRequester.onMessage(session, message)
           || inbox.onMessage(session, message) || (await forwarder.onMessage(session, message))
           || passThrough.onMessage(session, message) || (await passOwner.onMessage(session, message)) || peerTables.onMessage(session, message),
-        sessionOpened: (session) => { fetchRequester.sessionOpened(session); gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
+        sessionOpened: (session) => { gossip.opened(session); vapidSync.sessionOpened(session); fetchRequester.sessionOpened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
         sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); peerContent.sessionClosed(session); peerContentOwner.sessionClosed(session); fetchSource.sessionClosed(session); fetchRequester.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
       peerSessions = peers;
@@ -937,6 +944,7 @@ export class Botlingd {
       if (originTestHookEnabled(env)) daemon.originHookStop = startOriginTestHook(paths.dataDir, serverOrigin, log);
       daemon.fetchSource = fetchSource;
       daemon.fetchRequester = fetchRequester;
+      daemon.vapidSync = vapidSync;
       // M5-04e: the main bot reads a peer bot's chat in `<main folder>/.bot/peers/<botId>/chat.md` (read-only; written only here).
       // Until M5-04i's `runMainBot` is merged every server runs it.
       const mainFolder = join(paths.dataDir, "main");
@@ -964,6 +972,7 @@ export class Botlingd {
       await daemon.relay?.start();
       await daemon.writeOwnProfile((at) => advertisedPort(env, at));
       peers.start();
+      vapidSync.start();
       // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
       // Bound only now (M5-03b review): `attach` answers the call-ins a crash interrupted at once, and before `peers.start()`
       // the directory knows no peer, so every such answer was refused and lost (marked sent, never queued). Until here an ask
@@ -1047,6 +1056,7 @@ export class Botlingd {
     await step("server pairing", () => this.join.close());
     await step("remote sessions", () => this.remote.close());
     await step("relay", () => this.relay?.closeAfterDrain(1_000));
+    this.vapidSync?.close();
     await step("peer sessions", () => this.peers.close());
     this.chatMirror?.stop();
     this.passThrough.close();

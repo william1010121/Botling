@@ -37,6 +37,12 @@ export {
   type PushSendReport,
 } from "./sender";
 export {
+  VapidKeySync,
+  type VapidKeySyncOptions,
+  type VapidSyncRoster,
+  type VapidSyncSession,
+} from "./vapid-sync";
+export {
   attachedDeviceIds,
   DEFAULT_PUSH_BACKOFF_BASE_MS,
   DEFAULT_PUSH_COALESCE_MS,
