@@ -649,6 +649,16 @@ export const PluginView = z.strictObject({
   builtIn: z.boolean().optional(),
   /** What this machine grants this plugin at its running hash (Botling 3 only; 2.x leaves it unset). */
   grant: z.enum(["none", "read", "request", "write"]).optional(),
+  /**
+   * What this plugin asks at its running hash on this machine (Botling 3 only): the window's Settings › Plugins offers the
+   * tiers up to `tier` and sends one `plugin.grant` at exactly this hash and these asks. Lazy: the schemas are defined below.
+   */
+  asks: z.strictObject({
+    codeHash: z.lazy(() => PluginCodeHash),
+    tier: z.enum(["read", "request", "write"]),
+    reads: z.array(z.string().min(1).max(200)).max(50),
+    requests: z.array(z.lazy(() => CommandTypeEnum)).max(100),
+  }).optional(),
   /** A library plugin running in place of the built-in one of the same name (its version is the same or newer): the built-in's version. */
   replacesBuiltIn: z.string().max(100).optional(),
   /** A built-in plugin running while the library holds an older copy (or one whose version is not a semver), which is ignored: that copy's version. */

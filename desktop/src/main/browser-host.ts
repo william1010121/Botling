@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { BROWSER_CHANNEL, isWebUrl, urlFromInput, type BrowserDown, type BrowserMenuPick, type BrowserRect, type BrowserToolRun, type BrowserUp } from "../browser-wire";
 import { runOptions, siteOf, toolIsOn, toolsFor, type RunFile, type SiteToolOptions } from "../browser-site-tools";
 import { NetCapture } from "../browser-bot";
-import { droppedPdfPaths, fileNavigation, isOpenablePdf, localPdfPath, pdfFileUrl } from "../browser-pdf";
+import { droppedPdfPaths, fileNavigation, isOpenablePdf, localPdfPath, pdfFileUrl, pdfTabFileUrl } from "../browser-pdf";
 import { paneUserAgent, popupWay } from "../browser-auth";
 import { HintAsks, acceptLanguages, withHints, type HintFacts } from "../browser-hints";
 import type { BotBrowserWindow } from "./browser-bot-host";
@@ -129,6 +129,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
   const tabs: BrowserTabs = new BrowserTabs({
     create: (botId, tabId) => makePage(botId, tabId),
     onChange: (state, reveal) => send({ type: "state", ...state, ...(reveal ? { reveal: true } : {}) }),
+    fileUrl: pdfTabFileUrl,
   });
 
   function makePage(botId: string, tabId: string): TabPage {

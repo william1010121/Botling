@@ -101,7 +101,7 @@ describe("botlingd import CLI & run.ts (M6-01d)", () => {
 
     const lines = res.stdout.trimEnd().split("\n");
     expect(lines[0]).toBe("Imported from Botling 2 (read only; Botling 2's folder was not changed).");
-    expect(lines[1]).toMatch(/^Bots: 5 · lines: 7 · pins: 1 · plugins: \d+ \(\d+ read only until you approve them\)$/);
+    expect(lines[1]).toMatch(/^Bots: 5 · lines: 7 · pins: 1 · plugins: \d+ \(\d+ wait for your approval in Settings › Plugins\)$/);
     expect(lines[2]).toBe(`Report: ${join(dataDir, "import-report.md")}`);
 
     const reportFile = join(dataDir, "import-report.md");

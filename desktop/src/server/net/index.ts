@@ -9,3 +9,4 @@ export {
   loadRelayRoomKey, redact, RELAY_KEY_FILE, RELAY_MAX_ALLOW, RELAY_URL_ENV, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl,
   type RelayConnectorOptions, type RelaySessionAcceptor, type RelayState,
 } from "./relay";
+export { effectiveRelayUrl, readRelaySetting, RELAY_SETTING_FILE, RelaySettingError, relaySettingUrl, writeRelaySetting, type RelaySource } from "./relay-setting";

@@ -23,6 +23,11 @@ export interface BrowserTabInfo {
   crashed?: boolean;
   /** A bot is reading this tab now (phase 2, browser-bot.ts): the tab shows the bot's face. */
   reading?: boolean;
+  /**
+   * The file: URL of the local PDF this tab shows when `url` is another address (Botling 3's `botling-content://file/…`,
+   * browser-pdf.ts `pdfTabFileUrl`). Plugins' toolbar buttons match it, and a click sends it as the tab's URL.
+   */
+  fileUrl?: string;
 }
 export interface BrowserBotState { botId: string; tabs: BrowserTabInfo[]; active: string | null }
 

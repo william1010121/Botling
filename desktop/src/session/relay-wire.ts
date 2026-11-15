@@ -36,6 +36,15 @@ function fromB64u(text: string): Uint8Array {
 }
 async function sha256(bytes: Uint8Array): Promise<Uint8Array> { return new Uint8Array(await subtle().digest("SHA-256", ab(bytes))); }
 
+/**
+ * The origin of the page a relay serves (its `/v3/`, the Botling 3 phone page): the relay WebSocket URL's host with
+ * https (http for a local ws:// relay). botlingd names it in pairing links; the page compares it with its own origin.
+ */
+export function relayPageOrigin(relayUrl: string): string {
+  const url = new URL(relayUrl);
+  return `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}`;
+}
+
 /** The room id the relay gives a room key (base64url SHA-256 of the key's bytes, relay.ts `roomOf`). */
 export async function relayRoomOf(key: string): Promise<string> { return b64u(await sha256(fromB64u(key))); }
 

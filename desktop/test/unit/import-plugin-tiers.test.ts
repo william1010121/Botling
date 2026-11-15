@@ -220,11 +220,11 @@ describe("M6-03b: 2.x permissions -> tier and requests mapping", () => {
     expect(formatPluginsReportSection(ordered)).toBe([
       "Plugins",
       "  note            built in        can change its own data",
-      "  reading-coach   from Botling 2  read only now · asks to send messages · approve to restore",
-      "  my-tool         from Botling 2  read only now · asks to change its own data · approve to restore",
+      "  reading-coach   from Botling 2  nothing allowed yet · asks to send messages · approve in Settings › Plugins",
+      "  my-tool         from Botling 2  nothing allowed yet · asks to change its own data · approve in Settings › Plugins",
     ].join("\n"));
 
-    // A read-only imported plugin does not ask to restore anything.
+    // An imported plugin that asks only to read holds no grant either: it can do nothing until it is approved.
     const readOnlyLine = formatPluginsReportSection([
       {
         name: "note",
@@ -243,7 +243,7 @@ describe("M6-03b: 2.x permissions -> tier and requests mapping", () => {
     expect(readOnlyLine).toBe([
       "Plugins",
       "  note            built in        can change its own data",
-      "  plain-reader    from Botling 2  read only",
+      "  plain-reader    from Botling 2  nothing allowed yet · asks to read only · approve in Settings › Plugins",
     ].join("\n"));
 
     await writer.close();
