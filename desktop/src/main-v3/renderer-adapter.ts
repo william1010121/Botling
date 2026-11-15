@@ -765,7 +765,8 @@ export class RendererAdapter {
         // A reply with nothing to show (the core kept it out: only <no-reply/> or reactions, or cut off before it said
         // anything): the log holds no line for it, so neither does the renderer, as in 2.x. A line only the live frames
         // drew goes; none is made. A failed turn still gets its line (the server ends a turn the core never did so).
-        if (!event.text && event.status !== "failed" && !model.committed.has(event.messageId)) {
+        // Blank text counts as none, as the core's own rule does (hasVisibleContent: a stop's raw body may be "\n").
+        if (!event.text.trim() && event.status !== "failed" && !model.committed.has(event.messageId)) {
           if (model.known.has(event.messageId)) {
             this.emitEvent({ type: "message.removed", botId: model.botId, messageId: event.messageId }, model);
             model.known.delete(event.messageId);

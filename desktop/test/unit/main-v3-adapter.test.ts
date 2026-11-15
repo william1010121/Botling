@@ -309,6 +309,19 @@ describe("a reply with nothing to show (2.x draws no line for it)", () => {
     expect((await r.adapter.snapshot("b1")).chat?.messages).toEqual([]);
   });
 
+  it("blank text, and a message the server ended with a turn it was read into, draw no line either", async () => {
+    const r = await rig();
+    await r.store.resync();
+    // A stop of a turn with no line: the core sends the reply's raw body, which may be only blank.
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "stopped", text: " \n\n" });
+    // A message read into another turn: the server ends its own turn with that one, text "", no turn.started (worker.ts).
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t2", messageId: "r2", status: "done", text: "" });
+    await flush();
+    expect(r.ids()).toEqual([]);
+    expect((await r.adapter.snapshot("b1")).chat?.messages).toEqual([]);
+  });
+
   it("a failed turn with no line still shows one (the server's own turn.finished for a turn the core never ended)", async () => {
     const r = await rig();
     await r.store.resync();
