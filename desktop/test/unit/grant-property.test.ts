@@ -523,8 +523,11 @@ describe("M5-19: nothing is applied outside device scope ∩ the plugin's grant 
     // Every device scope subset (16) is reached.
     for (let mask = 0; mask < 16; mask++) need(`devicescope:${SCOPES.filter((_, i) => mask & (1 << i)).sort().join("+") || "none"}`, 25);
     // A plugin.grant is applied from a manage device, too.
-    need("applied:tier-read", 15);
-    need("helper:plugins.noteSnapshot:applied", 15);
+    // Floors only prove these kinds stay reachable. Since a server origin no longer applies a frame helper (fu-plugin-call-server-origin)
+    // and the generator spends 13% of its rolls on card / waiting.ignore commands (peer-answer-guard), the fixed seeds give 14 and 20
+    // (other seed sets: tier-read 9-14, noteSnapshot 17-33), so the floors sit below that spread.
+    need("applied:tier-read", 8);
+    need("helper:plugins.noteSnapshot:applied", 12);
     expect([...cover.keys()].some((key) => key.startsWith("plugin.grant:applied:novia:device"))).toBe(true);
   });
 });
