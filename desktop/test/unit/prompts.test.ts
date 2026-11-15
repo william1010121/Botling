@@ -6,10 +6,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, SITE_TOOLS_RULE, FILE_LINK_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
-import { WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, workerNoteRule } from "../../src/core/prompts/delegation";
+import { FILES_TOUCHED_HANDOFF_RULE, WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, WORKER_REPORT_BLOCK_RULE, workerNoteRule } from "../../src/core/prompts/delegation";
 import { CLAUDE_WORKER_POLICY } from "../../src/core/agent/claude-workers";
 import { AGY_WORKER_POLICY } from "../../src/core/prompts-agy";
-import { codexWorkerInstructions } from "../../src/core/prompts";
+import { codexWorkerInstructions, desktopPrompts } from "../../src/core/prompts";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
 import { desktop } from "../helpers";
@@ -54,6 +54,8 @@ function withDesktopReportGuidance(swift: string, worker: boolean): string {
       "- Final report to the coordinator: keep research-only scope, test commands, and preview-tool details in this internal handback, separate from user report prose. User reports still state material uncertainty and failed checks in plain language. State completed or failed,");
     // Approved 2026-11-14 (the user): workers hand back full paths, so the bot can link them.
     expected = expected.replace("source locations or artifact paths,", "source locations or artifact paths (files and folders as full absolute paths, so the coordinator can link them),");
+    // Approved 2026-11-16 (the user, M7-F03): the report ends with the files touched, why, and where to start reading.
+    expected = `${expected}\n- ${WORKER_REPORT_BLOCK_RULE}`;
   }
   return expected;
 }
@@ -87,7 +89,8 @@ function withApprovedRouting(swift: string): string {
   expected = expected.replace("\n- Complete the task before returning your final report.", `\n- ${WORKER_NOTIFY_RULE}\n- ${WORKER_LOOKUP_RULE}\n- Complete the task before returning your final report.`);
   // Approved 2026-11-08 (the user): task cards are gone, so no bot is told to write <task …/> lines any more.
   expected = expected.replace(/^- The app keeps a task card for each piece of work[^\n]*\n/m, "");
-  return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.`);
+  // Approved 2026-11-16 (the user, M7-F03): the earlier worker's "Files touched" block goes to the next worker on the same work.
+  return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. ${FILES_TOUCHED_HANDOFF_RULE}`);
 }
 
 // Approved 2026-11-11 (context-waste audit, fix 4): a Codex head is not told Claude-only things: the auto-mode classifier's
@@ -141,6 +144,24 @@ describe("prompts: the Swift app's strings", () => {
       const prompts = botPrompts({ profile, engine, heads: null, language: "en" });
       expect(prompts.system, engine).not.toContain(WORKER_LOOKUP_RULE);
     }
+  });
+
+  it("every engine's worker text asks for the Files touched block once, and every coordinator passes it on once (M7-F03)", () => {
+    const count = (text: string, part: string) => text.split(part).length - 1;
+    const profile = { name: "Probe", role: "bot" as const, folder: "/fixture", memoryPath: ".bot/memory.md", job: null };
+    for (const [engine, text] of [["claude", CLAUDE_WORKER_POLICY], ["agy", AGY_WORKER_POLICY], ["codex", codexWorkerInstructions(profile, "en")]] as const) {
+      expect(count(text, WORKER_REPORT_BLOCK_RULE), engine).toBe(1);
+    }
+    expect(WORKER_REPORT_BLOCK_RULE).toContain("Files touched (full paths), one line each on why, and where the next reader should start.");
+    for (const engine of ["claude", "codex", "agy"] as const) for (const role of ["main", "manager", "bot"] as const) {
+      const p = { ...profile, role };
+      expect(count(desktopPrompts(botPrompts({ profile: p, engine, heads: null, language: "en" }), p, engine, true).system, FILES_TOUCHED_HANDOFF_RULE), `${engine}/${role}`).toBe(1);
+    }
+    // the reviewer still reads the diff; the block is passed on unchanged
+    expect(FILES_TOUCHED_HANDOFF_RULE).toContain("unchanged");
+    expect(FILES_TOUCHED_HANDOFF_RULE).toContain("still reads the diff itself");
+    // workers get the block rule, not the coordinator sentence
+    for (const text of [CLAUDE_WORKER_POLICY, AGY_WORKER_POLICY, codexWorkerInstructions(profile, "en")]) expect(text).not.toContain(FILES_TOUCHED_HANDOFF_RULE);
   });
 
   it("gives agy both app-managed delegation and, in a multi-engine bot, the peer handoff protocol", () => {

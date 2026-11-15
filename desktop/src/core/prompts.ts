@@ -11,7 +11,7 @@
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
 import { CODEX_NOTE } from "./prompts-codex-text";
-import { DELEGATION_CAPS, delegationPolicy, VERBATIM_HANDOFF_RULE, WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, workerNoteRule } from "./prompts/delegation";
+import { DELEGATION_CAPS, delegationPolicy, FILES_TOUCHED_HANDOFF_RULE, VERBATIM_HANDOFF_RULE, WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, WORKER_REPORT_BLOCK_RULE, workerNoteRule } from "./prompts/delegation";
 export { VERBATIM_HANDOFF_RULE } from "./prompts/delegation";
 import type { BotProfile } from "./store/workspace";
 import { progressFile } from "./sub-bots";
@@ -139,7 +139,7 @@ export const workerSubBotRule = [
 export const NATIVE_SUBAGENT_LINE = "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.";
 /** What a Claude bot is told instead when its subagents are app-managed workers (the default; claude-workers.ts). */
 export const CLAUDE_WORKERS_RULE = delegationPolicy(DELEGATION_CAPS.claude, { engine: "claude", form: "line" });
-const CLAUDE_MAIN_WORKERS_LINE = "- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id. A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.";
+const CLAUDE_MAIN_WORKERS_LINE = `- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id. A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. ${FILES_TOUCHED_HANDOFF_RULE}`;
 const NATIVE_SUB_BOT_AGENTS = "you may start your own subagents with the Agent tool.";
 const WORKERS_SUB_BOT_AGENTS = "you may start your own workers with app_handoff.";
 // A bot made with delegation "onRequest" (a plugin's `bots.create`, e.g. a reading coach the user works with directly): these
@@ -289,6 +289,7 @@ export function codexWorkerInstructions(profile: PromptInput["profile"], languag
     codexLocalReportRule(paths.artifacts),
     "- Preserve the user's authorization and project tool restrictions. A denied tool call is not permission to bypass the restriction; report what is needed to continue.",
     "- Final report to the coordinator: keep research-only scope, test commands, and preview-tool details in this internal handback, separate from user report prose. User reports still state material uncertainty and failed checks in plain language. State completed or failed, what changed or was found, source locations or artifact paths (files and folders as full absolute paths, so the coordinator can link them), checks actually run with their results, and any remaining blocker. Distinguish observed evidence from inference. On a follow-up in this same session, retain the prior context and execute only the requested additional scope.",
+    `- ${WORKER_REPORT_BLOCK_RULE}`,
   ].join("\n");
 }
 
