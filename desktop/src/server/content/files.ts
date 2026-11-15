@@ -8,7 +8,7 @@
 // Indexed kinds: pictures, video, audio and PDFs. Other files (archives, data, code) are not indexed in M1: a line that
 // links one opens it through the 2.x path. A file on the protected list (§9A.2, §16: keys, keychains, `.ssh`, browser
 // profiles, Botling's own data folder) is never indexed.
-import { isAbsolute, normalize, sep } from "node:path";
+import { isAbsolute, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ContentRef } from "../../protocol";
 
@@ -68,7 +68,10 @@ export function isProtectedPath(path: string, options: { dataDir?: string; home?
   if (lower.includes("/library/cookies/")) return true;
   if (options.dataDir) {
     const data = normalize(options.dataDir).replace(/\/+$/, "");
-    if (path === data || path.startsWith(data + sep)) return true;
+    const own = normalize(path);
+    // M6-05: the files the 2.x import copied (`<dataDir>/imported/…`) are the user's own attachments; they are indexed.
+    if (own.startsWith(join(data, "imported") + sep)) return false;
+    if (own === data || own.startsWith(data + sep)) return true;
   }
   return false;
 }
