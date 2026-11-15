@@ -2,7 +2,7 @@
   "about": "Product files over 800 lines and the size each had when M7-S00 was made (main ffadc235). One entry per line, sorted by path, so a split card edits only its own line: it lowers the number, and the last card of a file removes the entry. A file not listed here may not pass 800 lines. desktop/src/main/main.ts is frozen on purpose (not split, user 2026-11-16): its number stays. Checked by desktop/scripts/check-lines.mjs.",
   "files": {
     "desktop/builtin-plugins/botling.note/src/ui.js": 2190,
-    "desktop/src/core/bot.ts": 2527,
+    "desktop/src/core/bot.ts": 2054,
     "desktop/src/core/server.ts": 2787,
     "desktop/src/main/main.ts": 1169
   },
