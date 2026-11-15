@@ -60,6 +60,7 @@ import { AgentStatusWriter } from "./agent-status";
 import { filePath, pageInCard } from "./page-preview";
 import { PAGE_COMPONENT } from "./preview-url";
 import { Bot, NO_LONGER_NEEDED, type DeferredTurn, type PresetTurnIds, type SessionStart, type SessionStartCodex, type Status as TurnStatus } from "./bot";
+import type { FetchRequest } from "./bot-tools";
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
@@ -234,6 +235,8 @@ export interface CoreOptions {
   mainBotMachine?: () => string | null;
   /** Botling 3's server only (2.x leaves it unset): content read/fetch for plugins (`content.read`, `content.fetch`). */
   content?: PluginWorld["content"];
+  /** Botling 3's server only (2.x leaves it unset): `app_fetch`, files from another machine into the bot's folder (M5-07d). */
+  fetch?: (botId: string, request: FetchRequest) => Promise<string>;
   /** Botling 3's server only (2.x leaves it unset): whether a plugin's program part may start at `codeHash` (M5-18a). */
   mayRunServerPart?: (name: string, codeHash: string) => boolean;
   /** Botling 3's server only (2.x leaves it unset): run each non-built-in plugin's program part in its own host process (M5-18b). */
@@ -621,6 +624,7 @@ export class Core {
     const build = (profile: BotProfile): Bot => {
       const bot: Bot = new Bot({
         profile,
+        ...(options.fetch ? { fetch: options.fetch } : {}),
         deferStartup: options.deferStartup && !this.activated,
         headConfig: options.headConfig,
         agyConfig: options.agyConfig,
