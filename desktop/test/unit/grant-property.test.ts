@@ -170,7 +170,7 @@ function genMalformed(r: Random): unknown {
   }
 }
 
-function genPlain(r: Random): Set<string> { return new Set(WAITING_TEXTS.slice(0, 2).filter(() => chance(r, 0.5))); }
+function genPlain(r: Random): Set<string> { return new Set(WAITING_TEXTS.slice(0, 2).filter(() => chance(r, 0.7))); }
 
 function genTable(r: Random): Model {
   const table: Model = new Map();
@@ -217,9 +217,9 @@ function genCommand(r: Random, world: World, via: Via | undefined): Command {
   const grant = entry?.kind === "row" && via ? Object.entries(entry.row.grants).find(([hash]) => hash === via.codeHash)?.[1] : undefined;
   if (via && grant?.requests.length && roll < 0.35) return make(r, pick(r, grant.requests as string[]), via.plugin);
   if (via && roll < 0.65) return make(r, pick(r, FOUR), pick(r, chance(r, 0.7) ? [via.plugin] : PLUGINS));
-  if (roll < 0.72) return make(r, pick(r, FOUR), pick(r, PLUGINS));
-  if (roll < 0.78) return make(r, "plugin.grant", pick(r, PLUGINS));
-  if (roll < 0.80) return make(r, "settings.set", "");
+  if (roll < 0.70) return make(r, pick(r, FOUR), pick(r, PLUGINS));
+  if (roll < 0.76) return make(r, "plugin.grant", pick(r, PLUGINS));
+  if (roll < 0.78) return make(r, "settings.set", "");
   // peer-answer-guard: `waiting.ignore` (a server may send it only for a plain item) and the card answers (a server never may).
   if (roll < 0.88) return make(r, "waiting.ignore", "");
   if (roll < 0.90) return make(r, pick(r, USER_ONLY_CARDS), "");
