@@ -629,4 +629,192 @@ describe("fetch policy (M5-06a)", () => {
   it("R7. FetchWhat matches protocol/fetch.ts FetchWhat", () => {
     expectTypeOf<FetchWhat>().toEqualTypeOf<ProtocolFetchWhat>();
   });
+
+  it("F1. .bot/artifacts symlink to botFolder, .bot, or another subfolder asks instead of free", () => {
+    const referenced = () => false;
+
+    // .bot/artifacts -> ../ (the bot folder itself)
+    const botSelf = join(root, "bots", "bot-self");
+    mkdirSync(join(botSelf, ".bot"), { recursive: true });
+    mkdirSync(join(botSelf, "src"), { recursive: true });
+    const secretSrc = join(botSelf, "src", "secret.ts");
+    writeFileSync(secretSrc, "export const secret = 1;\n");
+    symlinkSync("..", join(botSelf, ".bot", "artifacts"));
+
+    // .bot/artifacts -> . (the .bot directory itself)
+    const botDotSelf = join(root, "bots", "bot-dot-self");
+    mkdirSync(join(botDotSelf, ".bot"), { recursive: true });
+    const memoryMd = join(botDotSelf, ".bot", "memory.md");
+    writeFileSync(memoryMd, "# private memory\n");
+    symlinkSync(".", join(botDotSelf, ".bot", "artifacts"));
+
+    // .bot/artifacts -> ../shared (another subfolder inside botFolder)
+    const botSub = join(root, "bots", "bot-sub");
+    mkdirSync(join(botSub, ".bot"), { recursive: true });
+    mkdirSync(join(botSub, "shared"), { recursive: true });
+    const sharedTxt = join(botSub, "shared", "file.txt");
+    writeFileSync(sharedTxt, "shared\n");
+    symlinkSync(join("..", "shared"), join(botSub, ".bot", "artifacts"));
+
+    const botFolders = new Map<string, string>([
+      ["bot-self", botSelf],
+      ["bot-dot-self", botDotSelf],
+      ["bot-sub", botSub],
+    ]);
+
+    expect(classify({
+      what: { kind: "artifact", botId: "bot-self", path: "src/secret.ts" },
+      botFolders,
+      referenced,
+      dataDir,
+    })).toEqual({ kind: "ask", prefix: realpath(secretSrc) });
+
+    expect(classify({
+      what: { kind: "artifact", botId: "bot-self", path: "" },
+      botFolders,
+      referenced,
+      dataDir,
+    })).toEqual({ kind: "ask", prefix: realpath(botSelf) });
+
+    expect(classify({
+      what: { kind: "path", path: secretSrc },
+      botFolders,
+      referenced,
+      dataDir,
+    })).toEqual({ kind: "ask", prefix: realpath(secretSrc) });
+
+    expect(classify({
+      what: { kind: "git", path: botSelf },
+      botFolders,
+      referenced,
+      dataDir,
+    })).toEqual({ kind: "ask", prefix: realpath(botSelf) });
+
+    expect(classify({
+      what: { kind: "artifact", botId: "bot-dot-self", path: "memory.md" },
+      botFolders,
+      referenced,
+      dataDir,
+    })).toEqual({ kind: "ask", prefix: realpath(memoryMd) });
+
+    expect(classify({
+      what: { kind: "path", path: memoryMd },
+      botFolders,
+      referenced,
+      dataDir,
+    })).toEqual({ kind: "ask", prefix: realpath(memoryMd) });
+
+    expect(classify({
+      what: { kind: "artifact", botId: "bot-sub", path: "file.txt" },
+      botFolders,
+      referenced,
+      dataDir,
+    })).toEqual({ kind: "ask", prefix: realpath(sharedTxt) });
+  });
+
+  it("F2. missing or dangling dataDir fails closed as deny-list / isDeniedPath true", () => {
+    const botFolders = new Map<string, string>([["bot-a", botA]]);
+    const referenced = () => false;
+    const safeFile = join(botA, "src", "main.ts");
+    const missingDataDir = join(root, "missing-data-dir");
+    const danglingDataDir = join(root, "dangling-data-dir");
+    symlinkSync(join(root, "does-not-exist"), danglingDataDir);
+
+    expect(isDeniedPath(safeFile, missingDataDir)).toBe(true);
+    expect(isDeniedPath(safeFile, danglingDataDir)).toBe(true);
+
+    expect(classify({
+      what: { kind: "path", path: safeFile },
+      botFolders,
+      referenced,
+      dataDir: missingDataDir,
+    })).toEqual({ kind: "denied", reason: "deny-list" });
+
+    expect(classify({
+      what: { kind: "artifact", botId: "bot-a", path: "report.html" },
+      botFolders,
+      referenced,
+      dataDir: missingDataDir,
+    })).toEqual({ kind: "denied", reason: "deny-list" });
+  });
+
+  it("F3. dataDir is required in isDeniedPath", () => {
+    expectTypeOf<Parameters<typeof isDeniedPath>>().toEqualTypeOf<[targetPath: string, dataDir: string]>();
+  });
+
+  it("F4. denies additional browser profiles and credential files without false positives", () => {
+    const botFolders = new Map<string, string>([["bot-a", botA]]);
+    const referenced = () => false;
+
+    const extraDeniedPaths = [
+      join(root, "u", "Library", "Application Support", "Google", "Chrome Canary", "Default", "Cookies"),
+      join(root, "u", "Library", "Application Support", "Google", "Chrome Beta", "Default", "Cookies"),
+      join(root, "u", ".config", "google-chrome-beta", "Default", "Login Data"),
+      join(root, "u", ".config", "google-chrome-unstable", "Default", "Login Data"),
+      join(root, "u", "Library", "Application Support", "Chromium", "Default", "Cookies"),
+      join(root, "u", "Library", "Application Support", "Microsoft Edge Beta", "Default", "Cookies"),
+      join(root, "u", ".config", "microsoft-edge-beta", "Default", "Login Data"),
+      join(root, "u", "Library", "Application Support", "BraveSoftware", "Brave-Browser-Beta", "Default", "Cookies"),
+      join(root, "u", ".config", "BraveSoftware", "Brave-Browser-Beta", "Default", "Login Data"),
+      join(root, "u", "Library", "Application Support", "Vivaldi", "Default", "Cookies"),
+      join(root, "u", ".config", "vivaldi", "Default", "Login Data"),
+      join(artifactsA, ".git-credentials"),
+      join(artifactsA, "case-cred", ".GIT-CREDENTIALS"),
+      join(artifactsA, ".npmrc"),
+      join(artifactsA, "case-npmrc", ".NPMRC"),
+      join(artifactsA, ".pypirc"),
+      join(root, "u", ".config", "gh", "hosts.yml"),
+    ];
+
+    for (const p of extraDeniedPaths) {
+      mkdirSync(join(p, ".."), { recursive: true });
+      writeFileSync(p, "x");
+      expect(isDeniedPath(p, dataDir)).toBe(true);
+      expect(classify({
+        what: { kind: "path", path: p },
+        botFolders,
+        referenced,
+        dataDir,
+      })).toEqual({ kind: "denied", reason: "deny-list" });
+    }
+
+    // Sibling names and non-profile folders that must NOT false-positive
+    for (const name of ["chrome-canary.md", "vivaldi-notes.md", "npmrc.example", "git-credentials.example", "gh-cli.md"]) {
+      const safe = join(artifactsA, name);
+      writeFileSync(safe, "ok");
+      expect(isDeniedPath(safe, dataDir)).toBe(false);
+      expect(classify({
+        what: { kind: "artifact", botId: "bot-a", path: name },
+        botFolders,
+        referenced,
+        dataDir,
+      }).kind).toBe("free");
+    }
+
+    const nonProfileVivaldi = join(root, "projects", "Vivaldi", "notes.md");
+    mkdirSync(join(nonProfileVivaldi, ".."), { recursive: true });
+    writeFileSync(nonProfileVivaldi, "ok");
+    expect(isDeniedPath(nonProfileVivaldi, dataDir)).toBe(false);
+  });
+
+  it("F5. artifact branch resolves targetPath once via realpath (missing target returns outside)", () => {
+    const botFolders = new Map<string, string>([["bot-a", botA]]);
+    const referenced = () => false;
+
+    // Before F5, resolveCanonicalPath walked up ENOENT and matched DENY -> "deny-list";
+    // resolving once with realpath(targetPath) fails directly to "outside".
+    expect(classify({
+      what: { kind: "artifact", botId: "bot-a", path: ".env" },
+      botFolders,
+      referenced,
+      dataDir,
+    })).toEqual({ kind: "denied", reason: "outside" });
+
+    expect(classify({
+      what: { kind: "artifact", botId: "bot-a", path: ".ssh/id_rsa" },
+      botFolders,
+      referenced,
+      dataDir,
+    })).toEqual({ kind: "denied", reason: "outside" });
+  });
 });
