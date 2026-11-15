@@ -46,7 +46,7 @@ import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type DeviceRoster, type SessionHost, type SessionOptions } from "./session";
 import { fixedIds } from "./fixed-ids";
-import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity, readVapidKeys } from "./identity";
+import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity, readVapidKeyRecord } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
@@ -815,7 +815,7 @@ export class Botlingd {
         },
         peerReads: () => localReads,
         peerLocate: (m) => peerContent.locate(LOCAL_WINDOW, m),
-        vapidPublicKey: () => readVapidKeys(paths.dataDir)?.publicKey ?? null,
+        vapidKey: () => { const rec = readVapidKeyRecord(paths.dataDir); return rec ? { publicKey: rec.keys.publicKey, id: { gen: rec.gen, id: rec.id } } : null; },
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
@@ -899,7 +899,7 @@ export class Botlingd {
         onMessage: async (session, message) => (await gossip.onMessage(session, message)) || vapidSync.onMessage(session, message) || peerContent.onMessage(session, message) || peerContentOwner.onMessage(session, message) || fetchSource.onMessage(session, message) || fetchRequester.onMessage(session, message)
           || inbox.onMessage(session, message) || (await forwarder.onMessage(session, message))
           || passThrough.onMessage(session, message) || (await passOwner.onMessage(session, message)) || peerTables.onMessage(session, message),
-        sessionOpened: (session) => { vapidSync.sessionOpened(session); fetchRequester.sessionOpened(session); gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
+        sessionOpened: (session) => { gossip.opened(session); vapidSync.sessionOpened(session); fetchRequester.sessionOpened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
         sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); peerContent.sessionClosed(session); peerContentOwner.sessionClosed(session); fetchSource.sessionClosed(session); fetchRequester.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
       peerSessions = peers;

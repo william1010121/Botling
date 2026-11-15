@@ -104,6 +104,8 @@ export const Welcome = msg("welcome", {
   views: z.record(z.string().max(100), z.unknown()),
   /** Current cluster Web Push VAPID public key (§18.4, M4-26), so devices learn rotated keys on attach. */
   vapidPublicKey: VapidPublicKey.optional(),
+  /** Version `(gen, id)` of `vapidPublicKey` so devices only advance to newer keys (M4-26 review F3). */
+  vapidId: VapidKeyId.optional(),
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -378,10 +380,11 @@ export const PushSubscribe = msg("push.subscribe", {
 
 /**
  * Replacement cluster VAPID key pair distributed by the revocation root over full peer sessions to valid servers after
- * a server revocation (Q-P3, §18.4, M4-26). Each server keeps the key with the highest `id`.
+ * a server revocation or root takeover (Q-P3, §18.4, M4-26). Each server keeps the key with the highest `(gen, id)`.
  */
 export const VapidKey = msg("vapid.key", {
-  id: VapidKeyId,
+  gen: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   pub: VapidPublicKey,
   priv: VapidPrivateKey,
 });

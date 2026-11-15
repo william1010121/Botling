@@ -35,7 +35,7 @@
 // botlingd pings after 15 s of its own silence and drops a session it has not heard from for 45 s (§5.2; fe-link does
 // the same the other way).
 import { ContractError, type Command, type CommandType } from "../../contract";
-import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type WelcomeServer, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type Slot, type StreamId } from "../../protocol";
+import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type VapidKeyId, type WelcomeServer, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type Slot, type StreamId } from "../../protocol";
 import { DEAD_AFTER_MS, PING_AFTER_MS } from "../../session";
 import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
@@ -115,7 +115,9 @@ export interface SessionHost {
   /** D70: roster + own DH key for filling `dh` and K12 Profile `addresses` on `welcome.servers` and `peer`. */
   roster?: SessionRoster;
   self?: { readonly dhPub: Uint8Array };
-  /** M4-26 (§18.4, Q-P3): current cluster VAPID public key sent in `welcome` so devices learn rotated keys on attach. */
+  /** M4-26 (§18.4, Q-P3/F3): current cluster VAPID public key + `(gen, id)` read atomically for remote `welcome`. */
+  vapidKey?: () => { publicKey: string; id: VapidKeyId } | null;
+  /** M4-26 / M4-25 fallback when only `vapidPublicKey` is wired on a host. */
   vapidPublicKey?: () => string | null;
 }
 
@@ -445,11 +447,25 @@ export abstract class SessionCore {
     let next: Record<string, number> = {};
     try { next = this.host.nextFor(hello.deviceId, hello.originEpoch); } catch (error) { this.host.log(`session: next for ${hello.deviceId}: ${errorText(error)}`); }
     let vapidPublicKey: string | null = null;
-    if (!this.kind.local) { try { vapidPublicKey = this.host.vapidPublicKey?.() ?? null; } catch (error) { this.host.log(`session: vapidPublicKey: ${errorText(error)}`); } }
+    let vapidId: VapidKeyId | undefined;
+    if (!this.kind.local) {
+      try {
+        const key = this.host.vapidKey?.();
+        if (key) {
+          vapidPublicKey = key.publicKey;
+          vapidId = key.id;
+        } else {
+          vapidPublicKey = this.host.vapidPublicKey?.() ?? null;
+        }
+      } catch (error) {
+        this.host.log(`session: vapidKey: ${errorText(error)}`);
+      }
+    }
     this.send({
       t: "welcome", serverId: this.host.serverId, protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION }, minFeVersion: this.host.minFeVersion,
       rosterDigest: null, servers: [this.selfServerEntry(), ...this.peerList()], next, views: {},
       ...(vapidPublicKey ? { vapidPublicKey } : {}),
+      ...(vapidPublicKey && vapidId ? { vapidId } : {}),
     } as MessageOf<"welcome">);
     const tables = this.host.tables;
     if (tables) this.peerEvents = tables.onPeer((peer) => { this.send(this.peerMessage(peer)); });

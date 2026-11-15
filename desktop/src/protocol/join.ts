@@ -101,8 +101,22 @@ export function memberFingerprint(memberId: string): string {
 export const VapidPublicKey = z.string().regex(/^[A-Za-z0-9_-]{87}$/).refine((text) => { const bytes = fromBase64Url(text); return bytes?.length === 65 && bytes[0] === 4; }, { message: "an uncompressed P-256 point" });
 /** The cluster's Web Push private scalar (§18.4): 32 bytes, base64url. */
 export const VapidPrivateKey = z.string().regex(/^[A-Za-z0-9_-]{43}$/).refine((text) => fromBase64Url(text)?.length === 32, { message: "a 32-byte scalar" });
-/** Monotonic cluster VAPID key generation counter raised by the revocation root (Q-P3, M4-26). */
-export const VapidKeyId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+/** Root generation number for a cluster VAPID key version (Q-P3, M4-26 review F2). */
+export const VapidKeyGen = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+/** Per-root-generation monotonic VAPID key counter (Q-P3, M4-26). */
+export const VapidKeyCounter = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+/** Cluster VAPID key version ordered lexicographically by `(gen, id)` (M4-26 review F2/F3). */
+export const VapidKeyId = z.strictObject({
+  gen: VapidKeyGen,
+  id: VapidKeyCounter,
+});
+export type VapidKeyId = z.infer<typeof VapidKeyId>;
+
+/** Orders two VAPID key versions by `(gen, id)` (< 0 if a < b, 0 if equal, > 0 if a > b). */
+export function compareVapidKeyId(a: VapidKeyId, b: VapidKeyId): number {
+  if (a.gen !== b.gen) return a.gen - b.gen;
+  return a.id - b.id;
+}
 /** The cluster's Web Push key pair (§18.4): P-256, the public key uncompressed (65 bytes), the private scalar (32 bytes). */
 export const VapidKeys = z.strictObject({
   publicKey: VapidPublicKey,
@@ -133,6 +147,7 @@ export const JoinWelcome = msg("join.welcome", {
   roster: z.array(SignedStatement).min(1).max(JOIN_ROSTER_LIMIT),
   vapid: VapidKeys,
   vapidId: VapidKeyId.optional(),
+  vapidCovers: z.array(MemberId).max(256).optional(),
   prefs: z.array(PrefRow).max(500),
 });
 /** N → S: N committed S's `Add` and the statements, and wrote its endorsements. */

@@ -73,7 +73,7 @@ const samples: { [T in Exclude<MessageType, M2Type>]: { message: Extract<Message
   "shell.open": { sender: "server", session: { local: true }, message: { t: "shell.open", req: "s6", sealed: "c2VhbGVk" } },
   "shell.done": { sender: "fe", session: { local: true }, message: { t: "shell.done", req: "s1", ok: true, file: "/tmp/shot.png" } },
   "push.subscribe": { sender: "fe", session: { local: false }, message: { t: "push.subscribe", endpoint: "https://push.example/sub/1", keys: { p256dh: toBase64Url(new Uint8Array(65).fill(9).map((b, i) => (i === 0 ? 4 : b))), auth: toBase64Url(new Uint8Array(16).fill(5)) } } },
-  "vapid.key": { sender: "peer", session: { local: false }, message: { t: "vapid.key", id: 1, pub: toBase64Url(new Uint8Array(65).fill(9).map((b, i) => (i === 0 ? 4 : b))), priv: toBase64Url(new Uint8Array(32).fill(7)) } },
+  "vapid.key": { sender: "peer", session: { local: false }, message: { t: "vapid.key", gen: 1, id: 1, pub: toBase64Url(new Uint8Array(65).fill(9).map((b, i) => (i === 0 ? 4 : b))), priv: toBase64Url(new Uint8Array(32).fill(7)) } },
   ping: { sender: "peer", message: { t: "ping", at: 1 } },
   bye: { sender: "fe", message: { t: "bye", reason: "closing" } },
 };

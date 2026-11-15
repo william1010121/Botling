@@ -9,6 +9,7 @@ export {
   generateVapidKeysSync,
   readVapidKeyRecord,
   readVapidKeys,
+  revokedServerIds,
   rotateVapidKeys,
   VAPID_FILE,
   vapidFilePath,
@@ -17,4 +18,5 @@ export {
   writeVapidKeys,
   type AcceptVapidResult,
   type VapidKeyRecord,
+  type WriteVapidOptions,
 } from "./vapid";

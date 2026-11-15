@@ -1,34 +1,43 @@
 // Botling 3 M4-26: cluster VAPID key replacement after a server revocation (Q-P3, protocol v1 §18.4).
-// - Root mints a new VAPID key pair (`id = current + 1`) when it signs a server revocation (`revokeServer` or
-//   `reroot` with `oldRootLost: true`), and distributes `vapid.key{id, pub, priv}` ONLY over full peer sessions to
-//   valid servers (never to revoked servers, never on exchange-only sessions).
-// - Offline valid servers receive the current rotated key when they open a full peer session with the root; fresh
-//   joining servers receive `vapidId` alongside `vapid` in `join.welcome`.
+// - Root mints a new VAPID key pair ordered by `(gen, id)` whenever a revoked server is missing from `covers`
+//   or when a new root generation (`view.root.gen > 1`) takes over (`record.gen < view.root.gen`), retrying on disk
+//   write errors and reconciling on `start()` and every roster change (F1, F2).
+// - Distributes `vapid.key{gen, id, pub, priv}` ONLY over full peer sessions to valid servers (never to revoked
+//   servers, never on exchange-only sessions).
+// - Offline valid servers receive the current rotated key (`id >= 1`) when they open a full peer session with the root;
+//   fresh joining servers receive `{ gen, id }` (`vapidId`) and `vapidCovers` alongside `vapid` in `join.welcome` (F4).
 // - Receivers accept `vapid.key` ONLY from `view.root?.root` on an open full peer session, verify the P-256 pair
-//   matches, and keep the key with the highest `id` (rejecting stale/equal/mismatched keys).
-// - Devices learn the current `vapidPublicKey` in `welcome`, and `PushSender` uses the rotated key on disk.
+//   matches, and keep the key with the highest `(gen, id)` via `compareVapidKeyId`.
+// - Remote `welcome` carries `{ vapidPublicKey, vapidId }` so devices move only forward (F3); local sessions omit both (F5).
 import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
-// M4-26 review: a hook run right after ensureVapidKeys resolves on the sponsor, to land a rotation in the gap before
-// the sponsor reads the key id for join.welcome. Pass-through while unset.
-const vapidHooks = vi.hoisted(() => ({ afterEnsure: null as null | ((dataDir: string) => void) }));
+// M4-26 review: hooks run around ensureVapidKeys / rotateVapidKeys for F1/F4 tests. Pass-through while unset.
+const vapidHooks = vi.hoisted(() => ({
+  afterEnsure: null as null | ((dataDir: string) => void),
+  beforeRotate: null as null | ((dataDir: string) => void),
+}));
 vi.mock("../../src/server/identity/vapid", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/server/identity/vapid")>();
   return {
     ...actual,
-    ensureVapidKeys: async (dataDir: string) => {
-      const made = await actual.ensureVapidKeys(dataDir);
+    ensureVapidKeys: async (dataDir: string, options?: { gen?: number; covers?: readonly string[] }) => {
+      const made = await actual.ensureVapidKeys(dataDir, options);
       vapidHooks.afterEnsure?.(dataDir);
       return made;
+    },
+    rotateVapidKeys: (dataDir: string, options?: { gen?: number; covers?: readonly string[] }) => {
+      vapidHooks.beforeRotate?.(dataDir);
+      return actual.rotateVapidKeys(dataDir, options);
     },
   };
 });
 import {
-  decodeFrame, decodeWireFrame, encodeFrame, encodeWireFrame, fromBase64Url, toBase64Url,
-  type MessageOf, type VapidKeys,
+  compareVapidKeyId, decodeFrame, decodeWireFrame, encodeFrame, encodeWireFrame, FrameSplitter, fromBase64Url,
+  packFrame, toBase64Url, type MessageOf, type VapidKeys,
 } from "../../src/protocol";
 import {
   acceptVapidKey, bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity,
@@ -39,7 +48,7 @@ import { RosterStore } from "../../src/server/roster";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import { ServerJoin } from "../../src/server/pairing";
 import {
-  addressesValue, PeerSessions, SessionRouter, type AcceptedSession,
+  PeerSessions, SessionRouter, type AcceptedSession,
   type PeerConnection, type PeerConnector, type PeerTimers,
 } from "../../src/server/peer";
 import { PushSender, VapidKeySync, type PushTransport } from "../../src/server/push";
@@ -47,7 +56,7 @@ import { IntentRuntime } from "../../src/server/intents";
 import { effectCheckpointSink } from "../../src/server/effects";
 import { LiveChannel } from "../../src/server/live";
 import { LogHub } from "../../src/server/log";
-import { RemoteSessions, slotAuthorize, type RemoteHost } from "../../src/server/session";
+import { RemoteSessions, SessionServer, slotAuthorize, type RemoteHost, type SessionHost } from "../../src/server/session";
 import { ShellBridge } from "../../src/server/shell-bridge";
 import { generateDhKeyPair, SessionLink, type SessionTransport } from "../../src/session";
 import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
@@ -123,11 +132,14 @@ interface Node {
   roster: RosterStore;
   peers: PeerSessions;
   vapidSync: VapidKeySync;
+  router: SessionRouter;
   logs: string[];
 }
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
+  vapidHooks.afterEnsure = null;
+  vapidHooks.beforeRotate = null;
   for (const fn of cleanups.splice(0).reverse()) await fn();
 });
 
@@ -135,7 +147,7 @@ let seqDir = 0;
 async function setupClusterNodes(
   net: InMemoryPeerNet,
   names: string[],
-  options: { offline?: string[]; initialVapid?: VapidKeys } = {},
+  options: { offline?: string[]; initialVapid?: VapidKeys; initialRecord?: { gen: number; id: number; covers?: string[] }; retryMs?: number } = {},
 ): Promise<{ recovery: Recovery; clusterId: string; recoveryCode: string; nodes: Node[] }> {
   const dirs = names.map((name) => join(root, `n${++seqDir}-${name}`));
   for (const d of dirs) mkdirSync(d, { recursive: true });
@@ -144,18 +156,14 @@ async function setupClusterNodes(
   await Promise.all(stores.map((s, i) => s.submit((tx) => bindServerIdentity(tx, identities[i]!))));
   const keyInfos = await Promise.all(dirs.map((d) => readServerKeys(d)));
 
-  // Use a deterministic ClusterSetup on node 0 for recovery code support (needed for reroot test), or makeCluster.
-  // Actually let's sign cluster statements using a real recovery key generated via ClusterSetup so reroot works too!
   const roster0 = await RosterStore.open(stores[0]!, identities[0]!);
   const setup0 = new ClusterSetup(roster0);
   const begun = await setup0.begin();
   const confirmed = await setup0.confirm(begun.code);
   expect(confirmed.ok).toBe(true);
 
-  // Read Root{1} from node 0 and add all servers mutually.
   const clusterId = confirmed.ok ? confirmed.clusterId : "";
   const baseStatements = roster0.statements();
-  // Add mutual server Adds and address Profiles for every node.
   const extra: Awaited<ReturnType<typeof sign>>[] = [];
   const basePort = 41_000 + seqDir * 10;
   for (let i = 0; i < names.length; i++) {
@@ -178,7 +186,7 @@ async function setupClusterNodes(
   const allStatements = [...baseStatements, ...extra];
   for (let i = 0; i < names.length; i++) {
     writeStatements(dirs[i]!, clusterId, allStatements);
-    if (options.initialVapid) writeVapidKeys(dirs[i]!, options.initialVapid);
+    if (options.initialVapid) writeVapidKeys(dirs[i]!, options.initialVapid, options.initialRecord ?? { gen: 1, id: 0 });
   }
 
   const offline = new Set(options.offline ?? []);
@@ -193,6 +201,7 @@ async function setupClusterNodes(
       roster,
       sessions: () => peers.all,
       log: (l) => logs.push(l),
+      retryMs: options.retryMs ?? 30,
     });
     peers = new PeerSessions({
       roster,
@@ -207,9 +216,8 @@ async function setupClusterNodes(
       { accept: (t) => ({ link: { established: Promise.reject(new Error("no device")) }, receive: () => t.close(), transportClosed: () => undefined }) },
       peers,
     );
-    net.routers.set(port, router);
-
     if (!offline.has(names[i]!)) {
+      net.routers.set(port, router);
       peers.start();
       vapidSync.start();
     }
@@ -224,6 +232,7 @@ async function setupClusterNodes(
       roster,
       peers,
       vapidSync,
+      router,
       logs,
     };
     nodes.push(node);
@@ -235,7 +244,6 @@ async function setupClusterNodes(
     });
   }
 
-  // Dummy recovery object for signature compatibility when needed.
   const dummy = await makeCluster(keyInfos);
   return { recovery: dummy.recovery, clusterId, recoveryCode: begun.code, nodes };
 }
@@ -243,7 +251,7 @@ async function setupClusterNodes(
 describe("M4-26: protocol & vapid.key / welcome schemas", () => {
   it("round-trips vapid.key only for peer sender and rejects fe/server/malformed", () => {
     const keys = generateTestVapidKeys();
-    const frame = { t: "vapid.key" as const, id: 1, pub: keys.publicKey, priv: keys.privateKey };
+    const frame = { t: "vapid.key" as const, gen: 1, id: 1, pub: keys.publicKey, priv: keys.privateKey };
 
     const encoded = encodeWireFrame(frame, "peer", { local: false });
     expect(encoded.ok).toBe(true);
@@ -258,15 +266,20 @@ describe("M4-26: protocol & vapid.key / welcome schemas", () => {
       if (!badRole.ok) expect(badRole.reason).toBe("role");
     }
 
-    const badId = decodeWireFrame(JSON.stringify({ ...frame, id: -1 }), "peer", { local: false });
-    expect(badId.ok).toBe(false);
-    const badPub = decodeWireFrame(JSON.stringify({ ...frame, pub: "not-a-p256-key" }), "peer", { local: false });
-    expect(badPub.ok).toBe(false);
-    const extraField = decodeWireFrame(JSON.stringify({ ...frame, extra: 1 }), "peer", { local: false });
-    expect(extraField.ok).toBe(false);
+    expect(decodeWireFrame(JSON.stringify({ ...frame, gen: 0 }), "peer", { local: false }).ok).toBe(false);
+    expect(decodeWireFrame(JSON.stringify({ ...frame, gen: -1 }), "peer", { local: false }).ok).toBe(false);
+    expect(decodeWireFrame(JSON.stringify({ ...frame, id: 0 }), "peer", { local: false }).ok).toBe(false);
+    expect(decodeWireFrame(JSON.stringify({ ...frame, id: -1 }), "peer", { local: false }).ok).toBe(false);
+    expect(decodeWireFrame(JSON.stringify({ ...frame, pub: "not-a-p256-key" }), "peer", { local: false }).ok).toBe(false);
+    expect(decodeWireFrame(JSON.stringify({ ...frame, extra: 1 }), "peer", { local: false }).ok).toBe(false);
   });
 
-  it("allows optional vapidPublicKey in welcome", () => {
+  it("allows optional vapidPublicKey and vapidId in welcome, and orders VapidKeyId lexicographically", () => {
+    expect(compareVapidKeyId({ gen: 1, id: 99 }, { gen: 2, id: 1 })).toBeLessThan(0);
+    expect(compareVapidKeyId({ gen: 2, id: 1 }, { gen: 1, id: 99 })).toBeGreaterThan(0);
+    expect(compareVapidKeyId({ gen: 2, id: 1 }, { gen: 2, id: 2 })).toBeLessThan(0);
+    expect(compareVapidKeyId({ gen: 2, id: 2 }, { gen: 2, id: 2 })).toBe(0);
+
     const keys = generateTestVapidKeys();
     const base = {
       t: "welcome" as const,
@@ -280,61 +293,66 @@ describe("M4-26: protocol & vapid.key / welcome schemas", () => {
     };
     const withoutKey = encodeFrame(base, "server", { local: false });
     expect(withoutKey.ok).toBe(true);
-    const withKey = encodeFrame({ ...base, vapidPublicKey: keys.publicKey }, "server", { local: false });
+    const withKey = encodeFrame({ ...base, vapidPublicKey: keys.publicKey, vapidId: { gen: 2, id: 1 } }, "server", { local: false });
     expect(withKey.ok).toBe(true);
     if (withKey.ok) {
       const dec = decodeFrame(withKey.text, "server", { local: false });
       expect(dec.ok).toBe(true);
       if (dec.ok && dec.message.t === "welcome") {
         expect(dec.message.vapidPublicKey).toBe(keys.publicKey);
+        expect(dec.message.vapidId).toEqual({ gen: 2, id: 1 });
       }
     }
   });
 });
 
-describe("M4-26: VAPID key storage & highest-id invariant", () => {
-  it("reads legacy vapid-keys.json as id=0, rotates monotonically, and keeps highest id", () => {
+describe("M4-26: VAPID key storage & (gen, id) monotonic invariant", () => {
+  it("reads legacy vapid-keys.json as (gen=0, id=0, covers=[]), rotates by (gen, id) + covers, and keeps highest (gen, id)", () => {
     const dir = join(root, `store-${++seqDir}`);
     mkdirSync(dir, { recursive: true });
     const initial = generateTestVapidKeys();
-    // Simulate pre-M4-26 vapid-keys.json without an `id` field.
     writeFileSync(vapidFilePath(dir), `${JSON.stringify({ v: 1, ...initial })}\n`, { mode: 0o600 });
 
     const rec0 = readVapidKeyRecord(dir);
-    expect(rec0).toEqual({ id: 0, keys: initial });
+    expect(rec0).toEqual({ gen: 0, id: 0, covers: [], keys: initial });
     expect(readVapidKeys(dir)).toEqual(initial);
 
-    const rot1 = rotateVapidKeys(dir);
-    expect(rot1.id).toBe(1);
+    const srvA = "a".repeat(26);
+    const srvB = "b".repeat(26);
+    const rot1 = rotateVapidKeys(dir, { gen: 1, covers: [srvA] });
+    expect(rot1).toMatchObject({ gen: 1, id: 1, covers: [srvA] });
     expect(rot1.keys.publicKey).not.toBe(initial.publicKey);
-    expect(rot1.keys.privateKey).not.toBe(initial.privateKey);
     expect(readVapidKeyRecord(dir)).toEqual(rot1);
-    expect(readVapidKeys(dir)).toEqual(rot1.keys);
     expect(statSync(vapidFilePath(dir)).mode & 0o777).toBe(0o600);
 
-    const rot2 = rotateVapidKeys(dir);
-    expect(rot2.id).toBe(2);
+    const rot2 = rotateVapidKeys(dir, { gen: 1, covers: [srvB, srvA] });
+    expect(rot2).toMatchObject({ gen: 1, id: 2, covers: [srvA, srvB] });
     expect(rot2.keys.publicKey).not.toBe(rot1.keys.publicKey);
 
-    // Equal or lower id is rejected; higher id wins.
-    expect(acceptVapidKey(dir, { id: 2, pub: initial.publicKey, priv: initial.privateKey })).toMatchObject({ accepted: false, reason: "stale" });
-    expect(acceptVapidKey(dir, { id: 1, pub: initial.publicKey, priv: initial.privateKey })).toMatchObject({ accepted: false, reason: "stale" });
-    expect(readVapidKeys(dir)).toEqual(rot2.keys);
+    // Same or lower (gen, id) is rejected; higher gen resets counter to 1 and still wins over higher id in lower gen.
+    expect(acceptVapidKey(dir, { gen: 1, id: 2, pub: initial.publicKey, priv: initial.privateKey })).toMatchObject({ accepted: false, reason: "stale" });
+    expect(acceptVapidKey(dir, { gen: 1, id: 1, pub: initial.publicKey, priv: initial.privateKey })).toMatchObject({ accepted: false, reason: "stale" });
+    expect(acceptVapidKey(dir, { gen: 0, id: 99, pub: initial.publicKey, priv: initial.privateKey })).toMatchObject({ accepted: false, reason: "malformed" });
 
-    // Mismatched public/private key pair is rejected even with higher id.
+    const kGen2 = generateTestVapidKeys();
+    expect(acceptVapidKey(dir, { gen: 2, id: 1, pub: kGen2.publicKey, priv: kGen2.privateKey })).toMatchObject({
+      accepted: true,
+      record: { gen: 2, id: 1, covers: [], keys: kGen2 },
+    });
+    // A lower-gen key with higher counter (1, 99) is stale against (2, 1).
+    const kOldGen = generateTestVapidKeys();
+    expect(acceptVapidKey(dir, { gen: 1, id: 99, pub: kOldGen.publicKey, priv: kOldGen.privateKey })).toMatchObject({ accepted: false, reason: "stale" });
+
+    // Mismatched public/private key pair is rejected even with higher (gen, id).
     const kA = generateTestVapidKeys();
     const kB = generateTestVapidKeys();
-    expect(acceptVapidKey(dir, { id: 5, pub: kA.publicKey, priv: kB.privateKey })).toMatchObject({ accepted: false, reason: "mismatch" });
-    expect(readVapidKeyRecord(dir)?.id).toBe(2);
+    expect(acceptVapidKey(dir, { gen: 3, id: 1, pub: kA.publicKey, priv: kB.privateKey })).toMatchObject({ accepted: false, reason: "mismatch" });
+    expect(readVapidKeyRecord(dir)).toMatchObject({ gen: 2, id: 1 });
 
-    // Malformed id or key material is rejected.
-    expect(acceptVapidKey(dir, { id: -1, pub: kA.publicKey, priv: kA.privateKey })).toMatchObject({ accepted: false, reason: "malformed" });
-    expect(acceptVapidKey(dir, { id: 9.5, pub: kA.publicKey, priv: kA.privateKey })).toMatchObject({ accepted: false, reason: "malformed" });
-    expect(acceptVapidKey(dir, { id: 9, pub: "bad", priv: kA.privateKey })).toMatchObject({ accepted: false, reason: "malformed" });
-
-    // Matching pair with higher id is accepted.
-    expect(acceptVapidKey(dir, { id: 5, pub: kA.publicKey, priv: kA.privateKey })).toMatchObject({ accepted: true, record: { id: 5, keys: kA } });
-    expect(readVapidKeyRecord(dir)).toEqual({ id: 5, keys: kA });
+    // Malformed id/gen/key is rejected.
+    expect(acceptVapidKey(dir, { gen: 2, id: -1, pub: kA.publicKey, priv: kA.privateKey })).toMatchObject({ accepted: false, reason: "malformed" });
+    expect(acceptVapidKey(dir, { gen: 2, id: 9.5, pub: kA.publicKey, priv: kA.privateKey })).toMatchObject({ accepted: false, reason: "malformed" });
+    expect(acceptVapidKey(dir, { gen: 3, id: 1, pub: "bad", priv: kA.privateKey })).toMatchObject({ accepted: false, reason: "malformed" });
   });
 
   it("refuses symlinked vapid-keys.json on read and replaces symlink safely on write", () => {
@@ -342,19 +360,17 @@ describe("M4-26: VAPID key storage & highest-id invariant", () => {
     mkdirSync(dir, { recursive: true });
     const decoy = join(dir, "decoy.json");
     const keys = generateTestVapidKeys();
-    writeFileSync(decoy, `${JSON.stringify({ v: 1, id: 9, ...keys })}\n`, { mode: 0o600 });
+    writeFileSync(decoy, `${JSON.stringify({ v: 1, gen: 1, id: 9, ...keys })}\n`, { mode: 0o600 });
     symlinkSync(decoy, vapidFilePath(dir));
 
     expect(readVapidKeyRecord(dir)).toBeNull();
-    const rotated = rotateVapidKeys(dir);
+    const rotated = rotateVapidKeys(dir, { gen: 1, covers: [] });
+    expect(rotated.gen).toBe(1);
     expect(rotated.id).toBe(1);
-    // Decoy file was not overwritten through the symlink; vapid-keys.json is now a regular file.
     expect(JSON.parse(readFileSync(decoy, "utf8")).id).toBe(9);
   });
-});
 
-
-  it("propagates current vapidId across ServerJoin after prior key rotations", async () => {
+  it("propagates current vapidId across ServerJoin after prior key rotations (F4)", async () => {
     const sDir = join(root, `join-s-${++seqDir}`);
     const nDir = join(root, `join-n-${++seqDir}`);
     mkdirSync(sDir, { recursive: true, mode: 0o700 });
@@ -372,9 +388,9 @@ describe("M4-26: VAPID key storage & highest-id invariant", () => {
     expect((await setup.confirm(begun.code)).ok).toBe(true);
 
     // S rotated twice before N ever joined.
-    rotateVapidKeys(sDir);
-    const rot2 = rotateVapidKeys(sDir);
-    expect(rot2.id).toBe(2);
+    rotateVapidKeys(sDir, { gen: 1, covers: [] });
+    const rot2 = rotateVapidKeys(sDir, { gen: 1, covers: [] });
+    expect(rot2).toMatchObject({ gen: 1, id: 2 });
 
     let nJoin!: ServerJoin;
     const connector: PeerConnector = {
@@ -423,23 +439,23 @@ describe("M4-26: VAPID key storage & highest-id invariant", () => {
       await sStore.close();
     });
 
-    // A third rotation lands between S's ensureVapidKeys and its join.welcome: N must get that pair with its id,
-    // never the old pair under the new id.
+    // A third rotation lands between S's ensureVapidKeys and its join.welcome: N must get that pair with its (gen, id).
     let rot3: ReturnType<typeof rotateVapidKeys> | null = null;
-    vapidHooks.afterEnsure = (dataDir) => { if (dataDir === sDir && !rot3) rot3 = rotateVapidKeys(sDir); };
-    cleanups.push(() => { vapidHooks.afterEnsure = null; });
+    vapidHooks.afterEnsure = (dataDir) => { if (dataDir === sDir && !rot3) rot3 = rotateVapidKeys(sDir, { gen: 1, covers: [] }); };
     const offer = nJoin.createOffer();
     const added = await sJoin.addMachine(offer.link);
     const res = await sJoin.code(added.attempt, offer.code);
     expect(res.ok).toBe(true);
     expect(rot3).not.toBeNull();
+    expect(rot3!.gen).toBe(1);
     expect(rot3!.id).toBe(3);
     expect(readVapidKeyRecord(nDir)).toEqual(rot3);
     expect(readVapidKeyRecord(nDir)).toEqual(readVapidKeyRecord(sDir));
-    // Because N received id=3, a stale id=1 key is rejected.
+
     const oldKeys = generateTestVapidKeys();
-    expect(acceptVapidKey(nDir, { id: 1, pub: oldKeys.publicKey, priv: oldKeys.privateKey })).toMatchObject({ accepted: false, reason: "stale" });
+    expect(acceptVapidKey(nDir, { gen: 1, id: 1, pub: oldKeys.publicKey, priv: oldKeys.privateKey })).toMatchObject({ accepted: false, reason: "stale" });
   });
+});
 
 describe("M4-26: root minting & encrypted peer distribution on server revocation", () => {
   it("rotates on revokeServer, sends vapid.key only to valid peers, catches up offline peers, and rejects non-root spoofs", async () => {
@@ -451,98 +467,233 @@ describe("M4-26: root minting & encrypted peer distribution on server revocation
     });
     const [rootNode, goodNode, badNode, lateNode] = nodes as [Node, Node, Node, Node];
 
-    // Wait for root <-> good and root <-> bad full sessions to open.
     await until(() =>
       rootNode.peers.session(goodNode.keys.memberId)?.state === "open" &&
       rootNode.peers.session(badNode.keys.memberId)?.state === "open" &&
       goodNode.peers.session(rootNode.keys.memberId)?.state === "open"
     , { what: "initial peer sessions open" });
 
-    // Root revokes `bad`.
     const rev = await rootNode.roster.revokeServer(badNode.keys.memberId, false, "stolen disk");
     expect(rev.already).toBe(false);
 
-    // Root rotated synchronously on commit.
     const rootRec1 = readVapidKeyRecord(rootNode.dir);
-    expect(rootRec1?.id).toBe(1);
+    expect(rootRec1).toMatchObject({ gen: 1, id: 1, covers: [badNode.keys.memberId] });
     expect(rootRec1?.keys.publicKey).not.toBe(initial.publicKey);
 
-    // Valid peer `good` receives id=1 over its full encrypted session; `bad` NEVER receives it.
-    await until(() => readVapidKeyRecord(goodNode.dir)?.id === 1, { what: "good receives vapid.key id=1" });
+    await until(() => readVapidKeyRecord(goodNode.dir)?.id === 1, { what: "good receives vapid.key (1, 1)" });
     expect(readVapidKeys(goodNode.dir)).toEqual(rootRec1!.keys);
-    expect(readVapidKeyRecord(badNode.dir)).toEqual({ id: 0, keys: initial });
+    expect(readVapidKeyRecord(badNode.dir)).toEqual({ gen: 1, id: 0, covers: [], keys: initial });
 
     // Idempotent second call to revokeServer does NOT mint a second key.
     const revAgain = await rootNode.roster.revokeServer(badNode.keys.memberId, false, "stolen disk");
     expect(revAgain.already).toBe(true);
     expect(readVapidKeyRecord(rootNode.dir)?.id).toBe(1);
 
-    // Bring `late` online now: it was offline during the revocation, so on opening a full session with `root`,
-    // it receives `vapid.key{id: 1}` automatically after `roster.revocations` sync.
+    net.routers.set(lateNode.port, lateNode.router);
     lateNode.peers.start();
     lateNode.vapidSync.start();
 
-    await until(() => readVapidKeyRecord(lateNode.dir)?.id === 1, { what: "late catches up vapid.key id=1 on reconnect" });
+    await until(() => readVapidKeyRecord(lateNode.dir)?.id === 1, { what: "late catches up vapid.key (1, 1) on reconnect" });
     expect(readVapidKeys(lateNode.dir)).toEqual(rootRec1!.keys);
 
-    // Spoof check: wait for `good` <-> `late` session, then `late` (non-root) tries to send vapid.key{id: 99} to `good`.
+    // Spoof check: `late` (non-root) tries to send vapid.key{gen: 9, id: 99} to `good`.
     await until(() => lateNode.peers.session(goodNode.keys.memberId)?.state === "open", { what: "good <-> late open" });
     const spoof = generateTestVapidKeys();
     const sentSpoof = lateNode.peers.session(goodNode.keys.memberId)!.sendWire({
       t: "vapid.key",
+      gen: 9,
       id: 99,
       pub: spoof.publicKey,
       priv: spoof.privateKey,
     });
     expect(sentSpoof).toBe(true);
     await until(() => goodNode.logs.some((l) => l.includes("non-root")), { what: "good logs non-root refusal" });
-    expect(readVapidKeyRecord(goodNode.dir)?.id).toBe(1);
+    expect(readVapidKeyRecord(goodNode.dir)).toMatchObject({ gen: 1, id: 1 });
     expect(readVapidKeys(goodNode.dir)).toEqual(rootRec1!.keys);
 
-    // Secrets check: no logs ever contain private keys.
     const allLogs = nodes.flatMap((n) => n.logs).join("\n");
     expect(allLogs).not.toContain(initial.privateKey);
     expect(allLogs).not.toContain(rootRec1!.keys.privateKey);
     expect(allLogs).not.toContain(spoof.privateKey);
   });
 
-  it("rotates and distributes when reroot signs Revoke{oldRoot} (oldRootLost: true)", async () => {
+  it("F1: retries a failed rotation via timer after ENOSPC without failing revokeServer or leaking secrets", async () => {
     const net = new InMemoryPeerNet();
     const initial = generateTestVapidKeys();
-    const { recoveryCode, nodes } = await setupClusterNodes(net, ["root", "good", "late"], { initialVapid: initial });
-    const [rootNode, goodNode, lateNode] = nodes as [Node, Node, Node];
+    const { nodes } = await setupClusterNodes(net, ["root", "good", "bad"], { initialVapid: initial, retryMs: 25 });
+    const [rootNode, goodNode, badNode] = nodes as [Node, Node, Node];
 
     await until(() =>
-      goodNode.peers.session(rootNode.keys.memberId)?.state === "open" &&
-      goodNode.peers.session(lateNode.keys.memberId)?.state === "open"
-    , { what: "sessions open before reroot" });
+      rootNode.peers.session(goodNode.keys.memberId)?.state === "open" &&
+      goodNode.peers.session(rootNode.keys.memberId)?.state === "open"
+    , { what: "sessions open before failed rotation" });
 
-    // `good` reroots with oldRootLost=true -> becomes gen 2 root and signs Revoke{oldRoot}.
-    const res = await goodNode.roster.reroot({ code: recoveryCode, oldRootLost: true, keep: [] });
-    expect(res.gen).toBe(2);
-    expect(res.revokeId).toBeTruthy();
+    let failOnce = true;
+    vapidHooks.beforeRotate = (dir) => {
+      if (dir === rootNode.dir && failOnce) {
+        failOnce = false;
+        throw Object.assign(new Error(`ENOSPC: no space left on ${initial.privateKey}`), { code: "ENOSPC" });
+      }
+    };
 
-    const goodRec = readVapidKeyRecord(goodNode.dir);
-    expect(goodRec?.id).toBe(1);
-    expect(goodRec?.keys.publicKey).not.toBe(initial.publicKey);
+    const rev = await rootNode.roster.revokeServer(badNode.keys.memberId, false, "disk full test");
+    expect(rev.already).toBe(false);
+    // Right after the failed write, key was still old; retry timer recovers automatically.
+    expect(rootNode.logs.some((l) => l.includes("vapid-keys.json") && l.includes("will retry"))).toBe(true);
+    expect(rootNode.logs.join("\n")).not.toContain(initial.privateKey);
 
-    await until(() => readVapidKeyRecord(lateNode.dir)?.id === 1, { what: "late accepts vapid.key from new root" });
-    expect(readVapidKeys(lateNode.dir)).toEqual(goodRec!.keys);
-    expect(readVapidKeyRecord(rootNode.dir)).toEqual({ id: 0, keys: initial });
+    await until(() => {
+      const rec = readVapidKeyRecord(rootNode.dir);
+      return rec?.gen === 1 && rec.id === 1 && rec.covers.includes(badNode.keys.memberId);
+    }, { what: "retry timer rotates root vapid key after write error" });
+
+    await until(() => {
+      const rec = readVapidKeyRecord(goodNode.dir);
+      return rec?.gen === 1 && rec.id === 1;
+    }, { what: "good receives retried key from root" });
+    expect(readVapidKeys(goodNode.dir)).toEqual(readVapidKeys(rootNode.dir));
   });
 
-  it("never sends vapid.key to a revoked or exchange-only session even if still open, and refuses non-root rotation", () => {
+  it("F1: reconciles pre-existing or crash-interrupted uncovered revocations on VapidKeySync.start()", async () => {
+    const net = new InMemoryPeerNet();
+    const initial = generateTestVapidKeys();
+    const { nodes } = await setupClusterNodes(net, ["root", "good", "bad"], { initialVapid: initial, retryMs: 60_000 });
+    const [rootNode, goodNode, badNode] = nodes as [Node, Node, Node];
+
+    await until(() =>
+      rootNode.peers.session(goodNode.keys.memberId)?.state === "open" &&
+      goodNode.peers.session(rootNode.keys.memberId)?.state === "open"
+    , { what: "sessions open" });
+
+    // Simulate process killed after revokeServer commit before rotation succeeds.
+    vapidHooks.beforeRotate = (dir) => {
+      if (dir === rootNode.dir) throw Object.assign(new Error("crash"), { code: "EACCES" });
+    };
+    await rootNode.roster.revokeServer(badNode.keys.memberId, false, "interrupted");
+    expect(readVapidKeyRecord(rootNode.dir)).toEqual({ gen: 1, id: 0, covers: [], keys: initial });
+    rootNode.vapidSync.close();
+
+    // Restart VapidKeySync with healthy disk: start() alone detects the uncovered revocation and rotates.
+    vapidHooks.beforeRotate = null;
+    const restartedSync = new VapidKeySync({
+      dataDir: rootNode.dir,
+      roster: rootNode.roster,
+      sessions: () => rootNode.peers.all,
+      log: (l) => rootNode.logs.push(l),
+    });
+    cleanups.push(() => restartedSync.close());
+    restartedSync.start();
+
+    const rec = readVapidKeyRecord(rootNode.dir);
+    expect(rec).toMatchObject({ gen: 1, id: 1, covers: [badNode.keys.memberId] });
+    expect(rec?.keys.publicKey).not.toBe(initial.publicKey);
+    await until(() => readVapidKeyRecord(goodNode.dir)?.id === 1, { what: "good receives key reconciled on start()" });
+    expect(readVapidKeys(goodNode.dir)).toEqual(rec!.keys);
+  });
+
+  it("F2 case 1: new root that missed a prior (1, 1) rotation while offline mints (2, 1) on reroot and heals mid holding (1, 1)", async () => {
+    const net = new InMemoryPeerNet();
+    const initial = generateTestVapidKeys();
+    const { recoveryCode, nodes } = await setupClusterNodes(net, ["root", "good", "mid", "late"], {
+      offline: ["good"],
+      initialVapid: initial,
+    });
+    const [rootNode, goodNode, midNode, lateNode] = nodes as [Node, Node, Node, Node];
+
+    await until(() =>
+      midNode.peers.session(rootNode.keys.memberId)?.state === "open"
+    , { what: "root <-> mid open while good is offline" });
+
+    // Root revokes `late`: root and mid advance to (1, 1). `good` stays offline on (1, 0).
+    await rootNode.roster.revokeServer(lateNode.keys.memberId, false, "lost");
+    await until(() => readVapidKeyRecord(midNode.dir)?.id === 1, { what: "mid holds (1, 1)" });
+    const staleMidKey = readVapidKeys(midNode.dir)!;
+    expect(readVapidKeyRecord(goodNode.dir)).toMatchObject({ gen: 1, id: 0 });
+
+    // `root` vanishes; `good` comes back and reroots with oldRootLost=true -> gen 2, mints (2, 1) without seeing (1, 1).
+    net.routers.delete(rootNode.port);
+    rootNode.vapidSync.close();
+    rootNode.peers.close();
+    goodNode.vapidSync.start();
+    const res = await goodNode.roster.reroot({ code: recoveryCode, oldRootLost: true, keep: [] });
+    expect(res.gen).toBe(2);
+
+    const goodRec = readVapidKeyRecord(goodNode.dir);
+    expect(goodRec).toMatchObject({ gen: 2, id: 1 });
+    expect(goodRec?.covers).toContain(rootNode.keys.memberId);
+    expect(goodRec?.keys.publicKey).not.toBe(staleMidKey.publicKey);
+
+    // Connect `good` and `mid`: `mid` accepts (2, 1) over its (1, 1) key.
+    net.routers.set(goodNode.port, goodNode.router);
+    goodNode.peers.start();
+    await until(() => {
+      const rec = readVapidKeyRecord(midNode.dir);
+      return rec?.gen === 2 && rec.id === 1;
+    }, { what: "mid replaces (1, 1) with new root's (2, 1)" });
+    expect(readVapidKeys(midNode.dir)).toEqual(goodRec!.keys);
+  });
+
+  it("F2 case 2: reroot with oldRootLost=false always mints (2, 1) and heals split caused by stale old root", async () => {
+    const net = new InMemoryPeerNet();
+    const initial = generateTestVapidKeys();
+    const { recoveryCode, nodes } = await setupClusterNodes(net, ["root", "good", "mid", "victim"], {
+      offline: ["good"],
+      initialVapid: initial,
+    });
+    const [rootNode, goodNode, midNode, victimNode] = nodes as [Node, Node, Node, Node];
+
+    await until(() =>
+      midNode.peers.session(rootNode.keys.memberId)?.state === "open"
+    , { what: "root <-> mid open before partition" });
+
+    // Partitioned `good` reroots with oldRootLost=false (0 revocations) -> MUST still mint a fresh key (2, 1).
+    goodNode.vapidSync.start();
+    const res = await goodNode.roster.reroot({ code: recoveryCode, oldRootLost: false, keep: [] });
+    expect(res.gen).toBe(2);
+    expect(res.revokeId).toBeNull();
+    const rec21 = readVapidKeyRecord(goodNode.dir);
+    expect(rec21).toMatchObject({ gen: 2, id: 1, covers: [] });
+    expect(rec21?.keys.publicKey).not.toBe(initial.publicKey);
+
+    // Before hearing Root{2}, stale `root` revokes `victim`, minting (1, 1) and pushing it to `mid`.
+    await rootNode.roster.revokeServer(victimNode.keys.memberId, false, "stale root revoke");
+    await until(() => readVapidKeyRecord(midNode.dir)?.id === 1, { what: "mid takes stale root (1, 1)" });
+    const rootRec11 = readVapidKeyRecord(rootNode.dir)!;
+    expect(rootRec11).toMatchObject({ gen: 1, id: 1 });
+
+    // Partition heals: `good` connects to `mid` and `root`.
+    // Both `mid` and `root` accept `good`'s (2, 1) over stale old root's (1, 1) and reject any stale gen 1 key.
+    net.routers.set(goodNode.port, goodNode.router);
+    goodNode.peers.start();
+    await until(() => {
+      const m = readVapidKeyRecord(midNode.dir);
+      const r = readVapidKeyRecord(rootNode.dir);
+      return m?.gen === 2 && m.id === 1 && r?.gen === 2 && r.id === 1;
+    }, { what: "cluster heals split onto new root (2, 1) key" });
+
+    expect(readVapidKeys(midNode.dir)).toEqual(rec21!.keys);
+    expect(readVapidKeys(rootNode.dir)).toEqual(rec21!.keys);
+    expect(acceptVapidKey(midNode.dir, { gen: 1, id: 99, pub: rootRec11.keys.publicKey, priv: rootRec11.keys.privateKey })).toMatchObject({ accepted: false, reason: "stale" });
+  });
+
+  it("F5: refuses non-root rotation and never sends vapid.key to revoked, exchange-only, or invalid-self sessions", () => {
     const dir = join(root, `sync-guard-${++seqDir}`);
     mkdirSync(dir, { recursive: true });
-    writeVapidKeys(dir, generateTestVapidKeys(), 0);
+    const initial = generateTestVapidKeys();
+    writeVapidKeys(dir, initial, { gen: 1, id: 0, covers: [] });
 
+    const rootId = "a".repeat(26);
+    const nonRootId = "b".repeat(26);
+    const goodId = "c".repeat(26);
+    const revokedId = "d".repeat(26);
+    const validSet = new Set([rootId, nonRootId, goodId]);
     const view: import("../../src/server/roster").RosterView = {
-      self: "root-1",
-      cluster: "cluster-1",
-      root: { id: "r1", gen: 1, root: "root-1", recoveryPub: "rec", keep: new Set() },
-      servers: new Set(["root-1", "good-1", "revoked-1"]),
-      revoked: new Set(["revoked-1"]),
-      valid: new Set(["root-1", "good-1"]),
+      self: nonRootId,
+      cluster: "0".repeat(32),
+      root: { id: "r2", gen: 3, root: rootId, recoveryPub: "rec", keep: new Set() },
+      servers: new Set([rootId, nonRootId, goodId, revokedId]),
+      revoked: new Set([revokedId]),
+      valid: (validSet),
       members: new Map(),
       countingRevokes: [],
       dropped: [],
@@ -553,14 +704,15 @@ describe("M4-26: root minting & encrypted peer distribution on server revocation
     const sentExchange: unknown[] = [];
     const logs: string[] = [];
 
-    const goodSession = { peer: "good-1", state: "open", sendWire: (m: unknown) => { sentGood.push(m); return true; } };
-    const revokedSession = { peer: "revoked-1", state: "open", sendWire: (m: unknown) => { sentRevoked.push(m); return true; } };
-    const exchangeSession = { peer: "good-1", state: "exchange", sendWire: (m: unknown) => { sentExchange.push(m); return true; } };
+    const goodSession = { peer: goodId, state: "open", sendWire: (m: unknown) => { sentGood.push(m); return true; } };
+    const revokedSession = { peer: revokedId, state: "open", sendWire: (m: unknown) => { sentRevoked.push(m); return true; } };
+    const exchangeSession = { peer: goodId, state: "exchange", sendWire: (m: unknown) => { sentExchange.push(m); return true; } };
 
+    let currentMember = nonRootId;
     const sync = new VapidKeySync({
       dataDir: dir,
       roster: {
-        memberId: "root-1",
+        get memberId() { return currentMember; },
         get view() { return view; },
         onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
       },
@@ -569,17 +721,30 @@ describe("M4-26: root minting & encrypted peer distribution on server revocation
     });
     sync.start();
 
-    // Non-server-revocation roster change does not rotate.
-    for (const fn of listeners) fn({ view, invalidated: [] });
-    expect(readVapidKeyRecord(dir)?.id).toBe(0);
+    // Non-root server MUST NOT rotate on start() or on roster change even with uncovered revocation & higher root gen.
+    expect(readVapidKeyRecord(dir)).toEqual({ gen: 1, id: 0, covers: [], keys: initial });
+    for (const fn of listeners) fn({ view, invalidated: ["revoked-1"] });
+    expect(readVapidKeyRecord(dir)).toEqual({ gen: 1, id: 0, covers: [], keys: initial });
     expect(sentGood).toHaveLength(0);
 
-    // Server revocation rotates once and sends ONLY to open valid peer session.
-    for (const fn of listeners) fn({ view, invalidated: ["revoked-1"], serverRevokeSigned: true });
-    expect(readVapidKeyRecord(dir)?.id).toBe(1);
+    // Invalid/revoked root MUST NOT rotate either.
+    currentMember = rootId;
+    validSet.delete(rootId);
+    for (const fn of listeners) fn({ view, invalidated: [] });
+    expect(readVapidKeyRecord(dir)).toEqual({ gen: 1, id: 0, covers: [], keys: initial });
+
+    // Valid root rotates once for uncovered revocation + gen 3, and sends ONLY to open valid peer session.
+    validSet.add(rootId);
+    for (const fn of listeners) fn({ view, invalidated: [revokedId] });
+    expect(readVapidKeyRecord(dir)).toMatchObject({ gen: 3, id: 1, covers: [revokedId] });
     expect(sentGood).toHaveLength(1);
     expect(sentRevoked).toHaveLength(0);
     expect(sentExchange).toHaveLength(0);
+
+    // Second unrelated roster change does NOT rotate again because revoked-1 is already in covers and gen matches.
+    for (const fn of listeners) fn({ view, invalidated: [] });
+    expect(readVapidKeyRecord(dir)).toMatchObject({ gen: 3, id: 1 });
+    expect(sentGood).toHaveLength(1);
 
     // sessionOpened also refuses revoked and non-open sessions.
     sync.sessionOpened(revokedSession);
@@ -591,8 +756,8 @@ describe("M4-26: root minting & encrypted peer distribution on server revocation
   });
 });
 
-describe("M4-26: welcome.vapidPublicKey & PushSender use rotated keys", () => {
-  it("sends updated vapidPublicKey in welcome on re-attach and PushSender signs with the new key", async () => {
+describe("M4-26: welcome vapidPublicKey/vapidId (remote only) & PushSender use rotated keys", () => {
+  it("F3/F5: sends vapidPublicKey + vapidId on remote welcome, omits both on local session welcome, and PushSender signs with new key", async () => {
     const dir = join(root, `remote-${++seqDir}`);
     mkdirSync(dir, { recursive: true });
     const store = await openServerStore(dir);
@@ -605,7 +770,7 @@ describe("M4-26: welcome.vapidPublicKey & PushSender use rotated keys", () => {
     expect((await setup.confirm(begun.code)).ok).toBe(true);
 
     const initial = generateTestVapidKeys();
-    writeVapidKeys(dir, initial);
+    writeVapidKeys(dir, initial, { gen: 1, id: 0, covers: [] });
 
     const engine = new FakeTurnEngine({ bots: [BOT], chunks: ["ok"], chunkMs: 1 });
     const hub = new LogHub(store, { serverStreams: true });
@@ -625,12 +790,13 @@ describe("M4-26: welcome.vapidPublicKey & PushSender use rotated keys", () => {
       scope: ["read"],
     });
 
-    const host: RemoteHost = {
+    const localToken = "local-token-0123456789";
+    const sessionHost: SessionHost = {
       serverId,
       serverName: "TestMac",
       startedAt: Date.now(),
       minFeVersion: "3.0.0",
-      token: () => "",
+      token: () => localToken,
       hub,
       live,
       runtime,
@@ -640,18 +806,68 @@ describe("M4-26: welcome.vapidPublicKey & PushSender use rotated keys", () => {
       nextFor: () => ({}),
       ensureBotStream: async () => false,
       log: (l) => logs.push(l),
+      vapidKey: () => {
+        const rec = readVapidKeyRecord(dir);
+        return rec ? { publicKey: rec.keys.publicKey, id: { gen: rec.gen, id: rec.id } } : null;
+      },
+      vapidPublicKey: () => readVapidKeys(dir)?.publicKey ?? null,
+    };
+
+    const localSockPath = join(dir, "s.sock");
+    const localServer = new SessionServer(localSockPath, sessionHost);
+    await localServer.listen();
+
+    const host: RemoteHost = {
+      ...sessionHost,
       roster,
       self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey },
-      vapidPublicKey: () => readVapidKeys(dir)?.publicKey ?? null,
     };
     const remote = new RemoteSessions(host);
     cleanups.push(async () => {
       remote.close();
+      await localServer.close();
       await runtime.close();
       live.close();
       hub.close();
       await store.close();
     });
+
+    // F5: Local Unix socket session must omit both vapidPublicKey and vapidId from welcome.
+    const localWelcome = await new Promise<{ message: MessageOf<"welcome">; raw: string }>((resolve, reject) => {
+      const sock = connect(localSockPath);
+      const splitter = new FrameSplitter();
+      sock.on("error", reject);
+      sock.on("data", (chunk) => {
+        const split = splitter.push(new Uint8Array(chunk));
+        if (!split.ok) { reject(new Error(split.detail)); return; }
+        for (const frame of split.frames) {
+          const text = new TextDecoder().decode(frame);
+          const dec = decodeFrame(text, "server", { local: true });
+          if (dec.ok && dec.message.t === "welcome") {
+            sock.destroy();
+            resolve({ message: dec.message, raw: text });
+            return;
+          }
+        }
+      });
+      const hello = encodeFrame({
+        t: "hello",
+        deviceId: "desktop",
+        feVersion: "3.0.0",
+        protocol: 1,
+        originEpoch: EPOCH,
+        cursors: {},
+        outbox: [],
+        want: [],
+        token: localToken,
+      }, "fe", { local: true });
+      if (!hello.ok) { reject(new Error(hello.detail)); return; }
+      sock.on("connect", () => sock.write(packFrame(hello.text)));
+    });
+    expect(localWelcome.message.vapidPublicKey).toBeUndefined();
+    expect(localWelcome.message.vapidId).toBeUndefined();
+    expect(localWelcome.raw).not.toContain("vapidPublicKey");
+    expect(localWelcome.raw).not.toContain("vapidId");
 
     async function attachOnce(): Promise<MessageOf<"welcome">> {
       let open = true;
@@ -705,14 +921,14 @@ describe("M4-26: welcome.vapidPublicKey & PushSender use rotated keys", () => {
 
     const w1 = await attachOnce();
     expect(w1.vapidPublicKey).toBe(initial.publicKey);
+    expect(w1.vapidId).toEqual({ gen: 1, id: 0 });
 
-    // Rotate VAPID keys on disk (as happens on server revocation).
-    const rotated = rotateVapidKeys(dir);
+    const rotated = rotateVapidKeys(dir, { gen: 1, covers: [] });
     const w2 = await attachOnce();
     expect(w2.vapidPublicKey).toBe(rotated.keys.publicKey);
+    expect(w2.vapidId).toEqual({ gen: 1, id: 1 });
     expect(w2.vapidPublicKey).not.toBe(initial.publicKey);
 
-    // Subscribe the device and verify PushSender uses the new key immediately.
     const subKeys = generateTestVapidKeys();
     await roster.writeProfile(deviceId, "push", JSON.stringify({
       endpoint: "https://push.example/sub/device1",
