@@ -255,11 +255,23 @@ const rows: Row[] = [
 
 /** The commands `handle` takes before the update boot receipt commits (the first line of `handle`). */
 const BEFORE_COMMIT = ["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "doctor.view", "attachment.file", "card.image", "link.authorize", "chat.shown"];
+/**
+ * The text of the command switch. It is read from the file that holds it: `core/server.ts` today, and the file the switch is moved to
+ * (`core/server/*.ts`, M7-S67) after the cut, so the move does not need this test changed. From the signature line before the
+ * `new Set<string>([...])` gate to the method's closing brace at two spaces.
+ */
 const sourceOfHandle = () => {
-  const text = readFileSync(join(__dirname, "..", "..", "src", "core", "server.ts"), "utf8");
-  const from = text.indexOf("private async handle(cmd: Command");
-  const to = text.indexOf("\n  snapshot(botId?: string)", from);
-  expect(from).toBeGreaterThan(0);
+  const core = join(__dirname, "..", "..", "src", "core");
+  const folder = join(core, "server");
+  const candidates = [join(core, "server.ts"), ...(existsSync(folder) ? readdirSync(folder).filter((name) => name.endsWith(".ts")).sort().map((name) => join(folder, name)) : [])];
+  const found = candidates.map((path) => readFileSync(path, "utf8")).filter((text) => text.includes('new Set<string>(["boot.commit"'));
+  expect(found, "exactly one file holds the command switch").toHaveLength(1);
+  const text = found[0]!;
+  const gate = text.indexOf('new Set<string>(["boot.commit"');
+  const signature = [...text.slice(0, gate).matchAll(/\n {2}\S[^\n]*\(cmd: Command[^\n]*\{/g)].at(-1);
+  expect(signature, "the signature line of the command switch").toBeTruthy();
+  const from = signature!.index!;
+  const to = text.indexOf("\n  }\n", gate);
   expect(to).toBeGreaterThan(from);
   return text.slice(from, to);
 };

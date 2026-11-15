@@ -7,6 +7,9 @@
 //   subBotRequested, subBotReplied, subBotNote       sub-bots.test.ts, agent-group-server.test.ts
 //   showOpenQuestion, calledInPick, ignoreQuestion   question-ignore, callin-reply-settle, callin-late tests
 //   reconcileAgents, projectRequests, profiles, order, maintainer, lastPlugins, ...
+// Only a name that some file outside `core/server.ts` reaches (tests, spec adapters, product code) or that `core-split-characterization.test.ts`
+// reads is listed: a name nothing reaches is free to move into a collaborator without an accessor (review of M7-S61 dropped
+// `agentReconcile`, `answerOnCopy`, `closeCopiesOf`, `componentsTick`, `mobileDesk`, `movingSubagents`, `pickOnCopy`, `pluginStore`, `scanComponents`, `serverAsks`).
 import { afterEach, describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { Core } from "../../src/core/server";
@@ -14,21 +17,21 @@ import { coreProcessOptions } from "../../src/core/core-process";
 import { fakeCli, tempDir } from "../helpers";
 
 const METHODS = [
-  "activate", "agentMessageCommand", "agentStopCommand", "agentTag", "agentView", "answerOnCopy", "attach", "bot", "calledInPick", "closeCopiesOf", "event", "finishMove", "handle", "ignoreQuestion",
-  "makeSubBot", "moveOwners", "ownedAgentsNote", "pickOnCopy", "projectRequests", "reconcileAgents", "removeBot", "removeBotRequested", "removeSubBotRequested", "replied", "send", "showOpenQuestion",
+  "activate", "agentMessageCommand", "agentStopCommand", "agentTag", "agentView", "attach", "bot", "calledInPick", "event", "finishMove", "handle", "ignoreQuestion",
+  "makeSubBot", "moveOwners", "ownedAgentsNote", "projectRequests", "reconcileAgents", "removeBot", "removeBotRequested", "removeSubBotRequested", "replied", "send", "showOpenQuestion",
   "studioNow", "subBotNote", "subBotReplied", "subBotRequested", "workspaceSource",
 ];
 /** Fields and accessors: `in` finds an own field, an inherited one and an accessor alike. */
 const FIELDS = [
-  "activated", "agentReconcile", "agents", "bots", "conversations", "copies", "inflight", "lastPlugins", "libraryWatch", "maintainer", "memoryWatch", "mobileDesk", "movingSubagents", "options", "order",
-  "plugins", "profiles", "relay", "removed", "restarting", "routineClock", "serverAsks", "subBotsReported", "swapping", "waitingTimer", "watchClock",
+  "activated", "agents", "bots", "conversations", "copies", "inflight", "lastPlugins", "libraryWatch", "maintainer", "memoryWatch", "options", "order",
+  "plugins", "profiles", "relay", "removed", "restarting", "routineClock", "subBotsReported", "swapping", "waitingTimer", "watchClock",
 ];
 /** What other code calls on a `Core` without a cast. */
 const PUBLIC = [
-  "agentTargets", "attachMobile", "attachRelay", "cancelRestart", "cancelSwap", "closeSubBot", "componentsTick", "deliverInboxes", "drainForSwap", "groupAgents", "ignoreWaiting", "mainBot",
-  "mobileCommand", "moveAgent", "prepareQuitContinuation", "prepareRestart", "receive", "scanComponents", "shutdown", "snapshot", "waiting",
+  "agentTargets", "attachMobile", "attachRelay", "cancelRestart", "cancelSwap", "closeSubBot", "deliverInboxes", "drainForSwap", "groupAgents", "ignoreWaiting", "mainBot",
+  "mobileCommand", "moveAgent", "prepareQuitContinuation", "prepareRestart", "receive", "shutdown", "snapshot", "waiting",
 ];
-const PUBLIC_FIELDS = ["doctor", "epoch", "maintainerId", "mainBotId", "pending", "pluginStore", "releases", "storage"];
+const PUBLIC_FIELDS = ["doctor", "epoch", "maintainerId", "mainBotId", "pending", "releases", "storage"];
 /** What a plugin's world gives (`core.plugins.options.world`), reached by tests through two casts. */
 const WORLD = ["addRoutine", "botId", "bots", "chat", "routinesList", "send"];
 
@@ -63,9 +66,8 @@ describe("the private names of Core that tests and spec adapters reach", () => {
     expect(core.conversations.isCalledIn).toBeInstanceOf(Function);
     expect(core.agents.reconcile).toBeInstanceOf(Function);
     expect([core.activated, core.swapping, core.restarting, typeof core.lastPlugins]).toEqual([false, false, false, "string"]);
-    for (const name of ["inflight", "removed", "copies", "movingSubagents", "subBotsReported", "serverAsks"]) expect([name, typeof core[name]?.size]).toEqual([name, "number"]);
-    expect(Object.keys(core.agentReconcile).sort()).toEqual(["added", "dropped", "hostLost", "interrupted", "ownerReverted", "resend"]);
-    for (const name of ["routineClock", "watchClock", "libraryWatch", "memoryWatch", "waitingTimer", "mobileDesk", "relay"]) expect([name, core[name]]).toEqual([name, null]);
+    for (const name of ["inflight", "removed", "copies", "subBotsReported"]) expect([name, typeof core[name]?.size]).toEqual([name, "number"]);
+    for (const name of ["routineClock", "watchClock", "libraryWatch", "memoryWatch", "waitingTimer", "relay"]) expect([name, core[name]]).toEqual([name, null]);
   });
   it("the public surface other code calls is still there", () => {
     const core = open() as any;
