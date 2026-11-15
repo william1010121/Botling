@@ -16,6 +16,7 @@ import {captureScale,composeWindow} from "./window-capture";
 import {appMenuTemplate} from "./app-menu";
 import {bindingsFor} from "../contract/shortcuts";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
+import { installShellStorageIpc } from "./shell-storage";
 import { autoUpdater } from "electron-updater";
 import { CHECK_EVERY_MS, updateChannel, Updater } from "./updates";
 import { linkOpenWay, markdownLinkPath, reportPreviewURL, shellReportNavigation } from "./report-preview";
@@ -426,7 +427,6 @@ ipcMain.on(TEST_TRACE_CHANNEL,(event,record:unknown)=>acceptTraceIPC(traceWriter
   return{owned:appContents.has(event.sender.id),isMainFrame:frame===event.sender.mainFrame,
     url:frame.url,contentsId:event.sender.id,processId:frame.processId,routingId:frame.routingId};
 },record));
-
 // Settings > Shortcuts is recording a key: the menu's accelerators step aside so the key reaches the page (a minute at most).
 ipcMain.on("botling:shortcuts:suspend", (event, on: unknown) => {
   if (!fromAppFrame(event)) return;
@@ -435,7 +435,6 @@ ipcMain.on("botling:shortcuts:suspend", (event, on: unknown) => {
   if (menuSuspended) suspendTimer = setTimeout(() => { menuSuspended = false; applyMenu(shortcutOverrides); }, 60_000);
   applyMenu(shortcutOverrides);
 });
-
 // The in-app browser pane (browser-host.ts): the app page's tab strip and toolbar, and where the page goes.
 ipcMain.on(BROWSER_CHANNEL, (event, raw: unknown) => {
   if (!fromAppFrame(event)) return;
@@ -443,6 +442,7 @@ ipcMain.on(BROWSER_CHANNEL, (event, raw: unknown) => {
   if (!message) { note("refused a malformed browser message"); return; }
   browserFor(event.sender)?.receive(message);
 });
+installShellStorageIpc(ipcMain, dataDir, fromAppFrame);
 
 const PLUGIN_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,213}$/;
 

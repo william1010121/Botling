@@ -1,21 +1,42 @@
-// M7-S16: the types `Core` is made and driven with, moved out of core/server.ts unchanged; server.ts re-exports them.
+// The types and constants at the head of server.ts, moved out of it (M7-S70b; no code changed): what the core is started with
+// (`CoreOptions`), what it asks of main (`AppOp`, `AppAnswer`), the peer id and message limits, and the shapes `Core`'s methods
+// answer with. server.ts imports and re-exports every name, so no importer changes.
 import type { ModelDiscovery, ModelEngine } from "../../contract/model-discovery";
-import type { Command, Outbound, PluginView } from "../../contract";
-import type { FetchRequest } from "../bot-tools";
 import type { AgyConfig } from "../agent/agy";
 import type { CodexModel } from "../agent/codex-models";
-import type { CodexHeadConfig, CodexThreads } from "../agent/codex";
+import type { CodexThreads, CodexHeadConfig } from "../agent/codex";
 import type { HeadConfig } from "../agent/head";
+import type { Command, Outbound, PluginView } from "../../contract";
 import type { DeferredTurn, SessionStart, SessionStartCodex } from "../bot";
-import type { Doctor } from "../doctor";
-import type { GROUP_TIMING } from "../groups";
-import type { ConversationsDeps, RemoteMember } from "../conversations";
+import type { FetchRequest } from "../bot-tools";
 import type { BotStore } from "../store/bot-store";
+import type { Doctor } from "../doctor";
 import type { BotProfile } from "../store/workspace";
+import type { ConversationsDeps, RemoteMember } from "../conversations";
+import type { GROUP_TIMING } from "../groups";
 import type { EngineCli, PluginWorld } from "../plugins";
 import type { HostCommand, HostTiming } from "../plugins/host-client";
 import type { Sealer } from "../plugins/secrets";
-import type { AppOp, AppAnswer } from "../server";
+
+/** What the core asks of main (self-update.ts, plugins/app-seam.ts). */
+export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
+export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown; data?: unknown }
+
+/** An id from a peer's rows that is safe as a path part and as a stream key (M5-04c F2). */
+export const PEER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/**
+ * The most a peer message may take on the wire, counted as the JSON-escaped UTF-8 bytes of its text (M5-04d, checklist 6): a
+ * frame is at most 256 KiB (`protocol/frame.ts` FRAME_LIMIT, which a test keeps this under) and the slot, scope and counters
+ * around the text need under 2 KiB; 16 KiB is left. Characters alone are not enough: 100,000 CJK characters are about 300 KB.
+ */
+export const PEER_MESSAGE_BYTES = 240 * 1024;
+
+/** Text from a peer or a model as one clean line for a note, a log or a report: control characters gone, runs of spaces one, at most 300 characters, no closing full stop (the note adds its own). */
+export function oneLine(text: string): string {
+  const line = text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
+  const characters = [...line];
+  return characters.length > 300 ? `${characters.slice(0, 299).join("")}…` : line || "no reason given";
+}
 
 export interface CoreOptions {
   /** Workers on other machines (src/remote/service.ts): app_handoff's `machine`; absent: refused. */

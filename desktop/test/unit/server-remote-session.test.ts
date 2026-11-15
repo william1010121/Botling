@@ -17,7 +17,7 @@ import { rmSync } from "node:fs";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import type { Command } from "../../src/contract";
 import {
-  decodeFrame, encodeFrame, memberIdFromKey, toBase64Url,
+  decodeFrame, encodeFrame, KeptResultMarker, memberIdFromKey, ResAssembler, toBase64Url,
   type CmdBody, type Message, type MessageOf, type Slot, type StreamId,
 } from "../../src/protocol";
 import { effectCheckpointSink } from "../../src/server/effects";
@@ -32,7 +32,9 @@ import {
   type RemoteHost, type RemoteSessionOptions, type SessionHost,
 } from "../../src/server/session";
 import { ShellBridge } from "../../src/server/shell-bridge";
+import { ownTableStream, putRow } from "../../src/server/replica/tables";
 import { openServerStore, type ServerStore } from "../../src/server/store";
+import { activate as activateNote } from "../../builtin-plugins/botling.note/src/host";
 import { generateDhKeyPair, SessionLink, type SessionEnd, type SessionTransport } from "../../src/session";
 import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
 import { testRoot } from "../botlingd-harness";
@@ -811,5 +813,154 @@ describe("M4-01a M1: remote sessions never reach peerReads or peerLocate", () =>
 
     expect(peerReadsCalls).toEqual([]);
     expect(peerLocateCalls).toEqual([]);
+  });
+});
+
+// M7-04c: a remote page gets the result the owner kept for its own slot (`slot.result`, N2), and only that. This reverses the N2
+// review's "local only": the session's origin check (session-commands `slotResult`: `slot.origin === deviceId`) is what keeps one
+// device (or the window) from reading another's result, so it is tested here end to end, over the encrypted link.
+describe("slot.result for a remote device (M7-04c)", () => {
+  const HASH = "sha256:" + "11".repeat(32);
+  const NOTE_ROW = {
+    codeHash: HASH,
+    manifest: { tier: "write", reads: [], requests: [], owns: ["note"], provides: [], requires: [], uses: [], clients: [], needsShell: [] },
+    author: "builtin",
+    grants: { [HASH]: { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: 1 } },
+  };
+  /** A note's text over one log entry (about 14 bytes a line as JSON-escaped UTF-8); `tag` makes each device's own. */
+  const noteText = (tag: string, lines: number) => `${tag}\n${"筆記一行\n".repeat(lines)}`;
+
+  /** A server whose `plugins.call` runs the real Note program part over notes it holds, and a Device helper for the wire. */
+  async function noteServer(notes: Record<string, string>) {
+    const s = await server();
+    await s.store.submit((tx) => { putRow(tx, ownTableStream(tx), "plugin:botling.note", NOTE_ROW); });
+    const methods = new Map<string, (params: unknown) => unknown>();
+    activateNote({
+      subscriptions: [], storage: { get: () => null, set() {} }, events: { on: () => ({ dispose() {} }) },
+      ui: { expose: (method: string, fn: (params: unknown) => unknown) => { methods.set(method, fn); return { dispose() {} }; }, emit() {} },
+      notes: { read: async (bot: string) => ({ path: "/p/.bot/note.md", text: notes[bot] ?? "", mtime: 1 }) },
+    } as never);
+    const run = s.engine.run.bind(s.engine);
+    s.engine.run = async (cmd: Command) => cmd.type === "plugins.call" ? { result: await methods.get(cmd.method)!(cmd.params) } : run(cmd);
+    const looked: Slot[] = [];
+    const keptResult = s.runtime.keptResult.bind(s.runtime);
+    s.runtime.keptResult = (slot: Slot) => { looked.push(slot); return keptResult(slot); };
+    return { s, looked, srv: `srv:${s.serverId}` };
+  }
+  const read = (botId: string) => ({ type: "plugins.call", name: "botling.note", method: "read", params: { botId }, from: "frame" }) as Command;
+  /** The device reads a note as its page does: a plugins.call slot with the Note's via; the slot it was kept under. */
+  async function readNote(device: Device, srv: string, botId: string): Promise<{ slot: Slot; marker: KeptResultMarker }> {
+    const slot = device.slot(srv);
+    device.send({ t: "cmd", slot, floor: 1, inc: device.s.inc(), cmd: read(botId), via: { plugin: "botling.note", codeHash: HASH } } as Message);
+    const outcome = (await device.result(slot)).outcome;
+    expect(outcome.kind).toBe("applied");
+    return { slot, marker: KeptResultMarker.parse((outcome as { result: unknown }).result) };
+  }
+  /** `slot.result` as a req, joined from its res.parts when it came in parts; how many frames it took. */
+  async function fetchKept(device: Device, slot: Slot): Promise<{ res: MessageOf<"res">; frames: number }> {
+    const req = `k${device.got.length}-${Math.random().toString(36).slice(2, 8)}`;
+    device.send({ t: "req", req, cmd: { type: "slot.result", slot } } as Message);
+    const assembler = new ResAssembler();
+    let seen = 0;
+    return waitFor(() => {
+      for (const m of device.got.slice(seen)) {
+        seen += 1;
+        if (m.t === "res" && m.req === req) return { res: m, frames: 1 };
+        if (m.t === "res.part" && m.req === req) {
+          const step = assembler.push(m, REMOTE);
+          if (!step.ok) throw new Error(step.detail);
+          if (step.message) return { res: step.message, frames: m.n };
+        }
+      }
+      return null;
+    }, `the answer to slot.result ${req}`);
+  }
+  const errorOf = (res: MessageOf<"res">) => (res.ok ? null : res.error);
+
+  it("a remote page reads a 1 MiB note through plugins.call: the slot settles applied with a marker, slot.result brings the whole note back in parts", async () => {
+    const text = noteText("MINE", 80_000);
+    expect(Buffer.byteLength(JSON.stringify({ result: { text, mtime: 1 } }))).toBeGreaterThan(1_048_576);
+    const { s, srv } = await noteServer({ page: text });
+    const { device } = await paired(s);
+    const { slot, marker } = await readNote(device, srv, "page");
+    expect(marker.resultKept.kept).toBe(true);
+    expect(marker.resultKept.bytes).toBeGreaterThan(1_048_576);
+    // The log entry holds only the marker.
+    const applied = s.entries(srv).filter((entry) => entry.kind === "cmd.applied").at(-1)!;
+    expect(JSON.stringify(applied.body).length).toBeLessThan(4_000);
+    const { res, frames } = await fetchKept(device, slot);
+    expect(frames).toBeGreaterThan(1);
+    expect(res.ok).toBe(true);
+    const got = (res as { result: { result: { text: string } } }).result.result.text;
+    expect(got === text).toBe(true);
+  });
+
+  it("another device's slot is refused, with no lookup and nothing of its result in the answer; the same answer as for a slot that never existed", async () => {
+    const { s, looked, srv } = await noteServer({ a: noteText("A-SECRET", 30_000), b: noteText("B-SECRET", 30_000) });
+    const { device: a } = await paired(s);
+    const { device: b } = await paired(s);
+    const mine = await readNote(a, srv, "a");
+    const theirs = await readNote(b, srv, "b");
+    expect(theirs.marker.resultKept.kept).toBe(true);
+    expect(await s.runtime.keptResult(theirs.slot)).toMatchObject({ found: true });
+    looked.length = 0;
+
+    // A holds B's slot id (same target, epoch and number) and asks for it.
+    const stolen = await fetchKept(a, theirs.slot);
+    expect(errorOf(stolen.res)).toMatchObject({ code: "forbidden" });
+    // A slot of B's that never existed is answered the same: whether B's slot exists is not told.
+    const unknownOfB = await fetchKept(a, { ...theirs.slot, n: 999 });
+    expect(errorOf(unknownOfB.res)).toEqual(errorOf(stolen.res));
+    // A number under A's own origin that A never made: not found, and it says nothing of B.
+    const aWithBsNumber = await fetchKept(a, { ...mine.slot, n: theirs.slot.n + 50 });
+    expect(errorOf(aWithBsNumber.res)).toMatchObject({ code: "not_found" });
+    // Neither the other device's result, nor its member id, nor its slot's number is in any answer.
+    const wire = JSON.stringify([stolen.res, unknownOfB.res, aWithBsNumber.res]);
+    for (const leak of ["B-SECRET", "筆記一行", b.member, "resultKept"]) expect(wire).not.toContain(leak);
+    // The server never looked for another origin's slot (the check is before the lookup).
+    expect(looked.filter((slot) => slot.origin === b.member)).toEqual([]);
+    // A's own slot still comes back, and is A's.
+    const own = await fetchKept(a, mine.slot);
+    expect((own.res as { result: { result: { text: string } } }).result.result.text.startsWith("A-SECRET")).toBe(true);
+    // And B still gets its own.
+    expect(((await fetchKept(b, theirs.slot)).res as { result: { result: { text: string } } }).result.result.text.startsWith("B-SECRET")).toBe(true);
+  });
+
+  it("the window's slot (origin desktop) is refused for a device, with no lookup and no trace of its result", async () => {
+    const { s, looked, srv } = await noteServer({ window: noteText("WINDOW-SECRET", 30_000) });
+    const { device } = await paired(s);
+    const local = { origin: "desktop", originEpoch: EPOCH, target: srv, n: 1 } as Slot;
+    await s.runtime.receive({ slot: local, floor: 1, inc: s.inc(), cmd: read("window") } as CmdBody, { scope: "local" });
+    expect(await s.runtime.keptResult(local)).toMatchObject({ found: true });
+    looked.length = 0;
+    const asked = await fetchKept(device, local);
+    expect(errorOf(asked.res)).toMatchObject({ code: "forbidden" });
+    for (const leak of ["WINDOW-SECRET", "筆記一行", "resultKept", "desktop"]) expect(JSON.stringify(asked.res)).not.toContain(leak);
+    expect(looked).toEqual([]);
+  });
+
+  it("a slot that was never made, or is no longer kept, tells nothing: not_found, with no result, no other origin, no counts", async () => {
+    const { s, srv } = await noteServer({ x: noteText("X-SECRET", 30_000) });
+    const { device } = await paired(s);
+    const { slot } = await readNote(device, srv, "x");
+    const gone = await fetchKept(device, { ...slot, n: slot.n + 1000 });
+    const otherTarget = await fetchKept(device, { ...slot, target: "bot:6A0B0000-0000-4000-8000-000000000002" as Slot["target"] });
+    const otherEpoch = await fetchKept(device, { ...slot, originEpoch: "fedcba9876543210fedcba9876543210" });
+    for (const asked of [gone, otherTarget, otherEpoch]) {
+      expect(errorOf(asked.res)).toMatchObject({ code: "not_found" });
+      const text = (asked.res as { error: { message: string } }).error.message;
+      for (const leak of ["X-SECRET", "筆記一行", "resultKept", device.member, "bytes"]) expect(text).not.toContain(leak);
+    }
+  });
+
+  it("a device without the read scope may not ask (the allowlist needs read), even for its own slot", async () => {
+    const { s, looked, srv } = await noteServer({ y: noteText("Y-SECRET", 30_000) });
+    const { device } = await paired(s, ["reply"]);
+    const { slot } = await readNote(device, srv, "y");
+    looked.length = 0;
+    const asked = await fetchKept(device, slot);
+    expect(errorOf(asked.res)).toMatchObject({ code: "forbidden", message: expect.stringMatching(/needs the read scope/) });
+    expect(JSON.stringify(asked.res)).not.toContain("Y-SECRET");
+    expect(looked).toEqual([]);
   });
 });
