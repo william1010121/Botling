@@ -41,7 +41,22 @@ export function parseFeManifest(value: unknown): FeManifest {
   return { plugins: entries };
 }
 
-/** Reads the manifest the page was built with. Any failure (offline, 404, bad JSON) gives the empty manifest. */
+declare const __FE_MANIFEST__: string | undefined;
+
+/**
+ * The manifest this page's bundle was built with (esbuild `define`, fe-manifest-define.mjs): the same bytes as
+ * fe-build-manifest.json, so the list and the code cannot be from different builds. Use this in the app: the desktop
+ * window's CSP (`connect-src 'none'`) blocks `fetchFeManifest`. Not defined (a test, a build without it) or unreadable: empty.
+ */
+export function embeddedFeManifest(): FeManifest {
+  try {
+    return typeof __FE_MANIFEST__ === "string" ? parseFeManifest(JSON.parse(__FE_MANIFEST__)) : EMPTY_FE_MANIFEST;
+  } catch {
+    return EMPTY_FE_MANIFEST;
+  }
+}
+
+/** Reads fe-build-manifest.json over HTTP (the browser page only: the desktop window's CSP blocks it; prefer `embeddedFeManifest`). Any failure gives the empty manifest. */
 export async function fetchFeManifest(url: string = FE_MANIFEST_FILE, fetcher: typeof fetch = fetch): Promise<FeManifest> {
   try {
     const response = await fetcher(url, { cache: "no-store" });
