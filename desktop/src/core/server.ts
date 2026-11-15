@@ -258,6 +258,8 @@ export class Core {
   agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
   seq = 0;
+  /** The next event number: the one transition that moves `seq` (the collaborators ask for it, they do not set it). */
+  nextSeq() { return ++this.seq; }
   activated = false;
   private inflight = new Map<string, AbortController>();
   readonly ledger: ProcessLedger;
@@ -321,7 +323,7 @@ export class Core {
   /** The public plugin catalog (Explore, Updates on the Plugins page). */
   readonly pluginStore: PluginStore;
   get lastPlugins() { return this.coreWatch.lastPlugins; }
-  set lastPlugins(value: CoreWatch["lastPlugins"]) { this.coreWatch.lastPlugins = value; }
+  markPluginsShown(...a: Parameters<CoreWatch["markPluginsShown"]>) { return this.coreWatch.markPluginsShown(...a); }
   private settlingMaintainer = false;
   private get loadedClaudeParts() { return this.coreWatch.loadedClaudeParts; }
   private set loadedClaudeParts(value: CoreWatch["loadedClaudeParts"]) { this.coreWatch.loadedClaudeParts = value; }
@@ -419,7 +421,7 @@ export class Core {
     this.components.library.rescan();
     this.componentStamp = this.components.library.stamp;
     // What the snapshot shows already is no event (an event comes only when something changes).
-    this.lastPlugins = JSON.stringify(this.plugins.view());
+    this.markPluginsShown(JSON.stringify(this.plugins.view()));
     this.loadedClaudeParts = JSON.stringify(agentStamp(this.plugins.registry));
     // Quota files must be imported before their first in-memory reading.
     this.usage = new UsageBook(options.dataDir, undefined, undefined, options.quotaRetriever);
@@ -2003,7 +2005,7 @@ export class Core {
     if (event.type === "bot.updated" && event.bot.id === this.maintainerId && event.bot.maintainer !== true) {
       event = { ...event, bot: { ...event.bot, maintainer: true } };
     }
-    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: this.nextSeq(), event });
     if (event.type === "message.updated" && this.serverAsks.size) this.serverAskClosed(event.message.id);
     this.pluginEvent(event);
     this.checkWorkspaceSoon();
