@@ -11,19 +11,23 @@ import type { Client } from "../../src/renderer/client";
 import { SettingsSheet } from "../../src/renderer/Settings";
 import { SidebarSettings } from "../../src/renderer/SidebarSettings";
 import { panelPage } from "../../src/renderer/panel-page";
+import { loadSettingsShell, type SettingsShell } from "../settings-shell";
 
 const plugins: PluginsView = {
   plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null,
   settingsSections: [{ plugin: "meter", id: "meter.page", title: "Meter", terms: "quota rings", after: "engines", link: "Meter by bot" }],
   quickSettings: [{ plugin: "meter", id: "meter.rings", title: "Rings" }],
 };
-let host: HTMLDivElement, root: Root;
+// Settings and the gear draw from the settings plugin's slots (M7-02d): each test loads the plugin and, when it wants plugin pages
+// and blocks, hands the plugin list to the feed as the shell does. The `plugins` prop alone shows no plugin's page.
+let host: HTMLDivElement, root: Root, shell: SettingsShell | null = null;
+const withShell = async (view: PluginsView | null = null) => { shell = await loadSettingsShell(view); };
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; });
+afterEach(async () => { await act(async () => root.unmount()); await shell?.stop(); shell = null; host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; });
 
 function client() {
   const requests: any[] = [];
@@ -42,6 +46,7 @@ const resizeTo = async (height: number) => {
 };
 
 it("Settings: a plugin's page sits under Plugins (indented), is found by its terms, and its frame is sized to its content", async () => {
+  await withShell(plugins);
   const { client: c, requests } = client();
   await act(async () => root.render(createElement(SettingsSheet, { client: c, settings: settingsView({}), bot: null, plugins, onClose() {} })));
   const tabs = () => [...host.querySelectorAll(".settings-tab")].map((tab) => tab.textContent?.replace("New", ""));
@@ -64,6 +69,7 @@ it("Settings: a plugin's page sits under Plugins (indented), is found by its ter
 });
 
 it("Settings: without a plugin page the core pages are the same, and Usage is not one of them", async () => {
+  await withShell();
   const { client: c } = client();
   await act(async () => root.render(createElement(SettingsSheet, { client: c, settings: settingsView({}), bot: null, plugins: null, onClose() {} })));
   expect([...host.querySelectorAll(".settings-tab")].map((tab) => tab.textContent?.replace("New", ""))).toEqual(
@@ -72,6 +78,7 @@ it("Settings: without a plugin page the core pages are the same, and Usage is no
 });
 
 it("the gear popover draws each quickSettings block above the switch, links to the plugin's page, and opens it by its qualified id", async () => {
+  await withShell(plugins);
   const { client: c, requests } = client();
   const onOpen = vi.fn();
   await act(async () => root.render(createElement(SidebarSettings, { client: c, settings: settingsView({}), plugins, settingsOpen: false, onOpen })));
@@ -90,6 +97,7 @@ it("the gear popover draws each quickSettings block above the switch, links to t
 });
 
 it("the gear popover without plugin blocks has no frame and no extra link", async () => {
+  await withShell();
   const { client: c } = client();
   await act(async () => root.render(createElement(SidebarSettings, { client: c, settings: settingsView({}), plugins: null, settingsOpen: false, onOpen() {} })));
   await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Quick settings"]')!.click());
