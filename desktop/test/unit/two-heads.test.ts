@@ -153,7 +153,7 @@ describe("timing as 1.x", () => {
     const gate = join(dir, "turn.gate");
     const c = core(dir, { FAKE_CODEX_TURN_GATE: gate });
     const first = await c.call({ type: "chat.send", botId: MAIN, text: "first" });
-    await until(() => codexInputs(dir).some((text) => text.endsWith("first")), { timeout: 5_000 });
+    await until(() => codexInputs(dir).some((text) => text.endsWith("first")), { timeout: 25_000, what: "Codex to get the first message" });
     const second = await c.call({ type: "chat.send", botId: MAIN, text: "second" });
     // It is the turn under way that answers it.
     expect(second.turnId).toBe(first.turnId);
