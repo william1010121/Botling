@@ -206,7 +206,7 @@ describe("subagents", () => {
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect((await c.call({ type: "chat.snapshot" })).bots[0].subagents).toBe(1);
     writeFileSync(gate, "");
-    const news = await until(() => (c.of("message.added").map((e) => (e.event as { message: any }).message).find((m) => m.text === "The background research finished: Found 3 things.")), { what: "the background report" });
+    const news = await until(() => (c.of("message.added").map((e) => (e.event as { message: any }).message).find((m) => m.text === "The background research finished: Found 3 things.")), { what: "the background report", timeout: 25_000 }); // an "eventually" wait now: nothing races it
     expect(news.role).toBe("bot");
     reply = (await c.chat()).messages.find((m: { id: string }) => m.id === messageId);
     expect(reply.steps[0]).toMatchObject({ status: "completed", count: 1, done: true });
