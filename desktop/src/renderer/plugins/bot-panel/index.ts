@@ -28,7 +28,7 @@ export function activate(api: unknown): Promise<() => void> {
       // The plugin owns the slot, so the kernel takes this while it loads; a refusal fails the load (nothing half-registered stays).
       if (!kernel.contribute(plugin, MAIN_SLOT, { kind: "panel-block", block } satisfies PanelBlockEntry)) throw new Error(`the kernel refused the ${block} block`);
     }
-    // The column is the shell's slot (`:shell` owns `app/side`): where no shell owns it (a kernel of a test) the kernel refuses and logs; that is not a failed load.
-    kernel.contribute(plugin, REGION_SLOTS.side, { kind: "region", region: "side" } satisfies RegionEntry);
+    // The column is the shell's slot (`:shell` owns `app/side`): in a kernel where nobody owns it (a test's own) there is nothing to claim, and it is not a failed load.
+    if (kernel.slotOwner(REGION_SLOTS.side)) kernel.contribute(plugin, REGION_SLOTS.side, { kind: "region", region: "side" } satisfies RegionEntry);
   });
 }

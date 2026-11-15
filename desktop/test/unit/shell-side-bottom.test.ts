@@ -20,7 +20,7 @@ import { Kernel } from "../../../Web/src/plugin-kernel";
 import { BOT_PANEL_PLUGIN } from "../../src/renderer/panel-names";
 import { botPanelDeclaration } from "../../src/renderer/plugins/bot-panel";
 import { TOGGLE_BOTTOM_PANEL } from "../../src/renderer/BottomPanels";
-import { rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
+import { notifySlots, rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
 import { InPageHost, inPageHost } from "../../src/renderer/shell/inpage-host";
 import { parseFeManifest } from "../../src/renderer/shell/inpage-loader";
 import { RegionSlot, REGION_SLOTS, type RegionEntry } from "../../src/renderer/shell/regions";
@@ -161,14 +161,15 @@ describe("the regions as contributions", () => {
     expect(regionEntries("app/side")).toHaveLength(1);
   });
 
-  it("the plugin still loads where nobody owns app/side (a kernel without :shell): the refusal is the kernel's, not a failed load, and the plugin's own slots are there", async () => {
-    const kernel = new Kernel();
+  it("the plugin still loads where nobody owns app/side (a kernel without :shell): it claims nothing there, no refusal is logged, and the plugin's own slots are there", async () => {
+    const kernel = new Kernel({ log: true });
     const private_ = botPanelHost({ kernel, feed: { refresh: () => [] }, notify() {} });
     const [result] = await private_.start();
     expect(result!.status).toBe("loaded");
     expect(kernel.state(BOT_PANEL_PLUGIN)).toBe("active");
     expect(kernel.entries("app/side")).toEqual([]);
     expect(kernel.entries("panel/main").length).toBe(3);
+    expect(kernel.events.filter((event) => JSON.stringify(event).includes("app/side"))).toEqual([]);
     await private_.stop();
   });
 
@@ -246,7 +247,7 @@ describe("ShellFrame and RegionSlot", () => {
     await act(async () => {});
     expect(never.querySelector("#side")).not.toBeNull();
     const [held] = regionEntries("app/side");
-    await act(async () => { await held!.registration.dispose(); });
+    await act(async () => { await held!.registration.dispose(); notifySlots(); });
     expect(never.querySelector("#side"), "active but not claiming it").toBeNull();
     one.unload(BOT_PANEL_PLUGIN);
     await settled();
@@ -284,7 +285,7 @@ describe("the app page with the regions drawn from the slots", () => {
     const page = await mountPage();
     expect(page.element.querySelectorAll("aside.detail-panel")).toHaveLength(1);
     const [held] = regionEntries("app/side");
-    await act(async () => { await held!.registration.dispose(); });
+    await act(async () => { await held!.registration.dispose(); notifySlots(); });
     expect(page.element.querySelector("aside.detail-panel")).toBeNull();
     expect(page.element.querySelector("aside.right-strip")).toBeNull();
     expect(page.element.querySelector("#chat-frame")).not.toBeNull();
@@ -296,7 +297,7 @@ describe("the app page with the regions drawn from the slots", () => {
     const page = await mountPage();
     await openTerminal(page);
     const [held] = regionEntries("app/bottom");
-    await act(async () => { await held!.registration.dispose(); });
+    await act(async () => { await held!.registration.dispose(); notifySlots(); });
     expect(page.element.querySelector("button.bottom-toggle")).toBeNull();
     expect(page.element.querySelector("section.bottom-panel")).toBeNull();
     expect(page.element.querySelector("#chat-frame")).not.toBeNull();
