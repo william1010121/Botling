@@ -248,16 +248,15 @@ export class RosterStore {
     const cluster = this.cluster;
     const root = this.current.root;
     if (cluster === null || !root || member === root.root || !this.current.servers.has(member)) return [];
-    // Compute on a copy of the verified roots and adds with one synthetic cascading Revoke so validity.ts's own
-    // `cascadeOf` closure runs without mutating the store.
-    const copy: VerifiedStatement[] = this.verified.filter((item) => item.body.type === "root" || item.body.type === "add");
-    copy.push({
+    // Compute on a copy of the verified statements with one synthetic cascading Revoke so validity.ts's own
+    // `cascadeOf` closure runs without mutating the store, excluding members already marked revoked.
+    const copy: VerifiedStatement[] = [...this.verified, {
       id: "~preview",
       body: { type: "revoke", cluster, member, reason: "", by: root.root, gen: root.gen, cascade: true },
       signer: root.root,
-    });
+    }];
     const view = computeRoster(this.identity.memberId, cluster, copy);
-    return [...view.revoked].filter((id) => id !== member).sort();
+    return [...view.revoked].filter((id) => id !== member && !this.current.revoked.has(id)).sort();
   }
 
   /**

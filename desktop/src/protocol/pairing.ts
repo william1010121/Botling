@@ -96,6 +96,9 @@ export const AdminOp = z.discriminatedUnion("op", [
   /** The code as typed (read forgivingly by the server: `JoinCode`); a malformed one costs no try. */
   z.strictObject({ op: z.literal("machine.code"), attempt: JoinOfferId, code: z.string().min(1).max(32) }),
   z.strictObject({ op: z.literal("machine.cancel"), attempt: JoinOfferId }),
+  // Server removal (§4.3, D61, M4-05). Local socket only.
+  z.strictObject({ op: z.literal("machine.removePreview"), member: z.string().min(1).max(100) }),
+  z.strictObject({ op: z.literal("machine.remove"), member: MemberId, cascade: z.boolean(), reason: z.string().max(500).optional() }),
   // Cluster preferences (§17, M3 step 5): a write from the window or CLI on this machine (LWW per key, gossiped to
   // every peer server) and the current registers.
   z.strictObject({ op: z.literal("prefs.set"), key: PrefKey, value: z.unknown() }),

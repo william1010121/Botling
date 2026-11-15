@@ -370,6 +370,7 @@ export class Botlingd {
           handle: async (op) => {
             if (op.op === "prefs.set") return { row: await prefs.set(op.key, op.value) };
             if (op.op === "prefs.list") return { rows: prefs.rows() };
+            if (op.op === "machine.removePreview" || op.op === "machine.remove") return pairing.admin(op);
             return op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op) : pairing.admin(op);
           },
           onEvent: (listener) => { const a = pairing.onEvent(listener); const b = serverJoin.onEvent(listener); return () => { a(); b(); }; },

@@ -30,6 +30,8 @@
 //                             (M3 step 13) this server's fingerprint and every other server of its cluster: name,
 //                             fingerprint, state (live / stale / gone) and since, and how many commands wait for it;
 //                             read from the data folder, so it answers whether or not botlingd runs
+//   botlingd machines remove <name-or-id> [--yes | --only]
+//                             (M4-05) on the revocation root: previews what it added, asks once, and revokes it
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
@@ -43,7 +45,7 @@ import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
-import { AdminClient, addMachineCommand, devicesCommand, joinCommand, pairCommand, revokeDeviceCommand, type CliIo } from "./pairing";
+import { AdminClient, addMachineCommand, devicesCommand, joinCommand, pairCommand, removeMachineCommand, revokeDeviceCommand, type CliIo } from "./pairing";
 import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
@@ -319,6 +321,27 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     case "machines": {
+      if (rest[0] === "remove") {
+        const removeArgs = rest.slice(1);
+        const unknown = removeArgs.find((arg) => arg.startsWith("--") && arg !== "--yes" && arg !== "--only");
+        if (unknown) fail(`unknown option "${unknown}" (use --yes or --only)`, 2);
+        const yes = removeArgs.includes("--yes");
+        const only = removeArgs.includes("--only");
+        if (yes && only) fail("machines remove takes either --yes or --only, not both", 2);
+        const target = removeArgs.find((arg) => !arg.startsWith("--"));
+        if (!target) fail("machines remove needs a machine name or id: botlingd machines remove <name-or-id> [--yes | --only] (botlingd machines lists them)", 2);
+        const client = await adminSession(paths);
+        const io = stdinIo();
+        let code = 1;
+        try {
+          code = await removeMachineCommand(client, io, target!, { ...(yes ? { yes: true } : {}), ...(only ? { only: true } : {}) });
+        } finally {
+          io.close();
+          client.close();
+        }
+        process.exit(code);
+        return;
+      }
       const file = join(paths.dataDir, "server.db");
       const pid = holderPid(paths.dataDir);
       const db = existsSync(file) ? openReaderDb(file) : null;

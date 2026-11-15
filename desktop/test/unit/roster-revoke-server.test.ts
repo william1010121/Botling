@@ -306,4 +306,44 @@ describe("M4-04: revokeServer and cascadePreview", () => {
     expect(s2.roster.isValid(s2.identity.memberId)).toBe(true);
     expect(s2.roster.isValid(s3.identity.memberId)).toBe(false);
   });
+
+  it("cascadePreview excludes machines and phones that are already removed (matches validity.ts)", async () => {
+    const { s1, s2, s3, phone } = await chainCluster();
+    const phone2 = await deviceKeys();
+    await s3.roster.addDevice({ keys: phone2.keys, name: "Phone Two" });
+
+    const s4 = await makeServer();
+    const addS4 = await s2.roster.addServer({ keys: s4.identity.keys, name: "Server Four" });
+    const addS4Stmt = s2.roster.statements().find((item) => item.id === addS4.addId)!.statement;
+    await s4.roster.joinCluster({
+      add: addS4Stmt,
+      roster: s2.roster.statements().map((item) => item.statement),
+      sponsor: { member: s2.identity.memberId, keys: s2.identity.keys, name: "Server Two" },
+    });
+    const phone4 = await deviceKeys();
+    await s4.roster.addDevice({ keys: phone4.keys, name: "Phone Four" });
+
+    await s1.roster.merge([...s2.roster.statements(), ...s3.roster.statements(), ...s4.roster.statements()].map((item) => item.statement));
+    expect(s1.roster.cascadePreview(s3.identity.memberId)).toEqual([phone.member, phone2.member].sort());
+    expect(s1.roster.cascadePreview(s2.identity.memberId)).toEqual(
+      [s3.identity.memberId, phone.member, phone2.member, s4.identity.memberId, phone4.member].sort(),
+    );
+
+    // Revoke phone via device revocation: cascadePreview must exclude it.
+    await s3.roster.revokeDevice(phone.member, "lost");
+    await s1.roster.merge(s3.roster.statements().map((item) => item.statement));
+    expect(s1.roster.cascadePreview(s3.identity.memberId)).toEqual([phone2.member]);
+    expect(s1.roster.cascadePreview(s2.identity.memberId)).toEqual(
+      [s3.identity.memberId, phone2.member, s4.identity.memberId, phone4.member].sort(),
+    );
+
+    // Revoke s4 without cascade: s4 is already removed (left out), while phone4 is not removed yet (still listed).
+    await s1.roster.revokeServer(s4.identity.memberId, false);
+    expect(s1.roster.cascadePreview(s2.identity.memberId)).toEqual([s3.identity.memberId, phone2.member, phone4.member].sort());
+
+    // Upgrade s4 to cascade=true: now both s4 and phone4 are removed (both left out).
+    await s1.roster.revokeServer(s4.identity.memberId, true);
+    expect(s1.roster.cascadePreview(s2.identity.memberId)).toEqual([s3.identity.memberId, phone2.member].sort());
+    expect(s1.roster.cascadePreview(s4.identity.memberId)).toEqual([]);
+  });
 });
