@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it as vitestIt } from "vitest";
 import type { StreamId } from "../../src/protocol";
 import { appendEntries, ensureStream } from "../../src/server/log";
 import { openReaderDb, openServerStore } from "../../src/server/store";
@@ -18,6 +18,12 @@ const runtimes = [
   { name: "node", bin: process.execPath, env: {} as Record<string, string> },
   { name: "electron", bin: electron, env: { ELECTRON_RUN_AS_NODE: "1" } as Record<string, string> },
 ] as const;
+
+// Electron's own binary needs the desktop's shared libraries (libnspr4, libnss3, libgtk-3 and others), absent on a
+// headless Linux host: there the electron runtime's cases are skipped (run them on the Mac; CI's Ubuntu has the
+// libraries and runs them). Only the dynamic loader's own error skips: Electron failing any other way still fails.
+const electronLoads = process.platform === "darwin"
+  || !/error while loading shared libraries/.test(spawnSync(electron, ["--version"], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" }).stderr ?? "");
 
 const root = testRoot("backup-runtimes");
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -36,6 +42,7 @@ async function dataDirWith(name: string, lines: number): Promise<string> {
 const entries = (file: string) => { const db = openReaderDb(file); try { return Number(db.prepare("SELECT count(*) AS n FROM entries").get()?.n); } finally { db.close(); } };
 
 describe.each(runtimes)("botlingd under $name", ({ name, bin, env }) => {
+  const it = name === "electron" && !electronLoads ? vitestIt.skip : vitestIt;
   const run = (dataDir: string, args: string[]) => spawnSync(bin, ["--no-warnings", botlingdScript, ...args], { env: { ...botlingdEnv(dataDir), ...env }, encoding: "utf8", timeout: 90_000 });
 
   it("runs as that runtime", () => {
