@@ -7,6 +7,7 @@
 //     which catches the tests that drive the built core over core-harness.ts instead of importing it;
 //   - a unit test whose text names a changed file (electron-builder.config.cjs, build.mjs, …), for
 //     files that tests read or run rather than import.
+// The typecheck is incremental (.cache/tsc/desktop.tsbuildinfo): a rerun after a small change takes about half as long.
 // out/ is rebuilt first (well under a second) because many unit tests run the built core.
 // The full suite (`npm test`) is for a release candidate, not for every change.
 import { spawnSync } from "node:child_process";
@@ -50,7 +51,7 @@ const step = (label, command, args) => {
 const bin = (name) => join(desktop, "node_modules", ".bin", name);
 
 console.log(`test:changed against ${base}: ${changed.length} changed file(s), ${sources.length} relevant to desktop/`);
-let ok = step("typecheck", bin("tsc"), ["--noEmit", "-p", "tsconfig.json"]);
+let ok = step("typecheck", bin("tsc"), ["--noEmit", "-p", "tsconfig.json", "--incremental", "--tsBuildInfoFile", join(desktop, ".cache", "tsc", "desktop.tsbuildinfo")]);
 
 if (sources.length) {
   const unit = join(desktop, "test", "unit");
@@ -68,6 +69,12 @@ if (sources.length) {
   // `vitest related` takes source files and runs the tests that depend on them; a test file passed
   // in counts as its own dependent, so the name-matched tests ride along.
   const files = [...new Set([...sources, ...named])].map((path) => relative(desktop, path));
+  // heavyLocal tests (vitest.config.mts) are skipped on a local Mac run; say so when this change names one.
+  if (process.platform === "darwin" && !process.env.CI && process.env.BOTLING_TEST_HEAVY !== "1") {
+    const list = /const heavyLocal = \[([\s\S]*?)\]/.exec(readFileSync(join(desktop, "vitest.config.mts"), "utf8"))?.[1] ?? "";
+    const heavy = (list.match(/"[^"]+"/g) ?? []).map((n) => `test/unit/${n.slice(1, -1)}.test.ts`).filter((f) => files.includes(f));
+    if (heavy.length) console.log(`\nSkipped here (heavyLocal, heavy on the Mac): ${heavy.join(", ")}. Run them on the Linux host: scripts/remote-test.sh <sha> ${heavy.join(" ")}`);
+  }
   ok = step(`unit tests related to ${files.length} file(s)`, bin("vitest"), ["related", "--run", "--passWithNoTests", "--exclude", "test/live/**", ...files]) && ok;
 } else {
   console.log("\nNo changed desktop source or test files: nothing to unit test.");

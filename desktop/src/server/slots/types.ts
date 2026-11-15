@@ -2,7 +2,7 @@
 // runs, the basis reader and the scope check. Each is a plain interface so step 3's log, step 6's intent handlers and
 // a later "legacy apply" path plug in without changing the rules, and tests use fakes.
 import type { Command } from "../../contract";
-import type { Cursor, LogId, RefuseReason, Scope, Slot, StreamId } from "../../protocol";
+import type { Cursor, LogId, RefuseReason, Scope, Slot, StreamId, Via } from "../../protocol";
 import type { Db } from "../store";
 
 /**
@@ -25,6 +25,8 @@ export interface ApplyContext {
   cmd: Command;
   scope: Scope;
   basis?: Cursor;
+  /** M5-16: the plugin attribution the copy carried; part of the command's hash, so legacy apply finds its handler's result. */
+  via?: Via;
   /** For the intent entries (and effect rows, §12) the command adds before its `cmd.applied`. */
   log: SlotLog;
 }

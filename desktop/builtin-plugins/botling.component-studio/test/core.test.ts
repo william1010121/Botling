@@ -86,17 +86,18 @@ describe("component specs (Workspace+Specs.swift)", () => {
     // Maintainer got the first build, 1.x's words.
     const relay = await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "relay"));
     expect(relay.text).toContain(`(Component spec ${specId}; action: build-first) Build the first version now. What it is for, in the user's words: see the tests at a glance\nThe user wants it built right away from Main bot's reply, given here as context. The `);
-    // Its answer names what it built; the component lands in the library.
+    // Its answer names what it built; the component lands in the library. (Between landing and the bot's answer the chip already draws
+    // the reply's own sample, so wait for the filled data, not just for a display.)
     await until(async () => !(await c.chat(MAINTAINER)).running);
     await say(c, MAINTAINER, `/say Built test-board. <component-spec id="${specId}">{"name": "test-board", "about": "Tests at a glance", "fields": [{"name": "passed", "type": "int"}]}</component-spec>`);
     component(dir, "test-board", "Tests at a glance.\nData: {\"passed\": 2}");
-    const done = await until(async () => { const found = (await chipsOf(c, line.id))[0]; return found?.status === "done" && found.display ? found : null; }, { timeout: 15_000, what: "the built component under the reply" });
+    const done = await until(async () => { const found = (await chipsOf(c, line.id))[0]; return found?.status === "done" && found.display?.data === '{"filled":true}' ? found : null; }, { timeout: 15_000, what: "the built component under the reply" });
     expect(done).toMatchObject({ name: "test-board", component: "test-board", filling: null });
     expect(done.display).toMatchObject({ name: "test-board", data: '{"filled":true}' });
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).components).toContain("test-board");
     await until(async () => (await c.chat()).messages.some((m: any) => m.role === "notice" && m.text === "test-board added to Main bot."));
-    // The bot that wrote the reply was asked to draw it, quietly (no line of its own for that turn).
-    expect(texts(dir).some((text) => text.startsWith(`(App: Draw the component "test-board" for your reply from `) && text.includes(`("Your 3 tests: 2 passed, 1 failed."): the user made that reply into this component, for this: see the tests at a glance.`))).toBe(true);
+    // The bot that wrote the reply was asked to draw it, quietly (no line of its own for that turn); a note of the component list may come first in the same message.
+    expect(texts(dir).some((text) => text.includes(`(App: Draw the component "test-board" for your reply from `) && text.includes(`("Your 3 tests: 2 passed, 1 failed."): the user made that reply into this component, for this: see the tests at a glance.`))).toBe(true);
     const spec = JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8"))[0];
     expect(spec).toMatchObject({ status: "done", built: "test-board", version: 1, filledBy: "Main bot", filled: '{"filled":true}', about: "Tests at a glance" });
     expect(spec.conversation.map((entry: any) => entry.text)).toEqual([

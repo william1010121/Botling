@@ -331,6 +331,16 @@ try {
     if (!args.some((a) => !a.startsWith("-")) || args.some((a) => !a.startsWith("-") && f.includes(a))) mac.push(`${f} (macOnly, not run)`);
   }
 } catch {}
+// Files a local Mac run skips because they are heavy there (heavyLocal in vitest.config.mts), listed only when they ran.
+try {
+  const list = /const heavyLocal = \[([\s\S]*?)\]/.exec(fs.readFileSync("vitest.config.mts", "utf8"))?.[1] ?? "";
+  const heavy = new Set((list.match(/"[^"]+"/g) ?? []).map((n) => `test/unit/${n.slice(1, -1)}.test.ts`));
+  const ran = report.testResults.map((r) => rel(r.name)).filter((f) => heavy.has(f));
+  if (ran.length) {
+    line(`heavy: ${ran.length} file(s) a local Mac run skips (heavyLocal) ran here, with their full case counts:`);
+    for (const f of ran) line(`  ${f}`);
+  }
+} catch {}
 if (mac.length) {
   line(`run on the Mac: ${mac.length} file(s) skip tests here that need macOS (case-insensitive disk, APFS, sandbox, windows):`);
   for (const m of mac) line(`  ${m}`);

@@ -185,7 +185,8 @@ describe("<install-build>", () => {
 });
 
 describe("the install script", () => {
-  it("the script installs to the new place and leaves the running copy; a build that does not come up is set aside and the old copy reopened", () => {
+  // The script runs /usr/bin/ditto and /usr/bin/open, which only macOS has: skipped elsewhere (remote-test lists it under "run on the Mac").
+  it.skipIf(process.platform !== "darwin")("the script installs to the new place and leaves the running copy; a build that does not come up is set aside and the old copy reopened", () => {
     const dir = tempDir("self-update-script");
     const running = readBuild(fakeApp(join(dir, "drive"), "Botling 2", { BotlingGitCommit: "aaaaaaa1111" }))!;
     const build = readBuild(fakeApp(join(dir, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" }))!;
@@ -218,7 +219,7 @@ describe("the install script", () => {
     expect(installOutcome(join(dir, "core"))).toMatchObject({ kind: "rolledBack", reason: "the new build did not come up in 1 seconds" });
   });
 
-  it("an existing build at the target is backed up and put back if the new one does not come up", () => {
+  it.skipIf(process.platform !== "darwin")("an existing build at the target is backed up and put back if the new one does not come up", () => {
     const dir = tempDir("self-update-script");
     const running = readBuild(fakeApp(join(dir, "home", "Applications"), "Botling 2", { BotlingGitCommit: "aaaaaaa1111" }))!;
     const build = readBuild(fakeApp(join(dir, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" }))!;

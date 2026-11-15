@@ -266,12 +266,12 @@ describe("M5-02b: what the owner checks before it takes a call-in", () => {
     expect(stranger.h.engine.callIns).toHaveLength(0);
   });
 
-  it("refuses a call-in while no sender is attached (fail closed), and the reply command is not handled yet", async () => {
+  it("refuses a call-in while no sender is attached (fail closed), and a reply nobody waits for (the host's side, M5-02c) is applied and dropped", async () => {
     const h = await harness({ bots: ["MAIN", GUEST] });
     open.push(h);
     expect(outcomeOf(await send(h, ask()))).toMatchObject({ kind: "refused", reason: "invalid" });
     h.runtime.callIns.attach(fakeSender().sender);
-    expect(outcomeOf(await send(h, { type: "callin.reply", botId: HOST, callId: CALL, guest: { botId: GUEST, name: "x" }, outcome: { kind: "busy" } }))).toMatchObject({ kind: "refused", reason: "invalid" });
+    expect(outcomeOf(await send(h, { type: "callin.reply", botId: HOST, callId: CALL, guest: { botId: GUEST, name: "x" }, outcome: { kind: "busy" } }))).toMatchObject({ kind: "applied" });
   });
 
   it("holds at most a few call-ins per bot at once", async () => {

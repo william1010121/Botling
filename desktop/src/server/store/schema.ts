@@ -228,6 +228,18 @@ ALTER TABLE grants ADD COLUMN revokedAt INTEGER;
 CREATE INDEX grants_by_requester ON grants (requester, requesterServer, kind);
 `;
 
+// v13 (src/server/forward): `forwarddead` keeps a forward-queue row that could never be sent (it does not parse, its frame is too
+// large, or the encoder throws) after the forwarder moved it out of `forwardq`: same key, the raw envelope as it was, and why.
+// A kept row is also the "hole" in its queue: later rows of that queue go out with a `floor` above it (forwarder.ts).
+const V13 = `
+CREATE TABLE forwarddead (
+  origin TEXT NOT NULL, originEpoch TEXT NOT NULL, target TEXT NOT NULL, n INTEGER NOT NULL, owner TEXT NOT NULL,
+  cmdHash TEXT NOT NULL, envelope TEXT NOT NULL, heldAt INTEGER NOT NULL, failedAt INTEGER NOT NULL, reason TEXT NOT NULL,
+  PRIMARY KEY (origin, originEpoch, target, n)
+) WITHOUT ROWID;
+CREATE INDEX forwarddead_by_owner ON forwarddead (owner, origin, originEpoch, target, n);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -315,6 +327,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "fetch grants (src/server/fetch): requesterServer, kind, fetchId and revokedAt on grants",
     up(db) {
       db.exec(V12);
+    },
+  },
+  {
+    version: 13,
+    description: "forward queue rows that could never be sent (src/server/forward): forwarddead, kept for audit",
+    up(db) {
+      db.exec(V13);
     },
   },
 ];

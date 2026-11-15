@@ -516,17 +516,16 @@ describe("M5-06c: from a phone attached to another server (test 7)", () => {
   it.todo("answer from a phone on another server: a paired phone attached to B answers A's card (needs a pairing + pass-through fixture)");
 });
 
-describe("M5-06c: only a user answers the card (slotAuthorize)", () => {
+describe("M5-06c: only a user answers the card (slotAuthorize; generalised to every card by peer-answer-guard)", () => {
   const CARD = "6A0B0000-0000-4000-8000-0000000000C1";
   const OTHER = "6A0B0000-0000-4000-8000-0000000000C2";
   const BOT = "6A0B0000-0000-4000-8000-0000000000B1";
   const slot = (origin: string) => ({ origin, originEpoch: "0123456789abcdef0123456789abcdef", target: `bot:${BOT}` as const, n: 1 });
   const tx = null as never;
-  const roster = (userOnlyCard?: (id: string) => boolean) => ({
+  const roster = () => ({
     memberId: "srv-self",
     device: (member: string) => (member === "dev-phone" ? { keys: { sign: "s", dh: "d" }, scope: ["read", "reply"] as Array<"read" | "reply"> } : null),
     server: (member: string) => member === "srv-peer",
-    ...(userOnlyCard ? { userOnlyCard } : {}),
   });
   const cards: Command[] = [
     { type: "chat.choose", botId: BOT, messageId: CARD, index: 1 },
@@ -534,30 +533,14 @@ describe("M5-06c: only a user answers the card (slotAuthorize)", () => {
     { type: "chat.ignoreQuestion", botId: BOT, messageId: CARD },
   ];
 
-  it("a peer server's pick, answer or dismissal of an open serverAsk card is refused; a device, the window and other cards are not", () => {
-    const authorize = slotAuthorize(roster((id) => id === CARD));
+  it("a peer server's pick, answer or dismissal of the fetch card (and of any other card) is refused; a device and the window are not", () => {
+    const authorize = slotAuthorize(roster());
     for (const cmd of cards) {
       expect(authorize(tx, { slot: slot("srv-peer"), cmd, scope: "reply" })).toEqual({ reason: "origin", detail: USER_ONLY_CARD_DETAIL });
       expect(authorize(tx, { slot: slot("dev-phone"), cmd, scope: "reply" })).toBeNull();
       expect(authorize(tx, { slot: slot("desktop"), cmd, scope: "local" })).toBeNull();
     }
-    expect(authorize(tx, { slot: slot("srv-peer"), cmd: { type: "chat.choose", botId: BOT, messageId: OTHER, index: 0 }, scope: "reply" })).toBeNull();
+    expect(authorize(tx, { slot: slot("srv-peer"), cmd: { type: "chat.choose", botId: BOT, messageId: OTHER, index: 0 }, scope: "reply" })).toEqual({ reason: "origin", detail: USER_ONLY_CARD_DETAIL });
     expect(authorize(tx, { slot: slot("srv-peer"), cmd: { type: "chat.send", botId: BOT, text: "hi" }, scope: "reply" })).toBeNull();
-  });
-
-  it("a check that throws refuses (fail closed)", () => {
-    const authorize = slotAuthorize(roster(() => { throw new Error("core gone"); }));
-    for (const cmd of cards) expect(authorize(tx, { slot: slot("srv-peer"), cmd, scope: "reply" })).toMatchObject({ reason: "origin" });
-  });
-
-  it("Core.serverAskOpen is true only while the card waits", async () => {
-    const env = await setup();
-    const { sent } = env.askFetch("useronly-1", join(env.folder, "main.ts"));
-    const card = await env.openCard();
-    expect(env.state.core.serverAskOpen(card.id)).toBe(true);
-    expect(env.state.core.serverAskOpen("not-a-card")).toBe(false);
-    expect(env.maintainer().choose(card.id, 2)).toEqual({ accepted: true });
-    expect((await env.finished(sent)).reason).toBe("denied");
-    expect(env.state.core.serverAskOpen(card.id)).toBe(false);
   });
 });

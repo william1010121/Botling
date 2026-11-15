@@ -19,7 +19,7 @@
 import { describe, expect, it } from "vitest";
 import { canonicalJson, slotKey, type CmdBody, type Message, type Slot, type WireMessage } from "../../src/protocol";
 import { Directory, Forwarder, OwnerInbox, queueStats, type ForwardSession, type InboxSession } from "../../src/server/forward";
-import { SlotEngine, SlotRefusal, type ApplyFn } from "../../src/server/slots";
+import { SlotEngine, SlotRefusal, type ApplyFn, type ReceiveOptions } from "../../src/server/slots";
 import type { Db } from "../../src/server/store";
 import { entries, FakeLog, memoryStore, rng } from "./server-slots-harness";
 
@@ -85,7 +85,7 @@ async function run(seed: number, steps: number): Promise<{ items: number; restor
   };
   const newEngine = () => new SlotEngine({ submit: (c) => ownerStore.writer.submit(c), log, apply, authorize: () => null });
   let engine = newEngine();
-  const runtime = () => ({ receive: (body: CmdBody, options: object) => engine.receive(body, options), slots: engine, legacy: { receive: (body: CmdBody, options: object) => engine.receive(body, options) } });
+  const runtime = () => ({ receive: (body: CmdBody, options: ReceiveOptions) => engine.receive(body, options), slots: engine, legacy: { receive: (body: CmdBody, options: ReceiveOptions) => engine.receive(body, options) } });
   let inbox = new OwnerInbox({ self: B, runtime: runtime() as never, log: () => undefined });
 
   // Forwarder A.
@@ -115,7 +115,9 @@ async function run(seed: number, steps: number): Promise<{ items: number; restor
   const unrelay: Array<() => void> = [];
   const newForwarder = () => {
     for (const off of unrelay.splice(0)) off();
-    forwarder = new Forwarder({ self: A, submit: (c) => fwdStore.writer.submit(c), reader: () => fwdStore.db, directory, log: () => undefined, session: () => (peerOpen ? liveA : null) });
+    forwarder = new Forwarder({ self: A, submit: (c) => fwdStore.writer.submit(c), reader: () => fwdStore.db, directory, log: () => undefined, session: () => (peerOpen ? liveA : null),
+      // The stand-in commands (target ids like "x2") are not real wire commands: this test is about queue order, not frame checks.
+      encode: () => ({ ok: true }) });
     for (const origin of ORIGINS) unrelay.push(forwarder.attach(origin, (m) => feDown.get(origin)!.push(structuredClone(m))));
     if (peerOpen) forwarder.opened(liveA);
   };

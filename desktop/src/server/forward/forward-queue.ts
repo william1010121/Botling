@@ -12,7 +12,10 @@
 //     the retried slot and every row above it in the same queue, in
 //     one transaction (D58), each passed on as its own `cmd.retry`;
 //   - a `fwdcancels` entry goes on that slot's `cancel.noted` or `cmd.result` from the owner, or with its row on a
-//     `cmd.retry` (the front end re-sends both).
+//     `cmd.retry` (the front end re-sends both);
+//   - a row that can never be sent (`failRow`: it does not parse, its frame is too large, the encoder throws) moves into
+//     `forwarddead` with its reason in one transaction, and its cancel goes with it; the later rows of its queue then go
+//     out with a `floor` above the dead slot (`holesOf`, forwarder.ts), so the owner never waits for a slot nobody sends.
 import { queueKey, type CmdBody, type Slot } from "../../protocol";
 import type { Db } from "../store";
 
@@ -32,10 +35,28 @@ export interface ForwardCancel {
   at: number;
 }
 
+/** A row as read for sending: `envelope` is null when the stored text is not JSON (it can never be sent). */
+export interface QueuedRow extends Omit<ForwardRow, "envelope"> {
+  envelope: CmdBody | null;
+  /** The stored envelope text exactly as it is in the table (what `failRow` compares and keeps). */
+  raw: string;
+}
+
+/** One queue of what is waiting for an owner. `holes` are the dead slots (`forwarddead`) below a row still here. */
+export interface OwnerQueue {
+  key: string;
+  rows: QueuedRow[];
+  cancels: ForwardCancel[];
+  holes: number[];
+}
+
 /** What is waiting for one owner, each queue in slot order (rows and cancels of one queue together). */
 export interface OwnerWork {
-  queues: Array<{ key: string; rows: ForwardRow[]; cancels: ForwardCancel[] }>;
+  queues: OwnerQueue[];
 }
+
+/** The key prefix of a `ServerOrigin`'s unresolved submit in `meta` (`serverOrigin:<originEpoch>:<target>:<n>`). */
+export const SERVER_ORIGIN_META_PREFIX = "serverOrigin:";
 
 const slotOf = (row: Record<string, unknown>): Slot => ({
   origin: String(row.origin), originEpoch: String(row.originEpoch), target: String(row.target) as Slot["target"], n: Number(row.n),
@@ -63,24 +84,61 @@ export function commitCancel(tx: Db, slot: Slot, owner: string, now: number): bo
   return Number(result.changes) > 0;
 }
 
-/** Everything waiting for `owner`, each queue's rows and cancels in slot order. */
+/** Everything waiting for `owner`, each queue's rows and cancels in slot order. A row whose text is not JSON is still a row. */
 export function ownerWork(db: Db, owner: string): OwnerWork {
-  const queues = new Map<string, { key: string; rows: ForwardRow[]; cancels: ForwardCancel[] }>();
+  const queues = new Map<string, OwnerQueue>();
   const queueFor = (slot: Slot) => {
     const key = queueKey(slot);
     let queue = queues.get(key);
-    if (!queue) queues.set(key, (queue = { key, rows: [], cancels: [] }));
+    if (!queue) queues.set(key, (queue = { key, rows: [], cancels: [], holes: [] }));
     return queue;
   };
   for (const row of db.prepare("SELECT origin, originEpoch, target, n, owner, cmdHash, envelope, heldAt FROM forwardq WHERE owner = ? ORDER BY origin, originEpoch, target, n").all(owner)) {
     const slot = slotOf(row);
-    queueFor(slot).rows.push({ slot, owner, cmdHash: String(row.cmdHash), envelope: JSON.parse(String(row.envelope)) as CmdBody, heldAt: Number(row.heldAt) });
+    const raw = String(row.envelope);
+    let envelope: CmdBody | null = null;
+    try { envelope = JSON.parse(raw) as CmdBody; } catch { envelope = null; }
+    queueFor(slot).rows.push({ slot, owner, cmdHash: String(row.cmdHash), envelope, raw, heldAt: Number(row.heldAt) });
   }
   for (const row of db.prepare("SELECT origin, originEpoch, target, n, at FROM fwdcancels WHERE owner = ? ORDER BY origin, originEpoch, target, n").all(owner)) {
     const slot = slotOf(row);
     queueFor(slot).cancels.push({ slot, owner, at: Number(row.at) });
   }
+  // Dead slots only matter while a row of their queue sits above them (a later row can be stamped with an older floor).
+  for (const row of db.prepare(`SELECT d.origin, d.originEpoch, d.target, d.n FROM forwarddead d WHERE d.owner = ? AND EXISTS (
+    SELECT 1 FROM forwardq q WHERE q.origin = d.origin AND q.originEpoch = d.originEpoch AND q.target = d.target AND q.n > d.n)
+    ORDER BY d.origin, d.originEpoch, d.target, d.n`).all(owner)) {
+    queueFor(slotOf(row)).holes.push(Number(row.n));
+  }
   return { queues: [...queues.values()] };
+}
+
+/**
+ * Settles a row that can never be sent, in one transaction: it moves into `forwarddead` (raw envelope, why, when) and
+ * its cancel goes. Only when the row is still the one that was read (same owner, command hash and envelope text): a
+ * re-send that replaced it in the meantime is a new row, not this failure. Returns true when it moved.
+ */
+export function failRow(tx: Db, row: Pick<QueuedRow, "slot" | "owner" | "cmdHash" | "raw">, reason: string, now: number): boolean {
+  const { origin, originEpoch, target, n } = row.slot;
+  const found = tx.prepare("SELECT heldAt FROM forwardq WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ? AND owner = ? AND cmdHash = ? AND envelope = ?")
+    .get(origin, originEpoch, target, n, row.owner, row.cmdHash, row.raw);
+  if (!found) return false;
+  tx.prepare("INSERT OR REPLACE INTO forwarddead (origin, originEpoch, target, n, owner, cmdHash, envelope, heldAt, failedAt, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(origin, originEpoch, target, n, row.owner, row.cmdHash, row.raw, Number(found.heldAt), now, reason);
+  tx.prepare("DELETE FROM forwardq WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ?").run(origin, originEpoch, target, n);
+  tx.prepare("DELETE FROM fwdcancels WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ?").run(origin, originEpoch, target, n);
+  return true;
+}
+
+/** The slot numbers a `ServerOrigin` of this server still holds unresolved for one queue (its `meta` entries; a `cmd.retry` row is not in `forwardq`). */
+export function serverOriginPending(db: Db, slot: Pick<Slot, "origin" | "originEpoch" | "target">): number[] {
+  const prefix = `${SERVER_ORIGIN_META_PREFIX}${slot.originEpoch}:${slot.target}:`;
+  const out: number[] = [];
+  for (const row of db.prepare("SELECT key FROM meta WHERE substr(key, 1, ?) = ?").all(prefix.length, prefix)) {
+    const n = Number(String(row.key).slice(prefix.length));
+    if (Number.isSafeInteger(n) && n >= 1) out.push(n);
+  }
+  return out;
 }
 
 /** The owner's `cmd.result` for `slot`: its row and its cancel go. Returns what was there. */

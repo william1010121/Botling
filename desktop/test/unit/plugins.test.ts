@@ -118,6 +118,10 @@ describe("the plugin registry", () => {
     registry.rescan();
     expect(agentContributions(registry).stamp).toEqual(first);
     writeFileSync(join(folder, "claude", "skills", "a.md"), "two");
+    // The rescan notices a file by its date and size (registry.fingerprint); "one" and "two" are the same size and a fast disk
+    // can stamp both writes with one clock tick, so give the edit a later date, as a real edit minutes later has.
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(join(folder, "claude", "skills", "a.md"), later, later);
     registry.rescan();
     expect(agentContributions(registry).stamp).not.toEqual(first);
     registry.setEnabled("gh", false);
@@ -338,6 +342,7 @@ describe("the check's stable codes and nextStep (ADR-006 M3)", () => {
       "CCB_MISSING", "PATH_OUTSIDE_FOLDER", "PATH_MISSING", "CLAUDE_PLUGIN_JSON_MISSING", "STYLE_MISSING", "PERMISSION_UNKNOWN",
       "COMMAND_DUPLICATE", "SHORTCUT_UNREADABLE", "PANEL_NEEDS_WEB", "SETTING_ENV_INVALID", "SETTING_ENUM_NO_OPTIONS",
       "SETTING_DEFAULT_INVALID", "SETTING_TYPE_INVALID", "LINK_OUTSIDE_FOLDER", "ICON_TOO_LARGE", "ENGINE_TOO_LOW", "CONTRIBUTION_SKIPPED",
+      "NAME_DOTTED", "NAME_RESERVED",
     ]);
     for (const [code, step] of Object.entries(CHECK_NEXT_STEPS)) expect(step.length, code).toBeGreaterThan(20);
   });
