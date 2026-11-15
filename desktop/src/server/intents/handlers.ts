@@ -18,11 +18,15 @@
 //                      kept aside (`deferTurn`) and becomes `turn.queued` + a queued row in this transaction.
 //   chat.react / settings.set / bots.create: the core applies them now (bots.create's new bot gets its stream from
 //                      its first event).
+//   callin.ask / callin.cancel   (M5-02b, server/callin) a call-in from another server: one `callin` effect row (the
+//                      guest's turn runs after the commit, its answer goes back as `callin.reply`); cancel ends a queued
+//                      row or stops a started turn.
 //   bots.remove        the core's refusals first (main bot, Maintainer, unknown); a queued `remove` row, which the
 //                      worker runs after the commit (the core's removal is asynchronous; removing again is harmless).
 import { randomUUID } from "node:crypto";
 import { ContractError, type Command } from "../../contract";
 import { PluginRow, RowKey, type PluginGrant } from "../../protocol/table-rows";
+import { callInAsk, callInCancel, type CallInGuest } from "../callin";
 import { ownTableStream, putRow, readRowBody, RowBodyError } from "../replica/tables";
 import { readStream } from "../log";
 import { dbBasisReader, SlotRefusal, type ApplyContext, type BasisReader } from "../slots";
@@ -48,6 +52,8 @@ export interface IntentDeps {
   log?: (line: string) => void;
   /** M2 step 12: files a page uploaded, named by `chat.send.files` (none: such a command is refused). */
   uploads?: UploadedFiles | null;
+  /** M5-02b: the guest's side of call-ins from other servers (none: `callin.ask` is refused). */
+  callIns?: CallInGuest;
   /** Botling 3's server: a `plugin:` row's grants changed (after the commit), so the window's plugin list is redrawn. */
   pluginRowsChanged?: () => void;
 }
@@ -285,6 +291,11 @@ function applyNow(deps: IntentDeps, cmd: ApplyNowCommand) {
   return result === undefined ? {} : { result };
 }
 
+function callInDeps(deps: IntentDeps) {
+  if (!deps.callIns) throw new SlotRefusal("invalid", "call-ins are not ready on this server");
+  return { scope: deps.scope, worker: deps.worker, callIns: deps.callIns, now: deps.now };
+}
+
 export const INTENT_TYPES: ReadonlySet<string> = new Set([
   "chat.send", "turn.stop", "bots.remove",
   "chat.react", "chat.choose", "chat.answer", "chat.ignoreQuestion", "component.approve", "settings.set", "bots.create",
@@ -299,11 +310,11 @@ export function applyIntent(deps: IntentDeps, context: ApplyContext): { result?:
     case "turn.stop": return stop(deps, context, cmd);
     case "bots.remove": return remove(deps, context, cmd);
     case "plugin.grant": return grantPlugin(deps, context, cmd);
-    // M5-01: accepted on the wire, not run yet (the handlers are M5-02b / M5-02c).
-    case "callin.ask":
+    // M5-02b: the guest's side. `callin.reply` is the host's (M5-02c).
+    case "callin.ask": return callInAsk(callInDeps(deps), context, cmd);
+    case "callin.cancel": return callInCancel(callInDeps(deps), context, cmd);
     case "callin.reply":
-    case "callin.cancel":
-      throw new SlotRefusal("invalid", "call-ins arrive with M5-02");
+      throw new SlotRefusal("invalid", "call-in replies arrive with M5-02c");
     case "chat.react":
     case "chat.choose":
     case "chat.answer":

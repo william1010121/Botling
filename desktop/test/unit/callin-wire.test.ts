@@ -217,7 +217,7 @@ describe("M5-01: no device or window path can send them", () => {
     expect(authorize(tx, { slot: slot(PEER), cmd: send, scope: "reply" })).toBeNull();
   });
 
-  it("an accepted call-in reaches the intent handler, which refuses it until M5-02", () => {
+  it("an accepted call-in reaches the intent handler, which refuses it while no guest runner is bound (ask, cancel) and always for a reply until M5-02c", () => {
     for (const cmd of CALLINS) {
       let refusal: unknown;
       try {
@@ -226,7 +226,7 @@ describe("M5-01: no device or window path can send them", () => {
         refusal = error;
       }
       expect(refusal, cmd.type).toBeInstanceOf(SlotRefusal);
-      expect(refusal).toMatchObject({ reason: "invalid", detail: "call-ins arrive with M5-02" });
+      expect(refusal).toMatchObject({ reason: "invalid", detail: cmd.type === "callin.reply" ? "call-in replies arrive with M5-02c" : "call-ins are not ready on this server" });
     }
   });
 });
