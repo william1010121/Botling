@@ -11,7 +11,7 @@
 // marker inside a code fence or a $$ block, is plain text. Everything here is pure: it reads the lines
 // and returns positions or edits them in place; nothing depends on the DOM.
 
-import { isCellLine } from "../../../src/core/note-cells.ts";
+import { isCellLine, isBranchMarker } from "../../../src/core/note-cells.ts";
 // Reading the markers (parseBranches) is the app's one copy of the rules, desktop/src/core/note-cells.ts; the edits are here.
 import { parseBranches, cleanName, branchLine, routeLine, END_LINE, DEFAULT_FORK, IMPLICIT_ROUTE } from "../../../src/core/note-cells.ts";
 export { parseBranches, cleanName, branchLine, routeLine, END_LINE };
@@ -110,7 +110,7 @@ export function routeFacts(lines, route) {
   let content = 0;
   for (let i = route.start; i < route.end; i++) {
     const t = lines[i].trim();
-    if (!t || MARKER.test(lines[i]) || isCellLine(lines[i])) continue;
+    if (!t || isBranchMarker(lines[i]) || isCellLine(lines[i])) continue;
     content++;
     if (/^<show\b/i.test(t)) cards++;
     else if (/^[-*+]\s+\[ \]/.test(t)) todos++;
