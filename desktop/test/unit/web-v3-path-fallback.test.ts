@@ -77,9 +77,12 @@ interface ConnTrace {
   path: DialPath;
   open: boolean;
   closed: boolean;
+  socketClosed: boolean;
   welcomed: boolean;
   subscribed: boolean;
   sentCmds: string[];
+  dialOrder: number;
+  socketCloseOrder: number | null;
   closeOrder: number | null;
   cmdOrder: number | null;
 }
@@ -121,9 +124,10 @@ class DualPathServer {
   dialFor(path: DialPath): Dial {
     return (handlers: SocketHandlers): FeSocket => {
       const id = ++this.connSeq;
+      const dialOrder = ++this.eventSeq;
       const trace: ConnTrace = {
-        id, path, open: false, closed: false, welcomed: false, subscribed: false,
-        sentCmds: [], closeOrder: null, cmdOrder: null,
+        id, path, open: false, closed: false, socketClosed: false, welcomed: false, subscribed: false,
+        sentCmds: [], dialOrder, socketCloseOrder: null, closeOrder: null, cmdOrder: null,
       };
       this.traces.push(trace);
       const conn: { trace: ConnTrace; handlers: SocketHandlers; subs: Map<string, number>; pingTimer?: unknown; close(): void } = {
@@ -140,17 +144,24 @@ class DualPathServer {
           this.openConns.delete(conn);
         },
       };
+      const closeSocket = () => {
+        if (!trace.socketClosed) {
+          trace.socketClosed = true;
+          trace.socketCloseOrder = ++this.eventSeq;
+        }
+        conn.close();
+      };
 
       if ((path === "direct" && this.directBehavior === "refuse") || (path === "relay" && this.relayRefuse)) {
         setImmediate(() => {
           conn.close();
           handlers.close("refused");
         });
-        return { send() { /* refused */ }, close: () => conn.close() };
+        return { send() { /* refused */ }, close: closeSocket };
       }
 
       if (path === "direct" && this.directBehavior === "hang-before-open") {
-        return { send() { /* hanging */ }, close: () => conn.close() };
+        return { send() { /* hanging */ }, close: closeSocket };
       }
 
       this.openConns.add(conn);
@@ -167,7 +178,7 @@ class DualPathServer {
             void this.onFrame(conn, frame);
           });
         },
-        close: () => conn.close(),
+        close: closeSocket,
       };
     };
   }
@@ -374,6 +385,8 @@ describe("web-v3 path fallback and 60 s re-probe (M4-17)", () => {
     expect(server.maxActiveSubscribed).toBe(1);
     const relaySess = server.traces.find((t) => t.path === "relay" && t.subscribed)!;
     const directSess = server.traces.find((t) => t.path === "direct" && t.subscribed)!;
+    expect(relaySess.socketClosed).toBe(true);
+    expect(relaySess.socketCloseOrder!).toBeLessThan(directSess.dialOrder);
     expect(relaySess.closed).toBe(true);
     expect(directSess.welcomed).toBe(true);
     expect(relaySess.closeOrder!).toBeLessThan(directSess.id === relaySess.id ? Infinity : Number.MAX_SAFE_INTEGER);
@@ -516,10 +529,10 @@ describe("web-v3 path fallback and 60 s re-probe (M4-17)", () => {
     expect(probes).toEqual([]);
     expect(fb.path).toBe("relay");
 
-    // Show the page again while direct is back: re-probe resumes and switches.
+    // Show the page again while direct is back: nextProbeAt is already due, so re-probe runs immediately and switches.
     server.directBehavior = "open";
     visibility.setHidden(false);
-    await advanceWithFlush(clock, REPROBE_INTERVAL_MS);
+    await flush();
     expect(probes).toEqual(["welcomed"]);
     expect(fb.path).toBe("direct");
 
@@ -528,6 +541,57 @@ describe("web-v3 path fallback and 60 s re-probe (M4-17)", () => {
     opened.length = 0;
     expect(clock.pending).toBe(0);
     expect(visibility.listenerCount()).toBe(0);
+  });
+
+  it("repeated background/foreground switches within 60 s still probe by 60 s", async () => {
+    const clock = new CountingClock();
+    const server = new DualPathServer(clock);
+    server.directBehavior = "refuse";
+    const visibility = new FakeVisibility();
+    const { fb, probes } = await openTestLink(server, clock, { visibility });
+    await flush();
+    expect(fb.path).toBe("relay");
+
+    // Direct comes back, while the user repeatedly backgrounds and foregrounds within 60 s.
+    server.directBehavior = "open";
+    await advanceWithFlush(clock, 15_000);
+    visibility.setHidden(true);
+    await advanceWithFlush(clock, 10_000);
+    visibility.setHidden(false);
+    expect(probes).toEqual([]);
+
+    await advanceWithFlush(clock, 15_000);
+    visibility.setHidden(true);
+    await advanceWithFlush(clock, 10_000);
+    visibility.setHidden(false);
+    expect(probes).toEqual([]);
+
+    // Remaining 10 s reaches the original 60 s deadline: probe must run without resetting to another 60 s.
+    await advanceWithFlush(clock, 10_000);
+    expect(probes).toEqual(["welcomed"]);
+    expect(fb.path).toBe("direct");
+    expect(fb.link.state).toBe("live");
+  });
+
+  it("returning to foreground after nextProbeAt is overdue probes immediately", async () => {
+    const clock = new CountingClock();
+    const server = new DualPathServer(clock);
+    server.directBehavior = "refuse";
+    const visibility = new FakeVisibility();
+    const { fb, probes } = await openTestLink(server, clock, { visibility });
+    await flush();
+    expect(fb.path).toBe("relay");
+
+    await advanceWithFlush(clock, 20_000);
+    visibility.setHidden(true);
+    await advanceWithFlush(clock, 50_000);
+    expect(probes).toEqual([]);
+
+    server.directBehavior = "open";
+    visibility.setHidden(false);
+    await flush();
+    expect(probes).toEqual(["welcomed"]);
+    expect(fb.path).toBe("direct");
   });
 
   it("close while a 2 s fallback or active probe is pending leaves zero timers", async () => {

@@ -129,7 +129,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
   let attachedOnRelay = false;
   let probeTimer: unknown = undefined;
   let activeProbe: { cancel(): void } | null = null;
-  let lastProbeAt = 0;
+  let nextProbeAt: number | null = null;
   let link!: FeLink;
 
   const setPath = (next: DialPath) => {
@@ -150,18 +150,23 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
 
   const isHidden = () => options.visibility?.hidden === true;
 
-  const scheduleProbe = () => {
+  const scheduleProbe = (reset = false) => {
     clearProbeTimer();
-    if (stopped || forced === "relay" || !relayDial || !attachedOnRelay || currentPath !== "relay" || isHidden()) return;
+    if (stopped || forced === "relay" || !relayDial || !attachedOnRelay || currentPath !== "relay") {
+      nextProbeAt = null;
+      return;
+    }
+    if (reset || nextProbeAt === null) nextProbeAt = clock.now() + reprobeMs;
+    if (isHidden()) return;
+    const delay = Math.max(0, nextProbeAt - clock.now());
     probeTimer = clock.setTimeout(() => {
       probeTimer = undefined;
       runProbe();
-    }, reprobeMs);
+    }, delay);
   };
 
   const runProbe = () => {
     if (stopped || forced === "relay" || !relayDial || !attachedOnRelay || currentPath !== "relay" || isHidden() || activeProbe) return;
-    lastProbeAt = clock.now();
     let cancelled = false;
     let welcomed = false;
     let openedEarly = false;
@@ -178,7 +183,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
       cleanup();
       try { socket?.close(); } catch { /* already gone */ }
       options.onProbe?.(why);
-      scheduleProbe();
+      scheduleProbe(true);
     };
     const sendProbeHello = () => {
       if (cancelled || !socket) return;
@@ -218,6 +223,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
             options.onProbe?.("welcomed");
             // D18: close the relay session first (inside replaceSocket) before dialing direct fresh.
             attachedOnRelay = false;
+            nextProbeAt = null;
             link.replaceSocket();
           }
         },
@@ -235,7 +241,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
     if (isHidden()) {
       cancelProbe();
     } else if (attachedOnRelay && currentPath === "relay" && forced !== "relay") {
-      if (lastProbeAt > 0 && clock.now() - lastProbeAt >= reprobeMs) runProbe();
+      if (nextProbeAt !== null && clock.now() >= nextProbeAt) runProbe();
       else scheduleProbe();
     }
   };
@@ -244,6 +250,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
   const dial: Dial = (handlers) => {
     cancelProbe();
     attachedOnRelay = false;
+    nextProbeAt = null;
 
     if (forced === "relay" && relayDial) {
       setPath("relay");
@@ -296,13 +303,14 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
             if (!welcomed && isWelcomeFrame(f)) {
               welcomed = true;
               attachedOnRelay = true;
-              scheduleProbe();
+              scheduleProbe(true);
             }
             handlers.frame(f);
           },
           close(detail) {
             if (cancelled || phase !== "relay") return;
             attachedOnRelay = false;
+            nextProbeAt = null;
             cancelProbe();
             handlers.close(detail);
           },
@@ -313,6 +321,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
       } catch (error) {
         if (!cancelled && phase === "relay") {
           attachedOnRelay = false;
+          nextProbeAt = null;
           cancelProbe();
           handlers.close(String(error));
         }
@@ -376,6 +385,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
         if (cancelled) return;
         cancelled = true;
         attachedOnRelay = false;
+        nextProbeAt = null;
         clearDirectTimer();
         cancelProbe();
         try { directSocket?.close(); } catch { /* ignore */ }
@@ -404,6 +414,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
     async close() {
       stopped = true;
       attachedOnRelay = false;
+      nextProbeAt = null;
       cancelProbe();
       options.visibility?.removeEventListener("visibilitychange", onVisibility);
       await link.close();
