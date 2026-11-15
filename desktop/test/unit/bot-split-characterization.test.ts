@@ -377,7 +377,6 @@ describe("orders that must not change", () => {
   it("next() does nothing while a turn, the tidy, a switch or a drain is under way, and sends the waiting message once all are over", async () => {
     const r = rig();
     r.b.send("first"); await r.sent(0, 1); r.reply(0, "Hi"); await flush();
-    const turnLike = () => ({ id: "t-x", messageId: "m-x", userId: null, origin: "user", words: "waiting", open: true, sent: false, head: null, ended: [], about: [], peer: new Set(), told: 0, steps: [], resolve() {}, done: Promise.resolve("done"), reply: { text: "" } });
     const blockers: [string, () => void, () => void][] = [
       ["a turn", () => { r.peek.turn = { origin: "user", open: true }; }, () => { r.peek.turn = null; }],
       ["the tidy", () => { r.peek.tidying = true; }, () => { r.peek.tidying = false; }],
@@ -385,7 +384,8 @@ describe("orders that must not change", () => {
       ["a drain", () => { r.peek.draining = { head: r.head(0), resolve() {}, promise: Promise.resolve() }; }, () => { r.peek.draining = null; }],
     ];
     for (const [name, on, off] of blockers) {
-      const waiting = turnLike();
+      // A real turn made by the bot (not a hand-made object: next() runs begin() on it when a blocker is wrongly ignored).
+      const waiting = r.peek.newTurn("app", "waiting", null);
       r.peek.queue.push(waiting);
       on(); r.peek.next(); await flush();
       expect(r.peek.queue.length, `queue length while ${name}`).toBe(1);
