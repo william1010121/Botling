@@ -196,6 +196,24 @@ describe("peer-answer-guard: a peer server cannot answer or hide cards on a real
     await until(async () => (await messages()).some((m) => m.role === "bot" && /Allowed: ran echo from-window/.test(String(m.text))), { timeout: 30_000, what: "the second tool ran" });
   }, 120_000);
 
+  it("an open question (a card in the waiting list) is not a plain item: B cannot answer, dismiss or ignore it; the window answers it", async () => {
+    expect(await fromWindow({ type: "chat.send", botId: botA, text: "/choices" })).toMatchObject({ kind: "applied" });
+    const question = await until(async () => (await messages()).find((m) => m.role === "bot" && m.choices?.length && !m.approval && m.chosen == null && m.answer == null) ?? null, { timeout: 30_000, what: "the open question" });
+    const item = await until(async () => (await waiting()).find((candidate) => candidate.messageId === question.id) ?? null, { timeout: 30_000, what: "the question in the waiting list" });
+    expect(item.botId).toBe(botA);
+
+    expect(await fromB({ type: "waiting.ignore", botId: botA, text: item.text })).toMatchObject({ kind: "refused", reason: "scope" });
+    expect(await fromB({ type: "chat.choose", botId: botA, messageId: question.id, index: 0 })).toMatchObject({ kind: "refused", reason: "origin" });
+    expect(await fromB({ type: "chat.answer", botId: botA, messageId: question.id, text: "Fast" })).toMatchObject({ kind: "refused", reason: "origin" });
+    expect(await fromB({ type: "chat.ignoreQuestion", botId: botA, messageId: question.id })).toMatchObject({ kind: "refused", reason: "origin" });
+    expect(ignoredKeys()).toEqual([]);
+    expect((await waiting()).some((candidate) => candidate.messageId === question.id)).toBe(true);
+    expect((await messages()).find((m) => m.id === question.id).chosen ?? null).toBeNull();
+
+    expect(await fromWindow({ type: "chat.choose", botId: botA, messageId: question.id, index: 0 })).toMatchObject({ kind: "applied" });
+    await until(async () => !(await waiting()).some((candidate) => candidate.messageId === question.id), { timeout: 30_000, what: "the answered question left the list" });
+  }, 120_000);
+
   it("waiting.ignore from B: a plain item of the bot is set aside, a text not on the list is refused and leaves no key", async () => {
     appendFileSync(join(folder, ".bot", "memory.md"), "\n## Waiting on you\n- Which domain?\n- Publish now?\n");
     await until(async () => (await waiting()).some((item) => item.botId === botA && item.text === "Which domain?" && item.messageId === null), { timeout: 30_000, what: "plain items on the list" });
