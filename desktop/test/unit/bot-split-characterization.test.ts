@@ -426,18 +426,22 @@ describe("orders that must not change", () => {
     expect(r.b.snapshot().messages.some((m: any) => String(m.text).includes("waiting for active work"))).toBe(false);
   });
 
-  it("routeTurn: the settings hold comes before begin: a line sent while another waits for the head's own work goes after it, and nothing begins", async () => {
+  it("routeTurn: the settings hold comes before begin: a line sent once the work has ended, before the hold was released, goes after the held one", async () => {
     const r = rig("claude");
     r.b.send("first"); await r.sent(0, 1); r.reply(0, "Hi"); await flush();
-    r.peek.records.push({ id: "reply-own-task", role: "bot", text: "", date: toSwiftDate(), state: "done", engine: "claude", backgroundTasks: [{ id: "own-task", kind: "agent", title: "worker", status: "running", startedAt: toSwiftDate() }] });
+    const own = { id: "own-task", kind: "agent", title: "worker", status: "running", startedAt: toSwiftDate() };
+    r.peek.records.push({ id: "reply-own-task", role: "bot", text: "", date: toSwiftDate(), state: "done", engine: "claude", backgroundTasks: [own] });
     r.b.configure({ model: "new-model" });
-    r.b.send("held"); await flush();
+    const held = r.b.send("held"); await flush();
     expect(r.peek.settingsHold != null).toBe(true);
     expect(r.peek.turn == null).toBe(true);
-    r.b.send("held too"); await flush();
-    expect(r.peek.turn == null, "no turn began for the second line").toBe(true);
-    expect(r.peek.queue.length, "both lines wait").toBe(2);
-    expect(r.head(0).sent.length, "nothing went to the head").toBe(1);
+    // The work ends without the bot being told (the hold is released by its timer or by the next message): the window in which the
+    // order of the tests in routeTurn shows, as `ownWorkRunning` no longer keeps the second line out of `begin`.
+    own.status = "completed";
+    const second = r.b.send("held too"); await flush();
+    expect(r.peek.turn?.id === held.turnId, "the held line begins first, not the one sent later").toBe(true);
+    expect(r.peek.queue.length, "the later line waits").toBe(1);
+    expect(r.peek.queue[0].id === second.turnId, "the later line is the one waiting").toBe(true);
   });
 
   it("routeTurn: with nothing under way a turn begins at once, even with a model change pending", async () => {
