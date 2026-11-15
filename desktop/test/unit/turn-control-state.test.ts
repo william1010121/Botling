@@ -115,6 +115,8 @@ function summary(e: any): string {
   return bits.join(" ");
 }
 
+
+describe("TurnControl state and cross-bot access", () => {
   it("the 15 fields exist once: none is an own property of the Bot, each accessor is the TurnControl's value", () => {
     const A = rig("claude"); const b = A.peek; const tc = b.turns;
     for (const f of ["turn", "queue", "finished", "draining", "ignoreResults", "paused", "reportAsked", "pendingEnded", "ending", "contextSent", "steered", "claudeMidTurn", "inserting", "deferred", "unbegun"]) {
