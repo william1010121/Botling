@@ -28,7 +28,7 @@ import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import { commandEnded, type StreamItem } from "./stream";
 import type { WaitingOn } from "../worker-core/events";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
-import { WORKER_NOTIFY_RULE } from "../prompts/delegation";
+import { WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, WORKER_REPORT_BLOCK_RULE } from "../prompts/delegation";
 import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "../api-retry";
 import { EFFORTS_BY_ENGINE, type EffortLevel } from "../../contract/efforts";
 import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
@@ -74,8 +74,10 @@ export const CLAUDE_WORKER_POLICY = [
   "You are an app-managed worker in Botling, started by a coordinator bot. Do the task in your instructions yourself: read, research, edit, build and run meaningful tests as needed, within the user's existing permissions.",
   "You cannot start subagents or workers, and you do not talk to the user: the app hands your final message of each run to the coordinator as your report.",
   "End every run with a concise report: what you did, the evidence (commands and their results, files changed), and anything left, blocked or needing a decision. Name files and folders by their full absolute paths, so the coordinator can link them.",
+  WORKER_REPORT_BLOCK_RULE,
   "Messages that arrive later come from the coordinator and continue the same task.",
   WORKER_NOTIFY_RULE,
+  WORKER_LOOKUP_RULE,
 ].join("\n");
 
 /** A `.claude/agents/<type>.md` definition, as far as a worker can reproduce it. */

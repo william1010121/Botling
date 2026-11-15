@@ -11,7 +11,7 @@
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
 import { CODEX_NOTE } from "./prompts-codex-text";
-import { DELEGATION_CAPS, delegationPolicy, VERBATIM_HANDOFF_RULE, WORKER_NOTIFY_RULE, workerNoteRule } from "./prompts/delegation";
+import { DELEGATION_CAPS, delegationPolicy, FILES_TOUCHED_HANDOFF_RULE, VERBATIM_HANDOFF_RULE, WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, WORKER_REPORT_BLOCK_RULE, workerNoteRule } from "./prompts/delegation";
 export { VERBATIM_HANDOFF_RULE } from "./prompts/delegation";
 import type { BotProfile } from "./store/workspace";
 import { progressFile } from "./sub-bots";
@@ -139,7 +139,7 @@ export const workerSubBotRule = [
 export const NATIVE_SUBAGENT_LINE = "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.";
 /** What a Claude bot is told instead when its subagents are app-managed workers (the default; claude-workers.ts). */
 export const CLAUDE_WORKERS_RULE = delegationPolicy(DELEGATION_CAPS.claude, { engine: "claude", form: "line" });
-const CLAUDE_MAIN_WORKERS_LINE = "- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id. A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.";
+const CLAUDE_MAIN_WORKERS_LINE = `- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id. A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. ${FILES_TOUCHED_HANDOFF_RULE}`;
 const NATIVE_SUB_BOT_AGENTS = "you may start your own subagents with the Agent tool.";
 const WORKERS_SUB_BOT_AGENTS = "you may start your own workers with app_handoff.";
 // A bot made with delegation "onRequest" (a plugin's `bots.create`, e.g. a reading coach the user works with directly): these
@@ -280,6 +280,7 @@ export function codexWorkerInstructions(profile: PromptInput["profile"], languag
     "- Execute your assigned scope yourself: inspect source, research, edit, build, and run meaningful tests as needed. Do not delegate to native subagents, app_handoff, app_send_message, another bot, Claude, a project/team inbox, or handoff/plugin/component tags. You are the worker, so coordinator-only rules about handing work off, ending after acceptance, or waiting for another worker do not apply to you.",
     "- Preserve the assigned authorization phase. For research/design-only work, deliver findings and stop: do not implement source changes in any files, including new or non-conflicting files and isolated worktrees. File-owner release is only a conflict/ownership fact, not implementation authorization; neither it nor research completion authorizes a next phase. Require explicit user authorization relayed by the coordinator before implementation. Writing an assigned research artifact is permitted. If the payload's implementation goals conflict with a research-only boundary, obey the research-only boundary and report the conflict.",
     `- ${WORKER_NOTIFY_RULE}`,
+    `- ${WORKER_LOOKUP_RULE}`,
     "- Complete the task before returning your final report. Do not end with a promise to continue: the app treats your final report as this run's completion. Report a concrete blocker when you cannot continue, with the exact missing permission, information, or failed operation. Do not claim success without execution evidence.",
     "- Validation default: run only the relevant, meaningful behavior/regression checks for your assigned change; reuse sufficient existing evidence. Do not run a full suite or package build during development. Full validation and packaging belong to one separately authorized cumulative integration pass after changes are combined. Expand or repeat checks only for integration conflicts, new failures, or specific unresolved concerns, and report the reason. Prefer observable behavior tests; avoid adding redundant implementation-detail, hash, or fixture assertions unless they protect a real contract. Preserve essential permission, safety, and authorization checks. Report the checks actually run, results, reused evidence, and remaining limitations; never imply unrun checks passed. This default does not expand your assigned scope or authorization phase.",
     "- Own only the assigned files and scope. Other workers may be editing simultaneously: re-read before editing, make targeted changes, and preserve their work. Do not reserve routine validation for the coordinator; perform the checks needed to support your result yourself.",
@@ -288,6 +289,7 @@ export function codexWorkerInstructions(profile: PromptInput["profile"], languag
     codexLocalReportRule(paths.artifacts),
     "- Preserve the user's authorization and project tool restrictions. A denied tool call is not permission to bypass the restriction; report what is needed to continue.",
     "- Final report to the coordinator: keep research-only scope, test commands, and preview-tool details in this internal handback, separate from user report prose. User reports still state material uncertainty and failed checks in plain language. State completed or failed, what changed or was found, source locations or artifact paths (files and folders as full absolute paths, so the coordinator can link them), checks actually run with their results, and any remaining blocker. Distinguish observed evidence from inference. On a follow-up in this same session, retain the prior context and execute only the requested additional scope.",
+    `- ${WORKER_REPORT_BLOCK_RULE}`,
   ].join("\n");
 }
 
