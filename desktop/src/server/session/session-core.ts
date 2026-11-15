@@ -34,17 +34,16 @@
 //
 // botlingd pings after 15 s of its own silence and drops a session it has not heard from for 45 s (§5.2; fe-link does
 // the same the other way).
-import { ContractError, type Command, type CommandType } from "../../contract";
-import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type VapidKeyId, type WelcomeServer, type WireMessage, queueKey, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, Slot, type StreamId } from "../../protocol";
+import type { Command, CommandType } from "../../contract";
+import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type VapidKeyId, type WelcomeServer, type WireMessage, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, Slot, type StreamId } from "../../protocol";
 import { DEAD_AFTER_MS, PING_AFTER_MS } from "../../session";
 import { routeOf } from "../intents";
-import { cancelAnswer } from "../slots";
 import { readStream, type LogReader } from "../log";
-import type { LocalPeerReadSink } from "../content/local-peer-read";
 import type { LiveSubscription } from "../live";
 import { peerAddresses } from "../peer/config";
 import { LiveGate } from "./live-gate";
 import { ownTableFrame, type SessionHost, type SessionOptions } from "./session-types";
+import { errorText, SessionCommands } from "./session-commands";
 
 /**
  * Commands a front end may send as `req` (answered at once, no slot): every read command, and the ones the 2.x renderer
@@ -65,6 +64,7 @@ export function servedAsReq(type: CommandType): boolean {
 // Moved to session-types.ts (M7-S22); every name stays exported from here.
 export type { PhoneHost, ContentHandler, AdminHost, SessionHost, SessionRosterView, SessionRoster, SessionUploads, SessionPassThrough, SessionForward, SessionTables, SessionOptions } from "./session-types";
 export { ownTableFrame } from "./session-types";
+export { errorText } from "./session-commands";
 
 /** §5.2: `ping` after 15 s of silence, dead after 45 s heard nothing (the session layer's constants, step 3). */
 export { DEAD_AFTER_MS, PING_AFTER_MS };
@@ -86,9 +86,6 @@ export abstract class SessionCore {
   private readonly closedHandlers: Array<() => void> = [];
   /** Serializes `sub`s, so a slow one (a rewind, a new bot stream) never lets a later frame on the same stream pass it. */
   private subChain: Promise<void> = Promise.resolve();
-  /** One promise chain per command queue (D58, `queueCmd`). */
-  private readonly cmdChains = new Map<string, Promise<void>>();
-  private adminEvents: (() => void) | null = null;
   /** M3 step 7: feeds of peers' tables this front end subscribed to, and its listener of peer states. */
   private readonly tableFeeds = new Map<string, { close(): void }>();
   /** M5-14e: the `plugin:` rows of this server's own table, by stream (`srv:<self>`), served beside the log `sub`. */
@@ -100,10 +97,8 @@ export abstract class SessionCore {
   private relayOff: (() => void) | null = null;
   /** Settles when the session closes (a cancel waiting on a running handler stops waiting for this session). */
   private readonly closedSignal: Promise<void>;
-  /** M2 step 12: this session's upload frames, handled one after another in the order they came (D58). */
-  private uploadChain: Promise<void> = Promise.resolve();
-  /** Who this session's uploads belong to (a session-unique key). */
-  private readonly uploadOwner = `s-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+  /** The command half of this session (cmd, cancel, req, uploads, content, admin): session-commands.ts. */
+  private readonly commands: SessionCommands;
 
   /** The session kind frames are encoded and decoded for (local socket or not). */
   protected abstract readonly kind: SessionKind;
@@ -111,6 +106,15 @@ export abstract class SessionCore {
   protected constructor(protected readonly host: SessionHost, protected readonly options: SessionOptions = {}) {
     this.gate = new LiveGate((frame) => this.send(frame, streamOf(frame)), { intervalMs: options.liveIntervalMs ?? 100, ...(options.liveClock ? { clock: options.liveClock } : {}) });
     this.closedSignal = new Promise<void>((resolve) => this.closedHandlers.push(resolve));
+    this.commands = new SessionCommands({
+      host, options, self: this,
+      kind: () => this.kind, state: () => this.state, deviceId: () => this.deviceId, closedSignal: () => this.closedSignal,
+      send: (message, what) => this.send(message, what), sendRes: (message, command) => this.sendRes(message, command),
+      bye: (reason, detail, slot) => this.bye(reason, detail, slot), unsettled: (detail, slot) => this.unsettled(detail, slot),
+      cmdScope: (body) => this.cmdScope(body), reqRefusal: (cmd) => this.reqRefusal(cmd),
+      uploadRefusal: () => this.uploadRefusal(), cancelRefusal: (message) => this.cancelRefusal(message),
+      writeChunk: (message) => this.writeChunk?.(message) ?? false,
+    });
   }
 
   get device(): string | null { return this.deviceId; }
@@ -206,8 +210,7 @@ export abstract class SessionCore {
   close(): void {
     if (this.state === "closed") return;
     this.state = "closed";
-    this.adminEvents?.();
-    this.adminEvents = null;
+    this.commands.adminClosed();
     this.peerEvents?.();
     this.peerEvents = null;
     this.relayOff?.();
@@ -229,8 +232,7 @@ export abstract class SessionCore {
       this.host.admin?.sessionClosed?.(this);
     }
     this.closing();
-    const uploads = this.host.uploads;
-    if (uploads) void this.uploadChain.then(() => uploads.ended(this.uploadOwner)).catch(() => undefined);
+    this.commands.uploadsEnded();
     this.destroyTransport();
     for (const handler of this.closedHandlers.splice(0)) handler();
   }
@@ -476,261 +478,27 @@ export abstract class SessionCore {
   // ---------------------------------------------------------------------------------------------
   // Commands and requests
 
-  /**
-   * D58: one session is a FIFO stream, and its commands for one queue (origin, originEpoch, target) reach the slot
-   * engine in that order, each after the one before it settled. Without this a later copy could be checked before its
-   * predecessor committed: a legacy copy is then dropped and an intent copy held, and nothing in the session re-sends
-   * it. Different queues do not wait for each other (a slow legacy handler holds up only its own queue).
-   */
-  private queueCmd(body: CmdBody): void {
-    this.chain(body.slot, () => this.cmd(body), `cmd ${body.cmd.type} (slot ${body.slot.n})`);
-  }
-
-  /** Runs `work` after everything queued before it for the same (origin, originEpoch, target); unsettled ends the session. */
-  private chain(slot: CmdBody["slot"], work: () => Promise<void>, what: string): void {
-    const key = queueKey(slot);
-    const run = (this.cmdChains.get(key) ?? Promise.resolve())
-      .then(work)
-      .catch((error) => {
-        this.host.log(`session: ${what} not settled: ${errorText(error)}`);
-        this.unsettled(`${what} was not settled: ${errorText(error)}`, slot);
-      });
-    this.cmdChains.set(key, run);
-    void run.then(() => { if (this.cmdChains.get(key) === run) this.cmdChains.delete(key); });
-  }
-
-  /** The peer that owns a target (M3 step 9), or null: this server decides it (always on a lone server). */
-  private peerOwner(target: string): string | null {
-    return this.host.forward?.ownerOf(target) ?? null;
-  }
-
-  /**
-   * A cancel. For a target a peer owns it is committed into `fwdcancels` after the queue's earlier commands, so the
-   * forwarder sends it after its row (D59); the owner's answer comes back through the relay. Otherwise as M2.
-   */
-  private queueCancel(message: MessageOf<"cancel">): void {
-    if (this.cancelRefusal(message)) return;
-    const forward = this.host.forward;
-    let owner: string | null;
-    try { owner = this.peerOwner(message.slot.target); } catch (error) { this.unsettled(`cancel of slot ${message.slot.n}: no owner (${errorText(error)})`, message.slot); return; }
-    if (!forward || owner === null) { void this.cancel(message, true); return; }
-    this.chain(message.slot, async () => { if (this.state !== "closed") await forward.cancel(message.slot, owner); }, `cancel of slot ${message.slot.n}`);
-  }
-
-  protected async cmd(body: CmdBody): Promise<void> {
-    if (this.state === "closed") return;
-    const stated = this.cmdScope(body);
-    if (!("scope" in stated)) { this.bye(stated.reason, stated.detail); return; }
-    const { scope } = stated;
-    const reply = (message: Message) => { this.send(message, body.cmd.type); };
-    const route = routeOf(body.cmd.type).kind;
-    // M2 step 12 (v1 §9A.9): a message with uploaded files is `held` until their bytes are in, then applied once. The
-    // wait keeps this queue's later slots behind it (they cannot apply before it anyway); other queues and the upload
-    // frames themselves go on. A session that ends meanwhile settles nothing: the front end re-sends the command and
-    // resumes the upload on its next session.
-    if (!(await this.awaitUploads(body))) return;
-    try {
-      // M3 step 9: a target a peer owns is committed into the forward queue, then `held` (never before the commit).
-      const owner = this.peerOwner(body.slot.target);
-      if (owner !== null) {
-        await this.host.forward!.commit({ ...body, scope }, owner);
-        if (this.state === "open") this.send({ t: "held", slot: body.slot, at: this.host.serverId } as MessageOf<"held">, body.cmd.type);
-        return;
-      }
-      const status = route === "intent" || route === "legacy"
-        ? await this.host.runtime.receive(body, { scope, reply })
-        // A read or app command sent as a command: the core's own handler, under a slot like any legacy command.
-        : await this.host.runtime.legacy.receive(body, { scope, reply });
-      // D58: the copy waits on a slot this session did not send before it, and the owner kept no copy: the session
-      // broke FIFO. End it; the front end re-attaches and re-sends its outbox in slot order.
-      if (status.status === "dropped") this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) came before an earlier slot of its queue (D58)`, body.slot);
-    } catch (error) {
-      // Nothing was stored (the store failed, or the handler threw before its result was kept). Going on would let the
-      // next slot of this queue be checked without its predecessor (D58): end the session; the outbox re-sends both.
-      this.host.log(`session: cmd ${body.cmd.type} (slot ${body.slot.n}) not settled: ${errorText(error)}`);
-      this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) was not settled: ${errorText(error)}`, body.slot);
-    }
-  }
-
-  /** False when the session ended while the command waited for its files (nothing settled; the outbox re-sends). */
-  private async awaitUploads(body: CmdBody): Promise<boolean> {
-    const files = body.cmd.type === "chat.send" ? body.cmd.files ?? [] : [];
-    const uploads = this.host.uploads;
-    if (!files.length || !uploads) return true;
-    const ids = files.map((file) => file.id);
-    if (ids.every((id) => uploads.complete(id))) return true;
-    // A copy of a slot already decided gets its stored outcome without waiting (its files may never come again).
-    let next = 1;
-    try { next = this.host.nextFor(body.slot.origin, body.slot.originEpoch)[body.slot.target] ?? 1; } catch { next = 1; }
-    if (body.slot.n < next) return true;
-    if (this.peerOwner(body.slot.target) !== null) return true;
-    this.send({ t: "held", slot: body.slot, at: this.host.serverId } as MessageOf<"held">, body.cmd.type);
-    const outcome = await uploads.whenComplete(ids, this.closedSignal, this.options.uploadIdleMs);
-    return outcome !== "closed" && this.state === "open";
-  }
-
-  /** Upload frames in arrival order; a frame the store cannot take is answered `content.gone{offline}`. */
-  private queueUpload(message: MessageOf<"content.put"> | MessageOf<"content.chunk">): void {
-    this.uploadChain = this.uploadChain.then(() => this.upload(message)).catch((error) => this.host.log(`session: ${message.t} failed: ${errorText(error)}`));
-  }
-
-  private async upload(message: MessageOf<"content.put"> | MessageOf<"content.chunk">): Promise<void> {
-    if (this.state !== "open") return;
-    const uploads = this.host.uploads;
-    const refused = this.uploadRefusal();
-    if (!uploads || refused) {
-      if (message.t === "content.put") this.send({ t: "content.gone", req: message.req, id: message.id, reason: "denied" }, "content.put");
-      if (refused) this.host.log(`session: upload refused (${refused})`);
-      return;
-    }
-    let replies: Message[];
-    try {
-      replies = message.t === "content.put" ? await uploads.put(this.uploadOwner, message) : await uploads.chunk(this.uploadOwner, message);
-    } catch (error) {
-      this.host.log(`session: ${message.t} not kept: ${errorText(error)}`);
-      if (message.t === "content.put") replies = [{ t: "content.gone", req: message.req, id: message.id, reason: "offline" }];
-      else { replies = []; this.bye("unsettled", `an upload chunk could not be written: ${errorText(error)}`); }
-    }
-    for (const reply of replies) this.send(reply, message.t);
-  }
+  // The command half lives in session-commands.ts (M7-S91); one-line delegates keep these names here.
+  private queueCmd(body: CmdBody): void { this.commands.queueCmd(body); }
+  protected cmd(body: CmdBody): Promise<void> { return this.commands.cmd(body); }
+  private queueCancel(message: MessageOf<"cancel">): void { this.commands.queueCancel(message); }
+  private queueUpload(message: MessageOf<"content.put"> | MessageOf<"content.chunk">): void { this.commands.queueUpload(message); }
+  private admin(message: MessageOf<"admin">): Promise<void> { return this.commands.admin(message); }
+  private req(message: MessageOf<"req">): Promise<void> { return this.commands.req(message); }
+  private peerRead(message: MessageOf<"content.get"> | MessageOf<"content.credit"> | MessageOf<"content.cancel">): void { this.commands.peerRead(message); }
+  private content(message: MessageOf<"content.find"> | MessageOf<"content.open">): Promise<void> { return this.commands.content(message); }
 
   /** Why this session may not upload (remote: a device without the `reply` scope), or null. */
   protected uploadRefusal(): string | null { return null; }
 
-  private async cancel(message: MessageOf<"cancel">, checked = false): Promise<void> {
-    if (!checked && this.cancelRefusal(message)) return;
-    try {
-      // A cancel for a slot whose handler already began waits for that outcome (SlotEngine.cancel); a session that
-      // closes meanwhile stops waiting (its front end sends the cancel again on its next session).
-      const status = await Promise.race([this.host.runtime.slots.cancel(message.slot), this.closedSignal.then(() => null)]);
-      // D59: every cancel is answered, the stored outcome or `cancel.noted` (after the cancel committed).
-      if (status && this.state !== "closed") this.send(cancelAnswer(message.slot, status));
-    } catch (error) {
-      this.host.log(`session: cancel of slot ${message.slot.n} not settled: ${errorText(error)}`);
-      this.unsettled(`cancel of slot ${message.slot.n} was not settled: ${errorText(error)}`, message.slot);
-    }
-  }
-
   /** True when this cancel is not this session's to send (it was answered with a `bye`). */
   protected cancelRefusal(_message: MessageOf<"cancel">): boolean { return false; }
-
-  /** A local admin request (the role table keeps `admin` off every other session; checked here again). */
-  private async admin(message: MessageOf<"admin">): Promise<void> {
-    const admin = this.host.admin;
-    if (!this.kind.local || !admin) {
-      this.send({ t: "res", req: message.req, ok: false, error: { code: "forbidden", message: "admin requests are taken only on the local socket of a server that pairs" } }, "admin");
-      return;
-    }
-    this.adminEvents ??= admin.onEvent((event) => { this.send({ t: "admin.event", event }, "admin.event"); });
-    try {
-      const result = await admin.handle(message.op, this);
-      this.send({ t: "res", req: message.req, ok: true, result: result ?? null }, `admin ${message.op.op}`);
-    } catch (error) {
-      const code = (error as { code?: unknown })?.code;
-      const text = `${typeof code === "string" ? `${code}: ` : ""}${errorText(error)}`;
-      this.send({ t: "res", req: message.req, ok: false, error: { code: "conflict", message: text.slice(0, 2_000) } }, `admin ${message.op.op}`);
-    }
-  }
-
-  private async req(message: MessageOf<"req">): Promise<void> {
-    const cmd = message.cmd as Command;
-    const refused = this.reqRefusal(cmd);
-    if (refused) {
-      this.send({ t: "res", req: message.req, ok: false, error: refused }, cmd.type);
-      return;
-    }
-    if (cmd.type === "slot.result") { await this.slotResult(message.req, cmd.slot); return; }
-    try {
-      // A `local` command (botlingd's phone pairing) goes to botlingd's own desk only on this machine's socket (a device
-      // was refused above: admin scope).
-      const phone = this.kind.local && routeOf(cmd.type).kind === "local" ? this.host.phone : undefined;
-      const result = phone?.handles(cmd.type) ? await phone.run(cmd) : await this.host.engine.run(cmd);
-      this.sendRes({ t: "res", req: message.req, ok: true, result: result ?? null }, cmd.type);
-    } catch (error) {
-      const wire = error instanceof ContractError ? error.toWire() : { code: "internal" as const, message: errorText(error).slice(0, 2_000) };
-      this.sendRes({ t: "res", req: message.req, ok: false, error: wire }, cmd.type);
-    }
-  }
-
-  /**
-   * `slot.result` (N2): the result this server kept for one of this session's own slots whose result did not fit its
-   * `cmd.applied` entry (server/slots/kept-results.ts). Another origin's slot is refused without a lookup; a large result
-   * goes as `res.part`s. Answered here, never by the engine.
-   */
-  private async slotResult(req: string, raw: unknown): Promise<void> {
-    const refuse = (code: "bad_request" | "forbidden" | "not_found" | "internal", text: string) =>
-      this.send({ t: "res", req, ok: false, error: { code, message: text.slice(0, 2_000) } }, "slot.result");
-    const parsed = Slot.safeParse(raw);
-    if (!parsed.success) { refuse("bad_request", "slot.result names no valid slot"); return; }
-    const slot = parsed.data;
-    if (!this.deviceId || slot.origin !== this.deviceId) { refuse("forbidden", "slot.result answers only this session's own slots"); return; }
-    try {
-      const kept = await this.host.runtime.keptResult(slot);
-      if (!kept.found) { refuse("not_found", `the result of slot ${slot.n} is no longer kept (the server keeps only the newest few)`); return; }
-      this.sendRes({ t: "res", req, ok: true, result: kept.result ?? null }, "slot.result");
-    } catch (error) {
-      refuse("internal", `the result of slot ${slot.n} could not be read: ${errorText(error)}`);
-    }
-  }
-
-  private peerRead(message: MessageOf<"content.get"> | MessageOf<"content.credit"> | MessageOf<"content.cancel">): void {
-    const reads = this.host.peerReads?.();
-    if (!reads) {
-      if (message.t === "content.get") this.send({ t: "content.gone", req: message.req, id: message.id, reason: "offline" }, "content.get");
-      return;
-    }
-    if (message.t === "content.get") {
-      const sink: LocalPeerReadSink = {
-        send: (msg) => this.send(msg, msg.t),
-        chunk: (msg) => this.writeChunk?.(msg) ?? false,
-      };
-      void reads.get(this, message, sink);
-    } else if (message.t === "content.credit") {
-      reads.credit(this, message);
-    } else {
-      reads.cancel(this, message);
-    }
-  }
-
-  private async content(message: MessageOf<"content.find"> | MessageOf<"content.open">): Promise<void> {
-    const content = this.host.content;
-    let answer: Message;
-    try {
-      if (!content) throw new Error("no content service");
-      answer = await content.handle(message);
-    } catch (error) {
-      this.host.log(`session: ${message.t}: ${errorText(error)}`);
-      answer = message.t === "content.find"
-        ? { t: "content.found", req: message.req, ref: null }
-        : { t: "content.gone", req: message.req, id: message.id, reason: "offline" };
-    }
-    if (this.kind.local && message.t === "content.find" && answer.t === "content.found" && !answer.ref && this.host.peerLocate) {
-      try {
-        const located = await this.host.peerLocate({ t: "content.locate", req: message.req, botId: message.botId, line: message.line, url: message.url });
-        if (located) {
-          answer = {
-            t: "content.found",
-            req: message.req,
-            ref: { owner: located.owner, id: located.id, type: located.type, state: located.state, entry: located.entry },
-          };
-        }
-      } catch (error) {
-        this.host.log(`session: ${message.t} peer: ${errorText(error)}`);
-      }
-    }
-    // The answer carries the request's own `req` (the service echoes it; kept here whatever it says).
-    this.send({ ...answer, req: message.req } as Message, message.t);
-  }
 }
 
 /** The stream a frame is about, for a log line. */
 export function streamOf(message: Message): string | undefined {
   const stream = (message as { stream?: unknown }).stream;
   return typeof stream === "string" ? stream : undefined;
-}
-
-export function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function cleanServerAddresses(addresses?: ServerAddresses): ServerAddresses | undefined {
