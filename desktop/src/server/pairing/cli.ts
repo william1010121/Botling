@@ -1,6 +1,6 @@
-// `botlingd pair`, `botlingd devices`, `botlingd revoke-device`, `botlingd machines remove` (M2 step 5, M4-05, protocol
-// v1 §4.3–§4.6, §4.8), over the running botlingd's local socket (admin-client.ts). Input and output are injected, so
-// tests drive the same code.
+// `botlingd pair`, `botlingd devices`, `botlingd revoke-device`, `botlingd machines remove`, `botlingd reroot` (M2 step 5,
+// M4-05, M4-10, M4-11, protocol v1 §4.3–§4.6, §4.8), over the running botlingd's local socket (admin-client.ts).
+// Input and output are injected, so tests drive the same code.
 //
 //   pair [--name <device name>] [--scope read,reply,approve,manage]
 //     1. No cluster yet (the first pairing): the recovery code is shown once and must be typed back; the cluster exists
@@ -21,10 +21,12 @@
 //   machines remove <name-or-id> [--yes | --only]
 //                                     (on the revocation root, §4.3) previews what it added, asks once, and revokes it
 //   recovery replace                  (on the revocation root, §4.8) verifies the old code and replaces it
-import { memberFingerprint, parseJoinLink, type AdminEvent, type DeviceScope } from "../../protocol";
+//   reroot [--keep-all] [--old-root lost|keep]
+//                                     (§4.8, M4-11) promotes this server to revocation root; recovery code on stdin only
+import { memberFingerprint, parseJoinLink, RecoveryCode, type AdminEvent, type DeviceScope } from "../../protocol";
 import { AdminRefused, type AdminClient } from "./admin-client";
 import { qrTerminal } from "./qr";
-import type { DeviceRow, DroppedListResult, MachineRemovePreview, PairOfferResult, RecoveryStatusResult } from "./service";
+import type { DeviceRow, DroppedListResult, MachineRemovePreview, PairOfferResult, RecoveryStatusResult, RerootPreview, RerootResult } from "./service";
 import type { JoinOfferResult, MachineAddResult, MachineCodeResult } from "./join";
 
 export interface CliIo {
@@ -262,6 +264,175 @@ export async function droppedMachinesCommand(
   return 0;
 }
 
+export class RerootArgsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RerootArgsError";
+  }
+}
+
+export interface RerootOptions {
+  keepAll?: boolean;
+  oldRoot?: "lost" | "keep";
+}
+
+/** Parses `botlingd reroot` flags; refuses positional arguments so a recovery code can never sit in argv / ps. */
+export function parseRerootArgs(args: readonly string[]): RerootOptions {
+  const options: RerootOptions = {};
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--keep-all") {
+      options.keepAll = true;
+      continue;
+    }
+    if (arg === "--old-root") {
+      const value = args[i + 1];
+      if (value !== "lost" && value !== "keep") {
+        throw new RerootArgsError("--old-root takes lost or keep");
+      }
+      options.oldRoot = value;
+      i++;
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      const flagName = arg.split("=")[0];
+      throw new RerootArgsError(`unknown option "${flagName}" (use --keep-all, --old-root lost|keep)`);
+    }
+    throw new RerootArgsError("reroot reads the recovery code from stdin only, never as an argument");
+  }
+  return options;
+}
+
+const CODE_PROMPT = "Type the recovery code (26 characters; spaces and dashes are fine): ";
+
+/** `botlingd reroot [--keep-all] [--old-root lost|keep]` (§4.8, M4-11): code read from stdin only, never echoed. */
+export async function rerootCommand(
+  client: AdminClient,
+  io: CliIo,
+  options: RerootOptions = {},
+): Promise<number> {
+  let preview: RerootPreview;
+  try {
+    preview = await client.request({ op: "roster.rerootPreview" }) as RerootPreview;
+  } catch (error) {
+    io.out(`Cannot reroot: ${errorText(error)}`);
+    return 1;
+  }
+  if (preview.isRoot) {
+    io.out(`"${preview.selfName}" is already the revocation root.`);
+    return 1;
+  }
+
+  io.out(`This makes "${preview.selfName}" the revocation root of your machines.`);
+  const firstCode = await io.ask(CODE_PROMPT);
+  if (firstCode === null) {
+    io.out("Nothing was changed.");
+    return 1;
+  }
+
+  let oldRootLost: boolean;
+  if (options.oldRoot !== undefined) {
+    oldRootLost = options.oldRoot === "lost";
+  } else {
+    const lostAnswer = await io.ask(
+      `Is the old root "${preview.oldRootName}" lost or stolen? Type "lost" to remove it (what it added stays), or "keep" to leave it a member: `,
+    );
+    const choice = lostAnswer?.trim().toLowerCase() ?? "";
+    if (choice === "lost") oldRootLost = true;
+    else if (choice === "keep") oldRootLost = false;
+    else {
+      io.out("Stopped; nothing was changed.");
+      return 1;
+    }
+  }
+
+  let keep: string[];
+  if (preview.keepCandidates.length === 0 || options.keepAll) {
+    keep = preview.keepCandidates.map((c) => c.revokeId);
+  } else {
+    io.out("Removals made by earlier roots (untick any you did not make):");
+    const nameWidth = Math.max(12, ...preview.keepCandidates.map((c) => c.memberName.length + 2)) + 3;
+    preview.keepCandidates.forEach((c, index) => {
+      const when = c.receivedAt !== null
+        ? new Date(c.receivedAt).toISOString().slice(0, 16).replace("T", " ")
+        : "unknown time";
+      const memberLabel = `"${c.memberName}"`.padEnd(nameWidth);
+      io.out(`  [x] ${index + 1}  ${memberLabel}removed by ${c.signerName}   ${when}`);
+    });
+    const untickAnswer = await io.ask('Type the numbers to UNtick (e.g. "2"), or press Enter to keep all: ');
+    if (untickAnswer === null) {
+      io.out("Stopped; nothing was changed.");
+      return 1;
+    }
+    const untick = new Set<number>();
+    const trimmed = untickAnswer.trim();
+    if (trimmed) {
+      for (const token of trimmed.split(/[\s,]+/)) {
+        if (!/^[0-9]+$/.test(token)) {
+          io.out("Invalid selection; nothing was changed.");
+          return 1;
+        }
+        const n = Number(token);
+        if (n < 1 || n > preview.keepCandidates.length) {
+          io.out("Invalid selection; nothing was changed.");
+          return 1;
+        }
+        untick.add(n - 1);
+      }
+    }
+    keep = preview.keepCandidates.filter((_, index) => !untick.has(index)).map((c) => c.revokeId);
+  }
+
+  let candidateCode = firstCode;
+  for (let wrongTries = 0;;) {
+    let result: RerootResult;
+    const parsedCode = RecoveryCode.safeParse(candidateCode);
+    if (!parsedCode.success) {
+      result = { ok: false, reason: "bad-code" };
+    } else {
+      try {
+        result = await client.request({
+          op: "roster.reroot",
+          code: parsedCode.data,
+          oldRootLost,
+          keep,
+        }) as RerootResult;
+      } catch (error) {
+        io.out(`Cannot reroot: ${errorText(error)}`);
+        return 1;
+      }
+    }
+
+    if (result.ok) {
+      if (oldRootLost) {
+        io.out(`Done. "${preview.selfName}" is the revocation root. "${preview.oldRootName}" was removed; what it added stays.`);
+        if (result.oldRootAdded.length > 0) {
+          io.out(`Machines and phones "${preview.oldRootName}" added, newest first (remove any you do not know with "botlingd machines remove"):`);
+          const labels = result.oldRootAdded.map((item) =>
+            item.kind === "device" ? `phone "${item.name}"` : `"${item.name}"`,
+          );
+          const width = Math.max(16, ...labels.map((label) => label.length + 3));
+          result.oldRootAdded.forEach((item, index) => {
+            const day = new Date(item.at).toISOString().slice(0, 10);
+            io.out(`  ${labels[index]!.padEnd(width)}${day}`);
+          });
+        }
+      } else {
+        io.out(`Done. "${preview.selfName}" is the revocation root. "${preview.oldRootName}" remains a member.`);
+      }
+      io.out('Replace the recovery code now? Run "botlingd recovery replace".');
+      return 0;
+    }
+
+    wrongTries++;
+    io.out("That is not the recovery code. Nothing was changed.");
+    if (wrongTries >= RECOVERY_TRIES) return 1;
+    const retry = await io.ask(CODE_PROMPT);
+    if (retry === null) return 1;
+    candidateCode = retry;
+  }
+}
+
 const JOIN_TRIES = 3;
 
 /** A fingerprint as typed or shown (`ABCD EFGH …`, any case or spacing) to the member id it spells, or null. */
@@ -307,7 +478,7 @@ export async function joinCommand(client: AdminClient, io: CliIo, options: { nam
 }
 
 /**
- * `botlingd add-machine [<link>]` on a member (S); resolves with the exit code. With no link argument the link is read
+ * `botlingd add-machine [<link>] [--expect-fingerprint <fp>]` on a member (S); resolves with the exit code. With no link argument the link is read
  * from stdin, so its one-time secret is not on the command line, where other local users see it in the process list
  * and the shell keeps it in its history (review J2).
  */
