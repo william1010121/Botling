@@ -21,6 +21,8 @@ import { commandScope, REMOTE_READS, remoteCmdRefusal, type DeviceScope } from "
 import type { Clock } from "../src/fe-link";
 import { READ_COMMANDS, RendererAdapter, RequestViaSchema, type LinkPort } from "../src/main-v3/renderer-adapter";
 import { App, type WebChrome } from "../src/renderer/App";
+import { configureShellStorage } from "../src/renderer/shell/storage";
+import { createWebShellStorageBackend } from "./shell/device-store";
 import { Client, type Bridge, type RequestVia } from "../src/renderer/client";
 import { WorkspaceStore } from "../src/renderer/store";
 import { rendererKernel } from "../src/renderer/renderer-kernel";
@@ -225,6 +227,7 @@ function pageBundles(link: LinkPort): BundleFetcher | undefined {
 export function mountRenderer(root: HTMLElement, options: MountOptions): MountedRenderer {
   let bridge: BridgeV3 | null = null;
   const bundles = options.bundles ?? pageBundles(options.link);
+  const releaseStorage = configureShellStorage(createWebShellStorageBackend());
   const adapter = new RendererAdapter({ link: options.link, emit: (envelope) => bridge?.emit(envelope), clock: options.clock, audit: options.audit, ...(bundles ? { bundles } : {}) });
   bridge = new BridgeV3(adapter, options.capabilities);
   const client = new Client(bridge);
@@ -244,6 +247,6 @@ export function mountRenderer(root: HTMLElement, options: MountOptions): Mounted
   void store.resync().catch((error) => options.audit?.(`first snapshot: ${String((error as Error)?.message ?? error)}`));
   return {
     adapter, store, render, rowLoader,
-    unmount() { offChips(); offRows(); void rowLoader.stop(); adapter.stop(); bridge?.close(); reactRoot.unmount(); },
+    unmount() { offChips(); offRows(); void rowLoader.stop(); releaseStorage(); adapter.stop(); bridge?.close(); reactRoot.unmount(); },
   };
 }

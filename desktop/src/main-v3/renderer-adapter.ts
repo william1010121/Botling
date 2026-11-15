@@ -51,6 +51,7 @@ import {
 } from "./adapter-types";
 import { AdapterEntries } from "./adapter-entries";
 import { panelByRef, rowWeb, specsByRef } from "./web-by-ref";
+import { peerActionRefusal } from "./peer-actions";
 
 // The names that used to be defined here, still exported from this path.
 export { NOTICE_ID, botViewOfSummary, noticeText, pendingLine, pendingLineId, peerNoticeText, READ_COMMANDS } from "./adapter-types";
@@ -127,6 +128,13 @@ export class RendererAdapter {
 
   async request(cmd: Command, via?: RequestVia): Promise<AdapterAnswer> {
     try {
+      // M7-12b: what needs this desktop's own machine is refused here for a peer's bot, with the reason; the rest goes to
+      // its owner. First, so a plugin's attributed request (`via`) is refused the same way.
+      const peerOwner = botIdOf(cmd) ? this.peerOf(botIdOf(cmd)!) : null;
+      if (peerOwner) {
+        const why = peerActionRefusal(cmd, this.serverView(peerOwner)?.name ?? "that machine");
+        if (why) return { ok: false, error: { code: "forbidden", message: `not sent: ${why}` } };
+      }
       let validVia: RequestVia | undefined;
       if (via !== undefined) {
         const parsed = RequestViaSchema.safeParse(via);
