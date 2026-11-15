@@ -18,7 +18,7 @@ const KEYCAP_END = /[0-9#*]$/u;
 
 /**
  * Whether the variation selector at `at` is the one that belongs to an emoji: a single U+FE0E / U+FE0F straight after
- * a pictograph (`❤️`), or after a keycap base that a keycap mark follows (`1️⃣`). A run of selectors, or one after any
+ * a pictograph (a red heart), or after a keycap base that a keycap mark follows (a boxed digit). A run of selectors, or one after any
  * other character, can carry hidden data and does not stay.
  */
 function keeps(whole: string, at: number): boolean {
@@ -42,7 +42,7 @@ export function mapUnseen(text: string, joiners: boolean, replace: (character: s
 export const stripUnseen = (text: string, joiners = false): string => mapUnseen(text, joiners, () => "");
 
 /** Hangul fillers (U+115F, U+1160, U+3164, U+FFA0) and the braille blank (U+2800): letters, not format characters, that show as empty space. */
-const BLANKS = /[ᅟᅠㅤﾠ⠀]/gu;
+const BLANKS = /[\u115f\u1160\u3164\uffa0\u2800]/gu;
 
 /** `text` without the blank look-alikes: for comparing a name with a fixed word, never for showing it. */
 export const stripBlanks = (text: string): string => text.replace(BLANKS, "");

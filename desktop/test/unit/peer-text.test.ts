@@ -7,11 +7,11 @@ import { machineLabel } from "../../src/server/fetch/app-fetch";
 import { oneLine } from "../../src/server/fetch/approval";
 import { stripBlanks, stripUnseen } from "../../src/server/unseen";
 
-/** [character, how machineLabel writes it]. */
+/** [character, how machineLabel writes it] (up to U+00FF as `\xNN`, as before). */
 const UNSEEN: Array<[string, string]> = [
-  ["­", "\\u00ad"], ["͏", "\\u034f"], ["؜", "\\u061c"], ["᠎", "\\u180e"],
-  ["​", "\\u200b"], ["‎", "\\u200e"], ["‏", "\\u200f"], ["‮", "\\u202e"], ["⁠", "\\u2060"], ["⁦", "\\u2066"],
-  ["﻿", "\\ufeff"], ["︀", "\\ufe00"], ["︁", "\\ufe01"], ["️", "\\ufe0f"],
+  ["\u00ad", "\\xad"], ["\u034f", "\\u034f"], ["\u061c", "\\u061c"], ["\u180e", "\\u180e"],
+  ["\u200b", "\\u200b"], ["\u200e", "\\u200e"], ["\u200f", "\\u200f"], ["\u202e", "\\u202e"], ["\u2060", "\\u2060"], ["\u2066", "\\u2066"],
+  ["\ufeff", "\\ufeff"], ["\ufe00", "\\ufe00"], ["\ufe01", "\\ufe01"], ["\ufe0f", "\\ufe0f"],
   ["\u{e0000}", "\\u{e0000}"], ["\u{e0041}", "\\u{e0041}"], ["\u{e007f}", "\\u{e007f}"], ["\u{e0100}", "\\u{e0100}"], ["\u{e01ef}", "\\u{e01ef}"],
 ];
 
@@ -37,7 +37,7 @@ describe("one shared unseen set", () => {
   });
 
   it("normal names keep their shape: CJK, kana, accented, decomposed accents, emoji, emoji with a presentation selector, keycap", () => {
-    for (const name of ["build bot 中文", "ユーザー", "José", "José", "Nguyễn", "\u{1f600} Mac", "❤️ Mac", "☺︎ Mac", "1️⃣ Mac", "\u{1f1e8}\u{1f1ed}"]) {
+    for (const name of ["build bot 中文", "ユーザー", "José", "José", "Nguyễn", "\u{1f600} Mac", "❤\ufe0f Mac", "☺\ufe0e Mac", "1\ufe0f⃣ Mac", "\u{1f1e8}\u{1f1ed}"]) {
       expect(machineLabel(name), name).toBe(name);
       expect(oneLine(name), name).toBe(name);
       expect(stripControls(name), name).toBe(name);
@@ -45,16 +45,16 @@ describe("one shared unseen set", () => {
   });
 
   it("a selector that does not follow a pictograph, or comes in a run, is dropped (it can carry hidden data)", () => {
-    expect(stripControls("a️")).toBe("a");
-    expect(stripControls("\u{1f600}︁️")).toBe("\u{1f600}");
-    expect(stripControls("\u{1f600}️︁")).toBe("\u{1f600}");
-    expect(stripControls("\u{1f600}️️")).toBe("\u{1f600}");
-    expect(stripControls("​️")).toBe("");
+    expect(stripControls("a\ufe0f")).toBe("a");
+    expect(stripControls("\u{1f600}\ufe01\ufe0f")).toBe("\u{1f600}");
+    expect(stripControls("\u{1f600}\ufe0f\ufe01")).toBe("\u{1f600}");
+    expect(stripControls("\u{1f600}\ufe0f\ufe0f")).toBe("\u{1f600}");
+    expect(stripControls("\u200b\ufe0f")).toBe("");
   });
 
   it("joiners: the prompt text keeps emoji families and Persian names readable; the card drops them; a label escapes them", () => {
-    const family = "\u{1f468}‍\u{1f469}‍\u{1f467}";
-    const persian = "می‌خواهم";
+    const family = "\u{1f468}\u200d\u{1f469}\u200d\u{1f467}";
+    const persian = "می\u200cخواهم";
     expect(stripControls(family)).toBe(family);
     expect(stripControls(persian)).toBe(persian);
     expect(oneLine(family)).toBe("\u{1f468}\u{1f469}\u{1f467}");
@@ -70,7 +70,7 @@ describe("one shared unseen set", () => {
   });
 
   it("stripBlanks removes Hangul fillers and look-alike blanks", () => {
-    expect(stripBlanks("uᅟsᅠeㅤrﾠ⠀")).toBe("user");
+    expect(stripBlanks("u\u115fs\u1160e\u3164r\uffa0\u2800")).toBe("user");
     expect(stripBlanks("ユーザー 中文")).toBe("ユーザー 中文");
   });
 });
