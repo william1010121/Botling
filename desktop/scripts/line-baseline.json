@@ -8,7 +8,7 @@
     "desktop/src/core/server.ts": 3395,
     "desktop/src/fe-link/link.ts": 1172,
     "desktop/src/main/main.ts": 1169,
-    "desktop/src/renderer/App.tsx": 1036,
+    "desktop/src/renderer/App.tsx": 819,
     "desktop/src/server/botlingd.ts": 950,
     "desktop/src/server/fetch/source.ts": 1054,
     "desktop/src/server/import/run.ts": 858,
