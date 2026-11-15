@@ -13,7 +13,7 @@ import { Plugins, type LineContentRef, type PluginWorld } from "../../src/core/p
 import type { HostCommand, HostHandlers } from "../../src/core/plugins/host-client";
 import { testSealer } from "../../src/core/plugins/secrets";
 import { FeLink, MemoryFeStorage } from "../../src/fe-link";
-import { ownerHasPlugin, withOwnerLinkMenus } from "../../src/main-v3/peer-link-menu";
+import { chatLinkPlugin, ownerHasPlugin, withOwnerLinkMenus } from "../../src/main-v3/peer-link-menu";
 import { RendererAdapter, type LinkPort } from "../../src/main-v3/renderer-adapter";
 import type { Message, StreamId } from "../../src/protocol";
 import type { PluginRow, SummaryRow } from "../../src/protocol/table-rows";
@@ -419,5 +419,10 @@ describe("ownerHasPlugin: a plugin is there only with a valid row of that name",
     expect(ownerHasPlugin(null, "coach")).toBe(false);
     expect(ownerHasPlugin(undefined, "coach")).toBe(false);
     expect(linkKeys(withOwnerLinkMenus(VIEW, new Map([["plugin:coach", { codeHash: 5 }]])))).toEqual([]);
+  });
+  it("review probe: chatLinkPlugin takes only an entry whose command id is its own plugin's", () => {
+    const menus = [link("reader", "coach.start"), ...VIEW.menus!];
+    expect(chatLinkPlugin({ ...VIEW, menus }, "coach.start")).toBe("coach");
+    expect(chatLinkPlugin({ ...VIEW, menus: [link("reader", "coach.start")] }, "coach.start")).toBeNull();
   });
 });
