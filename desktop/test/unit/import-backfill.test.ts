@@ -292,7 +292,11 @@ describe("runBackfill (botlingd backfill-history)", () => {
     expect(result.reportText).toMatch(/Main bot[^\n]*\n\s+add 3 lines from Botling 2/);
     expect(result.reportText).toMatch(/Maintainer[^\n]*\n\s+add 3 lines from Botling 2/);
     expect(snapshotTree(fx.src)).toEqual(srcBefore);
-    expect(snapshotTree(fx.dataDir)).toEqual(dataBefore);
+    // server.db-shm is SQLite's shared-memory index of the WAL: every reader, a read-only one too, writes its read mark
+    // there. It holds no data; server.db and server.db-wal (the data) must be byte for byte the same.
+    const data = (list: string[]) => list.filter((item) => !item.startsWith("file server.db-shm "));
+    expect(data(snapshotTree(fx.dataDir))).toEqual(data(dataBefore));
+    expect(data(dataBefore).some((item) => item.startsWith("file server.db "))).toBe(true);
   });
 
   it("applies with a backup first, never writes the 2.x folder, and refuses while botlingd holds the folder", async () => {
