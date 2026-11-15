@@ -15,6 +15,17 @@ export const FETCH_GRANT_BYTES_LIMIT = 2 ** 31;
 /** A filesystem path or prefix in a fetch message: 1..4096 characters, no NUL. */
 export const FetchPath = z.string().min(1).max(4_096).refine((value) => !value.includes("\0"), { message: "a path may not hold NUL" });
 
+/**
+ * A file's path inside a fetch (M5-07b): relative to the fetched target, `/`-separated, in NFC, at most 4096 bytes
+ * (UTF-8), no NUL, not absolute, no empty, `.` or `..` segment. Both sides check it: the source before it sends and the
+ * requester before it writes (the requester never trusts the wire).
+ */
+export const FetchRelPath = z.string().min(1).refine((value) => new TextEncoder().encode(value).length <= 4_096, { message: "a file path is at most 4096 bytes" })
+  .refine((value) => !value.includes("\0"), { message: "a path may not hold NUL" })
+  .refine((value) => value === value.normalize("NFC"), { message: "a file path is in NFC" })
+  .refine((value) => !value.startsWith("/") && value.split("/").every((part) => part !== "" && part !== "." && part !== ".."), { message: "a file path is relative, with no empty, . or .. part" });
+export type FetchRelPath = z.infer<typeof FetchRelPath>;
+
 export const FetchWhat = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("path"), path: FetchPath }),
   z.strictObject({ kind: z.literal("artifact"), botId: BotId, path: FetchPath }),
@@ -59,10 +70,15 @@ export const FetchGrant = msg("fetch.grant", {
   expires: z.number().int().nonnegative().nullable(),
 });
 
-/** Bytes of a fetch chunk: binary frame (`encodeChunkFrame`), capped at `CONTENT_FRAME_CHUNK_LIMIT` (128 KiB). */
+/**
+ * Bytes of a fetch chunk: binary frame (`encodeChunkFrame`), capped at `CONTENT_FRAME_CHUNK_LIMIT` (128 KiB).
+ * `index` counts chunks over the whole fetch; `file` is the file the bytes belong to (M5-07b: chunks of one file come
+ * together, files in sorted order; a zero-byte file is one empty chunk).
+ */
 export const FetchChunk = msg("fetch.chunk", {
   fetchId: Id,
   index: Seq,
+  file: FetchRelPath,
   sha256: EntryHash,
   bytes: z.instanceof(Uint8Array).refine((bytes) => bytes.length <= CONTENT_FRAME_CHUNK_LIMIT, { message: `0 to ${CONTENT_FRAME_CHUNK_LIMIT} bytes` }),
 });

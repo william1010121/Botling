@@ -34,14 +34,47 @@ export class MemorySecretStore implements SecretStore {
 
 type SealedFile = Record<string, Record<string, string>>;
 
-/** Sealed secrets in a file; opened once at start (`load`), sealed on every change. */
+export interface SealedSecretStoreOptions {
+  /**
+   * Botling 3 (`botlingd`) binds each sealed blob to `{ v: 1, plugin, key, text }` so sealed blobs cannot be
+   * moved across plugins or keys. 2.x keeps its raw-value format.
+   */
+  bound?: boolean;
+}
+
+function unwrapBoundSecret(opened: string, plugin: string, key: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(opened);
+  } catch {
+    throw new Error("Sealed secret is not in the expected bound format.");
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    (parsed as Record<string, unknown>).v !== 1 ||
+    (parsed as Record<string, unknown>).plugin !== plugin ||
+    (parsed as Record<string, unknown>).key !== key ||
+    typeof (parsed as Record<string, unknown>).text !== "string"
+  ) {
+    throw new Error(`Sealed secret is not bound to ${plugin}.${key}.`);
+  }
+  return (parsed as { text: string }).text;
+}
+
+/** Sealed secrets in a file; opened at start and when a sealer attaches (`load`), sealed on every change. */
 export class SealedSecretStore implements SecretStore {
   private sealed: SealedFile = {};
   private open = new Map<string, string>();
   /** Why secrets cannot be read or kept here (no safe storage), or null. */
   problem: string | null = null;
 
-  constructor(private readonly file: string, private readonly sealer: Sealer | null) {
+  constructor(
+    private readonly file: string,
+    private readonly sealer: Sealer | null,
+    private readonly options: SealedSecretStoreOptions = {},
+  ) {
     if (!sealer) this.problem = "There is no safe storage here, so plugins' secrets cannot be kept.";
   }
 
@@ -62,9 +95,13 @@ export class SealedSecretStore implements SecretStore {
     for (const [plugin, keys] of Object.entries(this.sealed)) {
       for (const [key, sealed] of Object.entries(keys)) {
         try {
-          this.open.set(`${plugin}\u0000${key}`, await this.sealer.open(sealed));
+          const opened = await this.sealer.open(sealed);
+          const text = this.options.bound ? unwrapBoundSecret(opened, plugin, key) : opened;
+          if (this.sealed[plugin]?.[key] === sealed) this.open.set(`${plugin}\u0000${key}`, text);
         } catch (error) {
-          this.problem = `A sealed secret could not be opened: ${(error as Error).message}`;
+          if (this.sealed[plugin]?.[key] === sealed) {
+            this.problem = `A sealed secret could not be opened: ${(error as Error).message}`;
+          }
         }
       }
     }
@@ -76,7 +113,8 @@ export class SealedSecretStore implements SecretStore {
   async set(plugin: string, key: string, value: string | null) {
     if (value) {
       if (!this.sealer) throw new Error(this.problem ?? "There is no safe storage here.");
-      const sealed = await this.sealer.seal(value);
+      const payload = this.options.bound ? JSON.stringify({ v: 1, plugin, key, text: value }) : value;
+      const sealed = await this.sealer.seal(payload);
       (this.sealed[plugin] ??= {})[key] = sealed;
       this.open.set(`${plugin}\u0000${key}`, value);
     } else {

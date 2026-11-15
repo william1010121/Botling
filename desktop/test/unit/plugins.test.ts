@@ -118,6 +118,10 @@ describe("the plugin registry", () => {
     registry.rescan();
     expect(agentContributions(registry).stamp).toEqual(first);
     writeFileSync(join(folder, "claude", "skills", "a.md"), "two");
+    // The rescan notices a file by its date and size (registry.fingerprint); "one" and "two" are the same size and a fast disk
+    // can stamp both writes with one clock tick, so give the edit a later date, as a real edit minutes later has.
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(join(folder, "claude", "skills", "a.md"), later, later);
     registry.rescan();
     expect(agentContributions(registry).stamp).not.toEqual(first);
     registry.setEnabled("gh", false);

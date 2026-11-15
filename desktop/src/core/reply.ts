@@ -23,7 +23,8 @@ export type BotRequest =
   | { kind: "plugin"; request: string }
   | { kind: "folder"; path: string }
   | { kind: "install"; source: string }
-  | { kind: "newBot"; name: string; job: string }
+  /** `machine` (`<new-bot name="…" machine="…">`, M5-04d): the bot is made on that machine; absent: on this one. */
+  | { kind: "newBot"; name: string; job: string; machine?: string }
   /**
    * A sub bot (`<sub-bot name="…" subagent="agent id"/>`): with `subagent`, a running subagent moved out (`note` is any words
    * inside the tag); without it (`subagent` is ""), a new empty sub bot whose first task is `note`, on `engine` if one was named.
@@ -40,7 +41,8 @@ export type BotRequest =
   | { kind: "agentMessage"; to: string; text: string }
   /** The owner stops an agent it owns (`<agent-stop to="agent id"/>`). */
   | { kind: "agentStop"; to: string }
-  | { kind: "newProject"; folder: string; task: string }
+  /** `machine` (M5-04d): a project on another machine is not added from here; the main bot is told so. */
+  | { kind: "newProject"; folder: string; task: string; machine?: string }
   | { kind: "openQuestion"; from: string }
   | { kind: "giveComponent"; bot: string; name: string }
   | { kind: "takeComponent"; bot: string; name: string }
@@ -71,7 +73,8 @@ export interface Parsed {
 const decisionReferenceTag = () => /^ {0,3}<decision-ref\s+id="([0-9A-Fa-f-]{36})"\s*\/>[ \t]*$/gm;
 const quotedHTMLRegion = () => /<(pre|code|blockquote)\b[^>]*>[\s\S]*?<\/\1\s*>|<!--[\s\S]*?-->/gi;
 const choicesBlock = () => /<choices((?:\s+[A-Za-z-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'))?)*)\s*>\s*([\s\S]*?)\s*<\/choices>/g;
-const requestTag = () => /<(component|new-bot)\s+name\s*=\s*"([^"]+)"\s*>\s*([\s\S]*?)\s*<\/\1>/g;
+// `machine="…"` belongs to <new-bot> only (the lookbehind): a <component> with one is not a request, as before.
+const requestTag = () => /<(component|new-bot)\s+name\s*=\s*"([^"]+)"(?:(?<=<new-bot\s+name\s*=\s*"[^"]+")\s+machine\s*=\s*"([^"]*)")?\s*>\s*([\s\S]*?)\s*<\/\1>/g;
 const subBotTag = () => /<sub-bot((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/sub-bot>)/g;
 const removeSubBotTag = () => /<remove-sub-bot\s+name\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*<\/remove-sub-bot>)/g;
 const removeBotTag = () => /<remove-bot((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*<\/remove-bot>)/g;
@@ -85,7 +88,7 @@ const declinedTag = () => /<component-declined\s+id\s*=\s*(?:"([^"]*)"|'([^']*)'
 const taskTag = () => /<task((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*\/?>(?:[ \t]*<\/task>)?/g;
 const noReplyTag = () => /<no-reply\s*\/>|<no-reply>\s*<\/no-reply>/g;
 const openQuestionTag = () => /<open-question\s+from\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*<\/open-question>)/g;
-const projectTag = () => /<new-project\s+folder\s*=\s*"([^"]+)"\s*(?:\/>|>\s*([\s\S]*?)\s*<\/new-project>)/g;
+const projectTag = () => /<new-project\s+folder\s*=\s*"([^"]+)"(?:\s+machine\s*=\s*"([^"]*)")?\s*(?:\/>|>\s*([\s\S]*?)\s*<\/new-project>)/g;
 export const showTag = () => /<show((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/show>)/g;
 /** The tags plugins declare now (set by the core when its plugins change); parseReply reads them by default. */
 let declaredTags: readonly string[] = [];
@@ -222,9 +225,10 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
   }
 
   const tagged: BotRequest[] = [];
-  take(requestTag, ([kind, name, content]) => {
+  take(requestTag, ([kind, name, machine, content]) => {
     const n = trimWS(name!);
-    tagged.unshift(kind === "new-bot" ? { kind: "newBot", name: n, job: content! } : { kind: "component", name: n, request: content! });
+    const where = trimWS(machine ?? "");
+    tagged.unshift(kind === "new-bot" ? { kind: "newBot", name: n, job: content!, ...(where ? { machine: where } : {}) } : { kind: "component", name: n, request: content! });
   });
   requests.push(...tagged);
   const subBots: BotRequest[] = [];
@@ -263,7 +267,7 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
   take(pluginTag, ([request]) => requests.push({ kind: "plugin", request: request! }));
   take(installTag, ([source]) => requests.push({ kind: "install", source: source! }));
   const projects: BotRequest[] = [];
-  take(projectTag, ([folder, task]) => projects.unshift({ kind: "newProject", folder: trimWS(folder!), task: task! }));
+  take(projectTag, ([folder, machine, task]) => projects.unshift({ kind: "newProject", folder: trimWS(folder!), task: task!, ...(trimWS(machine ?? "") ? { machine: trimWS(machine!) } : {}) }));
   requests.push(...projects);
   take(noReplyTag, () => {});
   // Task cards are gone; a <task …/> line is dropped, never shown and never acted on.

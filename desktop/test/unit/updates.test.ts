@@ -2,7 +2,7 @@
 // default, at most every 6 hours, Check now always), the download and the restart. electron-updater itself is
 // replaced by a stand-in; no network, no real install.
 import { describe, expect, it } from "vitest";
-import { CHECK_EVERY_MS, Updater, compareVersions, parseVersion, releaseView, type UpdateInfoLike, type UpdaterLike } from "../../src/main/updates";
+import { CHECK_EVERY_MS, Updater, compareVersions, updateChannel, parseVersion, releaseView, type UpdateInfoLike, type UpdaterLike } from "../../src/main/updates";
 
 const page = (version: string) => `https://github.com/william1010121/Botling/releases/tag/v${version}`;
 const info = (version: string, extra: Partial<UpdateInfoLike> = {}): UpdateInfoLike => ({ version, releaseName: `Botling ${version}`, releaseDate: "2026-10-01T00:00:00Z", files: [{ url: `Botling-2-${version}-mac-arm64.zip` }], ...extra });
@@ -27,23 +27,30 @@ describe("releaseView", () => {
 });
 
 describe("Updater", () => {
-  function make(enabled: boolean, opts: { newest?: UpdateInfoLike | null; unavailable?: string | null; current?: string; fail?: Error } = {}) {
+  function make(enabled: boolean, opts: { newest?: UpdateInfoLike | null; unavailable?: string | null; current?: string; channel?: string; fail?: Error } = {}) {
     let saved: { checkedAt: number; newer: any } | null = null;
     let now = 1_000_000;
     const calls = { check: 0, download: 0, install: [] as unknown[][] };
     let downloaded: ((info: UpdateInfoLike) => void) | null = null;
     let progress: ((progress: { percent: number }) => void) | null = null;
     let midDownload: (() => void) | null = null;
+    let channelValue: string | null = null;
     const newest = opts.newest === undefined ? info("2.0.2") : opts.newest;
     const fake: UpdaterLike = {
       autoDownload: true, autoInstallOnAppQuit: true, allowPrerelease: true, allowDowngrade: true,
+      get channel() { return channelValue; },
+      set channel(value: string | null) {
+        channelValue = value;
+        // Mirrors electron-updater, which turns allowDowngrade on when channel is set.
+        if (value) fake.allowDowngrade = true;
+      },
       checkForUpdates: async () => { calls.check++; if (opts.fail) throw opts.fail; return newest ? { isUpdateAvailable: true, updateInfo: newest } : null; },
       downloadUpdate: async () => { calls.download++; progress?.({ percent: 42.4 }); midDownload?.(); downloaded?.(newest!); return []; },
       quitAndInstall: (...args) => { calls.install.push(args); },
       on: ((event: string, listener: never) => { if (event === "download-progress") progress = listener; else downloaded = listener; }) as UpdaterLike["on"],
     };
     const updater = new Updater({
-      current: opts.current ?? "2.0.0", updater: fake, enabled: async () => enabled, unavailable: () => opts.unavailable ?? null,
+      current: opts.current ?? "2.0.0", channel: opts.channel, updater: fake, enabled: async () => enabled, unavailable: () => opts.unavailable ?? null,
       load: () => saved, save: (state) => { saved = state; }, now: () => now,
     });
     return { updater, fake, calls, onDownload: (fn: () => void) => { midDownload = fn; }, tick: (ms: number) => { now += ms; } };
@@ -51,8 +58,20 @@ describe("Updater", () => {
 
   it("never downloads or installs by itself, and a stable build ignores prereleases", () => {
     const { fake } = make(true);
-    expect(fake).toMatchObject({ autoDownload: false, autoInstallOnAppQuit: false, allowPrerelease: false, allowDowngrade: false });
+    expect(fake).toMatchObject({ autoDownload: false, autoInstallOnAppQuit: false, allowPrerelease: false, allowDowngrade: false, channel: null });
     expect(make(true, { current: "2.0.0-local-trial.1" }).fake.allowPrerelease).toBe(true);
+  });
+  it("with channel 'v3': sets channel, keeps allowDowngrade false, and enables allowPrerelease", () => {
+    const { fake } = make(true, { current: "3.0.0", channel: "v3" });
+    expect(fake).toMatchObject({ channel: "v3", allowDowngrade: false, allowPrerelease: true });
+    // Any other name (a path to another repository's channel file) is ignored: `latest`, as 2.x.
+    expect(make(true, { channel: "../../../../other/repo/releases/download/v9/latest" }).fake).toMatchObject({ channel: null, allowDowngrade: false, allowPrerelease: false });
+  });
+  it("updateChannel: only the Botling 3 window follows `v3`; an inherited BOTLING_UPDATE_CHANNEL never moves 2.x", () => {
+    expect(updateChannel({ BOTLING_UPDATE_CHANNEL: "v3" }, true)).toBe("v3");
+    expect(updateChannel({ BOTLING_UPDATE_CHANNEL: "v3" }, false)).toBeUndefined();
+    expect(updateChannel({ BOTLING_UPDATE_CHANNEL: "beta" }, true)).toBeUndefined();
+    expect(updateChannel({}, true)).toBeUndefined();
   });
   it("off: looks only when asked (Check now)", async () => {
     const { updater, calls } = make(false);

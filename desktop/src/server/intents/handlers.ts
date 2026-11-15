@@ -18,11 +18,15 @@
 //                      kept aside (`deferTurn`) and becomes `turn.queued` + a queued row in this transaction.
 //   chat.react / settings.set / bots.create: the core applies them now (bots.create's new bot gets its stream from
 //                      its first event).
+//   callin.ask / callin.cancel   (M5-02b, server/callin) a call-in from another server: one `callin` effect row (the
+//                      guest's turn runs after the commit, its answer goes back as `callin.reply`); cancel ends a queued
+//                      row or stops a started turn.
 //   bots.remove        the core's refusals first (main bot, Maintainer, unknown); a queued `remove` row, which the
 //                      worker runs after the commit (the core's removal is asynchronous; removing again is harmless).
 import { randomUUID } from "node:crypto";
 import { ContractError, type Command } from "../../contract";
 import { PluginRow, RowKey, type PluginGrant } from "../../protocol/table-rows";
+import { callInAsk, callInCancel, callInReply, type CallInGuest, type CallInHost } from "../callin";
 import { ownTableStream, putRow, readRowBody, RowBodyError } from "../replica/tables";
 import { readStream } from "../log";
 import { dbBasisReader, SlotRefusal, type ApplyContext, type BasisReader } from "../slots";
@@ -48,6 +52,12 @@ export interface IntentDeps {
   log?: (line: string) => void;
   /** M2 step 12: files a page uploaded, named by `chat.send.files` (none: such a command is refused). */
   uploads?: UploadedFiles | null;
+  /** M5-02b: the guest's side of call-ins from other servers (none: `callin.ask` is refused). */
+  callIns?: CallInGuest;
+  /** M5-02c: the host's side (waits for `callin.reply`; none: it is refused). */
+  callHost?: CallInHost;
+  /** Botling 3's server: a `plugin:` row's grants changed (after the commit), so the window's plugin list is redrawn. */
+  pluginRowsChanged?: () => void;
 }
 
 const newLineId = () => randomUUID().toUpperCase();
@@ -70,6 +80,7 @@ function refuseFrom(error: unknown): never {
 }
 
 function requireBot(engine: TurnEngine, botId: string): void {
+  try { engine.checkBot?.(botId); } catch (error) { refuseFrom(error); }
   if (!engine.hasBot(botId)) throw new SlotRefusal("invalid", `no bot ${botId}`);
 }
 
@@ -142,6 +153,7 @@ function send(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<Command
 }
 
 function stop(deps: IntentDeps, { tx }: ApplyContext, cmd: Extract<Command, { type: "turn.stop" }>) {
+  try { deps.engine.checkBot?.(cmd.botId); } catch (error) { refuseFrom(error); }
   const row = findTurnEffect(tx, cmd.botId, cmd.turnId);
   // checkBasis already refused a turn whose row is not queued or started.
   if (!row) throw new SlotRefusal("changed", `turn ${cmd.turnId} already ended`);
@@ -266,6 +278,7 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
       hash: cmd.codeHash.slice(0, 80),
       reason: `tier ${cmd.tier}`,
     });
+    deps.scope.afterCommit(() => deps.pluginRowsChanged?.());
   } catch (error) {
     if (error instanceof RowBodyError) throw new SlotRefusal("invalid", error.message);
     throw error;
@@ -280,10 +293,15 @@ function applyNow(deps: IntentDeps, cmd: ApplyNowCommand) {
   return result === undefined ? {} : { result };
 }
 
+function callInDeps(deps: IntentDeps) {
+  if (!deps.callIns) throw new SlotRefusal("invalid", "call-ins are not ready on this server");
+  return { scope: deps.scope, worker: deps.worker, callIns: deps.callIns, now: deps.now };
+}
+
 export const INTENT_TYPES: ReadonlySet<string> = new Set([
   "chat.send", "turn.stop", "bots.remove",
   "chat.react", "chat.choose", "chat.answer", "chat.ignoreQuestion", "component.approve", "settings.set", "bots.create",
-  "plugin.grant",
+  "plugin.grant", "callin.ask", "callin.reply", "callin.cancel",
 ]);
 
 /** The core set's apply step (the slot engine's `apply` for `kind: "intent"` commands). */
@@ -294,6 +312,10 @@ export function applyIntent(deps: IntentDeps, context: ApplyContext): { result?:
     case "turn.stop": return stop(deps, context, cmd);
     case "bots.remove": return remove(deps, context, cmd);
     case "plugin.grant": return grantPlugin(deps, context, cmd);
+    // M5-02b: the guest's side. M5-02c: `callin.reply`, the host's side.
+    case "callin.ask": return callInAsk(callInDeps(deps), context, cmd);
+    case "callin.cancel": return callInCancel(callInDeps(deps), context, cmd);
+    case "callin.reply": return callInReply(deps, context, cmd);
     case "chat.react":
     case "chat.choose":
     case "chat.answer":

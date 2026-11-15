@@ -210,6 +210,29 @@ describe("M5-04a: ServerOrigin unit tests", () => {
     }
   });
 
+  it("4b. (M5-04d) a srv:<peer> target is accepted: bots.create goes out at scope manage with its own counter; srv:<self> and an unknown srv: throw TypeError", async () => {
+    const h = makeInMemoryHarness();
+    try {
+      const create: Command = { type: "bots.create", name: "nightly", job: "runs the nightly build" };
+      const slot = await h.origin.submit(`srv:${PEER}`, create);
+      expect(slot).toMatchObject({ origin: SELF, target: `srv:${PEER}`, n: 1 });
+      const again = await h.origin.submit(`srv:${PEER}`, { ...create, name: "other" });
+      expect(again.n).toBe(2);
+      expect(again.originEpoch).toBe(slot.originEpoch);
+      // A bot target of the same peer has its own counter.
+      expect((await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "x" })).n).toBe(1);
+      expect(h.cmdFrames().filter((frame) => frame.slot.target === `srv:${PEER}`).map((frame) => ({ n: frame.slot.n, scope: frame.scope, inc: frame.inc, cmd: frame.cmd }))).toEqual([
+        { n: 1, scope: "manage", inc: INC_1, cmd: create },
+        { n: 2, scope: "manage", inc: INC_1, cmd: { ...create, name: "other" } },
+      ]);
+      await expect(h.origin.submit(`srv:${SELF}`, create)).rejects.toThrow(TypeError);
+      await expect(h.origin.submit("srv:nobody", create)).rejects.toThrow(TypeError);
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM myorigins").get() as { c: number }).c).toBe(2);
+    } finally {
+      await h.close();
+    }
+  });
+
   it("6. slot conflict creates a new originEpoch and re-sends the item under it (§11.4)", async () => {
     const h = makeInMemoryHarness();
     try {

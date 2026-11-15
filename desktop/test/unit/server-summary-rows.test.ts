@@ -409,7 +409,12 @@ describe("summary rows: row kinds this version does not know (plan change N4)", 
   it("are kept, caught up and passed on verbatim, never refused or dropped, and left alone by the summary writer", async () => {
     const s = await setup({ views: { B1: view("B1") } });
     await s.settle();
-    const plugin = { codeHash: "sha256:abc", manifest: { tier: "read", reads: ["bots"] }, author: "user", files: [], grants: {} };
+    // `plugin:` has been a known kind since M5-13a, so its body must now pass PluginRow; `future-kind` stays the unknown one.
+    const plugin = {
+      codeHash: "sha256:abc",
+      manifest: { tier: "read", reads: ["bots"], requests: [], owns: [], provides: [], requires: [], uses: [], clients: [], needsShell: [] },
+      author: "user", files: [], grants: {},
+    };
     const future = ["any", { json: true }, 3];
     const base = tableRev(s.db, s.stream);
     // As a newer server (or a newer version of this one) would have written them.
