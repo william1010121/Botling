@@ -9,10 +9,15 @@
 //
 // A "tree" is a read-only view of the files of the repository: `fsTree(repoRoot)` (the working tree) or `gitTree(repoRoot, ref)`
 // (a commit, nothing checked out). Both name a file by its git blob id, so the two give the same hash for the same files.
-import { buildSync } from "esbuild";
+//
+// esbuild is NOT imported here, and not loaded in this process either: its module checks `new TextEncoder().encode("") instanceof Uint8Array`
+// while loading and throws under jsdom (a vitest `@vitest-environment jsdom` file that imports fe-build-manifest.mjs, then calls
+// feBuildManifestFile). `shellInputs` runs the build in a child node process (`ESBUILD_INPUTS_SCRIPT`); this file only resolves the
+// path of the package (no load), so importing it has no esbuild side effect and `shellInputs` works in any test environment.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 
 /** The entries of the web-v3 build (web-v3/build.mjs): the phone/browser page's shell, chat page, PDF viewer and service worker. */
@@ -31,6 +36,23 @@ export const isPluginSourcePath = (path) => inside(path, PLUGIN_SOURCE_ROOTS);
 /** A test, a doc or a note: changes that cannot make a plugin-only commit into a shell commit. */
 export const isNeutralPath = (path) => NOT_CODE_DIR.test(path) || NOT_CODE_FILE.test(path) || /^(?:docs|\.bot)\//.test(path);
 
+/** The child process of `shellInputs`: reads { esbuild, options } as JSON from stdin, builds, prints the metafile's input paths as JSON. */
+const ESBUILD_INPUTS_SCRIPT = `const { esbuild, options } = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+const { metafile } = require(esbuild).buildSync(options);
+process.stdout.write(JSON.stringify(Object.keys(metafile.inputs)));`;
+
+/** The input paths of esbuild's metafile for `options`, built in a child node process (see the top of this file). Synchronous; a build error throws. */
+function buildInputs(options) {
+  const esbuild = createRequire(import.meta.url).resolve("esbuild"); // resolves the path only: nothing is loaded here
+  try {
+    const out = execFileSync(process.execPath, ["-e", ESBUILD_INPUTS_SCRIPT], { input: JSON.stringify({ esbuild, options }), encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+    return JSON.parse(out);
+  } catch (error) {
+    throw new Error(`shellInputs: the esbuild build failed: ${error?.stderr || error?.message || error}`);
+  }
+}
+
 /**
  * The files the shell is made of: what the web-v3 build reads (esbuild's metafile inputs for WEB_V3_ENTRIES, the options of
  * web-v3/build.mjs), as sorted repo-relative paths, without plugin sources, node_modules and anything outside the repository.
@@ -40,9 +62,9 @@ export function shellInputs(repoRoot) {
   const cwd = realpathSync.native(repoRoot); // esbuild names files by real path: relative to a typed /var/... they would be "../../private/var/..."
   const entryPoints = WEB_V3_ENTRIES.map((entry) => join(cwd, entry)).filter((entry) => existsSync(entry));
   if (entryPoints.length === 0) return [];
-  const { metafile } = buildSync({ entryPoints, absWorkingDir: cwd, outdir: join(cwd, "unused-output"), write: false, metafile: true, bundle: true, format: "iife",
+  const inputs = buildInputs({ entryPoints, absWorkingDir: cwd, outdir: join(cwd, "unused-output"), write: false, metafile: true, bundle: true, format: "iife",
     jsx: "automatic", target: ["chrome130", "safari17"], nodePaths: [join(cwd, "desktop/node_modules")], logLevel: "silent", logOverride: { "empty-glob": "silent" } });
-  const paths = Object.keys(metafile.inputs).filter((path) => !path.startsWith("<")).map((path) => path.replaceAll("\\", "/"))
+  const paths = inputs.filter((path) => !path.startsWith("<")).map((path) => path.replaceAll("\\", "/"))
     .filter((path) => !path.startsWith("../") && !path.includes("node_modules/") && !isPluginSourcePath(path));
   return [...new Set(paths)].sort();
 }
