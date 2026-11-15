@@ -1,14 +1,14 @@
-import { readImagePaths, readImages } from "./read-images";
+import { readImagePaths } from "./read-images";
 import { isBrowserTool } from "../browser-bot";
 import { runBrowserTool } from "./browser-tools";
-import { COMPONENT_USAGE_TOOL, FETCH_TOOL, isBotTool, parseFetchRequest, type BotToolName, type FetchRequest, type ToolCaller } from "./bot-tools";
+import { COMPONENT_USAGE_TOOL, FETCH_TOOL, isBotTool, parseFetchRequest, type BotToolName, type ToolCaller } from "./bot-tools";
 import { isNoteTool, runNoteTool } from "./note-tools";
 import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
 import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
 import { AgyAcpHead, verifyAcpRuntime } from "./agent/agy-acp";
-import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
+import { AGY_EXECUTION_BLOCKED } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
 // claude process), the turn under way, the tool approvals it is waiting on, and its subagents
 // (subagents.json).
@@ -56,45 +56,38 @@ import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 //   Explicit handoff tags use the conductor's budgets and correlated return routes. A shared
 //   decision retains one owner, and a pick on any copy is applied exactly once.
 import { createHash, randomUUID } from "node:crypto";
-import { backgroundTaskOutput, backgroundTaskView, backgroundOutputFile } from "./background-work";
+import { backgroundTaskOutput, backgroundOutputFile } from "./background-work";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve as resolvePathOf } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { linkedFiles, type LinkedFile } from "./storage";
-import { answerLabel, attachmentKind, attachmentList, attachmentMissing, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
+import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
 import { dropLineMedia, keepLineMedia, lineMediaCopy } from "./chat-media";
 import { sameJSON } from "./same-json";
 import { parseFeedback } from "./feedback";
-import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
-import {
-  ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
-  type StepView, type SubagentView, type BotSettingsView, type ResultView, resultLinks,
-} from "../contract";
+import { hostKind, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
+import { ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type ChatSnapshot, type Event, type HeadsView, type MessageView, type ResultOf, type BotSettingsView, type ResultView, resultLinks } from "../contract";
 import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
-import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
+import { ClaudeHead, type HeadExit } from "./agent/head";
 import type { HotSettings } from "./agent/hot-settings";
-import { CodexHead, type CodexHeadConfig, type CodexItem } from "./agent/codex";
+import { CodexHead, type CodexItem } from "./agent/codex";
 import {
   Conductor, displayName, fitted, hasTwo, headsJSON, isActive, otherHead, parseHeadTags, readHeads, resolvePrimary, roundsText,
   type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
 } from "./heads";
 import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
-import { addSample, readTotals, speedView, type RequestEvent, type SpeedTotals } from "./token-speed";
+import { addSample, speedView, type RequestEvent, type SpeedTotals } from "./token-speed";
 import { commandEnded, ReplyText, type CommandState, type StreamItem } from "./agent/stream";
-import {
-  applyingReaction, archiveAll, archiveLine, characterCount, characterPrefix, compareReactions, reactionIntro, reactionUpdate, recentChat,
-  REACTION_PALETTE, reportNote, seenReactions, type SeenReactions,
-} from "./briefing";
-import type { ProcessLedger } from "./process/ledger";
+import { applyingReaction, archiveAll, archiveLine, compareReactions, reactionIntro, reactionUpdate, recentChat, REACTION_PALETTE, reportNote, seenReactions, type SeenReactions } from "./briefing";
 import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
-import { masked, parseReply, pluginTagNames, unsupportedRequest, type BotRequest, type PluginTag } from "./reply";
-import { SubagentBook, readSubagent, readExecution, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
+import { parseReply, unsupportedRequest, type BotRequest } from "./reply";
+import { SubagentBook, readSubagent, SUBAGENT_TOOLS, type SubagentRecord } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "./components/service";
 import { BUILT_INS, COMPONENT_LIMIT, componentKnowledgeFor, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
 import { detailValues, type CommandStatus } from "./components/commands";
 import type { Display } from "./reply";
-import { answerMessage, savedPicks, savedQuestions, validPicks, type QuestionPick } from "./questions";
+import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { headTurnContent, headTurnEnd } from "./head-turn";
 import { costDelta, hasVisibleContent, WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "./worker-core";
 import { projectWorker } from "./worker-projection";
@@ -107,7 +100,7 @@ import { specTrace } from "./spec-trace";
 import { CallInWorkBook, type CallInRelay } from "./call-in-work";
 import { codexWorkerDefaults, codexWorkersJSON } from "./settings";
 import { cardData, PAGE_COMPONENT, previewCards } from "./page-preview";
-import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
+import { totalTokens } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import { alwaysAllows } from "./permission-rules";
 import {
@@ -121,285 +114,17 @@ import {
   backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
   type BackgroundKind, type BackgroundTask,
 } from "./background-tasks";
-import {
-  HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, isUUID, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
-} from "./store/records";
-import type { BotProfile } from "./store/workspace";
+import { HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord } from "./store/records";
 import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./agent/workers";
-import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile, type RemoteWorkerHost } from "./agent/claude-workers";
+import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
 import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
-
+import { RECENT_TOOL_CALLS, NO_LONGER_NEEDED, NO_ANSWER, NEVER_ALWAYS, PLUGINS_RESTART, PROMPT_SESSION_DIVIDER, NEW_SESSION_DIVIDER, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
+import { keepable, resolvePath, union, firstLine, sleep, turnCommandId, preview, streamingText, subagentOf, isReviewRefusal, isRule, allowRule, permissionText, clip, stepView, routinesKey, iso, subagentView, messageView, approvalSummary } from "./bot/view-functions";
 export type Status = "done" | "stopped" | "failed";
+export { NO_LONGER_NEEDED } from "./bot/types";
+export type { SessionStart, SessionStartCodex, BotOptions, PresetTurnIds, DeferredTurn, GuestAnswer, StoredSpec } from "./bot/types";
+export { preview, streamingText, isRule, allowRule, permissionText, stepView, subagentView, messageView } from "./bot/view-functions";
 
-export interface SessionStart {
-  sessionId: string;
-  resume: boolean;
-  /** Appended to claude's system prompt (Prompts.swift's, ported in prompts.ts). */
-  systemPrompt: string;
-  /** Plugins' Claude parts (`--plugin-dir`), and the environment their MCP servers need. */
-  pluginDirs?: string[];
-  pluginEnv?: Record<string, string>;
-  /** The plugins' MCP tools, used without asking (`pluginTools`). */
-  pluginTools?: string[];
-  /** The plugins' skill folders, for Codex (`skills/extraRoots/set`) and Antigravity (`skills.json`); Claude has them in pluginDirs. */
-  skillRoots?: string[];
-  /** The bot's model and effort (bot.json; null: the default), its subagents' model, their 1-hour cache. */
-  model?: string | null;
-  effort?: string | null;
-  subagentModel?: string | null;
-  subagentHourCache?: boolean;
-  /** More folders it may use (`--add-dir`). */
-  addDirs?: string[];
-  /** Auto mode: Claude Code's (`--permission-mode auto`) or Codex's reviewer (`auto_review`); Claude only: rules for blocked calls the user allowed (`--settings`). */
-  autoMode?: boolean;
-  claudeBypassPermissions?: boolean;
-  codexBypassPermissions?: boolean;
-  allowRules?: string[];
-  /** Codex workers' model, effort and Fast mode when the app sets them (null: ~/.codex/config.toml's). */
-  codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null;
-  /** Model families whose app-managed workers may write spec/ (settings.json `specWriters`; spec-guard.ts). */
-  specWriters?: readonly string[];
-}
-
-export interface SessionStartCodex extends SessionStart {
-  /** What app-managed workers are told. */
-  workerInstructions: string;
-  codexModel: string | null;
-  /** The bot's scheduled-routines.json, for `app_routines`. */
-  routinesFile: string | null;
-}
-
-export interface BotOptions {
-  profile: BotProfile;
-  /** Botling 3's server only (2.x leaves it unset): `app_fetch`, a file or folder from another machine; answers with the text the tool returns (M5-07d). */
-  fetch?: (botId: string, request: FetchRequest) => Promise<string>;
-  /** How to run this bot's claude head for a session. */
-  headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig;
-  /** Antigravity native protocol; no Claude permission or plugin configuration is forwarded. */
-  agyConfig?: ((profile: BotProfile, config: AgyConfig) => AgyConfig) | null;
-  /** How to run its Codex head (null: Codex is not available here). */
-  codexConfig?: ((profile: BotProfile, session: SessionStartCodex) => CodexHeadConfig) | null;
-  /** The instructions for this bot's head (settings may change between wakes). */
-  prompts: (engine: Engine, heads: Heads | null) => BotPrompts;
-  /** A partner's: the bot whose chat it speaks in (set only on the other head of a two-head bot). */
-  primary?: Bot;
-  /** The head a partner runs. */
-  engine?: Engine;
-  /** How long the other head waits for the lead's first words before it gets a message to both anyway (1.x: 20 s). */
-  claimWaitMs?: number;
-  /** How long a turn set aside (deferred) and back as the turn under way may wait for claude to begin it (default 90 s). */
-  deferredStartMs?: number;
-  ledger: ProcessLedger;
-  emit: (event: Event) => void;
-  log: (line: string) => void;
-  /** No answer in this time counts as "Don't allow" (1.x: 10 minutes). */
-  approvalTimeoutMs: number;
-  /** An idle head tidies and goes to sleep after this long. */
-  idleMs: number;
-  /** How long Stop waits for claude to end the turn before ending its process tree. */
-  interruptGraceMs: number;
-  /** The most a tidy turn may take before the head is put to sleep anyway. */
-  tidyTimeoutMs?: number;
-  /** On quit, how long an awake bot may tidy (0: not at all; unset or Infinity: as long as it takes, as in 1.x). */
-  quitTidyMs?: number;
-  /** Candidate startup must not modify external project notes until its update commits. */
-  deferStartup?: boolean;
-  /** The main bot's routines get the project list (`Workspace.projectBriefing`). */
-  projectBriefing?: () => string;
-  /** The component library, command runs and pictures every bot shares (null: none). */
-  components?: ComponentsContext | null;
-  /** The requests in a reply (<component>, <plugin>, <install>, …) the app acts on; the rest come back (a notice says 2.0 cannot do them yet). */
-  onRequests?: (bot: Bot, requests: BotRequest[]) => BotRequest[];
-  /** What a turn spent (dollars, Claude's; Codex: 0) and used (tokens), by the bot's name (1.x's `onSpend`, `onTokens`). */
-  usage?: (bot: string, spent: number, tokens: TokenUsage) => void;
-  /** A subscription's limits as a head reported them (`onRateLimits`, `onCodexRateLimits`). */
-  rateLimits?: (engine: "claude" | "codex", limits: RateLimits) => void;
-  /** Plugins' afterReply hooks, when any plugin has one: may change a reply after it shows (null: none). */
-  replyFilter?: () => ((text: string) => Promise<string>) | null;
-  /** A reply showed (plugins' `bots.onReply`; Maintainer's requests settle). */
-  replied?: (bot: Bot, record: ChatRecord) => void;
-  /** A reply's tags that plugins declared (`replyTags`), for the plugins to hear (the bot is the one whose reply it was). */
-  pluginTags?: (bot: Bot, tags: PluginTag[]) => void;
-  /** Plugins' Claude parts (`--plugin-dir`) and the secrets their MCP servers read, for a new claude head. */
-  plugins?: () => { dirs: string[]; env: Record<string, string>; tools?: string[]; skillRoots?: string[] };
-  /** What the plugins' Claude parts are now (`PluginRegistry.claudeStamp`, 1.x's `pluginStamp`). */
-  pluginStamp?: () => string[];
-  /** Rows for the sub bots under this bot (the core builds them from the bots whose `parent` is this one). */
-  subBotRows?: () => SubagentRowView[];
-  /** Said at each wake after the wake line (the main bot's project list: `wakeNote`). */
-  wakeNote?: () => string;
-  /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
-  addDirs?: () => string[];
-  /** The browser's site tools folder, which only Maintainer writes: this bot's Claude head and workers are refused writes there (site-tools-guard.ts). */
-  siteToolsFolder?: string;
-  /** Workers on other machines (app_handoff's `machine`); absent or null: refused. */
-  remoteWorkers?: () => RemoteWorkerHost | null;
-  /** App-managed worktree (a plugin's `sessions.folder`, plugins/session-folders.ts): where its session starts instead of the project folder, and what else it may use there. */
-  worktree?: () => { cwd: string; addDirs: string[] } | null;
-  /** Another bot answering in its chat right now (a call-in's speaker). */
-  guest?: () => string | null;
-  /** The call-ins in its chat not answered yet, answering or waiting their turn. */
-  callIns?: () => { id: string; state: "queued" | "answering" }[];
-  /** The chat it is answering a call-in in now (null: none). */
-  answeringIn?: () => string | null;
-  /** Its reply on the news of a worker it started when called into `caller`'s chat with `asked` (`by`: "user" for the user's @, else a bot's): told back there (`callInFollowUp`). */
-  callInFollowUp?: (caller: string, asked: string, record: ChatRecord, by?: "user") => void;
-  /** Its turn on such a worker's report ended without a reply (`why`): that chat is told so (`callInFollowUpMissed`). */
-  callInFollowUpMissed?: (caller: string, asked: string, why: string, by?: "user") => void;
-  /** Its @s still being answered or waiting, said with its next turn (status only; null: none). */
-  callInNote?: () => string | null;
-  /** What a line shows besides itself for the component studio, through its seam (the plugins' `studioLineExtras`): the component it already is (Phase 5a). */
-  lineExtras?: (bot: Bot, record: ChatRecord) => { component?: string };
-  /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
-  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native"; claudeWorkerLimit?: number; specWriters?: readonly string[] };
-  /** The app-wide agent registry (agents.json): agents it hosts for another owner, and agents it owns that run elsewhere. */
-  agents?: AgentPort;
-  /**
-   * Botling 3's server only (2.x leaves it unset): asked before a turn is routed to a head. True keeps the turn
-   * aside (not routed); the server records it in its effect outbox and routes it later with `release()`.
-   */
-  deferTurn?: (turn: DeferredTurn) => boolean;
-  /** Botling 3's server only (2.x leaves it unset: the files, `FileBotStore`): the store of the bot kept in `directory`. */
-  botStore?: (directory: string) => BotStore;
-}
-
-/** The ids a Botling 3 server chose for a turn before the core makes it (its intent was committed first). */
-export interface PresetTurnIds {
-  turnId: string;
-  /** The reply's chat line. */
-  messageId: string;
-  /** The user's line (chat.send). */
-  userId?: string;
-}
-
-/** A turn the server may keep aside (`BotOptions.deferTurn`). */
-export interface DeferredTurn {
-  botId: string;
-  turnId: string;
-  messageId: string;
-  userId: string | null;
-  origin: "user" | "app" | "background" | "tidy";
-  words: string;
-  /** The head it goes to. */
-  engine: Engine;
-  /** A routine's run (its time came, or its watch failed). */
-  routine: boolean;
-  /** Settles once this turn ended, however it ended (a turn another turn read in settles when that one ends, or never). */
-  done: Promise<Status>;
-  /** Routes it now; resolves with the turn that took it (another turn under way may read it in) and how it ended. */
-  release(): { turnId: string; done: Promise<Status> };
-}
-
-type Origin = "user" | "app" | "background" | "tidy";
-type AgentHead = ClaudeHead | CodexHead | AgyAcpHead;
-
-interface Turn {
-  id: string;
-  /** The reply's chat line id. */
-  messageId: string;
-  /** The user's line this turn answers (null for the app's own and claude's own turns). */
-  userId: string | null;
-  origin: Origin;
-  /** What goes to claude before the briefing and reactions are added (the user's lines, or the app's note). */
-  words: string;
-  reply: ReplyText;
-  steps: StepRecord[];
-  /** The reply's chat line, once it has something to show. */
-  record: ChatRecord | null;
-  /** The gate: false once the turn ended or was stopped; nothing reaches anyone after. */
-  open: boolean;
-  /** Delivered to a head (false while it waits its turn). */
-  sent: boolean;
-  head: AgentHead | null;
-  /** Sent again once already (its resume failed). */
-  retried: boolean;
-  /** Swift date it was sent. */
-  started: number;
-  /** Subagents that ended while it ran (a silent turn has to report them). */
-  ended: string[];
-  /** Background work it started (1.x's `trace.takeTasks()`), kept in its reply. */
-  tasks?: BackgroundTask[];
-  /** It ended on an API error with no answer from the API (1.x's `turnLostConnection`). */
-  lostConnection?: boolean;
-  /** claude was sent a line of yours into this turn with priority "now": it may cut the turn off for it (`error_during_execution`). */
-  steeredNow?: boolean;
-  /** Work the other head handed over (its reply goes back), and the hand-off it is. */
-  conducted: boolean;
-  handoffId: string | null;
-  /** The other head's lines it passes on: seen by this head once sent. */
-  about: string[];
-  /** Explicit question views delivered with this turn's peer context (`turnPeerMessages`). */
-  peer: Set<string>;
-  /** How much of the reply's text the other head has heard already (`headWords`). */
-  told: number;
-  done: Promise<Status>;
-  resolve: (status: Status) => void;
-  /** For the tidy turn: its reply. */
-  onReply?: (text: string) => void;
-  /** Its turn in another chat (a group, or a chat it was called into): hidden here like the tidy, but it may ask for tools. */
-  guest?: boolean;
-  /** Called into this chat (its id) with @: hidden here, but its own chat and row show it at work. */
-  callIn?: string;
-  /** Told once whether it reached the head (true: it began, or was read into the turn under way) or never will (false:
-   * taken back or dropped while it waited): `send`'s `onDelivery`. */
-  delivery?: (delivered: boolean) => void;
-  /** For a call-in: what it was asked there (a worker it starts reports back with it, `callInWork`). */
-  callInAsked?: string;
-  /** For a call-in: "user" when the user's @ called it in (not a bot's). */
-  callInBy?: "user";
-  /** Its turn on the report or note of a worker it started in a call-in: its reply goes back to that chat too. */
-  relayTo?: CallInRelay;
-  /** A routine's run (Botling 3's server records it in its effect outbox before it starts). */
-  routine?: boolean;
-  /** Already past `deferTurn` (released by the server, or never deferred). */
-  released?: boolean;
-}
-
-/** What a bot said for its turn in another chat (1.x's `GroupAnswer`). */
-export type GuestAnswer = { kind: "busy" } | { kind: "failed"; why: string } | { kind: "reply"; text: string; steps: StepRecord[]; engine: string };
-
-interface Approval {
-  /** Monitors and managed workers outlive the coordinator turn; their owner closes their cards. */
-  lasting: boolean;
-  requestId: string;
-  tool: string;
-  input: Record<string, unknown>;
-  head: AgentHead;
-  timer: NodeJS.Timeout;
-  expires: number;
-}
-
-/** A call auto mode blocked, waiting on its card (`Bot.Denial`). */
-interface Denial {
-  tool: string;
-  summary: string;
-  /** What lets that call through: "Bash(rm -rf build)". */
-  rule: string;
-  /** One of its subagents made the call: which one, in the bot's words. */
-  subagent: string | null;
-  /** The user allowed it before and claude blocked it anyway: allowing again cannot help. */
-  allowedBefore: boolean;
-}
-
-/** How many recent tool calls are kept (`recentToolCalls`). */
-const RECENT_TOOL_CALLS = 500;
-
-export const NO_LONGER_NEEDED = "No longer needed";
-const NO_ANSWER = "No answer in time";
-/** Tools whose "always" would be far broader than it sounds; they are asked every time (`Bot.neverAlways`). */
-const NEVER_ALWAYS = new Set(["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command", "Permissions"]);
-/** 1.x's `RestartReason.plugins`. */
-const PLUGINS_RESTART = { told: "loading new plugins", shown: "loading new plugins" };
-const PROMPT_SESSION_DIVIDER = "New session (instructions updated)";
-const NEW_SESSION_DIVIDER = "Couldn't go on in the same session → new session";
-
-/**
- * A component spec as specs.json keeps it. It is the component studio's (botling.component-studio) record: the core keeps the list a chat
- * has, and knows only each record's id and the line it is made from.
- */
-export interface StoredSpec { id: string; messageID?: string; [field: string]: unknown }
-const readStoredSpec = (value: unknown): StoredSpec | null =>
-  value && typeof value === "object" && !Array.isArray(value) && typeof (value as StoredSpec).id === "string" ? (value as StoredSpec) : null;
 
 export class Bot {
   readonly store: BotStore;
@@ -6299,258 +6024,3 @@ export class Bot {
   }
 }
 
-/** `ComponentState.isKeepable`: JSON of anything but null, within 256K UTF-16 characters. */
-function keepable(json: string): boolean {
-  if (!json || json.length > 256 * 1024) return false;
-  try { return JSON.parse(json) !== null; } catch { return false; }
-}
-
-const resolvePath = (path: string) => resolvePathOf(path);
-
-/** `Bot.union`: the heads in either list, Claude first; undefined when none. */
-function union(a: string[] | undefined, b: string[] | undefined): string[] | undefined {
-  const both = new Set([...(a ?? []), ...(b ?? [])]);
-  const out = ["claude", "codex", "agy"].filter((engine) => both.has(engine));
-  return out.length ? out : undefined;
-}
-
-const firstLine = (text: string) => text.split(/\r?\n/).find((part) => part.length) ?? text;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-/** The id claude's command_lifecycle names a turn's message by (the one it was sent with), lowercased. */
-const turnCommandId = (turn: Turn) => (turn.userId ?? turn.messageId).toLowerCase();
-
-/** `Bot.preview(of:)`: a line's first line, ≤ 60 characters (what a reply to it quotes). */
-export function preview(record: ChatRecord): string {
-  const line = record.text.split(/[\n\r\u2028\u2029]+/).find((part) => part.length > 0) ?? decodeURIComponent(record.attachments?.[0]?.url.split("/").pop() ?? "");
-  return characterCount(line) > 60 ? `${characterPrefix(line, 60)}…` : line;
-}
-
-/** Tags held back while still being written, and those that end with their opening `>` (attributes only). */
-const BLOCK_TAGS = ["choices", "show", "component", "new-bot", "sub-bot", "remove-sub-bot", "remove-bot", "new-project", "plugin", "install", "need-folder",
-  "give-component", "take-component", "suggest-component", "component-spec", "component-declined", "open-question", "no-reply",
-  "task", "reaction", "decision-ref", "end", "block", "agent-message", "agent-stop"];
-const ATTRIBUTE_TAGS = new Set(["task", "reaction", "decision-ref", "open-question", "agent-stop", "remove-sub-bot", "remove-bot"]);
-
-/**
- * The reply so far as the chat shows it while it streams: the app's complete tags taken out, and
- * a tag still being written held back (from its `<` on), so no raw tag flashes in the bubble.
- */
-export function streamingText(raw: string): string {
-  // Tags in code are examples: they are looked for outside code only (code that is not closed yet counts as code).
-  const outside = masked(raw);
-  let cut = -1;
-  for (const name of [...BLOCK_TAGS, ...pluginTagNames()]) {
-    const opener = new RegExp(`<${name}(?=[\\s/>]|$)`, "g");
-    let open = -1;
-    for (const match of outside.matchAll(opener)) open = match.index!;
-    if (open < 0) continue;
-    const rest = outside.slice(open);
-    const closed = rest.includes(`</${name}>`) || /^<[^>]*\/>/.test(rest) || (ATTRIBUTE_TAGS.has(name) && /^<[^>]*>/.test(rest));
-    if (!closed && (cut < 0 || open < cut)) cut = open;
-  }
-  // A `<` at the very end may be the start of a tag.
-  const tail = /<[a-z/-]*$/i.exec(outside);
-  if (tail && (cut < 0 || tail.index < cut)) cut = tail.index;
-  return parseReply(cut >= 0 ? raw.slice(0, cut) : raw).body;
-}
-
-/** The subagent an item is a step of (1.x's `Bot.subagentID(of:)`), or null. */
-function subagentOf(item: CodexItem): string | null {
-  switch (item.kind) {
-    case "toolUse": case "toolResult": return item.parent;
-    case "subagentText": case "subagentUser": return item.parent;
-    case "subagentStarted": case "subagentWaiting": case "subagentOutput": return item.id;
-    default: return null;
-  }
-}
-
-/** A card for a call Codex's reviewer (auto mode) refused (`CodexSession.reviewed`). */
-function isReviewRefusal(requestId: string): boolean {
-  return requestId.startsWith("codex-review:");
-}
-
-/** An always-allowed entry that is a permission rule ("Bash(npm test)"), not a tool name. */
-export function isRule(entry: string): boolean {
-  return entry.includes("(") && entry.endsWith(")");
-}
-
-/**
- * The permission rule that lets exactly this call through (`Bot.allowRule`): the command, the file (as
- * `//absolute/path`; Edit rules cover every file tool), the site. Null when there is nothing narrow to allow.
- */
-export function allowRule(tool: string, detail: string): string | null {
-  const value = detail.trim();
-  switch (tool) {
-    case "Bash": return value ? `Bash(${value})` : null;
-    case "Write": case "Edit": case "MultiEdit": case "NotebookEdit": return value.startsWith("/") ? `Edit(/${value})` : null;
-    case "WebFetch": {
-      try { const host = new URL(value).hostname; return host ? `WebFetch(domain:${host})` : null; } catch { return null; }
-    }
-    default: return NEVER_ALWAYS.has(tool) ? null : tool;
-  }
-}
-
-/** The question, with what would run shown as code so nothing in it renders as a link or formatting (`Bot.permissionText`). */
-export function permissionText(tool: string, summary: string): string {
-  const longest = Math.max(0, ...(summary.match(/~+/g) ?? []).map((run) => run.length));
-  const fence = "~".repeat(Math.max(3, longest + 1));
-  return `Wants to use \`${tool.replaceAll("`", "'")}\`:\n\n${fence}\n${summary}\n${fence}`;
-}
-
-const clip = (text: string | undefined | null, limit: number) => (text == null ? null : text.length > limit ? `${text.slice(0, limit - 1)}…` : text);
-
-/** A step as the contract shows it; a subagent's with its status and tool count (`ChatPayload.stepView`). */
-export function stepView(step: StepRecord, subagents?: Pick<SubagentBook, "get">): StepView {
-  const kind = (["tool", "text", "subagent", "message"] as const).includes(step.kind) ? step.kind : "tool";
-  const subagent = kind === "subagent" ? subagents?.get(String(step.id)) : undefined;
-  const view: StepView = {
-    id: String(step.id).slice(0, 200),
-    kind,
-    tool: clip(step.tool, 200),
-    title: clip(subagent?.description || String(step.title ?? ""), 2_000) ?? "",
-    detail: clip(step.detail, 10_000),
-    output: clip(step.output, 10_000),
-    failed: step.failed === true,
-    done: step.done === true,
-  };
-  const images = readImages(step);
-  if (images.length) view.images = images;
-  if (kind === "message" && step.from) {
-    view.from = step.from.slice(0, 40);
-    if (typeof step.at === "number") view.time = iso(step.at);
-    if (step.queued) view.queued = true;
-  }
-  if (kind === "subagent") {
-    view.status = subagent?.status ?? (step.done ? (step.failed ? "failed" : "completed") : "running");
-    view.count = subagent ? toolCount(subagent) : null;
-    if (subagent && subagent.status !== "running") view.done = true;
-  }
-  return view;
-}
-
-/** A routines view without its next times (they move with the clock alone). */
-function routinesKey(view: ResultOf<"routines.list">): string {
-  return JSON.stringify([view.error, view.routines.map((routine) => [routine.id, routine.status, routine.schedule, routine.timezone])]);
-}
-
-function choiceView(choice: ChoiceRecord): ChoiceView {
-  return {
-    label: clip(String(choice.label ?? ""), 400) ?? "",
-    detail: clip(choice.detail, 400),
-    recommended: choice.recommended === true,
-    action: choice.action === "allowOnce" || choice.action === "alwaysAllow" || choice.action === "deny" ? choice.action : null,
-  };
-}
-
-const iso = (swift: number | undefined) => (typeof swift === "number" && Number.isFinite(swift) ? swiftDateISO(swift) : new Date(0).toISOString());
-
-/** `ChatPayload.make(subagent:)`'s data: its task, steps, words and report. */
-function executionText(id: string, execution: SubagentExecution | undefined): string {
-  return [`Agent: ${id}`, ...(execution ? [`Run: ${execution.run}`, execution.threadId ? `Thread: ${execution.threadId}` : "", execution.turnId ? `Turn: ${execution.turnId}` : "", execution.ownerSessionId ? `Owner session: ${execution.ownerSessionId}` : ""] : [])].filter(Boolean).join("\n");
-}
-
-export function subagentView(subagent: SubagentRecord, owner: string, book: SubagentBook, ownerEngine?: Engine, history?: SubagentHistory): SubagentView {
-  const raw = subagent.runtime;
-  const runtime = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
-  const text = (value: unknown) => typeof value === "string" && value.trim() ? clip(value.trim(), 200) : null;
-  const runs = history?.runs ?? [];
-  const current = history?.steps ?? subagent.steps;
-  return {
-    id: subagent.id.slice(0, 200),
-    title: clip(subagent.description || "Subagent", 400) ?? "Subagent",
-    owner: owner.slice(0, 200),
-    status: subagent.status,
-    type: clip(subagent.type, 200),
-    model: clip(subagent.model, 200),
-    engine: runtime?.engine === "agy" || runtime?.engine === "codex" || runtime?.engine === "claude" ? runtime.engine
-      : subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : subagent.type === "agy-worker" ? "agy" : subagent.type === "claude-worker" ? "claude" : ownerEngine ?? "claude",
-    runtime: runtime ? { reasoningEffort: text(runtime.reasoningEffort), serviceTier: text(runtime.serviceTier) } : null,
-    outputTokens: reportedOutputTokens(subagent),
-    tokenSpeed: speedView(readTotals(subagent.speed)),
-    waitingOn: book.waitOf(subagent),
-    execution: subagent.execution ?? null,
-    prompt: clip(subagent.prompt, 20_000) ?? "",
-    steps: [
-      ...runs.flatMap(({ run, steps }, index) => {
-        const execution = readExecution(run.execution);
-        const status = typeof run.status === "string" ? run.status : "stopped";
-        return [
-          { id: `history:${index}`, kind: "message" as const, title: `Previous run${execution ? ` ${execution.run}` : ""} · ${status}\n${executionText(subagent.id, execution)}\n\n${run.prompt ?? ""}`, failed: false, done: true },
-          // Agent steps must keep their real drill-through id in history too.
-          ...steps.slice(-200).map((step) => ({ ...step, id: step.kind === "subagent" ? step.id : `history:${index}:${step.id}`, done: true })),
-          { id: `history:${index}:result`, kind: "text" as const, title: run.result || `Run ${status}.`, failed: status === "failed", done: true },
-        ];
-      }),
-      ...(runs.length ? [{ id: "current-run", kind: "message" as const, title: `Current run${subagent.execution ? ` ${subagent.execution.run}` : ""}\n${executionText(subagent.id, subagent.execution)}\n\n${subagent.prompt}`, failed: false, done: true }] : []),
-      ...current,
-    ].slice(-500).map((step) => stepView(step, book)),
-    result: clip(subagent.result, 20_000),
-    startedAt: iso(subagent.startedAt),
-    endedAt: subagent.endedAt != null ? iso(subagent.endedAt) : null,
-  };
-}
-
-/** A chat line as the contract shows it (what 1.x's ChatPayload.Message is built from). */
-export function messageView(record: ChatRecord, approval?: { expires: number }, subagents?: Pick<SubagentBook, "get">, displays?: DisplayData[]): MessageView {
-  const view: MessageView = { id: record.id, role: record.role, text: record.text.slice(0, 400_000), time: swiftDateISO(record.date) };
-  if (record.turnID && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.turnID)) view.turnId = record.turnID;
-  if (record.state) view.state = record.state;
-  if (record.choices?.length) {
-    view.choices = record.choices.slice(0, 20).map(choiceView);
-    view.chosen = typeof record.chosen === "number" && record.chosen >= 0 ? record.chosen : null;
-    // The legacy status label is presentation only; the persisted record holds system provenance.
-    view.answer = typeof record.answer === "string" ? record.answer.slice(0, 4_000) : record.questionInvalidatedAt && !record.ignoredAt ? NO_LONGER_NEEDED : null;
-    if (record.ignoredAt) view.ignoredAt = record.ignoredAt;
-    const questions = savedQuestions(record.questions);
-    if (questions) {
-      view.questions = questions.map((question) => ({ question: question.question, multiple: question.multiple, options: question.options.map(choiceView) }));
-      const picks = savedPicks(questions, record.picks);
-      if (picks) view.picks = picks.map((pick) => ({ options: pick.options, other: pick.other ?? null, skipped: pick.skipped === true, ...(pick.notes ? { notes: { ...pick.notes } } : {}) }));
-    }
-  }
-  if (record.permissionTool) view.approval = { tool: record.permissionTool.slice(0, 200), expires: approval ? new Date(approval.expires).toISOString() : null };
-  if (record.steps?.length) view.steps = record.steps.slice(-500).map((step) => stepView(step, subagents));
-  if (Array.isArray(record.backgroundTasks) && record.backgroundTasks.length) {
-    // Persisted tasks can come from older/newer builds: drop one unrecognized task, never the message.
-    view.backgroundTasks = record.backgroundTasks.flatMap((value: unknown) => {
-      const task = backgroundTaskView(value);
-      return task ? [task] : [];
-    });
-  }
-  if (record.interrupted) view.interrupted = true;
-  if (record.attachments?.length) {
-    view.attachments = record.attachments.slice(0, 50).filter((file) => typeof file?.url === "string").map((file) => ({
-      name: decodeURIComponent(file.url.split("/").pop() ?? "file").slice(0, 400),
-      kind: file.kind === "image" || file.kind === "video" ? file.kind : "file",
-      url: file.url.slice(0, 4_000),
-      // An original attached by its path may have been moved or deleted since.
-      ...(attachmentMissing(file.url) ? { missing: true as const } : {}),
-    }));
-  }
-  if (typeof record.replyTo === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.replyTo)) view.replyTo = record.replyTo;
-  if (typeof record.replyPreview === "string") view.replyPreview = record.replyPreview.slice(0, 2_000);
-  if (record.engine === "agy" || record.engine === "claude" || record.engine === "codex") view.engine = record.engine;
-  if (record.to === "agy" || record.to === "claude" || record.to === "codex") view.to = record.to;
-  if (record.role === "user" && typeof record.via === "string" && record.via) view.via = record.via.slice(0, 200);
-  if (Array.isArray(record.seenBy)) {
-    const seen = (["claude", "codex", "agy"] as const).filter((engine) => record.seenBy!.includes(engine));
-    if (seen.length) view.seenBy = [...seen];
-  }
-  if (typeof record.decisionID === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.decisionID)) view.decisionId = record.decisionID;
-  if (isUUID(record.sourceID)) view.sourceId = record.sourceID.toUpperCase();
-  if (displays?.length) view.displays = displays.map((display) => ({ ...display, name: display.name.slice(0, 200), data: display.data.slice(0, 1_100_000) }));
-  if (Array.isArray(record.reactions) && record.reactions.length) {
-    view.reactions = record.reactions.slice(0, 60).filter((r) => typeof r?.emoji === "string" && typeof r?.actor === "string")
-      .map((r) => ({ emoji: r.emoji.slice(0, 16), actor: r.actor.slice(0, 200) }));
-  }
-  return view;
-}
-
-/** What a tool approval card asks to run: the text in its fence (`permissionText`), else its first line. */
-function approvalSummary(text: string): string {
-  const fenced = /^(~{3,})\n([\s\S]*?)\n\1\s*$/m.exec(text);
-  const body = fenced?.[2] ?? text.split(/\r?\n/).find((line) => line.trim()) ?? "";
-  const line = body.trim().replace(/\s+/g, " ");
-  return line.length > 400 ? `${line.slice(0, 399)}…` : line;
-}
