@@ -90,4 +90,30 @@ describe("waiting: a text-keyed ignore sets aside plain items only", () => {
     other.ignoreWaiting(PROJECT, X);
     expect(other.peerMayIgnoreWaiting(PROJECT, X)).toBe(true);
   });
+
+  it("review: a plain item and an app card with the same text (the server's own ask): the peer's text ignore sets aside the plain item only", () => {
+    // A bot's own `openQuestion()` skips app lines, so a server ask (M5-06c) sits on the list beside the bot's plain items.
+    const PLAIN = "1. Allow";
+    const folder = tempDir("waiting-plain-ignore-mixed");
+    mkdirSync(join(folder, ".bot"), { recursive: true });
+    writeFileSync(join(folder, ".bot", "memory.md"), `## Current status\n- Fine\n## Waiting on you\n- ${PLAIN}\n`);
+    const dir = tempDir("waiting-plain-ignore-mixed-data");
+    saveProjectRow(dir, { id: PROJECT, name: "botling", folder, avatar: "triangle" });
+    mkdirSync(join(dir, "projects", PROJECT), { recursive: true });
+    const core = new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true,
+      routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0, log: () => undefined });
+    cores.push(core);
+    void core.serverAsk(PROJECT, { text: "Fetch it", choices: ["Allow"] });
+    const card = mine(core).find((item) => item.messageId !== null);
+    expect(card).toMatchObject({ text: PLAIN, messageId: expect.any(String) });
+    expect(mine(core).filter((item) => item.text === PLAIN)).toHaveLength(2);
+    // The peer passes on the plain item; the handler must not reach the card through it.
+    expect(core.peerMayIgnoreWaiting(PROJECT, PLAIN)).toBe(true);
+    core.ignoreWaiting(PROJECT, PLAIN);
+    expect(mine(core)).toEqual([card]);
+    expect((core as any).bot(PROJECT).line(card!.messageId).ignoredAt).toBeUndefined();
+    expect((JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as { ignoredWaiting: string[] }).ignoredWaiting).toEqual([`${PROJECT}-${PLAIN}`]);
+    // A repeat now meets only the card: refused (a re-run of the handler would set the card aside by id).
+    expect(core.peerMayIgnoreWaiting(PROJECT, PLAIN)).toBe(false);
+  });
 });
