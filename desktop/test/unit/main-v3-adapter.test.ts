@@ -489,6 +489,48 @@ describe("pending lines → delivered by slot", () => {
     expect(r.server.copies).toEqual([]);
   });
 
+  describe("a plugins.call whose result the owner kept (too large for one log entry; N2)", () => {
+    const call = { type: "plugins.call", name: "note", method: "load", params: {}, from: "frame" } as Command;
+    const big = { result: { doc: "筆記".repeat(2_000) } }; // the fake server sends one frame; res.parts are server-session-frames's
+    /** The owner answers the call with a kept-result marker; `answer` is how it answers the `slot.result` req. */
+    async function keptRig(marker: { bytes: number; kept: boolean }, answer: (message: Extract<Message, { t: "req" }>, server: FakeServer) => void) {
+      const r = await rig((server) => {
+        const apply = server.applyHook!;
+        server.applyHook = (context) => context.cmd.type === "plugins.call" ? { result: { resultKept: marker } } : apply(context);
+        const base = server.onMessage!;
+        server.onMessage = (message: Message) => {
+          if (message.t === "req" && message.cmd.type === "slot.result") { r.reqs.push(message.cmd); answer(message, server); return; }
+          base(message);
+        };
+      });
+      await r.store.resync();
+      return r;
+    }
+
+    it("fetches the kept result with a slot.result req for its own slot and answers the call with the real result", async () => {
+      const r = await keptRig({ bytes: 1_200_000, kept: true }, (message, server) => server.send({ t: "res", req: message.req, ok: true, result: big }));
+      expect(await r.adapter.request(call)).toEqual({ ok: true, result: big });
+      const fetch = r.reqs.find((cmd) => cmd.type === "slot.result") as Extract<Command, { type: "slot.result" }>;
+      expect(fetch.slot).toEqual(r.server.copies.find((copy) => copy.cmd.type === "plugins.call")!.slot);
+    });
+
+    it("a result that could not be fetched answers an error that says the call ran, never \"not sent\"", async () => {
+      const r = await keptRig({ bytes: 1_200_000, kept: true }, (message, server) => server.send({ t: "res", req: message.req, ok: false, error: { code: "not_found", message: "no longer kept" } }));
+      const answer = await r.adapter.request(call);
+      expect(answer.ok).toBe(false);
+      const text = (answer as { error: { message: string } }).error.message;
+      expect(text).toMatch(/plugins\.call ran/);
+      expect(text).not.toMatch(/not sent/i);
+    });
+
+    it("a result too large to keep answers an error that says the call ran (no fetch)", async () => {
+      const r = await keptRig({ bytes: 40_000_000, kept: false }, () => { throw new Error("no fetch expected"); });
+      const answer = await r.adapter.request(call);
+      expect(answer).toMatchObject({ ok: false, error: { message: expect.stringMatching(/plugins\.call ran.*too large/) } });
+      expect(r.reqs.some((cmd) => cmd.type === "slot.result")).toBe(false);
+    });
+  });
+
   it("every command the server takes only as a read is sent as a request, never as a slot", () => {
     const reads = (Object.keys(COMMAND_ROUTES) as CommandType[]).filter((type) => COMMAND_ROUTES[type].kind === "read");
     expect(reads.length).toBeGreaterThan(10);
