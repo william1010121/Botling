@@ -20,10 +20,13 @@ export type FeedViewKey = (typeof FEED_VIEWS)[number][0];
 export const FEED_MENU_SLOTS: readonly string[] = SLOT_ALIASES.filter((alias) => alias.group === "menu").map(legacySlotId);
 
 const ROOT_IDS = new Set(ROOT_SLOTS.map(canonicalSlot));
+/** The places a built-in plugin owns now, so `:shell` does not (M7-02c: `botling.settings` provides `settings/section` and `settings/quick`). */
+export const PLUGIN_OWNED_SLOTS: readonly string[] = ["view/settings.section", "view/quickSettings"];
+const OWNED_ELSEWHERE = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 
 /**
  * What `:shell` owns besides the root slots (renderer-kernel.ts): the places the feed fills that are not a root slot already
  * (`view/bottomPanel` is `app/bottom`, a root slot: it is not listed twice). A card that gives one of these a real owner (the
- * settings plugin for `view/settings.section`, …) takes it off this list in the same change.
+ * settings plugin for `view/settings.section`, …) takes it off this list in the same change, by listing it in `PLUGIN_OWNED_SLOTS`.
  */
-export const FEED_SLOTS: readonly string[] = [...new Set([...FEED_VIEWS.map(([, slot]) => slot), ...FEED_MENU_SLOTS])].filter((slot) => !ROOT_IDS.has(slot));
+export const FEED_SLOTS: readonly string[] = [...new Set([...FEED_VIEWS.map(([, slot]) => slot), ...FEED_MENU_SLOTS])].filter((slot) => !ROOT_IDS.has(slot) && !OWNED_ELSEWHERE.has(slot));
