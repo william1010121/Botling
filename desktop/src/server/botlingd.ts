@@ -38,7 +38,7 @@ import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type SessionHost, type SessionOptions } from "./session";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
-import { Gossip, PrefsStore, RosterStore } from "./roster";
+import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
@@ -84,6 +84,41 @@ export class DataDirInUseError extends Error {
     super(`Another Botling server or core (pid ${pid}) already uses ${dataDir}; not starting a second one.`);
     this.name = "DataDirInUseError";
   }
+}
+
+/**
+ * The relay room's allow list (protocol v1 §6.3, §4.6, M4-16a): join tokens for pending pairing offers, valid devices,
+ * and valid peer servers ≠ self (each member token derived via static X25519 and cached by member + DH key).
+ */
+export function relayAllowList(options: {
+  roster: { readonly view: RosterView };
+  identity: { readonly dhKey: CryptoKey };
+  pairing: { relayOffers(): Array<{ offer: string; secret: Uint8Array; expiresAt: number }> };
+}): () => Promise<Array<{ h: string; exp?: number }>> {
+  const memberTokens = new Map<string, string>();
+  return async () => {
+    const view = options.roster.view;
+    const offers = options.pairing.relayOffers().map((offer) => ({ ...offer, secret: new Uint8Array(offer.secret) }));
+    const tokens: Array<{ h: string; exp?: number }> = [];
+    for (const offer of offers) {
+      tokens.push({ h: await relayTokenHash(await relayPairToken(offer.offer, offer.secret)), exp: offer.expiresAt });
+      offer.secret.fill(0);
+    }
+    for (const member of view.valid) {
+      if (member === view.self) continue;
+      const info = view.members.get(member);
+      const dhPub = info ? fromBase64Url(info.keys.dh) : null;
+      if (!info || !dhPub) continue;
+      const key = `${member} ${info.keys.dh}`;
+      let hash = memberTokens.get(key);
+      if (!hash) {
+        try { hash = await relayTokenHash(await relayDeviceToken(member, options.identity.dhKey, dhPub)); } catch { continue; }
+        memberTokens.set(key, hash);
+      }
+      tokens.push({ h: hash });
+    }
+    return tokens;
+  };
 }
 
 /** The key of the bot store kept in `directory`: the bot's id, or `<id>/partner-<engine>` for a second head's store. */
@@ -448,28 +483,8 @@ export class Botlingd {
       daemon.relayAddress = relayAddress;
       daemon.tokenValue = writeToken(paths.token);
       if (relayRoom) {
-        // Join tokens of the valid devices (derived from the static DH with each, cached by key) and of pending offers.
-        const deviceTokens = new Map<string, string>();
-        const allowList = async () => {
-          const offers = pairing.relayOffers().map((offer) => ({ ...offer, secret: new Uint8Array(offer.secret) }));
-          const tokens: Array<{ h: string; exp?: number }> = [];
-          for (const offer of offers) { tokens.push({ h: await relayTokenHash(await relayPairToken(offer.offer, offer.secret)), exp: offer.expiresAt }); offer.secret.fill(0); }
-          const view = roster.view;
-          for (const member of view.valid) {
-            const device = roster.device(member);
-            const dhPub = device ? fromBase64Url(device.keys.dh) : null;
-            if (!device || !dhPub) continue;
-            const key = `${member} ${device.keys.dh}`;
-            let hash = deviceTokens.get(key);
-            if (!hash) {
-              try { hash = await relayTokenHash(await relayDeviceToken(member, identity.dhKey, dhPub)); } catch { continue; }
-              deviceTokens.set(key, hash);
-            }
-            tokens.push({ h: hash });
-          }
-          return tokens;
-        };
-        const relay = new RelayConnector({ url: relayRoom.url, roomKey: relayRoom.key, sessions: remote, allowList, log, ...relayTestOptions(env) });
+        const allowList = relayAllowList({ roster, identity, pairing });
+        const relay = new RelayConnector({ url: relayRoom.url, roomKey: relayRoom.key, sessions: new SessionRouter(remote, peers, undefined, serverJoin), allowList, log, ...relayTestOptions(env) });
         roster.onChange(() => { void relay.refreshAllow(); });
         pairing.onOffersChanged(() => { void relay.refreshAllow(); });
         daemon.relay = relay;

@@ -6,12 +6,12 @@
 //
 // - The room key lives in the data folder (`relay-room.key`, 0600; made on first use): the same room across restarts,
 //   so a device's `{url, room}` from its pairing offer keeps working. The key never leaves botlingd and the relay.
-// - Allow list: the join tokens of the valid devices and of the pending pairing offers (src/session/relay-wire.ts says
-//   how they are derived; none is stored). It is sent again on every roster or offer change; a device that leaves the
-//   roster leaves the list and the relay closes its connection at once.
-// - Each relay peer is one device session (server/session RemoteSessions, transport kind `relay`: 128 KiB content
-//   chunks, the 1 MiB content window); its frames are base64url text in `d`. Nothing is parsed here: a `d` that is not
-//   base64url ends that peer.
+// - Allow list: the join tokens of the valid devices, valid peer servers (!== self) and pending pairing offers
+//   (src/session/relay-wire.ts says how they are derived; none is stored). It is sent again on every roster or offer
+//   change; a member that leaves the roster leaves the list and the relay closes its connection at once.
+// - Each relay peer is routed by its first frame (SessionRouter, transport kind `relay`: device, peer server, or join;
+//   device content uses 128 KiB chunks and the 1 MiB content window); its frames are base64url text in `d`. Nothing is
+//   parsed here: a `d` that is not base64url ends that peer.
 // - Everything botlingd sends to the relay goes through the pacer (pacing.ts): ≤ 45 messages/s, burst 150, control and
 //   live first, content ≤ 30/s. The sessions' links hold their frames while the pacer's channel is full.
 // - The connection is re-opened after a loss with a backoff (1 s doubling to 30 s, with jitter); the sessions on it
@@ -72,7 +72,7 @@ export function loadRelayRoomKey(file: string): string {
   return key;
 }
 
-/** An accepted device session (RemoteSessions.accept(transport, "relay")). */
+/** An accepted relay session (SessionRouter.accept(transport, "relay")). */
 export interface RelaySessionAcceptor {
   accept(transport: SessionTransport, kind: "relay"): {
     readonly link: { readonly established: Promise<unknown>; resume?(): void };

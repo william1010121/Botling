@@ -308,5 +308,4 @@ describe("M4-06: what a server does when another server becomes invalid", () => 
     expect(hasRow(s2, queuedSlot)).toBe(false);
   }, 60_000);
 
-  it.todo("7. Relay allow list excludes a revoked server's token (unit-level on allowList; belongs to M4-16a)");
 });
