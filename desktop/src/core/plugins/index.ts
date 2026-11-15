@@ -16,15 +16,12 @@
 // chat origin (only files the manifest names, and fonts beside them). A plugin's panels still run its
 // web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). Since step M11 ccb-latex
 // is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
+import { dirname, join, relative, resolve as resolvePath } from "node:path";
 import { z } from "zod";
-import { ContractError, type ApprovalAskView, type PluginsView, type PluginView, type ResultOf, type WebPluginSpecView } from "../../contract";
-import { ContractId } from "../../contract/editor-card";
-import { CONTENT_CHUNK_BYTES, ContentId, EntryRef, ServerId, type StreamId } from "../../protocol";
-import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } from "../../contract/shortcuts";
+import { ContractError, type ApprovalAskView, type PluginsView, type WebPluginSpecView } from "../../contract";
+import { bindingsFor, findConflict, legacyKey, pluginBindings } from "../../contract/shortcuts";
 import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
 import { viewSurfaces } from "./views";
@@ -33,439 +30,34 @@ import { chatLinkAddress, tabMatches } from "../../browser-tab-menu";
 import { fileURLToPath } from "node:url";
 import { CORE_PROMPT_SECTIONS } from "../prompts";
 import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
-import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
+import { PluginHostClient, DEFAULT_TIMING } from "./host-client";
 import { folderHash } from "./catalog";
 import { presentNameWarning, title, type JSONValue } from "./manifest";
 import { PluginRegistry, type HostSpec, type InstalledPlugin } from "./registry";
-import { SealedSecretStore, type Sealer } from "./secrets";
-import { WORKSPACE_EVENT, type WorkspaceChange, type WorkspaceSource } from "../workspace";
+import { SealedSecretStore } from "./secrets";
+import { WORKSPACE_EVENT, type WorkspaceChange } from "../workspace";
 import { PendingTags } from "./pending-tags";
 import { SessionFolders, cleanFolder, type SessionFolder } from "./session-folders";
 import { AppBriefingParams, AppCardParams, AppInstallParams, AppTellParams, BriefingBook, installCommandOK, type AppWorld } from "./app-seam";
 import { isStudioMethod, StudioParams, studioAnswer, type StudioWorld } from "./studio-seam";
 import { agyUsageInProfiles, agyWorkerUsage } from "../agy-usage-db";
 import { refreshAntigravityQuota } from "../antigravity-quota";
-import { NOTE_MAX, NoteWatcher, readNote } from "../bot-note";
+import { NoteWatcher, readNote } from "../bot-note";
 import { pluginLinkTarget, type PluginLinkTarget } from "../plugin-link";
 import { cellRuns, classifyLines, noteBranches, noteCards, noteRoutes, noteView, parseBranches } from "../note-format";
 import { noteService } from "../note-tools";
-import { ASSET_BYTES_MAX, assetFile, importAssetBytes, importAssetFile, linkedFile, linkedPictures, localizeImages } from "../note-assets";
+import { assetFile, importAssetBytes, importAssetFile, linkedFile, linkedPictures, localizeImages } from "../note-assets";
 
-export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
+import { isRegularFile, type BotInfo, type LineContentRef, type MessageDecoration, type PluginStatusItem, type PluginsOptions, type SnapshotFile } from "./types";
+import { materializeSnapshot, pruneSnapshots, readPluginSnapshot, SERVER_PART_HELD_NOTICE, str } from "./snapshot";
+import { NotifyParams, NotifyMore, SendParams, BotParams, NoteWriteParams, NoteAssetParams, NoteRefsParams, NoteLocalizeParams, NoteParseParams, NoteOutlineParams, NoteModeParams, NoteCardsParams, NoteRunParams, WakeParams, PickParams, InputParams, EmitParams, EMIT_MAX, ViewParams, TakeoverParams, ShowTabParams, SettingParams, SecretGetParams, SecretSetParams, KeyParams, StatusParams, ApprovalParams, RunParams, ComponentParams, RoutineParams, CreateParams, PluginOnly, AgyUsageParams, AgyWorkerParams, RoutinesListParams, RoutinesChangeParams, CardsStates, CardsRun, CardsAsk, CardsNotes, ChatDataParams, CHAT_DATA_BYTES, TasksParams, HistoryParams, ResultsParams, IgnoreParams, FaceParams, ChatParams, DecorateParams, FolderParams, FoldersParams, EngineParams, ContentReadParams, ContentFetchParams, DECORATION_BYTES } from "./request-params";
+import { BOT_INSTRUCTIONS_LIMIT, type PluginBotExtras, type PluginEventName } from "./request-params";
 
-/** A question of the app's in the main bot's chat (`ui.quickPick`, `ui.input`). */
-export interface AppQuestion { text: string; choices: { label: string; detail?: string }[]; typed: boolean }
-/** Its answer: a pick, or the user's own words (`typed` only). Ignoring it (no callbacks, by design) answers nothing. */
-export type AppAnswer = { index: number } | { text: string };
-export interface PluginStatusItem { id: string; text: string; icon: string | null; tooltip: string | null; command: string | null }
-/** A chat as a plugin may read it (`chat.messages`): its newest lines as kept, its name and unread count. `tasks` is always empty (task cards were removed in 2.5). */
-export interface PluginChat { botId: string; name: string; unread: number; messages: unknown[]; tasks: never[] }
-/** What a plugin's web part draws among a chat's messages (`chat.decorate`, chat extension v2). */
-export interface MessageDecoration { plugin: string; key: string; fold?: string[]; after?: string; under?: string; data?: JSONValue }
-/** How Botling starts an engine's CLI here (`engines.cli`), for a plugin's one-shot model call. */
-export interface EngineCli { file: string; args: string[]; env: Record<string, string> }
+// Moved out in M7-S12; every name still comes from here.
+export type { BotInfo, AppQuestion, AppAnswer, PluginStatusItem, PluginChat, MessageDecoration, EngineCli, SessionBot, NoteComponent, NoteComponents, NoteCardState, LineContentRef, PluginWorld, PluginsOptions } from "./types";
+export { SERVER_PART_HELD_NOTICE } from "./snapshot";
+export { BOT_INSTRUCTIONS_LIMIT, type PluginBotExtras, type PluginEventName } from "./request-params";
 
-/** A bot as a plugin that places sessions sees it: where its project is, where its chat files are, and where development work for it goes. */
-export interface SessionBot {
-  id: string; name: string; role: "manager" | "bot"; parent: string | null;
-  /** Its working folder (absolute) and its memory.md, relative to it. */
-  folder: string; memoryPath: string;
-  /** Where its chat files are (a plugin keeps its per-bot files beside them). */
-  storeDir: string;
-  /** Why it cannot run (its folder is gone), or null. */
-  problem: string | null;
-  /** Botling's own source's project: where development work goes (the work drive), else null. */
-  workRoot: string | null;
-}
-
-/** What the core lends the plugins. */
-/** A component as a note's insert menu lists it (`notes.components`). */
-export interface NoteComponent {
-  name: string;
-  /** A short name from about.md's first line; null: none. */
-  title: string | null;
-  /** about.md's first line. */
-  summary: string;
-  /** In the bot's own list (else elsewhere in the library). */
-  offered: boolean;
-  /** Its about.md Command: an empty `<show name="…"></show>` runs it. */
-  command: string | null;
-  /** Its about.md Refresh in seconds. */
-  every: number | null;
-  sizes: string[];
-  icon: string | null;
-  /** The newest JSON the bot's chat drew it with, for a preview; null: none. */
-  chatData: string | null;
-}
-export interface NoteComponents { folder: string; readOnly: boolean; components: NoteComponent[] }
-/** A note card as it draws now (`notes.cards`). */
-export interface NoteCardState {
-  key: string;
-  name: string;
-  /** Whether the library has that component. */
-  exists: boolean;
-  /** The command it runs: its own command="…", or its component's Command when it has no JSON; null: it shows its JSON. */
-  command: string | null;
-  /** The folder the command runs in (what the ApprovalSheet shows). */
-  folder: string;
-  /** Seconds between reruns (its refresh="…", else about.md's Refresh); null: by hand. */
-  every: number | null;
-  /** "static": no command, `data` is its JSON; "approve": the user has not allowed the command in that folder yet. */
-  status: "static" | "approve" | "idle" | "running" | "done" | "failed";
-  /** JSON to draw: the last run's output, else the card's own JSON ("null"). */
-  data: string;
-  error: string | null;
-  ranAt: number | null;
-  /** Card-page URLs of the local pictures `data` names (what `ccb.card` puts into its page). */
-  images: Record<string, string>;
-  /** The newest JSON the chat drew this component with (to show before the first run); null: none. */
-  chatData: string | null;
-}
-
-/** A reference to a content item as plugins get it (`content.read`): owner, hash and the entry that holds it. */
-export interface LineContentRef { owner: string; id: string; entry: { stream: StreamId; seq: number } }
-
-export interface PluginWorld {
-  bots(): BotInfo[];
-  /** A message to a bot (`bots.send`, `bots.wake`): shown as sent `via` that plugin (its title), or as the user's own (null). Throws why not. */
-  send(botId: string, text: string, via: string | null): { messageId: string };
-  /** Stops every turn a bot has under way, as its stop button does (null: no such bot). */
-  interrupt(botId: string): Promise<boolean | null>;
-  /** A line in the main bot's chat; with `actions`, buttons under it. */
-  notice(text: string, actions?: { label: string; run: () => void }[]): void;
-  /** Asks the user in the main bot's chat. */
-  ask(question: AppQuestion): Promise<AppAnswer>;
-  /** Opens a plugin's panel on the app page. */
-  openPanel(plugin: string, panel: string, title: string): void;
-  /** A plugin's `ui.showTab(…, { open: true })`: the main window shows that bot (the core's id) with that `mainTab` view. Absent: no window. */
-  openTab?(plugin: string, view: string, botId: string): void;
-  /** A plugin's push to its frames (`ui.emit`), on its way to the app page; never part of a snapshot, and no other client hears it. */
-  frameEvent?(plugin: string, name: string, botId: string | undefined, data: unknown): void;
-  /** A bot's working folder as the core keeps it, the main bot's too (null: no such bot). */
-  botFolder?(botId: string): string | null;
-  /** Where a bot's note is (bot-note.ts `notePath`, the Note tab's file; null: no such bot). The only file `notes.*` touches. */
-  botNote?(botId: string): string | null;
-  /** The URL a plugin's frame loads a picture from (`botling-card://image/<token>`, components' ImageRegistry); only for a note's own pictures. */
-  imageUrl?(path: string, type: string): string;
-  /** Botling's own settings plugins may read (`settings.app`). */
-  appSettings(): Record<string, JSONValue>;
-  /** The keys the user chose (settings.json `shortcutBindings`: Botling's shortcuts and plugin commands). */
-  shortcutOverrides(): Overrides;
-  /** A bot's folder and whether `command` may run there (approved-commands.json); null: no such bot. */
-  commandApproval(botId: string, command: string): { folder: string; approved: boolean } | null;
-  /** The user allowed `command` in the bot's folder (only ever from the app page's ApprovalSheet); false: no such bot. */
-  approveCommand(botId: string, command: string): boolean;
-  /**
-   * A plugin's run `key` of `command` in the bot's folder (`approvals.state`, `approvals.run`), by the core's own command runner (a time limit,
-   * an output cap, the process ledger); `run: false` only reads it. Runs only what the user allowed. null: no such bot.
-   */
-  commandRun(botId: string, key: string, command: string, run: false | { minIntervalMs: number }):
-    { folder: string; approved: boolean; status: "approve" | "idle" | "running" | "done" | "failed"; data: string | null; error: string | null; ranAt: number | null; started: boolean } | null;
-  /** What the ApprovalSheet asks about a pin's card (`approvalAsk` with a `component`): its command and the component's Detail command; null: allowed already (or no such bot). */
-  cardAsk?(botId: string, card: string, command: string, component: string): ApprovalAskView | null;
-  /** "Allow" for a pin's card: its command and Detail command as the sheet showed them. */
-  cardApprove?(botId: string, command: string, component: string, folder: string, detail: string | null): boolean;
-  /** What built-in plugins that keep cards of their own ask of a chat's components and their commands (`cards.*`); null: no such bot (or no component context). */
-  cards?: {
-    library(botId: string): { botId: string; names: string[]; offered: string[]; entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>; readOnly: boolean; folder: string } | null;
-    shown(botId: string): { messageId: string; index: number; name: string; command: string | null; shownCommand: string | null; data: string; author: string | null }[] | null;
-    states(botId: string, cards: { card: string; command: string | null; name: string; data?: string }[]): unknown[] | null;
-    run(botId: string, card: string, command: string, force: boolean): boolean | null;
-    ask(botId: string, card: string, command: string, component: string): ApprovalAskView | null;
-    setNotes(botId: string, notes: { date: number; line: string }[]): boolean;
-    legacyPins(botId: string): unknown[] | null;
-  };
-  /** The cards in a bot's note (`notes.components`, `notes.cards`, `notes.runCard`: bot.ts `noteComponents` …); null: no such bot. */
-  noteCards?: {
-    components(botId: string): NoteComponents | null;
-    states(botId: string, cards: { key: string; name: string; command: string | null; data: string; refresh: number | null }[]): NoteCardState[] | null;
-    run(botId: string, key: string, command: string, force: boolean): { folder: string; approved: boolean; started: boolean } | null;
-  };
-  /** What a plugin keeps for a chat's page changed (`chat.setData`). */
-  dataChanged?(botId: string, plugin: string, data: unknown): void;
-  /** The bot's component library, read only (`workspace.component`); null: no such bot. */
-  component(botId: string, name: string, data: string | undefined, command: string | undefined): { exists: boolean; command: string | null } | null;
-  /** The card-page URLs of the pictures a component's data names for that bot (what a tile needs); null: no such bot. */
-  imageUrls(botId: string, data: string): Record<string, string> | null;
-  /**
-   * `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. `more`: a sub bot's
-   * project bot (`parent`), instructions of any length kept in a file the bot reads, and its delegation ("onRequest": it does the
-   * work itself, starting subagents or workers only when the user asks).
-   */
-  createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined, more?: PluginBotExtras): BotInfo & { created: boolean };
-  /** Botling 3 content read/fetch (`content.read`, `content.fetch`). Absent in 2.x. */
-  content?: {
-    read(ref: { owner: string; id: string; entry: { stream: StreamId; seq: number } }, offset: number, length: number): Promise<Uint8Array>;
-    fetch?(storageDir: string, ref: { owner: string; id: string; entry: { stream: StreamId; seq: number } }): Promise<string>;
-  };
-  /**
-   * Botling 3 only (M5-09): the content reference of the file a chat line's link names (the line's `content_names` row, its hash
-   * ready), or null when the line holds none for that link. `link` is the address `linkCommand` matched (a file: URL). Absent in 2.x.
-   */
-  lineContent?(botId: string, messageId: string, link: string): LineContentRef | null;
-  /** A chat's newest `limit` lines (`chat.messages`; null: no such bot). Absent: a world without chats (tests, spec adapters). */
-  chat?(botId: string, limit: number): PluginChat | null;
-  /** The bot a plugin names ("main" too) as the core knows it (null: none). */
-  botId?(botId: string): string | null;
-  /** A chat's message decorations changed. */
-  decorated?(botId: string): void;
-  /** What the `usage.view` command answers (a fresh quota read first), for `usage.view`; absent: a world without usage (tests, spec adapters). */
-  usageView?(): Promise<unknown>;
-  /** An engine's CLI as Botling starts it (null: not here). */
-  engineCli?(engine: "claude" | "codex"): EngineCli | null;
-  /** A bot's session folder changed (a plugin's `sessions.folder`, or the plugin went): an awake one starts again before its next message. */
-  sessionMoved?(botId: string, reason: { told: string; shown: string }): void;
-  /** The bots whose sessions a plugin may place (every one but the main bot and Maintainer), for `sessions.bots`. Absent: none. */
-  sessionBots?(): SessionBot[];
-  /** The app around the core for botling.dev (`app.*`, built-in plugins only). Absent: a world without an app (tests, spec adapters). */
-  app?: AppWorld;
-  /** What the component studio asks of the core (`studio.*`, built-in plugins only). Absent: a world without one (tests, spec adapters). */
-  studio?: StudioWorld;
-  /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
-  addRoutine(botId: string, cron: string, task: string): "added" | "no-bot" | "bad-schedule";
-  /** A bot's routines as the app lists them (`routines.list`; null: no such bot). Absent: a world without routines (tests, spec adapters). */
-  routinesList?(botId: string): ResultOf<"routines.list"> | null;
-  /** Pauses, resumes or cancels one of a bot's routines (`routines.change`); throws why not. Returns the list after. */
-  routinesChange?(botId: string, operation: "pause" | "resume" | "cancel", id: string): ResultOf<"routines.change"> | null;
-  /** The library changed: the app shows it. */
-  changed(view: PluginsView): void;
-  /** A non-built-in plugin was written or changed on disk outside store installs/removals. */
-  pluginWritten?(name: string): void;
-  /** A plugin broke: Maintainer is asked to fix it. */
-  broken(plugin: string, problem: string): void;
-  log(line: string): void;
-  /** What plugins may read of the workspace (`workspace.*`, read only but for setting aside what waits on you). */
-  workspace: WorkspaceSource;
-  /**
-   * Some plugin listens for workspace changes (true) or none does any more. Said as soon as the host says so,
-   * before anything the host sends after it is answered: what is there then is what a listener may have read.
-   */
-  workspaceWatch(on: boolean): void;
-}
-
-export interface PluginsOptions {
-  dataDir: string;
-  world: PluginWorld;
-  /** How to run Node for the plugin host (null: program parts cannot run). */
-  node: HostCommand | null;
-  /** The bundled plugin host (out/host/host.mjs). */
-  hostScript: string;
-  /** The plugins shipped with the app (out/builtin-plugins, or the app's Resources/builtin-plugins). */
-  builtIns?: string | null;
-  sealer: Sealer | null;
-  /** Botling 3 binds each sealed secret blob to plugin/key (M6-06 F3); 2.x leaves it unset. */
-  boundSecrets?: boolean;
-  timing?: HostTiming;
-  /** The plugin host's pid, for the process ledger. */
-  onPid?: (pid: number, alive: boolean) => void;
-  /** Botling 3 (M5-18a): whether a plugin's program part may start at its current code hash (absent: always allowed). */
-  mayRunServerPart?: (name: string, codeHash: string) => boolean;
-  /** Botling 3 (M5-18b): run each non-built-in plugin's program part in its own host process (2.x: shared host). */
-  separateHosts?: boolean;
-  /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash, or null to omit. */
-  pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
-  /** Botling 3's server only: what this plugin asks at its running hash (`PluginView.asks`), or null to omit. */
-  pluginAsks?: (name: string) => PluginView["asks"] | null;
-}
-
-const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
-/** Whether `path` is a regular file on this machine now (a missing file, a folder, an unreadable one: no). */
-function isRegularFile(path: string): boolean {
-  try { return statSync(path).isFile(); } catch { return false; }
-}
-
-interface SnapshotFile { rel: string; data: Buffer; mode: number }
-
-/**
- * Reads every file under `dir` once (matching `folderHash`'s traversal and sort order) and computes its hash
- * from the exact bytes read, avoiding a TOCTOU window between hashing and copying.
- */
-function readPluginSnapshot(dir: string): { codeHash: string; files: SnapshotFile[] } {
-  const files: SnapshotFile[] = [];
-  const walk = (folder: string) => {
-    for (const entry of readdirSync(folder, { withFileTypes: true })) {
-      if (entry.isSymbolicLink()) throw new Error(`Plugin folder cannot contain symbolic links: ${entry.name}`);
-      const full = join(folder, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else {
-        const rel = relative(dir, full).split(sep).join("/");
-        const data = readFileSync(full);
-        const mode = statSync(full).mode;
-        files.push({ rel, data, mode });
-      }
-    }
-  };
-  walk(dir);
-  files.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
-  const codeHash = sha(files.map((file) => `${file.rel}\0${sha(file.data)}\n`).join(""));
-  return { codeHash, files };
-}
-
-/**
- * Materializes a verified content-addressed copy of `files` at `<snapshotRoot>/<codeHash>` so lazy `import()`
- * and `api.plugin.dir` read only the bytes that were hashed.
- */
-/** The copy is the same user's files: reuse it only as a real folder, with no links, holding exactly these bytes. */
-function snapshotIntact(dest: string, codeHash: string): boolean {
-  try {
-    return !lstatSync(dest).isSymbolicLink() && readPluginSnapshot(dest).codeHash === codeHash;
-  } catch { return false; /* missing or corrupt snapshot */ }
-}
-
-function materializeSnapshot(snapshotRoot: string, codeHash: string, files: readonly SnapshotFile[]): { dir: string; repaired: boolean } {
-  const dest = join(snapshotRoot, codeHash);
-  let repaired = false;
-  if (lstatSync(dest, { throwIfNoEntry: false })) {
-    // M5-18b review: an edit or a link planted in it is replaced, and the caller starts that host afresh.
-    if (snapshotIntact(dest, codeHash)) return { dir: dest, repaired };
-    rmSync(dest, { recursive: true, force: true });
-    repaired = true;
-  }
-  mkdirSync(snapshotRoot, { recursive: true });
-  const tmp = join(snapshotRoot, `.tmp-${codeHash}-${randomUUID()}`);
-  mkdirSync(tmp, { recursive: true });
-  try {
-    for (const file of files) {
-      const target = join(tmp, file.rel);
-      mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, file.data, { mode: (file.mode & 0o111) ? 0o555 : 0o444 });
-    }
-    if (folderHash(tmp) !== codeHash) throw new Error("Snapshot hash mismatch after materialization.");
-    try {
-      renameSync(tmp, dest);
-    } catch (error) {
-      if (snapshotIntact(dest, codeHash)) {
-        rmSync(tmp, { recursive: true, force: true });
-        return { dir: dest, repaired };
-      }
-      throw error;
-    }
-    return { dir: dest, repaired };
-  } catch (error) {
-    rmSync(tmp, { recursive: true, force: true });
-    throw error;
-  }
-}
-
-function pruneSnapshots(snapshotRoot: string, active: ReadonlySet<string>) {
-  if (!existsSync(snapshotRoot)) return;
-  try {
-    for (const entry of readdirSync(snapshotRoot, { withFileTypes: true })) {
-      if (active.has(entry.name)) continue;
-      rmSync(join(snapshotRoot, entry.name), { recursive: true, force: true });
-    }
-  } catch { /* best-effort cleanup */ }
-}
-
-export const SERVER_PART_HELD_NOTICE = "Its program part is off until you allow it to change its own data on this server.";
-
-const str = (max: number) => z.string().max(max);
-const NotifyParams = z.object({ plugin: str(214), text: str(20_000) });
-const NotifyMore = z.object({
-  level: z.enum(["info", "warn", "error"]).optional(),
-  actions: z.array(z.object({ title: str(200).min(1), command: str(200).min(1) })).max(5).optional(),
-});
-const SendParams = z.object({ plugin: str(214), bot: str(64), text: z.string().min(1).max(100_000), as: z.enum(["plugin", "user"]).default("plugin") });
-const BotParams = z.object({ plugin: str(214), bot: str(64) });
-const NoteWriteParams = BotParams.extend({ text: z.string().max(NOTE_MAX), base: z.number().finite().optional() });
-const NoteAssetParams = z.union([
-  BotParams.extend({ path: z.string().min(1).max(4096) }).strict(),
-  BotParams.extend({ data: z.string().min(1).max(Math.ceil(ASSET_BYTES_MAX / 3) * 4 + 4).regex(/^[A-Za-z0-9+/]+={0,2}$/), name: z.string().min(1).max(400) }).strict(),
-]);
-const NoteRefsParams = BotParams.extend({ refs: z.array(z.string().max(4096)).max(500) });
-const NoteLocalizeParams = BotParams.extend({ base: z.number().finite().optional() });
-const NoteParseParams = z.object({ plugin: str(214), text: z.string().max(NOTE_MAX), picks: z.record(z.string().max(4_000), z.string().max(1_000)).optional(), lines: z.boolean().optional() });
-const NoteOutlineParams = BotParams.extend({ text: z.string().max(NOTE_MAX).optional() });
-const NoteModeParams = BotParams.extend({ mode: z.enum(["db", "file"]).optional() });
-const NoteCardsParams = BotParams.extend({ text: z.string().max(NOTE_MAX).optional() });
-const NoteRunParams = NoteCardsParams.extend({ key: z.string().regex(/^note\/[0-9a-f]{16}-[0-9]{1,5}$/), force: z.boolean().optional() });
-const WakeParams = BotParams.extend({ prompt: z.string().min(1).max(100_000).optional() });
-const PickParams = z.object({
-  plugin: str(214), title: str(400).optional(),
-  items: z.array(z.object({ id: str(200).min(1), label: str(400).min(1), detail: str(1_000).optional() })).min(1).max(20),
-});
-const InputParams = z.object({ plugin: str(214), title: str(400).min(1), placeholder: str(400).optional(), secret: z.boolean().optional() });
-const EmitParams = z.object({ plugin: str(214), name: str(100).min(1), botId: str(128).optional(), data: z.unknown() });
-/** The most a push to a plugin's frames (`ui.emit`) may carry (JSON text). */
-const EMIT_MAX = 1_000_000;
-const ViewParams = z.object({ plugin: str(214), id: str(100).min(1), args: z.unknown().optional() });
-/** `ui.takeover`: opens one of the plugin's `rightPanel.takeover` views for a bot (`view`), or closes it (null). */
-const TakeoverParams = z.object({ plugin: str(214), view: str(100).min(1).nullable(), bot: str(128).optional(), wide: z.boolean().optional() });
-/** `ui.showTab`: shows (`on`) or hides one of the plugin's `forRole: "marked"` mainTab views for a bot; `open` also shows it now. */
-const ShowTabParams = z.object({ plugin: str(214), bot: str(128), view: str(100).min(1), on: z.boolean(), open: z.boolean().optional() });
-const SettingParams = z.object({ plugin: str(214), key: str(200), value: z.union([z.boolean(), z.number(), z.string().max(100_000), z.null()]) });
-const SecretKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
-const SecretGetParams = z.object({ plugin: str(214), key: SecretKey });
-const SecretSetParams = SecretGetParams.extend({ value: z.string().max(20_000).nullable() });
-const KeyParams = z.object({ plugin: str(214), command: str(200), key: str(40).nullable() });
-const StatusParams = z.object({
-  plugin: str(214), id: str(100).min(1),
-  item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
-});
-const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged", "noteConflict"] as const;
-export type PluginEventName = (typeof EVENT_NAMES)[number];
-const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
-const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
-const StateParams = ApprovalParams.extend({ key: RunKey });
-const RunParams = StateParams.extend({ minIntervalMs: z.number().int().min(0).max(3_600_000).optional() });
-const ComponentParams = BotParams.extend({ name: str(200).min(1), data: z.string().max(300_000).optional(), command: z.string().max(20_000).optional() });
-const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200), task: str(2_000) });
-const CreateParams = z.object({ plugin: str(214) }).passthrough();
-/** A plugin's instructions for a bot it makes: far longer than a job (they go to a file), within reason. */
-export const BOT_INSTRUCTIONS_LIMIT = 200_000;
-/** What `bots.create` takes beyond a name, a job and a face. */
-export interface PluginBotExtras { parent?: string; instructions?: string; delegation?: "default" | "onRequest" }
-const PluginOnly = z.object({ plugin: str(214) });
-const AgyUsageParams = z.object({ plugin: str(214), sessionId: str(200) });
-const AgyWorkerParams = z.object({ plugin: str(214), workerId: str(200) });
-const RoutinesListParams = z.object({ plugin: str(214), bot: str(64) });
-const RoutinesChangeParams = RoutinesListParams.extend({ operation: z.enum(["pause", "resume", "cancel"]), id: str(2_200).min(1) });
-const CardKey = z.string().min(1).max(110).regex(/^pin\/[A-Za-z0-9-]{1,100}$/);
-const CardsStates = BotParams.extend({ cards: z.array(z.object({ card: z.string().min(1).max(110), command: z.string().max(20_000).nullable(), name: str(200), data: z.string().max(1_000_000).optional() })).max(200) });
-const CardsRun = BotParams.extend({ card: CardKey, command: z.string().min(1).max(20_000), force: z.boolean() });
-const CardsAsk = BotParams.extend({ card: CardKey, command: z.string().min(1).max(20_000), name: str(200) });
-const CardsNotes = BotParams.extend({ notes: z.array(z.object({ date: z.number(), line: z.string().max(4_000) })).max(50) });
-const ChatDataParams = BotParams.extend({ data: z.unknown() });
-/** How much one plugin may keep for one chat's page (`chat.setData`), as JSON. */
-const CHAT_DATA_BYTES = 1_000_000;
-const Limit = (most: number, fallback: number) => z.number().int().optional().transform((value) => Math.min(most, Math.max(1, value ?? fallback)));
-const TasksParams = BotParams.extend({ limit: Limit(100, 100) });
-const HistoryParams = BotParams.extend({ days: Limit(14, 14) });
-const ResultsParams = BotParams.extend({ limit: Limit(100, 12) });
-const IgnoreParams = BotParams.extend({ text: z.string().min(1).max(400) });
-const FaceParams = BotParams.extend({ look: z.enum(["original", "cute"]) });
-const ChatParams = BotParams.extend({ limit: z.number().int().min(1).max(2_000).default(500) });
-const DecorateParams = BotParams.extend({
-  decorations: z.array(z.object({
-    key: str(300).min(1),
-    fold: z.array(ContractId).max(2_000).optional(),
-    after: ContractId.optional(),
-    under: ContractId.optional(),
-    /** Accepted and ignored: task cards were removed in 2.5. */
-    tasks: z.array(ContractId).max(100).optional(),
-    data: z.unknown().optional(),
-  })).max(200),
-});
-const FolderParams = BotParams.extend({
-  folder: z.unknown().nullable(),
-  reason: z.object({ told: str(2_000), shown: str(400) }).optional(),
-});
-const FoldersParams = z.object({ plugin: str(214), folders: z.record(str(64), z.unknown()) });
-const EngineParams = z.object({ plugin: str(214), engine: z.enum(["claude", "codex"]) });
-const CONTENT_READ_LIMIT = 4 * CONTENT_CHUNK_BYTES;
-const ContentRefParams = z.object({ owner: ServerId, id: ContentId, entry: EntryRef });
-const ContentReadParams = z.object({
-  plugin: str(214),
-  ref: ContentRefParams,
-  offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  length: z.number().int().nonnegative().max(CONTENT_READ_LIMIT),
-});
-const ContentFetchParams = z.object({
-  plugin: str(214),
-  ref: ContentRefParams,
-});
-/** How much one plugin may draw in one chat (`chat.decorate`), as JSON. */
-const DECORATION_BYTES = 1_000_000;
 
 export class Plugins {
   readonly registry: PluginRegistry;
