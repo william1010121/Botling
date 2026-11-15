@@ -1,7 +1,6 @@
-import { BottomPanels, TOGGLE_BOTTOM_PANEL } from "./BottomPanels";
+import { BottomPanels } from "./BottomPanels";
 import { ChatHeaderViews } from "./ChatHeaderViews";
 import { useComposerBar } from "./ComposerBar";
-import { ownsCommand } from "../../../Web/src/frame-protocol";
 // The app page: React chrome around the reused chat page. The left column lists the bots (as the
 // Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin frame
 // (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts
@@ -9,35 +8,37 @@ import { ownsCommand } from "../../../Web/src/frame-protocol";
 // commands. Only this page has the bridge to main.
 import { openReport } from "./report-opener";
 import { askChatToQuote, setComposerQuoter } from "./composer-quote";
-import { ShellOverlay, shellOverlayActive } from "./ShellOverlay";
-import { nativeEditor, postToChat } from "./editor-surface";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { shellOverlayActive } from "./ShellOverlay";
+import { postToChat } from "./editor-surface";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { status, statusText } from "../contract/bot-status";
-import { actionForEvent, commandBindings, commandForEvent, formatCombo } from "../contract/shortcuts";
+import { commandBindings, formatCombo } from "../contract/shortcuts";
 import { say, setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
-import { isMaintainer, resultLinks, type BotView, type PluginsView, type ResultView, type RoutineView, type SubagentRowView } from "../contract";
+import { isMaintainer, resultLinks, type BotView, type ResultView, type RoutineView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
-import { browserTabActions, browserTabAddress, commandRoute, keybindingsOf, menuItems } from "./plugin-commands";
-import { faceURL, sameHeldColors, setBotColors } from "./avatars";
-import { CHAT_TARGET, type ShellMessage } from "./chat-frame/protocol";
-import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
+import { browserTabActions, browserTabAddress, keybindingsOf, menuItems } from "./plugin-commands";
+import { sameHeldColors, setBotColors } from "./avatars";
+import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
-import { composerBarFor, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { composerBarFor, mainTabsFor, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { StorageTab } from "./StorageTab";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
-import { botCounts, canIdle, idleCounts, idleList, railOrder, railSplit } from "./rail-idle";
+import { botCounts, canIdle, idleCounts, idleList, railSplit } from "./rail-idle";
 import { markViewed, railWords, railWorkers, readOpenJobs, readRailFold, readRailSince, readViewedWorkers, seenInChat, toggleOpenJob, toggleRailFold, type RailFold, type RailMarks } from "./rail-workers";
 import { RailWorkerList, type RailWorkerActions } from "./RailWorkers";
-import { SubBotFace, SubBotNav } from "./SubBotNav";
-import { flashMs, headerNav, leaveMark, movePinned, newSubBotAsk, NEW_SINCE_PREFIX, pinnedTarget, rememberRoom, roomStep, subBotRow, togglePinned, type LastRooms } from "./sub-bot-nav";
-import { PINNED_KEYS, leaveMarks, pinnedNumber, useWhiteboardChoice, type WebChrome } from "./app-shared";
+import { SubBotNav } from "./SubBotNav";
+import { flashMs, headerNav, leaveMark, movePinned, newSubBotAsk, NEW_SINCE_PREFIX, pinnedTarget, rememberRoom, roomStep, togglePinned, type LastRooms } from "./sub-bot-nav";
+import { useAppKeys, useBottomControls, useBuiltinRunner } from "./app-hooks";
+import { PINNED_KEYS, leaveMarks, useWhiteboardChoice, type WebChrome } from "./app-shared";
 export type { WebChrome } from "./app-shared";
 import { ChatFrame } from "./chat-frame/ChatFrame";
-import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, StripPeek, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
+import { BotRow, focusComposer, RailStrip, RailToggle, rowTarget, runPluginCommand, searchHits, SubBotTitle } from "./rail-parts";
+export { BotRow, focusComposer, railMatches, RailStrip, rowTarget, runPluginCommand, SubBotTitle } from "./rail-parts";
+import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, SubBotMenu, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { useApprovalSheet } from "./ApprovalSheet";
 import { WorkerAskBar, WorkersBadge, WorkersMenu } from "./Workers";
@@ -47,7 +48,7 @@ import { ColumnDivider } from "./ColumnDivider";
 import { FloatingChat, useFloatMemory } from "./FloatingChat";
 import { lastLine } from "./floating-chat";
 import { ChatBody } from "./NoteDock";
-import { dockKey, docked as dockShown, jumpInPlace, keepDock, toggleDock } from "./note-dock";
+import { dockKey, docked as dockShown, keepDock, toggleDock } from "./note-dock";
 import { browserStore, useBrowser } from "./browser-state";
 
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
@@ -60,7 +61,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (heldToWrite) void client.request({ type: "settings.set", change: { key: "botColors", value: heldToWrite } }).catch(() => {});
   }, [client, heldToWrite]);
   const [error, setError] = useState<string | null>(null);
-  const [bottomControls, setBottomControls] = useState<HTMLSpanElement | null>(null);
+  const [bottomControls, setBottomControls] = useBottomControls();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const openSettings = useCallback((section: SettingsSection = "general") => { setSettingsSection(section); setSettingsOpen(true); }, []);
@@ -182,69 +183,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const runCommand = useCallback((id: string, args: string[] = [], caller?: { from: "frame"; name: string }) => {
     runPluginCommand(client, store.getView().plugins, id, args, (failure) => setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure)), caller);
   }, [client, store]);
-  // A key a panel's frame did not use (a modifier held): runs Botling's shortcuts or that plugin's own bound command (never another plugin's, and never a synthetic window keydown).
-  const forwardKey = useCallback((plugin: string, key: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) => {
-    const action = actionForEvent(key, shortcutBindings);
-    const pin = pinnedNumber(action);
-    if (pin) { openPinned(pin); return; }
-    switch (action) {
-      case "settings": openSettings(); break;
-      case "toggleRightPanel": toggleRight(); break;
-      case "toggleWorkers": toggleWorkers(); break;
-      case "toggleBrowser": toggleBrowser(); break;
-      case "toggleSidebar": toggleRail(); break;
-      case "search": startSearch(); break;
-      case "subBots": toggleSubBots(); break;
-      case "roomBack": stepRoom("back"); break;
-      case "roomForward": stepRoom("forward"); break;
-      case null: {
-        const command = commandForEvent(key, pluginKeys);
-        if (command) runCommand(command, [], { from: "frame", name: plugin });
-        break;
-      }
-    }
-  }, [openSettings, toggleRight, toggleWorkers, toggleBrowser, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const action = actionForEvent(event, shortcutBindings);
-      const pin = pinnedNumber(action);
-      if (pin) { event.preventDefault(); openPinned(pin); return; }
-      switch (action) {
-        case "settings": event.preventDefault(); openSettings(); break;
-        case "toggleRightPanel": event.preventDefault(); toggleRight(); break;
-        case "toggleWorkers": event.preventDefault(); toggleWorkers(); break;
-        case "toggleBrowser": event.preventDefault(); toggleBrowser(); break;
-        case "toggleSidebar": event.preventDefault(); toggleRail(); break;
-        case "search": event.preventDefault(); startSearch(); break;
-        case "subBots": event.preventDefault(); toggleSubBots(); break;
-        case "roomBack": event.preventDefault(); stepRoom("back"); break;
-        case "roomForward": event.preventDefault(); stepRoom("forward"); break;
-        case null: {
-          const command = event.defaultPrevented ? null : commandForEvent(event, pluginKeys);
-          if (command) { event.preventDefault(); runCommand(command); }
-          break;
-        }
-      }
-    };
-    const onCommand = (event: Event) => {
-      const pin = pinnedNumber(String((event as CustomEvent).detail));
-      if (pin) { openPinned(pin); return; }
-      switch ((event as CustomEvent).detail) {
-        case "settings": openSettings(); break;
-        case "rightPanel": toggleRight(); break;
-        case "workers": toggleWorkers(); break;
-        case "browser": toggleBrowser(); break;
-        case "sidebar": toggleRail(); break;
-        case "search": startSearch(); break;
-        case "subBots": toggleSubBots(); break;
-        case "roomBack": stepRoom("back"); break;
-        case "roomForward": stepRoom("forward"); break;
-      }
-    };
-    window.addEventListener("botling:chat-command", onCommand);
-    window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("botling:chat-command", onCommand); };
-  }, [openSettings, toggleRight, toggleWorkers, toggleBrowser, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
+  const forwardKey = useAppKeys({ openSettings, toggleRight, toggleWorkers, toggleBrowser, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand });
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   const watching = view.subagent?.id ?? null;
@@ -422,42 +361,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request({ type: "settings.set", change: { key: "mainTab", value: { botId, tab: key } } }).catch(fail);
   }, [client, store, fail]);
   // Botling's own commands a plugin frame may run: a bot's chat (its Chat tab), one of a bot's results.
-  const runBuiltin = useCallback<BuiltinRunner>((_plugin, command) => {
-    const botId = namedBot(store.getView().bots, command.botId);
-    if (!botId) { setError(`No bot "${command.botId.slice(0, 80)}".`); return; }
-    if (command.id === "botling.openResult") {
-      void client.request({ type: "result.open", botId, url: command.url })
-        .then((result) => { if (result.previewURL) openReport(botId, result.previewURL); }).catch(fail);
-      return;
-    }
-    if (command.id === "botling.openLink") {
-      // A Markdown file comes back as a report page (main never hands .md to the system's app): shown like the chat's.
-      void client.request({ type: "link.open", source: "user", botId, url: command.url })
-        .then((result) => { if (result.previewURL) openReport(botId, result.previewURL); }).catch(fail);
-      return;
-    }
-    if (command.id === "botling.openTab") {
-      const tab = mainTabsFor(store.getView().plugins, { id: botId, role: store.getView().bots.find((candidate) => candidate.id === botId)?.role ?? "bot", parent: store.getView().bots.find((candidate) => candidate.id === botId)?.parent })
-        .find((candidate) => candidate.plugin === command.plugin && candidate.id === command.view);
-      if (!tab) { fail(new Error(`No tab "${command.view.slice(0, 80)}".`)); return; }
-      selectBot(botId);
-      chooseTab(botId, tab);
-      return;
-    }
-    const shown = store.getView().chat?.botId;
-    // At one line (botling.openChat(botId, messageId)): from the bot's own tab with the floating chat, that chat opens
-    // over the tab; else its Chat shows. The chat page goes to the line once it shows that chat (none such: just the chat).
-    const dock = quoteNow.current;
-    if (jumpInPlace(dock.botId, botId, dock.noteKey, command.messageId)) {
-      if (!dock.noteOpen) dock.openNoteChat(true);
-    } else {
-      if (shown) chooseTab(shown, null);
-      chooseTab(botId, null);
-      setWhiteboardOn(false);
-      selectBot(botId);
-    }
-    if (command.messageId) postToChat({ botling: "jumpTo", botID: botId, messageID: command.messageId });
-  }, [client, store, fail, chooseTab, setWhiteboardOn, selectBot]);
+  const runBuiltin = useBuiltinRunner({ client, store, fail, setError, chooseTab, setWhiteboardOn, selectBot, dockNow: () => quoteNow.current });
   // A plugin's program part asked to show a bot with one of its tabs (`ui.showTab(…, { open: true })`): as its frame's openTab would.
   const openTabSeq = view.openTab?.seq ?? 0;
   useEffect(() => {
@@ -816,221 +720,4 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   );
 }
 
-export function BotRow({ bot, selected, inside, onSelect, look, waiting, counts, onMenu, pinned, onTogglePin, idle, peek, workers }: {
-  bot: BotView; selected: boolean;
-  /** Navigation v5: the sub bot of this project bot on screen ("› Release" on the row); sub bots are never rows of their own. */
-  inside?: string; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void;
-  /** The row was clicked: the row, and whether the keyboard pressed it (the status card then takes the focus). */
-  onSelect: (from?: { el: HTMLElement; keyboard: boolean }) => void;
-  /** The two numbers (rail-idle.ts botCounts): blue unread, orange what needs you (its sub bots' included). Absent: its own approvals and unread. */
-  counts?: { unread: number; needsYou: number };
-  /** Undefined for a row that cannot be pinned (the main bot, Maintainer). */
-  pinned?: boolean; onTogglePin?: () => void;
-  /** The corner button: a clock sends it to Idle, a back arrow (in Idle) brings it back. Undefined: it cannot go to Idle. */
-  idle?: { away: boolean; onToggle: () => void };
-  /** Its status card: the pointer came onto the row (corner buttons included) or left it; the keyboard focused the row. */
-  peek?: { enter: (row: HTMLElement) => void; leave: () => void; focus: (row: HTMLElement) => void };
-  /** Its worker list's count at the row's end (rail-workers.ts): a click folds or unfolds the list; folded, the unread number beside it. */
-  workers?: { total: number; unread: number; folded: boolean; label: string; unreadTip: string; onToggle: () => void };
-}) {
-  const asleep = bot.phase === "asleep" && !bot.working;
-  const unread = counts ? counts.unread : selected ? 0 : bot.unread;
-  const needsYou = counts ? counts.needsYou : bot.approvals;
-  const label = [bot.name, statusText(bot), needsYou ? `${needsYou} waiting on you` : waiting ? "waiting on you" : null, unread ? `${unread} unread` : null,
-    inside ? `in ${inside}` : null, pinned ? "pinned" : null, idle?.away ? "in Idle" : null].filter(Boolean).join(", ");
-  return (
-    <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}${idle ? " idleable" : ""}${workers ? " has-workers" : ""}`}
-      // A touch has no hover: its tap opens the card instead (onSelect).
-      onPointerEnter={peek ? (event) => { if (event.pointerType !== "touch") peek.enter(event.currentTarget.querySelector<HTMLElement>(".bot-row") ?? event.currentTarget); } : undefined}
-      onPointerLeave={peek ? (event) => { if (event.pointerType !== "touch") peek.leave(); } : undefined}>
-      <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label}
-        onClick={(event) => onSelect({ el: event.currentTarget, keyboard: event.detail === 0 })}
-        onFocus={peek ? (event) => { if (focusVisible(event.currentTarget)) peek.focus(event.currentTarget); } : undefined}
-        onBlur={peek ? (event) => { if (!(event.relatedTarget instanceof Element && event.relatedTarget.closest(".rail-peek, .bot-row-wrap"))) peek.leave(); } : undefined}
-        onContextMenu={onMenu ? (event) => { event.preventDefault(); onMenu(event.clientX, event.clientY); } : undefined}>
-        <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
-        <span className={`bot-name${bot.role === "main" ? " main" : ""}`}>{bot.name}</span>
-        <span className="bot-gap" />
-        {inside && <span className="bot-inside">› {inside}</span>}
-        {bot.working && <span className="bot-dot working" aria-hidden="true" />}
-        {unread > 0 && <span className="bot-counts"><span className="badge" aria-hidden="true">{unread}</span></span>}
-      </button>
-      {idle && (
-        // The clock at the row's top-right corner while the pointer is on it (the settle clock's icon); in Idle, the back arrow.
-        <button type="button" className={`bot-idle${idle.away ? " away" : ""}`} onClick={idle.onToggle}
-          title={idle.away ? "Back to the list" : "Send to Idle"} aria-label={idle.away ? `Bring ${bot.name} back from Idle` : `Send ${bot.name} to Idle`}>
-          <Icon name={idle.away ? "uturn" : "clock"} size={12} />
-        </button>
-      )}
-      {pinned !== undefined && onTogglePin && (
-        // The pin glyph at the row's end while the pointer is on it (1.x's BotRow).
-        <button type="button" className={`bot-pin${pinned ? " on" : ""}`} onClick={onTogglePin} title={pinned ? "Unpin" : "Pin to the top"} aria-label={pinned ? `Unpin ${bot.name}` : `Pin ${bot.name}`}>
-          <Icon name={pinned ? "pinSlash" : "pin"} size={12} />
-        </button>
-      )}
-      {workers && (
-        <button type="button" className={`rail-wk-pill${workers.folded ? " folded" : ""}`} aria-expanded={!workers.folded} aria-label={workers.label} title={workers.label} onClick={workers.onToggle}>
-          {workers.total}
-          {workers.folded && workers.unread > 0 && <span className="rail-wk-count" title={workers.unreadTip}>{workers.unread}</span>}
-          <span className={`rail-wk-chevron${workers.folded ? "" : " open"}`} aria-hidden="true"><Icon name="chevronLeft" size={9} /></span>
-        </button>
-      )}
-    </div>
-  );
-}
-
 export { railOrder } from "./rail-idle";
-
-/** Focus from the keyboard (not the focus a mouse click leaves on the row). */
-function focusVisible(el: Element): boolean {
-  try { return el.matches(":focus-visible"); } catch { return false; }
-}
-
-/** What a click on a subagent row opens: a sub bot's own chat (with the input box), or a subagent's read-only view. */
-export function rowTarget(row: Pick<SubagentRowView, "id" | "subBot">): { kind: "bot"; botId: string } | { kind: "subagent"; id: string } {
-  return row.subBot ? { kind: "bot", botId: row.subBot } : { kind: "subagent", id: row.id };
-}
-
-/** A sub bot's title: the project bot it belongs to (a button back to it), then its own name. */
-export function SubBotTitle({ bot, parent, onOpenParent }: { bot: BotView; parent: BotView | null; onOpenParent: (botId: string) => void }) {
-  // Navigation v5: its square face and name, then "sub bot of <project bot>" (the way back is the breadcrumb below too).
-  return (
-    <>
-      <SubBotFace row={subBotRow(bot, { items: [], doing: {} }, 0)} dot={false} />
-      <span className="chat-sub-bot" data-sub-bot={bot.id}>{bot.name}</span>
-      {parent && <span className="chat-sub-of">sub bot of <button type="button" className="chat-parent" title={`Back to ${parent.name}`} onClick={() => onOpenParent(parent.id)}>{parent.name}</button></span>}
-    </>
-  );
-}
-
-/** `RailLayout.matches`: the name, or a project's folder name, contains the query, ignoring case and accents. */
-export function railMatches(query: string, name: string, folder: string | null): boolean {
-  const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-  const wanted = fold(query.trim());
-  if (!wanted) return true;
-  return fold(name).includes(wanted) || (folder !== null && fold(folder).includes(wanted));
-}
-
-/** The rows the search keeps, in the order the column shows them (the main bot, the pinned rows, the rest). */
-function searchHits(bots: BotView[], pinned: string[], query: string): BotView[] {
-  return railOrder(bots, pinned).map((entry) => entry.bot)
-    .filter((bot) => railMatches(query, bot.name, bot.role === "manager" ? bot.folder.split("/").filter(Boolean).pop() ?? null : null));
-}
-
-/** The cursor back in the chat's input box (after the search). */
-export function focusComposer() {
-  if (nativeEditor()) { postToChat({ botling: "focus" }); return; }
-  const target = (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow;
-  if (!target) return;
-  target.focus();
-  const message: ShellMessage = { botling: "focus" };
-  target.postMessage(message, CHAT_TARGET);
-}
-
-/** The button that folds the left column into a strip of faces and opens it again (1.x's RailToggle, ⌃⌘S). */
-function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
-  const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
-  return (
-    <button type="button" className={`rail-toggle${collapsed ? "" : " on"}`} onClick={onToggle} title={`${label} (${shortcutLabel("toggleSidebar")})`} aria-label={label} aria-pressed={!collapsed}>
-      <Icon name="sidebarLeft" size={14} />
-    </button>
-  );
-}
-
-/** How long a face's tip or peek stays after the pointer or focus leaves it, so the pointer can cross into the peek. */
-const PEEK_GRACE_MS = 200;
-
-/**
- * The left column folded (1.x's RailStrip): faces only, the rows the open column keeps above its Idle group (railSplit;
- * the idle bots are left out), the pinned ones first, a blue dot on a face with unread messages; hover (or focus) a face for a peek
- * (StripPeek) with its name and status and, for a bot with sub bots, those sub bots, each opening its chat.
- * The chat is a native view above the shell, so an open peek covers it as one shell overlay across faces.
- */
-export function RailStrip({ bots, pinned, idle = [], look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, settingsControl }: {
-  bots: BotView[]; pinned: string[]; idle?: string[]; look: "original" | "cute"; shown: string | null; waiting: (id: string) => boolean;
-  onSelect: (id: string) => void; onMenu: (bot: BotView, x: number, y: number) => void; onExpand: () => void; onAddProject: () => void; onNewBot: () => void; settingsControl: ReactNode;
-}) {
-  const [tip, setTip] = useState<{ botId: string; top: number } | null>(null);
-  const [adding, setAdding] = useState(false);
-  const closing = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Focus put back on a face by Escape does not open its peek again.
-  const quiet = useRef(false);
-  const keep = useCallback(() => { if (closing.current) { clearTimeout(closing.current); closing.current = null; } }, []);
-  const hide = useCallback((soon: boolean) => {
-    keep();
-    if (soon) closing.current = setTimeout(() => { closing.current = null; setTip(null); }, PEEK_GRACE_MS);
-    else setTip(null);
-  }, [keep]);
-  useEffect(() => keep, [keep]);
-  const order = railSplit(bots, pinned, idle).rows;
-  const pinnedCount = order.filter(({ bot }) => pinned.includes(bot.id)).length;
-  const faces = useRef(new Map<string, HTMLButtonElement>());
-  return (
-    <aside className="rail-strip" aria-label="Bots (folded)">
-      <div className="rail-top drag"><RailToggle collapsed onToggle={onExpand} /></div>
-      <nav className="strip-bots" aria-label="Bots">
-        {order.map(({ bot }, index) => {
-          const asleep = bot.phase === "asleep" && !bot.working;
-          const unread = bot.unread > 0 && bot.id !== shown;
-          const parts = [statusText(bot), waiting(bot.id) ? "waiting on you" : null, unread ? `${bot.unread > 99 ? "99+" : bot.unread} unread` : null].filter(Boolean);
-          const subs = subBotsOf(bot, bots);
-          const open = tip?.botId === bot.id;
-          const show = (face: HTMLElement) => { keep(); setTip({ botId: bot.id, top: face.getBoundingClientRect().top }); };
-          return (
-            <div key={bot.id} className="strip-entry">
-              {index === 1 && <div className="strip-rule" />}
-              {pinnedCount > 0 && index === 1 + pinnedCount && <div className="strip-rule short" />}
-              <button type="button" ref={(face) => { if (face) faces.current.set(bot.id, face); else faces.current.delete(bot.id); }} className={`strip-bot${bot.id === shown ? " selected" : ""}${asleep ? " asleep" : ""}${bot.working ? " working" : ""}${bot.connection ? " disconnected" : ""}`} data-bot={bot.id}
-                aria-label={[bot.name, ...parts, subs.length ? `${subs.length} sub bot${subs.length === 1 ? "" : "s"}` : null].filter(Boolean).join(", ")}
-                aria-expanded={subs.length ? open : undefined} onClick={() => onSelect(bot.id)}
-                onMouseEnter={(event) => show(event.currentTarget)} onMouseLeave={() => hide(true)}
-                onFocus={(event) => { if (!quiet.current) show(event.currentTarget); }}
-                onBlur={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.parentElement?.contains(event.relatedTarget))) hide(true); }}
-                onKeyDown={(event) => { if (event.key === "Escape" && open) { event.preventDefault(); hide(false); } }}
-                onContextMenu={bot.role !== "main" && !isMaintainer(bot) ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
-                <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
-                {bot.connection && <span className="strip-disconnected" aria-hidden="true">!</span>}
-                {unread && <span className="strip-unread" aria-hidden="true" />}
-              </button>
-              {open && tip && (
-                <StripPeek bot={bot} subs={subs} detail={parts.join(" · ")} look={look} top={tip.top} shown={shown}
-                  onOpen={(id) => { hide(false); onSelect(id); }} onEnter={keep} onLeave={() => hide(true)}
-                  onDismiss={() => {
-                    quiet.current = true;
-                    faces.current.get(bot.id)?.focus();
-                    quiet.current = false;
-                    hide(false);
-                  }} />
-              )}
-            </div>
-          );
-        })}
-      </nav>
-      <ShellOverlay active={tip !== null}>{null}</ShellOverlay>
-      <div className="strip-add">
-        <button type="button" className="strip-plus" title="Add a project or a bot" aria-label="Add a project or a bot" aria-expanded={adding} onClick={() => setAdding(!adding)}><Icon name="plus" size={13} /></button>
-        {adding && (
-          <ShellOverlay><div className="strip-add-menu" role="menu">
-            <button type="button" role="menuitem" onClick={() => { setAdding(false); onAddProject(); }}>Add project…</button>
-            <button type="button" role="menuitem" onClick={() => { setAdding(false); onNewBot(); }}>New bot…</button>
-          </div></ShellOverlay>
-        )}
-      </div>
-      {settingsControl}
-    </aside>
-  );
-}
-
-/**
- * A plugin command from a key, the / menu or a menu: in the plugin host (the app page asks, so the core runs any),
- * or in the chat page when a web part there registered it.
- */
-export function runPluginCommand(client: Client, plugins: PluginsView | null | undefined, id: string, args: string[], onError: (failure: unknown) => void, caller?: { from: "frame"; name: string }) {
-  if (caller?.from === "frame" && !ownsCommand(caller.name, id)) return;
-  const route = commandRoute(plugins, id);
-  // A bottom panel's toggle command is the page's own to run (it shows or hides the panel of the bot on screen), whichever way it
-  // arrived: a key pressed in this page, or one the chat frame relays (where focus usually is).
-  if (route === "bottomPanel") window.dispatchEvent(new CustomEvent(TOGGLE_BOTTOM_PANEL, { detail: id }));
-  else if (route === "host") void client.request({ type: "plugins.command", id, ...(caller ?? {}), ...(args.length ? { args } : {}) }).catch(onError);
-  else postToChat({ botling: "runCommand", id });
-}

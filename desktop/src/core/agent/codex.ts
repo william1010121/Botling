@@ -1,11 +1,8 @@
 import { CodexRequestTracker } from "../token-speed";
-import { settingsChange, type HotSettings } from "./hot-settings";
-import {claudeConfigFolder} from '../claude-files';
-import {inspectClaudeRestart, type ClaudeRestartOutcome} from '../claude-restart';
+import { type HotSettings } from "./hot-settings";
+import { type ClaudeRestartOutcome } from '../claude-restart';
 import { RESTART_NOTE } from '../restart-continuation';
-import { monitorHandback, MONITOR_HANDBACK } from "./monitor-policy";
-import { DEFAULT_SPEC_WRITERS, inSpec, maySpecWrite, shellWritesSpec, SPEC_DENIED } from "../spec-guard";
-import { codexAutoRiskConfig } from "./auto-risk-policy";
+import { monitorHandback } from "./monitor-policy";
 // A bot's Codex head: one long-lived `codex app-server` (JSON-RPC, one JSON object a line on
 // stdio), ported from the Swift app's CodexAgentProcess.swift (checked against codex-cli 0.163.0).
 //
@@ -40,974 +37,47 @@ import { codexAutoRiskConfig } from "./auto-risk-policy";
 // Not ported (2.0 gaps, see desktop/README.md):
 // Codex's own native subagents (off in a coordinator anyway),
 // images in messages.
-import { approveIsolatedGit, isolatedGitOwnership, type IsolatedGitOwnership } from "./isolated-git";
-/** A live worker or monitored command as the head reports it (what keeps a head from idling). */
-export interface WorkerDependency { id: string; run: number; task: string; state: "running" | "reportQueued"; callback?: string; outcome?: string; taskTruncated: boolean }
-import type { SubagentExecution } from "../subagents";
+import { isolatedGitOwnership, type IsolatedGitOwnership } from "./isolated-git";
+import { type WorkerDependency, codexEffort, type CodexItem, type CodexOutput, type WorkerRecord, type CodexConfig, type Call, type Input, type Turn, type Approval, MAX_HANDOFF, isolatedGitOwners, shell, handbackFallback, firstLine, message, key, json, ADOPTED_RUN, syncResult } from "./codex-types";
+export { type WorkerDependency, codexEffort, type CodexItem, type CodexOutput, type WorkerRecord, type CodexConfig, MANAGED_TOOLS, MANAGED_TOOL_SIGNATURE, WORKER_TOOLS, handbackFallback, firstLine, codexCommand, codexToolStarted } from "./codex-types";
+import { CodexThreadAdapter, codexToolCompleted } from "./codex-thread";
+export { codexToolCompleted, type CodexWire, type CodexWorkerOptions, CodexThreadAdapter } from "./codex-thread";
+import { reply } from "./codex-head";
+export { reply, CodexThreads, type CodexHeadConfig, CodexHead, codexWorkerHost } from "./codex-head";
+import { CodexSessionRpc } from "./codex-session-rpc";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { writeFileAtomic } from "../durable/atomic";
-import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
-import { childEnvironment } from "./runner";
-import { codexLogsFile, codexRetryAt } from "./codex-retry-log";
-import { cliStartError, resolveExecutable } from "../process/executable";
-import { activity, type StreamItem } from "./stream";
-import type { HeadExit, HeadHandlers } from "./head";
-import { movedTaskError, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./workers";
-import { ComponentEditorAdapter, EditorTransport, type ComponentEditorAction, type ComponentEditorRoute } from "./component-editor";
-import { appTools, codexDynamicTools, workerAppTools } from "../app-tools/registry";
-import { isBotTool, type BotToolName, type BotToolRunner } from "../bot-tools";
+import type { StreamItem } from "./stream";
+import { movedTaskError, type WorkerInfo, type WorkerOwner, type WorkerSendResult } from "./workers";
+import { ComponentEditorAdapter } from "./component-editor";
+import { isBotTool } from "../bot-tools";
 import { EFFORTS_BY_ENGINE } from "../../contract/efforts";
-import { readCodexModels, resolveCodexModel, type CodexModelEntry } from "./codex-models";
-
-/** `value` as a level Codex's `effort` takes; null: none, or one it does not take. */
-export const codexEffort = (value: unknown): string | null => (EFFORTS_BY_ENGINE.codex as readonly unknown[]).includes(value) ? value as string : null;
+import { readCodexModels, resolveCodexModel } from "./codex-models";
 import { appRoutinesCall } from "../routines";
-import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, saveMonitors, type CommandMonitor } from "./monitors";
+import { bounded, isActive as monitorActive, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, type CommandMonitor } from "./monitors";
 import { toSwiftDate } from "../store/records";
-import { codexRateLimits, codexTokens, isEmptyLimits, minusTokens, noTokens, totalTokens, type TokenUsage } from "../usage";
-import {
-  CodexLegacyStore, INTERRUPTED_REPORT, reportPayload, STOPPED_REPORT, toLegacyCodex, wireStatus, WorkerCore,
-  type CodexJournal, type CoordinatorPort, type HandoffRequest, type RecoverResult, type RunEnd, type RunHandle, type WorkerAdapter, type WorkerCoreFactory,
-  type WorkerCoreOptions, type WorkerLedgerRecord, type WorkerReport,
-} from "../worker-core";
-
-/** What a Codex head gives the bot besides claude's items. */
-export type CodexItem =
-  | StreamItem
-  /** Words between tool calls (Codex's commentary): a step of the turn, not the reply. */
-  | { kind: "stepText"; text: string }
-  /** The app started a turn on the coordinator by itself (a worker's report). */
-  | { kind: "backgroundTurn"; taskId: string | null }
-  /** Workers at work or reports waiting: the bot must not sleep. */
-  | { kind: "managedPending"; pending: boolean }
-  /** Antigravity read words offered into its turn (`AgyAcpHead.offerInsert`) with a tool result. */
-  | { kind: "inserted"; id: string }
-  /** A run report of a worker another bot owns (workers.ts `setWorkerOwner`): the app routes it to that bot, never to this coordinator. */
-  | { kind: "workerReport"; id: string; run: number; engine: "claude" | "codex" | "agy"; status: string; report: string }
-  /** A worker another bot owns sent a note (app_notify_owner): the app routes it to that bot, never to this coordinator. */
-  | { kind: "workerNote"; id: string; run: number; engine: "claude" | "codex" | "agy"; noteKind: "report" | "question"; name: string; message: string; files: string[] }
-  /** A monitored command ended: its step (from an earlier turn) is done. */
-  | { kind: "monitorState"; record: CommandMonitor }
-  | { kind: "monitorEnded"; id: string; output: string; failed: boolean }
-  /** `app_routines` changed the bot's routines. */
-  | { kind: "routinesChanged" }
-  /**
-   * The coordinator's request was turned away and Codex will try again (`error` with willRetry:
-   * "Reconnecting... 1/5"): rateLimited for HTTP 429, else connection. `retryAt` (ms) comes from
-   * Codex's own log (codex-retry-log.ts) when the head finds it; null: not known (yet).
-   */
-  | { kind: "apiRetry"; thread: string; attempt: number; max: number; reason: "rateLimited" | "connection"; retryAt: number | null };
-
-export type CodexOutput =
-  | { kind: "write"; value: Record<string, unknown> }
-  /** `worker`: one of its app-managed workers' items (the bot's worker entry), not the coordinator's. */
-  | { kind: "item"; item: CodexItem; worker?: true }
-  | { kind: "thread"; id: string }
-  | { kind: "close" }
-  | { kind: "componentEditor"; action: ComponentEditorAction }
-  | { kind: "recoverEditor"; task:string; run:number; session:string; checkpoint:string }
-  | { kind: "failed"; message: string }
-  /** A browser tool call (any thread of this session): the head answers `rpcId` once main has. */
-  | { kind: "browser"; rpcId: unknown; tool: BotToolName; args: Record<string, unknown>; worker?: boolean };
-
-/** A worker as codex-threads/<session>.workers.json keeps it (`CodexManagedWorkerRecord`, 1.x's keys). */
-export interface WorkerRecord {
-  editorCheckpoint?: string;
-  editorSessionConfirmed?: boolean;
-  restartSafe?: boolean;
-  restartTurn?: string;
-  reportDispatching?: boolean;
-  id: string;
-  name: string;
-  instructions: string;
-  thread?: string;
-  run: number;
-  wasActive: boolean;
-  reportPending: boolean;
-  report?: string;
-  status?: string;
-  turn?: string;
-  isolatedGit?: IsolatedGitOwnership;
-  ownershipInstructions?: string;
-  role?: string;
-  /** The bot it was given to (workers.ts `setWorkerOwner`); absent: the coordinator's. */
-  owner?: WorkerOwner;
-}
-
-export interface CodexConfig {
-  cwd: string;
-  /**
-   * Plugins' skill folders (engine-skills.ts): given to the app-server with `skills/extraRoots/set` before the first thread,
-   * so the coordinator and its workers load them as Codex skills. None: not asked.
-   */
-  skillRoots?: string[];
-  /** The coordinator's developer instructions (Prompts.swift's system prompt for a Codex head). */
-  instructions: string;
-  /** What app-managed workers are told; null: not a coordinator (no app tools). */
-  workerInstructions: string | null;
-  /** Go on in this thread (`thread/resume`) instead of starting one. */
-  resumeThread: string | null;
-  model: string | null;
-  workerModel: string | null;
-  /** The models app_handoff's `model` may name (default: Codex's models cache; null: no list, a slug-shaped name is taken). */
-  workerModels?: () => readonly CodexModelEntry[] | null;
-  /** "low" … "xhigh". */
-  effort: string | null;
-  /** Workers' own effort and Fast mode (settings' Codex workers; null: as the coordinator / config.toml). */
-  workerEffort?: string | null;
-  workerFast?: boolean | null;
-  restoredWorkers: WorkerRecord[];
-  /** The restart journal's workers (written by a core before the worker ledger; read for one version). */
-  restartWorkers?: WorkerRecord[];
-  /** After an explicit restart (its time): workers the ledger says it interrupted are checked and resumed. */
-  restartRecovery?: number;
-  /** The member's core (Bot: its worker ledger and projections); absent: a core over `restoredWorkers`. */
-  workerCore?: (options: WorkerCoreOptions) => WorkerCore;
-  strictResume?: boolean;
-  restartTurn?: string;
-  /** Core binds this only for its own Maintainer; tool arguments cannot supply it. */
-  componentEditor?: ComponentEditorRoute | null;
-  /** scheduled-routines.json for `app_routines` (null: none here). */
-  routinesFile?: string | null;
-  /** The bot session that owns its monitors. */
-  ownerSession?: string;
-  restoredMonitors?: CommandMonitor[];
-  /** Auto mode (default on): Codex's own reviewer (`auto_review`) answers escalations; only its refusals become a card. */
-  autoMode?: boolean;
-  /** How long a worker's stop waits for its unanswered start requests before it gives up as not clean (default 15 s). */
-  workerStopDeadlineMs?: number;
-  /** Explicit opt-in: no approval prompts and no Codex sandbox. */
-  bypassPermissions?: boolean;
-  /** More folders it may write besides `cwd` (1.x's `writableRoots`: the bot's `--add-dir` folders). */
-  writableRoots?: string[];
-  /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). The coordinator is not restricted. */
-  specWriters?: readonly string[];
-}
-
-/** Codex's `sandbox_workspace_write.writable_roots` for these folders (none: nothing to add). */
-function writableRootsConfig(roots: readonly string[] | undefined): Record<string, unknown> {
-  return roots?.length ? { sandbox_workspace_write: { writable_roots: [...roots] } } : {};
-}
-
-type Call =
-  | { kind: "initialize" | "skillRoots" | "thread" | "turn" | "interrupt" | "other" }
-  | { kind: "coordinatorInstructions"; thread: string }
-  | { kind: "steer"; input: Input }
-  | { kind: "restartCoordinatorRead"; turn: string }
-  | { kind: "restartWorkerRead"; task: string; turn: string }
-  | { kind: "monitorCommand"; id: string }
-  /** A worker adapter's own request (CodexWire). */
-  | { kind: "adapter"; reply: (result: any, error: any) => void };
-
-interface Input { text: string; token: string; images?: string[] }
-interface Turn { id: string | null; waitingSteers: Input[]; interruptAsked: boolean; interruptSent: boolean; said: { text: string; phase: string | null }[] }
-interface Approval {
-  rpcId: unknown;
-  kind: "command" | "fileChange" | { permissions: Record<string, unknown> };
-  thread: string;
-  turn: string | null;
-}
-
-/** Codex's coordinator: no shell, no native subagents, no web search (`coordinatorConfig`). */
-const COORDINATOR_CONFIG = { "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled" };
-export const MANAGED_TOOLS: Record<string, unknown>[] = codexDynamicTools(appTools("codex"));
-/** The longest hand-off the worker core takes. */
-const MAX_HANDOFF = 64_000;
-/** Changing the tools needs a new coordinator thread (tools are fixed when a thread starts). */
-export const MANAGED_TOOL_SIGNATURE = JSON.stringify(MANAGED_TOOLS);
-/** A worker thread's one dynamic tool: app_notify_owner (fixed when its thread starts, like the coordinator's). */
-export const WORKER_TOOLS: Record<string, unknown>[] = codexDynamicTools(workerAppTools("codex"));
-// All bot sessions in this app share destination claims. A second session must never adopt
-// another worker's grant just because its branch/worktree names happen to match.
-const isolatedGitOwners = new Map<string, string>();
-/** The subagent type of the Maintainer's component editor. */
-
-/** The shell a monitored command runs in (1.x: zsh on macOS). */
-const shell = (command: string): string[] => (process.platform === "win32" ? ["cmd.exe", "/d", "/s", "/c", command] : process.platform === "darwin" ? ["/bin/zsh", "-c", command] : ["/bin/sh", "-c", command]);
-
-/** `CodexSession.handbackFallback`: worker evidence kept, fenced so its tags are not the app's. */
-export function handbackFallback(result: { name: string; task: string; status: string; report: string }, reason: string): string {
-  const evidence = `Reason: ${reason}\nWorker: ${result.name}\nTask: ${result.task}\nStatus: ${result.status}\n\n${result.report}`;
-  const longest = Math.max(0, ...(evidence.match(/~+/g) ?? []).map((run) => run.length));
-  const fence = "~".repeat(Math.max(3, longest + 1));
-  return `The coordinator could not summarize a worker result. The original evidence is preserved below.\n\n${fence}text\n${evidence}\n${fence}`;
-}
-
-export function firstLine(text: string): string {
-  const line = text.split(/\r?\n/).find((part) => part.length) ?? text;
-  return [...line].length > 60 ? `${[...line].slice(0, 60).join("")}…` : line;
-}
-
-const message = (error: unknown) => (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message : "Codex did not answer.");
-const key = (id: unknown) => String(id);
-const json = (value: unknown): string => {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string") return value;
-  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
-};
-
-/** The words a restarted worker's run shows when it adopts the answer its original turn completed with before the restart. */
-const ADOPTED_RUN = "(App: this worker's turn completed before the app restarted; its answer is reported as it was. Nothing was sent to it again.)";
-
-/**
- * A worker core result its sync adapters already have (a promise would mean an adapter that is not: `pending` instead).
- * The core's app tools may be async (handoff, message, cancel), but CodexSession answers each JSON-RPC line with the
- * outputs it causes, in order: its two adapters start, steer and recover synchronously, so a follow-up's result (and the
- * writes it queued) are there when the call returns. A tool call's receipt is written first and the core's work follows
- * in the same outputs; `handoff` is not awaited for the receipt (its task id is chosen up front, `nextTask`).
- */
-const syncResult = <T>(value: T | Promise<T>, pending: T): T => (value instanceof Promise ? pending : value);
-
-/** What it ran, without the shell wrapping it when Codex parsed it (`CodexSession.command`). */
-export function codexCommand(item: Record<string, any>): string {
-  const actions = (Array.isArray(item.commandActions) ? item.commandActions : []).map((a: any) => a?.command).filter((c: unknown): c is string => typeof c === "string");
-  if (actions.length === 1) return actions[0]!;
-  return typeof item.command === "string" ? item.command : actions.join(" && ");
-}
-
-/** A Codex tool call starting (a step): what it ran or changed. `changedFiles` keeps a patch's paths for its approval card. */
-export function codexToolStarted(item: any, changedFiles: Map<string, string[]>): { id: string; tool: string; title: string; detail: string; input: Record<string, unknown> } | null {
-  if (!item || typeof item.id !== "string") return null;
-  const id = item.id;
-  switch (item.type) {
-    case "commandExecution": {
-      const command = codexCommand(item);
-      return { id, tool: "Bash", title: activity("Bash", { command }), detail: command, input: { command } };
-    }
-    case "fileChange": {
-      const changes: any[] = Array.isArray(item.changes) ? item.changes : [];
-      const paths = changes.map((change) => change?.path).filter((path): path is string => typeof path === "string");
-      changedFiles.set(id, paths);
-      const adds = changes.length > 0 && changes.every((change) => change?.kind?.type === "add");
-      const tool = adds ? "Write" : "Edit";
-      let title = activity(tool, paths[0] ? { file_path: paths[0] } : {});
-      if (paths.length > 1) title += ` +${paths.length - 1}`;
-      return { id, tool, title, detail: paths.join("\n"), input: {} };
-    }
-    case "mcpToolCall": {
-      const server = String(item.server ?? ""), tool = String(item.tool ?? "");
-      return { id, tool: `mcp__${server}__${tool}`, title: `${server} ${tool}`, detail: json(item.arguments), input: {} };
-    }
-    case "dynamicToolCall": {
-      // The app's own tools show as their own steps (a hand-off as its subagent row).
-      const tool = String(item.tool ?? "tool");
-      if (tool === "app_handoff" || tool === "app_send_message" || tool === "app_task_checkpoint") return null;
-      return { id, tool, title: tool, detail: json(item.arguments), input: {} };
-    }
-    case "webSearch": {
-      const query = String(item.query ?? "");
-      return { id, tool: "WebSearch", title: activity("WebSearch", { query }), detail: query, input: {} };
-    }
-    default:
-      return null;
-  }
-}
-
-/** A Codex tool call done: its result (words it said are not one). */
-export function codexToolCompleted(item: any, changedFiles: Map<string, string[]>): { id: string; output: string; failed: boolean } | null {
-  if (!item || typeof item.id !== "string") return null;
-  const id = item.id;
-  const status = item.status;
-  switch (item.type) {
-    case "commandExecution": {
-      const failed = status !== "completed" || (typeof item.exitCode === "number" && item.exitCode !== 0);
-      return { id, output: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : "", failed };
-    }
-    case "fileChange": {
-      changedFiles.delete(id);
-      const diffs = (Array.isArray(item.changes) ? item.changes : []).map((change: any) => change?.diff).filter((diff: unknown): diff is string => typeof diff === "string");
-      return { id, output: diffs.join("\n"), failed: status !== "completed" };
-    }
-    case "mcpToolCall":
-    case "dynamicToolCall": {
-      if (item.type === "dynamicToolCall" && ["app_handoff", "app_send_message", "app_task_checkpoint"].includes(item.tool)) return null;
-      const output = item.error != null ? json(item.error) : json(item.result ?? item.contentItems);
-      return { id, output, failed: status === "failed" };
-    }
-    case "webSearch":
-      return { id, output: json(item.results), failed: false };
-    default:
-      return null;
-  }
-}
-
-/** Who answers a thread's escalations: Codex's own reviewer in auto mode, else the app ("user"). */
-const reviewerOf = (config: Pick<CodexConfig, "bypassPermissions" | "autoMode">) => (config.bypassPermissions || config.autoMode === false ? "user" : "auto_review");
-
-/** The words a Codex message phase is, for the run's text blocks. */
-const phaseOf = (phase: string | null): "commentary" | "final" | null => (phase === "commentary" ? "commentary" : phase ? "final" : null);
-
-// ---------------------------------------------------------------------------------------------
-// App-managed Codex workers (shared-core spec 4.2). Each is a thread of its coordinator's app-server. The adapter keeps
-// only the protocol: thread/start|resume, turn/start|steer|interrupt, the worker's approvals and auto-accepted isolated
-// Git requests, and the thread's tokens as differences; it turns the thread's notifications into the shared core's
-// WorkerEvents. The worker's state, its text, how its run ended, its report and the approvals table are the core's.
-
-/** What a Codex worker adapter uses of the app-server connection its coordinator owns. */
-export interface CodexWire {
-  /** A JSON-RPC request; `reply` gets its result or error. */
-  request(method: string, params: Record<string, unknown>, reply: (result: any, error: any) => void): void;
-  /** An answer to one of the app-server's requests. */
-  write(value: Record<string, unknown>): void;
-  /** Items a run shows beside its events (its runtime, its execution). */
-  item(item: CodexItem): void;
-}
-
-export interface CodexWorkerOptions {
-  /** The coordinator's settings, read when used (a hot switch changes them). */
-  config: CodexConfig;
-  wire: CodexWire;
-  /** Codex's reviewer refused one of its calls: the card (CodexSession.reviewed). */
-  reviewed?(params: any, worker: { id: string; name: string }): void;
-  /** A manual override of the reviewer covers this exact retry, once. */
-  allowedRetry?(key: string): boolean;
-  /** Why a follow-up must wait (restart recovery still reads its thread), else null. */
-  recovering?(id: string): string | null;
-  /** Words its turn refused after the run had ended: they start the next run. */
-  followUp?(id: string, text: string): void;
-  /** Every worker's record (an isolated Git destination must be the worker's alone). */
-  records?(): readonly WorkerLedgerRecord[];
-  now?(): number;
-}
-
-interface ThreadWorker {
-  id: string;
-  name: string;
-  /** The run under way (null: none, or it was stopped). */
-  run: RunHandle | null;
-  thread: string | null;
-  turnId: string | null;
-  /** Its thread is open in this app-server (a resumed one is once its instructions are refreshed). */
-  loaded: boolean;
-  completedTurns: Set<string>;
-  said: { text: string; phase: string | null }[];
-  /** Words for the turn under way before its id is known (or refused by a turn that was ending). */
-  messages: string[];
-  /** The words its turn starts with once its thread is ready. */
-  text: string;
-  /** Its thread's token totals last seen (null: not known in this app-server yet). */
-  tokens: TokenUsage | null;
-  /** JSON-RPC calls of its own not answered yet. */
-  calls: number;
-  /** A stop waiting for the start requests of the run it stopped to be answered (their turn, if any, interrupted). */
-  stopping?: (result: { cleaned: boolean }) => void;
-  /**
-   * The stopped run whose start request is still unanswered and no turn of which is known: it may yet begin a turn.
-   * Until that run's own request is answered (or its turn is seen and interrupted, or the app-server goes away) no next
-   * run may start. Bound to that run: nothing of another run (an old turn seen again) clears it.
-   */
-  isolating?: RunHandle;
-  /** Calls not answered yet, by the run that made them. */
-  pending: Map<RunHandle, number>;
-  /** Its latest run (the one under way, or the last to end): a late reply of an earlier run is that run's, not this one's. */
-  latest?: RunHandle;
-  /** Tool calls without a result yet. */
-  tools: Set<string>;
-  /** After the user allowed a refused call: its next turn asks the app ("user"), the one after the reviewer again. */
-  reviewerNext?: string;
-  /** Stopped: a turn that starts now is interrupted at once. */
-  cancelled: boolean;
-  isolatedGit?: IsolatedGitOwnership;
-  /** The effort its handoff asked for (null: the Codex workers' setting, else the coordinator's). */
-  effort?: string | null;
-  runtime?: { engine: "codex"; reasoningEffort: string | null; serviceTier: string | null };
-  /** The model its thread runs on, as the app-server said (spec-guard.ts). */
-  model?: string | null;
-  /** The model its handoff asked for (null: the Codex workers' setting, else the coordinator's). */
-  chosenModel?: string | null;
-  /** Restart: the original turn had completed with these messages (adopted, nothing is sent). */
-  adopt?: { said: { text: string; phase: string | null }[]; turn: string };
-  /** Restart: the run continues the original one (its scope and Git grant stay). */
-  continuing?: boolean;
-}
-
-interface WorkerApproval { worker: ThreadWorker; run: RunHandle; rpcId: unknown; kind: Approval["kind"]; turn: string | null }
-
-const decline = (rpcId: unknown, kind: Approval["kind"]) => ({ jsonrpc: "2.0", id: rpcId, result: typeof kind === "string" ? { decision: "decline" } : { permissions: {} } });
-
-/** Codex's app-managed workers as the shared core's adapter (kind "codex-thread"). */
-export class CodexThreadAdapter implements WorkerAdapter {
-  readonly kind = "codex-thread" as const;
-  readonly engine = "codex" as const;
-  readonly steersRunning = true;
-  /** After an explicit restart a resumed thread must be the very one it was. */
-  strictResume = false;
-  private workers = new Map<string, ThreadWorker>();
-  private approvals = new Map<string, WorkerApproval>();
-  private changedFiles = new Map<string, string[]>();
-  private speed = new CodexRequestTracker();
-
-  constructor(private o: CodexWorkerOptions) {}
-
-  private now() { return this.o.now?.() ?? Date.now(); }
-
-  private worker(record: Readonly<WorkerLedgerRecord>): ThreadWorker {
-    let w = this.workers.get(record.id);
-    if (!w) {
-      w = { id: record.id, name: record.name, run: null, thread: record.conversationId, turnId: null, loaded: false, completedTurns: new Set(), said: [], messages: [], text: "", tokens: null, calls: 0, pending: new Map(), tools: new Set(), cancelled: false };
-      this.workers.set(record.id, w);
-    }
-    w.thread ??= record.conversationId;
-    w.isolatedGit = record.engineData.isolatedGit as IsolatedGitOwnership | undefined;
-    w.effort = codexEffort(record.engineData.effort);
-    w.chosenModel = typeof record.engineData.model === "string" && record.engineData.model ? record.engineData.model : null;
-    return w;
-  }
-
-  /** The worker whose thread this is. */
-  private ofThread(thread: unknown): ThreadWorker | undefined {
-    return typeof thread === "string" ? [...this.workers.values()].find((w) => w.thread === thread) : undefined;
-  }
-
-  /** A worker's thread asking an app tool (its task and run). */
-  requester(thread: unknown): { id: string; run: number | null } | null {
-    const w = this.ofThread(thread);
-    return w ? { id: w.id, run: w.run?.run ?? null } : null;
-  }
-
-  private execution(w: ThreadWorker, run: RunHandle): SubagentExecution {
-    return { run: run.run, ownerSessionId: this.o.config.ownerSession ?? null, threadId: w.thread, turnId: w.turnId };
-  }
-
-  /** One of its own calls: the reply is dropped once its run is over. */
-  private call(w: ThreadWorker, run: RunHandle, method: string, params: Record<string, unknown>, reply: (result: any, error: any) => void) {
-    this.count(w, run, 1);
-    this.o.wire.request(method, params, (result, error) => {
-      this.count(w, run, -1);
-      if (w.run === run && !w.cancelled) return reply(result, error);
-      // A call of a run that was stopped: a turn it started is that run's, never a later one's, and is interrupted now.
-      if (method === "turn/start" && typeof result?.turn?.id === "string") this.isolate(w, result.turn.id, run);
-      // That run's last request answered: nothing of it can start any more.
-      if (w.isolating === run && !w.pending.has(run)) this.confirmed(w);
-    });
-  }
-
-  private count(w: ThreadWorker, run: RunHandle, by: 1 | -1) {
-    w.calls += by;
-    const left = (w.pending.get(run) ?? 0) + by;
-    if (left > 0) w.pending.set(run, left);
-    else w.pending.delete(run);
-  }
-
-  /**
-   * A turn of a stopped run: no later run takes its events, and it is interrupted. One seen before (an old turn, its
-   * notice again) says nothing new. A new one is the run's being isolated (`run`, or the one that could start a turn
-   * unseen) and confirms it.
-   */
-  private isolate(w: ThreadWorker, turn: string, run?: RunHandle) {
-    if (w.completedTurns.has(turn)) return;
-    w.completedTurns.add(turn);
-    if (w.thread) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: turn }, () => undefined);
-    if (w.isolating && (!run || run === w.isolating)) this.confirmed(w);
-  }
-
-  /** The stopped run is isolated: its stop (if it still waits) is done, and a next run may start. */
-  private confirmed(w: ThreadWorker) {
-    w.isolating = undefined;
-    const done = w.stopping;
-    w.stopping = undefined;
-    done?.({ cleaned: true });
-  }
-
-  private fail(w: ThreadWorker, run: RunHandle, error: string) {
-    w.run = null;
-    this.drop(w, () => true, false);
-    run.emit({ type: "end", end: { how: "error", finalText: null, error, detail: "app-server" } });
-  }
-
-  prepare(request: HandoffRequest) {
-    const isolatedGit = request.args.isolatedGit;
-    const effort = codexEffort(request.args.effort);
-    const model = typeof request.args.model === "string" && request.args.model ? request.args.model : null;
-    return { engineData: { ...(isolatedGit ? { isolatedGit } : {}), ...(effort ? { effort } : {}), ...(model ? { model } : {}) } };
-  }
-
-  /** A worker's turn effort: its handoff's, else the Codex workers' setting, else the coordinator's. */
-  private effortOf(record: Readonly<WorkerLedgerRecord>): string | null {
-    return codexEffort(record.engineData.effort) ?? this.o.config.workerEffort ?? this.o.config.effort ?? null;
-  }
-
-  runtime(record: Readonly<WorkerLedgerRecord>) {
-    return { reasoningEffort: this.workers.get(record.id)?.runtime?.reasoningEffort ?? this.effortOf(record) };
-  }
-
-  start(record: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle) {
-    const w = this.worker(record);
-    Object.assign(w, { run, latest: run, cancelled: false, turnId: null, said: [], messages: [] });
-    w.tools.clear();
-    if (w.adopt) {
-      // Completed before the app restarted: its answer is the run's, and nothing is sent again.
-      const { said, turn } = w.adopt;
-      delete w.adopt;
-      for (const message of said) run.emit({ type: "textWhole", text: message.text, phase: phaseOf(message.phase) });
-      this.end(w, run, { id: turn, status: "completed" }, said);
-      return;
-    }
-    if (record.engineData.role !== undefined) {
-      run.emit({ type: "end", end: { how: "error", finalText: null, error: "Unknown persisted worker role; no generic worker was substituted.", detail: "role" } });
-      return;
-    }
-    if (w.continuing) delete w.continuing;
-    else if (run.run > 1) {
-      // A follow-up is a task of its own: the hand-off's Git grant does not carry over.
-      w.isolatedGit = undefined;
-      run.setEngineData({ isolatedGit: undefined, ownershipInstructions: words });
-    }
-    if (w.loaded && w.thread) this.startTurn(w, run, words);
-    else { w.text = words; this.openThread(w, run); }
-  }
-
-  private openThread(w: ThreadWorker, run: RunHandle) {
-    const c = this.o.config;
-    const params: Record<string, unknown> = {
-      cwd: c.cwd, approvalPolicy: c.bypassPermissions ? "never" : "on-request", approvalsReviewer: reviewerOf(c), sandbox: c.bypassPermissions ? "danger-full-access" : "workspace-write",
-      developerInstructions: `${c.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate."}\n\n${MONITOR_HANDBACK}${this.specNote(w)}`,
-      // The workers write where the coordinator may, as in 1.x (`writable_roots`).
-      config: { "features.multi_agent": false, "agents.enabled": false, ...codexAutoRiskConfig(c.autoMode, c.bypassPermissions), ...writableRootsConfig(c.writableRoots) },
-    };
-    const model = w.chosenModel ?? c.workerModel ?? c.model;
-    if (model) params.model = model;
-    // Fast mode: the priority service tier (`CodexWorkerDefaults.fast`).
-    if (typeof c.workerFast === "boolean") params.serviceTier = c.workerFast ? "priority" : "default";
-    const resumed = !!w.thread;
-    // Tools are fixed when a thread starts: a resumed thread keeps the ones it started with.
-    if (resumed) { params.threadId = w.thread; params.excludeTurns = true; }
-    else params.dynamicTools = WORKER_TOOLS;
-    this.call(w, run, resumed ? "thread/resume" : "thread/start", params, (result, error) => this.threadReady(w, run, resumed, result, error));
-  }
-
-  private threadReady(w: ThreadWorker, run: RunHandle, resumed: boolean, result: any, error: any) {
-    const thread = result?.thread?.id;
-    if (error || typeof thread !== "string") return this.fail(w, run, `Could not start worker session: ${message(error)}`);
-    if (this.strictResume && resumed && thread !== w.thread) return this.fail(w, run, "Restart resume returned a different worker thread; no prompt was sent.");
-    w.thread = thread;
-    run.emit({ type: "session", conversationId: thread });
-    if (!resumed) w.tokens = noTokens();
-    else w.tokens = null;
-    w.loaded = !resumed;
-    const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
-    w.runtime = { engine: "codex", reasoningEffort: text(result.reasoningEffort), serviceTier: text(result.serviceTier) };
-    const model = text(result.model);
-    if (model) w.model = model;
-    this.o.wire.item({ kind: "subagentRuntime", id: w.id, runtime: w.runtime, ...(model ? { model } : {}) });
-    this.o.wire.item({ kind: "subagentExecution", id: w.id, execution: this.execution(w, run) });
-    if (!resumed) return this.startTurn(w, run, w.text);
-    // Resume alone can leave the rollout's old developer policy in force: the current one is appended.
-    const policy = `${this.o.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate."}\n\n${MONITOR_HANDBACK}${this.specNote(w)}`;
-    this.call(w, run, "thread/inject_items", { threadId: thread, items: [{ type: "message", role: "developer", content: [{ type: "input_text", text: policy }] }] }, (_result, refused) => {
-      if (refused) return this.fail(w, run, `Could not refresh worker instructions: ${message(refused)}`);
-      w.loaded = true;
-      this.startTurn(w, run, w.text);
-    });
-  }
-
-  private startTurn(w: ThreadWorker, run: RunHandle, text: string) {
-    if (!w.thread) return;
-    w.turnId = null;
-    w.said = [];
-    const params: Record<string, unknown> = { threadId: w.thread, input: [{ type: "text", text }] };
-    const effort = w.effort ?? this.o.config.workerEffort ?? this.o.config.effort;
-    if (effort) params.effort = effort;
-    if (w.reviewerNext) {
-      params.approvalsReviewer = w.reviewerNext;
-      w.reviewerNext = w.reviewerNext === "user" ? "auto_review" : undefined;
-    }
-    this.call(w, run, "turn/start", params, (result, error) => {
-      if (error) return this.fail(w, run, `Could not start worker turn: ${message(error)}`);
-      const id = result?.turn?.id;
-      if (typeof id !== "string") return;
-      // The successful turn/start accepted this explicit override. Otherwise keep thread settings.
-      if (effort) {
-        w.runtime = { engine: "codex", reasoningEffort: effort, serviceTier: w.runtime?.serviceTier ?? null };
-        this.o.wire.item({ kind: "subagentRuntime", id: w.id, runtime: w.runtime });
-      }
-      this.learnTurn(w, run, id);
-    });
-  }
-
-  private learnTurn(w: ThreadWorker, run: RunHandle, id: string) {
-    if (w.turnId || w.completedTurns.has(id)) return;
-    w.turnId = id;
-    this.o.wire.item({ kind: "subagentExecution", id: w.id, execution: this.execution(w, run) });
-    const messages = w.messages;
-    w.messages = [];
-    for (const text of messages) this.steerCall(w, run, text, id);
-  }
-
-  private steerCall(w: ThreadWorker, run: RunHandle, text: string, turnId: string) {
-    this.count(w, run, 1);
-    this.o.wire.request("turn/steer", { threadId: w.thread ?? "", expectedTurnId: turnId, input: [{ type: "text", text }] }, (_result, error) => {
-      this.count(w, run, -1);
-      // Only the run that sent them: a run stopped meanwhile, or followed by another, drops its late words.
-      if (!error || w.latest !== run || w.cancelled) return;
-      // Its turn had just ended: the words go into its next turn (this run's), or, the run over, its next run.
-      if (w.run === run) w.messages.push(text);
-      else if (!w.run) this.o.followUp?.(w.id, text);
-    });
-  }
-
-  steer(record: Readonly<WorkerLedgerRecord>, words: string): boolean {
-    const w = this.workers.get(record.id);
-    if (!w?.run || w.cancelled) return false;
-    w.isolatedGit = undefined;
-    const scope = typeof record.engineData.ownershipInstructions === "string" ? record.engineData.ownershipInstructions : record.instructions;
-    w.run.setEngineData({ isolatedGit: undefined, ownershipInstructions: `${scope}\nFollow-up: ${words}` });
-    if (w.turnId) this.steerCall(w, w.run, words, w.turnId);
-    else w.messages.push(words);
-    return true;
-  }
-
-  /** Ends its run's turn; its open approvals are declined. No end is emitted (the core decided "stopped"). */
-  /**
-   * Interrupts its turn: done at once when its turn is known (Codex ends it; its late events are dropped). When a start
-   * request has no answer yet there is no turn to interrupt: the stop is done once those are answered (a turn one
-   * started is interrupted then), so no next run starts while the old turn may still begin.
-   */
-  stop(record: Readonly<WorkerLedgerRecord>): { cleaned: boolean } | Promise<{ cleaned: boolean }> {
-    const w = this.workers.get(record.id);
-    // Its run already over: cancelled all the same, so a late steer error of that run starts no next run with its words.
-    if (!w?.run) { if (w) { w.cancelled = true; w.messages = []; } return { cleaned: true }; }
-    const run = w.run;
-    const unsettled = !w.turnId && w.pending.has(run);
-    this.interrupt(w);
-    if (!unsettled) return { cleaned: true };
-    w.isolating = run;
-    // Not forever: an app-server that never answers leaves it not clean (blocked until the answer comes, or a restart).
-    return new Promise((resolve) => {
-      const settle = (result: { cleaned: boolean }) => { clearTimeout(timer); resolve(result); };
-      const timer = setTimeout(() => { if (w.stopping === settle) { w.stopping = undefined; resolve({ cleaned: false }); } }, this.o.config.workerStopDeadlineMs ?? 15_000);
-      timer.unref?.();
-      w.stopping = settle;
-    });
-  }
-
-  private interrupt(w: ThreadWorker) {
-    const turn = w.turnId;
-    if (turn) w.completedTurns.add(turn);
-    w.run = null;
-    w.cancelled = true;
-    w.messages = [];
-    this.drop(w, () => true, true);
-    if (w.thread && turn) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: turn }, () => undefined);
-  }
-
-  answer(record: Readonly<WorkerLedgerRecord>, nativeId: string, allow: boolean, _input: Record<string, unknown>, why?: string) {
-    const approval = this.approvals.get(nativeId);
-    if (!approval || approval.worker.id !== record.id) return;
-    this.approvals.delete(nativeId);
-    const w = approval.worker;
-    if (w.run !== approval.run || !this.current(w, approval.turn)) return;
-    const result = approval.kind === "command" || approval.kind === "fileChange"
-      ? { decision: allow ? "accept" : "decline" }
-      : allow ? { permissions: approval.kind.permissions, scope: "turn" } : { permissions: {} };
-    this.o.wire.write({ jsonrpc: "2.0", id: approval.rpcId, result });
-    // A refusal carries no words in Codex's protocol: why goes to the turn as a message.
-    if (!allow && why && w.run) {
-      const text = `(App: ${why})`;
-      if (w.turnId) this.steerCall(w, w.run, text, w.turnId);
-      else w.messages.push(text);
-    }
-  }
-
-  recover(record: Readonly<WorkerLedgerRecord>): RecoverResult {
-    if (this.workers.get(record.id)?.isolating) return { state: "blocked", reason: "Its stopped run's start request has not been answered yet, so its old turn may still begin; it cannot start again until that is known (or the app-server restarts)." };
-    // Its turns lived in an app-server that is gone; only a restart's own check of the thread can hold it back.
-    const waiting = this.o.recovering?.(record.id);
-    return waiting ? { state: "blocked", reason: waiting } : { state: "clean" };
-  }
-
-  async close() {
-    for (const w of this.workers.values()) {
-      if (w.run) this.interrupt(w);
-      // A stop still waiting for its start requests' answers never gets them now: not known to be clean.
-      if (w.stopping) { const done = w.stopping; w.stopping = undefined; done({ cleaned: false }); }
-    }
-  }
-
-  /** The app-server went away: every run under way ends with it, and every thread must be resumed again. */
-  exited(reason: string) {
-    for (const w of this.workers.values()) {
-      w.loaded = false;
-      // Its turns went with it: a stop waiting for one is done (nothing of the old run can start).
-      w.calls = 0;
-      w.pending.clear();
-      this.confirmed(w);
-      const run = w.run;
-      if (!run) continue;
-      w.run = null;
-      this.drop(w, () => true, false);
-      run.emit({ type: "end", end: { how: "exited", finalText: null, error: reason, detail: "app-server exited" } });
-    }
-  }
-
-  /** Restart: its next run adopts the original turn's completed answer. */
-  adopt(id: string, said: { text: string; phase: string | null }[], turn: string) {
-    const w = this.workers.get(id) ?? this.blank(id);
-    w.adopt = { said, turn };
-  }
-
-  /** Restart: its next run continues the original one. */
-  continueAfterRestart(id: string) { (this.workers.get(id) ?? this.blank(id)).continuing = true; }
-
-  private blank(id: string): ThreadWorker {
-    const w: ThreadWorker = { id, name: "", run: null, thread: null, turnId: null, loaded: false, completedTurns: new Set(), said: [], messages: [], text: "", tokens: null, calls: 0, pending: new Map(), tools: new Set(), cancelled: false };
-    this.workers.set(id, w);
-    return w;
-  }
-
-  /** After the user allowed a refused call: its next turn asks the app once. */
-  askAppNext(id: string) { const w = this.workers.get(id); if (w) w.reviewerNext = "user"; }
-
-  /** Its turn under way (a restart snapshot). */
-  turnOf(id: string): string | null { return this.workers.get(id)?.turnId ?? null; }
-
-  /** Kept for an explicit restart: whether its turn can be resumed, and which turn. */
-  restartData(record: Readonly<WorkerLedgerRecord>) { return { restartSafe: this.restartSafe(record.id), restartTurn: this.turnOf(record.id) ?? undefined }; }
-
-  /** Whether an app restart now could resume it: a known turn and nothing unanswered or half-done. */
-  restartSafe(id: string): boolean {
-    const w = this.workers.get(id);
-    return !!w?.run && !w.cancelled && !!w.turnId && !w.calls && !w.tools.size && !w.messages.length && ![...this.approvals.values()].some((a) => a.worker === w);
-  }
-
-  private current(w: ThreadWorker, turn: string | null): boolean {
-    return !!w.run && !w.cancelled && (!turn || !w.completedTurns.has(turn)) && (!w.turnId || !turn || w.turnId === turn);
-  }
-
-  /** Forgets its approvals that match (declining them to Codex when `deny`); the core cancels their cards. */
-  private drop(w: ThreadWorker, matches: (approval: WorkerApproval) => boolean, deny: boolean, notify = false) {
-    for (const [nativeId, approval] of this.approvals) {
-      if (approval.worker !== w || !matches(approval)) continue;
-      this.approvals.delete(nativeId);
-      if (deny) this.o.wire.write(decline(approval.rpcId, approval.kind));
-      if (notify) approval.run.emit({ type: "permissionCancelled", nativeId });
-    }
-  }
-
-  /** Whether this worker's model may not write spec/ (spec-guard.ts); unknown counts as not. */
-  private specLocked(w: ThreadWorker): boolean {
-    const c = this.o.config;
-    return !maySpecWrite(w.model ?? w.chosenModel ?? c.workerModel ?? c.model, c.specWriters ?? DEFAULT_SPEC_WRITERS);
-  }
-
-  private specNote(w: ThreadWorker): string {
-    return this.specLocked(w) ? `\n\n${SPEC_DENIED}` : "";
-  }
-
-  /** An approval request that writes into spec/: a command that clearly does, or a patch with a path there. */
-  private writesSpec(method: string, params: any): boolean {
-    const cwd = typeof params.cwd === "string" && params.cwd ? params.cwd : this.o.config.cwd;
-    if (method === "item/commandExecution/requestApproval") {
-      const command = typeof params.command === "string" ? params.command : Array.isArray(params.command) ? params.command.join(" ") : "";
-      return !!command && shellWritesSpec(command, cwd);
-    }
-    if (method !== "item/fileChange/requestApproval") return false;
-    const files = typeof params.itemId === "string" ? this.changedFiles.get(params.itemId) ?? [] : [];
-    return [...files, ...(typeof params.grantRoot === "string" ? [params.grantRoot] : [])].some((path) => inSpec(path, cwd));
-  }
-
-  // From the app-server
-
-  /** One of the app-server's requests on a worker's thread (its approvals). False: not a worker's. */
-  serverRequest(method: string, rpcId: unknown, params: any): boolean {
-    const w = this.ofThread(params.threadId);
-    if (!w) return false;
-    if (this.specLocked(w) && this.writesSpec(method, params)) {
-      // Declined without a card: no answer of the user's lets a worker not on a spec writer's model write spec/.
-      this.o.wire.write(decline(rpcId, method === "item/fileChange/requestApproval" ? "fileChange" : "command"));
-      return true;
-    }
-    const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
-    switch (method) {
-      case "item/commandExecution/requestApproval": {
-        const turn = typeof params.turnId === "string" ? params.turnId : null;
-        const current = this.current(w, turn);
-        const plain = params.environmentId === "local" && !params.networkApprovalContext && (params.kind === undefined || params.kind === "command") // never stdin to a running process
-          && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"));
-        // A manual override covers one retry in its exact thread and working directory.
-        if (current && plain && this.o.allowedRetry?.(JSON.stringify([params.threadId, params.cwd, params.command]))) {
-          this.o.wire.write({ jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } });
-          return true;
-        }
-        const ownership = w.isolatedGit;
-        const exclusive = ownership && !(this.o.records?.() ?? []).some((r) => {
-          const other = r.engineData.isolatedGit as IsolatedGitOwnership | undefined;
-          return r.id !== w.id && !!other && (other.worktree === ownership.worktree || other.branch === ownership.branch);
-        });
-        if (this.o.config.bypassPermissions === true && current && w.turnId && turn === w.turnId && plain
-          && exclusive && isolatedGitOwners.get(ownership.worktree) === w.id && approveIsolatedGit(ownership, this.o.config.cwd, params)) {
-          // One request only: never acceptForSession / execpolicy amendments / wider permissions.
-          this.o.wire.write({ jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } });
-          return true;
-        }
-        let summary = typeof params.command === "string" ? params.command : "";
-        if (reason) summary += (summary ? "\n\n" : "") + reason;
-        this.ask(w, rpcId, "command", params, "Bash", summary);
-        return true;
-      }
-      case "item/fileChange/requestApproval": {
-        const files = typeof params.itemId === "string" ? this.changedFiles.get(params.itemId) ?? [] : [];
-        let summary = files.join("\n");
-        if (typeof params.grantRoot === "string" && params.grantRoot) summary += (summary ? "\n" : "") + params.grantRoot;
-        if (reason) summary += (summary ? "\n\n" : "") + reason;
-        this.ask(w, rpcId, "fileChange", params, "Edit", summary);
-        return true;
-      }
-      case "item/permissions/requestApproval": {
-        const asked = params.permissions && typeof params.permissions === "object" ? params.permissions : {};
-        this.ask(w, rpcId, { permissions: asked }, params, "Permissions", [reason, JSON.stringify(asked, Object.keys(asked).sort())].filter(Boolean).join("\n\n"));
-        return true;
-      }
-      default:
-        return false;
-    }
-  }
-
-  /**
-   * An approval card through the core. Its native id is a fresh local identity, never the RPC id: Codex reuses those, and
-   * a stale card must never answer a later request.
-   */
-  private ask(w: ThreadWorker, rpcId: unknown, kind: Approval["kind"], params: any, tool: string, summary: string) {
-    const turn = typeof params.turnId === "string" ? params.turnId : w.turnId;
-    if (!w.run || !this.current(w, turn)) { this.o.wire.write(decline(rpcId, kind)); return; }
-    if ([...this.approvals.values()].some((open) => open.rpcId === rpcId && open.worker === w && open.turn === turn)) return;
-    const nativeId = randomUUID();
-    this.approvals.set(nativeId, { worker: w, run: w.run, rpcId, kind, turn });
-    w.run.emit({ type: "permission", nativeId, tool, summary, input: {} });
-  }
-
-  /** A notification on a worker's thread. False: not a worker's. */
-  receive(method: string, params: any): boolean {
-    const w = this.ofThread(params.threadId);
-    if (!w) return false;
-    const run = w.run;
-    const supplied = params.turnId ?? (method === "turn/started" ? params.turn?.id : null);
-    if (run) for (const { scope: _scope, ...request } of this.speed.observe(w.id, method, params, this.now())) run.emit({ type: "request", request });
-    switch (method) {
-      case "turn/started": {
-        const id = params.turn?.id;
-        if (typeof id !== "string") return true;
-        if (w.cancelled) this.isolate(w, id);
-        else if (run) this.learnTurn(w, run, id);
-        return true;
-      }
-      case "item/started":
-      case "item/completed": {
-        const item = params.item;
-        if (!run || !item || typeof item !== "object") return true;
-        // Another turn's (a stopped run's, even before this run's turn is known): never this run's.
-        if (typeof params.turnId === "string" && (w.completedTurns.has(params.turnId) || (w.turnId && params.turnId !== w.turnId))) return true;
-        if (method === "item/started") {
-          const step = codexToolStarted(item, this.changedFiles);
-          if (step) { w.tools.add(step.id); run.emit({ type: "toolUse", ...step }); }
-          return true;
-        }
-        if (item.type === "agentMessage") {
-          const text = typeof item.text === "string" ? item.text : "";
-          const phase = typeof item.phase === "string" ? item.phase : null;
-          w.said.push({ text, phase });
-          run.emit({ type: "textWhole", text, phase: phaseOf(phase) });
-          return true;
-        }
-        const result = codexToolCompleted(item, this.changedFiles);
-        if (result) { w.tools.delete(result.id); run.emit({ type: "toolResult", ...result }); }
-        return true;
-      }
-      case "turn/completed":
-        this.turnCompleted(w, params.turn);
-        return true;
-      case "item/autoApprovalReview/completed":
-        this.o.reviewed?.(params, { id: w.id, name: w.name });
-        return true;
-      case "serverRequest/resolved":
-        for (const [nativeId, approval] of this.approvals) {
-          if (approval.rpcId !== params.requestId || approval.worker !== w || (typeof params.turnId === "string" && approval.turn !== params.turnId)) continue;
-          this.approvals.delete(nativeId);
-          approval.run.emit({ type: "permissionCancelled", nativeId });
-        }
-        return true;
-      case "thread/tokenUsage/updated":
-        if (run) this.tokenUsage(w, run, params);
-        return true;
-      default:
-        return true;
-    }
-  }
-
-  /** What the thread used since the last update (the totals' difference; a resumed thread's first update: its last request). */
-  private tokenUsage(w: ThreadWorker, run: RunHandle, params: any) {
-    const total = params.tokenUsage?.total;
-    if (total && typeof total === "object" && Number.isSafeInteger(total.outputTokens) && total.outputTokens >= 0) {
-      const now = codexTokens(total);
-      const last = params.tokenUsage?.last;
-      const used = w.tokens ? minusTokens(now, w.tokens) : last && typeof last === "object" ? codexTokens(last) : noTokens();
-      w.tokens = now;
-      if (totalTokens(used) > 0 && Object.values(used).every((count) => count >= 0)) run.emit({ type: "usage", tokens: used, cost: 0 });
-    }
-  }
-
-  private turnCompleted(w: ThreadWorker, turn: any) {
-    const run = w.run;
-    const id = turn?.id;
-    if (!run || w.cancelled || typeof id !== "string" || w.completedTurns.has(id) || (w.turnId && w.turnId !== id)) return;
-    w.completedTurns.add(id);
-    w.turnId = null;
-    if (w.messages.length) {
-      // Words a steer could not put into the turn as it ended: they are this run's, in a turn of their own.
-      this.drop(w, (approval) => !approval.turn || approval.turn === id, false, true);
-      const text = w.messages.join("\n\n");
-      w.messages = [];
-      this.startTurn(w, run, text);
-      return;
-    }
-    this.end(w, run, turn, w.said);
-  }
-
-  /** Its run's end as Codex says it: the last message that is not commentary is its final answer. */
-  private end(w: ThreadWorker, run: RunHandle, turn: { id: string; status?: unknown; error?: any }, said: { text: string; phase: string | null }[]) {
-    w.run = null;
-    this.drop(w, () => true, false);
-    run.setEngineData({ turn: turn.id });
-    const final = said.findLast((s) => s.phase !== "commentary")?.text.trim() || null;
-    const status = typeof turn.status === "string" ? turn.status : "failed";
-    const end: RunEnd = status === "completed" ? { how: "normal", finalText: final, error: null, detail: status }
-      : status === "interrupted" ? { how: "cancelled", finalText: final, error: "Codex interrupted the worker's turn.", detail: status }
-        : { how: "error", finalText: final, error: typeof turn.error?.message === "string" ? turn.error.message : "Worker failed.", detail: status };
-    run.emit({ type: "end", end });
-  }
-}
+import { minusTokens, noTokens, totalTokens, type TokenUsage } from "../usage";
+import { CodexLegacyStore, reportPayload, STOPPED_REPORT, toLegacyCodex, wireStatus, WorkerCore, type CodexJournal, type CoordinatorPort, type RunEnd, type WorkerCoreOptions, type WorkerReport } from "../worker-core";
 
 export class CodexSession implements CoordinatorPort {
   private nextId = 1;
-  private calls = new Map<number, Call>();
+  calls = new Map<number, Call>();
   threadId: string | null = null;
-  private turn: Turn | null = null;
-  private completedTurns = new Set<string>();
+  turn: Turn | null = null;
+  completedTurns = new Set<string>();
   /** The coordinator thread's tokens so far, and when the last turn ended (Phase 5c, 1.x's `tokensTotal`). */
-  private tokensTotal: TokenUsage = noTokens();
+  tokensTotal: TokenUsage = noTokens();
   private tokensAtTurnStart: TokenUsage = noTokens();
-  private inbox: Input[] = [];
-  private approvals = new Map<string, Approval>();
-  private changedFiles = new Map<string, string[]>();
-  /** Commands the user allowed after Codex's reviewer refused them: asked again, they go through. */
-  private allowedCommands = new Set<string>();
-  /** The coordinator's next turn asks the app instead of the reviewer, once (1.x `reviewerNext`). */
-  private reviewerNext: string | null = null;
-  /** Reviewer refusals shown as cards: what was refused, and whose. */
-  private reviews = new Map<string, { command: string; task: string | null; thread: string; cwd: string }>();
-  private finishing = false;
-  private stopped = false;
+  inbox: Input[] = [];
+  changedFiles = new Map<string, string[]>();
+  finishing = false;
+  stopped = false;
   /** Workers whose turn under way when the app restarted is being checked (thread/read, the editor's transcript). */
-  private restartPending = new Map<string, WorkerRecord>();
-  private restartCoordinatorPending = false;
+  restartPending = new Map<string, WorkerRecord>();
+  restartCoordinatorPending = false;
   private toolReplies = new Map<string, { intent: string; response: Record<string, unknown> }>();
   private pending = false;
-  private monitors = new Map<string, CommandMonitor>();
-  private activeMonitor: string | null = null;
-  /** A model switched to in place: every coordinator turn/start carries it (it holds for later turns too). */
-  private turnModel: string | null = null;
+  monitors = new Map<string, CommandMonitor>();
+  activeMonitor: string | null = null;
   /**
    * Its app-managed workers (shared-core spec 3.3): their state, runs, reports and approvals. The Codex threads and the
    * Maintainer's component editor are its two adapters; codex-threads/<session>.workers.json stays their journal
@@ -1018,13 +88,15 @@ export class CodexSession implements CoordinatorPort {
   readonly editor: ComponentEditorAdapter;
   private journal: WorkerRecord[];
   /** What the core, the adapters and the report port said since the last call returned (in order). */
-  private out: CodexOutput[] = [];
+  out: CodexOutput[] = [];
   /** The report turn under way: whose report the coordinator is shown now. */
-  private report: { id: string; run: number } | null = null;
+  report: { id: string; run: number } | null = null;
   /** A coordinator turn is ending: a report waits for next(), which decides what goes first. */
   private settling = false;
   /** The task id the next hand-off gets (its receipt is written before the core has made it). */
   private nextTask: string | null = null;
+  /** The RPC half: what the bot sends in and what codex sends back (codex-session-rpc.ts). */
+  private readonly rpc = new CodexSessionRpc(this);
 
   constructor(readonly config: CodexConfig) {
     for (const record of config.restoredMonitors ?? []) {
@@ -1043,7 +115,7 @@ export class CodexSession implements CoordinatorPort {
         item: (item) => this.out.push(this.workerItem(item)),
       },
       reviewed: (params, worker) => this.out.push(...this.reviewed(params, worker)),
-      allowedRetry: (key) => this.allowedCommands.delete(key),
+      allowedRetry: (key) => this.rpc.allowedCommands.delete(key),
       followUp: (id, text) => { void this.core.sendToWorker(id, text); },
     });
     this.threads.strictResume = !!config.restartWorkers || config.restartRecovery !== undefined;
@@ -1074,462 +146,29 @@ export class CodexSession implements CoordinatorPort {
     for (const record of this.core.all()) if (record.report.state === "dispatching" && !record.owner) this.core.retryUncertain(record.id, record.run);
   }
 
-  /** A worker's item (the core's, its adapters', a restart check's): for the bot's worker entry. */
-  private workerItem(item: CodexItem): CodexOutput {
-    return { kind: "item", item, worker: true };
-  }
+  // The RPC half (from the bot, from codex) is CodexSessionRpc; these forward to it so every caller stays as it was.
+  private workerItem(item: CodexItem): CodexOutput { return this.rpc.workerItem(item); }
+  private take(): CodexOutput[] { return this.rpc.take(); }
+  private get managed() { return this.rpc.managed; }
+  private turnSettings(params: Record<string, unknown>) { this.rpc.turnSettings(params); }
+  private nextReviewer(params: Record<string, unknown>) { this.rpc.nextReviewer(params); }
+  private reviewed(params: any, worker: { id: string; name: string } | null): CodexOutput[] { return this.rpc.reviewed(params, worker); }
+  private closeApprovals(matches: (approval: Approval) => boolean, deny = false): CodexOutput[] { return this.rpc.closeApprovals(matches, deny); }
+  start(): CodexOutput[] { return this.rpc.start(); }
+  send(text: string, images: string[] = []): CodexOutput[] { return this.rpc.send(text, images); }
+  applySettings(target: HotSettings): boolean { return this.rpc.applySettings(target); }
+  canApplySettings(target: HotSettings): boolean { return this.rpc.canApplySettings(target); }
+  steer(text: string): { joined: boolean; out: CodexOutput[] } { return this.rpc.steer(text); }
+  interrupt(): CodexOutput[] { return this.rpc.interrupt(); }
+  answerWorker(requestId: string, allow: boolean, why?: string): { answered: boolean; out: CodexOutput[] } { return this.rpc.answerWorker(requestId, allow, why); }
+  closeWorkers(): CodexOutput[] { return this.rpc.closeWorkers(); }
+  answer(requestId: string, allow: boolean, why?: string): CodexOutput[] { return this.rpc.answer(requestId, allow, why); }
+  finish(): CodexOutput[] { return this.rpc.finish(); }
+  stop(): CodexOutput[] { return this.rpc.stop(); }
+  receive(line: string): CodexOutput[] { return this.rpc.receive(line); }
 
-  /** What the core, the adapters and the port said since the last call, in order. */
-  private take(): CodexOutput[] {
-    const out = this.out;
-    this.out = [];
-    return out;
-  }
 
-  private get managed() { return this.config.workerInstructions !== null; }
-
-  // ------------------------------------------------------------------------------------------
-  // From the bot
-
-  start(): CodexOutput[] {
-    return [this.request("initialize", { clientInfo: { name: "claudecodebot", title: "Botling", version: "1" }, capabilities: { experimentalApi: true } }, { kind: "initialize" })];
-  }
-
-  /** A message: a turn of its own (now, or once the one under way ends). */
-  send(text: string, images: string[] = []): CodexOutput[] {
-    const input: Input = { text, token: randomUUID(), ...(images.length ? { images } : {}) };
-    if (!this.threadId || this.turn || this.restartCoordinatorPending) {
-      this.inbox.push(input);
-      return [];
-    }
-    return this.startTurn(input);
-  }
-
-  /**
-   * Its model and effort from its next turn on, without a new thread: `turn/start` overrides them for that
-   * turn and the ones after it; new workers start on them too. False (nothing changed): going back to the
-   * default, which an override cannot say, or it is stopping.
-   */
-  applySettings(target: HotSettings): boolean {
-    if (!this.canApplySettings(target)) return false;
-    const change = settingsChange(target, this.config);
-    if (change.model) { this.config.model = change.model; this.turnModel = change.model; }
-    if (change.effort) this.config.effort = change.effort;
-    return true;
-  }
-
-  canApplySettings(target: HotSettings): boolean {
-    const change = settingsChange(target, this.config);
-    return !this.stopped && !this.finishing && !("model" in change && !change.model) && !("effort" in change && !change.effort);
-  }
-
-  /** The coordinator's settings on a turn/start: its effort, and a model it was switched to in place. */
-  private turnSettings(params: Record<string, unknown>) {
-    if (this.turnModel) params.model = this.turnModel;
-    if (this.config.effort) params.effort = this.config.effort;
-  }
-
-  /** Words that join the turn under way (`turn/steer`); false when no turn runs. */
-  steer(text: string): { joined: boolean; out: CodexOutput[] } {
-    const turn = this.turn;
-    if (!turn || !this.threadId) return { joined: false, out: [] };
-    const input = { text, token: randomUUID() };
-    if (!turn.id) {
-      turn.waitingSteers.push(input);
-      return { joined: true, out: [] };
-    }
-    return { joined: true, out: [this.steerCall(input, turn.id)] };
-  }
-
-  interrupt(): CodexOutput[] {
-    const turn = this.turn;
-    if (!turn || turn.interruptAsked) return [];
-    turn.interruptAsked = true;
-    if (turn.id && this.threadId) {
-      turn.interruptSent = true;
-      return [this.request("turn/interrupt", { threadId: this.threadId, turnId: turn.id }, { kind: "interrupt" })];
-    }
-    return [];
-  }
-
-  /** A worker's approval (worker:<task>:<run>:<its own id>): the core's table, then its adapter. */
-  answerWorker(requestId: string, allow: boolean, why?: string): { answered: boolean; out: CodexOutput[] } {
-    const answered = !this.stopped && this.core.answer(requestId, allow, {}, why);
-    return { answered, out: this.take() };
-  }
-
-  /** The app is quitting: workers at work are interrupted (resumable later, never replayed); the coordinator is left. */
-  closeWorkers(): CodexOutput[] {
-    void this.core.close();
-    return [...this.take(), ...this.pendingChanged()];
-  }
-
-  answer(requestId: string, allow: boolean, why?: string): CodexOutput[] {
-    if (requestId.startsWith("worker:")) return this.answerWorker(requestId, allow, why).out;
-    if (requestId.startsWith("monitor:")) return this.approveMonitor(requestId.slice(8), allow);
-    if (requestId.startsWith("codex-review:")) return this.answerReview(requestId, allow);
-    const approval = this.approvals.get(requestId);
-    if (!approval) return [];
-    this.approvals.delete(requestId);
-    if (!this.approvalCurrent(approval)) return [this.item({ kind: "permissionCancelled", requestId })];
-    const result = approval.kind === "command" || approval.kind === "fileChange"
-      ? { decision: allow ? "accept" : "decline" }
-      : allow ? { permissions: approval.kind.permissions, scope: "turn" } : { permissions: {} };
-    const out: CodexOutput[] = [{ kind: "write", value: { jsonrpc: "2.0", id: approval.rpcId, result } }];
-    // A refusal carries no words in Codex's protocol: why goes to the turn as a message.
-    if (!allow && why && this.turn?.id) out.push(this.steerCall({ text: `(App: ${why})`, token: randomUUID() }, this.turn.id));
-    return out;
-  }
-
-  /** Stdin closes once the turn under way (and anything waiting) is done. */
-  finish(): CodexOutput[] {
-    this.finishing = true;
-    return !this.turn && !this.inbox.length && !this.hasManagedWork ? [{ kind: "close" }] : [];
-  }
-
-  /**
-   * The head goes away (the app quits, the bot stops): workers at work are interrupted with it (resumable later, never
-   * replayed); an interrupt of the coordinator alone leaves them.
-   */
-  stop(): CodexOutput[] {
-    const monitors = this.cancelMonitors();
-    this.stopped = true;
-    this.allowedCommands.clear();
-    this.reviews.clear();
-    this.inbox = [];
-    const out = [...this.restartPending.keys()].map((id) => this.workerItem({ kind: "subagentEnded", id, status: "interrupted", summary: INTERRUPTED_REPORT.quit }));
-    this.restartPending.clear();
-    void this.core.close();
-    return [...out, ...this.take(), ...this.closeApprovals(() => true, true), ...monitors, ...this.pendingChanged()];
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // From codex
-
-  receive(line: string): CodexOutput[] {
-    let value: any;
-    try { value = JSON.parse(line); } catch { return []; }
-    if (!value || typeof value !== "object") return [];
-    const method = typeof value.method === "string" ? value.method : null;
-    const params = value.params && typeof value.params === "object" ? value.params : {};
-    if (method && value.id !== undefined) return [...this.serverRequest(method, value.id, params), ...this.take()];
-    if (method) {
-      // A worker's thread: its adapter turns it into the core's events.
-      if (this.threads.receive(method, params)) return [...this.take(), ...this.pendingChanged()];
-      const out=this.notification(method, params);
-      out.push(...this.requests(method, params));
-      return [...out, ...this.take()];
-    }
-    if (typeof value.id === "number") {
-      const call = this.calls.get(value.id);
-      if (!call) return [];
-      this.calls.delete(value.id);
-      const out = this.response(call, value.result ?? null, value.error ?? null);
-      return [...out, ...this.take(), ...(call.kind === "adapter" ? this.pendingChanged() : [])];
-    }
-    return [];
-  }
-
-  private response(call: Call, result: any, error: any): CodexOutput[] {
-    switch (call.kind) {
-      case "restartCoordinatorRead": {
-        this.restartCoordinatorPending=false;
-        if(this.stopped)return [];
-        const turns=result?.thread?.turns;
-        const turn=Array.isArray(turns)?turns.find((t:any)=>t.id===call.turn):null;
-        const uncertain=turn?.status==="interrupted" && (!Array.isArray(turn.items) || turn.items.some((i:any)=>
-          !["agentMessage","reasoning","plan","contextCompaction"].includes(i.type) && !["completed","failed","declined"].includes(i.status)));
-        if(error || result?.thread?.id!==this.threadId || !turn || turns.at(-1)?.id!==call.turn || uncertain || !["completed","interrupted"].includes(turn.status)){
-          this.inbox.shift();
-          return [this.result(false,"Restart continuation paused: the original coordinator turn outcome is unconfirmed. No prompt was replayed."),...this.next()];
-        }
-        if(turn.status==="completed"){
-          this.inbox.shift();
-          const report=Array.isArray(turn.items)?turn.items.findLast((i:any)=>i.type==="agentMessage"&&i.phase!=="commentary")?.text:null;
-          return [this.result(!!report,report||"The original turn completed without a recoverable final report; it was not replayed."),...this.next()];
-        }
-        return this.inbox.length?this.startTurn(this.inbox.shift()!):this.next();
-      }
-      case "restartWorkerRead": {
-        const record = this.restartPending.get(call.task);
-        this.restartPending.delete(call.task);
-        const worker = this.core.get(call.task);
-        if (!worker || !record || worker.status !== "interrupted" || this.stopped) return this.pendingChanged();
-        const turns=result?.thread?.turns;
-        const turn=Array.isArray(turns)?turns.find((t:any)=>t.id===call.turn):null;
-        const unresolvedItems = turn?.status === "interrupted" && (!Array.isArray(turn.items) || turn.items.some((item:any) =>
-          !["agentMessage", "reasoning", "plan", "contextCompaction"].includes(item.type)
-          && !["completed", "failed", "declined"].includes(item.status)));
-        if(error || result?.thread?.id!==worker.conversationId || !turn || turns.at(-1)?.id!==call.turn || unresolvedItems || !["completed","interrupted"].includes(turn.status)){
-          return [this.item({kind:"subagentEnded",id:worker.id,status:"interrupted",summary:"Restart recovery could not confirm the original worker turn outcome. No task was replayed; reconcile this task and thread."}),...this.pendingChanged()];
-        }
-        if(turn.status==="completed"){
-          this.threads.adopt(worker.id,(turn.items??[]).filter((i:any)=>i.type==="agentMessage").map((i:any)=>({text:i.text??"",phase:i.phase??null})),call.turn);
-          return [...this.restartRun(worker.id,ADOPTED_RUN),...this.pendingChanged()];
-        }
-        this.threads.continueAfterRestart(worker.id);
-        return [...this.restartRun(worker.id,RESTART_NOTE+"\nOriginal assignment (scope remains unchanged):\n"+(record.ownershipInstructions??record.instructions)),...this.pendingChanged()];
-      }
-      case "initialize": {
-        if (error) return [{ kind: "failed", message: message(error) }];
-        const initialized: CodexOutput = { kind: "write", value: { jsonrpc: "2.0", method: "initialized" } };
-        const roots = this.config.skillRoots ?? [];
-        // The plugins' skills first, so the thread starts with them (the answer, or a refusal, starts it).
-        if (roots.length) return [initialized, this.request("skills/extraRoots/set", { extraRoots: [...roots] }, { kind: "skillRoots" })];
-        return [initialized, this.startThread()];
-      }
-      case "skillRoots":
-        // An app-server that does not know the method (an older Codex): the thread starts without the plugins' skills.
-        return [this.startThread()];
-      case "thread": {
-        const thread = result?.thread?.id;
-        if (error || typeof thread !== "string") return [{ kind: "failed", message: message(error) }];
-        if(this.config.strictResume && thread!==this.config.resumeThread)return [{kind:"failed",message:"Restart resume returned a different thread. No prompt was sent."}];
-        if (this.config.resumeThread && this.managed) return [this.refreshInstructions(this.config.instructions, thread, { kind: "coordinatorInstructions", thread })];
-        return this.coordinatorReady(thread);
-      }
-      case "coordinatorInstructions":
-        if (error) return [{ kind: "failed", message: `Could not refresh coordinator instructions: ${message(error)}` }];
-        return this.coordinatorReady(call.thread);
-      case "monitorCommand":
-        return this.completeMonitor(call.id, result, error);
-      case "turn": {
-        const monitor = this.activeMonitor ? this.monitors.get(this.activeMonitor) : undefined;
-        if (monitor) monitor.wake = error ? "uncertain" : "delivered";
-        if (error) {
-          // The turn never started: its message gets an error reply, and the next goes.
-          this.turn = null;
-          const shown = this.report;
-          const evidence = shown ? this.evidence(shown) : null;
-          const text = monitor ? `Monitor callback could not start: ${json(monitorPayload(monitor))}\n${message(error)}`
-            : evidence ? handbackFallback(evidence, message(error)) : message(error);
-          this.report = null;
-          this.activeMonitor = null;
-          return [this.result(false, text), ...this.settleReport(shown, false), ...this.next()];
-        }
-        const id = result?.turn?.id;
-        return typeof id === "string" ? this.learnTurn(id) : [];
-      }
-      case "steer":
-        // A steer the turn did not take (it had just ended): it goes as a turn of its own.
-        if (!error) return [];
-        if (!this.turn) return this.startTurn(call.input);
-        this.inbox.push(call.input);
-        return [];
-      case "adapter":
-        call.reply(result, error);
-        return [];
-      default:
-        return [];
-    }
-  }
-
-  private notification(method: string, params: any): CodexOutput[] {
-    // Codex's own limits (not a thread's): kept apart from Claude's (`.codexRateLimits`).
-    if (method === "account/rateLimits/updated") {
-      if (!params.rateLimits || typeof params.rateLimits !== "object") return [];
-      const limits = codexRateLimits(params.rateLimits);
-      return isEmptyLimits(limits) ? [] : [this.item({ kind: "rateLimits", engine: "codex", limits })];
-    }
-    // Another thread that is not one of its workers' (they went to their adapter): not this coordinator's.
-    const thread = typeof params.threadId === "string" ? params.threadId : null;
-    if (thread && this.threadId && thread !== this.threadId) return [];
-    switch (method) {
-      case "item/autoApprovalReview/completed":
-        return this.reviewed(params, null);
-      case "turn/started": {
-        const id = params.turn?.id;
-        return typeof id === "string" ? this.learnTurn(id) : [];
-      }
-      case "item/started": {
-        const step = codexToolStarted(params.item, this.changedFiles);
-        return step ? [this.item({ kind: "toolUse", ...step, parent: null })] : [];
-      }
-      case "item/completed":
-        return this.completed(params.item).map((item) => this.item(item));
-      case "serverRequest/resolved": {
-        return this.resolveApproval(params);
-      }
-      case "turn/completed":
-        return params.turn ? this.turnCompleted(params.turn) : [];
-      case "error":
-        return this.retrying(params);
-      case "thread/tokenUsage/updated":
-        if (params.tokenUsage?.total && typeof params.tokenUsage.total === "object") this.tokensTotal = codexTokens(params.tokenUsage.total);
-        return [];
-      default:
-        return [];
-    }
-  }
-
-  /** An `error` Codex will retry on the coordinator's turn (one it gives up on ends the turn: `turn/completed`). */
-  private retrying(params: any): CodexOutput[] {
-    if (params.willRetry !== true || !this.threadId || params.threadId !== this.threadId) return [];
-    const error = params.error && typeof params.error === "object" ? params.error : {};
-    const count = /(\d+)\s*\/\s*(\d+)/.exec(typeof error.message === "string" ? error.message : "");
-    const info = error.codexErrorInfo;
-    const variant = info && typeof info === "object" ? Object.values(info)[0] as { httpStatusCode?: unknown } | undefined : undefined;
-    const limited = variant?.httpStatusCode === 429 || info === "rateLimitExceeded" || info === "serverOverloaded";
-    return [this.item({
-      kind: "apiRetry", thread: this.threadId, attempt: count ? Number(count[1]) : 1, max: count ? Number(count[2]) : 0,
-      reason: limited ? "rateLimited" : "connection", retryAt: null,
-    })];
-  }
-
-  private serverRequest(method: string, rpcId: unknown, params: any): CodexOutput[] {
-    if (method === "item/tool/call") return this.managedTool(rpcId, params);
-    // A worker's approvals are its adapter's (through the core's table).
-    if (this.threads.serverRequest(method, rpcId, params)) return [];
-    const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
-    switch (method) {
-      case "item/commandExecution/requestApproval": {
-        // A manual override covers one retry in its exact thread and working directory.
-        const retryKey = JSON.stringify([params.threadId, params.cwd, params.command]);
-        const current = this.approvalCurrent({ rpcId, kind: "command", thread: params.threadId, turn: params.turnId ?? null });
-        if (current && params.environmentId === "local" && !params.networkApprovalContext
-          && (params.kind === undefined || params.kind === "command")
-          && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"))
-          && this.allowedCommands.delete(retryKey)) {
-          return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } } }];
-        }
-        let summary = typeof params.command === "string" ? params.command : "";
-        if (reason) summary += (summary ? "\n\n" : "") + reason;
-        return this.askApproval(rpcId, "command", params, "Bash", summary);
-      }
-      case "item/fileChange/requestApproval": {
-        const files = typeof params.itemId === "string" ? this.changedFiles.get(params.itemId) ?? [] : [];
-        let summary = files.join("\n");
-        if (typeof params.grantRoot === "string" && params.grantRoot) summary += (summary ? "\n" : "") + params.grantRoot;
-        if (reason) summary += (summary ? "\n\n" : "") + reason;
-        return this.askApproval(rpcId, "fileChange", params, "Edit", summary);
-      }
-      case "item/permissions/requestApproval": {
-        const asked = params.permissions && typeof params.permissions === "object" ? params.permissions : {};
-        const summary = [reason, JSON.stringify(asked, Object.keys(asked).sort())].filter(Boolean).join("\n\n");
-        return this.askApproval(rpcId, { permissions: asked }, params, "Permissions", summary);
-      }
-      case "mcpServer/elicitation/request":
-        // A form the app cannot show: declined, so nothing waits on it.
-        return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { action: "decline" } } }];
-      default:
-        // Bots ask in the chat (<choices>); anything else is not the app's to answer.
-        return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, error: { code: -32601, message: "Not supported by Botling." } } }];
-    }
-  }
-
-  private get reviewer(): string { return reviewerOf(this.config); }
-
-  private nextReviewer(params: Record<string, unknown>) {
-    if (!this.reviewerNext) return;
-    params.approvalsReviewer = this.reviewerNext;
-    this.reviewerNext = this.reviewerNext === "user" ? "auto_review" : null;
-  }
-
-  /** Codex's reviewer refused a call: a card with its reason (1.x `reviewed`). Allow lets it through next time. */
-  private reviewed(params: any, worker: { id: string; name: string } | null): CodexOutput[] {
-    const review = params.review && typeof params.review === "object" ? params.review : {};
-    if (review.status === "approved") return [];
-    const action = params.action && typeof params.action === "object" ? params.action : {};
-    const command = typeof action.command === "string" ? action.command
-      : Array.isArray(action.argv) ? action.argv.filter((a: unknown) => typeof a === "string").join(" ") : "";
-    const what = command || (typeof action.type === "string" ? action.type : "a call");
-    const risk = typeof review.riskLevel === "string" ? `[${review.riskLevel} risk] ` : "";
-    const why = typeof review.rationale === "string" && review.rationale ? review.rationale
-      : review.status === "denied" ? "Auto review denied this action."
-      : `Auto review did not approve this action (${typeof review.status === "string" ? review.status : "unknown result"}). No automatic approval was granted.`;
-    const requestId = `codex-review:${randomUUID()}`;
-    this.reviews.set(requestId, { command, task: worker?.id ?? null,
-      thread: typeof params.threadId === "string" ? params.threadId : "", cwd: typeof action.cwd === "string" ? action.cwd : "" });
-    // The bot shows it as auto mode's blocked-call card (the reason apart from the call) and tells the head after the pick.
-    const input = { reviewRefused: true, reason: `${risk}${why}`.trim(), ...(worker ? { worker: worker.name || worker.id } : {}) };
-    return [this.item({ kind: "permission", requestId, tool: action.type === "applyPatch" ? "Edit" : "Bash", summary: what, input, ...(worker ? { workerId: worker.id } : {}) })];
-  }
-
-  private answerReview(requestId: string, allow: boolean): CodexOutput[] {
-    const review = this.reviews.get(requestId);
-    if (!review) return [];
-    this.reviews.delete(requestId);
-    if (!allow || this.stopped) return [];
-    if (review.command && review.thread && review.cwd) this.allowedCommands.add(JSON.stringify([review.thread, review.cwd, review.command]));
-    // The next turn of the refused call's thread asks the app (which accepts the allowed call), once.
-    if (this.config.autoMode !== false) { if (review.task) this.threads.askAppNext(review.task); else this.reviewerNext = "user"; }
-    return [];
-  }
-
-  private approvalCurrent(approval: Approval): boolean {
-    if (this.stopped) return false;
-    return approval.thread === this.threadId && !!this.turn
-      && (!approval.turn || !this.completedTurns.has(approval.turn))
-      && !this.turn.interruptAsked && (!this.turn.id || !approval.turn || this.turn.id === approval.turn);
-  }
-
-  private askApproval(rpcId: unknown, kind: Approval["kind"], params: any, tool: string, summary: string): CodexOutput[] {
-    const thread = typeof params.threadId === "string" ? params.threadId : "";
-    const turn = typeof params.turnId === "string" ? params.turnId : this.turn?.id ?? null;
-    const approval: Approval = { rpcId, kind, thread, turn };
-    if (!this.approvalCurrent(approval)) return [this.declineApproval(approval)];
-    if ([...this.approvals.values()].some((pending) => pending.rpcId === rpcId && pending.thread === thread && pending.turn === turn)) return [];
-    // UI decisions use a fresh local identity, never a reusable/string-coerced RPC id.
-    const requestId = `codex-approval:${randomUUID()}`;
-    this.approvals.set(requestId, approval);
-    return [this.item({ kind: "permission", requestId, tool, summary, input: {} })];
-  }
-
-  private declineApproval(approval: Approval): CodexOutput {
-    return { kind: "write", value: { jsonrpc: "2.0", id: approval.rpcId,
-      result: typeof approval.kind === "string" ? { decision: "decline" } : { permissions: {} } } };
-  }
-
-  /** Terminal owner cleanup removes unanswered requests only; accepted decisions are already gone. */
-  private closeApprovals(matches: (approval: Approval) => boolean, deny = false): CodexOutput[] {
-    const out: CodexOutput[] = [];
-    for (const [requestId, approval] of this.approvals) {
-      if (!matches(approval)) continue;
-      this.approvals.delete(requestId);
-      if (deny) out.push(this.declineApproval(approval));
-      out.push(this.item({ kind: "permissionCancelled", requestId }));
-    }
-    return out;
-  }
-
-  private resolveApproval(params: any): CodexOutput[] {
-    return this.closeApprovals((approval) => approval.rpcId === params.requestId && approval.thread === params.threadId
-      && (typeof params.turnId !== "string" || approval.turn === params.turnId));
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // Turns
-
-  private startThread(): CodexOutput {
-    const params: Record<string, unknown> = {
-      cwd: this.config.cwd, approvalPolicy: this.config.bypassPermissions ? "never" : "on-request", approvalsReviewer: this.reviewer, sandbox: this.config.bypassPermissions ? "danger-full-access" : "workspace-write", developerInstructions: this.config.instructions,
-    };
-    params.config = codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions);
-    if (this.managed) {
-      params.environments = [];
-      params.dynamicTools = MANAGED_TOOLS;
-      params.config = { ...COORDINATOR_CONFIG, ...codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions) };
-    }
-    if (this.config.model) params.model = this.config.model;
-    // Its other folders are writable too, as in 1.x (`sandbox_workspace_write.writable_roots`).
-    if (this.config.writableRoots?.length) params.config = { ...(params.config as Record<string, unknown> | undefined), ...writableRootsConfig(this.config.writableRoots) };
-    if (this.config.resumeThread) {
-      // Tools are fixed when a thread starts; resume cannot change them.
-      delete params.dynamicTools;
-      delete params.environments;
-      params.threadId = this.config.resumeThread;
-      params.excludeTurns = true;
-      return this.request("thread/resume", params, { kind: "thread" });
-    }
-    return this.request("thread/start", params, { kind: "thread" });
-  }
-
-  /** Resume alone can leave the rollout's old developer policy in force: the current one is appended. */
-  private refreshInstructions(text: string, thread: string, call: Call): CodexOutput {
-    return this.request("thread/inject_items", { threadId: thread, items: [{ type: "message", role: "developer", content: [{ type: "input_text", text }] }] }, call);
-  }
-
-  private coordinatorReady(thread: string): CodexOutput[] {
+  coordinatorReady(thread: string): CodexOutput[] {
     if (this.stopped) return [];
     this.threadId = thread;
     const out: CodexOutput[] = [{ kind: "thread", id: thread }];
@@ -1547,7 +186,7 @@ export class CodexSession implements CoordinatorPort {
     return out;
   }
 
-  private startTurn(input: Input): CodexOutput[] {
+  startTurn(input: Input): CodexOutput[] {
     if (!this.threadId) {
       this.inbox.unshift(input);
       return [];
@@ -1561,7 +200,7 @@ export class CodexSession implements CoordinatorPort {
     return [this.request("turn/start", params, { kind: "turn" })];
   }
 
-  private learnTurn(id: string): CodexOutput[] {
+  learnTurn(id: string): CodexOutput[] {
     const turn = this.turn;
     if (!turn || turn.id || this.completedTurns.has(id)) return [];
     turn.id = id;
@@ -1574,7 +213,7 @@ export class CodexSession implements CoordinatorPort {
     return out;
   }
 
-  private turnCompleted(finished: any): CodexOutput[] {
+  turnCompleted(finished: any): CodexOutput[] {
     const current = this.turn;
     if (!current) return [];
     if (typeof finished.id === "string" && this.completedTurns.has(finished.id)) return [];
@@ -1631,7 +270,7 @@ export class CodexSession implements CoordinatorPort {
   }
 
   /** What a report turn's fallback keeps of the report it showed. */
-  private evidence(shown: { id: string; run: number }): { name: string; task: string; status: string; report: string } | null {
+  evidence(shown: { id: string; run: number }): { name: string; task: string; status: string; report: string } | null {
     const r = this.core.get(shown.id);
     return r ? { name: r.name, task: r.id, status: wireStatus(r.report.status ?? "failed"), report: r.report.text ?? "" } : null;
   }
@@ -1641,7 +280,7 @@ export class CodexSession implements CoordinatorPort {
    * evidence also went to the chat) or never started. The coordinator has no reconcile tool, so each is one attempt
    * without a decision: shown once more, then unresolved (the core's rule). Never taken as handed over.
    */
-  private settleReport(shown: { id: string; run: number } | null, _completed: boolean): CodexOutput[] {
+  settleReport(shown: { id: string; run: number } | null, _completed: boolean): CodexOutput[] {
     if (!shown) return [];
     this.settling = true;
     try { this.core.finishReport(shown.id, shown.run, true); } catch { /* settled meanwhile */ } finally { this.settling = false; }
@@ -1677,7 +316,7 @@ export class CodexSession implements CoordinatorPort {
   }
 
   /** The next waiting message's turn, a monitor's wake, a worker's report, or the end once `finish` asked for it. */
-  private next(): CodexOutput[] {
+  next(): CodexOutput[] {
     if(this.restartCoordinatorPending)return [];
     if (this.turn) return [];
     if (this.inbox.length) return this.startTurn(this.inbox.shift()!);
@@ -1700,22 +339,22 @@ export class CodexSession implements CoordinatorPort {
     return this.finishing && !this.hasManagedWork ? [...out, { kind: "close" }] : out;
   }
 
-  private steerCall(input: Input, turnId: string): CodexOutput {
+  steerCall(input: Input, turnId: string): CodexOutput {
     return this.request("turn/steer", { threadId: this.threadId ?? "", expectedTurnId: turnId, input: [{ type: "text", text: input.text }] }, { kind: "steer", input });
   }
 
-  private request(method: string, params: Record<string, unknown>, call: Call): CodexOutput {
+  request(method: string, params: Record<string, unknown>, call: Call): CodexOutput {
     const id = this.nextId++;
     this.calls.set(id, call);
     return { kind: "write", value: { jsonrpc: "2.0", id, method, params } };
   }
 
-  private item(item: CodexItem): CodexOutput {
+  item(item: CodexItem): CodexOutput {
     return { kind: "item", item };
   }
 
   /** A turn's end; `how` is how Codex ended it (classifyRun reads it: interrupted is "cancelled"). */
-  private result(ok: boolean, text: string, how: RunEnd["how"] = ok ? "normal" : "error"): CodexOutput {
+  result(ok: boolean, text: string, how: RunEnd["how"] = ok ? "normal" : "error"): CodexOutput {
     return this.item({ kind: "result", ok, text: ok ? text : "", error: ok ? "" : text, subtype: ok ? "success" : "error", how });
   }
 
@@ -1807,7 +446,7 @@ export class CodexSession implements CoordinatorPort {
     return { payload: { error: "Invalid monitor arguments. Use command (nonempty, at most 16384 bytes), or an owned monitor_id." }, success: false, out: [] };
   }
 
-  private approveMonitor(id: string, allow: boolean): CodexOutput[] {
+  approveMonitor(id: string, allow: boolean): CodexOutput[] {
     const record = this.monitors.get(id);
     if (this.stopped || !record || record.state !== "awaitingApproval") return [];
     if (!allow) return this.cancelMonitors(new Set([id]));
@@ -1823,7 +462,7 @@ export class CodexSession implements CoordinatorPort {
     ];
   }
 
-  private completeMonitor(id: string, result: any, error: any): CodexOutput[] {
+  completeMonitor(id: string, result: any, error: any): CodexOutput[] {
     const record = this.monitors.get(id);
     if (!record || (record.state !== "running" && record.state !== "cancelling") || this.stopped) return [];
     const exit = typeof result?.exitCode === "number" ? result.exitCode : null;
@@ -1902,14 +541,14 @@ export class CodexSession implements CoordinatorPort {
     return { result, out: [...this.take(), ...this.pendingChanged()] };
   }
 
-  private pendingChanged(): CodexOutput[] {
+  pendingChanged(): CodexOutput[] {
     const pending = this.hasManagedWork;
     if (pending === this.pending) return [];
     this.pending = pending;
     return [this.item({ kind: "managedPending", pending })];
   }
 
-  private managedTool(rpcId: unknown, params: any): CodexOutput[] {
+  managedTool(rpcId: unknown, params: any): CodexOutput[] {
     const id = key(rpcId);
     const reply = (payload: unknown, success: boolean) => ({ jsonrpc: "2.0", id: rpcId, result: { success, contentItems: [{ type: "inputText", text: json(payload) }] } });
     const tool = typeof params.tool === "string" ? params.tool : null;
@@ -2046,7 +685,7 @@ export class CodexSession implements CoordinatorPort {
    * A restart check came back: its interrupted run goes on as the same run (continued or adopted). A worker from an old
    * restart journal (no ledger record of the restart) starts its next run instead.
    */
-  private restartRun(id: string, words: string): CodexOutput[] {
+  restartRun(id: string, words: string): CodexOutput[] {
     const same = this.core.get(id)?.interruptedBy === "restart";
     const sent = syncResult(same ? this.core.resumeRun(id, words) : this.core.sendToWorker(id, words), { ok: false, reason: "Restart recovery could not resume this worker." });
     const out = this.take();
@@ -2099,7 +738,7 @@ export class CodexSession implements CoordinatorPort {
 
   /** One finished model request per `thread/tokenUsage/updated` of the coordinator's (workers': their adapter's). */
   private speed = new CodexRequestTracker();
-  private requests(method: string, params: any): CodexOutput[] {
+  requests(method: string, params: any): CodexOutput[] {
     if (typeof params.threadId !== "string" || params.threadId !== this.threadId) return [];
     return this.speed.observe(null, method, params, Date.now()).map(request => this.item({ kind: "request", request }));
   }
@@ -2127,7 +766,7 @@ export class CodexSession implements CoordinatorPort {
   // Items
 
   /** An item of the coordinator's turn done: words it said (commentary is a step, the final answer the reply), or a tool's result. */
-  private completed(item: any): CodexItem[] {
+  completed(item: any): CodexItem[] {
     if (item?.type === "agentMessage" && typeof item.id === "string") {
       const text = typeof item.text === "string" ? item.text : "";
       const phase = typeof item.phase === "string" ? item.phase : null;
@@ -2140,455 +779,4 @@ export class CodexSession implements CoordinatorPort {
   }
 }
 
-/** The reply: the last message that is not commentary (the final answer); else the last one. */
-export function reply(said: { text: string; phase: string | null }[]): string {
-  return (said.findLast((s) => s.phase !== "commentary") ?? said.at(-1))?.text ?? "";
-}
-
-// ---------------------------------------------------------------------------------------------
-// Which Codex thread each bot session is (`CodexThreads`): codex names its threads itself, while a
-// bot names its session (a UUID) before it starts. Under <core>/codex-threads/, as 1.x.
-
-export class CodexThreads {
-  constructor(readonly folder: string) {}
-
-  private file(session: string, suffix = "") {
-    return join(this.folder, session.toLowerCase() + suffix);
-  }
-
-  thread(session: string): string | null {
-    try {
-      const text = readFileSync(this.file(session), "utf8").trim();
-      return text || null;
-    } catch {
-      return null;
-    }
-  }
-
-  save(thread: string, session: string) {
-    mkdirSync(this.folder, { recursive: true });
-    const old = this.thread(session);
-    if (old && old !== thread) {
-      // The old transcript stays findable when a tool change needed a new coordinator.
-      const lineage = this.file(session, ".previous-threads");
-      const known = existsSync(lineage) ? readFileSync(lineage, "utf8") : "";
-      if (!known.split("\n").includes(old)) writeFileAtomic(lineage, `${known}${old}\n`);
-    }
-    writeFileAtomic(this.file(session), thread);
-  }
-
-  isManaged(session: string, thread: string): boolean {
-    try {
-      const stamp = JSON.parse(readFileSync(this.file(session, ".managed"), "utf8"));
-      return stamp?.thread === thread && stamp?.tools === MANAGED_TOOL_SIGNATURE;
-    } catch {
-      return false;
-    }
-  }
-
-  markManaged(thread: string, session: string) {
-    mkdirSync(this.folder, { recursive: true });
-    writeFileAtomic(this.file(session, ".managed"), JSON.stringify({ thread, tools: MANAGED_TOOL_SIGNATURE }));
-  }
-
-  workers(session: string): WorkerRecord[] {
-    try {
-      const value = JSON.parse(readFileSync(this.file(session, ".workers.json"), "utf8"));
-      return Array.isArray(value) ? value.filter((row) => row && typeof row.id === "string" && typeof row.name === "string" && typeof row.instructions === "string" && typeof row.run === "number") : [];
-    } catch {
-      return [];
-    }
-  }
-
-  saveWorkers(records: WorkerRecord[], session: string) {
-    mkdirSync(this.folder, { recursive: true });
-    writeFileAtomic(this.file(session, ".workers.json"), JSON.stringify(records));
-  }
-}
-
-// ---------------------------------------------------------------------------------------------
-// The process
-
-export interface CodexHeadConfig {
-  /** The bot tools (core/bot-tools.ts: the browser pane, the Note): the coordinator's and its workers'. */
-  browser?: BotToolRunner;
-  restartWorkers?: WorkerRecord[];
-  /** After an explicit restart (its time): the workers the ledger says it interrupted are checked and resumed. */
-  restartRecovery?: number;
-  /** The member's core (Bot: its worker ledger and projections); absent: codex-threads/<session>.workers.json. */
-  workerCore?: WorkerCoreFactory;
-  /** Where its workers' items go (Bot: its one worker entry); absent: `onItem` with the coordinator's. */
-  workerSink?: (item: CodexItem) => void;
-  strictResume?: boolean;
-  restartTurn?: string;
-  /** `codex`, or the fake app-server's interpreter for tests. */
-  command: string;
-  /** Plugins' skill folders (`CodexConfig.skillRoots`). */
-  skillRoots?: string[];
-  prefixArgs?: string[];
-  cwd: string;
-  env?: Record<string, string | undefined>;
-  /** The bot's session (a UUID): the thread it names is kept in `threads`. */
-  sessionId: string;
-  resume: boolean;
-  threads: CodexThreads;
-  instructions: string;
-  workerInstructions: string | null;
-  model?: string | null;
-  workerModel?: string | null;
-  effort?: string | null;
-  workerEffort?: string | null;
-  workerFast?: boolean | null;
-  /** The bot's scheduled-routines.json, for `app_routines` (null: none). */
-  routinesFile?: string | null;
-  /** Codex's own reviewer answers escalations (default on). */
-  autoMode?: boolean;
-  /** Explicit opt-in: no approval prompts and no Codex sandbox. */
-  bypassPermissions?: boolean;
-  /** More folders it may write (its `--add-dir` folders; 1.x's `writableRoots`). */
-  writableRoots?: string[];
-  /** Model families whose workers may write spec/ (settings.json `specWriters`). */
-  specWriters?: readonly string[];
-  componentEditor?: ComponentEditorRoute | null;
-  /** Register the separate Claude process with the app's existing process ledger. */
-  editorStarted?: (pid: number) => void;
-  /** Codex's log, read for when a retry goes (undefined: CODEX_HOME's logs_2.sqlite; null: never read). */
-  retryLog?: string | null;
-}
-
-/** One long-lived `codex app-server` for one bot session: `CodexSession` over its stdio. */
-export class CodexHead {
-  readonly engine = "codex" as const;
-  /** The Maintainer's component editors: their own Claude processes. */
-  private editors: EditorTransport;
-  private process: ManagedProcess | null = null;
-  private buffer = "";
-  private stderrTail = "";
-  private printed = false;
-  private expected = false;
-  private closed = false;
-  private failure: string | null = null;
-  private savedWorkers = "";
-  private savedMonitors = "";
-  readonly session: CodexSession;
-  /** Which retry notification the log is being read for (a newer one wins). */
-  private retryLookup: number | null = null;
-  private exitedResolve!: () => void;
-  readonly exited = new Promise<void>((resolve) => (this.exitedResolve = resolve));
-  running = false;
-
-  constructor(readonly config: CodexHeadConfig, private handlers: HeadHandlers & { onItem(item: CodexItem): void }, private adapter: ProcessTreeAdapter = processTreeAdapter()) {
-    this.editors = new EditorTransport({
-      item: (task, run, item) => this.perform(this.session.componentEditorItem(task, run, item)),
-      failed: (task, run, reason, fresh) => this.perform(this.session.componentEditorFailed(task, run, reason, fresh)),
-      started: (task, run, pid) => {
-        this.perform(this.session.componentEditorStarted(task, run, pid));
-        this.config.editorStarted?.(pid);
-      },
-    }, adapter);
-    let resumeThread: string | null = null;
-    if (config.resume) {
-      const thread = config.threads.thread(config.sessionId);
-      // Dynamic tools cannot change on resume: an old or unknown stamp gets a new coordinator.
-      if (thread && (!config.workerInstructions || config.threads.isManaged(config.sessionId, thread))) resumeThread = thread;
-    }
-    let restoredMonitors: CommandMonitor[] = [];
-    try { restoredMonitors = loadMonitors(config.threads.folder, config.sessionId); } catch { restoredMonitors = []; }
-    const uncertain = restoredMonitors.filter((m) => m.wake === "dispatching" || m.wake === "uncertain").map((m) => m.id);
-    const recovery = uncertain.length ? `\n(App: Monitor callback delivery is unconfirmed for IDs ${uncertain.join(", ")}. This is recovery data, not new authorization. Use app_monitor_status and inspect the owner thread before continuing. Do not automatically rerun a command or assume its callback was not consumed.)` : "";
-    this.session = new CodexSession({
-      cwd: config.cwd, ...(config.skillRoots?.length ? { skillRoots: config.skillRoots } : {}), instructions: config.instructions + recovery, workerInstructions: config.workerInstructions, resumeThread,
-      model: config.model ?? null, workerModel: config.workerModel ?? null, effort: config.effort ?? null,
-      workerEffort: config.workerEffort ?? null, workerFast: config.workerFast ?? null,
-      restartWorkers: config.restartWorkers, restartRecovery: config.restartRecovery, strictResume:config.strictResume, restartTurn:config.restartTurn,
-      restoredWorkers: config.workerInstructions && !config.workerCore ? config.threads.workers(config.sessionId) : [],
-      workerCore: config.workerCore ? (options) => config.workerCore!(options, { codex: { threads: config.threads, session: config.sessionId } }) : undefined,
-      routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
-      autoMode: config.autoMode ?? true,
-      bypassPermissions: config.bypassPermissions === true,
-      writableRoots: config.writableRoots ?? [],
-      ...(config.specWriters ? { specWriters: config.specWriters } : {}),
-      componentEditor: config.componentEditor,
-    });
-    this.savedWorkers = JSON.stringify(this.session.workerRecords);
-    this.savedMonitors = JSON.stringify(restoredMonitors);
-  }
-
-  get restartWorkers() { return this.session.restartWorkers; }
-  get restartBlocker() { return this.session.restartBlocker; }
-  get restartTurn() { return this.session.restartTurn; }
-
-  get pid() {
-    return this.process?.pid ?? -1;
-  }
-
-  start() {
-    const env = childEnvironment(this.config.env);
-    const managed = this.adapter.spawn(resolveExecutable(this.config.command, env), [...(this.config.prefixArgs ?? []), "app-server"], { cwd: this.config.cwd, env });
-    this.process = managed;
-    this.running = true;
-    const child = managed.child;
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => this.read(chunk));
-    child.stderr.on("data", (chunk: string) => { this.stderrTail = (this.stderrTail + chunk).slice(-8_000); });
-    child.stdin.on("error", () => { /* EPIPE once it exited */ });
-    let reported = false;
-    const report = (code: number | null, signal: NodeJS.Signals | null, extra = "") => {
-      if (reported) return;
-      reported = true;
-      this.running = false;
-      this.closed = true;
-      if (this.buffer.trim()) this.line(this.buffer.trim());
-      this.buffer = "";
-      this.stopEditors();
-      this.exitedResolve();
-      const why = [this.failure, this.stderrTail.trim(), extra].filter(Boolean).join("\n");
-      // Its workers' turns went with it: their runs end (failed), and their reports wait in the journal for the next head.
-      this.perform(this.session.exited(why));
-      this.handlers.onExit({ code: this.failure ? 1 : code, signal, stderr: why, expected: this.expected, silent: !this.printed });
-    };
-    child.once("error", (error) => report(null, null, cliStartError("codex", this.config.command, error)));
-    child.once("close", (code, signal) => report(code, signal));
-    this.perform(this.session.start());
-  }
-
-  /**
-   * When the retry goes, from Codex's log (read-only, codex-retry-log.ts): a few tries over about
-   * 25 s, as codex 0.163.0 writes its log rows in batches (seen about 10 s late). Found: the same
-   * item again with `retryAt` (the bot takes it only while that attempt is still the one it shows).
-   */
-  private findRetryTime(item: Extract<CodexItem, { kind: "apiRetry" }>) {
-    const file = this.config.retryLog === undefined ? codexLogsFile(childEnvironment(this.config.env)) : this.config.retryLog;
-    if (!file) return;
-    const since = Date.now() - 2_000;
-    const lookup = this.retryLookup = (this.retryLookup ?? 0) + 1;
-    const look = (waits: number[]) => {
-      const [wait, ...later] = waits;
-      if (wait === undefined) return;
-      setTimeout(() => {
-        if (this.closed || this.retryLookup !== lookup) return;
-        void codexRetryAt({ file, thread: item.thread, attempt: item.attempt, since }).then((at) => {
-          if (this.closed || this.retryLookup !== lookup) return;
-          if (at === null) return look(later);
-          this.handlers.onItem({ ...item, retryAt: at });
-        });
-      }, wait).unref?.();
-    };
-    look([500, 3_000, 4_000, 4_000, 4_000, 8_000]);
-  }
-
-  private read(chunk: string) {
-    this.printed = true;
-    this.buffer += chunk;
-    let newline: number;
-    while ((newline = this.buffer.indexOf("\n")) >= 0) {
-      const line = this.buffer.slice(0, newline).trim();
-      this.buffer = this.buffer.slice(newline + 1);
-      if (line) this.line(line);
-    }
-  }
-
-  private line(line: string) {
-    this.perform(this.session.receive(line));
-  }
-
-  /** Does what the session says, in order (writes keep their order). Worker records are saved first. */
-  private perform(outputs: CodexOutput[]) {
-    const records = this.session.workerRecords;
-    const text = JSON.stringify(records);
-    // With the member's core, its worker ledger is the record: the old journal is no longer written.
-    if (text !== this.savedWorkers && this.config.workerInstructions && !this.config.workerCore) {
-      this.config.threads.saveWorkers(records, this.config.sessionId);
-      this.savedWorkers = text;
-    }
-    // A monitor's state is written before what it leads to is done (its command, its wake).
-    const monitors = this.session.monitorRecords;
-    const monitorText = JSON.stringify(monitors);
-    const monitorsChanged = monitorText !== this.savedMonitors;
-    if (monitorsChanged) {
-      saveMonitors(this.config.threads.folder, this.config.sessionId, monitors);
-      this.savedMonitors = monitorText;
-    }
-    for (const output of outputs) {
-      switch (output.kind) {
-        case "write":
-          if (!this.closed && this.process) this.process.child.stdin.write(`${JSON.stringify(output.value)}\n`);
-          break;
-        case "item":
-          if (output.worker && this.config.workerSink) { this.config.workerSink(output.item); break; }
-          this.handlers.onItem(output.item);
-          if (output.item.kind === "apiRetry") this.findRetryTime(output.item);
-          break;
-        case "thread":
-          this.config.threads.save(output.id, this.config.sessionId);
-          if (this.config.workerInstructions) this.config.threads.markManaged(output.id, this.config.sessionId);
-          this.handlers.onItem({ kind: "init", sessionId: this.config.sessionId });
-          break;
-        case "recoverEditor": {
-          const launch=this.config.componentEditor?.launch;
-          const outcome=launch?inspectClaudeRestart({cwd:launch.cwd,configDir:claudeConfigFolder({...process.env,...launch.env}),sessionId:output.session,checkpoint:output.checkpoint}):{state:'blocked' as const,reason:'Original component-editor definition is unavailable; no replacement was created.'};
-          this.perform(this.session.recoverEditor(output.task,output.run,outcome));
-          break;
-        }
-        case "componentEditor":
-          this.performEditor(output.action);
-          break;
-        case "browser": {
-          const reply = (payload: unknown, success: boolean) => {
-            if (!this.closed && this.process) this.process.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: output.rpcId, result: { success, contentItems: [{ type: "inputText", text: typeof payload === "string" ? payload : JSON.stringify(payload) }] } })}\n`);
-          };
-          const run = this.config.browser;
-          if (!run) { reply({ error: "That tool is not available here." }, false); break; }
-          void run(output.tool, output.args, output.worker ? "worker" : "coordinator").then((result) => reply(result, true), (error) => reply({ error: (error as Error).message }, false));
-          break;
-        }
-        case "close":
-          this.stopEditors();
-          this.closeInput();
-          break;
-        case "failed":
-          this.failure = output.message;
-          this.stopEditors();
-          this.closeInput();
-          void this.process?.terminate({ graceMs: 1_000 });
-          break;
-      }
-    }
-    if (monitorsChanged) for (const record of monitors) this.handlers.onItem({ kind: "monitorState", record });
-  }
-
-  private stopEditors() {
-    this.editors.stopAll();
-  }
-
-  private performEditor(action: ComponentEditorAction) {
-    this.editors.perform(action);
-  }
-
-  private closeInput() {
-    if (this.closed || !this.process) return;
-    this.closed = true;
-    this.process.child.stdin.end();
-  }
-
-  send(text: string, _uuid?: string, images: string[] = []) {
-    this.perform(this.session.send(text, images));
-  }
-
-  canApplySettings(target: HotSettings): boolean {
-    return !this.closed && this.running && this.session.canApplySettings(target);
-  }
-
-  /** Its model and effort from its next turn on, in this same thread (`CodexSession.applySettings`). */
-  async applySettings(target: HotSettings): Promise<boolean> {
-    if (this.closed || !this.running || !this.session.applySettings(target)) return false;
-    if ("model" in target) this.config.model = this.session.config.model;
-    if ("effort" in target) this.config.effort = this.session.config.effort;
-    return true;
-  }
-
-  /** Words for the turn under way (`turn/steer`); false when it has none. */
-  steer(text: string): boolean {
-    const { joined, out } = this.session.steer(text);
-    this.perform(out);
-    return joined;
-  }
-
-  answer(requestId: string, allow: boolean, _input: Record<string, unknown>, message?: string) {
-    this.perform(this.session.answer(requestId, allow, allow ? undefined : message));
-  }
-
-  /** Forward only the rules the app has already approved to its existing Claude children. */
-  allow(rules: string[]) {
-    const launch = this.config.componentEditor?.launch;
-    if (!launch) return;
-    launch.allowRules = [...rules];
-    this.editors.allow(rules);
-  }
-
-  interrupt(): string {
-    this.perform(this.session.interrupt());
-    return "";
-  }
-
-  /** Workers at work now. */
-  get workers(): string[] {
-    return this.session.runningWorkers;
-  }
-
-  /** The live worker and monitor snapshot the completion judge reads. */
-  get completionDependencies(): WorkerDependency[] {
-    return this.session.completionDependencies;
-  }
-
-  cancelWorkers(ids?: Set<string>) {
-    this.perform(this.session.cancelWorkers(ids));
-  }
-
-  // WorkerHost (workers.ts): a worker is a thread of this app-server; the coordinator's Stop leaves it be.
-  private workerHostImpl?: WorkerHost;
-  get workerHost(): WorkerHost { return this.workerHostImpl ??= codexWorkerHost(this.session, (out) => this.perform(out), () => !this.closed && this.running); }
-  readonly workerHostKind = "codex-thread" as const;
-  readonly steersRunning = true;
-  listWorkers(): WorkerInfo[] { return this.workerHost.listWorkers(); }
-  sendToWorker(id: string, text: string): WorkerSendResult { return this.workerHost.sendToWorker(id, text) as WorkerSendResult; }
-  stopWorker(id: string): Promise<boolean> { return this.workerHost.stopWorker(id); }
-  setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult { return this.workerHost.setWorkerOwner(id, owner); }
-
-  /** The sub-bot hand-off's wrap-up request to one worker at work (false: it is not at work, nothing was sent). */
-  messageRunningWorker(id: string, text: string): boolean {
-    if (!this.session.runningWorkers.includes(id)) return false;
-    this.perform(this.session.wrapUpWorker(id, text));
-    return true;
-  }
-
-  /** Stdin closes once the turn under way and its workers' reports are done (going to sleep). */
-  finish() {
-    this.expected = true;
-    this.perform(this.session.finish());
-  }
-
-  async terminate(graceMs = 1_500): Promise<TerminateResult> {
-    this.expected = true;
-    this.perform(this.session.stop());
-    this.stopEditors();
-    this.closeInput();
-    const results = await Promise.all([...this.editors.ending, ...(this.process ? [this.process.terminate({ graceMs })] : [])]);
-    return { killed: [...new Set(results.flatMap(result => result.killed))], forced: results.some(result => result.forced) };
-  }
-}
-
-/** Codex's workers as a WorkerHost (workers.ts): `perform` carries the session's outputs to the app-server. */
-export function codexWorkerHost(session: CodexSession, perform: (out: CodexOutput[]) => void, alive: () => boolean = () => true): WorkerHost {
-  return {
-    workerHostKind: "codex-thread",
-    steersRunning: true,
-    listWorkers: () => session.workerInfos,
-    sendToWorker(id, text) {
-      if (!alive()) return { ok: false, reason: "Its Codex head is not running; the worker went with its process." };
-      const { result, out } = session.sendToWorker(id, text);
-      perform(out);
-      return result;
-    },
-    async stopWorker(id) {
-      if (!session.runningWorkers.includes(id)) return false;
-      perform(session.cancelWorkers(new Set([id])));
-      return true;
-    },
-    setWorkerOwner(id, owner) {
-      const set = session.setWorkerOwner(id, owner);
-      if (!set.ok) return set;
-      perform(set.out);
-      return { ok: true };
-    },
-    answer(requestId, allow, _input, message) {
-      const { answered, out } = session.answerWorker(requestId, allow, allow ? undefined : message);
-      perform(out);
-      return answered;
-    },
-    async close() { perform(session.closeWorkers()); },
-  };
-}
-
-export type { HeadExit };
+export type { HeadExit } from "./head";

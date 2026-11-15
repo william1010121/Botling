@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { inlineTokens } from "../kit/build.mjs";
 import { readChatCss } from "./helpers/chat-css";
+import { readStylesCss } from "../../desktop/test/unit/helpers/styles-css";
 
 // One set of design tokens (Web/src/tokens.css) for the app shell (desktop/src/renderer/styles.css),
 // the chat page (chat.css) and the component kit. Moving them there must change no colour: each
@@ -98,9 +99,10 @@ describe("tokens.css", () => {
 
   it("leaves the app shell's colours as they were", () => {
     const path = join(web, "../desktop/src/renderer/styles.css");
-    const own = readFileSync(path, "utf8");
-    expect(own).toMatch(/^@import "[./]*Web\/src\/tokens\.css";/m);
-    const css = inlineTokens(own, path);
+    const own = readStylesCss(); // styles.css with its section files in place (tokens.css not), so `used(own)` sees the shell's own rules
+    expect(readFileSync(path, "utf8")).toMatch(/^@import "[./]*Web\/src\/tokens\.css";/m);
+    const css = inlineTokens(readFileSync(path, "utf8"), path); // everything in, as the app builds it
+    expect(css).not.toContain("@import");
     const vars = rootVars(css);
     for (const [name, value] of Object.entries(shellBefore)) expect(vars[name], name).toBe(value);
     const light = rootVars(css, ':root[data-theme="light"]');

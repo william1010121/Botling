@@ -20,8 +20,8 @@ function commitAll() {
   execFileSync("git", ["-C", repo, "add", "-A"]);
   execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "x"]);
 }
-function baseline(files: Record<string, number>) {
-  put("scripts/line-baseline.json", JSON.stringify({ files }));
+function baseline(files: Record<string, number>, frozen?: Record<string, string>) {
+  put("scripts/line-baseline.json", JSON.stringify(frozen ? { files, frozen } : { files }));
 }
 function run(...extra: string[]) {
   const r = spawnSync(process.execPath, [script, "--root", repo, "--baseline", join(repo, "scripts/line-baseline.json"), ...extra], { encoding: "utf8" });
@@ -92,6 +92,31 @@ describe("check-lines", () => {
     expect(done.err).toContain("remove its entry");
   });
 
+  it("frozen file: growing by one line fails and names the reason; shrinking passes; its entry may not be removed", () => {
+    const reason = "Botling 2 only, user 2026-11-16: not split";
+    put("src/frozen.ts", lines(900));
+    baseline({ "src/frozen.ts": 900 }, { "src/frozen.ts": reason });
+    commitAll();
+    const same = run();
+    expect(same.code).toBe(0);
+    expect(same.out).toContain(reason);
+    put("src/frozen.ts", lines(901));
+    const grown = run();
+    expect(grown.code).toBe(1);
+    expect(grown.err).toContain("src/frozen.ts: frozen");
+    expect(grown.err).toContain(reason);
+    expect(grown.err).toContain("grew to 901 lines, its baseline is 900");
+    put("src/frozen.ts", lines(899));
+    const shrunk = run();
+    expect(shrunk.code).toBe(0);
+    expect(shrunk.out).toContain(reason);
+    expect(shrunk.out).not.toContain("lower the entry");
+    baseline({}, { "src/frozen.ts": reason });
+    const removed = run();
+    expect(removed.code).toBe(1);
+    expect(removed.err).toContain("its entry is gone from the baseline");
+  });
+
   it("fails an entry whose file is gone", () => {
     put("src/ok.ts", lines(5));
     baseline({ "src/gone.ts": 900 });
@@ -134,8 +159,11 @@ describe("line-baseline.json", () => {
     expect(paths).toEqual([...paths].sort());
     for (const [path, n] of Object.entries(parsed.files)) {
       expect(Number.isInteger(n) && n > 800, path).toBe(true);
-      expect(text.split("\n").filter((line) => line.includes(`${JSON.stringify(path)}:`))).toHaveLength(1);
+      expect(text.split("\n").filter((line) => line.trim().startsWith(`${JSON.stringify(path)}: ${n}`))).toHaveLength(1);
     }
     expect(parsed.files["desktop/src/main/main.ts"]).toBeGreaterThan(800); // frozen on purpose, never split
+    const frozen = (JSON.parse(text) as { frozen?: Record<string, string> }).frozen ?? {};
+    expect(frozen["desktop/src/main/main.ts"]).toContain("not split");
+    for (const path of Object.keys(frozen)) expect(Object.hasOwn(parsed.files, path), path).toBe(true);
   });
 });

@@ -23,7 +23,7 @@ import { newSinceMark, withNewSince } from "../sub-bot-nav";
 import { askOwnerText, askReference, type AskWorker } from "../worker-panel";
 import { asksUser, cardApprove, cardRun } from "../card-approval";
 import { FloatingChat, floatChatMessage, resendFloatChrome } from "../FloatingChat";
-import { focusComposer, runPluginCommand } from "../App";
+import { focusComposer, runPluginCommand } from "../rail-parts";
 import { leaveMarks, pinnedNumber } from "../app-shared";
 
 /** The reused chat page, in a frame. */

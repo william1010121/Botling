@@ -108,7 +108,10 @@ describe("the mirrored header matches App.tsx", () => {
     expect(bar).toBeGreaterThan(0);
     expect(slot).toBeGreaterThan(bar);
     expect(menu).toBeGreaterThan(slot);
-    expect(app).toContain('<div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>');
+    // The placeholder moved with ChatFrame (M7-S01) into chat-frame/ChatFrame.tsx; App.tsx renders that component after the menu.
+    const frame = readFileSync(join(desktop, "src/renderer/chat-frame/ChatFrame.tsx"), "utf8");
+    expect(frame).toContain('<div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>');
+    expect(app.indexOf("<ChatFrame ")).toBeGreaterThan(menu);
   });
 });
 

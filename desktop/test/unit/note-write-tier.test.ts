@@ -151,6 +151,33 @@ describe("who may write a bot's note (M7-04a)", () => {
   });
 });
 
+describe("ccb.snapshot writes a picture into the note's assets (plugins.noteSnapshot)", () => {
+  const picture = { base64: Buffer.from("px").toString("base64"), name: "snap.png" };
+  const snapshot = (plugin: string) => (running[0] as unknown as { noteSnapshot(name: string, bot: string, picture: { base64: string; name: string }): { ref: string; url: string | null } }).noteSnapshot(plugin, "main", picture);
+
+  it("a plugin that does not own the note is refused (a library one with files, a shipped one without owns); the Note's own call returns a ref", async () => {
+    await setup((dir) => {
+      plugin(join(dir, "plugins"), "nosy", FILES);
+      plugin(join(dir, "builtin"), "botling.other", FILES);
+      plugin(join(dir, "builtin"), "botling.note", OWNS_NOTE);
+    });
+    expect(() => snapshot("nosy")).toThrow(WHO);
+    expect(() => snapshot("botling.other")).toThrow(WHO);
+    expect(snapshot("botling.note")).toEqual({ ref: expect.stringMatching(/^note-assets\/[0-9a-f]{32}\.png$/), url: expect.any(String) });
+  });
+});
+
+describe("a disabled built-in plugin owns nothing", () => {
+  it("the Note turned off is refused (not running), and owns again when turned back on", async () => {
+    const { ask } = await setup((dir) => plugin(join(dir, "builtin"), "botling.note", OWNS_NOTE));
+    expect(await ask("notes.write", { plugin: "botling.note", bot: "main", text: "on\n" })).toMatchObject({ saved: true });
+    running[0]!.setEnabled("botling.note", false);
+    await expect(ask("notes.write", { plugin: "botling.note", bot: "main", text: "off\n" })).rejects.toThrow();
+    running[0]!.setEnabled("botling.note", true);
+    expect(await ask("notes.write", { plugin: "botling.note", bot: "main", text: "on again\n" })).toMatchObject({ saved: true });
+  });
+});
+
 describe("a forged call naming the Note (M5-15 at the owner, unchanged)", () => {
   const H1 = "a".repeat(64);
   const H2 = "b".repeat(64);

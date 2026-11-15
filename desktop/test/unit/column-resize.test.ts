@@ -1,9 +1,7 @@
 // The window's column dividers (column-resize.ts): limits, the chat's minimum, what is remembered, and the reset.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { clampWidth, COLUMNS, dragWidth, HANDLE, loadWidth, MIN_CHAT, roomFor, saveWidth } from "../../src/renderer/column-resize";
-import { desktop } from "../helpers";
+import { readStylesCss } from "./helpers/styles-css";
 
 const memory = () => {
   const data = new Map<string, string>();
@@ -89,7 +87,7 @@ describe("remembered widths", () => {
 });
 
 describe("the stylesheet agrees", () => {
-  const css = readFileSync(join(desktop, "src/renderer/styles.css"), "utf8");
+  const css = readStylesCss(); // styles.css with its section files in place
   it("sizes each column with its variable, falling back to the default width", () => {
     expect(css).toContain(`.rail { width: var(${COLUMNS.rail.cssVar}, ${COLUMNS.rail.fallback}px);`);
     expect(css).toContain(`.shell > .detail-panel { width: var(${COLUMNS.right.cssVar}, ${COLUMNS.right.fallback}px); }`);
