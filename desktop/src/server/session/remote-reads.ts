@@ -72,7 +72,13 @@ export function remoteReadRefusal(cmd: Command, scope: readonly DeviceScope[]): 
 
 /** The owner's scope and origin check for a slot (SlotEngine `authorize`). */
 export function slotAuthorize(roster: DeviceRoster): Authorize {
-  return (_tx, { slot, cmd, scope }) => {
+  return (_tx, { slot, cmd, scope, peer }) => {
+    // M7-12c (R1, L-008): a copy a peer server forwarded needs that peer to be a valid server now, where the slot is decided
+    // (also for a copy held ahead). Window copies carry no member id that a revocation could hit, so this is their check.
+    // No `peer` = not forwarded (local socket, device); `null`, an unknown peer or a roster without the hook refuses.
+    if (peer !== undefined && !(peer !== null && roster.server?.(peer) === true)) {
+      return { reason: "origin", detail: "the server that forwarded this command is not a valid server of this cluster (any more)" };
+    }
     // M5-01 (Q-C1): a call-in is sent by a server only; the window (`local`) and `admin` are refused like a device.
     if (commandScope(cmd) === "server" && (scope === "local" || scope === "admin")) {
       return { reason: "scope", detail: `${cmd.type} is only sent by another server` };

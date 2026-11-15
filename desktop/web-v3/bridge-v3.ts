@@ -25,6 +25,9 @@ import { configureShellStorage } from "../src/renderer/shell/storage";
 import { createWebShellStorageBackend } from "./shell/device-store";
 import { Client, type Bridge, type RequestVia } from "../src/renderer/client";
 import { WorkspaceStore } from "../src/renderer/store";
+import { rendererKernel } from "../src/renderer/renderer-kernel";
+import { bundledInPagePlugin } from "../src/renderer/shell/inpage-bundled";
+import { RowLoader, followRows, ticketBundleFetcher, type BundleFetcher, type BundleTicketPort, type RowsLink } from "../src/renderer/shell/row-loader";
 import { phoneLayout } from "../mobile/layout";
 import type { PendingFileView } from "../src/contract";
 import type { PageUploadsPort } from "./shell/uploads";
@@ -195,21 +198,37 @@ export interface MountOptions {
   /** The shell's controls placed in the renderer's chrome (the drawer button, the "This device" entry). */
   chrome: WebChrome;
   audit?: (text: string) => void;
+  /**
+   * M7-09b: reads a plugin's web bundle by the content reference its row names. Default: this page's own origin over the content path
+   * (a ticket from the session, then `/v3/c/`); none when the link cannot ask for tickets or the page has no origin. Without one the
+   * frames keep the server's `plugins.web` source and the row loader runs only what the FE build shipped.
+   */
+  bundles?: BundleFetcher;
 }
 
 export interface MountedRenderer {
   adapter: RendererAdapter;
+  /** M7-09b: the plugins' web parts held from the attached server's rows. */
+  rowLoader: RowLoader;
   store: WorkspaceStore;
   /** Re-renders with new chrome (the drawer state changed). */
   render(chrome: WebChrome): void;
   unmount(): void;
 }
 
+/** The page's own bundle reader: tickets over the link's session, bytes from this page's origin. */
+function pageBundles(link: LinkPort): BundleFetcher | undefined {
+  const origin = (globalThis as { location?: { origin?: string } }).location?.origin;
+  if (!origin || origin === "null" || typeof (link as unknown as Partial<BundleTicketPort>).remoteContent !== "function") return undefined;
+  return ticketBundleFetcher({ link: link as unknown as BundleTicketPort, base: origin });
+}
+
 /** Mounts the unchanged 2.x renderer into `root` (the one element the shell gives it). Call before the link starts. */
 export function mountRenderer(root: HTMLElement, options: MountOptions): MountedRenderer {
   let bridge: BridgeV3 | null = null;
+  const bundles = options.bundles ?? pageBundles(options.link);
   const releaseStorage = configureShellStorage(createWebShellStorageBackend());
-  const adapter = new RendererAdapter({ link: options.link, emit: (envelope) => bridge?.emit(envelope), clock: options.clock, audit: options.audit });
+  const adapter = new RendererAdapter({ link: options.link, emit: (envelope) => bridge?.emit(envelope), clock: options.clock, audit: options.audit, ...(bundles ? { bundles } : {}) });
   bridge = new BridgeV3(adapter, options.capabilities);
   const client = new Client(bridge);
   const store = new WorkspaceStore((botId) => client.request({ type: "chat.snapshot", ...(botId ? { botId } : {}) }));
@@ -217,12 +236,17 @@ export function mountRenderer(root: HTMLElement, options: MountOptions): Mounted
   bridge.onLocalChange = () => { void store.resync().catch(() => undefined); };
   const offChips = options.capabilities.uploads?.onChipsChanged(() => bridge?.onLocalChange()) ?? (() => undefined);
   adapter.start();
+  // M7-09b: the plugins' web parts from the attached server's own rows, into the renderer's kernel.
+  // Without a bundle reader only what the FE build shipped runs here; a row's web part is then left to `plugins.web`.
+  const noBundles: BundleFetcher = () => Promise.reject(new Error("this page cannot read web bundles"));
+  const rowLoader = new RowLoader({ kernel: rendererKernel, fetch: bundles ?? noBundles, source: bundledInPagePlugin, log: (line) => options.audit?.(line) });
+  const offRows = followRows(rowLoader, options.link as unknown as RowsLink);
   const reactRoot: Root = createRoot(root);
   const render = (chrome: WebChrome) => reactRoot.render(createElement(App, { client, store, web: chrome }));
   render(options.chrome);
   void store.resync().catch((error) => options.audit?.(`first snapshot: ${String((error as Error)?.message ?? error)}`));
   return {
-    adapter, store, render,
-    unmount() { offChips(); releaseStorage(); adapter.stop(); bridge?.close(); reactRoot.unmount(); },
+    adapter, store, render, rowLoader,
+    unmount() { offChips(); offRows(); void rowLoader.stop(); releaseStorage(); adapter.stop(); bridge?.close(); reactRoot.unmount(); },
   };
 }
