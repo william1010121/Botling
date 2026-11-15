@@ -16,7 +16,7 @@ import { LiveChannel } from "../../src/server/live";
 import { LogHub } from "../../src/server/log";
 import { ownTableStream, putRow } from "../../src/server/replica/tables";
 import { RosterStore } from "../../src/server/roster";
-import { slotAuthorize, statedScope, type DeviceRoster } from "../../src/server/session";
+import { PLUGIN_ORIGIN_DETAIL, slotAuthorize, statedScope, type DeviceRoster } from "../../src/server/session";
 import { PLUGIN_COMMAND_NEEDS_GRANT, pluginCommandNeedsGrant } from "../../src/server/slots/grant-check";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import { generateDhKeyPair } from "../../src/session";
@@ -192,6 +192,7 @@ async function outcome(s: Server, origin: string, cmd: Command, scope: Scope, wi
 const asPhone = (s: Server, origin: string, cmd: Command, withVia?: Via) => outcome(s, origin, cmd, statedScope(cmd), withVia);
 const ran = (s: Server) => s.engine.runs.map((cmd) => cmd.type);
 const GRANT_REFUSED = { kind: "refused", reason: "grant", detail: PLUGIN_COMMAND_NEEDS_GRANT };
+const ORIGIN_REFUSED = { kind: "refused", reason: "origin", detail: PLUGIN_ORIGIN_DETAIL };
 
 describe("M5-16: a default phone and a plugin's button", () => {
   it("1. via of a request-tier plugin whose `requests` holds the command: applied, and the handler runs", async () => {
@@ -207,7 +208,7 @@ describe("M5-16: a default phone and a plugin's button", () => {
     expect(ran(s)).toEqual(["plugins.linkCommand"]);
   });
 
-  it("2. the same command without via: refused grant (all four types), for a default phone, a manage device and a peer server; the handler never runs", async () => {
+  it("2. the same command without via: refused grant (all four types), for a default phone and a manage device; a peer server is refused origin; the handler never runs", async () => {
     const s = await startServer();
     await seed(s, "note", row({ tier: "write", grants: { [H1]: grant("write", ["plugins.linkCommand"]) } }));
     const phone = await device(s, DEFAULT);
@@ -215,7 +216,7 @@ describe("M5-16: a default phone and a plugin's button", () => {
     for (const cmd of [link("note.coach"), ...own("note")]) {
       expect(await asPhone(s, phone, cmd), `phone ${cmd.type}`).toEqual(GRANT_REFUSED);
       expect(await asPhone(s, admin, cmd), `manage ${cmd.type}`).toEqual(GRANT_REFUSED);
-      expect(await outcome(s, PEER_ID, cmd, "reply"), `peer ${cmd.type}`).toEqual(GRANT_REFUSED);
+      expect(await outcome(s, PEER_ID, cmd, "reply"), `peer ${cmd.type}`).toEqual(ORIGIN_REFUSED);
     }
     expect(ran(s)).toEqual([]);
   });
@@ -268,6 +269,58 @@ describe("M5-16: a default phone and a plugin's button", () => {
     expect(a).toMatchObject({ status: "result", message: { outcome: GRANT_REFUSED } });
     expect(b).toMatchObject({ status: "result", message: { outcome: GRANT_REFUSED } });
     expect(ran(s)).toEqual([]);
+  });
+});
+
+describe("fu-plugin-call-server-origin: a peer server with a write grant still cannot run a plugin method", () => {
+  it("whiteboard `ignore` (the method that reaches Core.ignoreWaiting): a peer server with via and a write grant is refused origin, a phone with the same via applies", async () => {
+    const s = await startServer();
+    const name = "botling.whiteboard";
+    await seed(s, name, row({ tier: "write", grants: { [H1]: grant("write") } }));
+    const phone = await device(s, DEFAULT);
+    const ignore = { type: "plugins.call", name, method: "ignore", params: { botId: BOT, text: "Allow Bash?" }, from: "frame" } as unknown as Command;
+    expect(await outcome(s, PEER_ID, ignore, "reply", via(name))).toEqual(ORIGIN_REFUSED);
+    expect(ran(s)).toEqual([]);
+    // The same command, same grant, from a user's device is the unchanged honest path.
+    expect((await asPhone(s, phone, ignore, via(name))).kind).toBe("applied");
+    expect(ran(s)).toEqual(["plugins.call"]);
+  });
+
+  it("all four types, a write grant, a request-tier grant that lists the command: a peer server is refused origin, the handler never runs", async () => {
+    const s = await startServer();
+    await seed(s, "note", row({ tier: "write", grants: { [H1]: grant("write", [...PLUGIN_COMMANDS]) } }));
+    for (const cmd of own("note")) {
+      expect(await outcome(s, PEER_ID, cmd, "reply", via("note")), `write ${cmd.type}`).toEqual(ORIGIN_REFUSED);
+    }
+    await seed(s, "note", row({ tier: "request", grants: { [H1]: grant("request", [...PLUGIN_COMMANDS]) } }));
+    for (const cmd of own("note")) {
+      expect(await outcome(s, PEER_ID, cmd, "reply", via("note")), `request ${cmd.type}`).toEqual(ORIGIN_REFUSED);
+    }
+    expect(ran(s)).toEqual([]);
+  });
+
+  it("the frame helpers (tileImages, approvalAsk, noteSnapshot) from a peer server: refused origin with or without via, under a write grant; the handler never runs", async () => {
+    const s = await startServer();
+    await seed(s, "note", row({ tier: "write", grants: { [H1]: grant("write", ["plugins.tileImages", "plugins.approvalAsk", "plugins.noteSnapshot"]) } }));
+    const helpers = [
+      { type: "plugins.tileImages", name: "note", botId: BOT, data: "{}" },
+      { type: "plugins.approvalAsk", name: "note", botId: BOT, command: "ls", folder: "/x" },
+      { type: "plugins.noteSnapshot", name: "note", botId: BOT, rect: { x: 0, y: 0, width: 10, height: 10 } },
+    ] as unknown as Command[];
+    for (const cmd of helpers) {
+      expect(await outcome(s, PEER_ID, cmd, "manage"), `no via ${cmd.type}`).toEqual(ORIGIN_REFUSED);
+      expect(await outcome(s, PEER_ID, cmd, statedScope(cmd), via("note")), `via ${cmd.type}`).toEqual(ORIGIN_REFUSED);
+    }
+    expect(ran(s)).toEqual([]);
+  });
+
+  it("a revoked peer is still refused origin by its own rule, and a peer's other reply command is not affected", async () => {
+    const s = await startServer();
+    await seed(s, "note", row({ tier: "write", grants: { [H1]: grant("write") } }));
+    s.valid.delete(PEER_ID);
+    expect(await outcome(s, PEER_ID, pcall("note"), "reply", via("note"))).toMatchObject({ kind: "refused", reason: "origin", detail: `${PEER_ID} is not a valid device of this cluster` });
+    s.valid.add(PEER_ID);
+    expect((await outcome(s, PEER_ID, { type: "chat.send", botId: BOT, text: "hi" } as Command, "reply")).kind).toBe("applied");
   });
 });
 

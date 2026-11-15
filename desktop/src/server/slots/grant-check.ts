@@ -22,8 +22,13 @@ const OWN_HELPER_COMMANDS: ReadonlySet<string> = new Set(["plugins.noteSnapshot"
  * `cmd.name === via.plugin`: resolving image URLs for a Board tile or Note card (M5-12b F2).
  */
 const RENDER_HELPER_COMMANDS: ReadonlySet<string> = new Set(["plugins.tileImages"]);
+/**
+ * Everything a plugin frame sends through a user's window or device: the four plugin commands and the frame-broker
+ * helpers. A peer server never sends one (fu-plugin-call-server-origin, `slotAuthorize`).
+ */
+export const PLUGIN_FRAME_COMMANDS: ReadonlySet<string> = new Set([...OWN_PLUGIN_COMMANDS, ...OWN_HELPER_COMMANDS, ...RENDER_HELPER_COMMANDS]);
 
-/** M5-16: what a device (or a peer server) reads when it sends a plugin command with no `via`. */
+/** M5-16: what a device reads when it sends a plugin command with no `via` (a peer server is refused `origin` before this). */
 export const PLUGIN_COMMAND_NEEDS_GRANT = "plugin commands from a device need the plugin's grant";
 
 /**
