@@ -81,6 +81,23 @@ export type MachineRemovePreview =
       fingerprint: string;
       cascade: Array<{ member: string; kind: "server" | "device"; name: string }>;
     };
+export interface DroppedListRow {
+  revokeId: string;
+  member: string;
+  memberName: string;
+  memberFingerprint: string;
+  signer: string;
+  signerName: string;
+  gen: number;
+  receivedAt: number | null;
+  why: "left-out" | "arrived-after";
+}
+export interface DroppedListResult {
+  isRoot: boolean;
+  rootMember: string | null;
+  rootName: string | null;
+  rows: DroppedListRow[];
+}
 
 export class PairingError extends Error {
   constructor(
@@ -238,6 +255,8 @@ export class PairingService {
       case "device.revoke": return this.revokeDevice(op.deviceId, op.reason);
       case "machine.removePreview": return this.removeMachinePreview(op.member);
       case "machine.remove": return this.removeMachine(op.member, op.cascade, op.reason);
+      case "roster.dropped": return this.droppedList();
+      case "roster.dismiss": return this.dismissDropped(op.revokeId);
       default: throw new PairingError("bad-request", `${op.op} is not a device pairing request`);
     }
   }
@@ -403,6 +422,47 @@ export class PairingService {
         if (error.reason === "cannot-revoke-root") throw new PairingError("cannot-revoke-root", error.message);
         if (error.reason === "not-a-server") throw new PairingError("not-a-server", error.message);
         if (error.reason === "no-cluster") throw new PairingError("no-cluster", error.message);
+      }
+      throw error;
+    }
+  }
+
+  /** Dropped server revocations (D63, §4.8, M4-10), minus any dismissed locally on this server. */
+  droppedList(): DroppedListResult {
+    const view = this.options.roster.view;
+    const root = view.root;
+    if (this.options.roster.clusterId === null || !root) {
+      return { isRoot: false, rootMember: null, rootName: null, rows: [] };
+    }
+    const rows: DroppedListRow[] = this.options.roster.dropped().map((row) => ({
+      revokeId: row.revokeId,
+      member: row.member,
+      memberName: this.serverDisplayName(row.member, view),
+      memberFingerprint: memberFingerprint(row.member),
+      signer: row.signer,
+      signerName: this.serverDisplayName(row.signer, view),
+      gen: row.gen,
+      receivedAt: row.receivedAt,
+      why: row.why,
+    }));
+    return {
+      isRoot: root.root === this.options.roster.memberId,
+      rootMember: root.root,
+      rootName: this.serverDisplayName(root.root, view),
+      rows,
+    };
+  }
+
+  /** Locally dismisses a dropped revocation on this server (writes local meta; signs nothing). */
+  async dismissDropped(revokeId: string): Promise<{ already: boolean }> {
+    try {
+      const result = await this.options.roster.dismissDropped(revokeId);
+      this.options.log?.(`pairing: dropped revocation ${revokeId} dismissed${result.already ? " (already)" : ""}`);
+      return result;
+    } catch (error) {
+      if (error instanceof RosterError) {
+        if (error.reason === "no-cluster") throw new PairingError("no-cluster", error.message);
+        if (error.reason === "not-dropped") throw new PairingError("bad-request", error.message);
       }
       throw error;
     }

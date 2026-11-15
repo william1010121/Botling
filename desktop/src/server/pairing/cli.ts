@@ -23,7 +23,7 @@
 import { memberFingerprint, parseJoinLink, type AdminEvent, type DeviceScope } from "../../protocol";
 import { AdminRefused, type AdminClient } from "./admin-client";
 import { qrTerminal } from "./qr";
-import type { DeviceRow, MachineRemovePreview, PairOfferResult } from "./service";
+import type { DeviceRow, DroppedListResult, MachineRemovePreview, PairOfferResult } from "./service";
 import type { JoinOfferResult, MachineAddResult, MachineCodeResult } from "./join";
 
 export interface CliIo {
@@ -195,6 +195,68 @@ export async function removeMachineCommand(
     io.out(`Removed "${preview.name}" (${preview.member}) and what it added (Revoke ${result.revokeId}).`);
   } else {
     io.out(`Removed "${preview.name}" (${preview.member}); what it added was kept (Revoke ${result.revokeId}).`);
+  }
+  return 0;
+}
+
+/** `botlingd machines dropped [--json]` (§4.8, M4-10): lists dropped server revocations; offers revoke again or dismiss on the root. */
+export async function droppedMachinesCommand(
+  client: AdminClient,
+  io: CliIo,
+  options: { json?: boolean } = {},
+): Promise<number> {
+  let list: DroppedListResult;
+  try {
+    list = await client.request({ op: "roster.dropped" }) as DroppedListResult;
+  } catch (error) {
+    io.out(`Cannot read dropped revocations: ${errorText(error)}`);
+    return 1;
+  }
+  if (options.json) {
+    io.out(JSON.stringify(list));
+    return 0;
+  }
+  if (!list.rows.length) {
+    io.out("No dropped revocations.");
+    return 0;
+  }
+  io.out("These revocations did not carry over:");
+  const whyText = (why: "left-out" | "arrived-after") =>
+    why === "left-out" ? "left out by you at the reroot" : "arrived after the reroot";
+  const timeText = (at: number | null) => (at !== null ? new Date(at).toISOString() : "unknown time");
+  const rootLabel = list.rootName ?? list.rootMember ?? "the new root";
+
+  list.rows.forEach((row, index) => {
+    const base = `  ${index + 1}  "${row.memberName}" (${row.memberFingerprint}) — signed by "${row.signerName}" (gen ${row.gen}, ${whyText(row.why)}, ${timeText(row.receivedAt)})`;
+    io.out(list.isRoot ? base : `${base} — re-do on ${rootLabel}`);
+  });
+
+  if (!list.isRoot) return 0;
+
+  const revokedMembers = new Set<string>();
+  for (const row of list.rows) {
+    if (revokedMembers.has(row.member)) continue;
+    const answer = await io.ask(
+      `For "${row.memberName}" (${row.memberFingerprint}): type "revoke" to revoke again, "dismiss" to dismiss (not mine), anything else to skip: `,
+    );
+    if (answer === null) break;
+    const choice = answer.trim().toLowerCase();
+    if (choice === "revoke") {
+      const code = await removeMachineCommand(client, io, row.member);
+      if (code === 0) revokedMembers.add(row.member);
+      continue;
+    }
+    if (choice === "dismiss") {
+      try {
+        await client.request({ op: "roster.dismiss", revokeId: row.revokeId });
+        io.out(`Dismissed "${row.memberName}" (${row.revokeId}); it stays hidden on this machine.`);
+      } catch (error) {
+        io.out(`Cannot dismiss "${row.memberName}": ${errorText(error)}`);
+        return 1;
+      }
+      continue;
+    }
+    io.out(`Skipped "${row.memberName}".`);
   }
   return 0;
 }
