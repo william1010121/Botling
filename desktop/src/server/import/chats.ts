@@ -1,29 +1,47 @@
-// 2.x -> 3.x chat import (protocol v1 §14.4, §7.3; M6-01c).
+// 2.x -> 3.x chat and lists import (protocol v1 §14.4, §7.3; M6-01c, M6-02a).
 //
 // Runs while botlingd is stopped (M6-01d holds the data-folder lock). Each 2.x bot gets:
 // 1. A `bot:<newId>` log stream whose first entries are `message.added` items with `{botId: newId, message:
 //    messageView(record)}` — identical to what EventTap writes — appended in batches of 500 lines per writer
 //    transaction. A crash mid-bot leaves the bot marked "unfinished" in `meta` so a retry resets its partial log and
 //    redoes it from empty; only after all batches and the core copy commit is it marked "done".
-// 2. The core's own 2.x-shaped copy via `DbBotStore` (`bot.json` settings and newest HISTORY_LIMIT chat lines).
+// 2. The core's own 2.x-shaped copy via `DbBotStore`: `bot.json` settings and newest HISTORY_LIMIT chat lines, plus
+//    `importLists(botStore, bot)` for `pins.json`, `specs.json`, `tasks.json`, and subagent index + steps.
 //    `DbBotStores` owns its own writer backend and does not accept an external `tx`, so the core copy runs right after
 //    the log batches commit (before the bot is marked "done").
 //
 // `head.json` (the engine session) is never imported, and 2.x bot ids mentioned inside message text are kept verbatim.
 import { messageView } from "../../core/bot";
 import type { ChatRecord } from "../../core/store/records";
-import { DbBotStores } from "../botstore";
+import { DbBotStores, type DbBotStore } from "../botstore";
 import { fitBody } from "../effects/fit";
 import { botStream, ensureBot } from "../effects/log-ops";
 import { appendEntries } from "../log";
 import type { Db, ServerStore } from "../store";
 import type { IdMapKind, IdMapRow } from "./id-map";
-import { readChat, type Read2xBot } from "./reader-2x";
+import { readChat, type Read2xBot, type Read2xChat } from "./reader-2x";
 
 export const CHAT_IMPORT_BATCH_SIZE = 500;
 
 export function importBotMetaKey(source: string, oldId: string): string {
   return `import:${source}:bot:${oldId}`;
+}
+
+export interface ImportedBotLists {
+  pins: number;
+  missingPinLines: number;
+  specs: number;
+  tasks: number;
+  subagents: number;
+  subagentSteps: number;
+  problems: string[];
+}
+
+export interface ImportListsOptions {
+  /** Pre-read 2.x chat bundle (used by `importBotChat` to avoid reading the source twice). */
+  chatData?: Read2xChat;
+  /** Imported chat line ids for this bot (case-insensitive check for pins pointing at lines). */
+  knownMessageIds?: ReadonlySet<string>;
 }
 
 export interface ImportedBotChat {
@@ -35,6 +53,7 @@ export interface ImportedBotChat {
   skipped: number;
   batches: number;
   alreadyDone: boolean;
+  lists: ImportedBotLists;
   problems: string[];
 }
 
@@ -42,6 +61,12 @@ export interface ImportChatsResult {
   bots: ImportedBotChat[];
   totalLines: number;
   totalSkipped: number;
+  totalPins: number;
+  totalMissingPinLines: number;
+  totalSpecs: number;
+  totalTasks: number;
+  totalSubagents: number;
+  totalSubagentSteps: number;
 }
 
 export interface ImportChatsOptions {
@@ -62,6 +87,16 @@ interface PreparedLine {
   msgId: string;
 }
 
+const EMPTY_LISTS: ImportedBotLists = {
+  pins: 0,
+  missingPinLines: 0,
+  specs: 0,
+  tasks: 0,
+  subagents: 0,
+  subagentSteps: 0,
+  problems: [],
+};
+
 const SQL = {
   getMeta: "SELECT value FROM meta WHERE key = ?",
   setMeta: "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
@@ -72,13 +107,83 @@ const SQL = {
 
 function resetUnfinishedBot(tx: Db, botId: string): void {
   const stream = botStream(botId);
+  const substepsPrefix = `substeps:[${JSON.stringify(botId)},`;
   tx.prepare("DELETE FROM entries WHERE stream = ?").run(stream);
   tx.prepare("DELETE FROM fulltext WHERE stream = ?").run(stream);
   tx.prepare("DELETE FROM messages WHERE botId = ?").run(botId);
   tx.prepare("DELETE FROM cards WHERE botId = ?").run(botId);
   tx.prepare("DELETE FROM streams WHERE stream = ?").run(stream);
   tx.prepare("DELETE FROM rows WHERE stream = ?").run(`chat:${botId}`);
+  tx.prepare("DELETE FROM rows WHERE stream = ?").run(`subagents:${botId}`);
+  tx.prepare("DELETE FROM rows WHERE substr(stream, 1, ?) = ?").run(substepsPrefix.length, substepsPrefix);
+  tx.prepare("DELETE FROM lists WHERE botId = ?").run(botId);
   tx.prepare("DELETE FROM bots WHERE botId = ?").run(botId);
+}
+
+function pinLineId(pin: unknown): string | null {
+  if (!pin || typeof pin !== "object" || Array.isArray(pin)) return null;
+  const record = pin as Record<string, unknown>;
+  if (typeof record.messageId === "string" && record.messageId.length > 0) return record.messageId;
+  if (typeof record.messageID === "string" && record.messageID.length > 0) return record.messageID;
+  return null;
+}
+
+/** Copies a bot's 2.x lists (`pins.json`, `specs.json`, `tasks.json`) and subagent index + steps via `DbBotStore`. */
+export async function importLists(
+  botStore: DbBotStore,
+  bot: Read2xBot,
+  options: ImportListsOptions = {},
+): Promise<ImportedBotLists> {
+  const chatData = options.chatData ?? readChat(bot);
+
+  const knownUpper = new Set<string>();
+  if (options.knownMessageIds) {
+    for (const id of options.knownMessageIds) knownUpper.add(id.toUpperCase());
+  } else {
+    const stored = botStore.loadMessages().records;
+    const source = stored.length > 0 ? stored : chatData.chat;
+    for (const record of source) knownUpper.add(record.id.toUpperCase());
+  }
+
+  botStore.saveList("pins.json", chatData.pins);
+  botStore.saveList("specs.json", chatData.specs);
+  botStore.saveList("tasks.json", chatData.tasks);
+
+  let missingPinLines = 0;
+  for (const pin of chatData.pins) {
+    const lineId = pinLineId(pin);
+    if (lineId !== null && !knownUpper.has(lineId.toUpperCase())) {
+      missingPinLines += 1;
+    }
+  }
+
+  let subagentSteps = 0;
+  for (const sub of chatData.subagents) {
+    const subId = String(sub.index.id);
+    for (const earlier of sub.history.runs) {
+      for (const step of earlier.steps) {
+        botStore.stageSubagentLine(subId, { k: "step", step });
+        subagentSteps += 1;
+      }
+      botStore.stageSubagentLine(subId, { k: "run", run: earlier.run });
+    }
+    for (const step of sub.history.steps) {
+      botStore.stageSubagentLine(subId, { k: "step", step });
+      subagentSteps += 1;
+    }
+  }
+  botStore.commitSubagents(chatData.subagents.map((s) => s.index));
+  await botStore.durable();
+
+  return {
+    pins: chatData.pins.length,
+    missingPinLines,
+    specs: chatData.specs.length,
+    tasks: chatData.tasks.length,
+    subagents: chatData.subagents.length,
+    subagentSteps,
+    problems: chatData.problems,
+  };
 }
 
 function prepareLines(
@@ -115,8 +220,8 @@ function appendPreparedBatch(
   batch: readonly PreparedLine[],
   now: (() => number) | undefined,
   log?: (line: string) => void,
-): { imported: number; skipped: number } {
-  if (!batch.length) return { imported: 0, skipped: 0 };
+): { imported: number; skipped: number; importedIds: string[] } {
+  if (!batch.length) return { imported: 0, skipped: 0, importedIds: [] };
   const putFulltext = tx.prepare(SQL.putFulltext);
   const appendOpts = now ? { now: now() } : {};
 
@@ -135,7 +240,7 @@ function appendPreparedBatch(
       }
     }
     tx.exec("RELEASE import_chat_batch");
-    return { imported: entries.length, skipped: 0 };
+    return { imported: entries.length, skipped: 0, importedIds: batch.map((item) => item.msgId) };
   } catch (error) {
     if (!tx.inTransaction) throw error;
     tx.exec("ROLLBACK TO import_chat_batch");
@@ -145,6 +250,7 @@ function appendPreparedBatch(
 
   let imported = 0;
   let skipped = 0;
+  const importedIds: string[] = [];
   for (const item of batch) {
     tx.exec("SAVEPOINT import_chat_item");
     try {
@@ -154,6 +260,7 @@ function appendPreparedBatch(
       }
       tx.exec("RELEASE import_chat_item");
       imported += 1;
+      importedIds.push(item.msgId);
     } catch (error) {
       if (!tx.inTransaction) throw error;
       tx.exec("ROLLBACK TO import_chat_item");
@@ -162,7 +269,7 @@ function appendPreparedBatch(
       log?.(`${stream}: skipped line ${item.msgId} (${error instanceof Error ? error.message : String(error)})`);
     }
   }
-  return { imported, skipped };
+  return { imported, skipped, importedIds };
 }
 
 export async function importBotChat(
@@ -184,11 +291,12 @@ export async function importBotChat(
       skipped: 0,
       batches: 0,
       alreadyDone: true,
+      lists: { ...EMPTY_LISTS, problems: [] },
       problems: [],
     };
   }
 
-  // Strictly read-only read of chat.json and bot.json (head.json is intentionally never imported).
+  // Strictly read-only read of chat.json, lists, subagents, and bot.json (head.json is intentionally never imported).
   const chatData = readChat(bot);
   const { prepared, skipped: prepSkipped } = prepareLines(chatData.chat, mapped.newId, options.log);
   const batchSize = Math.max(1, Math.floor(options.batchSize ?? CHAT_IMPORT_BATCH_SIZE));
@@ -201,6 +309,7 @@ export async function importBotChat(
   let importedLines = 0;
   let appendSkipped = 0;
   let batchCount = 0;
+  const importedMsgIds = new Set<string>();
   const stream = botStream(mapped.newId);
 
   for (let i = 0; i < batches.length; i++) {
@@ -224,16 +333,20 @@ export async function importBotChat(
     });
     importedLines += outcome.imported;
     appendSkipped += outcome.skipped;
+    for (const id of outcome.importedIds) importedMsgIds.add(id);
     batchCount += 1;
   }
 
-  // Core's 2.x-shaped copy via DbBotStore (bot.json settings + newest HISTORY_LIMIT lines).
+  // Core's 2.x-shaped copy via DbBotStore (bot.json settings + newest HISTORY_LIMIT lines + lists/subagents).
   const botStore = stores.open(mapped.newId, "");
   for (const [key, value] of Object.entries(chatData.settings)) {
     if (value !== undefined) botStore.saveSetting(key, value);
   }
   botStore.saveMessages(chatData.chat);
-  await botStore.durable();
+  const lists = await importLists(botStore, bot, {
+    chatData,
+    knownMessageIds: importedMsgIds,
+  });
 
   await store.submit((tx) => {
     tx.prepare(SQL.setMeta).run(metaKey, "done");
@@ -248,6 +361,7 @@ export async function importBotChat(
     skipped: prepSkipped + appendSkipped,
     batches: batchCount,
     alreadyDone: false,
+    lists,
     problems: chatData.problems,
   };
 }
@@ -280,5 +394,11 @@ export async function importChats(
     bots: results,
     totalLines: results.reduce((sum, r) => sum + r.lines, 0),
     totalSkipped: results.reduce((sum, r) => sum + r.skipped, 0),
+    totalPins: results.reduce((sum, r) => sum + r.lists.pins, 0),
+    totalMissingPinLines: results.reduce((sum, r) => sum + r.lists.missingPinLines, 0),
+    totalSpecs: results.reduce((sum, r) => sum + r.lists.specs, 0),
+    totalTasks: results.reduce((sum, r) => sum + r.lists.tasks, 0),
+    totalSubagents: results.reduce((sum, r) => sum + r.lists.subagents, 0),
+    totalSubagentSteps: results.reduce((sum, r) => sum + r.lists.subagentSteps, 0),
   };
 }
