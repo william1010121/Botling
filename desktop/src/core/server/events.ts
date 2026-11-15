@@ -35,6 +35,8 @@ export class CoreEvents {
   private waitingSoon(...a: Parameters<Core["waitingSoon"]>) { return this.host.waitingSoon(...a); }
 
   seq = 0;
+  /** The next event number: the one transition that moves `seq` (`event` here, and the other collaborators through `Core.nextSeq`; nobody sets it). */
+  nextSeq() { return ++this.seq; }
   inflight = new Map<string, AbortController>();
 
   event(event: Event) {
@@ -43,7 +45,7 @@ export class CoreEvents {
     if (event.type === "bot.updated" && event.bot.id === this.maintainerId && event.bot.maintainer !== true) {
       event = { ...event, bot: { ...event.bot, maintainer: true } };
     }
-    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: this.nextSeq(), event });
     if (event.type === "message.updated" && this.serverAsks.size) this.serverAskClosed(event.message.id);
     this.pluginEvent(event);
     this.checkWorkspaceSoon();

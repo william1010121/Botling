@@ -28,13 +28,13 @@ export class CorePluginWorld {
   private event(...a: Parameters<Core["event"]>) { return this.host.event(...a); }
   private followClaudeParts(...a: Parameters<Core["followClaudeParts"]>) { return this.host.followClaudeParts(...a); }
   private isSubBot(...a: Parameters<Core["isSubBot"]>) { return this.host.isSubBot(...a); }
-  private get lastPlugins() { return this.host.lastPlugins; }
-  private set lastPlugins(value: Core["lastPlugins"]) { this.host.lastPlugins = value; }
   private get ledger() { return this.host.ledger; }
   private log(...a: Parameters<Core["log"]>) { return this.host.log(...a); }
   private mainBot(...a: Parameters<Core["mainBot"]>) { return this.host.mainBot(...a); }
   private get maintainer() { return this.host.maintainer; }
   private get maintainerId() { return this.host.maintainerId; }
+  private markPluginsShown(...a: Parameters<Core["markPluginsShown"]>) { return this.host.markPluginsShown(...a); }
+  private nextSeq(...a: Parameters<Core["nextSeq"]>) { return this.host.nextSeq(...a); }
   private get options() { return this.host.options; }
   private get order() { return this.host.order; }
   private outId(...a: Parameters<Core["outId"]>) { return this.host.outId(...a); }
@@ -43,8 +43,6 @@ export class CorePluginWorld {
   private prepareRestart(...a: Parameters<Core["prepareRestart"]>) { return this.host.prepareRestart(...a); }
   private get profiles() { return this.host.profiles; }
   private get removed() { return this.host.removed; }
-  private get seq() { return this.host.seq; }
-  private set seq(value: Core["seq"]) { this.host.seq = value; }
   private studioNow(...a: Parameters<Core["studioNow"]>) { return this.host.studioNow(...a); }
   private get usage() { return this.host.usage; }
   private watchWorkspace(...a: Parameters<Core["watchWorkspace"]>) { return this.host.watchWorkspace(...a); }
@@ -102,7 +100,7 @@ export class CorePluginWorld {
         openPanel: (plugin, panel, title) => this.event({ type: "plugins.open", plugin, panel, title }),
         openTab: (plugin, view, botId) => this.event({ type: "plugins.openTab", plugin, view, botId }),
         // Straight to the app page, not through `event()`: no plugin, workspace or phone listener has anything to do with it.
-        frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? (this.mainBot()?.id ?? botId) : botId } : {}), data } }),
+        frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: this.nextSeq(), event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? (this.mainBot()?.id ?? botId) : botId } : {}), data } }),
         botFolder: (botId) => this.pluginBot(botId)?.profile.folder ?? null,
         botNote: (botId) => {
           const bot = this.pluginBot(botId);
@@ -163,8 +161,7 @@ export class CorePluginWorld {
           if (this.components.library.rescan()) for (const bot of this.bots.values()) bot.componentsChanged();
           this.componentsTick();
           const text = JSON.stringify(view);
-          if (text === this.lastPlugins) return;
-          this.lastPlugins = text;
+          if (!this.markPluginsShown(text)) return;
           this.event({ type: "plugins.updated", plugins: view });
         },
         pluginWritten: (name) => { const botId = this.activePluginWriter(); if (botId) options.pluginWritten?.(name, botId); },
