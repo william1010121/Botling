@@ -243,7 +243,12 @@ describe("M4-25 protocol & FeLink push support", () => {
       });
       return {
         send: (frame) => {
-          sentToServer.push(JSON.parse(frame) as Message);
+          const parsed = JSON.parse(frame) as Message;
+          sentToServer.push(parsed);
+          if (parsed.t === "push.subscribe") {
+            expect(decodeFrame(frame, "fe", { local: false }).ok).toBe(true);
+            return;
+          }
           inner.send(frame);
         },
         close: () => inner.close(),
@@ -502,7 +507,15 @@ describe("M4-25 page push opt-in UI and iOS Home Screen rules", () => {
         close: (d) => handlers.close(d),
       });
       return {
-        send: (frame) => { sentFrames.push(JSON.parse(frame) as Message); inner.send(frame); },
+        send: (frame) => {
+          const parsed = JSON.parse(frame) as Message;
+          sentFrames.push(parsed);
+          if (parsed.t === "push.subscribe") {
+            expect(decodeFrame(frame, "fe", { local: false }).ok).toBe(true);
+            return;
+          }
+          inner.send(frame);
+        },
         close: () => inner.close(),
       };
     };
@@ -532,12 +545,15 @@ describe("M4-25 page push opt-in UI and iOS Home Screen rules", () => {
       },
     });
     let perm: NotificationPermission = "default";
+    const NotificationMock = function Notification() {};
+    Object.defineProperty(NotificationMock, "permission", { configurable: true, get: () => perm });
+    Object.defineProperty(NotificationMock, "requestPermission", {
+      configurable: true,
+      value: async () => { permissionCalls += 1; perm = "granted"; return perm; },
+    });
     Object.defineProperty(globalThis, "Notification", {
       configurable: true,
-      value: Object.assign(function Notification() {}, {
-        get permission() { return perm; },
-        requestPermission: async () => { permissionCalls += 1; perm = "granted"; return perm; },
-      }),
+      value: NotificationMock,
     });
     Object.defineProperty(globalThis, "PushManager", { configurable: true, value: function PushManager() {} });
 
