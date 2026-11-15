@@ -11,8 +11,6 @@ import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings
 import type { AgyConfig } from "./agent/agy";
 import { mobileCommand } from '../mobile-bridge/adapter';
 import { ALL_BOTS } from '../mobile-bridge/scope';
-import { MobileDesk, OFF as MOBILE_OFF } from '../mobile-bridge/desk';
-import type { RelayConnector } from '../mobile-relay/connector';
 // The core: owns every bot's chat and head, and answers the contract's commands. It is
 // transport-agnostic: `receive` takes whatever arrived, `emit` is where answers and events go. It
 // validates everything it receives itself — main validating first is defense in depth, not the
@@ -21,23 +19,20 @@ import type { RelayConnector } from '../mobile-relay/connector';
 // Its data folder has the Swift app's layout (store/workspace.ts). On the first start with an
 // empty folder it imports a 1.x folder when one is given (read-only; store/importer.ts).
 import { mkdirSync } from "node:fs";
-import { basename, dirname, join, sep } from "node:path";
-import { commandGuidePath } from "./plugins/app-command";
+import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { linkIncoming, PendingFiles, servedType, writeIncoming } from "./attachments";
-import { studioWorld } from "./studio-world";
-import type { StudioWorld } from "./plugins/studio-seam";
+import { PendingFiles, writeIncoming } from "./attachments";
 import type { CodexModel } from "./agent/codex-models";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
-import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
+import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { claudeAutoCompactWindow, codexConfigFile } from "./engine-files";
 import { attachmentFile as attachmentLinkFile } from "../contract/attachment-url";
 import { lineHasLink } from "../browser-tab-menu";
 import { botName, firstLine, MemoryFiles } from "./projects";
 import { answerLabel } from "./attachments";
-import { ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound, type BotView, type Command, type Event, type Outbound, type ResultOf, type WaitingView, type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView, type PluginView } from "../contract";
+import { ContractError, PROTOCOL_VERSION, type Command, type Outbound, type ResultOf, type WaitingView, type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type PluginView } from "../contract";
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
 import { agyWorkerList } from "./agy-usage-db";
 import { AgentStore, migrationRecords } from "./store/agent-store";
@@ -48,19 +43,18 @@ import type { WorkerOwner } from "./agent/workers";
 import { AgentStatusWriter } from "./agent-status";
 import { filePath, pageInCard } from "./page-preview";
 import { PAGE_COMPONENT } from "./preview-url";
-import { Bot, NO_LONGER_NEEDED, type DeferredTurn, type GuestAnswer, type PresetTurnIds, type SessionStart, type SessionStartCodex, type Status as TurnStatus } from "./bot";
+import { Bot, NO_LONGER_NEEDED, type DeferredTurn, type SessionStart, type SessionStartCodex } from "./bot";
 import type { FetchRequest } from "./bot-tools";
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
-import { type Engine, type Heads } from "./heads";
-import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, profilePaths, savedLanguage, withPluginSections, type BotPrompts } from "./prompts";
+import { profilePaths } from "./prompts";
 import { StorageBook, storageItems } from "./storage";
 import { BotStore, readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
-import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
+import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { botFace } from "./faces";
 import { status, statusText } from "../contract/bot-status";
 import { currentChat, WorkspaceWatch, type BotSummary, type CurrentChat, type ShownChat, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
@@ -73,9 +67,8 @@ import { answeredNote, guestCardAnswerNote, pickedNote, relayedAnswerNote, type 
 import { ComponentsContext } from "./components/service";
 import { readdirSync } from "node:fs";
 import { FolderWatch } from "./folder-watch";
-import { agentContributions, agentStamp, claudeWiring, skillRootsWiring } from "./plugins/agent-contributions";
-import { claudeSkillFolders, placedSkillRoot } from "./plugins/engine-skills";
-import { Plugins, type BotInfo, type EngineCli, type PluginWorld } from "./plugins";
+import { agentStamp } from "./plugins/agent-contributions";
+import { Plugins, type EngineCli, type PluginWorld } from "./plugins";
 import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
@@ -90,6 +83,9 @@ import { CorePeerInbox } from "./server/peer-inbox";
 import { CoreProjects } from "./server/projects";
 import { CoreBots } from "./server/bots";
 import { CoreSubBots } from "./server/sub-bots";
+import { CorePluginSide } from "./server/plugin-side";
+import { CoreSend } from "./server/send";
+import { CoreEvents } from "./server/events";
 
 /** What the core asks of main (self-update.ts, plugins/app-seam.ts). */
 export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
@@ -262,13 +258,11 @@ export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; bo
 export class Core {
   readonly mainBotId: string;
   readonly maintainerId: string;
-  private readonly runMainBot: boolean;
+  readonly runMainBot: boolean;
   readonly doctor: DoctorModel;
   private agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
-  seq = 0;
-  private activated = false;
-  private inflight = new Map<string, AbortController>();
+  activated = false;
   private readonly ledger: ProcessLedger;
   /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
   private readonly usage: UsageBook;
@@ -287,8 +281,8 @@ export class Core {
   private get coreSubBots(): CoreSubBots { return (this.madeSubBots ??= new CoreSubBots(this)); }
   get bots() { return this.coreBots.bots; }
   set bots(value: CoreBots["bots"]) { this.coreBots.bots = value; }
-  private get order() { return this.coreBots.order; }
-  private set order(value: CoreBots["order"]) { this.coreBots.order = value; }
+  get order() { return this.coreBots.order; }
+  set order(value: CoreBots["order"]) { this.coreBots.order = value; }
   get profiles() { return this.coreBots.profiles; }
   set profiles(value: CoreBots["profiles"]) { this.coreBots.profiles = value; }
   private get newBot() { return this.coreBots.newBot; }
@@ -296,12 +290,23 @@ export class Core {
   get removed() { return this.coreBots.removed; }
   private get removedPluginBots() { return this.coreBots.removedPluginBots; }
   private get subBotsReported() { return this.coreSubBots.subBotsReported; }
+  private madePluginSide?: CorePluginSide;
+  private get corePluginSide(): CorePluginSide { return (this.madePluginSide ??= new CorePluginSide(this)); }
+  private madeSend?: CoreSend;
+  private get coreSend(): CoreSend { return (this.madeSend ??= new CoreSend(this)); }
+  private madeEvents?: CoreEvents;
+  private get coreEvents(): CoreEvents { return (this.madeEvents ??= new CoreEvents(this)); }
+  get seq() { return this.coreEvents.seq; }
+  set seq(value: CoreEvents["seq"]) { this.coreEvents.seq = value; }
+  private get inflight() { return this.coreEvents.inflight; }
+  get mobileDesk() { return this.coreEvents.mobileDesk; }
+  get relay() { return this.coreEvents.relay; }
   private get routineClock() { return this.coreWatch.routineClock; }
   private set routineClock(value: CoreWatch["routineClock"]) { this.coreWatch.routineClock = value; }
   private get watchClock() { return this.coreWatch.watchClock; }
   private set watchClock(value: CoreWatch["watchClock"]) { this.coreWatch.watchClock = value; }
-  private get components() { return this.coreWatch.components; }
-  private set components(value: CoreWatch["components"]) { this.coreWatch.components = value; }
+  get components() { return this.coreWatch.components; }
+  set components(value: CoreWatch["components"]) { this.coreWatch.components = value; }
   private get componentStamp() { return this.coreWatch.componentStamp; }
   private set componentStamp(value: CoreWatch["componentStamp"]) { this.coreWatch.componentStamp = value; }
   /** Newer signed releases, announced in the main bot's chat in developer mode (the developer tools are botling.dev). */
@@ -331,7 +336,6 @@ export class Core {
   readonly pluginStore: PluginStore;
   private get lastPlugins() { return this.coreWatch.lastPlugins; }
   private set lastPlugins(value: CoreWatch["lastPlugins"]) { this.coreWatch.lastPlugins = value; }
-  private settlingMaintainer = false;
   private get loadedClaudeParts() { return this.coreWatch.loadedClaudeParts; }
   private set loadedClaudeParts(value: CoreWatch["loadedClaudeParts"]) { this.coreWatch.loadedClaudeParts = value; }
   /** Whether the first chat.snapshot was held already (`firstSnapshotDelayMs`). */
@@ -339,7 +343,7 @@ export class Core {
   /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
   readonly conversations: Conversations;
   /** M5-06c: open `serverAsk` cards by the id of their chat line (the bot they are in, and how to end the wait). */
-  private serverAsks = new Map<string, { botId: string; close: (index: number | null) => void }>();
+  serverAsks = new Map<string, { botId: string; close: (index: number | null) => void }>();
   /** <open-question> copies in the main bot's chat: the copy's id → the question it copies. */
   copies = new Map<string, { botId: string; questionId: string }>();
   /** The app-wide agent registry (agents.json, A1): who owns each agent apart from who runs it. */
@@ -886,7 +890,7 @@ export class Core {
 
   writeInstructions(...a: Parameters<CoreBots["writeInstructions"]>) { return this.coreBots.writeInstructions(...a); }
 
-  private isSubBot(...a: Parameters<CoreBots["isSubBot"]>) { return this.coreBots.isSubBot(...a); }
+  isSubBot(...a: Parameters<CoreBots["isSubBot"]>) { return this.coreBots.isSubBot(...a); }
 
   private subBotRows(...a: Parameters<CoreBots["subBotRows"]>) { return this.coreBots.subBotRows(...a); }
 
@@ -1271,9 +1275,9 @@ export class Core {
   // ---- Agents (A2): reports, approvals, follow-ups and stops go to the owner; closing a sub bot ----
 
   /** Owner app turns carrying a report: turn id → the report (delivered once that turn starts). */
-  private reportTurns = new Map<string, { agentId: string; run: number }>();
+  reportTurns = new Map<string, { agentId: string; run: number }>();
   /** The turns that began while a report was being handed over (`deliverAgentReport`). */
-  private reportStarts: Set<string> | null = null;
+  reportStarts: Set<string> | null = null;
   /** Reports handed to an owner in this run of the core (redelivery after a restart goes once per run). */
   private reportsHanded = new Set<string>();
 
@@ -1416,7 +1420,7 @@ export class Core {
 
   makeSubBot(...a: Parameters<CoreSubBots["makeSubBot"]>) { return this.coreSubBots.makeSubBot(...a); }
 
-  private subBotReplied(...a: Parameters<CoreSubBots["subBotReplied"]>) { return this.coreSubBots.subBotReplied(...a); }
+  subBotReplied(...a: Parameters<CoreSubBots["subBotReplied"]>) { return this.coreSubBots.subBotReplied(...a); }
 
   private storeOf(...a: Parameters<CoreBots["storeOf"]>) { return this.coreBots.storeOf(...a); }
 
@@ -1513,7 +1517,7 @@ export class Core {
   }
 
   /** Resolve copies to their original, then persist the informational disposition everywhere. */
-  private ignoreQuestion(botId: string, messageId: string): { accepted: boolean } {
+  ignoreQuestion(botId: string, messageId: string): { accepted: boolean } {
     let chat = this.bot(botId), record = chat.line(messageId);
     const seen = new Set<string>();
     while (record?.sourceID && record.sourceMessageID) {
@@ -1563,7 +1567,7 @@ export class Core {
   }
 
   /** A bot's question was settled in its own chat: so is its copy (`closeCopies`). */
-  private closeCopiesOf(botId: string, messageId: string) {
+  closeCopiesOf(botId: string, messageId: string) {
     const original = this.bots.get(botId)?.line(messageId);
     if (original?.ignoredAt) {
       const chats = [...this.bots.values()];
@@ -1620,7 +1624,7 @@ export class Core {
   }
 
   /** A `serverAsk` card that is no longer open and was not picked: ignored (the pick, if any, reaches its own callback). */
-  private serverAskClosed(messageId: string): void {
+  serverAskClosed(messageId: string): void {
     const pending = this.serverAsks.get(messageId);
     if (!pending) return;
     const line = this.bots.get(pending.botId)?.line(messageId) ?? null;
@@ -1695,7 +1699,7 @@ export class Core {
   // The workspace for plugins (`api.workspace`, plugin-extraction.md §4.3): what the whiteboard reads,
   // one method each, read only. The main bot is "main" to plugins, as in `bots.list`.
 
-  private outId(id: string) {
+  outId(id: string) {
     return this.isMainBotId(id) ? "main" : id;
   }
 
@@ -1816,7 +1820,7 @@ export class Core {
   }
 
   /** Looks for a workspace change within a second (once, however many events come meanwhile). */
-  private checkWorkspaceSoon() {
+  checkWorkspaceSoon() {
     if (!this.workspaceWatch?.watching || this.workspaceTimer) return;
     this.workspaceTimer = setTimeout(() => { this.workspaceTimer = null; this.checkWorkspace(); }, 1_000);
     this.workspaceTimer.unref?.();
@@ -1844,7 +1848,7 @@ export class Core {
   }
 
   /** A refresh soon after a chat changed (several changes in a row make one). */
-  private waitingSoon() {
+  waitingSoon() {
     if (this.waitingTimer) return;
     this.waitingTimer = setTimeout(() => { this.waitingTimer = null; this.refreshWaiting(); }, 150);
     this.waitingTimer.unref?.();
@@ -1901,457 +1905,88 @@ export class Core {
     this.options.log?.(line);
   }
 
-  /** How plugins see a bot (`Workspace.info(for:)`): "main", or its id. */
-  /** The bot a plugin names ("main": the main bot), unless it was taken out of the column. */
-  private studioCache: StudioWorld | null = null;
-  private studioNow(): StudioWorld {
-    return (this.studioCache ??= studioWorld({
-      // Every chat a spec can be in (`chatsWithPins`).
-      chats: () => [...this.order.flatMap((id) => (this.removed.has(id) ? [] : [this.bots.get(id)!]))],
-      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
-      library: this.components.library,
-      commands: this.components.commands,
-      maintainer: this.maintainer,
-      maintainerBot: () => this.bots.get(this.maintainerId) ?? null,
-      componentBots: () => this.order.filter((id) => id !== this.maintainerId && !this.removed.has(id) && !this.isSubBot(id)).map((id) => this.bots.get(id)!),
-      componentsChanged: () => this.componentsTick(),
-      // Not "main" on a server that runs no main bot: its `Main (old)` keeps its own id, as in `bots.list`.
-      mainId: this.runMainBot ? this.mainBotId : "",
-    }));
-  }
+  studioNow(...a: Parameters<CorePluginSide["studioNow"]>) { return this.corePluginSide.studioNow(...a); }
 
-  pluginBot(botId: string): Bot | null {
-    const id = botId === "main" ? (this.mainBot()?.id ?? "") : botId;
-    return !id || this.removed.has(id) ? null : this.bots.get(id) ?? null;
-  }
+  pluginBot(...a: Parameters<CorePluginSide["pluginBot"]>) { return this.corePluginSide.pluginBot(...a); }
 
-  /** The workers seen at work, so each one's end is told once (`workerDone`). */
-  private readonly workersAtWork = new Set<string>();
+  pluginEvent(...a: Parameters<CorePluginSide["pluginEvent"]>) { return this.corePluginSide.pluginEvent(...a); }
 
-  /** What plugins listening with `events.on` hear of a core event. */
-  private pluginEvent(event: Event) {
-    if (!("botId" in event)) return;
-    const botId = this.outId(event.botId);
-    if (event.type === "message.added" && event.message.role === "user") {
-      this.plugins.event("messagePosted", { botId, role: "user", text: event.message.text, id: event.message.id });
-    } else if (event.type === "turn.started") {
-      this.plugins.event("turnStarted", { botId, turnId: event.turnId });
-    } else if (event.type === "turn.finished") {
-      if (event.status === "done" && event.text) this.plugins.event("messagePosted", { botId, role: "bot", text: event.text, id: event.messageId });
-      this.plugins.event("turnFinished", { botId, ok: event.status === "done", reply: event.text });
-    } else if (event.type === "subagent.updated") {
-      // Keyed by the worker and its run: the copy for an agent's owner, and views sent again, are not new ends.
-      const key = `${event.subagent.id}/${event.subagent.execution?.run ?? 0}`;
-      if (event.subagent.status === "running") {
-        if (this.workersAtWork.size < 2_000) this.workersAtWork.add(key);
-      } else if (this.workersAtWork.delete(key)) {
-        this.plugins.event("workerDone", { botId, workerId: event.subagent.id, status: event.subagent.status, report: event.subagent.result ?? "" });
-      }
-    }
-  }
+  activePluginWriter(...a: Parameters<CorePluginSide["activePluginWriter"]>) { return this.corePluginSide.activePluginWriter(...a); }
 
-  private activePluginWriter(): string | null {
-    if (this.settlingMaintainer) return this.maintainerId;
-    const maintainer = this.bots.get(this.maintainerId);
-    if (maintainer && (maintainer.view().working || maintainer.subagentsAtWork)) return this.maintainerId;
-    const pluginsRoot = join(this.options.dataDir, "plugins");
-    for (const bot of this.bots.values()) {
-      if (bot.profile.role === "main") continue;
-      const folder = bot.profile.folder;
-      if (folder !== pluginsRoot && !pluginsRoot.startsWith(folder + sep) && !folder.startsWith(pluginsRoot + sep)) continue;
-      if (bot.view().working || bot.subagentsAtWork) return bot.id;
-    }
-    return null;
-  }
+  botInfo(...a: Parameters<CorePluginSide["botInfo"]>) { return this.corePluginSide.botInfo(...a); }
 
-  botInfo(bot: Bot): BotInfo {
-    return { id: this.outId(bot.id), name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
-  }
+  replied(...a: Parameters<CorePluginSide["replied"]>) { return this.corePluginSide.replied(...a); }
 
-  /** A reply showed: plugins listening hear it; Maintainer's settles the component changes bots asked for. */
-  private replied(bot: Bot, record: ChatRecord) {
-    if (record.text) this.plugins.replied(this.botInfo(bot), record.text);
-    if (bot.profile.parent) this.subBotReplied(bot);
-    // A line of its reply that starts with @ and another bot's name calls that bot in (`receiveBotMention`).
-    this.conversations.receiveBotMention(record, bot);
-    // What the main bot wrote into an inbox goes to that bot now (1.x: after every main-bot reply).
-    if (bot.profile.role === "main") this.deliverInboxes();
-    if (bot.id === this.maintainerId) {
-      this.settlingMaintainer = true;
-      try { this.maintainer.settle(record); } finally { this.settlingMaintainer = false; }
-      this.plugins.event("libraryChanged", {});
-      // After the reply's own tags are acted on: a change from a spec panel that did not land is said there.
-      setImmediate(() => setImmediate(() => { this.plugins.event("maintainerReplied", { role: record.role, text: record.text.slice(0, 2_000), running: bot.subagentsAtWork }); this.componentsTick(); }));
-      this.componentsTick();
-    }
-  }
+  serverSend(...a: Parameters<CorePluginSide["serverSend"]>) { return this.corePluginSide.serverSend(...a); }
 
-  /**
-   * Botling 3's server: `chat.send` whose intent the server already committed, with the ids it recorded (the user's
-   * line, the turn, the reply's line). Everything else is 2.x's `chat.send`.
-   */
-  serverSend(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }, ids: PresetTurnIds, uploads: Array<{ path: string; name: string }> = []): Promise<ResultOf<"chat.send">> {
-    return this.send(botId, text, { ...options, ids }, uploads);
-  }
+  serverUserLine(...a: Parameters<CorePluginSide["serverUserLine"]>) { return this.corePluginSide.serverUserLine(...a); }
 
-  /**
-   * Botling 3's server: the user's line of a `chat.send` it is committing (or committed before a crash), in the bot's
-   * chat now (`Bot.presetUserLine`); its turn's `serverSend` later finds it by id. `time`: the line's ISO time in the log.
-   */
-  serverUserLine(botId: string, line: { id: string; text: string; time: string; replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }): boolean {
-    const ms = Date.parse(line.time);
-    return this.bot(botId).presetUserLine({
-      id: line.id, text: line.text, date: toSwiftDate(Number.isFinite(ms) ? ms : Date.now()),
-      ...(line.replyTo ? { replyTo: line.replyTo } : {}), ...(line.to ? { to: line.to } : {}),
-    });
-  }
+  serverTurn(...a: Parameters<CorePluginSide["serverTurn"]>) { return this.corePluginSide.serverTurn(...a); }
 
-  /** Botling 3's server: a turn it recorded before a restart (a routine's run, an answer's message), started now. */
-  serverTurn(botId: string, spec: Parameters<Bot["startPresetTurn"]>[0]): { turnId: string; done: Promise<TurnStatus> } {
-    return this.bot(botId).startPresetTurn(spec);
-  }
+  serverCallIn(...a: Parameters<CorePluginSide["serverCallIn"]>) { return this.corePluginSide.serverCallIn(...a); }
 
-  /**
-   * Botling 3's server (M5-02b): the guest's turn of a call-in from a bot on another server, run in the guest's own
-   * session (`Bot.groupTurn`, as a 2.x call-in is) and kept in the guest's own chat afterwards (`Bot.keepCallIn`), as
-   * 2.x does. `prompt` and `note` are built and cleaned by the caller (they carry peer text). `signal` ends the wait and
-   * the turn (the host gave up, D51); the answer is then `failed` with why "cancelled".
-   */
-  async serverCallIn(guestId: string, prompt: string, call: {
-    host: { botId: string; name: string }; asked: string; by: "user" | "bot"; note: string;
-    busyWaitMs: number; answerMs: number; onBegin: () => void; signal?: AbortSignal;
-  }): Promise<GuestAnswer> {
-    const bot = this.bots.get(guestId);
-    if (!bot) return { kind: "failed", why: "It is not running." };
-    const askedAt = toSwiftDate();
-    const answer = await bot.groupTurn(prompt, call.busyWaitMs, call.answerMs, {
-      callIn: call.host.botId, asked: call.asked, ...(call.by === "user" ? { by: "user" as const } : {}), onBegin: call.onBegin, ...(call.signal ? { signal: call.signal } : {}),
-    });
-    if (answer.kind === "reply") {
-      const line: ChatRecord = { id: newId(), role: "bot", text: answer.text, date: toSwiftDate(), steps: answer.steps, engine: answer.engine };
-      bot.keepCallIn(call.note, askedAt, line);
-    }
-    return answer;
-  }
+  hasBot(...a: Parameters<CorePluginSide["hasBot"]>) { return this.corePluginSide.hasBot(...a); }
 
-  /** Botling 3's server: whether `botId` is one of the core's bots. */
-  hasBot(botId: string): boolean {
-    return this.profiles.some((profile) => profile.id === botId);
-  }
+  botView(...a: Parameters<CorePluginSide["botView"]>) { return this.corePluginSide.botView(...a); }
 
-  /** Botling 3's server: a bot's current view (its summary row in the server's srv: table), or null. */
-  botView(bot: Bot): BotView {
-    const view = bot.view();
-    return bot.id === this.maintainerId ? { ...view, maintainer: true } : view;
-  }
+  serverBotView(...a: Parameters<CorePluginSide["serverBotView"]>) { return this.corePluginSide.serverBotView(...a); }
 
-  serverBotView(botId: string): BotView | null {
-    const bot = this.bots.get(botId);
-    return bot ? this.botView(bot) : null;
-  }
+  botIds(...a: Parameters<CorePluginSide["botIds"]>) { return this.corePluginSide.botIds(...a); }
 
-  /** Botling 3's server: the bots the core has now. */
-  botIds(): string[] {
-    return this.profiles.map((profile) => profile.id);
-  }
+  reloadPluginSecrets(...a: Parameters<CorePluginSide["reloadPluginSecrets"]>) { return this.corePluginSide.reloadPluginSecrets(...a); }
 
-  /** Botling 3's server (M6-06): re-opens plugin secrets once a window attaches and syncs the host. */
-  reloadPluginSecrets(): Promise<void> {
-    return this.plugins.reloadSecrets();
-  }
+  pendingFiles(...a: Parameters<CorePluginSide["pendingFiles"]>) { return this.corePluginSide.pendingFiles(...a); }
 
-  /** Botling 3's server: files waiting in a bot's input box (they go with the next message, even an empty one). */
-  pendingFiles(botId: string): number {
-    return this.pending.list(botId).length;
-  }
+  checkRemoveBot(...a: Parameters<CorePluginSide["checkRemoveBot"]>) { return this.corePluginSide.checkRemoveBot(...a); }
 
-  /** Botling 3's server: throws what `bots.remove` would refuse with (`removeBot`), before its intent is stored. */
-  checkRemoveBot(id: string): void {
-    this.checkBot(id);
-    const profile = this.profiles.find((candidate) => candidate.id === id);
-    if (!profile) throw new ContractError("not_found", "No such bot.");
-    if (profile.role === "main" || id === this.mainBotId || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
-  }
 
-  /**
-   * Botling 3's server: the core-set commands it applies inside its own transaction. Synchronous, the same handlers
-   * as `handle`: what they emit meanwhile is stored in that transaction, and a turn they start is kept aside by
-   * `deferTurn` (the server routes it after the commit).
-   */
-  applyNow(cmd: ApplyNowCommand): unknown {
-    if (!this.activated) throw new ContractError("conflict", "Waiting for the update boot receipt to commit. Please try again shortly.");
-    switch (cmd.type) {
-      case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
-      case "chat.ignoreQuestion": return this.ignoreQuestion(cmd.botId, cmd.messageId);
-      case "chat.choose": return this.calledInPick(cmd.botId, cmd.messageId, cmd.index) ?? this.bot(cmd.botId).choose(cmd.messageId, cmd.index, cmd.text);
-      case "chat.answer": {
-        const files = (cmd.images ?? []).flatMap((image) => writeIncoming(join(this.options.dataDir, "incoming"), image.name, image.base64) ?? []);
-        try {
-          if (cmd.picks) return this.calledInGroupAnswer(cmd.botId, cmd.messageId, cmd.picks, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files, cmd.picks);
-          return this.calledInAnswer(cmd.botId, cmd.messageId, cmd.text, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files);
-        } finally { for (const file of files) rmSync(file, { force: true }); }
-      }
-      case "component.approve": return this.bot(cmd.botId).componentApprove(cmd.messageId, cmd.index, cmd);
-      case "settings.set": return this.changeSetting(cmd.change);
-      case "bots.create": {
-        const made = this.makeBot(cmd.name, cmd.job, { setUp: true });
-        if (made.kind === "empty") throw new ContractError("bad_request", "A bot needs a name and a job.");
-        if (made.kind === "taken" || made.kind === "removedByUser") throw new ContractError("conflict", `No bot was made: the name "${botName(cmd.name)}" is already used by a project or the app.`);
-        return { botId: made.botId, created: made.kind === "made" };
-      }
-    }
-  }
+  applyNow(...a: Parameters<CoreSend["applyNow"]>) { return this.coreSend.applyNow(...a); }
 
-  /** Your message through the plugins' beforeSend hooks first; one can change it or stop it (`Workspace.send`). */
-  private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; ids?: PresetTurnIds }, uploads: Array<{ path: string; name: string }> = []): Promise<ResultOf<"chat.send">> {
-    const bot = this.bot(botId);
-    // A message to a bot in Idle brings it back to the list (the user is talking to it again).
-    const idle = this.settingsNow().idleBots ?? [];
-    if (idle.includes(botId.toUpperCase())) this.changeSetting({ key: "idleBots", value: idle.filter((id) => id !== botId.toUpperCase()) });
-    // The files waiting in its input box go with the message (1.x sends them all).
-    const files = this.pending.take(botId);
-    // Botling 3 uploads (M2 step 12): the server's checked file under the name the page gave, as an incoming copy, so
-    // it lands in the bot's attachments folder like a pasted file (`keep` copies it; the incoming name goes after).
-    const incoming = uploads.length ? linkIncoming(join(this.options.dataDir, "incoming"), uploads) : [];
-    try {
-      // Picked or dropped files on disk go by their own path; the incoming copies are copied (`keep`).
-      const result = await this.sendWith(bot, text, { ...options, files: [...files.map((file) => file.path), ...incoming], originals: files.filter((file) => !file.incoming).map((file) => file.path) });
-      if (result.stoppedBy) this.pending.restore(botId, files);
-      else this.pending.done(files);
-      return result;
-    } catch (error) {
-      this.pending.restore(botId, files);
-      throw error;
-    } finally {
-      for (const path of incoming) rmSync(dirname(path), { recursive: true, force: true });
-    }
-  }
+  send(...a: Parameters<CoreSend["send"]>) { return this.coreSend.send(...a); }
 
-  private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; files: string[]; originals?: string[]; ids?: PresetTurnIds }): Promise<ResultOf<"chat.send">> {
-    if (!text.trim() && !options.files.length) throw new ContractError("bad_request", "Nothing to send.");
-    const outcome = await this.plugins.beforeSend(this.botInfo(bot), text);
-    if ("stoppedBy" in outcome) {
-      const plugin = this.plugins.registry.plugin(outcome.stoppedBy);
-      const name = plugin ? (plugin.manifest.displayName ?? plugin.manifest.name) : outcome.stoppedBy;
-      const messageId = bot.appNotice(`Plugin "${name}" stopped this message: ${text}`);
-      return { messageId, turnId: null, stoppedBy: outcome.stoppedBy };
-    }
-    const words = outcome.send.slice(0, 100_000) || text;
-    // Bots you named with @ are called in: they answer here too, after reading the chat (`Workspace.send`).
-    const called = this.conversations.calledIn(words, bot.id);
-    const appNote = this.conversations.notes(bot, called, words);
-    const sent = bot.send(words, { ...options, ...(appNote ? { appNote } : {}) });
-    if (called.length) {
-      // The line this message made (Botling 3's server: by its id, since lines sent after it may be in the chat already).
-      const userId = options.ids?.userId;
-      const newest = (userId ? bot.lines().find((line) => line.id === userId) : undefined) ?? bot.lines().findLast((line) => line.role === "user");
-      if (newest) this.conversations.startCallIn(bot, called, newest.id, null);
-    }
-    specTrace("callin", "UserLine", { chat: bot.id, to: called[0]?.id ?? null, pending: this.conversations.callIns(bot.id) });
-    return sent;
-  }
+  sendWith(...a: Parameters<CoreSend["sendWith"]>) { return this.coreSend.sendWith(...a); }
 
-  /** A file the chat origin may serve for this bot: one of its lines' attachments, or one waiting in its input box. */
-  /** `line`: the line showing it, whose copy of the picture (as it was when the line was posted) is served when there is one. */
-  private attachmentFile(botId: string, ref: string, line?: string): ResultOf<"attachment.file"> {
-    const bot = this.bot(botId);
-    let path: string | null = null;
-    if (ref.startsWith("pending:")) path = this.pending.get(botId, ref.slice(8))?.path ?? null;
-    else path = bot.attachmentPath(ref, line);
-    if (!path) throw new ContractError("not_found", "No such attachment.");
-    return { path, type: servedType(path) };
-  }
+  attachmentFile(...a: Parameters<CoreSend["attachmentFile"]>) { return this.coreSend.attachmentFile(...a); }
 
-  private settingsFile(): Record<string, unknown> | undefined {
-    try {
-      const value = readJSON(Layout.settings(this.options.dataDir));
-      return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-    } catch {
-      return undefined;
-    }
-  }
+  settingsFile(...a: Parameters<CoreSend["settingsFile"]>) { return this.coreSend.settingsFile(...a); }
 
-  /** settings.json as 1.x writes it (`AppSettings`): only the keys the prompts need. */
-  private settings(): { language: string | undefined; results: string | undefined } {
-    const value = this.settingsFile();
-    return { language: value?.languageChoice as string | undefined, results: value?.resultPublishingChoice as string | undefined };
-  }
+  settings(...a: Parameters<CoreSend["settings"]>) { return this.coreSend.settings(...a); }
 
-  /** The app's language: settings.json's, else the system's (`AppLanguage.preferred`). */
-  private language() {
-    const settings = this.settings();
-    return savedLanguage(settings.language) ?? preferredLanguage(this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale]);
-  }
+  language(...a: Parameters<CoreSend["language"]>) { return this.coreSend.language(...a); }
 
-  /** The bot's instructions (Prompts.swift's), from its profile and the app's settings. */
-  /** `workingFolder`: the app worktree the session starts in, when there is one. */
-  prompts(profile: BotProfile, engine: Engine = "claude", heads: Heads | null = null, workingFolder: string | null = null): BotPrompts {
-    const settings = this.settings();
-    const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
-    return desktopPrompts(botPrompts({
-      profile: { ...profile, instructions: profile.instructions ?? null },
-      language: savedLanguage(settings.language) ?? preferredLanguage(languages),
-      results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
-      engine,
-      heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
-      workingFolder: workingFolder !== profile.folder ? workingFolder : null,
-      parentName: profile.parent ? this.profiles.find((candidate) => candidate.id === profile.parent)?.name ?? null : null,
-    }), profile, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app", withPluginSections(this.promptSections()));
-  }
+  prompts(...a: Parameters<CoreSend["prompts"]>) { return this.coreSend.prompts(...a); }
 
-  /** The prompt sections plugins give, each that names a command with that command's line and guide (none without one). */
-  private promptSections() {
-    const commands = this.plugins.agentCommands();
-    return this.plugins.promptSections().flatMap((section) => {
-      if (section.command === undefined) return [section];
-      const command = commands.find((candidate) => candidate.plugin === section.plugin && candidate.id === section.command);
-      const line = command ? this.options.runCommand?.(command) : null;
-      return command && line ? [{ ...section, tool: { command: line, docs: command.docs ? this.commandGuide(command) : "" } }] : [];
-    });
-  }
+  promptSections(...a: Parameters<CoreSend["promptSections"]>) { return this.coreSend.promptSections(...a); }
 
-  /**
-   * The path bots are told for a command's guide: one that stays the same (`<data>/plugin-guides/<plugin>/…`, a link to the plugin
-   * folder whose script the command runs: an override's, else the shipped one), so the prompt does not change when an override
-   * comes or goes and a rebuilt guide is read by the next report a bot writes. Re-pointed each time prompts are built.
-   */
-  /**
-   * What enabled plugins give a new head (agent-contributions.ts, engine-skills.ts): Claude's --plugin-dir folders (its parts,
-   * and one made for each skill folder outside them, under `<data>/plugin-skills/claude`), the secrets' environment, the MCP
-   * tools, and the skill folders Codex and Antigravity are pointed at. Skill folders go through `skillPlace`.
-   */
-  private agentWiring(): { dirs: string[]; env: Record<string, string>; tools: string[]; skillRoots: string[] } {
-    const contributions = agentContributions(this.plugins.registry);
-    const place = (plugin: string, root: string) => this.skillPlace(plugin, root);
-    const own = contributions.skillRoots.filter((entry) => !entry.claude).map((entry) => ({ plugin: entry.plugin, root: place(entry.plugin, entry.root) }));
-    return { ...claudeWiring(contributions, claudeSkillFolders(own, join(this.options.dataDir, "plugin-skills", "claude"))), skillRoots: skillRootsWiring(contributions, place) };
-  }
+  agentWiring(...a: Parameters<CoreSend["agentWiring"]>) { return this.coreSend.agentWiring(...a); }
 
-  /** The path engines are told for a plugin's skill folder (engine-skills.ts `placedSkillRoot`). */
-  private skillPlace(plugin: string, root: string): string {
-    const command = this.plugins.agentCommands().find((candidate) => candidate.plugin === plugin && candidate.docs);
-    return placedSkillRoot(root, command, join(this.options.dataDir, "plugin-guides"), this.options.pluginOverrides ?? null);
-  }
+  skillPlace(...a: Parameters<CoreSend["skillPlace"]>) { return this.coreSend.skillPlace(...a); }
 
-  private commandGuide(command: { plugin: string; folder: string; flag: string; docs: string | null }): string {
-    return commandGuidePath({ ...command, docs: command.docs! }, join(this.options.dataDir, "plugin-guides"), this.options.pluginOverrides ?? null);
-  }
+  commandGuide(...a: Parameters<CoreSend["commandGuide"]>) { return this.coreSend.commandGuide(...a); }
 
-  event(event: Event) {
-    // A removed bot (still stopping) is heard no more.
-    if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
-    if (event.type === "bot.updated" && event.bot.id === this.maintainerId && event.bot.maintainer !== true) {
-      event = { ...event, bot: { ...event.bot, maintainer: true } };
-    }
-    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
-    if (event.type === "message.updated" && this.serverAsks.size) this.serverAskClosed(event.message.id);
-    this.pluginEvent(event);
-    this.checkWorkspaceSoon();
-    // An agent another bot owns: its owner's view of it follows too.
-    if (event.type === "subagent.updated") {
-      const record = this.agents.byHostBot(event.botId, event.subagent.id);
-      if (record && isDetached(record) && !this.removed.has(record.owner.botId) && this.bots.has(record.owner.botId)) {
-        this.event({ ...event, botId: record.owner.botId, subagent: { ...event.subagent, owner: this.agentBotName(record.owner.botId).slice(0, 200), host: this.agentBotName(record.host.botId).slice(0, 200) } });
-      }
-    }
-    // A sub bot's row under its project bot follows it (working or not, unread).
-    if (event.type === "bot.updated" && event.bot.parent) this.bots.get(event.bot.parent)?.refresh();
-    if (this.changeListeners.size) {
-      const botId = event.type === "bot.updated" ? event.bot.id : "botId" in event ? event.botId : undefined;
-      for (const listener of [...this.changeListeners]) { try { listener(botId === undefined ? {} : { botId }); } catch { /* a listener never stops the core */ } }
-    }
-    // An owner's turn with an agent's report began: that report is delivered.
-    if (event.type === "turn.started") {
-      this.reportStarts?.add(event.turnId);
-      const report = this.reportTurns.get(event.turnId);
-      if (report) { this.reportTurns.delete(event.turnId); this.agents.reportDelivered(report.agentId, report.run); }
-    }
-    // A question copied into the main bot's chat was settled in its own: so is the copy.
-    if (event.type === "message.updated" && (this.copies.size || event.message.ignoredAt)) this.closeCopiesOf(event.botId, event.message.id);
-    // A called-in bot's question relayed into the chat that called it was answered in its own: so is the copy there.
-    if (event.type === "message.updated") this.closeRelayedCopies(event.botId, event.message.id);
-    // A question asked or answered, a bot added: what waits on you may have changed.
-    if (event.type === "message.added" || event.type === "message.updated" || event.type === "message.removed" || event.type === "bot.updated") this.waitingSoon();
-  }
 
-  private changeListeners = new Set<(change: { botId?: string }) => void>();
-  /** The phone bridge's event stream: told that something changed (and in which bot), never what. */
-  onChange(listener: (change: { botId?: string }) => void): () => void {
-    this.changeListeners.add(listener);
-    return () => { this.changeListeners.delete(listener); };
-  }
+  event(...a: Parameters<CoreEvents["event"]>) { return this.coreEvents.event(...a); }
 
-  private mobileDesk: MobileDesk | null = null;
-  /** Called once by the bridge's start when the phone connection is configured (mobile-bridge/start.ts). */
-  attachMobile(desk: MobileDesk) { this.mobileDesk = desk; }
-  private mobileOr(): MobileDesk { if (!this.mobileDesk) throw new Error("The phone connection is not set up."); return this.mobileDesk; }
-  private relay: RelayConnector | null = null;
-  /** Called once at startup (mobile-relay/start.ts): the end-to-end encrypted relay, off until Settings › Phone gives it an address. */
-  attachRelay(relay: RelayConnector) { this.relay = relay; }
-  /** Settings › Phone: the bridge's routes and phones, plus the relay and the phones paired through it. */
-  private mobileView() {
-    const view = this.mobileDesk ? this.mobileDesk.view() : MOBILE_OFF;
-    if (!this.relay) return view;
-    const relayed = this.relay.devices().map(({ id, label, pairedAt, expiresAt, botIds }) => ({ id, label: label ?? "", pairedAt, expiresAt, botIds: [...botIds], via: "relay" as const }));
-    return { ...view, devices: [...view.devices.map((device) => ({ ...device, via: "bridge" as const })), ...relayed].sort((a, b) => b.pairedAt - a.pairedAt), relay: this.relay.view() };
-  }
+  onChange(...a: Parameters<CoreEvents["onChange"]>) { return this.coreEvents.onChange(...a); }
 
-  /** Settings › Machines (remote/service.ts); off when this app runs no remote workers (tests, probes). */
-  private machinesView(): MachinesView {
-    return this.options.remoteWorkers?.view() ?? { enabled: false, relay: { url: null, state: "off" }, machines: [] };
-  }
-  private machinesOr() {
-    const remote = this.options.remoteWorkers;
-    if (!remote) throw new ContractError("conflict", "Workers on other machines are not available here.");
-    return remote;
-  }
+  attachMobile(...a: Parameters<CoreEvents["attachMobile"]>) { return this.coreEvents.attachMobile(...a); }
 
-  /** Private mobile transport: the guard and handle's synchronous send prefix share this loop. */
-  mobileCommand(raw: unknown, allowedBots: readonly string[]) {
-    return mobileCommand({
-      pending: botId => this.pending.views(botId),
-      snapshot: botId => this.snapshot(botId),
-      history: command => this.bot(command.botId).history(command.before, command.bytes, command.until),
-      handle: command => this.handle(command, new AbortController().signal),
-    }, raw, allowedBots);
-  }
+  mobileOr(...a: Parameters<CoreEvents["mobileOr"]>) { return this.coreEvents.mobileOr(...a); }
 
-  /** Handles one message from main. Exactly one response per request id, cancelled or not. */
-  receive(raw: unknown) {
-    const parsed = parseInbound(raw);
-    if (!parsed.ok) {
-      this.log(`refused: ${parsed.error.code} ${parsed.error.message}`);
-      if (parsed.id) this.options.emit(errorResponse(parsed.id, parsed.error));
-      return;
-    }
-    const message = parsed.value;
-    if ("cancel" in message) {
-      this.inflight.get(message.cancel)?.abort();
-      return;
-    }
-    if (this.inflight.has(message.id)) {
-      this.options.emit(errorResponse(message.id, { code: "conflict", message: "A request with this id is already running." }));
-      return;
-    }
-    const controller = new AbortController();
-    this.inflight.set(message.id, controller);
-    const cancelled = new Promise<never>((_, reject) =>
-      controller.signal.addEventListener("abort", () => reject(new ContractError("cancelled", "The request was cancelled."))),
-    );
-    cancelled.catch(() => {});
-    Promise.resolve()
-      .then(() => Promise.race([this.handle(message.cmd, controller.signal), cancelled]))
-      .then((result) => this.options.emit(okResponse(message.id, result)))
-      .catch((error) => {
-        const wire = error instanceof ContractError ? error.toWire() : { code: "internal" as const, message: String((error as Error)?.message ?? error) };
-        if (wire.code === "internal") this.log(`internal error: ${(error as Error)?.stack ?? error}`);
-        this.options.emit(errorResponse(message.id, wire));
-      })
-      .finally(() => this.inflight.delete(message.id));
-  }
+  attachRelay(...a: Parameters<CoreEvents["attachRelay"]>) { return this.coreEvents.attachRelay(...a); }
+
+  mobileView(...a: Parameters<CoreEvents["mobileView"]>) { return this.coreEvents.mobileView(...a); }
+
+  machinesView(...a: Parameters<CoreEvents["machinesView"]>) { return this.coreEvents.machinesView(...a); }
+
+  machinesOr(...a: Parameters<CoreEvents["machinesOr"]>) { return this.coreEvents.machinesOr(...a); }
+
+  mobileCommand(...a: Parameters<CoreEvents["mobileCommand"]>) { return this.coreEvents.mobileCommand(...a); }
+
+  receive(...a: Parameters<CoreEvents["receive"]>) { return this.coreEvents.receive(...a); }
 
   /** Your pick on a called-in bot's line goes back to it (`answerCallIn`); null: not such a line. */
-  private calledInPick(botId: string, messageId: string, index: number): { accepted: boolean } | null {
+  calledInPick(botId: string, messageId: string, index: number): { accepted: boolean } | null {
     const chat = this.bot(botId);
     const record = chat.line(messageId);
     if (!record || !this.conversations.isCalledIn(record, chat.id)) return null;
@@ -2363,7 +1998,7 @@ export class Core {
   }
 
   /** Your words on a called-in bot's question go back to it. */
-  private calledInAnswer(botId: string, messageId: string, text: string, files: number): { accepted: boolean } | null {
+  calledInAnswer(botId: string, messageId: string, text: string, files: number): { accepted: boolean } | null {
     const chat = this.bot(botId);
     const record = chat.line(messageId);
     if (!record || !this.conversations.isCalledIn(record, chat.id) || !record.choices?.length) return null;
@@ -2432,7 +2067,7 @@ export class Core {
   }
 
   /** A called-in bot answered in its own chat on a question relayed into other chats: every open copy shows the answer. */
-  private closeRelayedCopies(botId: string, messageId: string) {
+  closeRelayedCopies(botId: string, messageId: string) {
     const original = this.bots.get(botId)?.line(messageId);
     if (!original || original.role !== "bot" || original.sourceMessageID || isOpenQuestion(original) || original.ignoredAt
       || !(original.choices?.length || original.questions?.length)) return;
@@ -2447,7 +2082,7 @@ export class Core {
   }
 
   /** A called-in bot's question group answered together: its one answer message goes to that bot, as words would. */
-  private calledInGroupAnswer(botId: string, messageId: string, picks: QuestionPick[], files: number): { accepted: boolean } | null {
+  calledInGroupAnswer(botId: string, messageId: string, picks: QuestionPick[], files: number): { accepted: boolean } | null {
     const record = this.bot(botId).line(messageId);
     if (!record || !this.conversations.isCalledIn(record, botId)) return null;
     const questions = savedQuestions(record.questions);
@@ -2471,7 +2106,7 @@ export class Core {
     return bot;
   }
 
-  private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
+  async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
     if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "doctor.view", "attachment.file", "card.image", "link.authorize", "chat.shown"]).has(cmd.type)) {
       throw new ContractError("conflict", "Waiting for the update boot receipt to commit. Please try again shortly.");
     }
@@ -2764,7 +2399,7 @@ export class Core {
     };
   }
 
-  private settingsNow(): SettingsView {
+  settingsNow(): SettingsView {
     return { ...settingsView(readSettings(Layout.settings(this.options.dataDir)), this.language()), agyPermissionSessions: agyPermissionSessions(),
       claudeAutoCompactWindow: claudeAutoCompactWindow(), codexConfigFile: codexConfigFile() };
   }
@@ -2786,7 +2421,7 @@ export class Core {
   }
 
   /** One change on the Settings page: saved in settings.json (other keys kept), then told to every window. */
-  private changeSetting(change: SettingsChange): SettingsView {
+  changeSetting(change: SettingsChange): SettingsView {
     const file = Layout.settings(this.options.dataDir);
     const before = readSettings(file);
     const developerBefore = this.developerProject();
