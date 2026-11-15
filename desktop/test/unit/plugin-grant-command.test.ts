@@ -15,6 +15,7 @@ import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "..
 import { COMMAND_ROUTES, IntentRuntime } from "../../src/server/intents";
 import { LiveChannel } from "../../src/server/live";
 import { LogHub } from "../../src/server/log";
+import { reconcilePluginRows } from "../../src/server/replica/plugin-rows";
 import { ownTableStream, putRow, readRowBody } from "../../src/server/replica/tables";
 import { RosterStore } from "../../src/server/roster";
 import {
@@ -563,8 +564,8 @@ describe("M5-14a: plugin.grant command and owner-side apply", () => {
       message: { outcome: { kind: "refused", reason: "changed" } },
     });
 
-    // Old hash still in grants (HASH_1) IS known -> applies.
-    const oldKnown = await sendLocal(2, {
+    // Old hash still in grants (HASH_1) IS known: raising it above its stored grant is refused ...
+    const oldRaised = await sendLocal(2, {
       type: "plugin.grant",
       plugin: "my.plugin",
       codeHash: HASH_1,
@@ -572,13 +573,19 @@ describe("M5-14a: plugin.grant command and owner-side apply", () => {
       reads: ["chat.snapshot"],
       requests: ["chat.send"],
     });
+    expect(oldRaised).toMatchObject({
+      status: "result",
+      message: { outcome: { kind: "refused", reason: "invalid", detail: "above what the plugin asks" } },
+    });
+    // ... re-stating (or lowering) it applies.
+    const oldKnown = await sendLocal(3, { type: "plugin.grant", plugin: "my.plugin", codeHash: HASH_1, tier: "read", reads: [], requests: [] });
     expect(oldKnown).toMatchObject({
       status: "result",
       message: { outcome: { kind: "applied", result: { applied: true } } },
     });
 
     // Missing plugin -> changed.
-    const missingPlugin = await sendLocal(3, {
+    const missingPlugin = await sendLocal(4, {
       type: "plugin.grant",
       plugin: "absent.plugin",
       codeHash: HASH_1,
@@ -812,5 +819,52 @@ describe("M5-14a: plugin.grant command and owner-side apply", () => {
     );
     expect(coreRes).toMatchObject({ ok: false, error: { code: "not_found" } });
     await core.shutdown();
+  });
+
+  it("9. review fixes: plugin.grant never grantable (F3); built-in grants not user-changeable (F4); revoking nothing is not audited (F5); the audit records the tier (F6)", async () => {
+    const s = await startTestServer();
+    let n = 0;
+    const send = (cmd: Command) => s.runtime.receive(
+      { slot: { origin: "desktop", originEpoch: EPOCH_A, target: s.serverStream as StreamId, n: ++n }, floor: 1, inc: s.inc(), cmd } as CmdBody,
+      { scope: "local" },
+    );
+    const rowOf = (name: string) => PluginRow.parse(readRowBody(s.db(), s.serverStream, `plugin:${name}`));
+    const revOf = (name: string) => Number(s.db().prepare("SELECT rev FROM rows WHERE stream = ? AND key = ?").get(s.serverStream, `plugin:${name}`)!.rev);
+
+    // F3: even when the manifest asks for it, `plugin.grant` in `requests` is refused invalid and nothing is written.
+    await seedPlugin(s, "asks.grant", samplePluginRow({ requests: ["plugin.grant", "chat.send"] }));
+    const asksGrant = await send({ type: "plugin.grant", plugin: "asks.grant", codeHash: HASH_1, tier: "request", reads: [], requests: ["chat.send", "plugin.grant"] });
+    expect(asksGrant).toMatchObject({ status: "result", message: { outcome: { kind: "refused", reason: "invalid", detail: "plugin.grant cannot be granted to a plugin" } } });
+    expect(rowOf("asks.grant").grants[HASH_1]).toBeUndefined();
+    expect(readGrantAudits(s.db(), s.serverStream)).toHaveLength(0);
+
+    // F4: a built-in's grant is neither revoked nor changed by the user; a reconcile keeps it.
+    const builtinGrant = { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: 1_000 } as const;
+    await seedPlugin(s, "builtin.one", { ...samplePluginRow({ tier: "write" }), author: "builtin", grants: { [HASH_1]: builtinGrant } });
+    for (const tier of ["none", "read", "write"] as const) {
+      const attempt = await send({ type: "plugin.grant", plugin: "builtin.one", codeHash: HASH_1, tier, reads: [], requests: [] });
+      expect(attempt).toMatchObject({ status: "result", message: { outcome: { kind: "refused", reason: "invalid", detail: "built-in" } } });
+    }
+    expect(rowOf("builtin.one").grants[HASH_1]).toEqual(builtinGrant);
+    const manifest = rowOf("builtin.one").manifest;
+    await s.store.submit((tx) => {
+      reconcilePluginRows(tx, ownTableStream(tx), [{ name: "builtin.one", codeHash: HASH_1, manifest, author: "builtin" }], 5_000);
+    });
+    expect(rowOf("builtin.one").grants[HASH_1]).toEqual(builtinGrant);
+    expect(readGrantAudits(s.db(), s.serverStream)).toHaveLength(0);
+
+    // F5: revoking a grant that does not exist is applied, changes nothing and writes no audit row.
+    await seedPlugin(s, "plain", samplePluginRow());
+    const revBefore = revOf("plain");
+    const revokeNothing = await send({ type: "plugin.grant", plugin: "plain", codeHash: HASH_1, tier: "none", reads: [], requests: [] });
+    expect(revokeNothing).toMatchObject({ status: "result", message: { outcome: { kind: "applied", result: { applied: true } } } });
+    expect(revOf("plain")).toBe(revBefore);
+    expect(readGrantAudits(s.db(), s.serverStream)).toHaveLength(0);
+
+    // F6: the audit row records the tier, for a grant and for a revoke.
+    await send({ type: "plugin.grant", plugin: "plain", codeHash: HASH_1, tier: "request", reads: [], requests: ["chat.send"] });
+    await send({ type: "plugin.grant", plugin: "plain", codeHash: HASH_1, tier: "none", reads: [], requests: [] });
+    expect(readGrantAudits(s.db(), s.serverStream).map((row) => row.body.reason)).toEqual(["tier request", "tier none"]);
+    expect(rowOf("plain").grants[HASH_1]).toBeUndefined();
   });
 });

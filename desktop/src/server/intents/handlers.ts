@@ -199,6 +199,14 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
   if (cmd.codeHash !== row.codeHash && !knownExisting) {
     throw new SlotRefusal("changed", `codeHash ${cmd.codeHash} is not known for plugin ${cmd.plugin}`);
   }
+  // Built-ins keep their grants in 3.0 (§14.4): the user neither revokes nor changes one (reconcile would restore it).
+  if (row.grants[cmd.codeHash]?.grantedBy === "builtin") {
+    throw new SlotRefusal("invalid", "built-in");
+  }
+  // A plugin is never given the power to grant (D54): `plugin.grant` is a user act only.
+  if (cmd.requests.includes("plugin.grant")) {
+    throw new SlotRefusal("invalid", "plugin.grant cannot be granted to a plugin");
+  }
   if (cmd.tier !== "none") {
     const allowedReads = new Set(row.manifest.reads);
     const allowedRequests = new Set(row.manifest.requests);
@@ -210,6 +218,22 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
       throw new SlotRefusal("invalid", "above what the plugin asks");
     }
   }
+  // An old hash keeps the authority its own code was given (D52): it may only be lowered or revoked, never raised by
+  // the current manifest's asks.
+  if (cmd.tier !== "none" && cmd.codeHash !== row.codeHash) {
+    const prev = row.grants[cmd.codeHash]!;
+    const prevReads = new Set(prev.reads);
+    const prevRequests = new Set(prev.requests);
+    if (
+      GRANT_TIER_RANK[cmd.tier] > GRANT_TIER_RANK[prev.tier]
+      || cmd.reads.some((item) => !prevReads.has(item))
+      || (cmd.tier !== "read" && cmd.requests.some((item) => !prevRequests.has(item)))
+    ) {
+      throw new SlotRefusal("invalid", "above what the plugin asks");
+    }
+  }
+  // Revoking a grant that does not exist changes nothing and is not audited.
+  if (cmd.tier === "none" && !knownExisting) return { result: { applied: true } };
   const now = deps.now();
   const nextGrants: Record<string, PluginGrant> = { ...row.grants };
   if (cmd.tier === "none") {
@@ -240,6 +264,7 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
       member: slot.origin,
       name: cmd.plugin,
       hash: cmd.codeHash.slice(0, 80),
+      reason: `tier ${cmd.tier}`,
     });
   } catch (error) {
     if (error instanceof RowBodyError) throw new SlotRefusal("invalid", error.message);
