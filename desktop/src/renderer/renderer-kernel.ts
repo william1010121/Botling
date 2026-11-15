@@ -7,8 +7,11 @@
 //   - `:shell` owns the shell's root slots (`ROOT_SLOTS`: app/rail, app/main, app/side, app/bottom, app/overlay). Whatever is
 //     drawn in one is a contribution to it: today the whole page, as one contribution to `app/main` ("the legacy surface",
 //     shell/ShellFrame.tsx). shell/KernelSlot.tsx draws a slot; it re-draws when `subscribeSlots` says the kernel changed.
+//     It also owns the view and menu places the plugin feed fills (`FEED_SLOTS`, M7-02b): the plugin list as the page
+//     received it, one instance per plugin (shell/plugin-feed.ts), until a plugin owns a place itself.
 // Slots have the new names and the 2.x names as aliases (slot-names.ts): the kernel holds one registration and finds it under both.
 import { Kernel, ROOT_SLOTS, canonicalSlot } from "../../../Web/src/plugin-kernel";
+import { FEED_SLOTS } from "./shell/feed-slots";
 
 /** The chat surface's instance in the renderer's kernel. */
 export const CHAT_SURFACE = ":chat";
@@ -45,5 +48,6 @@ export const rendererKernel = new Kernel({
   },
 });
 rendererKernel.install({ name: CHAT_SURFACE, provides: { services: [INSERT_QUOTE] } });
-rendererKernel.install({ name: SHELL_SURFACE, provides: { slots: ROOT_SLOTS } });
-void rendererKernel.load(SHELL_SURFACE, (plugin) => { for (const slot of ROOT_SLOTS) rendererKernel.provideSlot(plugin, slot); });
+const SHELL_SLOTS = [...ROOT_SLOTS, ...FEED_SLOTS];
+rendererKernel.install({ name: SHELL_SURFACE, provides: { slots: SHELL_SLOTS } });
+void rendererKernel.load(SHELL_SURFACE, (plugin) => { for (const slot of SHELL_SLOTS) rendererKernel.provideSlot(plugin, slot); });

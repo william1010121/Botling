@@ -21,7 +21,8 @@ export type SlotFrames = { client: Client; onBuiltin?: BuiltinRunner } & FrameSe
 
 function draw(entry: SlotEntry, frames: SlotFrames | undefined): ReactNode {
   if (entry.kind === "component") return entry.render();
-  if (!frames) return null;
+  // Not a component and not a frame (the plugin feed's rows, plugin-feed.ts `{kind: "feed"}`): nothing to draw.
+  if (entry.kind !== "frame" || !frames) return null;
   const { client, onBuiltin, ...services } = frames;
   if (entry.frame === "panel") return <PanelFrame client={client} plugin={entry.plugin} panel={entry.panel} title={entry.title} onClose={entry.onClose ?? (() => {})} {...(onBuiltin ? { onBuiltin } : {})} {...services} />;
   return <SlotFrame client={client} plugin={entry.plugin} view={entry.view} title={entry.title} fontSize={entry.fontSize ?? 13} {...(entry.botId ? { botId: entry.botId } : {})} {...(onBuiltin ? { onBuiltin } : {})} {...services} />;
