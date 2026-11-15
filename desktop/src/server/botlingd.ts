@@ -134,10 +134,10 @@ export function clusterOrigins(
  * Device & peer-server roster view passed to `slotAuthorize` (M5-04b): a peer server is accepted only when it is in
  * `view.servers` AND `view.valid` (not root-revoked and not unvouched/not-yet-effective).
  */
-export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">, userOnlyCard?: (messageId: string) => boolean): DeviceRoster {
+export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">, hooks: Pick<DeviceRoster, "plainWaiting"> = {}): DeviceRoster {
   return {
     memberId: roster.memberId,
-    ...(userOnlyCard ? { userOnlyCard } : {}),
+    ...(hooks.plainWaiting ? { plainWaiting: hooks.plainWaiting } : {}),
     device: (member) => roster.device(member),
     server: (member) => {
       const view = roster.view;
@@ -582,7 +582,7 @@ export class Botlingd {
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, (messageId) => core.serverAskOpen(messageId))), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, { plainWaiting: (botId, text) => core.peerMayIgnoreWaiting(botId, text) })), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
         // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
         // may run and re-announces its list once (core.pluginGrantsChanged).
         pluginRowsChanged: () => {
