@@ -49,6 +49,7 @@ import { openServerStore, type ServerStore } from "./store";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, SummaryRows, TableFeeds } from "./replica";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
 import { Directory, Forwarder, OwnerInbox } from "./forward";
+import { designatedServer, machineLabel } from "./designated";
 import { release as osRelease } from "node:os";
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
@@ -314,28 +315,18 @@ export class Botlingd {
       const stores: DbBotStores = new DbBotStores(store, { onCommitted: (botId, directory) => exports.committed(botId, directory) });
       const opened = new Map<string, string>();
       let peerSessions: PeerSessions | null = null;
-      const resolveDesignated = (raw: unknown): string => {
-        const view = roster.view;
-        if (
-          typeof raw === "string"
-          && view.servers.has(raw)
-          && !view.revoked.has(raw)
-          && (!view.valid.has(memberId) || view.valid.has(raw))
-        ) {
-          return raw;
-        }
-        return view.root?.root ?? memberId;
-      };
+      const resolveDesignated = (raw: unknown): string => designatedServer(roster.view, raw);
       const machineName = (id: string): string =>
         peerSessions?.states().find((state) => state.member === id)?.name
         ?? roster.profile(id, "name")
         ?? roster.view.members.get(id)?.name
         ?? (id === memberId ? SERVER_NAME : id);
+      const machineLine = (id: string): string => machineLabel(machineName(id));
       const designated = resolveDesignated(prefs.get("designatedServer")?.value);
       prefs.onChange((rows) => {
         for (const row of rows) {
           if (row.key === "designatedServer") {
-            log(`designatedServer is now ${machineName(resolveDesignated(row.value))}; the main bot moves when each server next starts.`);
+            log(`designatedServer is now ${machineLine(resolveDesignated(row.value))}; the main bot moves when each server next starts.`);
           }
         }
       });
@@ -354,7 +345,7 @@ export class Botlingd {
         mainBotId: ids.main,
         maintainerId: ids.maintainer,
         runMainBot: designated === memberId,
-        mainBotMachine: () => (designated === memberId ? null : machineName(designated)),
+        mainBotMachine: () => (designated === memberId ? null : machineLine(designated)),
         pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
           read: async (ref, offset, length) => {
@@ -550,7 +541,13 @@ export class Botlingd {
         log,
         admin: {
           handle: async (op, session) => {
-            if (op.op === "prefs.set") return { row: await prefs.set(op.key, op.value) };
+            if (op.op === "prefs.set") {
+              // M5-04i: only a server this one holds valid can be designated (the CLI and every window are told why not).
+              if (op.key === "designatedServer" && designatedServer(roster.view, op.value) !== op.value) {
+                throw new Error(`${JSON.stringify(op.value)?.slice(0, 80) ?? "undefined"} is not a server of this cluster that can run the main bot (unknown, revoked or not valid)`);
+              }
+              return { row: await prefs.set(op.key, op.value) };
+            }
             if (op.op === "prefs.list") return { rows: prefs.rows() };
             if (op.op === "machine.removePreview" || op.op === "machine.remove") return pairing.admin(op, session);
             return op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op, session) : pairing.admin(op, session);

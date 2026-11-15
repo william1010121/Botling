@@ -1896,7 +1896,7 @@ First write a test that shows this, then fix it.`;
     this.checkBot(id);
     const profile = this.profiles.find((candidate) => candidate.id === id);
     if (!profile) throw new ContractError("not_found", "No such bot.");
-    if (profile.role === "main" || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
+    if (profile.role === "main" || id === this.mainBotId || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
     // Its sub bots go with it (they hang under it, in its folder).
     for (const sub of this.profiles.filter((candidate) => candidate.parent === id)) await this.removeBot(sub.id);
     const bot = this.bots.get(id);
@@ -2464,7 +2464,8 @@ First write a test that shows this, then fix it.`;
       maintainerBot: () => this.bots.get(this.maintainerId) ?? null,
       componentBots: () => this.order.filter((id) => id !== this.maintainerId && !this.removed.has(id) && !this.isSubBot(id)).map((id) => this.bots.get(id)!),
       componentsChanged: () => this.componentsTick(),
-      mainId: this.mainBotId,
+      // Not "main" on a server that runs no main bot: its `Main (old)` keeps its own id, as in `bots.list`.
+      mainId: this.runMainBot ? this.mainBotId : "",
     }));
   }
 
@@ -2584,7 +2585,7 @@ First write a test that shows this, then fix it.`;
     this.checkBot(id);
     const profile = this.profiles.find((candidate) => candidate.id === id);
     if (!profile) throw new ContractError("not_found", "No such bot.");
-    if (profile.role === "main" || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
+    if (profile.role === "main" || id === this.mainBotId || id === this.maintainerId) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
   }
 
   /**

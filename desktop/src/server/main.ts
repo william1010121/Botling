@@ -60,6 +60,7 @@ import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
+import { machineLabel } from "./designated";
 
 const out = (line: string) => process.stdout.write(`${line}\n`);
 const fail = (line: string, code = 1): never => { process.stderr.write(`botlingd: ${line}\n`); process.exit(code); };
@@ -395,7 +396,7 @@ async function main(argv: string[]): Promise<void> {
         const byName = candidates.filter((item) => item.name === target);
         if (byName.length > 1) {
           const choices = byName.map((item) => `${item.member} (${item.fingerprint})`).join(", ");
-          fail(`more than one machine is named "${target}" (${choices}); pass the id instead`, 2);
+          fail(`more than one machine is named "${machineLabel(target)}" (${choices}); pass the id instead`, 2);
         }
         if (byName.length === 1) {
           resolved = byName[0]!;
@@ -406,14 +407,16 @@ async function main(argv: string[]): Promise<void> {
           }
         }
       }
-      if (!resolved) return fail(`no machine named "${target}" (botlingd machines lists them)`, 2);
+      if (!resolved) return fail(`no machine named "${machineLabel(target)}" (botlingd machines lists them)`, 2);
       const client = await adminSession(paths);
       try {
         await client.request({ op: "prefs.set", key: "designatedServer", value: resolved.member });
+      } catch (error) {
+        fail(`cannot designate ${machineLabel(resolved.name ?? target)}: ${(error as Error).message}`, 2);
       } finally {
         client.close();
       }
-      out(`designated ${resolved.name ?? target}; its main bot takes over when each server next starts.`);
+      out(`designated ${machineLabel(resolved.name ?? target)}; its main bot takes over when each server next starts.`);
       return;
     }
     case "recovery": {

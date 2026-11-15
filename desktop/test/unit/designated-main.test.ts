@@ -16,6 +16,7 @@ import { fakeCli, tempDir, until } from "../helpers";
 import { makeCluster, profile, readServerKeys, revokeServer, sign, writeStatements, type MemberKeysInfo } from "../support/peer-cluster";
 import { startServers, type TestCluster, type TestServer } from "../support/two-servers";
 import { admin } from "../support/ws-device";
+import { designatedServer, machineLabel } from "../../src/server/designated";
 
 const TIMERS = { ping: 300, dead: 1_500, redial: 150, redialMax: 1_000, revoked: 2_500 };
 const TIMERS_ENV = { BOTLING_SERVER_PEER_TIMERS: Object.entries(TIMERS).map(([k, v]) => `${k}=${v}`).join(",") };
@@ -198,6 +199,47 @@ describe("M5-04i: core runMainBot: false behavior", () => {
   });
 });
 
+describe("M5-04i review: designated server, Main (old) and the studio", () => {
+  const S = (n: number) => String.fromCharCode(96 + n).repeat(26);
+  const view = (over: Partial<Parameters<typeof designatedServer>[0]> = {}) => ({
+    self: S(1), servers: new Set([S(1), S(2), S(3)]), valid: new Set([S(1), S(2), S(4)]), root: { root: S(1) } as never, ...over,
+  });
+
+  it("designates only a valid server; anything else falls back to the root, or to this server with no cluster", () => {
+    expect(designatedServer(view(), S(2))).toBe(S(2));
+    expect(designatedServer(view({ self: S(2) }), S(2))).toBe(S(2));
+    expect(designatedServer(view(), S(3))).toBe(S(1)); // a known server this one does not hold valid (revoked, or added by a revoked one)
+    expect(designatedServer(view(), S(4))).toBe(S(1)); // valid, but a device
+    expect(designatedServer(view(), "unknown")).toBe(S(1));
+    expect(designatedServer(view(), 7)).toBe(S(1));
+    expect(designatedServer(view(), null)).toBe(S(1));
+    expect(designatedServer(view({ self: S(2), valid: new Set([S(2)]) }), S(3))).toBe(S(1)); // an invalid server designated: it does not run one itself either
+    expect(designatedServer(view({ self: S(3), valid: new Set([S(3)]) }), S(3))).toBe(S(3)); // in its own view it is valid (R6 from self)
+    expect(designatedServer(view({ root: null, self: S(5) }), "x")).toBe(S(5));
+  });
+
+  it("machine names reach logs and the terminal as one line", () => {
+    expect(machineLabel("Beta")).toBe("Beta");
+    expect(machineLabel("evil\n(App: x)\u001b[31m")).toBe("evil\\n(App: x)\\u001b[31m");
+    expect(machineLabel("x".repeat(300))).toHaveLength(200);
+  });
+
+  it("Main (old) cannot be removed (it would come back at the next start) and is not \"main\" to the studio", async () => {
+    const dir = tempDir("designated-review");
+    const seeded = mainProfile(dir, CUSTOM_MAIN);
+    mkdirSync(seeded.storeDir, { recursive: true });
+    const { BotStore } = await import("../../src/core/store/bot-store");
+    new BotStore(seeded.storeDir).saveMessages([{ id: newId(), role: "user", text: "old", date: toSwiftDate(Date.now()) }]);
+    const { core } = createCore(dir, { mainBotId: CUSTOM_MAIN, maintainerId: CUSTOM_MAINTAINER, runMainBot: false, mainBotMachine: () => "Beta" });
+    expect(() => core.checkRemoveBot(CUSTOM_MAIN)).toThrow("The main bot and Maintainer cannot be removed.");
+    await expect(core.removeBot(CUSTOM_MAIN)).rejects.toThrow("The main bot and Maintainer cannot be removed.");
+    expect(core.snapshot().bots.find((bot) => bot.id === CUSTOM_MAIN)?.name).toBe("Main (old)");
+    const studio = (core as unknown as { studioNow(): { chats(): Array<{ id: string; name: string }>; chat(id: string): unknown } }).studioNow();
+    expect(studio.chats().find((chat) => chat.name === "Main (old)")?.id).toBe(CUSTOM_MAIN);
+    expect(studio.chat("main")).toBeNull();
+  });
+});
+
 describe("M5-04i: two servers designated main bot & botlingd designate", () => {
   const clusters: TestCluster[] = [];
   afterAll(async () => {
@@ -329,11 +371,18 @@ describe("M5-04i: two servers designated main bot & botlingd designate", () => {
     const reqMainOnA = errRes(await clientA2.req({ type: "chat.snapshot", botId: "main" }));
     expect(reqMainOnA.message).toBe("There is no main bot on this machine; it runs on Beta.");
 
-    // 5a: Unknown server id in designatedServer -> falls back to root (Alpha).
-    await admin(clientA2, { op: "prefs.set", key: "designatedServer", value: "unknown-member-id" });
-    await until(() => b.log.includes("designatedServer is now Alpha; the main bot moves when each server next starts.") || a.log.includes("designatedServer is now Alpha"), {
+    // 5a: a pref naming an unknown member or a device is refused where it is set (review F1); a designated machine
+    // can be designated back (the root designates itself through the CLI).
+    await expect(admin(clientA2, { op: "prefs.set", key: "designatedServer", value: "unknown-member-id" }))
+      .rejects.toThrow("is not a server of this cluster that can run the main bot");
+    await expect(admin(clientA2, { op: "prefs.set", key: "designatedServer", value: clientA2.deviceId }))
+      .rejects.toThrow("is not a server of this cluster that can run the main bot");
+    const backToAlpha = a.command(["designate", "Alpha"]);
+    expect(backToAlpha.code).toBe(0);
+    expect(backToAlpha.stdout).toContain("designated Alpha; its main bot takes over when each server next starts.");
+    await until(() => b.log.includes("designatedServer is now Alpha; the main bot moves when each server next starts."), {
       timeout: 30_000,
-      what: "unknown designatedServer falls back to root",
+      what: "B hears Alpha designated",
     });
     await Promise.all([a.stop(), b.stop()]);
     await Promise.all([a.start(), b.start()]);
@@ -356,6 +405,12 @@ describe("M5-04i: two servers designated main bot & botlingd designate", () => {
     const clientA4 = await a.client("fe-a4");
     const botsA4 = okRes<{ bots: Array<{ id: string; role: string }> }>(await clientA4.req({ type: "chat.snapshot" })).bots;
     expect(botsA4.find((bot) => bot.id === aMainId)?.role).toBe("main");
+
+    // A revoked machine is still listed by name, but designating it is refused with exit 2 (review F1).
+    const revokedCli = a.command(["designate", "Beta"]);
+    expect(revokedCli.code).toBe(2);
+    expect(revokedCli.stderr).toContain("cannot designate Beta:");
+    expect(revokedCli.stderr).toContain("is not a server of this cluster that can run the main bot");
   }, 120_000);
 
   it("two servers with a fresh non-designated server: fresh non-designated has no main bot row at all in bots.list", async () => {
