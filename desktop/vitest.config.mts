@@ -24,7 +24,7 @@ const needsHelper = existsSync("out/core/agy-file-helper.base64") ? [] : ["test/
 
 // Tests kept beside their code (most co-located tests are not run yet; add a file here once it passes, and to
 // package.json's test:unit, which CI runs).
-const colocated = ["src/mobile-bridge/pairing.test.ts", "mobile/pair.test.ts"];
+const colocated = ["src/mobile-bridge/pairing.test.ts", "src/mobile-bridge/bridge.test.ts", "mobile/pair.test.ts"];
 
 // relay/src (the relay server some tests start) imports `ws`. relay/ has no install of its own in a checkout made with
 // `npm ci` here (link-deps.sh links one in a worktree), so Node would look up the folders above it and could find
