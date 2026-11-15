@@ -288,7 +288,7 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
     const got = check(`${seed}`, run, aKilled);
     if (kind === "gaveUpCrash") {
       // Crash point 1: B finished its turn, A posts it once as late, and the one wake is the give-up's.
-      expect({ turns: got.turns, line: got.line, wake: got.wake }, `seed ${seed}: ${run.token} rows ${JSON.stringify(callInRows().filter((row) => row.asked.includes(run.token)).map((row) => [row.state, row.replied]))} chat ${JSON.stringify(chatOf(run.hostId).map((entry) => entry.text.slice(0, 80)))} A log ${a.log.slice(-900)} B log ${b.log.slice(-900)}`).toEqual({ turns: 1, line: 1, wake: 1 });
+      expect({ turns: got.turns, line: got.line, wake: got.wake }, `seed ${seed}: ${run.token} rows ${JSON.stringify(callInRows().filter((row) => row.asked.includes(run.token)).map((row) => [row.state, row.replied]))} chat ${JSON.stringify(chatOf(run.hostId).map((entry) => entry.text.slice(0, 80)))} B diag ${b.log.split('\n').filter((l) => l.includes('TEMPDIAG')).join(' | ')}`).toEqual({ turns: 1, line: 1, wake: 1 });
       expect(chatOf(run.hostId).filter((entry) => entry.text.startsWith("Late answer from ")).length, `seed ${seed}: ${run.token}: late notice`).toBe(1);
     }
     if (kind === "lateKill" && got.turns === 1 && got.line === 0) totals.lostLate++;

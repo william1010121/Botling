@@ -144,6 +144,7 @@ export class CallInGuest implements CallInRunner {
 
   /** Ends the row and marks it answered in one transaction, then sends: at most once. */
   private async answer(row: EffectRow, payload: CallInPayload, outcome: Outcome): Promise<void> {
+    if (outcome.kind !== "reply") this.options.log?.(`callin: TEMPDIAG answering ${outcome.kind} ${outcome.kind === "failed" ? outcome.why : ""}`);
     const reserved = await this.options.scope.submit((tx) => {
       const current = readEffect(tx, row.effectId);
       if (!current || current.state !== "started" || (current.payload as CallInPayload).replied) return false;
