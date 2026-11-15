@@ -5,7 +5,7 @@
     "desktop/src/core/agent/codex.ts": 1684,
     "desktop/src/core/bot.ts": 6026,
     "desktop/src/core/plugins/index.ts": 1030,
-    "desktop/src/core/server.ts": 3395,
+    "desktop/src/core/server.ts": 3248,
     "desktop/src/main/main.ts": 1169,
     "desktop/src/renderer/App.tsx": 819,
     "desktop/src/server/botlingd.ts": 950
