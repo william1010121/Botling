@@ -13,6 +13,9 @@
 //      gets the stored outcome, `fresh: false`, and nothing runs again. A copy held ahead is decided under the table
 //      at the moment it is decided.
 //   3. `plugin.grant` is applied only from `local` or a `manage` device, never with `via`, never from a server origin.
+//   5. A peer server never settles a card (`chat.choose`, `chat.answer`, `chat.ignoreQuestion`, `component.approve`): refused
+//      `origin`, before any lookup and for every stated scope. Its `waiting.ignore` is applied only for a plain waiting
+//      item of the bot the slot targets, else (another bot, not plain, the waiting list unreadable) refused `scope` (peer-answer-guard, `.bot/artifacts/v3-m5/peer-answer-guard-review.md`).
 //   4. A hash swap never widens: a command with `via` h2 is never decided under h1's grant (and a resend of a decided
 //      slot with another `via` is a slot conflict, never the old outcome).
 //
@@ -48,12 +51,18 @@ const FOUR = ["plugins.command", "plugins.linkCommand", "plugins.tabCommand", "p
 const HELPERS = ["plugins.tileImages", "plugins.noteSnapshot", "plugins.approvalAsk"] as const;
 const SCOPES: readonly DeviceScope[] = ["read", "reply", "approve", "manage"];
 const BOT = "6A0B0000-0000-4000-8000-000000000002";
+/** Another bot of the owner with the same plain waiting items as BOT; only `waiting.ignore` names it (every slot targets `bot:BOT`). */
+const OTHER_BOT = "6A0B0000-0000-4000-8000-000000000003";
 const EPOCH = (caseIndex: number) => caseIndex.toString(16).padStart(32, "0");
 const INC = "inc-00000001";
 const SELF = "srv-self";
 const PEER = "srv-peer";
 const ALL_TYPES = Object.keys(COMMAND_SCOPES) as Array<keyof typeof COMMAND_SCOPES>;
 const GRANTABLE = ALL_TYPES.filter((type) => COMMAND_SCOPES[type] !== "server"); // a grant's `requests` cannot name a call-in
+/** peer-answer-guard: the card commands only a user settles. Written out here, not imported from the code under test. */
+const USER_ONLY_CARDS = ["chat.choose", "chat.answer", "chat.ignoreQuestion", "component.approve"];
+/** Texts a `waiting.ignore` can carry: the first two are plain waiting items of BOT and OTHER_BOT (when `world.plain` holds them), the third is never plain. */
+const WAITING_TEXTS = ["plain-1", "plain-2", "card-text"];
 const REQUEST_POOL = ["chat.send", "chat.react", "plugins.call", "plugins.command", "plugins.linkCommand", "plugins.tabCommand", "plugin.grant", "plugins.remove", "bots.create", "settings.set", "link.authorize"];
 
 // --- the model ---------------------------------------------------------------------------------------------------------
@@ -62,13 +71,20 @@ type Entry = { kind: "row"; row: PluginRow } | { kind: "malformed"; body: unknow
 type Model = Map<string, Entry>;
 type OriginKind = "local" | "device" | "server" | "unknown" | "self";
 interface Origin { kind: OriginKind; id: string; scope: DeviceScope[] }
-interface World { table: Model; devices: Map<string, DeviceScope[]>; servers: Set<string> }
-type Expect = { applied: true } | { applied: false; reason: "origin" | "scope" | "grant" };
+/** `plain`: the texts that are plain waiting items (no card) of BOT and OTHER_BOT right now (the `plainWaiting` hook's answer); null: the hook throws. */
+interface World { table: Model; devices: Map<string, DeviceScope[]>; servers: Set<string>; plain: Set<string> | null }
+type Expect = { applied: true } | { applied: false; reason: "origin" | "scope" | "grant" | "invalid" };
 
 const four = (type: string): boolean => (FOUR as readonly string[]).includes(type);
 
 /** The owner's rules for one command, from §11.3 / §11.7 / D53 / D54 / C6 / C12 (not the engine's code). */
 function oracle(world: World, origin: Origin, stated: Scope, cmd: Command, via: Via | undefined): Expect {
+  const want = authority(world, origin, stated, cmd, via);
+  // §11.3: a command for another bot than the slot's target (`bot:BOT`) is never applied; it is refused `invalid` after authorization.
+  return want.applied && (cmd as { botId?: string }).botId !== BOT ? { applied: false, reason: "invalid" } : want;
+}
+
+function authority(world: World, origin: Origin, stated: Scope, cmd: Command, via: Via | undefined): Expect {
   const needed: string = commandScope(cmd);
   const honest = ["read", "reply", "approve", "manage"].includes(needed) ? needed : "read";
   // Layer 1: origin and device scope (N7: first).
@@ -77,8 +93,12 @@ function oracle(world: World, origin: Origin, stated: Scope, cmd: Command, via: 
   } else if (origin.id === SELF) {
     return { applied: false, reason: "origin" };
   } else if (world.servers.has(origin.id)) {
-    if (cmd.type === "plugin.grant" || CARD_COMMANDS.has(cmd.type)) return { applied: false, reason: "origin" };
-    if (cmd.type === "waiting.ignore") return { applied: false, reason: "scope" };
+    if (cmd.type === "plugin.grant") return { applied: false, reason: "origin" };
+    // peer-answer-guard: a card is a user's to settle, so a server is refused `origin` before anything else is looked at.
+    if (USER_ONLY_CARDS.includes(cmd.type)) return { applied: false, reason: "origin" };
+    // peer-answer-guard: `waiting.ignore` from a server sets aside only a plain waiting item of the bot it names, sent to that bot
+    // (every slot here targets `bot:BOT`); another bot, a non-plain text or an unreadable waiting list is refused `scope`.
+    if (cmd.type === "waiting.ignore" && (cmd.botId !== BOT || !world.plain?.has(cmd.text))) return { applied: false, reason: "scope" };
     if (needed === "server") { if (stated !== "read") return { applied: false, reason: "scope" }; }
     else if (!["reply", "manage"].includes(needed) || stated !== honest) return { applied: false, reason: "scope" };
   } else {
@@ -116,8 +136,8 @@ const subset = <T>(r: Random, list: readonly T[], p = 0.5): T[] => list.filter((
 
 /**
  * A command of `type`, naming plugin `plugin` where the type takes a plugin (`plugins.call` takes `name`, the others an id).
- * Every command carries a `botId`, so one queue (origin, epoch, bot target) holds all of a case's slots (the slot engine
- * checks a command's target after authorization; that rule is not under test here, a held copy needs one queue).
+ * Every command carries a `botId`, so one queue (origin, epoch, bot target) holds all of a case's slots (a held copy needs one
+ * queue). Only `waiting.ignore` sometimes names OTHER_BOT: the server target rule, and `invalid` after authorization otherwise.
  */
 function make(r: Random, type: string, plugin: string): Command {
   switch (type) {
@@ -129,6 +149,7 @@ function make(r: Random, type: string, plugin: string): Command {
     case "plugins.noteSnapshot": return { type, name: plugin, botId: BOT, rect: { x: 0, y: 0, width: 10, height: 10 } } as unknown as Command;
     case "plugins.approvalAsk": return { type, name: plugin, botId: BOT, command: "ls", folder: "/tmp" } as unknown as Command;
     case "plugin.grant": return { type, plugin, codeHash: pick(r, HASHES), tier: "write", reads: [], requests: [], botId: BOT } as unknown as Command;
+    case "waiting.ignore": return { type, botId: chance(r, 0.2) ? OTHER_BOT : BOT, text: pick(r, WAITING_TEXTS) } as unknown as Command;
     case "settings.set": return { type, change: { key: pick(r, ["theme", "developerMode", "claudeBypassPermissions", "density"]), value: "x" }, botId: BOT } as unknown as Command;
     default: return { type, botId: BOT, messageId: "m1", turnId: "t1" } as unknown as Command;
   }
@@ -165,6 +186,8 @@ function genMalformed(r: Random): unknown {
     default: return { codeHash: H1, manifest, author: "user", grants: Object.fromEntries(HASHES.map((h) => [h, { tier: "admin", reads: [], requests: [...REQUEST_POOL], grantedBy: "user", at: 1 }])) };
   }
 }
+
+function genPlain(r: Random): Set<string> | null { return chance(r, 0.1) ? null : new Set(WAITING_TEXTS.slice(0, 2).filter(() => chance(r, 0.85))); }
 
 function genTable(r: Random): Model {
   const table: Model = new Map();
@@ -206,6 +229,9 @@ function genVia(r: Random, world: World): Via | undefined {
 }
 
 function genCommand(r: Random, world: World, via: Via | undefined): Command {
+  // peer-answer-guard: `waiting.ignore` (a server may send it only for a plain item) and the card answers (a server never may),
+  // drawn first so that every other command class keeps its share of the rest.
+  if (chance(r, 0.13)) return chance(r, 2 / 13) ? make(r, pick(r, USER_ONLY_CARDS), "") : make(r, "waiting.ignore", "");
   const roll = r();
   const entry = via ? world.table.get(via.plugin) : undefined;
   const grant = entry?.kind === "row" && via ? Object.entries(entry.row.grants).find(([hash]) => hash === via.codeHash)?.[1] : undefined;
@@ -247,12 +273,16 @@ interface Applied { origin: string; epoch: string; n: number; type: string; scop
 function setup() {
   const { db, writer } = memoryStore();
   const log = new FakeLog();
-  const world: World = { table: new Map(), devices: new Map(), servers: new Set([PEER]) };
+  const world: World = { table: new Map(), devices: new Map(), servers: new Set([PEER]), plain: null };
   const applied: Applied[] = [];
   const roster: DeviceRoster = {
     memberId: SELF,
     device: (member) => (world.devices.has(member) ? { keys: { sign: "s", dh: "d" }, scope: world.devices.get(member) } : null),
     server: (member) => member !== SELF && world.servers.has(member),
+    plainWaiting: (botId, text) => { // the model's waiting list, read when the slot is decided
+      if (!world.plain) throw new Error("the waiting list cannot be read");
+      return (botId === BOT || botId === OTHER_BOT) && world.plain.has(text);
+    },
   };
   const apply: ApplyFn = ({ tx, slot, cmd, scope, via, log: l }) => {
     l.appendEntry(tx, slot.target, "test.intent", { n: slot.n }, slot);
@@ -288,6 +318,7 @@ async function runCase(h: ReturnType<typeof setup>, seed: number, index: number)
   };
   const { world, engine, applied } = h;
   world.table = genTable(r);
+  world.plain = genPlain(r);
   const origin = genOrigin(r);
   world.devices = new Map(origin.kind === "device" ? [[origin.id, origin.scope]] : []);
   world.servers = new Set([PEER]);
@@ -353,6 +384,8 @@ async function runCase(h: ReturnType<typeof setup>, seed: number, index: number)
     if (kind === "applied" && via) hit("applied:via");
     if (kind === "applied" && !via && origin.kind === "local") hit("applied:local-novia");
     if (kind === "applied" && origin.kind === "server") hit("applied:server");
+    if (origin.kind === "server" && USER_ONLY_CARDS.includes(cmd.type)) hit(`server:card:${kind}`);
+    if (origin.kind === "server" && cmd.type === "waiting.ignore") hit(`server:waiting-ignore:${cmd.botId !== BOT ? "other-bot" : !world.plain ? "hook-throws" : world.plain.has(cmd.text) ? "plain" : "not-plain"}:${kind}`);
     if (kind === "applied" && origin.kind === "device") hit("applied:device");
     if (via) {
       if (HOSTILE_HASHES.includes(via.codeHash)) hit("via:hostile-hash");
@@ -373,6 +406,7 @@ async function runCase(h: ReturnType<typeof setup>, seed: number, index: number)
     if (first.status !== "held") fail("2", "slot 2 was not held while slot 1 is missing", { status: first.status });
     const change = changeTable(r, world);
     if (change !== "none") { hit(`tablechange:held:${change}`); await writeTable(h); }
+    if (chance(r, 0.5)) world.plain = genPlain(r); // the waiting list changes while the copy is held; it is decided under the list of that moment
     const result1 = await send(body(1, cmd1, via1, 1), stated1);
     check(1, cmd1, via1, stated1, result1, 0, "slot 1 (predecessor)");
     // Slot 2 was decided in the same turn of the queue, under the same table.
@@ -400,6 +434,7 @@ async function runCase(h: ReturnType<typeof setup>, seed: number, index: number)
   const change = changeTable(r, world);
   hit(`tablechange:${change}`);
   if (change !== "none") await writeTable(h);
+  if (chance(r, 0.5)) world.plain = genPlain(r);
   // The device may be revoked, narrowed or widened after the decision too.
   if (origin.kind === "device" && chance(r, 0.4)) { hit("devicechange"); if (chance(r, 0.5)) world.devices.delete(origin.id); else world.devices.set(origin.id, chance(r, 0.5) ? [...SCOPES] : ["read"]); }
   if (origin.kind === "server" && chance(r, 0.3)) { hit("serverchange"); world.servers.delete(PEER); }
@@ -471,7 +506,12 @@ describe("M5-19: nothing is applied outside device scope ∩ the plugin's grant 
       "plugin.grant:applied:novia:local", "plugin.grant:refused:via:local", "plugin.grant:refused:novia:server",
       // review: every command scope class, and the read / request tiers at a hash other than the row's current one.
       "cmdscope:read", "cmdscope:reply", "cmdscope:approve", "cmdscope:manage", "cmdscope:admin", "cmdscope:machine", "cmdscope:server",
-      "via:grant-read:other-hash", "via:grant-request:other-hash"]) need(key, 25);
+      "via:grant-read:other-hash", "via:grant-request:other-hash",
+      // peer-answer-guard: a server's card answer is refused, its waiting.ignore is applied for a plain item and refused for the rest.
+      "server:card:refused", "server:waiting-ignore:plain:applied", "server:waiting-ignore:not-plain:refused",
+      "server:waiting-ignore:other-bot:refused", "server:waiting-ignore:hook-throws:refused", "outcome:refused:invalid"]) need(key, 25);
+    expect(cover.get("server:card:applied") ?? 0, "a server must never apply a card answer").toBe(0);
+    for (const key of ["not-plain", "other-bot", "hook-throws"]) expect(cover.get(`server:waiting-ignore:${key}:applied`) ?? 0, `a server must never set aside an item (${key})`).toBe(0);
     for (const change of ["regen", "swap-keep-grants", "swap-drop-grants", "widen", "narrow", "remove", "malform"]) need(`tablechange:${change}`, 100);
     // Every device scope subset (16) is reached.
     for (let mask = 0; mask < 16; mask++) need(`devicescope:${SCOPES.filter((_, i) => mask & (1 << i)).sort().join("+") || "none"}`, 25);
@@ -525,6 +565,7 @@ describe("M5-19 review: a remote origin claiming local or admin is decided as re
           if (ONLY_CASE !== null && index !== ONLY_CASE) continue;
           const r = rng(Math.imul(seed ^ 0x5eed, 2246822519) ^ Math.imul(index + 1, 3266489917));
           h.world.table = genTable(r);
+          h.world.plain = genPlain(r);
           const roll = r();
           const origin: Origin = roll < 0.45 ? { kind: "device", id: "dev-a", scope: chance(r, 0.5) ? [...SCOPES] : subset(r, SCOPES) }
             : roll < 0.8 ? { kind: "server", id: PEER, scope: [] }
