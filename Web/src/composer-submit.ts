@@ -1,7 +1,7 @@
 import { placeholder as placeholderExtension } from "@codemirror/view";
 import { post } from "./bridge";
 import { composerHost, DeliveryUncertain, type DeliveryResult } from "./composer-host";
-import { answerPrefix, type ChipHandle, type ComposerChip, type Mention } from "./composer";
+import { answerPrefix, mentionsOf, slashItemsOf, type ChipHandle, type ComposerChip, type Mention } from "./composer";
 import type { Composer } from "./composer";
 import { t } from "./i18n";
 import { escapeHTML } from "./util";

@@ -587,12 +587,12 @@ function unique(entries: Mention[]): Mention[] {
 }
 
 /** Bots you can @ here, each once. */
-function mentionsOf(names: string[] | undefined): Mention[] {
+export function mentionsOf(names: string[] | undefined): Mention[] {
   return unique((names ?? []).map((name) => ({ name, kind: "bot" })));
 }
 
 /** The app's commands first, then the bot's own components, then the rest of the library. */
-function slashItemsOf(state: ChatState): Mention[] {
+export function slashItemsOf(state: ChatState): Mention[] {
   return unique([
     ...(state.slashCommands ?? []).map(({ name, about, command }): Mention => ({ name, kind: "command", about, ...(command ? { command } : {}) })),
     ...(state.slashComponents ?? []).map((name): Mention => ({ name, kind: "component" })),
