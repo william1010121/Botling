@@ -1,6 +1,6 @@
 // The state `Botlingd.start` builds up phase by phase (M7-S84), as types only: `StartContext` is what the phases have made so far,
-// `Later` is what a closure made in an early phase reads once a later phase has made it. `D` is the `Botlingd` class (a type
-// parameter, so this file does not import botlingd.ts and the two files make no import cycle).
+// `Later` is what a closure made in an early phase reads once a later phase has made it. `D` is the server itself: `StartDaemon` for
+// the phases in botlingd-start.ts, the `Botlingd` class in botlingd.ts (a type parameter, so no file here imports botlingd.ts).
 import type { Core } from "../core/server";
 import type { DataDirLock } from "../core/store/data-dir-lock";
 import type { BotlingdEngine } from "./botlingd-engine";
@@ -24,7 +24,7 @@ import type { CoreEngine, IntentRuntime } from "./intents";
 import type { LiveChannel } from "./live";
 import type { LogHub } from "./log";
 import type { MediaJobs } from "./media";
-import type { listenPort } from "./net";
+import type { listenPort, LoopbackListener, RelayConnector } from "./net";
 import type { PairingService, ServerJoin } from "./pairing";
 import type { PhoneDesk } from "./pairing/phone-desk";
 import type { peerTimers, PeerSessions, RelayAddress } from "./peer";
@@ -42,7 +42,16 @@ import type { createUtilityHostLauncher, createUtilityScriptRunner } from "./uti
  * Values that a closure made in an early phase of `Botlingd.start` reads after a later phase has made them. Before then a
  * call finds the empty value and answers "not ready" (fail closed), as it did when `start` was one function.
  */
-export interface Later<D> {
+/** What the phases in botlingd-start.ts read of the server itself (`Botlingd` satisfies it, so that file does not import botlingd.ts). */
+export interface StartDaemon {
+  readonly token: string;
+  listener: LoopbackListener | null;
+  relay: RelayConnector | null;
+  relayAddress: RelayAddress | null;
+  useRelay(url: string | null): Promise<void>;
+}
+
+export interface Later<D = StartDaemon> {
   /** `peers` as a nullable view (machine names): null until the peer sessions exist. */
   peerSessions: PeerSessions | null;
   /** M3 step 3: peer servers. Set by `startPeers`; earlier phases use it only in callbacks that run once sessions exist. */
@@ -69,7 +78,7 @@ export interface Later<D> {
 }
 
 /** What `Botlingd.start` has made so far. Each phase takes what it reads (`Pick`) and returns what later phases read. */
-export interface StartContext<D> {
+export interface StartContext<D = StartDaemon> {
   options: BotlingdOptions;
   env: BotlingdOptions["env"];
   paths: BotlingdPaths;
