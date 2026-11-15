@@ -20,7 +20,7 @@ import { disablePushNotifications, enablePushNotifications, PUSH_ENABLED_PREF, p
 import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
-import { askedPath, bannerText, FE_VERSION, itemWords, newDiagnostics, openConnection, UNSETTLED_LEGACY_WARNING, type Connection, type Diagnostics, type DialPath } from "./connection";
+import { askedPath, bannerText, FE_VERSION, itemWords, newDiagnostics, openConnection, pairsThroughRelay, UNSETTLED_LEGACY_WARNING, type Connection, type Diagnostics, type DialPath } from "./connection";
 import { slotKey, type DeviceScope, type ServerState, type Slot, type VapidKeyId } from "../../src/protocol";
 import { grantCommands, linkPluginSource, listPlugins, ONLY_MANAGE, pluginSheet, type GrantTier, type PluginSource } from "./plugins";
 
@@ -94,8 +94,9 @@ export function Shell() {
     const k = keys ?? await makePairKeys();
     setRetry(null);
     setPhase({ kind: "pairing", code: null });
-    // Through the relay when the page was asked to (`?via=relay`) and the offer names the server's room (M2 step 13).
-    const relay = ASKED_PATH === "relay" ? offer.addresses.relay : undefined;
+    // Through the relay when the page was asked to (`?via=relay`) or was loaded from that relay, and the offer names the
+    // server's room (M2 step 13).
+    const relay = pairsThroughRelay(ASKED_PATH, offer.addresses.relay, location.origin) ? offer.addresses.relay : undefined;
     const run = pair({
       offer, keys: k, name: defaultName(), wsUrl: wsUrlFor(location.href), feVersion: FE_VERSION, save: saveDevice,
       ...(relay ? { transport: "relay" as const, WebSocketImpl: relaySocketImpl(() => ({ url: relay.url, room: relay.room, token: relayPairToken(offer.offer, fromBase64Url(offer.secret)!) })) } : {}),
@@ -238,7 +239,9 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     void (async () => {
       // `?via=` forces one path for this page load; otherwise saved manual "relay" override or automatic fallback.
       const saved = ASKED_PATH ? null : await loadPref("path").catch(() => null);
-      const wanted = ASKED_PATH ?? (saved === "relay" ? "relay" : null);
+      // A page loaded from the relay can reach nothing but the relay (its CSP is connect-src 'self'): no direct tries.
+      const onRelayPage = pairsThroughRelay(null, device.relay, location.origin);
+      const wanted = ASKED_PATH ?? (saved === "relay" || onRelayPage ? "relay" : null);
       const forcedPath: DialPath | undefined = wanted === "relay" && device.relay ? "relay" : wanted === "tailnet" ? "direct" : undefined;
       const initialPath: DialPath = forcedPath ?? "direct";
       diagnostics.player.path = initialPath === "relay" ? "relay" : pathOfPage(location.hostname);

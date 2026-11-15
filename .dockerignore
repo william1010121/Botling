@@ -4,6 +4,7 @@
 desktop/out
 desktop/dist
 desktop/mobile/dist
+desktop/web-v3/dist
 Web/dist
 spec
 docs

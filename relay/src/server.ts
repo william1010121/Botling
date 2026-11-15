@@ -1,4 +1,5 @@
-// HTTP + WebSocket front of the relay: /healthz, optional static apps (/mobile/, /v3/), and the WebSocket at /ws.
+// HTTP + WebSocket front of the relay: /healthz, the phone page (Botling 3 under /v3/ when STATIC_V3_DIR is set, with
+// / and /mobile/ sent there; else the 2.x page under /mobile/), and the WebSocket at /ws.
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { RelayConfig } from './config.ts';
@@ -26,6 +27,11 @@ export function originAllowed(req: IncomingMessage, allowed: string[]): boolean 
   try { return new URL(origin).host === req.headers.host; } catch { return false; }
 }
 
+/** Addresses that open the phone page: the root, `/v3` without its slash, and anything under the 2.x `/mobile/`. */
+export function isPhoneEntry(pathname: string): boolean {
+  return pathname === '/' || pathname === '/v3' || pathname === '/mobile' || pathname.startsWith('/mobile/');
+}
+
 export function startRelay(config: RelayConfig): Promise<RelayServer> {
   const relay = new Relay(config);
   const server = createServer(async (req, res) => {
@@ -45,14 +51,17 @@ export function startRelay(config: RelayConfig): Promise<RelayServer> {
     if (url.pathname === '/healthz' || url.pathname === '/readyz') {
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ ok: true })); return;
     }
-    if (config.staticDir) {
+    if (config.staticV3Dir) {
+      // The Botling 3 page is the phone page: the root (what a phone opens) and every 2.x page address (an old Home
+      // Screen app starts at /mobile/) land on /v3/, which keeps its own scope, manifest and service worker. Only the
+      // query (?via=relay) is carried; the fragment (#pair=…) never reaches here and the browser keeps it.
+      if (isPhoneEntry(url.pathname)) { res.writeHead(302, { Location: `/v3/${url.search}` }); res.end(); return; }
+      if (await serveStaticV3(config.staticV3Dir, req, res, url.pathname)) return;
+    } else if (config.staticDir) {
+      // Without the Botling 3 page: the 2.x relay as it was.
       if (url.pathname === '/' || url.pathname === '/mobile') { res.writeHead(302, { Location: '/mobile/' }); res.end(); return; }
       const origin = config.publicOrigin ?? `https://${req.headers.host ?? 'localhost'}`;
       if (await serveStatic(config.staticDir, origin, req, res, url.pathname)) return;
-    }
-    if (config.staticV3Dir) {
-      if (url.pathname === '/v3') { res.writeHead(302, { Location: '/v3/' }); res.end(); return; }
-      if (await serveStaticV3(config.staticV3Dir, req, res, url.pathname)) return;
     }
     res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end(req.method === 'HEAD' ? undefined : 'Not found');
   });
