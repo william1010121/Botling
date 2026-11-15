@@ -420,10 +420,11 @@ describe("call sites the S55 and S56 reviews found unguarded", () => {
 
   it("A8, onExit: a deferred turn is taken back and ends as failed when its head exits", async () => {
     const { A, turn } = await withDeferred();
-    // No turn under way (it ended: `next` would otherwise take the deferred turn back first, and drop it without a line).
-    A.peek.turns.close();
+    // No turn under way, and `next` is held (tidying): `next` would otherwise take the deferred turn back after `onExit`, whatever `onExit` did.
+    A.peek.turns.close(); A.peek.headRun.tidying = true;
     const seen = A.events.length;
     A.head(0).finish();
+    A.peek.headRun.tidying = false;
     expect(A.peek.deferred).toBeNull(); expect(turn.open).toBe(false);
     const failed = A.events.slice(seen).filter((e) => e.type === "turn.finished" && e.turnId === turn.id);
     expect(failed).toHaveLength(1); expect(failed[0]).toMatchObject({ status: "failed" });
@@ -451,9 +452,12 @@ describe("call sites the S55 and S56 reviews found unguarded", () => {
   it("B4, onExit: the pause ends with the head's process", async () => {
     const A = rig("claude");
     A.b.send("one"); await A.sent(0, 1);
+    // No turn under way, and `next` is held (tidying): `next` would otherwise resume the pause after `onExit`, whatever `onExit` did.
+    A.peek.turns.close(); A.peek.headRun.tidying = true;
     A.peek.turns.startPause({ conducted: true, handoffId: null });
     expect(A.peek.paused).not.toBeNull();
     A.head(0).finish();
+    A.peek.headRun.tidying = false;
     expect(A.peek.paused).toBeNull();
   });
 
