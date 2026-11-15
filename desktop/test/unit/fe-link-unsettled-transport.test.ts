@@ -39,7 +39,7 @@ function bigSnap(i: number): Message {
 }
 
 /** A botlingd local server whose command runtime always throws (nothing can ever be stored). */
-async function neverSettlingServer(backlog: boolean, byeFlushMs?: number): Promise<{ path: string; copies: () => number; sessions: () => number; sockets: Set<Socket> }> {
+async function neverSettlingServer(backlog: boolean, byeFlushMs?: number, subBacklog = false): Promise<{ path: string; copies: () => number; sessions: () => number; sockets: Set<Socket> }> {
   const dir = mkdtempSync(join(tmpdir(), "n1-"));
   const path = join(dir, "s.sock");
   let copies = 0;
@@ -60,7 +60,8 @@ async function neverSettlingServer(backlog: boolean, byeFlushMs?: number): Promi
         // The server's own srv: stream: a snap, so the front end may send its outbox (§13.1).
         sub: async (stream: StreamId) => {
           if (stream !== SRV && stream !== BOT) return { ok: false, reason: "unknown stream" };
-          send({ t: "snap", stream, logId: LOG_ID, seq: 0, hash: HASH, view: {} } as unknown as Message);
+          if (subBacklog && stream === BOT) for (let i = 0; i < 12; i += 1) send(bigSnap(i));
+          else send({ t: "snap", stream, logId: LOG_ID, seq: 0, hash: HASH, view: {} } as unknown as Message);
           return { ok: true };
         },
       }),
@@ -147,8 +148,22 @@ describe("the bye's flush is bounded (N1)", () => {
   }, 20_000);
 });
 
-/** A front end written by hand: hello, then one command the server cannot settle; `pause` stops reading after the welcome. */
-async function rawClient(path: string, pause = false): Promise<{ socket: Socket; got: Message[]; closed: Promise<void> }> {
+describe("a malformed frame's bye takes the same path (N1)", () => {
+  it("the bye{malformed} still reaches the client behind log frames waiting in the server's write buffer", async () => {
+    const server = await neverSettlingServer(false, undefined, true);
+    const { socket, got, closed, write } = await rawClient(server.path, false, false);
+    write({ t: "sub", stream: BOT, cursor: null } as never);
+    await until(() => got.some((m) => m.t === "snap" && m.stream === BOT), 5_000);
+    socket.write(packFrame("not json")); // about 2 MB of snaps are still queued on the server side
+    await closed;
+    expect(got.filter((m) => m.t === "snap" && m.stream === BOT)).toHaveLength(12);
+    expect(got.find((m) => m.t === "bye")).toMatchObject({ t: "bye", reason: "malformed" });
+    socket.destroy();
+  }, 20_000);
+});
+
+/** A front end written by hand: hello, then (with `cmd`) one command the server cannot settle; `pause` stops reading after the welcome. */
+async function rawClient(path: string, pause = false, cmd = true): Promise<{ socket: Socket; got: Message[]; closed: Promise<void>; write: (message: Message) => void }> {
   const socket = createConnection(path);
   const got: Message[] = [];
   const splitter = new FrameSplitter();
@@ -171,9 +186,9 @@ async function rawClient(path: string, pause = false): Promise<{ socket: Socket;
   write({ t: "hello", deviceId: "desktop", feVersion: "3.0.0", protocol: 1, originEpoch: "0123456789abcdef0123456789abcdef", cursors: {}, outbox: [], want: [], token: TOKEN } as never);
   await until(() => got.some((m) => m.t === "welcome"), 5_000);
   if (pause) socket.pause();
-  write({
+  if (cmd) write({
     t: "cmd", slot: { origin: "desktop", originEpoch: "0123456789abcdef0123456789abcdef", target: BOT, n: 1 }, floor: 1, inc: LOG_ID,
     cmd: { type: "chat.react", botId: "b1", messageId: "m1", emoji: "👍", present: true },
   } as never);
-  return { socket, got, closed };
+  return { socket, got, closed, write };
 }
