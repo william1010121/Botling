@@ -13,10 +13,11 @@
 // outlives windows), plugin secrets (risk 3: no safe storage without the window, see `noSafeStorage`).
 import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
+import type { RemoteMember } from "../core/conversations";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
 import type { Sealer } from "../core/plugins/secrets";
 import { Core } from "../core/server";
-import { MAIN_BOT_ID } from "../core/store/records";
+import { MAIN_BOT_ID, MAINTAINER_ID } from "../core/store/records";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "../core/store/data-dir-lock";
 import { fromBase64Url, type StreamId } from "../protocol";
 import { backupCheckMs, DailyBackups } from "./backup-schedule";
@@ -45,7 +46,7 @@ import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from ".
 import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { ShellBridge } from "./shell-bridge";
-import { openServerStore, type ServerStore } from "./store";
+import { openServerStore, type Db, type ServerStore } from "./store";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, SummaryRows, TableFeeds } from "./replica";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
 import { Directory, Forwarder, OwnerInbox } from "./forward";
@@ -167,6 +168,45 @@ export function storeKeyOf(dataDir: string, directory: string): string {
   if (rel.startsWith("main/")) return `${MAIN_BOT_ID}/${rel.slice(5)}`;
   if (rel.startsWith("projects/")) return rel.slice("projects/".length);
   return rel || MAIN_BOT_ID;
+}
+
+/**
+ * Peer bots callable with @ from this server (M5-02a): live `bot:` summary rows of valid peer servers (role `bot`
+ * or `manager`, top-level only), leaving out the 2.x constants `MAIN_BOT_ID` and `MAINTAINER_ID`.
+ */
+export function peerRemoteMembers(roster: Pick<RosterStore, "view">, db: Db): RemoteMember[] {
+  const view = roster.view;
+  const peers = [...view.valid].filter((member) => member !== view.self && view.servers.has(member)).sort();
+  if (!peers.length) return [];
+  const streamState = db.prepare("SELECT state FROM streams WHERE stream = ?");
+  const machineRow = db.prepare("SELECT body FROM rows WHERE stream = ? AND key = 'machine' AND deleted = 0");
+  const botRows = db.prepare("SELECT key, body FROM rows WHERE stream = ? AND key LIKE 'bot:%' AND deleted = 0 ORDER BY rev");
+  const result: RemoteMember[] = [];
+  for (const server of peers) {
+    const stream = `srv:${server}`;
+    const meta = streamState.get(stream);
+    if (meta && String(meta.state) === "gone") continue;
+    let machineName = "";
+    try {
+      const m = machineRow.get(stream);
+      if (m?.body != null) {
+        const parsed = JSON.parse(String(m.body)) as { name?: unknown };
+        if (typeof parsed.name === "string") machineName = parsed.name.trim();
+      }
+    } catch { /* ignore malformed machine row */ }
+    const serverName = view.members.get(server)?.name?.trim() || machineName || server;
+    for (const row of botRows.all(stream)) {
+      const id = String(row.key).slice(4);
+      if (!id || id === MAIN_BOT_ID || id === MAINTAINER_ID) continue;
+      let body: { name?: unknown; role?: unknown; parent?: unknown };
+      try { body = JSON.parse(String(row.body ?? "{}")); } catch { continue; }
+      if (body.role !== "bot" && body.role !== "manager") continue;
+      if (body.parent !== null && body.parent !== undefined) continue;
+      if (typeof body.name !== "string" || !body.name.trim()) continue;
+      result.push({ id, name: body.name, server, serverName });
+    }
+  }
+  return result;
 }
 
 export interface BotlingdOptions {
@@ -331,6 +371,7 @@ export class Botlingd {
             return pluginRead.fetch(storageDir, ref);
           },
         },
+        remoteMembers: () => peerRemoteMembers(roster, hub.reader()),
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory);
           opened.set(key, directory);

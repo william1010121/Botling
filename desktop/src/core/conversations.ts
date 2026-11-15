@@ -47,10 +47,32 @@ export class BotMentionLog {
   }
 }
 
+/** A bot owned by a peer server in the cluster (M5-02a). */
+export type RemoteMember = Member & { server: string; serverName: string };
+
+/** Inputs for a cross-server call-in turn (M5-02c). */
+export interface RemoteTurnRequest {
+  member: RemoteMember;
+  host: { botId: string; name: string };
+  transcript: readonly ChatRecord[];
+  newest: string | null;
+  ask: string | null;
+  asked: string;
+  by: "user" | "bot";
+  depth: number;
+  onBegin?: () => void;
+}
+
+const isRemoteMember = (member: Member): member is RemoteMember => "server" in member && typeof (member as RemoteMember).server === "string";
+
 export interface ConversationsDeps {
   dataDir: string;
   /** Everyone who can answer outside their own chat, in turn order: the main bot, projects and bots, Maintainer (`everyMember`). */
   members: () => Member[];
+  /** Peer bots owned by other servers, listed after local members (Botling 3 only). */
+  remoteMembers?: () => RemoteMember[];
+  /** Runs a cross-server call-in turn on the guest's owner (Botling 3 M5-02c). */
+  remoteTurn?: (call: RemoteTurnRequest) => Promise<GuestAnswer>;
   /** Sub bots, each under its project bot: callable with @ in that bot's chat only (null: none). */
   subBots?: () => (Member & { parent: string })[];
   bot: (id: string) => Bot | null;
@@ -113,11 +135,16 @@ export class Conversations {
   /** Everyone who can answer outside their own chat, in turn order (`everyMember`). */
   members(): Member[] { return this.deps.members(); }
 
+  private remoteMembers(): RemoteMember[] {
+    const localIds = new Set(this.deps.members().map((member) => member.id));
+    return (this.deps.remoteMembers?.() ?? []).filter((member) => !localIds.has(member.id));
+  }
+
   /** Components `text` names with / (`components.mentionNote(for:)`). */
   mentionNote = (text: string): string | null => this.deps.mentionNote?.(text) ?? null;
 
   /** Who a member id is (`speakerName(for:)`). */
-  speakerName = (id: string): string | null => [...this.deps.members(), ...(this.deps.subBots?.() ?? [])].find((member) => member.id === id)?.name ?? null;
+  speakerName = (id: string): string | null => [...this.deps.members(), ...(this.deps.subBots?.() ?? []), ...this.remoteMembers()].find((member) => member.id === id)?.name ?? null;
 
   /** The call-ins in `chatId` not answered yet: who, and whether answering or waiting their turn. */
   callIns(chatId: string): { id: string; state: "queued" | "answering" }[] {
@@ -176,27 +203,33 @@ export class Conversations {
 
   /**
    * The names a bot's @ can be written with, for `chatId`'s chat: every project bot by its name, every sub bot by
-   * its full path ("Parent/Sub"), and by its name alone the chat's own sub bots (and, to say they are out of
-   * reach, other bots' sub bots).
+   * its full path ("Parent/Sub"), by its name alone the chat's own sub bots (and, to say they are out of reach, other
+   * bots' sub bots), and peer bots by "@name (machine)" and "@name" after local members.
    */
-  private mentionAliases(chatId: string): { member: Member; name: string; full: boolean; own: boolean; path: string }[] {
+  private mentionAliases(chatId: string): { member: Member; name: string; full: boolean; own: boolean; path: string; local: boolean }[] {
     const tops = this.deps.members();
     const own = this.subBotsOf(chatId);
-    const aliases: { member: Member; name: string; full: boolean; own: boolean; path: string }[] = tops.map((member) => ({ member, name: member.name, full: true, own: true, path: member.name }));
+    const aliases: { member: Member; name: string; full: boolean; own: boolean; path: string; local: boolean }[] = tops.map((member) => ({ member, name: member.name, full: true, own: true, path: member.name, local: true }));
     for (const sub of this.deps.subBots?.() ?? []) {
       const parent = tops.find((member) => member.id === sub.parent);
       const member = { id: sub.id, name: sub.name };
       const isOwn = own.some((candidate) => candidate.id === sub.id);
       const path = parent ? `${parent.name}/${sub.name}` : sub.name;
-      if (parent) aliases.push({ member, name: path, full: true, own: isOwn, path });
-      aliases.push({ member, name: sub.name, full: false, own: isOwn, path });
+      if (parent) aliases.push({ member, name: path, full: true, own: isOwn, path, local: true });
+      aliases.push({ member, name: sub.name, full: false, own: isOwn, path, local: true });
+    }
+    for (const remote of this.remoteMembers()) {
+      const qualified = `${remote.name} (${remote.serverName})`;
+      aliases.push({ member: remote, name: qualified, full: true, own: true, path: qualified, local: false });
+      aliases.push({ member: remote, name: remote.name, full: true, own: true, path: qualified, local: false });
     }
     return aliases;
   }
 
   /**
-   * Which bot a line starting with @ names in `chatId`'s chat: a full name ("Parent/Sub" or a project bot's name)
-   * names that one bot; a sub bot's name alone names it while exactly one bot here has that name. Longer names win.
+   * Which bot a line starting with @ names in `chatId`'s chat: a full name ("Parent/Sub", "Name (machine)", or a
+   * project bot's name) names that one bot; a sub bot's name alone names it while exactly one bot here has that name;
+   * a local bot wins a clash with a peer bot of the same name. Longer names win.
    */
   private resolveMention(candidate: string, chatId: string):
     | { kind: "bot" | "elsewhere"; member: Member; written: string }
@@ -209,14 +242,18 @@ export class Conversations {
     const same = aliases.filter((alias) => alias.name.toLowerCase() === key);
     // The bots it can mean here: those with that full name, and the chat's own sub bots by their name alone.
     const reachable = same.filter((alias) => alias.full || alias.own);
-    const pick = reachable.length ? reachable : same;
+    const localReachable = reachable.filter((alias) => alias.local);
+    const pick = localReachable.length ? localReachable : reachable.length ? reachable : same;
     const distinct = [...new Map(pick.map((alias) => [alias.member.id, alias])).values()];
     if (distinct.length > 1) {
       const paths = [...new Set(distinct.map((alias) => alias.path))];
       const shown = paths.map((path) => `@${path}`).join(", ");
+      const subPath = paths.find((path) => path.includes("/"));
       const note = paths.length < distinct.length
         ? `Not sent with @: ${distinct.length} bots are named "${first.name}" (${shown}) and @ cannot tell them apart; rename one.`
-        : `Not sent with @: ${distinct.length} bots are named "${first.name}" (${shown}); write the full name, @Parent/${first.name} (e.g. ${`@${paths.find((path) => path.includes("/")) ?? paths[0]}`}).`;
+        : subPath
+          ? `Not sent with @: ${distinct.length} bots are named "${first.name}" (${shown}); write the full name, @Parent/${first.name} (e.g. @${subPath}).`
+          : `Not sent with @: ${distinct.length} bots are named "${first.name}" (${shown}); write the full name (e.g. @${paths[0]}).`;
       return { kind: "ambiguous", note };
     }
     const one = distinct[0]!;
@@ -243,12 +280,13 @@ export class Conversations {
     return [...new Map(found.map((member) => [member.id, member])).values()];
   }
 
-  /** The bots that can be called into `chat` with @: everyone but its own bot, and its own sub bots (`callable(into:)`). */
+  /** The bots that can be called into `chat` with @: everyone but its own bot, its own sub bots, and peer bots (`callable(into:)`). */
   callable(chatId: string): Member[] {
     const members = this.deps.members();
-    if (members.some((member) => member.id === chatId)) return [...members.filter((member) => member.id !== chatId), ...this.subBotsOf(chatId)];
+    const remotes = this.remoteMembers().filter((member) => member.id !== chatId);
+    if (members.some((member) => member.id === chatId)) return [...members.filter((member) => member.id !== chatId), ...this.subBotsOf(chatId), ...remotes];
     // A sub bot may call the project bots in (its parent too), never another bot's sub bots.
-    return (this.deps.subBots?.() ?? []).some((sub) => sub.id === chatId) ? members : [];
+    return (this.deps.subBots?.() ?? []).some((sub) => sub.id === chatId) ? [...members, ...remotes] : [];
   }
 
   /** The names the @ menu offers (the main bot and Maintainer), then every other bot (`callInView`). */
@@ -263,10 +301,20 @@ export class Conversations {
   calledIn(text: string, chatId: string): Member[] {
     const callable = this.callable(chatId);
     if (!callable.length) return [];
-    // A sub bot may also be named by its full path, @Parent/Sub.
-    const paths = this.mentionAliases(chatId).filter((alias) => alias.full && callable.some((member) => member.id === alias.member.id))
+    // Local names win a clash with a peer bot of the same bare name; @name (machine) still reaches the peer.
+    const localNames = new Set([
+      ...this.deps.members().map((member) => member.name.toLowerCase()),
+      ...this.subBotsOf(chatId).map((member) => member.name.toLowerCase()),
+    ]);
+    const entries = callable
+      .filter((member) => !isRemoteMember(member) || !localNames.has(member.name.toLowerCase()))
+      .map((member) => ({ ...member, member }));
+    // A sub bot may also be named by its full path, @Parent/Sub, and a peer bot by @Name (machine).
+    const paths = this.mentionAliases(chatId)
+      .filter((alias) => alias.full && callable.some((member) => member.id === alias.member.id))
+      .filter((alias) => alias.local || !localNames.has(alias.name.toLowerCase()))
       .map((alias, index) => ({ id: `path:${index}`, name: alias.name, member: alias.member }));
-    const named = mentioned(text, [...callable.map((member) => ({ ...member, member })), ...paths]).map((entry) => entry.member);
+    const named = mentioned(text, [...entries, ...paths]).map((entry) => entry.member);
     return [...new Map(named.map((member) => [member.id, member])).values()];
   }
 
@@ -430,6 +478,7 @@ export class Conversations {
     for (const entry of entries) {
       const member = entry.member;
       const bot = this.deps.bot(member.id);
+      const remote = !bot && isRemoteMember(member) ? member : null;
       // Not answered (`why`): a bot that asked is handed a turn saying so, like an answer; otherwise told with the notice below.
       let began = false;
       const notHeard = (action: "Start" | "GiveUp" | "NoAnswer", why: string) => {
@@ -437,22 +486,37 @@ export class Conversations {
         if (!this.wakeUnheard(chat, member.name, why, caller)) unheard.push(`${member.name} (${why})`);
         this.trace(action, chat.id, { to: member.id, outcome: "unheard", followUp: this.followUps.get(chat.id)?.depth ?? 0 });
       };
-      if (!bot) { this.settle(chat.id, entry); notHeard("Start", "it is not running"); continue; }
+      if (!bot && !remote) { this.settle(chat.id, entry); notHeard("Start", "it is not running"); continue; }
       if (!this.callable(chat.id).some((candidate) => candidate.id === member.id)) { this.settle(chat.id, entry); notHeard("Start", "it can no longer be called into this chat"); continue; }
+      if (remote && !this.deps.remoteTurn) { this.settle(chat.id, entry); notHeard("Start", "its machine cannot take call-ins yet"); continue; }
       entry.state = "answering";
       this.trace("Start", chat.id, { to: member.id, outcome: "answering" });
-      const prompt = caller
-        ? botCallInPrompt({ member, host, chat: chat.lines(), transcript: before, body: caller.body, speakerName: this.speakerName }) + "\n" + botCallInWorkNote()
-        : callInPrompt({ member, host, chat: chat.lines(), transcript: before, newest, ask, speakerName: this.speakerName, mentionNote: this.mentionNote }) + "\n" + callInWorkNote();
       this.speak(chat.id, member.id, member.id);
       const askedAt = toSwiftDate();
       const asked = ask ?? (caller ? `@${member.name} ${caller.body}` : (newest ? chat.lines().find((line) => line.id === newest)?.text : undefined) ?? "");
       let answer: GuestAnswer;
       try {
-        // A card's answer does not wait for a busy bot: it goes into the bot's own chat instead (`delivery.busy`).
-        answer = await bot.groupTurn(prompt, delivery ? 0 : this.timing.busyNamed, this.timing.answerNamed, {
-          callIn: chat.id, ...(caller ? { asked: caller.body } : { asked: asked || `@${member.name}`, by: "user" as const }), onBegin: () => { began = true; delivery?.began(); },
-        });
+        if (remote) {
+          answer = await this.deps.remoteTurn!({
+            member: remote,
+            host: { botId: chat.id, name: host },
+            transcript: before,
+            newest,
+            ask,
+            asked: asked || `@${member.name}`,
+            by: caller ? "bot" : "user",
+            depth: caller?.depth ?? 1,
+            onBegin: () => { began = true; delivery?.began(); },
+          });
+        } else {
+          const prompt = caller
+            ? botCallInPrompt({ member, host, chat: chat.lines(), transcript: before, body: caller.body, speakerName: this.speakerName }) + "\n" + botCallInWorkNote()
+            : callInPrompt({ member, host, chat: chat.lines(), transcript: before, newest, ask, speakerName: this.speakerName, mentionNote: this.mentionNote }) + "\n" + callInWorkNote();
+          // A card's answer does not wait for a busy bot: it goes into the bot's own chat instead (`delivery.busy`).
+          answer = await bot!.groupTurn(prompt, delivery ? 0 : this.timing.busyNamed, this.timing.answerNamed, {
+            callIn: chat.id, ...(caller ? { asked: caller.body } : { asked: asked || `@${member.name}`, by: "user" as const }), onBegin: () => { began = true; delivery?.began(); },
+          });
+        }
       } catch (error) {
         answer = { kind: "failed", why: (error as Error).message || "Its turn could not start." };
       } finally {
@@ -460,7 +524,7 @@ export class Conversations {
         this.settle(chat.id, entry);
         this.speak(chat.id, null, member.id);
       }
-      if (member.id === this.deps.mainBotId) this.deps.afterMainTurn();
+      if (!remote && member.id === this.deps.mainBotId) this.deps.afterMainTurn();
       if (answer.kind === "busy" && delivery) { this.trace("GiveUp", chat.id, { to: member.id, outcome: "rerouted" }); delivery.busy(); }
       else if (answer.kind === "busy") notHeard("GiveUp", "busy");
       else if (answer.kind === "failed") notHeard("NoAnswer", firstLineOf(answer.why));
@@ -470,7 +534,7 @@ export class Conversations {
         let said = "";
         const posted = await this.postGuestReply(answer, member, bot, chat, { passes: false, tagsAct: !caller }, (line) => {
           said = line.text;
-          bot.keepCallIn(`Called into ${host}'s chat with @: ${asked}`, askedAt, line);
+          bot?.keepCallIn(`Called into ${host}'s chat with @: ${asked}`, askedAt, line);
         });
         // A bot asked and nothing was posted: not an answer; it is told so like any @ not answered, never left waiting.
         if (caller && !posted) { notHeard("NoAnswer", "it answered nothing"); this.deps.refreshWaiting(); continue; }
@@ -554,9 +618,9 @@ export class Conversations {
    * A guest's reply (`postGuestReply`): filtered by plugins, parsed, posted as its line with its steps,
    * its tags handled when `policy` lets them act. The posted line's id; null when nothing was posted.
    */
-  async postGuestReply(answer: Extract<GuestAnswer, { kind: "reply" }>, member: Member, bot: Bot, chat: Bot, policy: { passes: boolean; tagsAct: boolean }, keep?: (line: ChatRecord) => void): Promise<string | null> {
+  async postGuestReply(answer: Extract<GuestAnswer, { kind: "reply" }>, member: Member, bot: Bot | null, chat: Bot, policy: { passes: boolean; tagsAct: boolean }, keep?: (line: ChatRecord) => void): Promise<string | null> {
     let text = answer.text;
-    const filter = this.deps.replyFilter(bot);
+    const filter = bot ? this.deps.replyFilter(bot) : null;
     if (filter) { try { text = await filter(text); } catch { /* as it was */ } }
     if (policy.passes && isPass(text)) return null;
     const parsed = parseReply(text);
@@ -572,9 +636,9 @@ export class Conversations {
       chat.post(line);
       posted = line.id;
       // Plugins listening with bots.onReply hear it as the guest's reply (`bot.replyObserver`).
-      this.deps.replied?.(bot, line);
+      if (bot) this.deps.replied?.(bot, line);
     }
-    if (parsed.requests.length && policy.tagsAct) this.deps.handle(bot, parsed.requests);
+    if (bot && parsed.requests.length && policy.tagsAct) this.deps.handle(bot, parsed.requests);
     return posted;
   }
 }
