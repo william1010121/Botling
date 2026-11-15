@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Botling 3 Settings › Phone in the window (src/renderer/PhoneSettingsV3.tsx, shown by PhoneSettings when botlingd's
-// view carries `v3`): the first pairing makes the cluster (the recovery code is shown once and typed back), a pairing
-// code is a QR of the Botling 3 link, a phone's 6-digit code is compared and accepted or rejected once, paired phones
+// view carries `v3`): the first pairing makes the cluster (the recovery code is shown once and typed back, and is not
+// the phone's code), then a pairing code follows at once as a QR of the Botling 3 link, a phone's 6-digit code is compared and accepted or rejected once, paired phones
 // are listed and revoked (after asking). The 2.x view (no `v3`) keeps its own screen. The phone page's sign-in words
 // point at Settings › Phone, never at a command line.
 import { act, createElement } from "react";
@@ -55,16 +55,21 @@ describe("Settings › Phone in Botling 3", () => {
       expect(calls.filter((c) => c.type === "mobile.cluster")).toEqual([{ type: "mobile.cluster" }]);
       expect(m.host.textContent).toContain(CODE);
       const input = m.host.querySelector(`input[aria-label="${v3.typeBack}"]`) as HTMLInputElement;
+      // The recovery code is not what the phone scans: the page says so, and that the QR comes once it is typed back.
+      expect(m.host.textContent).toContain(v3.codeNote);
+      expect(v3.codeNote).toMatch(/QR/);
+      expect(m.host.querySelector("svg.qr-code")).toBeNull();
       await type(input, "wrong");
       await click(button(m.host, v3.confirmCode));
       expect(m.host.querySelector('[role="alert"]')?.textContent).toContain(v3.clusterReason["wrong-code"]);
+      expect(calls.some((c) => c.type === "mobile.pair")).toBe(false); // a wrong code makes no pairing code
       await type(input, CODE.toLowerCase());
       await click(button(m.host, v3.confirmCode));
       expect(calls.filter((c) => c.type === "mobile.cluster").at(-1)).toEqual({ type: "mobile.cluster", code: CODE.toLowerCase() });
       await settle();
       expect(m.host.textContent).not.toContain(CODE); // shown once: gone once confirmed
-      await click(button(m.host, mobileWords("en").create));
-      expect(calls.find((c) => c.type === "mobile.pair")).toEqual({ type: "mobile.pair" });
+      // Confirmed: the pairing code follows at once (as botlingd pair does), no second button to find.
+      expect(calls.filter((c) => c.type === "mobile.pair")).toEqual([{ type: "mobile.pair" }]);
       // A Botling 3 link (about 600 bytes) still makes a QR picture, and the link is never shown as text.
       expect(m.host.querySelector("svg.qr-code path")?.getAttribute("d")).toBeTruthy();
       expect(m.host.textContent).not.toContain("e".repeat(40));
@@ -167,7 +172,10 @@ describe("Settings › Phone in Botling 3", () => {
 
   it("speaks Traditional Chinese", async () => {
     const m = await mount(async () => viewOf({ cluster: "none", relayFixed: false, offers: [], devices: [] }), "zh-Hant");
-    try { expect(m.host.textContent).toContain(mobileWords("zh-Hant").v3.setup); } finally { await m.done(); }
+    try {
+      expect(m.host.textContent).toContain(mobileWords("zh-Hant").v3.setup);
+      expect(mobileWords("zh-Hant").v3.codeNote).toMatch(/QR/); // the recovery code is not the phone's code, in both languages
+    } finally { await m.done(); }
   });
 
   it("leaves the 2.x screen as it was when the view has no v3 part", async () => {
