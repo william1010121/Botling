@@ -118,6 +118,14 @@ const WAITING_TEXT_LIMIT = 400;
  */
 export const PEER_MESSAGE_BYTES = 240 * 1024;
 
+/**
+ * Text from a peer as plain text in a markdown chat line (Web/src/markdown.ts renders notices): the punctuation that
+ * makes links, autolinks, images, code or emphasis is backslash-escaped, which markdown shows as the character itself.
+ */
+function plainMarkdown(text: string): string {
+  return text.replace(/[\\`*_[\]()<>!|~]/g, "\\$&");
+}
+
 /** Text from a peer or a model as one clean line for a note, a log or a report: control characters gone, runs of spaces one, at most 300 characters, no closing full stop (the note adds its own). */
 function oneLine(text: string): string {
   const line = text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
@@ -1935,10 +1943,12 @@ First write a test that shows this, then fix it.`;
    * `(App: …)` note with its next message. The line is what keeps it: `queueNote` holds one note and none for a bot that is
    * not awake, and an outcome from another machine can come late (after a sleep, or two in one turn).
    */
-  private tellMain(words: string) {
+  private tellMain(words: (part: (text: string) => string) => string) {
     const main = this.mainBot();
-    main?.appNotice(words);
-    main?.queueNote(`(App: ${words})`);
+    // The chat line is markdown: a peer's name or reason such as `[x](https://…)` must stay text, never a link (review
+    // M5-04d); the note goes to the model as written.
+    main?.appNotice(words(plainMarkdown));
+    main?.queueNote(`(App: ${words((text) => text)})`);
   }
 
   /**
@@ -1948,7 +1958,7 @@ First write a test that shows this, then fix it.`;
   private botRequestedOn(machineName: string, rawName: string, rawJob: string, sentOnce: Set<string>) {
     const machine = this.machineNamed(machineName);
     if (machine.kind === "here") { this.botRequested(rawName, rawJob, null); return; }
-    if (machine.kind === "unknown") { this.tellMain(`There is no machine named "${machine.name}"; the bot was not made.`); return; }
+    if (machine.kind === "unknown") { this.tellMain((p) => `There is no machine named "${p(machine.name)}"; the bot was not made.`); return; }
     const name = botName(rawName);
     const job = rawJob.trim();
     if (!name || !job) return;
@@ -1957,7 +1967,7 @@ First write a test that shows this, then fix it.`;
     const tell = (why: string | null) => {
       if (told) return;
       told = true;
-      this.tellMain(why === null ? `The bot "${name}" was made on ${machine.name}.` : `${machine.name} did not make the bot "${name}": ${oneLine(why)}.`);
+      this.tellMain((p) => (why === null ? `The bot "${p(name)}" was made on ${p(machine.name)}.` : `${p(machine.name)} did not make the bot "${p(name)}": ${p(oneLine(why))}.`));
     };
     if (machine.kind === "ambiguous") { tell("more than one machine has that name"); return; }
     if (job.length > BOT_JOB_LIMIT) { tell(`the job is longer than ${BOT_JOB_LIMIT} characters`); return; }
@@ -2202,7 +2212,7 @@ First write a test that shows this, then fix it.`;
         // U3: the file is kept and logged on every turn, but the main bot is told once (again after it fits and went).
         if (!this.peerOverTold.has(peer.id)) {
           this.peerOverTold.add(peer.id);
-          this.tellMain(`The message for "${peer.name}" on ${peer.serverName} is too long to send, so it was not sent. Cut it down in its inbox file.`);
+          this.tellMain((p) => `The message for "${p(peer.name)}" on ${p(peer.serverName)} is too long to send, so it was not sent. Cut it down in its inbox file.`);
         }
         continue;
       }
@@ -2225,7 +2235,7 @@ First write a test that shows this, then fix it.`;
         if (outcome.ok) return;
         const why = oneLine(outcome.why);
         this.log(`message to ${who} was not delivered: ${why}`);
-        this.tellMain(`The message to "${peer.name}" on ${peer.serverName} was not delivered: ${why}.`);
+        this.tellMain((p) => `The message to "${p(peer.name)}" on ${p(peer.serverName)} was not delivered: ${p(why)}.`);
       }, () => undefined);
     }
     // A bot that left (its server was removed): its text stays in the file, and the log says so once.
@@ -2542,10 +2552,10 @@ First write a test that shows this, then fix it.`;
       const machine = this.machineNamed(request.machine);
       if (machine.kind === "here") return true;
       if (machine.kind === "unknown") {
-        this.tellMain(`There is no machine named "${machine.name}"; the project was not added.`);
+        this.tellMain((p) => `There is no machine named "${p(machine.name)}"; the project was not added.`);
       } else if (!told.has(machine.name.toLowerCase())) {
         told.add(machine.name.toLowerCase());
-        this.tellMain(`Adding a project on ${machine.name} needs ${machine.name}'s own window.`);
+        this.tellMain((p) => `Adding a project on ${p(machine.name)} needs ${p(machine.name)}'s own window.`);
       }
       return false;
     });

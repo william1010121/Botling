@@ -9,6 +9,7 @@ import { parseReply } from "../../src/core/reply";
 import { saveProjectRow } from "../../src/core/projects";
 import { Core, PEER_MESSAGE_BYTES, type CoreOptions } from "../../src/core/server";
 import { FRAME_LIMIT } from "../../src/protocol/frame";
+import { renderMarkdown } from "../../../Web/src/markdown";
 import type { Command } from "../../src/contract";
 import type { MessageOf, Slot } from "../../src/protocol";
 import { tempDir, until } from "../helpers";
@@ -123,6 +124,31 @@ describe("M5-04d 2/3/6: <new-bot machine> makes a bot on a peer", () => {
     h.sent[0]!.settle({ ok: true });
     await until(() => h.notes.length === 1);
     expect(h.notes).toEqual(['(App: The bot "nightly" was made on build-box.)']);
+  });
+
+  it("2e. a peer's name or reason holding a markdown link is text in the main chat, never a link (the note keeps it as written)", async () => {
+    const link = "[x](https://example.invalid)";
+    const h = fixture({ machines: [{ id: SERVER_B, name: link }], members: [{ id: PEER_BUILD, name: link }] });
+    // The machine named like a link, and a refusal reason holding a link and an autolink.
+    h.act(h.main, h.tag(`<new-bot name="nightly" machine="${link}">job</new-bot>`));
+    await until(() => h.sent.length === 1);
+    h.sent[0]!.settle({ ok: false, why: `see ${link} or <https://example.invalid/a> ![i](https://example.invalid/i.png)` });
+    await until(() => h.notes.length === 1);
+    // A peer bot and server named like a link, in the refused-after-commit notice.
+    h.core.projectBriefing();
+    writeFileSync(h.inbox(PEER_BUILD), "do it\n");
+    h.core.deliverInboxes();
+    await until(() => h.sent.length === 2);
+    h.sent[1]!.settle({ ok: false, why: link });
+    await until(() => h.notes.length === 2);
+    const shown = h.main.lines().filter((line) => line.role === "notice").map((line) => line.text);
+    expect(shown).toHaveLength(2);
+    for (const text of shown) {
+      const html = renderMarkdown(text);
+      expect(html).not.toMatch(/<a\b|<img\b|<video\b|data-url/);
+      expect(html).toContain("[x](https://example.invalid)");
+    }
+    expect(h.notes[0]).toBe(`(App: ${link} did not make the bot "nightly": see ${link} or <https://example.invalid/a> ![i](https://example.invalid/i.png).)`);
   });
 
   it("3. a refusal from the peer: the did-not-make note with its reason on one clean line", async () => {
