@@ -712,6 +712,8 @@ export class FetchSource {
             t: "fetch.chunk",
             fetchId: message.fetchId,
             index,
+            // M5-07b: the requester splits the stream into files by this name.
+            file: file.relPath,
             sha256: sha256Hex(read.bytes),
             bytes: read.bytes,
           });
@@ -927,7 +929,13 @@ export class FetchSource {
       return { ok: false, reason: "denied" };
     }
 
+    // M5-07b: names go on the wire in NFC (the chunk's `file` schema); the manifest and `from.file` use the same form.
+    // Two names that become one after NFC cannot be told apart by the requester, so the fetch is refused.
+    for (const entry of entries) entry.relPath = entry.relPath.normalize("NFC");
     entries.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
+    for (let i = 1; i < entries.length; i++) {
+      if (entries[i]!.relPath === entries[i - 1]!.relPath) return { ok: false, reason: "denied" };
+    }
     const files: FileEntry[] = [];
     let totalBytes = 0;
     for (const entry of entries) {

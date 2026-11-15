@@ -32,6 +32,7 @@ import { PluginContentRead } from "./content/plugin-read";
 import { RemoteContent } from "./content/remote";
 import { Uploads } from "./content/put";
 import { ContentTickets } from "./content/tickets";
+import { FetchRequester } from "./fetch/requester";
 import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
@@ -350,6 +351,8 @@ export class Botlingd {
   serverOrigin: ServerOrigin | null = null;
   private originHookStop: (() => void) | null = null;
   fetchSource: FetchSource | null = null;
+  /** M5-07b: requester side of on-demand fetch (nothing calls `fetch` before M5-07d adds `app_fetch`). */
+  fetchRequester: FetchRequester | null = null;
 
   get token(): string { return this.tokenValue; }
 
@@ -744,6 +747,15 @@ export class Botlingd {
         onAudit: () => feeds.notify(feeds.ownStream),
         log,
       });
+      // M5-07b: requester side of on-demand fetch (`peers` is made below; no session exists before it starts).
+      const fetchRequester = new FetchRequester({
+        store,
+        session: (member) => peers.session(member),
+        botFolder: (botId) => engine.botView(botId)?.folder ?? null,
+        serverName: (member) => peers.states().find((state) => state.member === member)?.name || null,
+        onAudit: () => feeds.notify(feeds.ownStream),
+        log,
+      });
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
       const peers: PeerSessions = new PeerSessions({
         roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log,
@@ -752,11 +764,11 @@ export class Botlingd {
         // M3 step 9: forwarded commands (owner side) and the owners' answers (forwarding side).
         // M3 step 8: forwarded front-end subscriptions (owner side) and the frames that answer them (attached side).
         // M3 step 10: content gets and their answers (bulk lane), both sides.
-        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || peerContent.onMessage(session, message) || peerContentOwner.onMessage(session, message) || fetchSource.onMessage(session, message)
+        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || peerContent.onMessage(session, message) || peerContentOwner.onMessage(session, message) || fetchSource.onMessage(session, message) || fetchRequester.onMessage(session, message)
           || inbox.onMessage(session, message) || (await forwarder.onMessage(session, message))
           || passThrough.onMessage(session, message) || (await passOwner.onMessage(session, message)) || peerTables.onMessage(session, message),
-        sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
-        sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); peerContent.sessionClosed(session); peerContentOwner.sessionClosed(session); fetchSource.sessionClosed(session); },
+        sessionOpened: (session) => { fetchRequester.sessionOpened(session); gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
+        sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); peerContent.sessionClosed(session); peerContentOwner.sessionClosed(session); fetchSource.sessionClosed(session); fetchRequester.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
       peerSessions = peers;
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
@@ -770,6 +782,7 @@ export class Botlingd {
       daemon.serverOrigin = serverOrigin;
       if (originTestHookEnabled(env)) daemon.originHookStop = startOriginTestHook(paths.dataDir, serverOrigin, log);
       daemon.fetchSource = fetchSource;
+      daemon.fetchRequester = fetchRequester;
       daemon.media = media;
       daemon.pluginTimer = pluginTimer;
       daemon.utilityHostShutdown = utilityHost?.shutdown ?? null;
@@ -869,12 +882,14 @@ export class Botlingd {
     this.passThrough.close();
     this.passOwner.close();
     this.fetchSource?.close();
+    this.fetchRequester?.close();
     this.peerContent?.close();
     await step("peer log cache", () => this.peerLogs.idle());
     await step("peer content", () => this.peerContent?.flushed());
     this.originHookStop?.();
     this.serverOrigin?.close();
     await step("fetch source", () => this.fetchSource?.flushed());
+    await step("fetch requester", () => this.fetchRequester?.flushed());
     this.feeds.close();
     await step("listener", () => this.listener?.close());
     rmSync(join(this.paths.dataDir, LISTEN_FILE), { force: true });

@@ -16,7 +16,7 @@ import { ownTableStream, putRow } from "../../src/server/replica/tables";
 import { RosterStore } from "../../src/server/roster";
 import { slotAuthorize, type DeviceRoster } from "../../src/server/session";
 import { grantAllows } from "../../src/server/slots/grant-check";
-import { openServerStore, type ServerStore } from "../../src/server/store";
+import { openServerStore, type Db, type ServerStore } from "../../src/server/store";
 import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
 import { testRoot } from "../botlingd-harness";
 import { generateDhKeyPair } from "../../src/session";
@@ -269,6 +269,31 @@ describe("M5-15: the owner's grant check in the slot engine", () => {
     const cmd = { type: "plugins.command", id: "my.plugin.go" } as Command;
     const status = await s.runtime.receive({ slot: { origin: "desktop", originEpoch: EPOCH, target: `bot:${BOT}`, n: ++slotN }, floor: slotN, inc: s.inc(), cmd, via: via("my", H1) } as CmdBody, { scope: "local" });
     expect(status).toMatchObject({ status: "result", message: { outcome: { kind: "refused", reason: "grant", detail: `plugin my may not do this on ${NAME}` } } });
+  });
+
+  it("review: when the installed-plugins query throws, the nested-name guard fails closed: refused grant, not allowed", async () => {
+    const s = await startServer();
+    await seed(s, "my", row({ tier: "write", grants: { [H1]: grant("write") } }));
+    await seed(s, "my.plugin", row({ codeHash: H2, tier: "write", grants: {} }));
+    const cmd = { type: "plugins.command", id: "my.plugin.go" } as Command;
+    const input = { slot: { origin: "desktop", originEpoch: EPOCH, target: `bot:${BOT}`, n: ++slotN } as Slot, cmd, scope: "local" as Scope, via: via("my", H1) };
+    // A command of plugin "my" that names its own commands is allowed when the list can be read ...
+    const own = { ...input, cmd: { type: "plugins.command", id: "my.go" } as Command };
+    expect(await s.store.submit((tx) => s.runtime.slots.denies(tx, own))).toBeNull();
+    // ... and refused for every command when the query fails (the proxy makes only that query throw).
+    const failing = (tx: Db): Db => new Proxy(tx, {
+      get(target, key) {
+        if (key !== "prepare") return Reflect.get(target, key, target);
+        return (sql: string) => {
+          if (sql.includes("substr(key, 1, 7)")) throw new Error("forced: installed-plugins query failed");
+          return target.prepare(sql);
+        };
+      },
+    });
+    for (const c of [own.cmd, cmd]) {
+      expect(await s.store.submit((tx) => s.runtime.slots.denies(failing(tx), { ...input, cmd: c })), JSON.stringify(c))
+        .toEqual({ reason: "grant", detail: `plugin my may not do this on ${NAME}` });
+    }
   });
 
   it("7. plugin.grant with via stays refused (M5-14a F3), also when the row's grant lists it", async () => {
