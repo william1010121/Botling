@@ -31,6 +31,10 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
   desktop pushes `changed` notices (no content) when a chat the phone may read changes; the phone then reads a
   snapshot, as with the bridge's event stream.
 - **The phone app** is the existing Botling Web build (`desktop/mobile/dist`), served by the relay under `/mobile/`.
+  **Since the Botling 3 phone page replaced it** (the default `full` image, `STATIC_V3_DIR`): the relay serves
+  `desktop/web-v3/dist` under `/v3/` and redirects `/` and every `/mobile` address there, so the 2.x pairing links
+  below no longer open a 2.x page. The `/ws` protocol is unchanged: a 2.x desktop keeps its room and its connected
+  phones, but a phone that loads the page again gets Botling 3's. The `full-2x` image target keeps the 2.x page.
   `mobile/relay-client.ts` replaces the HTTPS transport; everything above it (`web-bridge.ts`, the desktop renderer)
   is unchanged.
 
@@ -51,7 +55,7 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
 ## Pairing (QR)
 
 1. Settings › Phone › Relay: enter the relay's address (ours: `wss://relay.driseam.com/ws`), **Turn on**. The QR link
-   uses the same host, so that host must serve the phone app under `/mobile/` (the default `full` image does). The first time, the desktop makes a
+   uses the same host, so that host must serve the phone app under `/mobile/` (the `full-2x` image does; the default `full` image now sends it to the Botling 3 page). The first time, the desktop makes a
    32-byte room key and an X25519 identity key (`<data>/mobile/relay.json`, mode 0600, owner-only folder).
 2. **Create pairing code** (once the relay is connected, the code points at it by default; the bridge's routes stay in
    the menu). There is no bot picker: a paired phone gets every bot, including bots added later (scope `*`, resolved
