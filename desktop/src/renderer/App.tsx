@@ -1,11 +1,11 @@
 import { BottomPanels } from "./BottomPanels";
 import { ChatHeaderViews } from "./ChatHeaderViews";
 import { useComposerBar } from "./ComposerBar";
-// The app page: React chrome around the reused chat page. The left column lists the bots (as the
-// Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin frame
-// (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts
-// what the user does (send, a pick on an approval, Stop); this page turns that into contract
-// commands. Only this page has the bridge to main.
+// The app page: React chrome around the reused chat page, drawn inside shell/ShellFrame as the legacy surface of `app/main`.
+// The left column lists the bots (as the Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin
+// frame (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts what the user does
+// (send, a pick on an approval, Stop); this page turns that into contract commands. Only this page has the bridge to main.
+import { ShellFrame } from "./shell/ShellFrame";
 import { openReport } from "./report-opener";
 import { askChatToQuote, setComposerQuoter } from "./composer-quote";
 import { shellOverlayActive } from "./ShellOverlay";
@@ -466,7 +466,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (bot && bot.unread > 0) void client.request({ type: "chat.read", botId: bot.id }).catch(() => {});
   }, [client, bot]);
 
-  return (
+  return <ShellFrame plugins={view.plugins} legacy={(
     <div className={`shell${paneOpen ? " browser-on" : ""}${browserFull ? " browser-full" : ""}${browserDocked ? " browser-mini" : ""}${browserFloat ? " browser-float" : ""}`} data-ready={view.ready ? "1" : "0"}>
       {/* A panel a plugin's program part opened (`ui.openView`). */}
       {!web && view.pluginPanel && (
@@ -717,7 +717,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)}
         onOpenBot={(botId) => { if (botId === bot?.id) openBotSettings(); else { openingBotSettings.current = botId; if (collapsed) toggleRight(); selectBot(botId); } }} />}
     </div>
-  );
+  )} />;
 }
 
 export { railOrder } from "./rail-idle";

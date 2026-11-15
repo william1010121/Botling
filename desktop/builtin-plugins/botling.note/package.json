@@ -18,6 +18,9 @@
     "permissions": [
       "files"
     ],
+    "owns": [
+      "note"
+    ],
     "web": "dist/web.js",
     "host": "dist/host.js",
     "contributes": {

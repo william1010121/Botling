@@ -22,6 +22,8 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readCharacters } from "../build-renderer.mjs";
+import { FE_MANIFEST_FILE, feBuildManifestFile } from "../fe-build-manifest.mjs";
+import { feManifestDefine } from "../fe-manifest-define.mjs";
 import { inlineTokens } from "../../Web/kit/build.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,11 +44,14 @@ async function webPart(name, sources) {
 export async function buildPage({ out = outdir, development = false } = {}) {
   // Every file the build reads (absolute paths), for the page tests' freshness check (test/acceptance/web-v3/page-fresh.ts).
   const sources = new Set([fileURLToPath(import.meta.url)]);
+  // The in-page plugin list, written into the shell bundle (the same bytes as fe-build-manifest.json, checked before writing).
+  const feManifest = feBuildManifestFile(root, undefined, { requireMinFeVersion: true });
   const [latex, chatExtras, catchup, boardPart] = await Promise.all(["ccb-latex", "botling.chat-extras", "botling.catchup", "botling.board"].map((name) => webPart(name, sources)));
-  const browser = { bundle: true, format: "iife", target: ["chrome130", "safari17"], minify: !development, sourcemap: "linked", legalComments: "eof", write: false, nodePaths, metafile: true };
+  const browser = { bundle: true, format: "iife", target: ["chrome130", "safari17"], minify: !development, sourcemap: "linked", legalComments: "eof", write: false, nodePaths, metafile: true,
+    logOverride: { "empty-glob": "silent" } }; // the in-page plugin folder (shell/inpage-bundled.ts) has no plugin yet
   const [shell, chat, pdfViewer, worker] = await Promise.all([
     build({ ...browser, entryPoints: [join(here, "shell/main.tsx")], outfile: join(out, "web.js"), jsx: "automatic",
-      define: { __BOTLING_WEB_BASE__: WEB_BASE, "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(readCharacters(root)), __BOTLING_WEB__: "true" } }),
+      define: { ...feManifestDefine(feManifest), __BOTLING_WEB_BASE__: WEB_BASE, "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(readCharacters(root)), __BOTLING_WEB__: "true" } }),
     build({ ...browser, entryPoints: [join(here, "chat-entry.ts")], outfile: join(out, "chat.js"),
       define: { __BOTLING_WEB_BASE__: WEB_BASE, __LATEX_SOURCE__: JSON.stringify(latex), __CHAT_EXTRAS_SOURCE__: JSON.stringify(chatExtras), __CATCHUP_SOURCE__: JSON.stringify(catchup), __BOARD_SOURCE__: JSON.stringify(boardPart), __BOTLING_WEB__: "true" } }),
     // An ES module (pdf.js is one); its Node-only branches never run in a browser.
@@ -77,6 +82,9 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   asset(join(root, "builtin-plugins/botling.chat-extras/src/chat-extras.css"), "plugins/botling.chat-extras/chat-extras.css");
   asset(join(root, "builtin-plugins/botling.catchup/catchup.css"), "plugins/botling.catchup/catchup.css");
   asset(join(root, "builtin-plugins/botling.board/src/board.css"), "plugins/botling.board/board.css");
+  // The in-page plugins this build ships (M7-10a): name and folder hash, built from src/renderer/plugins/* (the bundled ones are in the metafile's inputs).
+  files.set(join(out, FE_MANIFEST_FILE), feBuildManifestFile(root));
+  for (const file of ["fe-build-manifest.mjs", "fe-shell-manifest.mjs"]) sources.add(join(root, file));
   // The build's id, stamped in index.html and version.json (as the 2.x page does).
   const hash = createHash("sha256");
   for (const [file, contents] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
@@ -87,6 +95,8 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   const index = join(out, "index.html");
   files.set(index, Buffer.from(Buffer.from(files.get(index)).toString("utf8").replaceAll("__BOTLING_BUILD__", id)));
   files.set(join(out, "version.json"), Buffer.from(`${JSON.stringify({ build: id })}\n`));
+  // A plugin folder edited while the build ran would leave the bundle and the file with different lists: fail instead.
+  if (!Buffer.from(files.get(join(out, FE_MANIFEST_FILE))).equals(feManifest)) throw new Error("A plugin folder changed during the build; build again.");
   rmSync(out, { recursive: true, force: true });
   for (const [file, contents] of files) {
     mkdirSync(dirname(file), { recursive: true });

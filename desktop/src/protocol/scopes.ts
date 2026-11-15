@@ -58,7 +58,8 @@ export const COMMAND_SCOPES: Record<CommandType, CommandScope> = {
   "plugins.list": read,
   "plugins.store": read,
   "plugins.panel": read,
-  // N2: a kept slot result; local only (not in REMOTE_READS), and only the slot's own origin (session-core).
+  // N2: a kept slot result, only for the slot's own origin (session-commands `slotResult`: `slot.origin === deviceId`); a remote
+  // front end may ask for it too (REMOTE_READS, M7-04c), so a page gets a big plugin result (the Note's read) back.
   "slot.result": read,
   "plugins.web": read,
   // Unread marks: reading a chat marks it read.
@@ -211,6 +212,8 @@ export function commandScope(cmd: Command): CommandScope {
 export const REMOTE_READS: ReadonlySet<CommandType> = new Set<CommandType>([
   "chat.snapshot", "chat.history", "task.output", "subagent.view", "routines.list", "component.detail", "waiting.list",
   "usage.view", "codex.models", "engine.models", "chat.read", "chat.shown",
+  // M7-04c: the result the owner kept for the session's own slot (N2). The origin check (`slotResult`) is what keeps it private.
+  "slot.result",
 ]);
 
 /** Why a remote session may not send this command as a `cmd`, or null when its scopes allow it. */

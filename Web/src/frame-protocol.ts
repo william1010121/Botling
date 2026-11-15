@@ -54,7 +54,8 @@ export type FrameRequest =
   | { ccb: "snapshot"; id: number; botId: string; rect: FrameRect }
   | { ccb: "openLink"; id: number; botId: string; href: string }
   | { ccb: "composerQuote"; id: number; text: string; botId: string; focus: boolean }
-  | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string; detail?: string };
+  | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string; detail?: string }
+  | { ccb: "storage"; id: number; op: "get" | "set" | "remove"; key: string; value?: unknown };
 
 /** A part of a frame, in its own CSS px. */
 export interface FrameRect { x: number; y: number; width: number; height: number }
@@ -71,6 +72,7 @@ export function frameEvent(name: string, data: unknown): FrameEvent {
 }
 
 export const METHOD_MAX = 200;
+export const STORAGE_KEY_MAX = 256;
 /** The tallest a frame may ask to be (px). */
 export const RESIZE_MAX = 20_000;
 export const PARAMS_MAX = 1_000_000;
@@ -94,6 +96,7 @@ const KEYS: Record<FrameRequest["ccb"], string[]> = {
   snapshot: ["ccb", "id", "botId", "rect"],
   openLink: ["ccb", "id", "botId", "href"],
   composerQuote: ["ccb", "id", "text", "botId", "focus"],
+  storage: ["ccb", "id", "op", "key", "value"],
 };
 /** The longest text a frame may quote into an input box. */
 export const QUOTE_MAX = 200_000;
@@ -150,6 +153,18 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
       if (!text(message.key, 32) || !text(message.code, 32)) return null;
       if (![message.metaKey, message.ctrlKey, message.altKey, message.shiftKey].every((flag) => typeof flag === "boolean")) return null;
       return { ccb: "key", key: message.key as string, code: message.code as string, metaKey: message.metaKey as boolean, ctrlKey: message.ctrlKey as boolean, altKey: message.altKey as boolean, shiftKey: message.shiftKey as boolean };
+    case "storage": {
+      if (!Number.isSafeInteger(message.id) || !text(message.key, STORAGE_KEY_MAX)) return null;
+      if (message.op === "get" || message.op === "remove") {
+        if (message.value !== undefined) return null;
+        return { ccb: "storage", id: message.id as number, op: message.op, key: message.key };
+      }
+      if (message.op === "set") {
+        if (message.value === undefined) return null;
+        return { ccb: "storage", id: message.id as number, op: "set", key: message.key, value: message.value };
+      }
+      return null;
+    }
     case "resize":
       return typeof message.height === "number" && Number.isFinite(message.height) && message.height >= 0 ? { ccb: "resize", height: Math.min(RESIZE_MAX, Math.ceil(message.height)) } : null;
     default:
