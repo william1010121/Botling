@@ -4,11 +4,15 @@
 // answer back as a `GuestAnswer`, so the guest's line is appended to H by the same code that appends a local guest's line:
 // only A writes H, once per call-in.
 //
-//   every wait ends exactly once   reply · failed · busy (B's outcomes), the wait running out, B not reachable (not in the
-//                                  roster, owned by another server, the ask refused), the ask could not be sent, cancel (an
+//   how long it waits             the 75 s (`SUB_BOT_WAIT_MS`) is a LIVENESS wait, not an answer deadline: a guest may take up to
+//                                  15 minutes. The host keeps waiting while B's server is live (`peerState`, the peer sessions'
+//                                  own last-heard bookkeeping: no new heartbeat) and gives up when it has been stale for 75 s,
+//                                  or gone from the roster, or at an overall cap of 15 min + 1 min.
+//   every wait ends exactly once   reply · failed · busy (B's outcomes), B not reachable (not in the roster, owned by another
+//                                  server, stale for 75 s, the cap, the ask refused), the ask could not be sent, cancel (an
 //                                  aborted signal), or this host closing. `settle` is the one place a wait ends: it removes
-//                                  the entry and the timer first, so a second ending (a duplicate or late reply, a timer that
-//                                  fires after a reply) finds nothing to do.
+//                                  the entry first, so a second ending (a duplicate or late reply, a tick after a reply)
+//                                  finds nothing to do.
 //   the reply is peer text         it is cleaned before it is an answer (`cleanReply`): control characters and direction
 //                                  marks removed, every `<` that opens a tag turned into a look-alike so no tag of the 2.x
 //                                  reply parser (`<show command=…>`, choices, requests) can act on H; a `why` is one clean line.
@@ -24,7 +28,7 @@ import type { Command } from "../../contract";
 import type { GuestAnswer } from "../../core/bot";
 import type { RemoteTurnRequest } from "../../core/conversations";
 import { SUB_BOT_WAIT_MS } from "../../core/sub-bots";
-import { transcriptLines } from "../../core/groups";
+import { oneLine, transcriptLines } from "../../core/groups";
 import type { ChatRecord } from "../../core/store/records";
 import { slotKey, type Outcome, type Slot, type Target } from "../../protocol";
 import type { ApplyContext } from "../slots";
@@ -32,10 +36,16 @@ import { SlotRefusal } from "../slots";
 import type { TxScope } from "../effects";
 import type { CallInSender } from "./guest";
 import { cleanLine, stripControls } from "./prompt";
-import { CALLIN_TRANSCRIPT_LIMIT, cutOldest } from "./wire-text";
+import { CALLIN_NAME_LIMIT, CALLIN_REPLY_LIMIT, CALLIN_TRANSCRIPT_LIMIT, cutOldest, cutUnits } from "./wire-text";
 
-/** How long the host waits for the guest (the 2.x call-in wait; above the guest's own 60 s busy wait). */
+/** How long B's server may be silent before the host gives up (the 2.x call-in wait; above the guest's 60 s busy wait). */
 export const CALLIN_HOST_WAIT_MS = SUB_BOT_WAIT_MS;
+/** The most a call-in may wait whatever B's server does: the guest's own answer limit (15 min) and a minute. */
+export const CALLIN_HOST_CAP_MS = 16 * 60_000;
+/** How often the waits are checked against the peer's state. */
+const TICK_MS = 5_000;
+/** One transcript line, in characters (the renderer cuts the text to 400, and adds options and picks). */
+const TRANSCRIPT_LINE_CHARS = 2_000;
 /** `callin.ask.asked`, in UTF-16 units (the contract's `.max(4_000)`). */
 const ASKED_UNITS = 4_000;
 /** The longest `why` the host passes on, in characters. */
@@ -52,11 +62,18 @@ export interface CallInHostSender extends CallInSender {
   onOutcome?(listener: (slot: Slot, outcome: Outcome) => void): () => void;
   /** The outcome already known for `slot`, or null. */
   outcome?(slot: Slot): Outcome | null;
+  /** The peer session's state of `server` (the peer sessions' own: `live`, `stale` since its last frame, `gone`), or null. */
+  peerState(server: string): { state: "live" | "stale" | "gone"; since: number | null } | null;
 }
 
 export interface CallInHostOptions {
-  /** How long a wait lasts (default `CALLIN_HOST_WAIT_MS`); tests make it short. */
-  waitMs?: number;
+  /** How long B's server may stay stale before the wait ends (default `CALLIN_HOST_WAIT_MS`). */
+  staleMs?: number;
+  /** The most a wait may last (default `CALLIN_HOST_CAP_MS`). */
+  capMs?: number;
+  /** How often the waits are checked (default 5 s). */
+  tickMs?: number;
+  now?: () => number;
   log?: (line: string) => void;
 }
 
@@ -66,6 +83,7 @@ interface Wait {
   hostBotId: string;
   /** The machine's name as shown (quoted, one clean line). */
   machine: string;
+  startedAt: number;
   settle(answer: GuestAnswer): void;
 }
 
@@ -75,16 +93,12 @@ export type CallInTurnRequest = RemoteTurnRequest & { signal?: AbortSignal };
 const failed = (why: string): GuestAnswer => ({ kind: "failed", why });
 const errorText = (error: unknown) => cleanLine(error instanceof Error ? error.message : String(error), 200);
 
-/** The guest's reply as an answer for H: peer text, so controls are gone and no tag can act (see the file header). */
+/**
+ * The guest's reply as an answer for H: peer text, so controls are gone, runs of `>>>` / `<<<` are spaced out (a bot that
+ * asked is handed the answer inside a quoted block of its prompt), and no tag can act (see the file header). Lines stay lines.
+ */
 export function cleanReply(text: string): string {
-  return stripControls(text).replace(/\r\n?/g, "\n").replace(/<(?=[A-Za-z/!?])/g, "＜");
-}
-
-/** `text` cut to at most `units` UTF-16 units without splitting a surrogate pair. */
-function cutUnits(text: string, units: number): string {
-  if (text.length <= units) return text;
-  const end = /[\uD800-\uDBFF]/.test(text[units - 1] ?? "") ? units - 1 : units;
-  return text.slice(0, end);
+  return text.replace(/\r\n?/g, "\n").split("\n").map((line) => cleanLine(line, CALLIN_REPLY_LIMIT)).join("\n").replace(/<(?=[A-Za-z/!?])/g, "＜");
 }
 
 export class CallInHost {
@@ -95,11 +109,18 @@ export class CallInHost {
   private readonly waits = new Map<string, Wait>();
   /** The ask's slot → its callId, so a refusal of the ask ends the wait at once. */
   private readonly asked = new Map<string, string>();
-  private readonly waitMs: number;
+  private readonly staleMs: number;
+  private readonly capMs: number;
+  private readonly tickMs: number;
+  private readonly now: () => number;
+  private ticker: NodeJS.Timeout | null = null;
   private readonly log: (line: string) => void;
 
   constructor(options: CallInHostOptions = {}) {
-    this.waitMs = options.waitMs ?? CALLIN_HOST_WAIT_MS;
+    this.staleMs = options.staleMs ?? CALLIN_HOST_WAIT_MS;
+    this.capMs = options.capMs ?? CALLIN_HOST_CAP_MS;
+    this.tickMs = options.tickMs ?? TICK_MS;
+    this.now = options.now ?? Date.now;
     this.log = options.log ?? (() => undefined);
   }
 
@@ -118,6 +139,7 @@ export class CallInHost {
     this.closed = true;
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.stopTicker();
     for (const wait of [...this.waits.values()]) wait.settle(failed("this machine is stopping"));
   }
 
@@ -134,7 +156,7 @@ export class CallInHost {
     const callId = randomUUID();
     const ask: Ask = {
       type: "callin.ask", botId: call.member.id, callId,
-      host: { server: sender.self, botId: call.host.botId, name: cleanLine(call.host.name, 80) || "bot" },
+      host: { server: sender.self, botId: call.host.botId, name: cutUnits(cleanLine(call.host.name, 80), CALLIN_NAME_LIMIT).trim() || "bot" },
       transcript: this.transcriptOf(call),
       asked: cutUnits(stripControls(call.asked), ASKED_UNITS) || `@${cleanLine(call.member.name, 80)}`,
       by: call.by, depth: Math.min(2, Math.max(1, Math.trunc(call.depth) || 1)),
@@ -142,20 +164,18 @@ export class CallInHost {
     return new Promise<GuestAnswer>((resolve) => {
       let done = false;
       let slotId: string | null = null;
-      let timer: NodeJS.Timeout | null = null;
       const onAbort = () => settle(failed("cancelled"));
       const settle = (answer: GuestAnswer) => {
         if (done) return;
         done = true;
-        if (timer) clearTimeout(timer);
         call.signal?.removeEventListener("abort", onAbort);
         this.waits.delete(callId);
+        if (this.waits.size === 0) this.stopTicker();
         if (slotId) this.asked.delete(slotId);
         resolve(answer);
       };
-      this.waits.set(callId, { server: call.member.server, guestBotId: call.member.id, hostBotId: call.host.botId, machine, settle });
-      timer = setTimeout(() => settle(unreachable), this.waitMs);
-      timer.unref?.();
+      this.waits.set(callId, { server: call.member.server, guestBotId: call.member.id, hostBotId: call.host.botId, machine, startedAt: this.now(), settle });
+      this.startTicker();
       call.signal?.addEventListener("abort", onAbort, { once: true });
       sender.submit(target, ask).then((slot) => {
         if (done) return;
@@ -172,6 +192,37 @@ export class CallInHost {
       });
     });
   };
+
+  private startTicker(): void {
+    if (this.ticker) return;
+    this.ticker = setInterval(() => this.tick(), this.tickMs);
+    this.ticker.unref?.();
+  }
+
+  private stopTicker(): void {
+    if (this.ticker) clearInterval(this.ticker);
+    this.ticker = null;
+  }
+
+  /**
+   * The wait is a liveness wait (file header): a wait ends here when B's server is gone from the roster, has been silent
+   * (stale) for `staleMs`, or the wait is over the cap. Silence is counted from the peer's last frame, but never from before
+   * this call-in began, so every call-in gets its full window. No state for the peer: counted as stale (fail closed).
+   */
+  private tick(): void {
+    const sender = this.sender;
+    const now = this.now();
+    for (const wait of [...this.waits.values()]) {
+      const unreachable = failed(`its machine ${wait.machine} is not reachable`);
+      if (now - wait.startedAt >= this.capMs) { wait.settle(unreachable); continue; }
+      let peer: ReturnType<CallInHostSender["peerState"]> = null;
+      try { peer = sender?.peerState(wait.server) ?? null; } catch { peer = null; }
+      if (peer?.state === "live") continue;
+      if (peer?.state === "gone") { wait.settle(unreachable); continue; }
+      const quietSince = Math.max(peer?.since ?? wait.startedAt, wait.startedAt);
+      if (now - quietSince >= this.staleMs) wait.settle(unreachable);
+    }
+  }
 
   /** The ask's own slot ended refused at B (or the machine was revoked): the wait ends now instead of after the wait. */
   private askEnded(slot: Slot, outcome: Outcome): void {
@@ -190,7 +241,11 @@ export class CallInHost {
       const { attachments, ...rest } = record;
       return attachments?.length ? { ...rest, text: `${rest.text} [${attachments.length} attachment(s) not shared with another machine]` } : rest;
     });
-    return cutOldest(transcriptLines(records, call.newest, call.speakerName, call.host.name), CALLIN_TRANSCRIPT_LIMIT);
+    // One line per message, whatever the chat text holds: `transcriptLines` already folds newlines (`oneLine`), and every
+    // line is folded and stripped once more here, so no chat text can start a line of its own with a speaker's label
+    // ("User (newest): …") for the guest to read as another speaker.
+    const lines = transcriptLines(records, call.newest, call.speakerName, call.host.name).map((line) => oneLine(stripControls(line), TRANSCRIPT_LINE_CHARS));
+    return cutOldest(lines, CALLIN_TRANSCRIPT_LIMIT);
   }
 
   /**

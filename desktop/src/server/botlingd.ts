@@ -572,6 +572,8 @@ export class Botlingd {
       runtime.callHost.attach({
         self: roster.memberId, ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd),
         onOutcome: (listener) => serverOrigin.on(listener), outcome: (slot) => serverOrigin.outcome(slot),
+        // The peer sessions' own bookkeeping (live / stale since the last frame / gone): the wait is a liveness wait.
+        peerState: (server) => { const state = peers.states().find((entry) => entry.member === server); return state ? { state: state.state, since: state.since } : null; },
       });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
