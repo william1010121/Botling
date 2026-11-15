@@ -2383,8 +2383,9 @@ First write a test that shows this, then fix it.`;
     // preview: the original question, recommendations and permission actions stay in chat.
     const addQuestion = (botId: string, chat: Bot | null | undefined, question: { id: string; text: string }) => {
       const legacyText = firstLine(question.text).slice(0, 400);
-      // Older versions keyed an ignored item by its first line; changing the preview must not revive it.
-      if (ignored.has(`${botId}-${legacyText}`)) return;
+      // A question is set aside only by its own id (`chat.ignoreQuestion`, the line's `ignoredAt`, which `openQuestion()`
+      // already skips), never by a text key: a plain item's `<botId>-<text>` key must not hide a later question whose
+      // preview is that text (fu-waiting-plain-ignore).
       const line = chat?.line(question.id);
       const choices = line?.choices;
       const group = savedQuestions(line?.questions);
@@ -2417,7 +2418,8 @@ First write a test that shows this, then fix it.`;
       if (line && isOpenQuestion(line)) addQuestion(pending.botId, chat, { id, text: line.text });
     }
     const acked = [...ignored].filter((key) => key.includes("-task:")).slice(-200);
-    return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing, ...(acked.length ? { acked } : {}) };
+    // Text keys (`ignoredWaiting`, 1.x's `<botId>-<text>`) set aside plain items only (`messageId` null).
+    return { items: out.filter((item) => item.messageId !== null || !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing, ...(acked.length ? { acked } : {}) };
   }
 
   /** A bot's memory.md sections (empty when its folder has a problem); read and parsed once per change of the file (MemoryFiles). */
@@ -2598,6 +2600,14 @@ First write a test that shows this, then fix it.`;
     // and the slot engine refuses a target that is not `bot:<botId>`), so it is never sent on to another machine (§11.2
     // step 5: no second hop). The legacy handler runs before that target check, so forwarding here would let a peer send
     // a command to a third machine as this server. A peer's item is set aside from the workspace source (M5-04d).
+    // A text that is on the list only as an open question (a client that names it by its text, such as the whiteboard) is
+    // set aside by the question's id, as "Ignore" on the card does: a text key would hide a later question with that preview.
+    const items = this.waiting().items.filter((item) => item.botId === botId && item.text === text);
+    if (items.length && items.every((item) => item.messageId !== null)) {
+      for (const item of items) if (item.messageId) this.ignoreQuestion(botId, item.messageId);
+      this.refreshWaiting();
+      return this.waiting();
+    }
     const file = Layout.settings(this.options.dataDir);
     const raw = readSettings(file);
     const ignored = readSettingsList(raw.ignoredWaiting);
@@ -2615,8 +2625,11 @@ First write a test that shows this, then fix it.`;
    * when it stores the outcome, and by then the handler has set the item aside; a repeat of an ignore is a no-op.
    */
   peerMayIgnoreWaiting(botId: string, text: string): boolean {
-    if (readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting).includes(`${botId}-${text}`)) return true;
-    return this.waiting().items.some((item) => item.messageId === null && item.botId === botId && item.text === text);
+    const items = this.waiting().items.filter((item) => item.botId === botId && item.text === text);
+    if (items.some((item) => item.messageId === null)) return true;
+    // A repeat is a no-op only while no open question has that text: a text key is never for a card (and `ignoreWaiting`
+    // would set that card aside by its id).
+    return !items.length && readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting).includes(`${botId}-${text}`);
   }
 
   /**

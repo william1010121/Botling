@@ -39,15 +39,17 @@ describe("waiting question preview", () => {
       expect(core.waiting().items.filter(item => item.botId === PROJECT)).toEqual([]);
     });
   });
-  it("bounds a long preview and preserves previously ignored questions", async () => {
+  it("bounds a long preview; a text key no longer hides a question (fu-waiting-plain-ignore), its id-keyed ignore does", async () => {
     await withQuestion([{ label: "X".repeat(500) }], (core, _file, dir) => {
       const text = core.waiting().items.find(item => item.botId === PROJECT)!.text;
       expect(text).toHaveLength(400);
       expect(text.endsWith("…")).toBe(true);
       for (const preview of [lead, text]) {
         writeFileSync(join(dir, "settings.json"), JSON.stringify({ ignoredWaiting: [`${PROJECT}-${preview}`] }));
-        expect(core.waiting().items.filter(item => item.botId === PROJECT)).toEqual([]);
+        expect(core.waiting().items.filter(item => item.botId === PROJECT)).toHaveLength(1);
       }
+      expect((core as any).ignoreQuestion(PROJECT, QUESTION)).toEqual({ accepted: true });
+      expect(core.waiting().items.filter(item => item.botId === PROJECT)).toEqual([]);
     });
   });
 
