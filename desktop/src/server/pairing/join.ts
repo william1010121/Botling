@@ -153,6 +153,7 @@ interface Offer {
   expiresAt: number;
   left: number;
   state: "open" | "busy" | "used";
+  owner: object | null;
   session: NSession | null;
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -176,6 +177,9 @@ interface Attempt {
   channel: JoinChannel;
   peer: { member: string; name: string } | null;
   busy: boolean;
+  welcoming: boolean;
+  owner: object | null;
+  ownerClosed: boolean;
   timer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -183,6 +187,8 @@ export class ServerJoin {
   private readonly offers = new Map<string, Offer>();
   private readonly attempts = new Map<string, Attempt>();
   private readonly listeners = new Set<(event: AdminEvent) => void>();
+  private readonly closedOwners = new WeakSet<object>();
+  private readonly ownerAborts = new Map<object, Set<() => void>>();
   private readonly now: () => number;
   private readonly log: (line: string) => void;
   private readonly connector: PeerConnector;
@@ -202,14 +208,33 @@ export class ServerJoin {
   }
 
   /** The local socket's join requests. */
-  async admin(op: AdminOp): Promise<unknown> {
+  async admin(op: AdminOp, session?: object): Promise<unknown> {
+    if (session && this.closedOwners.has(session)) throw new JoinError("state", "the admin session closed");
     switch (op.op) {
-      case "join.offer": return this.createOffer(op.name);
+      case "join.offer": return this.createOffer(op.name, session);
       case "join.cancel": return this.cancelOffer(op.offer);
-      case "machine.add": return this.addMachine(op.link);
+      case "machine.add": return this.addMachine(op.link, session);
       case "machine.code": return this.code(op.attempt, op.code);
       case "machine.cancel": return this.cancelAttempt(op.attempt);
       default: throw new JoinError("state", `${op.op} is not a server pairing request`);
+    }
+  }
+
+  /** M4-46 (J8): burns offers and cancels attempts owned by a local admin session that left, letting an in-flight welcome finish. */
+  adminClosed(session: object): void {
+    this.closedOwners.add(session);
+    const aborts = this.ownerAborts.get(session);
+    if (aborts) {
+      this.ownerAborts.delete(session);
+      for (const abort of [...aborts]) abort();
+    }
+    for (const offer of [...this.offers.values()]) {
+      if (offer.owner === session && !offer.session?.joining) this.burn(offer, "cancelled");
+    }
+    for (const attempt of [...this.attempts.values()]) {
+      if (attempt.owner !== session) continue;
+      attempt.ownerClosed = true;
+      if (!attempt.welcoming) this.cancelAttempt(attempt.id);
     }
   }
 
@@ -219,15 +244,29 @@ export class ServerJoin {
   /** botlingd stops: offers forgotten, sessions closed. */
   close(): void {
     this.closed = true;
+    for (const aborts of this.ownerAborts.values()) for (const abort of [...aborts]) abort();
+    this.ownerAborts.clear();
     for (const offer of [...this.offers.values()]) this.burn(offer, "cancelled");
     for (const attempt of [...this.attempts.values()]) this.dropAttempt(attempt, "botlingd is stopping");
+  }
+
+  private trackOwnerAbort(owner: object | undefined, abort: () => void): () => void {
+    if (!owner) return () => undefined;
+    let set = this.ownerAborts.get(owner);
+    if (!set) { set = new Set(); this.ownerAborts.set(owner, set); }
+    set.add(abort);
+    return () => {
+      set!.delete(abort);
+      if (set!.size === 0) this.ownerAborts.delete(owner);
+    };
   }
 
   // ---------------------------------------------------------------------------------------------
   // N
 
   /** A join offer (refused while this server belongs to a cluster). */
-  createOffer(name?: string): JoinOfferResult {
+  createOffer(name?: string, owner?: object): JoinOfferResult {
+    if (owner && this.closedOwners.has(owner)) throw new JoinError("state", "the admin session closed");
     if (this.options.roster.clusterId !== null) throw new JoinError("member", "this server already belongs to a cluster, so it cannot join another one (a server joins only while it has no other members)");
     const addresses = this.options.joinAddresses();
     if (!addresses.length) throw new JoinError("no-address", "this server has no loopback listener another server could reach (BOTLING_SERVER_PORT)");
@@ -241,7 +280,7 @@ export class ServerJoin {
       v: 1, offer: id, server: this.options.identity.memberId, name: serverName,
       keys: { sign: this.options.identity.keys.sign, dh: this.options.identity.keys.dh }, secret: toBase64Url(secret), expiresAt, addresses,
     });
-    const offer: Offer = { id, secret, code: JoinCode.parse(code), name: serverName, expiresAt, left: JOIN_CODE_TRIES, state: "open", session: null, timer: null };
+    const offer: Offer = { id, secret, code: JoinCode.parse(code), name: serverName, expiresAt, left: JOIN_CODE_TRIES, state: "open", owner: owner ?? null, session: null, timer: null };
     // The offer's time holds for an open session too (review J1): an intruder with the link's secret who keeps a session
     // open must not keep the secret and the code alive past it. Only a welcome being taken is let finish.
     offer.timer = setTimeout(() => { if (!offer.session?.joining) this.burn(offer, "expired"); }, Math.max(0, expiresAt - this.now()) + 5);
@@ -388,7 +427,7 @@ export class ServerJoin {
   private nClosed(session: NSession): void {
     if (session.timer) { clearTimeout(session.timer); session.timer = null; }
     const offer = session.offer;
-    if (!offer || offer.session !== session || offer.state !== "busy") return;
+    if (!offer || offer.session !== session || offer.state !== "busy" || session.joining) return;
     // Cut before the join finished: the offer goes back while it lasts (wrong tries stay counted).
     offer.session = null;
     offer.state = "open";
@@ -421,7 +460,8 @@ export class ServerJoin {
   // S
 
   /** Opens the pairing session with the server the link names; resolves once both said who they are. */
-  async addMachine(linkText: string): Promise<MachineAddResult> {
+  async addMachine(linkText: string, owner?: object): Promise<MachineAddResult> {
+    if (owner && this.closedOwners.has(owner)) throw new JoinError("declined", "the admin session closed");
     const offer = parseJoinLink(linkText);
     if (!offer) throw new JoinError("bad-link", "that is not a join link (botlingd join prints one)");
     if (joinOfferExpired(offer, this.now())) throw new JoinError("expired", "the join link expired; run botlingd join on the other machine again");
@@ -437,17 +477,34 @@ export class ServerJoin {
     const known = this.attempts.get(offer.offer);
     if (known) this.dropAttempt(known, "a new attempt with the same link");
     let connection: PeerConnection;
-    try { connection = await this.connector.connect(url); } catch (error) { throw new JoinError("unreachable", `cannot reach that server: ${String((error as Error)?.message ?? error)}`); }
+    let aborted = false;
+    const offConnect = this.trackOwnerAbort(owner, () => { aborted = true; });
+    try { connection = await this.connector.connect(url); } catch (error) {
+      offConnect();
+      throw new JoinError("unreachable", `cannot reach that server: ${String((error as Error)?.message ?? error)}`);
+    }
+    offConnect();
+    if (aborted || (owner && this.closedOwners.has(owner)) || this.closed) {
+      connection.close();
+      throw new JoinError("declined", "the admin session closed");
+    }
     const secret = fromBase64Url(offer.secret)!;
-    const attempt: Attempt = { id: offer.offer, offer, url, channel: null!, peer: null, busy: false, timer: null };
+    const attempt: Attempt = { id: offer.offer, offer, url, channel: null!, peer: null, busy: false, welcoming: false, owner: owner ?? null, ownerClosed: false, timer: null };
     attempt.channel = new JoinChannel(connection, {
       dial: { mode: "pair", transport: "tailnet", cluster: JOIN_CLUSTER, self: this.self, responder: { memberId: offer.server, dhPub: dh }, pair: { offer: offer.offer, secret } },
     }, null, () => { if (this.attempts.get(attempt.id) === attempt && !attempt.busy) this.dropAttempt(attempt, "the session ended"); }, this.log);
     connection.bind({ frame: (frame) => attempt.channel.link.receive(frame), closed: () => attempt.channel.link.transportClosed() });
+    const offHandshake = this.trackOwnerAbort(owner, () => { attempt.ownerClosed = true; attempt.channel.close(); });
     let info: SessionInfo;
     try { info = await attempt.channel.link.established; } catch (error) {
+      offHandshake();
       attempt.channel.close();
       throw new JoinError("unreachable", `the pairing handshake failed (${String((error as { detail?: string; message?: string })?.detail ?? (error as Error)?.message ?? error)}); the link may be used, expired or cancelled`);
+    }
+    offHandshake();
+    if (attempt.ownerClosed || (owner && this.closedOwners.has(owner)) || this.closed) {
+      attempt.channel.close();
+      throw new JoinError("declined", "the admin session closed");
     }
     this.attempts.set(attempt.id, attempt);
     attempt.timer = setTimeout(() => this.dropAttempt(attempt, "the offer expired"), Math.max(0, offer.expiresAt - this.now()) + 5);
@@ -494,10 +551,12 @@ export class ServerJoin {
     try {
       attempt.channel.send({ t: "join.code", code: code.data });
       const answer = await this.expect(attempt, this.options.replyTimeoutMs ?? JOIN_REPLY_TIMEOUT_MS);
+      if (attempt.ownerClosed) { this.cancelAttempt(attempt.id); return { ok: false, reason: "cancelled" }; }
       if (!answer) { this.dropAttempt(attempt, "no answer to the code"); return { ok: false, reason: "lost" }; }
       if (answer.t === "join.wrong") return { ok: false, reason: "wrong", left: answer.left };
       if (answer.t === "join.declined") { this.dropAttempt(attempt, `declined (${answer.reason})`); return { ok: false, reason: answer.reason }; }
       if (answer.t !== "join.checked") { this.dropAttempt(attempt, `${answer.t} instead of an answer to the code`); return { ok: false, reason: "refused" }; }
+      attempt.welcoming = true;
       return await this.welcome(attempt);
     } finally {
       attempt.busy = false;

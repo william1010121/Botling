@@ -69,8 +69,10 @@ export interface ContentHandler {
 /** Pairing and devices for the local socket's `admin` requests (server/pairing). */
 export interface AdminHost {
   /** The `res` result of one request; throws (with an optional `code`) to refuse it. */
-  handle(op: AdminOp): Promise<unknown>;
+  handle(op: AdminOp, session?: object): Promise<unknown>;
   onEvent(listener: (event: AdminEvent) => void): () => void;
+  /** M4-46 (J8): called when a local admin session closes so its open offers/attempts are cancelled. */
+  sessionClosed?(session: object): void;
 }
 
 /** What every session shares: botlingd's parts. */
@@ -322,7 +324,10 @@ export abstract class SessionCore {
     this.gate.close();
     this.reader?.close();
     this.reader = null;
-    if (this.kind.local) this.host.peerReads?.()?.closeSession(this);
+    if (this.kind.local) {
+      this.host.peerReads?.()?.closeSession(this);
+      this.host.admin?.sessionClosed?.(this);
+    }
     this.closing();
     const uploads = this.host.uploads;
     if (uploads) void this.uploadChain.then(() => uploads.ended(this.uploadOwner)).catch(() => undefined);
@@ -641,7 +646,7 @@ export abstract class SessionCore {
     }
     this.adminEvents ??= admin.onEvent((event) => { this.send({ t: "admin.event", event }, "admin.event"); });
     try {
-      const result = await admin.handle(message.op);
+      const result = await admin.handle(message.op, this);
       this.send({ t: "res", req: message.req, ok: true, result: result ?? null }, `admin ${message.op.op}`);
     } catch (error) {
       const code = (error as { code?: unknown })?.code;

@@ -367,12 +367,13 @@ export class Botlingd {
         },
         log,
         admin: {
-          handle: async (op) => {
+          handle: async (op, session) => {
             if (op.op === "prefs.set") return { row: await prefs.set(op.key, op.value) };
             if (op.op === "prefs.list") return { rows: prefs.rows() };
-            return op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op) : pairing.admin(op);
+            return op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op, session) : pairing.admin(op);
           },
           onEvent: (listener) => { const a = pairing.onEvent(listener); const b = serverJoin.onEvent(listener); return () => { a(); b(); }; },
+          sessionClosed: (session) => { serverJoin.adminClosed(session); },
         },
         // M3 step 7: peers' states (`welcome.servers`, `peer{…}`) and their tables, from this server's copies.
         // (`peers` is made below; no session opens before the listeners start.)
