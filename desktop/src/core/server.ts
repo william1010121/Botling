@@ -991,7 +991,7 @@ First write a test that shows this, then fix it.`;
     const peers: PeerBriefingRow[] = this.peerBots().map((peer) => {
       const inbox = this.peerInbox(peer.id);
       mkdirSync(dirname(inbox), { recursive: true });
-      return { name: peer.name, machine: peer.serverName, about: "", inbox };
+      return { name: peer.name, machine: peer.serverName, about: "", inbox, chat: this.peerChatCopy(peer.id) };
     });
     return projectBriefingText({
       peers,
@@ -1017,6 +1017,11 @@ First write a test that shows this, then fix it.`;
   private peerInbox(botId: string): string {
     const main = this.profiles.find((profile) => profile.role === "main");
     return join(main?.folder ?? Layout.mainBot(this.options.dataDir), ".bot", "peers", botId, "inbox.md");
+  }
+
+  /** M5-04e: the read-only copy of a peer bot's last lines; botlingd's `PeerChatMirror` writes it, never the core. */
+  private peerChatCopy(botId: string): string {
+    return join(dirname(this.peerInbox(botId)), "chat.md");
   }
 
   /** An awake main bot hears about bots made or removed with its next message (`briefAwakeMainBot`). */

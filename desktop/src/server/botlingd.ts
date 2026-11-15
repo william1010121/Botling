@@ -51,6 +51,7 @@ import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers
 import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
 import { PluginRow, RowKey } from "../protocol/table-rows";
 import { openServerStore, type Db, type ServerStore } from "./store";
+import { PeerChatMirror, type MirrorBot } from "./replica/peer-chat-mirror";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, readRowBody, SummaryRows, TableFeeds } from "./replica";
 import { PluginAdmin } from "./plugin-admin";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
@@ -256,6 +257,24 @@ export function peerRemoteMembers(roster: Pick<RosterStore, "view">, db: Db): Re
 }
 
 /**
+ * The peer bots whose chats are copied for the main bot (M5-04e): the same bots as `peerRemoteMembers`, each with the
+ * time of its last line from its `bot:` summary row (`lastAt`), so the most recently active are followed first. The
+ * mirror checks every id and name itself; nothing here is trusted.
+ */
+export function peerChatList(roster: Pick<RosterStore, "view">, db: Db): MirrorBot[] {
+  const row = db.prepare("SELECT body FROM rows WHERE stream = ? AND key = ? AND deleted = 0");
+  return peerRemoteMembers(roster, db).map((member) => {
+    let at: number | undefined;
+    try {
+      const found = row.get(`srv:${member.server}`, `bot:${member.id}`);
+      const parsed = found?.body != null ? JSON.parse(String(found.body)) as { lastAt?: unknown } : null;
+      if (typeof parsed?.lastAt === "number" && Number.isFinite(parsed.lastAt)) at = parsed.lastAt;
+    } catch { /* an unreadable row: no activity time */ }
+    return { botId: member.id, owner: member.server, name: member.name, machine: member.serverName, at };
+  });
+}
+
+/**
  * This server's own name as its peers show it (M5-04c, U1): the roster member name of this server (what
  * `peerRemoteMembers` calls a peer), else its machine row's name, else its server id. `SERVER_NAME` is the same
  * constant on every server, so it alone would make B's bot read "From the main bot on This Mac" about itself.
@@ -385,6 +404,8 @@ export class Botlingd {
   fetchSource: FetchSource | null = null;
   /** M5-07b: requester side of on-demand fetch (nothing calls `fetch` before M5-07d adds `app_fetch`). */
   fetchRequester: FetchRequester | null = null;
+  /** M5-04e: the read-only copies of peer bots' chats in the main bot's folder. */
+  chatMirror: PeerChatMirror | null = null;
 
   get token(): string { return this.tokenValue; }
 
@@ -819,6 +840,15 @@ export class Botlingd {
       if (originTestHookEnabled(env)) daemon.originHookStop = startOriginTestHook(paths.dataDir, serverOrigin, log);
       daemon.fetchSource = fetchSource;
       daemon.fetchRequester = fetchRequester;
+      // M5-04e: the main bot reads a peer bot's chat in `<main folder>/.bot/peers/<botId>/chat.md` (read-only; written only here).
+      // Until M5-04i's `runMainBot` is merged every server runs it.
+      const mainFolder = join(paths.dataDir, "main");
+      daemon.chatMirror = new PeerChatMirror({
+        peerLogs, passThrough, root: mainFolder,
+        folder: (botId) => join(mainFolder, ".bot", "peers", botId),
+        list: () => peerChatList(roster, hub.reader()),
+        log: (line) => log(line),
+      });
       daemon.media = media;
       daemon.pluginTimer = pluginTimer;
       daemon.tailnetOrigins = origin ? [origin] : [];
@@ -836,6 +866,7 @@ export class Botlingd {
       await daemon.relay?.start();
       await daemon.writeOwnProfile((at) => advertisedPort(env, at));
       peers.start();
+      daemon.chatMirror.start();
       daemon.watchLock();
       const schedule = backupCheckMs(env);
       if (schedule) {
@@ -914,6 +945,7 @@ export class Botlingd {
     await step("remote sessions", () => this.remote.close());
     await step("relay", () => this.relay?.closeAfterDrain(1_000));
     await step("peer sessions", () => this.peers.close());
+    this.chatMirror?.stop();
     this.passThrough.close();
     this.passOwner.close();
     this.fetchSource?.close();
