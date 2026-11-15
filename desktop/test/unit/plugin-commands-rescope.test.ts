@@ -72,7 +72,10 @@ describe("M5-16: the scope table (nothing but the four moved)", () => {
   });
 
   it("every other command keeps the scope it had at the base (hash of the table without the four, taken at bb212ac7; plugins.secret is admin since M6-06 F1)", () => {
-    const rest = Object.entries(COMMAND_SCOPES).filter(([type]) => !(PLUGIN_COMMANDS as readonly string[]).includes(type)).map(([type, scope]) => `${type}:${scope}`).sort();
+    // Commands added after the base are left out of the hash and checked on their own (N2: `slot.result`, a read).
+    const added: Record<string, string> = { "slot.result": "read" };
+    for (const [type, scope] of Object.entries(added)) expect(COMMAND_SCOPES[type as keyof typeof COMMAND_SCOPES], type).toBe(scope);
+    const rest = Object.entries(COMMAND_SCOPES).filter(([type]) => !(PLUGIN_COMMANDS as readonly string[]).includes(type) && !Object.hasOwn(added, type)).map(([type, scope]) => `${type}:${scope}`).sort();
     expect(rest).toHaveLength(119);
     expect(createHash("sha256").update(rest.join("\n")).digest("hex")).toBe("eda24bb93e9f8bae76864196a08c3e30cca88ff545ca23b8f798e142b01f8c1a");
     // The `reply` list read as words, so a diff is readable: the old reply commands plus exactly the four.
