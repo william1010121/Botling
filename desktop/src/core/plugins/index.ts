@@ -16,9 +16,10 @@
 // chat origin (only files the manifest names, and fonts beside them). A plugin's panels still run its
 // web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). Since step M11 ccb-latex
 // is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
-import { statSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { z } from "zod";
 import { ContractError, type ApprovalAskView, type PluginsView, type ResultOf, type WebPluginSpecView } from "../../contract";
 import { ContractId } from "../../contract/editor-card";
@@ -34,8 +35,8 @@ import { CORE_PROMPT_SECTIONS } from "../prompts";
 import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
 import { folderHash } from "./catalog";
-import { title, type JSONValue } from "./manifest";
-import { PluginRegistry, type InstalledPlugin } from "./registry";
+import { presentNameWarning, title, type JSONValue } from "./manifest";
+import { PluginRegistry, type HostSpec, type InstalledPlugin } from "./registry";
 import { SealedSecretStore, type Sealer } from "./secrets";
 import { WORKSPACE_EVENT, type WorkspaceChange, type WorkspaceSource } from "../workspace";
 import { PendingTags } from "./pending-tags";
@@ -244,13 +245,102 @@ export interface PluginsOptions {
   /** The plugins shipped with the app (out/builtin-plugins, or the app's Resources/builtin-plugins). */
   builtIns?: string | null;
   sealer: Sealer | null;
+  /** Botling 3 binds each sealed secret blob to plugin/key (M6-06 F3); 2.x leaves it unset. */
+  boundSecrets?: boolean;
   timing?: HostTiming;
   /** The plugin host's pid, for the process ledger. */
   onPid?: (pid: number, alive: boolean) => void;
   /** Botling 3 (M5-18a): whether a plugin's program part may start at its current code hash (absent: always allowed). */
   mayRunServerPart?: (name: string, codeHash: string) => boolean;
+  /** Botling 3 (M5-18b): run each non-built-in plugin's program part in its own host process (2.x: shared host). */
+  separateHosts?: boolean;
   /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash, or null to omit. */
   pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
+}
+
+const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
+
+interface SnapshotFile { rel: string; data: Buffer; mode: number }
+
+/**
+ * Reads every file under `dir` once (matching `folderHash`'s traversal and sort order) and computes its hash
+ * from the exact bytes read, avoiding a TOCTOU window between hashing and copying.
+ */
+function readPluginSnapshot(dir: string): { codeHash: string; files: SnapshotFile[] } {
+  const files: SnapshotFile[] = [];
+  const walk = (folder: string) => {
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) throw new Error(`Plugin folder cannot contain symbolic links: ${entry.name}`);
+      const full = join(folder, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else {
+        const rel = relative(dir, full).split(sep).join("/");
+        const data = readFileSync(full);
+        const mode = statSync(full).mode;
+        files.push({ rel, data, mode });
+      }
+    }
+  };
+  walk(dir);
+  files.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+  const codeHash = sha(files.map((file) => `${file.rel}\0${sha(file.data)}\n`).join(""));
+  return { codeHash, files };
+}
+
+/**
+ * Materializes a verified content-addressed copy of `files` at `<snapshotRoot>/<codeHash>` so lazy `import()`
+ * and `api.plugin.dir` read only the bytes that were hashed.
+ */
+/** The copy is the same user's files: reuse it only as a real folder, with no links, holding exactly these bytes. */
+function snapshotIntact(dest: string, codeHash: string): boolean {
+  try {
+    return !lstatSync(dest).isSymbolicLink() && readPluginSnapshot(dest).codeHash === codeHash;
+  } catch { return false; /* missing or corrupt snapshot */ }
+}
+
+function materializeSnapshot(snapshotRoot: string, codeHash: string, files: readonly SnapshotFile[]): { dir: string; repaired: boolean } {
+  const dest = join(snapshotRoot, codeHash);
+  let repaired = false;
+  if (lstatSync(dest, { throwIfNoEntry: false })) {
+    // M5-18b review: an edit or a link planted in it is replaced, and the caller starts that host afresh.
+    if (snapshotIntact(dest, codeHash)) return { dir: dest, repaired };
+    rmSync(dest, { recursive: true, force: true });
+    repaired = true;
+  }
+  mkdirSync(snapshotRoot, { recursive: true });
+  const tmp = join(snapshotRoot, `.tmp-${codeHash}-${randomUUID()}`);
+  mkdirSync(tmp, { recursive: true });
+  try {
+    for (const file of files) {
+      const target = join(tmp, file.rel);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, file.data, { mode: (file.mode & 0o111) ? 0o555 : 0o444 });
+    }
+    if (folderHash(tmp) !== codeHash) throw new Error("Snapshot hash mismatch after materialization.");
+    try {
+      renameSync(tmp, dest);
+    } catch (error) {
+      if (snapshotIntact(dest, codeHash)) {
+        rmSync(tmp, { recursive: true, force: true });
+        return { dir: dest, repaired };
+      }
+      throw error;
+    }
+    return { dir: dest, repaired };
+  } catch (error) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function pruneSnapshots(snapshotRoot: string, active: ReadonlySet<string>) {
+  if (!existsSync(snapshotRoot)) return;
+  try {
+    for (const entry of readdirSync(snapshotRoot, { withFileTypes: true })) {
+      if (active.has(entry.name)) continue;
+      rmSync(join(snapshotRoot, entry.name), { recursive: true, force: true });
+    }
+  } catch { /* best-effort cleanup */ }
 }
 
 export const SERVER_PART_HELD_NOTICE = "Its program part is off until you allow it to change its own data on this server.";
@@ -366,8 +456,12 @@ const DECORATION_BYTES = 1_000_000;
 export class Plugins {
   readonly registry: PluginRegistry;
   readonly host: PluginHostClient;
+  private readonly hosts = new Map<string, PluginHostClient>();
+  private readonly hostMeta = new Map<string, { main: string; dir: string; fingerprint: string }>();
+  private readonly retiring = new Set<Promise<void>>();
   readonly secrets: SealedSecretStore;
   private readonly dataRoot: string;
+  private readonly snapshotRoot: string;
   private started = false;
   /** Enabled plugins whose program part is held back by mayRunServerPart. */
   private heldBack = new Set<string>();
@@ -397,40 +491,25 @@ export class Plugins {
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
     this.markedTabs = new MarkedTabs(dataDir);
-    this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer);
+    this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer, options.boundSecrets ? { bound: true } : undefined);
     this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
     this.dataRoot = join(dataDir, "plugin-data");
+    this.snapshotRoot = join(dataDir, "plugin-snapshots");
     this.held = new PendingTags(join(dataDir, "plugin-pending-tags.json"));
     this.folders = new SessionFolders(join(dataDir, "plugin-session-folders.json"));
     this.briefings = new BriefingBook(join(dataDir, "plugin-dev-briefing.json"));
     for (const botId of this.folders.plugins().flatMap((name) => this.folders.bots(name))) { const now = this.folderSignature(botId); if (now) this.foldersTold.set(botId, now); }
-    this.host = new PluginHostClient(options.hostScript, options.node, this.dataRoot, (line) => world.log(line), options.timing ?? DEFAULT_TIMING, options.onPid);
+    this.host = this.createHostClient();
     this.registry.onNotice = (text) => world.notice(text);
     this.registry.onBroken = (plugin, problem) => world.broken(plugin, problem);
+    this.registry.onNameWarning = (_plugin, warning) => world.log(warning);
     this.registry.onSkipped = (plugin, skipped) => world.log(`plugin ${plugin}: skipped ${skipped.length} contribution(s) this Botling does not know or cannot read (the rest loads): ${skipped.join("; ")}`);
     // The registry's first scan ran before this was set: say what it skipped too.
     for (const plugin of this.registry.plugins) if (plugin.skipped?.length) this.registry.onSkipped(plugin.manifest.name, plugin.skipped);
+    for (const plugin of this.registry.plugins) { const warning = plugin.builtIn ? null : presentNameWarning(plugin.manifest.name); if (warning) this.registry.onNameWarning(plugin.manifest.name, warning); }
     this.registry.onUpdated = (plugin, from) => world.notice(`Plugin "${title(plugin.manifest)}" updated: ${from} → ${plugin.manifest.version}`);
     this.registry.onPluginWritten = (name) => world.pluginWritten?.(name);
     this.registry.onChanged = () => this.sync();
-    this.host.onPluginFailure = (plugin, message, fatal) => {
-      // The host may have died: nobody listens until it says so again.
-      this.followWorkspace();
-      if (!plugin) return;
-      this.status.delete(plugin);
-      if (this.takeover?.plugin === plugin) this.takeover = null;
-      this.dropDecorations(plugin);
-      this.registry.recordHostFailure(plugin, message, fatal);
-    };
-    this.host.onRegistered = () => {
-      this.followWorkspace();
-      this.announce();
-      this.replayHeld();
-    };
-    this.host.onNotification = (method, params) => this.notified(method, params);
-    this.host.onRequest = (method, params) => this.requested(method, params);
-    // M5-18a: a restart after a crash runs only what may run now (a file the fingerprint does not cover may have changed).
-    if (options.mayRunServerPart) this.host.beforeRestart = () => this.sync();
     setPluginTags([...this.replyTagOwners().keys()]);
   }
 
@@ -450,9 +529,86 @@ export class Plugins {
     else this.announce();
   }
 
+  /** D74 (M6-06): re-opens sealed secrets once a window sealer attaches, then reloads the host with them. */
+  async reloadSecrets() {
+    this.secrets.problem = null;
+    await this.secrets.load();
+    this.sync();
+  }
+
   /** The library is looked at again (the core's 1.5 s clock). */
   scan() {
     this.registry.rescan();
+  }
+
+  private createHostClient(owner?: string): PluginHostClient {
+    const { options } = this;
+    const client = new PluginHostClient(
+      options.hostScript,
+      options.node,
+      this.dataRoot,
+      (line) => options.world.log(line),
+      options.timing ?? DEFAULT_TIMING,
+      options.onPid,
+      owner,
+    );
+    client.onPluginFailure = (plugin, message, fatal) => {
+      // The host may have died: nobody listens until it says so again.
+      this.followWorkspace();
+      // M5-18c + R4: a separate host always belongs to its owner, even when it dies or errors with nothing in flight.
+      const target = owner ?? plugin;
+      if (!target) return;
+      this.status.delete(target);
+      if (this.takeover?.plugin === target) this.takeover = null;
+      this.dropDecorations(target);
+      this.registry.recordHostFailure(target, message, fatal);
+    };
+    client.onRegistered = () => {
+      this.followWorkspace();
+      this.announce();
+      this.replayHeld();
+    };
+    client.onNotification = (method, params) => this.notified(method, params, owner);
+    client.onRequest = (method, params) => this.requested(method, params, owner);
+    // M5-18a: a restart after a crash runs only what may run now (a file the fingerprint does not cover may have changed).
+    if (options.mayRunServerPart) client.beforeRestart = () => this.sync();
+    return client;
+  }
+
+  private hostFor(name: string): PluginHostClient {
+    return this.hosts.get(name) ?? this.host;
+  }
+
+  private orderedHosts(): PluginHostClient[] {
+    const names = [...this.hosts.keys()].sort();
+    return [this.host, ...names.map((name) => this.hosts.get(name)!)];
+  }
+
+  private commandHost(id: string): PluginHostClient | null {
+    // The longest plugin name the id starts with owns it, built-ins included (M5-18b review: a plugin named "botling"
+    // must not take "botling.terminal.…" from the built-in in the shared host).
+    let owner = "";
+    for (const plugin of this.registry.plugins) {
+      const name = plugin.manifest.name;
+      if (name.length > owner.length && id.startsWith(`${name}.`)) owner = name;
+    }
+    const client = owner && this.options.separateHosts && !this.registry.plugin(owner)?.builtIn ? this.hosts.get(owner) : this.host;
+    return client?.running && client.commands.includes(id) ? client : null;
+  }
+
+  private retireHost(client: PluginHostClient) {
+    const pending = client.shutdown().catch(() => {});
+    this.retiring.add(pending);
+    void pending.finally(() => { this.retiring.delete(pending); });
+  }
+
+  private mayRunHash(name: string, codeHash: string): boolean {
+    if (!this.options.mayRunServerPart) return true;
+    try {
+      return this.options.mayRunServerPart(name, codeHash);
+    } catch {
+      return false;
+    }
   }
 
   private serverPartAllowed(plugin: InstalledPlugin): boolean {
@@ -470,18 +626,72 @@ export class Plugins {
     if (!this.started) return;
     const app = this.options.world.appSettings();
     const nextHeldBack = new Set<string>();
-    const specs = this.registry.hostSpecs(this.dataRoot).flatMap((spec) => {
+    const sharedSpecs: HostSpec[] = [];
+    const separateSpecs = new Map<string, HostSpec>();
+    const activeSnapshots = new Set<string>();
+    /** Plugins whose snapshot folder had changed in place: what their host imported from it may not be what was hashed. */
+    const repaired = new Set<string>();
+    for (const spec of this.registry.hostSpecs(this.dataRoot)) {
       const plugin = this.registry.plugin(spec.name);
-      if (plugin && !this.serverPartAllowed(plugin)) {
-        nextHeldBack.add(spec.name);
-        return [];
+      const isSeparate = !!this.options.separateHosts && !!plugin && !plugin.builtIn;
+      if (isSeparate) {
+        let snapshot: { codeHash: string; files: SnapshotFile[] };
+        try {
+          snapshot = readPluginSnapshot(plugin.folder);
+        } catch {
+          nextHeldBack.add(spec.name);
+          continue;
+        }
+        if (!this.mayRunHash(plugin.manifest.name, snapshot.codeHash)) {
+          nextHeldBack.add(spec.name);
+          continue;
+        }
+        let snapDir: string;
+        try {
+          const made = materializeSnapshot(this.snapshotRoot, snapshot.codeHash, snapshot.files);
+          snapDir = made.dir;
+          if (made.repaired) repaired.add(spec.name);
+        } catch {
+          nextHeldBack.add(spec.name);
+          continue;
+        }
+        activeSnapshots.add(snapshot.codeHash);
+        const snapMain = join(snapDir, relative(plugin.folder, spec.main));
+        separateSpecs.set(spec.name, { ...spec, dir: snapDir, main: snapMain, app });
+      } else {
+        if (plugin && !this.serverPartAllowed(plugin)) {
+          nextHeldBack.add(spec.name);
+          continue;
+        }
+        sharedSpecs.push({ ...spec, app });
       }
-      return [{ ...spec, app }];
-    });
+    }
     this.heldBack = nextHeldBack;
-    // M5-18a: a plugin the host still runs lost its grant (or its granted code): a fresh host, not an unload (§18.3).
-    if ([...nextHeldBack].some((name) => this.host.runs(name))) this.host.replace(specs);
-    else this.host.update(specs);
+    // M5-18a: a plugin the shared host still runs lost its grant (or its granted code): a fresh host, not an unload (§18.3).
+    if ([...nextHeldBack].some((name) => this.host.runs(name))) this.host.replace(sharedSpecs);
+    else this.host.update(sharedSpecs);
+    for (const [name, client] of [...this.hosts.entries()]) {
+      if (!separateSpecs.has(name)) {
+        this.hosts.delete(name);
+        this.hostMeta.delete(name);
+        this.retireHost(client);
+      }
+    }
+    for (const [name, spec] of separateSpecs) {
+      let client = this.hosts.get(name);
+      const prev = this.hostMeta.get(name);
+      this.hostMeta.set(name, { main: spec.main, dir: spec.dir ?? "", fingerprint: spec.fingerprint });
+      if (!client) {
+        client = this.createHostClient(name);
+        this.hosts.set(name, client);
+        client.update([spec]);
+      } else if (repaired.has(name) || (prev && (prev.main !== spec.main || prev.dir !== spec.dir || prev.fingerprint !== spec.fingerprint))) {
+        client.replace([spec]);
+      } else {
+        client.update([spec]);
+      }
+    }
+    if (this.options.separateHosts) pruneSnapshots(this.snapshotRoot, activeSnapshots);
     for (const name of [...this.status.keys()]) if (!this.loaded(name)) this.status.delete(name);
     if (this.takeover && !this.drawing(this.takeover.plugin)) this.takeover = null;
     this.dropDecorations();
@@ -575,7 +785,7 @@ export class Plugins {
       this.notes.unwatch((data as { botId: string }).botId);
       if (this.markedTabs.forget((data as { botId: string }).botId)) this.announce();
     }
-    this.host.event(name, data);
+    for (const client of this.orderedHosts()) client.event(name, data);
   }
 
   private announce() {
@@ -584,7 +794,7 @@ export class Plugins {
 
   /** Whether some plugin listens for workspace changes now; the world is told when that changes. */
   private followWorkspace() {
-    const on = this.host.running && this.host.events.has(WORKSPACE_EVENT);
+    const on = this.orderedHosts().some((client) => client.running && client.events.has(WORKSPACE_EVENT));
     if (on === this.watchingWorkspace) return;
     this.watchingWorkspace = on;
     this.options.world.workspaceWatch(on);
@@ -592,12 +802,12 @@ export class Plugins {
 
   /** The workspace changed: plugins listening hear it (`workspace.onChange`); nothing is sent while none does. */
   workspaceChanged(change: WorkspaceChange) {
-    this.host.event(WORKSPACE_EVENT, change);
+    for (const client of this.orderedHosts()) client.event(WORKSPACE_EVENT, change);
   }
 
   async shutdown() {
     this.notes.close();
-    await this.host.shutdown();
+    await Promise.all([...this.orderedHosts().map((client) => client.shutdown()), ...this.retiring]);
   }
 
   // ------------------------------------------------------------------------------------------
@@ -607,7 +817,7 @@ export class Plugins {
   previousVersion: (name: string) => string | null = () => null;
 
   view(): PluginsView {
-    const registered = new Set(this.host.running ? this.host.commands : []);
+    const sharedRegistered = new Set(this.host.running ? this.host.commands : []);
     return {
       plugins: this.registry.plugins.slice(0, 200).map((plugin) => {
         const ccb = plugin.manifest.ccb;
@@ -637,13 +847,20 @@ export class Plugins {
             ...setting, title: setting.title.slice(0, 400), type: setting.type.slice(0, 20), options: setting.options.slice(0, 50).map((option) => option.slice(0, 200)),
             value: typeof setting.value === "string" ? setting.value.slice(0, 10_000) : typeof setting.value === "object" ? null : setting.value,
           })),
-          commands: (ccb?.contributes?.commands ?? []).slice(0, 100).map((command) => ({ id: command.id.slice(0, 200), title: command.title.slice(0, 200), registered: registered.has(command.id) })),
+          commands: (() => {
+            const own = this.hosts.get(plugin.manifest.name);
+            const registered = own ? new Set(own.running ? own.commands : []) : sharedRegistered;
+            return (ccb?.contributes?.commands ?? []).slice(0, 100).map((command) => ({ id: command.id.slice(0, 200), title: command.title.slice(0, 200), registered: registered.has(command.id) }));
+          })(),
           panels: plugin.enabled && !plugin.failure && ccb?.web ? (ccb.contributes?.panels ?? []).slice(0, 20).map((panel) => ({ id: panel.id.slice(0, 100), title: panel.title.slice(0, 200) })) : [],
           ...(this.status.get(plugin.manifest.name)?.size ? { status: [...this.status.get(plugin.manifest.name)!.values()].slice(0, 20) } : {}),
         };
       }),
       broken: Object.entries(this.registry.problems).slice(0, 200).map(([folder, problems]) => ({ folder: folder.slice(0, 214), problems: problems.slice(0, 50).map((problem) => problem.slice(0, 2_000)) })),
-      host: { running: this.host.running, problem: this.host.problem?.slice(0, 2_000) ?? null },
+      host: {
+        running: this.orderedHosts().some((client) => client.running),
+        problem: this.orderedHosts().map((client) => client.problem).find(Boolean)?.slice(0, 2_000) ?? null,
+      },
       secretsProblem: this.secrets.problem?.slice(0, 2_000) ?? null,
       ...commandSurfaces(this.contributions()),
       ...viewSurfaces(this.contributions(), (name) => !!this.registry.webPart(name), (plugin, view) => this.markedTabs.bots(plugin, view)),
@@ -714,9 +931,10 @@ export class Plugins {
     if (from === "chat" && !this.registry.plugins.some((plugin) => plugin.enabled && !plugin.failure && plugin.manifest.ccb?.web && id.startsWith(`${plugin.manifest.name}.`))) {
       throw new ContractError("forbidden", `The chat page may not run "${id}" (no web part of its plugin runs there).`);
     }
-    if (!this.host.running || !this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
+    const host = this.commandHost(id);
+    if (!host) throw new ContractError("not_found", `No command "${id}".`);
     try {
-      return await this.host.command(id, args);
+      return await host.command(id, args);
     } catch (error) {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
       throw new ContractError("conflict", (error as Error).message);
@@ -731,12 +949,13 @@ export class Plugins {
   async tabCommand(id: string, tab: { botId: string; tabId: string; url: string }): Promise<unknown> {
     const offered = ofKind(this.contributions(), "menu").some((entry) => entry.menu === "browser/tab" && entry.command === id && entry.plugin && id.startsWith(`${entry.plugin}.`) && tabMatches(entry.when, tab.url));
     if (!offered) throw new ContractError("forbidden", `"${id}" is not offered for this browser tab.`);
-    if (!this.host.running || !this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
+    const host = this.commandHost(id);
+    if (!host) throw new ContractError("not_found", `No command "${id}".`);
     let path: string | null = null;
     try { if (new URL(tab.url).protocol === "file:") path = fileURLToPath(tab.url); } catch { /* not a local file */ }
     const botId = this.options.world.botId?.("main") === tab.botId ? "main" : tab.botId;
     try {
-      return await this.host.command(id, [{ botId, tabId: tab.tabId, url: tab.url, path }]);
+      return await host.command(id, [{ botId, tabId: tab.tabId, url: tab.url, path }]);
     } catch (error) {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
       throw new ContractError("conflict", (error as Error).message);
@@ -752,12 +971,13 @@ export class Plugins {
     const address = chatLinkAddress(link.url);
     const offered = address !== null && ofKind(this.contributions(), "menu").some((entry) => entry.menu === "chat/link" && entry.command === id && id.startsWith(`${entry.plugin}.`) && tabMatches(entry.when, address));
     if (!offered) throw new ContractError("forbidden", `"${id}" is not offered for this link.`);
-    if (!this.host.running || !this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
+    const host = this.commandHost(id);
+    if (!host) throw new ContractError("not_found", `No command "${id}".`);
     let path: string | undefined;
     try { if (address && new URL(address).protocol === "file:") path = fileURLToPath(address); } catch { /* not a local file */ }
     const botId = this.options.world.botId?.("main") === link.botId ? "main" : link.botId;
     try {
-      return await this.host.command(id, [{ botId, messageId: link.messageId, url: link.url, ...(path ? { path } : {}) }]);
+      return await host.command(id, [{ botId, messageId: link.messageId, url: link.url, ...(path ? { path } : {}) }]);
     } catch (error) {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
       throw new ContractError("conflict", (error as Error).message);
@@ -831,7 +1051,7 @@ export class Plugins {
     if (!plugin.enabled || plugin.failure || !plugin.manifest.ccb?.web) throw new ContractError("conflict", `Plugin "${name}" is not on.`);
     if (this.heldBack.has(name)) throw new ContractError("conflict", SERVER_PART_HELD_NOTICE);
     try {
-      return await this.host.webCall(name, method, params, from);
+      return await this.hostFor(name).webCall(name, method, params, from);
     } catch (error) {
       throw new ContractError("conflict", (error as Error).message);
     }
@@ -843,17 +1063,30 @@ export class Plugins {
   /** Your message through the plugins' beforeSend hooks: changed, or stopped by one. */
   async beforeSend(bot: BotInfo, text: string): Promise<{ send: string } | { stoppedBy: string }> {
     if (!text.trim()) return { send: text };
-    return this.host.beforeSend(bot, text);
+    let current = text;
+    for (const client of this.orderedHosts()) {
+      if (client.beforeSendHooks <= 0 || !client.running) continue;
+      const outcome = await client.beforeSend(bot, current);
+      if ("stoppedBy" in outcome) return outcome;
+      current = outcome.send;
+    }
+    return { send: current };
   }
 
   /** A reply through the plugins' afterReply hooks (null: none listen, it shows as it is). */
   afterReplyFilter(bot: () => BotInfo): ((text: string) => Promise<string>) | null {
-    if (this.host.afterReplyHooks <= 0 || !this.host.running) return null;
-    return (text) => this.host.afterReply(bot(), text);
+    if (!this.orderedHosts().some((client) => client.afterReplyHooks > 0 && client.running)) return null;
+    return async (text) => {
+      let current = text;
+      for (const client of this.orderedHosts()) {
+        if (client.afterReplyHooks > 0 && client.running) current = await client.afterReply(bot(), current);
+      }
+      return current;
+    };
   }
 
   replied(bot: BotInfo, text: string) {
-    this.host.replied(bot, text);
+    for (const client of this.orderedHosts()) client.replied(bot, text);
   }
 
   // ------------------------------------------------------------------------------------------
@@ -888,7 +1121,8 @@ export class Plugins {
     for (const tag of tags) {
       const plugin = owners.get(tag.tag);
       if (!plugin || !this.loaded(plugin)) continue;
-      if (this.host.runs(plugin) && !this.held.has(plugin)) this.host.replyTag(plugin, bot, tag);
+      const host = this.hostFor(plugin);
+      if (host.runs(plugin) && !this.held.has(plugin)) host.replyTag(plugin, bot, tag);
       else this.held.hold(plugin, bot, tag);
     }
     // The host may run it already (only the order mattered above).
@@ -898,9 +1132,10 @@ export class Plugins {
   /** Tags held for plugins the host runs now are handed over, in the order they came. */
   private replayHeld() {
     for (const plugin of new Set(this.replyTagOwners().values())) {
-      if (!this.held.has(plugin) || !this.loaded(plugin) || !this.host.runs(plugin)) continue;
+      const host = this.hostFor(plugin);
+      if (!this.held.has(plugin) || !this.loaded(plugin) || !host.runs(plugin)) continue;
       for (const entry of this.held.take(plugin)) {
-        if (this.replyTagOwners().get(entry.tag) === plugin) this.host.replyTag(plugin, entry.bot, { tag: entry.tag, attributes: entry.attributes, body: entry.body });
+        if (this.replyTagOwners().get(entry.tag) === plugin) host.replyTag(plugin, entry.bot, { tag: entry.tag, attributes: entry.attributes, body: entry.body });
       }
     }
   }
@@ -1079,10 +1314,12 @@ export class Plugins {
   }
 
   /** A request's params and the loaded plugin it names; throws when either is wrong. */
-  private asked<T extends z.ZodTypeAny>(schema: T, params: unknown): { plugin: InstalledPlugin; data: z.infer<T> } {
+  private asked<T extends z.ZodTypeAny>(schema: T, params: unknown, owner?: string): { plugin: InstalledPlugin; data: z.infer<T> } {
     const parsed = schema.safeParse(params);
     if (!parsed.success) throw new Error(`Not a request a plugin can make: ${parsed.error.issues[0]?.message ?? "bad params"}.`);
-    const plugin = this.loaded((parsed.data as { plugin?: unknown }).plugin);
+    const claimed = (parsed.data as { plugin?: unknown }).plugin;
+    if (owner !== undefined && claimed !== owner) throw new Error(`This host may only act for "${owner}".`);
+    const plugin = this.loaded(claimed);
     if (!plugin) throw new Error("That plugin is not running.");
     return { plugin, data: parsed.data };
   }
@@ -1123,7 +1360,11 @@ export class Plugins {
     ];
   }
 
-  private notified(method: string, params: unknown) {
+  private notified(method: string, params: unknown, owner?: string) {
+    if (owner !== undefined) {
+      const claimed = params && typeof params === "object" ? (params as { plugin?: unknown }).plugin : undefined;
+      if (claimed !== owner) return;
+    }
     const { world } = this.options;
     switch (method) {
       case "notify": {
@@ -1173,7 +1414,11 @@ export class Plugins {
     }
   }
 
-  private async requested(method: string, params: unknown): Promise<unknown> {
+  private async requested(method: string, params: unknown, owner?: string): Promise<unknown> {
+    if (owner !== undefined) {
+      const claimed = params && typeof params === "object" ? (params as { plugin?: unknown }).plugin : undefined;
+      if (claimed !== undefined && claimed !== owner) throw new Error(`This host may only act for "${owner}".`);
+    }
     const { world } = this.options;
     switch (method) {
       case "bots.list":
@@ -1413,7 +1658,7 @@ export class Plugins {
       }
       case "bots.create": {
         const parsed = CreateParams.safeParse(params);
-        const plugin = parsed.success ? this.loaded(parsed.data.plugin) : null;
+        const plugin = parsed.success && (owner === undefined || parsed.data.plugin === owner) ? this.loaded(parsed.data.plugin) : null;
         if (!plugin?.manifest.ccb?.permissions?.includes("bots")) throw new Error("Creating bots needs the \"bots\" permission in package.json.");
         const raw = parsed.data as Record<string, unknown>;
         const text = (key: string) => (typeof raw[key] === "string" ? (raw[key] as string).slice(0, 4_000) : "");

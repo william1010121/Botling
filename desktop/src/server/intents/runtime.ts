@@ -9,12 +9,13 @@
 // Everything that writes goes through one TxScope over the store's writer, so the tap and the handlers share the
 // command's transaction and LogHub hears about every stream a commit touched.
 import type { Event as ContractEvent } from "../../contract";
-import type { CmdBody, Scope } from "../../protocol";
+import type { CmdBody } from "../../protocol";
+import { CallInGuest, CallInHost } from "../callin";
 import { contentLineHook, type ContentService } from "../content";
 import { ensureStream, type LogHub } from "../log";
 import { ContractLiveFeed, type LiveChannel } from "../live";
 import type { TapHooks } from "../effects/tap";
-import { SlotEngine, type Audit, type Authorize, type ReceiveStatus, type ReplySink } from "../slots";
+import { SlotEngine, type Audit, type Authorize, type ReceiveOptions, type ReceiveStatus } from "../slots";
 import {
   ensureBot, EffectWorker, EventTap, recoverEffects, serverStreamOf, TxScope,
   type DeferredTurnRequest, type RecoveryReport, type Submitter, type TurnEngine,
@@ -61,6 +62,10 @@ export class IntentRuntime {
   readonly tap: EventTap;
   readonly slots: SlotEngine;
   readonly legacy: LegacyApply;
+  /** M5-02b: the guest's side of call-ins (botlingd attaches the server origin once it exists). */
+  readonly callIns: CallInGuest;
+  /** M5-02c: the host's side (botlingd attaches the server origin and binds `remoteTurn` into the core). */
+  readonly callHost: CallInHost;
   private readonly deps: IntentDeps;
   private readonly now: () => number;
 
@@ -68,7 +73,9 @@ export class IntentRuntime {
     const log = options.log;
     this.now = options.now ?? Date.now;
     this.scope = new TxScope(options.store, (streams) => options.hub?.committed(streams), (error) => log?.(`intents: an after-commit step failed (${error instanceof Error ? error.message : String(error)})`));
-    this.worker = new EffectWorker({ scope: this.scope, engine: options.engine, now: this.now, log });
+    this.callIns = new CallInGuest({ scope: this.scope, engine: options.engine, now: this.now, log });
+    this.callHost = new CallInHost({ log, scope: this.scope, now: this.now });
+    this.worker = new EffectWorker({ scope: this.scope, engine: options.engine, now: this.now, log, callIns: this.callIns });
     this.tap = new EventTap({
       scope: this.scope,
       live: options.live ? new ContractLiveFeed(options.live) : null,
@@ -84,7 +91,7 @@ export class IntentRuntime {
       ...(options.serverEvents ? { serverEvents: options.serverEvents } : {}),
       ...(options.mirrorBotUpdates ? { mirrorBotUpdates: true } : {}),
     });
-    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null, pluginRowsChanged: options.pluginRowsChanged };
+    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null, pluginRowsChanged: options.pluginRowsChanged, callIns: this.callIns, callHost: this.callHost };
     const slotLog = dbSlotLog(this.scope, log);
     this.slots = new SlotEngine({
       submit: (command) => this.scope.submit(command),
@@ -110,7 +117,7 @@ export class IntentRuntime {
   }
 
   /** One copy of a front end's command (a slot). Reads and app commands never come here. */
-  receive(body: CmdBody, options: { scope?: Scope; reply?: ReplySink } = {}): Promise<ReceiveStatus> {
+  receive(body: CmdBody, options: ReceiveOptions): Promise<ReceiveStatus> {
     const route = routeOf(body.cmd.type);
     if (route.kind === "intent") return this.slots.receive(body, options);
     if (route.kind === "legacy") return this.legacy.receive(body, options);
@@ -123,6 +130,7 @@ export class IntentRuntime {
   }
 
   close(): void {
+    this.callHost.close();
     this.worker.close();
   }
 

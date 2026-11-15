@@ -26,12 +26,20 @@ function normalizeForDiffCheck(config: Record<string, any>): Record<string, any>
   const clone = structuredClone(config);
   delete clone.appId;
   delete clone.productName;
+  delete clone.artifactName;
   if (clone.extraMetadata) {
     delete clone.extraMetadata.main;
     delete clone.extraMetadata.version;
+    delete clone.extraMetadata.appId;
   }
   if (clone.directories) {
     delete clone.directories.output;
+  }
+  if (clone.nsis) {
+    delete clone.nsis.artifactName;
+  }
+  if (clone.linux) {
+    delete clone.linux.executableName;
   }
   if (Array.isArray(clone.publish)) {
     clone.publish = clone.publish.map((entry: Record<string, any>) => {
@@ -54,8 +62,8 @@ afterEach(() => {
   delete req.cache[v3ConfigPath];
 });
 
-describe("Botling 3 electron-builder config (M6-07a)", () => {
-  it("differs from the 2.x config in exactly the six specified fields and keeps fuses untouched", () => {
+describe("Botling 3 electron-builder config (M6-07a / M6-07c)", () => {
+  it("differs from the 2.x config only in the v3 overrides and keeps fuses untouched", () => {
     delete process.env.BOTLING_DIST_DIR;
     delete process.env.BOTLING_V3_VERSION;
 
@@ -69,7 +77,16 @@ describe("Botling 3 electron-builder config (M6-07a)", () => {
     expect(v3.extraMetadata.main).not.toBe(v2.extraMetadata.main);
     expect(v3.extraMetadata.version).toBe("3.0.0-beta.1");
     expect(v2.extraMetadata.version).toBeUndefined();
+    expect(v3.extraMetadata.appId).toBe(v3.appId);
+    expect(v2.extraMetadata.appId).toBeUndefined();
     expect(v3.directories.output).not.toBe(v2.directories.output);
+
+    expect(v3.artifactName).toBe("Botling-3-${version}-${os}-${arch}.${ext}");
+    expect(v3.artifactName).not.toBe(v2.artifactName);
+    expect(v3.nsis.artifactName).toBe("Botling-3-${version}-win-${arch}.${ext}");
+    expect(v3.nsis.artifactName).not.toBe(v2.nsis.artifactName);
+    expect(v3.linux.executableName).toBe("botling3");
+    expect(v3.linux.executableName).not.toBe(v2.linux.executableName);
 
     expect(Array.isArray(v3.publish)).toBe(true);
     expect(v3.publish.length).toBeGreaterThan(0);

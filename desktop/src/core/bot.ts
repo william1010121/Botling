@@ -1,7 +1,7 @@
 import { readImagePaths, readImages } from "./read-images";
 import { isBrowserTool } from "../browser-bot";
 import { runBrowserTool } from "./browser-tools";
-import { COMPONENT_USAGE_TOOL, isBotTool, type BotToolName, type ToolCaller } from "./bot-tools";
+import { COMPONENT_USAGE_TOOL, FETCH_TOOL, isBotTool, parseFetchRequest, type BotToolName, type FetchRequest, type ToolCaller } from "./bot-tools";
 import { isNoteTool, runNoteTool } from "./note-tools";
 import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
@@ -171,6 +171,8 @@ export interface SessionStartCodex extends SessionStart {
 
 export interface BotOptions {
   profile: BotProfile;
+  /** Botling 3's server only (2.x leaves it unset): `app_fetch`, a file or folder from another machine; answers with the text the tool returns (M5-07d). */
+  fetch?: (botId: string, request: FetchRequest) => Promise<string>;
   /** How to run this bot's claude head for a session. */
   headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig;
   /** Antigravity native protocol; no Claude permission or plugin configuration is forwarded. */
@@ -1005,15 +1007,18 @@ export class Bot {
    * showing neither in this chat. Wakes it if asleep. While it is busy with its own chat it waits up to
    * `waitForMs`, then gives up (busy); once asked, it has `answerWithinMs` to reply.
    */
-  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked, by, onBegin }: { callIn?: string; asked?: string; by?: "user"; onBegin?: () => void } = {}): Promise<GuestAnswer> {
-    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked, by, onBegin });
+  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked, by, onBegin, signal }: { callIn?: string; asked?: string; by?: "user"; onBegin?: () => void; signal?: AbortSignal } = {}): Promise<GuestAnswer> {
+    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked, by, onBegin, signal });
     const deadline = Date.now() + waitForMs;
     while (this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold) {
       if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
+      // Botling 3 M5-02b: `signal` (a call-in the host gave up, D51) ends the wait and the turn; 2.x passes none.
+      if (signal?.aborted) return { kind: "failed", why: "cancelled" };
       if (Date.now() >= deadline) return { kind: "busy" };
       await sleep(300);
     }
     if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
+    if (signal?.aborted) return { kind: "failed", why: "cancelled" };
     const problem = this.problem ?? this.profile.problem;
     if (problem) return { kind: "failed", why: problem };
     this.guestTurn = true;
@@ -1025,7 +1030,7 @@ export class Bot {
         if (callIn) { turn.callIn = callIn; turn.callInAsked = asked ?? ""; if (by) turn.callInBy = by; }
         let settled = false;
         const settle = (answer: GuestAnswer) => { if (!settled) { settled = true; clearTimeout(timer); resolve(answer); } };
-        const timer = setTimeout(() => {
+        const giveUp = (why: string) => {
           if (turn.open) {
             turn.open = false;
             if (this.turn === turn) this.turn = null;
@@ -1034,11 +1039,16 @@ export class Bot {
             // Its reply, when it comes, belongs to nobody now.
             if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }
           }
-          settle({ kind: "failed", why: "No answer in time." });
-        }, answerWithinMs);
+          settle({ kind: "failed", why });
+        };
+        const timer = setTimeout(() => giveUp("No answer in time."), answerWithinMs);
+        const aborted = () => giveUp("cancelled");
+        signal?.addEventListener("abort", aborted, { once: true });
+        void turn.done.finally(() => signal?.removeEventListener("abort", aborted));
         // A failed or stopped turn hands "" here (finishTurn): not a reply; turn.done says what happened.
         turn.onReply = (reply) => { if (reply) settle({ kind: "reply", text: reply, steps: turn.steps.slice(-500), engine }); };
         void turn.done.then((status) => settle(status === "done" ? { kind: "reply", text: turn.reply.text, steps: turn.steps.slice(-500), engine } : { kind: "failed", why: status === "failed" ? "It could not answer." : "It was stopped." }));
+        if (signal?.aborted) { giveUp("cancelled"); return; }
         onBegin?.();
         this.begin(turn);
       });
@@ -1389,8 +1399,17 @@ export class Bot {
   private async botTool(name: BotToolName, args: Record<string, unknown>, caller: ToolCaller = "coordinator"): Promise<unknown> {
     if (isNoteTool(name)) return runNoteTool(name, args, { botId: this.owner.profile.id, caller });
     if (name === COMPONENT_USAGE_TOOL) return this.componentUsage(args, caller);
+    if (name === FETCH_TOOL) return this.fetchTool(args, caller);
     if (!isBrowserTool(name)) throw new Error(`Unknown app tool ${name}.`);
     return runBrowserTool(name, args, { botId: this.owner.profile.id, folder: this.owner.profile.folder });
+  }
+
+  /** app_fetch: files from another machine into this bot's `.bot/incoming/` (the server's `fetch` option does it; 2.x has none). */
+  private async fetchTool(args: Record<string, unknown>, caller: ToolCaller): Promise<string> {
+    if (caller !== "coordinator") throw new Error("Only the bot itself fetches from another machine.");
+    const fetch = this.options.fetch;
+    if (!fetch) return "Fetching from another machine needs Botling 3.";
+    return fetch(this.owner.profile.id, parseFetchRequest(args));
   }
 
   /** app_component_usage: one component's whole usage (its about.md), for the coordinator that is about to use it. */

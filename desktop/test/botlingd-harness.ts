@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
-import { decodeFrame, encodeFrame, FrameSplitter, packFrame, type Cursor, type Entry, type Message, type MessageOf, type Slot } from "../src/protocol";
+import { decodeFrame, decodeWireFrame, encodeFrame, FrameSplitter, packFrame, type Cursor, type Entry, type Message, type MessageOf, type Slot } from "../src/protocol";
 import { desktop, fakeCli, fakeCodex, until } from "./helpers";
 
 export const botlingdScript = join(desktop, "out", "server", "main.cjs");
@@ -109,6 +109,10 @@ export class ScriptClient {
       const split = this.splitter.push(chunk);
       if (!split.ok) throw new Error(split.detail);
       for (const frame of split.frames) {
+        // `rows` of a `srv:` stream (M3): the own table's plugin rows that botlingd sends beside the log sub of its `srv:`
+        // stream (M5-14e); this v1-shaped client reads the log only. Every other frame must still be a v1 message.
+        const wire = decodeWireFrame(frame, "server", { local: true });
+        if (wire.ok && wire.message.t === "rows" && wire.message.stream.startsWith("srv:")) continue;
         const decoded = decodeFrame(frame, "server", { local: true });
         if (!decoded.ok) throw new Error(`bad frame from botlingd: ${decoded.detail}`);
         this.onMessage(decoded.message);

@@ -320,6 +320,8 @@ export class RendererAdapter {
       if (cmd.type === "chat.shown" && cmd.botId) this.show(cmd.botId);
       // A peer's bot: the window hints go nowhere (the attached server's core does not have the bot; M3 step 11).
       if ((cmd.type === "chat.shown" || cmd.type === "chat.read") && cmd.botId && this.peerOf(cmd.botId)) return { ok: true, result: {} };
+      // F1 (M6-06): plugin secrets never enter the durable outbox (fe-link.sqlite); send as a non-persisted req.
+      if (cmd.type === "plugins.secret") return await this.read(cmd);
       if (READ_COMMANDS.has(cmd.type)) return await this.read(cmd);
       return await this.command(cmd);
     } catch (error) {
