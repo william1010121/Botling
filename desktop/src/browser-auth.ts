@@ -7,6 +7,10 @@
 // - Popups: a sign-in popup (window.open with features: Google, Apple, Microsoft, …) reports back to its opener via
 //   window.opener / postMessage, so it must stay a real popup of that page (same session, same safety settings), not
 //   a new tab with no opener. A plain target=_blank link or window.open without features still becomes a tab.
+// - The capture (2026-11-15): a tab has the DevTools protocol attached (the background network capture), a popup does
+//   not, and Google refuses sign-in in a DevTools-controlled browser: GitHub's "Continue with Google" in a tab got "This
+//   browser or app may not be secure" while claude.ai's Google popup signed in. So a tab drops its capture while its
+//   top frame is on Google's sign-in pages and takes it up again when the page leaves (those requests are not captured).
 
 /** Plain Chrome's user agent for the platform and Chrome major version of Electron's own `fallback`. */
 export function paneUserAgent(fallback: string): string {
@@ -23,6 +27,33 @@ export function popupWay(url: string, disposition: string): PopupWay {
   if (!isHttp(url) && url !== "about:blank") return "refuse";
   if (disposition === "new-window") return "popup";
   return url === "about:blank" ? "refuse" : "tab";
+}
+
+/** Google's sign-in pages: accounts.google.com, the country hosts and accounts.youtube.com it sets cookies through.
+ * Country hosts are two letters (ccTLDs): a three-letter gTLD would let anyone who registers com.xyz or google.xyz
+ * drop a tab's capture on their own page. */
+export function isSignInPage(url: string): boolean {
+  let host: string;
+  try { const u = new URL(url); if (u.protocol !== "https:" && u.protocol !== "http:") return false; host = u.hostname.toLowerCase(); } catch { return false; }
+  return host === "accounts.youtube.com" || /^accounts\.google\.(?:com|(?:com?\.)?[a-z]{2})$/.test(host);
+}
+
+/** A tab's DevTools protocol client, as the capture sees it. */
+export interface Debuggee { isAttached(): boolean; attach(): void; detach(): void }
+
+/** Attaches or detaches a tab's capture for the page its top frame is going to; whether it is attached now. */
+export function captureFor(url: string, debuggee: Debuggee): boolean {
+  const want = !isSignInPage(url);
+  if (want !== debuggee.isAttached()) {
+    if (want) debuggee.attach(); else debuggee.detach();
+  }
+  return debuggee.isAttached();
+}
+
+/** A navigation of the tab: only a new document in the top frame moves the capture (a Google sign-in iframe on another
+ * page, or a same-document hop, leaves it where it is). */
+export function followNavigation(details: { url: string; isMainFrame: boolean; isSameDocument?: boolean }, debuggee: Debuggee): void {
+  if (details.isMainFrame && !details.isSameDocument) captureFor(details.url, debuggee);
 }
 
 function isHttp(url: string): boolean {
