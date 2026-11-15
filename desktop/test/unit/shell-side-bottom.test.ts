@@ -163,7 +163,7 @@ describe("the regions as contributions", () => {
 
   it("the plugin still loads where nobody owns app/side (a kernel without :shell): the refusal is the kernel's, not a failed load, and the plugin's own slots are there", async () => {
     const kernel = new Kernel();
-    const private_ = botPanelHost({ kernel, feed: { refresh() {} }, notify() {} });
+    const private_ = botPanelHost({ kernel, feed: { refresh: () => [] }, notify() {} });
     const [result] = await private_.start();
     expect(result!.status).toBe("loaded");
     expect(kernel.state(BOT_PANEL_PLUGIN)).toBe("active");
