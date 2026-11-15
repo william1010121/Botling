@@ -120,6 +120,21 @@ export function takeRetry(tx: Db, slot: Slot, owner: string): Slot[] {
   return gone;
 }
 
+/** Drops every waiting row and cancel for a revoked `owner` (§4.6), returning the deleted rows in slot order. */
+export function dropOwner(tx: Db, owner: string): ForwardRow[] {
+  const rows = tx.prepare("SELECT origin, originEpoch, target, n, owner, cmdHash, envelope, heldAt FROM forwardq WHERE owner = ? ORDER BY origin, originEpoch, target, n").all(owner)
+    .map((row) => ({
+      slot: slotOf(row),
+      owner: String(row.owner),
+      cmdHash: String(row.cmdHash),
+      envelope: JSON.parse(String(row.envelope)) as CmdBody,
+      heldAt: Number(row.heldAt),
+    }));
+  if (rows.length) tx.prepare("DELETE FROM forwardq WHERE owner = ?").run(owner);
+  tx.prepare("DELETE FROM fwdcancels WHERE owner = ?").run(owner);
+  return rows;
+}
+
 /** Rows and cancels waiting, in all and for the oldest (status, tests). */
 export function queueStats(db: Db): { rows: number; cancels: number; oldestHeldAt: number | null } {
   const rows = db.prepare("SELECT COUNT(*) AS n, MIN(heldAt) AS oldest FROM forwardq").get();

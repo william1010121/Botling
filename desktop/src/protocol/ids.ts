@@ -83,7 +83,7 @@ export type Scope = z.infer<typeof Scope>;
  * Why an owner refused a slot (§11.3, §11.5, §12). `grant` (plan change N2, D52–D57): the command came from a plugin
  * (`via`) whose code hash holds no grant for it; until M5 every command carrying `via` is refused so (fail closed).
  */
-export const RefuseReason = z.enum(["slot conflict", "changed", "scope", "origin", "invalid", "turn ended", "grant"]);
+export const RefuseReason = z.enum(["slot conflict", "changed", "scope", "origin", "invalid", "turn ended", "grant", "revoked"]);
 export type RefuseReason = z.infer<typeof RefuseReason>;
 
 /** How the UI words a refusal reason after "not sent" (§11.6); only reasons with words of their own are listed. */

@@ -152,7 +152,10 @@ export const Held = msg("held", { slot: Slot, at: ServerId });
  * nothing was appended (`slot conflict`). Sent again for every duplicate.
  */
 export const CmdResult = msg("cmd.result", { slot: Slot, outcome: Outcome, logId: LogId, seq: Seq.min(1).nullable() })
-  .refine((result) => result.seq !== null || (result.outcome.kind === "refused" && result.outcome.reason === "slot conflict"), { message: "only a slot conflict has no entry", path: ["seq"] });
+  .refine(
+    (result) => result.seq !== null || (result.outcome.kind === "refused" && (result.outcome.reason === "slot conflict" || result.outcome.reason === "revoked")),
+    { message: "only a slot conflict or a revoked owner has no entry", path: ["seq"] },
+  );
 /** Sent to an earlier incarnation of the owner: re-send with `inc` once you have its `reset`. Not an outcome (D49). */
 export const CmdRetry = msg("cmd.retry", { slot: Slot, inc: LogId });
 /**

@@ -307,7 +307,9 @@ export class Botlingd {
       const forwarder: Forwarder = new Forwarder({
         self: serverId, submit: (command) => openStore.submit(command), reader: () => hub.reader(), directory, log,
         session: (peer): PeerSession | null => peers.session(peer),
+        isRevoked: (peer) => !roster.view.valid.has(peer),
       });
+      roster.onChange((change) => { void forwarder.revoked(change.invalidated); });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);
