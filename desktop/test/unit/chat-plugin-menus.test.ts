@@ -172,7 +172,7 @@ describe("a peer bot's chat/link button (M5-09) through the slot", () => {
     menus: [link("coach", "coach.start"), link("reader", "reader.open"), { menu: "composer/plus", command: "coach.note", plugin: "coach", title: "Note" }],
   };
   const ownerRow = { codeHash: "sha256:" + "bb".repeat(32), manifest: { tier: "request", reads: [], requests: ["plugins.linkCommand"], owns: [], provides: [], requires: [], uses: [], clients: [], needsShell: [] }, author: "user", grants: {} };
-  const buttons = (view: PluginsView) => posted(chatPlugins(view)).linkMenu.map((entry) => entry.command);
+  const buttons = (view: PluginsView) => (posted(chatPlugins(view)).linkMenu ?? []).map((entry) => entry.command);
 
   it("shows only the buttons of plugins the owner has, and a press resolves to the owner's plugin (so the command carries its via)", async () => {
     await host().start();

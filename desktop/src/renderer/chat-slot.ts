@@ -32,8 +32,8 @@ function slotRows(kernel: Kernel): Menus {
   return rows;
 }
 
-export function chatPlugins(view: PluginsView | null | undefined, kernel: Kernel = rendererKernel, host: Pick<InPageHost, "unavailable"> = inPageHost): PluginsView | null | undefined {
-  if (!view) return view;
+export function chatPlugins(view: PluginsView | null | undefined, kernel: Kernel = rendererKernel, host: Pick<InPageHost, "unavailable"> = inPageHost): PluginsView | null {
+  if (!view) return null;
   const up = kernel.state(CHAT_PLUGIN) === "active";
   if (!up && !host.unavailable(CHAT_PLUGIN)) return view;
   const held = up ? slotRows(kernel) : [];
