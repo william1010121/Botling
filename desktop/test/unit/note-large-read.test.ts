@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION, type Command } from "../../src/contract";
 import { FeLink, MemoryFeStorage } from "../../src/fe-link";
 import { RendererAdapter } from "../../src/main-v3/renderer-adapter";
-import { KeptResultMarker, REMOTE_READS, type Message, type Slot } from "../../src/protocol";
+import { encodeResFrames, KeptResultMarker, REMOTE_READS, type Message, type Slot } from "../../src/protocol";
 import { ENTRY_BYTES_LIMIT } from "../../src/server/log";
 import { ownTableStream, putRow } from "../../src/server/replica/tables";
 import { pluginFrameHost } from "../../src/renderer/plugin-frame-host";
@@ -162,12 +162,19 @@ describe("the window: a 1 MiB note read through plugin-frame-host, the adapter a
     };
     return { client: new Client(bridge), server, calls: state.calls, fetches: state.fetches, answer: (how) => { state.how = how; } };
   }
+  /** Answers a req as the server's session does: one `res`, or `res.part`s when it does not fit a frame (session-core `sendRes`). */
+  function sendBig(server: FakeServer, req: string, result: unknown): void {
+    const encoded = encodeResFrames({ t: "res", req, ok: true, result }, "server", { local: true } as never);
+    if (!encoded.ok) throw new Error(`cannot send the answer: ${encoded.detail}`);
+    expect(encoded.texts.length).toBeGreaterThan(1);
+    for (const text of encoded.texts) server.send(JSON.parse(text) as Message);
+  }
   const host = (client: Client) => pluginFrameHost({ client, components: () => ({}), bots: () => [], ask: (_view, _approve, done) => done(false) });
 
   it("answers the frame's read with the whole 1 MiB note: one slot with the Note's via, the note by one slot.result for that slot", async () => {
     const r = await rig({ bytes: 1_100_000, kept: true });
     const text = bigNote();
-    r.answer((message, server) => server.send({ t: "res", req: message.req, ok: true, result: { result: { text, mtime: 1 } } }));
+    r.answer((message, server) => sendBig(server, message.req, { result: { text, mtime: 1 } }));
     const answer = await host(r.client).call("botling.note", "read", { botId: "b1" }) as { result: { text: string; mtime: number } };
     expect(answer.result.text === text).toBe(true);
     expect(answer.result.text.length).toBe(text.length);
@@ -179,7 +186,7 @@ describe("the window: a 1 MiB note read through plugin-frame-host, the adapter a
   it("a write goes the same way (a refused save hands the note back): via stamped, one run, the result fetched", async () => {
     const r = await rig({ bytes: 1_100_000, kept: true });
     const text = bigNote();
-    r.answer((message, server) => server.send({ t: "res", req: message.req, ok: true, result: { result: { saved: false, text, mtime: 9 } } }));
+    r.answer((message, server) => sendBig(server, message.req, { result: { saved: false, text, mtime: 9 } }));
     const answer = await host(r.client).call("botling.note", "write", { botId: "b1", text: "mine", base: 1 }) as { result: { text: string } };
     expect(answer.result.text === text).toBe(true);
     expect(r.calls).toHaveLength(1);
