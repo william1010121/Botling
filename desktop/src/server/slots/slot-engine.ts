@@ -60,7 +60,7 @@ export interface ReceiveOptions { scope: Scope; reply?: ReplySink }
  * The scope the caller stated, or a TypeError (fail closed, L-009). The envelope's own `body.scope` is never read:
  * a frame can say `local` or `admin`, and a caller that forgot to state a scope must not inherit the frame's.
  */
-export function statedScope(options: { scope?: unknown } | undefined, who: string): Scope {
+export function requiredSlotScope(options: { scope?: unknown } | undefined, who: string): Scope {
   const parsed = Scope.safeParse(options?.scope);
   if (!parsed.success) throw new TypeError(`${who}: a command needs the scope its accepting server stated`);
   return parsed.data;
@@ -253,7 +253,7 @@ export class SlotEngine {
    * status repeats the immediate one.
    */
   async receive(body: CmdBody, options: ReceiveOptions): Promise<ReceiveStatus> {
-    const scope = statedScope(options, "slots");
+    const scope = requiredSlotScope(options, "slots");
     const input: SlotInput = {
       slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, ...(body.via ? { via: body.via } : {}),
       hash: cmdHash({ cmd: body.cmd, scope, basis: body.basis, via: body.via }),

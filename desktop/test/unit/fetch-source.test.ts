@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   CONTENT_FRAME_CHUNK_LIMIT, decodeWireFrame, encodeChunkFrame, encodeWireFrame, fromBase64Url, type WireMessage,
 } from "../../src/protocol";
-import { FetchAsk } from "../../src/protocol/fetch";
+import { FETCH_MAX_DEPTH, FetchAsk } from "../../src/protocol/fetch";
 import { ContentService } from "../../src/server/content";
 import { statSig } from "../../src/server/content/pin";
 import { PEER_CONTENT_FRAME } from "../../src/server/content/peer-content";
@@ -1029,6 +1029,96 @@ describe("M5-07a: fetch source", () => {
     const d2 = await until(() => s2.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "l3 f2" });
     expect(d2).toMatchObject({ t: "fetch.denied", fetchId: "l3-f2", reason: "limit" });
     expect(s2.sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+  });
+
+  it("F-a. a tree deeper than FETCH_MAX_DEPTH is `limit` before any approval, chunk or grant; exactly at the cap is served", async () => {
+    const asked: string[] = [];
+    const env = await setupInProcessCluster(async (fetch) => { asked.push(fetch.fetchId); return "once" as const; });
+    cleanups.push(env.cleanup);
+    const deep = (root: string, depth: number) => {
+      const folders = Array.from({ length: depth }, (_, i) => `f${i}`);
+      mkdirSync(join(root, ...folders), { recursive: true });
+      writeFileSync(join(root, ...folders, "leaf.txt"), "leaf");
+    };
+    deep(join(env.artifactsA, "ok64"), FETCH_MAX_DEPTH);
+    deep(join(env.artifactsA, "bad65"), FETCH_MAX_DEPTH + 1);
+    // A file reached through a link counts at the folder the link sits in, like any other file.
+    const linked = (name: string, depth: number) => {
+      const root = join(env.artifactsA, name);
+      const folders = Array.from({ length: depth }, (_, i) => `f${i}`);
+      mkdirSync(join(root, ...folders), { recursive: true });
+      writeFileSync(join(root, "real.txt"), "real");
+      symlinkSync(join(root, "real.txt"), join(root, ...folders, "leaf.txt"));
+    };
+    linked("ok64link", FETCH_MAX_DEPTH);
+    linked("bad65link", FETCH_MAX_DEPTH + 1);
+    deep(join(env.srcA, "bad65"), FETCH_MAX_DEPTH + 1); // outside the artifacts: this one would need an approval card
+    const ask = async (fetchId: string, what: { kind: "artifact"; botId: string; path: string } | { kind: "path"; path: string }) => {
+      const sink = makeFakeSink(env.kb.memberId);
+      env.source.onMessage(sink.sink, { t: "fetch.ask", fetchId, requester: { bot: env.botB }, source: env.ka.memberId, what, purpose: "deep", maxBytes: 10 * MiB });
+      const end = await until(() => sink.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: fetchId });
+      return { end, chunks: sink.sent.filter((m) => m.t === "fetch.chunk").length };
+    };
+
+    const good = await ask("fa-ok", { kind: "artifact", botId: "bot-a", path: "ok64" });
+    expect(good.end.t).toBe("fetch.done");
+
+    expect((await ask("fa-ok-link", { kind: "artifact", botId: "bot-a", path: "ok64link" })).end.t).toBe("fetch.done");
+
+    const bad = await ask("fa-bad", { kind: "artifact", botId: "bot-a", path: "bad65" });
+    expect(bad.end).toMatchObject({ t: "fetch.denied", fetchId: "fa-bad", reason: "limit" });
+    expect(bad.chunks).toBe(0);
+
+    const badLink = await ask("fa-bad-link", { kind: "artifact", botId: "bot-a", path: "bad65link" });
+    expect(badLink.end).toMatchObject({ t: "fetch.denied", fetchId: "fa-bad-link", reason: "limit" });
+    expect(badLink.chunks).toBe(0);
+
+    const badPath = await ask("fa-bad-path", { kind: "path", path: join(env.srcA, "bad65") });
+    expect(badPath.end).toMatchObject({ t: "fetch.denied", fetchId: "fa-bad-path", reason: "limit" });
+    expect(badPath.chunks).toBe(0);
+    expect(asked).not.toContain("fa-bad-path"); // refused before a card was raised
+    const grants = env.readerA.prepare("SELECT COUNT(*) AS n FROM grants WHERE fetchId IN (?, ?)").get("fa-bad", "fa-bad-path") as { n: number };
+    expect(Number(grants.n)).toBe(0); // no grant row for either refused fetch
+  });
+
+  it("F-a2. a too-deep link to a file outside the target but inside the grant prefix is `limit` before the grant", async () => {
+    const env = await setupInProcessCluster(async () => "once" as const);
+    cleanups.push(env.cleanup);
+    // The artifact grant prefix is the whole artifacts folder; the target is one folder in it. The scan only counts
+    // links that stay inside the target, the collect step serves any link inside the prefix: it must refuse too.
+    writeFileSync(join(env.artifactsA, "outside-target.txt"), "x");
+    const folders = Array.from({ length: FETCH_MAX_DEPTH + 1 }, (_, i) => `f${i}`);
+    mkdirSync(join(env.artifactsA, "gap65", ...folders), { recursive: true });
+    symlinkSync(join(env.artifactsA, "outside-target.txt"), join(env.artifactsA, "gap65", ...folders, "leaf.txt"));
+    const sink = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sink.sink, { t: "fetch.ask", fetchId: "fa2-gap", requester: { bot: env.botB }, source: env.ka.memberId, what: { kind: "artifact", botId: "bot-a", path: "gap65" }, purpose: "deep", maxBytes: 10 * MiB });
+    const end = await until(() => sink.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "fa2-gap" });
+    expect(end).toMatchObject({ t: "fetch.denied", fetchId: "fa2-gap", reason: "limit" });
+    expect(sink.sent.some((m) => m.t === "fetch.grant" || m.t === "fetch.chunk")).toBe(false);
+    const grants = env.readerA.prepare("SELECT COUNT(*) AS n FROM grants WHERE fetchId = ?").get("fa2-gap") as { n: number };
+    expect(Number(grants.n)).toBe(0);
+  });
+
+  it("F-a3. a tree made deeper while the approval card waits is `limit` before the grant", async () => {
+    let target = "";
+    const env = await setupInProcessCluster(async () => {
+      // The scan passed (the tree was shallow); while the card waits a 65-deep file appears.
+      const folders = Array.from({ length: FETCH_MAX_DEPTH + 1 }, (_, i) => `f${i}`);
+      mkdirSync(join(target, ...folders), { recursive: true });
+      writeFileSync(join(target, ...folders, "leaf.txt"), "late");
+      return "once" as const;
+    });
+    cleanups.push(env.cleanup);
+    target = join(env.srcA, "grows");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, "top.txt"), "top");
+    const sink = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sink.sink, { t: "fetch.ask", fetchId: "fa3-grows", requester: { bot: env.botB }, source: env.ka.memberId, what: { kind: "path", path: target }, purpose: "deep", maxBytes: 10 * MiB });
+    const end = await until(() => sink.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "fa3-grows" });
+    expect(end).toMatchObject({ t: "fetch.denied", fetchId: "fa3-grows", reason: "limit" });
+    expect(sink.sent.some((m) => m.t === "fetch.grant" || m.t === "fetch.chunk")).toBe(false);
+    const grants = env.readerA.prepare("SELECT COUNT(*) AS n FROM grants WHERE fetchId = ?").get("fa3-grows") as { n: number };
+    expect(Number(grants.n)).toBe(0);
   });
 
   it("L-a. a cancelled serve ends without the approval hook answering (session closed, then source closed)", async () => {

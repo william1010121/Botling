@@ -1,7 +1,7 @@
 import {expect,it,vi} from 'vitest';
 vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>true}));
 import {botPrompts} from '../../src/core/prompts';
-import {AGY_WORKER_TOOLS} from '../../src/core/agent/agy-mcp';
+import {AGY_APP_TOOLS} from '../../src/core/agent/agy-mcp';
 const profile={name:'Probe',role:'bot' as const,folder:'/fixture',memoryPath:'.bot/memory.md',job:null};
 it('uses a coordinator policy when managed transport is available, with distinct worker instructions',()=>{
  const p=botPrompts({profile,engine:'agy'});
@@ -9,7 +9,7 @@ it('uses a coordinator policy when managed transport is available, with distinct
  for(const contract of ['research-only','implementation_authorized=false','file_release_authorizes_implementation=false','isolated git worktree','END YOUR CURRENT TURN','app_task_checkpoint'])expect(p.system).toContain(contract);
  expect(p.system).not.toContain('Work directly on');expect(p.system).not.toContain('app_monitor_start');expect(p.system).not.toContain('app_routines');
  expect(p.codexWorkerSystem).toContain('research/design-only');expect(p.codexWorkerSystem).not.toContain('You are the coordinator');
- expect(AGY_WORKER_TOOLS.map(t=>t.name)).toContain('app_task_checkpoint');
+ expect(AGY_APP_TOOLS.map(t=>t.name)).toContain('app_task_checkpoint');
 });
 it('exposes only coordinator tools and keeps cross-engine dispatch gated',async()=>{
  const {mkdtempSync,mkdirSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');

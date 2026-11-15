@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { CLAUDE_APP_TOOLS } from "../../src/core/agent/claude-workers";
-import { AGY_WORKER_TOOLS, AgyMcpBridge } from "../../src/core/agent/agy-mcp";
+import { AGY_APP_TOOLS, AgyMcpBridge } from "../../src/core/agent/agy-mcp";
 import { MANAGED_TOOLS, MANAGED_TOOL_SIGNATURE } from "../../src/core/agent/codex";
 
 const golden = (name: string) => readFileSync(join(__dirname, "../fixtures/app-tools", `${name}.json`), "utf8");
@@ -22,7 +22,7 @@ describe("app tools, byte for byte", () => {
     expect(pretty(CLAUDE_APP_TOOLS)).toBe(golden("claude"));
   });
   it("agy's worker tools, and what a bridge with workers lists (handoff to agy only)", () => {
-    expect(pretty(AGY_WORKER_TOOLS)).toBe(golden("agy"));
+    expect(pretty(AGY_APP_TOOLS)).toBe(golden("agy"));
     const cwd = mkdtempSync(join(tmpdir(), "botling-app-tools-"));
     dirs.push(cwd);
     mkdirSync(join(cwd, "private-profile"));
