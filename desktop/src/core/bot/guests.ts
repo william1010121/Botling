@@ -34,7 +34,7 @@ export class BotGuests {
   private get denialAsks() { return this.host.denialAsks; }
   private get approvals() { return this.host.approvals; }
   private get turn() { return this.host.turn; }
-  private set turn(v: Turn | null) { this.host.turn = v; }
+  private get turns() { return this.host.turns; }
   private get ignoreResults() { return this.host.ignoreResults; }
   private set ignoreResults(v: number) { this.host.ignoreResults = v; }
 
@@ -114,7 +114,7 @@ export class BotGuests {
         const giveUp = (why: string) => {
           if (turn.open) {
             turn.open = false;
-            if (this.turn === turn) this.turn = null;
+            if (this.turn === turn) this.turns.close();
             if (turn.callIn) this.updated();
             turn.resolve("stopped");
             // Its reply, when it comes, belongs to nobody now.
