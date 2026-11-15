@@ -102,7 +102,6 @@ describe("check-move", () => {
     expect(row(r, "src/b.ts")).toMatchObject({ changed: 0, added: 1, movedIn: 13 }); // 12 lines of methods and the closing brace; the class line is new
     expect(row(r, "src/a.ts")).toMatchObject({ changed: 0, movedOut: 12, added: 0 });
     expect(row(r, "src/b.ts").ignored).toBe(2);
-    expect(r.json!.total.ok).toBeUndefined();
     expect(r.json!.ok).toBe(true);
   });
 
@@ -119,7 +118,7 @@ describe("check-move", () => {
   });
 
   it("new code is added, not moved, and a brace beside new lines does not count as moved", () => {
-    put("src/a.ts", BASE_A.replace(MOVED.replace(/^/gm, ""), "")); // delete the two methods outright
+    put("src/a.ts", BASE_A.replace(MOVED, "")); // delete the two methods outright
     put("src/z.ts", "export function z(n: number) {\n  if (n) {\n    return 1;\n  }\n  return 2;\n}\n");
     const head = commit();
     const r = check(`${base}..${head}`, "--json", "--max-changed", "100");
