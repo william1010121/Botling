@@ -33,6 +33,7 @@ interface PendingSubmit {
 }
 
 export interface ServerOriginOptions {
+  /** This server's roster `memberId` (never a legacy `serverId`), used as `slot.origin` and to attach to `forwarder`. */
   self: string;
   submit<T>(command: (tx: Db) => T): Promise<T>;
   reader(): Db;

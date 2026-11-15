@@ -37,7 +37,7 @@ import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
-import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type SessionHost, type SessionOptions } from "./session";
+import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type DeviceRoster, type SessionHost, type SessionOptions } from "./session";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
@@ -95,6 +95,21 @@ export function clusterOrigins(
     connectOrigins.add(`wss://${host}`);
   }
   return { origins: [...origins].sort(), connectOrigins: [...connectOrigins].sort() };
+}
+
+/**
+ * Device & peer-server roster view passed to `slotAuthorize` (M5-04b): a peer server is accepted only when it is in
+ * `view.servers` AND `view.valid` (not root-revoked and not unvouched/not-yet-effective).
+ */
+export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">): DeviceRoster {
+  return {
+    memberId: roster.memberId,
+    device: (member) => roster.device(member),
+    server: (member) => {
+      const view = roster.view;
+      return member !== view.self && view.servers.has(member) && view.valid.has(member);
+    },
+  };
 }
 
 /** The oldest Botling 3 window this server serves (fe-link compares it without the -suffix). */
@@ -355,11 +370,7 @@ export class Botlingd {
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize({
-          memberId: roster.memberId,
-          device: (member) => roster.device(member),
-          server: (member) => { const view = roster.view; return member !== view.self && view.servers.has(member) && view.valid.has(member); },
-        }), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster)), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
         tapHooks: {
           eventSeen: (event) => {
             summary?.seen(event);
@@ -456,9 +467,9 @@ export class Botlingd {
         isRevoked: (peer) => !roster.view.valid.has(peer),
       });
       roster.onChange((change) => { void forwarder.revoked(change.invalidated); });
-      // M5-04a: this server acting as its own command origin (call-ins, main bot).
+      // M5-04a: this server acting as its own command origin (call-ins, main bot); slot.origin is always roster.memberId.
       const serverOrigin = new ServerOrigin({
-        self: serverId, submit: (command) => openStore.submit(command), reader: () => hub.reader(), forwarder,
+        self: roster.memberId, submit: (command) => openStore.submit(command), reader: () => hub.reader(), forwarder,
         subscribeTable: (stream, sink) => feeds.subscribe(stream, null, sink), log,
       });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });

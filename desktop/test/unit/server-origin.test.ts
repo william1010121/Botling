@@ -6,19 +6,24 @@
 // - Two-server tests (`startServers`, loopback only): A submits `waiting.ignore` for a bot owned by B (authorized by
 //   M5-04b), applied once at B and heard by A's listener — including across SIGKILL + restart of A and across a
 //   backup restore of B (`cmd.retry`). Requires `npm run build` (out/server/main.cjs).
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Command } from "../../src/contract";
 import { slotKey, type LogId, type MessageOf, type Outcome, type Slot, type WireMessage } from "../../src/protocol";
+import { authorizeRoster, Botlingd } from "../../src/server/botlingd";
 import { Directory, Forwarder, ServerOrigin, type ForwardSession } from "../../src/server/forward";
+import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "../../src/server/identity";
 import { TableFeeds } from "../../src/server/replica";
-import type { Db } from "../../src/server/store";
-import { until } from "../helpers";
+import { RosterStore } from "../../src/server/roster";
+import { slotAuthorize } from "../../src/server/session";
+import { openServerStore, type Db } from "../../src/server/store";
+import { botlingdEnv, testRoot } from "../botlingd-harness";
+import { desktop, until } from "../helpers";
 import { memoryStore } from "./server-slots-harness";
 import type { FaultProxy } from "../support/fault-proxy";
-import { makeCluster, profile, readServerKeys, writeStatements, type MemberKeysInfo } from "../support/peer-cluster";
+import { makeCluster, profile, readServerKeys, sign, strangerKeys, writeStatements, type MemberKeysInfo } from "../support/peer-cluster";
 import { startServers, type TestCluster, type TestServer } from "../support/two-servers";
 
 const SELF = "srv-a";
@@ -454,4 +459,196 @@ describe("M5-04a: ServerOrigin across two real botlingd processes", () => {
 
     await until(() => withDb(a, (db) => (db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c === 0), { timeout: 20_000, what: "A forwardq empty after retry" });
   }, 180_000);
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// Real RosterStore authorization (F2) & Botlingd legacy-serverId wiring (F3)
+
+describe("M5-04a: real RosterStore authorization and legacy serverId wiring", () => {
+  const root = testRoot("server-origin-wiring");
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it("8. real RosterStore rejects both root-revoked servers and servers in view.servers but not view.valid", async () => {
+    const dirA = join(root, "roster-a");
+    const dirE = join(root, "roster-e");
+    mkdirSync(dirA, { recursive: true });
+    mkdirSync(dirE, { recursive: true });
+
+    const storeA = await openServerStore(dirA);
+    const idA = await loadOrCreateServerIdentity(dirA, { create: true });
+    await storeA.submit((tx) => bindServerIdentity(tx, idA));
+    const rosterA = await RosterStore.open(storeA, idA);
+    try {
+      const setup = new ClusterSetup(rosterA);
+      const began = await setup.begin();
+      expect((await setup.confirm(began.code)).ok).toBe(true);
+      const ka = await readServerKeys(dirA);
+      const clusterId = rosterA.clusterId!;
+
+      const kb = await strangerKeys();
+      const kc = await strangerKeys();
+      const kd = await strangerKeys();
+
+      const addB = await sign(
+        { type: "add", cluster: clusterId, member: kb.memberId, kind: "server", keys: { sign: kb.sign, dh: kb.dh }, name: "B", by: ka.memberId, at: 1_700_000_000_000, joined: false },
+        ka,
+      );
+      const addD = await sign(
+        { type: "add", cluster: clusterId, member: kd.memberId, kind: "server", keys: { sign: kd.sign, dh: kd.dh }, name: "D", by: ka.memberId, at: 1_700_000_000_001, joined: false },
+        ka,
+      );
+      // C is added by B (with joined: false). Once A revokes B, C stays in view.servers and is not in view.revoked,
+      // yet C is not in view.valid because its only voucher (B) is no longer valid.
+      const addC = await sign(
+        { type: "add", cluster: clusterId, member: kc.memberId, kind: "server", keys: { sign: kc.sign, dh: kc.dh }, name: "C", by: kb.memberId, at: 1_700_000_000_002, joined: false },
+        kb,
+      );
+
+      expect((await rosterA.mergeGossip([addB.statement, addD.statement])).refused).toEqual([]);
+      await rosterA.revokeServer(kb.memberId, false, "compromised");
+      expect((await rosterA.mergeGossip([addC.statement])).refused).toEqual([]);
+
+      const viewA = rosterA.view;
+      expect(viewA.servers.has(kb.memberId)).toBe(true);
+      expect(viewA.revoked.has(kb.memberId)).toBe(true);
+      expect(viewA.valid.has(kb.memberId)).toBe(false);
+
+      expect(viewA.servers.has(kc.memberId)).toBe(true);
+      expect(viewA.revoked.has(kc.memberId)).toBe(false);
+      expect(viewA.valid.has(kc.memberId)).toBe(false);
+
+      expect(viewA.servers.has(kd.memberId)).toBe(true);
+      expect(viewA.valid.has(kd.memberId)).toBe(true);
+
+      const authA = slotAuthorize(authorizeRoster(rosterA));
+      const cmd: Command = { type: "waiting.ignore", botId: BOT_OWN, text: "check" };
+      const tx = null as never;
+      const slotFor = (origin: string, n: number): Slot => ({ origin, originEpoch: "a".repeat(32), target: TARGET_OWN, n });
+
+      expect(authA(tx, { slot: slotFor(kd.memberId, 1), cmd, scope: "reply" })).toBeNull();
+      expect(authA(tx, { slot: slotFor(kb.memberId, 1), cmd, scope: "reply" })).toEqual({
+        reason: "origin",
+        detail: `${kb.memberId} is not a valid device of this cluster`,
+      });
+      expect(authA(tx, { slot: slotFor(kc.memberId, 1), cmd, scope: "reply" })).toEqual({
+        reason: "origin",
+        detail: `${kc.memberId} is not a valid device of this cluster`,
+      });
+
+      // Also verify an unvouched cluster member on a second real RosterStore E (in view.servers via Root + Add, not yet
+      // in view.valid until E vouches for the root).
+      const storeE = await openServerStore(dirE);
+      const idE = await loadOrCreateServerIdentity(dirE, { create: true });
+      await storeE.submit((txE) => bindServerIdentity(txE, idE));
+      const made = await makeCluster([ka, kd]);
+      await storeE.close();
+      writeStatements(dirE, made.clusterId, made.statements);
+
+      const storeE2 = await openServerStore(dirE);
+      try {
+        const rosterE = await RosterStore.open(storeE2, idE);
+        const ke = await readServerKeys(dirE);
+        expect(rosterE.view.servers.has(kd.memberId)).toBe(true);
+        expect(rosterE.view.revoked.has(kd.memberId)).toBe(false);
+        expect(rosterE.view.valid.has(kd.memberId)).toBe(false);
+
+        const authE = slotAuthorize(authorizeRoster(rosterE));
+        expect(authE(tx, { slot: slotFor(kd.memberId, 1), cmd, scope: "reply" })).toEqual({
+          reason: "origin",
+          detail: `${kd.memberId} is not a valid device of this cluster`,
+        });
+
+        // Once E adds ka, ka and kd enter view.valid and are allowed.
+        const vouchA = await sign(
+          { type: "add", cluster: made.clusterId, member: ka.memberId, kind: "server", keys: { sign: ka.sign, dh: ka.dh }, name: "A", by: ke.memberId, at: 1_700_000_000_003, joined: false },
+          ke,
+        );
+        expect((await rosterE.mergeGossip([vouchA.statement])).refused).toEqual([]);
+        expect(rosterE.view.valid.has(kd.memberId)).toBe(true);
+        expect(authE(tx, { slot: slotFor(kd.memberId, 2), cmd, scope: "reply" })).toBeNull();
+      } finally {
+        await storeE2.close();
+      }
+    } finally {
+      await storeA.close();
+    }
+  });
+
+  it("9. Botlingd wires ServerOrigin with roster.memberId even when a legacy data dir keeps serverId !== memberId", async () => {
+    const dir = join(root, "legacy-server");
+    const peerDir = join(root, "peer-verifier");
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(peerDir, { recursive: true });
+
+    const peer = await strangerKeys();
+    const store = await openServerStore(dir);
+    const identity = await loadOrCreateServerIdentity(dir, { create: true });
+    await store.submit((tx) => {
+      bindServerIdentity(tx, identity);
+      // Simulate an M1 data folder where streams already exist and meta.serverId differs from identity.memberId.
+      tx.prepare("UPDATE meta SET value = ? WHERE key = 'serverId'").run("legacy-server-id");
+      seedPeerStream(tx, "legacy-server-id", "loglegac" as LogId, []);
+      seedPeerStream(tx, peer.memberId, INC_1, ["6A0B0000-0000-4000-8000-000000000099"]);
+    });
+    const roster = await RosterStore.open(store, identity);
+    const setup = new ClusterSetup(roster);
+    expect((await setup.confirm((await setup.begin()).code)).ok).toBe(true);
+    const selfKeys = await readServerKeys(dir);
+    const addPeer = await sign(
+      { type: "add", cluster: roster.clusterId!, member: peer.memberId, kind: "server", keys: { sign: peer.sign, dh: peer.dh }, name: "Peer", by: selfKeys.memberId, at: 1_700_000_000_000, joined: false },
+      selfKeys,
+    );
+    expect((await roster.mergeGossip([addPeer.statement])).refused).toEqual([]);
+    await store.close();
+
+    const daemon = await Botlingd.start({
+      env: botlingdEnv(dir, { BOTLING_SERVER_PORT: "0", BOTLING_SERVER_BACKUP_CHECK_MS: "0" }),
+      outDir: join(desktop, "out"),
+      log: () => undefined,
+    });
+    try {
+      expect(daemon.serverId).toBe("legacy-server-id");
+      expect(daemon.roster.memberId).toBe(identity.memberId);
+      expect(daemon.serverId).not.toBe(daemon.roster.memberId);
+
+      const peerBot = "6A0B0000-0000-4000-8000-000000000099";
+      const cmd: Command = { type: "waiting.ignore", botId: peerBot, text: "legacy-origin" };
+      const slot = await daemon.serverOrigin!.submit(`bot:${peerBot}`, cmd);
+      expect(slot.origin).toBe(daemon.roster.memberId);
+      expect(slot.origin).not.toBe(daemon.serverId);
+
+      const row = daemon.hub.reader()
+        .prepare("SELECT origin FROM forwardq WHERE originEpoch = ? AND target = ? AND n = ?")
+        .get(slot.originEpoch, slot.target, slot.n) as { origin: string } | undefined;
+      expect(row?.origin).toBe(daemon.roster.memberId);
+
+      // A peer that knows this server by its roster.memberId accepts slot.origin and would refuse serverId.
+      const peerStore = await openServerStore(peerDir);
+      try {
+        const peerId = await loadOrCreateServerIdentity(peerDir, { create: true });
+        await peerStore.submit((tx) => bindServerIdentity(tx, peerId));
+        const peerRoster = await RosterStore.open(peerStore, peerId);
+        const peerSetup = new ClusterSetup(peerRoster);
+        expect((await peerSetup.confirm((await peerSetup.begin()).code)).ok).toBe(true);
+        const peerKeys = await readServerKeys(peerDir);
+        const addSelf = await sign(
+          { type: "add", cluster: peerRoster.clusterId!, member: selfKeys.memberId, kind: "server", keys: { sign: selfKeys.sign, dh: selfKeys.dh }, name: "A", by: peerKeys.memberId, at: 1_700_000_000_000, joined: false },
+          peerKeys,
+        );
+        expect((await peerRoster.mergeGossip([addSelf.statement])).refused).toEqual([]);
+
+        const peerAuth = slotAuthorize(authorizeRoster(peerRoster));
+        expect(peerAuth(null as never, { slot, cmd, scope: "reply" })).toBeNull();
+        expect(peerAuth(null as never, { slot: { ...slot, origin: daemon.serverId }, cmd, scope: "reply" })).toEqual({
+          reason: "origin",
+          detail: `${daemon.serverId} is not a valid device of this cluster`,
+        });
+      } finally {
+        await peerStore.close();
+      }
+    } finally {
+      await daemon.stop();
+    }
+  }, 60_000);
 });
