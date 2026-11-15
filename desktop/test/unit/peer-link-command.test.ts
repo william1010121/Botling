@@ -383,7 +383,8 @@ describe("pressing the button on a peer bot's line runs at its owner, as the con
     await adapter.snapshot();
     await adapter.snapshot(FAR);
     const frame = (cmd: Record<string, unknown>) => adapter.request(cmd as Command, { plugin: "coach" });
-    const snap = { type: "plugins.noteSnapshot", name: "coach", botId: FAR, rect: { x: 0, y: 0, width: 10, height: 10 } };
+    // A command the owner decides (manage); a machine-only one (plugins.noteSnapshot) is refused before attribution (M7-12b).
+    const snap = { type: "plugins.tileImages", name: "coach", botId: FAR, data: "x" };
     // A has no coach row: its frame cannot be attributed, whatever B has.
     expect(await frame(snap)).toMatchObject({ ok: false, error: { code: "forbidden", message: expect.stringContaining("this machine") } });
     expect(sentTo(FAR_STREAM)).toEqual([]);
@@ -394,7 +395,7 @@ describe("pressing the button on a peer bot's line runs at its owner, as the con
     await frame({ type: "plugins.approvalAsk", name: "coach", botId: FAR, command: "ls", folder: "/p" });
     await press();
     expect(sentTo(FAR_STREAM).map((copy) => [copy.cmd.type, copy.via?.codeHash])).toEqual([
-      ["plugins.noteSnapshot", HASH_A], ["plugins.approvalAsk", HASH_A], ["plugins.linkCommand", HASH_B],
+      ["plugins.tileImages", HASH_A], ["plugins.approvalAsk", HASH_A], ["plugins.linkCommand", HASH_B],
     ]);
   });
 

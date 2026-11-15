@@ -109,6 +109,8 @@ export interface PluginFrameHost {
   composerQuote?(plugin: string, spec: Omit<Extract<FrameRequest, { ccb: "composerQuote" }>, "ccb" | "id">): Promise<{ inserted: boolean }>;
   /** The page's own ApprovalSheet for what `plugin`'s frame asks: whether the user allowed it. */
   requestApproval?(plugin: string, ask: Omit<Extract<FrameRequest, { ccb: "approval" }>, "ccb" | "id">): Promise<{ allowed: boolean }>;
+  /** Per-device shell storage for `plugin` (`ccb.storage`). */
+  storage?(plugin: string, req: Omit<Extract<FrameRequest, { ccb: "storage" }>, "ccb" | "id">): Promise<unknown>;
 }
 
 export interface PluginFrame {
@@ -195,6 +197,13 @@ export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, 
           }
           const answer = host.composerQuote?.(plugin, ask) ?? Promise.resolve({ inserted: false });
           answer.then((value) => reply(id, true, { inserted: value.inserted === true }), () => reply(id, true, { inserted: false }));
+          return;
+        }
+        case "storage": {
+          if (!broker.allow(target)) { reply(message.id, false, "Too many calls; wait a moment."); return; }
+          const { id, ccb: _kind, ...ask } = message;
+          if (!host.storage) { reply(id, false, "This page does not answer ccb.storage."); return; }
+          host.storage(plugin, ask).then((value) => reply(id, true, value), (failure) => reply(id, false, why(failure)));
           return;
         }
         case "notify":

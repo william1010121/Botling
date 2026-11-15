@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "shell": {
+    "minFeVersion": "3.0.0-m1"
+  }
+}

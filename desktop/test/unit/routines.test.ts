@@ -263,13 +263,14 @@ describe("@once lines in routines.cron (a script waking its bot)", () => {
  * Runs `body` with a script's appends landing inside the app's rewrite of `file`: `before` right before the rename
  * of the new file over it (into the file the app read), `after` right after it (into the new file).
  */
-function racing(file: string, { before = [], after = [] }: { before?: string[]; after?: string[] }, body: () => void) {
+function racing(file: string, { before = [], after = [], atRename }: { before?: string[]; after?: string[]; atRename?: () => void }, body: () => void) {
   const fs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
   const original = fs.renameSync;
   let renames = 0;
   fs.renameSync = ((from: string, to: string) => {
     if (String(to) !== file) return original(from, to);
     renames++;
+    atRename?.();
     for (const line of before) appendFileSync(file, line);
     original(from, to);
     for (const line of after) appendFileSync(file, line);
@@ -323,6 +324,18 @@ describe("an app rewrite of routines.cron keeps what a script appends meanwhile 
     const text = readFileSync(file, "utf8");
     expect(text.endsWith(`${DAILY_SUMMARY}\n@once Alert: early\n`)).toBe(true);
     expect(text.split("\n").filter((line) => line === "@once Alert: early")).toHaveLength(1);
+  });
+
+  // Why routines-core.test.ts waits for the file's text, not for the file: `create` opens it with "a+" (so a script's append lands in the
+  // same file, the test above) and renames the header over it later; in between everyone sees an empty routines.cron. A test that took
+  // `existsSync` for "made" read "" on a loaded host (S42, 2026-11-16: 2 runs of 4, line 63). Checked at the rename itself, not by polling.
+  it("create: from the moment the file exists until the header is renamed over it, it is empty", () => {
+    const file = cron("");
+    let atRename: string | null = null;
+    racing(file, { atRename: () => { atRename = existsSync(file) ? readFileSync(file, "utf8") : null; } }, () => new RoutineFile(file).create([DAILY_SUMMARY]));
+    expect(atRename).toBe("");
+    expect(readFileSync(file, "utf8")).toMatch(/^# Routines: [\s\S]*\n/);
+    expect(readFileSync(file, "utf8")).toContain(`${DAILY_SUMMARY}\n`);
   });
 
   it("a line appended without a final newline is kept as its own line", () => {

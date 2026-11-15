@@ -11,8 +11,9 @@ import { CoreHarness, MAIN } from "../core-harness";
 import { writeLibrary } from "../fixtures/components";
 
 const harnesses: CoreHarness[] = [];
-function core(dir: string) {
-  const harness = new CoreHarness(dir, { FAKE_CLAUDE_INPUT: join(dir, "claude-input.log"), BOTLING_ROUTINE_TICK_MS: "0", BOTLING_PLAIN_SHELL: "1", BOTLING_TEST_SEAL_KEY: "test-key" });
+/** `shipped`: the core's built-in plugins are `<dir>/builtin-plugins` (a plugin there that says `owns: ["note"]` may change the note, M7-04a). */
+function core(dir: string, shipped = false) {
+  const harness = new CoreHarness(dir, { ...(shipped ? { BOTLING_BUILTIN_PLUGINS: join(dir, "builtin-plugins") } : {}), FAKE_CLAUDE_INPUT: join(dir, "claude-input.log"), BOTLING_ROUTINE_TICK_MS: "0", BOTLING_PLAIN_SHELL: "1", BOTLING_TEST_SEAL_KEY: "test-key" });
   harnesses.push(harness);
   return harness;
 }
@@ -21,10 +22,10 @@ afterEach(async () => {
 });
 
 /** A plugin whose program part hands each `go` straight to `api.notes.<method>(...args)` and keeps the `noteCardChanged` it hears. */
-function notePlugin(dir: string, name: string, permissions: string[]) {
-  const folder = join(dir, "plugins", name);
+function notePlugin(dir: string, name: string, permissions: string[], shipped = false) {
+  const folder = join(dir, shipped ? "builtin-plugins" : "plugins", name);
   mkdirSync(join(folder, "dist"), { recursive: true });
-  writeFileSync(join(folder, "package.json"), JSON.stringify({ name, displayName: "Note test", version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { host: "dist/host.mjs", web: "dist/web.js", permissions } }));
+  writeFileSync(join(folder, "package.json"), JSON.stringify({ name, displayName: "Note test", version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { host: "dist/host.mjs", web: "dist/web.js", permissions, ...(shipped ? { owns: ["note"] } : {}) } }));
   writeFileSync(join(folder, "dist", "web.js"), "export function activate() {}");
   writeFileSync(join(folder, "dist", "host.mjs"), `export function activate(api) {
     const heard = [];
@@ -45,9 +46,9 @@ describe("cards in a bot's note", () => {
   it("draws each <show> line as the chat would; a command runs only once allowed, by the same approvals; each run is heard", async () => {
     const dir = tempDir("note-cards");
     writeLibrary(dir);
-    notePlugin(dir, "notetest", ["files"]);
+    notePlugin(dir, "notetest", ["files"], true);
     notePlugin(dir, "nosy", []);
-    const c = core(dir);
+    const c = core(dir, true);
     const go = async (method: string, ...args: unknown[]): Promise<any> => (await c.call({ type: "plugins.call", name: "notetest", method: "go", params: { method, args }, from: "frame" })).result;
     await until(async () => (await c.call({ type: "plugins.list" })).host.running && go("read", MAIN).then(() => true, () => false), { timeout: 20_000 });
     await turn(c, `/say Status: <show name="status">{"ok":false}</show>`);
@@ -142,9 +143,9 @@ describe("cards in a bot's note", () => {
 
   it("freeze to image: main's picture of the card goes into the note's note-assets; none taken, or no \"files\": refused", async () => {
     const dir = tempDir("note-snapshot");
-    notePlugin(dir, "notetest", ["files"]);
+    notePlugin(dir, "notetest", ["files"], true);
     notePlugin(dir, "nosy", []);
-    const c = core(dir);
+    const c = core(dir, true);
     await until(async () => (await c.call({ type: "plugins.list" })).host.running, { timeout: 20_000 });
     const note = (await c.call({ type: "plugins.call", name: "notetest", method: "go", params: { method: "read", args: [MAIN] }, from: "frame" })).result.path as string;
     const rect = { x: 10, y: 20, width: 300, height: 120 };

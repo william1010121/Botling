@@ -37,12 +37,12 @@ function caseLabels(): string[] {
 // The plugins and the world
 
 /** `root` is the folder holding the plugin: `<dir>/builtin` for one shipped with Botling, `<dir>/plugins` for a library plugin. */
-function plugin(root: string, name: string, permissions: string[], extra: { web?: boolean; contributes?: unknown } = {}) {
+function plugin(root: string, name: string, permissions: string[], extra: { web?: boolean; contributes?: unknown; owns?: string[] } = {}) {
   const folder = join(root, name);
   mkdirSync(join(folder, "dist"), { recursive: true });
   writeFileSync(join(folder, "package.json"), JSON.stringify({
     name, displayName: name === "botling.all" ? "All" : `${name[0]!.toUpperCase()}${name.slice(1)}`, version: "1.0.0", engines: { ccb: "^2.0.0" },
-    ccb: { host: "dist/host.mjs", ...(extra.web ? { web: "dist/web.js" } : {}), permissions, ...(extra.contributes ? { contributes: extra.contributes } : {}) },
+    ccb: { host: "dist/host.mjs", ...(extra.web ? { web: "dist/web.js" } : {}), permissions, ...(extra.owns ? { owns: extra.owns } : {}), ...(extra.contributes ? { contributes: extra.contributes } : {}) },
   }));
   writeFileSync(join(folder, "dist", "host.mjs"), "export function activate() {}");
   if (extra.web) writeFileSync(join(folder, "dist", "web.js"), "export function activate() {}");
@@ -92,7 +92,7 @@ afterEach(async () => { for (const plugins of running.splice(0)) await plugins.s
 
 async function setup(): Promise<Env> {
   const dir = tempDir("plugin-requests-table");
-  plugin(join(dir, "builtin"), A, ALL_PERMISSIONS, { web: true, contributes: CONTRIBUTES });
+  plugin(join(dir, "builtin"), A, ALL_PERMISSIONS, { web: true, contributes: CONTRIBUTES, owns: ["note"] });
   plugin(join(dir, "builtin"), "botling.bare", []);
   plugin(join(dir, "plugins"), L, []);
   plugin(join(dir, "plugins"), F, ALL_PERMISSIONS, { web: true });
