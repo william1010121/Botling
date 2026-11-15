@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import type { MessageOf, Slot } from "../../src/protocol";
-import { BotlingdProcess, testRoot } from "../botlingd-harness";
+import { BotlingdProcess, ScriptClient, testRoot } from "../botlingd-harness";
 
 const root = testRoot("fetch-start");
 const running: BotlingdProcess[] = [];
@@ -25,7 +25,7 @@ describe("botlingd start: leftover fetch staging", () => {
     const first = new BotlingdProcess(dataDir);
     running.push(first);
     await first.ready();
-    const client = new (await import("../botlingd-harness")).ScriptClient("script");
+    const client = new ScriptClient("script");
     await client.connect(first.socket, first.token);
     await client.sub(client.srv);
     const snap = await client.wait((m): m is MessageOf<"snap"> => m.t === "snap" && m.stream === client.srv, "srv snap");
