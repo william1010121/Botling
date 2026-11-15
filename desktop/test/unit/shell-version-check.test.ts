@@ -7,8 +7,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { feBuildManifest } from "../../fe-build-manifest.mjs";
-import { findMinFeVersion, fsTree, gitTree, isNeutralPath, isPluginSourcePath, isShellPath, SHELL_ROOTS, shellHash, shellManifest } from "../../fe-shell-manifest.mjs";
-import { checkChange, checkRange, classifyChange } from "../../scripts/check-shell-version.mjs";
+import { findMinFeVersion, fsTree, gitTree, isNeutralPath, isPluginSourcePath, isShellPath, parseShellBaseline, SHELL_BASELINE_FILE, SHELL_ROOTS, shellBaselineText, shellHash, shellManifest } from "../../fe-shell-manifest.mjs";
+import { checkBaseline, checkChange, checkRange, classifyChange } from "../../scripts/check-shell-version.mjs";
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const script = join(desktop, "scripts/check-shell-version.mjs");
@@ -46,7 +46,9 @@ function makeRepo() {
     "desktop/src/renderer/plugins/settings/index.ts": "export const activate = () => {};\n",
     "docs/notes.md": "# notes\n",
   }, "base");
-  return { repo, commit, base };
+  // The committed baseline of the shell part (what `--update` writes).
+  const baseline = commit({ [SHELL_BASELINE_FILE]: shellBaselineText(shellManifest(fsTree(repo))) }, "baseline");
+  return { repo, commit, base: baseline };
 }
 
 describe("which paths are the shell, a plugin source, or neutral", () => {
@@ -81,12 +83,12 @@ describe("the shell part of the manifest", () => {
     const { repo, commit, base } = makeRepo();
     const first = shellManifest(gitTree(repo, base));
     expect(first.minFeVersion).toBe("3.0.0-m1");
-    expect(first.codeHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(first.hash).toMatch(/^[0-9a-f]{64}$/);
     // A plugin source, a test and a doc do not move it; a shell file does; so does the constant.
     const plugin = commit({ "desktop/builtin-plugins/botling.note/index.js": "module.exports = 2;\n", "desktop/src/renderer/plugins/settings/index.ts": "export const activate = () => 1;\n", "desktop/test/unit/a.test.ts": "x\n", "docs/notes.md": "more\n" });
     expect(shellManifest(gitTree(repo, plugin))).toEqual(first);
     const shell = commit({ "desktop/src/renderer/shell/main.tsx": "export const shell = 2;\n" });
-    expect(shellHash(gitTree(repo, shell))).not.toBe(first.codeHash);
+    expect(shellHash(gitTree(repo, shell))).not.toBe(first.hash);
     const bumped = commit({ [CONSTANT_FILE]: constant("3.0.0-m2") });
     expect(shellManifest(gitTree(repo, bumped)).minFeVersion).toBe("3.0.0-m2");
   });
@@ -114,7 +116,7 @@ describe("the shell part of the manifest", () => {
   it("is written into fe-build-manifest.json by the build's manifest function, and the real repository has a value and a hash", () => {
     const manifest = feBuildManifest(desktop);
     expect(manifest.version).toBe(1);
-    expect(manifest.shell.codeHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(manifest.shell.hash).toMatch(/^[0-9a-f]{64}$/);
     // The value in the manifest is the one the server source defines (found by name, not by line).
     const source = readFileSync(join(desktop, "src/server/botlingd.ts"), "utf8");
     const declared = /const MIN_FE_VERSION\s*=\s*"([^"]+)"/.exec(source)?.[1];
@@ -188,6 +190,55 @@ describe("check-shell-version: a plugin-only change never moves the shell part",
   });
 });
 
+describe("the committed baseline", () => {
+  const cli = (repo: string, ...args: string[]) => spawnSync(process.execPath, [script, "--repo", repo, ...args], { encoding: "utf8" });
+
+  it("agrees with a tree whose shell is as it was, also after plugin-only commits", () => {
+    const { repo, commit, base } = makeRepo();
+    expect(checkBaseline(repo, base)).toEqual([]);
+    const plugin = commit({ "desktop/builtin-plugins/botling.note/index.js": "module.exports = 2;\n", "docs/notes.md": "x\n" });
+    expect(checkBaseline(repo, plugin)).toEqual([]);
+    expect(parseShellBaseline(readFileSync(join(repo, SHELL_BASELINE_FILE), "utf8"))).toEqual(shellManifest(gitTree(repo, base)));
+  });
+
+  it("names a shell change or a MIN_FE_VERSION bump that did not bring a new baseline, and accepts it once --update is committed", () => {
+    const { repo, commit, base } = makeRepo();
+    const shell = commit({ "desktop/src/renderer/shell/main.tsx": "export const shell = 2;\n" });
+    expect(checkBaseline(repo, shell)).toEqual([expect.stringContaining("the shell hash is"), expect.stringContaining("--update")]);
+    const failing = cli(repo, base, shell);
+    expect(failing.status).toBe(1);
+    expect(failing.stdout).toContain("baseline out of date");
+    expect(failing.stderr).toContain("the shell changed without a new baseline");
+    const updated = cli(repo, "--update");
+    expect(updated.status).toBe(0);
+    const fixed = commit({ [SHELL_BASELINE_FILE]: readFileSync(join(repo, SHELL_BASELINE_FILE), "utf8") }, "baseline");
+    expect(checkBaseline(repo, fixed)).toEqual([]);
+    const bump = commit({ [CONSTANT_FILE]: constant("3.0.0-m2") });
+    expect(checkBaseline(repo, bump)).toEqual([expect.stringContaining('MIN_FE_VERSION is "3.0.0-m2"'), expect.stringContaining("--update")]);
+    expect(cli(repo, fixed, fixed).status).toBe(0);
+  });
+
+  it("fails closed for a missing or malformed baseline", () => {
+    const { repo, commit } = makeRepo();
+    const garbled = commit({ [SHELL_BASELINE_FILE]: "{ not json" });
+    expect(checkBaseline(repo, garbled)).toEqual([expect.stringContaining("not a valid baseline")]);
+    const odd = commit({ [SHELL_BASELINE_FILE]: JSON.stringify({ version: 1, shell: { minFeVersion: "3.0.0-m1", hash: "zz" } }) });
+    expect(checkBaseline(repo, odd)).toEqual([expect.stringContaining("not a valid baseline")]);
+    const gone = commit({ [SHELL_BASELINE_FILE]: null });
+    expect(checkBaseline(repo, gone)).toEqual([expect.stringContaining("is missing")]);
+    expect(cli(repo, gone, gone).status).toBe(1);
+    expect(cli(repo, "--no-baseline", gone, gone).status).toBe(0);
+  });
+
+  it("refuses --update when MIN_FE_VERSION cannot be found (a baseline with a null value is never written)", () => {
+    const { repo, commit } = makeRepo();
+    commit({ [CONSTANT_FILE]: "export const OTHER = 1;\n" });
+    const before = readFileSync(join(repo, SHELL_BASELINE_FILE), "utf8");
+    expect(cli(repo, "--update").status).toBe(2);
+    expect(readFileSync(join(repo, SHELL_BASELINE_FILE), "utf8")).toBe(before);
+  });
+});
+
 describe("the command line", () => {
   const run = (repo: string, ...args: string[]) => spawnSync(process.execPath, [script, "--repo", repo, ...args], { encoding: "utf8" });
 
@@ -195,11 +246,11 @@ describe("the command line", () => {
     const { repo, commit, base } = makeRepo();
     commit({ "desktop/builtin-plugins/botling.note/index.js": "module.exports = 2;\n" }, "plugin edit");
     const ok = run(repo, base, "HEAD");
-    expect({ status: ok.status, out: ok.stdout.trim() }).toEqual({ status: 0, out: "check-shell-version: 1 change checked, 1 plugin-only, 0 failed" });
+    expect({ status: ok.status, out: ok.stdout.trim() }).toEqual({ status: 0, out: "check-shell-version: 1 change checked, 1 plugin-only, 0 failed, baseline ok" });
     // Move the constant into a plugin source, then bump it from a plugin-only commit.
     const moved = commit({ [CONSTANT_FILE]: "export const OTHER = 1;\n", "desktop/src/renderer/plugins/settings/version.ts": constant("3.0.0-m1") }, "move");
     commit({ "desktop/src/renderer/plugins/settings/version.ts": constant("3.0.0-m2") }, "bump from a plugin");
-    const bad = run(repo, moved, "HEAD");
+    const bad = run(repo, "--no-baseline", moved, "HEAD");
     expect(bad.status).toBe(1);
     expect(bad.stderr).toContain("\"bump from a plugin\"");
     expect(bad.stderr).toContain("MIN_FE_VERSION changed");

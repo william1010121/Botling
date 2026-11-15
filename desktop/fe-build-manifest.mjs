@@ -1,5 +1,5 @@
 // The FE build's manifest of the in-page built-in plugins it ships (M7-10a; plan-change D56, C14):
-// `fe-build-manifest.json` = { version: 1, shell: { minFeVersion, codeHash }, plugins: [{ name, codeHash }] }, sorted by name. The shell's in-page loader
+// `fe-build-manifest.json` = { version: 1, shell: { minFeVersion, hash }, plugins: [{ name, codeHash }] }, sorted by name. The shell's in-page loader
 // (src/renderer/shell/inpage-loader.ts) runs a plugin's code in the page only when its name and hash are listed here.
 //
 // The list is built from the folder src/renderer/plugins/*: every sub-folder with an index.ts is one

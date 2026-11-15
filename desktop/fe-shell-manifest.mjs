@@ -1,8 +1,8 @@
 // The shell half of the FE build's manifest (M7-10b; plan-change §4.3 check 4, D55, N8): `minFeVersion` names the shell only.
 //
-// fe-build-manifest.json gets `shell: { minFeVersion, codeHash }`:
+// fe-build-manifest.json gets `shell: { minFeVersion, hash }`:
 //   - minFeVersion: the value of `MIN_FE_VERSION`, found BY NAME in desktop/src (a card may move the constant to another file);
-//   - codeHash: a hash of every file the shell is made of (SHELL_ROOTS, minus plugin sources, tests and docs).
+//   - hash: a hash of every file the shell is made of (SHELL_ROOTS, minus plugin sources, tests and docs).
 // A plugin-only change (builtin-plugins/** or src/renderer/plugins/**) is not part of the shell, so it can never move either
 // value. scripts/check-shell-version.mjs fails a commit that touches only plugin sources and moves one anyway.
 //
@@ -103,5 +103,17 @@ export function findMinFeVersion(tree) {
   return values.length === 1 ? values[0] : null;
 }
 
-/** `{ minFeVersion, codeHash }` for the tree: the manifest's shell part. */
-export const shellManifest = (tree, roots = SHELL_ROOTS) => ({ minFeVersion: findMinFeVersion(tree), codeHash: shellHash(tree, roots) });
+/** `{ minFeVersion, hash }` for the tree: the manifest's shell part. */
+export const shellManifest = (tree, roots = SHELL_ROOTS) => ({ minFeVersion: findMinFeVersion(tree), hash: shellHash(tree, roots) });
+
+/** The committed baseline: the shell part as of the last shell change (the build's manifest is not committed, so the check compares with this).
+ * It lives beside the manifest code and outside SHELL_ROOTS, so writing it never moves the hash. */
+export const SHELL_BASELINE_FILE = "desktop/fe-shell-baseline.json";
+export const shellBaselineText = (shell) => `${JSON.stringify({ version: 1, shell: { minFeVersion: shell.minFeVersion, hash: shell.hash } }, null, 2)}\n`;
+/** The shell part named by a baseline file's text; null when it is not a well-formed baseline (fails closed). */
+export function parseShellBaseline(text) {
+  try {
+    const shell = JSON.parse(text)?.shell;
+    return shell && typeof shell.minFeVersion === "string" && /^[0-9a-f]{64}$/.test(shell.hash) ? { minFeVersion: shell.minFeVersion, hash: shell.hash } : null;
+  } catch { return null; }
+}
