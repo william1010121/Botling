@@ -216,6 +216,7 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
   await until(() => hosts.every((hostId) => withDb(b, (db) => !!db.prepare("SELECT 1 FROM rows WHERE stream = ? AND key = ? AND deleted = 0").get(`srv:${ka.memberId}`, `bot:${hostId}`))), { timeout: 60_000, every: 50, what: `${seed}: B's copy names the host bots` });
   const sends = runs.map((run) => ({ botId: run.hostId, text: `/mention ${run.guest.name} ${run.token}` }));
   let aKilled = false;
+  const gaveUpBefore = gaveUpRows();
   try {
     if (kind === "net") {
       for (const proxy of proxies()) proxy.schedule({ drop: pick(2, 8) / 100, duplicate: pick(2, 6) / 100, delay: { p: 0.1, ms: pick(50, 250) } });
@@ -315,6 +316,9 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
     totals.wakes += got.wake;
     totals.turns += got.turns;
   }
+  // The crash kinds: every call-in A gave up on was answered by B, and each answer used its record up (M5-03a: a record left
+  // behind would make a second reply for the same call-in late again).
+  if (kind === "gaveUpCrash" || kind === "lateKill") expect(gaveUpRows(), `seed ${seed}: callin:gaveup records left after the wave`).toBe(gaveUpBefore);
   // Every call-in of the wave is over: nothing is left in either forward queue (also `converge`'s quiet condition).
   expect({ a: [count(a, "forwardq"), count(a, "fwdcancels")], b: [count(b, "forwardq"), count(b, "fwdcancels")] }, `seed ${seed}: forward queues`).toEqual({ a: [0, 0], b: [0, 0] });
   if (kind === "down") totals.down += runs.length;

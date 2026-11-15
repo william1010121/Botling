@@ -18,6 +18,7 @@ import { Core } from "../../src/core/server";
 import { Command, type Command as CommandType } from "../../src/contract";
 import { encodeWireFrame, type Outcome, type Slot, type Target } from "../../src/protocol";
 import { CALLIN_TRANSCRIPT_LIMIT, CallInHost, CALLIN_HOST_WAIT_MS, escapedBytes, type CallInHostSender } from "../../src/server/callin";
+import { callInTimers } from "../../src/server/callin/timers";
 import { testRoot } from "../botlingd-harness";
 import { tempDir } from "../helpers";
 import { harness, outcomeOf, type Harness } from "./server-intents-harness";
@@ -635,5 +636,19 @@ describe("M5-02c review: the wait ends after the reply's commit", () => {
     expect(answer).toMatchObject({ kind: "reply", text: "ok" });
     expect(host.waiting).toBe(0);
     host.close();
+  });
+});
+
+describe("M5-03b: the host timer test knob (BOTLING_SERVER_CALLIN_TIMERS)", () => {
+  const KNOB = "BOTLING_SERVER_CALLIN_TIMERS";
+  it("is read only with the fake agent; a malformed value or an unknown name throws", () => {
+    expect(callInTimers({ [KNOB]: "stale=2500,cap=30000,tick=200", BOTLING_AGENT: "fake" })).toEqual({ staleMs: 2_500, capMs: 30_000, tickMs: 200 });
+    // A real (or unset) agent never has its waits shortened, whatever the environment says.
+    expect(callInTimers({ [KNOB]: "stale=10", BOTLING_AGENT: "claude" })).toEqual({});
+    expect(callInTimers({ [KNOB]: "stale=10" })).toEqual({});
+    expect(callInTimers({ BOTLING_AGENT: "fake" })).toEqual({});
+    for (const bad of ["stale=9", "stale", "stale=-5", "stale=1e5", "constructor=100", "__proto__=100", "toString=100", "stale=100,"]) {
+      expect(() => callInTimers({ [KNOB]: bad, BOTLING_AGENT: "fake" }), bad).toThrow(KNOB);
+    }
   });
 });
