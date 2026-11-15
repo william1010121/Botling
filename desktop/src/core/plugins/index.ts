@@ -219,6 +219,8 @@ export interface PluginWorld {
   routinesChange?(botId: string, operation: "pause" | "resume" | "cancel", id: string): ResultOf<"routines.change"> | null;
   /** The library changed: the app shows it. */
   changed(view: PluginsView): void;
+  /** A non-built-in plugin was written or changed on disk outside store installs/removals. */
+  pluginWritten?(name: string): void;
   /** A plugin broke: Maintainer is asked to fix it. */
   broken(plugin: string, problem: string): void;
   log(line: string): void;
@@ -400,6 +402,7 @@ export class Plugins {
     // The registry's first scan ran before this was set: say what it skipped too.
     for (const plugin of this.registry.plugins) if (plugin.skipped?.length) this.registry.onSkipped(plugin.manifest.name, plugin.skipped);
     this.registry.onUpdated = (plugin, from) => world.notice(`Plugin "${title(plugin.manifest)}" updated: ${from} → ${plugin.manifest.version}`);
+    this.registry.onPluginWritten = (name) => world.pluginWritten?.(name);
     this.registry.onChanged = () => this.sync();
     this.host.onPluginFailure = (plugin, message, fatal) => {
       // The host may have died: nobody listens until it says so again.
