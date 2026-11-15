@@ -7,6 +7,7 @@
 // Expected: botlingd never lets Electron end it on a quit from macOS. It passes the quit on to the attached Botling 3
 // windows (`shell.quit`, which they answer like Cmd+Q) and keeps running, as it does when the window quits; with no
 // window attached, or while macOS logs out or shuts down, it stops the normal way (daemon.stop, as on SIGTERM).
+import type { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -208,7 +209,8 @@ describe("botlingd start in process: the quit reaches the real daemon (server/ma
     const dataDir = testRoot("v3-quit-start");
     const savedEnv = { ...process.env };
     const events = ["SIGTERM", "SIGINT", "SIGHUP", "uncaughtException"] as const;
-    const before = new Map(events.map((event) => [event, new Set(process.listeners(event))]));
+    const emitter = process as unknown as EventEmitter;
+    const before = new Map(events.map((event) => [event, new Set(emitter.listeners(event))]));
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const client = new ScriptClient("desktop");
@@ -236,7 +238,7 @@ describe("botlingd start in process: the quit reaches the real daemon (server/ma
       client.close();
       exit.mockRestore();
       stdout.mockRestore();
-      for (const event of events) for (const added of process.listeners(event)) if (!before.get(event)!.has(added)) process.removeListener(event, added as never);
+      for (const event of events) for (const added of emitter.listeners(event)) if (!before.get(event)!.has(added)) emitter.removeListener(event, added as (...args: unknown[]) => void);
       for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
       Object.assign(process.env, savedEnv);
     }
