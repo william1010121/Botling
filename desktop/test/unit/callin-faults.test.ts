@@ -61,7 +61,7 @@ const bInput = join(scratch, "b-input.jsonl");
 let cluster: TestCluster;
 let a: TestServer, b: TestServer;
 let pa: FaultProxy, pb: FaultProxy;
-let kb: MemberKeysInfo;
+let ka: MemberKeysInfo, kb: MemberKeysInfo;
 let guests: Array<{ id: string; name: string }> = [];
 
 // ---------------------------------------------------------------------------------------------
@@ -208,6 +208,9 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
   // The crash kinds give each run a guest of its own (their slot counters are edited or watched one by one).
   const own = kind === "gaveUpCrash" || kind === "lateKill";
   const runs: Run[] = hosts.map((hostId, i) => ({ token: `Q${String(index * 10 + i).padStart(3, "0")}Z`, hostId, guest: guests[own ? i : pick(0, GUESTS - 1)]! }));
+  // B checks the host bot against its copy of A's table (`admit`): wait until that copy names every host bot, so a kill of B
+  // below cannot leave an ask to be refused only because the replica was a moment behind.
+  await until(() => hosts.every((hostId) => withDb(b, (db) => !!db.prepare("SELECT 1 FROM rows WHERE stream = ? AND key = ? AND deleted = 0").get(`srv:${ka.memberId}`, `bot:${hostId}`))), { timeout: 60_000, every: 50, what: `${seed}: B's copy names the host bots` });
   const sends = runs.map((run) => ({ botId: run.hostId, text: `/mention ${run.guest.name} ${run.token}` }));
   let aKilled = false;
   try {
@@ -317,8 +320,7 @@ beforeAll(async () => {
   });
   ({ a, b } = cluster);
   await Promise.all([a.stop(), b.stop()]);
-  const [ka, kbKeys] = await Promise.all([readServerKeys(a.dataDir), readServerKeys(b.dataDir)]);
-  kb = kbKeys;
+  [ka, kb] = await Promise.all([readServerKeys(a.dataDir), readServerKeys(b.dataDir)]);
   pa = await cluster.proxy(a, "websocket", SEED);
   pb = await cluster.proxy(b, "websocket", SEED + 1);
   const made = await makeCluster([ka, kb]);
