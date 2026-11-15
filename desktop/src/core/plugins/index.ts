@@ -34,7 +34,7 @@ import { CORE_PROMPT_SECTIONS } from "../prompts";
 import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
 import { folderHash } from "./catalog";
-import { title, type JSONValue } from "./manifest";
+import { presentNameWarning, title, type JSONValue } from "./manifest";
 import { PluginRegistry, type InstalledPlugin } from "./registry";
 import { SealedSecretStore, type Sealer } from "./secrets";
 import { WORKSPACE_EVENT, type WorkspaceChange, type WorkspaceSource } from "../workspace";
@@ -409,9 +409,11 @@ export class Plugins {
     this.host = new PluginHostClient(options.hostScript, options.node, this.dataRoot, (line) => world.log(line), options.timing ?? DEFAULT_TIMING, options.onPid);
     this.registry.onNotice = (text) => world.notice(text);
     this.registry.onBroken = (plugin, problem) => world.broken(plugin, problem);
+    this.registry.onNameWarning = (_plugin, warning) => world.log(warning);
     this.registry.onSkipped = (plugin, skipped) => world.log(`plugin ${plugin}: skipped ${skipped.length} contribution(s) this Botling does not know or cannot read (the rest loads): ${skipped.join("; ")}`);
     // The registry's first scan ran before this was set: say what it skipped too.
     for (const plugin of this.registry.plugins) if (plugin.skipped?.length) this.registry.onSkipped(plugin.manifest.name, plugin.skipped);
+    for (const plugin of this.registry.plugins) { const warning = plugin.builtIn ? null : presentNameWarning(plugin.manifest.name); if (warning) this.registry.onNameWarning(plugin.manifest.name, warning); }
     this.registry.onUpdated = (plugin, from) => world.notice(`Plugin "${title(plugin.manifest)}" updated: ${from} → ${plugin.manifest.version}`);
     this.registry.onPluginWritten = (name) => world.pluginWritten?.(name);
     this.registry.onChanged = () => this.sync();

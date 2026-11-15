@@ -170,8 +170,8 @@ function decodeManifest(value: unknown): PluginManifest {
 }
 
 /** Reads and checks a plugin folder: its manifest, or the problems (`PluginRegistry.load`). */
-export function loadPlugin(folder: string): { ok: true; manifest: PluginManifest } | { ok: false; problems: string[] } {
-  const problems = checkPlugin(folder);
+export function loadPlugin(folder: string, origin: PluginOrigin = "incoming"): { ok: true; manifest: PluginManifest } | { ok: false; problems: string[] } {
+  const problems = checkPlugin(folder, origin);
   if (problems.length) return { ok: false, problems };
   try {
     return { ok: true, manifest: decodeManifest(JSON.parse(readFileSync(join(folder, "package.json"), "utf8"))) };
@@ -247,15 +247,51 @@ export const CHECK_NEXT_STEPS = {
   ICON_TOO_LARGE: `Shrink that image below ${Math.round(MAX_IMAGE_BYTES / 1024)} KB (export a smaller size or use SVG) or remove it; a plugin's icons should be small.`,
   ENGINE_TOO_LOW: "Raise engines.ccb in package.json to at least the API the message names (for example \"^2.7.0\"), or drop that contribution.",
   CONTRIBUTION_SKIPPED: "Fix that entry of contributes as the message says (see the plugin guide for the slots and values this Botling knows); until then this Botling skips it.",
+  NAME_DOTTED: "Rename the plugin in package.json to lowercase letters, digits, - _ with no dot (and rename its folder to match).",
+  NAME_RESERVED: "Pick another name in package.json (and rename its folder to match); the name botling and names that start with botling. belong to the plugins that ship with Botling.",
 } as const;
 
 export type CheckCode = keyof typeof CHECK_NEXT_STEPS;
+
+/**
+ * Where a plugin folder is read from, which decides the name rule (Botling 3 follow-up of M5-15 F2):
+ * - "builtIn": the app's own builtin-plugins folder. Decided by the folder the plugin is loaded from, never by the
+ *   name its manifest claims. These ship with dots (`botling.board`) and keep them.
+ * - "library": a plugin already in the plugin library. A dotted name stays loadable (it is never deleted); the
+ *   registry logs a warning instead of refusing it.
+ * - "incoming": anything on its way in (an install from git, a folder, npm or the store; `plugin check`; the 2.x
+ *   import). The strict rule applies. This is the default, so a caller that forgets to say gets the strict rule.
+ */
+export type PluginOrigin = "builtIn" | "library" | "incoming";
+
+/** The names Botling keeps for the plugins it ships: `botling` and everything under `botling.`. */
+export const RESERVED_NAME_PREFIX = "botling";
+
+/** Whether `name` is in the namespace of the shipped plugins (`botling`, `botling.board`). */
+export const isReservedName = (name: string): boolean => name === RESERVED_NAME_PREFIX || name.startsWith(`${RESERVED_NAME_PREFIX}.`);
+
+const shown = (name: string) => JSON.stringify(name.length > 80 ? `${name.slice(0, 80)}…` : name);
+
+/** The extra name rule for a plugin on its way in: no dot, and not the shipped plugins' names. Only these two; the character set stays as `NAME_INVALID` says. */
+export function incomingNameIssues(name: string): { code: "NAME_DOTTED" | "NAME_RESERVED"; message: string }[] {
+  if (isReservedName(name)) return [{ code: "NAME_RESERVED", message: `name ${shown(name)} is reserved: "${RESERVED_NAME_PREFIX}" and every name that starts with "${RESERVED_NAME_PREFIX}." belong to the plugins that ship with Botling.` }];
+  if (name.includes(".")) return [{ code: "NAME_DOTTED", message: `name ${shown(name)} may not contain a dot: a dot separates a plugin's name from its command names, so a command such as ${shown(`${name}.go`)} could be taken for a command of another plugin.` }];
+  return [];
+}
+
+/** An installed plugin whose name a new plugin could not take: the log line (it stays installed). Null: nothing to say. */
+export function presentNameWarning(name: string): string | null {
+  const [issue] = incomingNameIssues(name);
+  if (!issue) return null;
+  const why = issue.code === "NAME_RESERVED" ? "the name is reserved for the plugins that ship with Botling" : "the name contains a dot";
+  return `plugin ${shown(name)} is installed and keeps working, but a new plugin could not be installed with this name (${why}); a command of it is refused when it belongs to a longer installed plugin name.`;
+}
 
 /** One problem from the check: a stable code, the readable message and what to do about it. */
 export interface PluginIssue { code: CheckCode; message: string; nextStep: string }
 
 /** The structured problems with a plugin folder; none: it may load. */
-export function checkPluginIssues(folder: string): PluginIssue[] {
+export function checkPluginIssues(folder: string, origin: PluginOrigin = "incoming"): PluginIssue[] {
   const issues: PluginIssue[] = [];
   const add = (code: CheckCode, message: string) => { issues.push({ code, message, nextStep: CHECK_NEXT_STEPS[code] }); };
   let text: string;
@@ -269,6 +305,7 @@ export function checkPluginIssues(folder: string): PluginIssue[] {
     return issues;
   }
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(manifest.name)) add("NAME_INVALID", `name "${manifest.name}" may only use lowercase letters, digits, - . _.`);
+  if (origin === "incoming") for (const issue of incomingNameIssues(manifest.name)) add(issue.code, issue.message);
   if (!/^\d+\.\d+\.\d+/.test(manifest.version)) add("VERSION_INVALID", `version "${manifest.version}" must be semver, for example 1.0.0.`);
   const range = manifest.engines?.ccb;
   if (range === undefined) {
@@ -358,8 +395,8 @@ export function contributionIssues(folder: string): { needs: { feature: string; 
 }
 
 /** The problems with a plugin folder (`PluginRegistry.check`) as plain messages; none: it may load. */
-export function checkPlugin(folder: string): string[] {
-  return checkPluginIssues(folder).map((issue) => issue.message);
+export function checkPlugin(folder: string, origin: PluginOrigin = "incoming"): string[] {
+  return checkPluginIssues(folder, origin).map((issue) => issue.message);
 }
 
 // ---------------------------------------------------------------------------------------------

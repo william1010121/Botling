@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
-import { checkPlugin, diskFolder, loadPlugin, readManifest, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
+import { checkPlugin, diskFolder, loadPlugin, presentNameWarning, readManifest, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
 import type { Contribution } from "./contributions";
 import { ContributionKernel } from "./kernel-list";
 import type { SecretStore } from "./secrets";
@@ -125,6 +125,8 @@ export class PluginRegistry {
   onUpdated: (plugin: InstalledPlugin, from: string) => void = () => {};
   /** Entries of a plugin's `contributes` this Botling skips (`InstalledPlugin.skipped`), when they change: the log says so. */
   onSkipped: (plugin: string, skipped: string[]) => void = () => {};
+  /** A plugin of the library has a name a new plugin could not take (a dot, or the reserved `botling`): said once per name, the plugin stays. */
+  onNameWarning: (plugin: string, warning: string) => void = () => {};
   /** Anything that matters changed (`revision` moved). */
   onChanged: () => void = () => {};
   /** A non-built-in plugin was added or edited on disk outside user-initiated store installs/removals. */
@@ -133,6 +135,8 @@ export class PluginRegistry {
   private state: State;
   /** What `onSkipped` last said for each plugin. */
   private reportedSkips: Record<string, string[]> = {};
+  /** The names `onNameWarning` already said. */
+  private warnedNames = new Set<string>();
   private fingerprints: Record<string, string> = {};
   /** Each Claude part's content hash, by the fingerprint it was taken at (`claudeContents`). */
   private claudeContents = new Map<string, { fingerprint: string; hash: string }>();
@@ -486,9 +490,12 @@ export class PluginRegistry {
     }
     for (const { name, folder, builtIn } of folders) {
       if (!existsSync(join(folder, "package.json"))) continue;
-      const loaded = loadPlugin(folder);
+      // The folder it is read from decides the name rule, never the name the manifest claims.
+      const loaded = loadPlugin(folder, builtIn ? "builtIn" : "library");
       if (loaded.ok) {
         const manifest = loaded.manifest;
+        const nameWarning = builtIn ? null : presentNameWarning(manifest.name);
+        if (nameWarning && !this.warnedNames.has(manifest.name)) { this.warnedNames.add(manifest.name); this.onNameWarning(manifest.name, nameWarning); }
         const print = PluginRegistry.fingerprint(folder, manifest);
         // Both Botling and the library have it: the library's copy runs only at the built-in's version or a newer one (versions.ts).
         const shipped = found.get(manifest.name);
