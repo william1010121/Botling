@@ -9,6 +9,8 @@ export interface RelayConfig {
   allowedOrigins: string[];
   /** Optional folder with the phone web app (desktop/mobile/dist), served under /mobile/. */
   staticDir: string | null;
+  /** Optional folder with the Botling 3 web app (desktop/web-v3/dist), served under /v3/. */
+  staticV3Dir: string | null;
   /** Public https origin, used in the chat page's CSP. Default: https://<Host header>. */
   publicOrigin: string | null;
   /** Largest frame either side may send (bytes). A chat snapshot is the biggest thing that travels. */
@@ -50,6 +52,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
     host: env.HOST?.trim() || '0.0.0.0',
     allowedOrigins,
     staticDir: env.STATIC_DIR?.trim() || null,
+    staticV3Dir: env.STATIC_V3_DIR?.trim() || null,
     publicOrigin,
     maxFrameBytes: int(env, 'MAX_FRAME_BYTES', 4 * 1024 * 1024, 1024, 64 * 1024 * 1024),
     maxConnections: int(env, 'MAX_CONNECTIONS', 5_000),
