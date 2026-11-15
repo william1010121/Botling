@@ -53,6 +53,20 @@ describe("readNote / writeNote", () => {
     expect(readFileSync(file, "utf8")).toBe("merged");
   });
 
+  it("a save stamps the note later than the one it replaced, even when the clock has not moved past it", () => {
+    // Linux stamps files with the kernel's coarse clock, so two saves in one tick would share the mtime a save is based
+    // on. A note dated ahead of the clock stands in for that tick here, on any disk.
+    const file = join(tempDir("bot-note"), "note.md");
+    readNote(file);
+    const ahead = Date.now() / 1000 + 5;
+    utimesSync(file, ahead, ahead);
+    const base = readNote(file).mtime;
+    const ours = writeNote(file, "mine", base);
+    expect(ours.saved).toBe(true);
+    expect(ours.mtime).toBeGreaterThan(base);
+    expect(writeNote(file, "stale", base)).toEqual({ saved: false, text: "mine", mtime: ours.mtime });
+  });
+
   it("a save with a base when the file was removed makes it again", () => {
     const file = join(tempDir("bot-note"), "note.md");
     const { mtime } = readNote(file);

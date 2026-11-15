@@ -322,6 +322,19 @@ describe("the Note tab's plain read and write", () => {
     expect(readFileSync(file, "utf8")).toContain(`<!-- cell: ${ids[0]} -->`);
   });
 
+  it("every save stamps note.md later than the note it was based on, even when the clock has not moved past it", () => {
+    // Linux stamps files with the kernel's coarse clock: two saves a few ms apart share an mtime, and the mtime is the
+    // version a save is based on. A note.md dated ahead of the clock stands in for that tick here, on any disk.
+    const { file, note } = noteAt("A\n<!-- cell -->\nB\n");
+    later(file);
+    const base = note.readPlain().mtime;
+    expect(base).toBeGreaterThan(Date.now());
+    const saved = note.writePlain("A\n<!-- cell -->\nB plus\n", base);
+    expect(saved.saved).toBe(true);
+    expect(saved.mtime).toBeGreaterThan(base);
+    expect(note.writePlain("mine", base)).toEqual({ saved: false, text: "A\n<!-- cell -->\nB plus\n", mtime: saved.mtime });
+  });
+
   it("withoutBlankEdges drops only the blank lines at a cell's edges", () => {
     expect(withoutBlankEdges("\n \nA\n\nB\n\t\n")).toBe("A\n\nB");
     expect(withoutBlankEdges("A\n\nB")).not.toBe(withoutBlankEdges("A\nB"));
