@@ -2,7 +2,7 @@
 // checks, once-grant reuse prevention, limits, and resume).
 // Requires `npm run build` (out/server/main.cjs) for the two-server botlingd test.
 import { createHash } from "node:crypto";
-import { closeSync, ftruncateSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, ftruncateSync, linkSync, realpathSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -593,7 +593,7 @@ describe("M5-07a: fetch source", () => {
     const doneA = await until(() => sent.find((m) => (m.t === "fetch.done" || m.t === "fetch.denied") && m.fetchId === "p1-a") ?? null, { timeout: 5_000, what: "p1-a end" });
     expect(doneA.t).toBe("fetch.done");
     const grantA = sent.find((m) => m.t === "fetch.grant" && m.fetchId === "p1-a") as WireMessage & { t: "fetch.grant" };
-    expect(grantA.prefix).toBe(aPath);
+    expect(grantA.prefix).toBe(realpathSync(aPath));
 
     answer = "deny";
     env.source.onMessage(sink, {
@@ -800,6 +800,38 @@ describe("M5-07a: fetch source", () => {
     expect(joined.equals(payload)).toBe(true);
   });
 
+  it("P6b (M3). after a dropped session the once grant stays, a same-fetchId ask without from is refused, with from it resumes", async () => {
+    let drop: (() => void) | null = null;
+    const env = await setupInProcessCluster(undefined, (fetchId, index) => { if (fetchId === "p6b" && index === 1) drop?.(); });
+    cleanups.push(env.cleanup);
+    writeFileSync(join(env.artifactsA, "r.bin"), deterministicBytes("p6b", 300 * 1024));
+    const a = makeFakeSink(env.kb.memberId);
+    drop = () => { a.sink.open = false; env.source.sessionClosed(a.sink); };
+    env.source.onMessage(a.sink, {
+      t: "fetch.ask", fetchId: "p6b", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "drop", maxBytes: 10 * MiB,
+    });
+    await until(() => (a.sent.filter((m) => m.t === "fetch.chunk").length >= 2 ? true : null), { timeout: 5_000, what: "2 chunks" });
+    await new Promise((r) => setTimeout(r, 100));
+    const row = env.readerA.prepare("SELECT revokedAt FROM grants WHERE fetchId = ?").get("p6b") as { revokedAt: number | null };
+    expect(row.revokedAt).toBeNull();
+    const b = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(b.sink, {
+      t: "fetch.ask", fetchId: "p6b", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "restart", maxBytes: 10 * MiB,
+    });
+    const r2 = await until(() => b.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p6b r2" });
+    expect(r2).toMatchObject({ t: "fetch.denied", fetchId: "p6b", reason: "denied" });
+    expect(b.sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+    const c = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(c.sink, {
+      t: "fetch.ask", fetchId: "p6b", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "resume", maxBytes: 10 * MiB, from: { file: "r.bin", index: 1 },
+    });
+    const r3 = await until(() => c.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p6b r3" });
+    expect(r3.t).toBe("fetch.done");
+  });
+
   it("P6 (M3). once grant gets 10-minute expires, is revoked on terminal failure, and refuses replay without from", async () => {
     const env = await setupInProcessCluster();
     cleanups.push(env.cleanup);
@@ -974,6 +1006,44 @@ describe("M5-07a: fetch source", () => {
     const d2 = await until(() => s2.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "l3 f2" });
     expect(d2).toMatchObject({ t: "fetch.denied", fetchId: "l3-f2", reason: "limit" });
     expect(s2.sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+  });
+
+  it("L-a. a cancelled serve ends without the approval hook answering (session closed, then source closed)", async () => {
+    const asked: string[] = [];
+    // The hook never answers, like an approval card nobody clicks.
+    const env = await setupInProcessCluster(async (fetch) => { asked.push(fetch.fetchId); return new Promise<never>(() => undefined); });
+    cleanups.push(env.cleanup);
+    writeFileSync(join(env.srcA, "a.txt"), "needs approval");
+    const settles = async (what: string) => {
+      const result = await Promise.race([
+        env.source.flushed().then(() => "ended" as const),
+        new Promise<"stuck">((resolve) => setTimeout(() => resolve("stuck"), 3_000)),
+      ]);
+      expect(result, what).toBe("ended");
+    };
+
+    const a = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(a.sink, {
+      t: "fetch.ask", fetchId: "la-session", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "path", path: join(env.srcA, "a.txt") }, purpose: "wait", maxBytes: 10 * MiB,
+    });
+    await until(() => (asked.includes("la-session") ? true : null), { timeout: 5_000, what: "hook asked (session)" });
+    a.sink.open = false;
+    env.source.sessionClosed(a.sink);
+    await settles("a serve whose session closed must end while the hook is unanswered");
+
+    const b = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(b.sink, {
+      t: "fetch.ask", fetchId: "la-close", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "path", path: join(env.srcA, "a.txt") }, purpose: "wait", maxBytes: 10 * MiB,
+    });
+    await until(() => (asked.includes("la-close") ? true : null), { timeout: 5_000, what: "hook asked (close)" });
+    env.source.close();
+    await settles("stop (close + flushed) must not wait for the hook");
+
+    for (const sent of [a.sent, b.sent]) expect(sent.some((m) => m.t === "fetch.chunk" || m.t === "fetch.grant")).toBe(false);
+    expect((env.readerA.prepare("SELECT COUNT(*) AS n FROM grants").get() as { n: number }).n).toBe(0);
+    expect(env.readerA.prepare("SELECT 1 FROM rows WHERE key IN ('audit:la-session', 'audit:la-close')").get()).toBeUndefined();
   });
 
   it("L4. racing resume from same requesterServer cancels old in-flight task and completes on new sink", async () => {

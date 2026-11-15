@@ -97,6 +97,20 @@ interface FileEntry {
 
 interface ActiveServe {
   cancelled: boolean;
+  /** Resolves when the serve is cancelled (session closed, source closed, or replaced by a racing resume). */
+  readonly whenCancelled: Promise<void>;
+  cancel(): void;
+}
+
+function newServe(): ActiveServe {
+  let wake!: () => void;
+  const whenCancelled = new Promise<void>((resolve) => { wake = resolve; });
+  const task: ActiveServe = {
+    cancelled: false,
+    whenCancelled,
+    cancel: () => { if (!task.cancelled) { task.cancelled = true; wake(); } },
+  };
+  return task;
 }
 
 interface InflightEntry {
@@ -234,10 +248,10 @@ export class FetchSource {
         return true;
       }
       // Same requesterServer: cancel the in-flight attempt (racing resume) and run after it winds down.
-      existing.task.cancelled = true;
+      existing.task.cancel();
     }
     const waitForPrior = existing?.done;
-    const task: ActiveServe = { cancelled: false };
+    const task = newServe();
     let set = this.active.get(session);
     if (!set) { set = new Set(); this.active.set(session, set); }
     set.add(task);
@@ -270,14 +284,14 @@ export class FetchSource {
   sessionClosed(session: FetchSink): void {
     const set = this.active.get(session);
     if (!set) return;
-    for (const task of set) task.cancelled = true;
+    for (const task of set) task.cancel();
     this.active.delete(session);
   }
 
   close(): void {
     this.closed = true;
     for (const set of this.active.values()) {
-      for (const task of set) task.cancelled = true;
+      for (const task of set) task.cancel();
     }
     this.active.clear();
   }
@@ -540,7 +554,9 @@ export class FetchSource {
             grantKind = "always";
             grantExpires = matched.expires == null ? null : Number(matched.expires);
           } else {
-            const decision = await this.askHook({
+            // L-a: a cancelled serve (session closed, source closed, racing resume) stops waiting for the approval
+            // hook at once and counts as "deny", so stop() and a resume never wait on an unanswered card.
+            const decision = await Promise.race([this.askHook({
               fetchId: message.fetchId,
               requester: message.requester,
               requesterServer,
@@ -550,7 +566,7 @@ export class FetchSource {
               prefix: classified.prefix,
               realPath: realTarget,
               ...(hasHardLinks ? { hardLinks: true } : {}),
-            });
+            }), task.whenCancelled.then(() => "deny" as const)]);
             if (task.cancelled || session.state !== "open") return;
             if (decision === "deny") { await terminalDeny("denied"); return; }
             askedApproval = true;
