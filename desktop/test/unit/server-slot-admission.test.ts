@@ -75,13 +75,13 @@ describe("scope is stated by the caller (M5-19 I1)", () => {
     // This server serves only its own window (M1 table): a stated `read` is refused although the frame says `local`.
     const legacy = await h.runtime.receive(bodyOf(h, legacyRead, { wire: "local" }), { scope: "read" });
     expect(outcomeOf(legacy)).toMatchObject({ kind: "refused", reason: "scope" });
-    const intent = await h.runtime.receive(bodyOf(h, intentSend, { wire: "admin" }), { scope: "read" });
+    const intent = await h.runtime.receive(bodyOf(h, intentSend, { wire: "admin", n: 2 }), { scope: "read" });
     expect(outcomeOf(intent)).toMatchObject({ kind: "refused", reason: "scope" });
     await h.settle();
     expect(readsOnly(h)).toHaveLength(0);
     expect(h.engine.spawns).toEqual([]);
     // The same frames with a stated `local` are applied: the stated value, not the frame, is what counts.
-    const ok = await h.runtime.receive(bodyOf(h, legacyRead, { n: 2 }), { scope: "local" });
+    const ok = await h.runtime.receive(bodyOf(h, legacyRead, { n: 3 }), { scope: "local" });
     expect(outcomeOf(ok)).toMatchObject({ kind: "applied" });
     expect(readsOnly(h)).toHaveLength(1);
   });
