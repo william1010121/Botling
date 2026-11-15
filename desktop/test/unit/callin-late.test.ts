@@ -7,6 +7,7 @@
 // Part 1: the real intent runtime (in-memory server.db, the real handler) with a fake `ServerOrigin` and a fake clock.
 // Part 2: a real `Core` (the chat the user sees: the notice, the line, no wake). Part 3: B's real guest side meets the cancel.
 import { mkdirSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { Bot } from "../../src/core/bot";
@@ -17,6 +18,9 @@ import type { ChatRecord } from "../../src/core/store/records";
 import { Command, type Command as CommandType } from "../../src/contract";
 import { encodeWireFrame, type Outcome, type Slot, type Target } from "../../src/protocol";
 import { CallInHost, GAVEUP_KEEP_MS, GAVEUP_PREFIX, gaveUpKey, type CallInHostSender, type LateLine } from "../../src/server/callin";
+import { GaveUpBook } from "../../src/server/callin/late";
+import type { TxScope } from "../../src/server/effects";
+import type { Db } from "../../src/server/store";
 import { testRoot } from "../botlingd-harness";
 import { tempDir } from "../helpers";
 import { harness, outcomeOf, type Harness } from "./server-intents-harness";
@@ -515,5 +519,28 @@ describe("M5-03a part 3: the cancel the host sends stops B's guest turn; B's fai
     await a.h.settle();
     expect(a.lates).toHaveLength(0);
     expect(gaveRows(a.h)).toEqual([]);
+  });
+});
+
+// ---- review (M5-03a): a reply applied before the give-up's own write ----------------------------------------------------
+
+describe("M5-03a review: the record is not written back after a reply used it up", () => {
+  it("19. the reply's transaction runs before the give-up's write: the write adds no row, so a second reply is not late", async () => {
+    const raw = new DatabaseSync(":memory:");
+    raw.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID");
+    const db = raw as unknown as Db;
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    // The store's writer is busy: the give-up's write waits behind the reply's transaction.
+    const scope = { submit: async <T>(work: (tx: Db) => T) => { await gate; return work(db); }, onRollback() {} } as unknown as TxScope;
+    const book = new GaveUpBook({ scope, now: () => 1_000, log: () => undefined });
+    const saved = book.remember("call-19", { server: SERVER_B, hostBotId: HOST, guestBotId: GUEST, guestName: "build" });
+    expect(book.find(db, "call-19")).toMatchObject({ server: SERVER_B, hostBotId: HOST, guestBotId: GUEST });
+    book.consume(db, "call-19");
+    open();
+    await expect(saved).resolves.toBe(true);
+    expect(Number((raw.prepare("SELECT count(*) AS n FROM meta").get() as { n: number }).n)).toBe(0);
+    expect(book.find(db, "call-19")).toBeNull();
+    raw.close();
   });
 });
