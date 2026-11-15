@@ -44,7 +44,7 @@ describe("Settings › Phone in Botling 3", () => {
     const m = await mount(async (cmd) => {
       calls.push(cmd);
       if (cmd.type === "mobile.cluster" && cmd.code === undefined) { cluster = "confirming"; return { ok: true, code: CODE, expiresAt: Date.now() + 600_000 }; }
-      if (cmd.type === "mobile.cluster") { if (cmd.code.toUpperCase() !== CODE) return { ok: false, reason: "wrong-code" }; // botlingd reads it forgivingly cluster = "ready"; return { ok: true }; }
+      if (cmd.type === "mobile.cluster") { if (cmd.code.toUpperCase() !== CODE) return { ok: false, reason: "wrong-code" }; /* botlingd reads it forgivingly */ cluster = "ready"; return { ok: true }; }
       if (cmd.type === "mobile.pair") return { url: LINK, expiresAt: Date.now() + 300_000, route: { kind: "relay", origin: "https://relay.example" }, offer: OFFER };
       return viewOf({ cluster, relayFixed: false, offers: [], devices: [] });
     });
