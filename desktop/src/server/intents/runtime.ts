@@ -9,13 +9,13 @@
 // Everything that writes goes through one TxScope over the store's writer, so the tap and the handlers share the
 // command's transaction and LogHub hears about every stream a commit touched.
 import type { Event as ContractEvent } from "../../contract";
-import type { CmdBody, Scope } from "../../protocol";
+import type { CmdBody } from "../../protocol";
 import { CallInGuest, CallInHost, type CallInHostOptions } from "../callin";
 import { contentLineHook, type ContentService } from "../content";
 import { ensureStream, type LogHub } from "../log";
 import { ContractLiveFeed, type LiveChannel } from "../live";
 import type { TapHooks } from "../effects/tap";
-import { SlotEngine, type Audit, type Authorize, type ReceiveStatus, type ReplySink } from "../slots";
+import { SlotEngine, type Audit, type Authorize, type ReceiveOptions, type ReceiveStatus } from "../slots";
 import {
   ensureBot, EffectWorker, EventTap, recoverEffects, serverStreamOf, TxScope,
   type DeferredTurnRequest, type RecoveryReport, type Submitter, type TurnEngine,
@@ -119,7 +119,7 @@ export class IntentRuntime {
   }
 
   /** One copy of a front end's command (a slot). Reads and app commands never come here. */
-  receive(body: CmdBody, options: { scope?: Scope; reply?: ReplySink } = {}): Promise<ReceiveStatus> {
+  receive(body: CmdBody, options: ReceiveOptions): Promise<ReceiveStatus> {
     const route = routeOf(body.cmd.type);
     if (route.kind === "intent") return this.slots.receive(body, options);
     if (route.kind === "legacy") return this.legacy.receive(body, options);

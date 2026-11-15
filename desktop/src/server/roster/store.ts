@@ -10,7 +10,7 @@
 //   in); `Add` of a device, `Revoke` of a device it has in its roster, `Revoke` of a server when this server is the
 //   current revocation root (D46, D61), and `Endorse` of a member it finds valid that it neither added nor endorsed yet.
 // - Listeners hear which members stopped being valid (sessions close, M2 step 4).
-import { addJoins, clusterIdFromRecoveryKey, DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, revokeCascades, RootStatement, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
+import { addJoins, clusterIdFromRecoveryKey, DEFAULT_DEVICE_SCOPE, DeviceScope, encodePushSubscription, fromBase64Url, MemberKeys, memberIdFromKey, parsePushSubscription, RevocationStatement, revokeCascades, RootStatement, rosterDigest, SignedStatement, statementId, type ProfileField, type PushSubscription, type StatementBody } from "../../protocol";
 import { formatRecoveryCode, newRecoveryCode, normalizeRecoveryCode, recoveryKeyFromCode } from "../identity/recovery";
 import type { Command, Db } from "../store";
 import { computeRoster, validDevice, type DroppedRow, type MemberInfo, type RosterView, type VerifiedStatement } from "./validity";
@@ -30,7 +30,7 @@ export interface RosterIdentity {
 
 export type RosterRefusal =
   | "no-cluster" | "cluster-exists" | "bad-root" | "self-revoked" | "bad-keys" | "revoked" | "not-a-device" | "server-revoke-root-only"
-  | "cannot-revoke-root" | "not-a-server" | "bad-join" | "bad-code" | "already-root" | "not-root" | "bad-keep" | "not-dropped";
+  | "cannot-revoke-root" | "not-a-server" | "bad-join" | "bad-code" | "already-root" | "not-root" | "bad-keep" | "not-dropped" | "bad-profile";
 
 export class RosterError extends Error {
   constructor(readonly reason: RosterRefusal, message: string) { super(message); this.name = "RosterError"; }
@@ -710,17 +710,28 @@ export class RosterStore {
    * just reached it at), unless the value read back is that already. The hlc is above every Profile of that field.
    * Returns the statement, or null when nothing was written.
    */
-  writeProfile(member: string, field: "name" | "icon" | "addresses", value: string): Promise<SignedStatement | null> {
+  writeProfile(member: string, field: ProfileField, value: string): Promise<SignedStatement | null> {
     return this.serial(async () => {
       const cluster = this.requireCluster();
-      if (this.profile(member, field) === value) return null;
+      let storedValue = value;
+      if (field === "push") {
+        // §18.4: only valid, unrevoked devices hold a push subscription; re-checked inside serial at commit time.
+        if (!validDevice(this.current, member)) {
+          if (this.current.revoked.has(member)) throw new RosterError("revoked", "cannot store a push subscription for a revoked device");
+          throw new RosterError("not-a-device", "push subscriptions belong only to valid devices");
+        }
+        const parsed = parsePushSubscription(value);
+        if (!parsed) throw new RosterError("bad-profile", "push subscription is malformed");
+        storedValue = encodePushSubscription(parsed);
+      }
+      if (this.profile(member, field) === storedValue) return null;
       let ms = this.now();
       let c = 0;
       for (const { body } of this.verified) {
         if (body.type !== "profile" || body.member !== member || body.field !== field) continue;
         if (body.hlc.ms > ms || (body.hlc.ms === ms && body.hlc.c >= c)) { ms = body.hlc.ms; c = body.hlc.c + 1; }
       }
-      const profile = await this.sign({ type: "profile", cluster, member, field, value: value.slice(0, 2_000), hlc: { ms, c: Math.min(c, 0xffff) } });
+      const profile = await this.sign({ type: "profile", cluster, member, field, value: storedValue.slice(0, 2_000), hlc: { ms, c: Math.min(c, 0xffff) } });
       await this.apply([profile], cluster, [{ act: "profile.write", statement: profile.id, by: this.identity.memberId, member }]);
       return profile.statement;
     });
@@ -888,7 +899,9 @@ export class RosterStore {
    * by a server that is valid here (a known server that was revoked can no longer redirect a peer's address: M3 step 3
    * review, step 4); null when there is none (§4.1, §6.2: peers' addresses).
    */
-  profile(member: string, field: "name" | "icon" | "addresses"): string | null {
+  profile(member: string, field: ProfileField): string | null {
+    // §18.4: a revoked device's push subscription is never used.
+    if (field === "push" && !validDevice(this.current, member)) return null;
     let best: { value: string; ms: number; c: number; id: string } | null = null;
     for (const { id, body, signer } of this.verified) {
       if (body.type !== "profile" || body.member !== member || body.field !== field || body.cluster !== this.cluster) continue;
@@ -896,7 +909,25 @@ export class RosterStore {
       const { ms, c } = body.hlc;
       if (!best || ms > best.ms || (ms === best.ms && (c > best.c || (c === best.c && id < best.id)))) best = { value: body.value, ms, c, id };
     }
-    return best?.value ?? null;
+    if (!best) return null;
+    if (field === "push" && !parsePushSubscription(best.value)) return null;
+    return best.value;
+  }
+
+  /** A valid, unrevoked device's parsed Web Push subscription, or null (§18.4). */
+  pushSubscription(member: string): PushSubscription | null {
+    const raw = this.profile(member, "push");
+    return raw ? parsePushSubscription(raw) : null;
+  }
+
+  /** Every valid, unrevoked device with a well-formed Web Push subscription, sorted by device id (§18.4). */
+  pushSubscriptions(): Array<{ device: string; subscription: PushSubscription }> {
+    const out: Array<{ device: string; subscription: PushSubscription }> = [];
+    for (const member of [...this.current.valid].sort()) {
+      const subscription = this.pushSubscription(member);
+      if (subscription) out.push({ device: member, subscription });
+    }
+    return out;
   }
 
   private self() {

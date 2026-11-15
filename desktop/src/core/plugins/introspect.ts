@@ -94,7 +94,7 @@ export const INSPECT_QUERIES = {
       const issues: { folder: string; code: string; message: string; nextStep: string }[] = [];
       for (const plugin of registry.plugins) {
         if (input.plugin !== undefined && plugin.manifest.name !== input.plugin) continue;
-        for (const issue of [...checkPluginIssues(plugin.folder), ...contributionIssues(plugin.folder).issues]) issues.push({ folder: plugin.manifest.name, ...issue });
+        for (const issue of [...checkPluginIssues(plugin.folder, plugin.builtIn ? "builtIn" : "library"), ...contributionIssues(plugin.folder).issues]) issues.push({ folder: plugin.manifest.name, ...issue });
       }
       // Folders that could not be loaded at all are not in `plugins`; the registry kept their problems as text.
       for (const [folder, problems] of Object.entries(registry.problems)) {

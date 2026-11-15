@@ -53,6 +53,7 @@ export class BotlingdEngine implements TurnEngine {
 
   bots(): string[] { return this.inner.bots(); }
   hasBot(botId: string): boolean { return this.inner.hasBot(botId); }
+  checkBot(botId: string): void { this.inner.checkBot?.(botId); }
   botView(botId: string): BotView | null { return this.inner.botView?.(botId) ?? null; }
   pendingFiles(botId: string): number { return this.inner.pendingFiles(botId); }
   checkRemove(botId: string): void { this.inner.checkRemove(botId); }

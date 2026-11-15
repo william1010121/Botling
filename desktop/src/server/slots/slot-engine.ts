@@ -37,12 +37,12 @@
 // it still wants. A session delivers one queue's copies in send order (the session core chains them), so a gap or a
 // copy dropped from the held buffer means the session broke FIFO: that session is ended and the origin re-sends.
 import type { Command } from "../../contract";
-import { queueKey, type CmdBody, type Cursor, type LogId, type MessageOf, type Outcome, type Scope, type Slot, type Via } from "../../protocol";
+import { queueKey, Scope, type CmdBody, type Cursor, type LogId, type MessageOf, type Outcome, type Slot, type Via } from "../../protocol";
 import { PluginRow } from "../../protocol/table-rows";
 import { ownTableStream, readRowBody } from "../replica/tables";
 import type { Command as StoreCommand, Db } from "../store";
 import { checkBasis, checkTarget, dbBasisReader, localOnly } from "./basis";
-import { grantAllows } from "./grant-check";
+import { grantAllows, pluginCommandNeedsGrant } from "./grant-check";
 import { cmdHash } from "./hash";
 import { addCancel, findReceipt, isCancelled, readNext, removeCancel, writeNext, writeReceipt, writeSkip, type QueueRef } from "./tables";
 import { SlotRefusal, type ApplyFn, type Audit, type Authorize, type BasisReader, type SlotLog } from "./types";
@@ -52,6 +52,19 @@ export type CmdRetryMessage = MessageOf<"cmd.retry">;
 export type SlotReply = CmdResultMessage | CmdRetryMessage;
 /** Where the messages about one copy of a command go (the session that sent it). */
 export type ReplySink = (message: SlotReply) => void;
+
+/** What every `receive` caller passes: the scope its accepting server stated (never optional), and where replies go. */
+export interface ReceiveOptions { scope: Scope; reply?: ReplySink }
+
+/**
+ * The scope the caller stated, or a TypeError (fail closed, L-009). The envelope's own `body.scope` is never read:
+ * a frame can say `local` or `admin`, and a caller that forgot to state a scope must not inherit the frame's.
+ */
+export function statedScope(options: { scope?: unknown } | undefined, who: string): Scope {
+  const parsed = Scope.safeParse(options?.scope);
+  if (!parsed.success) throw new TypeError(`${who}: a command needs the scope its accepting server stated`);
+  return parsed.data;
+}
 
 /** Held-ahead slots kept per (origin, originEpoch, target) (§11.3, §20). */
 export const HELD_LIMIT = 64;
@@ -135,12 +148,15 @@ function readPluginRow(tx: Db, plugin: string): PluginRow | null {
   }
 }
 
-/** The names of this server's live `plugin:` rows (to tell `my.plugin.go` of plugin `my.plugin` from plugin `my`). */
-function installedPlugins(tx: Db): string[] {
+/**
+ * The names of this server's live `plugin:` rows (to tell `my.plugin.go` of plugin `my.plugin` from plugin `my`).
+ * null when the query fails: the nested-name guard cannot run, so the caller refuses (L-009, fail closed).
+ */
+function installedPlugins(tx: Db): string[] | null {
   try {
     return tx.prepare("SELECT key FROM rows WHERE stream = ? AND deleted = 0 AND substr(key, 1, 7) = 'plugin:'").all(ownTableStream(tx)).map((row) => String(row.key).slice("plugin:".length));
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -214,10 +230,15 @@ export class SlotEngine {
     if (input.via) {
       // D54 / M5-14a F3: a plugin never sends `plugin.grant`. Kept ahead of the grant lookup on purpose.
       if (input.cmd.type === "plugin.grant") return { reason: "grant", detail: "plugin.grant cannot be sent by a plugin" };
-      const decision = grantAllows(readPluginRow(tx, input.via.plugin), input.via, input.cmd, ownServerName(tx), installedPlugins(tx));
+      const installed = installedPlugins(tx);
+      // L-009: without the list of installed plugins the nested-name guard cannot run, so the grant check refuses.
+      if (installed === null) return { reason: "grant", detail: `plugin ${input.via.plugin} may not do this on ${ownServerName(tx)}` };
+      const decision = grantAllows(readPluginRow(tx, input.via.plugin), input.via, input.cmd, ownServerName(tx), installed);
       if (!decision.ok) return { reason: "grant", detail: decision.detail };
+      return null;
     }
-    return null;
+    // M5-16: with the four plugin commands at `reply`, only the local window may send one without `via`.
+    return pluginCommandNeedsGrant(input.cmd, input.scope);
   }
 
   /** The owner's `next` for a queue (`welcome.next`, §11.4). */
@@ -227,12 +248,12 @@ export class SlotEngine {
 
   /**
    * One copy of a command from an origin. `scope` is the scope the accepting server states (a front end's `cmd` never
-   * carries one); falls back to the envelope's for a forwarded command. Every message about this copy, including
-   * the result of a held copy applied later, goes to `reply`; the returned status repeats the immediate one.
+   * carries one); it is required, and the envelope's own `scope` is never used in its place (a missing one throws).
+   * Every message about this copy, including the result of a held copy applied later, goes to `reply`; the returned
+   * status repeats the immediate one.
    */
-  async receive(body: CmdBody, options: { scope?: Scope; reply?: ReplySink } = {}): Promise<ReceiveStatus> {
-    const scope = options.scope ?? body.scope;
-    if (!scope) throw new TypeError("slots: a command needs the scope its accepting server stated");
+  async receive(body: CmdBody, options: ReceiveOptions): Promise<ReceiveStatus> {
+    const scope = statedScope(options, "slots");
     const input: SlotInput = {
       slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, ...(body.via ? { via: body.via } : {}),
       hash: cmdHash({ cmd: body.cmd, scope, basis: body.basis, via: body.via }),
@@ -382,7 +403,7 @@ export class SlotEngine {
       try {
         checkTarget(input.slot.target, input.cmd);
         checkBasis(tx, this.basis, log, input.slot.target, input.cmd, input.basis);
-        const applied = this.options.apply({ tx, slot: input.slot, cmd: input.cmd, scope: input.scope, basis: input.basis, log });
+        const applied = this.options.apply({ tx, slot: input.slot, cmd: input.cmd, scope: input.scope, basis: input.basis, ...(input.via ? { via: input.via } : {}), log });
         if (applied && typeof (applied as unknown as PromiseLike<unknown>).then === "function") {
           (applied as unknown as Promise<unknown>).then(undefined, () => {});
           throw new TypeError("slots: an apply step must be synchronous (it returned a promise)");

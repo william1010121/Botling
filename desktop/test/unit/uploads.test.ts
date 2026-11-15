@@ -18,7 +18,7 @@ import { BridgeV3, type AdapterPort } from "../../web-v3/bridge-v3";
 import type { PageUploadsPort } from "../../web-v3/shell/uploads";
 import { testRoot } from "../botlingd-harness";
 import { CoreHarness, MAIN } from "../core-harness";
-import { tempDir } from "../helpers";
+import { expectSameBytes, tempDir } from "../helpers";
 import { harness, outcomeOf, type Harness } from "./server-intents-harness";
 
 const root = testRoot("uploads");
@@ -67,7 +67,7 @@ describe("Uploads (the server's store)", () => {
     expect(replies.filter((r) => r.t === "content.credit").length).toBeGreaterThan(0);
     expect(replies.at(-1)).toEqual({ t: "content.stored", req: "r1", id: idOf(data), have: data.length });
     expect(uploads.complete(idOf(data))?.size).toBe(data.length);
-    expect(readFileSync(uploads.complete(idOf(data))!.path)).toEqual(Buffer.from(data));
+    expectSameBytes(readFileSync(uploads.complete(idOf(data))!.path), data);
     expect(uploads.list()).toEqual([hexOf(data)]);
     // A put of a file already here: stored(size) at once.
     expect(await uploads.put("s2", put("r2", data))).toEqual([{ t: "content.stored", req: "r2", id: idOf(data), have: data.length }]);

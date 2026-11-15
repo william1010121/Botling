@@ -8,7 +8,7 @@ import type { DeferredTurn } from "../../core/bot";
 import type { ApplyNowCommand, CallInAnswer, CallInOptions, EngineHost, TurnEngine, TurnRunning, TurnStart, TurnStatus, UserLine } from "../effects";
 
 /** What the binding uses of the core. */
-export type CoreLike = Pick<Core, "serverSend" | "serverTurn" | "serverCallIn" | "serverUserLine" | "applyNow" | "receive" | "hasBot" | "botIds" | "serverBotView" | "pendingFiles" | "checkRemoveBot" | "removeBot">;
+export type CoreLike = Pick<Core, "serverSend" | "serverTurn" | "serverCallIn" | "serverUserLine" | "applyNow" | "receive" | "hasBot" | "botIds" | "serverBotView" | "pendingFiles" | "checkBot" | "checkRemoveBot" | "removeBot">;
 
 interface Waiting { resolve(value: unknown): void; reject(error: unknown): void }
 
@@ -40,6 +40,7 @@ export class CoreEngine implements TurnEngine {
 
   bots(): string[] { return this.need().botIds(); }
   hasBot(botId: string): boolean { return this.need().hasBot(botId); }
+  checkBot(botId: string): void { this.need().checkBot?.(botId); }
   botView(botId: string): BotView | null { return this.core?.serverBotView(botId) ?? null; }
   pendingFiles(botId: string): number { return this.need().pendingFiles(botId); }
   checkRemove(botId: string): void { this.need().checkRemoveBot(botId); }

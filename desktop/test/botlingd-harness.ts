@@ -7,11 +7,24 @@ import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { decodeFrame, encodeFrame, FrameSplitter, packFrame, type Cursor, type Entry, type Message, type MessageOf, type Slot } from "../src/protocol";
+import { DatabaseSync } from "node:sqlite";
+import { decodeFrame, decodeWireFrame, encodeFrame, FrameSplitter, packFrame, type Cursor, type Entry, type Message, type MessageOf, type Slot } from "../src/protocol";
 import { desktop, fakeCli, fakeCodex, until } from "./helpers";
 
 export const botlingdScript = join(desktop, "out", "server", "main.cjs");
+/** The 2.x main bot id. A data folder made since M5-04g mints its own (meta `ids.main`): read it with mainBotOf. */
 export const MAIN = "6A0B0000-0000-4000-8000-000000000002";
+
+/** The main bot id a botlingd data folder minted (`ids.main` in server.db), read once the server is ready. */
+export function mainBotOf(dataDir: string): string {
+  const db = new DatabaseSync(join(dataDir, "server.db"), { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 10000");
+    const row = db.prepare("SELECT value FROM meta WHERE key = 'ids.main'").get() as { value: string } | undefined;
+    if (!row) throw new Error(`no ids.main in ${dataDir}/server.db`);
+    return String(row.value);
+  } finally { db.close(); }
+}
 
 /** A folder for test data: on the external work disk when it is there (never a Botling data folder). */
 export function testRoot(name: string): string {
@@ -96,6 +109,10 @@ export class ScriptClient {
       const split = this.splitter.push(chunk);
       if (!split.ok) throw new Error(split.detail);
       for (const frame of split.frames) {
+        // `rows` of a `srv:` stream (M3): the own table's plugin rows that botlingd sends beside the log sub of its `srv:`
+        // stream (M5-14e); this v1-shaped client reads the log only. Every other frame must still be a v1 message.
+        const wire = decodeWireFrame(frame, "server", { local: true });
+        if (wire.ok && wire.message.t === "rows" && wire.message.stream.startsWith("srv:")) continue;
         const decoded = decodeFrame(frame, "server", { local: true });
         if (!decoded.ok) throw new Error(`bad frame from botlingd: ${decoded.detail}`);
         this.onMessage(decoded.message);

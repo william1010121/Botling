@@ -1,11 +1,17 @@
 # Agent notes
 
+- **Before writing or reviewing code, read `docs/code-standards.md`** (hard rules: breaking one is FIX FIRST; the common-mistakes checklist every handoff includes) and the lessons in `docs/LESSONS.md` tagged for your area.
+
 ## 2.x desktop app (`desktop/`)
 
 - **Default check while working:** `cd desktop && npm run test:changed`. It typechecks, rebuilds
   `out/` and runs only the unit tests related to your changes (uncommitted work against `HEAD`,
   untracked files included). For committed work on a branch, give the base:
   `npm run test:changed -- <base-branch>`. A typical run takes seconds.
+- **Typecheck on the Linux test host, not on the Mac:** locally run only `npm run build` (fast). For the
+  typecheck, commit and run `desktop/scripts/remote-test.sh <sha> --typecheck-only` (add `--typecheck` before
+  a test run to do both). Do not run `tsc` / `npm run typecheck` / `npm run test:changed` on the Mac in parallel
+  with other workers; they are the biggest CPU load there.
 - **New worktree:** run `desktop/scripts/link-deps.sh` once (no `npm install`). It links
   `desktop/node_modules` and `Web/node_modules` to the shared install for this lockfile on the
   external SSD (`/Volumes/My-SSD/botling-work/deps/desktop-<lock hash>`, made with `npm ci` the first
@@ -16,7 +22,7 @@
 - **Dev build:** `npm run dist:dir` (the unpacked app, about 15 s). Put its output and caches on a
   volume with free space: `BOTLING_DIST_DIR`, `electron_config_cache`, `ELECTRON_BUILDER_CACHE`
   (see `desktop/README.md`).
-- `npm run build` only bundles `out/` (under a second); `npm run typecheck` is `tsc --noEmit`.
+- `npm run build` only bundles `out/` (under a second); `npm run typecheck` is `tsc --noEmit` (run it on the host, see above).
 
 ## Spec program (`spec/`)
 
