@@ -4,13 +4,13 @@
 // time, like the oversized plugins.panel result that was re-sent 582 times every 0.5 s): every session that carries it
 // ends with `bye{unsettled, slot}`. The front end must count those and stop sending the slot after the 5th.
 import { mkdtempSync, rmSync } from "node:fs";
-import { createServer, type Server, type Socket } from "node:net";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FeLink, MemoryFeStorage, type FeLinkEvent } from "../../src/fe-link";
 import { unixDial } from "../../src/main-v3/unix-dial";
-import { decodeFrame, FrameSplitter, type Message, type StreamId } from "../../src/protocol";
+import { decodeFrame, encodeFrame, FrameSplitter, packFrame, type Message, type StreamId } from "../../src/protocol";
 import { Session, type SessionHost } from "../../src/server/session/session";
 
 const TOKEN = "t".repeat(32);
@@ -39,7 +39,7 @@ function bigSnap(i: number): Message {
 }
 
 /** A botlingd local server whose command runtime always throws (nothing can ever be stored). */
-async function neverSettlingServer(backlog: boolean): Promise<{ path: string; copies: () => number; sessions: () => number }> {
+async function neverSettlingServer(backlog: boolean, byeFlushMs?: number): Promise<{ path: string; copies: () => number; sessions: () => number; sockets: Set<Socket> }> {
   const dir = mkdtempSync(join(tmpdir(), "n1-"));
   const path = join(dir, "s.sock");
   let copies = 0;
@@ -77,7 +77,7 @@ async function neverSettlingServer(backlog: boolean): Promise<{ path: string; co
     sessions += 1;
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
-    new Session(socket, host, { helloTimeoutMs: 60_000, pingAfterMs: 60_000, deadAfterMs: 120_000 });
+    new Session(socket, host, { helloTimeoutMs: 60_000, pingAfterMs: 60_000, deadAfterMs: 120_000, ...(byeFlushMs ? { byeFlushMs } : {}) });
   });
   await new Promise<void>((resolve) => server.listen(path, resolve));
   cleanups.push(async () => {
@@ -85,7 +85,7 @@ async function neverSettlingServer(backlog: boolean): Promise<{ path: string; co
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });
   });
-  return { path, copies: () => copies, sessions: () => sessions };
+  return { path, copies: () => copies, sessions: () => sessions, sockets };
 }
 
 describe.each([
@@ -127,35 +127,53 @@ describe.each([
 
   it("the server's bye{unsettled} reaches the client before the socket closes", async () => {
     const server = await neverSettlingServer(backlog);
-    const { createConnection } = await import("node:net");
-    const { encodeFrame, packFrame } = await import("../../src/protocol");
-    const socket = createConnection(server.path);
-    const got: Message[] = [];
-    const splitter = new FrameSplitter();
-    socket.on("data", (chunk: Buffer) => {
-      const split = splitter.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-      if (!split.ok) throw new Error(split.detail);
-      for (const frame of split.frames) {
-        const decoded = decodeFrame(frame, "server", { local: true });
-        if (decoded.ok) got.push(decoded.message);
-      }
-    });
-    const closed = new Promise<void>((resolve) => socket.on("close", () => resolve()));
-    socket.on("error", () => undefined);
-    await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
-    const write = (message: Message) => {
-      const encoded = encodeFrame(message, "fe", { local: true });
-      if (!encoded.ok) throw new Error(encoded.detail);
-      socket.write(packFrame(encoded.text));
-    };
-    write({ t: "hello", deviceId: "desktop", feVersion: "3.0.0", protocol: 1, originEpoch: "0123456789abcdef0123456789abcdef", cursors: {}, outbox: [], want: [], token: TOKEN } as never);
-    await until(() => got.some((m) => m.t === "welcome"), 5_000);
-    write({
-      t: "cmd", slot: { origin: "desktop", originEpoch: "0123456789abcdef0123456789abcdef", target: BOT, n: 1 }, floor: 1, inc: LOG_ID,
-      cmd: { type: "chat.react", botId: "b1", messageId: "m1", emoji: "👍", present: true },
-    } as never);
+    const { socket, got, closed } = await rawClient(server.path);
     await closed;
     if (backlog) expect(got.filter((m) => m.t === "snap" && m.stream === BOT)).toHaveLength(12);
     expect(got.find((m) => m.t === "bye")).toMatchObject({ t: "bye", reason: "unsettled", slot: { n: 1 } });
+    socket.destroy();
   }, 20_000);
 });
+
+describe("the bye's flush is bounded (N1)", () => {
+  it("a front end that stops reading is cut off after byeFlushMs, not kept open by the queued frames", async () => {
+    const server = await neverSettlingServer(true, 100);
+    const { socket } = await rawClient(server.path, true);
+    await until(() => server.copies() === 1, 5_000);
+    const [serverSocket] = [...server.sockets];
+    expect(serverSocket?.destroyed).toBe(false); // still writing the queued frames, the client does not read
+    await until(() => serverSocket!.destroyed, 3_000);
+    socket.destroy();
+  }, 20_000);
+});
+
+/** A front end written by hand: hello, then one command the server cannot settle; `pause` stops reading after the welcome. */
+async function rawClient(path: string, pause = false): Promise<{ socket: Socket; got: Message[]; closed: Promise<void> }> {
+  const socket = createConnection(path);
+  const got: Message[] = [];
+  const splitter = new FrameSplitter();
+  socket.on("data", (chunk: Buffer) => {
+    const split = splitter.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+    if (!split.ok) throw new Error(split.detail);
+    for (const frame of split.frames) {
+      const decoded = decodeFrame(frame, "server", { local: true });
+      if (decoded.ok) got.push(decoded.message);
+    }
+  });
+  const closed = new Promise<void>((resolve) => socket.on("close", () => resolve()));
+  socket.on("error", () => undefined);
+  await new Promise<void>((resolve) => socket.on("connect", () => resolve()));
+  const write = (message: Message) => {
+    const encoded = encodeFrame(message, "fe", { local: true });
+    if (!encoded.ok) throw new Error(encoded.detail);
+    socket.write(packFrame(encoded.text));
+  };
+  write({ t: "hello", deviceId: "desktop", feVersion: "3.0.0", protocol: 1, originEpoch: "0123456789abcdef0123456789abcdef", cursors: {}, outbox: [], want: [], token: TOKEN } as never);
+  await until(() => got.some((m) => m.t === "welcome"), 5_000);
+  if (pause) socket.pause();
+  write({
+    t: "cmd", slot: { origin: "desktop", originEpoch: "0123456789abcdef0123456789abcdef", target: BOT, n: 1 }, floor: 1, inc: LOG_ID,
+    cmd: { type: "chat.react", botId: "b1", messageId: "m1", emoji: "👍", present: true },
+  } as never);
+  return { socket, got, closed };
+}
