@@ -8,9 +8,11 @@
 //     pairing   token = SHA-256("botling3/relay-pair/v1" ‖ 0 ‖ offer ‖ 0 ‖ P), P the offer's one-time secret (in the
 //               link's fragment): only the holder of the link can join, and only until the offer expires.
 //     device    token = SHA-256("botling3/relay-device/v1" ‖ 0 ‖ deviceId ‖ 0 ‖ X25519(device, server)), the static
-//               DH both sides can compute from their own private key and the other's roster key. botlingd lists the
-//               valid devices' tokens; a device leaving the roster leaves the list, and the relay closes its
-//               connection at once (4403).
+//               DH both sides can compute from their own private key and the other's roster key. Peer servers use the
+//               same derivation (`relayDeviceToken`) with their own member id as `deviceId`: A's room lists
+//               token(B, X25519(A, B)) while B's lists token(A, X25519(A, B)), and each server excludes self, so a
+//               token seen in one room is never valid in another. botlingd lists valid devices' and peer servers'
+//               tokens; a member leaving the roster leaves the list, and the relay closes its connection at once (4403).
 //   The token only admits a connection to the room (relay admission, not authentication): every session inside still
 //   runs the full handshake and roster check (src/session), the relay sees only opaque `d` frames.
 // - Session frames travel as base64url text in `d` (the relay takes text frames only).
