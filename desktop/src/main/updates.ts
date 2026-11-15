@@ -59,6 +59,17 @@ export interface UpdaterLike {
   on(event: "download-progress", listener: (progress: { percent: number }) => void): unknown;
 }
 
+/** The channels a build may follow besides `latest` (D74: Botling 3's `v3`); any other name is ignored. */
+const UPDATE_CHANNELS: ReadonlySet<string> = new Set(["v3"]);
+
+/** The channel to follow: only the Botling 3 window, whose guard (main-v3/guard.ts) ran in this process, names one.
+ * The environment alone never moves an app off `latest`: 2.x started from a Botling 3 bot's shell inherits
+ * BOTLING_UPDATE_CHANNEL=v3. */
+export function updateChannel(env: Record<string, string | undefined>, v3Window: boolean): string | undefined {
+  const channel = env.BOTLING_UPDATE_CHANNEL;
+  return v3Window && channel && UPDATE_CHANNELS.has(channel) ? channel : undefined;
+}
+
 export interface UpdaterOptions {
   current: string;
   channel?: string;
@@ -102,7 +113,7 @@ export class Updater {
     updater.allowDowngrade = false;
     // A prerelease build (a trial) follows prereleases; a stable one does not.
     updater.allowPrerelease = (parseVersion(options.current)?.pre.length ?? 0) > 0;
-    if (options.channel) {
+    if (options.channel && UPDATE_CHANNELS.has(options.channel)) {
       updater.channel = options.channel;
       // electron-updater turns allowDowngrade on when a channel is set; keep downgrades off.
       updater.allowDowngrade = false;

@@ -16,7 +16,7 @@ import {appMenuTemplate} from "./app-menu";
 import {bindingsFor} from "../contract/shortcuts";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
 import { autoUpdater } from "electron-updater";
-import { CHECK_EVERY_MS, Updater } from "./updates";
+import { CHECK_EVERY_MS, updateChannel, Updater } from "./updates";
 import { linkOpenWay, markdownLinkPath, reportPreviewURL, shellReportNavigation } from "./report-preview";
 import { MARKDOWN_CSP, markdownPage, markdownResponse, markdownStyles } from "./markdown-page";
 import { pluginLinkRoute } from "../core/plugin-link";
@@ -287,7 +287,7 @@ async function withInstallRequest<T>(action: () => Promise<T>): Promise<T> {
 const updatesFile = join(dataDir, "updates.json");
 const updater = new Updater({
   current: app.getVersion(),
-  channel: process.env.BOTLING_UPDATE_CHANNEL,
+  channel: updateChannel(process.env, (globalThis as { __botlingV3Window?: boolean }).__botlingV3Window === true),
   updater: autoUpdater,
   unavailable: () => !app.isPackaged ? "this is a development run, which does not update itself."
     : process.platform === "linux" && !process.env.APPIMAGE ? "this Linux package (.deb) cannot update itself; download the new version from the release page."

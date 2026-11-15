@@ -11,3 +11,5 @@ applyV3Guard({
   env: process.env,
   packaged: app.isPackaged ? { appData: app.getPath("appData") } : undefined,
 });
+// Marks this process as the Botling 3 window (not the environment, which children inherit): main.ts follows `v3`.
+(globalThis as { __botlingV3Window?: boolean }).__botlingV3Window = true;
