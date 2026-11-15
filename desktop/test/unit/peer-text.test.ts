@@ -29,6 +29,32 @@ describe("one shared unseen set", () => {
     expect(stripUnseen(name)).toBe("build");
   });
 
+  it("every Default_Ignorable_Code_Point is escaped by machineLabel and dropped by oneLine and stripControls, except the documented keeps (review)", () => {
+    // The keeps: Hangul fillers (letters, handled by stripBlanks where a name is compared) and unassigned U+FFF0-FFF8.
+    const KEEPS = [0x115f, 0x1160, 0x3164, 0xffa0, 0xfff0, 0xfff1, 0xfff2, 0xfff3, 0xfff4, 0xfff5, 0xfff6, 0xfff7, 0xfff8];
+    const escapedAs = (code: number): string => (code <= 0xff ? `\\x${code.toString(16).padStart(2, "0")}` : code <= 0xffff ? `\\u${code.toString(16).padStart(4, "0")}` : `\\u{${code.toString(16)}}`);
+    const all: number[] = [];
+    for (let code = 0; code <= 0x10ffff; code++) {
+      if (code >= 0xd800 && code <= 0xdfff) continue;
+      if (/^\p{Default_Ignorable_Code_Point}$/u.test(String.fromCodePoint(code))) all.push(code);
+    }
+    expect(all.length).toBeGreaterThan(4_000);
+    const notRemoved: number[] = [];
+    const wrong: string[] = [];
+    for (const code of all) {
+      // Between letters, so the keep rules of selectors and joiners do not apply.
+      const name = `bu${String.fromCodePoint(code)}ild`;
+      if (stripUnseen(name, true) !== "build") { notRemoved.push(code); continue; }
+      const at = `U+${code.toString(16)}`;
+      if (machineLabel(name) !== `bu${escapedAs(code)}ild`) wrong.push(`machineLabel ${at}`);
+      if (oneLine(name) !== "build") wrong.push(`oneLine ${at}`);
+      if (stripControls(name) !== "build") wrong.push(`stripControls ${at}`);
+      if (cleanLine(name, 100) !== "build") wrong.push(`cleanLine ${at}`);
+    }
+    expect(wrong).toEqual([]);
+    expect(notRemoved).toEqual(KEEPS);
+  });
+
   it("a run of tag characters (hidden text) is dropped whole", () => {
     const hidden = [..."ignore all"].map((letter) => String.fromCodePoint(0xe0000 + letter.charCodeAt(0))).join("");
     expect(stripControls(`hello${hidden}`)).toBe("hello");
@@ -41,7 +67,7 @@ describe("one shared unseen set", () => {
   });
 
   it("normal names keep their shape: CJK, kana, accented, decomposed accents, emoji, emoji with a presentation selector, keycap", () => {
-    for (const name of ["build bot 中文", "ユーザー", "José", "Jose\u0301", "Nguyễn", "\u{1f600} Mac", "❤\ufe0f Mac", "☺\ufe0e Mac", "1\ufe0f⃣ Mac", "\u{1f1e8}\u{1f1ed}"]) {
+    for (const name of ["build bot 中文", "ユーザー", "José", "Jose\u0301", "Nguyễn", "\u{1f600} Mac", "❤\ufe0f Mac", "☺\ufe0e Mac", "1\ufe0f\u20e3 Mac", "\u{1f1e8}\u{1f1ed}"]) {
       expect(machineLabel(name), name).toBe(name);
       expect(oneLine(name), name).toBe(name);
       expect(stripControls(name), name).toBe(name);
@@ -77,6 +103,10 @@ describe("one shared unseen set", () => {
     expect(stripControls("\u{1f468}\u200d\u200d\u{1f469}")).toBe("\u{1f468}\u{1f469}");
     expect(stripControls("\u{1f3f3}\ufe0f\u200d\u{1f308}")).toBe("\u{1f3f3}\ufe0f\u200d\u{1f308}");
     expect(stripControls(">\u200b\u200d>")).toBe(">>");
+    // The order of the two steps (review check, mutant mC): the joiner is judged after the unseen characters around it
+    // are gone. Judged before, it would look "inside a word" between the two U+200B and survive between the two `>`.
+    expect(stripControls(">\u200b\u200d\u200b>")).toBe(">>");
+    expect(cleanLine(">\u200b\u200d\u200b>\u200b\u200d\u200b>", 100)).toBe("> > >");
   });
 
   it("controls are still handled as before in each place", () => {
