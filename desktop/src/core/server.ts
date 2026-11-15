@@ -42,10 +42,10 @@ import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON,
 import { claudeAutoCompactWindow, codexConfigFile } from "./engine-files";
 import { attachmentFile as attachmentLinkFile } from "../contract/attachment-url";
 import { lineHasLink } from "../browser-tab-menu";
-import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, updateProjectRow, type BriefingRow } from "./projects";
+import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, updateProjectRow, type BriefingRow, type PeerBriefingRow } from "./projects";
 import { answerLabel } from "./attachments";
 import {
-  ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
+  ContractError, MESSAGE_TEXT_LIMIT, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type BotView, type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
   type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView,
 } from "../contract";
@@ -209,6 +209,13 @@ export interface CoreOptions {
   remoteMembers?: () => RemoteMember[];
   /** Botling 3's server only (2.x leaves it unset): runs a cross-server call-in turn (M5-02c). */
   remoteTurn?: ConversationsDeps["remoteTurn"];
+  /**
+   * Botling 3's server only (2.x leaves it unset; M5-04c): sends `cmd` to the server that owns `target` with this
+   * server as origin. `committed` settles when the slot is durably queued; `outcome` when the owner has decided.
+   */
+  remoteCommand?(target: string, cmd: Command): { committed: Promise<void>; outcome: Promise<{ ok: true } | { ok: false; why: string }> };
+  /** Botling 3's server only: this machine's name, for "From the main bot on <name>" in what a peer's bot is sent (M5-04c). */
+  machineName?: string;
 }
 
 /** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
@@ -926,11 +933,32 @@ First write a test that shows this, then fix it.`;
       question: this.bots.get(profile.id)?.openQuestion()?.text ?? null,
     });
     const maintainer = this.profiles.find((profile) => profile.id === this.maintainerId) ?? maintainerProfile(this.options.dataDir, "", this.maintainerId);
+    const peers: PeerBriefingRow[] = this.peerBots().map((peer) => {
+      const inbox = this.peerInbox(peer.id);
+      mkdirSync(dirname(inbox), { recursive: true });
+      return { name: peer.name, machine: peer.serverName, about: "", inbox };
+    });
     return projectBriefingText({
+      peers,
       projects: this.profiles.filter((profile) => profile.role === "manager" && profile.id !== this.maintainerId).map((profile) => row(profile, `folder ${profile.folder}`)),
       bots: this.profiles.filter((profile) => profile.role === "bot" && !profile.parent).map((profile) => row(profile, firstLine(profile.job ?? ""))),
       maintainer: row(maintainer, "plugin-library extensions and in-chat components only"),
     });
+  }
+
+  /**
+   * Bots on other machines the main bot can hand work to (M5-04c): `remoteMembers` (bots and managers of valid peers),
+   * leaving out a peer's old 2.x main bot, which the importer turned into an ordinary bot named "Main (old)" (D26).
+   */
+  private peerBots(): RemoteMember[] {
+    if (!this.options.remoteCommand || !this.options.remoteMembers) return [];
+    return this.options.remoteMembers().filter((peer) => peer.name !== "Main (old)");
+  }
+
+  /** The file the main bot appends to for a peer's bot; it lives next to the main bot's, never on the peer's machine. */
+  private peerInbox(botId: string): string {
+    const main = this.profiles.find((profile) => profile.role === "main");
+    return join(main?.folder ?? Layout.mainBot(this.options.dataDir), ".bot", "peers", botId, "inbox.md");
   }
 
   /** An awake main bot hears about bots made or removed with its next message (`briefAwakeMainBot`). */
@@ -2012,6 +2040,60 @@ First write a test that shows this, then fix it.`;
       // Handed over first, then emptied: a bot that cannot take it now (read-only, closing) keeps it for later.
       try { bot.relay(text); } catch (error) { this.log(`inbox of ${profile.name} kept: ${(error as Error).message}`); continue; }
       try { writeFileSync(file, ""); } catch (error) { this.log(`inbox of ${profile.name} not emptied: ${(error as Error).message}`); }
+    }
+    this.deliverPeerInboxes();
+  }
+
+  /** Peer bots whose inbox is in flight (committed not settled yet): never sent twice (M5-04c). */
+  private peerSending = new Set<string>();
+  /** Gone peers whose kept inbox was already logged: once is enough. */
+  private peerGoneLogged = new Set<string>();
+
+  /**
+   * M5-04c: what the main bot appended to a peer bot's inbox goes out as `chat.send` with this server as origin. The
+   * file is emptied only after the slot is committed (a crash or a refusal before that keeps the text, so it is sent
+   * again); text added meanwhile stays. No inbox.md is ever written on the peer's machine.
+   */
+  private deliverPeerInboxes() {
+    const remoteCommand = this.options.remoteCommand;
+    if (!remoteCommand) return;
+    const peers = this.peerBots();
+    const listed = new Set(peers.map((peer) => peer.id));
+    for (const peer of peers) {
+      if (this.peerSending.has(peer.id)) continue;
+      const file = this.peerInbox(peer.id);
+      let text: string;
+      try { text = readFileSync(file, "utf8"); } catch { continue; }
+      if (!text.trim()) continue;
+      const who = `${peer.name} on ${peer.serverName}`;
+      const wrapped = `From the main bot on ${this.options.machineName ?? "this machine"}:\n${text}`;
+      if (wrapped.length > MESSAGE_TEXT_LIMIT) { this.log(`inbox of ${who} kept: the text is longer than ${MESSAGE_TEXT_LIMIT} characters`); continue; }
+      let sent: ReturnType<typeof remoteCommand>;
+      try { sent = remoteCommand(`bot:${peer.id}`, { type: "chat.send", botId: peer.id, text: wrapped }); } catch (error) { this.log(`inbox of ${who} kept: ${(error as Error).message}`); continue; }
+      this.peerSending.add(peer.id);
+      sent.committed.then(() => {
+        this.peerSending.delete(peer.id);
+        // Only what was sent goes; a line appended while it was on its way stays for the next turn.
+        let now: string;
+        try { now = readFileSync(file, "utf8"); } catch { return; }
+        try { writeFileSync(file, now.startsWith(text) ? now.slice(text.length) : now); } catch (error) { this.log(`inbox of ${who} not emptied: ${(error as Error).message}`); }
+      }, (error: unknown) => {
+        this.peerSending.delete(peer.id);
+        this.log(`inbox of ${who} kept: ${(error as Error).message}`);
+      });
+      sent.outcome.then((outcome) => { if (!outcome.ok) this.log(`message to ${who} was not delivered: ${outcome.why}`); }, () => undefined);
+    }
+    // A bot that left (its server was removed): its text stays in the file, and the log says so once.
+    const root = join(dirname(this.peerInbox("x")), "..");
+    let folders: string[] = [];
+    try { folders = readdirSync(root); } catch { /* no peers yet */ }
+    for (const id of folders) {
+      if (listed.has(id) || this.peerGoneLogged.has(id)) continue;
+      let text = "";
+      try { text = readFileSync(join(root, id, "inbox.md"), "utf8"); } catch { continue; }
+      if (!text.trim()) continue;
+      this.peerGoneLogged.add(id);
+      this.log(`inbox of ${id} kept: that bot is no longer on a machine of this cluster`);
     }
   }
 

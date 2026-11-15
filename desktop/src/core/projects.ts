@@ -231,18 +231,26 @@ export class MemoryFiles {
 /** A row of the main bot's project list: its name, what goes in brackets, its memory and inbox files, an open question's first line. */
 export interface BriefingRow { name: string; about: string; memory: string; inbox: string; question: string | null }
 
+/** A bot on another machine in the main bot's project list (M5-04c): `about` may be empty (no brackets then). */
+export interface PeerBriefingRow { name: string; machine: string; about: string; inbox: string }
+
 /**
  * `Workspace.projectBriefing`: the project list the main bot gets each time it wakes
  * (and with its routines): each project's and bot's memory and inbox file and a question waiting in
  * its own chat, Maintainer's, and the <open-question> note when any of them asks.
  */
-export function projectBriefingText(input: { projects: BriefingRow[]; bots: BriefingRow[]; maintainer: BriefingRow}): string {
+export function projectBriefingText(input: { projects: BriefingRow[]; bots: BriefingRow[]; maintainer: BriefingRow; peers?: PeerBriefingRow[] }): string {
   const note = (row: BriefingRow) => (row.question !== null ? `; open question in its chat: ${firstLine(row.question)}` : "");
   const line = (row: BriefingRow) => `- ${row.name} (${row.about}): memory file ${row.memory}; inbox file ${row.inbox}${note(row)}`;
   const projectLines = input.projects.length ? input.projects.map(line).join("\n") : "(No projects yet.)";
   const botLines = input.bots.length ? "\n(App: Bots of their own, which you reach the same way.)\n" + input.bots.map(line).join("\n") : "";
+  // M5-04c: with no peers the text is byte for byte the 2.x one.
+  const peerLine = (row: PeerBriefingRow) => `- ${row.name} on ${row.machine}${row.about ? ` (${row.about})` : ""}: inbox file ${row.inbox}`;
+  const peerLines = input.peers?.length
+    ? '\n(App: Bots on other machines. To hand off work, append a line to the end of its inbox file; the app sends it to that machine. To make a bot on another machine, write <new-bot name="…" machine="…">its job</new-bot>.)\n' + input.peers.map(peerLine).join("\n")
+    : "";
   const maintainerLine = line(input.maintainer);
   const asking = [...input.projects, ...input.bots, input.maintainer].some((row) => row.question !== null);
   const cardLine = asking ? '\n(App: A decision marked "open question in its chat" already has its card there. To bring it up, write <open-question from="its name"/> in your reply: the app shows that same card here. Never write a new choices block for it.)' : "";
-  return `(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n${projectLines}${botLines}\n${maintainerLine}${cardLine}`;
+  return `(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n${projectLines}${botLines}${peerLines}\n${maintainerLine}${cardLine}`;
 }
