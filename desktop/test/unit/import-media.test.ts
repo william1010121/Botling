@@ -1,6 +1,7 @@
 // M6-05: attachments in the 2.x import. Fixture folders only (temp copies from make2xFolder); no real 2.x data.
 import { createHash } from "node:crypto";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   lstatSync,
@@ -13,6 +14,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -139,7 +141,7 @@ async function openStack(dataDir = tempDir("botling-import-media-db-")): Promise
 }
 
 function sourceHashOf(src: string): string {
-  return createHash("sha256").update(realpathSync(src)).digest("hex");
+  return createHash("sha256").update(realpathSync.native(src)).digest("hex");
 }
 
 async function runImport(
@@ -505,5 +507,164 @@ describe("the maintainer line is untouched", () => {
     expect(run.plan.entries.filter((e) => e.state === "inside")).toHaveLength(1);
     expect(rows(run.store, "SELECT 1 FROM content")).toEqual([]);
     expect(run.result.bots.find((b) => b.oldId === MAINTAINER_ID)?.lines).toBe(1);
+  });
+});
+
+function caseInsensitive(dir: string): boolean {
+  const probe = join(dir, "CaseProbe");
+  mkdirSync(probe);
+  try { return existsSync(join(dir, "caseprobe")); } finally { rmSync(probe, { recursive: true }); }
+}
+
+describe("M6-05 review: real paths, the planned file only, the protected list", () => {
+  it("12. target inside the source by a case-different spelling is refused", () => {
+    const root = tempDir();
+    if (!caseInsensitive(root)) return;
+    const src = join(root, "V2");
+    mkdirSync(src);
+    make2xFolder(src, { extraMainMessages: [] });
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, { mainId: TARGET_MAIN_ID, maintainerId: TARGET_MAINTAINER_ID, designated: true });
+    const plan = planMedia(data.bots, idMap, src);
+    let threw = false;
+    try { copyMedia(plan, join(root, "v2", "v3"), "h"); } catch { threw = true; }
+    expect(threw).toBe(true);
+    expect(existsSync(join(src, "v3"))).toBe(false);
+  });
+
+  it("13. an attachment URL spelled in another case than the source is still inside", () => {
+    const root = tempDir();
+    if (!caseInsensitive(root)) return;
+    const src = join(root, "V2");
+    mkdirSync(join(src, "attachments"), { recursive: true });
+    writeFileSync(join(src, "attachments", "pic.png"), png("p"));
+    make2xFolder(src, { extraMainMessages: [userLine(1, "x", [fileUrl(join(root, "v2", "attachments", "pic.png"))])] });
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, { mainId: TARGET_MAIN_ID, maintainerId: TARGET_MAINTAINER_ID, designated: true });
+    const plan = planMedia(data.bots, idMap, src);
+    const e = plan.entries.find((x) => x.url.endsWith("pic.png"))!;
+    expect(e.state).toBe("inside");
+  });
+
+  it("14. a file swapped for a link after planning is not copied (TOCTOU)", () => {
+    const root = tempDir();
+    const src = join(root, "v2");
+    mkdirSync(join(src, "attachments"), { recursive: true });
+    writeFileSync(join(src, "attachments", "pic.png"), png("p"));
+    make2xFolder(src, { extraMainMessages: [userLine(1, "x", [fileUrl(join(src, "attachments", "pic.png"))])] });
+    const outside = join(tempDir("botling-out-"), "private.png");
+    writeFileSync(outside, png("S"));
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, { mainId: TARGET_MAIN_ID, maintainerId: TARGET_MAINTAINER_ID, designated: true });
+    const plan = planMedia(data.bots, idMap, src);
+    unlinkSync(join(src, "attachments", "pic.png"));
+    symlinkSync(outside, join(src, "attachments", "pic.png"));
+    const dataDir = tempDir("botling-db-");
+    const copied = copyMedia(plan, dataDir, "h");
+    const url = [...copied.map.entries()].find(([k]) => k.endsWith("pic.png"))?.[1];
+    const leaked = url ? readFileSync(fileURLToPath(url)).equals(png("S")) : false;
+    expect(leaked).toBe(false);
+    expect(copied.failed.map((f) => f.path)).toEqual([join(src, "attachments", "pic.png")]);
+
+    // The same with the folder above swapped for a link (the last part is a plain file there): the inode check holds.
+    unlinkSync(join(src, "attachments", "pic.png"));
+    writeFileSync(join(src, "attachments", "pic.png"), png("p"));
+    const plan3 = planMedia(data.bots, idMap, src);
+    const elsewhere = tempDir("botling-out2-");
+    writeFileSync(join(elsewhere, "pic.png"), png("S"));
+    renameSync(join(src, "attachments"), join(src, "attachments-old"));
+    symlinkSync(elsewhere, join(src, "attachments"));
+    const copied3 = copyMedia(plan3, tempDir("botling-db-"), "h");
+    const url3 = [...copied3.map.entries()].find(([k]) => k.endsWith("pic.png"))?.[1];
+    expect(url3 ? readFileSync(fileURLToPath(url3)).equals(png("S")) : false).toBe(false);
+    expect(copied3.failed).toHaveLength(1);
+  });
+
+  it("15. a file that grew after planning is not read past its planned size", () => {
+    const root = tempDir();
+    const src = join(root, "v2");
+    mkdirSync(join(src, "attachments"), { recursive: true });
+    writeFileSync(join(src, "attachments", "pic.png"), png("p"));
+    make2xFolder(src, { extraMainMessages: [userLine(1, "x", [fileUrl(join(src, "attachments", "pic.png"))])] });
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, { mainId: TARGET_MAIN_ID, maintainerId: TARGET_MAINTAINER_ID, designated: true });
+    const plan = planMedia(data.bots, idMap, src);
+    appendFileSync(join(src, "attachments", "pic.png"), Buffer.alloc(5_000_000, 1));
+    const dataDir = tempDir("botling-db-");
+    const copied = copyMedia(plan, dataDir, "h");
+    expect(copied.failed.length).toBe(1);
+  });
+
+  it("16. an existing <dataDir>/imported link into the source is refused", () => {
+    const root = tempDir();
+    const src = join(root, "v2");
+    make2xFolder(src, { extraMainMessages: [] });
+    const dataDir = tempDir("botling-db-");
+    symlinkSync(src, join(dataDir, "imported"));
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, { mainId: TARGET_MAIN_ID, maintainerId: TARGET_MAINTAINER_ID, designated: true });
+    const plan = planMedia(data.bots, idMap, src);
+    expect(() => copyMedia(plan, dataDir, "h")).toThrow("The import's source and target must be separate folders.");
+    expect(existsSync(join(src, "h"))).toBe(false);
+  });
+
+  it("17. a link under <dataDir>/imported/ to server.db is not indexed; and elsewhere", async () => {
+    const stack = await openStack();
+    const dbFile = join(stack.dataDir, "server.db");
+    mkdirSync(join(stack.dataDir, "imported", "h", "b"), { recursive: true });
+    symlinkSync(dbFile, join(stack.dataDir, "imported", "h", "b", "x.png"));
+    const elsewhere = tempDir("botling-else-");
+    symlinkSync(dbFile, join(elsewhere, "y.png"));
+    const noted = await stack.store.submit((db) => {
+      const a = stack.content.noteLine(db, TARGET_MAIN_ID, { id: "l1", attachments: [{ url: fileUrl(join(stack.dataDir, "imported", "h", "b", "x.png")) }] }, { stream: `bot:${TARGET_MAIN_ID}` as any, seq: 1 });
+      const b = stack.content.noteLine(db, TARGET_MAIN_ID, { id: "l2", attachments: [{ url: fileUrl(join(elsewhere, "y.png")) }] }, { stream: `bot:${TARGET_MAIN_ID}` as any, seq: 2 });
+      return { a: a?.files.length ?? 0, b: b?.files.length ?? 0 };
+    });
+    expect(noted).toEqual({ a: 0, b: 0 });
+  });
+
+  it("18. report paths with control characters are escaped", () => {
+    const plan = { sourceReal: "/s", limit: 10, over: { count: 0, bytes: 0 }, entries: [{ botNewId: "b", url: "file:///x", path: "/x/a\u001b[31mred\nInjected line.png", real: null, size: 0, state: "missing" as const }] };
+    const lines = mediaReport(plan, { map: new Map(), failed: [], count: 0, bytes: 0 }, { home: "/nohome" });
+    // eslint-disable-next-line no-control-regex
+    for (const line of lines) expect(line).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(lines.length).toBe(2);
+  });
+
+  it("19. a second run keeps the copy the first run made (same inode), so a path pin on it stays valid", () => {
+    const root = tempDir();
+    const src = join(root, "v2");
+    mkdirSync(join(src, "attachments"), { recursive: true });
+    writeFileSync(join(src, "attachments", "pic.png"), png("p"));
+    make2xFolder(src, { extraMainMessages: [userLine(1, "x", [fileUrl(join(src, "attachments", "pic.png"))])] });
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, { mainId: TARGET_MAIN_ID, maintainerId: TARGET_MAINTAINER_ID, designated: true });
+    const dataDir = tempDir("botling-db-");
+    const first = copyMedia(planMedia(data.bots, idMap, src), dataDir, "h");
+    const url = [...first.map.entries()].find(([k]) => k.endsWith("pic.png"))![1];
+    const ino = statSync(fileURLToPath(url)).ino;
+    const second = copyMedia(planMedia(data.bots, idMap, src), dataDir, "h");
+    expect(second.map.get([...first.map.keys()].find((k) => k.endsWith("pic.png"))!)).toBe(url);
+    expect(statSync(fileURLToPath(url)).ino).toBe(ino);
+    expect(second.failed).toEqual([]);
+  });
+
+  it("20. a 255-byte file name and odd names copy safely", () => {
+    const root = tempDir();
+    const src = join(root, "v2");
+    mkdirSync(join(src, "attachments"), { recursive: true });
+    const long = "é".repeat(125) + "ab.png"; // 256 bytes? keep <=255
+    const name = Buffer.byteLength(long) > 255 ? "é".repeat(124) + "abc.png" : long;
+    writeFileSync(join(src, "attachments", name), png("l"));
+    writeFileSync(join(src, "attachments", "..png"), png("d"));
+    writeFileSync(join(src, "attachments", "a\\b\u0001.png"), png("c"));
+    make2xFolder(src, { extraMainMessages: [userLine(1, "x", [name, "..png", "a\\b\u0001.png"].map((n) => fileUrl(join(src, "attachments", n))))] });
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, { mainId: TARGET_MAIN_ID, maintainerId: TARGET_MAINTAINER_ID, designated: true });
+    const plan = planMedia(data.bots, idMap, src);
+    const dataDir = tempDir("botling-db-");
+    const copied = copyMedia(plan, dataDir, "h");
+    expect(copied.failed).toEqual([]);
+    for (const v of copied.map.values()) expect(fileURLToPath(v).startsWith(join(realpathSync(dataDir), "imported") ) || fileURLToPath(v).startsWith(join(dataDir, "imported"))).toBe(true);
   });
 });

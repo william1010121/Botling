@@ -6,20 +6,24 @@
 // attachment is referenced in place). Total copied is limited (default 2 GiB); the rest are listed, not copied.
 //
 // The 2.x folder is strictly read only here (the rule of M6-01d's review): sources are opened for reading only
-// (`copyFileSync` opens its source read-only), every decision uses REAL paths (symlinks resolved) and the target is
-// checked against the source by real path before a byte is written; `plugin-secrets.json` is never copied.
+// (`O_RDONLY | O_NOFOLLOW`, and only the device/inode that was planned), every decision uses REAL paths with the on-disk
+// case (symlinks resolved, `realpathSync.native`) and the target is checked against the source by real path before a
+// byte is written; `plugin-secrets.json` is never copied.
 import {
   constants,
-  copyFileSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   closeSync,
+  lstatSync,
   mkdirSync,
   openSync,
+  readSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
+  writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -45,6 +49,9 @@ export interface MediaEntry {
   /** Its real path (symlinks resolved); null when it cannot be resolved to a regular file. */
   real: string | null;
   size: number;
+  /** Device and inode of the planned file: the copy reads exactly this file or nothing (no swap after planning). */
+  dev?: number;
+  ino?: number;
   state: MediaState;
 }
 
@@ -65,6 +72,14 @@ export interface MediaCopyResult {
   bytes: number;
 }
 
+/**
+ * Real path with the on-disk case (`realpathSync.native`): the JS `realpathSync` keeps the case it was given, so on a
+ * case-insensitive volume `/x/V2` and `/x/v2` would compare as different folders although they are one.
+ */
+function realPath(path: string): string {
+  return realpathSync.native(path);
+}
+
 /** The nearest existing ancestor's real path plus the missing tail (the target may not exist yet). */
 function realPathOrNearest(path: string): string {
   const tail: string[] = [];
@@ -76,7 +91,7 @@ function realPathOrNearest(path: string): string {
     current = parent;
   }
   try {
-    return join(realpathSync(current), ...tail);
+    return join(realPath(current), ...tail);
   } catch {
     return join(current, ...tail);
   }
@@ -99,7 +114,7 @@ export function planMedia(
   sourceRoot: string,
   limit: number = MEDIA_IMPORT_LIMIT,
 ): MediaPlan {
-  const sourceReal = realpathSync(sourceRoot);
+  const sourceReal = realPath(sourceRoot);
   const newIdOf = new Map(idMap.map((row) => [row.oldId, row.newId]));
   const entries: MediaEntry[] = [];
   const seen = new Set<string>();
@@ -118,11 +133,17 @@ export function planMedia(
         seen.add(file.url);
         let real: string | null = null;
         let size = 0;
+        let dev: number | undefined;
+        let ino: number | undefined;
         try {
-          real = realpathSync(path);
+          real = realPath(path);
           const stat = statSync(real);
           if (!stat.isFile()) real = null;
-          else size = stat.size;
+          else {
+            size = stat.size;
+            dev = stat.dev;
+            ino = stat.ino;
+          }
         } catch {
           real = null;
         }
@@ -140,7 +161,7 @@ export function planMedia(
           total += size;
           state = "inside";
         }
-        entries.push({ botNewId, url: file.url, path, real, size, state });
+        entries.push({ botNewId, url: file.url, path, real, size, ...(dev !== undefined ? { dev, ino } : {}), state });
       }
     }
   }
@@ -159,6 +180,46 @@ function safeFileName(name: string): string {
   return bytes.length <= 160 ? cleaned : bytes.subarray(0, 160).toString("utf8").replace(/�/g, "");
 }
 
+function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
+  try {
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Copies the planned file to `temp`, reading only the planned file: opened read-only and without following a final
+ * link, then checked to be the same device/inode and size as when it was planned; at most `size` bytes are read.
+ */
+function copyPlanned(entry: MediaEntry, temp: string): void {
+  const src = openSync(entry.real!, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(src);
+    if (!stat.isFile() || stat.size !== entry.size || (entry.dev !== undefined && (stat.dev !== entry.dev || stat.ino !== entry.ino))) {
+      throw new Error("the file changed since the import was planned");
+    }
+    const out = openSync(temp, "wx", 0o600);
+    try {
+      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      let done = 0;
+      while (done < entry.size) {
+        const read = readSync(src, buffer, 0, Math.min(buffer.length, entry.size - done), done);
+        if (read === 0) throw new Error("the file changed while it was copied");
+        let written = 0;
+        while (written < read) written += writeSync(out, buffer, written, read - written);
+        done += read;
+      }
+      if (fstatSync(src).size !== entry.size) throw new Error("the file changed while it was copied");
+      fsyncSync(out);
+    } finally {
+      closeSync(out);
+    }
+  } finally {
+    closeSync(src);
+  }
+}
+
 /**
  * Copies each `inside` file to `<dataDir>/imported/<sourceHash>/<newBotId>/<n>-<file name>` (the source opened read
  * only, copied to a temporary name, then renamed). Refuses a data folder that is, holds or lies inside the 2.x folder
@@ -174,6 +235,13 @@ export function copyMedia(plan: MediaPlan, dataDir: string, sourceHash: string):
   if (todo.length === 0) return result;
 
   const hashDir = join(resolve(dataDir), "imported", safeSegment(sourceHash, "source"));
+  // No link on the way, before and after the folder is made: `<dataDir>/imported/<hash>` must really be there (an old
+  // link could lead into the source or anywhere else).
+  const expected = join(realPathOrNearest(dataDir), "imported", safeSegment(sourceHash, "source"));
+  const linked = (real: string) => real !== expected || isInside(real, plan.sourceReal);
+  if (linked(realPathOrNearest(hashDir))) throw new Error("The import's source and target must be separate folders.");
+  mkdirSync(hashDir, { recursive: true, mode: 0o700 });
+  if (linked(realPath(hashDir))) throw new Error("The import's source and target must be separate folders.");
   const counters = new Map<string, number>();
   for (const entry of todo) {
     const botDir = join(hashDir, safeSegment(entry.botNewId, "bot"));
@@ -183,16 +251,17 @@ export function copyMedia(plan: MediaPlan, dataDir: string, sourceHash: string):
     const temp = `${dest}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
     try {
       mkdirSync(botDir, { recursive: true, mode: 0o700 });
-      // Read-only open of the source; the copy is a separate file in the target.
-      copyFileSync(entry.real!, temp, constants.COPYFILE_EXCL);
-      const copied = statSync(temp);
-      if (copied.size !== entry.size) throw new Error("the file changed while it was copied");
-      const fd = openSync(temp, "r");
-      try {
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
+      if (realPath(botDir) !== join(realPath(hashDir), safeSegment(entry.botNewId, "bot"))) throw new Error("the bot's folder is a link");
+      // A second run (after a crash) keeps the copy the first run made: a line already imported may point at it, and a
+      // `pin: path` on it must keep its inode.
+      const existing = lstatOrNull(dest);
+      if (existing?.isFile() && existing.size === entry.size) {
+        result.map.set(entry.url, pathToFileURL(dest).toString());
+        result.count += 1;
+        result.bytes += entry.size;
+        continue;
       }
+      copyPlanned(entry, temp);
       renameSync(temp, dest);
       result.map.set(entry.url, pathToFileURL(dest).toString());
       result.count += 1;
@@ -228,7 +297,10 @@ function plural(count: number, one: string, many: string): string {
 }
 
 function withHome(path: string, home: string): string {
-  return home && (path === home || path.startsWith(home + sep)) ? `~${path.slice(home.length)}` : path;
+  const shown = home && (path === home || path.startsWith(home + sep)) ? `~${path.slice(home.length)}` : path;
+  // A file name may hold a line break or a terminal escape: the report and the CLI's output show it escaped.
+  // eslint-disable-next-line no-control-regex
+  return shown.replace(/[\u0000-\u001f\u007f]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
 }
 
 /** The report's media lines (M6-05): nothing when the import had no attachments to speak of. */
