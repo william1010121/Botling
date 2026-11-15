@@ -2345,11 +2345,6 @@ First write a test that shows this, then fix it.`;
     });
   }
 
-  /** M5-06c: whether `messageId` is an open `serverAsk` card (only a user answers it: botlingd refuses a peer server's pick). */
-  serverAskOpen(messageId: string): boolean {
-    return this.serverAsks.has(messageId);
-  }
-
   /** A `serverAsk` card that is no longer open and was not picked: ignored (the pick, if any, reaches its own callback). */
   private serverAskClosed(messageId: string): void {
     const pending = this.serverAsks.get(messageId);
@@ -2594,6 +2589,17 @@ First write a test that shows this, then fix it.`;
     if (!ignored.includes(key)) writeSettings(file, { ...raw, ignoredWaiting: [...ignored, key].slice(-200) });
     this.refreshWaiting();
     return this.waiting();
+  }
+
+  /**
+   * peer-answer-guard: whether a peer server's `waiting.ignore{botId, text}` may go ahead here. Yes for a plain waiting
+   * item (no card: `messageId` null) on the list now, never for a question or approval card or a text that is not on
+   * the list. Also yes for a key that is already ignored: the owner checks the scope before the handler runs and again
+   * when it stores the outcome, and by then the handler has set the item aside; a repeat of an ignore is a no-op.
+   */
+  peerMayIgnoreWaiting(botId: string, text: string): boolean {
+    if (readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting).includes(`${botId}-${text}`)) return true;
+    return this.waiting().items.some((item) => item.messageId === null && item.botId === botId && item.text === text);
   }
 
   /**
