@@ -135,12 +135,15 @@ function readPluginRow(tx: Db, plugin: string): PluginRow | null {
   }
 }
 
-/** The names of this server's live `plugin:` rows (to tell `my.plugin.go` of plugin `my.plugin` from plugin `my`). */
-function installedPlugins(tx: Db): string[] {
+/**
+ * The names of this server's live `plugin:` rows (to tell `my.plugin.go` of plugin `my.plugin` from plugin `my`).
+ * null when the query fails: the nested-name guard cannot run, so the caller refuses (L-009, fail closed).
+ */
+function installedPlugins(tx: Db): string[] | null {
   try {
     return tx.prepare("SELECT key FROM rows WHERE stream = ? AND deleted = 0 AND substr(key, 1, 7) = 'plugin:'").all(ownTableStream(tx)).map((row) => String(row.key).slice("plugin:".length));
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -214,7 +217,10 @@ export class SlotEngine {
     if (input.via) {
       // D54 / M5-14a F3: a plugin never sends `plugin.grant`. Kept ahead of the grant lookup on purpose.
       if (input.cmd.type === "plugin.grant") return { reason: "grant", detail: "plugin.grant cannot be sent by a plugin" };
-      const decision = grantAllows(readPluginRow(tx, input.via.plugin), input.via, input.cmd, ownServerName(tx), installedPlugins(tx));
+      const installed = installedPlugins(tx);
+      // L-009: without the list of installed plugins the nested-name guard cannot run, so the grant check refuses.
+      if (installed === null) return { reason: "grant", detail: `plugin ${input.via.plugin} may not do this on ${ownServerName(tx)}` };
+      const decision = grantAllows(readPluginRow(tx, input.via.plugin), input.via, input.cmd, ownServerName(tx), installed);
       if (!decision.ok) return { reason: "grant", detail: decision.detail };
     }
     return null;
