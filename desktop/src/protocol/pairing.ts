@@ -117,6 +117,11 @@ export const AdminOp = z.discriminatedUnion("op", [
   // Fetch grants (§16, M5-06c): the "always" grants in force, and revoking one. Local socket only.
   z.strictObject({ op: z.literal("fetch.grants") }),
   z.strictObject({ op: z.literal("fetch.revoke"), grantId: Id }),
+  // Plugin grants from this machine's CLI (M5-14c, D74 Q-C10). Local socket only. The grant applies at the row's current
+  // codeHash with the plugin's own asks, through the same owner-side apply a local-window `plugin.grant` takes, so every
+  // M5-14a check runs. `none` is on the wire for a later sheet; the CLI sends the other three.
+  z.strictObject({ op: z.literal("plugins.list") }),
+  z.strictObject({ op: z.literal("plugins.grant"), plugin: z.string().min(1).max(200), tier: z.enum(["none", "read", "request", "write"]) }),
 ]);
 export type AdminOp = z.infer<typeof AdminOp>;
 

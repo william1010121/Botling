@@ -52,6 +52,7 @@ import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
 import { PluginRow, RowKey } from "../protocol/table-rows";
 import { openServerStore, type Db, type ServerStore } from "./store";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, readRowBody, SummaryRows, TableFeeds } from "./replica";
+import { PluginAdmin } from "./plugin-admin";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
 import type { Command } from "../contract";
 import type { Target } from "../protocol";
@@ -670,6 +671,8 @@ export class Botlingd {
       let localReads: LocalPeerReads | null = null;
       // M5-06c: the fetch approval card and grants (built with the fetch source below; the admin ops read it).
       let fetchApproval: FetchApproval | null = null;
+      // M5-14c: the CLI's plugin list and grant (a local-window `plugin.grant` through the intent runtime).
+      const pluginAdmin = new PluginAdmin({ runtime, reader: () => hub.reader(), serverId });
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
@@ -699,6 +702,7 @@ export class Botlingd {
               if (!fetchApproval) throw new Error("fetch is not ready yet");
               return op.op === "fetch.grants" ? { rows: fetchApproval.grants() } : { revoked: await fetchApproval.revoke(op.grantId) };
             }
+            if (op.op === "plugins.list" || op.op === "plugins.grant") return pluginAdmin.handle(op);
             if (op.op === "machine.removePreview" || op.op === "machine.remove") return pairing.admin(op, session);
             return op.op.startsWith("join.") || op.op.startsWith("machine.") ? serverJoin.admin(op, session) : pairing.admin(op, session);
           },
