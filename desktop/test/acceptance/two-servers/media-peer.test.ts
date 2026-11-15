@@ -8,7 +8,8 @@
 //     are logged (Range, status), and so is the traffic between A and B (both proxies): the second engine plays from
 //     A's cache, so it causes no second full download across servers.
 //  2. The PDF opens from the chat: page 1 within 2 s, by range requests only (< 1 MiB read before page 1).
-//  3. The big clip plays a moment; B's file is rewritten under its line; a seek to a part not read yet: the line says the
+//  3. The big clip (B's preview of it made first, so the choice is the same every run) plays a moment in its original;
+//     B's file is rewritten under its line; a seek to a part not read yet: the line says the
 //     file changed, and A never serves the new bytes.
 // Measured: poster-first time, first frame, seek times, the page's request log to A, A↔B bytes, PDF page 1 time and
 // bytes. Phone-width screenshots (video playing, PDF page 1) go to V3_SHOT_DIR when set.
@@ -52,17 +53,27 @@ function makeClip(file: string): void {
     "-t", "300", "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "400k", "-maxrate", "500k", "-bufsize", "1M", "-g", "48",
     "-c:a", "aac", "-b:a", "48k", "-pix_fmt", "yuv420p", "-movflags", "+faststart", file]);
 }
-/** A ~70 MiB clip: above the 64 MiB copy limit, so its line pins the path (rewritable under it). */
+/**
+ * A ~70 MiB clip: above the 64 MiB copy limit, so its line pins the path (rewritable under it). It is long and small
+ * (300 s at ~1.9 Mbit/s, constant rate) so that every player rule keeps the original with a wide margin: the 1.5× rule
+ * and WebKit's slow-start switch both compare against 1.5 × its bitrate ≈ 2.9 Mbit/s, far under the tailnet first
+ * guess (20 Mbit/s) and loopback reads. (A 14 Mbit/s clip sat at 21 Mbit/s, above the first guess: whether its line
+ * played the original or switched to B's preview mid-test depended on the measured rate, and on a loaded machine
+ * WebKit — which holds the clock while it buffers — could switch, so the test lost its element and timed out.)
+ */
 function makeBigClip(file: string): void {
-  ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30", "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=44100",
-    "-t", "40", "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "14M", "-maxrate", "14M", "-bufsize", "28M", "-g", "60",
-    "-c:a", "aac", "-b:a", "96k", "-pix_fmt", "yuv420p", "-movflags", "+faststart", file]);
+  ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24", "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=44100",
+    "-t", "300", "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "1850k", "-minrate", "1850k", "-maxrate", "1850k", "-bufsize", "3700k",
+    "-x264-params", "nal-hrd=cbr", "-g", "48", "-c:a", "aac", "-b:a", "64k", "-pix_fmt", "yuv420p", "-movflags", "+faststart", file]);
 }
 
 function withDb<T>(server: TestServer, run: (db: DatabaseSync) => T): T {
   const db = new DatabaseSync(join(server.dataDir, "server.db"), { readOnly: true });
   try { db.exec("PRAGMA busy_timeout = 10000"); return run(db); } finally { db.close(); }
 }
+/** B's `content.variant` entries naming a preview (only the > 50 MB clips get one). */
+const previewsOnB = () => withDb(b, (db) => (db.prepare("SELECT body FROM entries WHERE kind = 'content.variant'").all() as Array<{ body: string }>).filter((row) => (JSON.parse(row.body) as { variant: { name: string } }).variant.name === "preview").length);
+let bigPreviews = 0;
 const rosterIds = (server: TestServer) => withDb(server, (db) => (db.prepare("SELECT id FROM roster").all() as Array<{ id: string }>).map((row) => String(row.id)));
 
 let cluster: TestCluster;
@@ -139,7 +150,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   scriptB?.close();
-  for (const s of [a, b]) if (s) report[`log${s.name}`] = s.log.split("\n").filter((line) => /peer content|content:|media/.test(line)).slice(-30).map((line) => line.replace(/(^|[\s(])\/[^\s)]+/g, "$1<path>"));
+  for (const s of [a, b]) if (s) report[`log${s.name}`] = s.log.split("\n").filter((line) => /peer content|content:|media|session ended|handshake ended/.test(line)).slice(-40).map((line) => line.replace(/(^|[\s(])\/[^\s)]+/g, "$1<path>"));
   await cluster?.cleanup();
   if (media) rmSync(media, { recursive: true, force: true });
   if (bigDir) rmSync(bigDir, { recursive: true, force: true });
@@ -327,7 +338,15 @@ async function run(engine: string, type: BrowserType) {
     const name = `render-${engine}.mp4`;
     await sayOnB(`/say The render ${engine}: ![render-${engine}](${pathToFileURL(bigs[engine]!).href})`);
     await expect.poll(async () => (await mediaOf(page, name))?.state ?? "", { timeout: 120_000 }).toBe("ready");
+    // B's preview of this clip (> 50 MB, so §9A.5 always makes one) exists before it plays: the page's choice is then
+    // made with the preview known, every run, instead of racing B's ffmpeg job (a preview arriving while the original
+    // plays used to retarget the element mid-test, more often in WebKit on a loaded machine).
+    const previews = ++bigPreviews;
+    await until(() => previewsOnB() >= previews, { timeout: 180_000, what: `B's preview of ${name}` });
+    await expect.poll(async () => (await mediaOf(page, name))?.variant ?? "", { timeout: 30_000 }).toBe("original");
     const big = (await mediaOf(page, name))!;
+    result.big = { variant: big.variant, reason: big.reason, badge: big.badge ?? "" };
+    expect(big.reason).toBe("rate");
     const bigPlay = await playTimed(frame, big.src!);
     expect(bigPlay.error, JSON.stringify(bigPlay)).toBeUndefined();
     await expect.poll(async () => (await videoState(frame, big.src!))?.time ?? 0, { timeout: 30_000 }).toBeGreaterThan(0.3);
