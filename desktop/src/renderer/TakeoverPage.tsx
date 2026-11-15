@@ -3,10 +3,14 @@
 // plugin's web part. What the page asks becomes what the chat's own frame does for a web part: a call to the plugin's program part, an ask
 // for your OK on this page's ApprovalSheet (the page cannot allow anything), the pages its component frames are drawn on (main serves them
 // from botling-card://page/), and what the program part pushes (`ui.emit`) reaches the page as `ccb.on`.
+// The takeover slot is the bot-panel plugin's (M7-03a; `panel/takeover`): with that plugin away the panel shows the shell's "unavailable"
+// line and no frame (the page asks nothing of its plugin then), and the frame is back when the plugin is.
 import { useCallback, useEffect, useRef } from "react";
 import type { Client } from "./client";
 import { RequestFailed } from "./client";
 import type { ApprovalAskView, Command, PluginsView } from "../contract";
+import { PANEL_UNAVAILABLE } from "./panel-names";
+import { usePanelState } from "./panel-slot";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 
 export function TakeoverPage({ client, plugin, view, title, botId, wide, plugins, onError, onAsk }: {
@@ -16,6 +20,7 @@ export function TakeoverPage({ client, plugin, view, title, botId, wide, plugins
   onError: (failure: unknown) => void;
   /** An ask for your OK: the app page's ApprovalSheet shows it (the page cannot allow it). */
   onAsk: (view: ApprovalAskView, approve: Command, done?: (allowed: boolean) => void) => void }) {
+  const panel = usePanelState();
   const frame = useRef<HTMLIFrameElement>(null);
   const ready = useRef(false);
   const sent = useRef("");
@@ -105,6 +110,13 @@ export function TakeoverPage({ client, plugin, view, title, botId, wide, plugins
     return () => window.removeEventListener("message", onMessage);
   }, [client, plugin, post, pushPlugin, onError]);
 
+  if (panel.unavailable) {
+    return (
+      <aside className={`takeover-panel${wide ? " wide" : ""}`} aria-label={title} data-plugin={plugin} data-view={view}>
+        <p className="panel-unavailable" role="status">{PANEL_UNAVAILABLE}</p>
+      </aside>
+    );
+  }
   return (
     <aside className={`takeover-panel${wide ? " wide" : ""}`} aria-label={title} data-plugin={plugin} data-view={view}>
       <iframe ref={frame} className="takeover-frame" src={`${CHAT_PAGE}?panel=${encodeURIComponent(`${plugin}/${view}`)}`} sandbox={CHAT_SANDBOX} allow={CHAT_FRAME_ALLOW} title={title} />

@@ -20,12 +20,25 @@ export type FeedViewKey = (typeof FEED_VIEWS)[number][0];
 export const FEED_MENU_SLOTS: readonly string[] = SLOT_ALIASES.filter((alias) => alias.group === "menu").map(legacySlotId);
 
 const ROOT_IDS = new Set(ROOT_SLOTS.map(canonicalSlot));
-/**
- * The places a built-in plugin owns now, so `:shell` does not (M7-02c: `botling.settings` provides `settings/section` and `settings/quick`;
- * M7-06a: `botling.chat` provides `message/context`, `message/preview`, `chat/link`, `composer/plus`, `composer/bar` and `chat/header`).
- */
-export const PLUGIN_OWNED_SLOTS: readonly string[] = ["view/settings.section", "view/quickSettings",
-  "menu/message/context", "menu/message/preview", "menu/chat/link", "menu/composer/plus", "view/composerBar", "view/chatHeader"];
+/** The places a built-in plugin owns now, so `:shell` does not, by 2.x id, one block per plugin. */
+export const PLUGIN_OWNED_SLOTS: readonly string[] = [
+  // botling.settings (M7-02c): settings/section, settings/quick
+  "view/settings.section",
+  "view/quickSettings",
+
+  // botling.chat (M7-06a): message/context, message/preview, chat/link, composer/plus, composer/bar, chat/header
+  "menu/message/context",
+  "menu/message/preview",
+  "menu/chat/link",
+  "menu/composer/plus",
+  "view/composerBar",
+  "view/chatHeader",
+
+  // botling.bot-panel (M7-03a): panel/main, panel/section, panel/takeover
+  "view/rightPanel",
+  "view/rightPanel.section",
+  "view/rightPanel.takeover",
+];
 const OWNED_ELSEWHERE = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 
 /**

@@ -7,7 +7,7 @@ import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "../engine-def
 import { displayName, fitted, headsJSON, resolvePrimary, type Engine, type Heads } from "../heads";
 import { isPlainOK, type BotPrompts } from "../prompts";
 import { codexWorkerDefaults, codexWorkersJSON } from "../settings";
-import type { BotStore, HeadState } from "../store/bot-store";
+import type { BotStore } from "../store/bot-store";
 import { newId, toSwiftDate, type ChatRecord } from "../store/records";
 import type { BotContext } from "./context";
 import type { AgentHead, BotOptions } from "./types";
@@ -37,9 +37,8 @@ export class BotSettings {
   private get managedPending() { return this.host.managedPending; }
   private get shuttingDown() { return this.host.shuttingDown; }
   private get session() { return this.host.session; }
-  private set session(v: HeadState) { this.host.session = v; }
-  private get briefing() { return this.host.briefing; }
-  private set briefing(v: boolean) { this.host.briefing = v; }
+  private sessionResumed(sessionId: string) { this.host.headRun.sessionResumed(sessionId); }
+  private briefingGiven() { this.host.headRun.briefingGiven(); }
 
   private appPrimary(): Engine | null { return this.host.appPrimary(); }
   private updated() { return this.host.updated(); }
@@ -275,7 +274,7 @@ export class BotSettings {
     (this.host as { engine: Engine }).engine = to;
     const saved = to === "agy" ? this.store.loadSettings().agyConversation : null;
     if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) {
-      this.session = {sessionId:saved,started:true}; this.briefing = false;
+      this.sessionResumed(saved);
     } else this.newSession();
     this.store.saveHead(this.session);
     this.saveHeads(to);
@@ -323,7 +322,7 @@ export class BotSettings {
         this.add({ id: newId(), role: "error", text: `Restart after handoff failed: ${(error as Error).message}`, date: toSwiftDate() });
         return;
       }
-      this.briefing = false;
+      this.briefingGiven();
       const briefing = [this.wakeNote(), this.componentNote()].filter(Boolean).join("\n\n");
       const resume = this.prompts().resume;
       const reply = await this.maintenance(this.withSavedMemory(briefing ? `${resume}\n\n${briefing}` : resume), timeout, head);

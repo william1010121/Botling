@@ -79,14 +79,16 @@ export class HeadEvents {
   // Fields of `Bot` it writes (a setter for another owner's field: M7-S54 ... replace these by named transitions):
   private get apiRetries(): number { return this.host.apiRetries; }
   private set apiRetries(v: number) { this.host.apiRetries = v; }
-  private get briefing(): boolean { return this.host.briefing; }
-  private set briefing(v: boolean) { this.host.briefing = v; }
+  // BotHead's transitions (M7-S57):
+  private briefingDue() { this.host.headRun.briefingDue(); }
+  private sessionStarted() { this.host.headRun.sessionStarted(); }
+  private sessionRenamed(sessionId: string) { this.host.headRun.sessionRenamed(sessionId); }
   private get codexRetry(): Bot["codexRetry"] { return this.host.codexRetry; }
   private set codexRetry(v: Bot["codexRetry"]) { this.host.codexRetry = v; }
   private get deferred(): Turn | null { return this.host.deferred; }
   private set deferred(v: Turn | null) { this.host.deferred = v; }
   private get head(): AgentHead | null { return this.host.head; }
-  private set head(v: AgentHead | null) { this.host.head = v; }
+  private detach() { this.host.headRun.detach(); }
   private get ignoreResults(): number { return this.host.ignoreResults; }
   private set ignoreResults(v: number) { this.host.ignoreResults = v; }
   private get managedPending(): boolean { return this.host.managedPending; }
@@ -96,11 +98,10 @@ export class HeadEvents {
   private get pendingEnded(): string[] { return this.host.pendingEnded; }
   private set pendingEnded(v: string[]) { this.host.pendingEnded = v; }
   private get restarting(): AgentHead | null { return this.host.restarting; }
-  private set restarting(v: AgentHead | null) { this.host.restarting = v; }
   private get retryingConnection(): boolean { return this.host.retryingConnection; }
   private set retryingConnection(v: boolean) { this.host.retryingConnection = v; }
   private get turn(): Turn | null { return this.host.turn; }
-  private set turn(v: Turn | null) { this.host.turn = v; }
+  private get turns() { return this.host.turns; }
   // Methods of `Bot`:
   private add(record: ChatRecord) { return this.host.add(record); }
   private addBackgroundTask(id: string, kind: BackgroundKind, title: string) { return this.host.addBackgroundTask(id, kind, title); }
@@ -168,7 +169,7 @@ export class HeadEvents {
     if (this.tidying) turn.onReply = (text) => this.tidyFollowUp?.(text);
     turn.head = head;
     turn.sent = true;
-    this.turn = turn;
+    this.turns.start(turn);
     this.clearIdle();
     if (turn.origin !== "tidy") {
       this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
@@ -221,8 +222,8 @@ export class HeadEvents {
     if (item.kind === "init") {
       if (this.engine === "agy") this.store.saveSetting("agyRecovery", undefined);
       let save = false;
-      if (!this.session.started) { this.session.started = true; save = true; }
-      if (item.sessionId && item.sessionId !== this.session.sessionId && /^[0-9a-f-]{36}$/i.test(item.sessionId)) { this.session.sessionId = item.sessionId; save = true; }
+      if (!this.session.started) { this.sessionStarted(); save = true; }
+      if (item.sessionId && item.sessionId !== this.session.sessionId && /^[0-9a-f-]{36}$/i.test(item.sessionId)) { this.sessionRenamed(item.sessionId); save = true; }
       if (save) { this.store.saveHead(this.session); if (this.engine === "agy") this.store.saveSetting("agyConversation", this.session.sessionId); }
       return;
     }
@@ -251,7 +252,7 @@ export class HeadEvents {
       if (item.state !== "started" || !this.contextSent.delete(item.id) || mid || this.ignoreResults || this.draining) return;
       const waiting = this.turn;
       if (waiting && (!waiting.open || waiting.head !== head || waiting.reply.text || waiting.steps.length || waiting.record)) return;
-      if (waiting) { this.turn = null; this.deferred = waiting; }
+      if (waiting) { this.turns.close(); this.deferred = waiting; }
       this.backgroundTurn(head, "app");
       return;
     }
@@ -449,7 +450,7 @@ export class HeadEvents {
     if (this.unbegun?.turn === turn) this.clearUnbegun();
     if (!turn.open) return;
     turn.open = false;
-    if (this.turn === turn) this.turn = null;
+    if (this.turn === turn) this.turns.close();
     this.clearCodexRetry();
     if (turn.origin === "tidy") {
       if (turn.callIn) this.updated();
@@ -575,7 +576,7 @@ export class HeadEvents {
     const lostToNetwork = !exit.expected && !this.shuttingDown && (this.outage !== null || (exit.code !== 0 && mentionsConnectionError(exit.stderr)));
     const cutOff = lostToNetwork ? this.inHeadSubagents.map((subagent) => subagent.id) : [];
     const lostSession = this.session.started ? this.session.sessionId : null;
-    this.head = null;
+    this.detach();
     this.retryingConnection = false;
     this.codexRetry = null;
     this.clearIdle();
@@ -615,10 +616,10 @@ export class HeadEvents {
     this.log(`head exited (${why})${exit.expected ? "" : " unexpectedly"}`);
     if (exit.expected && this.restarting === head) {
       // Ended to start again before a message: the same session goes on (`--resume`).
-      this.restarting = null;
+      this.host.restartEnded();
     } else if (this.restartRecovery || (exit.expected && this.engine === "agy")) {
       // agy resumes by its actual conversation ID after cancel, sleep or shutdown.
-      this.briefing = !this.session.started;
+      this.briefingDue();
     } else if (exit.expected) {
       // It went to sleep: the next wake is a new session, briefed from memory.md and the chat.
       this.newSession();
@@ -629,7 +630,7 @@ export class HeadEvents {
       if (this.engine === "agy") {
         // Preserve identity across failed resumes, the next explicit message and app restart.
         this.store.saveSetting("agyRecovery", { sessionId: this.session.sessionId, state: "resume-required", reason: exit.stderr.slice(-1000) || why });
-        this.briefing = !this.session.started;
+        this.briefingDue();
       } else this.newSession();
       this.store.saveHead(this.session);
       if (lostToNetwork) {

@@ -266,13 +266,15 @@ export class RendererAdapter {
    */
   private onOwnPlugins(table: { changed: string[]; removed: string[] }): void {
     const keys = [...table.changed, ...table.removed].filter((key) => key.startsWith("plugin:"));
-    if (!keys.length) return;
-    this.pluginsWeb = null;
+    // M7-09c (Q-M7-C1): the first rows of a newly attached server replace the copy without naming what the OLD server had and this one
+    // lacks (`removed` is empty then), so every plugin the window was given from a row is compared with the rows as they are now.
+    if (!keys.length && !this.webKeys.size) return;
     const server = this.options.link.server;
     const rows = server ? this.options.link.table?.(server)?.rows : undefined;
+    const names = new Set([...keys.map((key) => key.slice("plugin:".length)), ...this.webKeys.keys()]);
+    if (keys.length) this.pluginsWeb = null;
     let moved = false;
-    for (const key of keys) {
-      const name = key.slice("plugin:".length);
+    for (const name of names) {
       const served = this.webKeys.get(name);
       if (served === undefined) continue;
       const now = rowWeb(rows, name)?.key ?? null;
@@ -280,6 +282,7 @@ export class RendererAdapter {
       moved = true;
       if (now === null) this.webKeys.delete(name); else this.webKeys.set(name, now);
     }
+    if (moved) this.pluginsWeb = null;
     const full = this.base?.plugins;
     if (moved && this.served && full) this.emitEvent({ type: "plugins.updated", plugins: full });
   }
