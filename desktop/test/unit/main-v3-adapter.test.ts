@@ -322,6 +322,21 @@ describe("a reply with nothing to show (2.x draws no line for it)", () => {
     expect((await r.adapter.snapshot("b1")).chat?.messages).toEqual([]);
   });
 
+  it("a reply the core keeps with no words (only its tool steps) stays where it is when the turn ends with no text", async () => {
+    const r = await rig();
+    await r.store.resync();
+    r.server.append(BOT, "turn.started", { botId: "b1", turnId: "t1", messageId: "r1" });
+    r.server.append(BOT, "message.added", { botId: "b1", message: line("r1", "", { turnId: "t1", state: "streaming" }) });
+    r.server.append(BOT, "message.added", { botId: "b1", message: line("m2", "a later line") });
+    r.server.append(BOT, "turn.finished", { botId: "b1", turnId: "t1", messageId: "r1", status: "done", text: "" });
+    await flush();
+    expect(r.ids()).toEqual(["r1", "m2"]);
+    r.server.append(BOT, "message.updated", { botId: "b1", message: line("r1", "", { turnId: "t1", state: "done", steps: [step("s1")] }) });
+    await flush();
+    expect(r.ids()).toEqual(["r1", "m2"]);
+    expect(r.chat().find((m) => m.id === "r1")).toMatchObject({ state: "done", steps: [{ id: "s1" }] });
+  });
+
   it("a failed turn with no line still shows one (the server's own turn.finished for a turn the core never ended)", async () => {
     const r = await rig();
     await r.store.resync();
