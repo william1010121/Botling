@@ -20,6 +20,7 @@ import type { Key } from "../../../Web/src/locales/en";
 import { Group, Row, Segmented, Toggle, why } from "./settings-controls";
 import { resolveSection, settingsNav, type SettingsSection } from "./settings-pages";
 import { useCoreSettings } from "./settings-slot";
+import { usePluginSettings } from "./settings-feed";
 import { ModelsWorkers } from "./ModelsWorkers";
 import { ChatSummaries, type CodexModelOption } from "./chat-summaries";
 export { BotSettings } from "./BotPanelSettings";
@@ -59,10 +60,11 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  // The core pages are what the settings plugin registered in the `settings/section` slot (settings-slot.ts); when it is not up,
-  // the shell says so instead of showing a blank page.
+  // Every page is what the settings plugin's `settings/section` slot holds: the core pages (settings-slot.ts) and the plugins' own
+  // (settings-feed.ts). When the plugin is not up, the shell says so instead of showing a blank page.
   const core = useCoreSettings();
-  const groups = useMemo(() => settingsNav(plugins, search, core.groups), [search, plugins, core]);
+  const { pages: pluginPages } = usePluginSettings();
+  const groups = useMemo(() => settingsNav(pluginPages, search, core.groups), [search, pluginPages, core]);
   const pages = groups.flatMap((group) => group.pages);
   const wanted = resolveSection(section);
   const current = pages.find((entry) => entry.id === wanted) ?? pages[0];
