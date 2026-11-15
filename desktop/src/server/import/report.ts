@@ -48,6 +48,8 @@ export interface ImportReportData {
     machineKeys: readonly string[];
     layoutKeys: readonly string[];
     oversizedKeys: readonly string[];
+    /** The phone relay line (import/relay.ts), when 2.x had a relay. */
+    relayLine?: string | null;
   };
   approvals: {
     folders: number;
@@ -70,7 +72,11 @@ const AUTHOR_WORDS: Record<PluginRow["author"], string> = {
   import: "from Botling 2",
 };
 
-const TIER_RANK: Record<Tier, number> = {
+/** What the plugin may do at its running hash now: "none" when it holds no grant there (an imported plugin, B-20(a)). */
+type Granted = Tier | "none";
+
+const TIER_RANK: Record<Granted, number> = {
+  none: -1,
   read: 0,
   request: 1,
   write: 2,
@@ -82,8 +88,11 @@ function fmtCount(n: number): string {
   return COUNT_FORMAT.format(n);
 }
 
-function canTierPhrase(tier: Tier): string {
+function canTierPhrase(tier: Granted): string {
   switch (tier) {
+    case "none":
+      // No grant at the running hash refuses every command, even a read-tier helper (grant-check.ts): not "read only".
+      return "nothing allowed yet";
     case "read":
       return "read only";
     case "request":
@@ -116,10 +125,10 @@ function normalizeEntry(entry: PluginReportEntry): {
   name: string;
   author: PluginRow["author"];
   ask: Tier;
-  granted: Tier;
+  granted: Granted;
 } {
   if ("row" in entry) {
-    const granted = (Object.hasOwn(entry.row.grants, entry.row.codeHash) ? entry.row.grants[entry.row.codeHash]?.tier : undefined) ?? "read";
+    const granted = (Object.hasOwn(entry.row.grants, entry.row.codeHash) ? entry.row.grants[entry.row.codeHash]?.tier : undefined) ?? "none";
     return {
       name: cleanName(entry.name),
       author: entry.row.author,
@@ -131,17 +140,18 @@ function normalizeEntry(entry: PluginReportEntry): {
     name: cleanName(entry.name),
     author: entry.author,
     ask: entry.ask,
-    granted: entry.granted ?? "read",
+    granted: entry.granted ?? "none",
   };
 }
 
-function statusPhrase(author: PluginRow["author"], ask: Tier, granted: Tier): string {
+function statusPhrase(author: PluginRow["author"], ask: Tier, granted: Granted): string {
   if (author === "builtin") {
     return canTierPhrase(granted);
   }
   if (TIER_RANK[granted] >= TIER_RANK[ask]) {
     return canTierPhrase(granted);
   }
+  if (granted === "none") return `${canTierPhrase(granted)} · asks to ${askTierPhrase(ask)} · approve in Settings › Plugins`;
   return `${canTierPhrase(granted)} now · asks to ${askTierPhrase(ask)} · approve to restore`;
 }
 
@@ -205,7 +215,7 @@ function formatList(items: readonly string[]): string {
 export function formatImportReport(data: ImportReportData): string {
   const ungranted = countUngrantedPlugins(data.plugins);
   const skippedPart = data.totalSkipped > 0 ? ` (${fmtCount(data.totalSkipped)} skipped)` : "";
-  const pluginsPart = ungranted > 0 ? ` (${fmtCount(ungranted)} read only until you approve them)` : "";
+  const pluginsPart = ungranted > 0 ? ` (${fmtCount(ungranted)} wait for your approval in Settings › Plugins)` : "";
 
   const header = [
     data.dryRun
@@ -247,6 +257,7 @@ export function formatImportReport(data: ImportReportData): string {
   if (data.settings.oversizedKeys.length > 0) {
     settingsLines.push(`  Oversized preferences dropped: ${formatList(data.settings.oversizedKeys)}`);
   }
+  if (data.settings.relayLine) settingsLines.push(`  ${data.settings.relayLine}`);
 
   const approvalsLines = [
     "Approvals",

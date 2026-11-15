@@ -3,7 +3,7 @@ import { ShellOverlay } from "./ShellOverlay";
 // ever sent, never shown back: the page knows whether it is set), its commands, and its panels, which
 // open in a sandboxed frame (panel-page.ts). A small stand-in until 2.0 has 1.x's Settings window.
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
-import { isMaintainer, type BotView, type ComponentInfoView, type PluginStoreEntryView, type PluginStoreView, type PluginView, type PluginsView } from "../contract";
+import { isMaintainer, type BotView, type Command, type ComponentInfoView, type PluginStoreEntryView, type PluginStoreView, type PluginView, type PluginsView } from "../contract";
 import { StoreList, usePluginStore } from "./PluginStore";
 import { say } from "./shortcut-labels";
 import type { Lang } from "../../../Web/src/i18n";
@@ -13,6 +13,7 @@ import { FrameBroker, registerPluginFrame } from "./frame-broker";
 import { frameEvent, type BuiltinCommand, type FrameRequest } from "../../../Web/src/frame-protocol";
 import { panelPage, type PanelFit } from "./panel-page";
 import { pluginFrameHost, type PluginFrameHostDeps } from "./plugin-frame-host";
+import { asksLine, grantTiersFor, windowGrantCommand, WINDOW_GRANT_WORDS, type WindowGrantTier } from "./plugin-grant";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
@@ -87,7 +88,8 @@ export function PluginsPanel({ client, plugins, bots, onPanel, onClose, onAsked,
             onSetting={(key, value) => run(client.request({ type: "plugins.setting", name: plugin.name, key, value }))}
             onSecret={(key, value) => run(client.request({ type: "plugins.secret", name: plugin.name, key, value }))}
             onCommand={(id, title) => { setResult(null); run(client.request({ type: "plugins.command", id }).then((answer) => setResult(`${title}: ${answer.result === null || answer.result === undefined ? "done" : JSON.stringify(answer.result).slice(0, 200)}`))); }}
-            onPanel={(id, title) => onPanel({ plugin: plugin.name, id, title })} />
+            onPanel={(id, title) => onPanel({ plugin: plugin.name, id, title })}
+            onGrant={(cmd) => client.request(cmd).then(() => {})} />
         ))}
       </ul>
       {plugins?.broken.map((entry) => (
@@ -119,6 +121,49 @@ function AskMaintainer({ onSend }: { onSend: (text: string) => void }) {
   );
 }
 
+/**
+ * Botling 3: approve a plugin from the window (an imported 2.x plugin waits at "nothing yet" until the user approves it).
+ * The tiers go up to what it asks at the shown hash; [Allow] sends one `plugin.grant` at that hash with those asks. One tap
+ * sends once (an in-flight guard in a ref, L-007); a refused grant shows why and can be tried again.
+ */
+function GrantChoice({ plugin, onGrant }: { plugin: PluginView; onGrant: (cmd: Extract<Command, { type: "plugin.grant" }>) => Promise<void> }) {
+  const tiers = grantTiersFor(plugin);
+  const current = plugin.grant !== undefined && plugin.grant !== "none" && tiers.includes(plugin.grant) ? plugin.grant : null;
+  const [choice, setChoice] = useState<WindowGrantTier | null>(null);
+  const [sending, setSending] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [allowed, setAllowed] = useState<WindowGrantTier | null>(null);
+  const granting = useRef(false);
+  const shown = choice ?? current;
+  const allow = () => {
+    if (granting.current || shown === null || shown === current) return;
+    const cmd = windowGrantCommand(plugin, shown);
+    if (!cmd) return;
+    granting.current = true;
+    setSending(true);
+    setProblem(null);
+    setAllowed(null);
+    void onGrant(cmd).then(
+      () => { setAllowed(shown); setChoice(null); },
+      (failure) => setProblem(why(failure)),
+    ).finally(() => { granting.current = false; setSending(false); });
+  };
+  return (
+    <div className="plugin-grant" role="group" aria-label={`Allow ${plugin.name} to`}>
+      <div className="plugin-meta plugin-asks">{asksLine(plugin.asks!)}</div>
+      {tiers.map((tier) => (
+        <label key={tier} className="plugin-grant-option">
+          <input type="radio" name={`grant-${plugin.name}`} value={tier} checked={shown === tier} disabled={sending}
+            onChange={() => { setChoice(tier); setAllowed(null); setProblem(null); }} /> {WINDOW_GRANT_WORDS[tier]}
+        </label>
+      ))}
+      <button type="button" className="plugin-grant-allow" disabled={sending || shown === null || shown === current} onClick={allow}>Allow</button>
+      {allowed && <div className="plugin-meta plugin-grant-sent" role="status">Allowed: {WINDOW_GRANT_WORDS[allowed]}</div>}
+      {problem && <div className="plugins-problem" role="alert">{problem}</div>}
+    </div>
+  );
+}
+
 const GRANT_WORDS: Record<NonNullable<PluginView["grant"]>, string> = {
   none: "nothing yet",
   read: "Read only",
@@ -126,7 +171,7 @@ const GRANT_WORDS: Record<NonNullable<PluginView["grant"]>, string> = {
   write: "Change its own data on the server",
 };
 
-function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEnable, onSetting, onSecret, onCommand, onPanel }: {
+function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEnable, onSetting, onSecret, onCommand, onPanel, onGrant }: {
   plugin: PluginView;
   lang: Lang | null;
   /** The same plugin in the public catalog, if it is there. */
@@ -139,6 +184,8 @@ function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEna
   onSecret: (key: string, value: string | null) => void;
   onCommand: (id: string, title: string) => void;
   onPanel: (id: string, title: string) => void;
+  /** Botling 3: sends the window's `plugin.grant` for this plugin (settles when the owner answers). */
+  onGrant: (cmd: Extract<Command, { type: "plugin.grant" }>) => Promise<void>;
 }) {
   const [asking, setAsking] = useState(false);
   const busy = catalog?.status?.kind === "checking" || catalog?.status?.kind === "asking";
@@ -162,6 +209,8 @@ function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEna
           {!plugin.builtIn && <div className="plugin-meta">To change it: botlingd plugins grant {plugin.name} --tier read|request|write</div>}
         </>
       )}
+      {/* A new running hash starts a fresh choice (the old one was for code no longer shown). */}
+      {plugin.asks && grantTiersFor(plugin).length > 0 && <GrantChoice key={plugin.asks.codeHash} plugin={plugin} onGrant={onGrant} />}
       {/* Which copy runs when the library has one too (core/plugins/versions.ts): the library's at the built-in's version or newer. */}
       {plugin.ignoredLibraryVersion !== undefined && <div className="plugin-meta plugin-copy-ignored">Your plugin library's copy ({plugin.ignoredLibraryVersion}) is older and is ignored</div>}
       {plugin.replacesBuiltIn !== undefined && <div className="plugin-meta plugin-copy-library">Your plugin library's copy (in use) replaces the built-in {plugin.replacesBuiltIn}</div>}

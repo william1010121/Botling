@@ -67,6 +67,14 @@ export function menuItems(plugins: PluginsView | null | undefined, menu: PluginM
   });
 }
 
+/**
+ * The address plugins' toolbar buttons see for a tab: the file: URL of the local PDF it shows when its own address is another
+ * one (Botling 3's `botling-content://file/…`, BrowserTabInfo `fileUrl`), else its URL. A click sends this as the tab's URL.
+ */
+export function browserTabAddress(tab: { url: string; fileUrl?: string } | null | undefined): string | null {
+  return tab ? tab.fileUrl ?? tab.url : null;
+}
+
 /** The plugins' buttons for the browser pane's toolbar (menu "browser/tab") on a tab at `url`: those whose `when` matches it. */
 export function browserTabActions(plugins: PluginsView | null | undefined, url: string | null | undefined, lang?: string | null): { command: string; title: string; icon?: string }[] {
   if (!url) return [];

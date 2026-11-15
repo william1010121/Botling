@@ -1,4 +1,5 @@
-// Static serving of the built Botling 3 page under /v3/: CSP parity with botlingd, path traversal checks, and /mobile/ isolation.
+// Static serving of the built Botling 3 page under /v3/: CSP parity with botlingd, path traversal checks, and the 2.x
+// /mobile/ headers when only STATIC_DIR is set.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
@@ -193,12 +194,11 @@ test('GET /v3/../mobile/index.html, encoded traversal, symlink escape, dot files
   }
 });
 
-test('/mobile/ still answers with the exact same headers alongside /v3/', async () => {
+// With STATIC_V3_DIR set, /mobile/ redirects to /v3/ (phone-root.test.ts); without it the 2.x page keeps its headers.
+test('/mobile/ still answers with the exact same headers when STATIC_V3_DIR is unset', async () => {
   const mobileDir = fakeMobileDist();
-  const v3Dir = fakeV3Dist();
   const relay = await startRelay(config({
     staticDir: mobileDir,
-    staticV3Dir: v3Dir,
     publicOrigin: 'https://relay.example',
   }));
   try {

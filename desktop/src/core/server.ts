@@ -47,7 +47,7 @@ import { answerLabel } from "./attachments";
 import {
   ContractError, MESSAGE_TEXT_LIMIT, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type BotView, type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
-  type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView,
+  type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView, type MachinesView, type PluginView,
 } from "../contract";
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
 import { agyWorkerList } from "./agy-usage-db";
@@ -266,6 +266,8 @@ export interface CoreOptions {
   machines?(): Array<{ id: string; name: string }>;
   /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash. */
   pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
+  /** Botling 3's server only: what this plugin asks at its running hash, for the window's approval (`PluginView.asks`). */
+  pluginAsks?: (name: string) => PluginView["asks"] | null;
 }
 
 /** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
@@ -432,6 +434,7 @@ export class Core {
       ...(options.mayRunServerPart ? { mayRunServerPart: options.mayRunServerPart } : {}),
       ...(options.separateHosts !== undefined ? { separateHosts: options.separateHosts } : {}),
       ...(options.pluginGrant ? { pluginGrant: options.pluginGrant } : {}),
+      ...(options.pluginAsks ? { pluginAsks: options.pluginAsks } : {}),
       world: {
         bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
         send: (botId, text, via) => {

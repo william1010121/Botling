@@ -225,18 +225,18 @@ export function activate(ccb) {
     });
     expect(imported.problems).toEqual([]);
     expect(imported.reportText).toContain("sample-plugin");
-    expect(imported.reportText).toContain("approve to restore");
-    expect(imported.reportText).toContain("plugins: 17 (2 read only until you approve them)");
+    expect(imported.reportText).toContain("approve in Settings › Plugins");
+    expect(imported.reportText).toContain("plugins: 17 (2 wait for your approval in Settings › Plugins)");
     expect(existsSync(join(dataDir, "plugin-secrets.json"))).toBe(false);
     expect(imported.reportText).toContain("request-helper");
     // B-20(a): each imported third-party plugin has its own "approve to restore" line; no built-in has one.
     for (const name of [fx.pluginName, reqPluginName]) {
-      expect(reportPluginLine(imported.reportText, name), `${name} report line`).toMatch(/· approve to restore$/);
+      expect(reportPluginLine(imported.reportText, name), `${name} report line`).toMatch(/  nothing allowed yet · .* · approve in Settings › Plugins$/);
     }
     for (const name of EXPECTED_BUILTINS) {
       const line = reportPluginLine(imported.reportText, name);
       expect(line, `${name} report line`).toBeDefined();
-      expect(line, `${name} report line`).not.toContain("approve to restore");
+      expect(line, `${name} report line`).not.toContain("approve");
     }
 
     // The 2.x folder is left exactly as it was (no file added, removed or touched).
