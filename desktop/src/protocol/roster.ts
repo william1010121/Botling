@@ -94,13 +94,63 @@ export const RootStatement = z.strictObject({
   if (root.gen === 1 && root.keep.length > 0) ctx.addIssue({ code: "custom", path: ["keep"], message: "gen 1 keeps nothing" });
   if (new Set(root.keep).size !== root.keep.length) ctx.addIssue({ code: "custom", path: ["keep"], message: "a revocation is kept once" });
 });
-/** `Profile{cluster, member, field, value, hlc}`: a member's display fields (last writer by hlc). */
+export const PROFILE_VALUE_LIMIT = 2_000;
+export const ProfileField = z.enum(["name", "icon", "addresses", "push"]);
+export type ProfileField = z.infer<typeof ProfileField>;
+
+/** Web Push endpoint URL (§18.4): https in production, or loopback http in tests. */
+export const PushEndpoint = z.string().min(1).max(1_900).refine((value) => {
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return false;
+    if (url.protocol === "https:") return Boolean(url.hostname);
+    if (url.protocol === "http:") return url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
+    return false;
+  } catch {
+    return false;
+  }
+}, { message: "must be an https URL (or loopback http URL)" });
+
+/** Web Push device keys (RFC 8291): 65-byte uncompressed P-256 point and 16-byte auth secret, base64url. */
+export const PushKeys = z.strictObject({
+  p256dh: z.string().regex(/^[A-Za-z0-9_-]{87}$/).refine((text) => {
+    const bytes = fromBase64Url(text);
+    return bytes?.length === 65 && bytes[0] === 4;
+  }, { message: "an uncompressed P-256 point" }),
+  auth: z.string().regex(/^[A-Za-z0-9_-]{22}$/).refine((text) => fromBase64Url(text)?.length === 16, { message: "a 16-byte auth secret" }),
+});
+
+/** Web Push subscription stored in `Profile{field: "push"}` (§18.4). */
+export const PushSubscription = z.strictObject({
+  endpoint: PushEndpoint,
+  keys: PushKeys,
+}).refine((sub) => {
+  const json = canonicalJson(sub);
+  return json.length <= PROFILE_VALUE_LIMIT && utf8Bytes(json).length <= PROFILE_VALUE_LIMIT;
+}, { message: `push subscription exceeds ${PROFILE_VALUE_LIMIT} bytes` });
+export type PushSubscription = z.infer<typeof PushSubscription>;
+
+export function encodePushSubscription(sub: PushSubscription): string {
+  return canonicalJson(PushSubscription.parse(sub));
+}
+
+export function parsePushSubscription(value: string): PushSubscription | null {
+  try {
+    const parsed = PushSubscription.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `Profile{cluster, member, field, value, hlc}`: a member's profile fields (last writer by hlc). */
 export const ProfileStatement = z.strictObject({
   type: z.literal("profile"),
   cluster: ClusterId,
   member: MemberId,
-  field: z.enum(["name", "icon", "addresses"]),
-  value: z.string().max(2_000),
+  field: ProfileField,
+  value: z.string().max(PROFILE_VALUE_LIMIT),
   hlc: Hlc,
 });
 

@@ -7,7 +7,9 @@ import { BotId, Command, MessageView, WireError } from "../contract";
 import { ContentRef, ContentVariant, Entry } from "./entries";
 import { ContentTicket, EntryRef, PluginName, VariantName } from "./content-url";
 import { AdminEvent, AdminOp } from "./pairing";
-import { MemberId, PublicKey, RevocationStatement, Signature, SignedStatement, StatementId } from "./roster";
+import { canonicalJson } from "./entries";
+import { utf8Bytes } from "./encoding";
+import { MemberId, PROFILE_VALUE_LIMIT, PublicKey, PushEndpoint, PushKeys, RevocationStatement, Signature, SignedStatement, StatementId } from "./roster";
 import {
   ContentId, Cursor, EntryHash, LocalContentId, Id, LogId, OriginEpoch, Outcome, PROTOCOL_VERSION, Scope, Seq, ServerId, ServerState, Slot, StreamId, Target,
 } from "./ids";
@@ -360,6 +362,17 @@ export const Admin = msg("admin", { req: ReqId, op: AdminOp });
 export const AdminEventMsg = msg("admin.event", { event: AdminEvent });
 
 // ---------------------------------------------------------------------------------------------
+// Web Push subscription (§18.4, M4-22): remote device -> attached server
+
+export const PushSubscribe = msg("push.subscribe", {
+  endpoint: PushEndpoint,
+  keys: PushKeys,
+}).refine((sub) => {
+  const json = canonicalJson({ endpoint: sub.endpoint, keys: sub.keys });
+  return json.length <= PROFILE_VALUE_LIMIT && utf8Bytes(json).length <= PROFILE_VALUE_LIMIT;
+}, { message: `push subscription exceeds ${PROFILE_VALUE_LIMIT} bytes` });
+
+// ---------------------------------------------------------------------------------------------
 // The server's requests of the attached window (local socket; the 2.x core's app ops)
 
 /** String arguments of a `shell.*` request. `shell.browser` carries the bot's browser request as JSON in `request` (≤ 64,000, as the 2.x app op). */
@@ -398,6 +411,7 @@ export const MESSAGES = {
   "pair.hello": PairHello, "pair.added": PairAdded, "pair.ack": PairAck, "pair.declined": PairDeclined,
   "roster.have": RosterHave, "roster.ids": RosterIds, "roster.want": RosterWant, "roster.statements": RosterStatements, "roster.revocations": RosterRevocations,
   admin: Admin, "admin.event": AdminEventMsg,
+  "push.subscribe": PushSubscribe,
   "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.done": ShellDone,
   ping: Ping, bye: Bye,
 } as const;
