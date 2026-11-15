@@ -213,3 +213,64 @@ describe("TurnBook transitions of queue and turn (M7-S54)", () => {
     expect(waiting.open).toBe(false);
   });
 });
+
+describe("TurnBook transitions of the set-aside turn, steered lines and inserts (M7-S55)", () => {
+  it("setAside clears the turn under way and keeps it as the deferred one; takeBack hands it back and clears it", async () => {
+    const r = rig("claude");
+    r.b.send("hello"); await r.sent(0, 1);
+    const book = r.peek.turns; const turn = r.peek.turn;
+    book.setAside(turn);
+    expect(book.turn).toBeNull(); expect(book.deferred).toBe(turn);
+    expect(r.peek.turn).toBeNull(); expect(r.peek.deferred).toBe(turn);
+    expect(book.takeBack()).toBe(turn);
+    expect(book.deferred).toBeNull(); expect(book.takeBack()).toBeNull();
+  });
+
+  it("next begins the set-aside turn again when it is open and its head runs: it is the turn under way, not begun", async () => {
+    const r = rig("claude");
+    r.b.send("hello"); await r.sent(0, 1);
+    const turn = r.peek.turn;
+    r.peek.turns.setAside(turn);
+    r.peek.next();
+    expect(r.peek.turn).toBe(turn); expect(r.peek.deferred).toBeNull();
+    expect(r.peek.unbegun?.turn).toBe(turn);
+    r.peek.clearUnbegun();
+    expect(r.peek.unbegun).toBeNull();
+  });
+
+  it("a stopped set-aside turn still bumps ignoreResults and interrupts the head when next takes it back (order 5)", async () => {
+    const r = rig("claude");
+    r.b.send("hello"); await r.sent(0, 1);
+    const turn = r.peek.turn; let interrupts = 0;
+    r.head(0).onInterrupt = () => { interrupts++; };
+    r.peek.turns.setAside(turn);
+    turn.open = false;
+    r.peek.next();
+    expect(r.peek.deferred).toBeNull(); expect(r.peek.turn).toBeNull();
+    expect(r.peek.ignoreResults).toBe(1); expect(interrupts).toBe(1);
+  });
+
+  it("steered lines and the other head's words: set, settle, and forget when the process is gone", () => {
+    const { peek } = rig("claude"); const book = peek.turns;
+    const [a, b] = [{ id: "a" }, { id: "b" }] as any[];
+    book.steerStarted("s1", a); book.steerStarted("s2", b);
+    expect(peek.steered.get("s1")).toBe(a); expect(peek.steered.size).toBe(2);
+    book.steerSettled("s1"); expect(peek.steered.has("s1")).toBe(false); expect(peek.steered.has("s2")).toBe(true);
+    book.contextWritten("c1"); book.contextWritten("c2");
+    expect(book.contextSettled("c1")).toBe(true); expect(book.contextSettled("c1")).toBe(false);
+    book.forgetSent();
+    expect(peek.steered.size).toBe(0); expect(peek.contextSent.size).toBe(0);
+  });
+
+  it("insertOffered keeps the line offered into an Antigravity turn by id until it is delivered", async () => {
+    const r = rig("agy", { insertOk: true });
+    r.b.send("first"); await r.sent(0, 1);
+    r.b.send("second"); await flush();
+    const offered = r.peek.inserting;
+    expect(offered.size).toBe(1);
+    const [id, turn] = [...offered.entries()][0]!;
+    expect(r.peek.queue).toContain(turn);
+    r.peek.insertDelivered(r.head(0), id);
+    expect(offered.size).toBe(0); expect(r.peek.queue).not.toContain(turn);
+  });
+});

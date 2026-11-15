@@ -126,6 +126,22 @@ export class TurnControl {
   dequeueAt(at: number) { this.queue.splice(at, 1); }
   /** Every waiting message leaves the line (quitting): the caller ends them. */
   dequeueAll(): Turn[] { return this.queue.splice(0); }
+  /** `turn`, under way and not begun by claude, is set aside while claude answers a line first (turn cleared first, as it always was). */
+  setAside(turn: Turn) { this.close(); this.deferred = turn; }
+  /** The turn set aside is no longer set aside (it is the turn under way again, or it ended); hands it back. */
+  takeBack(): Turn | null { const turn = this.deferred; this.deferred = null; return turn; }
+  /** Your line `next` was written to claude's stdin mid-turn (`id`, lower case): if claude begins a turn for it, it is answered there. */
+  steerStarted(id: string, next: Turn) { this.steered.set(id, next); }
+  /** Claude read the line `id` into a turn, or ended it: nothing more comes for it. */
+  steerSettled(id: string) { this.steered.delete(id); }
+  /** The other head's words `id` were written to claude mid-turn. */
+  contextWritten(id: string) { this.contextSent.add(id); }
+  /** Claude read, or began a turn for, the other head's words `id`: false if they were not written mid-turn. */
+  contextSettled(id: string): boolean { return this.contextSent.delete(id); }
+  /** The head's process is gone: what was written to it mid-turn will never be read. */
+  forgetSent() { this.contextSent.clear(); this.steered.clear(); }
+  /** Your line `next` was offered into an Antigravity turn under `id`. */
+  insertOffered(id: string, next: Turn) { this.inserting.set(id, next); }
   /** `turn` is the turn under way (`Bot.begin`'s name is taken by the forwarder to it below). */
   start(turn: Turn) { this.turn = turn; }
   /** No turn is under way. */
@@ -261,7 +277,7 @@ export class TurnControl {
     if (this.turnImages(next).length) return false;
     const id = (next.userId ?? next.messageId).toLowerCase();
     if (!head.offerInsert(id, next.words)) return false;
-    this.inserting.set(id, next);
+    this.insertOffered(id, next);
     return true;
   }
 
@@ -303,7 +319,7 @@ export class TurnControl {
       const id = next.userId ?? next.messageId;
       next.head = head;
       next.sent = true;
-      this.steered.set(id.toLowerCase(), next);
+      this.steerStarted(id.toLowerCase(), next);
       head.send(this.compose(next, false), id, this.turnImages(next), { now: true });
       current.steeredNow = true;
     }
@@ -345,7 +361,7 @@ export class TurnControl {
     const waiting = this.turn;
     // Read into the turn under way after all.
     if (waiting && (!waiting.open || waiting.head !== head || waiting.reply.text || waiting.steps.length || waiting.record || this.deferred)) return;
-    if (waiting) { this.close(); this.deferred = waiting; }
+    if (waiting) this.setAside(waiting);
     const turn = this.newTurn("user", next.words, next.userId);
     turn.head = head;
     turn.sent = true;
@@ -365,8 +381,8 @@ export class TurnControl {
    */
   commandEnded(head: AgentHead, id: string, state: CommandState) {
     // Words steered into a turn, or the other head's words: read in there, nothing more comes for them.
-    this.steered.delete(id);
-    this.contextSent.delete(id);
+    this.steerSettled(id);
+    this.contextSettled(id);
     // The turn set aside and back as the turn under way, not begun: its end after the result means claude took its words
     // into the turn that just ended (2026-11-09: it waited for a turn that never came, hours of "Thinking").
     const unbegun = this.unbegun;
@@ -378,7 +394,7 @@ export class TurnControl {
     }
     const deferred = this.deferred;
     if (!deferred || deferred.head !== head || turnCommandId(deferred) !== id) return;
-    this.deferred = null;
+    this.takeBack();
     // Stopped by you meanwhile: closed already, and claude has nothing of it left to interrupt.
     if (!deferred.open) return;
     const status: Status = state === "completed" ? "done" : "stopped";
@@ -424,7 +440,7 @@ export class TurnControl {
     const deferred = this.deferred;
     if (deferred) {
       // It was sent already: claude begins it now.
-      this.deferred = null;
+      this.takeBack();
       if (deferred.open && deferred.head === this.head && this.head?.running) { this.start(deferred); this.awaitBegin(deferred, this.head); return; }
       // Stopped meanwhile: what claude does with it belongs to nobody.
       if (!deferred.open && deferred.head === this.head && this.head?.running) { this.ignoreResults += 1; this.head.interrupt(); }

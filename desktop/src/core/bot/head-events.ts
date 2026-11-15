@@ -57,7 +57,6 @@ export class HeadEvents {
   private get session(): HeadState { return this.host.session; }
   private get approvals(): Bot["approvals"] { return this.host.approvals; }
   private get claudeMidTurn(): WeakSet<AgentHead> { return this.host.claudeMidTurn; }
-  private get contextSent(): Set<string> { return this.host.contextSent; }
   private get cutOffByNetwork(): Set<string> { return this.host.cutOffByNetwork; }
   private get draining(): Bot["draining"] { return this.host.draining; }
   private get ending(): WeakSet<AgentHead> { return this.host.ending; }
@@ -83,8 +82,6 @@ export class HeadEvents {
   private set briefing(v: boolean) { this.host.briefing = v; }
   private get codexRetry(): Bot["codexRetry"] { return this.host.codexRetry; }
   private set codexRetry(v: Bot["codexRetry"]) { this.host.codexRetry = v; }
-  private get deferred(): Turn | null { return this.host.deferred; }
-  private set deferred(v: Turn | null) { this.host.deferred = v; }
   private get head(): AgentHead | null { return this.host.head; }
   private set head(v: AgentHead | null) { this.host.head = v; }
   private get ignoreResults(): number { return this.host.ignoreResults; }
@@ -242,16 +239,16 @@ export class HeadEvents {
       if (item.state === "started" && this.unbegun?.head === head) this.clearUnbegun();
       const steered = this.steered.get(item.id);
       if (steered) {
-        if (item.state === "started") { this.steered.delete(item.id); if (!mid) this.steeredStarted(head, steered); }
+        if (item.state === "started") { this.turns.steerSettled(item.id); if (!mid) this.steeredStarted(head, steered); }
         return;
       }
       // The other head's words, read too late for the turn they were meant for: claude answers them
       // in a turn of its own, the app's (its words show; <no-reply/> shows nothing). A message of
       // ours sent after them but not begun yet waits for that turn to end.
-      if (item.state !== "started" || !this.contextSent.delete(item.id) || mid || this.ignoreResults || this.draining) return;
+      if (item.state !== "started" || !this.turns.contextSettled(item.id) || mid || this.ignoreResults || this.draining) return;
       const waiting = this.turn;
       if (waiting && (!waiting.open || waiting.head !== head || waiting.reply.text || waiting.steps.length || waiting.record)) return;
-      if (waiting) { this.turns.close(); this.deferred = waiting; }
+      if (waiting) this.turns.setAside(waiting);
       this.backgroundTurn(head, "app");
       return;
     }
@@ -582,8 +579,7 @@ export class HeadEvents {
     this.ignoreResults = 0;
     // Paused work went with the process (1.x drops `pausedWork` when the process exits).
     this.paused = null;
-    this.contextSent.clear();
-    this.steered.clear();
+    this.turns.forgetSent();
     for (const [id, approval] of [...this.approvals]) if (approval.head === head) this.settle(id, NO_LONGER_NEEDED, false);
     // Its subagents (and Codex's workers) run inside its process: they went with it.
     this.managedPending = false;
@@ -607,8 +603,7 @@ export class HeadEvents {
       this.finishTurn(turn, "failed", `The agent exited (${why}) without finishing. ${exit.stderr.slice(-1_000)}`.trim());
       failedTurn = true;
     }
-    const deferred = this.deferred;
-    this.deferred = null;
+    const deferred = this.turns.takeBack();
     if (deferred?.open) this.finishTurn(deferred, "failed", `The agent exited (${why}) before it began this message.`);
     // What it left running in the background went with its process.
     this.stopTasks();

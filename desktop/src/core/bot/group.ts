@@ -54,7 +54,7 @@ export class BotGroup {
   private get draining() { return this.host.draining; }
   private get ignoreResults() { return this.host.ignoreResults; }
   private get ending() { return this.host.ending; }
-  private get contextSent() { return this.host.contextSent; }
+  private get turns() { return this.host.turns; }
   private get cardPicks() { return this.host.cardPicks; }
   private refuseIfClosed() { return this.host.refuseIfClosed(); }
   private add(record: ChatRecord, opts?: { archive?: boolean }) { return this.host.add(record, opts); }
@@ -324,7 +324,7 @@ export class BotGroup {
       if (!head.steer(note)) return false;
     } else {
       const id = randomUUID();
-      this.contextSent.add(id);
+      this.turns.contextWritten(id);
       head.send(note, id);
     }
     for (const id of about) turn.peer.add(id);
