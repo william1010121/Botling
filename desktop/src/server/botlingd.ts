@@ -39,6 +39,7 @@ import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
 import { BotExports } from "./exports";
+import type { CallInHost } from "./callin";
 import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
@@ -520,6 +521,7 @@ export class Botlingd {
       const pendingBotWrites = new Map<string, { botId: string; at: number }>();
       let syncPlugins: (force?: boolean) => Promise<void> = async () => undefined;
       let originRef: ServerOrigin | null = null;
+      let hostCallIns: CallInHost | null = null;
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
@@ -548,6 +550,8 @@ export class Botlingd {
         // M5-04c: the origin is built below, after the core; a call before then is "not ready".
         remoteCommand: (target, cmd) => remoteCommandVia(originRef, target, cmd),
         machineName: () => ownMachineName(roster, serverId, SERVER_NAME),
+        // M5-02c: the host's side of call-ins (the runtime below owns it; until it exists a call-in is "not reachable").
+        remoteTurn: (call) => hostCallIns ? hostCallIns.remoteTurn(call) : Promise.resolve({ kind: "failed", why: "its machine cannot take call-ins yet" }),
         fetch: createAppFetch({ roster, requester: () => fetchRequesterRef }),
         pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
         botStore: (directory) => {
@@ -709,6 +713,16 @@ export class Botlingd {
       roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
       // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
       runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
+      // M5-02c: the host's side asks through the same origin, and hears how each ask ended (a refused ask ends its wait at once).
+      hostCallIns = runtime.callHost;
+      // M5-03a (D51): a reply after the host gave up is appended marked late and wakes nobody.
+      runtime.callHost.bindLate((late) => core.conversations.postLate(late));
+      runtime.callHost.attach({
+        self: roster.memberId, ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd),
+        onOutcome: (listener) => serverOrigin.on(listener), outcome: (slot) => serverOrigin.outcome(slot),
+        // The peer sessions' own bookkeeping (live / stale since the last frame / gone): the wait is a liveness wait.
+        peerState: (server) => { const state = peers.states().find((entry) => entry.member === server); return state ? { state: state.state, since: state.since } : null; },
+      });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);
@@ -859,6 +873,13 @@ export class Botlingd {
         onAudit: () => feeds.notify(feeds.ownStream),
         log,
       });
+      // Staging folders of a fetch that a killed process never finished are removed now, before any session exists.
+      try {
+        const folders: string[] = [];
+        for (const botId of engine.bots()) { const folder = engine.botView(botId)?.folder; if (folder) folders.push(folder); }
+        const removed = fetchRequester.removeLeftoverStaging(folders);
+        if (removed > 0) log(`fetch: removed ${removed} unfinished staging folder(s) left by an earlier run`);
+      } catch (error) { log(`fetch: leftover staging cleanup failed: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 200))}`); }
       fetchRequesterRef = fetchRequester;
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
       const peers: PeerSessions = new PeerSessions({

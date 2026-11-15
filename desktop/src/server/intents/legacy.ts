@@ -8,6 +8,9 @@
 //                              hold → dropped (a legacy copy is never kept ahead: the handler must not run before its
 //                                     predecessors; the sender's re-send brings it again)
 //                              ready, cancelled → the slot engine stores `cmd.cancelled`
+//                              ready, but the scope / origin / grant check or the target check (M5-04d U1: a command
+//                                for another bot's stream, a server command on a bot's) would refuse it → the slot
+//                                engine stores that refusal; the slot is not marked begun and the handler never runs
 //                              ready → mark the slot begun in the same transaction (SlotEngine.begin: from now on a
 //                                      cancel is too late and gets this slot's real outcome, D59), run the handler once
 //                                      (a second copy meanwhile waits for the same run), keep
@@ -18,11 +21,21 @@
 // again. commands.ts says, per command, what that second run does.
 import type { Command } from "../../contract";
 import { ContractError } from "../../contract";
-import { queueKey, type CmdBody, type Scope } from "../../protocol";
-import { admit, cmdHash, SlotRefusal, type ApplyContext, type BegunEnd, type ReceiveStatus, type ReplySink, type SlotEngine, type SlotLog } from "../slots";
+import { queueKey, type CmdBody } from "../../protocol";
+import { admit, checkTarget, cmdHash, SlotRefusal, statedScope, type ApplyContext, type BegunEnd, type ReceiveOptions, type ReceiveStatus, type SlotEngine, type SlotLog } from "../slots";
 import type { TxScope, TurnEngine } from "../effects";
 
 type Ran = { ok: true; result: unknown } | { ok: false; detail: string };
+
+/** `checkTarget` as a yes / no: false when the command is not for the stream its slot names (a throw also counts as no, L-009). */
+function belongsToTarget(body: CmdBody): boolean {
+  try {
+    checkTarget(body.slot.target, body.cmd);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const keyOf = (slot: { origin: string; originEpoch: string; target: string; n: number }, hash: string) => `${queueKey(slot)}#${slot.n}#${hash}`;
 
@@ -41,9 +54,9 @@ export class LegacyApply {
     private readonly holdMs = 50,
   ) {}
 
-  async receive(body: CmdBody, options: { scope?: Scope; reply?: ReplySink } = {}): Promise<ReceiveStatus> {
-    const scope = options.scope ?? body.scope;
-    if (!scope) throw new TypeError("legacy: a command needs the scope its accepting server stated");
+  async receive(body: CmdBody, options: ReceiveOptions): Promise<ReceiveStatus> {
+    // The caller's stated scope, never the frame's own `body.scope` (M5-19 I1); a missing one throws before anything is stored.
+    const scope = statedScope(options, "legacy");
     const hash = cmdHash({ cmd: body.cmd, scope, basis: body.basis, via: body.via });
     // Set inside the admission transaction when the slot is marked begun (SlotEngine.begin).
     const begun: { end?: (how: BegunEnd) => void } = {};
@@ -52,7 +65,10 @@ export class LegacyApply {
       admission = await this.scope.submit((tx) => {
         const admitted = admit(tx, this.log, { slot: body.slot, floor: body.floor, inc: body.inc, cmd: body.cmd, scope, basis: body.basis, ...(body.via ? { via: body.via } : {}), hash });
         // A command the owner refuses (a device without the scope, or no longer valid; a plugin's, N1) never runs its handler (M2).
-        const denied = admitted.kind === "ready" && !admitted.cancelled && this.slots().denies(tx, { slot: body.slot, cmd: body.cmd, scope, via: body.via }) !== null;
+        // Nor does one for a target it does not belong to (U1): that check used to come after the handler. Same order as the
+        // slot engine's decision (scope first, then target); the engine then stores the refusal.
+        const denied = admitted.kind === "ready" && !admitted.cancelled
+          && (this.slots().denies(tx, { slot: body.slot, cmd: body.cmd, scope, via: body.via }) !== null || !belongsToTarget(body));
         // D59: marked begun in the transaction that found no cancel, so a cancel after this is too late, never noted.
         if (admitted.kind === "ready" && !admitted.cancelled && !denied) begun.end = this.slots().begin(body.slot);
         return { ...admitted, denied };
