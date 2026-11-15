@@ -57,14 +57,19 @@ export function slashMenu(plugins: PluginsView | null | undefined): SlashCommand
   return out;
 }
 
+export type MenuRow = NonNullable<PluginsView["menus"]>[number];
+export type MenuItem = { command: string; title: string; icon?: string; quick?: boolean; alt?: string; hint?: string };
+
+/** One menu row as the menu draws it: the words a plugin gave for the page's language (`locales`) replace its own. */
+export function menuRow(item: MenuRow, lang?: string | null): MenuItem {
+  const said = (lang ? item.locales?.[lang] : undefined) ?? {};
+  const [title, alt, hint] = [said.title ?? item.title, said.alt ?? item.alt, said.hint ?? item.hint];
+  return { command: item.command, title, ...(item.icon ? { icon: item.icon } : {}), ...(item.quick ? { quick: true } : {}), ...(alt ? { alt } : {}), ...(hint ? { hint } : {}) };
+}
+
 /** The commands plugins put in one of the app's menus, in order. */
-export function menuItems(plugins: PluginsView | null | undefined, menu: PluginMenu, lang?: string | null): { command: string; title: string; icon?: string; quick?: boolean; alt?: string; hint?: string }[] {
-  return (plugins?.menus ?? []).filter((item) => item.menu === menu).map((item) => {
-    // The words a plugin gave for the page's language (`locales`) replace its own.
-    const said = (lang ? item.locales?.[lang] : undefined) ?? {};
-    const [title, alt, hint] = [said.title ?? item.title, said.alt ?? item.alt, said.hint ?? item.hint];
-    return { command: item.command, title, ...(item.icon ? { icon: item.icon } : {}), ...(item.quick ? { quick: true } : {}), ...(alt ? { alt } : {}), ...(hint ? { hint } : {}) };
-  });
+export function menuItems(plugins: PluginsView | null | undefined, menu: PluginMenu, lang?: string | null): MenuItem[] {
+  return (plugins?.menus ?? []).filter((item) => item.menu === menu).map((item) => menuRow(item, lang));
 }
 
 /**
