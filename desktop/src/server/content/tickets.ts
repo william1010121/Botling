@@ -26,17 +26,28 @@ const bindingKey = (b: TicketBinding) => `${b.deviceId}\n${b.owner}\n${b.id}\n${
 const TIER_RANK: Record<Tier, number> = { read: 1, request: 2, write: 3 };
 
 /**
- * Checks that `plugin` has a live `plugin:<name>` row on `owner` (`srv:<owner>`) with a grant ≥ `read` at its
- * current `codeHash` (§9A.7, D54, M5-17). Missing, tombstoned, malformed, or ungranted rows are refused.
+ * Checks that `plugin` may read `owner`'s content (§9A.7, C7, D54, M5-17). The running code is this server's own copy
+ * (`srv:<self>`, the one a front end loads, D52): its `codeHash` is the running hash. `srv:<owner>` must hold a grant
+ * ≥ `read` for that same hash (for the server's own content the owner is `self`). A missing, tombstoned, malformed or
+ * ungranted row, and any read error, is refused (fail closed).
  */
-export function hasPluginReadGrant(db: Db, owner: string, plugin: string): boolean {
-  const raw = readRowBody(db, `srv:${owner}`, `plugin:${plugin}`);
-  if (!raw) return false;
-  const parsed = PluginRow.safeParse(raw);
-  if (!parsed.success) return false;
-  const grant = parsed.data.grants[parsed.data.codeHash];
-  if (!grant) return false;
-  return TIER_RANK[grant.tier] >= TIER_RANK.read;
+export function hasPluginReadGrant(db: Db, self: string, owner: string, plugin: string): boolean {
+  try {
+    const key = `plugin:${plugin}`;
+    const running = PluginRow.safeParse(readRowBody(db, `srv:${self}`, key));
+    if (!running.success) return false;
+    let granting = running.data;
+    if (owner !== self) {
+      const theirs = PluginRow.safeParse(readRowBody(db, `srv:${owner}`, key));
+      if (!theirs.success) return false;
+      granting = theirs.data;
+    }
+    const grant = granting.grants[running.data.codeHash];
+    if (!grant) return false;
+    return TIER_RANK[grant.tier] >= TIER_RANK.read;
+  } catch {
+    return false;
+  }
 }
 
 export class ContentTickets {

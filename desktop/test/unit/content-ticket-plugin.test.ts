@@ -381,6 +381,8 @@ describe("M5-17: /v3/c/ plugin ticket enforcement", () => {
     await s.store.submit((tx) => {
       ensureStream(tx, `srv:${PEER_OWNER}` as StreamId);
       putRow(tx, `srv:${PEER_OWNER}`, "plugin:plugin-a", makePluginRow(HASH_1, HASH_1, "read"));
+      // M5-17 follow-up (M1): the running code is this server's own copy, at the hash the owner granted.
+      putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_1, HASH_1, "read"));
     });
 
     const reader = s.store.openReader();
@@ -442,5 +444,96 @@ describe("M5-17: /v3/c/ plugin ticket enforcement", () => {
 
     const shellTicket = noReaderTickets.issue({ deviceId: DEVICE_A, owner: s.owner, id: s.id, entry: s.entry }).ticket;
     expect((await fetch(noReaderOrigin + contentUrlPath({ owner: s.owner, id: s.id, variant: "original", entry: s.entry, ticket: shellTicket }))).status).toBe(200);
+  });
+
+  async function peerSetup(s: Awaited<ReturnType<typeof setupServer>>, peerOwner: string) {
+    const reader = s.store.openReader();
+    cleanups.push(() => reader.close());
+    const remote = new RemoteContent({
+      service: s.service,
+      tickets: new ContentTickets(),
+      roster: { device: (m) => (m === DEVICE_A ? { keys: { sign: "s", dh: "d" }, scope: ["read"] } : null) },
+      reader: () => reader,
+      peer: {
+        ownerOfBot: () => null,
+        locate: async () => null,
+        check: async () => "ok" as const,
+        respond: async () => new Response("peer-bytes", { status: 200 }),
+      },
+    });
+    const origin = await listen(remote);
+    const ask = (req: string) => remote.ticket(DEVICE_A, { t: "content.ticket", req, owner: peerOwner, id: s.id, entry: s.entry, plugin: "plugin-a" });
+    const urlFor = (ticket: string) => origin + contentUrlPath({ owner: peerOwner, id: s.id, variant: "original", entry: s.entry, ticket, plugin: "plugin-a" });
+    return { ask, urlFor };
+  }
+
+  it("M1: peer-owned content needs the owner's grant for the RUNNING hash (this server's own row), not the owner's own hash", async () => {
+    const s = await setupServer();
+    const PEER_OWNER = "peer-b";
+    await s.store.submit((tx) => {
+      ensureStream(tx, `srv:${PEER_OWNER}` as StreamId);
+      putRow(tx, `srv:${PEER_OWNER}`, "plugin:plugin-a", makePluginRow(HASH_1, HASH_1, "read"));
+      putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_1, HASH_1, "read"));
+    });
+    const { ask, urlFor } = await peerSetup(s, PEER_OWNER);
+    const granted = await ask("m1a");
+    expect(granted.t).toBe("content.granted");
+    if (granted.t !== "content.granted") throw new Error("expected granted");
+    expect((await fetch(urlFor(granted.ticket))).status).toBe(200);
+
+    // A bot rewrites plugin A on this server: new running hash, no grant. The peer still holds the old granted hash.
+    await s.store.submit((tx) => {
+      putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_2, null));
+    });
+    const refused = await fetch(urlFor(granted.ticket));
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("x-botling-content")).toBe("refused; reason=plugin");
+    expect(await ask("m1b")).toMatchObject({ t: "content.gone", reason: "denied" });
+
+    // This server's own content is refused as well (the two paths agree).
+    expect(await s.remote.ticket(DEVICE_A, { t: "content.ticket", req: "m1c", owner: s.owner, id: s.id, entry: s.entry, plugin: "plugin-a" }))
+      .toMatchObject({ t: "content.gone", reason: "denied" });
+
+    // The owner grants the new running hash too: serves again.
+    await s.store.submit((tx) => {
+      putRow(tx, `srv:${PEER_OWNER}`, "plugin:plugin-a", { ...makePluginRow(HASH_1, HASH_1, "read"), grants: { ...makePluginRow(HASH_1, HASH_1).grants, ...makePluginRow(HASH_2, HASH_2).grants } });
+    });
+    expect((await fetch(urlFor(granted.ticket))).status).toBe(200);
+
+    // No own row at all (plugin not installed here): refused.
+    await s.store.submit((tx) => { deleteRow(tx, ownTableStream(tx), "plugin:plugin-a", Date.now()); });
+    expect((await fetch(urlFor(granted.ticket))).status).toBe(403);
+  });
+
+  it("L1: a corrupt or unreadable plugin row answers denied / 403, not offline / 500", async () => {
+    const s = await setupServer();
+    await s.store.submit((tx) => {
+      putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_1, HASH_1, "read"));
+    });
+    const granted = await s.remote.ticket(DEVICE_A, { t: "content.ticket", req: "l1a", owner: s.owner, id: s.id, entry: s.entry, plugin: "plugin-a" });
+    expect(granted.t).toBe("content.granted");
+    if (granted.t !== "content.granted") throw new Error("expected granted");
+    const url = s.origin + contentUrlPath({ owner: s.owner, id: s.id, variant: "original", entry: s.entry, ticket: granted.ticket, plugin: "plugin-a" });
+    expect((await fetch(url)).status).toBe(200);
+
+    // The stored body is not JSON.
+    await s.store.submit((tx) => {
+      tx.prepare("UPDATE rows SET body = ? WHERE stream = ? AND key = ?").run("{", ownTableStream(tx), "plugin:plugin-a");
+    });
+    const res = await fetch(url);
+    expect(res.status).toBe(403);
+    expect(res.headers.get("x-botling-content")).toBe("refused; reason=plugin");
+    await expect(s.remote.ticket(DEVICE_A, { t: "content.ticket", req: "l1b", owner: s.owner, id: s.id, entry: s.entry, plugin: "plugin-a" }))
+      .resolves.toMatchObject({ t: "content.gone", reason: "denied" });
+
+    // The reader itself throws.
+    const throwing = new RemoteContent({
+      service: s.service,
+      tickets: new ContentTickets(),
+      roster: { device: (m) => (m === DEVICE_A ? { keys: { sign: "s", dh: "d" }, scope: ["read"] } : null) },
+      reader: () => { throw new Error("db closed"); },
+    });
+    await expect(throwing.ticket(DEVICE_A, { t: "content.ticket", req: "l1c", owner: s.owner, id: s.id, entry: s.entry, plugin: "plugin-a" }))
+      .resolves.toMatchObject({ t: "content.gone", reason: "denied" });
   });
 });

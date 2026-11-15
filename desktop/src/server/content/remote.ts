@@ -52,8 +52,12 @@ export class RemoteContent {
   }
 
   private pluginGranted(owner: string, plugin: string): boolean {
-    if (!this.options.reader) return false;
-    return hasPluginReadGrant(this.options.reader(), owner, plugin);
+    try {
+      if (!this.options.reader) return false;
+      return hasPluginReadGrant(this.options.reader(), this.options.service.serverId, owner, plugin);
+    } catch {
+      return false;
+    }
   }
 
   /** `content.locate` from a device's session (its validity was checked for the frame). */
