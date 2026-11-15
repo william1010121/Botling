@@ -15,7 +15,7 @@ const HOST = "6A0B0000-0000-4000-8000-000000000003";
 const CALL = "6A0B0000-0000-4000-8000-0000000000C1";
 const ORIGIN = "srv-host";
 const HOST_TARGET = `bot:${HOST}` as Target;
-const FAMILY = "👨‍👩‍👧‍👦"; // one character, 11 UTF-16 units (stripControls drops its joiners, so the run tests use WIDE)
+const FAMILY = "👨‍👩‍👧‍👦"; // one character, 11 UTF-16 units (the fence-run tests use WIDE: one code point per character keeps the counts simple)
 const WIDE = "😀"; // one character, 2 UTF-16 units
 const LONE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 

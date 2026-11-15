@@ -122,9 +122,15 @@ export const PEER_MESSAGE_BYTES = 240 * 1024;
 /**
  * Text from a peer as plain text in a markdown chat line (Web/src/markdown.ts renders notices): the punctuation that
  * makes links, autolinks, images, code or emphasis is backslash-escaped, which markdown shows as the character itself.
+ * A piece can also open the line (`# Big did not make the bot`), so what is special only at the start of a line is
+ * escaped at the start of the piece: `#` (heading), `-` and `+` (list, `---` rule) and `1.` (ordered list); `>` and
+ * the fence characters are in the set above. Leading spaces go (four of them would make a code block).
  */
 function plainMarkdown(text: string): string {
-  return text.replace(/[\\`*_[\]()<>!|~]/g, "\\$&");
+  return text
+    .replace(/^\s+/, "")
+    .replace(/[\\`*_[\]()<>!|~]/g, "\\$&")
+    .replace(/^(?:([#+-])|(\d{1,9})\.)/, (_all, mark: string | undefined, digits: string | undefined) => (mark ? `\\${mark}` : `${digits}\\.`));
 }
 
 /** Text from a peer or a model as one clean line for a note, a log or a report: control characters gone, runs of spaces one, at most 300 characters, no closing full stop (the note adds its own). */

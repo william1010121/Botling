@@ -12,6 +12,7 @@
 //   so no absolute path can get in. A failure's `detail` is never put in (it may name a path of this machine).
 // - Fail closed: a requester that is not built yet, or that throws, is "not reachable"; never a stack.
 import type { RosterStore } from "../roster";
+import { mapUnseen } from "../unseen";
 import type { FetchResult } from "./requester";
 
 /** What the core hands over (core/bot-tools.ts `FetchRequest`, the same shape). */
@@ -28,15 +29,19 @@ export function machineName(name: string): string {
   return [...SEGMENTER.segment(cleaned)].slice(0, 40).map((part) => part.segment).join("").replace(SPACES, "");
 }
 
-// botName keeps control characters (ESC, BEL, NUL, a tab inside) and the bidi / zero-width marks; a roster name is any
-// text up to 100 characters. The rule for text from a peer (code-standards 4, L-004): control characters escaped.
-const UNSEEN = /[\u0000-\u001f\u007f-\u009f؜​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
-/** `machineName`, then every control character and bidi / zero-width mark as `\xNN` / `\uNNNN`: the name the text shows and the match uses. */
+// botName keeps control characters (ESC, BEL, NUL, a tab inside) and the unseen characters (bidi and zero-width marks,
+// soft hyphen, selectors, tags: server/unseen.ts); a roster name is any text up to 100 characters. The rule for text from
+// a peer (code-standards 4, L-004): all of them escaped. ZWJ and ZWNJ too, because the label is a match key and must
+// show every difference between two names.
+const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/g;
+const escapeCharacter = (character: string): string => {
+  const code = character.codePointAt(0)!;
+  if (code <= 0xff) return `\\x${code.toString(16).padStart(2, "0")}`;
+  return code <= 0xffff ? `\\u${code.toString(16).padStart(4, "0")}` : `\\u{${code.toString(16)}}`;
+};
+/** `machineName`, then every control character and unseen character as `\xNN` / `\uNNNN` / `\u{N}`: the name the text shows and the match uses. */
 export function machineLabel(name: string): string {
-  return machineName(name).replace(UNSEEN, (character) => {
-    const code = character.charCodeAt(0);
-    return code <= 0xff ? `\\x${code.toString(16).padStart(2, "0")}` : `\\u${code.toString(16).padStart(4, "0")}`;
-  });
+  return mapUnseen(machineName(name).replace(CONTROLS, escapeCharacter), true, escapeCharacter);
 }
 
 /** `12 MB`: under 1,000,000 bytes `<n> KB` (at least `1 KB`), under 10^9 `<n> MB` (rounded), else `<n.n> GB` (the M5-06b rule, bytes). */

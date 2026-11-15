@@ -4,6 +4,7 @@
 // the asked words) is cleaned here before it goes into the prompt: one line each, no control characters, no way to close
 // the fence or to start a line that looks like the app's own note (a peer's newline must never inject a line).
 import { characterPrefix } from "../../core/briefing";
+import { stripUnseen } from "../unseen";
 import { BOT_CALLED_IN_LEAD, CALLED_IN_LEAD, botCallInWorkNote, callInWorkNote, oneLine, quoteName } from "../../core/groups";
 
 /** How many of the host chat's newest lines the guest reads (2.x shows 15; the wire may carry more). */
@@ -13,11 +14,15 @@ const LINE_LIMIT = 1_000;
 /** A transcript line starts with who said it, as `transcriptLines` writes it. */
 const LABEL = /^(?:User(?: \(newest\))?|Notice|A removed bot|"[^"\n]{0,60}"): /;
 const NEWLINES = /\r\n|[\n\r\u000B\u000C\u0085\u2028\u2029]/;
-/** Control characters other than the newlines `oneLine` handles and the tab, and the invisible text-direction marks. */
-const CONTROL = /[\u0000-\u0008\u000E-\u001F\u007F-\u0084\u0086-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+/** Control characters other than the newlines `oneLine` handles and the tab. */
+const CONTROL = /[\u0000-\u0008\u000E-\u001F\u007F-\u0084\u0086-\u009F]/g;
 
-/** `text` without control characters (newlines kept for `oneLine` to turn into " ⏎ "). */
-export const stripControls = (text: string): string => text.replace(CONTROL, "");
+/**
+ * `text` without control characters and unseen characters (`server/unseen.ts`: bidi and zero-width marks, soft hyphen,
+ * selectors, tag characters); newlines are kept for `oneLine` to turn into " ⏎ ". ZWJ and ZWNJ stay: they hold emoji
+ * families and Persian or Indic words together, and in a quoted prompt line they hide nothing a model can act on.
+ */
+export const stripControls = (text: string): string => stripUnseen(text.replace(CONTROL, ""));
 
 /** Runs of 3+ `>` or `<` spaced out ("> > > >"): replacing only ">>>" would leave ">>>" behind in ">>>>>". */
 const FENCE_RUN = /[>]{3,}|[<]{3,}/g;
