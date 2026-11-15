@@ -36,6 +36,8 @@ interface Server {
   tables: PeerTables;
   logs: string[];
   now: { t: number };
+  /** The streams `copyChanged` was called for, in order. */
+  changed: string[];
 }
 
 const dirs: string[] = [];
@@ -58,8 +60,9 @@ async function server(id: string, dir?: string): Promise<Server> {
   const logs: string[] = [];
   const now = { t: 1_700_000_000_000 };
   const feeds = new TableFeeds({ reader: () => reader, ownStream: `srv:${id}`, log: (line) => logs.push(line) });
-  const tables = new PeerTables({ store, reader: () => reader, feeds, log: (line) => logs.push(line), now: () => now.t });
-  const made = { id, dir: folder, store, reader, feeds, tables, logs, now };
+  const changed: string[] = [];
+  const tables = new PeerTables({ store, reader: () => reader, feeds, log: (line) => logs.push(line), now: () => now.t, copyChanged: (stream) => changed.push(stream) });
+  const made = { id, dir: folder, store, reader, feeds, tables, logs, now, changed };
   opened.push(made);
   return made;
 }
@@ -399,6 +402,28 @@ describe("M3 step 7: copies of peers' srv: tables", () => {
     await a.tables.onMessage(again.sides[0], oldRows);
     expect(a.tables.droppedRetired).toBe(1);
     expect(liveRows(a.reader, stream).size).toBe(0);
+  });
+
+  it("fu-callin-outbox review: an applied batch and a taken reset of a copy call copyChanged; an ignored reset does not", async () => {
+    // Who owns a bot (`Directory.peerOwner`) is read from these copies, and a copy fills after its session opened, with no
+    // roster change: interrupted call-ins waiting for their host's server look again on this call (botlingd).
+    const a = await server(A), b = await server(B);
+    const stream = `srv:${B}`;
+    await b.store.submit((tx) => putRow(tx, stream, "audit:one", { act: "test", at: 1 }));
+    const link = new Link(a, b);
+    await link.start();
+    expect(a.changed).toContain(stream);
+    expect(liveRows(a.reader, stream).has("audit:one")).toBe(true);
+    const oldLogId = logIdOf(b.reader, stream);
+    await link.cut(1_700_000_000_123);
+    a.changed.length = 0;
+    const stranger = { t: "reset", stream, logId: "zzzzzzzzzzzz", retired: [{ logId: "yyyyyyyyyyyy", keptSeq: 1 }], reason: "restored" } as MessageOf<"reset">;
+    await a.tables.onMessage(link.sides[0], stranger);
+    expect(a.changed).toEqual([]);
+    const taken = { t: "reset", stream, logId: newLogId(), retired: [{ logId: oldLogId, keptSeq: 1 }], reason: "restored" } as MessageOf<"reset">;
+    await a.tables.onMessage(link.sides[0], taken);
+    expect(liveRows(a.reader, stream).size).toBe(0);
+    expect(a.changed).toEqual([stream]);
   });
 
   it("a front end ahead of the copy keeps its table until the copy passes its cursor (monotonic reads)", async () => {

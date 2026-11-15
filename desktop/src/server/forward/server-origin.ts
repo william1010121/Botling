@@ -95,49 +95,72 @@ export class ServerOrigin {
    */
   async submit(target: Target, cmd: Command): Promise<Slot> {
     this.checkSendable(target, cmd);
-    const ownerCheck = this.options.forwarder.ownerOf(target);
-    if (ownerCheck === null) {
+    if (this.options.forwarder.ownerOf(target) === null) {
       throw new TypeError(`server-origin: cannot submit to ${target} (owned by this server or no peer owns it)`);
     }
-    const committed = await this.options.submit((tx) => {
-      const owner = this.options.forwarder.ownerOf(target);
-      if (owner === null) {
-        throw new TypeError(`server-origin: cannot submit to ${target} (owned by this server or no peer owns it)`);
-      }
-      const existing = tx.prepare("SELECT originEpoch, nextN FROM myorigins WHERE target = ?").get(target);
-      let originEpoch: string;
-      let n: number;
-      if (existing) {
-        originEpoch = String(existing.originEpoch);
-        n = Number(existing.nextN);
-        tx.prepare("UPDATE myorigins SET nextN = ? WHERE target = ?").run(n + 1, target);
-      } else {
-        originEpoch = randomBytes(16).toString("hex");
-        n = 1;
-        tx.prepare("INSERT INTO myorigins (target, originEpoch, nextN) VALUES (?, ?, ?)").run(target, originEpoch, 2);
-      }
-      const slot: Slot = { origin: this.options.self, originEpoch, target, n };
-      if (this.options.isRevoked?.(owner)) {
-        return { slot, owner, record: null as PendingSubmit | null };
-      }
-      const floor = this.computeFloor(tx, originEpoch, target, n);
-      const inc = tableLogId(tx, `srv:${owner}`) ?? UNKNOWN_INC;
-      const scope = statedScope(cmd);
-      const envelope = { slot, floor, inc, cmd, scope } as CmdBody;
-      const hash = cmdHash({ cmd, scope });
-      const record: PendingSubmit = { slot, owner, cmd, scope };
-      tx.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
-        .run(pendingKey(slot), JSON.stringify(record));
-      commitRow(tx, envelope, hash, owner, this.now());
-      return { slot, owner, record };
-    });
-    if (!committed.record) {
-      this.recordAndNotify(committed.slot, REVOKED_OUTCOME);
-      return committed.slot;
+    const staged = await this.options.submit((tx) => this.stage(tx, target, cmd));
+    this.afterCommit(staged);
+    return staged.slot;
+  }
+
+  /**
+   * `submit` inside the CALLER's writer transaction (fu-callin-outbox): the slot, the pending key and the queue row are
+   * written into `tx`, so they commit or roll back together with the caller's own writes (a guest marks its call-in
+   * answered and queues the answer in one step; a crash leaves both or neither). The same checks as `submit` run first and
+   * throw before anything is written. Nothing in memory changes here: after `tx` COMMITTED the caller runs `done()` once
+   * (never when it rolled back), which tracks the slot and pumps the queue (or ends it `refused{revoked}`).
+   */
+  submitIn(tx: Db, target: Target, cmd: Command): { slot: Slot; done(): void } {
+    this.checkSendable(target, cmd);
+    if (this.options.forwarder.ownerOf(target) === null) {
+      throw new TypeError(`server-origin: cannot submit to ${target} (owned by this server or no peer owns it)`);
     }
-    this.pending.set(slotKey(committed.slot), committed.record);
-    this.options.forwarder.pump(committed.owner);
-    return committed.slot;
+    const staged = this.stage(tx, target, cmd);
+    return { slot: staged.slot, done: () => this.afterCommit(staged) };
+  }
+
+  /** The writes of one submit, in the writer transaction `tx`. */
+  private stage(tx: Db, target: Target, cmd: Command): { slot: Slot; owner: string; record: PendingSubmit | null } {
+    const owner = this.options.forwarder.ownerOf(target);
+    if (owner === null) {
+      throw new TypeError(`server-origin: cannot submit to ${target} (owned by this server or no peer owns it)`);
+    }
+    const existing = tx.prepare("SELECT originEpoch, nextN FROM myorigins WHERE target = ?").get(target);
+    let originEpoch: string;
+    let n: number;
+    if (existing) {
+      originEpoch = String(existing.originEpoch);
+      n = Number(existing.nextN);
+      tx.prepare("UPDATE myorigins SET nextN = ? WHERE target = ?").run(n + 1, target);
+    } else {
+      originEpoch = randomBytes(16).toString("hex");
+      n = 1;
+      tx.prepare("INSERT INTO myorigins (target, originEpoch, nextN) VALUES (?, ?, ?)").run(target, originEpoch, 2);
+    }
+    const slot: Slot = { origin: this.options.self, originEpoch, target, n };
+    if (this.options.isRevoked?.(owner)) {
+      return { slot, owner, record: null };
+    }
+    const floor = this.computeFloor(tx, originEpoch, target, n);
+    const inc = tableLogId(tx, `srv:${owner}`) ?? UNKNOWN_INC;
+    const scope = statedScope(cmd);
+    const envelope = { slot, floor, inc, cmd, scope } as CmdBody;
+    const hash = cmdHash({ cmd, scope });
+    const record: PendingSubmit = { slot, owner, cmd, scope };
+    tx.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+      .run(pendingKey(slot), JSON.stringify(record));
+    commitRow(tx, envelope, hash, owner, this.now());
+    return { slot, owner, record };
+  }
+
+  /** After the transaction of `stage` committed: the slot is tracked and the queue is pumped (or the revoked owner ends it). */
+  private afterCommit(staged: { slot: Slot; owner: string; record: PendingSubmit | null }): void {
+    if (!staged.record) {
+      this.recordAndNotify(staged.slot, REVOKED_OUTCOME);
+      return;
+    }
+    this.pending.set(slotKey(staged.slot), staged.record);
+    this.options.forwarder.pump(staged.owner);
   }
 
   private checkSendable(target: Target, cmd: Command): void {

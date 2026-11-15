@@ -2,7 +2,7 @@
 // the forwarder (a target a peer owns), the owner's inbox (targets this server owns, forwarded by a peer) and the
 // directory (who owns a target).
 export { Directory, type DirectoryOptions } from "./directory";
-export { commitCancel, commitRow, failRow, isRetired, ownerWork, serverOriginPending, queueStats, takeNoted, takeResult, takeRetry, type ForwardCancel, type ForwardRow, type OwnerQueue, type OwnerWork, type QueuedRow } from "./forward-queue";
+export { commitCancel, commitRow, deadToPrune, failRow, isRetired, ownerHasHole, ownerWork, pruneDead, serverOriginPending, queueStats, takeNoted, takeResult, takeRetry, type DroppedRow, type ForwardCancel, type ForwardRow, type OwnerQueue, type OwnerWork, type QueuedRow } from "./forward-queue";
 export { Forwarder, type ForwarderOptions, type ForwardSession, type RelaySink } from "./forwarder";
 export { OwnerInbox, peerScope, type InboxSession, type OwnerInboxOptions } from "./owner-inbox";
 export { ServerOrigin, type ServerOriginOptions } from "./server-origin";

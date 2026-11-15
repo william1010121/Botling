@@ -15,7 +15,11 @@
 //     `cmd.retry` (the front end re-sends both);
 //   - a row that can never be sent (`failRow`: it does not parse, its frame is too large, the encoder throws) moves into
 //     `forwarddead` with its reason in one transaction, and its cancel goes with it; the later rows of its queue then go
-//     out with a `floor` above the dead slot (`holesOf`, forwarder.ts), so the owner never waits for a slot nobody sends.
+//     out with a `floor` above the dead slot (`holesOf`, forwarder.ts), so the owner never waits for a slot nobody sends;
+//   - a dead row stays only while something can still need it (`deadToPrune`): a row of its queue that carries a floor at
+//     or below it, an unanswered slot below it, or a `ServerOrigin` submit that names it. Then `pruneDead` deletes it,
+//     with its cancel, so `forwarddead` stays small and the pump does not scan old dead rows. A cancel for a dead slot is
+//     never kept (`commitCancel`). A stored envelope that is not JSON never throws here (`commitRow`, `dropOwner`).
 import { queueKey, type CmdBody, type Slot } from "../../protocol";
 import type { Db } from "../store";
 
@@ -62,6 +66,16 @@ const slotOf = (row: Record<string, unknown>): Slot => ({
   origin: String(row.origin), originEpoch: String(row.originEpoch), target: String(row.target) as Slot["target"], n: Number(row.n),
 }) as Slot;
 
+/** The stored envelope text as an object, or null when it is not JSON or not an object (never throws). */
+function parsedEnvelope(raw: string): CmdBody | null {
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as CmdBody) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Commits `envelope` (scope already stated) for `owner`. A row of the same slot with the same command and `inc` stays
  * as it is; otherwise the envelope is replaced (a re-send under the owner's new `inc` after a `cmd.retry`, or a cloned
@@ -70,15 +84,21 @@ const slotOf = (row: Record<string, unknown>): Slot => ({
 export function commitRow(tx: Db, envelope: CmdBody, cmdHash: string, owner: string, now: number): boolean {
   const { origin, originEpoch, target, n } = envelope.slot;
   const found = tx.prepare("SELECT owner, cmdHash, envelope FROM forwardq WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ?").get(origin, originEpoch, target, n);
-  if (found && String(found.owner) === owner && String(found.cmdHash) === cmdHash && (JSON.parse(String(found.envelope)) as CmdBody).inc === envelope.inc) return false;
+  // A stored text that is not JSON is never "the same row": the re-send replaces it (fail closed, no throw).
+  if (found && String(found.owner) === owner && String(found.cmdHash) === cmdHash && parsedEnvelope(String(found.envelope))?.inc === envelope.inc) return false;
   tx.prepare(`INSERT INTO forwardq (origin, originEpoch, target, n, owner, cmdHash, envelope, heldAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (origin, originEpoch, target, n) DO UPDATE SET owner = excluded.owner, cmdHash = excluded.cmdHash, envelope = excluded.envelope, heldAt = excluded.heldAt`)
     .run(origin, originEpoch, target, n, owner, cmdHash, JSON.stringify(envelope), now);
   return true;
 }
 
-/** Commits a cancel for `owner` (whether or not this server holds the slot's row). True when it was new. */
+/**
+ * Commits a cancel for `owner` (whether or not this server holds the slot's row). True when it was new. A slot that
+ * is in `forwarddead` gets none: its row never went, no owner will ever decide it, and the pump skips a hole's cancel,
+ * so it would only sit in `fwdcancels`.
+ */
 export function commitCancel(tx: Db, slot: Slot, owner: string, now: number): boolean {
+  if (tx.prepare("SELECT 1 AS x FROM forwarddead WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ?").get(slot.origin, slot.originEpoch, slot.target, slot.n)) return false;
   const result = tx.prepare("INSERT INTO fwdcancels (origin, originEpoch, target, n, owner, at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (origin, originEpoch, target, n) DO NOTHING")
     .run(slot.origin, slot.originEpoch, slot.target, slot.n, owner, now);
   return Number(result.changes) > 0;
@@ -178,19 +198,85 @@ export function takeRetry(tx: Db, slot: Slot, owner: string): Slot[] {
   return gone;
 }
 
-/** Drops every waiting row and cancel for a revoked `owner` (§4.6), returning the deleted rows in slot order. */
-export function dropOwner(tx: Db, owner: string): ForwardRow[] {
+/** A row dropped for a revoked owner: `envelope` is null when its stored text was not JSON (the slot and hash are columns, so it still counts). */
+export interface DroppedRow extends Omit<ForwardRow, "envelope"> {
+  envelope: CmdBody | null;
+}
+
+/**
+ * Drops every waiting row, cancel and dead row for a revoked `owner` (§4.6), returning the deleted rows in slot order.
+ * A row whose stored text is not JSON is dropped like any other (its `envelope` is null): one corrupt row never keeps
+ * the others from being dropped, and every origin still hears its refusal. Dead rows of a revoked owner can never
+ * matter again (nothing is sent to it), so they go too.
+ */
+export function dropOwner(tx: Db, owner: string): DroppedRow[] {
   const rows = tx.prepare("SELECT origin, originEpoch, target, n, owner, cmdHash, envelope, heldAt FROM forwardq WHERE owner = ? ORDER BY origin, originEpoch, target, n").all(owner)
     .map((row) => ({
       slot: slotOf(row),
       owner: String(row.owner),
       cmdHash: String(row.cmdHash),
-      envelope: JSON.parse(String(row.envelope)) as CmdBody,
+      envelope: parsedEnvelope(String(row.envelope)),
       heldAt: Number(row.heldAt),
     }));
   if (rows.length) tx.prepare("DELETE FROM forwardq WHERE owner = ?").run(owner);
   tx.prepare("DELETE FROM fwdcancels WHERE owner = ?").run(owner);
+  tx.prepare("DELETE FROM forwarddead WHERE owner = ?").run(owner);
   return rows;
+}
+
+/** True when a dead slot of `owner` has a row of its queue above it (a row that may still need a raised floor). */
+export function ownerHasHole(db: Db, owner: string): boolean {
+  return !!db.prepare(`SELECT 1 AS x FROM forwarddead d WHERE d.owner = ? AND EXISTS (
+    SELECT 1 FROM forwardq q WHERE q.origin = d.origin AND q.originEpoch = d.originEpoch AND q.target = d.target AND q.n > d.n) LIMIT 1`).get(owner);
+}
+
+/**
+ * The dead slots of `owner` nothing needs any more. A dead slot `d` of a queue is needed while any of these holds
+ * (and then it stays):
+ *   - a `ServerOrigin` submit of the queue is pending at a slot `<= d` (the submit at `d` is ended from the dead row
+ *     after a restart; one below is an unanswered slot a later row's floor reaches back to);
+ *   - a row of the queue is at `d`, below it (unanswered), or above it with a floor at or below `d` (or one whose
+ *     text is not JSON: its floor is unknown), because the pump raises that row's floor over `d`.
+ * Otherwise it is dropped when the origin has shown it heard the refusal or a later dead slot makes it redundant: a row
+ * above it with a floor above `d` (the origin's floor is its smallest unresolved slot, so it resolved `d`), or a
+ * higher dead slot in the same queue (a row is raised above the highest dead slot it passes). Without one of those
+ * the row stays: the origin may not have heard yet and its next row would carry a floor at or below `d`.
+ */
+export function deadToPrune(db: Db, owner: string): Slot[] {
+  const deadByQueue = new Map<string, Slot[]>();
+  for (const row of db.prepare("SELECT origin, originEpoch, target, n FROM forwarddead WHERE owner = ? ORDER BY origin, originEpoch, target, n").all(owner)) {
+    const slot = slotOf(row);
+    const key = queueKey(slot);
+    const list = deadByQueue.get(key);
+    if (list) list.push(slot); else deadByQueue.set(key, [slot]);
+  }
+  const out: Slot[] = [];
+  for (const dead of deadByQueue.values()) {
+    const queue = dead[0]!;
+    const rows = db.prepare("SELECT n, envelope FROM forwardq WHERE origin = ? AND originEpoch = ? AND target = ? ORDER BY n").all(queue.origin, queue.originEpoch, queue.target)
+      .map((row) => {
+        const floor = parsedEnvelope(String(row.envelope))?.floor;
+        return { n: Number(row.n), floor: typeof floor === "number" && Number.isFinite(floor) ? floor : null };
+      });
+    const pending = serverOriginPending(db, queue);
+    const highest = dead[dead.length - 1]!.n;
+    for (const { n: d } of dead) {
+      if (pending.some((m) => m <= d)) continue;
+      if (rows.some((r) => r.n === d || r.n < d || (r.n > d && (r.floor === null || r.floor <= d)))) continue;
+      if (rows.some((r) => r.n > d) || highest > d) out.push({ ...queue, n: d });
+    }
+  }
+  return out;
+}
+
+/** Deletes `deadToPrune(tx, owner)` (decided again inside the writer's transaction) with the cancels of those slots; returns how many. */
+export function pruneDead(tx: Db, owner: string): number {
+  const stale = deadToPrune(tx, owner);
+  for (const slot of stale) {
+    tx.prepare("DELETE FROM forwarddead WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ? AND owner = ?").run(slot.origin, slot.originEpoch, slot.target, slot.n, owner);
+    tx.prepare("DELETE FROM fwdcancels WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ?").run(slot.origin, slot.originEpoch, slot.target, slot.n);
+  }
+  return stale.length;
 }
 
 /** Rows and cancels waiting, in all and for the oldest (status, tests). */

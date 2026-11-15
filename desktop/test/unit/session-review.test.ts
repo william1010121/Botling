@@ -1,6 +1,7 @@
 // M2 step 3 security review: one test per defect found in src/session (see .bot/artifacts/v3-m2/step-3-session.md,
 // "Review"). Node only; the shared vectors (test/session-vectors.ts) stay as they are.
 import { afterEach, describe, expect, it } from "vitest";
+import { until } from "../helpers";
 import {
   generateDhKeyPair, SessionLink, SESSION_FRAME_LIMIT,
   type HandshakeMode, type LocalStatic, type PeerClaim, type PeerDecision, type SessionEnd, type SessionLimits, type SessionTransport,
@@ -101,5 +102,58 @@ describe("session layer security review (M2 step 3)", () => {
     await sleep(10);
     expect(pair.r.ended?.reason).toBe("roster");
     expect(pair.r.link.state).toBe("ended");
+  });
+});
+
+describe("session layer: the transport closing right behind the last frame", () => {
+  it("J1 root cause: a frame handed over just before the transport closed is still delivered, then the session ends", async () => {
+    const pair = await connect();
+    await Promise.all([pair.i.link.established, pair.r.link.established]);
+    // The transport hands over the frame and, in the same turn, its close event (a socket's close comes right behind its
+    // last message). Opening a frame is asynchronous, so the frame is still in flight when the close arrives.
+    const receive = pair.r.link.receive.bind(pair.r.link);
+    pair.r.link.receive = (frame) => { receive(frame); pair.r.link.transportClosed(); };
+    pair.i.link.send("control", text("last words"));
+    await until(() => pair.r.ended !== null, { what: "the responder's session to end" });
+    expect(pair.r.got.map((bytes) => new TextDecoder().decode(bytes))).toEqual(["last words"]);
+    expect(pair.r.ended?.reason).toBe("transport");
+  });
+
+  it("the session ends as soon as the frames received before the close were handled, not after the grace", async () => {
+    const pair = await connect();
+    await Promise.all([pair.i.link.established, pair.r.link.established]);
+    const receive = pair.r.link.receive.bind(pair.r.link);
+    pair.r.link.receive = (frame) => { receive(frame); pair.r.link.transportClosed(); };
+    pair.i.link.send("control", text("last words"));
+    await until(() => pair.r.got.length > 0, { what: "the last frame to be delivered" });
+    await pair.r.link.received();
+    // No timer involved: the end is chained on the inbox before `received()` is, so it has run by now.
+    expect(pair.r.ended?.reason).toBe("transport");
+  });
+
+  it("a frame handed over after the transport closed is not delivered", async () => {
+    const pair = await connect();
+    await Promise.all([pair.i.link.established, pair.r.link.established]);
+    const receive = pair.r.link.receive.bind(pair.r.link);
+    const held: Uint8Array[] = [];
+    pair.r.link.receive = (frame) => { held.push(frame); };
+    pair.i.link.send("control", text("after the close"));
+    await until(() => held.length > 0, { what: "the sealed frame" });
+    pair.r.link.transportClosed();
+    receive(held[0]!);
+    await until(() => pair.r.ended !== null, { what: "the responder's session to end" });
+    await pair.r.link.received();
+    expect(pair.r.got).toEqual([]);
+    expect(pair.r.link.delivered).toBe(0);
+  });
+
+  it("a transport that closes while onFrame never returns still ends the session (bounded wait)", async () => {
+    const pair = await connect({ onFrameR: () => new Promise<void>(() => undefined) });
+    await Promise.all([pair.i.link.established, pair.r.link.established]);
+    pair.i.link.send("control", text("stuck"));
+    await sleep(20);
+    pair.r.link.transportClosed();
+    await until(() => pair.r.ended !== null, { timeout: 3_000, what: "the session to end although onFrame hangs" });
+    expect(pair.r.ended?.reason).toBe("transport");
   });
 });

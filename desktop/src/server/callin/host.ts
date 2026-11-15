@@ -32,6 +32,10 @@
 //                                  notice and the guest's line) and wakes nobody: it never resolves a wait and never takes the
 //                                  2.x wake path. It is used up by the first reply (at most one late line, across restarts);
 //                                  a late `failed` or `busy` (a cancelled call answers `failed "cancelled"`) posts nothing.
+//   a late line survives a crash   (fu-callin-outbox) the reply's transaction that uses the record up also writes the line as a
+//                                  `callin:late:<callId>` row (`late-outbox.ts`); the line is posted after the commit and the row
+//                                  deleted. A crash in between leaves the row and the next start posts it (`bindLate`); the chat
+//                                  keys the line by callId, so a crash after the post and before the delete posts it once.
 import { randomUUID } from "node:crypto";
 import type { Command } from "../../contract";
 import type { GuestAnswer } from "../../core/bot";
@@ -45,7 +49,9 @@ import { SlotRefusal } from "../slots";
 import type { TxScope } from "../effects";
 import type { Db } from "../store";
 import type { CallInSender } from "./guest";
+import type { CallInCrash } from "./crash";
 import { GaveUpBook, type GaveUp } from "./late";
+import { LateOutbox, type LateRow } from "./late-outbox";
 import { cleanLine, stripControls } from "./prompt";
 import { CALLIN_NAME_LIMIT, CALLIN_REPLY_LIMIT, CALLIN_TRANSCRIPT_LIMIT, cutOldest, cutUnits } from "./wire-text";
 
@@ -79,6 +85,8 @@ export interface CallInHostSender extends CallInSender {
 
 /** A late answer for the host chat (M5-03a): the guest's line is appended marked late; nobody is woken for it. */
 export interface LateLine {
+  /** The call-in: the chat posts the late line once per callId (a post after a crash is told by it). */
+  callId: string;
   /** The host chat. */
   chatId: string;
   member: { id: string; name: string };
@@ -99,6 +107,8 @@ export interface CallInHostOptions {
   tickMs?: number;
   now?: () => number;
   log?: (line: string) => void;
+  /** Test hook (`BOTLING_SERVER_CALLIN_CRASH`, fake agent only): called right after a late reply's transaction committed. */
+  crash?: CallInCrash | null;
 }
 
 interface Wait {
@@ -144,6 +154,9 @@ export class CallInHost {
   private readonly options: CallInHostOptions;
   private readonly gaveUp: GaveUpBook;
   private lateSink: ((late: LateLine) => void | Promise<void>) | null = null;
+  private readonly outbox = new LateOutbox();
+  /** Late lines being posted now, by callId: a start-time drain and a fresh reply never post the same one at once. */
+  private readonly posting = new Set<string>();
 
   constructor(options: CallInHostOptions = {}) {
     this.options = options;
@@ -155,8 +168,14 @@ export class CallInHost {
     this.gaveUp = new GaveUpBook({ scope: options.scope ?? null, now: this.now, log: this.log, ...(options.keepMs !== undefined ? { keepMs: options.keepMs } : {}), ...(options.maxGaveUp !== undefined ? { max: options.maxGaveUp } : {}) });
   }
 
-  /** Binds where a late line goes (botlingd: the core's `Conversations.postLate`); until then a late answer is dropped. */
-  bindLate(sink: (late: LateLine) => void | Promise<void>): void { this.lateSink = sink; }
+  /**
+   * Binds where a late line goes (botlingd: the core's `Conversations.postLate`). Late lines a crash left in the outbox are
+   * posted now; a late reply that comes before this stays in the outbox until then.
+   */
+  bindLate(sink: (late: LateLine) => void | Promise<void>): void {
+    this.lateSink = sink;
+    void this.drainLate();
+  }
 
   /** Binds the server origin (botlingd does it once `ServerOrigin` exists); until then every call-in is "not reachable". */
   attach(sender: CallInHostSender): void {
@@ -327,7 +346,21 @@ export class CallInHost {
     if (!record) return null;
     if (!this.matches(record, origin, cmd)) throw new SlotRefusal("invalid", "that answer is not for this call-in");
     this.gaveUp.consume(tx, cmd.callId);
+    // The line this reply owes goes into the same transaction as the consume: both commit or neither (a crash after the commit
+    // leaves the row, and the next start posts it).
+    const row = this.lateRowOf(record, cmd);
+    if (row) this.outbox.stage(tx, cmd.callId, row, this.now());
     return record;
+  }
+
+  /** The line a late reply owes the chat: only an answer with words (a late `failed` or `busy` posts nothing). */
+  private lateRowOf(record: GaveUp, cmd: Reply): LateRow | null {
+    const outcome = cmd.outcome;
+    if (outcome.kind !== "reply") return null;
+    const text = cleanReply(outcome.text);
+    if (!text.trim()) return null;
+    const at = this.now();
+    return { chatId: record.hostBotId, guestBotId: record.guestBotId, guestName: record.guestName, text, engine: outcome.engine, at, until: Math.max(record.until, at + 1) };
   }
 
   /** Sweeps the expired and damaged given-up records (a writer transaction of its own). */
@@ -350,16 +383,43 @@ export class CallInHost {
     wait.settle(this.answerOf(cmd.outcome));
   }
 
-  /** D51: the late line. Only an answer with words is posted; a late `failed` (a cancelled call answers so) or `busy` is not. */
+  /**
+   * D51: the late line, after the reply's transaction committed (its row is in the outbox). Only an answer with words is posted;
+   * a late `failed` (a cancelled call answers so) or `busy` is not.
+   */
   private postLate(record: GaveUp, cmd: Reply): void {
-    const outcome = cmd.outcome;
+    this.options.crash?.("host", cmd.callId);
+    const row = this.lateRowOf(record, cmd);
+    if (!row) { this.log("callin: a late answer without a line was dropped"); return; }
+    void this.postRow(cmd.callId, row);
+  }
+
+  /** Posts one outbox row through the sink, then deletes it. A failure keeps the row (the next start posts it again). Never rejects. */
+  private async postRow(callId: string, row: LateRow): Promise<void> {
     const sink = this.lateSink;
-    if (outcome.kind !== "reply" || !sink) { this.log("callin: a late answer without a line was dropped"); return; }
-    const answer = { kind: "reply" as const, text: cleanReply(outcome.text), steps: [], engine: outcome.engine };
-    const failedPost = (error: unknown) => this.log(`callin: a late answer could not be posted (${errorText(error)})`);
+    if (!sink || this.posting.has(callId)) return; // unbound: the row waits for `bindLate`
+    this.posting.add(callId);
     try {
-      void Promise.resolve(sink({ chatId: record.hostBotId, member: { id: record.guestBotId, name: record.guestName }, answer })).catch(failedPost);
-    } catch (error) { failedPost(error); }
+      const answer = { kind: "reply" as const, text: row.text, steps: [], engine: row.engine };
+      await sink({ callId, chatId: row.chatId, member: { id: row.guestBotId, name: row.guestName }, answer });
+      await this.options.scope?.submit((tx) => this.outbox.drop(tx, callId));
+    } catch (error) {
+      this.log(`callin: a late answer could not be posted, it stays queued (${errorText(error)})`);
+    } finally {
+      this.posting.delete(callId);
+    }
+  }
+
+  /** Posts every row the outbox still holds (at start, once the sink is bound). */
+  private async drainLate(): Promise<void> {
+    const scope = this.options.scope;
+    if (!scope) return;
+    try {
+      const rows = await scope.submit((tx) => this.outbox.pending(tx, this.now()));
+      for (const { callId, row } of rows) await this.postRow(callId, row);
+    } catch (error) {
+      this.log(`callin: the late lines could not be read (${errorText(error)})`);
+    }
   }
 
   private matches(wait: { server: string; hostBotId: string; guestBotId: string }, origin: string, cmd: Reply): boolean {

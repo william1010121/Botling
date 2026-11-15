@@ -2,6 +2,7 @@
 // intent runtime over a fake engine, and envelope builders. Nothing here is used by the app.
 import type { Command } from "../../src/contract";
 import type { CmdBody, Cursor, LogId } from "../../src/protocol";
+import type { CallInCrash } from "../../src/server/callin";
 import { effectCheckpointSink } from "../../src/server/effects";
 import { IntentRuntime, type UploadedFiles } from "../../src/server/intents";
 import { LiveChannel } from "../../src/server/live";
@@ -44,12 +45,12 @@ export interface Harness {
   close(): void;
 }
 
-export async function harness(options: FakeTurnEngineOptions = {}, shared?: { db: Db; writer: Writer; slots: Map<string, number> }, extra: { uploads?: UploadedFiles } = {}): Promise<Harness> {
+export async function harness(options: FakeTurnEngineOptions = {}, shared?: { db: Db; writer: Writer; slots: Map<string, number> }, extra: { uploads?: UploadedFiles; callInCrash?: CallInCrash } = {}): Promise<Harness> {
   const { db, writer } = shared ?? memoryStore();
   const engine = new FakeTurnEngine(options);
   const logs: string[] = [];
   const live = new LiveChannel({ sink: effectCheckpointSink(writer), checkpointIntervalMs: 5 });
-  const runtime = new IntentRuntime({ store: writer, engine, live, log: (line) => logs.push(line), ...(extra.uploads ? { uploads: extra.uploads } : {}) });
+  const runtime = new IntentRuntime({ store: writer, engine, live, log: (line) => logs.push(line), ...(extra.uploads ? { uploads: extra.uploads } : {}), ...(extra.callInCrash ? { callInCrash: extra.callInCrash } : {}) });
   await runtime.start();
   const serverId = String(db.prepare("SELECT value FROM meta WHERE key = 'serverId'").get()!.value);
   const serverStream = `srv:${serverId}`;

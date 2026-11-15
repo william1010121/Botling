@@ -6,21 +6,24 @@
 //   at most one guest turn per call-in   the row's id is derived from (sender, guest, callId): a second ask is a primary
 //                                        key conflict, refused at apply; a crash makes a started row `interrupted`,
 //                                        never started again (recovery.ts)
-//   the answer is sent at most once      `replied` is set in the same transaction that ends the row, before the send; a
-//                                        crash between the two loses the answer (the host's wait ends in "unreachable"),
-//                                        never doubles it
+//   the answer is queued exactly once   `replied` is set, the row ends AND the answer is queued (`ServerOrigin.submitIn`, the
+//                                        server's own queue row) in ONE transaction (fu-callin-outbox): a crash leaves either
+//                                        all of it (the queue sends the answer after the restart) or none of it (the row is
+//                                        still started, so recovery answers `failed` once); never a marked row with no answer
 //   a restart with the row started       one `failed` reply "its machine restarted during the answer" (the 2.x rule),
-//                                        sent once the origin is attached (`attach` → `resume`)
+//                                        queued once the origin is attached (`attach` → `resume`), also in one transaction
 //   cancel (D51)                         a queued row is cancelled (no turn, no reply); a started one aborts the turn
 //                                        (`signal`) and answers `failed` "cancelled"
 import type { Command } from "../../contract";
 import type { Slot, Target } from "../../protocol";
+import type { Db } from "../store";
 import { oneLine } from "../../core/groups";
 import {
   effectsIn, moveEffect, readEffect, setEffectPayload,
   type CallInAnswer, type CallInPayload, type CallInRunner, type EffectRow, type TurnEngine, type TxScope,
 } from "../effects";
 import { SlotRefusal } from "../slots";
+import type { CallInCrash } from "./crash";
 import { guestPrompt, cleanLine, stripControls } from "./prompt";
 import { CALLIN_NAME_LIMIT, CALLIN_REPLY_LIMIT, CALLIN_WHY_LIMIT, cutEscaped, cutUnits } from "./wire-text";
 
@@ -32,6 +35,15 @@ export interface CallInSender {
   submit(target: Target, cmd: Command): Promise<Slot>;
 }
 
+/** What the guest needs of `ServerOrigin`: the answer is queued inside the guest's own transaction. */
+export interface CallInGuestSender extends CallInSender {
+  /**
+   * `submit` inside the caller's writer transaction `tx`: throws (writing nothing) for a command that does not parse or cannot be
+   * sent. After `tx` committed the caller runs `done()` (never when it rolled back): it tracks the slot and pumps the queue.
+   */
+  submitIn(tx: Db, target: Target, cmd: Command): { slot: Slot; done(): void };
+}
+
 export interface CallInGuestOptions {
   scope: TxScope;
   engine: TurnEngine;
@@ -41,6 +53,8 @@ export interface CallInGuestOptions {
   busyWaitMs?: number;
   /** How long the guest's turn may take (the host cancels long before; this only bounds a lost cancel). */
   answerMs?: number;
+  /** Test hook (`BOTLING_SERVER_CALLIN_CRASH`, fake agent only): called right after the answer's transaction committed. */
+  crash?: CallInCrash | null;
 }
 
 type Outcome = Extract<Command, { type: "callin.reply" }>["outcome"];
@@ -51,10 +65,14 @@ const CUT_NOTE = "\n…(cut: the answer was longer than the limit)";
 const errorText = (error: unknown) => oneLine(error instanceof Error ? error.message : String(error), 300);
 
 export class CallInGuest implements CallInRunner {
-  private sender: CallInSender | null = null;
+  private sender: CallInGuestSender | null = null;
   private resolveReady!: () => void;
   private readonly ready = new Promise<void>((resolve) => { this.resolveReady = resolve; });
   private resumed = false;
+  /** A `resume` pass is running; `again`: a change came during it. `waiting`: interrupted rows the last pass left for later. */
+  private resuming = false;
+  private again = false;
+  private waiting = 0;
   /** Started rows' turns, to abort on `callin.cancel`. */
   private readonly running = new Map<string, AbortController>();
   /** A cancel that came before the runner created its controller (the row was just taken). */
@@ -66,7 +84,7 @@ export class CallInGuest implements CallInRunner {
   }
 
   /** Binds the server origin; the answers of call-ins a crash interrupted go out now. */
-  attach(sender: CallInSender): void {
+  attach(sender: CallInGuestSender): void {
     this.sender = sender;
     this.resolveReady();
     void this.resume();
@@ -109,7 +127,7 @@ export class CallInGuest implements CallInRunner {
       const answer: CallInAnswer = controller.signal.aborted ? { kind: "failed", why: "cancelled" } : await this.turn(row, payload, controller.signal);
       // A turn cancelled while it ran answers "cancelled", whatever it had ready (the host gave up, D51).
       const outcome = controller.signal.aborted ? ({ kind: "failed", why: "cancelled" } as const) : this.outcomeOf(answer);
-      await this.answer(row, payload, outcome);
+      await this.finish(row, "started", outcome);
     } finally {
       this.running.delete(row.effectId);
     }
@@ -142,51 +160,89 @@ export class CallInGuest implements CallInRunner {
     return { kind: "reply", text: cutEscaped(answer.text, CALLIN_REPLY_LIMIT, CUT_NOTE), engine: answer.engine };
   }
 
-  /** Ends the row and marks it answered in one transaction, then sends: at most once. */
-  private async answer(row: EffectRow, payload: CallInPayload, outcome: Outcome): Promise<void> {
-    const reserved = await this.options.scope.submit((tx) => {
-      const current = readEffect(tx, row.effectId);
-      if (!current || current.state !== "started" || (current.payload as CallInPayload).replied) return false;
-      setEffectPayload(tx, row.effectId, { ...payload, replied: true }, ["started"]);
-      return moveEffect(tx, row.effectId, ["started"], "finished", this.now());
-    });
-    if (reserved) await this.send(row.botId, payload, outcome);
-  }
-
-  private async send(botId: string, payload: CallInPayload, outcome: Outcome): Promise<void> {
+  /**
+   * The one durable step of an answer (fu-callin-outbox): in ONE writer transaction the row (still `from`, not yet `replied`)
+   * is marked answered (and, when it was `started`, finished) and `callin.reply` is queued in the server's own forward queue
+   * (`submitIn`). Either all of it commits or none: a kill leaves the row as it was (recovery answers it once) or the answer
+   * queued (the forwarder sends it after the restart). A reply that cannot be queued (it does not parse, no peer owns the host
+   * bot) is retried once as a short one that always parses; when that fails too the row ends without an answer, as before.
+   */
+  private async finish(row: EffectRow, from: "started" | "interrupted", outcome: Outcome): Promise<void> {
     const sender = this.sender;
-    if (!sender) return;
+    const payload = row.payload as CallInPayload;
     const target = `bot:${payload.host.botId}` as Target;
-    const reply = (value: Outcome): Command => ({ type: "callin.reply", botId: payload.host.botId, callId: payload.callId, guest: { botId, name: this.nameOf(botId) }, outcome: value });
-    try {
-      await sender.submit(target, reply(outcome));
-      return;
-    } catch (error) {
-      this.options.log?.(`callin: the answer to ${payload.callId} was not sent (${errorText(error)})`);
+    const reply = (value: Outcome): Command => ({ type: "callin.reply", botId: payload.host.botId, callId: payload.callId, guest: { botId: row.botId, name: this.nameOf(row.botId) }, outcome: value });
+    /** The row is still `from` and not answered (read in the transaction that acts on it). */
+    const open = (tx: Db): boolean => {
+      const current = readEffect(tx, row.effectId);
+      return !!current && current.state === from && !(current.payload as CallInPayload).replied;
+    };
+    /** Marks it answered and, for a started row, finishes it (the same transaction as the queue row). */
+    const end = (tx: Db): boolean => setEffectPayload(tx, row.effectId, { ...payload, replied: true }, [from])
+      && (from !== "started" || moveEffect(tx, row.effectId, ["started"], "finished", this.now()));
+    const attempts: Outcome[] = [outcome];
+    if (!(outcome.kind === "failed" && outcome.why === COULD_NOT_SEND)) attempts.push({ kind: "failed", why: COULD_NOT_SEND });
+    for (const [index, value] of attempts.entries()) {
+      try {
+        await this.options.scope.submit((tx) => {
+          if (!sender) throw new Error("no origin is attached");
+          if (!open(tx)) return false;
+          // May throw: before any write of this step, so a refusal leaves the row untouched for the next attempt.
+          const staged = sender.submitIn(tx, target, reply(value));
+          if (!end(tx)) throw new Error("the call-in row changed under its answer");
+          this.options.scope.afterCommit(() => { this.options.crash?.("guest", payload.callId); staged.done(); });
+          return true;
+        });
+        return;
+      } catch (error) {
+        this.options.log?.(`callin: ${index === 0 ? "the" : "even the short"} answer to ${payload.callId} was not sent (${errorText(error)})`);
+      }
     }
-    // Once more with a short outcome that always parses, so the host is not left waiting on a refusal of ours.
-    if (outcome.kind === "failed" && outcome.why === COULD_NOT_SEND) return;
-    try {
-      await sender.submit(target, reply({ kind: "failed", why: COULD_NOT_SEND }));
-    } catch (error) {
-      this.options.log?.(`callin: even the short answer to ${payload.callId} was not sent (${errorText(error)})`);
-    }
+    // Neither could be queued: the row ends without an answer (the host's wait ends by its own rules).
+    try { await this.options.scope.submit((tx) => { if (open(tx)) end(tx); }); } catch (error) { this.options.log?.(`callin: the call-in ${payload.callId} could not be ended (${errorText(error)})`); }
   }
 
-  /** At start: each call-in a crash interrupted gets its one `failed` answer. */
+  /**
+   * At start: each call-in a crash interrupted gets its one `failed` answer, each in its own transaction. A row whose host
+   * bot no peer owns YET (the directory knows no peer before `peers.start()`, or the roster has not caught up) is left alone:
+   * not sent and not marked answered, so nothing is lost; `retry` answers it once the peer is known.
+   */
   private async resume(): Promise<void> {
     if (this.resumed) return;
     this.resumed = true;
+    this.resuming = true;
+    this.again = false;
     try {
-      const marked = await this.options.scope.submit((tx) => effectsIn(tx, "interrupted").filter((row) => {
-        const payload = row.payload as CallInPayload;
-        if (row.kind !== "callin" || payload.replied) return false;
-        return setEffectPayload(tx, row.effectId, { ...payload, replied: true }, ["interrupted"]);
-      }));
-      for (const row of marked) await this.send(row.botId, row.payload as CallInPayload, { kind: "failed", why: RESTARTED });
+      const rows = await this.options.scope.submit((tx) => effectsIn(tx, "interrupted").filter((row) => row.kind === "callin" && !(row.payload as CallInPayload).replied));
+      let waiting = 0;
+      for (const row of rows) {
+        const host = (row.payload as CallInPayload).host.botId;
+        if (!this.sender?.ownerOf(`bot:${host}` as Target)) { waiting += 1; continue; }
+        await this.finish(row, "interrupted", { kind: "failed", why: RESTARTED });
+      }
+      if (waiting && waiting !== this.waiting) this.options.log?.(`callin: ${waiting} interrupted call-in(s) wait for their host's server to be known before they are answered`);
+      this.waiting = waiting;
     } catch (error) {
+      this.waiting = Math.max(this.waiting, 1); // unknown: look again at the next change
       this.options.log?.(`callin: answering interrupted call-ins failed (${errorText(error)})`);
+    } finally {
+      this.resuming = false;
     }
+    // A change that came while this pass ran may have made a host's server known after its row was looked at.
+    if (this.again) this.retry();
+  }
+
+  /**
+   * Something `ownerOf` reads changed (the roster, or a peer's `srv:` table copy, which fills only after the peer's session
+   * opened, without a roster change): answers the interrupted call-ins that were waiting for their host's server. Nothing
+   * happens while none waits, so it may be called on every copy change.
+   */
+  retry(): void {
+    if (!this.sender) return;
+    if (this.resuming) { this.again = true; return; }
+    if (this.waiting === 0) return;
+    this.resumed = false;
+    void this.resume();
   }
 
   /**

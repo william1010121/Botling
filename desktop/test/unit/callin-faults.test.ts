@@ -23,12 +23,16 @@
 //           target's slot counter stepped back (exactly what a crash before the submit's transaction leaves). B then gets
 //           the ask alone, finishes its turn and replies: A posts it once, marked late, and wakes nobody more.
 //   lateKill  B has the asks and runs its turns, then the network is cut both ways: B's replies wait in its queue, A gives up
-//           (record written, cancel queued); on heal the replies and the cancels cross. A is SIGKILLed the moment a late
-//           reply's transaction consumed the `callin:gaveup` record (crash point 2:
-//           after the commit, before `postLate` ran). The line may be lost (the record is used up in the reply's
-//           transaction, the line is posted after it: "at most once beats delivery", M5-03a); it is never posted twice
-//           and nobody is woken for it. The test counts the lost lines and prints them.
+//           (record written, cancel queued); on heal the replies and the cancels cross. A kills ITSELF (the test hook
+//           BOTLING_SERVER_CALLIN_CRASH, armed by the test) the moment the first late reply's transaction committed: the
+//           record is used up and the late line is staged in the same transaction, nothing is posted yet (crash point 2).
+//           After the restart the staged line is posted from A's outbox (`callin:late:` row): every call-in B answered has
+//           its late line, exactly once (fu-callin-outbox; before it a line could be lost), and nobody is woken for it.
+//   guestCrash  B kills ITSELF the moment the first guest answer's transaction committed (the row marked answered and the answer
+//           queued together, nothing pumped; the old two-step code lost the answer here, and A waited for its cap). B is
+//           restarted: that answer still reaches A (a receipt at A, a line in H), and no row of B is marked answered without one.
 // Properties, per call-in (token), read from the servers' own tables and the fake CLI's input files:
+//   every call-in B marked answered has exactly one reply applied at A (a receipt), and no call-in has two;
 //   ≤ 1 guest turn at B (and ≤ 1 `callin` row there); ≤ 1 guest line in H, late or not; the asker woken ≤ 1 time (and
 //   exactly once while A was not killed); a late line adds no wake; a call-in B cancelled before it started posts nothing;
 //   no line without a turn. Every wave ends with both forward queues empty.
@@ -54,15 +58,18 @@ const GUESTS = 8;
 const WAKE_MARK = "whom you called in with @";
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-type Kind = "clean" | "net" | "killA" | "killB" | "killBmid" | "down" | "gaveUpCrash" | "lateKill";
-/** The waves, in order: 74 call-ins, every kind of fault in it; the runs of a wave go at once. */
+type Kind = "clean" | "net" | "killA" | "killB" | "killBmid" | "down" | "gaveUpCrash" | "lateKill" | "guestCrash";
+/** The waves, in order: 80 call-ins, every kind of fault in it; the runs of a wave go at once. */
 const PLAN: Array<[Kind, number]> = [
-  ["clean", 10], ["net", 10], ["killA", 8], ["net", 10], ["killB", 8], ["killBmid", 8], ["down", 8], ["gaveUpCrash", 6], ["lateKill", 6],
+  ["clean", 10], ["net", 10], ["killA", 8], ["net", 10], ["killB", 8], ["killBmid", 8], ["down", 8], ["gaveUpCrash", 6], ["lateKill", 6], ["guestCrash", 6],
 ];
 
 const scratch = testRoot("callin-faults");
 const aInput = join(scratch, "a-input.jsonl");
 const bInput = join(scratch, "b-input.jsonl");
+/** The crash hooks (BOTLING_SERVER_CALLIN_CRASH): a server kills itself right after a call-in step committed while its file holds `armed`, and leaves `hit:<callId>` there. */
+const aCrash = join(scratch, "a-crash.txt");
+const bCrash = join(scratch, "b-crash.txt");
 let cluster: TestCluster;
 let a: TestServer, b: TestServer;
 let pa: FaultProxy, pb: FaultProxy;
@@ -79,12 +86,19 @@ function withDb<T>(server: TestServer, run: (db: DatabaseSync) => T): T {
 const count = (server: TestServer, table: string) => withDb(server, (db) => Number((db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n));
 const inputLines = (file: string): string[] => { try { return readFileSync(file, "utf8").split("\n").filter(Boolean).map((line) => String((JSON.parse(line) as { text?: unknown }).text ?? "")); } catch { return []; } };
 
-interface CallInRow { state: string; replied: boolean; asked: string }
+interface CallInRow { state: string; replied: boolean; asked: string; callId: string }
 /** B's `callin` effect rows. */
 const callInRows = (): CallInRow[] => withDb(b, (db) => (db.prepare("SELECT state, payload FROM effects WHERE kind = 'callin'").all() as Array<{ state: string; payload: string }>)
-  .map((row) => { const payload = JSON.parse(row.payload) as { asked: string; replied: boolean }; return { state: row.state, replied: payload.replied, asked: payload.asked }; }));
+  .map((row) => { const payload = JSON.parse(row.payload) as { asked: string; replied: boolean; callId: string }; return { state: row.state, replied: payload.replied, asked: payload.asked, callId: payload.callId }; }));
 /** The `callin:gaveup:` rows in A's `meta` (M5-03a: one per call-in A gave up on, used up by its late reply). */
 const gaveUpRows = (): number => withDb(a, (db) => Number((db.prepare("SELECT COUNT(*) AS n FROM meta WHERE key LIKE 'callin:gaveup:%'").get() as { n: number }).n));
+/** The `callin:late:` rows in A's `meta` (fu-callin-outbox: a late line staged with its reply, deleted once posted). */
+const lateRows = (): number => withDb(a, (db) => Number((db.prepare("SELECT COUNT(*) AS n FROM meta WHERE key LIKE 'callin:late:%'").get() as { n: number }).n));
+/** The `callin.reply` commands A applied from B for a host bot (A's receipts): one per answer B queued. */
+const receiptsFor = (hostId: string): number => withDb(a, (db) => Number((db.prepare("SELECT COUNT(*) AS n FROM receipts WHERE origin = ? AND target = ?").get(kb.memberId, `bot:${hostId}`) as { n: number }).n));
+/** Arms a crash hook (the next call-in step that reaches it kills its server) and waits for it to fire; returns the callId it hit. */
+const arm = (file: string) => writeFileSync(file, "armed");
+const hitOf = (file: string): string | null => { try { const text = readFileSync(file, "utf8"); return text.startsWith("hit:") ? text.slice(4) : null; } catch { return null; } };
 /** A's stopped data folder: drops the queued `callin.cancel` rows (queue row, pending key) and steps each target's slot counter back: what a crash before the submit's transaction leaves. */
 function dropQueuedCancels(): number {
   const db = new DatabaseSync(join(a.dataDir, "server.db"));
@@ -199,7 +213,11 @@ function check(seed: string, run: Run, aKilled: boolean): { line: number; wake: 
   const line = lines.filter((entry) => entry.sourceId === run.guest.id).length;
   const late = lines.filter((entry) => entry.text.startsWith("Late answer from ")).length;
   const wake = inputLines(aInput).filter((text) => text.includes(run.token)).reduce((sum, text) => sum + text.split(WAKE_MARK).length - 1, 0);
+  const receipts = receiptsFor(run.hostId);
   if (rows.length !== 1) fail(`${rows.length} callin rows at B (want exactly 1: the ask is applied once)`);
+  // B marks a call-in answered only together with queueing its answer, and the queue sends it until A applied it: no answer lost, none doubled.
+  if (receipts > 1) fail(`${receipts} replies applied at A (want ≤ 1)`);
+  if (rows[0]!.replied && receipts !== 1) fail(`B marked the call-in answered (${rows[0]!.state}) but A applied ${receipts} replies (want 1: the answer must not be lost between the mark and the queue)`);
   if (turns > 1) fail(`${turns} guest turns at B (want ≤ 1)`);
   if (line > 1) fail(`${line} guest lines in H (want ≤ 1)`);
   if (late > 1) fail(`${late} late notices in H (want ≤ 1)`);
@@ -224,6 +242,7 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
   await until(() => hosts.every((hostId) => withDb(b, (db) => !!db.prepare("SELECT 1 FROM rows WHERE stream = ? AND key = ? AND deleted = 0").get(`srv:${ka.memberId}`, `bot:${hostId}`))), { timeout: 60_000, every: 50, what: `${seed}: B's copy names the host bots` });
   const sends = runs.map((run) => ({ botId: run.hostId, text: `/mention ${run.guest.name} ${run.token}` }));
   let aKilled = false;
+  let hit: string | null = null;
   const gaveUpBefore = gaveUpRows();
   try {
     if (kind === "net") {
@@ -306,16 +325,29 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       // B has the asks (and is running its guest turns); from here nothing crosses, so its replies wait in its queue while A gives up.
       isolate();
       await until(() => gaveUpRows() >= base + size, { timeout: 30_000, every: 25, what: `${seed}: the records written` }).catch(() => undefined);
-      const written = gaveUpRows();
+      // Armed before the heal, so no late reply can pass the hook unarmed: the first one that commits kills A (the hook), after
+      // the record is used up and the late line is staged, before anything is posted (crash point 2). The hit is exact, never timed.
+      rmSync(aCrash, { force: true });
+      arm(aCrash);
       heal();
-      // B's held replies and A's cancels cross now. The first late reply that uses its record up: A dies there, before (or just
-      // after) the line is posted (crash point 2).
-      const consumed = await until(() => gaveUpRows() < written, { timeout: 30_000, every: 5, what: `${seed}: a late reply to use a record up` }).then(() => true, () => false);
-      if (consumed) totals.lateKills++;
+      // B's held replies and A's cancels cross now.
+      await until(() => hitOf(aCrash) !== null, { timeout: 30_000, every: 5, what: `${seed}: a late reply to commit` });
+      totals.lateKills++;
       await a.kill();
       aKilled = true;
       totals.kills++;
       await a.start();
+    } else if (kind === "guestCrash") {
+      // B kills itself the moment the first guest answer committed: the row marked answered and the answer queued together.
+      rmSync(bCrash, { force: true });
+      arm(bCrash);
+      await sendAll(a, sends);
+      await until(() => hitOf(bCrash) !== null, { timeout: 60_000, every: 5, what: `${seed}: B's first answer to commit` });
+      hit = hitOf(bCrash);
+      await b.kill();
+      totals.kills++;
+      totals.guestHits++;
+      await b.start();
     } else {
       await sendAll(a, sends);
     }
@@ -331,11 +363,27 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       expect({ turns: got.turns, line: got.line, wake: got.wake }, `seed ${seed}: ${run.token} rows ${JSON.stringify(callInRows().filter((row) => row.asked.includes(run.token)).map((row) => [row.state, row.replied]))} chat ${JSON.stringify(chatOf(run.hostId).map((entry) => entry.text.slice(0, 80)))} B log ${b.log.slice(-600)}`).toEqual({ turns: 1, line: 1, wake: 1 });
       expect(chatOf(run.hostId).filter((entry) => entry.text.startsWith("Late answer from ")).length, `seed ${seed}: ${run.token}: late notice`).toBe(1);
     }
+    // Crash point 2 (fu-callin-outbox): every call-in B answered has its late line; the staged line was posted after the restart.
     if (kind === "lateKill" && got.turns === 1 && got.line === 0) totals.lostLate++;
+    if (kind === "lateKill") expect({ turns: got.turns, line: got.line }, `seed ${seed}: ${run.token} late line lost (A killed after the reply committed)`).toEqual({ turns: 1, line: 1 });
+    // B's crash point (fu-callin-outbox): the answer that was committed when B died reached A: replied at B, one reply applied, its line in H.
+    if (kind === "guestCrash" && callInRows().some((row) => row.asked.includes(run.token) && row.callId === hit)) {
+      expect({ rows: callInRows().filter((row) => row.callId === hit).map((row) => [row.state, row.replied]), receipts: receiptsFor(run.hostId), line: got.line }, `seed ${seed}: ${run.token} the answer B had committed when it died`).toEqual({ rows: [["finished", true]], receipts: 1, line: 1 });
+      totals.guestAnswersKept++;
+    }
     // B's one answer for an interrupted row reached a wait (else A gave up while B was down, or a kill between B's mark and its
     // queue lost the answer and A's wait ended at the cap).
-    if (kind === "killBmid" && inputLines(aInput).some((text) => text.includes(run.token) && text.includes(WAKE_MARK) && text.includes("restarted during the answer"))) totals.restartAnswers++;
-    if (kind === "killBmid" && got.turns === 1 && callInRows().some((row) => row.asked.includes(run.token) && row.state === "interrupted")) totals.interruptedTurns++;
+    const restartAnswered = inputLines(aInput).some((text) => text.includes(run.token) && text.includes(WAKE_MARK) && text.includes("restarted during the answer"));
+    if (kind === "killBmid" && restartAnswered) totals.restartAnswers++;
+    if (kind === "killBmid" && got.turns === 1 && callInRows().some((row) => row.asked.includes(run.token) && row.state === "interrupted")) {
+      totals.interruptedTurns++;
+      // The answer B owes for an interrupted turn reached A (the receipt, checked above) and the asker was told it: either B's
+      // "restarted during the answer", or A had given up while B was down ("not reachable"). The cap (a lost answer) shows up as
+      // "not reachable" too, which is why the receipt check and this count both stand.
+      const woken = inputLines(aInput).filter((text) => text.includes(run.token) && text.includes(WAKE_MARK));
+      if (!restartAnswered && !woken.some((text) => text.includes("is not reachable"))) throw new SeedFailure(seed, `${run.token}: an interrupted guest turn whose asker heard neither B's restart answer nor a give-up`);
+      if (!restartAnswered) totals.interruptedGaveUp++;
+    }
     totals.runs++;
     totals.lines += got.line;
     totals.wakes += got.wake;
@@ -344,6 +392,8 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
   // The crash kinds: every call-in A gave up on was answered by B, and each answer used its record up (M5-03a: a record left
   // behind would make a second reply for the same call-in late again).
   if (kind === "gaveUpCrash" || kind === "lateKill") expect(gaveUpRows(), `seed ${seed}: callin:gaveup records left after the wave`).toBe(gaveUpBefore);
+  // Every staged late line was posted and its row deleted (a row left behind would post again at the next start).
+  if (kind === "gaveUpCrash" || kind === "lateKill") expect(lateRows(), `seed ${seed}: callin:late rows left after the wave`).toBe(0);
   // B never drops an answer it marked sent: the roster does not change here, so every answer can be queued (only a crash
   // between the mark and the queue loses one, and that leaves no log line).
   expect(b.log.split("\n").filter((line) => /callin: (even )?the (short )?answer to .* was not sent/.test(line)), `seed ${seed}: answers B could not queue`).toEqual([]);
@@ -361,8 +411,8 @@ beforeAll(async () => {
   cluster = await startServers({
     name: "callin-faults", count: 2,
     env: {
-      A: { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, BOTLING_SERVER_CALLIN_TIMERS: `stale=${STALE_MS},cap=${CAP_MS},tick=200`, FAKE_CLAUDE_INPUT: aInput },
-      B: { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, FAKE_CLAUDE_INPUT: bInput, FAKE_CLAUDE_GUEST_MS: "250" },
+      A: { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, BOTLING_SERVER_CALLIN_TIMERS: `stale=${STALE_MS},cap=${CAP_MS},tick=200`, BOTLING_SERVER_CALLIN_CRASH: `host=${aCrash}`, FAKE_CLAUDE_INPUT: aInput },
+      B: { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, BOTLING_SERVER_CALLIN_CRASH: `guest=${bCrash}`, FAKE_CLAUDE_INPUT: bInput, FAKE_CLAUDE_GUEST_MS: "250" },
     },
   });
   ({ a, b } = cluster);
@@ -389,7 +439,7 @@ afterAll(async () => {
 describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => {
   it(`${PLAN.reduce((sum, [, n]) => sum + n, 0)} seeded call-ins: never two guest turns, never two lines, never two wakes (seed ${SEED})`, async () => {
     console.log(`callin-faults: seed ${SEED} (CALLIN_FAULT_SEED); ${PLAN.length} waves`);
-    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, interruptedTurns: 0, restartAnswers: 0 };
+    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, guestHits: 0, guestAnswersKept: 0, interruptedTurns: 0, interruptedGaveUp: 0, restartAnswers: 0 };
     for (let index = 0; index < PLAN.length; index++) await wave(index, PLAN[index]![0], PLAN[index]![1], totals);
     console.log(`callin-faults: ${JSON.stringify(totals)}`);
     expect(totals.runs, `seed ${SEED}: runs`).toBeGreaterThanOrEqual(50);
@@ -398,7 +448,12 @@ describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => 
     expect(totals.lines, `seed ${SEED}: guest lines in H`).toBeGreaterThan(20);
     expect(totals.kills, `seed ${SEED}: kills`).toBeGreaterThanOrEqual(6);
     expect(totals.faults, `seed ${SEED}: network faults`).toBeGreaterThan(0);
-    expect(totals.lateKills, `seed ${SEED}: A killed right after a late reply used its record up`).toBeGreaterThan(0);
+    expect(totals.lateKills, `seed ${SEED}: A killed right after a late reply committed`).toBeGreaterThan(0);
+    expect(totals.lostLate, `seed ${SEED}: late lines lost`).toBe(0);
+    expect(totals.guestHits, `seed ${SEED}: B killed right after an answer committed`).toBeGreaterThan(0);
+    expect(totals.guestAnswersKept, `seed ${SEED}: the answers B had committed when it died, all kept`).toBe(totals.guestHits);
     expect(totals.interruptedTurns, `seed ${SEED}: guest turns B was killed in`).toBeGreaterThan(0);
+    // B's restart answer reached an asker's wait at least once (the rest were given up on while B was down; each one's receipt is checked per run).
+    expect(totals.restartAnswers, `seed ${SEED}: restart answers that reached a wait`).toBeGreaterThan(0);
   }, 600_000);
 });
