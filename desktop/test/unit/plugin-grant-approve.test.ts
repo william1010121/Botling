@@ -132,13 +132,31 @@ describe("Settings › Plugins: approving a plugin from the window", () => {
   });
 
   it("offers nothing for a built-in plugin, a 2.x core (no grant) or a server that sends no asks", async () => {
-    for (const one of [plugin({ builtIn: true, grant: "write" }), plugin({ grant: undefined, asks: undefined }), plugin({ asks: undefined })]) {
+    for (const one of [plugin({ builtIn: true, grant: "write" }), plugin({ grant: undefined, asks: undefined }), plugin({ grant: undefined }), plugin({ asks: undefined })]) {
       const ui = await render(panel(fakeClient().client, [one]));
       try {
         expect(ui.host.querySelector(".plugin-grant")).toBeNull();
         expect(allowButton(ui.host)).toBeNull();
       } finally { await ui.done(); }
     }
+  });
+
+  it("review: a new running hash drops the tier picked for the old code, so Allow never sends it at the new hash", async () => {
+    const { client, grants } = fakeClient();
+    const NEW = "5e0cbd1677e4db331b948fcb7e59d7d57fc86368b47964d8886e773d63745dd9";
+    const ui = await render(panel(client, [plugin()]));
+    try {
+      await pick(ui.host, "write");
+      expect(allowButton(ui.host)?.disabled).toBe(false);
+      await ui.rerender(panel(client, [plugin({ asks: asks({ codeHash: NEW }) })]));
+      expect(tiers(ui.host).length).toBe(3);
+      expect(allowButton(ui.host)?.disabled).toBe(true);
+      await tap(ui.host);
+      expect(grants()).toEqual([]);
+      await pick(ui.host, "read");
+      await tap(ui.host);
+      expect(grants()).toEqual([expect.objectContaining({ codeHash: NEW, tier: "read" })]);
+    } finally { await ui.done(); }
   });
 
   it("windowGrantCommand never puts plugin.grant in the requests and refuses a tier above the asks", () => {
