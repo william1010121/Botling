@@ -209,6 +209,8 @@ export interface CoreOptions {
   remoteMembers?: () => RemoteMember[];
   /** Botling 3's server only (2.x leaves it unset): runs a cross-server call-in turn (M5-02c). */
   remoteTurn?: ConversationsDeps["remoteTurn"];
+  /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash. */
+  pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
 }
 
 /** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
@@ -340,6 +342,7 @@ export class Core {
       sealer: host?.sealer ?? null,
       timing: host?.timing,
       onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
+      ...(options.pluginGrant ? { pluginGrant: options.pluginGrant } : {}),
       world: {
         bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
         send: (botId, text, via) => {

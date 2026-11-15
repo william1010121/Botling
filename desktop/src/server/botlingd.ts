@@ -49,7 +49,8 @@ import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type Db, type ServerStore } from "./store";
-import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, SummaryRows, TableFeeds } from "./replica";
+import { PluginRow } from "../protocol/table-rows";
+import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, readRowBody, SummaryRows, TableFeeds } from "./replica";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
 import type { Command } from "../contract";
 import type { Target } from "../protocol";
@@ -178,6 +179,17 @@ export function relayAllowList(options: {
     }
     return tokens;
   };
+}
+
+/** Reads this server's `plugin:<name>` row (M5-13b) and returns its grant tier at the row's current `codeHash`, or `"none"`. */
+export function readPluginGrant(db: Db, serverId: string, name: string): "none" | "read" | "request" | "write" {
+  try {
+    const parsed = PluginRow.safeParse(readRowBody(db, `srv:${serverId}`, `plugin:${name}`));
+    if (!parsed.success) return "none";
+    return parsed.data.grants[parsed.data.codeHash]?.tier ?? "none";
+  } catch {
+    return "none";
+  }
 }
 
 /** The key of the bot store kept in `directory`: the bot's id, or `<id>/partner-<engine>` for a second head's store. */
@@ -402,6 +414,7 @@ export class Botlingd {
           },
         },
         remoteMembers: () => peerRemoteMembers(roster, hub.reader()),
+        pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory, ids.main);
           opened.set(key, directory);
