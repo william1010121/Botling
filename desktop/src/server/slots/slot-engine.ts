@@ -13,7 +13,7 @@
 //     n < next, otherwise               → refused{slot conflict}, seq null, nothing stored; audit
 //     n > next                          → hold (≤ 64 per queue) and wait
 //     n ∈ cancels                       → cmd.cancelled
-//     carries `via` (a plugin's)        → cmd.refused{grant} until M5's grants (N1, fail closed)
+//     carries `via` (a plugin's)        → cmd.refused{grant} unless device scope ∩ the grant at via.codeHash allows (M5-15)
 //     origin invalid / scope forbids    → cmd.refused{scope | origin}
 //     target or basis check fails       → cmd.refused{invalid | changed} (§11.5)
 //     apply throws SlotRefusal          → cmd.refused{reason} (the apply's writes rolled back)
@@ -37,9 +37,12 @@
 // it still wants. A session delivers one queue's copies in send order (the session core chains them), so a gap or a
 // copy dropped from the held buffer means the session broke FIFO: that session is ended and the origin re-sends.
 import type { Command } from "../../contract";
-import { GRANT_REFUSAL_DETAIL, queueKey, type CmdBody, type Cursor, type LogId, type MessageOf, type Outcome, type Scope, type Slot, type Via } from "../../protocol";
+import { queueKey, type CmdBody, type Cursor, type LogId, type MessageOf, type Outcome, type Scope, type Slot, type Via } from "../../protocol";
+import { PluginRow } from "../../protocol/table-rows";
+import { ownTableStream, readRowBody } from "../replica/tables";
 import type { Command as StoreCommand, Db } from "../store";
 import { checkBasis, checkTarget, dbBasisReader, localOnly } from "./basis";
+import { grantAllows } from "./grant-check";
 import { cmdHash } from "./hash";
 import { addCancel, findReceipt, isCancelled, readNext, removeCancel, writeNext, writeReceipt, writeSkip, type QueueRef } from "./tables";
 import { SlotRefusal, type ApplyFn, type Audit, type Authorize, type BasisReader, type SlotLog } from "./types";
@@ -62,7 +65,7 @@ export interface SlotInput {
   cmd: Command;
   scope: Scope;
   basis?: Cursor;
-  /** The plugin the command came from (N1): refused with `grant` until M5. */
+  /** The plugin the command came from (N1): checked against this owner's grant for `codeHash` (M5-15). */
   via?: Via;
   /** cmdHash over cmd, scope, basis and via when present (never floor or inc). */
   hash: string;
@@ -122,6 +125,27 @@ export interface SlotEngineOptions {
 
 interface HeldCopy { body: CmdBody; scope: Scope; reply?: ReplySink }
 
+/** This server's `plugin:<name>` row, or null when there is none or it cannot be read (fail closed: no row, no grant). */
+function readPluginRow(tx: Db, plugin: string): PluginRow | null {
+  try {
+    const parsed = PluginRow.safeParse(readRowBody(tx, ownTableStream(tx), `plugin:${plugin}`));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The name this machine gives itself in its `machine` row, else its server id (never empty). */
+function ownServerName(tx: Db): string {
+  try {
+    const stream = ownTableStream(tx);
+    const machine = readRowBody(tx, stream, "machine") as { name?: unknown } | null;
+    return typeof machine?.name === "string" && machine.name ? machine.name : stream.slice("srv:".length);
+  } catch {
+    return "this server";
+  }
+}
+
 const queueOf = (slot: Slot): QueueRef => ({ origin: slot.origin, originEpoch: slot.originEpoch, target: slot.target });
 const truncate = (text: string) => (text.length > DETAIL_LIMIT ? `${text.slice(0, DETAIL_LIMIT - 1)}…` : text);
 
@@ -174,12 +198,15 @@ export class SlotEngine {
    * command's handler, so a command the owner would refuse never runs its handler (the slot is then decided as usual).
    */
   denies(tx: Db, input: { slot: Slot; cmd: Command; scope: Scope; via?: Via }): { reason: "scope" | "origin" | "grant"; detail?: string } | null {
-    // §11.3 / D53: the device's scope first, then the plugin's grant (none exist before M5: fail closed).
+    // §11.3 / D53 / M5-15: the device's scope first (N7), then the plugin's grant at `via.codeHash`, read from this
+    // owner's own `srv:` row inside the decision transaction. Only the owner refuses for a grant (D58).
     const denied = this.authorize(tx, input);
     if (denied) return denied;
     if (input.via) {
+      // D54 / M5-14a F3: a plugin never sends `plugin.grant`. Kept ahead of the grant lookup on purpose.
       if (input.cmd.type === "plugin.grant") return { reason: "grant", detail: "plugin.grant cannot be sent by a plugin" };
-      return { reason: "grant", detail: GRANT_REFUSAL_DETAIL };
+      const decision = grantAllows(readPluginRow(tx, input.via.plugin), input.via, input.cmd, ownServerName(tx));
+      if (!decision.ok) return { reason: "grant", detail: decision.detail };
     }
     return null;
   }
