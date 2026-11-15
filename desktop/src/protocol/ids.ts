@@ -103,6 +103,19 @@ export const Outcome = z.discriminatedUnion("kind", [
 ]);
 export type Outcome = z.infer<typeof Outcome>;
 
+/**
+ * An `applied` outcome's `result` when the real result did not fit one log entry (N2, 2026-11-15): the handler ran, so
+ * the slot is applied, never refused. `kept`: the owner keeps the result (`slot_results`, the newest few only) and the
+ * front end fetches it with a `slot.result` req, whose answer may be large (`res.part`s); false: too large even for that
+ * (over `KEPT_RESULT_MAX_BYTES`), nothing kept. `bytes` counts the result's JSON as UTF-8. It travels inside `result`,
+ * so older front ends and forwarders take it as an ordinary result. A legacy command's top-level result is built by
+ * the core, never by plugin code, so a plugin cannot forge it.
+ */
+export const KeptResultMarker = z.strictObject({
+  resultKept: z.strictObject({ bytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), kept: z.boolean() }),
+});
+export type KeptResultMarker = z.infer<typeof KeptResultMarker>;
+
 /** The command hash a receipt stores: SHA-256 hex over `cmd`, `scope` and `basis`, never `floor` or `inc` (§11.1). */
 export const CmdHash = EntryHash;
 

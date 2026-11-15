@@ -111,6 +111,53 @@ describe("a req answer over the frame limit", () => {
   });
 });
 
+describe("slot.result: the result the owner kept for a slot too large for its cmd.applied (N2)", () => {
+  const slot = { origin: "test", originEpoch: EPOCH, target: "srv:server-1", n: 4 };
+  function keptHost(found: { found: true; result: unknown } | { found: false }) {
+    const asked: unknown[] = [];
+    const runs: string[] = [];
+    const opened = open(async (cmd) => { runs.push(cmd.type); return null; }, { runtime: { keptResult: async (s: unknown) => { asked.push(s); return found; } } as never });
+    return { ...opened, asked, runs };
+  }
+  const resOf = (socket: FakeSocket, req: string) => {
+    const frames = socket.frames().filter((frame) => frame.t === "res" || frame.t === "res.part");
+    const parts = new ResAssembler();
+    for (const frame of frames) {
+      if (frame.t === "res" && frame.req === req) return frame;
+      if (frame.t === "res.part" && frame.req === req) { const step = parts.push(frame, LOCAL); if (!step.ok) throw new Error(step.detail); if (step.message) return step.message; }
+    }
+    return undefined;
+  };
+
+  it("answers the session's own slot with the kept result, as res.parts when large; the engine is not asked", async () => {
+    const result = bigSpecs();
+    const { socket, session, asked, runs } = keptHost({ found: true, result });
+    socket.feed({ t: "req", req: "k1", cmd: { type: "slot.result", slot } } as never);
+    await settle();
+    expect(resOf(socket, "k1")).toEqual({ t: "res", req: "k1", ok: true, result });
+    expect(asked).toEqual([slot]);
+    expect(runs).toEqual([]);
+    session.close();
+  });
+
+  it("refuses another origin's slot without looking it up", async () => {
+    const { socket, session, asked } = keptHost({ found: true, result: { secret: 1 } });
+    socket.feed({ t: "req", req: "k2", cmd: { type: "slot.result", slot: { ...slot, origin: "desktop" } } } as never);
+    await settle();
+    expect(resOf(socket, "k2")).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(asked).toEqual([]);
+    session.close();
+  });
+
+  it("a slot whose result is no longer kept is answered not_found", async () => {
+    const { socket, session } = keptHost({ found: false });
+    socket.feed({ t: "req", req: "k3", cmd: { type: "slot.result", slot } } as never);
+    await settle();
+    expect(resOf(socket, "k3")).toMatchObject({ ok: false, error: { code: "not_found" } });
+    session.close();
+  });
+});
+
 describe("any other frame over the limit", () => {
   it("is never written: send says false and the log names the frame, what it was for and why", () => {
     const { socket, session, log } = open(async () => null);

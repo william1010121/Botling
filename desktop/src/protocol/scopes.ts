@@ -58,6 +58,8 @@ export const COMMAND_SCOPES: Record<CommandType, CommandScope> = {
   "plugins.list": read,
   "plugins.store": read,
   "plugins.panel": read,
+  // N2: a kept slot result; local only (not in REMOTE_READS), and only the slot's own origin (session-core).
+  "slot.result": read,
   "plugins.web": read,
   // Unread marks: reading a chat marks it read.
   "chat.read": read,
