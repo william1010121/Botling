@@ -44,7 +44,10 @@ export interface ElectronMainLike {
     whenReady?: () => Promise<void>;
     setActivationPolicy?: (policy: "regular" | "accessory" | "prohibited") => void;
     dock?: { hide?: () => void };
+    on?: (event: "before-quit", listener: (event: { preventDefault(): void }) => void) => unknown;
   };
+  /** Used only after `app.whenReady()` (Electron refuses it before). */
+  powerMonitor?: { on?: (event: "shutdown", listener: () => void) => unknown };
   utilityProcess?: ElectronUtilityContext["utilityProcess"];
   MessageChannelMain?: ElectronUtilityContext["MessageChannelMain"];
 }

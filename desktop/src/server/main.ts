@@ -83,6 +83,7 @@ import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
 import type { ElectronUtilityContext } from "./packaged-electron";
+import { stopOnSystemQuit, type SystemQuitListener } from "./shell-bridge";
 import { machineLabel } from "./designated";
 
 const out = (line: string) => process.stdout.write(`${line}\n`);
@@ -98,7 +99,15 @@ function holderPid(dataDir: string): number | null {
   return holder && alive(holder.pid) ? holder.pid : null;
 }
 
-export interface ServerCliOptions { packaged?: boolean; appId?: string; outDir?: string; execPath?: string; electronUtility?: ElectronUtilityContext }
+export interface ServerCliOptions {
+  packaged?: boolean;
+  appId?: string;
+  outDir?: string;
+  execPath?: string;
+  electronUtility?: ElectronUtilityContext;
+  /** `start` in Electron: where macOS's quits for this process arrive (main-v3/main.ts); see shell-bridge.ts `answerSystemQuit`. */
+  onSystemQuit?: (listener: SystemQuitListener) => void;
+}
 
 async function start(options: ServerCliOptions = {}): Promise<void> {
   // Importing 1.x/2.x data is M6's explicit step: an inherited BOTLING_IMPORT_FROM / BOTLING_1X_DIR is not acted on.
@@ -131,6 +140,7 @@ async function start(options: ServerCliOptions = {}): Promise<void> {
   process.on("SIGTERM", () => stop(0));
   process.on("SIGINT", () => stop(0));
   process.on("SIGHUP", () => stop(0));
+  stopOnSystemQuit(options.onSystemQuit, daemon, stop);
   process.on("uncaughtException", (error) => {
     process.stderr.write(`botlingd: uncaught: ${error?.stack ?? String(error)}\n`);
     stop(1);

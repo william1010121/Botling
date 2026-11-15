@@ -184,6 +184,14 @@ describe("stopOnSystemQuit: botlingd start wires the quit to its normal stop", (
     expect(stop).toHaveBeenCalledWith(0);
   });
 
+  it("stops when handing the quit on throws (the quit is never dropped)", () => {
+    let registered: SystemQuitListener | undefined;
+    const stop = vi.fn();
+    stopOnSystemQuit((listener) => { registered = listener; }, { answerSystemQuit: () => { throw new Error("socket gone"); } }, stop);
+    registered!(false);
+    expect(stop).toHaveBeenCalledWith(0);
+  });
+
   it("does nothing without a quit source (not Electron, or a development run)", () => {
     expect(() => stopOnSystemQuit(undefined, { answerSystemQuit: () => "stop" }, vi.fn())).not.toThrow();
   });

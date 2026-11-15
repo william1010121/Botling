@@ -56,7 +56,7 @@ import { PhoneDesk } from "./pairing/phone-desk";
 import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "./push";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { VapidKeySync } from "./push";
-import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
+import { NO_SAFE_STORAGE, ShellBridge, answerSystemQuit } from "./shell-bridge";
 import { PluginRow, RowKey } from "../protocol/table-rows";
 import { openServerStore, type Db, type ServerStore } from "./store";
 import { PeerChatMirror, type MirrorBot } from "./replica/peer-chat-mirror";
@@ -1160,6 +1160,15 @@ export class Botlingd {
           chars: running && running.turnId === String(row.turnId) ? running.turnText.length : 0,
         };
       });
+  }
+
+  /**
+   * A quit from macOS reached this process (the packaged botlingd is the same app bundle as the window): "kept" when the
+   * attached windows were asked to quit and botlingd keeps running, "stop" when the caller should stop it (shell-bridge.ts).
+   */
+  answerSystemQuit(systemEnding: boolean): "kept" | "stop" {
+    if (this.stopping) return "stop";
+    return answerSystemQuit(this.shell, systemEnding, this.log);
   }
 
   /** Stops in order: sessions (bye closing), the core (turns end, plugins stop), then what stores what they did. */
