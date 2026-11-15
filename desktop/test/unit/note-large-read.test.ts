@@ -8,8 +8,8 @@
 //   2. The window: plugin-frame-host -> renderer Client -> RendererAdapter -> FeLink -> a server that keeps the result:
 //      the frame gets the whole 1 MiB note; a result that cannot be fetched or was too large to keep says the call ran
 //      (never "not sent"), and the handler is not asked again.
-// A remote page cannot fetch a kept result yet: `slot.result` is not in REMOTE_READS (N2 review probe in
-// server-slot-big-result.test.ts); see M7-04c.md. This file does not change that.
+// A remote page fetches a kept result the same way (`slot.result` is in REMOTE_READS since M7-04c); its wire, a 1 MiB note in
+// res.parts and the origin check that keeps one device from another's result, are tested in server-remote-session.test.ts.
 import { afterEach, describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION, type Command } from "../../src/contract";
 import { FeLink, MemoryFeStorage } from "../../src/fe-link";
@@ -213,7 +213,7 @@ describe("the window: a 1 MiB note read through plugin-frame-host, the adapter a
 });
 
 describe("a remote page", () => {
-  it("cannot fetch a kept result: slot.result is local only (the N2 review probe); M7-04c.md asks for a decision", () => {
-    expect(REMOTE_READS.has("slot.result")).toBe(false);
+  it("may fetch a kept result: slot.result is in REMOTE_READS (M7-04c; the wire end to end is in server-remote-session.test.ts)", () => {
+    expect(REMOTE_READS.has("slot.result")).toBe(true);
   });
 });
