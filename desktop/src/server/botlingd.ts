@@ -38,6 +38,7 @@ import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
 import { BotExports } from "./exports";
+import type { CallInHost } from "./callin";
 import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
@@ -517,6 +518,7 @@ export class Botlingd {
       const pendingBotWrites = new Map<string, { botId: string; at: number }>();
       let syncPlugins: (force?: boolean) => Promise<void> = async () => undefined;
       let originRef: ServerOrigin | null = null;
+      let hostCallIns: CallInHost | null = null;
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
@@ -545,6 +547,8 @@ export class Botlingd {
         // M5-04c: the origin is built below, after the core; a call before then is "not ready".
         remoteCommand: (target, cmd) => remoteCommandVia(originRef, target, cmd),
         machineName: () => ownMachineName(roster, serverId, SERVER_NAME),
+        // M5-02c: the host's side of call-ins (the runtime below owns it; until it exists a call-in is "not reachable").
+        remoteTurn: (call) => hostCallIns ? hostCallIns.remoteTurn(call) : Promise.resolve({ kind: "failed", why: "its machine cannot take call-ins yet" }),
         pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory, ids.main);
@@ -705,6 +709,14 @@ export class Botlingd {
       roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
       // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
       runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
+      // M5-02c: the host's side asks through the same origin, and hears how each ask ended (a refused ask ends its wait at once).
+      hostCallIns = runtime.callHost;
+      runtime.callHost.attach({
+        self: roster.memberId, ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd),
+        onOutcome: (listener) => serverOrigin.on(listener), outcome: (slot) => serverOrigin.outcome(slot),
+        // The peer sessions' own bookkeeping (live / stale since the last frame / gone): the wait is a liveness wait.
+        peerState: (server) => { const state = peers.states().find((entry) => entry.member === server); return state ? { state: state.state, since: state.since } : null; },
+      });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);

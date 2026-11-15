@@ -60,6 +60,8 @@ export interface RemoteTurnRequest {
   asked: string;
   by: "user" | "bot";
   depth: number;
+  /** Names the chat's speakers for the transcript lines (a bot's own name, a removed bot). */
+  speakerName: (id: string) => string | null;
   onBegin?: () => void;
 }
 
@@ -506,6 +508,7 @@ export class Conversations {
             asked: asked || `@${member.name}`,
             by: caller ? "bot" : "user",
             depth: caller?.depth ?? 1,
+            speakerName: this.speakerName,
             onBegin: () => { began = true; delivery?.began(); },
           });
         } else {

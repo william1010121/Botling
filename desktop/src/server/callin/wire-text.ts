@@ -46,6 +46,25 @@ export function cutEscaped(text: string, limit: number, marker = ""): string {
 }
 
 /**
+ * `lines` joined with "\n", the OLDEST lines dropped until the whole is at most `limit` escaped bytes (M5-02c: a call-in's
+ * transcript slice keeps the newest lines, which carry the ask). A single newest line that alone is over the limit is cut
+ * to fit, keeping its start. "" for no lines.
+ */
+export function cutOldest(lines: readonly string[], limit: number): string {
+  let start = lines.length;
+  let used = 0;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    // The "\n" between two lines is 2 escaped bytes.
+    const bytes = escapedBytes(lines[i]!) + (start < lines.length ? 2 : 0);
+    if (used + bytes > limit) break;
+    used += bytes;
+    start = i;
+  }
+  if (start === lines.length) return lines.length ? cutEscaped(lines[lines.length - 1]!, limit) : "";
+  return lines.slice(start).join("\n");
+}
+
+/**
  * `text` cut to at most `max` UTF-16 units (what zod's string `.max` counts), at a code point boundary so no surrogate
  * pair is split. `oneLine` counts user-perceived characters, and one of those can be many units (an emoji family is 11).
  */
