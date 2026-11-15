@@ -12,7 +12,8 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { canonicalSlot, slotName } from "../../../Web/src/plugin-kernel";
+import { Kernel, canonicalSlot, slotName } from "../../../Web/src/plugin-kernel";
+import { BUILTIN_BOT_MENU, readBotMenu } from "../../src/renderer/bot-menu-items";
 import { feBuildManifestFile } from "../../fe-build-manifest.mjs";
 import type { BotView, PluginsView } from "../../src/contract";
 import { BotMenu } from "../../src/renderer/Rail";
@@ -300,6 +301,35 @@ describe("pressing an item", () => {
     await openMenu(mounted);
     await act(async () => { document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
     expect(mounted.host.querySelector(".bot-menu")).toBeNull();
+  });
+});
+
+describe("reading the slot (a private kernel)", () => {
+  /** A kernel with the sidebar's slot owned, `other` a plugin that contributes to it before the sidebar's own items. */
+  async function kernelWith(own: typeof BUILTIN_BOT_MENU, other: { kind: string; id: string; place: string }[]) {
+    const kernel = new Kernel({ slotName: canonicalSlot });
+    kernel.install({ name: SIDEBAR_PLUGIN, provides: { slots: [BOT_CONTEXT_SLOT] } });
+    await kernel.load(SIDEBAR_PLUGIN, (plugin) => { kernel.provideSlot(plugin, BOT_CONTEXT_SLOT); });
+    kernel.install({ name: "test.other", contributes: { slots: [BOT_CONTEXT_SLOT] } });
+    await kernel.load("test.other", (plugin) => { for (const entry of other) kernel.contribute(plugin, BOT_CONTEXT_SLOT, entry); });
+    kernel.install({ name: "test.late", contributes: { slots: [BOT_CONTEXT_SLOT] } });
+    await kernel.load("test.late", (plugin) => { for (const entry of own) kernel.contribute(plugin, BOT_CONTEXT_SLOT, entry); });
+    return kernel;
+  }
+
+  it("takes an item only from the sidebar's own registrations: another plugin's 'remove' is not the menu's Remove", async () => {
+    const kernel = await kernelWith([], [{ kind: "bot-menu-item", id: "remove", place: "bottom" }, { kind: "bot-menu-item", id: "pin", place: "top" }]);
+    expect(readBotMenu(kernel, false)).toEqual({ state: "slot", top: [], bottom: [], rows: [] });
+  });
+
+  it("is `direct` while nobody owns the slot, `unavailable` when the host lost the plugin, and the slot's items once it is owned", async () => {
+    const empty = new Kernel({ slotName: canonicalSlot });
+    expect(readBotMenu(empty, false)).toEqual({ state: "direct" });
+    expect(readBotMenu(empty, true)).toEqual({ state: "unavailable" });
+    const kernel = new Kernel({ slotName: canonicalSlot });
+    kernel.install({ name: SIDEBAR_PLUGIN, provides: { slots: [BOT_CONTEXT_SLOT] } });
+    await kernel.load(SIDEBAR_PLUGIN, (plugin) => { kernel.provideSlot(plugin, BOT_CONTEXT_SLOT); for (const item of BUILTIN_BOT_MENU) kernel.contribute(plugin, BOT_CONTEXT_SLOT, item); });
+    expect(readBotMenu(kernel, false)).toEqual({ state: "slot", top: ["pin", "restart"], bottom: ["remove"], rows: [] });
   });
 });
 
