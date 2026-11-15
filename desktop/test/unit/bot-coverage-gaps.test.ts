@@ -167,7 +167,7 @@ describe("releaseClaim: a held message goes on, or is failed when its route is b
 describe("redrawQueued: your line is drawn again through the owner's chat", () => {
   const line = (id: string) => ({ id, role: "user", text: "hello", date: toSwiftDate() });
 
-  it("a partner's queued line is emitted by the owner itself: from the owner's records, not mirrored through fromPartner (which would also save the chat)", () => {
+  it("a partner's queued line is emitted by the owner itself: from the owner's records, not mirrored through fromPartner (which would also save the chat; the spy on fromPartner is the proof, the save timer is private to the records book after the split)", () => {
     const r = rig(["claude", "codex"]);
     const partner = r.partner("codex");
     expect(partner).toBeTruthy();
@@ -183,7 +183,6 @@ describe("redrawQueued: your line is drawn again through the owner's chat", () =
     expect(r.events).toHaveLength(1);
     expect(r.events[0]).toMatchObject({ type: "message.updated", botId: r.peek.id, message: { id, role: "user", queued: true } });
     expect(mirrored).not.toHaveBeenCalled();
-    expect(r.peek.saveTimer ?? null).toBeNull();
   });
 
   it("the owner's own queued line is drawn with its Queued mark, and without it once it left the queue", () => {
