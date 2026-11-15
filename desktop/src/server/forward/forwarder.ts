@@ -20,8 +20,10 @@
 //                                        (`sendWire` false: the link, not the row) never settles a row; it is tried again
 //                                        on the next pump.
 //
-// It never answers a command with an outcome of its own (F3): no refusal, no scope or grant check (only the owner's
-// decision counts); the front end hears `held`, then the owner's answer. Who owns what is directory.ts.
+// It never answers a command with an outcome of its own (F3): no scope or grant check (only the owner's decision
+// counts); the front end hears `held`, then the owner's answer. The two exceptions settle a row no owner can ever
+// decide: a revoked owner (`refused revoked`) and a row that can never be sent (`refused invalid`, above). Who owns
+// what is directory.ts.
 import { encodeWireFrame, LogId, queueKey, type CmdBody, type Message, type MessageOf, type Slot, type WireMessage } from "../../protocol";
 import type { Db } from "../store";
 import { cmdHash } from "../slots";
@@ -187,10 +189,12 @@ export class Forwarder {
       const key = slotKeyOf(row.slot);
       const print = `${row.cmdHash}\u0000${row.envelope?.inc}`;
       if (sent.rows.get(key) !== print) {
-        const bad = this.unsendable(row);
+        // The frame checked is the one sent: a raised floor can make a frame that fit no longer fit.
+        const readable = !!row.envelope && typeof row.envelope === "object" && !Array.isArray(row.envelope);
+        const envelope = readable ? this.stamped(queue, row, row.envelope!) : undefined;
+        if (envelope === null) return true;
+        const bad = this.unsendable(envelope);
         if (bad) { this.settle(owner, row, bad); return true; }
-        const envelope = this.stamped(queue, row, row.envelope!);
-        if (!envelope) return true;
         if (!session.sendWire({ t: "cmd", ...envelope } as WireMessage)) return false;
         sent.rows.set(key, print);
       }
@@ -202,10 +206,9 @@ export class Forwarder {
     return true;
   }
 
-  /** Why this row can never be sent (a fixed word, never the row's own text), or null when it can. */
-  private unsendable(row: QueuedRow): string | null {
-    const envelope = row.envelope;
-    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) return "unreadable";
+  /** Why this frame (the row as it would go, floor raised) can never be sent: a fixed word, never the row's own text; null when it can. */
+  private unsendable(envelope: CmdBody | undefined): string | null {
+    if (!envelope) return "unreadable";
     try {
       const encoded = this.encode({ t: "cmd", ...envelope } as WireMessage);
       return encoded.ok ? null : encoded.reason;

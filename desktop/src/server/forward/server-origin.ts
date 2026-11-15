@@ -382,6 +382,9 @@ export class ServerOrigin {
     this.pending.delete(key);
     if (existing) this.maybeCloseWatch(existing.owner);
     this.recordAndNotify(slot, outcome, existing?.originSlot);
+    // The forwarder pumped on the owner's answer while this slot's meta entry still counted as held: a row of this
+    // queue above a dead slot (forwarddead) waits for it, so pump again now that it is resolved.
+    if (existing && !this.closed) this.options.forwarder.pump(existing.owner);
   }
 
   private async handleRetry(slot: Slot, inc: LogId): Promise<void> {
