@@ -131,7 +131,8 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     expect(feed.loaded()).toContain("ccb-latex");
     // `botling.git` is not listed but has rows: still an instance (the arrays are what surfaces read).
     expect(feed.loaded()).toContain("botling.git");
-    expect(feed.rows("view/settings.section")).toEqual(view.settingsSections);
+    // (After the listed plugins': the instances load in the list's order, then the ones only the rows name.)
+    expect(feed.rows("view/settings.section")).toEqual([...view.settingsSections!.filter((row) => row.plugin !== "botling.git"), ...view.settingsSections!.filter((row) => row.plugin === "botling.git")]);
   });
 
   it("uses the plugins.web answer's version in the fingerprint", () => {
