@@ -98,7 +98,6 @@ export class HeadEvents {
   private get pendingEnded(): string[] { return this.host.pendingEnded; }
   private set pendingEnded(v: string[]) { this.host.pendingEnded = v; }
   private get restarting(): AgentHead | null { return this.host.restarting; }
-  private set restarting(v: AgentHead | null) { this.host.restarting = v; }
   private get retryingConnection(): boolean { return this.host.retryingConnection; }
   private set retryingConnection(v: boolean) { this.host.retryingConnection = v; }
   private get turn(): Turn | null { return this.host.turn; }
@@ -617,7 +616,7 @@ export class HeadEvents {
     this.log(`head exited (${why})${exit.expected ? "" : " unexpectedly"}`);
     if (exit.expected && this.restarting === head) {
       // Ended to start again before a message: the same session goes on (`--resume`).
-      this.restarting = null;
+      this.host.restartEnded();
     } else if (this.restartRecovery || (exit.expected && this.engine === "agy")) {
       // agy resumes by its actual conversation ID after cancel, sleep or shutdown.
       this.briefingDue();
