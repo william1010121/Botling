@@ -5,13 +5,27 @@
 // and never by name, so a command written by older code keeps the authority that code was given (C12: a swap never
 // revokes retroactively), and new code starts with none.
 import type { Command } from "../../contract";
-import type { Via } from "../../protocol";
+import type { Scope, Via } from "../../protocol";
 import type { PluginRow } from "../../protocol/table-rows";
 
 export type GrantDecision = { ok: true } | { ok: false; detail: string };
 
 /** Plugin commands a `write` grant lets a plugin send for itself (C6): the plugin's own server part and buttons. */
 const OWN_PLUGIN_COMMANDS: ReadonlySet<string> = new Set(["plugins.call", "plugins.command", "plugins.linkCommand", "plugins.tabCommand"]);
+
+/** M5-16: what a device (or a peer server) reads when it sends a plugin command with no `via`. */
+export const PLUGIN_COMMAND_NEEDS_GRANT = "plugin commands from a device need the plugin's grant";
+
+/**
+ * M5-16 (§11.7, C6, Q-C11): the four plugin commands need only `reply`, so the grant has to do the limiting, and a grant
+ * is found by `via`. A plugin command with no `via` is therefore refused unless it comes from the desktop window on this
+ * machine (`local`, the 2.x renderer's own buttons). Fails closed: any other or unknown scope is refused too. Run after
+ * the device-scope check (N7), so a read-only device still reads `scope`, not `grant`.
+ */
+export function pluginCommandNeedsGrant(cmd: Command, scope: Scope): { reason: "grant"; detail: string } | null {
+  if (!OWN_PLUGIN_COMMANDS.has(cmd.type) || scope === "local") return null;
+  return { reason: "grant", detail: PLUGIN_COMMAND_NEEDS_GRANT };
+}
 
 /**
  * Whether `cmd` names the plugin `plugin` (`plugins.call.name`, or the `<plugin>.` prefix of a command id). A command id

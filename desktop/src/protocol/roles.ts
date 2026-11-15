@@ -120,6 +120,8 @@ const ROLE_ROWS = {
   "admin.event": rule(false, true, false, { localOnly: true }),
   // Remote device only (§18.4, M4-22): a paired device sends its push subscription to its attached server.
   "push.subscribe": rule(true, false, false, { remoteOnly: true }),
+  // Server ↔ server only (§18.4, Q-P3, M4-26): the root pushes replacement cluster VAPID keys over full peer sessions.
+  "vapid.key": rule(false, false, true),
   // Local socket only (M1).
   "content.find": rule(true, false, false, { localOnly: true }),
   "content.found": rule(false, true, false, { localOnly: true }),

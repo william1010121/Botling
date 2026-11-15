@@ -21,21 +21,28 @@
 //   a session lost before chunk 0 cannot resume: the fetch starts again under a NEW fetchId (for an ask grant the
 //   source's user is asked again) and the old folder is removed (L-c).
 // - Every failure removes the staging folder and `<dest>`. A fetch lives in memory only: a restart of this
-//   server ends it (the folder, if any, is left to the user; nothing resumes).
+//   server ends it and nothing resumes; the staging folder a killed process left is removed when botlingd starts
+//   (`removeLeftoverStaging`: only `.<uuid>.partial` plain folders under a plain `.bot/incoming/<source>/`, never a
+//   symlink, never a finished `<fetchId>/`).
+// - A source cannot make this server build an unbounded tree: at most `FETCH_MAX_DIRS` folders are made and a file may
+//   sit at most `FETCH_MAX_DEPTH` folders deep; over either is `limit`, checked before the folder is made.
 // - One audit row (`audit:<fetchId>`, `act: "fetch.receive"`) in this server's `srv:` table after the files are in
-//   place (the source wrote its `fetch.serve` row before the first byte).
+//   place (the source wrote its `fetch.serve` row before the first byte). If the row cannot be written the fetch is
+//   NOT ok: the files are removed and the result is `corrupt` (fail closed: no receipt, no files kept).
 import { createHash, randomUUID, type Hash } from "node:crypto";
-import { constants, lstatSync, mkdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, type Stats } from "node:fs";
+import { constants, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, type Stats } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import type { WireMessage, WireMessageOf } from "../../protocol";
-import { FETCH_MAX_BYTES, FETCH_MAX_FILES, FetchRelPath, type FetchDenyReason, type FetchWhat } from "../../protocol/fetch";
+import { FETCH_MAX_BYTES, FETCH_MAX_DEPTH, FETCH_MAX_DIRS, FETCH_MAX_FILES, FetchRelPath, type FetchDenyReason, type FetchWhat } from "../../protocol/fetch";
 import { ownTableStream, putRow } from "../replica/tables";
 import type { ServerStore } from "../store";
 
 const realpath = realpathSync.native ?? realpathSync;
 export const FETCH_RESUME_WINDOW_MS = 10 * 60_000;
 const PARTIAL = ".partial";
+/** What `prepare` names a staging folder: `.<fetchId>.partial` (a `randomUUID()`: lowercase hex). */
+const STAGING_NAME = /^\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.partial$/;
 /** macOS `O_NOFOLLOW_ANY` (open fails with ELOOP if any part of the path is a symlink); not in `fs.constants`. */
 const O_NOFOLLOW_ANY = process.platform === "darwin" ? 0x20000000 : 0;
 // (macOS refuses O_NOFOLLOW together with O_NOFOLLOW_ANY with EINVAL; ANY covers the last part too.)
@@ -67,6 +74,9 @@ export interface FetchRequesterOptions {
   serverName(member: string): string | null;
   /** How long a lost session may take to come back (default 10 minutes). */
   resumeWindowMs?: number;
+  /** Folders one fetch may make, and how deep a file may sit (defaults `FETCH_MAX_DIRS` / `FETCH_MAX_DEPTH`; tests use small ones). */
+  maxDirs?: number;
+  maxDepth?: number;
   onAudit?: () => void;
   log?: (line: string) => void;
   now?: () => number;
@@ -96,6 +106,8 @@ interface Pending {
   /** The next chunk index (also: how many chunks are verified). */
   expected: number;
   lastFile: string | null;
+  /** Folders made under the staging folder so far. */
+  dirs: number;
   grant: { bytes: number; files: number } | null;
   done: Array<{ rel: string; size: number; sha256: string }>;
   seen: Set<string>;
@@ -110,12 +122,16 @@ export class FetchRequester {
   private readonly pending = new Map<string, Pending>();
   private readonly running = new Set<Promise<unknown>>();
   private readonly resumeWindowMs: number;
+  private readonly maxDirs: number;
+  private readonly maxDepth: number;
   private readonly log: (line: string) => void;
   private readonly now: () => number;
   private closed = false;
 
   constructor(private readonly options: FetchRequesterOptions) {
     this.resumeWindowMs = options.resumeWindowMs ?? FETCH_RESUME_WINDOW_MS;
+    this.maxDirs = options.maxDirs ?? FETCH_MAX_DIRS;
+    this.maxDepth = options.maxDepth ?? FETCH_MAX_DEPTH;
     this.log = options.log ?? (() => undefined);
     this.now = options.now ?? Date.now;
   }
@@ -133,7 +149,7 @@ export class FetchRequester {
         fetchId: randomUUID(), botId, source, what, purpose: purpose.slice(0, 500),
         maxBytes: Math.max(1, Math.min(FETCH_MAX_BYTES, Math.floor(Number.isFinite(maxBytes) ? maxBytes : FETCH_MAX_BYTES))),
         botFolder: folder, srvDir: incomingDirName(this.options.serverName(source), source), dest: "", partial: "", partialId: "",
-        session, state: "asking", expected: 0, lastFile: null, grant: null, done: [], seen: new Set(), cur: null, total: 0,
+        session, state: "asking", expected: 0, lastFile: null, dirs: 0, grant: null, done: [], seen: new Set(), cur: null, total: 0,
         timer: null, chain: Promise.resolve(), resolve,
       };
       try {
@@ -247,7 +263,7 @@ export class FetchRequester {
       const oldId = p.fetchId;
       await this.discard(p);
       p.fetchId = randomUUID();
-      p.grant = null; p.done = []; p.seen = new Set(); p.total = 0; p.lastFile = null;
+      p.grant = null; p.done = []; p.seen = new Set(); p.total = 0; p.lastFile = null; p.dirs = 0;
       try { this.prepare(p); } catch (error) {
         this.pending.delete(oldId);
         this.removeDest(p);
@@ -299,10 +315,14 @@ export class FetchRequester {
       if (p.seen.has(folded)) return this.corrupt(p, `file ${rel} comes twice (or differs only by case)`);
       if (p.done.length + 1 > FETCH_MAX_FILES || (p.grant && p.done.length + 1 > p.grant.files)) return this.corrupt(p, "more files than the grant names");
       p.seen.add(folded);
+      // a file nested too deep is `limit` before any folder is made for it (the folders above the file are its depth).
+      if (rel.split("/").length - 1 > this.maxDepth) return this.end(p, { ok: false, reason: "limit", detail: "a file sits deeper than the folder depth limit" });
       // the staging folder is still the one made for this fetch, and every folder under it on the way to the file is
       // made here one at a time and is a plain folder (no symlink planted by the bot; a recursive mkdir would follow
       // one and make folders outside). Compared by inode / lstat, never realpath vs realpath.
-      if (!this.makeFolders(p, rel) || !this.stagingIntact(p, rel)) return this.corrupt(p, "a chunk's folder leads out of the fetch folder");
+      const made = this.makeFolders(p, rel);
+      if (made === "limit") return this.end(p, { ok: false, reason: "limit", detail: "more folders than the folder limit" });
+      if (made === "bad" || !this.stagingIntact(p, rel)) return this.corrupt(p, "a chunk's folder leads out of the fetch folder");
       // O_EXCL: the file is new (fails on anything there, a symlink included); O_NOFOLLOW_ANY (macOS): no symlink on the way.
       const handle = await open(target, NEW_FILE_FLAGS, 0o600);
       // the file opened is the one at `target` (a folder swapped between the check and the open would
@@ -358,10 +378,13 @@ export class FetchRequester {
           name: `.bot/incoming/${p.srvDir}/${p.fetchId}`.slice(0, 200), size: p.total, hash: manifest,
         });
       });
-      this.options.onAudit?.();
     } catch (error) {
-      this.log(`fetch: audit row for ${p.fetchId} failed: ${String((error as Error)?.message ?? error)}`);
+      // no receipt, no files: `<dest>` is already in place, so `end` removes it (and the source folders if now empty).
+      this.log(`fetch: audit row for ${p.fetchId} failed, the fetch is dropped: ${String((error as Error)?.message ?? error)}`);
+      return this.end(p, { ok: false, reason: "corrupt", detail: "the audit row could not be written, so nothing was kept" });
     }
+    // only a notification; the row is written, so it must not undo the fetch
+    try { this.options.onAudit?.(); } catch (error) { this.log(`fetch: onAudit for ${p.fetchId} threw: ${String((error as Error)?.message ?? error)}`); }
     this.settle(p, { ok: true, fetchId: p.fetchId, dest: `.bot/incoming/${p.srvDir}/${p.fetchId}`, absDest, files: files.length, bytes: p.total, manifest });
   }
 
@@ -398,21 +421,73 @@ export class FetchRequester {
     } catch { return false; }
   }
 
-  /** Makes the folders from the staging folder down to `rel`'s folder one at a time; each must be a plain folder. */
-  private makeFolders(p: Pending, rel: string): boolean {
+  /**
+   * Makes the folders from the staging folder down to `rel`'s folder one at a time; each must be a plain folder.
+   * `limit`: a new folder would be more than `maxDirs` (nothing is made for it); `bad`: not a plain folder.
+   */
+  private makeFolders(p: Pending, rel: string): "ok" | "bad" | "limit" {
     try {
       const staged = lstatSync(p.partial);
-      if (staged.isSymbolicLink() || !staged.isDirectory() || idOf(staged) !== p.partialId) return false;
+      if (staged.isSymbolicLink() || !staged.isDirectory() || idOf(staged) !== p.partialId) return "bad";
       const parts = rel.split("/").slice(0, -1);
       for (let i = 1; i <= parts.length; i++) {
         const dir = join(p.partial, ...parts.slice(0, i));
         let st: Stats | null = null;
-        try { st = lstatSync(dir); } catch (error) { if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return false; }
-        if (!st) { mkdirSync(dir); st = lstatSync(dir); }
-        if (st.isSymbolicLink() || !st.isDirectory()) return false;
+        try { st = lstatSync(dir); } catch (error) { if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return "bad"; }
+        if (!st) {
+          if (p.dirs + 1 > this.maxDirs) return "limit";
+          p.dirs += 1;
+          mkdirSync(dir);
+          st = lstatSync(dir);
+        }
+        if (st.isSymbolicLink() || !st.isDirectory()) return "bad";
       }
-      return true;
-    } catch { return false; }
+      return "ok";
+    } catch { return "bad"; }
+  }
+
+  /**
+   * Start-up cleanup (call once, before any fetch): removes the staging folders `.<fetchId>.partial` that a fetch which
+   * never finished left in `<bot folder>/.bot/incoming/<source>/` of each folder given. Returns how many it removed.
+   * Only a plain folder with exactly that name goes, and only when `.bot`, `incoming` and `<source>` are plain folders
+   * themselves (`lstat`, never a symlink; the source folder must also be the same one after it was listed). A finished
+   * `<fetchId>/`, a file, a link or any other name is left alone, as is the staging folder of a fetch running now.
+   * `rmSync` is the fd-based remover (Node 24: `openat` + `O_NOFOLLOW`, `unlinkat`; the F5 race test of the M5-07b
+   * review could not make it delete outside), so a link swapped in for the staging folder loses only the link.
+   * Anything that throws or looks odd is skipped, never removed.
+   */
+  removeLeftoverStaging(botFolders: Iterable<string>): number {
+    const live = new Set([...this.pending.values()].map((p) => `.${p.fetchId}${PARTIAL}`));
+    let removed = 0;
+    const plainDir = (path: string): Stats | null => {
+      try { const st = lstatSync(path); return st.isDirectory() && !st.isSymbolicLink() ? st : null; } catch { return null; }
+    };
+    for (const folder of botFolders) {
+      try {
+        const chain = [join(folder, ".bot"), join(folder, ".bot", "incoming")];
+        const ids = chain.map((path) => { const st = plainDir(path); return st ? idOf(st) : null; });
+        if (ids.some((id) => id === null)) continue;
+        for (const source of readdirSync(chain[1]!)) {
+          const srv = join(chain[1]!, source);
+          const srvStat = plainDir(srv);
+          if (!srvStat) continue;
+          const dirs = [...chain, srv];
+          const want = [...ids, idOf(srvStat)];
+          for (const name of readdirSync(srv)) {
+            if (!STAGING_NAME.test(name) || live.has(name)) continue;
+            const path = join(srv, name);
+            // `.bot`, `incoming` and the source folder are still the plain folders that were checked (a swap for a link
+            // to another tree is not followed), and the staging folder is a plain folder, not a link.
+            if (dirs.some((dir, i) => { const st = plainDir(dir); return !st || idOf(st) !== want[i]; }) || !plainDir(path)) continue;
+            rmSync(path, { recursive: true, force: true });
+            removed += 1;
+          }
+        }
+      } catch (error) {
+        this.log(`fetch: leftover staging in a bot folder was not cleaned: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 200))}`);
+      }
+    }
+    return removed;
   }
 
   /** Removes the fetch folder, and the source folder and `.bot/incoming` when that leaves them empty. */

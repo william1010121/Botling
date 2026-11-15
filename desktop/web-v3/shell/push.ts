@@ -6,12 +6,23 @@
 // - iOS Safari tabs outside the Home Screen app cannot receive Web Push: `pushSupport` detects this and surfaces
 //   explicit guidance.
 // - Never logs or surfaces `endpoint`, `keys.p256dh`, or `keys.auth` (L-015).
-import { fromBase64Url, PushSubscription as PushSubscriptionSchema, toBase64Url, type PushSubscription as WirePushSubscription } from "../../src/protocol";
+import { compareVapidKeyId, fromBase64Url, PushSubscription as PushSubscriptionSchema, toBase64Url, VapidKeyId, type PushSubscription as WirePushSubscription, type VapidKeyId as VapidKeyIdValue } from "../../src/protocol";
 
 export const PUSH_ENABLED_PREF = "pushEnabled";
 export const PUSH_VAPID_PREF = "pushVapidKey";
 export const PUSH_VAPID_HISTORY_PREF = "pushVapidKeys";
+export const PUSH_VAPID_ID_PREF = "pushVapidId";
 const MAX_VAPID_HISTORY = 16;
+
+function parseStoredVapidId(raw: string | null): VapidKeyIdValue | null {
+  if (!raw) return null;
+  try {
+    const parsed = VapidKeyId.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
 
 function parseVapidHistory(raw: string | null, storedKey: string | null): string[] {
   const keys: string[] = [];
@@ -153,6 +164,7 @@ function subscriptionMatchesKey(subscription: PushSubscription, vapidPublicKey: 
 
 export interface EnablePushOptions {
   vapidPublicKey: string | null;
+  vapidId?: VapidKeyIdValue | null;
   sendPushSubscribe(sub: WirePushSubscription): boolean;
   prefs: PushPrefs;
   requestPermission?: () => Promise<NotificationPermission>;
@@ -171,6 +183,14 @@ export async function enablePushNotifications(options: EnablePushOptions): Promi
   const appServerKey = decodeApplicationServerKey(options.vapidPublicKey);
   if (!appServerKey) {
     return { ok: false, message: "The server's notification key is invalid." };
+  }
+  let nextVapidId: VapidKeyIdValue | null = null;
+  if (options.vapidId !== undefined && options.vapidId !== null) {
+    const parsedId = VapidKeyId.safeParse(options.vapidId);
+    if (!parsedId.success) {
+      return { ok: false, message: "The server's notification key version is invalid." };
+    }
+    nextVapidId = parsedId.data;
   }
   const askPermission = options.requestPermission ?? (() => Notification.requestPermission());
   const permission = await askPermission();
@@ -202,11 +222,13 @@ export async function enablePushNotifications(options: EnablePushOptions): Promi
   await options.prefs.save(PUSH_ENABLED_PREF, "1").catch(() => undefined);
   await options.prefs.save(PUSH_VAPID_PREF, options.vapidPublicKey).catch(() => undefined);
   await options.prefs.save(PUSH_VAPID_HISTORY_PREF, JSON.stringify([options.vapidPublicKey])).catch(() => undefined);
+  await options.prefs.save(PUSH_VAPID_ID_PREF, nextVapidId ? JSON.stringify(nextVapidId) : "").catch(() => undefined);
   return { ok: true, sent };
 }
 
 export interface SyncPushOptions {
   vapidPublicKey: string | null;
+  vapidId?: VapidKeyIdValue | null;
   sendPushSubscribe(sub: WirePushSubscription): boolean;
   prefs: PushPrefs;
   permission?: NotificationPermission;
@@ -215,9 +237,10 @@ export interface SyncPushOptions {
 
 /**
  * Re-syncs (and re-subscribes if the cluster VAPID key rotated) on attach ONLY if the user previously opted in.
+ * Moves strictly forward by `welcome.vapidId` `(gen, id)` so a lagging server never rolls back to an older key.
  * Never registers a service worker or asks permission if the user has not opted in.
  */
-export async function syncPushOnAttach(options: SyncPushOptions): Promise<"off" | "missing-key" | "no-registration" | "synced" | "resubscribed" | "key-mismatch" | "invalid"> {
+export async function syncPushOnAttach(options: SyncPushOptions): Promise<"off" | "missing-key" | "no-registration" | "synced" | "resubscribed" | "stale-key" | "key-mismatch" | "invalid"> {
   const permission = options.permission ?? (typeof Notification !== "undefined" ? Notification.permission : "default");
   if (permission !== "granted") return "off";
   const enabled = await options.prefs.load(PUSH_ENABLED_PREF).catch(() => null);
@@ -226,11 +249,19 @@ export async function syncPushOnAttach(options: SyncPushOptions): Promise<"off" 
   const appServerKey = decodeApplicationServerKey(options.vapidPublicKey);
   if (!appServerKey) return "invalid";
 
+  let incomingId: VapidKeyIdValue | null = null;
+  if (options.vapidId !== undefined && options.vapidId !== null) {
+    const parsedId = VapidKeyId.safeParse(options.vapidId);
+    if (!parsedId.success) return "invalid";
+    incomingId = parsedId.data;
+  }
+
   const getReg = options.getRegistration ?? (() => navigator.serviceWorker?.getRegistration?.("./") ?? Promise.resolve(undefined));
   const registration = await getReg().catch(() => undefined);
   if (!registration?.pushManager) return "no-registration";
 
   const storedKey = await options.prefs.load(PUSH_VAPID_PREF).catch(() => null);
+  const storedId = parseStoredVapidId(await options.prefs.load(PUSH_VAPID_ID_PREF).catch(() => null));
   const history = parseVapidHistory(
     await options.prefs.load(PUSH_VAPID_HISTORY_PREF).catch(() => null),
     storedKey,
@@ -238,9 +269,19 @@ export async function syncPushOnAttach(options: SyncPushOptions): Promise<"off" 
   let sub = await registration.pushManager.getSubscription().catch(() => null);
   let resubscribed = false;
   if (sub && !subscriptionMatchesKey(sub, options.vapidPublicKey, storedKey)) {
-    if (history.includes(options.vapidPublicKey)) return "key-mismatch";
+    if (storedId !== null) {
+      if (incomingId === null || compareVapidKeyId(incomingId, storedId) <= 0) {
+        return "stale-key";
+      }
+    } else if (history.includes(options.vapidPublicKey)) {
+      return "key-mismatch";
+    }
     await sub.unsubscribe().catch(() => false);
     sub = null;
+  } else if (!sub && storedId !== null) {
+    if (incomingId === null || compareVapidKeyId(incomingId, storedId) < 0) {
+      return "stale-key";
+    }
   }
   if (!sub) {
     sub = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appServerKey });
@@ -255,6 +296,9 @@ export async function syncPushOnAttach(options: SyncPushOptions): Promise<"off" 
     PUSH_VAPID_HISTORY_PREF,
     JSON.stringify(appendVapidHistory(history, options.vapidPublicKey)),
   ).catch(() => undefined);
+  if (incomingId !== null && (storedId === null || compareVapidKeyId(incomingId, storedId) > 0)) {
+    await options.prefs.save(PUSH_VAPID_ID_PREF, JSON.stringify(incomingId)).catch(() => undefined);
+  }
   return resubscribed ? "resubscribed" : "synced";
 }
 
@@ -265,6 +309,7 @@ export async function disablePushNotifications(
   await prefs.save(PUSH_ENABLED_PREF, "0").catch(() => undefined);
   await prefs.save(PUSH_VAPID_PREF, "").catch(() => undefined);
   await prefs.save(PUSH_VAPID_HISTORY_PREF, "").catch(() => undefined);
+  await prefs.save(PUSH_VAPID_ID_PREF, "").catch(() => undefined);
   const reg = await getRegistration().catch(() => undefined);
   const sub = await reg?.pushManager?.getSubscription().catch(() => null);
   if (sub) await sub.unsubscribe().catch(() => false);

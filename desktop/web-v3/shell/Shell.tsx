@@ -21,7 +21,7 @@ import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
 import { askedPath, bannerText, FE_VERSION, itemWords, newDiagnostics, openConnection, UNSETTLED_LEGACY_WARNING, type Connection, type Diagnostics, type DialPath } from "./connection";
-import { slotKey, type DeviceScope, type ServerState, type Slot } from "../../src/protocol";
+import { slotKey, type DeviceScope, type ServerState, type Slot, type VapidKeyId } from "../../src/protocol";
 import { grantCommands, linkPluginSource, listPlugins, ONLY_MANAGE, pluginSheet, type GrantTier, type PluginSource } from "./plugins";
 
 /** Diagnostics for the headless harness and support (not a capability; the renderer never sees it). */
@@ -271,6 +271,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
           if (nextId) setServerId(nextId);
           void syncPushOnAttach({
             vapidPublicKey: conn.link.vapidPublicKey,
+            vapidId: conn.link.vapidId,
             sendPushSubscribe: (sub) => {
               const ok = conn.link.sendPushSubscribe(sub);
               if (ok) { diagnostics.push.state = "subscribed"; diagnostics.push.sends += 1; diagnostics.push.error = undefined; }
@@ -398,6 +399,7 @@ export function ThisDevice({
   const [pushNotice, setPushNotice] = useState<string | null>(null);
   const pushBusyRef = useRef(false);
   const [vapidPublicKey, setVapidPublicKey] = useState<string | null>(() => connection?.link.vapidPublicKey ?? null);
+  const [vapidId, setVapidId] = useState<VapidKeyId | null>(() => connection?.link.vapidId ?? null);
 
   useEffect(() => {
     let alive = true;
@@ -416,6 +418,7 @@ export function ThisDevice({
       setAttachedServerId(null);
       setLiveServers([]);
       setVapidPublicKey(null);
+      setVapidId(null);
       return;
     }
     const syncLink = (attachedOverride?: boolean) => {
@@ -424,6 +427,7 @@ export function ThisDevice({
       setAttachedServerId(isAttached ? (connection.link.attachedServerId() ?? null) : null);
       setLiveServers(isAttached ? connection.link.servers() : []);
       setVapidPublicKey(connection.link.vapidPublicKey ?? null);
+      setVapidId(connection.link.vapidId ?? null);
     };
     setPendingItems(connection.link.pending());
     syncLink();
@@ -544,6 +548,7 @@ export function ThisDevice({
                     diagnostics.push.error = undefined;
                     void enablePushNotifications({
                       vapidPublicKey,
+                      vapidId,
                       sendPushSubscribe: (sub) => connection?.link.sendPushSubscribe(sub) ?? false,
                       prefs,
                     }).then((result) => {

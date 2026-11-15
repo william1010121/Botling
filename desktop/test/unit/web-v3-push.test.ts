@@ -11,7 +11,7 @@ import type { Command } from "../../src/contract";
 import { FeLink, MemoryFeStorage, type Dial } from "../../src/fe-link";
 import { decodeFrame, encodeFrame, FrameSplitter, memberIdFromKey, packFrame, toBase64Url, Welcome, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind } from "../../src/protocol";
 import { ensureSoleServerVapidKeys, isSoleServerInRoster, type VapidSyncState } from "../../src/server/botlingd";
-import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeys, vapidFilePath } from "../../src/server/identity";
+import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeyRecord, readVapidKeys, rotateVapidKeys, vapidFilePath } from "../../src/server/identity";
 import { RosterStore } from "../../src/server/roster";
 import { RemoteSessions, Session, SessionCore, slotAuthorize, type LiveGateClock, type RemoteHost, type SessionHost } from "../../src/server/session";
 import { effectCheckpointSink } from "../../src/server/effects";
@@ -238,7 +238,7 @@ describe("M4-25 protocol & FeLink push support", () => {
           if (typeof raw === "string") {
             const parsed = JSON.parse(raw) as Message;
             if (parsed.t === "welcome") {
-              handlers.frame(JSON.stringify({ ...parsed, vapidPublicKey: vapidKey }));
+              handlers.frame(JSON.stringify({ ...parsed, vapidPublicKey: vapidKey, vapidId: { gen: 1, id: 2 } }));
               return;
             }
           }
@@ -503,7 +503,7 @@ describe("M4-25 page push opt-in UI and iOS Home Screen rules", () => {
           if (typeof raw === "string") {
             const parsed = JSON.parse(raw) as Message;
             if (parsed.t === "welcome") {
-              handlers.frame(JSON.stringify({ ...parsed, vapidPublicKey: vapidKey }));
+              handlers.frame(JSON.stringify({ ...parsed, vapidPublicKey: vapidKey, vapidId: { gen: 1, id: 2 } }));
               return;
             }
           }
@@ -623,6 +623,7 @@ describe("M4-25 page push opt-in UI and iOS Home Screen rules", () => {
     expect(sentPush[0].endpoint).toBe(fakeSub.endpoint);
     expect(prefsMap.get("pushEnabled")).toBe("1");
     expect(prefsMap.get("pushVapidKey")).toBe(vapidKey);
+    expect(prefsMap.get("pushVapidId")).toBe(JSON.stringify({ gen: 1, id: 2 }));
     expect(host.querySelector('[data-testid="push-status"]')?.textContent).toContain("Enabled");
 
     // Secret keys must never appear in rendered UI or extracted diagnostics.
@@ -792,7 +793,7 @@ describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
       log: (l) => logs.push(l),
       roster,
       self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey },
-      vapidPublicKey: () => readVapidKeys(rootDir)?.publicKey ?? null,
+      vapidKey: () => { const rec = readVapidKeyRecord(rootDir); return rec ? { publicKey: rec.keys.publicKey, id: { gen: rec.gen, id: rec.id } } : null; },
     };
     const remote = new RemoteSessions(host, {
       pushWindowMs: options.windowMs,
@@ -889,12 +890,16 @@ describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
     const subLast = { endpoint: "https://push.example/sub/LAST", keys: { p256dh: makeP256Pub(3), auth: makeAuth(3) } };
 
     c1.sendPush(subA);
+    await new Promise((r) => setTimeout(r, 20));
+    await s.roster.idle();
     for (let i = 0; i < 25; i++) {
       c1.sendPush(subB);
       c2.sendPush(subA);
     }
-    c2.sendPush(subLast);
     await new Promise((r) => setTimeout(r, 40));
+    await s.roster.idle();
+    c2.sendPush(subLast);
+    await new Promise((r) => setTimeout(r, 20));
     await s.roster.idle();
 
     const beforeWindow = s.roster.statements().filter((st) => st.statement.body.type === "profile" && st.statement.body.field === "push");
@@ -954,10 +959,10 @@ describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
 
     let currentKey = keyA;
     let subscribeCalls = 0;
-    const makeSubWithKey = (ep: string, vapidKey: string) => ({
-      ...makeFakeSubscription(ep),
-      options: { applicationServerKey: keyBytes(vapidKey) },
-    });
+    const makeSubWithKey = (ep: string, vapidKey: string) => Object.assign(
+      makeFakeSubscription(ep),
+      { options: { applicationServerKey: keyBytes(vapidKey) } },
+    );
     let activeSub = makeSubWithKey("https://push.example/sub-A", keyA);
 
     const prefsMap = new Map<string, string>([["pushEnabled", "1"], ["pushVapidKey", keyA]]);
@@ -1123,6 +1128,7 @@ describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
     const client = dialReal(s1, dev);
     const welcome = await client.hello();
     expect(welcome.vapidPublicKey).toBe(minted!.publicKey);
+    expect(welcome.vapidId).toEqual({ gen: 1, id: 0 });
 
     const sub = { endpoint: "https://push.example/e2e/1", keys: { p256dh: makeP256Pub(80), auth: makeAuth(80) } };
     client.sendPush(sub);
@@ -1135,5 +1141,202 @@ describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
 
   it("F6: cleanPushText strips bidi overrides and zero-width characters", () => {
     expect(cleanPushText("Alpha​Beta‮Gamma⁦Delta‏")).toBe("Alpha Beta Gamma Delta");
+  });
+
+  it("M4-26 F3: FeLink plumbs welcome.vapidId and clears it when absent", async () => {
+    const server = new FakeServer();
+    const clock = new FakeClock();
+    const key1 = makeVapidPub(91);
+    const key2 = makeVapidPub(92);
+    let welcomeSpec: { vapidPublicKey?: string; vapidId?: { gen: number; id: number } } = {
+      vapidPublicKey: key1,
+      vapidId: { gen: 2, id: 3 },
+    };
+    const dial: Dial = (handlers) => {
+      const inner = server.dial({
+        open: () => handlers.open(),
+        frame: (raw) => {
+          if (typeof raw === "string") {
+            const parsed = JSON.parse(raw) as Message;
+            if (parsed.t === "welcome") {
+              handlers.frame(JSON.stringify({ ...parsed, ...welcomeSpec }));
+              return;
+            }
+          }
+          handlers.frame(raw);
+        },
+        close: (detail) => handlers.close(detail),
+      });
+      return inner;
+    };
+
+    const link = await FeLink.open({
+      storage: new MemoryFeStorage(),
+      dial,
+      deviceId: "dev1",
+      feVersion: "3.0.0",
+      local: false,
+      clock,
+    });
+    links.push(link);
+    link.start();
+    await flush();
+    expect(link.vapidPublicKey).toBe(key1);
+    expect(link.vapidId).toEqual({ gen: 2, id: 3 });
+
+    // Reconnect with a welcome that omits vapidId: must reset vapidId to null rather than keeping stale {2, 3}.
+    welcomeSpec = { vapidPublicKey: key2 };
+    link.replaceSocket();
+    await flush();
+    expect(link.vapidPublicKey).toBe(key2);
+    expect(link.vapidId).toBeNull();
+  });
+
+  it("M4-26 F3: page advances only to strictly newer welcome.vapidId (gen, id) and refuses stale/lagging server keys", async () => {
+    const key10 = makeVapidPub(93);
+    const key11 = makeVapidPub(94);
+    const keyStaleUnseen = makeVapidPub(95);
+    const key21 = makeVapidPub(96);
+    const keyLowerGenHigherId = makeVapidPub(97);
+    const keyUnversioned = makeVapidPub(98);
+    const keyBytes = (k: string) => decodeApplicationServerKey(k)!.buffer;
+
+    const makeSubWithKey = (ep: string, vapidKey: string) => Object.assign(
+      makeFakeSubscription(ep),
+      { options: { applicationServerKey: keyBytes(vapidKey) } },
+    );
+
+    let activeSub: ReturnType<typeof makeSubWithKey> | null = null;
+    let subscribeCalls = 0;
+    let nextSubKey = key10;
+    const reg = {
+      scope: "https://mac.tailnet.ts.net/v3/",
+      pushManager: {
+        getSubscription: async () => activeSub,
+        subscribe: async () => {
+          subscribeCalls += 1;
+          activeSub = makeSubWithKey(`https://push.example/mono-${subscribeCalls}`, nextSubKey);
+          return activeSub;
+        },
+      },
+    } as unknown as ServiceWorkerRegistration;
+
+    const prefsMap = new Map<string, string>();
+    const prefs: PushPrefs = {
+      load: async (k) => prefsMap.get(k) ?? null,
+      save: async (k, v) => { prefsMap.set(k, v); },
+    };
+    const sent: Array<{ endpoint: string }> = [];
+
+    // 1. User enables notifications on a server at (gen: 1, id: 1) after rotation.
+    nextSubKey = key11;
+    const enabled = await enablePushNotifications({
+      vapidPublicKey: key11,
+      vapidId: { gen: 1, id: 1 },
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs,
+      requestPermission: async () => "granted",
+      registerSw: async () => reg,
+    });
+    expect(enabled).toEqual({ ok: true, sent: true });
+    expect(prefsMap.get("pushVapidId")).toBe(JSON.stringify({ gen: 1, id: 1 }));
+    expect(subscribeCalls).toBe(1);
+    expect(sent).toHaveLength(1);
+
+    // 2. Attach to lagging offline server holding unseen old key (gen: 1, id: 0): refused as stale without unsubscribing!
+    const subAt11 = activeSub!;
+    expect(await syncPushOnAttach({
+      vapidPublicKey: keyStaleUnseen,
+      vapidId: { gen: 1, id: 0 },
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs,
+      permission: "granted",
+      getRegistration: async () => reg,
+    })).toBe("stale-key");
+    expect(subAt11.wasUnsubscribed).toBe(false);
+    expect(subscribeCalls).toBe(1);
+    expect(sent).toHaveLength(1);
+    expect(prefsMap.get("pushVapidId")).toBe(JSON.stringify({ gen: 1, id: 1 }));
+
+    // 3. Attach to new root generation (gen: 2, id: 1): even if a test compares gen 2 against e.g. (1, 1), gen wins!
+    nextSubKey = key21;
+    expect(await syncPushOnAttach({
+      vapidPublicKey: key21,
+      vapidId: { gen: 2, id: 1 },
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs,
+      permission: "granted",
+      getRegistration: async () => reg,
+    })).toBe("resubscribed");
+    expect(subAt11.wasUnsubscribed).toBe(true);
+    expect(subscribeCalls).toBe(2);
+    expect(sent).toHaveLength(2);
+    expect(prefsMap.get("pushVapidId")).toBe(JSON.stringify({ gen: 2, id: 1 }));
+
+    // 4. Attach to stale old root offering higher counter in lower gen (gen: 1, id: 9): must refuse!
+    const subAt21 = activeSub!;
+    expect(await syncPushOnAttach({
+      vapidPublicKey: keyLowerGenHigherId,
+      vapidId: { gen: 1, id: 9 },
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs,
+      permission: "granted",
+      getRegistration: async () => reg,
+    })).toBe("stale-key");
+    expect(subAt21.wasUnsubscribed).toBe(false);
+    expect(subscribeCalls).toBe(2);
+
+    // 5. Attach to unversioned server (missing vapidId) after holding versioned key: fail closed as stale!
+    expect(await syncPushOnAttach({
+      vapidPublicKey: keyUnversioned,
+      vapidId: null,
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs,
+      permission: "granted",
+      getRegistration: async () => reg,
+    })).toBe("stale-key");
+    expect(subAt21.wasUnsubscribed).toBe(false);
+    expect(subscribeCalls).toBe(2);
+
+    // 6. If browser dropped the subscription (sub === null), do not create a new one on an older/stale server key.
+    activeSub = null;
+    expect(await syncPushOnAttach({
+      vapidPublicKey: key10,
+      vapidId: { gen: 1, id: 0 },
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs,
+      permission: "granted",
+      getRegistration: async () => reg,
+    })).toBe("stale-key");
+    expect(subscribeCalls).toBe(2);
+
+    // 7. Re-syncing against the current (gen: 2, id: 1) server recovers the missing subscription cleanly.
+    nextSubKey = key21;
+    expect(await syncPushOnAttach({
+      vapidPublicKey: key21,
+      vapidId: { gen: 2, id: 1 },
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs,
+      permission: "granted",
+      getRegistration: async () => reg,
+    })).toBe("resubscribed");
+    expect(subscribeCalls).toBe(3);
+
+    // 8. Disabling clears pushVapidId too.
+    await disablePushNotifications(prefs, async () => reg);
+    expect(prefsMap.get("pushVapidId")).toBe("");
+  });
+
+  it("M4-26 F3: RemoteSession welcome emits incremented (gen, id) vapidId after rotateVapidKeys", async () => {
+    const s = await makeRealServer({ windowMs: 0 });
+    await ensureVapidKeys(s.dir);
+    const rotated = rotateVapidKeys(s.dir, { gen: 1, covers: [] });
+
+    const dev = await makeDevice();
+    await s.roster.addDevice({ keys: dev.keys, name: "Phone" });
+    const client = dialReal(s, dev);
+    const welcome = await client.hello();
+    expect(welcome.vapidPublicKey).toBe(rotated.keys.publicKey);
+    expect(welcome.vapidId).toEqual({ gen: 1, id: 1 });
   });
 });

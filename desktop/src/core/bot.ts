@@ -1,7 +1,7 @@
 import { readImagePaths, readImages } from "./read-images";
 import { isBrowserTool } from "../browser-bot";
 import { runBrowserTool } from "./browser-tools";
-import { COMPONENT_USAGE_TOOL, isBotTool, type BotToolName, type ToolCaller } from "./bot-tools";
+import { COMPONENT_USAGE_TOOL, FETCH_TOOL, isBotTool, parseFetchRequest, type BotToolName, type FetchRequest, type ToolCaller } from "./bot-tools";
 import { isNoteTool, runNoteTool } from "./note-tools";
 import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
@@ -171,6 +171,8 @@ export interface SessionStartCodex extends SessionStart {
 
 export interface BotOptions {
   profile: BotProfile;
+  /** Botling 3's server only (2.x leaves it unset): `app_fetch`, a file or folder from another machine; answers with the text the tool returns (M5-07d). */
+  fetch?: (botId: string, request: FetchRequest) => Promise<string>;
   /** How to run this bot's claude head for a session. */
   headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig;
   /** Antigravity native protocol; no Claude permission or plugin configuration is forwarded. */
@@ -1397,8 +1399,17 @@ export class Bot {
   private async botTool(name: BotToolName, args: Record<string, unknown>, caller: ToolCaller = "coordinator"): Promise<unknown> {
     if (isNoteTool(name)) return runNoteTool(name, args, { botId: this.owner.profile.id, caller });
     if (name === COMPONENT_USAGE_TOOL) return this.componentUsage(args, caller);
+    if (name === FETCH_TOOL) return this.fetchTool(args, caller);
     if (!isBrowserTool(name)) throw new Error(`Unknown app tool ${name}.`);
     return runBrowserTool(name, args, { botId: this.owner.profile.id, folder: this.owner.profile.folder });
+  }
+
+  /** app_fetch: files from another machine into this bot's `.bot/incoming/` (the server's `fetch` option does it; 2.x has none). */
+  private async fetchTool(args: Record<string, unknown>, caller: ToolCaller): Promise<string> {
+    if (caller !== "coordinator") throw new Error("Only the bot itself fetches from another machine.");
+    const fetch = this.options.fetch;
+    if (!fetch) return "Fetching from another machine needs Botling 3.";
+    return fetch(this.owner.profile.id, parseFetchRequest(args));
   }
 
   /** app_component_usage: one component's whole usage (its about.md), for the coordinator that is about to use it. */

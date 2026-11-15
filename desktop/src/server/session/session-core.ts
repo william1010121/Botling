@@ -35,7 +35,7 @@
 // botlingd pings after 15 s of its own silence and drops a session it has not heard from for 45 s (§5.2; fe-link does
 // the same the other way).
 import { ContractError, type Command, type CommandType } from "../../contract";
-import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type WelcomeServer, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type Slot, type StreamId } from "../../protocol";
+import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type VapidKeyId, type WelcomeServer, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type Slot, type StreamId } from "../../protocol";
 import { DEAD_AFTER_MS, PING_AFTER_MS } from "../../session";
 import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
@@ -115,7 +115,9 @@ export interface SessionHost {
   /** D70: roster + own DH key for filling `dh` and K12 Profile `addresses` on `welcome.servers` and `peer`. */
   roster?: SessionRoster;
   self?: { readonly dhPub: Uint8Array };
-  /** Cluster VAPID public key included in remote `welcome` frames (§18.4, M4-25). */
+  /** M4-26 (§18.4, Q-P3/F3): current cluster VAPID public key + `(gen, id)` read atomically for remote `welcome`. */
+  vapidKey?: () => { publicKey: string; id: VapidKeyId } | null;
+  /** M4-26 / M4-25 fallback when only `vapidPublicKey` is wired on a host. */
   vapidPublicKey?: () => string | null;
 }
 
@@ -173,7 +175,25 @@ export interface SessionTables {
   onPeer(listener: (peer: { id: string; state: ServerState; since: number | null; dh?: string; addresses?: ServerAddresses }) => void): () => void;
   /** A peer's `srv:` table, served from this server's copy (not the log hub). */
   isPeerTable(stream: string): boolean;
+  /**
+   * This server's own `srv:` table stream (M5-14e). A front end that subs it gets the log as always and, besides, the
+   * table's `plugin:` rows as `rows` frames (`ownTableFrame`), so a page attached to one server reads its plugins as it
+   * reads a peer's. Absent: no rows (a host without table feeds).
+   */
+  isOwnTable?(stream: string): boolean;
   subscribe(stream: string, cursor: Cursor | null, sink: (message: WireMessage) => boolean): { close(): void };
+}
+
+/** The kinds of own-table rows a front end gets (M5-14e); the table's other rows (`machine`, `settings`, `audit:`, `bot:`) stay on the log path. */
+const OWN_ROW_PREFIXES = ["plugin:"] as const;
+
+/**
+ * What of the own table's feed a front end gets: `rows` frames cut to the `plugin:` rows (`after`/`to` stay, so the
+ * reader's rev still moves); anything else of the feed (its `reset`, which the log path sends itself) is dropped.
+ */
+export function ownTableFrame(frame: WireMessage): WireMessage | null {
+  if (frame.t !== "rows") return null;
+  return { ...frame, rows: frame.rows.filter((row) => OWN_ROW_PREFIXES.some((prefix) => row.key.startsWith(prefix))) };
 }
 
 export interface SessionOptions {
@@ -213,6 +233,8 @@ export abstract class SessionCore {
   private adminEvents: (() => void) | null = null;
   /** M3 step 7: feeds of peers' tables this front end subscribed to, and its listener of peer states. */
   private readonly tableFeeds = new Map<string, { close(): void }>();
+  /** M5-14e: the `plugin:` rows of this server's own table, by stream (`srv:<self>`), served beside the log `sub`. */
+  private readonly ownFeeds = new Map<string, { close(): void }>();
   /** M3 step 8: this front end's pass-through legs, by stream. */
   private readonly legs = new Map<string, { ack(cursor: Cursor): void; liveResync?(): void; close(): void }>();
   private peerEvents: (() => void) | null = null;
@@ -334,6 +356,8 @@ export abstract class SessionCore {
     this.relayOff = null;
     for (const feed of this.tableFeeds.values()) feed.close();
     this.tableFeeds.clear();
+    for (const feed of this.ownFeeds.values()) feed.close();
+    this.ownFeeds.clear();
     for (const leg of this.legs.values()) leg.close();
     this.legs.clear();
     for (const timer of this.timers) { clearTimeout(timer); clearInterval(timer); }
@@ -422,11 +446,26 @@ export abstract class SessionCore {
     this.reader = this.host.hub.attach((message) => { this.send(message, streamOf(message)); this.onLogFrame(message); });
     let next: Record<string, number> = {};
     try { next = this.host.nextFor(hello.deviceId, hello.originEpoch); } catch (error) { this.host.log(`session: next for ${hello.deviceId}: ${errorText(error)}`); }
-    const vapidPublicKey = !this.kind.local ? (this.host.vapidPublicKey?.() ?? null) : null;
+    let vapidPublicKey: string | null = null;
+    let vapidId: VapidKeyId | undefined;
+    if (!this.kind.local) {
+      try {
+        const key = this.host.vapidKey?.();
+        if (key) {
+          vapidPublicKey = key.publicKey;
+          vapidId = key.id;
+        } else {
+          vapidPublicKey = this.host.vapidPublicKey?.() ?? null;
+        }
+      } catch (error) {
+        this.host.log(`session: vapidKey: ${errorText(error)}`);
+      }
+    }
     this.send({
       t: "welcome", serverId: this.host.serverId, protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION }, minFeVersion: this.host.minFeVersion,
       rosterDigest: null, servers: [this.selfServerEntry(), ...this.peerList()], next, views: {},
       ...(vapidPublicKey ? { vapidPublicKey } : {}),
+      ...(vapidPublicKey && vapidId ? { vapidId } : {}),
     } as MessageOf<"welcome">);
     const tables = this.host.tables;
     if (tables) this.peerEvents = tables.onPeer((peer) => { this.send(this.peerMessage(peer)); });
@@ -529,6 +568,14 @@ export abstract class SessionCore {
       if (await this.host.ensureBotStream(stream.slice(4))) result = await reader.sub(stream, cursor);
     }
     if (!result.ok) { this.host.log(`session: sub ${stream} refused (${result.reason})`); return; }
+    if (tables?.isOwnTable?.(stream)) {
+      // M5-14e: the own table's plugin rows, whole at each (re)sub (no cursor: the log's is not the table's), then deltas.
+      this.ownFeeds.get(stream)?.close();
+      this.ownFeeds.set(stream, tables.subscribe(stream, null, (frame) => {
+        const own = ownTableFrame(frame);
+        return own ? this.sendWire(own) : this.state !== "closed";
+      }));
+    }
     if (stream.startsWith("bot:") && !this.lives.has(stream) && this.state === "open") {
       // M1: the live subscription starts with the log one, not after the catch-up batches (§9.4); the receiver takes a
       // whole-segment frame at any time, so text is only shown early, never lost.
@@ -544,6 +591,8 @@ export abstract class SessionCore {
     if (leg) { leg.close(); this.legs.delete(stream); this.gate.remove(stream); return; }
     const feed = this.tableFeeds.get(stream);
     if (feed) { feed.close(); this.tableFeeds.delete(stream); return; }
+    this.ownFeeds.get(stream)?.close();
+    this.ownFeeds.delete(stream);
     this.reader?.unsub(stream);
     this.lives.get(stream)?.close();
     this.lives.delete(stream);

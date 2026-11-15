@@ -19,7 +19,7 @@
     "preload:build": "node scripts/preload-dev.mjs",
     "core:build": "node scripts/core-dev.mjs",
     "perf": "node scripts/perf/bench.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json --incremental --tsBuildInfoFile .cache/tsc/desktop.tsbuildinfo",
     "test:changed": "node scripts/test-changed.mjs",
     "test:spec": "node build.mjs && vitest run ../spec/tests",
     "link-deps": "sh scripts/link-deps.sh",

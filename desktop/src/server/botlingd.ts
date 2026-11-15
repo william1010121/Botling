@@ -33,23 +33,27 @@ import { RemoteContent } from "./content/remote";
 import { Uploads } from "./content/put";
 import { ContentTickets } from "./content/tickets";
 import { clusterNames, FetchApproval } from "./fetch/approval";
+import { createAppFetch } from "./fetch/app-fetch";
 import { FetchRequester } from "./fetch/requester";
 import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
 import { effectCheckpointSink, ensureBot } from "./effects";
 import { BotExports } from "./exports";
+import { callInTimers, type CallInHost } from "./callin";
 import { CoreEngine, IntentRuntime } from "./intents";
 import { LogHub } from "./log";
 import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthorize, writeToken, type BotlingdPaths, type DeviceRoster, type SessionHost, type SessionOptions } from "./session";
 import { fixedIds } from "./fixed-ids";
-import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeys } from "./identity";
+import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeyRecord, readVapidKeys } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
+import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "./push";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
+import { VapidKeySync } from "./push";
 import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
 import { PluginRow, RowKey } from "../protocol/table-rows";
 import { openServerStore, type Db, type ServerStore } from "./store";
@@ -132,10 +136,10 @@ export function clusterOrigins(
  * Device & peer-server roster view passed to `slotAuthorize` (M5-04b): a peer server is accepted only when it is in
  * `view.servers` AND `view.valid` (not root-revoked and not unvouched/not-yet-effective).
  */
-export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">, userOnlyCard?: (messageId: string) => boolean): DeviceRoster {
+export function authorizeRoster(roster: Pick<RosterStore, "memberId" | "view" | "device">, hooks: Pick<DeviceRoster, "plainWaiting"> = {}): DeviceRoster {
   return {
     memberId: roster.memberId,
-    ...(userOnlyCard ? { userOnlyCard } : {}),
+    ...(hooks.plainWaiting ? { plainWaiting: hooks.plainWaiting } : {}),
     device: (member) => roster.device(member),
     server: (member) => {
       const view = roster.view;
@@ -335,6 +339,10 @@ export interface BotlingdOptions {
   /** Packaged Electron run: launch child Node work (plugin host, pdf-text) via utilityProcess.fork. */
   packaged?: boolean;
   electronUtility?: ElectronUtilityContext;
+  /** Optional Web Push transport override (used by tests to point at a local fake push server). */
+  pushTransport?: PushTransport;
+  /** Optional per-bot push coalescing window override in ms (defaults to 60,000 ms). */
+  pushCoalesceMs?: number;
 }
 
 export class Botlingd {
@@ -370,6 +378,8 @@ export class Botlingd {
     readonly pairing: PairingService,
     /** M3 step 6: this server's summary rows (`srv:` table). */
     readonly summary: SummaryRows,
+    /** M4-24: Web Push triggers for owned bots needing the user. */
+    readonly pushTriggers: PushTriggers,
     /** M3 step 3: peer servers (KK sessions over `/v3/ws`, one per pair, the D47 exchange). */
     readonly peers: PeerSessions,
     /** M3 step 4: server pairing (join offers on this server, add-machine attempts from it). */
@@ -421,10 +431,12 @@ export class Botlingd {
   serverOrigin: ServerOrigin | null = null;
   private originHookStop: (() => void) | null = null;
   fetchSource: FetchSource | null = null;
-  /** M5-07b: requester side of on-demand fetch (nothing calls `fetch` before M5-07d adds `app_fetch`). */
+  /** M5-07b: requester side of on-demand fetch (`app_fetch`, M5-07d, calls `fetch`). */
   fetchRequester: FetchRequester | null = null;
   /** M5-04e: the read-only copies of peer bots' chats in the main bot's folder. */
   chatMirror: PeerChatMirror | null = null;
+  /** M4-26: cluster VAPID key rotation & distribution over full peer sessions after server revocation. */
+  vapidSync: VapidKeySync | null = null;
 
   get token(): string { return this.tokenValue; }
 
@@ -514,9 +526,12 @@ export class Botlingd {
         ? createUtilityScriptRunner(options.electronUtility.utilityProcess)
         : undefined;
       let pluginRead: PluginContentRead | null = null;
+      // M5-07d: `app_fetch` resolves a machine name to a valid peer and uses the requester, which is built after the core.
+      let fetchRequesterRef: FetchRequester | null = null;
       const pendingBotWrites = new Map<string, { botId: string; at: number }>();
       let syncPlugins: (force?: boolean) => Promise<void> = async () => undefined;
       let originRef: ServerOrigin | null = null;
+      let hostCallIns: CallInHost | null = null;
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
@@ -545,6 +560,9 @@ export class Botlingd {
         // M5-04c: the origin is built below, after the core; a call before then is "not ready".
         remoteCommand: (target, cmd) => remoteCommandVia(originRef, target, cmd),
         machineName: () => ownMachineName(roster, serverId, SERVER_NAME),
+        // M5-02c: the host's side of call-ins (the runtime below owns it; until it exists a call-in is "not reachable").
+        remoteTurn: (call) => hostCallIns ? hostCallIns.remoteTurn(call) : Promise.resolve({ kind: "failed", why: "its machine cannot take call-ins yet" }),
+        fetch: createAppFetch({ roster, requester: () => fetchRequesterRef }),
         pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory, ids.main);
@@ -570,11 +588,15 @@ export class Botlingd {
       const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
       // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
       let summary: SummaryRows | null = null;
+      // M4-24: Web Push triggers for owned bots needing the user (wired after remote sessions exist).
+      let pushTriggers: PushTriggers | null = null;
+      let attachedDevices = (): Set<string> => new Set();
       // M2 step 12: uploads from pages (`content.put`), kept in <data>/uploads; a chat.send naming them waits for them.
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
-        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, (messageId) => core.serverAskOpen(messageId))), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, { plainWaiting: (botId, text) => core.peerMayIgnoreWaiting(botId, text) })), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        callHostTimers: callInTimers(env),
         // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
         // may run and re-announces its list once (core.pluginGrantsChanged).
         pluginRowsChanged: () => {
@@ -586,7 +608,7 @@ export class Botlingd {
             summary?.seen(event);
             if (event.type === "plugins.updated") void syncPlugins();
           },
-          eventStored: (tx, event) => summary?.stored(tx, event),
+          eventStored: (tx, event) => { summary?.stored(tx, event); pushTriggers?.stored(tx, event); },
         },
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
@@ -606,8 +628,28 @@ export class Botlingd {
       });
       const report = await runtime.start();
       log(`recovery: ${JSON.stringify(report)}`);
+      const pushSender = new PushSender({
+        dataDir: paths.dataDir,
+        ownsBot: (botId) => engine.hasBot(botId),
+        roster,
+        log,
+        ...(options.pushTransport ? { transport: options.pushTransport } : {}),
+      });
+      const deviceReadable = (member: string) => { const device = roster.device(member); return !!device && (device.scope ?? []).includes("read"); };
+      const push = new PushTriggers({
+        scope: runtime.scope,
+        sender: pushSender,
+        roster,
+        canPushDevice: deviceReadable,
+        reader: () => hub.reader(),
+        botName: (botId) => engine.botView(botId)?.name ?? null,
+        attachedDevices: () => attachedDevices(),
+        ...(options.pushCoalesceMs !== undefined ? { coalesceMs: options.pushCoalesceMs } : {}),
+        log,
+      });
+      pushTriggers = push;
       const summaries = summary;
-      const reconciled = await runtime.scope.submit((tx) => summaries.reconcile(tx));
+      const reconciled = await runtime.scope.submit((tx) => { push.seed(tx); return summaries.reconcile(tx); });
       log(`summary rows: ${JSON.stringify({ ...reconciled, unknown: reconciled.unknown.length })}`);
       summaries.startPurging();
       // M5-13b/M5-13c: publish one plugin:<name> row per installed plugin (plus audit row for bot writes) and keep machine.pluginsDigest current.
@@ -703,8 +745,16 @@ export class Botlingd {
       });
       originRef = serverOrigin;
       roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
-      // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
-      runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
+      // M5-02c: the host's side asks through the same origin, and hears how each ask ended (a refused ask ends its wait at once).
+      hostCallIns = runtime.callHost;
+      // M5-03a (D51): a reply after the host gave up is appended marked late and wakes nobody.
+      runtime.callHost.bindLate((late) => core.conversations.postLate(late));
+      runtime.callHost.attach({
+        self: roster.memberId, ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd),
+        onOutcome: (listener) => serverOrigin.on(listener), outcome: (slot) => serverOrigin.outcome(slot),
+        // The peer sessions' own bookkeeping (live / stale since the last frame / gone): the wait is a liveness wait.
+        peerState: (server) => { const state = peers.states().find((entry) => entry.member === server); return state ? { state: state.state, since: state.since } : null; },
+      });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);
@@ -778,6 +828,7 @@ export class Botlingd {
           onPeer: (listener) => peers.onState((state) => listener({ id: state.member, state: state.state, since: state.since })),
           // Only a server this roster names as a peer (a lone server serves srv: streams from its log hub as before).
           isPeerTable: (stream) => peerTables.isPeerTable(stream) && peers.states().some((state) => `srv:${state.member}` === stream),
+          isOwnTable: (stream) => stream === feeds.ownStream,
           subscribe: (stream, cursor, sink) => feeds.subscribe(stream, cursor, sink),
         },
         forward: {
@@ -793,6 +844,7 @@ export class Botlingd {
         },
         peerReads: () => localReads,
         peerLocate: (m) => peerContent.locate(LOCAL_WINDOW, m),
+        vapidKey: () => { const rec = readVapidKeyRecord(paths.dataDir); return rec ? { publicKey: rec.keys.publicKey, id: { gen: rec.gen, id: rec.id } } : null; },
       };
       const server = new SessionServer(paths.socket, sessionHost, options.session);
       // M2 step 4: paired devices' encrypted sessions (the transports come with steps 6 and 13).
@@ -800,7 +852,6 @@ export class Botlingd {
       const tickets = new ContentTickets();
       roster.onChange((change) => { for (const member of change.invalidated) tickets.dropDevice(member); });
       // M3 step 10: content owned by a peer, passed through and verified per chunk; this server's content read by peers.
-      const deviceReadable = (member: string) => { const device = roster.device(member); return !!device && (device.scope ?? []).includes("read"); };
       const chunkCache: ChunkCache = new ChunkCache({
         store, reader: () => hub.reader(), dataDir: paths.dataDir, budget: peerBudget, log,
         priority: (key, stream) => peerContent.priority(key, stream),
@@ -829,7 +880,8 @@ export class Botlingd {
           log(`vapid: ${String((error as Error)?.message ?? error)}`);
         });
       });
-      const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner, vapidPublicKey: () => readVapidKeys(paths.dataDir)?.publicKey ?? null }, options.session);
+      const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner }, options.session);
+      attachedDevices = () => attachedDeviceIds(remote.open);
       // M5-06c: a fetch that asks puts a card into the Maintainer's chat; asks left open by the last run are `gone`.
       const approval = new FetchApproval({
         core, store, reader: () => hub.reader(), self: serverId, names: clusterNames(roster, () => hub.reader()), log,
@@ -866,25 +918,36 @@ export class Botlingd {
         onAudit: () => feeds.notify(feeds.ownStream),
         log,
       });
+      // Staging folders of a fetch that a killed process never finished are removed now, before any session exists.
+      try {
+        const folders: string[] = [];
+        for (const botId of engine.bots()) { const folder = engine.botView(botId)?.folder; if (folder) folders.push(folder); }
+        const removed = fetchRequester.removeLeftoverStaging(folders);
+        if (removed > 0) log(`fetch: removed ${removed} unfinished staging folder(s) left by an earlier run`);
+      } catch (error) { log(`fetch: leftover staging cleanup failed: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 200))}`); }
+      fetchRequesterRef = fetchRequester;
+      // M4-26: cluster VAPID key rotation on server revocation & encrypted distribution to valid servers.
+      let peers!: PeerSessions;
+      const vapidSync = new VapidKeySync({ dataDir: paths.dataDir, roster, sessions: () => peers.all, log });
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
-      const peers: PeerSessions = new PeerSessions({
+      peers = new PeerSessions({
         roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log,
         // M3 step 7: every peer's srv: table is subscribed while its session is open (§10.1).
         // M3 step 5: gossip frames first (roster sync is the first exchange, §4.6), then the tables.
         // M3 step 9: forwarded commands (owner side) and the owners' answers (forwarding side).
         // M3 step 8: forwarded front-end subscriptions (owner side) and the frames that answer them (attached side).
         // M3 step 10: content gets and their answers (bulk lane), both sides.
-        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || peerContent.onMessage(session, message) || peerContentOwner.onMessage(session, message) || fetchSource.onMessage(session, message) || fetchRequester.onMessage(session, message)
+        onMessage: async (session, message) => (await gossip.onMessage(session, message)) || vapidSync.onMessage(session, message) || peerContent.onMessage(session, message) || peerContentOwner.onMessage(session, message) || fetchSource.onMessage(session, message) || fetchRequester.onMessage(session, message)
           || inbox.onMessage(session, message) || (await forwarder.onMessage(session, message))
           || passThrough.onMessage(session, message) || (await passOwner.onMessage(session, message)) || peerTables.onMessage(session, message),
-        sessionOpened: (session) => { fetchRequester.sessionOpened(session); gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
+        sessionOpened: (session) => { gossip.opened(session); vapidSync.sessionOpened(session); fetchRequester.sessionOpened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
         sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); peerContent.sessionClosed(session); peerContentOwner.sessionClosed(session); fetchSource.sessionClosed(session); fetchRequester.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
       peerSessions = peers;
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
       feeds.start();
       gossip.start();
-      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
+      daemon = new Botlingd(paths, serverId, lock, store, hub, live, exports, stores, core, runtime, content, shell, server, log, roster, clusterSetup, remote, pairing, summaries, push, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner);
       daemon.remoteContent = remoteContent;
       daemon.peerContent = peerContent;
       daemon.peerContentOwner = peerContentOwner;
@@ -893,6 +956,7 @@ export class Botlingd {
       if (originTestHookEnabled(env)) daemon.originHookStop = startOriginTestHook(paths.dataDir, serverOrigin, log);
       daemon.fetchSource = fetchSource;
       daemon.fetchRequester = fetchRequester;
+      daemon.vapidSync = vapidSync;
       // M5-04e: the main bot reads a peer bot's chat in `<main folder>/.bot/peers/<botId>/chat.md` (read-only; written only here).
       // Until M5-04i's `runMainBot` is merged every server runs it.
       const mainFolder = join(paths.dataDir, "main");
@@ -920,6 +984,12 @@ export class Botlingd {
       await daemon.relay?.start();
       await daemon.writeOwnProfile((at) => advertisedPort(env, at));
       peers.start();
+      vapidSync.start();
+      // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).
+      // Bound only now (M5-03b review): `attach` answers the call-ins a crash interrupted at once, and before `peers.start()`
+      // the directory knows no peer, so every such answer was refused and lost (marked sent, never queued). Until here an ask
+      // is refused "not ready" (fail closed) and a queued call-in waits.
+      runtime.callIns.attach({ ownerOf: (target) => forwarder.ownerOf(target), submit: (target, cmd) => serverOrigin.submit(target, cmd) });
       daemon.chatMirror.start();
       daemon.watchLock();
       const schedule = backupCheckMs(env);
@@ -998,6 +1068,7 @@ export class Botlingd {
     await step("server pairing", () => this.join.close());
     await step("remote sessions", () => this.remote.close());
     await step("relay", () => this.relay?.closeAfterDrain(1_000));
+    this.vapidSync?.close();
     await step("peer sessions", () => this.peers.close());
     this.chatMirror?.stop();
     this.passThrough.close();
@@ -1022,6 +1093,8 @@ export class Botlingd {
     await step("events", () => this.runtime.scope.submit(() => undefined));
     await step("summary rows", () => this.summary.flush());
     this.summary.close();
+    this.pushTriggers.close();
+    await step("push triggers", () => this.pushTriggers.idle());
     await step("runtime", () => this.runtime.close());
     await step("media jobs", () => this.media?.close());
     await step("content", () => this.content.close());

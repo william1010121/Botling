@@ -14,6 +14,25 @@ export function tempDir(name: string): string {
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** A run or seed count from the environment (CI lowers some on pull requests; main and the nightly run keep the
+ * defaults). Anything but a positive whole number, unset or empty included, gives the default. */
+export function envCount(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+/** Asserts two byte sequences are equal. Use it instead of `expect(a).toEqual(b)` for anything past a few KiB:
+ * vitest's deep equality walks a Buffer one element at a time (about 5 s per MiB), this compares in one call and
+ * names the first differing offset. */
+export function expectSameBytes(actual: Uint8Array, expected: Uint8Array): void {
+  const a = Buffer.from(actual.buffer, actual.byteOffset, actual.byteLength);
+  const b = Buffer.from(expected.buffer, expected.byteOffset, expected.byteLength);
+  if (a.equals(b)) return;
+  let at = 0;
+  while (at < a.length && at < b.length && a[at] === b[at]) at++;
+  throw new Error(`bytes differ: got ${a.length} bytes, expected ${b.length}; first difference at offset ${at}`);
+}
+
 /** Every app-managed worker's record in the members' worker-ledger.json files under `dir` (any bot, any member). */
 export function ledgerRecords(dir: string): any[] {
   const found: any[] = [];

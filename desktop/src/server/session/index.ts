@@ -5,5 +5,5 @@ export { botlingdPaths, PathsError, readToken, refuse2xData, sameToken, SOCKET_P
 export { REQ_ALSO, servedAsReq, Session, type ContentHandler, type SessionHost, type SessionOptions } from "./session";
 export { DEAD_AFTER_MS, PING_AFTER_MS, SessionCore, type AdminHost } from "./session-core";
 export { devicePeerCheck, LIVE_SOFT_BYTES, PUSH_PROFILE_WINDOW_MS, PushProfileLimiter, RemoteSession, RemoteSessions, type PairingHook, type RemoteHost, type RemoteRoster, type RemoteSessionOptions } from "./remote-session";
-export { REMOTE_READS, remoteReadRefusal, slotAuthorize, statedScope, type DeviceRoster } from "./remote-reads";
+export { REMOTE_READS, remoteReadRefusal, slotAuthorize, statedScope, USER_ONLY_CARD_DETAIL, WAITING_PLAIN_ONLY_DETAIL, WAITING_TARGET_DETAIL, type DeviceRoster } from "./remote-reads";
 export { SessionServer, socketAnswers } from "./socket-server";

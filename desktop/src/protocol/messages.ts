@@ -6,10 +6,10 @@ import { z } from "zod";
 import { BotId, Command, MessageView, WireError } from "../contract";
 import { ContentRef, ContentVariant, Entry } from "./entries";
 import { ContentTicket, EntryRef, PluginName, VariantName } from "./content-url";
-import { VapidPublicKey } from "./join";
 import { AdminEvent, AdminOp } from "./pairing";
 import { canonicalJson } from "./entries";
 import { utf8Bytes } from "./encoding";
+import { VapidKeyId, VapidPrivateKey, VapidPublicKey } from "./join";
 import { MemberId, PROFILE_VALUE_LIMIT, PublicKey, PushEndpoint, PushKeys, RevocationStatement, Signature, SignedStatement, StatementId } from "./roster";
 import {
   ContentId, Cursor, EntryHash, LocalContentId, Id, LogId, OriginEpoch, Outcome, PROTOCOL_VERSION, Scope, Seq, ServerId, ServerState, Slot, StreamId, Target,
@@ -102,8 +102,10 @@ export const Welcome = msg("welcome", {
   /** The owner's `next` for this front end's current epoch, per target this server owns (§11.4). */
   next: z.record(Target, z.number().int().min(1)),
   views: z.record(z.string().max(100), z.unknown()),
-  /** Cluster VAPID public key for Web Push subscribe (§18.4, M4-25). */
+  /** Current cluster Web Push VAPID public key (§18.4, M4-25 / M4-26), so devices learn rotated keys on attach. */
   vapidPublicKey: VapidPublicKey.optional(),
+  /** Version `(gen, id)` of `vapidPublicKey` so devices only advance to newer keys (M4-26 review F3). */
+  vapidId: VapidKeyId.optional(),
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -182,8 +184,8 @@ export const Held = msg("held", { slot: Slot, at: ServerId });
  */
 export const CmdResult = msg("cmd.result", { slot: Slot, outcome: Outcome, logId: LogId, seq: Seq.min(1).nullable() })
   .refine(
-    (result) => result.seq !== null || (result.outcome.kind === "refused" && (result.outcome.reason === "slot conflict" || result.outcome.reason === "revoked")),
-    { message: "only a slot conflict or a revoked owner has no entry", path: ["seq"] },
+    (result) => result.seq !== null || (result.outcome.kind === "refused" && (result.outcome.reason === "slot conflict" || result.outcome.reason === "revoked" || result.outcome.reason === "invalid")),
+    { message: "only a slot conflict, a revoked owner or a command that could not be sent has no entry", path: ["seq"] },
   );
 /** Sent to an earlier incarnation of the owner: re-send with `inc` once you have its `reset`. Not an outcome (D49). */
 export const CmdRetry = msg("cmd.retry", { slot: Slot, inc: LogId });
@@ -376,6 +378,17 @@ export const PushSubscribe = msg("push.subscribe", {
   return json.length <= PROFILE_VALUE_LIMIT && utf8Bytes(json).length <= PROFILE_VALUE_LIMIT;
 }, { message: `push subscription exceeds ${PROFILE_VALUE_LIMIT} bytes` });
 
+/**
+ * Replacement cluster VAPID key pair distributed by the revocation root over full peer sessions to valid servers after
+ * a server revocation or root takeover (Q-P3, §18.4, M4-26). Each server keeps the key with the highest `(gen, id)`.
+ */
+export const VapidKey = msg("vapid.key", {
+  gen: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  pub: VapidPublicKey,
+  priv: VapidPrivateKey,
+});
+
 // ---------------------------------------------------------------------------------------------
 // The server's requests of the attached window (local socket; the 2.x core's app ops)
 
@@ -418,6 +431,7 @@ export const MESSAGES = {
   "roster.have": RosterHave, "roster.ids": RosterIds, "roster.want": RosterWant, "roster.statements": RosterStatements, "roster.revocations": RosterRevocations,
   admin: Admin, "admin.event": AdminEventMsg,
   "push.subscribe": PushSubscribe,
+  "vapid.key": VapidKey,
   "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.seal": ShellSeal, "shell.open": ShellOpen, "shell.done": ShellDone,
   ping: Ping, bye: Bye,
 } as const;

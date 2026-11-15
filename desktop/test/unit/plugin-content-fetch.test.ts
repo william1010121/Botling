@@ -20,7 +20,7 @@ import { PluginContentRead } from "../../src/server/content/plugin-read";
 import { ensureStream } from "../../src/server/log";
 import type { PeerSession } from "../../src/server/peer";
 import { openServerStore, type ServerStore } from "../../src/server/store";
-import { tempDir, until } from "../helpers";
+import { expectSameBytes, tempDir, until } from "../helpers";
 
 const MiB = CONTENT_CHUNK_BYTES;
 const FETCH_MAX_BYTES = 500 * MiB;
@@ -380,7 +380,7 @@ describe("M5-08b: plugin API content.fetch(ref)", () => {
     const fetched = await h.api.content.fetch(ref);
     expect(fetched).toBe(resolve(h.storageDir, "content", id));
     const { readFileSync } = await import("node:fs");
-    expect(readFileSync(fetched)).toEqual(data);
+    expectSameBytes(readFileSync(fetched), data);
   });
 
   it("1b. local copyFile fallback when pinFile answers path, plus path-pin mutation and wrong-entry checks", async () => {
@@ -395,7 +395,7 @@ describe("M5-08b: plugin API content.fetch(ref)", () => {
     const fetched = await h.api.content.fetch(ref);
     expect(fetched).toBe(resolve(h.storageDir, "content", id));
     const { readFileSync } = await import("node:fs");
-    expect(readFileSync(fetched)).toEqual(data);
+    expectSameBytes(readFileSync(fetched), data);
 
     // Wrong entry still fails
     await expect(
@@ -428,7 +428,7 @@ describe("M5-08b: plugin API content.fetch(ref)", () => {
     const repaired = await h.api.content.fetch(ref);
     expect(repaired).toBe(first);
     const { readFileSync } = await import("node:fs");
-    expect(readFileSync(repaired)).toEqual(data);
+    expectSameBytes(readFileSync(repaired), data);
 
     // Reference check still runs even when cached file is present
     await expect(
@@ -450,7 +450,7 @@ describe("M5-08b: plugin API content.fetch(ref)", () => {
     const fetched = await h.api.content.fetch(ref);
     expect(fetched).toBe(resolve(h.storageDir, "content", id));
     const { readFileSync } = await import("node:fs");
-    expect(readFileSync(fetched)).toEqual(peerData);
+    expectSameBytes(readFileSync(fetched), peerData);
 
     // Flip a byte in transit on a fresh uncached file -> failure and no file / .partial left
     const badData = makeBytes("peer-fetch-corrupt", 2048);
