@@ -1324,6 +1324,9 @@ export const CommandTypeEnum = z.enum([...BASE_COMMAND_TYPES, "plugin.grant"]);
 
 /** A call-in's transcript slice is at most 64 KiB of UTF-8 (the host cuts the oldest lines first, M5-02c). */
 const CALLIN_TRANSCRIPT_BYTES = 64 * 1024;
+const CALLIN_REPLY_BYTES = 200 * 1024;
+/** UTF-8 bytes of `text` as it travels in a frame (JSON-escaped, quotes not counted), so a valid call-in always fits FRAME_LIMIT. */
+const wireBytes = (text: string): number => new TextEncoder().encode(JSON.stringify(text)).length - 2;
 /**
  * Cross-server call-ins (Q-C1, D51, protocol v1 §15): slots whose origin is a server, never a device or the window
  * (`COMMAND_SCOPES` scope `server`). They sit outside `BASE_COMMANDS` so `plugin.grant.requests` cannot name them: a plugin is
@@ -1336,7 +1339,7 @@ const CALLIN_COMMANDS = [
     botId,
     callId: id,
     host: z.strictObject({ server: z.string().min(1).max(200), botId, name: z.string().min(1).max(200) }),
-    transcript: z.string().refine((text) => new TextEncoder().encode(text).length <= CALLIN_TRANSCRIPT_BYTES, "transcript is over 64 KiB"),
+    transcript: z.string().max(CALLIN_TRANSCRIPT_BYTES).refine((text) => wireBytes(text) <= CALLIN_TRANSCRIPT_BYTES, "transcript is over 64 KiB"),
     asked: z.string().max(4_000),
     by: z.enum(["user", "bot"]),
     depth: z.number().int().min(1).max(2),
@@ -1348,7 +1351,7 @@ const CALLIN_COMMANDS = [
     callId: id,
     guest: z.strictObject({ botId, name: z.string().min(1).max(200) }),
     outcome: z.discriminatedUnion("kind", [
-      z.strictObject({ kind: z.literal("reply"), text: z.string().max(200 * 1024), engine: Engine }),
+      z.strictObject({ kind: z.literal("reply"), text: z.string().max(CALLIN_REPLY_BYTES).refine((text) => wireBytes(text) <= CALLIN_REPLY_BYTES, "reply text is over 200 KiB"), engine: Engine }),
       z.strictObject({ kind: z.literal("failed"), why: z.string().max(1_000) }),
       z.strictObject({ kind: z.literal("busy") }),
     ]),

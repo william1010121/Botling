@@ -122,7 +122,7 @@ export type Tier = z.infer<typeof Tier>;
 const PluginCodeHash = z.string().min(1).max(100).regex(/^[A-Za-z0-9:_.-]+$/);
 const PluginManifestItem = z.string().max(200);
 const PluginManifestList = z.array(PluginManifestItem).max(100);
-const PluginCommandType = z.enum(Object.keys(COMMAND_SCOPES) as [CommandType, ...CommandType[]]);
+const PluginCommandType = z.enum((Object.keys(COMMAND_SCOPES) as CommandType[]).filter((type) => COMMAND_SCOPES[type] !== "server") as [CommandType, ...CommandType[]]);
 
 /** One per-codeHash grant recorded in a `plugin:<name>` row (D52, §8.2). */
 export const PluginGrant = z.strictObject({

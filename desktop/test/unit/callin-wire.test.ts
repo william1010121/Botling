@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Command, PROTOCOL_VERSION, RENDERER_COMMANDS, type Outbound } from "../../src/contract";
 import { Core } from "../../src/core/server";
 import { coreProcessOptions } from "../../src/core/core-process";
-import { COMMAND_SCOPES, commandScope, remoteCmdRefusal, remoteReqRefusal, type DeviceScope, type Slot } from "../../src/protocol";
+import { COMMAND_SCOPES, FRAME_LIMIT, commandScope, encodeWireFrame, remoteCmdRefusal, remoteReqRefusal, type DeviceScope, type Slot } from "../../src/protocol";
 import { COMMAND_ROUTES, applyIntent, INTENT_TYPES, type IntentDeps } from "../../src/server/intents";
 import { slotAuthorize, statedScope, type DeviceRoster } from "../../src/server/session";
 import { SlotRefusal } from "../../src/server/slots/types";
@@ -87,6 +87,87 @@ describe("M5-01: the call-in commands parse", () => {
     const grant = { type: "plugin.grant", plugin: "p", codeHash: "a".repeat(64), tier: "request", reads: [], requests: ["callin.ask"] };
     expect(Command.safeParse(grant).success).toBe(false);
     expect(Command.safeParse({ ...grant, requests: ["chat.send"] }).success).toBe(true);
+  });
+});
+
+// F1 (review): the limits count the JSON-escaped UTF-8 bytes a frame carries, so any command that parses fits one frame.
+describe("M5-01: a command that parses always fits one frame", () => {
+  const frame = (cmd: unknown) => ({ t: "cmd", slot: { origin: PEER, originEpoch: EPOCH, target: `bot:${HOST}`, n: 1 }, floor: 1, inc: EPOCH, cmd, scope: "read" });
+  /** The frame a peer server would send; fails the test with the refusal when it does not fit. */
+  const fits = (cmd: unknown): number => {
+    const encoded = encodeWireFrame(frame(cmd) as never, "peer", "peer" as never);
+    expect(encoded.ok, encoded.ok ? "" : `${encoded.reason} ${encoded.detail}`).toBe(true);
+    return new TextEncoder().encode(JSON.stringify(frame(cmd))).length;
+  };
+  const withText = (text: string) => ({ ...reply, outcome: { kind: "reply", text, engine: "claude" } });
+  const lone = "\ud800"; // a lone surrogate escapes to 6 bytes
+  /** The largest fill of each shape that still parses (found by bisecting `Command`), checked below to be at the bound. */
+  const largest = (make: (text: string) => unknown, unit: string): string => {
+    let low = 0;
+    let high = 200 * 1024 + 1;
+    while (low < high - 1) {
+      const mid = (low + high) >> 1;
+      if (Command.safeParse(make(unit.repeat(mid))).success) low = mid; else high = mid;
+    }
+    return unit.repeat(low);
+  };
+
+  it("6. a reply over 200 KiB once escaped is refused before any work: CJK, newlines, control characters, ANSI", () => {
+    // 200 K CJK characters are 3 bytes each: 600 KiB, nowhere near one frame.
+    expect(Command.safeParse(withText("答".repeat(200 * 1024))).success).toBe(false);
+    // A newline is `\n` (2 bytes); an ANSI escape or any control character is `\u001b` (6 bytes).
+    expect(Command.safeParse(withText("\n".repeat(150 * 1024))).success).toBe(false);
+    expect(Command.safeParse(withText("\u001b".repeat(40 * 1024))).success).toBe(false);
+    expect(Command.safeParse(withText("\u001b[31m".repeat(30 * 1024))).success).toBe(false);
+    expect(Command.safeParse(withText('"'.repeat(120 * 1024))).success).toBe(false);
+    // Just under and just over the bound, escaped.
+    expect(Command.safeParse(withText("\n".repeat(100 * 1024))).success).toBe(true);
+    expect(Command.safeParse(withText("\n".repeat(100 * 1024 + 1))).success).toBe(false);
+    expect(Command.safeParse(withText("答".repeat(68_266))).success).toBe(true); // 204,798 bytes
+    expect(Command.safeParse(withText("答".repeat(68_267))).success).toBe(false); // 204,801 bytes
+    expect(Command.safeParse(withText("x".repeat(200 * 1024))).success).toBe(true);
+  });
+
+  it("6b. a transcript over 64 KiB once escaped is refused: CJK, newlines, control characters, ANSI", () => {
+    const withTranscript = (transcript: string) => ({ ...ask, transcript });
+    // 64 KiB of raw bytes (the old test) is no longer enough: the escaped form is what counts.
+    expect(Command.safeParse(withTranscript("\n".repeat(64 * 1024))).success).toBe(false);
+    expect(Command.safeParse(withTranscript("\n".repeat(32 * 1024))).success).toBe(true);
+    expect(Command.safeParse(withTranscript("\n".repeat(32 * 1024 + 1))).success).toBe(false);
+    expect(Command.safeParse(withTranscript("\u001b".repeat(64 * 1024))).success).toBe(false);
+    expect(Command.safeParse(withTranscript("\u001b[0m".repeat(8 * 1024))).success).toBe(false);
+    expect(Command.safeParse(withTranscript("答".repeat(200 * 1024))).success).toBe(false);
+    expect(Command.safeParse(withTranscript("答".repeat(21_845))).success).toBe(true);
+    expect(Command.safeParse(withTranscript("x".repeat(64 * 1024))).success).toBe(true);
+    // An unescaped long text is refused on its length alone, before the escaped size is measured.
+    expect(Command.safeParse(withTranscript("x".repeat(64 * 1024 + 1))).success).toBe(false);
+  });
+
+  it("7. the largest legal command of each kind encodes and fits one frame (256 KiB)", () => {
+    const sizes: Record<string, number> = {};
+    // The biggest reply at the bound, in each shape that stresses escaping.
+    for (const [label, unit] of [["ascii", "x"], ["cjk", "答"], ["newline", "\n"], ["ansi-esc", "\u001b"], ["quote", '"'], ["lone-surrogate", lone], ["astral", "😀"]] as const) {
+      const text = largest(withText, unit);
+      expect(Command.safeParse(withText(text)).success, label).toBe(true);
+      sizes[`reply ${label}`] = fits(withText(text));
+    }
+    // The biggest ask: the transcript at the bound plus every other field at its bound, all in the costliest escape.
+    const long = (unit: string, chars: number) => unit.repeat(chars);
+    for (const [label, unit] of [["ascii", "x"], ["cjk", "答"], ["newline", "\n"], ["ansi-esc", "\u001b"], ["lone-surrogate", lone]] as const) {
+      const transcript = largest((text) => ({ ...ask, transcript: text }), unit);
+      const cmd = {
+        ...ask, transcript, depth: 2, by: "bot",
+        asked: long(unit, 4_000), host: { server: long(unit, 200), botId: HOST, name: long(unit, 200) },
+      };
+      expect(Command.safeParse(cmd).success, label).toBe(true);
+      sizes[`ask ${label}`] = fits(cmd);
+    }
+    // The biggest failed outcome and the cancel.
+    sizes.failed = fits({ ...reply, guest: { botId: GUEST, name: long(lone, 200) }, outcome: { kind: "failed", why: long(lone, 1_000) } });
+    sizes.cancel = fits(cancel);
+    for (const [label, bytes] of Object.entries(sizes)) expect(bytes, label).toBeLessThanOrEqual(FRAME_LIMIT);
+    // The envelope is small: a reply at the bound leaves more than 50 KiB of the frame spare.
+    expect(Math.max(...Object.values(sizes))).toBeLessThan(FRAME_LIMIT - 50 * 1024);
   });
 });
 
