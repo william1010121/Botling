@@ -21,7 +21,7 @@ import type { RelayConnector } from '../mobile-relay/connector';
 // Its data folder has the Swift app's layout (store/workspace.ts). On the first start with an
 // empty folder it imports a 1.x folder when one is given (read-only; store/importer.ts).
 import { mkdirSync } from "node:fs";
-import { basename, dirname, join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { commandGuidePath } from "./plugins/app-command";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
@@ -31,19 +31,17 @@ import { studioWorld } from "./studio-world";
 import type { StudioWorld } from "./plugins/studio-seam";
 import type { CodexModel } from "./agent/codex-models";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
-import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
+import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { claudeAutoCompactWindow, codexConfigFile } from "./engine-files";
 import { attachmentFile as attachmentLinkFile } from "../contract/attachment-url";
 import { lineHasLink } from "../browser-tab-menu";
-import { botName, firstLine, MemoryFiles } from "./projects";
-import { answerLabel } from "./attachments";
-import { ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound, type BotView, type Command, type Event, type Outbound, type ResultOf, type WaitingView, type SettingsChange, type SettingsView, type MachinesView, type PluginView } from "../contract";
+import { botName, MemoryFiles } from "./projects";
+import { ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound, type BotView, type Command, type Event, type Outbound, type ResultOf, type SettingsChange, type SettingsView, type MachinesView, type PluginView } from "../contract";
 import { AgentRegistry, isDetached } from "./agent-registry";
-import { agyWorkerList } from "./agy-usage-db";
 import { AgentStore, migrationRecords } from "./store/agent-store";
 import { filePath, pageInCard } from "./page-preview";
 import { PAGE_COMPONENT } from "./preview-url";
-import { Bot, NO_LONGER_NEEDED, type DeferredTurn, type GuestAnswer, type PresetTurnIds, type SessionStart, type SessionStartCodex, type Status as TurnStatus } from "./bot";
+import { Bot, type DeferredTurn, type GuestAnswer, type PresetTurnIds, type SessionStart, type SessionStartCodex, type Status as TurnStatus } from "./bot";
 import type { FetchRequest } from "./bot-tools";
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
@@ -55,16 +53,14 @@ import { BotStore, readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
-import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
-import { botFace } from "./faces";
-import { status, statusText } from "../contract/bot-status";
-import { currentChat, WorkspaceWatch, type BotSummary, type CurrentChat, type ShownChat, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
+import { MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
+import { status } from "../contract/bot-status";
+import { type ShownChat } from "./workspace";
 import { Layout, loadProfiles, type BotProfile } from "./store/workspace";
 import { notePath } from "./bot-note";
 import { unsupportedRequest } from "./reply";
-import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { Conversations, type ConversationsDeps, type RemoteMember } from "./conversations";
-import { answeredNote, guestCardAnswerNote, pickedNote, relayedAnswerNote, type GROUP_TIMING } from "./groups";
+import { type GROUP_TIMING } from "./groups";
 import { ComponentsContext } from "./components/service";
 import { readdirSync } from "node:fs";
 import { FolderWatch } from "./folder-watch";
@@ -86,6 +82,8 @@ import { CoreProjects } from "./server/projects";
 import { CoreBots } from "./server/bots";
 import { CoreSubBots } from "./server/sub-bots";
 import { CoreAgents } from "./server/agents";
+import { CoreCopies } from "./server/copies";
+import { CoreWaiting } from "./server/waiting";
 
 /** What the core asks of main (self-update.ts, plugins/app-seam.ts). */
 export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
@@ -96,9 +94,6 @@ import { machineNameFrom } from "../remote/relay/wire";
 
 /** An id from a peer's rows that is safe as a path part and as a stream key (M5-04c F2). */
 export const PEER_ID = /^[A-Za-z0-9_-]{1,64}$/;
-/** The longest `bots.create` job and `waiting.ignore` text the contract takes (`contract/index.ts`, counted in characters as zod does). */
-const BOT_JOB_LIMIT = 4_000;
-const WAITING_TEXT_LIMIT = 400;
 /**
  * The most a peer message may take on the wire, counted as the JSON-escaped UTF-8 bytes of its text (M5-04d, checklist 6): a
  * frame is at most 256 KiB (`protocol/frame.ts` FRAME_LIMIT, which a test keeps this under) and the slot, scope and counters
@@ -258,7 +253,7 @@ export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; bo
 export class Core {
   readonly mainBotId: string;
   readonly maintainerId: string;
-  private readonly runMainBot: boolean;
+  readonly runMainBot: boolean;
   readonly doctor: DoctorModel;
   private agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
@@ -288,6 +283,16 @@ export class Core {
   private get agentStatus() { return this.coreAgents.agentStatus; }
   private get reportTurns() { return this.coreAgents.reportTurns; }
   private get reportStarts() { return this.coreAgents.reportStarts; }
+  private madeCopies?: CoreCopies;
+  private get coreCopies(): CoreCopies { return (this.madeCopies ??= new CoreCopies(this)); }
+  private madeWaiting?: CoreWaiting;
+  private get coreWaiting(): CoreWaiting { return (this.madeWaiting ??= new CoreWaiting(this)); }
+  get copies() { return this.coreCopies.copies; }
+  get serverAsks() { return this.coreCopies.serverAsks; }
+  private get lastWaiting() { return this.coreWaiting.lastWaiting; }
+  private set lastWaiting(value: CoreWaiting["lastWaiting"]) { this.coreWaiting.lastWaiting = value; }
+  private get waitingTimer() { return this.coreWaiting.waitingTimer; }
+  private set waitingTimer(value: CoreWaiting["waitingTimer"]) { this.coreWaiting.waitingTimer = value; }
   get bots() { return this.coreBots.bots; }
   set bots(value: CoreBots["bots"]) { this.coreBots.bots = value; }
   private get order() { return this.coreBots.order; }
@@ -311,20 +316,13 @@ export class Core {
   readonly releases: ReleaseNotices;
   private get libraryWatch() { return this.coreWatch.libraryWatch; }
   private set libraryWatch(value: CoreWatch["libraryWatch"]) { this.coreWatch.libraryWatch = value; }
-  private get memoryWatch() { return this.coreWatch.memoryWatch; }
-  private set memoryWatch(value: CoreWatch["memoryWatch"]) { this.coreWatch.memoryWatch = value; }
-  private get memoryFiles() { return this.coreWatch.memoryFiles; }
-  /** Plugins' workspace changes (`workspace.onChange`): the watch while some plugin listens, its next check, and its clock. */
-  private workspaceWatch: WorkspaceWatch | null = null;
-  private workspaceTimer: NodeJS.Timeout | null = null;
-  private workspaceClock: NodeJS.Timeout | null = null;
+  get memoryWatch() { return this.coreWatch.memoryWatch; }
+  set memoryWatch(value: CoreWatch["memoryWatch"]) { this.coreWatch.memoryWatch = value; }
+  get memoryFiles() { return this.coreWatch.memoryFiles; }
   /** The chat the main window shows now, as it last said (`chat.shown`); null: none, or not said yet. */
-  private shownChat: ShownChat | null = null;
+  shownChat: ShownChat | null = null;
   readonly plugins: Plugins;
   private get projectFiles() { return this.coreProjects.projectFiles; }
-  /** What waits on you as the windows were last told, and the timers that look again. */
-  private lastWaiting = "";
-  private waitingTimer: NodeJS.Timeout | null = null;
   /** Files waiting in each bot's input box. */
   readonly pending: PendingFiles;
   /** The Storage tab's dragged-in files, by bot (references only; storage.ts). */
@@ -341,10 +339,6 @@ export class Core {
   private snapshotHeld = false;
   /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
   readonly conversations: Conversations;
-  /** M5-06c: open `serverAsk` cards by the id of their chat line (the bot they are in, and how to end the wait). */
-  private serverAsks = new Map<string, { botId: string; close: (index: number | null) => void }>();
-  /** <open-question> copies in the main bot's chat: the copy's id → the question it copies. */
-  copies = new Map<string, { botId: string; questionId: string }>();
 
   mainBot(): Bot | null {
     if (!this.runMainBot) return null;
@@ -352,11 +346,11 @@ export class Core {
     return bot?.profile.role === "main" ? bot : null;
   }
 
-  private isMainBotId(id: string): boolean {
+  isMainBotId(id: string): boolean {
     return this.runMainBot && id === this.mainBotId;
   }
 
-  private noMainBotMessage(): string {
+  noMainBotMessage(): string {
     const name = this.options.mainBotMachine?.()?.trim();
     return name ? `There is no main bot on this machine; it runs on ${name}.` : "There is no main bot on this machine.";
   }
@@ -840,7 +834,7 @@ export class Core {
 
   private libraryTargets(...a: Parameters<CoreWatch["libraryTargets"]>) { return this.coreWatch.libraryTargets(...a); }
 
-  private memoryTargets(...a: Parameters<CoreWatch["memoryTargets"]>) { return this.coreWatch.memoryTargets(...a); }
+  memoryTargets(...a: Parameters<CoreWatch["memoryTargets"]>) { return this.coreWatch.memoryTargets(...a); }
 
   componentsTick(...a: Parameters<CoreWatch["componentsTick"]>) { return this.coreWatch.componentsTick(...a); }
 
@@ -871,7 +865,7 @@ export class Core {
 
   projectBriefing(...a: Parameters<CorePeerInbox["projectBriefing"]>) { return this.corePeerInbox.projectBriefing(...a); }
 
-  private peerBots(...a: Parameters<CorePeerInbox["peerBots"]>) { return this.corePeerInbox.peerBots(...a); }
+  peerBots(...a: Parameters<CorePeerInbox["peerBots"]>) { return this.corePeerInbox.peerBots(...a); }
 
 
 
@@ -947,155 +941,17 @@ export class Core {
 
   tellMain(...a: Parameters<CoreBots["tellMain"]>) { return this.coreBots.tellMain(...a); }
 
-  /**
-   * The main bot's <new-bot name="…" machine="…">job</new-bot> (M5-04d, D26, Q-C3): `bots.create` on that peer's server, this
-   * server as origin (scope `manage`). The bot is made there, never here; the outcome comes back to the main bot as a note.
-   */
-  botRequestedOn(machineName: string, rawName: string, rawJob: string, sentOnce: Set<string>) {
-    const machine = this.machineNamed(machineName);
-    if (machine.kind === "here") { this.botRequested(rawName, rawJob, null); return; }
-    if (machine.kind === "unknown") { this.tellMain((p) => `There is no machine named "${p(machine.name)}"; the bot was not made.`); return; }
-    const name = botName(rawName);
-    const job = rawJob.trim();
-    if (!name || !job) return;
-    const remoteCommand = this.options.remoteCommand!;
-    let told = false;
-    const tell = (why: string | null) => {
-      if (told) return;
-      told = true;
-      this.tellMain((p) => (why === null ? `The bot "${p(name)}" was made on ${p(machine.name)}.` : `${p(machine.name)} did not make the bot "${p(name)}": ${p(oneLine(why))}.`));
-    };
-    if (machine.kind === "ambiguous") { tell("more than one machine has that name"); return; }
-    if (job.length > BOT_JOB_LIMIT) { tell(`the job is longer than ${BOT_JOB_LIMIT} characters`); return; }
-    const once = `${machine.id}\n${name.toLowerCase()}`;
-    if (sentOnce.has(once)) return;
-    sentOnce.add(once);
-    let sent: ReturnType<typeof remoteCommand>;
-    try { sent = remoteCommand(`srv:${machine.id}`, { type: "bots.create", name, job }); } catch (error) { tell((error as Error).message); return; }
-    // The slot is committed first (a failure there is final), the owner's decision comes later; the main bot hears one of them.
-    sent.committed.catch((error: unknown) => tell((error as Error).message));
-    sent.outcome.then((outcome) => tell(outcome.ok ? null : outcome.why), (error: unknown) => tell((error as Error).message));
-  }
-
-  /** A bot of another machine of this cluster (`peerBots`) that is not one of this server's own (a local id always wins). */
-  private peerBotFor(botId: string): RemoteMember | null {
-    if (botId === "main" || this.bots.has(botId) || this.profiles.some((profile) => profile.id === botId)) return null;
-    return this.peerBots().find((peer) => peer.id === botId) ?? null;
-  }
-
-  /** Waiting items being set aside on a peer (committed or decided not yet): a second tap sends nothing (M5-04d). */
-  private peerIgnoring = new Set<string>();
-
-  /** `waiting.ignore` for a peer's bot, with this server as origin (scope `reply`); a failure is logged, never thrown. */
-  private ignoreWaitingOn(peer: RemoteMember, text: string) {
-    const remoteCommand = this.options.remoteCommand;
-    const who = `${peer.name} on ${peer.serverName}`;
-    const key = `${peer.id}\n${text}`;
-    if (!remoteCommand || this.peerIgnoring.has(key)) return;
-    if (!text || text.length > WAITING_TEXT_LIMIT) { this.log(`ignoring a waiting item of ${who} failed: the text is empty or longer than ${WAITING_TEXT_LIMIT} characters`); return; }
-    let sent: ReturnType<typeof remoteCommand>;
-    try { sent = remoteCommand(`bot:${peer.id}`, { type: "waiting.ignore", botId: peer.id, text }); } catch (error) { this.log(`ignoring a waiting item of ${who} failed: ${oneLine((error as Error).message)}`); return; }
-    this.peerIgnoring.add(key);
-    let logged = false;
-    const failed = (why: string) => { this.peerIgnoring.delete(key); if (!logged) { logged = true; this.log(`ignoring a waiting item of ${who} failed: ${oneLine(why)}`); } };
-    sent.committed.catch((error: unknown) => failed((error as Error).message));
-    sent.outcome.then((outcome) => { if (outcome.ok) this.peerIgnoring.delete(key); else failed(outcome.why); }, (error: unknown) => failed((error as Error).message));
-  }
+  botRequestedOn(...a: Parameters<CoreCopies["botRequestedOn"]>) { return this.coreCopies.botRequestedOn(...a); }
+  peerBotFor(...a: Parameters<CoreCopies["peerBotFor"]>) { return this.coreCopies.peerBotFor(...a); }
+  ignoreWaitingOn(...a: Parameters<CoreCopies["ignoreWaitingOn"]>) { return this.coreCopies.ignoreWaitingOn(...a); }
 
   botRequested(...a: Parameters<CoreBots["botRequested"]>) { return this.coreBots.botRequested(...a); }
 
   removeBot(...a: Parameters<CoreBots["removeBot"]>) { return this.coreBots.removeBot(...a); }
 
-  /**
-   * The main bot's <open-question from="name"/> (`showOpenQuestion`): the card a project or bot already
-   * shows in its own chat shows here too, a copy kept in step with it; a pick or words on it go there.
-   */
-  showOpenQuestion(name: string) {
-    const main = this.mainBot();
-    if (!main) return;
-    const wanted = name.replace(/^[\t ]+|[\t ]+$/g, "").toLowerCase();
-    const profile = this.profiles.find((candidate) => candidate.role !== "main" && !candidate.parent && candidate.name.toLowerCase() === wanted);
-    if (!profile) { main.queueNote(`(App: There is no project or bot called "${name}"; no card was shown.)`); return; }
-    const question = this.bots.get(profile.id)?.openQuestion();
-    if (!question) {
-      main.appNotice(`${profile.name} has no question waiting in its chat now.`, undefined, undefined, { sourceID: profile.id });
-      main.queueNote(`(App: ${profile.name} has no open card, so none was shown. Do not ask its question again yourself; if it still needs the user, it asks in its own chat.)`);
-      return;
-    }
-    const copy: string = main.appNotice(`${profile.name}: ${question.text}`, question.choices, (index) => this.pickOnCopy(copy, index), {
-      onAnswer: (text, files) => this.answerOnCopy(copy, text, files), sourceID: profile.id, sourceMessageID: question.id, ...(question.questions ? { questions: question.questions } : {}),
-    });
-    this.copies.set(copy, { botId: profile.id, questionId: question.id });
-    this.refreshWaiting();
-  }
-
-  /** Resolve copies to their original, then persist the informational disposition everywhere. */
-  private ignoreQuestion(botId: string, messageId: string): { accepted: boolean } {
-    let chat = this.bot(botId), record = chat.line(messageId);
-    const seen = new Set<string>();
-    while (record?.sourceID && record.sourceMessageID) {
-      const key = `${chat.id}:${record.id}`;
-      if (seen.has(key) || !isOpenQuestion(record)) return { accepted: false };
-      seen.add(key);
-      const source = this.bots.get(record.sourceID);
-      const original = source?.line(record.sourceMessageID);
-      // The bot it copies was removed (a sub bot's card relayed into its parent's chat), or its line is gone: the copy
-      // is ignored where it is, never left open with nothing to settle it (spec/models/callin/RelayedCard.tla).
-      if (!source || !original) break;
-      chat = source;
-      record = original;
-    }
-    if (!record) return { accepted: false };
-    const result = chat.ignoreQuestion(record.id);
-    if (result.accepted) this.refreshWaiting();
-    return result;
-  }
-
-  /** A pick on a copy goes to the question it copies; one settled or gone meanwhile closes the copy. */
-  private pickOnCopy(copy: string, index: number) {
-    const source = this.copies.get(copy);
-    this.copies.delete(copy);
-    if (!source) return;
-    let accepted = false;
-    try { accepted = this.bots.get(source.botId)?.choose(source.questionId, index).accepted ?? false; } catch { /* gone */ }
-    if (!accepted) this.log(`a pick on a copy of ${source.botId}'s question found it settled`);
-    this.refreshWaiting();
-  }
-
-  /** Words on a copy answer the question it copies; both show the answer. */
-  private answerOnCopy(copy: string, text: string, files: string[]): boolean {
-    const source = this.copies.get(copy);
-    const bot = source ? this.bots.get(source.botId) : undefined;
-    if (!source || !bot) { this.mainBot()?.settleAppQuestion(copy, { answer: "No longer needed" }); return false; }
-    let accepted = false;
-    // A question group answered on its copy: the original gets the same picks (its line shows them too).
-    const copyLine = this.mainBot()?.line(copy);
-    const picks = copyLine?.picks && bot.line(source.questionId)?.questions ? copyLine.picks : undefined;
-    try { accepted = bot.answer(source.questionId, text, files, picks).accepted; } catch { /* gone */ }
-    if (!accepted && copyLine) delete copyLine.picks;
-    this.copies.delete(copy);
-    this.mainBot()?.settleAppQuestion(copy, accepted ? { answer: answerLabel(text, files.length) } : { answer: "No longer needed" });
-    this.refreshWaiting();
-    return true;
-  }
-
-  /** A bot's question was settled in its own chat: so is its copy (`closeCopies`). */
-  private closeCopiesOf(botId: string, messageId: string) {
-    const original = this.bots.get(botId)?.line(messageId);
-    if (original?.ignoredAt) {
-      const chats = [...this.bots.values()];
-      for (const [copy, source] of this.copies) if (source.botId === botId && source.questionId === messageId) this.copies.delete(copy);
-      for (const chat of chats) chat.syncIgnoredCopies(botId, messageId, original.ignoredAt);
-      return;
-    }
-    for (const [copy, source] of [...this.copies]) {
-      if (source.botId !== botId || source.questionId !== messageId) continue;
-      const line = this.bots.get(botId)?.line(messageId);
-      if (line && line.chosen == null && line.answer == null) continue;
-      this.copies.delete(copy);
-      this.mainBot()?.settleAppQuestion(copy, line?.chosen != null ? { chosen: line.chosen } : { answer: line?.answer ?? "No longer needed" });
-    }
-  }
+  showOpenQuestion(...a: Parameters<CoreCopies["showOpenQuestion"]>) { return this.coreCopies.showOpenQuestion(...a); }
+  ignoreQuestion(...a: Parameters<CoreCopies["ignoreQuestion"]>) { return this.coreCopies.ignoreQuestion(...a); }
+  closeCopiesOf(...a: Parameters<CoreCopies["closeCopiesOf"]>) { return this.coreCopies.closeCopiesOf(...a); }
 
   deliverInboxes(...a: Parameters<CorePeerInbox["deliverInboxes"]>) { return this.corePeerInbox.deliverInboxes(...a); }
 
@@ -1105,306 +961,18 @@ export class Core {
    * What waits on you (`refreshWaiting`): each bot's latest open question in its own chat, else its
    * memory's "Waiting on you"; then the main bot's own questions; without what you set aside.
    */
-  /**
-   * M5-06c (D74): a question card from this server itself (a fetch that asks, `server/fetch/approval.ts`) in `botId`'s
-   * chat (the Maintainer's). It is a normal app question: the pick comes from any device through `chat.choose`, and the
-   * answer is the choice's index. It is `null` whenever there is no pick: the card is ignored, closed after a restart
-   * ("No longer needed"), the core shuts down, `cancelled` settles first (the ask it belongs to is over: the card is then
-   * closed "No longer needed" so nobody answers a dead question), the bot is missing or there is nothing to choose.
-   * A caller must treat anything but a valid index as "no".
-   */
-  serverAsk(botId: string, ask: { text: string; choices: string[] }, cancelled?: Promise<void>): Promise<number | null> {
-    const bot = this.bots.get(botId);
-    if (!bot || this.removed.has(botId) || !ask.choices.length) return Promise.resolve(null);
-    return new Promise<number | null>((resolve) => {
-      let id = "";
-      let settled = false;
-      const finish = (index: number | null) => {
-        if (settled) return;
-        settled = true;
-        this.serverAsks.delete(id);
-        resolve(index);
-      };
-      id = bot.appNotice(ask.text, ask.choices.map((label) => ({ label })), (index) => finish(Number.isInteger(index) && index >= 0 && index < ask.choices.length ? index : null));
-      this.serverAsks.set(id, { botId, close: finish });
-      void cancelled?.then(() => {
-        if (settled) return;
-        // Close the card first (a pick after this finds nothing open), then end the wait.
-        try { bot.settleAppQuestion(id, {}); } catch (error) { this.log(`serverAsk: closing the card failed: ${(error as Error).message}`); }
-        finish(null);
-      });
-    });
-  }
+  serverAsk(...a: Parameters<CoreCopies["serverAsk"]>) { return this.coreCopies.serverAsk(...a); }
+  serverAskClosed(...a: Parameters<CoreCopies["serverAskClosed"]>) { return this.coreCopies.serverAskClosed(...a); }
 
-  /** A `serverAsk` card that is no longer open and was not picked: ignored (the pick, if any, reaches its own callback). */
-  private serverAskClosed(messageId: string): void {
-    const pending = this.serverAsks.get(messageId);
-    if (!pending) return;
-    const line = this.bots.get(pending.botId)?.line(messageId) ?? null;
-    if (!line || (line.chosen == null && !isOpenQuestion(line))) pending.close(null);
-  }
-
-  waiting(): WaitingView {
-    // When a question was asked (its line's time), for the whiteboard's "2h ago".
-    const asked = (chat: Bot | null | undefined, id: string): { at?: string } => {
-      const date = chat?.line(id)?.date;
-      return typeof date === "number" && Number.isFinite(date) ? { at: new Date(fromSwiftDate(date)).toISOString() } : {};
-    };
-    const ignored = new Set(readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting));
-    const out: WaitingView["items"] = [];
-    const doing: WaitingView["doing"] = {};
-    // Use the recorded choices, not a possibly unrelated opening sentence. This is only a
-    // preview: the original question, recommendations and permission actions stay in chat.
-    const addQuestion = (botId: string, chat: Bot | null | undefined, question: { id: string; text: string }) => {
-      const legacyText = firstLine(question.text).slice(0, 400);
-      // A question is set aside only by its own id (`chat.ignoreQuestion`, the line's `ignoredAt`, which `openQuestion()`
-      // already skips), never by a text key: a plain item's `<botId>-<text>` key must not hide a later question whose
-      // preview is that text (fu-waiting-plain-ignore).
-      const line = chat?.line(question.id);
-      const choices = line?.choices;
-      const group = savedQuestions(line?.questions);
-      // A question group: its questions, numbered (each one's options stay in the chat).
-      const labels = group ? group.map((item, index) => `${index + 1}. ${(item.question || item.options.map((option) => option.label).join(" / ")).replace(/\s+/g, " ").trim()}`) : Array.isArray(choices) ? choices.flatMap((choice, index) =>
-        typeof choice?.label === "string" && choice.label.trim() ? [`${index + 1}. ${choice.label.trim().replace(/\s+/g, " ")}`] : []) : [];
-      // Keep a directly stated question for context (e.g. Yes / No); never infer one from prose.
-      const questionLead = /[?？][*_`]*$/.test(legacyText.trim()) ? `${legacyText} — ` : "";
-      const preview = labels.length ? questionLead + labels.join(" / ") : legacyText;
-      const text = preview.length > 400 ? `${preview.slice(0, 399)}…` : preview;
-      out.push({ botId, text, messageId: question.id, ...asked(chat, question.id) });
-    };
-    for (const profile of this.profiles) {
-      if (profile.role === "main" || profile.parent) continue;
-      // A manager's Now card: the first thing under "In progress" in its memory.md.
-      if (profile.role === "manager" && !profile.problem) {
-        const first = this.memoryFiles.items(join(profile.folder, profile.memoryPath), "inProgress")[0];
-        if (first) doing[profile.id] = first.slice(0, 400);
-      }
-      const question = this.bots.get(profile.id)?.openQuestion();
-      if (question) addQuestion(profile.id, this.bots.get(profile.id), question);
-      else for (const item of this.memoryFiles.items(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
-    }
-    for (const question of this.mainBot()?.openQuestions() ?? []) addQuestion(this.mainBotId, this.mainBot(), question);
-    // M5-06c: the server's own open questions (a fetch waiting for its card). The Maintainer is a manager and its
-    // `openQuestion()` sees only `role: "bot"` lines, so these app questions would be missing from the summary.
-    for (const [id, pending] of this.serverAsks) {
-      const chat = this.bots.get(pending.botId);
-      const line = chat?.line(id);
-      if (line && isOpenQuestion(line)) addQuestion(pending.botId, chat, { id, text: line.text });
-    }
-    const acked = [...ignored].filter((key) => key.includes("-task:")).slice(-200);
-    // Text keys (`ignoredWaiting`, 1.x's `<botId>-<text>`) set aside plain items only (`messageId` null).
-    return { items: out.filter((item) => item.messageId !== null || !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing, ...(acked.length ? { acked } : {}) };
-  }
-
-  /** A bot's memory.md sections (empty when its folder has a problem); read and parsed once per change of the file (MemoryFiles). */
-  private memorySections(profile: BotProfile): MemorySections {
-    const file = join(profile.folder, profile.memoryPath);
-    const items = (section: keyof MemorySections) => (profile.problem ? [] : this.memoryFiles.items(file, section).slice(0, 20).map((item) => item.slice(0, 400)));
-    return { currentStatus: items("currentStatus"), inProgress: items("inProgress"), decided: items("decided"), waitingOnYou: items("waitingOnYou") };
-  }
-
-  /** The links handed over in a bot's chat, newest first. */
-  private resultLinks(bot: Bot, limit: number): ResultLink[] {
-    return bot.results().slice(0, limit).map((result) => ({ label: result.label.slice(0, 400), url: result.url.slice(0, 4_000) }));
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // The workspace for plugins (`api.workspace`, plugin-extraction.md §4.3): what the whiteboard reads,
-  // one method each, read only. The main bot is "main" to plugins, as in `bots.list`.
-
-  private outId(id: string) {
-    return this.isMainBotId(id) ? "main" : id;
-  }
-
-  /** The bot a plugin names, with its profile; throws when there is none. */
-  private workspaceBot(botId: string): { bot: Bot; profile: BotProfile } {
-    const bot = this.pluginBot(botId);
-    const profile = bot ? this.profiles.find((candidate) => candidate.id === bot.id) : undefined;
-    if (!bot || !profile) throw new Error("No such bot.");
-    return { bot, profile };
-  }
-
-  /** Every bot (sub bots too), in the left column's order. */
-  private workspaceBots(): { bot: Bot; profile: BotProfile }[] {
-    return this.profiles.flatMap((profile) => {
-      const bot = this.removed.has(profile.id) ? undefined : this.bots.get(profile.id);
-      return bot ? [{ bot, profile }] : [];
-    });
-  }
-
-  private botSummary(bot: Bot, profile: BotProfile, pinned: Set<string>): BotSummary {
-    const view = bot.view();
-    return {
-      id: this.outId(bot.id), name: profile.name.slice(0, 200), role: profile.role, parent: profile.parent ? this.outId(profile.parent) : null,
-      folder: basename(profile.folder.replace(/[\\/]+$/, "")).slice(0, 400), engine: view.heads[0] ?? "claude", busy: view.working, asleep: view.phase === "asleep",
-      avatar: profile.avatar.slice(0, 40), pinned: pinned.has(bot.id),
-      lastActivity: view.lastActivity ?? null, job: view.job?.slice(0, 400) ?? null, subagents: view.subagents, guest: !!view.guest, approvals: view.approvals,
-      status: { key: status(view), text: statusText(view) },
-      lastReply: profile.role === "main" ? bot.lines().findLast((line) => line.role === "bot" && line.text.trim())?.text.slice(0, 400) ?? null : null,
-    };
-  }
-
-  /** What waits on you with plugins' bot ids. */
-  private workspaceWaiting(): WaitingView {
-    const view = this.waiting();
-    const main = `${this.mainBotId}-`;
-    return {
-      items: view.items.map((item) => ({ ...item, botId: this.outId(item.botId) })),
-      doing: Object.fromEntries(Object.entries(view.doing).map(([id, text]) => [this.outId(id), text])),
-      ...(view.acked ? { acked: view.acked.map((key) => (this.runMainBot && key.startsWith(main) ? `main-${key.slice(main.length)}` : key)) } : {}),
-    };
-  }
-
-  private workspaceSource(): WorkspaceSource {
-    return {
-      bots: () => {
-        const pinned = new Set(settingsView(readSettings(Layout.settings(this.options.dataDir))).pinnedBots);
-        return this.workspaceBots().map(({ bot, profile }) => this.botSummary(bot, profile, pinned));
-      },
-      memory: (botId) => this.memorySections(this.workspaceBot(botId).profile),
-      // Task cards were removed in 2.5: both stay for plugins that still ask, and answer nothing.
-      tasks: (botId) => { this.workspaceBot(botId); return []; },
-      taskHistory: (botId) => { this.workspaceBot(botId); return []; },
-      results: (botId, limit) => this.resultLinks(this.workspaceBot(botId).bot, limit),
-      waiting: () => this.workspaceWaiting(),
-      ignoreWaiting: (botId, text) => {
-        // A bot of this machine first ("main" is the local main bot whatever a peer's rows say: `peerBotFor`), then a peer's (M5-04d).
-        const peer = this.peerBotFor(botId);
-        if (peer) this.ignoreWaitingOn(peer, text);
-        else this.ignoreWaiting(this.workspaceBot(botId).bot.id, text);
-      },
-      pendingApprovals: (botId) => this.workspaceBot(botId).bot.pendingApprovals(),
-      face: (botId, look) => {
-        const { bot } = this.workspaceBot(botId);
-        const view = bot.view();
-        const waiting = view.approvals > 0 || this.waiting().items.some((item) => item.botId === bot.id);
-        return botFace(view, look, { asleep: view.phase === "asleep", working: view.working, waiting });
-      },
-      current: () => this.currentChat(),
-      agyWorkers: (sessionId) => agyWorkerList(this.agents.all, sessionId, this.options.dataDir),
-    };
-  }
-
-  /** The chat the user has open in the main window, for plugins (`workspace.current`); null: none, or gone. */
-  private currentChat(): CurrentChat | null {
-    const shown = this.shownChat;
-    const bot = shown && !this.removed.has(shown.botId) ? this.bots.get(shown.botId) : undefined;
-    if (!shown || !bot) return null;
-    return currentChat(shown, this.outId(bot.id), bot.view().heads[0] ?? "claude", bot.headSessions());
-  }
-
-  /** What each workspace method would answer, by bot and kind: what a change is noticed by. */
-  private workspaceDigest(): WorkspaceDigest {
-    const pinned = new Set(settingsView(readSettings(Layout.settings(this.options.dataDir))).pinnedBots);
-    const waiting = this.workspaceWaiting();
-    const out: WorkspaceDigest = {};
-    for (const { bot, profile } of this.workspaceBots()) {
-      const id = this.outId(bot.id);
-      out[id] = {
-        bots: JSON.stringify(this.botSummary(bot, profile, pinned)),
-        memory: JSON.stringify(this.memorySections(profile)),
-        waiting: JSON.stringify([waiting.items.filter((item) => item.botId === id), waiting.doing[id] ?? null, bot.pendingApprovals()]),
-        results: JSON.stringify(this.resultLinks(bot, 100)),
-      };
-    }
-    // Only the bot shown has a "current": a switch names the one left and the one opened.
-    const current = this.currentChat();
-    if (current && out[current.botId]) out[current.botId].current = JSON.stringify(current);
-    return out;
-  }
-
-  /**
-   * Some plugin listens for workspace changes, or none does any more (Plugins, as soon as the host says so).
-   * Listening: what is there now is the start; a change is looked for soon after any event, and every 5 s.
-   */
-  private watchWorkspace(on: boolean) {
-    if (!on) {
-      this.workspaceWatch?.stop();
-      if (this.workspaceTimer) { clearTimeout(this.workspaceTimer); this.workspaceTimer = null; }
-      if (this.workspaceClock) { clearInterval(this.workspaceClock); this.workspaceClock = null; }
-      return;
-    }
-    this.workspaceWatch ??= new WorkspaceWatch(this.epoch);
-    try { this.workspaceWatch.start(this.workspaceDigest()); } catch (error) { this.log(`workspace: ${(error as Error).message}`); return; }
-    if (!this.workspaceClock) {
-      this.workspaceClock = setInterval(() => this.checkWorkspace(), 5_000);
-      this.workspaceClock.unref?.();
-    }
-  }
-
-  /** Looks for a workspace change within a second (once, however many events come meanwhile). */
-  private checkWorkspaceSoon() {
-    if (!this.workspaceWatch?.watching || this.workspaceTimer) return;
-    this.workspaceTimer = setTimeout(() => { this.workspaceTimer = null; this.checkWorkspace(); }, 1_000);
-    this.workspaceTimer.unref?.();
-  }
-
-  private checkWorkspace() {
-    if (!this.workspaceWatch?.watching) return;
-    let change;
-    try { change = this.workspaceWatch.check(this.workspaceDigest()); } catch (error) { this.log(`workspace: ${(error as Error).message}`); return; }
-    if (change) this.plugins.workspaceChanged(change);
-  }
-
-  /** Tells the windows when what waits on you changed (1.x's `refreshWaiting`, after anything that may change it). */
-  refreshWaiting() {
-    // A memory file changed, maybe: plugins watching the workspace look again.
-    this.checkWorkspaceSoon();
-    // Bots added or removed since: their memory files watched (or no longer).
-    if (this.memoryWatch) { this.memoryWatch.sync(); this.memoryFiles.keepOnly(this.memoryTargets().map((target) => target.path)); }
-    let view: WaitingView;
-    try { view = this.waiting(); } catch (error) { this.log(`waiting: ${(error as Error).message}`); return; }
-    const text = JSON.stringify(view);
-    if (text === this.lastWaiting) return;
-    this.lastWaiting = text;
-    this.event({ type: "waiting.updated", waiting: view });
-  }
-
-  /** A refresh soon after a chat changed (several changes in a row make one). */
-  private waitingSoon() {
-    if (this.waitingTimer) return;
-    this.waitingTimer = setTimeout(() => { this.waitingTimer = null; this.refreshWaiting(); }, 150);
-    this.waitingTimer.unref?.();
-  }
-
-  /** Takes one off the list without answering it (settings' `ignoredWaiting`, 1.x's ids). */
-  ignoreWaiting(botId: string, text: string): WaitingView {
-    this.checkBot(botId);
-    // A command reached this server because it owns the target (the front end sends a peer bot's command to its owner,
-    // and the slot engine refuses a target that is not `bot:<botId>`), so it is never sent on to another machine (§11.2
-    // step 5: no second hop). The legacy handler runs before that target check, so forwarding here would let a peer send
-    // a command to a third machine as this server. A peer's item is set aside from the workspace source (M5-04d).
-    // A text that is on the list only as an open question (a client that names it by its text, such as the whiteboard) is
-    // set aside by the question's id, as "Ignore" on the card does: a text key would hide a later question with that preview.
-    const items = this.waiting().items.filter((item) => item.botId === botId && item.text === text);
-    if (items.length && items.every((item) => item.messageId !== null)) {
-      for (const item of items) if (item.messageId) this.ignoreQuestion(botId, item.messageId);
-      this.refreshWaiting();
-      return this.waiting();
-    }
-    const file = Layout.settings(this.options.dataDir);
-    const raw = readSettings(file);
-    const ignored = readSettingsList(raw.ignoredWaiting);
-    const key = `${botId}-${text}`;
-    // Only the last 200: old ones are long answered or gone (1.x).
-    if (!ignored.includes(key)) writeSettings(file, { ...raw, ignoredWaiting: [...ignored, key].slice(-200) });
-    this.refreshWaiting();
-    return this.waiting();
-  }
-
-  /**
-   * peer-answer-guard: whether a peer server's `waiting.ignore{botId, text}` may go ahead here. Yes for a plain waiting
-   * item (no card: `messageId` null) on the list now, never for a question or approval card or a text that is not on
-   * the list. Also yes for a key that is already ignored: the owner checks the scope before the handler runs and again
-   * when it stores the outcome, and by then the handler has set the item aside; a repeat of an ignore is a no-op.
-   */
-  peerMayIgnoreWaiting(botId: string, text: string): boolean {
-    const items = this.waiting().items.filter((item) => item.botId === botId && item.text === text);
-    if (items.some((item) => item.messageId === null)) return true;
-    // A repeat is a no-op only while no open question has that text: a text key is never for a card (and `ignoreWaiting`
-    // would set that card aside by its id).
-    return !items.length && readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting).includes(`${botId}-${text}`);
-  }
+  waiting(...a: Parameters<CoreWaiting["waiting"]>) { return this.coreWaiting.waiting(...a); }
+  outId(...a: Parameters<CoreWaiting["outId"]>) { return this.coreWaiting.outId(...a); }
+  workspaceSource(...a: Parameters<CoreWaiting["workspaceSource"]>) { return this.coreWaiting.workspaceSource(...a); }
+  watchWorkspace(...a: Parameters<CoreWaiting["watchWorkspace"]>) { return this.coreWaiting.watchWorkspace(...a); }
+  checkWorkspaceSoon(...a: Parameters<CoreWaiting["checkWorkspaceSoon"]>) { return this.coreWaiting.checkWorkspaceSoon(...a); }
+  refreshWaiting(...a: Parameters<CoreWaiting["refreshWaiting"]>) { return this.coreWaiting.refreshWaiting(...a); }
+  waitingSoon(...a: Parameters<CoreWaiting["waitingSoon"]>) { return this.coreWaiting.waitingSoon(...a); }
+  ignoreWaiting(...a: Parameters<CoreWaiting["ignoreWaiting"]>) { return this.coreWaiting.ignoreWaiting(...a); }
+  peerMayIgnoreWaiting(...a: Parameters<CoreWaiting["peerMayIgnoreWaiting"]>) { return this.coreWaiting.peerMayIgnoreWaiting(...a); }
 
   addProject(...a: Parameters<CoreProjects["addProject"]>) { return this.coreProjects.addProject(...a); }
 
@@ -1867,126 +1435,11 @@ export class Core {
       .finally(() => this.inflight.delete(message.id));
   }
 
-  /** Your pick on a called-in bot's line goes back to it (`answerCallIn`); null: not such a line. */
-  private calledInPick(botId: string, messageId: string, index: number): { accepted: boolean } | null {
-    const chat = this.bot(botId);
-    const record = chat.line(messageId);
-    if (!record || !this.conversations.isCalledIn(record, chat.id)) return null;
-    const label = record.choices?.[index]?.label;
-    if (!isOpenQuestion(record) || label === undefined) return { accepted: false };
-    const relayed = this.answerRelayedCopy(chat, record, label, { chosen: index });
-    if (relayed) return relayed;
-    return this.answerGuestLine(chat, record, pickedNote(label), label, { chosen: index });
-  }
-
-  /** Your words on a called-in bot's question go back to it. */
-  private calledInAnswer(botId: string, messageId: string, text: string, files: number): { accepted: boolean } | null {
-    const chat = this.bot(botId);
-    const record = chat.line(messageId);
-    if (!record || !this.conversations.isCalledIn(record, chat.id) || !record.choices?.length) return null;
-    const shown = answerLabel(text.trim(), files);
-    if (!shown || !isOpenQuestion(record)) return { accepted: false };
-    const relayed = this.answerRelayedCopy(chat, record, text.trim() || shown, { answer: shown });
-    if (relayed) return relayed;
-    return this.answerGuestLine(chat, record, answeredNote(shown), text.trim() || shown, { answer: shown });
-  }
-
-  /**
-   * Your answer on a called-in bot's line in this chat (its guest line, `isCalledIn`) goes back to it, and counts once it
-   * gets there (spec/models/callin/RelayedCard.tla): free, it answers here (a call-in, as when you named it); at work, the
-   * answer goes into its own chat, read into its turn under way or waiting for it to end. Meanwhile the card shows the
-   * answer "Queued"; if it never gets there (taken back, the bot stopped or removed), the card is open again and says so.
-   */
-  private answerGuestLine(chat: Bot, record: ChatRecord, note: string, words: string, outcome: { chosen?: number; answer?: string }): { accepted: boolean } {
-    const guest = typeof record.sourceID === "string" ? this.bots.get(record.sourceID) : undefined;
-    if (!guest || !this.conversations.callable(chat.id).some((member) => member.id === guest.id)) {
-      chat.settleAppQuestion(record.id, { answer: NO_LONGER_NEEDED });
-      return { accepted: false };
-    }
-    if (!chat.holdCardAnswer(record.id, outcome, guest.profile.name)) return { accepted: false };
-    const told = (delivered: boolean) => {
-      chat.releaseCardAnswer(record.id, delivered);
-      // A relayed copy of the user's call-in (`callInBy`): the card it copies shows the answer too.
-      if (delivered) this.settleRelayedOriginal(record, outcome);
-    };
-    const intoItsChat = () => {
-      try { guest.send(words, { appNote: guestCardAnswerNote(chat.profile.name), onDelivery: told }); } catch { told(false); }
-    };
-    if (guest.takesGuest && !this.conversations.callIns(chat.id).length) {
-      this.conversations.answerCallIn(chat, record, note, { began: () => told(true), busy: intoItsChat, failed: () => told(false) });
-    } else intoItsChat();
-    return { accepted: true };
-  }
-
-  /**
-   * A called-in bot's question relayed into the chat of the bot that called it (`callInFollowUp`: the copy names it
-   * with `sourceMessageID`) answered there: received where it was given. The answer is your message to this chat's own
-   * bot (it asked on your behalf and carries the work on), and the card it copies shows the answer in the called-in
-   * bot's chat; that bot is not woken, so two bots never act on one answer: the caller tells it with @ when needed.
-   * null: not such a copy, or a copy of a call-in the user made (`callInBy`): this chat's bot did not ask, so the answer
-   * goes to the called bot like its guest line's (answerGuestLine), and its own card shows it once it gets there.
-   */
-  private answerRelayedCopy(chat: Bot, copy: ChatRecord, words: string, outcome: { chosen?: number; answer?: string }): { accepted: boolean } | null {
-    if (copy.role !== "bot" || typeof copy.sourceID !== "string" || typeof copy.sourceMessageID !== "string" || copy.callInBy === "user") return null;
-    const name = this.bots.get(copy.sourceID)?.profile.name ?? "the bot you called in";
-    chat.send(words, { replyTo: copy.id, appNote: relayedAnswerNote(name) });
-    chat.settleAppQuestion(copy.id, outcome);
-    this.settleRelayedOriginal(copy, outcome);
-    return { accepted: true };
-  }
-
-  /**
-   * A called-in bot's question relayed into another chat (`callInFollowUp`: the copy names it with `sourceMessageID`)
-   * was answered on the copy: the answer went to that bot with the call-in, so its own card only shows it.
-   */
-  private settleRelayedOriginal(copy: ChatRecord, outcome: { chosen?: number; answer?: string }) {
-    if (copy.role !== "bot" || typeof copy.sourceID !== "string" || typeof copy.sourceMessageID !== "string") return;
-    const source = this.bots.get(copy.sourceID);
-    const original = source?.line(copy.sourceMessageID);
-    if (!source || !original || !isOpenQuestion(original)) return;
-    if (copy.picks && original.questions) original.picks = copy.picks;
-    source.settleAppQuestion(original.id, outcome);
-  }
-
-  /** A called-in bot answered in its own chat on a question relayed into other chats: every open copy shows the answer. */
-  private closeRelayedCopies(botId: string, messageId: string) {
-    const original = this.bots.get(botId)?.line(messageId);
-    if (!original || original.role !== "bot" || original.sourceMessageID || isOpenQuestion(original) || original.ignoredAt
-      || !(original.choices?.length || original.questions?.length)) return;
-    for (const chat of this.bots.values()) {
-      if (chat.id === botId) continue;
-      for (const copy of chat.lines()) {
-        if (copy.role !== "bot" || copy.sourceID !== botId || copy.sourceMessageID !== messageId || !isOpenQuestion(copy)) continue;
-        if (original.picks && copy.questions) copy.picks = original.picks;
-        chat.settleAppQuestion(copy.id, original.chosen != null ? { chosen: original.chosen } : { answer: original.answer ?? NO_LONGER_NEEDED });
-      }
-    }
-  }
-
-  /** A called-in bot's question group answered together: its one answer message goes to that bot, as words would. */
-  private calledInGroupAnswer(botId: string, messageId: string, picks: QuestionPick[], files: number): { accepted: boolean } | null {
-    const record = this.bot(botId).line(messageId);
-    if (!record || !this.conversations.isCalledIn(record, botId)) return null;
-    const questions = savedQuestions(record.questions);
-    const clean = questions ? validPicks(questions, picks) : null;
-    if (!questions || !clean) throw new ContractError("bad_request", "Those answers do not fit the questions.");
-    if (!isOpenQuestion(record)) return { accepted: false };
-    record.picks = clean;
-    const result = this.calledInAnswer(botId, messageId, answerMessage(questions, clean), files);
-    if (!result?.accepted && isOpenQuestion(record)) delete record.picks;
-    return result;
-  }
-
-  bot(id: string): Bot {
-    if (id === "main") {
-      const main = this.mainBot();
-      if (!main) throw new ContractError("not_found", this.noMainBotMessage());
-      return main;
-    }
-    const bot = this.bots.get(id);
-    if (!bot) throw new ContractError("not_found", "No such bot.");
-    return bot;
-  }
+  calledInPick(...a: Parameters<CoreCopies["calledInPick"]>) { return this.coreCopies.calledInPick(...a); }
+  calledInAnswer(...a: Parameters<CoreCopies["calledInAnswer"]>) { return this.coreCopies.calledInAnswer(...a); }
+  closeRelayedCopies(...a: Parameters<CoreCopies["closeRelayedCopies"]>) { return this.coreCopies.closeRelayedCopies(...a); }
+  calledInGroupAnswer(...a: Parameters<CoreCopies["calledInGroupAnswer"]>) { return this.coreCopies.calledInGroupAnswer(...a); }
+  bot(...a: Parameters<CoreCopies["bot"]>) { return this.coreCopies.bot(...a); }
 
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
     if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "doctor.view", "attachment.file", "card.image", "link.authorize", "chat.shown"]).has(cmd.type)) {
