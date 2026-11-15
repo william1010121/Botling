@@ -667,4 +667,21 @@ describe("M6-05 review: real paths, the planned file only, the protected list", 
     expect(copied.failed).toEqual([]);
     for (const v of copied.map.values()) expect(fileURLToPath(v).startsWith(join(realpathSync(dataDir), "imported") ) || fileURLToPath(v).startsWith(join(dataDir, "imported"))).toBe(true);
   });
+  it("21. a bot folder under imported/<hash>/ that is a link is not written through", () => {
+    const root = tempDir();
+    const src = join(root, "v2");
+    mkdirSync(join(src, "attachments"), { recursive: true });
+    writeFileSync(join(src, "attachments", "pic.png"), png("p"));
+    make2xFolder(src, { extraMainMessages: [userLine(1, "x", [fileUrl(join(src, "attachments", "pic.png"))])] });
+    const data = read2x(src);
+    const idMap = mapIds(data.bots, { mainId: TARGET_MAIN_ID, maintainerId: TARGET_MAINTAINER_ID, designated: true });
+    const dataDir = tempDir("botling-db-");
+    const elsewhere = tempDir("botling-elsewhere-");
+    mkdirSync(join(dataDir, "imported", "h"), { recursive: true });
+    symlinkSync(elsewhere, join(dataDir, "imported", "h", TARGET_MAIN_ID));
+    const copied = copyMedia(planMedia(data.bots, idMap, src), dataDir, "h");
+    expect(readdirSync(elsewhere)).toEqual([]);
+    expect(copied.count).toBe(0);
+    expect(copied.failed.length).toBeGreaterThan(0);
+  });
 });
