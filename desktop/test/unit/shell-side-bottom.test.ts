@@ -238,6 +238,54 @@ describe("ShellFrame and RegionSlot", () => {
     expect(host.innerHTML).toBe('<div><i id="d"></i></div>');
   });
 
+  // Review probes (M7-03c review): each fails with one guard of regions.tsx removed.
+  it("a frame's bottom region needs its own claim: another frame's claim does not keep it drawn (the scope check)", async () => {
+    const a = await mountFrame(frame({ regions: { bottom: createElement("i", { id: "a" }) }, legacy: createElement("div", null, createElement(RegionSlot, { region: "bottom" })) }));
+    const [mine] = regionEntries("app/bottom");
+    const b = await mountFrame(frame({ regions: { bottom: createElement("i", { id: "b" }) }, legacy: createElement("div", null, createElement(RegionSlot, { region: "bottom" })) }));
+    expect(regionEntries("app/bottom")).toHaveLength(2);
+    await act(async () => { await mine!.registration.dispose(); notifySlots(); });
+    expect(a.innerHTML).toBe("<div></div>");
+    expect(b.innerHTML).toBe('<div><i id="b"></i></div>');
+  });
+
+  it("when the kernel took the page but refused the bottom claim, the bottom region is drawn directly rather than not at all", async () => {
+    const real = rendererKernel.contribute.bind(rendererKernel);
+    vi.spyOn(rendererKernel, "contribute").mockImplementation(((plugin: string, slot: string, entry: unknown) => (slot === REGION_SLOTS.bottom ? null : real(plugin, slot, entry))) as never);
+    const host = await mountFrame(frame({ regions: { bottom: createElement("i", { id: "r" }) }, legacy: createElement("div", { id: "taken" }, createElement(RegionSlot, { region: "bottom" })) }));
+    expect(regionEntries("app/bottom")).toHaveLength(0);
+    expect(host.innerHTML).toBe('<div id="taken"><i id="r"></i></div>');
+  });
+
+  it("the side region is drawn while botling.bot-panel is loading and while it is unloading, not only when it is absent", async () => {
+    const mine = !rendererKernel.declaration(BOT_PANEL_PLUGIN);
+    if (mine) rendererKernel.install({ name: BOT_PANEL_PLUGIN });
+    const host = await mountFrame(frame({ regions: { side: createElement("i", { id: "side" }) }, legacy: createElement("div", null, createElement(RegionSlot, { region: "side" })) }));
+    let open!: () => void; let release!: () => void;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    const hang = new Promise<void>((resolve) => { release = resolve; });
+    // Runs even when an expectation below fails, so the plugin is not left loading/unloading for the next tests.
+    cleanups.push(async () => {
+      open(); release();
+      if (rendererKernel.state(BOT_PANEL_PLUGIN) !== "absent") await rendererKernel.requestUnload(BOT_PANEL_PLUGIN);
+      if (mine) rendererKernel.uninstall(BOT_PANEL_PLUGIN);
+    });
+    let loaded!: Promise<unknown>;
+    await act(async () => { loaded = rendererKernel.load(BOT_PANEL_PLUGIN, async (plugin) => { rendererKernel.register(plugin, "test", "hold", () => hang); await gate; }); });
+    expect(rendererKernel.state(BOT_PANEL_PLUGIN)).toBe("loading");
+    expect(host.querySelector("#side"), "loading").not.toBeNull();
+    await act(async () => { open(); await loaded; });
+    expect(rendererKernel.state(BOT_PANEL_PLUGIN)).toBe("active");
+    expect(host.querySelector("#side"), "active without its claim").toBeNull();
+    let unloaded!: Promise<unknown>;
+    await act(async () => { unloaded = rendererKernel.requestUnload(BOT_PANEL_PLUGIN); });
+    expect(rendererKernel.state(BOT_PANEL_PLUGIN)).toBe("unloading");
+    expect(host.querySelector("#side"), "unloading").not.toBeNull();
+    await act(async () => { release(); await unloaded; });
+    expect(rendererKernel.state(BOT_PANEL_PLUGIN)).toBe("absent");
+    expect(host.querySelector("#side")).not.toBeNull();
+  });
+
   it("the side region needs botling.bot-panel's contribution while the plugin is up, and is drawn while the plugin is not (its own data, or the shell's unavailable line)", async () => {
     const side = frame({ regions: { side: createElement("i", { id: "side" }) }, legacy: createElement("div", null, createElement(RegionSlot, { region: "side" })) });
     const never = await mountFrame(side);
