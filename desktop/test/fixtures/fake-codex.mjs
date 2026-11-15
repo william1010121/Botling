@@ -42,7 +42,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, isAbsolute, join } from "node:path";
 import { safeWritePath } from "./safe-write.mjs";
 import { randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 // `codex exec` as Catch-up runs it: reads the selected messages from the prompt and writes 1–3
@@ -202,7 +202,11 @@ async function coordinatorTurn(thread, turn, text) {
     const now = Date.now();
     const body = `session_loop{thread_id=${thread}}:run_sampling_request{turn_id=${turn}}: stream disconnected - retrying sampling request (1/5 in 40.000123s)... turn_id=${turn} retries=1 max_retries=5 sampling_error=exceeded retry limit, last status: 429 Too Many Requests`;
     if (db && existsSync(db)) {
-      spawnSync("sqlite3", [db, `INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body, thread_id) VALUES (${Math.floor(now / 1000)}, ${(now % 1000) * 1_000_000}, 'WARN', 'codex_core::responses_retry', '${body}', '${thread}');`]);
+      const { DatabaseSync } = await import("node:sqlite");
+      const log = new DatabaseSync(db);
+      log.prepare("INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body, thread_id) VALUES (?, ?, 'WARN', 'codex_core::responses_retry', ?, ?)")
+        .run(Math.floor(now / 1000), (now % 1000) * 1_000_000, body, thread);
+      log.close();
     }
     notify("error", { error: { message: "Reconnecting... 1/5", codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } }, additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests", misalignment: null }, willRetry: true, threadId: thread, turnId: turn });
     const gate = process.env.FAKE_CODEX_RETRY_GATE;
