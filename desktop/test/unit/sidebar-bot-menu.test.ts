@@ -322,6 +322,36 @@ describe("reading the slot (a private kernel)", () => {
     expect(readBotMenu(kernel, false)).toEqual({ state: "slot", top: [], bottom: [], rows: [] });
   });
 
+  // Review probes (M7-05b review): each guard of readBotMenu and of activate's refusal check, with a test that fails without it.
+  /** A kernel where the sidebar owns the slot and registers `own`, then `acme` registers `rows` (raw entries). */
+  async function sidebarThen(own: unknown[], rows: unknown[]) {
+    const kernel = new Kernel({ slotName: canonicalSlot });
+    kernel.install({ name: SIDEBAR_PLUGIN, provides: { slots: [BOT_CONTEXT_SLOT] } });
+    await kernel.load(SIDEBAR_PLUGIN, (plugin) => { kernel.provideSlot(plugin, BOT_CONTEXT_SLOT); for (const entry of own) kernel.contribute(plugin, BOT_CONTEXT_SLOT, entry); });
+    kernel.install({ name: "acme", contributes: { slots: [BOT_CONTEXT_SLOT] } });
+    await kernel.load("acme", (plugin) => { for (const entry of rows) kernel.contribute(plugin, BOT_CONTEXT_SLOT, entry); });
+    return kernel;
+  }
+  const feed = (row: Record<string, unknown>) => ({ kind: "feed", row: { plugin: "acme", menu: "bot/context", command: "acme.run", title: "Run acme", ...row } });
+
+  it("takes a plugin's row only when the row names the plugin that registered it and the bot/context menu", async () => {
+    const kernel = await sidebarThen([], [feed({}), feed({ plugin: "zed", command: "zed.wipe", title: "Wipe" }), feed({ menu: "chat/link", command: "acme.link", title: "Link" })]);
+    expect(readBotMenu(kernel, false)).toEqual({ state: "slot", top: [], bottom: [], rows: [{ command: "acme.run", title: "Run acme" }] });
+  });
+
+  it("draws each of the sidebar's items once and none it does not know, even from the sidebar itself", async () => {
+    const kernel = await sidebarThen([...BUILTIN_BOT_MENU, { kind: "bot-menu-item", id: "remove", place: "bottom" }, { kind: "bot-menu-item", id: "format-disk", place: "top" }], []);
+    expect(readBotMenu(kernel, false)).toEqual({ state: "slot", top: ["pin", "restart"], bottom: ["remove"], rows: [] });
+  });
+
+  it("activate fails the load when the kernel refuses one of the menu's items", async () => {
+    const { activate } = await import("../../src/renderer/plugins/sidebar");
+    // Refuses the Restart item (and the rail, so a load that went on past the refusal would fail with another message, not this one).
+    const refusing = { provideSlot() {}, contribute: (_plugin: string, slot: string, entry: { id?: string }) => slot === BOT_CONTEXT_SLOT && entry.id !== "restart" };
+    const api = { define: async (_declaration: unknown, register: (kernel: unknown, plugin: string) => void) => { register(refusing, SIDEBAR_PLUGIN); return () => {}; } };
+    await expect(activate(api)).rejects.toThrow("the kernel refused the restart item");
+  });
+
   it("is `direct` while nobody owns the slot, `unavailable` when the host lost the plugin, and the slot's items once it is owned", async () => {
     const empty = new Kernel({ slotName: canonicalSlot });
     expect(readBotMenu(empty, false)).toEqual({ state: "direct" });
