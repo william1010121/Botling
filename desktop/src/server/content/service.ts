@@ -24,7 +24,7 @@ import { pathToFileURL } from "node:url";
 import { CONTENT_CHUNK_BYTES, type ContentRef, type ContentVariant, type Entry, type MessageOf, type StreamId } from "../../protocol";
 import { appendEntries, inRead, readStream } from "../log";
 import type { Command, Db, SqlRow } from "../store";
-import { contentTypeOf, namedFiles, pathOfFileRef, type LineLike, type NamedFile } from "./files";
+import { contentTypeOf, isProtectedPath, namedFiles, pathOfFileRef, type LineLike, type NamedFile } from "./files";
 import { CHUNK_BYTES, Hasher, type HashResult } from "./hasher";
 import { newPendingHex, pinFile, pinsDir, sameSig, statSig, sweepPins, type Pin, type PinOptions, type StatSig } from "./pin";
 
@@ -141,6 +141,13 @@ export class ContentService {
   /** M2 step 10: the media jobs (variants). Before `recover`, so every content made ready has its job. */
   attachMedia(media: ContentMedia | null): void { this.media = media; }
   get pinsDir(): string { return pinsDir(this.options.dataDir); }
+  private realData: string | null = null;
+  private realDataDir(): string {
+    if (this.realData === null) {
+      try { this.realData = realpathSync.native(this.options.dataDir); } catch { return this.options.dataDir; }
+    }
+    return this.realData;
+  }
   private now(): number { return this.options.now?.() ?? Date.now(); }
   private audit(text: string): void { this.options.audit?.(text); }
   private db(): Db {
@@ -173,6 +180,9 @@ export class ContentService {
       try {
         source = realpathSync(file.path);
         if (!statSync(source).isFile()) throw new Error("not a regular file");
+        // The protected list holds for the file a link leads to too (a link named `x.png` to `server.db` or a key), and
+        // for the on-disk case of its path (M6-05 review: `<dataDir>/imported/` is exempt, a link inside it is not).
+        if (isProtectedPath(realpathSync.native(source), { dataDir: this.realDataDir() })) throw new Error("protected");
         sig = statSig(source);
       } catch (error) {
         skipped.push({ path: file.path, reason: String((error as NodeJS.ErrnoException)?.code ?? (error as Error)?.message ?? error) });
