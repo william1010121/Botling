@@ -1322,6 +1322,41 @@ const BASE_COMMAND_TYPES = BASE_COMMANDS.map((schema) => schema.shape.type.value
 /** Every contract command name; used to bound `plugin.grant.requests` (§11.7). */
 export const CommandTypeEnum = z.enum([...BASE_COMMAND_TYPES, "plugin.grant"]);
 
+/** A call-in's transcript slice is at most 64 KiB of UTF-8 (the host cuts the oldest lines first, M5-02c). */
+const CALLIN_TRANSCRIPT_BYTES = 64 * 1024;
+/**
+ * Cross-server call-ins (Q-C1, D51, protocol v1 §15): slots whose origin is a server, never a device or the window
+ * (`COMMAND_SCOPES` scope `server`). They sit outside `BASE_COMMANDS` so `plugin.grant.requests` cannot name them: a plugin is
+ * never given a server-only command. No `picks` in 3.0 (the guest's cards stay in the guest's chat).
+ */
+const CALLIN_COMMANDS = [
+  /** Host server A asks the guest's owner B to run `botId`'s turn: the host chat's transcript slice and what was asked. */
+  z.strictObject({
+    type: z.literal("callin.ask"),
+    botId,
+    callId: id,
+    host: z.strictObject({ server: z.string().min(1).max(200), botId, name: z.string().min(1).max(200) }),
+    transcript: z.string().refine((text) => new TextEncoder().encode(text).length <= CALLIN_TRANSCRIPT_BYTES, "transcript is over 64 KiB"),
+    asked: z.string().max(4_000),
+    by: z.enum(["user", "bot"]),
+    depth: z.number().int().min(1).max(2),
+  }),
+  /** The guest's owner B answers the host bot `botId` on server A: the reply, or why there is none (applied once by the slot). */
+  z.strictObject({
+    type: z.literal("callin.reply"),
+    botId,
+    callId: id,
+    guest: z.strictObject({ botId, name: z.string().min(1).max(200) }),
+    outcome: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("reply"), text: z.string().max(200 * 1024), engine: Engine }),
+      z.strictObject({ kind: z.literal("failed"), why: z.string().max(1_000) }),
+      z.strictObject({ kind: z.literal("busy") }),
+    ]),
+  }),
+  /** The host gave up (D51): B skips the call-in if it has not started, and stops the guest turn if it has. */
+  z.strictObject({ type: z.literal("callin.cancel"), botId, callId: id }),
+] as const;
+
 export const Command = z.discriminatedUnion("type", [
   ...BASE_COMMANDS,
   /** Raises, lowers, or revokes (`tier: "none"`) one plugin grant at one code hash on the target server (D54, §11.7). */
@@ -1333,6 +1368,7 @@ export const Command = z.discriminatedUnion("type", [
     reads: z.array(z.string().min(1).max(200)).max(50),
     requests: z.array(CommandTypeEnum).max(100),
   }),
+  ...CALLIN_COMMANDS,
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command["type"];
@@ -1485,6 +1521,9 @@ export interface Results {
   "plugins.approvalAsk": { needsApproval: ApprovalAskView | null };
   "plugins.approve": { accepted: boolean };
   "plugin.grant": { applied: true };
+  "callin.ask": { applied: true };
+  "callin.reply": { applied: true };
+  "callin.cancel": { applied: true };
   "plugins.tileImages": { images: Record<string, string> };
   "plugins.noteSnapshot": { ref: string; url: string | null };
   "plugins.openLink": { opened: boolean; previewURL?: string };
