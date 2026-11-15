@@ -4,6 +4,7 @@
 import { ProtocolEntryEvent, type CmdBody, type Cursor, type LogId, type Slot, type StreamId } from "../../src/protocol";
 import { migrate, Writer, type Db, type WriterOptions } from "../../src/server/store";
 import { openDb } from "../../src/server/store/sqlite";
+import { fitBody } from "../../src/server/effects";
 import type { SlotLog } from "../../src/server/slots";
 
 export const SERVER = "srv:me";
@@ -31,6 +32,9 @@ export class FakeLog implements SlotLog {
     tx.prepare("INSERT INTO entries (stream, seq, hlc, kind, body, slot, hash) VALUES (?, ?, '0', ?, ?, ?, 'h')")
       .run(stream, head + 1, kind, JSON.stringify(body), slot ? JSON.stringify(slot) : null);
     return { logId: this.logId(tx, stream), seq: head + 1 };
+  }
+  fits(kind: string, body: Record<string, unknown>): boolean {
+    return !fitBody(kind, body).dropped;
   }
   /** A restore: every stream and the server get a new incarnation (§7.6). */
   restore(): void {

@@ -4,7 +4,7 @@
 import type { Cursor, LogId, StreamId } from "../../protocol";
 import { ensureStream } from "../log";
 import type { SlotLog } from "../slots";
-import { appendFitted, serverStreamOf, type TxScope } from "../effects";
+import { appendFitted, fitBody, serverStreamOf, type TxScope } from "../effects";
 
 export function dbSlotLog(scope: TxScope, log?: (line: string) => void): SlotLog {
   return {
@@ -15,5 +15,6 @@ export function dbSlotLog(scope: TxScope, log?: (line: string) => void): SlotLog
       if (!entry) throw new Error(`slots: a ${kind} entry for ${stream} could not be stored`);
       return { logId: entry.logId, seq: entry.seq };
     },
+    fits: (kind, body) => !fitBody(kind, body).dropped,
   };
 }

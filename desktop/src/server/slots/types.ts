@@ -16,6 +16,8 @@ export interface SlotLog {
   logId(tx: Db, stream: StreamId): LogId;
   /** Appends one entry (`kind` and its body without `type`) to `stream`; returns the entry's cursor. */
   appendEntry(tx: Db, stream: StreamId, kind: string, body: Record<string, unknown>, slot?: Slot): Cursor;
+  /** Whether `appendEntry` can store this entry (it fits one frame, cut if its kind allows). */
+  fits(kind: string, body: Record<string, unknown>): boolean;
 }
 
 /** What the apply step gets: the slot, the command and the transaction it runs in. */

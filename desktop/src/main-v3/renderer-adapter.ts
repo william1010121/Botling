@@ -98,13 +98,14 @@ export interface RendererAdapterOptions {
 /**
  * Commands that only read (requests on the session, §11.1): no slot, no outcome. `chat.read` and `chat.shown` are
  * idempotent window hints, sent as reads so opening a chat does not write a log entry each time. Anything not listed
- * is a slot (the safe default: a read sent as a slot still answers, from its `cmd.applied` result).
+ * is a slot (a read sent as a slot still answers, from its `cmd.applied` result, but only when that result fits one log
+ * entry: a large one is refused, so every server read, `COMMAND_ROUTES` kind "read", must be listed here; a test checks).
  */
 export const READ_COMMANDS: ReadonlySet<CommandType> = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.read", "chat.shown", "task.output", "subagent.view", "turn.await", "routines.list",
   "results.list", "storage.list", "attachment.file", "link.authorize", "settings.get", "bot.settings", "engine.models", "codex.models",
   "usage.view", "doctor.view", "doctor.run", "mobile.view", "machines.view", "machines.hosts", "waiting.list", "plugins.list", "plugins.store",
-  "plugins.web", "plugins.file", "plugins.linkTarget", "plugins.loaded", "plugins.failed", "plugins.notice", "card.image",
+  "plugins.panel", "plugins.web", "plugins.file", "plugins.linkTarget", "plugins.loaded", "plugins.failed", "plugins.notice", "card.image",
   "project.files", "project.preview", "worker.cwd", "agent.targets", "agy.runtime.check", "component.detail",
 ]);
 /** Card answers carry the bot cursor the window showed as `basis` (§11.5). */
