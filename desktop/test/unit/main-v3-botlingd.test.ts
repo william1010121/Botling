@@ -394,3 +394,44 @@ describe("M6-07c main-v3 --botlingd flag path", () => {
     }
   }, 60_000);
 });
+
+describe("M6-07c re-review H1: packaged botlingd names this build's own commands", () => {
+  const execPath = "/Applications/Botling 3.app/Contents/MacOS/Botling 3";
+  const self = `env -u ELECTRON_RUN_AS_NODE '${execPath}'`;
+  async function run(packaged: boolean, env: Record<string, string | undefined>) {
+    await runMainV3({
+      argv: [execPath, "--botlingd", "start"], platform: "linux", env, execPath,
+      electron: { app: { isPackaged: packaged, whenReady: async () => undefined } } as any,
+      root: tempDir("pkg-cmds"), outDir: "/app.asar/out", runServerCli: vi.fn(async () => undefined),
+    });
+  }
+
+  it("replaces scrubbed or inherited commands, so the core never runs ELECTRON_RUN_AS_NODE=1 <app> <script>", async () => {
+    const env: Record<string, string | undefined> = {
+      BOTLING_SERVER_DATA_DIR: "/tmp/v3-srv", BOTLING_CHECK_COMMAND: "evil --check", BOTLING_APP_COMMAND: "evil",
+    };
+    await run(true, env);
+    expect(env.BOTLING_APP_COMMAND).toBe(self);
+    expect(env.BOTLING_CHECK_COMMAND).toBe(`${self} --check-plugin`);
+    expect(env.BOTLING_SHOT_COMMAND).toBe(`${self} --component-shot`);
+
+    // What the core makes of that environment (Maintainer's plugin check, the bots' --render-report).
+    const { coreProcessOptions } = await import("../../src/core/core-process");
+    const options = coreProcessOptions({
+      env: { ...env, BOTLING_CORE_PROBE: "1" } as NodeJS.ProcessEnv, dataDir: tempDir("pkg-cmds-core"), outDir: "/app.asar/out",
+      emit: () => undefined, log: () => undefined, node: null, sealer: null, app: undefined as never,
+    });
+    const report = options.runCommand?.({ script: "/x/report.cjs", flag: "--render-report" }) ?? "";
+    for (const line of [options.checkCommand ?? "", report]) {
+      expect(line.startsWith(self)).toBe(true);
+      expect(line).not.toContain("ELECTRON_RUN_AS_NODE=1");
+    }
+  });
+
+  it("leaves a development run's commands alone", async () => {
+    const env: Record<string, string | undefined> = { BOTLING_SERVER_DATA_DIR: "/tmp/v3-srv", BOTLING_CHECK_COMMAND: "dev --check" };
+    await run(false, env);
+    expect(env.BOTLING_CHECK_COMMAND).toBe("dev --check");
+    expect(env.BOTLING_APP_COMMAND).toBeUndefined();
+  });
+});
