@@ -1,6 +1,7 @@
 // The @ routing and call-in state machine of spec/models/callin/Callin.tla, action for action.
 // Pure: a step takes a state and returns the next one, or null when the action is not enabled.
 // A bot that asked with @ below the depth limit is handed a turn when the call-in ends, answered or not.
+// No cap per message of the user's: what ends a run of call-ins is the depth limit and the user's lines (turns()).
 
 export type Outcome = "queued" | "answering" | "answered" | "unheard" | "unreachable" | "dropped" | "merged" | "seen";
 export type PendingState = "queued" | "answering";
@@ -12,7 +13,6 @@ export interface CallinConfig {
   top: string[];
   /** Each sub bot's parent. */
   parent: Record<string, string>;
-  cap: number;
   maxDepth: number;
   /**
    * "silent": before 78bf1640 (drops left no notice); "sub": before 9d7c0bda (and sub bots not callable either);
@@ -93,7 +93,6 @@ export class CallinReference {
       const covered = s.pending[c]!.some((p) => s.ev[p.ev - 1]!.to === t && s.ev[p.ev - 1]!.body === b);
       return covered ? add("merged", false) : add("dropped", !this.silent);
     }
-    if (s.recent[c]!.length >= this.config.cap) return add("dropped", true);
     add("queued", false, d + 1);
     s.recent[c]!.push(pair(t, b));
     s.pending[c]!.push({ ev: s.ev.length, st: "queued" });
@@ -210,6 +209,20 @@ export class CallinReference {
     return candidates.filter((a) => this.step(s, a) !== null);
   }
 
+  /** Turns(c): `c`'s own turns running or waiting, and those its @s in flight will hand back. */
+  turns(s: CallinState, c: string): number {
+    return s.own[c]! + s.ev.filter((e) => e.chat === c && OPEN.includes(e.st) && this.asks(e)).length;
+  }
+
+  /** The action properties of Callin.tla ([][...]_vars) on one step `before` -a-> `after`, for tests. */
+  stepProperties(before: CallinState, a: CallinAction, after: CallinState): string[] {
+    const broken: string[] = [];
+    const top = this.config.top;
+    if (top.some((c) => this.turns(after, c) > this.turns(before, c) && !(a.name === "UserLine" && a.c === c))) broken.push("NoRoundWithoutUser");
+    if (top.some((c) => before.followUp[c] === this.config.maxDepth - 1 && after.own[c]! < before.own[c]! && !(this.turns(after, c) < this.turns(before, c)))) broken.push("LastLevelSpends");
+    return broken;
+  }
+
   // ---- The invariants of Callin.tla, for tests.
   invariants(s: CallinState): string[] {
     const broken: string[] = [];
@@ -223,7 +236,7 @@ export class CallinReference {
     if (s.ev.some((e) => e.woke > 0 && !(this.asks(e) && (e.st === "answered" || e.st === "unheard")))) broken.push("WakeBelowDepth");
     if (s.ev.some((e) => e.st === "unreachable" && this.config.parent[e.to] === e.chat)) broken.push("SubReachable");
     if (s.ev.some((e) => DELIVERED.includes(e.st) && e.to in this.config.parent && this.config.parent[e.to] !== e.chat)) broken.push("SubOnlyInParent");
-    if (top.some((c) => s.recent[c]!.length > this.config.cap)) broken.push("CapPerUserLine");
+    if (s.ev.some((e) => OPEN.includes(e.st) && this.asks(e) && e.depth !== this.config.maxDepth - 1)) broken.push("OwedAtLastLevel");
     for (const c of top) {
       const open = s.ev.flatMap((e, i) => (e.chat === c && OPEN.includes(e.st) ? [i + 1] : []));
       const listed = s.pending[c]!;

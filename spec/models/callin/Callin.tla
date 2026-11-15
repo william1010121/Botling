@@ -6,6 +6,8 @@
 \* (or gives up: busy), then answers or fails (timeout). The pending list is what the chat shows.
 \* A bot that asked with @ below the depth limit is handed a turn when the call-in ends, answered or not:
 \* the answer, or word that it was not answered (appMessage), so it is never left waiting on it.
+\* There is no cap per message of yours (BOT_MENTIONS_PER_USER_LINE is gone): a 4th @ is delivered like the first.
+\* What ends a run of call-ins is the depth limit and your lines: see NoRoundWithoutUser below.
 EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS Top,       \* bots with a chat others can be called into (members)
@@ -13,7 +15,6 @@ CONSTANTS Top,       \* bots with a chat others can be called into (members)
           Parent,    \* [Sub -> Top]
           Bodies,    \* the words an @ can carry
           MaxDepth,  \* MAX_FOLLOW_DEPTH
-          Cap,       \* BOT_MENTIONS_PER_USER_LINE
           MaxAts,    \* bound: @s in one behaviour
           MaxOwn,    \* bound: user lines waiting in one bot
           BUG        \* "none"; "silent": before 78bf1640; "sub": before 9d7c0bda; "nowake": a failed bot @ handed nothing back
@@ -93,7 +94,6 @@ Route(c, t, b, m) ==
                IF \E i \in 1..Len(pending[c]) : ev[pending[c][i].ev].to = t /\ ev[pending[c][i].ev].body = b
                THEN ev' = Append(ev, new("merged", FALSE, d)) /\ UNCHANGED <<pending, recent>>
                ELSE Drop(~Silent)
-          [] Cardinality(recent[c]) >= Cap -> Drop(TRUE)
           [] OTHER -> /\ ev' = Append(ev, new("queued", FALSE, d + 1))
                       /\ recent' = [recent EXCEPT ![c] = @ \cup {<<t, b>>}]
                       /\ pending' = [pending EXCEPT ![c] = Append(@, [ev |-> Len(ev) + 1, st |-> "queued"])]
@@ -203,13 +203,29 @@ WakeBelowDepth == \A k \in DOMAIN ev : ev[k].woke > 0 => Asks(k) /\ ev[k].st \in
 \* A sub bot is reachable in its parent's chat, and only there.
 SubReachable == \A k \in DOMAIN ev : ev[k].st = "unreachable" => ~(ev[k].to \in Sub /\ Parent[ev[k].to] = ev[k].chat)
 SubOnlyInParent == \A k \in DOMAIN ev : (ev[k].st \in Delivered /\ ev[k].to \in Sub) => Parent[ev[k].to] = ev[k].chat
-CapPerUserLine == \A c \in Top : Cardinality(recent[c]) <= Cap
 \* The pending list shows exactly the call-ins not answered yet, in turn order, with their state.
 PendingExact ==
   \A c \in Top :
     /\ {pending[c][i].ev : i \in DOMAIN pending[c]} = {k \in DOMAIN ev : ev[k].chat = c /\ ev[k].st \in Open}
     /\ \A i \in DOMAIN pending[c] : pending[c][i].st = ev[pending[c][i].ev].st
     /\ \A i, j \in DOMAIN pending[c] : i < j => pending[c][i].ev < pending[c][j].ev
+
+\* ---- No @ loop without you
+\* The turns c's bot has: own turns running or waiting, and those its @s in flight will hand back.
+Turns(c) == own[c] + Cardinality({k \in DOMAIN ev : ev[k].chat = c /\ ev[k].st \in Open /\ Asks(k)})
+\* No new round without a user line: c's turns grow only with your line in its chat (a hand-back trades a turn owed
+\* for one held, a reply's @ a turn held for one owed; a call-in into c is no turn of c's own).
+NoRoundWithoutUser == [][\A c \in Top : Turns(c)' <= Turns(c) \/ \E t \in Bots \cup {None} : UserLine(c, t)]_vars
+\* Every turn owed comes back at the last level: a hand-back leaves followUp = MaxDepth - 1 (Route puts a bot's @ one
+\* level below the turn it came from, and only those short of MaxDepth hand back).
+OwedAtLastLevel == \A k \in DOMAIN ev : (ev[k].st \in Open /\ Asks(k)) => ev[k].depth = MaxDepth - 1
+\* ... so a turn spent there (its reply routes at MaxDepth, which hands nothing back) lowers Turns.
+LastLevelSpends == [][\A c \in Top : (followUp[c] = MaxDepth - 1 /\ own'[c] < own[c]) => Turns(c)' < Turns(c)]_vars
+\* Why call-ins end without you: Turns never grows (NoRoundWithoutUser); a turn spent that keeps Turns has followUp = 0,
+\* so no hand-back came since a reply was last routed (its own, or one heard again: Rehear, which no turn causes), and
+\* held turns come back only by a hand-back; after one, the next turn spent lowers Turns (OwedAtLastLevel,
+\* LastLevelSpends). OwedAtLastLevel holds because MaxDepth = 2: with a deeper limit two hand-backs that meet share the
+\* one slot, the reply to the other goes back to level 0, and the @s need not end.
 
 \* ---- Liveness
 \* Every call-in is eventually answered, or not, with a notice.
