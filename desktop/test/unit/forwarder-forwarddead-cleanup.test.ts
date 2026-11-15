@@ -47,9 +47,9 @@ function harness(encode: (message: WireMessage) => { ok: true } | { ok: false; r
   const insertRaw = (n: number, raw: string, owner = OWNER) => writer.submit((tx) => {
     tx.prepare("INSERT INTO forwardq (origin, originEpoch, target, n, owner, cmdHash, envelope, heldAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run("desktop", EPOCH, `bot:${BOT_B}`, n, owner, "badhash", raw, NOW - 1);
   });
-  const insertDead = (n: number, owner = OWNER) => writer.submit((tx) => {
+  const insertDead = (n: number, owner = OWNER, epoch = EPOCH) => writer.submit((tx) => {
     tx.prepare("INSERT INTO forwarddead (origin, originEpoch, target, n, owner, cmdHash, envelope, heldAt, failedAt, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run("desktop", EPOCH, `bot:${BOT_B}`, n, owner, "h", JSON.stringify(envelopeOf(n)), NOW - 1, NOW, "too-large");
+      .run("desktop", epoch, `bot:${BOT_B}`, n, owner, "h", JSON.stringify(envelopeOf(n)), NOW - 1, NOW, "too-large");
   });
   const setMeta = (n: number) => writer.submit((tx) => { tx.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(`serverOrigin:${EPOCH}:bot:${BOT_B}:${n}`, "{}"); });
   const clearMeta = (n: number) => writer.submit((tx) => { tx.prepare("DELETE FROM meta WHERE key = ?").run(`serverOrigin:${EPOCH}:bot:${BOT_B}:${n}`); });
@@ -178,8 +178,8 @@ describe("a dead row is pruned once nothing can need it", () => {
   it("another owner's dead rows and another queue's rows are not touched", async () => {
     const h = harness();
     try {
-      await h.insertDead(1, "srv-c");
-      await h.insertDead(2, "srv-c");
+      await h.insertDead(1, "srv-c", "e".repeat(32));
+      await h.insertDead(2, "srv-c", "e".repeat(32));
       await h.insertDead(1);
       await h.insertDead(2);
       await h.writer.submit((tx) => { const e = envelopeOf(1, { slot: slotOf(1, { originEpoch: "d".repeat(32) }) }); commitRow(tx, e, hashOf(e), OWNER, NOW); });
