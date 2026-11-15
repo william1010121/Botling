@@ -91,7 +91,7 @@ describe("wiring (Electron main and the window, not unit-testable)", () => {
     const app = source("renderer/App.tsx");
     const start = app.indexOf("<BrowserPane ");
     const pane = app.slice(start, app.indexOf("/>", app.indexOf("onTabAction=", start)));
-    expect(pane).toMatch(/tabActions=\{browserTabActions\(view\.plugins, browserTabAddress\(/);
+    expect(pane).toMatch(/tabActions=\{browserTabActions\(browserPlugins\(view\.plugins\), browserTabAddress\(/);
     expect(pane).toMatch(/type: "plugins\.tabCommand"[^}]*url: browserTabAddress\(tab\)/);
   });
   it("a bot's tab list (app_browser_tabs) does not carry fileUrl", () => {

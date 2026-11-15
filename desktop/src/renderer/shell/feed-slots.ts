@@ -25,7 +25,10 @@ const ROOT_IDS = new Set(ROOT_SLOTS.map(canonicalSlot));
  * M7-06a: `botling.chat` provides `message/context`, `message/preview`, `chat/link`, `composer/plus`, `composer/bar` and `chat/header`).
  */
 export const PLUGIN_OWNED_SLOTS: readonly string[] = ["view/settings.section", "view/quickSettings",
-  "menu/message/context", "menu/message/preview", "menu/chat/link", "menu/composer/plus", "view/composerBar", "view/chatHeader"];
+  "menu/message/context", "menu/message/preview", "menu/chat/link", "menu/composer/plus", "view/composerBar", "view/chatHeader",
+
+  // M7-06c: `botling.browser-pane` provides `browser/tab`.
+  "menu/browser/tab"];
 const OWNED_ELSEWHERE = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 
 /**
