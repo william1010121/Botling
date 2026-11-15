@@ -259,7 +259,7 @@ describe("golden transcripts of an unchanged Bot", () => {
     const r = rig("claude", { interruptGraceMs: 60_000 });
     const sent = r.b.send("work please"); await r.sent(0, 1);
     const stopping = r.b.stop(sent.turnId!); await flush(); r.mark("draining");
-    expect(r.peek.draining).not.toBeNull();
+    expect(r.peek.draining != null).toBe(true);
     r.b.send("quick one"); await flush(); r.mark("message sent while draining");
     expect(r.head(0).sent).toHaveLength(1);
     r.head(0).item({ kind: "result", ok: false, text: "", error: "error_during_execution", subtype: "error_during_execution" });
@@ -276,7 +276,7 @@ describe("golden transcripts of an unchanged Bot", () => {
     r.reply(0, "Answer to first", "end_turn"); await flush(); r.mark("first ended, second not read yet");
     const appTurn = r.b.appMessage("(App: a report)")!; await r.sent(0, 3); r.mark("app message sent");
     r.head(0).item({ kind: "command", id: steeredId, state: "started" }); await flush(); r.mark("claude began the steered line: app turn set aside");
-    expect(r.peek.deferred).not.toBeNull();
+    expect(r.peek.deferred != null).toBe(true);
     expect(await r.b.stop(appTurn)).toEqual({ stopped: true, killed: [], forced: false }); r.mark("set-aside turn stopped");
     r.reply(0, "Answer to second", "end_turn"); await flush(); r.mark("second ended: the stopped turn's result is to be ignored");
     expect(r.peek.ignoreResults).toBe(1);
@@ -339,7 +339,7 @@ describe("golden transcripts of an unchanged Bot", () => {
     r.peek.records.push({ id: "reply-own-task", role: "bot", text: "", date: toSwiftDate(), state: "done", engine: "claude", backgroundTasks: [{ id: "own-task", kind: "agent", title: "worker", status: "running", startedAt: toSwiftDate() }] });
     r.b.configure({ model: "new-model" });
     r.b.send("use the new model"); await flush(); r.mark("held");
-    expect(r.peek.settingsHold).not.toBeNull();
+    expect(r.peek.settingsHold != null).toBe(true);
     expect(r.head(0).sent).toHaveLength(1);
     r.peek.endBackground("own-task", "completed", null); await r.sent(1, 1); r.mark("work ended: restarted, message sent");
     r.reply(1, "On the new model"); await flush(); r.mark("done");
@@ -362,7 +362,7 @@ describe("golden transcripts of an unchanged Bot", () => {
     const r = rig("agy");
     r.b.send("first"); await r.sent(0, 1);
     r.b.send("second"); r.b.send("third"); await flush(); r.mark("two waiting");
-    expect(r.peek.queue).toHaveLength(2);
+    expect(r.peek.queue.length).toBe(2);
     bots.splice(bots.indexOf(r.b), 1);
     await r.b.shutdown({ tidy: false }); r.mark("shut down");
     const stopped = r.lines.find((line) => line.includes("h0 terminate")) ?? "";
@@ -388,7 +388,8 @@ describe("orders that must not change", () => {
       const waiting = turnLike();
       r.peek.queue.push(waiting);
       on(); r.peek.next(); await flush();
-      expect(r.peek.queue, `while ${name}`).toEqual([waiting]);
+      expect(r.peek.queue.length, `queue length while ${name}`).toBe(1);
+      expect(r.peek.queue[0] === waiting, `the waiting message is still first while ${name}`).toBe(true);
       expect(r.head(0).sent, `while ${name}`).toHaveLength(1);
       off(); r.peek.queue.splice(0);
     }
@@ -402,7 +403,7 @@ describe("orders that must not change", () => {
     await r.b.setHeads(["codex"]);
     r.b.holdForSwap(true);
     r.b.send("held"); await flush();
-    expect(r.peek.queue).toHaveLength(1);
+    expect(r.peek.queue.length).toBe(1);
     expect(r.peek.switching).toBe(false);
     expect(r.head(0).sent).toHaveLength(1);
     r.b.holdForSwap(false); await r.sent(0, 2);
@@ -417,7 +418,7 @@ describe("orders that must not change", () => {
     await r.b.setHeads(["codex"]);
     r.b.send("held"); await r.sent(0, 2);
     expect(r.head(0).sent[1]!.text).toContain("The model is about to change");
-    expect(r.peek.settingsHold).toBeNull();
+    expect(r.peek.settingsHold == null).toBe(true);
     expect(r.b.snapshot().messages.some((m: any) => String(m.text).includes("waiting for active work"))).toBe(false);
   });
 
@@ -427,7 +428,7 @@ describe("orders that must not change", () => {
     r.b.configure({ model: "new-model" });
     const sent = r.b.send("second"); await flush();
     expect(r.peek.turn?.id).toBe(sent.turnId);
-    expect(r.peek.queue).toEqual([]);
+    expect(r.peek.queue.length).toBe(0);
     await r.sent(1, 1);
     expect(r.head(1).config.model).toBe("new-model");
   });
@@ -437,13 +438,13 @@ describe("orders that must not change", () => {
     a.b.send("first"); await a.sent(0, 1);
     a.b.send("second"); await a.sent(0, 2);
     expect(a.head(0).sent[1].now).toBe(true);
-    expect(a.peek.queue).toEqual([]);
+    expect(a.peek.queue.length).toBe(0);
     const b = rig("claude");
     b.b.send("first"); await b.sent(1, 1);
     b.b.configure({ model: "new-model" });
     b.b.send("second"); await flush();
     expect(b.head(1).sent).toHaveLength(1);
-    expect(b.peek.queue).toHaveLength(1);
+    expect(b.peek.queue.length).toBe(1);
   });
 
   it("routeTurn: pause comes before steer: your line during the app's own turn pauses it (PAUSE_NOTE), while during your own turn it is a plain steer", async () => {
@@ -451,12 +452,12 @@ describe("orders that must not change", () => {
     appTurn.b.appMessage("(App: a report)"); await appTurn.sent(0, 1);
     appTurn.b.send("question"); await appTurn.sent(0, 2);
     expect(appTurn.head(0).sent[1].text.startsWith(PAUSE_NOTE)).toBe(true);
-    expect(appTurn.peek.paused).not.toBeNull();
+    expect(appTurn.peek.paused != null).toBe(true);
     const yours = rig();
     yours.b.send("first"); await yours.sent(1, 1);
     yours.b.send("question"); await yours.sent(1, 2);
     expect(yours.head(1).sent[1].text).not.toContain(PAUSE_NOTE);
-    expect(yours.peek.paused).toBeNull();
+    expect(yours.peek.paused == null).toBe(true);
   });
 
   it("routeTurn: steer is for claude and Codex, insert is for Antigravity, and what neither takes is queued", async () => {
@@ -468,18 +469,18 @@ describe("orders that must not change", () => {
     codex.b.send("first"); await codex.sent(1, 1);
     codex.b.send("second"); await flush();
     expect(codex.head(1).steered).toHaveLength(1);
-    expect(codex.peek.queue).toEqual([]);
+    expect(codex.peek.queue.length).toBe(0);
     const agyInsert = rig("agy", { insertOk: true });
     agyInsert.b.send("first"); await agyInsert.sent(2, 1);
     agyInsert.b.send("second"); await flush();
     expect(agyInsert.head(2).offered).toHaveLength(1);
-    expect(agyInsert.peek.queue).toHaveLength(1);
+    expect(agyInsert.peek.queue.length).toBe(1);
     expect(agyInsert.head(2).sent).toHaveLength(1);
     const agyQueue = rig("agy");
     agyQueue.b.send("first"); await agyQueue.sent(3, 1);
     agyQueue.b.send("second"); await flush();
     expect(agyQueue.head(3).offered).toHaveLength(0);
-    expect(agyQueue.peek.queue).toHaveLength(1);
+    expect(agyQueue.peek.queue.length).toBe(1);
   });
 
   it("an engine switch hands over before the message: the handoff prompt reaches the old head, then the new head is read to, then the message", async () => {
