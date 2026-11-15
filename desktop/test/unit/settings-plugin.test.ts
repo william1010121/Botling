@@ -57,7 +57,8 @@ describe("the settings plugin as the FE build ships it", () => {
     const one = host();
     const [result] = await one.start();
     expect(result).toEqual({ status: "loaded", name: SETTINGS_PLUGIN, codeHash: shipped.codeHash });
-    expect(one.loaded()).toEqual([{ name: SETTINGS_PLUGIN, codeHash: shipped.codeHash }]);
+    // The build ships every in-page plugin (M7-05a added the sidebar): the settings plugin is one of the ones running.
+    expect(one.loaded().filter((entry) => entry.name === SETTINGS_PLUGIN)).toEqual([{ name: SETTINGS_PLUGIN, codeHash: shipped.codeHash }]);
     expect(rendererKernel.state(SETTINGS_PLUGIN)).toBe("active");
     expect(lines).toEqual([]);
   });
@@ -200,11 +201,11 @@ describe("who holds the host", () => {
     const one = host();
     const first = one.acquire();
     const second = one.acquire();
-    await vi.waitFor(() => { expect(one.loaded()).toHaveLength(1); });
+    await vi.waitFor(() => { expect(one.loaded().filter((entry) => entry.name === SETTINGS_PLUGIN)).toHaveLength(1); });
     first();
     first();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(one.loaded()).toHaveLength(1);
+    expect(one.loaded().filter((entry) => entry.name === SETTINGS_PLUGIN)).toHaveLength(1);
     expect(rendererKernel.state(SETTINGS_PLUGIN)).toBe("active");
     second();
     await vi.waitFor(() => { expect(one.loaded()).toEqual([]); expect(rendererKernel.state(SETTINGS_PLUGIN)).toBe("absent"); });

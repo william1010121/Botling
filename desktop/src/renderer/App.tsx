@@ -53,9 +53,19 @@ import { browserStore, useBrowser } from "./browser-state";
 
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
+  // The left column's layout (folded into a strip of faces, ⌃⌘S; the pinned bots; Idle: 1.x's RailView) is the sidebar plugin's (M7-05a): kept in
+  // the shell's storage while the plugin is up, in the settings keys otherwise. Read first: the bot colours below settle by the pinned bots.
+  const writeLayout = useCallback((key: LayoutKey, value: RailLayout[LayoutKey]) => {
+    void client.request({ type: "settings.set", change: { key, value } as SettingsChange }).catch(() => {});
+  }, [client]);
+  const { layout, read: readLayout, change: changeLayout } = useRailLayout(view.settings, !web, writeLayout);
+  const railCollapsed = layout.railCollapsed;
+  const toggleRail = useCallback((collapse?: boolean) => {
+    changeLayout((now) => ({ railCollapsed: collapse ?? !now.railCollapsed }));
+  }, [changeLayout]);
   // Bots whose colours clash get the least clashing one (avatars.ts); before any face below is drawn.
   // Once settled a colour is held in settings.json `botColors`, so nothing later moves it.
-  const heldColors = setBotColors(view.bots, view.settings?.pinnedBots ?? [], view.settings?.botColors);
+  const heldColors = setBotColors(view.bots, layout.pinnedBots, view.settings?.botColors);
   const heldToWrite = view.settings && !web && view.bots.length > 0 && !sameHeldColors(view.settings.botColors, heldColors) ? heldColors : null;
   useEffect(() => {
     if (heldToWrite) void client.request({ type: "settings.set", change: { key: "botColors", value: heldToWrite } }).catch(() => {});
@@ -110,16 +120,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (web || !current.chat?.botId) return;
     browserStore.toggle(current.chat.botId);
   }, [store, web]);
-  // The left column: folded into a strip of faces (⌃⌘S), its search (⌘K) and the pinned bots (1.x's RailView). Its layout (folded, pinned,
-  // Idle) is the sidebar plugin's (M7-05a): kept in the shell's storage while the plugin is up, in the settings keys otherwise.
-  const writeLayout = useCallback((key: LayoutKey, value: RailLayout[LayoutKey]) => {
-    void client.request({ type: "settings.set", change: { key, value } as SettingsChange }).catch(() => {});
-  }, [client]);
-  const { layout, read: readLayout, change: changeLayout } = useRailLayout(view.settings, !web, writeLayout);
-  const railCollapsed = layout.railCollapsed;
-  const toggleRail = useCallback((collapse?: boolean) => {
-    changeLayout((now) => ({ railCollapsed: collapse ?? !now.railCollapsed }));
-  }, [changeLayout]);
+  // The left column's search (⌘K); its layout (folded, pinned, Idle) is read above, next to the bot colours that depend on the pinned bots.
   const [query, setQuery] = useState("");
   const search = useRef<HTMLInputElement>(null);
   const startSearch = useCallback(() => {

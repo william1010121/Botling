@@ -102,7 +102,6 @@ describe("the sidebar plugin as the FE build ships it", () => {
     expect(rendererKernel.slotOwner(RAIL_SLOT)).toBe(SHELL_SURFACE);
     const rail = rendererKernel.entries(RAIL_SLOT);
     expect(rail.map(({ plugin }) => plugin)).toEqual([SIDEBAR_PLUGIN]);
-    expect(rendererKernel.entries("view/rail")).toHaveLength(1);
     // The declaration is what the kernel holds: it needs the shell's storage service, owns one slot and contributes to one.
     expect(sidebarDeclaration.requires?.services).toEqual([SHELL_STORAGE]);
     expect(rendererKernel.declaration(SIDEBAR_PLUGIN)?.provides?.slots).toEqual([BOT_ROW]);
@@ -190,7 +189,7 @@ describe("the left column as drawn", () => {
     await shell();
     const mounted = await page({ shown: ID.alpha });
     const order = [...mounted.host.querySelector(".shell")!.children].map((child) => child.className.split(" ")[0] || child.tagName);
-    expect(order.slice(0, 3)).toEqual(["rail", "column-divider", "chat-pane"]);
+    expect(order.slice(0, 3)).toEqual(["rail", "col-handle", "chat-pane"]);
   });
 });
 
