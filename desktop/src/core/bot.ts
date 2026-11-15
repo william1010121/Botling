@@ -1760,7 +1760,7 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Sending, and the turn
 
-  private refuseIfClosed(): void { return this.questions.refuseIfClosed(); }
+  refuseIfClosed(): void { return this.questions.refuseIfClosed(); }
 
   /**
    * A message from the user; `replyTo`: a line of the chat it answers (a pick on a question, say).
