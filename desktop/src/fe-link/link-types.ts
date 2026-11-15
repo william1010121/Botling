@@ -2,7 +2,7 @@
 // emits, the views the UI renders, the session and the constants the stream half shares with the shell; plus `LinkHost`,
 // the names `LinkStreams` (link-streams.ts) borrows from `FeLink`.
 import type { Command } from "../contract";
-import type { Cursor, DeliveryState, MessageOf, Message, OriginEpoch, ServerAddresses, ServerState, Slot, StreamId, Entry, Target, ConnectionState } from "../protocol";
+import type { Cursor, DeliveryState, MessageOf, Message, OriginEpoch, ServerAddresses, ServerState, Slot, StreamId, Entry, Target } from "../protocol";
 import type { ResAssembler } from "../protocol";
 import type { LiveReceiver, LiveSegmentView } from "../server/live/receiver";
 import type { ConnModel } from "./connection-state";

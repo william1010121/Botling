@@ -24,7 +24,7 @@ import { initialConn, versionBelow, type ConnEvent, type ConnModel } from "./con
 import { StreamCursors } from "./cursors";
 import { LinkStreams } from "./link-streams";
 import { cleanServerAddresses, systemClock } from "./link-types";
-import type { Clock, ContentAnswer, ContentReadMessage, Dial, FeLinkEvent, FeLinkOptions, FeSocket, LinkHost, PendingRequest, PendingView, RemoteContentAnswer, ServerView, Session, SocketHandlers } from "./link-types";
+import type { Clock, ContentAnswer, ContentReadMessage, Dial, FeLinkEvent, FeLinkOptions, PendingRequest, PendingView, RemoteContentAnswer, ServerView, Session, SocketHandlers } from "./link-types";
 import { OwnRows } from "./own-rows";
 import { Outbox } from "./outbox";
 import { TableCopies } from "./tables";
