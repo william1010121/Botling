@@ -175,7 +175,13 @@ export class SlotEngine {
    */
   denies(tx: Db, input: { slot: Slot; cmd: Command; scope: Scope; via?: Via }): { reason: "scope" | "origin" | "grant"; detail?: string } | null {
     // §11.3 / D53: the device's scope first, then the plugin's grant (none exist before M5: fail closed).
-    return this.authorize(tx, input) ?? (input.via ? { reason: "grant", detail: GRANT_REFUSAL_DETAIL } : null);
+    const denied = this.authorize(tx, input);
+    if (denied) return denied;
+    if (input.via) {
+      if (input.cmd.type === "plugin.grant") return { reason: "grant", detail: "plugin.grant cannot be sent by a plugin" };
+      return { reason: "grant", detail: GRANT_REFUSAL_DETAIL };
+    }
+    return null;
   }
 
   /** The owner's `next` for a queue (`welcome.next`, §11.4). */

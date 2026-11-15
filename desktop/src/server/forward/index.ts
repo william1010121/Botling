@@ -5,3 +5,4 @@ export { Directory, type DirectoryOptions } from "./directory";
 export { commitCancel, commitRow, isRetired, ownerWork, queueStats, takeNoted, takeResult, takeRetry, type ForwardCancel, type ForwardRow, type OwnerWork } from "./forward-queue";
 export { Forwarder, type ForwarderOptions, type ForwardSession, type RelaySink } from "./forwarder";
 export { OwnerInbox, peerScope, type InboxSession, type OwnerInboxOptions } from "./owner-inbox";
+export { ServerOrigin, type ServerOriginOptions } from "./server-origin";

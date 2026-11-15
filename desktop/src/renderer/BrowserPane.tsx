@@ -4,8 +4,8 @@
 // pushes the page down while it shows, the sheet narrows it, and the ⋯ menu is a native menu.
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { hostOf, type BrowserBotState, type BrowserTabInfo } from "../browser-wire";
-import type { BotView } from "../contract";
-import { MAINTAINER_ID, faceURL } from "./avatars";
+import { isMaintainer, type BotView } from "../contract";
+import { faceURL } from "./avatars";
 import { FloatingChat } from "./FloatingChat";
 import { browserStore, postBrowser, useBrowser } from "./browser-state";
 import { askForToolText } from "../browser-site-tools";
@@ -252,7 +252,7 @@ export function BrowserPane({ bot, state, full, look, miniChat, onMiniChat, line
         </div>
         {sheet && (
           <SiteToolsSheet botId={botId} botName={bot.name} tab={active} catalog={catalog} runs={runs} onClose={() => setSheet(false)}
-            onAsk={onAskTool} askText={(page, request) => askForToolText(page, catalog?.folder ?? "the app's browser-tools folder", catalog?.guide ?? "its README.md", botId === MAINTAINER_ID, request)} closeIcon={ICONS.close()} />
+            onAsk={onAskTool} askText={(page, request) => askForToolText(page, catalog?.folder ?? "the app's browser-tools folder", catalog?.guide ?? "its README.md", isMaintainer(bot), request)} closeIcon={ICONS.close()} />
         )}
       </div>
     </section>

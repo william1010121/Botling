@@ -16,13 +16,15 @@ import { afterAll, describe, expect, it } from "vitest";
 import { MemoryFeStorage } from "../../src/fe-link";
 import { ServerClient } from "../../src/main-v3/server-client";
 import type { Entry, Message, MessageOf, Slot } from "../../src/protocol";
-import { BotlingdProcess, botlingdCommand, MAIN, ScriptClient, testRoot } from "../botlingd-harness";
+import { BotlingdProcess, botlingdCommand, mainBotOf, ScriptClient, testRoot } from "../botlingd-harness";
 import { desktop, until } from "../helpers";
 
 const root = testRoot("botlingd");
 const dataDir = join(root, "data");
 const files = join(root, "files");
 const running: BotlingdProcess[] = [];
+/** The main bot this data folder minted on its first start (M5-04g). */
+let MAIN = "";
 afterAll(async () => {
   for (const daemon of running) await daemon.stop("SIGKILL");
   rmSync(root, { recursive: true, force: true });
@@ -49,6 +51,7 @@ describe("botlingd (plain Node, no window, fake engine)", () => {
     writeFileSync(picture, Buffer.from("89504e470d0a1a0a0000000d49484452", "hex"));
     const daemon = start();
     await daemon.ready();
+    MAIN = mainBotOf(dataDir);
     expect(statSync(daemon.socket).mode & 0o777).toBe(0o600);
     expect(statSync(join(dataDir, "botlingd.token")).mode & 0o777).toBe(0o600);
     expect(statSync(dataDir).mode & 0o777).toBe(0o700);

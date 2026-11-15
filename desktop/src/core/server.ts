@@ -80,7 +80,7 @@ import { notePath } from "./bot-note";
 import { unsupportedRequest, type BotRequest } from "./reply";
 import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
-import { Conversations } from "./conversations";
+import { Conversations, type ConversationsDeps, type RemoteMember } from "./conversations";
 import { answeredNote, guestCardAnswerNote, pickedNote, relayedAnswerNote, type GROUP_TIMING } from "./groups";
 import { ComponentsContext } from "./components/service";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
@@ -207,8 +207,16 @@ export interface CoreOptions {
   mainBotMachine?: () => string | null;
   /** Botling 3's server only (2.x leaves it unset): content read/fetch for plugins (`content.read`, `content.fetch`). */
   content?: PluginWorld["content"];
+  /** Botling 3's server only (2.x leaves it unset): whether a plugin's program part may start at `codeHash` (M5-18a). */
+  mayRunServerPart?: (name: string, codeHash: string) => boolean;
   /** Botling 3's server only (2.x leaves it unset): a bot created or edited a plugin in `<data>/plugins`. */
   pluginWritten?: (name: string, botId: string) => void;
+  /** Botling 3's server only (2.x leaves it unset): peer bots callable with @. */
+  remoteMembers?: () => RemoteMember[];
+  /** Botling 3's server only (2.x leaves it unset): runs a cross-server call-in turn (M5-02c). */
+  remoteTurn?: ConversationsDeps["remoteTurn"];
+  /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash. */
+  pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
 }
 
 /** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
@@ -309,6 +317,15 @@ export class Core {
     if (id === "main" && !this.mainBot()) throw new ContractError("not_found", this.noMainBotMessage());
   }
 
+  /**
+   * Botling 3's server only: a plugin row changed (a grant, or the running hash). The one path for both M5-14d (front
+   * ends see the grant at the running hash) and M5-18a (which program parts may run is decided again): the plugins
+   * sync and announce their list through `changed`, which sends `plugins.updated` only when it reads differently.
+   */
+  pluginGrantsChanged(): void {
+    this.plugins.rowsChanged();
+  }
+
   constructor(private options: CoreOptions) {
     this.mainBotId = options.mainBotId ?? MAIN_BOT_ID;
     this.maintainerId = options.maintainerId ?? MAINTAINER_ID;
@@ -360,6 +377,8 @@ export class Core {
       sealer: host?.sealer ?? null,
       timing: host?.timing,
       onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
+      ...(options.mayRunServerPart ? { mayRunServerPart: options.mayRunServerPart } : {}),
+      ...(options.pluginGrant ? { pluginGrant: options.pluginGrant } : {}),
       world: {
         bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
         send: (botId, text, via) => {
@@ -653,6 +672,8 @@ export class Core {
       refreshWaiting: () => this.refreshWaiting(),
       log: (line) => this.log(line),
       timing: options.groupTiming,
+      ...(options.remoteMembers ? { remoteMembers: options.remoteMembers } : {}),
+      ...(options.remoteTurn ? { remoteTurn: options.remoteTurn } : {}),
     });
     this.maintainer = new MaintainerDesk({
       root: options.dataDir,
@@ -1871,7 +1892,7 @@ First write a test that shows this, then fix it.`;
     const bot = this.newBot(profile);
     const orderAt = this.order.indexOf(this.maintainerId);
     this.order.splice(orderAt < 0 ? this.order.length : orderAt, 0, profile.id);
-    this.event({ type: "bot.updated", bot: bot.view() });
+    this.event({ type: "bot.updated", bot: this.botView(bot) });
     return bot;
   }
 
@@ -2566,8 +2587,14 @@ First write a test that shows this, then fix it.`;
   }
 
   /** Botling 3's server: a bot's current view (its summary row in the server's srv: table), or null. */
+  private botView(bot: Bot): BotView {
+    const view = bot.view();
+    return bot.id === this.maintainerId ? { ...view, maintainer: true } : view;
+  }
+
   serverBotView(botId: string): BotView | null {
-    return this.bots.get(botId)?.view() ?? null;
+    const bot = this.bots.get(botId);
+    return bot ? this.botView(bot) : null;
   }
 
   /** Botling 3's server: the bots the core has now. */
@@ -2755,6 +2782,9 @@ First write a test that shows this, then fix it.`;
   private event(event: Event) {
     // A removed bot (still stopping) is heard no more.
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
+    if (event.type === "bot.updated" && event.bot.id === this.maintainerId && event.bot.maintainer !== true) {
+      event = { ...event, bot: { ...event.bot, maintainer: true } };
+    }
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
     this.pluginEvent(event);
     this.checkWorkspaceSoon();
@@ -3252,7 +3282,7 @@ First write a test that shows this, then fix it.`;
 
   snapshot(botId?: string): ResultOf<"chat.snapshot"> {
     const bot = botId === undefined ? this.mainBot() : this.bot(botId);
-    const views = this.order.map((id) => this.bots.get(id)!.view());
+    const views = this.order.map((id) => this.botView(this.bots.get(id)!));
     return {
       epoch: this.epoch,
       seq: this.seq,
