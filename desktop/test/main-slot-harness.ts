@@ -13,9 +13,9 @@ import type { Client } from "../src/renderer/client";
 import { WorkspaceStore, type WorkspaceView } from "../src/renderer/store";
 import { desktop } from "./helpers";
 
-export const SITE = "B0000000-0000-4000-8000-0000000000c1";
-export const OTHER = "B0000000-0000-4000-8000-0000000000c2";
-export const MAIN = "B0000000-0000-4000-8000-0000000000c3";
+export const SITE = "B0000000-0000-4000-8000-0000000000C1";
+export const OTHER = "B0000000-0000-4000-8000-0000000000C2";
+export const MAIN = "B0000000-0000-4000-8000-0000000000C3";
 const make = (id: string, name: string, role: BotView["role"]): BotView => ({ id, name, role, avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] });
 export const siteBot = make(SITE, "Site", "manager");
 export const otherBot = make(OTHER, "Blog", "manager");
