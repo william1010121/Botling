@@ -109,6 +109,7 @@ export class PluginHostClient {
     private readonly log: (line: string) => void = () => {},
     readonly timing: HostTiming = DEFAULT_TIMING,
     private readonly onPid: (pid: number, alive: boolean) => void = () => {},
+    private readonly owner?: string,
   ) {}
 
   get pid(): number | null { return this.process?.pid ?? null; }
@@ -219,7 +220,7 @@ export class PluginHostClient {
   private early: { name: string; data: unknown; at: number }[] = [];
 
   command(id: string, args: unknown[] = []): Promise<unknown> {
-    return this.request("command", { id, args }, id.split(".")[0] ?? null, this.timing.call);
+    return this.request("command", { id, args }, this.owner ?? id.split(".")[0] ?? null, this.timing.call);
   }
 
   /**
@@ -345,8 +346,9 @@ export class PluginHostClient {
     }
     const status = signal ?? code ?? "?";
     this.log(`plugin host exited (${status})${this.stderr ? `: ${this.stderr.slice(-400)}` : ""}`);
-    if (!blamed.size) this.onPluginFailure(null, `The plugin host exited (${status})`, false);
+    if (!blamed.size) this.onPluginFailure(this.owner ?? null, `The plugin host exited (${status})`, false);
     for (const plugin of blamed) this.onPluginFailure(plugin, `The plugin host crashed while running it (${status})`, false);
+    if (this.stopping) return;
     this.restarts++;
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
@@ -463,6 +465,7 @@ export class PluginHostClient {
       const { name, message } = (failure ?? {}) as { name?: unknown; message?: unknown };
       this.log(`plugin host: a cleanup of ${typeof name === "string" ? name : "?"} failed: ${typeof message === "string" ? message.slice(0, 500) : ""}`);
     }
+    if (this.stopping) return;
     this.loaded = loaded;
     this.running = true;
     const early = this.early.splice(0).filter((event) => Date.now() - event.at < 30_000);
