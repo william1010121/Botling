@@ -365,7 +365,7 @@ export class Bot {
 
   /** The turn under way and the queue behind it (M7-S52): made on first use, from this bot. */
   private turnControl: TurnControl | null = null;
-  private get turns(): TurnControl { return this.turnControl ??= new TurnControl(this, this.ctx); }
+  get turns(): TurnControl { return this.turnControl ??= new TurnControl(this, this.ctx); }
   /** The fields TurnControl owns, as this bot has always had them (`turn`, `queue`, `deferred` are read by BotContext). */
   get turn(): Turn | null { return this.turns.turn; }
   set turn(turn: Turn | null) { this.turns.turn = turn; }
@@ -820,7 +820,7 @@ export class Bot {
 
   /** Makes `turn` the one under way and sends it (waking the bot if it sleeps). */
   begin(turn: Turn, head?: AgentHead) {
-    this.turn = turn;
+    this.turns.start(turn);
     this.delivered(turn);
     this.redrawQueued(turn);
     this.clearIdle();
@@ -1130,7 +1130,7 @@ export class Bot {
     this.clearApiRetry();
     this.shuttingDown = true;
     // Messages still waiting never reached claude.
-    for (const waiting of this.queue.splice(0)) { waiting.open = false; waiting.resolve("stopped"); }
+    for (const waiting of this.turns.dequeueAll()) { waiting.open = false; waiting.resolve("stopped"); }
     const held = this.settingsHold;
     if (held) {
       clearInterval(held.timer);

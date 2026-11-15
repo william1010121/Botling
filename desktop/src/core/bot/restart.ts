@@ -175,7 +175,7 @@ export class BotRestart {
 
   /** `turn` (your message) waits for this head's own work to finish before its model/effort restart; a card says so. */
   holdForSettings(turn: Turn) {
-    this.queue.unshift(turn);
+    this.host.turns.enqueueFirst(turn);
     if (!this.settingsHold) {
       const id = newId();
       const settings = this.restartReason?.shown ?? "the new model or effort";
@@ -341,7 +341,7 @@ export class BotRestart {
         const userId = saved.userId && this.owner.records.some((record) => record.id === saved.userId) ? saved.userId : null;
         const turn = bot.newTurn(userId ? saved.origin as Origin : saved.origin === "user" ? "app" : saved.origin as Origin, saved.words, userId);
         turn.id = saved.turnId; turn.messageId = saved.messageId; turn.handoffId = saved.handoffId; turn.conducted = saved.conducted;
-        bot.queue.push(turn);
+        bot.turns.enqueue(turn);
       }
       if (!bot.turn) bot.next();
       this.log(`restart ${entry.botId}: the ${waiting.length} message(s) that waited were sent at the user's pick`);
@@ -364,13 +364,13 @@ export class BotRestart {
       turn.handoffId=entry.handoffId??null;
       // Keep task correlation, but use a new transport turn: the prior turn is visibly interrupted.
       turn.retried=true; // A failed resume must never fall back to a fresh session/replay.
-      bot.queue.push(turn);
+      bot.turns.enqueue(turn);
     }
     for(const saved of entry.queued){
       if(!["user","app","background"].includes(saved.origin))throw Error("Queued work origin requires reconciliation.");
       const turn=bot.newTurn(saved.origin as Origin,saved.words,saved.userId);
       turn.id=saved.turnId;turn.messageId=saved.messageId;turn.handoffId=saved.handoffId;turn.conducted=saved.conducted;turn.retried=true;
-      bot.queue.push(turn);
+      bot.turns.enqueue(turn);
     }
     if(bot.queue.length)bot.next();
     // A Codex head's workers live in it: it starts to check and resume them (and hand over reports they still owe).

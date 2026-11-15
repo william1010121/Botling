@@ -100,7 +100,7 @@ export class HeadEvents {
   private get retryingConnection(): boolean { return this.host.retryingConnection; }
   private set retryingConnection(v: boolean) { this.host.retryingConnection = v; }
   private get turn(): Turn | null { return this.host.turn; }
-  private set turn(v: Turn | null) { this.host.turn = v; }
+  private get turns() { return this.host.turns; }
   // Methods of `Bot`:
   private add(record: ChatRecord) { return this.host.add(record); }
   private addBackgroundTask(id: string, kind: BackgroundKind, title: string) { return this.host.addBackgroundTask(id, kind, title); }
@@ -168,7 +168,7 @@ export class HeadEvents {
     if (this.tidying) turn.onReply = (text) => this.tidyFollowUp?.(text);
     turn.head = head;
     turn.sent = true;
-    this.turn = turn;
+    this.turns.start(turn);
     this.clearIdle();
     if (turn.origin !== "tidy") {
       this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
@@ -251,7 +251,7 @@ export class HeadEvents {
       if (item.state !== "started" || !this.contextSent.delete(item.id) || mid || this.ignoreResults || this.draining) return;
       const waiting = this.turn;
       if (waiting && (!waiting.open || waiting.head !== head || waiting.reply.text || waiting.steps.length || waiting.record)) return;
-      if (waiting) { this.turn = null; this.deferred = waiting; }
+      if (waiting) { this.turns.close(); this.deferred = waiting; }
       this.backgroundTurn(head, "app");
       return;
     }
@@ -449,7 +449,7 @@ export class HeadEvents {
     if (this.unbegun?.turn === turn) this.clearUnbegun();
     if (!turn.open) return;
     turn.open = false;
-    if (this.turn === turn) this.turn = null;
+    if (this.turn === turn) this.turns.close();
     this.clearCodexRetry();
     if (turn.origin === "tidy") {
       if (turn.callIn) this.updated();

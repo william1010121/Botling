@@ -58,7 +58,7 @@ export class BotHead {
   private get routineStorePath(): string | null { return this.host.routineStorePath; }
   private get workerCore(): WorkerCoreFactory { return this.host.workerCore; }
   private get turn(): Turn | null { return this.host.turn; }
-  private set turn(v: Turn | null) { this.host.turn = v; }
+  private get turns() { return this.host.turns; }
   private get ignoreResults(): number { return this.host.ignoreResults; }
   private set ignoreResults(v: number) { this.host.ignoreResults = v; }
   private get switchTo(): Engine | null { return this.host.switchTo; }
@@ -379,7 +379,7 @@ export class BotHead {
         this.log("the tidy did not end in time");
         if (turn.open) {
           turn.open = false;
-          if (this.turn === turn) this.turn = null;
+          if (this.turn === turn) this.turns.close();
           turn.resolve("stopped");
           // Its result, if it comes, belongs to nobody.
           if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }

@@ -159,3 +159,55 @@ function summary(e: any): string {
     A.peek.partners.clear(); (P.peek.options as any).primary = null;
   });
 });
+
+describe("TurnBook transitions of queue and turn (M7-S54)", () => {
+  const named = (...ids: string[]) => ids.map((id) => ({ id }) as any);
+
+  it("enqueue, enqueueFirst, dequeue, dequeueAt and dequeueAll keep the line in order and hand back what left it", () => {
+    const { peek } = rig("claude"); const book = peek.turns;
+    const [a, b, c, d] = named("a", "b", "c", "d");
+    expect(book.dequeue()).toBeUndefined();
+    book.enqueue(a); book.enqueue(b); book.enqueueFirst(c); book.enqueue(d);
+    expect(book.queue.map((t: any) => t.id)).toEqual(["c", "a", "b", "d"]);
+    expect(peek.queue).toBe(book.queue);
+    book.dequeueAt(1);
+    expect(book.queue.map((t: any) => t.id)).toEqual(["c", "b", "d"]);
+    expect(book.dequeue()).toBe(c);
+    const left = book.dequeueAll();
+    expect(left.map((t: any) => t.id)).toEqual(["b", "d"]);
+    expect(book.queue).toEqual([]);
+    expect(peek.queue).toBe(book.queue);
+  });
+
+  it("start makes a turn the one under way and close clears it; the Bot's accessor shows both", () => {
+    const { peek } = rig("claude"); const book = peek.turns;
+    const [t] = named("t");
+    book.start(t);
+    expect(book.turn).toBe(t); expect(peek.turn).toBe(t);
+    book.close();
+    expect(book.turn).toBeNull(); expect(peek.turn).toBeNull();
+  });
+
+  it("stop closes the turn before the head hears the interrupt (design-bot.md section 5, order 1)", async () => {
+    const r = rig("claude");
+    r.b.send("hello"); await r.sent(0, 1);
+    const turnId = r.peek.turn.id;
+    const underWay: unknown[] = [];
+    r.head(0).onInterrupt = () => underWay.push(r.peek.turn);
+    const result = await r.b.stop(turnId);
+    expect(result.stopped).toBe(true);
+    expect(underWay).toEqual([null]);
+    expect(r.peek.finished.get(turnId)).toBe("stopped");
+  });
+
+  it("a message that waits for the turn under way is the queue's, and shutdown takes the whole line out and ends each turn", async () => {
+    const r = rig("agy");
+    r.b.send("first"); await r.sent(0, 1);
+    r.b.send("second"); await flush();
+    expect(r.peek.queue.length).toBe(1);
+    const waiting = r.peek.queue[0];
+    await r.b.shutdown({ tidy: false });
+    expect(r.peek.queue).toEqual([]);
+    expect(waiting.open).toBe(false);
+  });
+});

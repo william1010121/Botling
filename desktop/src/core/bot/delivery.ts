@@ -41,7 +41,7 @@ export class BotDelivery {
   private emit(event: Event) { this.ctx.emit(event); }
   private get draining() { return this.host.draining; }
   private get turn() { return this.host.turn; }
-  private set turn(v) { this.host.turn = v; }
+  private get turns() { return this.host.turns; }
   private get head() { return this.host.head; }
   private get session() { return this.host.session; }
   private get restartPending() { return this.host.restartPending; }
@@ -99,7 +99,7 @@ export class BotDelivery {
     // Keep workers alive, but never send a user turn under a known stale model/effort: it waits for this
     // head's own work to finish (a partner head's work does not count), then the restart, then it goes.
     if (!given && this.waitsForRestart(turn) && (this.modelSettingsPending || this.folderPending) && old?.running && this.ownWorkRunning) {
-      this.turn = null;
+      this.turns.close();
       turn.head = null;
       turn.sent = false;
       // It was shown as under way: no longer (its reply line does not exist yet).
