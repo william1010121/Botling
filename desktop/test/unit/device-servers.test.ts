@@ -23,6 +23,7 @@ import { importDhKeyPair, SessionLink, type SessionTransport } from "../../src/s
 import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
 import { DEVICE_DB, loadDevice, saveDevice, saveDeviceServers, type DeviceRecord } from "../../web-v3/shell/device-store";
 import { testRoot } from "../botlingd-harness";
+import { until } from "../helpers";
 import { FakeClock, FakeServer, flush, SERVER_ID } from "./fe-link-harness";
 
 const REMOTE = { local: false } as const;
@@ -342,7 +343,8 @@ describe("M4-18 / D70: device learns every server's key and addresses", () => {
       }, "fe", REMOTE);
       if (!encHello.ok) throw new Error(encHello.detail);
       link.send("control", new TextEncoder().encode(encHello.text));
-      await flush();
+      // The welcome arrives asynchronously (store reads, writer commits): wait for it, never assume one flush() is enough.
+      await until(() => got.some((m) => m.t === "welcome"), { timeout: 10_000, what: "the welcome frame" });
       return { got, link, close: () => { link.close(); session.close(); } };
     };
 
@@ -384,9 +386,9 @@ describe("M4-18 / D70: device learns every server's key and addresses", () => {
     expect("addresses" in s3Entry!).toBe(false);
 
     // Live peer event when s2 becomes stale: still carries dh and addresses; when s2 is revoked -> gone with no addresses.
+    const findPeer = (state: ServerState) => first.got.find((m): m is MessageOf<"peer"> => m.t === "peer" && m.serverId === s2.identity.memberId && m.state === state);
     for (const fn of peerListeners) fn({ id: s2.identity.memberId, state: "stale", since: 4_000 });
-    await flush();
-    const stalePeer = first.got.find((m): m is MessageOf<"peer"> => m.t === "peer" && m.serverId === s2.identity.memberId && m.state === "stale");
+    const stalePeer = await until(() => findPeer("stale"), { timeout: 10_000, what: "the stale peer frame" });
     expect(stalePeer).toEqual({
       t: "peer",
       serverId: s2.identity.memberId,
@@ -399,8 +401,7 @@ describe("M4-18 / D70: device learns every server's key and addresses", () => {
     await s1.roster.revokeServer(s2.identity.memberId, false, "stolen");
     peerStates[0] = { id: s2.identity.memberId, name: "Linux box", state: "gone", since: 5_000 };
     for (const fn of peerListeners) fn({ id: s2.identity.memberId, state: "gone", since: 5_000 });
-    await flush();
-    const gonePeer = first.got.find((m): m is MessageOf<"peer"> => m.t === "peer" && m.serverId === s2.identity.memberId && m.state === "gone");
+    const gonePeer = await until(() => findPeer("gone"), { timeout: 10_000, what: "the gone peer frame" });
     expect(gonePeer).toEqual({
       t: "peer",
       serverId: s2.identity.memberId,

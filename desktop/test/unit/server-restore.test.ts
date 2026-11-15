@@ -34,12 +34,14 @@ import { decodeFrame, encodeFrame, type Entry, type Message, type MessageOf, typ
 import { WorkspaceStore } from "../../src/renderer/store";
 import { readEntries } from "../../src/server/log";
 import { openReaderDb } from "../../src/server/store/connection";
-import { BotlingdProcess, botlingdEnv, botlingdScript, MAIN, ScriptClient, testRoot } from "../botlingd-harness";
+import { BotlingdProcess, botlingdEnv, botlingdScript, mainBotOf, ScriptClient, testRoot } from "../botlingd-harness";
 import { desktop, until } from "../helpers";
 
 const root = testRoot("restore");
 const dataDir = join(root, "data");
-const BOT = `bot:${MAIN}` as const;
+/** The main bot this data folder minted on its first start (M5-04g); a restore keeps it (the backup holds the same meta). */
+let MAIN = "";
+let BOT: `bot:${string}` = "bot:";
 const extra = { BOTLING_SERVER_BACKUP_CHECK_MS: "300" };
 const running: BotlingdProcess[] = [];
 const windows: ServerClient[] = [];
@@ -130,6 +132,8 @@ describe("backup / restore end to end (plain Node, no window, fake engine)", () 
     // ---- 1. Before the backup.
     let daemon = start();
     await daemon.ready();
+    MAIN = mainBotOf(dataDir);
+    BOT = `bot:${MAIN}`;
     const originEpoch = "fedcba9876543210fedcba9876543210";
     const script = new ScriptClient("script", originEpoch);
     await script.connect(daemon.socket, daemon.token);

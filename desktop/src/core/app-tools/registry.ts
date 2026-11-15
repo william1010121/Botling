@@ -15,7 +15,7 @@ export type AppToolProvider = "claude" | "agy" | "codex";
 export type AppToolName =
   | "app_handoff" | "app_send_message" | "app_cancel_task" | "app_task_checkpoint" | "app_reconcile_report"
   | "app_routines" | "app_monitor_start" | "app_monitor_status" | "app_monitor_cancel"
-  | "app_notify_owner" | "app_component_usage"
+  | "app_notify_owner" | "app_component_usage" | "app_fetch"
   | "app_browser_tabs" | "app_browser_open" | "app_browser_requests" | "app_browser_extract"
   | "app_note_outline" | "app_note_read" | "app_note_search"
   | "app_note_edit" | "app_note_insert" | "app_note_delete" | "app_note_move" | "app_note_split" | "app_note_merge" | "app_note_branch";
@@ -69,6 +69,10 @@ const PARAMS = {
   id: () => text,
   command: () => text,
   monitor_id: () => text,
+  // app_fetch (M5-07d).
+  path: () => ({ type: "string", description: "As on that machine; ~ is allowed." }),
+  purpose: () => ({ type: "string", maxLength: 500 }),
+  max_bytes: () => ({ type: "integer", minimum: 1, maximum: 524288000 }),
   files: () => ({ type: "array", items: text, maxItems: 20, description: "Full paths of files the note is about (a plan, a progress file, a result)." }),
   // The in-app browser tools (browser-bot.ts, core/browser-tools.ts).
   tab_id: () => ({ type: "string", description: "A tab of your browser pane, from app_browser_tabs (e.g. t3). Default: the tab the user has selected." }),
@@ -159,6 +163,7 @@ const APP_TOOLS: readonly AppToolDef[] = [
   } },
   { name: "app_notify_owner", forms: notifyForms() },
   { name: "app_component_usage", forms: componentUsageForms() },
+  { name: "app_fetch", forms: fetchForms() },
   ...browserTools(),
   ...noteTools(),
 ];
@@ -279,11 +284,25 @@ function componentUsageForms(): Partial<Record<AppToolProvider, ToolForm>> {
   return { claude: form, agy: form, codex: form };
 }
 
+/**
+ * app_fetch (M5-07d, D74 Q-C6): a coordinator asks another machine of the cluster for a file or folder; it lands in the
+ * bot's own `.bot/incoming/`. Every engine's coordinator, the same words; never a worker (WORKER_APP_TOOLS).
+ */
+function fetchForms(): Partial<Record<AppToolProvider, ToolForm>> {
+  const form: ToolForm = {
+    description: "Fetch a file or folder from another machine in this Botling cluster into this bot's folder (.bot/incoming/). The other machine may ask its user first. Give a short purpose; it is shown to them.",
+    params: ["machine", "path", "purpose", "max_bytes"], required: ["machine", "path", "purpose"],
+    // (`machine` is the worker's in PARAMS: here it is the machine to fetch from.)
+    schemas: { machine: { type: "string", description: "The machine's name." } },
+  };
+  return { claude: form, agy: form, codex: form };
+}
+
 /** Which tools each provider's coordinator gets, in the order it lists them. */
 const PROVIDER_TOOLS: Record<AppToolProvider, readonly AppToolName[]> = {
-  claude: ["app_handoff", "app_send_message", "app_cancel_task", "app_routines", "app_component_usage", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
-  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", "app_routines", "app_component_usage", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
-  codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", "app_component_usage", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
+  claude: ["app_handoff", "app_send_message", "app_cancel_task", "app_routines", "app_component_usage", "app_fetch", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
+  agy: ["app_task_checkpoint", "app_reconcile_report", "app_handoff", "app_send_message", "app_cancel_task", "app_routines", "app_component_usage", "app_fetch", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
+  codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", "app_component_usage", "app_fetch", ...BROWSER_TOOL_NAMES, ...NOTE_TOOL_NAMES],
 };
 
 /** The tools an app-managed worker gets (never a coordinator): app_notify_owner, the browser tools and the Note read tools. */

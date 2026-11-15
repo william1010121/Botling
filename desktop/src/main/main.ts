@@ -10,13 +10,14 @@ import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import { permissionAllowed } from "./permissions";
+import { sealWithSafeStorage } from "./safe-seal";
 import {nativeEditorNavigation,hasNativeEditorHost,isNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor,nativeEditorLayer} from "./editor-host";
 import {captureScale,composeWindow} from "./window-capture";
 import {appMenuTemplate} from "./app-menu";
 import {bindingsFor} from "../contract/shortcuts";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
 import { autoUpdater } from "electron-updater";
-import { CHECK_EVERY_MS, Updater } from "./updates";
+import { CHECK_EVERY_MS, updateChannel, Updater } from "./updates";
 import { linkOpenWay, markdownLinkPath, reportPreviewURL, shellReportNavigation } from "./report-preview";
 import { MARKDOWN_CSP, markdownPage, markdownResponse, markdownStyles } from "./markdown-page";
 import { pluginLinkRoute } from "../core/plugin-link";
@@ -67,7 +68,8 @@ if (scrubbed.length) console.warn(`[packaged] ignored ${scrubbed.join(", ")}`);
 // `--check-plugin <folder>` (1.x's flag): the plugin check Maintainer runs, then exit; no window, no data folder.
 const checkAt = process.argv.indexOf("--check-plugin");
 if (checkAt >= 0) {
-  const report = checkReport(process.argv[checkAt + 1]);
+  // A library copy of a shipped built-in (Maintainer's way to change one) keeps its reserved name.
+  const report = checkReport(process.argv[checkAt + 1], "incoming", app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins"));
   // Written synchronously, then exit at once: nothing below (data folder, single-instance lock) runs.
   if (report.stdout) writeSync(1, report.stdout);
   if (report.stderr) writeSync(2, report.stderr);
@@ -265,11 +267,7 @@ const core: CoreClient = new CoreClient({
     writeFileSync(file, image.toPNG());
     return { ok: true, file };
   },
-  seal: (op, text) => {
-    // Plugins' secrets: sealed with the OS keychain's key (safeStorage); only the core asks, over its own port.
-    if (!safeStorage.isEncryptionAvailable()) throw new Error("This computer offers no safe storage for secrets.");
-    return op === "seal" ? safeStorage.encryptString(text).toString("base64") : safeStorage.decryptString(Buffer.from(text, "base64"));
-  },
+  seal: (op, text) => sealWithSafeStorage(safeStorage, op, text),
 });
 
 // One install request at a time (a release's download and restart).
@@ -287,6 +285,7 @@ async function withInstallRequest<T>(action: () => Promise<T>): Promise<T> {
 const updatesFile = join(dataDir, "updates.json");
 const updater = new Updater({
   current: app.getVersion(),
+  channel: updateChannel(process.env, (globalThis as { __botlingV3Window?: boolean }).__botlingV3Window === true),
   updater: autoUpdater,
   unavailable: () => !app.isPackaged ? "this is a development run, which does not update itself."
     : process.platform === "linux" && !process.env.APPIMAGE ? "this Linux package (.deb) cannot update itself; download the new version from the release page."

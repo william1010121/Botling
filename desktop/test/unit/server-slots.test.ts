@@ -368,7 +368,9 @@ describe("§11.3 apply at the owner, branch by branch", () => {
 
   it("refuses a command with no stated scope", async () => {
     const h = harness();
-    await expect(h.engine.receive(react(1))).rejects.toThrow("scope");
+    await expect(h.engine.receive(react(1), {} as never)).rejects.toThrow("scope");
+    await expect(h.engine.receive({ ...react(1), scope: "local" }, {} as never)).rejects.toThrow("scope"); // the frame's own scope is not the caller's
+    expect(receiptCount(h.db)).toBe(0);
   });
 });
 

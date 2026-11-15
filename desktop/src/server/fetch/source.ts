@@ -2,7 +2,8 @@
 //
 // - Free requests (bot artifacts, referenced blobs with nlink === 1) run with a `once` grant bound to `fetchId`
 //   (10-minute TTL); `ask` requests reuse an active `always` grant (unless any target file has nlink > 1) or call the
-//   approval hook (default `"deny"` until M5-06b wires Maintainer cards).
+//   approval hook (`approval.ts`'s card in the Maintainer's chat; without one, `"deny"`). Anything but "once" /
+//   "always" from the hook is a deny (M5-06c).
 // - An audit row (`audit:<fetchId>`, `act: "fetch.serve"`) commits to `srv:<self>` BEFORE the first byte leaves.
 // - Fixed 64 KiB (`PEER_CONTENT_FRAME`) frames on every transport (direct & relay) so resume indices never drift.
 // - Before EVERY chunk frame: wait if `queuedBytes > 1 MiB`, re-check grant validity/revocation/expiry, peer &
@@ -10,12 +11,15 @@
 //   string containment against stored real prefix, `isDeniedPath`, and open with `O_NOFOLLOW` re-verifying realpath,
 //   lstat `(dev, ino)` equality, size, and `mtimeNs`.
 // - Daily byte usage is persisted per day in `server.db` `meta` (`fetchDailyBytes:<day>`).
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { constants, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { constants, lstatSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { basename, isAbsolute, join, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import type { ChunkMessage, EntryRef, WireMessage, WireMessageOf } from "../../protocol";
-import type { FetchDenyReason, FetchRequester } from "../../protocol/fetch";
+import { FetchRelPath, type FetchDenyReason, type FetchRequester } from "../../protocol/fetch";
 import type { DeviceScope } from "../../protocol/scopes";
 import { PEER_CONTENT_FRAME } from "../content/peer-content";
 import { sameSig, statSig, type StatSig } from "../content/pin";
@@ -25,7 +29,23 @@ import type { RosterView } from "../roster";
 import type { Db, ServerStore } from "../store";
 import { classify, isDeniedPath, Limits, type BotId, type FetchWhat } from "./policy";
 
+const execFileAsync = promisify(execFile);
 const realpath = realpathSync.native ?? realpathSync;
+const GIT_STRIPPED_ENV_KEYS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_CONFIG_PARAMETERS",
+  "GIT_CONFIG_COUNT",
+] as const;
+// M5-07c: the repository's own config is untrusted (a free `.bot/artifacts` repo is bot-written). `-c` beats repo
+// config, and GIT_ALLOW_PROTOCOL (set below) overrides every `protocol.*.allow`, so a promisor remote's lazy fetch
+// (which runs `remote.*.uploadpack` / `core.sshCommand`) never starts; no hooks or fsmonitor either.
+const GIT_SAFE_ARGS = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never"] as const;
+const GIT_TIMEOUT_MS = 10 * 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ONCE_GRANT_TTL_MS = 10 * 60_000;
 const FETCH_HIGH_WATER = 1 * 1024 * 1024;
@@ -52,7 +72,8 @@ export interface FetchAskRequest {
   hardLinks?: boolean;
 }
 
-export type FetchAskHook = (fetch: FetchAskRequest) => Promise<"once" | "always" | "deny">;
+/** `cancelled` settles when the serve is over (session closed, source stopping, a racing resume): the card is then dead. */
+export type FetchAskHook = (fetch: FetchAskRequest, cancelled: Promise<void>) => Promise<"once" | "always" | "deny">;
 
 export interface FetchSourceOptions {
   self: string;
@@ -65,8 +86,12 @@ export interface FetchSourceOptions {
   };
   botFolders(): Map<BotId, string>;
   content?: Pick<ContentService, "markChanged">;
+  /** Parent folder for temporary git bundles (defaults to `os.tmpdir()`). */
+  bundleTmpDir?: string;
   dailyLimitBytes?: number;
   ask?: FetchAskHook;
+  /** M5-06c: why a fetchId may not be asked at all (it was waiting for its card when the source restarted), or null. */
+  gone?: (fetchId: string) => string | null;
   onAudit?: () => void;
   onChunk?: (fetchId: string, index: number) => void | Promise<void>;
   log?: (line: string) => void;
@@ -138,6 +163,27 @@ function safeRealpath(path: string): { ok: true; path: string } | { ok: false; s
 
 function isSymlink(path: string): boolean {
   try { return lstatSync(path).isSymbolicLink(); } catch { return false; }
+}
+
+/** No `info/alternates` / `info/http-alternates`, and no symlink in the object store's top two levels. */
+function objectStoreIsClosed(objectsDir: string): boolean {
+  try {
+    for (const name of ["alternates", "http-alternates"]) {
+      try { lstatSync(join(objectsDir, "info", name)); return false; } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return false;
+      }
+    }
+    for (const top of readdirSync(objectsDir, { withFileTypes: true })) {
+      if (top.isSymbolicLink()) return false;
+      if (!top.isDirectory()) continue;
+      for (const entry of readdirSync(join(objectsDir, top.name), { withFileTypes: true })) {
+        if (entry.isSymbolicLink()) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function sha256Hex(data: Uint8Array | string): string {
@@ -407,6 +453,13 @@ export class FetchSource {
   }
 
   private async handleAsk(session: FetchSink, message: WireMessageOf<"fetch.ask">, task: ActiveServe): Promise<void> {
+    let tmpBundleDir: string | null = null;
+    const cleanupBundle = () => {
+      if (!tmpBundleDir) return;
+      const dir = tmpBundleDir;
+      tmpBundleDir = null;
+      rmSync(dir, { recursive: true, force: true });
+    };
     let onceGrantToRevoke: string | null = null;
     const revokeOnce = async () => {
       if (!onceGrantToRevoke) return;
@@ -419,6 +472,7 @@ export class FetchSource {
       });
     };
     const terminalDeny = async (reason: FetchDenyReason, detail?: string) => {
+      cleanupBundle();
       await this.flushDailyBytes();
       if (task.cancelled || session.state !== "open") return;
       await revokeOnce();
@@ -439,10 +493,9 @@ export class FetchSource {
       if (!reqCheck.ok) { await terminalDeny(reqCheck.reason, reqCheck.detail); return; }
       const requesterId = reqCheck.requesterId;
 
-      if (message.what.kind === "git") {
-        await terminalDeny("denied", "git bundle fetch is handled separately");
-        return;
-      }
+      // M5-06c: an ask whose card was open at the last restart is `gone`, never carded a second time.
+      const goneDetail = this.options.gone?.(message.fetchId) ?? null;
+      if (goneDetail) { await terminalDeny("gone", goneDetail); return; }
 
       const existingByFetch = db.prepare(
         "SELECT grantId, requester, requesterServer, prefix, kind, fetchId, expires, revokedAt FROM grants WHERE fetchId = ?",
@@ -477,6 +530,7 @@ export class FetchSource {
       if (!resolvedTarget.ok) { await terminalDeny(resolvedTarget.reason); return; }
       const realTarget = resolvedTarget.realPath;
       const isBlob = message.what.kind === "blob";
+      const isGit = message.what.kind === "git";
       if (!isBlob && isDeniedPath(realTarget, this.options.dataDir)) {
         await terminalDeny("deny-list");
         return;
@@ -527,9 +581,13 @@ export class FetchSource {
       }
 
       // H3 + L1 + L2: pre-hash scan via lstat/stat checks file count, 500 MiB size cap, symlink loops, and nlink > 1.
-      const scan = this.scanTarget(realTarget, isBlob);
-      if (!scan.ok) { await terminalDeny(scan.reason); return; }
-      const hasHardLinks = !isBlob && scan.hasHardLinks;
+      // For git, we serve a freshly created single bundle file rather than the working tree or .git/objects.
+      let hasHardLinks = false;
+      if (!isGit) {
+        const scan = this.scanTarget(realTarget, isBlob);
+        if (!scan.ok) { await terminalDeny(scan.reason); return; }
+        hasHardLinks = !isBlob && scan.hasHardLinks;
+      }
 
       if (!existingByFetch) {
         if (classified.kind === "free" && !hasHardLinks) {
@@ -566,9 +624,10 @@ export class FetchSource {
               prefix: classified.prefix,
               realPath: realTarget,
               ...(hasHardLinks ? { hardLinks: true } : {}),
-            }), task.whenCancelled.then(() => "deny" as const)]);
+            }, task.whenCancelled), task.whenCancelled.then(() => "deny" as const)]);
             if (task.cancelled || session.state !== "open") return;
-            if (decision === "deny") { await terminalDeny("denied"); return; }
+            // M5-06c: fail closed. Only an explicit "once" / "always" serves; null, undefined or anything else is a deny.
+            if (decision !== "once" && decision !== "always") { await terminalDeny("denied"); return; }
             askedApproval = true;
             grantId = randomUUID();
             // H1: never widen a file's "always" grant to its parent directory.
@@ -580,10 +639,33 @@ export class FetchSource {
         }
       }
 
-      // Collect files, verify M5 post-open realpath/lstat/dev/ino, and compute SHA-256 & manifest.
-      const collected = await this.collectFiles(realTarget, isBlob ? realTarget : grantPrefix!, isBlob);
-      if (!collected.ok) { await terminalDeny(collected.reason); return; }
-      const { files, totalBytes, manifest } = collected;
+      // Collect files (or create temporary git bundle), verify M5 post-open realpath/lstat/dev/ino, and compute SHA-256 & manifest.
+      let files: FileEntry[];
+      let totalBytes: number;
+      let manifest: string;
+      let gitTarget: { repoPath: string; bundleDir: string } | undefined;
+      if (isGit) {
+        if (!resolvedTarget.isDirectory) {
+          await terminalDeny("gone", "not a git repository");
+          return;
+        }
+        const bundled = await this.createGitBundle(realTarget, grantPrefix!, task);
+        if (bundled.bundleDir) tmpBundleDir = bundled.bundleDir;
+        if (!bundled.ok) {
+          if (bundled.reason) await terminalDeny(bundled.reason, bundled.detail);
+          return;
+        }
+        files = bundled.files;
+        totalBytes = bundled.totalBytes;
+        manifest = bundled.manifest;
+        gitTarget = { repoPath: realTarget, bundleDir: bundled.bundleDir };
+      } else {
+        const collected = await this.collectFiles(realTarget, isBlob ? realTarget : grantPrefix!, isBlob);
+        if (!collected.ok) { await terminalDeny(collected.reason); return; }
+        files = collected.files;
+        totalBytes = collected.totalBytes;
+        manifest = collected.manifest;
+      }
       if (totalBytes > Limits.PER_REQUEST_BYTES) { await terminalDeny("limit"); return; }
 
       // M1: for a blob, require the single target file's SHA-256 matches the content id.
@@ -593,8 +675,11 @@ export class FetchSource {
         return;
       }
 
-      // L2 race guard: if a hard link appeared after scanTarget under free or always, refuse.
-      if (!isBlob && !existingByFetch && !askedApproval && files.some((f) => f.nlink > 1)) {
+      // L2 race guard: a hard link the user was not told about refuses. Only an approval whose card said "this file has
+      // other names on disk" (asked with hardLinks) may serve one; a link that appeared after the scan (also while a card
+      // without that line waited) under free, always, a plain Allow once or a resume, is refused (M5-06c review).
+      const toldHardLinks = askedApproval && hasHardLinks;
+      if (!isBlob && !isGit && !toldHardLinks && files.some((f) => f.nlink > 1)) {
         await terminalDeny("denied");
         return;
       }
@@ -664,7 +749,10 @@ export class FetchSource {
 
       const effectiveMaxBytes = Math.min(message.maxBytes, Limits.PER_REQUEST_BYTES);
       const botDailyKey = `${requesterServer}\0${requesterId}`;
-      const requireSingleLink = !isBlob && (classified.kind === "free" || grantKind! === "always");
+      // M5-06c: a file that already had other names when this ask began went through the card with the hard-link line
+      // (the user was told), so its approval counts; a link that appears mid-stream in any other fetch (free, always, a
+      // plain Allow once, a resume) stops it. dev/ino is checked before every chunk either way (readVerifiedSlice).
+      const requireSingleLink = !isBlob && !toldHardLinks;
       let index = 0;
       let bytesSent = 0;
       let sentSinceFlush = 0;
@@ -683,7 +771,7 @@ export class FetchSource {
             return;
           }
 
-          const check = this.checkBeforeChunk(session, task, message.requester, requesterServer, grantId!, grantPrefix!, file.absPath, isBlob);
+          const check = this.checkBeforeChunk(session, task, message.requester, requesterServer, grantId!, grantPrefix!, file.absPath, isBlob, gitTarget);
           if (!check.ok) {
             if (check.reason) await terminalDeny(check.reason, check.detail);
             else await this.flushDailyBytes();
@@ -692,7 +780,7 @@ export class FetchSource {
 
           const offset = slice * frameLimit;
           const pieceLen = file.size === 0 ? 0 : Math.min(frameLimit, file.size - offset);
-          const read = await this.readVerifiedSlice(file, grantPrefix!, isBlob, requireSingleLink, offset, pieceLen);
+          const read = await this.readVerifiedSlice(file, gitTarget ? gitTarget.bundleDir : grantPrefix!, isBlob, requireSingleLink, offset, pieceLen);
           if (!read.ok) {
             if (read.reason === "gone" && message.what.kind === "blob" && resolvedTarget.blobPin === "path") {
               { const targetId = message.what.id; await this.options.content?.markChanged(targetId).catch((err) => this.log(`fetch: markChanged ${targetId} failed: ${String((err as Error)?.message ?? err)}`)); }
@@ -712,6 +800,8 @@ export class FetchSource {
             t: "fetch.chunk",
             fetchId: message.fetchId,
             index,
+            // M5-07b: the requester splits the stream into files by this name.
+            file: file.relPath,
             sha256: sha256Hex(read.bytes),
             bytes: read.bytes,
           });
@@ -744,6 +834,7 @@ export class FetchSource {
         });
       }
       if (task.cancelled || session.state !== "open") return;
+      cleanupBundle();
       session.sendWire({
         t: "fetch.done",
         fetchId: message.fetchId,
@@ -753,18 +844,20 @@ export class FetchSource {
     } catch (error) {
       this.log(`fetch: serving ${message.fetchId} failed: ${String((error as Error)?.message ?? error)}`);
       await terminalDeny("gone");
+    } finally {
+      cleanupBundle();
     }
   }
 
   private resolveTargetPath(
     db: Db,
-    what: Exclude<FetchWhat, { kind: "git" }>,
+    what: FetchWhat,
     botFolders: Map<BotId, string>,
   ): { ok: true; realPath: string; isDirectory: boolean; blobPin: string | null; blobStatSig: StatSig | null } | { ok: false; reason: FetchDenyReason } {
     let rawPath: string;
     let blobPin: string | null = null;
     let blobStatSig: StatSig | null = null;
-    if (what.kind === "path") {
+    if (what.kind === "path" || what.kind === "git") {
       rawPath = what.path;
     } else if (what.kind === "artifact") {
       const botFolder = botFolders.get(what.botId);
@@ -927,7 +1020,13 @@ export class FetchSource {
       return { ok: false, reason: "denied" };
     }
 
+    // M5-07b: names go on the wire in NFC (the chunk's `file` schema); the manifest and `from.file` use the same form.
+    // Two names that become one after NFC cannot be told apart by the requester, so the fetch is refused.
+    for (const entry of entries) entry.relPath = entry.relPath.normalize("NFC");
     entries.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
+    for (let i = 1; i < entries.length; i++) {
+      if (entries[i]!.relPath === entries[i - 1]!.relPath) return { ok: false, reason: "denied" };
+    }
     const files: FileEntry[] = [];
     let totalBytes = 0;
     for (const entry of entries) {
@@ -950,6 +1049,129 @@ export class FetchSource {
     return { ok: true, files, totalBytes, manifest: sha256Hex(manifestLines) };
   }
 
+  private async createGitBundle(
+    realTarget: string,
+    grantPrefix: string,
+    task: ActiveServe,
+  ): Promise<
+    | { ok: true; files: FileEntry[]; totalBytes: number; manifest: string; bundleDir: string }
+    | { ok: false; reason: FetchDenyReason | null; detail?: string; bundleDir?: string }
+  > {
+    if (task.cancelled) return { ok: false, reason: null };
+    if (isSymlink(join(realTarget, ".git"))) return { ok: false, reason: "outside" };
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ALLOW_PROTOCOL: "none",
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_NO_REPLACE_OBJECTS: "1",
+    };
+    for (const key of GIT_STRIPPED_ENV_KEYS) delete env[key];
+    const parent = dirname(realTarget);
+    if (parent !== realTarget) env.GIT_CEILING_DIRECTORIES = parent;
+
+    const ac = new AbortController();
+    void task.whenCancelled.then(() => ac.abort());
+
+    // Verify realTarget itself is a git repository (GIT_CEILING_DIRECTORIES stops walk-up into parent repos)
+    // and ensure .git / common-dir stay inside grantPrefix and outside DENY.
+    let revParseOut: string;
+    try {
+      const res = await execFileAsync("git", [...GIT_SAFE_ARGS, "-C", realTarget, "rev-parse", "--git-dir", "--git-common-dir", "--git-path", "objects"], {
+        env,
+        timeout: GIT_TIMEOUT_MS,
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+        signal: ac.signal,
+      });
+      revParseOut = res.stdout;
+    } catch (error) {
+      if (task.cancelled || (error as NodeJS.ErrnoException)?.name === "AbortError") return { ok: false, reason: null };
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { ok: false, reason: "gone", detail: "git is not available" };
+      return { ok: false, reason: "gone", detail: "not a git repository" };
+    }
+
+    const lines = revParseOut.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 3) return { ok: false, reason: "gone", detail: "not a git repository" };
+    for (const rawDir of lines.slice(0, 3)) {
+      const absGitDir = resolve(realTarget, rawDir);
+      const realGitDir = safeRealpath(absGitDir);
+      if (!realGitDir.ok) return { ok: false, reason: realGitDir.symlink ? "outside" : "gone" };
+      if (isDeniedPath(realGitDir.path, this.options.dataDir)) return { ok: false, reason: "deny-list" };
+      if (!isSubpathOrEqual(grantPrefix, realGitDir.path)) return { ok: false, reason: "outside" };
+    }
+    // Alternates or a symlink inside the object store would pack objects from outside the grant into the bundle.
+    if (!objectStoreIsClosed(resolve(realTarget, lines[2]!))) return { ok: false, reason: "outside" };
+
+    const repoName = (basename(realTarget) || "repo").normalize("NFC");
+    const bundleRelPath = `${repoName}.bundle`.normalize("NFC");
+    if (!FetchRelPath.safeParse(bundleRelPath).success) return { ok: false, reason: "denied" };
+
+    let bundleDir: string;
+    try {
+      const baseTmp = realpath(this.options.bundleTmpDir ?? tmpdir());
+      bundleDir = realpath(mkdtempSync(join(baseTmp, "botling-git-")));
+    } catch {
+      return { ok: false, reason: "denied" };
+    }
+    if (isDeniedPath(bundleDir, this.options.dataDir)) {
+      return { ok: false, reason: "deny-list", bundleDir };
+    }
+
+    const tmpBundlePath = join(bundleDir, "repo.bundle");
+    try {
+      await execFileAsync("git", [...GIT_SAFE_ARGS, "-C", realTarget, "bundle", "create", tmpBundlePath, "--all"], {
+        env,
+        timeout: GIT_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+        signal: ac.signal,
+      });
+    } catch (error) {
+      if (task.cancelled || (error as NodeJS.ErrnoException)?.name === "AbortError") {
+        return { ok: false, reason: null, bundleDir };
+      }
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+        return { ok: false, reason: "gone", detail: "git is not available", bundleDir };
+      }
+      const stderr = String((error as { stderr?: unknown })?.stderr ?? "");
+      if (/not a git repository/i.test(stderr)) {
+        return { ok: false, reason: "gone", detail: "not a git repository", bundleDir };
+      }
+      if (/refusing to create empty bundle/i.test(stderr)) {
+        return { ok: false, reason: "gone", detail: "git repository has no commits", bundleDir };
+      }
+      return { ok: false, reason: "gone", detail: "could not create git bundle", bundleDir };
+    }
+
+    if (task.cancelled) return { ok: false, reason: null, bundleDir };
+
+    const hashed = await hashRegularFile(tmpBundlePath, bundleDir, this.options.dataDir, false);
+    if (!hashed.ok) return { ok: false, reason: hashed.reason, bundleDir };
+    if (hashed.size > Limits.PER_REQUEST_BYTES) return { ok: false, reason: "limit", bundleDir };
+
+    const file: FileEntry = {
+      absPath: tmpBundlePath,
+      relPath: bundleRelPath,
+      size: hashed.size,
+      sha256: hashed.sha256,
+      dev: hashed.dev,
+      ino: hashed.ino,
+      mtimeNs: hashed.mtimeNs,
+      nlink: hashed.nlink,
+    };
+    const manifestLines = `${file.relPath}\t${file.size}\t${file.sha256}\n`;
+    return {
+      ok: true,
+      files: [file],
+      totalBytes: file.size,
+      manifest: sha256Hex(manifestLines),
+      bundleDir,
+    };
+  }
+
   private checkBeforeChunk(
     session: FetchSink,
     task: ActiveServe,
@@ -959,6 +1181,7 @@ export class FetchSource {
     grantPrefix: string,
     fileAbsPath: string,
     isBlob: boolean,
+    gitTarget?: { repoPath: string; bundleDir: string },
   ): { ok: true } | { ok: false; reason: FetchDenyReason | null; detail?: string } {
     if (task.cancelled || session.state !== "open") return { ok: false, reason: null };
 
@@ -977,14 +1200,26 @@ export class FetchSource {
     if (!grant || grant.revokedAt !== null) return { ok: false, reason: "revoked" };
     if (grant.expires !== null && Number(grant.expires) <= this.now()) return { ok: false, reason: "expired" };
 
-    if (!isBlob && !isSubpathOrEqual(grantPrefix, fileAbsPath)) return { ok: false, reason: "outside" };
-    if (isSymlink(fileAbsPath)) return { ok: false, reason: "outside" };
+    const checkedPath = gitTarget ? gitTarget.repoPath : fileAbsPath;
+    if (!isBlob && !isSubpathOrEqual(grantPrefix, checkedPath)) return { ok: false, reason: "outside" };
+    if (isSymlink(checkedPath)) return { ok: false, reason: "outside" };
 
-    const resolved = safeRealpath(fileAbsPath);
+    const resolved = safeRealpath(checkedPath);
     if (!resolved.ok) return { ok: false, reason: resolved.symlink ? "outside" : "gone" };
-    if (resolved.path !== fileAbsPath) return { ok: false, reason: "outside" };
+    if (resolved.path !== checkedPath) return { ok: false, reason: "outside" };
     if (!isBlob && !isSubpathOrEqual(grantPrefix, resolved.path)) return { ok: false, reason: "outside" };
     if (!isBlob && isDeniedPath(resolved.path, this.options.dataDir)) return { ok: false, reason: "deny-list" };
+
+    if (gitTarget) {
+      if (isSymlink(join(gitTarget.repoPath, ".git"))) return { ok: false, reason: "outside" };
+      if (!isSubpathOrEqual(gitTarget.bundleDir, fileAbsPath)) return { ok: false, reason: "outside" };
+      if (isSymlink(fileAbsPath)) return { ok: false, reason: "outside" };
+      const resolvedBundle = safeRealpath(fileAbsPath);
+      if (!resolvedBundle.ok) return { ok: false, reason: resolvedBundle.symlink ? "outside" : "gone" };
+      if (resolvedBundle.path !== fileAbsPath) return { ok: false, reason: "outside" };
+      if (!isSubpathOrEqual(gitTarget.bundleDir, resolvedBundle.path)) return { ok: false, reason: "outside" };
+      if (isDeniedPath(resolvedBundle.path, this.options.dataDir)) return { ok: false, reason: "deny-list" };
+    }
     return { ok: true };
   }
 

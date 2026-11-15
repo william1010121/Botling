@@ -1,0 +1,21 @@
+{
+  "name": "user.x",
+  "version": "1.0.0",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "permissions": ["files"],
+    "web": "lib/web.js",
+    "host": "lib/host.mjs",
+    "contributes": {
+      "commands": [
+        { "id": "user.x.info", "title": "X Info" },
+        { "id": "user.x.calls", "title": "X Calls" },
+        { "id": "user.x.lazy", "title": "X Lazy" }
+      ],
+      "settings": {
+        "secretX": { "type": "string", "title": "Secret X", "secret": true },
+        "secretY": { "type": "string", "title": "Unused", "secret": false }
+      }
+    }
+  }
+}

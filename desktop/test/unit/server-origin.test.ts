@@ -7,7 +7,7 @@
 //   M5-04b), applied once at B and heard by A's listener — including across SIGKILL + restart of A and across a
 //   backup restore of B (`cmd.retry`). Requires `npm run build` (out/server/main.cjs).
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Command } from "../../src/contract";
@@ -205,6 +205,29 @@ describe("M5-04a: ServerOrigin unit tests", () => {
       await expect(h.origin.submit(TARGET_OWN, { type: "waiting.ignore", botId: BOT_OWN, text: "own" })).rejects.toThrow(TypeError);
       expect((h.db.prepare("SELECT COUNT(*) AS c FROM myorigins").get() as { c: number }).c).toBe(0);
       expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c).toBe(0);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("4b. (M5-04d) a srv:<peer> target is accepted: bots.create goes out at scope manage with its own counter; srv:<self> and an unknown srv: throw TypeError", async () => {
+    const h = makeInMemoryHarness();
+    try {
+      const create: Command = { type: "bots.create", name: "nightly", job: "runs the nightly build" };
+      const slot = await h.origin.submit(`srv:${PEER}`, create);
+      expect(slot).toMatchObject({ origin: SELF, target: `srv:${PEER}`, n: 1 });
+      const again = await h.origin.submit(`srv:${PEER}`, { ...create, name: "other" });
+      expect(again.n).toBe(2);
+      expect(again.originEpoch).toBe(slot.originEpoch);
+      // A bot target of the same peer has its own counter.
+      expect((await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "x" })).n).toBe(1);
+      expect(h.cmdFrames().filter((frame) => frame.slot.target === `srv:${PEER}`).map((frame) => ({ n: frame.slot.n, scope: frame.scope, inc: frame.inc, cmd: frame.cmd }))).toEqual([
+        { n: 1, scope: "manage", inc: INC_1, cmd: create },
+        { n: 2, scope: "manage", inc: INC_1, cmd: { ...create, name: "other" } },
+      ]);
+      await expect(h.origin.submit(`srv:${SELF}`, create)).rejects.toThrow(TypeError);
+      await expect(h.origin.submit("srv:nobody", create)).rejects.toThrow(TypeError);
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM myorigins").get() as { c: number }).c).toBe(2);
     } finally {
       await h.close();
     }
@@ -651,8 +674,17 @@ describe("M5-04a: ServerOrigin across two real botlingd processes", () => {
 
   afterAll(async () => { await cluster?.cleanup(); }, 60_000);
 
+  /** peer-answer-guard: a peer's `waiting.ignore` is applied only for a plain item on the owner's list now, so B's bot lists them. */
+  const listPlainItems = (...texts: string[]) => {
+    const file = join(b.dataDir, "bots", botB, ".bot", "memory.md");
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `## Waiting on you\n${texts.map((text) => `- ${text}`).join("\n")}\n`);
+  };
+  const PLAIN = ["ignore-live", "ignore-restart", "ignore-retry"];
+
   it("5. A submits waiting.ignore to B's bot -> applied once at B, heard by A; kill and restart A between submit and result -> still applied once and heard after restart", async () => {
     const target = `bot:${botB}` as const;
+    listPlainItems(...PLAIN);
 
     // 5a: live send and outcome
     const slot1 = await submitServerOrigin(a, "sub-1", target, { type: "waiting.ignore", botId: botB, text: "ignore-live" });
@@ -701,6 +733,8 @@ describe("M5-04a: ServerOrigin across two real botlingd processes", () => {
     await b.restore(backup);
     const newInc = withDb(b, (db) => String((db.prepare("SELECT logId FROM streams WHERE stream = ?").get(srvB()) as { logId: string }).logId));
     expect(newInc).not.toBe(oldInc);
+    // The restore may bring back an older folder: the plain item the peer's ignore names is listed again before the slot is decided.
+    listPlainItems(...PLAIN);
 
     pa.heal(); pb.heal();
 
@@ -778,7 +812,7 @@ describe("M5-04a: real RosterStore authorization and legacy serverId wiring", ()
       expect(viewA.servers.has(kd.memberId)).toBe(true);
       expect(viewA.valid.has(kd.memberId)).toBe(true);
 
-      const authA = slotAuthorize(authorizeRoster(rosterA));
+      const authA = slotAuthorize(authorizeRoster(rosterA, { plainWaiting: () => true }));
       const cmd: Command = { type: "waiting.ignore", botId: BOT_OWN, text: "check" };
       const tx = null as never;
       const slotFor = (origin: string, n: number): Slot => ({ origin, originEpoch: "a".repeat(32), target: TARGET_OWN, n });
@@ -810,7 +844,7 @@ describe("M5-04a: real RosterStore authorization and legacy serverId wiring", ()
         expect(rosterE.view.revoked.has(kd.memberId)).toBe(false);
         expect(rosterE.view.valid.has(kd.memberId)).toBe(false);
 
-        const authE = slotAuthorize(authorizeRoster(rosterE));
+        const authE = slotAuthorize(authorizeRoster(rosterE, { plainWaiting: () => true }));
         expect(authE(tx, { slot: slotFor(kd.memberId, 1), cmd, scope: "reply" })).toEqual({
           reason: "origin",
           detail: `${kd.memberId} is not a valid device of this cluster`,
@@ -895,7 +929,7 @@ describe("M5-04a: real RosterStore authorization and legacy serverId wiring", ()
         );
         expect((await peerRoster.mergeGossip([addSelf.statement])).refused).toEqual([]);
 
-        const peerAuth = slotAuthorize(authorizeRoster(peerRoster));
+        const peerAuth = slotAuthorize(authorizeRoster(peerRoster, { plainWaiting: () => true }));
         expect(peerAuth(null as never, { slot, cmd, scope: "reply" })).toBeNull();
         expect(peerAuth(null as never, { slot: { ...slot, origin: daemon.serverId }, cmd, scope: "reply" })).toEqual({
           reason: "origin",

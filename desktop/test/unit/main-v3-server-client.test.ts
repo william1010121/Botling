@@ -106,6 +106,52 @@ describe("server client", () => {
     expect(dones(bare)).toEqual([{ t: "shell.done", req: "q1", ok: false, error: "This window cannot do that." }]);
   });
 
+  it("serves shell.seal and shell.open with options.seal, and refuses when absent or throwing (M6-06)", async () => {
+    const server = new FakeServer();
+    const seal = vi.fn<NonNullable<CoreClientOptions["seal"]>>((op, text) =>
+      op === "seal" ? `sealed:${Buffer.from(text, "utf8").toString("base64")}` : Buffer.from(text.slice("sealed:".length), "base64").toString("utf8"),
+    );
+    const { c, audit } = client(server, undefined, { seal });
+    c.start();
+    await c.ready();
+    await flush();
+    server.send({ t: "shell.seal", req: "k1", text: "s3cret" });
+    server.send({ t: "shell.open", req: "k2", sealed: "sealed:czNjcmV0" });
+    await flush();
+    expect(seal.mock.calls).toEqual([["seal", "s3cret"], ["open", "sealed:czNjcmV0"]]);
+    expect(dones(server)).toEqual([
+      { t: "shell.done", req: "k1", ok: true, data: { sealed: "sealed:czNjcmV0" } },
+      { t: "shell.done", req: "k2", ok: true, data: { text: "s3cret" } },
+    ]);
+    expect(audit.join("\n")).not.toContain("s3cret");
+
+    const throwing = new FakeServer();
+    const second = client(throwing, undefined, { seal: () => { throw new Error("keychain locked"); } });
+    second.c.start();
+    await second.c.ready();
+    await flush();
+    throwing.send({ t: "shell.seal", req: "k3", text: "s3cret" });
+    throwing.send({ t: "shell.open", req: "k4", sealed: "sealed:czNjcmV0" });
+    await flush();
+    expect(dones(throwing)).toEqual([
+      { t: "shell.done", req: "k3", ok: false, error: "keychain locked" },
+      { t: "shell.done", req: "k4", ok: false, error: "keychain locked" },
+    ]);
+
+    const bare = new FakeServer();
+    const third = client(bare);
+    third.c.start();
+    await third.c.ready();
+    await flush();
+    bare.send({ t: "shell.seal", req: "k5", text: "s3cret" });
+    bare.send({ t: "shell.open", req: "k6", sealed: "sealed:czNjcmV0" });
+    await flush();
+    expect(dones(bare)).toEqual([
+      { t: "shell.done", req: "k5", ok: false, error: "This window cannot keep secrets." },
+      { t: "shell.done", req: "k6", ok: false, error: "This window cannot keep secrets." },
+    ]);
+  });
+
   it("starts botlingd when nothing listens on the socket, at most once every 10 s", async () => {
     const dir = mkdtempSync(join(tmpdir(), "blv3-"));
     try {
