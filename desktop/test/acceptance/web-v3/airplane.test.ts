@@ -111,6 +111,7 @@ async function oneRun(engine: string, type: BrowserType, run: number): Promise<R
   const maybe: string[] = [];
   const failedShown = new Set<string>();
   const killed = new Set<string>();
+  const done: string[] = [];
   let context: BrowserContext | null = null;
   let page: Page;
   const record = async () => {
@@ -158,14 +159,19 @@ async function oneRun(engine: string, type: BrowserType, run: number): Promise<R
 
     let i = 0;
     const next = async () => { const t = text(run, ++i); await send(page, t); await shown(page, t); accepted.push(t); };
-    while (i < CMDS) {
-      const fault = faults.get(i + 1);
-      if (!fault) { await next(); continue; }
+    // A fault's burst sends several commands, which may pass the next planned position: each fault fires at the first
+    // command at or after its position (after the last command if need be), so every planned fault is done, and `done`
+    // records where it really happened.
+    const due = [...faults].sort(([x], [y]) => x - y);
+    while (i < CMDS || done.length < due.length) {
+      const [at, fault] = due[done.length] ?? [Infinity, undefined];
+      if (!fault || i + 1 < at) { await next(); continue; }
+      done.push(`${i + 1}:${fault}`);
       const burst = 2 + Math.floor(random() * 4);
       if (process.env.V3_ACCEPT_TRACE) console.log(`run ${run} at ${i + 1}: ${fault}`);
       if (fault === "offline") {
         await context!.setOffline(true);
-        for (let k = 0; k < burst && i < CMDS; k++) await next();
+        for (let k = 0; k < burst; k++) await next();
         await context!.setOffline(false);
       } else if (fault === "reload") {
         await record();
@@ -175,13 +181,14 @@ async function oneRun(engine: string, type: BrowserType, run: number): Promise<R
         await next();
       } else if (fault === "server-kill") {
         await server.stop("SIGKILL");
-        for (let k = 0; k < burst && i < CMDS; k++) await next();
+        for (let k = 0; k < burst; k++) await next();
         await server.restart();
       } else {
         await record();
         const t = text(run, ++i);
         await send(page, t);
         const targets = browserProcesses(profile);
+        if (!targets.length) throw new Error(`run ${run}: browser-kill found no process of the browser`);
         for (const { pid } of targets) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
         for (const { command } of targets) killed.add(command);
         maybe.push(t);
@@ -201,7 +208,7 @@ async function oneRun(engine: string, type: BrowserType, run: number): Promise<R
     const strange = users.filter((t) => !accepted.includes(t) && !maybe.includes(t));
     if (await chatOf(page).getByText(/Not sent/).count()) failedShown.add("Not sent line on the page");
     if (strange.length) doubled.push(...strange.map((t) => `unexpected ${t}`));
-    return { ...(speed ? { speed } : {}), run, faults: [...faults].map(([at, f]) => `${at}:${f}`), accepted: accepted.length, maybe: maybe.length, maybeFound: maybe.filter((t) => countUser(messages, t) === 1).length, lost, doubled, failedShown: [...failedShown], ms: Date.now() - t0, killed: [...killed] };
+    return { ...(speed ? { speed } : {}), run, faults: done, accepted: accepted.length, maybe: maybe.length, maybeFound: maybe.filter((t) => countUser(messages, t) === 1).length, lost, doubled, failedShown: [...failedShown], ms: Date.now() - t0, killed: [...killed] };
   } finally {
     await (context as BrowserContext | null)?.close().catch(() => undefined);
     await server.stop("SIGTERM").catch(() => undefined);
