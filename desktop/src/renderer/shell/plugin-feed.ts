@@ -17,6 +17,7 @@ import type { PluginsView, WebPluginSpecView } from "../../contract";
 import { rendererKernel } from "../renderer-kernel";
 import { FEED_MENU_SLOTS, FEED_VIEWS } from "./feed-slots";
 import { frameDeclaration, type FrameDeclaration } from "./frame-declarations";
+import { tileRows } from "./tile-rows";
 
 /** What the feed contributes to a slot: one `PluginsView` row (a view's or a menu's). */
 export interface FeedEntry<Row = unknown> { kind: "feed"; row: Row }
@@ -42,6 +43,7 @@ function planOf(view: PluginsView | null, web: FeedWeb): Map<string, Wanted> {
   if (view) {
     for (const [key, slot] of FEED_VIEWS) for (const row of view[key] ?? []) add(row.plugin, { slot, row });
     for (const row of view.menus ?? []) { const slot = `menu/${row.menu}`; if (MENU_SLOTS.has(slot)) add(row.plugin, { slot, row }); }
+    for (const { slot, row } of tileRows(view)) add(row.plugin, { slot, row }); // the tile slots of botling.bot-panel (M7-03b)
   }
   const versions = new Map((web?.specs ?? []).map((spec) => [spec.name, spec.version]));
   const wanted = new Map<string, Wanted>();
@@ -97,12 +99,20 @@ export class PluginFeed {
   /**
    * A plugin that owns `slots` has come or gone (an in-page built-in, shell/inpage-host.ts): the kernel refuses a contribution to a
    * slot whose owner is away and does not ask again when it returns, so the instances that contribute to them are loaded again
-   * from the last view. Slots are given by either name. The other instances are not touched.
+   * from the last view. Slots are given by either name. The other instances are not touched, unless they share a slot with one that is loaded again and come after it in the list (their order in that slot).
    */
   refresh(slots: readonly string[]): string[] {
     const changed = new Set(slots.map(canonicalSlot));
-    for (const name of this.owned.keys()) {
-      if (this.kernel.declaration(name)?.contributes?.slots?.some((slot) => changed.has(slot))) this.owned.set(name, "");
+    // A plugin that is loaded again comes after the ones that were not touched, in every slot it is in; so every later plugin (the
+    // list's order) that shares a slot with one that is loaded again is loaded again too, and every slot keeps the list's order as a
+    // fresh load gives it (F1). A plugin that shares no slot with them is not touched.
+    const moved = new Set<string>();
+    for (const [name, plan] of planOf(this.last.view, this.last.web)) {
+      if (!this.owned.has(name)) continue;
+      const slots = this.kernel.declaration(name)?.contributes?.slots ?? [];
+      if (!slots.some((slot) => changed.has(slot) || moved.has(slot))) continue;
+      this.owned.set(name, "");
+      for (const { slot } of plan.rows) moved.add(canonicalSlot(slot));
     }
     return this.reconcile(this.last.view, this.last.web);
   }
@@ -116,6 +126,21 @@ export class PluginFeed {
   /** `slot`'s rows as the kernel holds them (given by either name of the slot), in registration order. */
   rows<Row = unknown>(slot: string): Row[] {
     return this.kernel.entries<Partial<FeedEntry<Row>>>(slot).filter(({ entry }) => entry.kind === "feed").map(({ entry }) => entry.row as Row);
+  }
+
+  /**
+   * `slot`'s rows in the plugin list's order (the order of the `PluginsView` arrays they mirror), each plugin's rows in the order it
+   * registered them. `rows` gives registration order, where a plugin that was switched off and on, or reloaded for an owner that
+   * came back, comes after the ones that stayed (P2): a surface that draws the rows reads them here, so the same view always gives
+   * the same page (F1 of the 02c review).
+   */
+  rowsInListOrder<Row = unknown>(slot: string): Row[] {
+    const place = new Map([...planOf(this.last.view, this.last.web).keys()].map((name, index) => [name, index] as const));
+    return this.kernel.entries<Partial<FeedEntry<Row>>>(slot)
+      .map((one, index) => ({ one, index }))
+      .filter(({ one }) => one.entry.kind === "feed")
+      .sort((a, b) => (place.get(a.one.plugin) ?? place.size) - (place.get(b.one.plugin) ?? place.size) || a.index - b.index)
+      .map(({ one }) => one.entry.row as Row);
   }
 
   /**

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it, vi } from "vitest";
+import { expect, it, vi, beforeEach, afterEach } from "vitest";
 import { SettingsSheet } from "../../src/renderer/Settings";
 import type { Client } from "../../src/renderer/client";
 
@@ -27,6 +27,11 @@ it("offers Doctor in Settings (Engine setup) and checks CLI health when opened",
 import { DoctorSection } from "../../src/renderer/Doctor";
 import { SidebarSettings } from "../../src/renderer/SidebarSettings";
 import type { DoctorView, EventEnvelope } from "../../src/contract";
+import { loadSettingsShell, type SettingsShell } from "../settings-shell";
+// Settings draws only from the settings plugin's slots (M7-02d): a test that renders it loads the plugin as the shell does.
+let settingsShell: SettingsShell;
+beforeEach(async () => { settingsShell = await loadSettingsShell(); });
+afterEach(async () => { await settingsShell.stop(); });
 
 const checked = (attention = true): DoctorView => ({
   checks: [

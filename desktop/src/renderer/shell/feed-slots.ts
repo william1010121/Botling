@@ -28,6 +28,16 @@ export const PLUGIN_OWNED_SLOTS: readonly string[] = [
 
   // botling.sidebar (M7-05a): bot/row, not in FEED_SLOTS: no feed rows go there yet
   "statusItem/botRow",
+
+  // botling.bot-panel (M7-03a): panel/main, panel/section, panel/takeover
+  "view/rightPanel",
+  "view/rightPanel.section",
+  "view/rightPanel.takeover",
+
+  // botling.bot-panel (M7-03b): panel/tile/board, panel/tile/whiteboard, panel/tile/pin
+  "tile/board",
+  "tile/whiteboard",
+  "tile/pin",
 ];
 const OWNED_ELSEWHERE = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 

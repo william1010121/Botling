@@ -42,3 +42,13 @@ export function viewSurfaces(list: Contribution[], drawn: (plugin: string) => bo
       .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), width: view.width ?? COMPOSER_BAR_WIDTH.default, forRole: viewRole(view.forRole) })),
   };
 }
+
+/**
+ * `PluginsView.tiles` (M7-03b): one row per `tile` contribution, without its component folder (each surface once: a manifest may repeat one). Nothing at all (no key) when there is none, so a
+ * view of plugins without tiles is what it was. `list` is the contributions of the plugins that are on (`Plugins.contributions()`).
+ */
+export function tileView(list: Contribution[]): Pick<PluginsView, "tiles"> {
+  const tiles = ofKind(list, "tile").filter((tile) => tile.id.length <= 100).slice(0, 200)
+    .map((tile) => ({ plugin: tile.plugin, id: tile.id, title: tile.title.slice(0, 200), sizes: tile.sizes.slice(0, 10).map((size) => size.slice(0, 20)), surfaces: [...new Set(tile.surfaces)].slice(0, 3) }));
+  return tiles.length ? { tiles } : {};
+}
