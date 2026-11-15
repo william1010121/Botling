@@ -1,8 +1,8 @@
 // M5-04c: the main bot hands work to a bot on another machine by appending to its peer inbox file.
 // Core part: a core with fake `remoteMembers` / `remoteCommand` (no engine). Two-server part: real botlingd processes.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { projectBriefingText } from "../../src/core/projects";
 import { Core, type CoreOptions } from "../../src/core/server";
@@ -357,7 +357,11 @@ describe("M5-04c: A's main bot hands work to B's bot across two real servers", (
     await until(() => withDb(a, (db) => (db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c === 0), { timeout: 20_000, what: "A forwardq empty" });
     expect(wrappedCount("second job")).toBe(1);
     expect(wrappedCount("ship the report")).toBe(1);
-    // B never got an inbox.md for this: its bots' folders hold none from A (the file lives in A's main folder only).
-    expect(existsSync(join(b.dataDir, "main", ".bot", "peers"))).toBe(false);
+    // B never got an inbox.md for this: no inbox.md anywhere in B's data folder holds A's text (the file lives in A's
+    // main folder only). B may make its own empty .bot/peers/<id>/ folders when its main bot is briefed about A's bots
+    // (A's minted Maintainer is listed, M5-02a), so the folder itself is not the test.
+    const inboxes = (readdirSync(b.dataDir, { recursive: true }) as string[]).filter((path) => basename(path) === "inbox.md");
+    expect(inboxes.filter((path) => /ship the report|second job/.test(readFileSync(join(b.dataDir, path), "utf8")))).toEqual([]);
+    expect(inboxes.filter((path) => path.split(sep).includes("peers"))).toEqual([]);
   }, 240_000);
 });
