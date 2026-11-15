@@ -28,8 +28,10 @@ import { loadSettingsShell } from "../settings-shell";
 
 const SECTION = "view/settings.section";
 const QUICK = "view/quickSettings";
-const manifest = parseFeManifest(JSON.parse(feBuildManifestFile(desktop).toString("utf8")));
-const shipped = manifest.plugins.find((entry) => entry.name === SETTINGS_PLUGIN)!;
+const built = parseFeManifest(JSON.parse(feBuildManifestFile(desktop).toString("utf8")));
+const shipped = built.plugins.find((entry) => entry.name === SETTINGS_PLUGIN)!;
+// Only this plugin's entry: the build ships other in-page plugins too (botling.bot-panel, …), and these tests are about this one.
+const manifest = { ...built, plugins: [shipped] };
 const golden = JSON.parse(readFileSync(join(desktop, "test", "fixtures", "settings-nav-golden.json"), "utf8")) as { all: unknown; phone: unknown; none: unknown };
 const fixture = (): PluginsView => JSON.parse(readFileSync(join(desktop, "test", "fixtures", "kernel-goldens", "plugins-list.json"), "utf8")) as PluginsView;
 
@@ -73,9 +75,9 @@ describe("the settings plugin as the FE build ships it", () => {
     expect(rendererKernel.declaration(SHELL_SURFACE)?.provides?.slots).not.toEqual(expect.arrayContaining([SECTION]));
     expect(rendererKernel.declaration(SHELL_SURFACE)?.provides?.slots).not.toEqual(expect.arrayContaining([QUICK]));
     // The two lists agree: what the plugin provides is what left FEED_SLOTS.
-    expect(rendererKernel.declaration(SETTINGS_PLUGIN)?.provides?.slots?.slice().sort()).toEqual(PLUGIN_OWNED_SLOTS.map(canonicalSlot).sort());
-    expect(settingsDeclaration.provides?.slots?.map(canonicalSlot).sort()).toEqual([...PLUGIN_OWNED_SLOTS].sort());
-    for (const slot of PLUGIN_OWNED_SLOTS) expect(FEED_SLOTS, slot).not.toContain(slot);
+    expect(rendererKernel.declaration(SETTINGS_PLUGIN)?.provides?.slots?.slice().sort()).toEqual([SECTION, QUICK].sort());
+    expect(settingsDeclaration.provides?.slots?.map(canonicalSlot).sort()).toEqual([SECTION, QUICK].sort());
+    for (const slot of [SECTION, QUICK]) { expect(PLUGIN_OWNED_SLOTS, slot).toContain(slot); expect(FEED_SLOTS, slot).not.toContain(slot); }
   });
 
   it("registers the core pages in the slot, one registration each, in today's order", async () => {
