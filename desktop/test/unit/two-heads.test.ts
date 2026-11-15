@@ -55,7 +55,7 @@ describe("a Codex head", () => {
     expect(start).toEqual({ sandbox: "workspace-write", approvalPolicy: "on-request", config: { "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled", "auto_review.extra_policy": expect.any(String),
         // Its other folders are writable roots, as in 1.x: the main bot's are every bot's notes (here Maintainer's).
         sandbox_workspace_write: { writable_roots: [join(dir, "plugins", ".bot")] } },
-      tools: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", "app_component_usage",
+      tools: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint", "app_component_usage", "app_fetch",
         "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract",
         "app_note_outline", "app_note_read", "app_note_search", "app_note_edit", "app_note_insert", "app_note_delete", "app_note_move", "app_note_split", "app_note_merge", "app_note_branch"] });
     // Its first message is the Codex wake briefing: the memory snapshot inlined, then the words.

@@ -178,6 +178,15 @@ async function turnOf(fe: Fe, marker: string, what: string): Promise<string> {
   return until(() => fe.live.find((item) => item.frame.text.includes(marker))?.frame.turnId ?? null, { timeout: 30_000, every: 10, what });
 }
 
+/** The connections open through a proxy now, from its events. */
+function openConns(proxy: FaultProxy): Set<number> {
+  const open = new Set<number>();
+  for (const event of proxy.events) {
+    if (event.action === "open") open.add(event.conn);
+    else if (event.action === "close") open.delete(event.conn);
+  }
+  return open;
+}
 const sessionEnds = () => (a.log.match(/session ended/g) ?? []).length + (b.log.match(/session ended/g) ?? []).length;
 
 /** The checks every turn must pass at the front end on A. */
@@ -270,7 +279,15 @@ describe("live text across servers (two botlingd, fault proxy)", () => {
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       const framesBefore = fe.framesOf(turnId).length;
       const faultAt = performance.now();
-      if (fault === "drop") { pa.drop("down", 1).drop("up", 1); pb.drop("down", 1).drop("up", 1); }
+      if (fault === "drop") {
+        // Only on the connections open now: a drop still armed when the session ends (its direction had sent nothing
+        // yet) must not take the next dial's first handshake frame, which only the 15 s handshake timeout ends.
+        for (const proxy of [pa, pb]) {
+          const now = openConns(proxy);
+          const ours = (_: Buffer, conn: number) => now.has(conn);
+          proxy.drop("down", 1, ours).drop("up", 1, ours);
+        }
+      }
       else { pa.cut(); pb.cut(); }
       await until(() => (sessionEnds() > ends ? true : null), { timeout: 20_000, what: `the ${fault} ended the session` });
       // Live frames come again after the redial, before the turn ends.

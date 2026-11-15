@@ -2,9 +2,9 @@
 // says so with an `error` notification (willRetry: true, "Reconnecting... 1/5"), and logs how long
 // it waits in CODEX_HOME/logs_2.sqlite. The bot shows it (BotView.codexRetry, the typing bubble)
 // until the turn moves on or ends.
-import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { CodexSession, type CodexConfig, type CodexOutput } from "../../src/core/agent/codex";
 import { codexRetryAt, parseRetryLine } from "../../src/core/agent/codex-retry-log";
@@ -16,6 +16,9 @@ import { desktop, tempDir, until } from "../helpers";
 const recordings: Record<string, string[]> = JSON.parse(readFileSync(join(desktop, "test", "fixtures", "codex-recordings.json"), "utf8"));
 const THREAD = "01a1640c-e2db-7742-998a-553a14d4336f";
 const TURN = "01a1640c-e80e-7682-b431-5f06a7fbc859";
+
+/** codex-cli 0.163.0's logs table (CODEX_HOME/logs_2.sqlite). */
+const LOGS_TABLE = "CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, ts_nanos INTEGER NOT NULL, level TEXT NOT NULL, target TEXT NOT NULL, feedback_log_body TEXT, module_path TEXT, file TEXT, line INTEGER, thread_id TEXT, process_uuid TEXT, estimated_bytes INTEGER NOT NULL DEFAULT 0);";
 
 const config = (): CodexConfig => ({
   cwd: "/tmp/bot", instructions: "You are a test bot.", workerInstructions: "You are a worker.", resumeThread: null,
@@ -53,9 +56,11 @@ describe("Codex's retry log (logs_2.sqlite, read-only)", () => {
   const db = (rows: { ts: number; nanos: number; body: string; thread: string; target?: string }[]) => {
     const dir = tempDir("codex-retry-log");
     const file = join(dir, "logs_2.sqlite");
-    const insert = rows.map((r) => `INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body, thread_id) VALUES (${r.ts}, ${r.nanos}, 'WARN', '${r.target ?? "codex_core::responses_retry"}', '${r.body}', '${r.thread}');`).join("\n");
-    const made = spawnSync("sqlite3", [file, `CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, ts_nanos INTEGER NOT NULL, level TEXT NOT NULL, target TEXT NOT NULL, feedback_log_body TEXT, module_path TEXT, file TEXT, line INTEGER, thread_id TEXT, process_uuid TEXT, estimated_bytes INTEGER NOT NULL DEFAULT 0);\n${insert}`]);
-    expect(made.status).toBe(0);
+    const made = new DatabaseSync(file);
+    made.exec(LOGS_TABLE);
+    const insert = made.prepare("INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body, thread_id) VALUES (?, ?, 'WARN', ?, ?, ?)");
+    for (const r of rows) insert.run(r.ts, r.nanos, r.target ?? "codex_core::responses_retry", r.body, r.thread);
+    made.close();
     return file;
   };
   const body = (attempt: number, delay: string) => `run_sampling_request{turn_id=${TURN}}: stream disconnected - retrying sampling request (${attempt}/5 in ${delay})... turn_id=${TURN} retries=${attempt} max_retries=5 sampling_error=exceeded retry limit, last status: 429 Too Many Requests`;
@@ -78,6 +83,35 @@ describe("Codex's retry log (logs_2.sqlite, read-only)", () => {
     expect(await codexRetryAt({ file, thread: THREAD, attempt: 1, since: since + 3_600_000 })).toBeNull();
     expect(await codexRetryAt({ file: join(tempDir("codex-retry-none"), "logs_2.sqlite"), thread: THREAD, attempt: 1, since })).toBeNull();
     expect(await codexRetryAt({ file, thread: "x'; DROP TABLE logs; --", attempt: 1, since })).toBeNull();
+  });
+
+  it("a file that is not codex's log, a log with no logs table, or one codex holds locked: unknown at once, and the file is left as it was", async () => {
+    const since = 1_793_004_860_000;
+    const garbage = join(tempDir("codex-retry-garbage"), "logs_2.sqlite");
+    writeFileSync(garbage, "not a database, just text that is long enough to be read as a header\n".repeat(20));
+    const before = readFileSync(garbage);
+    expect(await codexRetryAt({ file: garbage, thread: THREAD, attempt: 1, since })).toBeNull();
+    expect(readFileSync(garbage).equals(before)).toBe(true);
+
+    const empty = join(tempDir("codex-retry-empty"), "logs_2.sqlite");
+    const made = new DatabaseSync(empty);
+    made.exec("CREATE TABLE other (id INTEGER)");
+    made.close();
+    expect(await codexRetryAt({ file: empty, thread: THREAD, attempt: 1, since })).toBeNull();
+
+    // Codex writing: an exclusive lock (rollback journal) keeps readers out; the read gives up without waiting.
+    const file = db([{ ts: 1_793_004_861, nanos: 250_000_000, body: body(1, "40.000123s"), thread: THREAD }]);
+    const writer = new DatabaseSync(file);
+    try {
+      writer.exec("BEGIN EXCLUSIVE; INSERT INTO logs (ts, ts_nanos, level, target) VALUES (1, 0, 'INFO', 'x');");
+      const started = performance.now();
+      expect(await codexRetryAt({ file, thread: THREAD, attempt: 1, since })).toBeNull();
+      expect(performance.now() - started).toBeLessThan(1_000);
+      writer.exec("ROLLBACK");
+    } finally {
+      writer.close();
+    }
+    expect(await codexRetryAt({ file, thread: THREAD, attempt: 1, since })).toBe(1_793_004_861_250 + 40_000);
   });
 });
 
@@ -104,8 +138,9 @@ describe("a Codex bot waiting on a rate-limited retry", () => {
     writeFileSync(join(dir, "main/bot.json"), JSON.stringify({ engine: "codex", heads: { engines: ["codex"], answerWith: "codex" } }));
     const home = join(dir, "codex-home");
     mkdirSync(home, { recursive: true });
-    const made = spawnSync("sqlite3", [join(home, "logs_2.sqlite"), "CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, ts_nanos INTEGER NOT NULL, level TEXT NOT NULL, target TEXT NOT NULL, feedback_log_body TEXT, module_path TEXT, file TEXT, line INTEGER, thread_id TEXT, process_uuid TEXT, estimated_bytes INTEGER NOT NULL DEFAULT 0);"]);
-    expect(made.status).toBe(0);
+    const made = new DatabaseSync(join(home, "logs_2.sqlite"));
+    made.exec(LOGS_TABLE);
+    made.close();
     const gate = join(dir, "retry-gate");
     const core = new CoreHarness(dir, { CODEX_HOME: home, FAKE_CODEX_RETRY_GATE: gate });
     harnesses.push(core);
