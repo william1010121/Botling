@@ -3,7 +3,8 @@
 //
 // - `submit(target, cmd)` allocates `n` from `myorigins (target, originEpoch, nextN)` and commits the `forwardq` row in
 //   one writer transaction, with `floor` = the smallest `n` still unresolved for `(originEpoch, target)` and `inc` = this
-//   server's copy of `srv:<owner>` (`tableLogId`). Targets this server owns (`ownerOf === null`) throw TypeError. If the
+//   server's copy of `srv:<owner>` (`tableLogId`). The target is a `bot:` of a peer or, since M5-04d, a peer's own `srv:<id>`
+//   (the main bot's `bots.create`, scope `manage`; `Directory.peerOwner` resolves both). Targets this server owns (`ownerOf === null`) throw TypeError. If the
 //   owner is already revoked in the roster (`isRevoked`), it ends immediately with `refused{revoked}` without queueing.
 // - Outcomes arrive from `Forwarder.attach(self, ...)`: kept in memory for `outcome(slot)` and delivered to listeners.
 // - `slot conflict` (§11.4, D30): allocates a new `originEpoch` (once per conflict wave), moves the refused item to
@@ -13,8 +14,8 @@
 //   of `srv:<owner>` reaches `inc` (including across restarts). A retry naming a retired `logId` (or an orphaned `meta`
 //   entry whose `forwardq` row was lost in a crash window) reconciles under the current `tableLogId`.
 import { randomBytes } from "node:crypto";
-import type { Command } from "../../contract";
-import { slotKey, type CmdBody, type LogId, type Message, type Outcome, type Scope, type Slot, type Target, type WireMessage } from "../../protocol";
+import { Command as CommandSchema, type Command } from "../../contract";
+import { encodeWireFrame, slotKey, type CmdBody, type LogId, type Message, type Outcome, type Scope, type Slot, type Target, type WireMessage } from "../../protocol";
 import { tableLogId } from "../replica/tables";
 import { statedScope } from "../session/remote-reads";
 import { cmdHash } from "../slots";
@@ -84,8 +85,16 @@ export class ServerOrigin {
     this.loadPending();
   }
 
-  /** Submits `cmd` for `target` (must be owned by a peer server) with this server as origin. */
+  /**
+   * Submits `cmd` for `target` (must be owned by a peer server) with this server as origin.
+   *
+   * M5-02b (the M5-01 review): the command is checked BEFORE the transaction, so a bad one leaves no row, no pending
+   * key and no change to `nextN`: it must parse (`Command`) and its frame must be one a peer session can send
+   * (`encodeWireFrame` as a peer). `Forwarder.pump` stops at the first row `sendWire` refuses, so an unsendable row
+   * would block every later command to that owner, and a restart would retry it for good.
+   */
   async submit(target: Target, cmd: Command): Promise<Slot> {
+    this.checkSendable(target, cmd);
     const ownerCheck = this.options.forwarder.ownerOf(target);
     if (ownerCheck === null) {
       throw new TypeError(`server-origin: cannot submit to ${target} (owned by this server or no peer owns it)`);
@@ -129,6 +138,25 @@ export class ServerOrigin {
     this.pending.set(slotKey(committed.slot), committed.record);
     this.options.forwarder.pump(committed.owner);
     return committed.slot;
+  }
+
+  private checkSendable(target: Target, cmd: Command): void {
+    const parsed = CommandSchema.safeParse(cmd);
+    if (!parsed.success) {
+      throw new TypeError(`server-origin: ${(cmd as { type?: unknown })?.type ?? "?"} is not a valid command (${parsed.error.issues[0]?.message ?? "refused"})`);
+    }
+    // The frame as the forwarder will send it, with the largest slot and floor and a longest incarnation id, so the
+    // check holds for whatever number and epoch the transaction then allocates.
+    const probe = {
+      t: "cmd",
+      slot: { origin: this.options.self, originEpoch: "f".repeat(32), target, n: Number.MAX_SAFE_INTEGER },
+      floor: Number.MAX_SAFE_INTEGER,
+      inc: "x".repeat(64) as LogId,
+      cmd,
+      scope: statedScope(cmd),
+    } as unknown as WireMessage;
+    const encoded = encodeWireFrame(probe, "peer", { local: false });
+    if (!encoded.ok) throw new TypeError(`server-origin: ${cmd.type} cannot be sent to a peer (${encoded.reason}: ${encoded.detail})`);
   }
 
   /** The outcome heard for `slot` in this process lifetime, or null while unresolved/unknown. */

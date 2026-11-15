@@ -2,13 +2,13 @@
 // before). The core's emit carries both its events and its answers to `receive`: events go to the server's host (the
 // event tap), answers settle the legacy commands this binding sent.
 import { randomUUID } from "node:crypto";
-import { ContractError, PROTOCOL_VERSION, type BotView, type Command, type Event as ContractEvent, type Outbound } from "../../contract";
+import { ContractError, Engine, PROTOCOL_VERSION, type BotView, type Command, type Event as ContractEvent, type Outbound } from "../../contract";
 import type { Core } from "../../core/server";
 import type { DeferredTurn } from "../../core/bot";
-import type { ApplyNowCommand, EngineHost, TurnEngine, TurnRunning, TurnStart, TurnStatus, UserLine } from "../effects";
+import type { ApplyNowCommand, CallInAnswer, CallInOptions, EngineHost, TurnEngine, TurnRunning, TurnStart, TurnStatus, UserLine } from "../effects";
 
 /** What the binding uses of the core. */
-export type CoreLike = Pick<Core, "serverSend" | "serverTurn" | "serverUserLine" | "applyNow" | "receive" | "hasBot" | "botIds" | "serverBotView" | "pendingFiles" | "checkBot" | "checkRemoveBot" | "removeBot">;
+export type CoreLike = Pick<Core, "serverSend" | "serverTurn" | "serverCallIn" | "serverUserLine" | "applyNow" | "receive" | "hasBot" | "botIds" | "serverBotView" | "pendingFiles" | "checkBot" | "checkRemoveBot" | "removeBot">;
 
 interface Waiting { resolve(value: unknown): void; reject(error: unknown): void }
 
@@ -46,6 +46,18 @@ export class CoreEngine implements TurnEngine {
   checkRemove(botId: string): void { this.need().checkRemoveBot(botId); }
   applyNow(cmd: ApplyNowCommand): unknown { return this.need().applyNow(cmd); }
   userLine(botId: string, line: UserLine): void { this.need().serverUserLine(botId, line); }
+
+  /** M5-02b: a guest's turn for a call-in from another server (`Core.serverCallIn`: the guest's own session, kept in its chat). */
+  async callInTurn(guestId: string, prompt: string, onBegin: () => void, options: CallInOptions): Promise<CallInAnswer> {
+    const answer = await this.need().serverCallIn(guestId, prompt, {
+      host: options.host, asked: options.asked, by: options.by, note: options.note,
+      busyWaitMs: options.busyWaitMs, answerMs: options.answerMs, onBegin, signal: options.signal,
+    });
+    if (answer.kind !== "reply") return answer;
+    // The reply's engine is the contract's (claude, codex, agy); anything else would be refused on the wire.
+    const engine = Engine.safeParse(answer.engine);
+    return { kind: "reply", text: answer.text, engine: engine.success ? engine.data : "claude" };
+  }
 
   async startTurn(turn: TurnStart): Promise<TurnRunning> {
     const core = this.need();

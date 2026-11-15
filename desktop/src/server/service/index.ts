@@ -1,8 +1,9 @@
-// Login-item service management for botlingd (M6-08, D74): LaunchAgent on macOS, systemd user unit on Linux.
+// Login-item service management for botlingd (M6-08, M6-07c, D74): LaunchAgent on macOS, systemd user unit on Linux.
 import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { isPackagedElectron } from "../packaged-electron";
 import { botlingdPaths } from "../session";
 import { DEFAULT_SERVICE_LABEL, launchAgentPath, launchAgentPlist, serviceLabel } from "./launchd";
 import { SYSTEMD_UNIT_NAME, systemdUnit, systemdUnitPath } from "./systemd";
@@ -41,33 +42,72 @@ export function execServiceRunner(cmd: string, args: string[]): Promise<{ code: 
   });
 }
 
-/** Developer form only: `process.execPath` and the real path of the running botlingd script with `start`. */
-export function botlingdProgram(script = process.argv[1]): { program: string; args: string[] } {
+export interface BotlingdProgramOptions {
+  packaged?: boolean;
+  execPath?: string;
+  script?: string;
+}
+
+/**
+ * Program + arguments for the login-item service:
+ * - packaged: `[process.execPath, "--botlingd", "start"]` (runAsNode fuse stays off);
+ * - developer: `[process.execPath, <realpath of script>, "start"]`.
+ */
+export function botlingdProgram(
+  scriptOrOptions: string | BotlingdProgramOptions = process.argv[1],
+  options: Omit<BotlingdProgramOptions, "script"> = {},
+): { program: string; args: string[] } {
+  const opts: BotlingdProgramOptions = typeof scriptOrOptions === "string" || scriptOrOptions === undefined
+    ? { ...options, script: scriptOrOptions }
+    : scriptOrOptions;
+  const program = opts.execPath ?? process.execPath;
+  const packaged = opts.packaged ?? isPackagedElectron();
+  if (packaged) return { program, args: ["--botlingd", "start"] };
+  const script = opts.script ?? process.argv[1];
   if (!script) throw new ServiceError("Cannot determine the running botlingd script path.");
   let resolved: string;
   try { resolved = realpathSync(script); } catch { resolved = resolve(script); }
-  return { program: process.execPath, args: [resolved, "start"] };
+  return { program, args: [resolved, "start"] };
 }
 
-/** Only the data-folder, socket (when set), optional ELECTRON_RUN_AS_NODE=1, and BOTLING_SERVICE=1. */
-export function serviceEnv(env: Record<string, string | undefined>): Record<string, string> {
+/** Only the data-folder, socket (when set), optional ELECTRON_RUN_AS_NODE=1 (dev only), and BOTLING_SERVICE=1. */
+export function serviceEnv(
+  env: Record<string, string | undefined>,
+  options: { packaged?: boolean } = {},
+): Record<string, string> {
+  const packaged = options.packaged ?? isPackagedElectron();
   const out: Record<string, string> = {};
   if (env.BOTLING_SERVER_DATA_DIR) out.BOTLING_SERVER_DATA_DIR = resolve(env.BOTLING_SERVER_DATA_DIR);
   else if (env.BOTLING_DATA_DIR) out.BOTLING_DATA_DIR = resolve(env.BOTLING_DATA_DIR);
   if (env.BOTLING_SERVER_SOCKET) out.BOTLING_SERVER_SOCKET = resolve(env.BOTLING_SERVER_SOCKET);
-  if (env.ELECTRON_RUN_AS_NODE && env.ELECTRON_RUN_AS_NODE !== "0") out.ELECTRON_RUN_AS_NODE = "1";
+  if (!packaged && env.ELECTRON_RUN_AS_NODE && env.ELECTRON_RUN_AS_NODE !== "0") out.ELECTRON_RUN_AS_NODE = "1";
   out.BOTLING_SERVICE = "1";
   return out;
 }
 
 export function buildServiceSpec(
   env: Record<string, string | undefined>,
-  options: { appId?: string; label?: string; program?: { program: string; args: string[] } } = {},
+  options: {
+    appId?: string;
+    label?: string;
+    program?: { program: string; args: string[] };
+    packaged?: boolean;
+    execPath?: string;
+    script?: string;
+  } = {},
 ): ServiceSpec {
+  const packaged = options.packaged ?? isPackagedElectron();
+  if (packaged && !options.label && !options.appId) {
+    throw new ServiceError("Packaged botlingd service requires the v3 appId.");
+  }
   const paths = botlingdPaths(env);
-  const { program, args } = options.program ?? botlingdProgram();
+  const { program, args } = options.program ?? botlingdProgram({
+    packaged,
+    execPath: options.execPath,
+    script: options.script,
+  });
   const label = options.label ?? (options.appId ? serviceLabel(options.appId) : DEFAULT_SERVICE_LABEL);
-  return { program, args, env: serviceEnv(env), dataDir: resolve(paths.dataDir), label };
+  return { program, args, env: serviceEnv(env, { packaged }), dataDir: resolve(paths.dataDir), label };
 }
 
 function resolvePlatform(options: ServiceOptions): "darwin" | "linux" {
@@ -143,7 +183,14 @@ export async function serviceCommand(
   args: string[],
   env: Record<string, string | undefined>,
   out: (line: string) => void,
-  deps: { run?: ServiceRunner; options?: ServiceOptions; program?: { program: string; args: string[] } } = {},
+  deps: {
+    run?: ServiceRunner;
+    options?: ServiceOptions;
+    program?: { program: string; args: string[] };
+    packaged?: boolean;
+    appId?: string;
+    execPath?: string;
+  } = {},
 ): Promise<void> {
   const [sub, ...extra] = args;
   if (sub !== "install" && sub !== "uninstall" && sub !== "status") {
@@ -151,9 +198,17 @@ export async function serviceCommand(
   }
   if (extra.length) throw new ServiceError("service takes one subcommand: install | uninstall | status", 2);
   const run = deps.run ?? execServiceRunner;
-  const options = deps.options ?? {};
+  const label = deps.options?.label ?? (deps.appId ? serviceLabel(deps.appId) : undefined);
+  const options: ServiceOptions = label ? { ...deps.options, label } : (deps.options ?? {});
   if (sub === "install") {
-    const path = await install(buildServiceSpec(env, { label: options.label, program: deps.program }), run, options);
+    const spec = buildServiceSpec(env, {
+      label: options.label,
+      appId: deps.appId,
+      program: deps.program,
+      packaged: deps.packaged,
+      execPath: deps.execPath,
+    });
+    const path = await install(spec, run, options);
     out(`installed: botlingd starts at login (${path})`);
   } else if (sub === "uninstall") {
     await uninstall(run, options);

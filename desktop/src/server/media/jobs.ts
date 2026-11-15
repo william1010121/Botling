@@ -29,6 +29,7 @@ import { sameSig, statSig, type StatSig } from "../content/pin";
 import { mp4Meta } from "./mp4";
 import { PDF_TEXT_MAX_BYTES, type PdfText } from "./pdf-text";
 import { killLeftoverTool, PDF_TEXT_SCRIPT, runTool, ToolError, type RunOptions } from "./run";
+import type { ScriptRunner } from "../utility-process";
 import { imageSize, isLinearized, linearize, LINEARIZE_ABOVE_BYTES, makeImageThumb, makePdfThumb, pdfPages, SMALL_IMAGE_BYTES, THUMB_MAX_PX } from "./still";
 import { findTools, toolNotes, toolsSummary, type MediaTools } from "./tools";
 import { makePoster, makePreview, previewReason, probeVideo, type VideoMeta } from "./video";
@@ -84,6 +85,10 @@ export interface MediaJobsOptions {
   pdfTextScript?: string | null;
   /** false: jobs are queued but run only on `kick()` from the caller (tests). Default true. */
   autoRun?: boolean;
+  /** Packaged Electron builds cannot use ELECTRON_RUN_AS_NODE; run pdf-text via utilityProcess.fork. */
+  packaged?: boolean;
+  /** Overrides the child-process runner for PDF text jobs (Electron utilityProcess.fork when packaged). */
+  pdfTextRunner?: ScriptRunner;
 }
 
 export interface VariantFile {
@@ -352,7 +357,13 @@ export class MediaJobs {
     if (!script) return { skip: "no PDF text: the text script is not built (out/server/pdf-text.cjs)" };
     if (source.size > PDF_TEXT_MAX_BYTES) return { skip: `no PDF text: the file is above ${PDF_TEXT_MAX_BYTES} bytes` };
     try {
-      await runTool(this.tools, process.execPath, [script, source.path, out], { ...run, timeoutMs: PDF_TEXT_TIMEOUT_MS, env: { ELECTRON_RUN_AS_NODE: "1" } });
+      if (this.options.pdfTextRunner) {
+        await this.options.pdfTextRunner(script, [source.path, out], { ...run, timeoutMs: PDF_TEXT_TIMEOUT_MS });
+      } else if (this.options.packaged) {
+        return { skip: "no PDF text: packaged utility runner is unavailable" };
+      } else {
+        await runTool(this.tools, process.execPath, [script, source.path, out], { ...run, timeoutMs: PDF_TEXT_TIMEOUT_MS, env: { ELECTRON_RUN_AS_NODE: "1" } });
+      }
     } catch (error) {
       // A file pdf.js cannot read (or one that ran out of time) fails the same way again: noted, not retried.
       if (error instanceof ToolError && !this.closed) return { skip: `no PDF text: ${error.message}`.slice(0, 500) };

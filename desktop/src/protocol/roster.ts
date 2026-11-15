@@ -94,13 +94,70 @@ export const RootStatement = z.strictObject({
   if (root.gen === 1 && root.keep.length > 0) ctx.addIssue({ code: "custom", path: ["keep"], message: "gen 1 keeps nothing" });
   if (new Set(root.keep).size !== root.keep.length) ctx.addIssue({ code: "custom", path: ["keep"], message: "a revocation is kept once" });
 });
-/** `Profile{cluster, member, field, value, hlc}`: a member's display fields (last writer by hlc). */
+export const PROFILE_VALUE_LIMIT = 2_000;
+export const ProfileField = z.enum(["name", "icon", "addresses", "push"]);
+export type ProfileField = z.infer<typeof ProfileField>;
+
+/** Host names that never belong to a public push service (local, link-local and private DNS zones). */
+const PRIVATE_HOST = /(^|\.)(localhost|local|internal|home\.arpa)$/;
+
+/**
+ * Web Push endpoint URL (§18.4). Every server POSTs to it (M4-23), so a device must not be able to aim the servers at
+ * their own machine or network: https on the default port, a DNS name with a dot, no IP literal, no local zone, no
+ * credentials. A name that resolves to a private address is the sender's check at send time (M4-23).
+ */
+export const PushEndpoint = z.string().min(1).max(1_900).refine((value) => {
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port !== "") return false;
+    const host = url.hostname.toLowerCase().replace(/\.+$/, "");
+    if (!host.includes(".") || host.startsWith("[") || /^[0-9.]+$/.test(host) || PRIVATE_HOST.test(host)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}, { message: "must be an https URL of a public host on the default port" });
+
+/** Web Push device keys (RFC 8291): 65-byte uncompressed P-256 point and 16-byte auth secret, base64url. */
+export const PushKeys = z.strictObject({
+  p256dh: z.string().regex(/^[A-Za-z0-9_-]{87}$/).refine((text) => {
+    const bytes = fromBase64Url(text);
+    return bytes?.length === 65 && bytes[0] === 4;
+  }, { message: "an uncompressed P-256 point" }),
+  auth: z.string().regex(/^[A-Za-z0-9_-]{22}$/).refine((text) => fromBase64Url(text)?.length === 16, { message: "a 16-byte auth secret" }),
+});
+
+/** Web Push subscription stored in `Profile{field: "push"}` (§18.4). */
+export const PushSubscription = z.strictObject({
+  endpoint: PushEndpoint,
+  keys: PushKeys,
+}).refine((sub) => {
+  const json = canonicalJson(sub);
+  return json.length <= PROFILE_VALUE_LIMIT && utf8Bytes(json).length <= PROFILE_VALUE_LIMIT;
+}, { message: `push subscription exceeds ${PROFILE_VALUE_LIMIT} bytes` });
+export type PushSubscription = z.infer<typeof PushSubscription>;
+
+export function encodePushSubscription(sub: PushSubscription): string {
+  return canonicalJson(PushSubscription.parse(sub));
+}
+
+export function parsePushSubscription(value: string): PushSubscription | null {
+  try {
+    const parsed = PushSubscription.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `Profile{cluster, member, field, value, hlc}`: a member's profile fields (last writer by hlc). */
 export const ProfileStatement = z.strictObject({
   type: z.literal("profile"),
   cluster: ClusterId,
   member: MemberId,
-  field: z.enum(["name", "icon", "addresses"]),
-  value: z.string().max(2_000),
+  field: ProfileField,
+  value: z.string().max(PROFILE_VALUE_LIMIT),
   hlc: Hlc,
 });
 

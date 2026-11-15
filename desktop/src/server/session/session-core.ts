@@ -171,7 +171,25 @@ export interface SessionTables {
   onPeer(listener: (peer: { id: string; state: ServerState; since: number | null; dh?: string; addresses?: ServerAddresses }) => void): () => void;
   /** A peer's `srv:` table, served from this server's copy (not the log hub). */
   isPeerTable(stream: string): boolean;
+  /**
+   * This server's own `srv:` table stream (M5-14e). A front end that subs it gets the log as always and, besides, the
+   * table's `plugin:` rows as `rows` frames (`ownTableFrame`), so a page attached to one server reads its plugins as it
+   * reads a peer's. Absent: no rows (a host without table feeds).
+   */
+  isOwnTable?(stream: string): boolean;
   subscribe(stream: string, cursor: Cursor | null, sink: (message: WireMessage) => boolean): { close(): void };
+}
+
+/** The kinds of own-table rows a front end gets (M5-14e); the table's other rows (`machine`, `settings`, `audit:`, `bot:`) stay on the log path. */
+const OWN_ROW_PREFIXES = ["plugin:"] as const;
+
+/**
+ * What of the own table's feed a front end gets: `rows` frames cut to the `plugin:` rows (`after`/`to` stay, so the
+ * reader's rev still moves); anything else of the feed (its `reset`, which the log path sends itself) is dropped.
+ */
+export function ownTableFrame(frame: WireMessage): WireMessage | null {
+  if (frame.t !== "rows") return null;
+  return { ...frame, rows: frame.rows.filter((row) => OWN_ROW_PREFIXES.some((prefix) => row.key.startsWith(prefix))) };
 }
 
 export interface SessionOptions {
@@ -211,6 +229,8 @@ export abstract class SessionCore {
   private adminEvents: (() => void) | null = null;
   /** M3 step 7: feeds of peers' tables this front end subscribed to, and its listener of peer states. */
   private readonly tableFeeds = new Map<string, { close(): void }>();
+  /** M5-14e: the `plugin:` rows of this server's own table, by stream (`srv:<self>`), served beside the log `sub`. */
+  private readonly ownFeeds = new Map<string, { close(): void }>();
   /** M3 step 8: this front end's pass-through legs, by stream. */
   private readonly legs = new Map<string, { ack(cursor: Cursor): void; liveResync?(): void; close(): void }>();
   private peerEvents: (() => void) | null = null;
@@ -332,6 +352,8 @@ export abstract class SessionCore {
     this.relayOff = null;
     for (const feed of this.tableFeeds.values()) feed.close();
     this.tableFeeds.clear();
+    for (const feed of this.ownFeeds.values()) feed.close();
+    this.ownFeeds.clear();
     for (const leg of this.legs.values()) leg.close();
     this.legs.clear();
     for (const timer of this.timers) { clearTimeout(timer); clearInterval(timer); }
@@ -387,6 +409,7 @@ export abstract class SessionCore {
         return;
       case "content.put": case "content.chunk": this.queueUpload(message); return;
       case "admin": void this.admin(message); return;
+      case "push.subscribe": if (this.kind.local) this.bye("role", "push.subscribe is only for a remote device session"); return;
       case "shell.done": this.host.shell.answer(this.shellWindow(), message); return;
       case "ping": return;
       case "bye": this.close(); return;
@@ -524,6 +547,14 @@ export abstract class SessionCore {
       if (await this.host.ensureBotStream(stream.slice(4))) result = await reader.sub(stream, cursor);
     }
     if (!result.ok) { this.host.log(`session: sub ${stream} refused (${result.reason})`); return; }
+    if (tables?.isOwnTable?.(stream)) {
+      // M5-14e: the own table's plugin rows, whole at each (re)sub (no cursor: the log's is not the table's), then deltas.
+      this.ownFeeds.get(stream)?.close();
+      this.ownFeeds.set(stream, tables.subscribe(stream, null, (frame) => {
+        const own = ownTableFrame(frame);
+        return own ? this.sendWire(own) : this.state !== "closed";
+      }));
+    }
     if (stream.startsWith("bot:") && !this.lives.has(stream) && this.state === "open") {
       // M1: the live subscription starts with the log one, not after the catch-up batches (§9.4); the receiver takes a
       // whole-segment frame at any time, so text is only shown early, never lost.
@@ -539,6 +570,8 @@ export abstract class SessionCore {
     if (leg) { leg.close(); this.legs.delete(stream); this.gate.remove(stream); return; }
     const feed = this.tableFeeds.get(stream);
     if (feed) { feed.close(); this.tableFeeds.delete(stream); return; }
+    this.ownFeeds.get(stream)?.close();
+    this.ownFeeds.delete(stream);
     this.reader?.unsub(stream);
     this.lives.get(stream)?.close();
     this.lives.delete(stream);

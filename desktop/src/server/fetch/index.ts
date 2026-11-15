@@ -4,3 +4,4 @@ export {
   type BotId, type ClassifyInput, type ClassifyResult, type DenyPattern, type FetchWhat,
 } from "./policy";
 export { FETCH_RESUME_WINDOW_MS, FetchRequester, incomingDirName, type FetchFailure, type FetchPeer, type FetchRequesterOptions, type FetchResult } from "./requester";
+export { createAppFetch, fetchResultText, machineLabel, machineName, type AppFetchDeps, type AppFetchRequest } from "./app-fetch";
