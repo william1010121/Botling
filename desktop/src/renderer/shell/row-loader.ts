@@ -13,6 +13,13 @@
 // The instance of a plugin here is named `web:<plugin>`: the plugin feed (plugin-feed.ts) holds the instance named as the plugin
 // is, for its view rows, and the two must not take each other's name.
 //
+// Hot update and a server switch (M7-09c, Q-M7-C1): a newer row never waits behind a fetch of an older one (the older step is let go and
+// the new one starts at once), so a bundle that never answers cannot hold an update past the 5 s the plan allows. When the front end
+// attaches to ANOTHER server (`switchServer`, told by `followRows`), what was being fetched for the old server is dropped and what
+// failed there is tried again; nothing is torn down on a guess: the plugins that run keep running until the new server's own rows
+// come, and then `reconcile` decides each one by its (name, codeHash, bundle): the same keeps running untouched, another swaps (D64,
+// D65), one the new server lacks unloads. Outbox items are not touched (they stay the shell's).
+//
 // An outbox item stamped `via` by the old code keeps that `via` (the outbox writes it once); this module only decides where its
 // one outcome is shown: on the live instance of that plugin, or, when there is none, in the shell's pending view (§13.1).
 //
@@ -205,6 +212,10 @@ export class RowLoader {
   private readonly listeners = new Set<() => void>();
   private readonly sinks = new Map<string, Set<(item: OutcomeItem) => void>>();
   private readonly delivered = new Set<string>();
+  /** A fetch of a web part that is under way, by plugin: `wake` lets its step go (the row moved on, or the server did). */
+  private readonly fetching = new Map<string, { key: string; wake: () => void }>();
+  /** Counts the server switches: a step that began before one is of the old server and does nothing more (M7-09c). */
+  private epoch = 0;
   private readonly inPage: InPageLoader;
   private readonly log: (line: string) => void;
   private stopped = false;
@@ -225,8 +236,21 @@ export class RowLoader {
   reconcile(rows: ReadonlyMap<string, unknown> | null | undefined): Promise<void> {
     if (this.stopped) return Promise.resolve();
     this.plans = plansOf(rows);
+    // A fetch for a plan that is not the row's now is let go: the newer step is queued behind it and must not wait for its bytes.
+    for (const [name, held] of this.fetching) { const plan = this.plans.get(name); if (!plan || planKey(plan) !== held.key) held.wake(); }
     const names = new Set([...this.applied.keys(), ...this.plans.keys(), ...this.chains.keys()]);
     return Promise.all([...names].map((name) => this.enqueue(name))).then(() => undefined);
+  }
+
+  /**
+   * The front end is attached to another server now (its rows are not here yet). Whatever was being fetched for the old server is
+   * dropped, and a plan that failed there is not "failed" for the new one. Plugins that run keep running until `reconcile` gets the
+   * new server's rows.
+   */
+  switchServer(): void {
+    this.epoch += 1;
+    this.failed.clear();
+    for (const held of [...this.fetching.values()]) held.wake();
   }
 
   /** Tries again the plugins that failed (a re-attach: the bytes may be there now). */
@@ -297,6 +321,7 @@ export class RowLoader {
   async stop(): Promise<void> {
     this.stopped = true;
     this.plans = new Map();
+    for (const held of [...this.fetching.values()]) held.wake();
     await Promise.all([...new Set([...this.applied.keys(), ...this.chains.keys()])].map((name) => this.enqueue(name)));
     this.listeners.clear();
   }
@@ -316,20 +341,21 @@ export class RowLoader {
     return run;
   }
 
-  /** Whether the plan the step began with is still the row's. A newer step is queued behind this one and will do it. */
-  private current(name: string, key: string): boolean {
+  /** Whether the plan the step began with is still the row's, of the same server. A newer step is queued behind this one and will do it. */
+  private current(name: string, key: string, epoch: number): boolean {
     const plan = this.plans.get(name);
-    return !this.stopped && !!plan && planKey(plan) === key;
+    return !this.stopped && epoch === this.epoch && !!plan && planKey(plan) === key;
   }
 
   private async sync(name: string): Promise<void> {
     const plan = this.plans.get(name);
     if (!plan) { await this.remove(name); return; }
     const key = planKey(plan);
+    const epoch = this.epoch;
     if (this.applied.get(name) === key || this.failed.get(name) === key) return;
     // 1. The build's own copy, when the build shipped exactly this code.
     const result = await this.inPage.load(name, plan.codeHash);
-    if (!this.current(name, key)) return;
+    if (!this.current(name, key, epoch)) return;
     if (result.status === "loaded") {
       await this.dropFrame(name);
       this.where.set(name, "page");
@@ -350,21 +376,28 @@ export class RowLoader {
       this.failed.delete(name);
       return;
     }
-    let source: string;
+    let wake!: () => void;
+    const letGo = new Promise<null>((resolve) => { wake = () => resolve(null); });
+    const held = { key, wake };
+    this.fetching.set(name, held);
+    let source: string | null;
     try {
-      source = await this.options.fetch({ plugin: name, ref: plan.ref });
+      source = await Promise.race([this.options.fetch({ plugin: name, ref: plan.ref }), letGo]);
       // Whatever the fetcher is, these bytes are checked against the row's reference before they can run (FU-6).
-      if (!bundleMatches(source, plan.ref)) throw new BundleRefusedError("the bytes are not the web part its row names");
+      if (source !== null && !bundleMatches(source, plan.ref)) throw new BundleRefusedError("the bytes are not the web part its row names");
     } catch (error) {
       // The old code, if any, keeps running: nothing was undone for a web part that could not be had or was refused.
-      this.failed.set(name, key);
+      // A failure that belongs to a row or a server that is gone is not recorded on the plan of the new one.
+      if (this.current(name, key, epoch)) this.failed.set(name, key);
       const why = quoted((error as Error)?.message ?? error);
       this.log(error instanceof BundleRefusedError
         ? `row loader: the web part of ${quoted(name)} was refused (the old code, if any, keeps running): ${why}`
         : `row loader: the web part of ${quoted(name)} was not loaded: ${why}`);
       return;
+    } finally {
+      if (this.fetching.get(name) === held) this.fetching.delete(name);
     }
-    if (!this.current(name, key)) return;
+    if (source === null || !this.current(name, key, epoch)) return;
     await this.startFrame(plan, key, source);
   }
 
@@ -438,13 +471,16 @@ export interface RowsLink {
  * does not hold yet (an older server sends none) changes nothing. Returns the undo.
  */
 export function followRows(loader: RowLoader, link: RowsLink): () => void {
+  // The server whose rows the loader holds. Another server attached (M7-09c, Q-M7-C1): its rows replace the list when they come.
+  let followed = link.server;
   const sync = () => {
     const server = link.server;
+    if (server !== followed) { followed = server; loader.switchServer(); }
     const table = server ? link.table?.(server) : null;
     if (table) void loader.reconcile(table.rows);
   };
   const off = link.on((event) => {
-    if (event.type === "attached" && event.attached) { void loader.retry(); sync(); return; }
+    if (event.type === "attached" && event.attached) { sync(); void loader.retry(); return; }
     if (event.type === "servers" && link.server && (!event.table || event.table.stream === `srv:${link.server}`)) sync();
   });
   sync();
