@@ -58,18 +58,12 @@ describe("botlingd pair / devices / revoke-device (built, plain Node)", () => {
 
       pair = pairProcess(dir);
       const codeLine = (await pair.line((line) => /^\s+([A-Z2-7]{4}-){6}[A-Z2-7]{2}$/.test(line), "the recovery code")).trim();
-      await pair.line((line) => line.startsWith("Recovery code"), "the prompt");
-      // While it waits to be typed back: no cluster, and status says why.
-      const waiting = botlingdCommand(dir, ["status"]);
-      expect(waiting.stdout).toContain("note: The recovery code was shown but not typed back yet");
-      expect(waiting.stdout).toContain("cluster: none yet");
-      expect(JSON.parse(botlingdCommand(dir, ["status", "--json"]).stdout)).toMatchObject({ clusterId: null, recoveryNote: expect.stringContaining("not typed back") });
-      pair.type("AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA");
-      await pair.line((line) => line === "That is not the code shown above.", "the wrong-code answer");
-      expect(botlingdCommand(dir, ["status"]).stdout).toContain("cluster: none yet");
-      pair.type(codeLine);
-      const created = await pair.line((line) => /^Cluster [0-9a-f]{32} created\.$/.test(line), "the cluster");
-      const clusterId = created.split(" ")[1]!;
+      const created = await pair.line((line) => /^This is the first pairing, so it created your Botling cluster \([0-9a-f]{32}\)\.$/.test(line), "the cluster");
+      const clusterId = created.match(/\(([0-9a-f]{32})\)/)![1]!;
+      await pair.line((line) => line.startsWith("Press Enter once you have saved it"), "the prompt");
+      // Made at once: nothing is typed back, and status no longer says "none yet".
+      expect(botlingdCommand(dir, ["status"]).stdout).not.toContain("cluster: none yet");
+      pair.type("");
       const link = await pair.line((line) => line.startsWith("https://"), "the link");
       const offer = parsePairLink(link)!;
       expect(offer.cluster).toBe(clusterId);

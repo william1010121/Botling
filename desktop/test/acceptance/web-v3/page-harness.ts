@@ -78,8 +78,8 @@ export class PairCli {
   async link(): Promise<string> {
     const first = await until(() => this.lines.find((l) => l.startsWith("https://") || /^\s+([A-Z2-7]{4}-){6}[A-Z2-7]{2}$/.test(l)), { timeout: 30_000, what: "the link or the recovery code" });
     if (!first.startsWith("https://")) {
-      await this.line((l) => l.startsWith("Recovery code"), "the recovery prompt");
-      this.type(first.trim());
+      await this.line((l) => l.startsWith("Press Enter"), "the saved-it prompt");
+      this.type("");
     }
     return this.line((l) => l.startsWith("https://"), "the pairing link");
   }

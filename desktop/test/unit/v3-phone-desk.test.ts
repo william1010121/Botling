@@ -2,7 +2,7 @@
 // (src/server/pairing/phone-desk.ts over the v3 PairingService) and its relay setting, never by the 2.x core inside it.
 // - the routes: the six phone commands are `local` (a req on this machine's socket, never a slot: a pairing link is a
 //   secret and must never reach a log entry), the window adapter sends them as reads, a device is refused;
-// - PhoneDesk: the first pairing makes the cluster (recovery code shown once, typed back), offers become the link the
+// - PhoneDesk: the first pairing makes the cluster (at once; recovery code shown once, never typed back), offers become the link the
 //   QR shows, a `pair.code` event shows the 6-digit code to compare, the window accepts or rejects once, devices list
 //   and revoke, the relay address is kept and switched;
 // - botlingd itself (in process, a local relay): Settings › Phone turns the relay on live, pairs at the relay's page,
@@ -114,7 +114,7 @@ describe("the phone commands' routes in Botling 3", () => {
 });
 
 describe("PhoneDesk: Settings › Phone over the v3 pairing", () => {
-  it("makes the cluster first (recovery code shown once, typed back), then an offer whose link the QR shows; no secret in the view", async () => {
+  it("makes the cluster first (at once, recovery code shown once, never typed back), then an offer whose link the QR shows; no secret in the view", async () => {
     const { pairing } = await realPairing();
     const relay = fakeRelay();
     const desk = new PhoneDesk({ pairing, relay });
@@ -125,9 +125,8 @@ describe("PhoneDesk: Settings › Phone over the v3 pairing", () => {
     const made = await run(desk, { type: "mobile.cluster" }) as { ok: boolean; code: string; expiresAt: number };
     expect(made.ok).toBe(true);
     expect(made.code.replace(/[\s-]/g, "")).toMatch(/^[A-Z2-7]{26}$/);
-    expect((await run(desk, { type: "mobile.view" }) as any).v3.cluster).toBe("confirming");
-    expect(await run(desk, { type: "mobile.cluster", code: "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA" })).toMatchObject({ ok: false, reason: "wrong-code" });
-    expect(await run(desk, { type: "mobile.cluster", code: made.code.toLowerCase() })).toEqual({ ok: true });
+    // Made at once: nothing is typed back (a later type-back is told the cluster exists).
+    expect(await run(desk, { type: "mobile.cluster", code: made.code })).toMatchObject({ ok: false, reason: "cluster-exists" });
     const ready = await run(desk, { type: "mobile.view" }) as any;
     expect(ready.v3.cluster).toBe("ready");
     expect(JSON.stringify(ready)).not.toContain(made.code);
@@ -148,8 +147,7 @@ describe("PhoneDesk: Settings › Phone over the v3 pairing", () => {
     const { pairing, emit } = await realPairing();
     const desk = new PhoneDesk({ pairing, relay: fakeRelay() });
     cleanups.push(() => desk.close());
-    const made = await run(desk, { type: "mobile.cluster" }) as { code: string };
-    await run(desk, { type: "mobile.cluster", code: made.code });
+    await run(desk, { type: "mobile.cluster" });
     const { offer } = await run(desk, { type: "mobile.pair" }) as { offer: string };
     await expect(run(desk, { type: "mobile.confirm", offer, accept: true })).rejects.toThrow(/not waiting/);
     emit({ kind: "pair.code", offer, code: "042917", deviceId: DEVICE, deviceName: "iPhone" });
@@ -258,7 +256,7 @@ describe("botlingd answers Settings › Phone (in process, a local relay)", () =
     await until(async () => (await req({ type: "mobile.view" })).relay.state === "online", { timeout: 15_000, what: "the relay online" });
 
     const made = await req({ type: "mobile.cluster" });
-    expect(await req({ type: "mobile.cluster", code: made.code })).toEqual({ ok: true });
+    expect(made).toMatchObject({ ok: true, code: expect.any(String) });
     const offer = await req({ type: "mobile.pair" });
     expect(offer.url.startsWith(`http://127.0.0.1:${relay.port}/v3/#pair=`)).toBe(true);
     const parsed = parsePairLink(offer.url)!;
@@ -303,7 +301,7 @@ describe("botlingd answers Settings › Phone (in process, a local relay)", () =
     };
     expect((await req({ type: "mobile.view" })).relay.url).toBe(relay.url);
     const made = await req({ type: "mobile.cluster" });
-    await req({ type: "mobile.cluster", code: made.code });
+    expect(made.ok).toBe(true);
     expect(parsePairLink((await req({ type: "mobile.pair" })).url)!.addresses.relay?.url).toBe(relay.url);
     await req({ type: "mobile.relay", url: null });
     const offer = await req({ type: "mobile.pair" });

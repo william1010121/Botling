@@ -19,7 +19,8 @@
 //               keys, compares a new code, and gets the same (already committed) Add.
 //
 // The cluster is made at the first pairing (§4.8): no offer is made before it exists, so `botlingd pair` (and the desktop
-// window) first runs `cluster.create` (the recovery code is shown once) and `cluster.confirm` (typed back). Admin
+// window) first runs `cluster.create`: the cluster is made at once and its recovery code is shown once (nothing is typed
+// back; `cluster.confirm` remains for the older two-step setup). Admin
 // requests come only from the local socket (the role table keeps `admin` off every other session) or the CLI over it.
 import {
   addJoins, DeviceScope, fromBase64Url, memberFingerprint, pairLink, PAIR_OFFER_TTL_MS, PAIR_PENDING_LIMIT, PairOffer, toBase64Url,
@@ -283,9 +284,9 @@ export class PairingService {
         return { clusterId: this.options.roster.clusterId, pending: waiting ? { expiresAt: waiting.expiresAt } : null, note: this.options.cluster.note() };
       }
       case "cluster.create": {
-        const started = await this.options.cluster.begin();
-        this.options.log?.(`pairing: a recovery code was shown for cluster ${started.clusterId} (not stored; waiting to be typed back)`);
-        return started;
+        const made = await this.options.cluster.create();
+        this.options.log?.(`pairing: cluster ${made.clusterId} created (its recovery code was shown once, not stored)`);
+        return made;
       }
       case "cluster.confirm": {
         const result = await this.options.cluster.confirm(op.code);
@@ -314,7 +315,7 @@ export class PairingService {
   /** A new offer and its link. Refused before the cluster exists and while 5 offers are pending. */
   createOffer(input: { name?: string; scope?: readonly DeviceScope[] } = {}): PairOfferResult {
     const clusterId = this.options.roster.clusterId;
-    if (clusterId === null) throw new PairingError("no-cluster", "there is no cluster yet: create it first (the recovery code is shown once and typed back)");
+    if (clusterId === null) throw new PairingError("no-cluster", "there is no cluster yet: create it first (its recovery code is shown once)");
     this.prune();
     if (this.offers.size >= PAIR_PENDING_LIMIT) throw new PairingError("limit", `at most ${PAIR_PENDING_LIMIT} pairing offers are pending; cancel one or wait for one to expire`);
     const addresses = this.options.addresses();

@@ -634,7 +634,7 @@ describe("the CLI over a real local socket", () => {
     await watcher;
     expect(code).toBe(0);
     expect(tries).toBe(1);
-    expect(io.lines.some((line) => line.startsWith("Cluster ") && line.endsWith(" created."))).toBe(true);
+    expect(io.lines.some((line) => line.startsWith("This is the first pairing, so it created your Botling cluster"))).toBe(true);
     expect(io.lines.some((line) => line.includes("█") || line.includes("▀"))).toBe(true); // the QR
     expect(io.lines.at(-1)).toMatch(new RegExp(`^Paired: ${keys.member} `));
     expect(s.roster.device(keys.member)).not.toBeNull();

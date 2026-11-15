@@ -5,8 +5,8 @@
 //
 //   mobile.view     the cluster's state, the relay (address, connected or not, fixed by BOTLING_SERVER_RELAY_URL), the
 //                   pairings this window started and the valid paired phones. Never a link, a secret or a recovery code.
-//   mobile.cluster  the first pairing makes the cluster (§4.8): without a code a new recovery code (shown once, never
-//                   kept here), with one the code typed back.
+//   mobile.cluster  the first pairing makes the cluster (§4.8): without a code the cluster at once and its recovery
+//                   code (shown once in a dialog, never kept here); with one the older type-back confirm.
 //   mobile.pair     a new offer (service.createOffer): the link the window shows as a QR, its expiry, its offer id.
 //   mobile.confirm  the person compared the 6-digit code (`pair.code` event) with the phone's: accept adds the phone,
 //                   reject burns the offer. Only an offer this window made that waits for exactly that check (L-008); a
@@ -113,8 +113,8 @@ export class PhoneDesk {
 
   private async cluster(code: string | undefined): Promise<MobileClusterView> {
     if (code === undefined) {
-      const started = await this.admin({ op: "cluster.create" }) as { code: string; expiresAt: number };
-      return { ok: true, code: started.code, expiresAt: started.expiresAt };
+      const made = await this.admin({ op: "cluster.create" }) as { code: string };
+      return { ok: true, code: made.code };
     }
     const op = AdminOp.safeParse({ op: "cluster.confirm", code });
     if (!op.success) return { ok: false, reason: "malformed" };

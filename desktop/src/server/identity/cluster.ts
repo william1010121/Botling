@@ -7,6 +7,10 @@
 //                        null}` is signed with it and stored with `meta.clusterId` in one transaction. The private key
 //                        is dropped right after signing.
 //
+//   create()          → begin() and confirm() in one go (the first pairing in Settings › Phone and `botlingd pair`): the
+//                        cluster exists at once and the code is returned to be shown once, like an API key. Nothing
+//                        has to be typed back; the key material and the code are made exactly as above.
+//
 // The code is never written anywhere by the server (not server.db, not a file, not the log); after `begin` returns
 // it lives only in the caller's hands. A wrong code changes nothing; the pending setup stays until it expires.
 // No cluster exists until the code was confirmed, so "unconfirmed" is only ever a pending setup (`note`).
@@ -75,6 +79,14 @@ export class ClusterSetup {
     await this.roster.createCluster(root, pending.clusterId);
     this.pending = null;
     return { ok: true, clusterId: pending.clusterId, rootId: root.id };
+  }
+
+  /** Makes the cluster now and returns its recovery code, to be shown once (nothing is typed back). */
+  async create(): Promise<{ code: string; clusterId: string }> {
+    const started = await this.begin();
+    const made = await this.confirm(started.code);
+    if (!made.ok) throw new Error(made.reason === "cluster-exists" ? "this server already belongs to a cluster" : `the cluster was not made (${made.reason})`);
+    return { code: started.code, clusterId: made.clusterId };
   }
 
   /** Forgets a pending setup (the pairing was cancelled). */

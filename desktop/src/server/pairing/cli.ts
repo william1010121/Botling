@@ -3,8 +3,8 @@
 // Input and output are injected, so tests drive the same code.
 //
 //   pair [--name <device name>] [--scope read,reply,approve,manage]
-//     1. No cluster yet (the first pairing): the recovery code is shown once and must be typed back; the cluster exists
-//        only after that (three tries; otherwise nothing is made).
+//     1. No cluster yet (the first pairing): the cluster is made and its recovery code shown once; Enter goes on
+//        (nothing is typed back).
 //     2. An offer: the link (its fragment holds the one-time secret) and the same as a QR code, valid 5 minutes.
 //     3. A device answers: both screens show a 6-digit code; the user says whether they match.
 //     4. The device acknowledges its Add: done. A lost ack gives the offer back (the device may retry until it expires).
@@ -97,31 +97,23 @@ export async function pairCommand(client: AdminClient, io: CliIo, options: { nam
   }
 }
 
-/** The first pairing makes the cluster: the recovery code shown once, then typed back. */
+/** The first pairing makes the cluster: its recovery code is shown once, like an API key; Enter goes on. */
 async function createCluster(client: AdminClient, io: CliIo): Promise<boolean> {
-  const started = await client.request({ op: "cluster.create" }) as { code: string; clusterId: string; expiresAt: number };
-  io.out("This is the first pairing, so it creates your Botling cluster.");
-  io.out("Your recovery code (shown once; write it down or keep it in a password manager, never in Botling):");
-  io.out("");
-  io.out(`    ${started.code}`);
-  io.out("");
-  io.out("It is needed to replace this machine as the cluster's root if it is ever lost. Type it back to confirm.");
-  for (let attempt = 1; attempt <= RECOVERY_TRIES; attempt++) {
-    const typed = await io.ask("Recovery code: ", { secret: true });
-    if (typed === null) break;
-    let result: { ok: boolean; reason?: string; clusterId?: string };
-    try {
-      result = await client.request({ op: "cluster.confirm", code: typed }) as typeof result;
-    } catch (error) {
-      if (!(error instanceof AdminRefused)) throw error;
-      result = { ok: false, reason: "malformed" };
-    }
-    if (result.ok) { io.out(`Cluster ${result.clusterId} created.`); return true; }
-    if (result.reason === "expired" || result.reason === "no-setup") break;
-    io.out(result.reason === "malformed" ? "That is not a recovery code (26 letters and digits)." : "That is not the code shown above.");
+  let made: { code: string; clusterId: string };
+  try {
+    made = await client.request({ op: "cluster.create" }) as typeof made;
+  } catch (error) {
+    io.out(`Cannot create the cluster: ${errorText(error)}`);
+    return false;
   }
-  io.out("The recovery code was not confirmed, so no cluster was made. Run botlingd pair again for a new code.");
-  return false;
+  io.out(`This is the first pairing, so it created your Botling cluster (${made.clusterId}).`);
+  io.out("Your recovery code (shown once; keep it in a password manager, never in Botling):");
+  io.out("");
+  io.out(`    ${made.code}`);
+  io.out("");
+  io.out("It lets you reconnect your devices if this machine is lost. You won't see it again.");
+  await io.ask("Press Enter once you have saved it. ");
+  return true;
 }
 
 /** `botlingd devices`. */
