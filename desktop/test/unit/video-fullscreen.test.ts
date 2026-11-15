@@ -14,7 +14,7 @@ const policy = (allow: string | undefined) => (allow ?? "").split(";").map(part 
 describe("chat video fullscreen", () => {
   it("the chat frame's permissions policy grants fullscreen, on the main chat and on takeover pages", () => {
     expect(policy(CHAT_FRAME_ALLOW)).toContain("fullscreen");
-    for (const file of ["src/renderer/App.tsx", "src/renderer/TakeoverPage.tsx"]) {
+    for (const file of ["src/renderer/chat-frame/ChatFrame.tsx","src/renderer/TakeoverPage.tsx"]) {
       const source = readFileSync(join(desktop, file), "utf8");
       const frames = source.match(/<iframe[^>]*CHAT_PAGE[^>]*>/g) ?? [];
       expect(frames.length, file).toBeGreaterThan(0);
