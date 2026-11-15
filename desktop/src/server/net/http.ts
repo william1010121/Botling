@@ -1,4 +1,4 @@
-// botlingd's one network listener (M2 step 6, protocol v1 §6.1, §18.3, D21): plain HTTP on 127.0.0.1 only, never another
+// botlingd's one network listener (M2 step 6, protocol v1 §6.1, §18.3, D21, D71): plain HTTP on 127.0.0.1 only, never another
 // interface. `tailscale serve` (run by the user, never by botlingd; `botlingd status` prints the command) publishes it
 // at the machine's tailnet HTTPS name.
 //
@@ -9,8 +9,9 @@
 // Every answer carries the security headers below (CSP `script-src 'self'`, no sniffing, no referrer, framing only by
 // the page itself). The page is static: nothing here reads a cookie, a query or a body; `/v3/c/` reads only its query
 // (the entry and the ticket), never a cookie. The WebSocket upgrade is taken
-// only on `/v3/ws`, only with no Origin (a non-browser client) or an Origin this server is reached at; everything after
-// it is the session layer's business (no frame is parsed before its roster check).
+// only on `/v3/ws`, only with no Origin (a non-browser client) or an exact-match Origin this server is reached at, a
+// valid cluster server's tailnet origin, or the relay's origin (D71); everything after it is the session layer's business
+// (no frame is parsed before its roster check).
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
@@ -58,9 +59,29 @@ export const FRAME_HOST_CSP = [
   "font-src data:", "media-src data: blob:", "connect-src 'none'", "frame-src 'none'", "child-src 'none'", "worker-src 'none'", "form-action 'none'", "base-uri 'none'",
 ].join("; ");
 
-/** The page's policy with extra `connect-src` origins (the relay's WebSocket origin, M2 step 13); CSP itself without. */
+function isExactWsOrigin(origin: string): boolean {
+  if (!/^wss?:\/\/[A-Za-z0-9.\[\]:-]+$/.test(origin)) return false;
+  try {
+    const parsed = new URL(origin);
+    return (parsed.protocol === "ws:" || parsed.protocol === "wss:") && parsed.origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+function isExactHttpOrigin(origin: string): boolean {
+  if (!/^https?:\/\/[A-Za-z0-9.\[\]:-]+$/.test(origin)) return false;
+  try {
+    const parsed = new URL(origin);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+/** The page's policy with extra `connect-src` origins (the relay and valid cluster servers' tailnet WebSocket origins, M2 step 13 / D71); CSP itself without. */
 export function cspWith(connect: readonly string[]): string {
-  const extra = connect.filter((origin) => /^wss?:\/\/[A-Za-z0-9.\[\]:-]+$/.test(origin));
+  const extra = connect.filter(isExactWsOrigin);
   if (!extra.length) return CSP;
   return CSP.replace("connect-src 'self'", `connect-src 'self' ${[...new Set(extra)].join(" ")}`);
 }
@@ -120,14 +141,14 @@ export interface LoopbackListenerOptions {
   remote: SessionAcceptor;
   /** The built page (web-v3/dist), or null for the placeholder. */
   pageDir: string | null;
-  /** https origins the page is reached at (the tailnet origin), besides the loopback ones. */
+  /** Exact http(s) origins allowed on `/v3/ws` (this server's tailnet origin, valid cluster servers' tailnet origins, and the relay's origin, D71), besides the loopback ones. */
   origins: () => string[];
   log: (line: string) => void;
   maxHandshaking?: number;
   maxConnections?: number;
   /** `/v3/c/…` (step 9): GET/HEAD byte ranges of a chat line's file; without it those answer 501. */
   content?: ContentEndpoint;
-  /** Origins the page may open WebSockets to besides its own (the relay, M2 step 13), added to `connect-src`. */
+  /** WebSocket origins the page may open besides its own (the relay and valid cluster servers' tailnet origins, D71), added to `connect-src`. */
   connectOrigins?: () => string[];
 }
 
@@ -169,10 +190,14 @@ export class LoopbackListener {
   get address(): AddressInfo { return this.server.address() as AddressInfo; }
   get port(): number { return this.address.port; }
 
-  /** Origins a browser may open `/v3/ws` from: the loopback ones and the configured tailnet origin. */
+  /** Exact origins a browser may open `/v3/ws` from: loopback, configured tailnet/cluster server origins, and relay (D71). */
   allowedOrigins(): Set<string> {
     const port = this.port;
-    return new Set([`http://${LISTEN_HOST}:${port}`, `http://localhost:${port}`, ...this.options.origins()]);
+    const allowed = new Set([`http://${LISTEN_HOST}:${port}`, `http://localhost:${port}`]);
+    for (const origin of this.options.origins()) {
+      if (isExactHttpOrigin(origin)) allowed.add(origin);
+    }
+    return allowed;
   }
 
   private upgrade(request: IncomingMessage, raw: Duplex, head: Buffer): void {

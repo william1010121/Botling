@@ -41,7 +41,7 @@ import { Gossip, PrefsStore, RosterStore } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
-import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
+import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
 import { followedStreams, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, SummaryRows, TableFeeds } from "./replica";
@@ -54,7 +54,42 @@ export const PLACEHOLDER_TAILNET_ORIGIN = "https://tailnet-name.invalid";
 /** The https origin a device reaches this server at over the tailnet (set by the user once `tailscale serve` runs), or null. */
 export function tailnetOrigin(env: Record<string, string | undefined>): string | null {
   const value = (env.BOTLING_SERVER_TAILNET_ORIGIN ?? "").trim().replace(/\/+$/, "");
-  return /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?$/.test(value) ? value : null;
+  if (!/^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?$/.test(value)) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && parsed.pathname === "/" && !parsed.search && !parsed.hash ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * D71: exact origins for the page's `connect-src` (`wss://` tailnet origins of valid cluster servers and the relay)
+ * and for `/v3/ws` (`https://` tailnet origins of valid cluster servers, own tailnet origin, and the relay HTTP origin).
+ */
+export function clusterOrigins(
+  roster: Pick<RosterStore, "view" | "profile">,
+  ownTailnetOrigin: string | null,
+  relayUrlValue: string | null,
+): { origins: string[]; connectOrigins: string[] } {
+  const origins = new Set<string>();
+  const connectOrigins = new Set<string>();
+  if (ownTailnetOrigin) origins.add(ownTailnetOrigin);
+  if (relayUrlValue) {
+    connectOrigins.add(relayConnectOrigin(relayUrlValue));
+    const parsed = new URL(relayUrlValue);
+    origins.add(`${parsed.protocol === "wss:" ? "https:" : "http:"}//${parsed.host}`);
+  }
+  const view = roster.view;
+  for (const member of view.valid) {
+    if (!view.servers.has(member)) continue;
+    const tailnet = peerAddresses(roster.profile(member, "addresses")).tailnet;
+    if (!tailnet) continue;
+    const host = new URL(tailnet).host;
+    origins.add(`https://${host}`);
+    connectOrigins.add(`wss://${host}`);
+  }
+  return { origins: [...origins].sort(), connectOrigins: [...connectOrigins].sort() };
 }
 
 /** The oldest Botling 3 window this server serves (fe-link compares it without the -suffix). */
@@ -469,7 +504,7 @@ export class Botlingd {
         daemon.relay = relay;
       }
       await server.listen();
-      await daemon.listen(port, options.outDir, origin, relayRoom ? [relayConnectOrigin(relayRoom.url)] : []);
+      await daemon.listen(port, options.outDir, origin);
       await daemon.relay?.start();
       await daemon.writeOwnProfile((at) => advertisedPort(env, at));
       peers.start();
@@ -493,16 +528,21 @@ export class Botlingd {
    * The loopback listener on 127.0.0.1:`port` (null = off). A port already taken does not stop the server: the local
    * socket keeps working, the log and `botlingd status` say why devices cannot reach it.
    */
-  private async listen(port: number | null, outDir: string, origin: string | null, connectOrigins: string[] = []): Promise<void> {
+  private async listen(port: number | null, outDir: string, origin: string | null): Promise<void> {
     const file = join(this.paths.dataDir, LISTEN_FILE);
     rmSync(file, { force: true });
     if (port === null) { this.log("listener: off (BOTLING_SERVER_PORT=off)"); return; }
     let state: Record<string, unknown>;
     try {
       this.listener = await LoopbackListener.start({
-        port, remote: new SessionRouter(this.remote, this.peers, undefined, this.join), pageDir: defaultPageDir(outDir), origins: () => (origin ? [origin] : []), log: this.log,
+        port,
+        remote: new SessionRouter(this.remote, this.peers, undefined, this.join),
+        pageDir: defaultPageDir(outDir),
+        // D71: exact origins of valid cluster servers, own tailnet origin, and the relay; revoked servers drop out at once.
+        origins: () => clusterOrigins(this.roster, origin, this.relayAddress?.url ?? null).origins,
+        connectOrigins: () => clusterOrigins(this.roster, null, this.relayAddress?.url ?? null).connectOrigins,
+        log: this.log,
         ...(this.remoteContent ? { content: this.remoteContent } : {}),
-        ...(connectOrigins.length ? { connectOrigins: () => connectOrigins } : {}),
       });
       state = { pid: process.pid, address: LISTEN_HOST, port: this.listener.port };
     } catch (error) {
