@@ -5,6 +5,7 @@
 //          turn   a turn kept aside in this process is released (the same core Turn); otherwise the engine starts it
 //                 from the row (chat.send: the user's text and ids; an answer's or routine's turn: its words and ids)
 //          remove the engine removes the bot (idempotent), then the row is `finished`
+//          callin the call-in runner (server/callin/guest.ts) runs the guest's turn and ends the row itself (M5-02b)
 //
 // A row is `started` (committed) before the engine is asked, so a turn is begun at most once: a crash after that makes
 // it `interrupted` at the next start (recovery.ts), never started again. The turn's row ends with its `turn.finished`
@@ -18,11 +19,16 @@ import { appendFitted, clearLive } from "./log-ops";
 import type { TxScope } from "./scope";
 import { moveEffect, queuedEffects, readEffect, type EffectRow, type TurnPayload } from "./table";
 
+/** What runs a `callin` row (M5-02b, server/callin/guest.ts); it ends the row itself. */
+export interface CallInRunner { run(row: EffectRow): Promise<void> }
+
 export interface EffectWorkerOptions {
   scope: TxScope;
   engine: TurnEngine;
   now?: () => number;
   log?: (line: string) => void;
+  /** Runs `callin` rows (none: such a row is cancelled, nothing runs). */
+  callIns?: CallInRunner;
   /** Rows taken per command. */
   batch?: number;
 }
@@ -147,6 +153,7 @@ export class EffectWorker {
 
   private async run(row: EffectRow): Promise<void> {
     if (row.kind === "remove") return this.runRemove(row);
+    if (row.kind === "callin") return this.runCallIn(row);
     const payload = row.payload as TurnPayload;
     const turnId = row.turnId!;
     let running: TurnRunning;
@@ -191,6 +198,21 @@ export class EffectWorker {
     void running.done?.then((status) => {
       setImmediate(() => { void this.closeRow(row, status); });
     }, () => {});
+  }
+
+  private async runCallIn(row: EffectRow): Promise<void> {
+    try {
+      if (!this.options.callIns) throw new Error("this server has no call-in runner");
+      await this.options.callIns.run(row);
+    } catch (error) {
+      this.options.log?.(`effects: call-in ${row.effectId} of ${row.botId} failed (${errorText(error)})`);
+    }
+    // The runner ends its row; one it left `started` (it threw before answering) must not stay started for good.
+    try {
+      await this.options.scope.submit((tx) => { moveEffect(tx, row.effectId, ["started"], "interrupted", this.now()); });
+    } catch (error) {
+      this.options.log?.(`effects: closing call-in ${row.effectId} failed (${errorText(error)})`);
+    }
   }
 
   private async runRemove(row: EffectRow): Promise<void> {

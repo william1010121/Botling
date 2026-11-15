@@ -52,12 +52,13 @@ import { LiveGate, type LiveGateClock } from "./live-gate";
 /**
  * Commands a front end may send as `req` (answered at once, no slot): every read command, and the ones the 2.x renderer
  * sends as reads although the core changes a little for them: unread marks (chat.read, chat.shown), a Doctor run, a
- * worker's folder, a link a line asked to open, and a plugin web part's reports (loaded, failed, notice, link target;
- * kept in memory). Nothing they change is chat history; their events still go into the log. commands.ts classes them
- * `legacy` for when they come as a `cmd`.
+ * worker's folder, a link a line asked to open, a plugin web part's reports (loaded, failed, notice, link target;
+ * kept in memory), and plugin secret edits (so plaintext never touches a front-end durable outbox). Nothing they change
+ * is chat history; their events still go into the log. commands.ts classes them `legacy` for when they come as a `cmd`.
  */
 export const REQ_ALSO: ReadonlySet<CommandType> = new Set<CommandType>([
   "chat.read", "chat.shown", "doctor.run", "worker.cwd", "link.authorize", "plugins.linkTarget", "plugins.loaded", "plugins.failed", "plugins.notice",
+  "plugins.secret",
 ]);
 export function servedAsReq(type: CommandType): boolean {
   return routeOf(type).kind === "read" || REQ_ALSO.has(type);

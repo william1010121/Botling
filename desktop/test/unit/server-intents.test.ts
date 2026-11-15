@@ -336,7 +336,7 @@ describe("legacy apply", () => {
       if (route.kind === "legacy") expect(table).toContain(`\`${type}\``);
     }
     const counts = Object.values(COMMAND_ROUTES).reduce<Record<string, number>>((all, route) => ({ ...all, [route.kind]: (all[route.kind] ?? 0) + 1 }), {});
-    expect(counts.intent).toBe(11);
+    expect(counts.intent).toBe(14);
   });
 });
 

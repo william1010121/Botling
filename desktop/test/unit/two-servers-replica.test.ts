@@ -206,27 +206,32 @@ beforeAll(async () => {
 afterAll(async () => { await cluster?.cleanup(); }, 60_000);
 
 describe("M3 step 7: summary replication between botlingd", () => {
-  it("A holds B's and C's srv: tables equal to theirs; a real turn on B reaches A's copy; FEs on A see the peers", async () => {
-    const MAIN = mainBotOf(b.dataDir); // B's own main bot (each server mints its own, M5-04g)
+  it("A holds B's and C's srv: tables equal to theirs; a real turn on A (the designated server) reaches B's copy; FEs on A see the peers", async () => {
+    // M5-04i: only the designated server (the root, A, by default) runs a main bot; each server minted its own id (M5-04g).
+    const MAIN = mainBotOf(a.dataDir);
     const copyB = await copyEqual(a, b, streamB, "A's copy of B");
-    expect(Object.keys(copyB)).toEqual(expect.arrayContaining([`bot:${MAIN}`, "machine"]));
+    expect(Object.keys(copyB)).toContain("machine");
+    expect(Object.keys(copyB)).not.toContain(`bot:${mainBotOf(b.dataDir)}`); // B is not designated: no main bot row
+    expect(Object.keys(liveRows(b, streamB))).not.toContain(`bot:${mainBotOf(b.dataDir)}`);
+    expect(Object.keys(liveRows(a, `srv:${ka.memberId}`))).toContain(`bot:${MAIN}`); // the designated server has it
     await copyEqual(a, c, streamC, "A's copy of C (third server)");
     await copyEqual(b, a, `srv:${ka.memberId}`, "B's copy of A");
     await copyEqual(c, b, streamB, "C's copy of B");
     expect(streamRow(a, streamB)).toMatchObject({ state: "live" });
     for (const server of [a, b, c]) server.assertLoopbackOnly({ expectListener: true });
 
-    // A real turn on B: B's summary row changes; A's copy follows.
-    const client = await b.client("script", "d".repeat(32));
+    // A real turn on A (the designated server): A's summary row changes; B's copy follows.
+    const client = await a.client("script", "d".repeat(32));
     await client.sub(client.srv);
     const srvSnap = await client.wait((m): m is MessageOf<"snap"> => m.t === "snap" && m.stream === client.srv, "srv snap");
     const marker = `replicated ${Date.now()}`;
     const slot: Slot = { origin: "script", originEpoch: client.originEpoch, target: `bot:${MAIN}` as Slot["target"], n: 1 };
     client.cmd(slot, { type: "chat.send", botId: MAIN, text: `/say ${marker}` }, srvSnap.logId);
     await client.wait((m): m is MessageOf<"cmd.result"> => m.t === "cmd.result" && m.slot.n === 1, "cmd.result");
-    await until(() => JSON.stringify(liveRows(a, streamB)[`bot:${MAIN}`]?.body ?? {}).includes(marker), { timeout: 30_000, what: "the marker in A's copy of B's main row" });
+    const streamA = `srv:${ka.memberId}`;
+    await until(() => JSON.stringify(liveRows(b, streamA)[`bot:${MAIN}`]?.body ?? {}).includes(marker), { timeout: 30_000, what: "the marker in B's copy of A's main row" });
     client.close();
-    await copyEqual(a, b, streamB, "A's copy after the turn");
+    await copyEqual(b, a, streamA, "B's copy after the turn");
 
     // A front end on A: welcome lists B and C; B's table from A's copy as rows batches.
     const fe = new WireClient();
