@@ -10,7 +10,7 @@
 // command's transaction and LogHub hears about every stream a commit touched.
 import type { Event as ContractEvent } from "../../contract";
 import type { CmdBody, Scope } from "../../protocol";
-import { CallInGuest } from "../callin";
+import { CallInGuest, CallInHost } from "../callin";
 import { contentLineHook, type ContentService } from "../content";
 import { ensureStream, type LogHub } from "../log";
 import { ContractLiveFeed, type LiveChannel } from "../live";
@@ -64,6 +64,8 @@ export class IntentRuntime {
   readonly legacy: LegacyApply;
   /** M5-02b: the guest's side of call-ins (botlingd attaches the server origin once it exists). */
   readonly callIns: CallInGuest;
+  /** M5-02c: the host's side (botlingd attaches the server origin and binds `remoteTurn` into the core). */
+  readonly callHost: CallInHost;
   private readonly deps: IntentDeps;
   private readonly now: () => number;
 
@@ -72,6 +74,7 @@ export class IntentRuntime {
     this.now = options.now ?? Date.now;
     this.scope = new TxScope(options.store, (streams) => options.hub?.committed(streams), (error) => log?.(`intents: an after-commit step failed (${error instanceof Error ? error.message : String(error)})`));
     this.callIns = new CallInGuest({ scope: this.scope, engine: options.engine, now: this.now, log });
+    this.callHost = new CallInHost({ log });
     this.worker = new EffectWorker({ scope: this.scope, engine: options.engine, now: this.now, log, callIns: this.callIns });
     this.tap = new EventTap({
       scope: this.scope,
@@ -88,7 +91,7 @@ export class IntentRuntime {
       ...(options.serverEvents ? { serverEvents: options.serverEvents } : {}),
       ...(options.mirrorBotUpdates ? { mirrorBotUpdates: true } : {}),
     });
-    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null, pluginRowsChanged: options.pluginRowsChanged, callIns: this.callIns };
+    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null, pluginRowsChanged: options.pluginRowsChanged, callIns: this.callIns, callHost: this.callHost };
     const slotLog = dbSlotLog(this.scope, log);
     this.slots = new SlotEngine({
       submit: (command) => this.scope.submit(command),
@@ -127,6 +130,7 @@ export class IntentRuntime {
   }
 
   close(): void {
+    this.callHost.close();
     this.worker.close();
   }
 
