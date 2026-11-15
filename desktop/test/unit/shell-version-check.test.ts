@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { feBuildManifest } from "../../fe-build-manifest.mjs";
-import { findMinFeVersion, fsTree, gitTree, isNeutralPath, isPluginSourcePath, isShellPath, parseShellBaseline, SHELL_BASELINE_FILE, SHELL_ROOTS, shellBaselineText, shellHash, shellManifest } from "../../fe-shell-manifest.mjs";
+import { feBuildManifest, feBuildManifestFile } from "../../fe-build-manifest.mjs";
+import { findMinFeVersion, fsTree, gitTree, isNeutralPath, isPluginSourcePath, parseShellBaseline, SHELL_BASELINE_FILE, shellBaselineText, shellHash, shellInputs, shellManifest } from "../../fe-shell-manifest.mjs";
 import { checkBaseline, checkChange, checkRange, classifyChange } from "../../scripts/check-shell-version.mjs";
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -17,6 +17,12 @@ afterEach(() => { while (repos.length) rmSync(repos.pop()!, { recursive: true, f
 
 const CONSTANT_FILE = "desktop/src/server/botlingd.ts";
 const constant = (value: string) => `export const MIN_FE_VERSION = "${value}";\nexport const OTHER = 1;\n`;
+// The web-v3 build's entry in the throwaway repositories: what it imports is the shell (a file the old folder list did not cover, a plugin source, a loose file).
+const ENTRY = [
+  'import "../../src/renderer/shell/main";', 'import "../../src/fe-link/link";', 'import "../../src/session/handshake";', 'import "../../../Web/src/plugin-kernel/kernel";',
+  'import "../../src/renderer/plugins/settings/index";', 'import "../../builtin-plugins/botling.note/index.js";', "export const page = 1;", "",
+].join("\n");
+const SHELL_FILES = ["Web/src/plugin-kernel/kernel.ts", "desktop/src/fe-link/link.ts", "desktop/src/renderer/shell/main.tsx", "desktop/src/session/handshake.ts", "desktop/web-v3/shell/main.tsx"];
 
 function git(repo: string, ...args: string[]): string {
   return execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8" }).trim();
@@ -41,7 +47,9 @@ function makeRepo() {
     "desktop/src/renderer/shell/main.tsx": "export const shell = 1;\n",
     "desktop/src/fe-link/link.ts": "export const link = 1;\n",
     "Web/src/plugin-kernel/kernel.ts": "export const kernel = 1;\n",
-    "desktop/web-v3/shell/main.tsx": "export const page = 1;\n",
+    "desktop/web-v3/shell/main.tsx": ENTRY,
+    "desktop/src/session/handshake.ts": "export const handshake = 1;\n",
+    "desktop/src/renderer/shell/unused.ts": "export const unused = 1;\n", // under an old shell folder, but no entry imports it
     "desktop/builtin-plugins/botling.note/index.js": "module.exports = 1;\n",
     "desktop/src/renderer/plugins/settings/index.ts": "export const activate = () => {};\n",
     "docs/notes.md": "# notes\n",
@@ -51,18 +59,14 @@ function makeRepo() {
   return { repo, commit, base: baseline };
 }
 
-describe("which paths are the shell, a plugin source, or neutral", () => {
+describe("which paths are a plugin source, or neutral", () => {
   it("splits them as the card says", () => {
-    for (const path of ["desktop/src/renderer/shell/main.tsx", "desktop/src/fe-link/link.ts", "desktop/src/protocol/messages.ts", "desktop/web-v3/shell/connection.ts", "Web/src/plugin-kernel/kernel.ts", "Web/host/src/api.ts"]) {
-      expect(isShellPath(path), path).toBe(true);
+    for (const path of ["desktop/src/renderer/shell/main.tsx", "desktop/src/fe-link/link.ts", "desktop/src/session/handshake.ts", "desktop/web-v3/shell/connection.ts", "Web/src/plugin-kernel/kernel.ts", "Web/host/src/api.ts"]) {
       expect(isPluginSourcePath(path), path).toBe(false);
+      expect(isNeutralPath(path), path).toBe(false);
     }
-    for (const path of ["desktop/builtin-plugins/botling.note/index.js", "desktop/src/renderer/plugins/settings/index.ts"]) {
-      expect(isPluginSourcePath(path), path).toBe(true);
-      expect(isShellPath(path), path).toBe(false);
-    }
+    for (const path of ["desktop/builtin-plugins/botling.note/index.js", "desktop/src/renderer/plugins/settings/index.ts"]) expect(isPluginSourcePath(path), path).toBe(true);
     for (const path of ["desktop/test/unit/x.test.ts", "desktop/src/renderer/shell/x.test.ts", "docs/a.md", ".bot/artifacts/x.md", "desktop/web-v3/dist/web.js", "Web/test/a.ts"]) expect(isNeutralPath(path), path).toBe(true);
-    for (const path of ["desktop/src/server/botlingd.ts", "desktop/src/core/x.ts", "desktop/builtin-plugins-extra/a.js"]) expect(isShellPath(path), path).toBe(false);
     expect(isPluginSourcePath("desktop/builtin-plugins-extra/a.js")).toBe(false);
   });
 
@@ -81,21 +85,48 @@ describe("which paths are the shell, a plugin source, or neutral", () => {
 describe("the shell part of the manifest", () => {
   it("names MIN_FE_VERSION found by name, and a hash of the shell's files only", () => {
     const { repo, commit, base } = makeRepo();
-    const first = shellManifest(gitTree(repo, base));
+    const files = shellInputs(repo);
+    expect(files).toEqual(SHELL_FILES); // plugin sources (imported by the entry too) and the file nothing imports are not in it
+    const first = shellManifest(gitTree(repo, base), files);
     expect(first.minFeVersion).toBe("3.0.0-m1");
     expect(first.hash).toMatch(/^[0-9a-f]{64}$/);
     // A plugin source, a test and a doc do not move it; a shell file does; so does the constant.
     const plugin = commit({ "desktop/builtin-plugins/botling.note/index.js": "module.exports = 2;\n", "desktop/src/renderer/plugins/settings/index.ts": "export const activate = () => 1;\n", "desktop/test/unit/a.test.ts": "x\n", "docs/notes.md": "more\n" });
-    expect(shellManifest(gitTree(repo, plugin))).toEqual(first);
+    expect(shellManifest(gitTree(repo, plugin), files)).toEqual(first);
     const shell = commit({ "desktop/src/renderer/shell/main.tsx": "export const shell = 2;\n" });
-    expect(shellHash(gitTree(repo, shell))).not.toBe(first.hash);
+    expect(shellHash(gitTree(repo, shell), files)).not.toBe(first.hash);
     const bumped = commit({ [CONSTANT_FILE]: constant("3.0.0-m2") });
-    expect(shellManifest(gitTree(repo, bumped)).minFeVersion).toBe("3.0.0-m2");
+    expect(shellManifest(gitTree(repo, bumped), files).minFeVersion).toBe("3.0.0-m2");
+  });
+
+  it("takes its files from the web-v3 build's inputs, not from a folder list", () => {
+    const { repo, commit, base } = makeRepo();
+    const files = shellInputs(repo);
+    const hashAt = (ref: string) => shellHash(gitTree(repo, ref), files);
+    // desktop/src/session/* is no old shell folder, yet the phone page reads it: a change there moves the hash.
+    const session = commit({ "desktop/src/session/handshake.ts": "export const handshake = 2;\n" });
+    expect(hashAt(session)).not.toBe(hashAt(base));
+    // A file under an old shell folder that no entry imports, and one outside every folder, do not.
+    const loose = commit({ "desktop/src/renderer/shell/unused.ts": "export const unused = 2;\n", "desktop/src/server/other.ts": "export const other = 1;\n" });
+    expect(hashAt(loose)).toBe(hashAt(session));
+    // A file the entry starts to import is in the next list.
+    const grown = commit({ "desktop/src/session/lanes.ts": "export const lanes = 1;\n", "desktop/src/session/handshake.ts": 'import "./lanes";\nexport const handshake = 2;\n' });
+    expect(shellInputs(repo)).toEqual([...SHELL_FILES, "desktop/src/session/lanes.ts"].sort());
+    const more = commit({ "desktop/src/session/lanes.ts": "export const lanes = 2;\n" });
+    expect(shellHash(gitTree(repo, more), shellInputs(repo))).not.toBe(shellHash(gitTree(repo, grown), shellInputs(repo)));
+  });
+
+  it("lists the real build's inputs: the phone page's session files are in it, plugin sources and node_modules are not", () => {
+    const files = shellInputs(resolve(desktop, ".."));
+    for (const path of ["desktop/src/session/handshake.ts", "desktop/src/session/index.ts", "desktop/web-v3/shell/main.tsx"]) expect(files, path).toContain(path);
+    expect(files.filter((path) => isPluginSourcePath(path) || /node_modules|^\.\.|^\//.test(path))).toEqual([]);
+    expect(files).toEqual([...files].sort());
   });
 
   it("reads the same hash from a commit and from the working tree", () => {
     const { repo, base } = makeRepo();
-    expect(shellManifest(fsTree(repo))).toEqual(shellManifest(gitTree(repo, base)));
+    const files = shellInputs(repo);
+    expect(shellManifest(fsTree(repo), files)).toEqual(shellManifest(gitTree(repo, base), files));
   });
 
   it("finds the constant after it moved to another file or got a type, and gives null for none or two", () => {
@@ -125,7 +156,30 @@ describe("the shell part of the manifest", () => {
     expect(declared).toHaveLength(1);
     expect(manifest.shell.minFeVersion).toBe(declared[0]);
     expect(Object.keys(manifest)).toEqual(["version", "shell", "plugins"]);
-    expect(SHELL_ROOTS.every((root) => !isPluginSourcePath(root))).toBe(true);
+    // The hash is the one of the web-v3 build's inputs.
+    expect(manifest.shell.hash).toBe(shellHash(fsTree(resolve(desktop, "..")), shellInputs(resolve(desktop, ".."))));
+  });
+
+  it("fails a real build when MIN_FE_VERSION cannot be found (the manifest would carry null)", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "botling-shell-version-"));
+    repos.push(repo);
+    const root = join(repo, "desktop");
+    mkdirSync(join(root, "src/server"), { recursive: true });
+    writeFileSync(join(root, "src/server/a.ts"), "export const OTHER = 1;\n");
+    // A plain call still gives null (a scratch root of a test has no constant); a build asks for the value.
+    expect(feBuildManifest(root, repo).shell.minFeVersion).toBeNull();
+    expect(() => feBuildManifest(root, repo, { requireMinFeVersion: true })).toThrow(/MIN_FE_VERSION is not defined exactly once/);
+    expect(() => feBuildManifestFile(root, repo, { requireMinFeVersion: true })).toThrow(/MIN_FE_VERSION/);
+    writeFileSync(join(root, "src/server/a.ts"), constant("3.0.0-m1"));
+    expect(feBuildManifest(root, repo, { requireMinFeVersion: true }).shell.minFeVersion).toBe("3.0.0-m1");
+    // The desktop renderer build refuses before it writes anything.
+    writeFileSync(join(root, "src/server/a.ts"), "export const OTHER = 1;\n");
+    const outdir = join(repo, "out");
+    const { buildRenderer } = await import(join(desktop, "build-renderer.mjs"));
+    await expect(buildRenderer({ root, outdir })).rejects.toThrow(/MIN_FE_VERSION/);
+    expect(readdirSync(repo)).not.toContain("out");
+    // Both real builds ask for it (web-v3/build.mjs has a fixed root: its source is what is checked).
+    for (const file of ["build-renderer.mjs", "web-v3/build.mjs"]) expect(readFileSync(join(desktop, file), "utf8"), file).toMatch(/feBuildManifestFile\(root, undefined, \{ requireMinFeVersion: true \}\)/);
   });
 });
 
@@ -165,7 +219,7 @@ describe("check-shell-version: a plugin-only change never moves the shell part",
     const paths = ["desktop/builtin-plugins/botling.note/index.js"];
     expect(checkChange(repo, base, edit, paths).problems).toEqual([]);
     // A wrong definition (the plugin folder counted as shell) moves the hash on the same commit: the check is what notices.
-    const wrong = (tree: ReturnType<typeof gitTree>) => shellHash(tree, [...SHELL_ROOTS, "desktop/builtin-plugins"], () => true);
+    const wrong = (tree: ReturnType<typeof gitTree>) => shellHash(tree, [...SHELL_FILES, "desktop/builtin-plugins/botling.note/index.js"]);
     expect(checkChange(repo, base, edit, paths, { hash: wrong }).problems).toEqual([expect.stringContaining("the shell hash changed")]);
     expect(checkRange(repo, base, edit, { hash: wrong })[0]!.problems).toEqual([expect.stringContaining("the shell hash changed")]);
     // A shell commit with the same wrong definition is not held to it.
@@ -179,6 +233,20 @@ describe("check-shell-version: a plugin-only change never moves the shell part",
     const edit = commit({ "desktop/builtin-plugins/botling.note/index.js": "module.exports = 4;\n" }, "plugin edit");
     const results = checkRange(repo, base, edit);
     expect(results[1]!.problems).toEqual([expect.stringContaining("MIN_FE_VERSION is not defined exactly once")]);
+  });
+
+  it("skips merge commits and compares each side's commit with its own first parent (--no-merges)", () => {
+    const { repo, commit, base } = makeRepo();
+    git(repo, "checkout", "-q", "-b", "side");
+    commit({ "desktop/src/renderer/shell/main.tsx": "export const shell = 7;\n" }, "side: shell edit");
+    commit({ "desktop/builtin-plugins/botling.note/index.js": "module.exports = 7;\n" }, "side: plugin edit");
+    git(repo, "checkout", "-q", "main");
+    commit({ "desktop/builtin-plugins/botling.note/more.js": "module.exports = 8;\n" }, "main: plugin edit");
+    git(repo, "merge", "-q", "--no-ff", "-m", "merge side", "side");
+    expect(git(repo, "rev-list", "--merges", `${base}..HEAD`).split("\n").filter(Boolean)).toHaveLength(1); // the history does hold a merge commit
+    const results = checkRange(repo, base, "HEAD");
+    expect(results.map((r) => r.subject).sort()).toEqual(["main: plugin edit", "side: plugin edit", "side: shell edit"]);
+    expect(results.map((r) => [r.subject, r.kind, r.problems]).sort()).toEqual([["main: plugin edit", "plugin-only", []], ["side: plugin edit", "plugin-only", []], ["side: shell edit", "other", []]]);
   });
 
   it("checks base → head as one change with --whole", () => {
@@ -259,6 +327,40 @@ describe("the command line", () => {
     expect(bad.stderr).toContain("\"bump from a plugin\"");
     expect(bad.stderr).toContain("MIN_FE_VERSION changed");
     expect(bad.stdout).toContain("1 failed");
+  });
+
+  it("falls back to main for a base that is all zeros or empty (a new branch's `before`), and exits 2 when there is no main either", () => {
+    const { repo, commit } = makeRepo();
+    git(repo, "checkout", "-q", "-b", "feature");
+    commit({ "desktop/builtin-plugins/botling.note/index.js": "module.exports = 2;\n" }, "plugin edit");
+    for (const zero of ["0".repeat(40), ""]) {
+      const ok = run(repo, zero, "HEAD");
+      expect({ zero, status: ok.status, out: ok.stdout.trim() }).toEqual({ zero, status: 0, out: "check-shell-version: 1 change checked, 1 plugin-only, 0 failed, baseline ok" });
+    }
+    // A plugin-only bump on the branch is seen through the fallback too (the range is main..HEAD, not empty).
+    commit({ [CONSTANT_FILE]: "export const OTHER = 1;\n", "desktop/src/renderer/plugins/settings/version.ts": constant("3.0.0-m1") }, "move the constant");
+    commit({ "desktop/src/renderer/plugins/settings/version.ts": constant("3.0.0-m2") }, "bump from a plugin");
+    const bad = run(repo, "--no-baseline", "0".repeat(40), "HEAD");
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain("\"bump from a plugin\"");
+    // No local main: origin/main is used; neither: unreadable, never a silent pass.
+    git(repo, "update-ref", "refs/remotes/origin/main", "main");
+    git(repo, "branch", "-m", "main", "trunk");
+    expect(run(repo, "--no-baseline", "0".repeat(40), "HEAD").status).toBe(1);
+    git(repo, "update-ref", "-d", "refs/remotes/origin/main");
+    const gone = run(repo, "--no-baseline", "0".repeat(40), "HEAD");
+    expect(gone.status).toBe(2);
+    expect(gone.stdout).not.toContain("0 failed");
+  });
+
+  it("is an npm script, run by the \"Electron 2 checks\" job with the pull request's base or the push's before", () => {
+    expect(JSON.parse(readFileSync(join(desktop, "package.json"), "utf8")).scripts["check:shell-version"]).toBe("node scripts/check-shell-version.mjs");
+    const ci = readFileSync(join(desktop, "../.github/workflows/ci.yml"), "utf8");
+    const job = ci.slice(ci.indexOf("  desktop:\n"), ci.indexOf("\n  spec:\n"));
+    expect(job).toContain("name: Electron 2 checks");
+    expect(job).toContain("BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}");
+    expect(job).toContain('npm run check:shell-version -- "${BASE_SHA:-0}" HEAD');
+    expect(job).toContain("fetch-depth: 0"); // the range base..HEAD needs the history
   });
 
   it("exits 2 on a ref it cannot read (never a silent pass)", () => {

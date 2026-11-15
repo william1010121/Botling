@@ -2,22 +2,21 @@
 //
 // fe-build-manifest.json gets `shell: { minFeVersion, hash }`:
 //   - minFeVersion: the value of `MIN_FE_VERSION`, found BY NAME in desktop/src (a card may move the constant to another file);
-//   - hash: a hash of every file the shell is made of (SHELL_ROOTS, minus plugin sources, tests and docs).
+//   - hash: a hash of every file the shell is made of: the files the web-v3 build reads (`shellInputs`), minus plugin sources (M7-10c;
+//     it was a list of folders, which missed 23 files such as desktop/src/session/*).
 // A plugin-only change (builtin-plugins/** or src/renderer/plugins/**) is not part of the shell, so it can never move either
 // value. scripts/check-shell-version.mjs fails a commit that touches only plugin sources and moves one anyway.
 //
 // A "tree" is a read-only view of the files of the repository: `fsTree(repoRoot)` (the working tree) or `gitTree(repoRoot, ref)`
 // (a commit, nothing checked out). Both name a file by its git blob id, so the two give the same hash for the same files.
+import { buildSync } from "esbuild";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
-/** Repo-relative folders the shell is made of (the FE build's own code: renderer, phone page, link, protocol, chat page, kit). */
-export const SHELL_ROOTS = [
-  "desktop/src/renderer", "desktop/web-v3", "desktop/mobile", "desktop/src/fe-link", "desktop/src/protocol", "desktop/src/contract",
-  "Web/src", "Web/kit", "Web/host",
-];
+/** The entries of the web-v3 build (web-v3/build.mjs): the phone/browser page's shell, chat page, PDF viewer and service worker. */
+export const WEB_V3_ENTRIES = ["desktop/web-v3/shell/main.tsx", "desktop/web-v3/chat-entry.ts", "desktop/web-v3/pdf-viewer/viewer.ts", "desktop/web-v3/sw.ts"];
 /** Where `MIN_FE_VERSION` is looked for (by name). */
 export const MIN_FE_VERSION_ROOT = "desktop/src";
 export const MIN_FE_VERSION_NAME = "MIN_FE_VERSION";
@@ -31,8 +30,22 @@ const NOT_CODE_FILE = /(?:\.(?:test|spec)\.[a-z]+|\.md|\.DS_Store|dist\.inputs\.
 export const isPluginSourcePath = (path) => inside(path, PLUGIN_SOURCE_ROOTS);
 /** A test, a doc or a note: changes that cannot make a plugin-only commit into a shell commit. */
 export const isNeutralPath = (path) => NOT_CODE_DIR.test(path) || NOT_CODE_FILE.test(path) || /^(?:docs|\.bot)\//.test(path);
-/** True for a file the shell hash covers. */
-export const isShellPath = (path, roots = SHELL_ROOTS) => inside(path, roots) && !isPluginSourcePath(path) && !isNeutralPath(path);
+
+/**
+ * The files the shell is made of: what the web-v3 build reads (esbuild's metafile inputs for WEB_V3_ENTRIES, the options of
+ * web-v3/build.mjs), as sorted repo-relative paths, without plugin sources, node_modules and anything outside the repository.
+ * Read from the working tree under `repoRoot`; an entry that is not there is skipped (a scratch root has none), a build error throws.
+ */
+export function shellInputs(repoRoot) {
+  const cwd = realpathSync.native(repoRoot); // esbuild names files by real path: relative to a typed /var/... they would be "../../private/var/..."
+  const entryPoints = WEB_V3_ENTRIES.map((entry) => join(cwd, entry)).filter((entry) => existsSync(entry));
+  if (entryPoints.length === 0) return [];
+  const { metafile } = buildSync({ entryPoints, absWorkingDir: cwd, outdir: join(cwd, "unused-output"), write: false, metafile: true, bundle: true, format: "iife",
+    jsx: "automatic", target: ["chrome130", "safari17"], nodePaths: [join(cwd, "desktop/node_modules")], logLevel: "silent", logOverride: { "empty-glob": "silent" } });
+  const paths = Object.keys(metafile.inputs).filter((path) => !path.startsWith("<")).map((path) => path.replaceAll("\\", "/"))
+    .filter((path) => !path.startsWith("../") && !path.includes("node_modules/") && !isPluginSourcePath(path));
+  return [...new Set(paths)].sort();
+}
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 /** The git blob id of some bytes (what `git hash-object` prints). */
@@ -46,14 +59,10 @@ function walk(dir, prefix, out) {
   }
 }
 
-/** The working tree under `repoRoot`. `files(roots)`: [{ path, id }] under those repo-relative folders; `read(path)`: text. */
+/** The working tree under `repoRoot`. `ids(paths)`: [{ path, id }] for those repo-relative files that exist; `read(path)`: text. */
 export function fsTree(repoRoot) {
   return {
-    files(roots) {
-      const paths = [];
-      for (const root of roots) if (existsSync(join(repoRoot, root))) walk(join(repoRoot, root), root, paths);
-      return paths.map((path) => ({ path, id: blobId(readFileSync(join(repoRoot, path))) }));
-    },
+    ids: (paths) => paths.filter((path) => existsSync(join(repoRoot, path))).map((path) => ({ path, id: blobId(readFileSync(join(repoRoot, path))) })),
     read: (path) => readFileSync(join(repoRoot, path), "utf8"),
     /** The paths under `root` whose text contains `needle`. */
     grep(root, needle) {
@@ -68,8 +77,9 @@ export function fsTree(repoRoot) {
 export function gitTree(repoRoot, ref) {
   const git = (...args) => execFileSync("git", ["-C", repoRoot, ...args], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
   return {
-    files(roots) {
-      const out = git("ls-tree", "-r", "-z", "--full-tree", ref, "--", ...roots);
+    ids(paths) {
+      if (paths.length === 0) return [];
+      const out = git("ls-tree", "-r", "-z", "--full-tree", ref, "--", ...paths);
       return out.split("\0").filter(Boolean).flatMap((row) => {
         const match = /^\d+ blob ([0-9a-f]{40})\t(.+)$/s.exec(row);
         return match ? [{ path: match[2], id: match[1] }] : [];
@@ -84,9 +94,9 @@ export function gitTree(repoRoot, ref) {
   };
 }
 
-/** The hash of the shell's files: sha256 of "<path>\0<blob id>\n" per file, sorted by path. */
-export function shellHash(tree, roots = SHELL_ROOTS, accept = isShellPath) {
-  const rows = tree.files(roots).filter(({ path }) => accept(path, roots)).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+/** The hash of the shell's `files` (`shellInputs`) in `tree`: sha256 of "<path>\0<blob id>\n" per file that exists there, sorted by path. */
+export function shellHash(tree, files) {
+  const rows = tree.ids(files).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return sha256(rows.map(({ path, id }) => `${path}\0${id}\n`).join(""));
 }
 
@@ -103,8 +113,8 @@ export function findMinFeVersion(tree) {
   return values.length === 1 ? values[0] : null;
 }
 
-/** `{ minFeVersion, hash }` for the tree: the manifest's shell part. */
-export const shellManifest = (tree, roots = SHELL_ROOTS) => ({ minFeVersion: findMinFeVersion(tree), hash: shellHash(tree, roots) });
+/** `{ minFeVersion, hash }` for the tree: the manifest's shell part (`files`: `shellInputs` of the same checkout). */
+export const shellManifest = (tree, files) => ({ minFeVersion: findMinFeVersion(tree), hash: shellHash(tree, files) });
 
 /** The committed baseline: only `minFeVersion`, as of the last bump (the build's manifest is not committed, so the check compares with this).
  * The shell hash is NOT in it on purpose: many branches edit the shell at once and would all conflict on it; the hash rule is per commit

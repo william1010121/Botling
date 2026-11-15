@@ -8,5 +8,6 @@ export interface FeBuildManifest {
 }
 export function folderHash(dir: string): string;
 export function inpagePluginFolders(root: string): { name: string; folder: string }[];
-export function feBuildManifest(root: string, repoRoot?: string): FeBuildManifest;
-export function feBuildManifestFile(root: string, repoRoot?: string): Buffer;
+export interface FeBuildManifestOptions { requireMinFeVersion?: boolean }
+export function feBuildManifest(root: string, repoRoot?: string, options?: FeBuildManifestOptions): FeBuildManifest;
+export function feBuildManifestFile(root: string, repoRoot?: string, options?: FeBuildManifestOptions): Buffer;

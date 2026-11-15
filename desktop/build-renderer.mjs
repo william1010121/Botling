@@ -36,7 +36,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
   const characters = readCharacters(root);
   // The in-page plugins this build ships (M7-10a); Botling Web (2.x) runs no plugins and has none. The same bytes go into
   // the bundle (the window's CSP forbids fetching them) and into fe-build-manifest.json.
-  const feManifest = webBuild ? null : feBuildManifestFile(root);
+  const feManifest = webBuild ? null : feBuildManifestFile(root, undefined, { requireMinFeVersion: true });
   // "empty-glob": the in-page plugin folder (shell/inpage-bundled.ts) has no plugin yet.
   const browser = { bundle: true, format: "iife", target: "chrome130", minify: !development,
     sourcemap: "linked", legalComments: "eof", write: false, nodePaths, logOverride: { "empty-glob": "silent" } };
