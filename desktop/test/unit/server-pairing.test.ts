@@ -123,8 +123,7 @@ async function server(options: { dir?: string; ackTimeoutMs?: number; helloTimeo
   const s: Server = {
     dir, store, identity, roster, setup, pairing, host, remote, events, logs, clock, stop,
     cluster: async () => {
-      const started = await pairing.admin({ op: "cluster.create" }) as { code: string };
-      expect(await pairing.admin({ op: "cluster.confirm", code: started.code })).toMatchObject({ ok: true });
+      expect(await pairing.admin({ op: "cluster.create" })).toMatchObject({ code: expect.any(String) });
     },
     offer: async () => parsePairLink(((await pairing.admin({ op: "pair.offer" })) as { link: string }).link)!,
   };
@@ -273,24 +272,15 @@ async function openIk(s: Server, keys: Keys) {
 }
 
 describe("the first pairing makes the cluster", () => {
-  it("only after the recovery code is typed back; offers are refused before", async () => {
+  it("at once when it is made (the recovery code is shown once, never typed back); offers are refused before", async () => {
     const s = await server();
     await expect(s.pairing.admin({ op: "pair.offer" })).rejects.toMatchObject({ code: "no-cluster" });
     expect(await s.pairing.admin({ op: "cluster.status" })).toEqual({ clusterId: null, pending: null, note: null });
     const started = await s.pairing.admin({ op: "cluster.create" }) as { code: string; clusterId: string };
     expect(started.code).toMatch(/^([A-Z2-7]{4}-){6}[A-Z2-7]{2}$/);
-    const status = await s.pairing.admin({ op: "cluster.status" }) as { clusterId: string | null; note: string | null };
-    expect(status.clusterId).toBeNull();
-    expect(status.note).toMatch(/recovery code was shown but not typed back/);
-    // A wrong code (well formed) changes nothing: still no cluster, still no offer.
-    const wrong = started.code.startsWith("A") ? `B${started.code.slice(1)}` : `A${started.code.slice(1)}`;
-    expect(await s.pairing.admin({ op: "cluster.confirm", code: wrong })).toMatchObject({ ok: false, reason: "wrong-code" });
-    expect(s.roster.clusterId).toBeNull();
-    await expect(s.pairing.admin({ op: "pair.offer" })).rejects.toMatchObject({ code: "no-cluster" });
-    // The right code (any spelling) makes it.
-    expect(await s.pairing.admin({ op: "cluster.confirm", code: started.code.toLowerCase().replace(/-/g, " ") })).toMatchObject({ ok: true, clusterId: started.clusterId });
     expect(s.roster.clusterId).toBe(started.clusterId);
     expect(await s.pairing.admin({ op: "cluster.status" })).toEqual({ clusterId: started.clusterId, pending: null, note: null });
+    await expect(s.pairing.admin({ op: "cluster.create" })).rejects.toThrow(/already belongs to a cluster/);
     const offer = await s.offer();
     expect(offer.cluster).toBe(started.clusterId);
     // The code is in no log line.
@@ -613,7 +603,7 @@ describe("the CLI over a real local socket", () => {
     return { lines, out: (line) => { lines.push(line); }, ask: async (prompt) => { lines.push(prompt); return answer(prompt, lines); } };
   }
 
-  it("botlingd pair: first pairing (recovery code typed back after one wrong try), link + QR, code compared, device paired; devices; revoke-device closes its session", async () => {
+  it("botlingd pair: first pairing (recovery code shown once, Enter to go on, nothing typed back), link + QR, code compared, device paired; devices; revoke-device closes its session", async () => {
     const s = await server();
     const { path, token } = await socketFor(s);
     const client = await AdminClient.connect(path, token);
@@ -622,12 +612,12 @@ describe("the CLI over a real local socket", () => {
     let device: PairDevice | null = null;
     let tries = 0;
     const io = terminal(async (prompt, lines) => {
-      if (prompt.startsWith("Recovery code")) {
-        // The cluster is not there before the code is typed back.
-        expect(s.roster.clusterId).toBeNull();
-        const shown = lines.map((line) => line.trim()).find((line) => /^([A-Z2-7]{4}-){6}[A-Z2-7]{2}$/.test(line))!;
+      if (prompt.startsWith("Press Enter")) {
+        // The cluster is made with the code; the code was shown once above.
+        expect(s.roster.clusterId).not.toBeNull();
+        expect(lines.some((line) => /^([A-Z2-7]{4}-){6}[A-Z2-7]{2}$/.test(line.trim()))).toBe(true);
         tries++;
-        return tries === 1 ? "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA" : shown;
+        return "";
       }
       if (prompt.startsWith("Does the device show")) {
         const shown = lines.filter((line) => line.startsWith("Code: ")).at(-1)!.slice(6).replace(" ", "");
@@ -643,8 +633,7 @@ describe("the CLI over a real local socket", () => {
     const code = await pairCommand(client, io, {});
     await watcher;
     expect(code).toBe(0);
-    expect(tries).toBe(2);
-    expect(io.lines).toContain("That is not the code shown above.");
+    expect(tries).toBe(1);
     expect(io.lines.some((line) => line.startsWith("Cluster ") && line.endsWith(" created."))).toBe(true);
     expect(io.lines.some((line) => line.includes("█") || line.includes("▀"))).toBe(true); // the QR
     expect(io.lines.at(-1)).toMatch(new RegExp(`^Paired: ${keys.member} `));
@@ -664,16 +653,11 @@ describe("the CLI over a real local socket", () => {
     expect(await revokeDeviceCommand(client, terminal(() => null), "zzzzzzzzzzzzzzzzzzzzzzzzzz")).toBe(1);
   });
 
-  it("botlingd pair: answering no to the code declines; three wrong recovery codes make no cluster", async () => {
+  it("botlingd pair: answering no to the code declines", async () => {
     const s = await server();
     const { path, token } = await socketFor(s);
     const client = await AdminClient.connect(path, token);
     cleanups.push(() => client.close());
-    const noCluster = terminal(() => "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA");
-    expect(await pairCommand(client, noCluster, { qr: false })).toBe(1);
-    expect(noCluster.lines.at(-1)).toMatch(/no cluster was made/);
-    expect(s.roster.clusterId).toBeNull();
-
     await s.cluster();
     let device: PairDevice | null = null;
     const io = terminal(() => "n");
