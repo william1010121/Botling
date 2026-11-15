@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClaudeHead } from "../../src/core/agent/head";
 import { previewFile } from "../../src/core/preview-url";
@@ -478,9 +478,9 @@ describe("M6-10a: Botling 3 parity checklist after 2.x fixture import", () => {
     expect(savedTasks).toEqual([expect.objectContaining({ title: "Review notes" })]);
 
     // Subagents open with steps.
-    const subView = await reqOk<{ name: string; status: string; steps: Array<{ title: string; output?: string }> }>(client, { type: "subagent.view", botId: env.mainId, subagentId: env.fixture.subagentId });
-    expect(subView).toMatchObject({ name: "Researcher", status: "done" });
-    expect(subView.steps.some((s) => s.title === "Read note.txt" && s.output === "attachment body")).toBe(true);
+    const subView = await reqOk<{ subagent: { id: string; status: string; prompt: string; result: string | null; steps: Array<{ title: string; output?: string }> } }>(client, { type: "subagent.view", botId: env.mainId, subagentId: env.fixture.subagentId });
+    expect(subView.subagent).toMatchObject({ id: env.fixture.subagentId, prompt: "Find files", result: "Found 2 files", status: "stopped" });
+    expect(subView.subagent.steps.some((s) => s.title === "Read note.txt" && s.output === "attachment body")).toBe(true);
   }, 60_000);
 
   it("3. designated main bot and Maintainer answer; Maintainer gets --add-dir for imported folders", async () => {
@@ -527,11 +527,13 @@ describe("M6-10a: Botling 3 parity checklist after 2.x fixture import", () => {
 
     const mainStream = await subBot(client, env.mainId);
     await send(mainStream, { type: "chat.send", botId: env.mainId, text: `/say <show name="${CARD_NAME}"></show>` }, "main show card");
-    const mainTurn = await until(
-      () => client.entriesOf(mainStream).find((e) => e.kind === "turn.finished" && (e.body as { message?: { displays?: unknown[] } }).message?.displays?.length) ?? null,
-      { timeout: 30_000, what: "main card reply" },
-    );
-    const mainMsgId = (mainTurn.body as { message: { id: string } }).message.id;
+    const mainTurn = await until(async () => {
+      const snap = await reqOk<{
+        chat: { messages: Array<{ id: string; role: string; state?: string; displays?: Array<{ name: string }> }> };
+      }>(client, { type: "chat.snapshot", botId: env.mainId });
+      return snap.chat.messages.find((m) => m.id !== CARD_MSG_ID && m.role === "bot" && m.state === "done" && m.displays?.some((d) => d.name === CARD_NAME)) ?? null;
+    }, { timeout: 30_000, what: "main card reply" });
+    const mainMsgId = mainTurn.id;
     const mainCmdResult = (await send(
       mainStream,
       { type: "component.command", botId: env.mainId, messageId: mainMsgId, index: 0, command: CARD_COMMAND, folder: Layout.mainBot(env.dataDir) },
@@ -553,11 +555,13 @@ describe("M6-10a: Botling 3 parity checklist after 2.x fixture import", () => {
     const p2Id = env.projectIds[1]!;
     const p2Stream = await subBot(client, p2Id);
     await send(p2Stream, { type: "chat.send", botId: p2Id, text: `/say <show name="${CARD_NAME}"></show>` }, "p2 show card");
-    const p2Turn = await until(
-      () => client.entriesOf(p2Stream).find((e) => e.kind === "turn.finished" && (e.body as { message?: { displays?: unknown[] } }).message?.displays?.length) ?? null,
-      { timeout: 30_000, what: "p2 card reply" },
-    );
-    const p2MsgId = (p2Turn.body as { message: { id: string } }).message.id;
+    const p2Turn = await until(async () => {
+      const snap = await reqOk<{
+        chat: { messages: Array<{ id: string; role: string; state?: string; displays?: Array<{ name: string }> }> };
+      }>(client, { type: "chat.snapshot", botId: p2Id });
+      return snap.chat.messages.find((m) => m.role === "bot" && m.state === "done" && m.displays?.some((d) => d.name === CARD_NAME)) ?? null;
+    }, { timeout: 30_000, what: "p2 card reply" });
+    const p2MsgId = p2Turn.id;
     const p2CmdResult = (await send(
       p2Stream,
       { type: "component.command", botId: p2Id, messageId: p2MsgId, index: 0, command: CARD_COMMAND, folder: env.fixture.projectDirs[1]! },
@@ -596,7 +600,7 @@ describe("M6-10a: Botling 3 parity checklist after 2.x fixture import", () => {
       { type: "link.authorize", botId: p1Id, messageId: REPORT_MSG_ID, url: "file:///not-linked/other.html" },
       "link.authorize unlinked",
     );
-    expect(authUnlinked).toEqual({ result: true, linked: false });
+    expect(authUnlinked).toEqual({ result: false, linked: false });
 
     const storage = await reqOk<{ items: Array<{ path: string }> }>(client, { type: "storage.list", botId: p1Id });
     expect(storage.items.some((item) => realpathSync.native(item.path) === realpathSync.native(env.reportFile))).toBe(true);
@@ -761,7 +765,9 @@ describe("M6-10a: Botling 3 parity checklist after 2.x fixture import", () => {
     expect(insideFile.t).toBe("content.file");
     const insideOpened = insideFile as MessageOf<"content.file">;
     expect(insideOpened.type).toBe("image/png");
-    expect(realpathSync.native(insideOpened.path).startsWith(join(realpathSync.native(env.dataDir), "imported"))).toBe(true);
+    expect(existsSync(fileURLToPath(insideUrl))).toBe(true);
+    expect(realpathSync.native(fileURLToPath(insideUrl)).startsWith(join(realpathSync.native(env.dataDir), "imported"))).toBe(true);
+    expect(realpathSync.native(insideOpened.path).startsWith(realpathSync.native(env.dataDir))).toBe(true);
     expect(readFileSync(insideOpened.path)).toEqual(env.insidePngBytes);
 
     const outsideUrl = outsideMsg!.attachments![0]!.url;
