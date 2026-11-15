@@ -56,7 +56,7 @@ export const AGY_LOCAL_TOOLS: AgyTool[] = [
   { name:'write_file', description:'Write exact UTF-8 contents to a workspace file. Requires approval unless Full permission is active.', inputSchema:schema({path:text,content:text},['path','content']) },
   { name:'run_command', description:'Run a shell command in this workspace, waiting for completion (maximum 120 seconds). Requires approval unless Full permission is active. Stop cancels its process group.', inputSchema:schema({command:text},['command']) },
 ];
-export const AGY_WORKER_TOOLS: AgyTool[] = appTools('agy');
+export const AGY_APP_TOOLS: AgyTool[] = appTools('agy');
 export const AGY_AUTO_ALLOWED_TOOLS = new Set(['app_handoff','app_send_message','app_task_checkpoint','app_cancel_task','app_reconcile_report']);
 const canonical = (v: any): string => v && typeof v === 'object' ? Array.isArray(v) ? '['+v.map(canonical).join(',')+']' : '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}' : JSON.stringify(v);
 
@@ -219,7 +219,7 @@ export class AgyMcpBridge {
       if(name==='app_handoff' && args.engine!==undefined && args.engine!=='agy')throw new Error('Cross-engine workers unavailable.');
       return this.delegate(name,args);
     }
-    if (!full && !grants.length && AGY_WORKER_TOOLS.some(tool=>tool.name===name)) {
+    if (!full && !grants.length && AGY_APP_TOOLS.some(tool=>tool.name===name)) {
       const approved = await this.requestApproval(name,args);
       if (!approved || this.stopped) throw new Error('The user did not approve this app action. Nothing executed.');
       this.grant(`botling_${name}`,args);

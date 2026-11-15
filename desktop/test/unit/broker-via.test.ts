@@ -60,7 +60,7 @@ afterEach(async () => {
   for (const fn of cleanups.splice(0).reverse()) await fn();
 });
 
-async function setupAdapterWithPluginTable(rows: Map<string, unknown> | null) {
+async function setupAdapterWithPluginTable(initialRows: Array<[string, unknown]> | null) {
   const server = new FakeServer();
   const clock = new FakeClock();
   const link = await FeLink.open({
@@ -72,39 +72,28 @@ async function setupAdapterWithPluginTable(rows: Map<string, unknown> | null) {
     newEpoch: nextEpoch,
     local: true,
   });
+  const adapter = new RendererAdapter({ link, clock, emit: () => undefined });
   link.start();
-  await flush();
-
-  // Wrap FeLink as LinkPort supplying the attached server's own table copy (delivered by M5-14e in production).
-  const port: LinkPort = {
-    get status() { return link.status; },
-    get server() { return link.server; },
-    on: (listener) => link.on(listener),
-    subscribe: (stream) => link.subscribe(stream),
-    unsubscribe: (stream) => link.unsubscribe(stream),
-    dropCache: (stream) => link.dropCache(stream),
-    submit: (target, cmd, basis, via) => link.submit(target, cmd, basis, via),
-    dismiss: (slot) => link.dismiss(slot),
-    dismissRestored: () => link.dismissRestored(),
-    pending: (target) => link.pending(target),
-    cursor: (stream) => link.cursor(stream),
-    request: (cmd) => link.request(cmd),
-    history: (stream, before, bytes) => link.history(stream, before, bytes),
-    servers: () => link.servers(),
-    ownerOf: (target) => link.ownerOf(target),
-    table: (serverId) => {
-      if (serverId === SERVER_ID && rows !== null) {
-        return { rows };
-      }
-      return link.table(serverId);
-    },
-    staleSince: (stream) => link.staleSince(stream),
-  };
-
-  const adapter = new RendererAdapter({ link: port, clock, emit: () => undefined });
   adapter.start();
   cleanups.push(async () => { adapter.stop(); await link.stop(); });
-  return { server, clock, link, port, adapter };
+  await flush();
+
+  let rev = 0;
+  const sendRows = async (entries: Array<[string, unknown] | { key: string; deleted: true }>) => {
+    if (!entries.length) return;
+    const after = rev;
+    const rows = entries.map((entry) => {
+      rev += 1;
+      return Array.isArray(entry)
+        ? { key: entry[0], rev, body: entry[1] }
+        : { key: entry.key, rev, deleted: true as const };
+    });
+    server.sendWire({ t: "rows", stream: SRV_STREAM, logId: "incown01", after, to: rev, rows, more: false });
+    await flush();
+  };
+  if (initialRows !== null) await sendRows(initialRows);
+
+  return { server, clock, link, adapter, sendRows };
 }
 
 function makeSandboxFrame() {
@@ -121,11 +110,10 @@ function makeSandboxFrame() {
 
 describe("M5-12b: frame broker attribution -> via on outbox items", () => {
   it("page bridge path stamps via { plugin, codeHash } from attached server's plugin: row for broker commands", async () => {
-    const rows = new Map<string, unknown>([
+    const { server, adapter, sendRows } = await setupAdapterWithPluginTable([
       ["plugin:notes-helper", pluginRow(HASH_1)],
       ["plugin:other", pluginRow(HASH_OTHER)],
     ]);
-    const { server, adapter } = await setupAdapterWithPluginTable(rows);
     const bridge = new BridgeV3(adapter, {
       openLink: () => undefined,
       narrow: () => false,
@@ -166,8 +154,8 @@ describe("M5-12b: frame broker attribution -> via on outbox items", () => {
     expect(server.copies[1].cmd).toMatchObject({ type: "plugins.command", id: "notes-helper.refresh", name: "notes-helper" });
     expect(server.copies[1].via).toEqual({ plugin: "notes-helper", codeHash: HASH_1 });
 
-    // 3. Hot swap changes row's codeHash -> next command stamps HASH_2
-    rows.set("plugin:notes-helper", pluginRow(HASH_2));
+    // 3. Hot swap changes row's codeHash via delta rows frame -> next command stamps HASH_2
+    await sendRows([["plugin:notes-helper", pluginRow(HASH_2)]]);
     frame.send({ ccb: "call", id: 2, method: "ping", params: null });
     await flush();
     expect(server.copies).toHaveLength(3);
@@ -346,13 +334,11 @@ describe("M5-12b: frame broker attribution -> via on outbox items", () => {
   });
 
   it("refuses locally fail-closed when plugin row is missing, table is null, row is malformed, via is malformed, or local shortcuts carry via", async () => {
-    const rows = new Map<string, unknown>([
-      ["plugin:broken", { codeHash: HASH_1, grants: "invalid-not-object" }],
-      ["plugin:valid", pluginRow(HASH_1)],
-    ]);
     const openLinkSpy = vi.fn();
     const removeSpy = vi.fn();
-    const { server, link, adapter } = await setupAdapterWithPluginTable(rows);
+    const { server, link, adapter } = await setupAdapterWithPluginTable([
+      ["plugin:valid", pluginRow(HASH_1)],
+    ]);
     const bridge = new BridgeV3(adapter, {
       openLink: openLinkSpy,
       narrow: () => false,
@@ -380,8 +366,27 @@ describe("M5-12b: frame broker attribution -> via on outbox items", () => {
       });
     }
 
-    // Malformed row
-    const broken = await (adapter as unknown as { request(cmd: Command, via?: { plugin: string }): Promise<unknown> }).request(
+    // Malformed row (corrupted in-memory row bypassing wire validation)
+    const malformedPort: LinkPort = {
+      get status() { return link.status; },
+      get server() { return link.server; },
+      on: (l) => link.on(l),
+      subscribe: (s) => link.subscribe(s),
+      unsubscribe: (s) => link.unsubscribe(s),
+      dropCache: (s) => link.dropCache(s),
+      submit: (t, c, b, v) => link.submit(t, c, b, v),
+      dismiss: (s) => link.dismiss(s),
+      dismissRestored: () => link.dismissRestored(),
+      pending: (t) => link.pending(t),
+      cursor: (s) => link.cursor(s),
+      request: (c) => link.request(c),
+      history: (s, b, by) => link.history(s, b, by),
+      table: (id) => (id === SERVER_ID ? { rows: new Map([["plugin:broken", { codeHash: HASH_1, grants: "invalid-not-object" }]]) } : link.table(id)),
+    };
+    const malformedAdapter = new RendererAdapter({ link: malformedPort, clock: new FakeClock(), emit: () => undefined });
+    malformedAdapter.start();
+    cleanups.push(() => malformedAdapter.stop());
+    const broken = await (malformedAdapter as unknown as { request(cmd: Command, via?: { plugin: string }): Promise<unknown> }).request(
       { type: "plugins.call", name: "broken", method: "m", params: null, from: "frame" },
       { plugin: "broken" },
     );
@@ -390,29 +395,8 @@ describe("M5-12b: frame broker attribution -> via on outbox items", () => {
       error: { code: "forbidden", message: "not sent: the plugin is not installed on this machine" },
     });
 
-    // Null table (link.table(server) returns null)
-    const nullTableAdapter = new RendererAdapter({
-      link: {
-        get status() { return link.status; },
-        get server() { return SERVER_ID; },
-        on: (l) => link.on(l),
-        subscribe: (s) => link.subscribe(s),
-        unsubscribe: (s) => link.unsubscribe(s),
-        dropCache: (s) => link.dropCache(s),
-        submit: (t, c, b, v) => link.submit(t, c, b, v),
-        dismiss: (s) => link.dismiss(s),
-        dismissRestored: () => link.dismissRestored(),
-        pending: (t) => link.pending(t),
-        cursor: (s) => link.cursor(s),
-        request: (c) => link.request(c),
-        history: (s, b, by) => link.history(s, b, by),
-        table: () => null,
-      },
-      clock: new FakeClock(),
-      emit: () => undefined,
-    });
-    nullTableAdapter.start();
-    cleanups.push(() => nullTableAdapter.stop());
+    // Null table (real FeLink before own rows arrive: link.table(own) is null)
+    const { adapter: nullTableAdapter } = await setupAdapterWithPluginTable(null);
     const noTable = await (nullTableAdapter as unknown as { request(cmd: Command, via?: { plugin: string }): Promise<unknown> }).request(
       { type: "plugins.call", name: "valid", method: "m", params: null, from: "frame" },
       { plugin: "valid" },

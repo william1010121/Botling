@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { ChunkMessage, EntryRef, WireMessage, WireMessageOf } from "../../protocol";
-import { FetchRelPath, type FetchDenyReason, type FetchRequester } from "../../protocol/fetch";
+import { FETCH_MAX_DEPTH, FetchRelPath, type FetchDenyReason, type FetchRequester } from "../../protocol/fetch";
 import type { DeviceScope } from "../../protocol/scopes";
 import { PEER_CONTENT_FRAME } from "../content/peer-content";
 import { sameSig, statSig, type StatSig } from "../content/pin";
@@ -906,7 +906,9 @@ export class FetchSource {
     let totalBytes = 0;
     let hasHardLinks = false;
 
-    const walk = (dir: string): FetchDenyReason | null => {
+    // `depth` is the number of folders above a file in `dir` (the target itself is 0), the requester's count: a file
+    // deeper than FETCH_MAX_DEPTH is dropped there, so say `limit` here, before an approval, a grant or the daily quota.
+    const walk = (dir: string, depth: number): FetchDenyReason | null => {
       let names: string[];
       try {
         names = readdirSync(dir).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
@@ -926,6 +928,7 @@ export class FetchSource {
           if (!targetSt.isFile()) continue;
           if (!isBlob && !isSubpathOrEqual(realTarget, real.path)) continue;
           if (!isBlob && (isDeniedPath(full, this.options.dataDir) || isDeniedPath(real.path, this.options.dataDir))) continue;
+          if (depth > FETCH_MAX_DEPTH) return "limit";
           if (++fileCount > Limits.PER_REQUEST_FILES) return "limit";
           totalBytes += Number(targetSt.size);
           if (totalBytes > Limits.PER_REQUEST_BYTES) return "limit";
@@ -936,10 +939,11 @@ export class FetchSource {
           if (visited.has(key)) continue;
           if (++folders > Limits.PER_REQUEST_FILES) return "limit";
           visited.add(key);
-          const err = walk(full);
+          const err = walk(full, depth + 1);
           if (err) return err;
         } else if (lst.isFile()) {
           if (!isBlob && isDeniedPath(full, this.options.dataDir)) continue;
+          if (depth > FETCH_MAX_DEPTH) return "limit";
           if (++fileCount > Limits.PER_REQUEST_FILES) return "limit";
           totalBytes += Number(lst.size);
           if (totalBytes > Limits.PER_REQUEST_BYTES) return "limit";
@@ -949,7 +953,7 @@ export class FetchSource {
       return null;
     };
 
-    const err = walk(realTarget);
+    const err = walk(realTarget, 0);
     if (err) return { ok: false, reason: err };
     return { ok: true, hasHardLinks };
   }
@@ -990,6 +994,8 @@ export class FetchSource {
             if (!targetSt.isFile()) continue;
             if (!isBlob && !isSubpathOrEqual(grantPrefix, real.path)) continue;
             if (!isBlob && (isDeniedPath(full, this.options.dataDir) || isDeniedPath(real.path, this.options.dataDir))) continue;
+            // F-a again here: the scan counts only links inside the target, this walk serves any link inside the prefix.
+            if (rel.split("/").length - 1 > FETCH_MAX_DEPTH) return "limit";
             if (entries.length >= Limits.PER_REQUEST_FILES) return "limit";
             estimatedBytes += Number(targetSt.size);
             if (estimatedBytes > Limits.PER_REQUEST_BYTES) return "limit";
@@ -1006,6 +1012,7 @@ export class FetchSource {
           } else if (lst.isFile()) {
             if (!isBlob && !isSubpathOrEqual(grantPrefix, full)) continue;
             if (!isBlob && isDeniedPath(full, this.options.dataDir)) continue;
+            if (rel.split("/").length - 1 > FETCH_MAX_DEPTH) return "limit";
             if (entries.length >= Limits.PER_REQUEST_FILES) return "limit";
             estimatedBytes += Number(lst.size);
             if (estimatedBytes > Limits.PER_REQUEST_BYTES) return "limit";
