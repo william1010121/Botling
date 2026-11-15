@@ -119,6 +119,8 @@ import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type Wor
 import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
 import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
 import { BotContext } from "./bot/context";
+import { BotRestart } from "./bot/restart";
+import { BotHead } from "./bot/head";
 import { RECENT_TOOL_CALLS, NO_LONGER_NEEDED, NO_ANSWER, NEVER_ALWAYS, PLUGINS_RESTART, PROMPT_SESSION_DIVIDER, NEW_SESSION_DIVIDER, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
 import { keepable, resolvePath, union, firstLine, sleep, turnCommandId, preview, streamingText, subagentOf, isReviewRefusal, isRule, allowRule, permissionText, clip, stepView, routinesKey, iso, subagentView, messageView, approvalSummary } from "./bot/view-functions";
 export type Status = "done" | "stopped" | "failed";
@@ -142,21 +144,19 @@ export class Bot {
   /** Read by BotContext (M7-S41). */
   records: ChatRecord[] = [];
   /** Set when its chat file could not be read: nothing is written over it then. */
-  private problem: string | null = null;
-  private readOnly = false;
+  problem: string | null = null;
+  readOnly = false;
   /** Who else has this bot's project open, when someone does: shown once as a notice, never a block. */
   private saveTimer: NodeJS.Timeout | null = null;
   // At most one pending write, retaining the book itself rather than queued snapshots.
   private subagentSaveTimer: NodeJS.Timeout | null = null;
   private subagentsDirty = false;
   private subagentSaveRetryMs = 1_000;
-  private head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
   readonly engine: Engine;
   /** Its heads (bot.json `heads`, 1.x's format). Kept by the primary; a partner reads it. */
   /** Read by BotContext (M7-S41). */
   headsSettings: Heads;
-  private startupActive = false;
   /** App-owned peers keyed by engine (on the conversation owner only). */
   /** Read by BotContext (M7-S41). */
   partners = new Map<Engine, Bot>();
@@ -181,7 +181,7 @@ export class Bot {
   private handoffDecisions = new Map<string, Set<string>>();
   private rounds: RoundsProgress | null = null;
   /** Codex: workers at work or their reports waiting (the bot stays awake). */
-  private managedPending = false;
+  managedPending = false;
   /** Cut off by the network (1.x's `outage`): it waits for the network to come back (`networkRestored`) to carry on. */
   outage: Outage | null = null;
   private retryingConnection = false;
@@ -197,18 +197,16 @@ export class Bot {
   private subagentProgress = new Map<string, number>();
   /** Quiet spells already reminded of ("": its own turn; else a subagent's id), once each (`stallReminded`). */
   private stallReminded = new Set<string>();
-  /** Tidying memory.md before it sleeps. */
-  private tidying = false;
   /** Read by BotContext (M7-S41). */
   turn: Turn | null = null;
   /** Messages that wait for the turn under way (or the tidy) to end. */
   /** Read by BotContext (M7-S41). */
   queue: Turn[] = [];
   private finished = new Map<string, Status>();
-  private approvals = new Map<string, Approval>();
-  private draining: { head: AgentHead; resolve: () => void; promise: Promise<void> } | null = null;
+  approvals = new Map<string, Approval>();
+  draining: { head: AgentHead; resolve: () => void; promise: Promise<void> } | null = null;
   /** Results still to come from turns ended early (a tidy or a guest turn that ran late): they belong to nobody. */
-  private ignoreResults = 0;
+  ignoreResults = 0;
   /** The app's own questions in this chat (installing a plugin): what a pick does. */
   private appQuestions = new Map<string, (index: number) => void>();
   /** …and what words typed on one do instead of going to the bot (a copy of another bot's question). */
@@ -216,47 +214,14 @@ export class Bot {
   /** The subagent rows as the windows last saw them (a change sends bot.updated). */
   private lastRows = "";
   /** What the app tells it with its next message (`queueNote`). */
-  private queuedNote: string | null = null;
+  queuedNote: string | null = null;
   /** Work paused for the user's message (1.x's `pausedWork`): carried on once the user has been answered. */
-  private paused: { conducted: boolean; handoffId: string | null } | null = null;
-  /** Read by BotContext (M7-S41). */
-  session: HeadState;
-  /** The next head is a new session: its first message carries the wake briefing. */
-  private briefing = true;
-  /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
-  private restartPending = false;
-  private modelSettingsPending = false;
-  /**
-   * The restart waiting is for a new working folder (a plugin's `sessions.folder`): your message never goes to the process
-   * still in the old one; while its own work runs it waits, as for a model change (spec/models/folders TurnStartsCurrent).
-   */
-  private folderPending = false;
-  /** The restart waiting is also for something other than its model or effort (plugins, folders, subagents' model): a hot switch cannot stand in for it. */
-  private restartNonModel = false;
-  /** Counts model/effort changes, so a hot switch that finishes after a newer one leaves that one waiting. */
-  private settingsGeneration = 0;
-  /**
-   * Your message waits for this head's own work (its subagents, workers, background tasks) to finish, so a
-   * model or effort change that needs a restart can be applied first; it is sent then, never on the old
-   * settings. `noticeId`: the chat card that says so.
-   */
-  private settingsHold: { noticeId: string; timer: ReturnType<typeof setInterval> } | null = null;
-  /** Why it starts again before its next message (1.x's `RestartReason`): what it is told, what its divider says. */
-  private restartReason: { told: string; shown: string } | null = null;
-  /** The restart waiting is only for plugins: when they changed back, it is not needed (1.x's `pendingRestartForPluginsOnly`). */
-  private restartForPluginsOnly = false;
-  /** The plugins' Claude parts its process started with (1.x's `loadedPluginStamp`). */
-  private loadedPluginStamp: string[] | null = null;
-  /** A head ended for such a restart: its session carries on. */
-  private restarting: AgentHead | null = null;
-  /** What its process has cost so far (claude's `total_cost_usd`, a running total; 1.x's `sessionCost`). */
-  private sessionCost = { last: 0 };
+  paused: { conducted: boolean; handoffId: string | null } | null = null;
   /** Its head runs on another CLI from its next message on (1.x's `switchEngine`): a handoff through memory.md first. */
   /** Read by BotContext (M7-S41). */
   switchTo: Engine | null = null;
   /** Writing that handoff (1.x's `.switching(.writing)`). */
-  private switching = false;
-  private idleTimer: NodeJS.Timeout | null = null;
+  switching = false;
   private alwaysAllowed: string[];
   /** Calls auto mode blocked that wait in the chat for your Allow, by message id (1.x's `denialAsks`). Nothing waits on them. */
   private denialAsks = new Map<string, Denial>();
@@ -273,21 +238,19 @@ export class Bot {
   private deniedFrames = new Map<string, { tool: string | null; reason: string }>();
   private deniedCalls = new Set<string>();
   private unread: number;
-  private shuttingDown = false;
+  shuttingDown = false;
   /** What this head's session has been told of the chat's reactions (null: tell it from scratch). */
-  private reactionsSeen: SeenReactions | null = null;
+  reactionsSeen: SeenReactions | null = null;
   /** Finished subagents a silent turn has already been asked to report, once. */
   private reportAsked = new Set<string>();
   /** Subagents that ended between turns: the next turn claude starts itself reports them. */
   private pendingEnded: string[] = [];
-  /** While tidying, a Codex worker's report turn on the memory update (`internalReply` kept open in 1.x). */
-  private tidyFollowUp: ((text: string) => void) | null = null;
   /** Heads being ended (a Stop it did not listen to, quitting): nothing they print counts any more. */
   private ending = new WeakSet<AgentHead>();
   /** The other head's words written to claude mid-turn, by message uuid: one that gets a turn of its own is the app's. */
   private contextSent = new Set<string>();
   /** Your lines written to claude while its turn ran, by message uuid: one claude begins a turn of its own for is answered there. */
-  private steered = new Map<string, Turn>();
+  steered = new Map<string, Turn>();
   /**
    * claude has a turn under way: it said "started" for a line, or its turn said something, and no result came since.
    * A "started" for a line then means claude read it into that turn (3353d2d9), never a turn of its own.
@@ -320,12 +283,72 @@ export class Bot {
   /** Its own components (bot.json `components`, at most 20); null: not given yet. */
   private componentList: string[] | null = null;
   /** What this head's session has been told about components (null: tell it in full). */
-  private briefedComponents: ComponentKnowledge | null = null;
+  briefedComponents: ComponentKnowledge | null = null;
   private componentsMayHaveChanged = false;
 
   /** Made on first use, from this bot: a fake `Object.create(Bot.prototype)` has one too. */
   private botContext: BotContext | null = null;
   private get ctx(): BotContext { return this.botContext ??= new BotContext(this); }
+  /** The restart state and the core swap hold of this bot (M7-S51): made on first use, from this bot. */
+  private botRestart: BotRestart | null = null;
+  private get restarts(): BotRestart { return this.botRestart ??= new BotRestart(this, this.ctx); }
+  /** The process and session of this bot (M7-S51): made on first use, from this bot. */
+  private botHead: BotHead | null = null;
+  private get headRun(): BotHead { return this.botHead ??= new BotHead(this, this.ctx); }
+  /** The fields BotRestart owns, as this bot has always had them (read by BotHead and BotRestart through `Bot`). */
+  get restartPending(): boolean { return this.restarts.restartPending; }
+  set restartPending(v: boolean) { this.restarts.restartPending = v; }
+  get modelSettingsPending(): boolean { return this.restarts.modelSettingsPending; }
+  set modelSettingsPending(v: boolean) { this.restarts.modelSettingsPending = v; }
+  get folderPending(): boolean { return this.restarts.folderPending; }
+  set folderPending(v: boolean) { this.restarts.folderPending = v; }
+  get restartNonModel(): boolean { return this.restarts.restartNonModel; }
+  set restartNonModel(v: boolean) { this.restarts.restartNonModel = v; }
+  get settingsGeneration(): number { return this.restarts.settingsGeneration; }
+  set settingsGeneration(v: number) { this.restarts.settingsGeneration = v; }
+  get settingsHold(): { noticeId: string; timer: ReturnType<typeof setInterval> } | null { return this.restarts.settingsHold; }
+  set settingsHold(v: { noticeId: string; timer: ReturnType<typeof setInterval> } | null) { this.restarts.settingsHold = v; }
+  get restartReason(): { told: string; shown: string } | null { return this.restarts.restartReason; }
+  set restartReason(v: { told: string; shown: string } | null) { this.restarts.restartReason = v; }
+  get restartForPluginsOnly(): boolean { return this.restarts.restartForPluginsOnly; }
+  set restartForPluginsOnly(v: boolean) { this.restarts.restartForPluginsOnly = v; }
+  get restarting(): AgentHead | null { return this.restarts.restarting; }
+  set restarting(v: AgentHead | null) { this.restarts.restarting = v; }
+  get swapHold(): boolean { return this.restarts.swapHold; }
+  set swapHold(v: boolean) { this.restarts.swapHold = v; }
+  get restartRecovery(): boolean { return this.restarts.restartRecovery; }
+  set restartRecovery(v: boolean) { this.restarts.restartRecovery = v; }
+  get restartProviderTurn(): string | undefined { return this.restarts.restartProviderTurn; }
+  set restartProviderTurn(v: string | undefined) { this.restarts.restartProviderTurn = v; }
+  get restartWorkerRecords(): import('./agent/codex').WorkerRecord[] | undefined { return this.restarts.restartWorkerRecords; }
+  set restartWorkerRecords(v: import('./agent/codex').WorkerRecord[] | undefined) { this.restarts.restartWorkerRecords = v; }
+  get restartWorkersSince(): number | undefined { return this.restarts.restartWorkersSince; }
+  set restartWorkersSince(v: number | undefined) { this.restarts.restartWorkersSince = v; }
+  /** The fields BotHead owns, as this bot has always had them. */
+  get head(): AgentHead | null { return this.headRun.head; }
+  set head(v: AgentHead | null) { this.headRun.head = v; }
+  get startupActive(): boolean { return this.headRun.startupActive; }
+  set startupActive(v: boolean) { this.headRun.startupActive = v; }
+  get tidying(): boolean { return this.headRun.tidying; }
+  set tidying(v: boolean) { this.headRun.tidying = v; }
+  get session(): HeadState { return this.headRun.session; }
+  set session(v: HeadState) { this.headRun.session = v; }
+  get briefing(): boolean { return this.headRun.briefing; }
+  set briefing(v: boolean) { this.headRun.briefing = v; }
+  get loadedPluginStamp(): string[] | null { return this.headRun.loadedPluginStamp; }
+  set loadedPluginStamp(v: string[] | null) { this.headRun.loadedPluginStamp = v; }
+  get sessionCost(): { last: number } { return this.headRun.sessionCost; }
+  set sessionCost(v: { last: number }) { this.headRun.sessionCost = v; }
+  get idleTimer(): NodeJS.Timeout | null { return this.headRun.idleTimer; }
+  set idleTimer(v: NodeJS.Timeout | null) { this.headRun.idleTimer = v; }
+  get tidyFollowUp(): ((text: string) => void) | null { return this.headRun.tidyFollowUp; }
+  set tidyFollowUp(v: ((text: string) => void) | null) { this.headRun.tidyFollowUp = v; }
+  get freshSessionPending(): boolean { return this.headRun.freshSessionPending; }
+  set freshSessionPending(v: boolean) { this.headRun.freshSessionPending = v; }
+  get startedFresh(): boolean { return this.headRun.startedFresh; }
+  set startedFresh(v: boolean) { this.headRun.startedFresh = v; }
+  get adoptedSession(): boolean { return this.headRun.adoptedSession; }
+  set adoptedSession(v: boolean) { this.headRun.adoptedSession = v; }
 
   constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
     const primary = options.primary;
@@ -442,7 +465,7 @@ export class Bot {
   get id() { return this.ctx.id; }
   get profile() { return this.ctx.profile; }
   private get paths() { return this.ctx.paths; }
-  private log(line: string) { this.ctx.log(line); }
+  log(line: string) { this.ctx.log(line); }
   private emit(event: Event) { this.ctx.emit(event); }
 
   /** What the partner's chat did, in this chat (`mirror`): its lines are this chat's lines too. */
@@ -539,7 +562,7 @@ export class Bot {
     if (changed) this.persist();
   }
 
-  private persist(soon = false) {
+  persist(soon = false) {
     if (this.readOnly) return;
     if (soon) {
       this.saveTimer ??= setTimeout(() => { this.saveTimer = null; this.persist(); }, 500);
@@ -605,7 +628,7 @@ export class Bot {
   }
 
   /** A new line; `archive: false` for a reply still being written (it is archived when it ends). */
-  private add(record: ChatRecord, { archive = true } = {}) {
+  add(record: ChatRecord, { archive = true } = {}) {
     this.records.push(record);
     this.persist();
     if (archive) archiveLine(this.paths.archive, record);
@@ -617,7 +640,7 @@ export class Bot {
     this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
   }
 
-  private remove(record: ChatRecord) {
+  remove(record: ChatRecord) {
     const at = this.records.indexOf(record);
     if (at < 0) return;
     this.records.splice(at, 1);
@@ -688,9 +711,7 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Turns in other chats (1.x's `groupTurn`, `post`, `keepCallIn`)
 
-  private guestTurn = false;
-  /** The core is being swapped: no turn begins (hot-swap.ts). */
-  private swapHold = false;
+  guestTurn = false;
 
   /**
    * Says `text` (its turn in a chat it was called into) and returns the reply,
@@ -1034,7 +1055,7 @@ export class Bot {
    * ledger (the old journals imported once, then never written), every transition projected, and a restart told from
    * a quit. One live core per member: a head's core goes with its head.
    */
-  private readonly workerCore: WorkerCoreFactory = (options, legacy) => {
+  readonly workerCore: WorkerCoreFactory = (options, legacy) => {
     const core = new WorkerCore({
       ...options, store: new WorkerLedger(this.workerLedgerFile, legacy),
       projected: (record) => this.projectWorker(record),
@@ -1048,11 +1069,11 @@ export class Bot {
   };
 
   /** Whether this bot's Claude subagents are app-managed workers (the default) or native Agent calls (settings.json `claudeWorkers: "native"`). */
-  private claudeWorkersOn(): boolean {
+  claudeWorkersOn(): boolean {
     return this.options.launch?.().claudeWorkers !== "native";
   }
 
-  private ensureClaudeWorkers(): ClaudeWorkers {
+  ensureClaudeWorkers(): ClaudeWorkers {
     if (this.claudeWorkerHost) return this.claudeWorkerHost;
     this.claudeWorkerHost = new ClaudeWorkers({
       file: claudeWorkersFile(this.store.directory),
@@ -1086,7 +1107,7 @@ export class Bot {
    * pane beside this bot's chat (saved data goes to the bot's own `.bot/browser/`); the Note tools read this project's
    * Notes and change this bot's own (a worker only reads).
    */
-  private async botTool(name: BotToolName, args: Record<string, unknown>, caller: ToolCaller = "coordinator"): Promise<unknown> {
+  async botTool(name: BotToolName, args: Record<string, unknown>, caller: ToolCaller = "coordinator"): Promise<unknown> {
     if (isNoteTool(name)) return runNoteTool(name, args, { botId: this.owner.profile.id, caller });
     if (name === COMPONENT_USAGE_TOOL) return this.componentUsage(args, caller);
     if (name === FETCH_TOOL) return this.fetchTool(args, caller);
@@ -1175,7 +1196,7 @@ export class Bot {
    * their own bookkeeping happens here (the book, the step that started one, approvals, usage, speed),
    * never the coordinator's turn. Their state is the ledger's (`projectWorker`).
    */
-  private onWorkerOutput(item: CodexItem) {
+  onWorkerOutput(item: CodexItem) {
     if (this.shuttingDown && item.kind !== "subagentEnded" && item.kind !== "permissionCancelled") return;
     switch (item.kind) {
       // Each usage's own spend (the core's), never a running total.
@@ -1296,7 +1317,7 @@ export class Bot {
   }
 
   /** Its worker host told who owns each of its workers, as the registry has it (a move made while the host was not up). */
-  private syncWorkerOwners() {
+  syncWorkerOwners() {
     const host = this.workerHost;
     const port = this.options.agents;
     if (!host || !port) return;
@@ -1539,7 +1560,7 @@ export class Bot {
   }
 
   /** A failed write stays dirty. Critical callers see the error; background retries are bounded. */
-  private flushSubagents(progress = false) {
+  flushSubagents(progress = false) {
     if (this.subagentSaveTimer) { clearTimeout(this.subagentSaveTimer); this.subagentSaveTimer = null; }
     if (this.readOnly || !this.subagentsDirty) return;
     try {
@@ -1663,7 +1684,7 @@ export class Bot {
     this.options.emit({ type: "heads.updated", botId: this.id, heads: this.headsView() });
   }
 
-  private updated() {
+  updated() {
     this.emit({ type: "bot.updated", bot: this.view() });
   }
 
@@ -1876,7 +1897,7 @@ export class Bot {
   }
 
   /** A turn for `head` (this bot's or its partner's), routed there now. */
-  private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds } = {}): Turn {
+  deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds } = {}): Turn {
     // Work for a head the bot does not have (a hand-off from a bot with one head): made when first needed (1.x's `bot(for:)`).
     this.requireEngineRoute(head);
     const bot = this.botFor(head) ?? this.owner.makePartner(head);
@@ -1917,7 +1938,7 @@ export class Bot {
     return { turnId: turn.id, done: turn.done };
   }
 
-  private newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn {
+  newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn {
     // Your message (or the app's) goes on with the session: the try waiting after an API error is not needed.
     if (origin === "user" || origin === "app") this.clearApiRetry();
     let resolve!: Turn["resolve"];
@@ -2161,7 +2182,7 @@ export class Bot {
   }
 
   /** Its own choices in bot.json (1.x's `model`, `effort`, `subagentModel`, `codexWorkers`). */
-  private choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; subagentEffort: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null; agyWorkerModel: string | null; agyWorkerEffort: string | null; workerMachine: string | null } {
+  choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; subagentEffort: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null; agyWorkerModel: string | null; agyWorkerEffort: string | null; workerMachine: string | null } {
     const settings = this.store.loadSettings();
     const pick = (value: unknown, list: readonly string[]) => (typeof value === "string" && list.includes(value) ? value : null);
     const workers = codexWorkerDefaults(settings.codexWorkers);
@@ -2330,7 +2351,7 @@ export class Bot {
   }
 
   /** Its head is `to` now; the next head is a new session. */
-  private becomeEngine(to: Engine) {
+  becomeEngine(to: Engine) {
     (this as { engine: Engine }).engine = to;
     const saved = to === "agy" ? this.store.loadSettings().agyConversation : null;
     if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) {
@@ -2819,7 +2840,7 @@ export class Bot {
   }
 
   /** Makes `turn` the one under way and sends it (waking the bot if it sleeps). */
-  private begin(turn: Turn, head?: AgentHead) {
+  begin(turn: Turn, head?: AgentHead) {
     this.turn = turn;
     this.delivered(turn);
     this.redrawQueued(turn);
@@ -2835,92 +2856,14 @@ export class Bot {
     else void this.deliver(turn, head);
   }
 
-  /**
-   * Its process starts again, in the same session, before its next message (1.x's `restart(_:)` for
-   * "may read <folder>": a folder you allowed is one more `--add-dir`). Asleep, the next wake has it anyway.
-   */
-  restartBeforeNextMessage(reason: { told: string; shown: string } | null = null) {
-    if (this.options.primary) { this.options.primary.restartBeforeNextMessage(reason); return; }
-    this.restartFor(reason);
-  }
-
-  /** Its session's folder moved (a plugin's `sessions.folder`): it starts again there before your next message, never answering it from the old one. */
-  folderMoved(reason: { told: string; shown: string }) {
-    if (this.options.primary) { this.options.primary.folderMoved(reason); return; }
-    this.restartFor(reason, false, true);
-  }
-
-  /** This head starts again in the same session before its next message, for `reason` (`restart(_:)`). Asleep: the next wake has it. */
-  private restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) {
-    this.restartForPluginsOnly = false;
-    if (!this.head?.running) { this.restartPending = false; this.restartNonModel = false; this.folderPending = false; return; }
-    this.restartPending = true;
-    this.folderPending ||= folder;
-    this.modelSettingsPending ||= modelSettings;
-    if (modelSettings) this.settingsGeneration += 1;
-    else this.restartNonModel = true;
-    if (reason) this.restartReason = reason;
-  }
-
-  /**
-   * "Restart bot": every head of this conversation starts again before its next message (the way a model
-   * change does, so a running turn, subagents or workers are never cut off). A claude head starts a NEW
-   * session with the wake briefing (memory.md and the recent chat): claude keeps a session's first system
-   * prompt on --resume, so only a new session has the app's current instructions. Asleep, nothing runs now;
-   * the next wake starts the new session.
-   */
-  restartNow(): { restart: "next-message" | "asleep" } {
-    const owner = this.owner;
-    if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
-    let awake = false;
-    for (const bot of owner.members) {
-      if (bot.engine === "claude") bot.freshSessionPending = true;
-      bot.restartFor({ told: "restarted at your user's request", shown: "manual restart" });
-      awake ||= bot.restartPending;
-    }
-    return { restart: awake ? "next-message" : "asleep" };
-  }
-
-  /** "Restart bot" on a claude head: its next start is a new session, whatever its prompt hash says. */
-  private freshSessionPending = false;
-  /** ensureHead began a new session for the message being sent (its briefing says it all; no restart note). */
-  private startedFresh = false;
-
-  /** A session handed over by the old core is resumed as it is once (a cut-off turn goes on exactly where it stopped). */
-  private adoptedSession = false;
-  /** The prompt hash head.json kept for this session (the old core wrote it): none for an older file or another session. */
-  private savedPromptHash(sessionId: string): { promptHash?: string } {
-    const saved = this.store.loadHead();
-    return saved?.sessionId === sessionId && saved.promptHash ? { promptHash: saved.promptHash } : {};
-  }
-
-  /** A hash of the system prompt this head's session would be created with now (engine differences included). */
-  private promptHash(): string {
-    return createHash("sha256").update(this.prompts().system).digest("hex").slice(0, 16);
-  }
-
-  /** Its process has the plugins' Claude parts as they are now. */
-  private hasCurrentPlugins(): boolean {
-    const stamp = this.options.pluginStamp?.();
-    return !!stamp && JSON.stringify(stamp) === JSON.stringify(this.loadedPluginStamp);
-  }
-
-  /**
-   * Plugins' Claude parts changed (1.x's `reloadPlugins`). Asleep: the next wake loads them. Awake: it
-   * restarts just before its next message, so the new skills and agents are there. Many changes make one
-   * restart, and changes that come back to what its session has make none. Its other head restarts too.
-   */
-  reloadPlugins() {
-    if (this.options.primary) return;
-    if (this.hasCurrentPlugins()) {
-      if (this.restartForPluginsOnly) { this.restartPending = false; this.restartNonModel = false; this.restartReason = null; this.restartForPluginsOnly = false; }
-      return;
-    }
-    const waiting = this.restartPending;
-    for (const peer of this.peers) peer.restartFor(PLUGINS_RESTART);
-    this.restartFor(PLUGINS_RESTART);
-    if (!waiting && this.restartPending) this.restartForPluginsOnly = true;
-  }
+  restartBeforeNextMessage(reason: { told: string; shown: string } | null = null) { this.restarts.restartBeforeNextMessage(reason); }
+  folderMoved(reason: { told: string; shown: string }) { this.restarts.folderMoved(reason); }
+  restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) { this.restarts.restartFor(reason, modelSettings, folder); }
+  restartNow(): { restart: "next-message" | "asleep" } { return this.restarts.restartNow(); }
+  savedPromptHash(sessionId: string): { promptHash?: string } { return this.restarts.savedPromptHash(sessionId); }
+  promptHash(): string { return this.restarts.promptHash(); }
+  hasCurrentPlugins(): boolean { return this.restarts.hasCurrentPlugins(); }
+  reloadPlugins() { this.restarts.reloadPlugins(); }
 
   /** Writes the turn's message to a head (starting one, in a new session, if the bot is asleep). */
   private async deliver(turn: Turn, given?: AgentHead) {
@@ -3138,182 +3081,16 @@ export class Bot {
   }
 
   /** This head's instructions now. */
-  private prompts(): BotPrompts {
+  prompts(): BotPrompts {
     return this.options.prompts(this.engine, this.sharesChat ? this.heads : null);
   }
 
-  private ensureHead(): AgentHead {
-    this.requireEngineRoute(this.engine, this.owner.engine);
-    if (this.head?.running) return this.head;
-    // It fell asleep before its switch of engine was done: it wakes on the new one.
-    if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
-    this.requireEngineRoute(this.engine, this.owner.engine);
-    this.restartPending = false;
-    this.restartNonModel = false;
-    this.modelSettingsPending = false;
-    this.folderPending = false;
-    this.restartForPluginsOnly = false;
-    this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
-    const prompts = this.prompts();
-    // claude keeps the system prompt a session was created with (--resume ignores a new one): when the app's
-    // has changed since (or "Restart bot" asks, or head.json has no hash yet), this is a new session, and its
-    // first message carries the wake briefing. Codex refreshes its instructions on resume, and agy is given
-    // them again on session/load, so only claude is told apart.
-    const adopted = this.adoptedSession;
-    this.adoptedSession = false;
-    if (this.engine === "claude" && this.session.started && !this.briefing && (this.freshSessionPending || (!adopted && this.session.promptHash !== this.promptHash()))) {
-      this.newSession();
-      this.startedFresh = true;
-      this.owner.add({ id: newId(), role: "divider", text: PROMPT_SESSION_DIVIDER, date: toSwiftDate() });
-    }
-    this.freshSessionPending = false;
-    const resume = this.session.started && !this.briefing;
-    if (!resume) this.session.promptHash = this.promptHash();
-    const launch = this.options.launch?.() ?? { subagentHourCache: false };
-    const start = this.sessionStart(resume, prompts);
-    // An app-made worktree: the session starts there; the project's .bot (memory, inbox) stays reachable.
-    const tree = this.owner.options.worktree?.() ?? null;
-    let head: AgentHead;
-    if (this.engine === "agy") {
-      if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
-      const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, ...(tree ? { addDirs: tree.addDirs } : {}), sessionId: start.sessionId, resume: start.resume,
-        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), browser: (name, args, caller) => this.botTool(name, args, caller), routines: (args) => this.routinesTool(args), canStartReport: () => !this.turn && (!this.queue.length || !!this.settingsHold) && !this.draining && !this.shuttingDown, });
-      if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
-      head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) }, undefined,
-        { core: this.workerCore, sink: (item) => this.onWorkerOutput(item) });
-    } else if (this.engine === "codex") {
-      if (!this.options.codexConfig) throw new Error("Codex is not available here.");
-      const base = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
-      const config = tree ? { ...base, cwd: tree.cwd, writableRoots: [...new Set([...(base.writableRoots ?? []), ...tree.addDirs])] } : base;
-      if (this.restartRecovery && config.resume) {
-        const thread = config.threads.thread(config.sessionId);
-        if (!thread || (config.workerInstructions && !config.threads.isManaged(config.sessionId, thread))) throw new Error("Mixed Codex conversation mapping unavailable; identity retained, no replacement or replay.");
-      }
-      const restartWorkers=this.restartWorkerRecords;
-      const restartTurn=this.restartProviderTurn;
-      const restartRecovery=this.restartWorkersSince;
-      this.restartProviderTurn=undefined;
-      this.restartWorkerRecords=undefined;
-      this.restartWorkersSince=undefined;
-      head = new CodexHead({...config, browser: (name, args, caller) => this.botTool(name, args, caller), restartWorkers, restartRecovery, restartTurn, strictResume:this.restartRecovery && config.resume,
-        workerCore: this.workerCore, workerSink: (item) => this.onWorkerOutput(item)}, { onItem: item => {
-        this.onItem(head, item);
-      }, onExit: exit => this.onExit(head, exit) });
-    } else {
-      const base = this.options.headConfig(this.profile, start);
-      const config = tree ? { ...base, cwd: tree.cwd, addDirs: [...new Set([...(base.addDirs ?? []), ...tree.addDirs])] } : base;
-      // Claude's subagents are app-managed workers (claude-workers.ts): the app's tools come in over the control channel
-      // and the native Agent/Task tool is gone. The hidden settings.json `claudeWorkers: "native"` keeps the native one.
-      const workers = !config.harmless && this.claudeWorkersOn() ? this.ensureClaudeWorkers() : null;
-      const siteTools = this.options.siteToolsFolder ? { siteToolsGuard: { folder: this.options.siteToolsFolder } } : {};
-      // app_routines comes on the same server, also for the native fallback (which gets only that tool).
-      const appMcp = config.harmless ? null : { server: CLAUDE_APP_SERVER, tools: workers ? CLAUDE_APP_TOOLS : CLAUDE_ROUTINE_TOOLS };
-      head = new ClaudeHead({ ...config, ...siteTools, monitorWorker: false, ...(appMcp ? { appMcp } : {}), ...(workers ? { agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
-        onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit),
-        ...(appMcp ? { onAppTool: async (name: string, args: Record<string, unknown>) => name === "app_routines" ? this.routinesTool(args)
-          : isBotTool(name) ? this.botTool(name, args, "coordinator") : workers ? workers.tool(name, args) : Promise.reject(new Error(`Unknown app tool ${name}.`)) } : {}),
-      });
-    }
-    head.start();
-    this.head = head;
-    // Workers it hosts for another bot: their host learns who owns them before any report goes out (a move made while it slept).
-    if (this.engine !== "claude") this.syncWorkerOwners();
-    this.sessionCost = { last: 0 };
-    if (head.pid > 0) this.options.ledger.record(head.pid);
-    this.log(`head started pid ${head.pid} session ${this.session.sessionId}${resume ? " (resumed)" : " (new)"}`);
-    this.store.saveHead(this.session);
-    this.updated();
-    return head;
-  }
-
-  /** What a head of this bot starts with now (its settings, plugins, instructions). */
-  private sessionStart(resume: boolean, prompts: BotPrompts): SessionStart {
-    const plugins = this.options.plugins?.() ?? { dirs: [], env: {} };
-    const choices = this.owner.choices();
-    const launch = this.options.launch?.() ?? { subagentHourCache: false };
-    return {
-      sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env, pluginTools: plugins.tools ?? [], skillRoots: plugins.skillRoots ?? [],
-      model: choices.model, effort: choices.efforts[this.engine], subagentModel: choices.subagentModel,
-      subagentHourCache: launch.subagentHourCache, codexWorkers: choices.codexWorkers,
-      addDirs: this.owner.options.addDirs?.() ?? [],
-      // 1.x's "Auto-approve safe actions": on unless turned off.
-      autoMode: launch.autoMode !== false, allowRules: this.allowRules,
-      claudeBypassPermissions: launch.claudeBypassPermissions === true,
-      codexBypassPermissions: launch.codexBypassPermissions === true,
-      ...(launch.specWriters ? { specWriters: launch.specWriters } : {}),
-    };
-  }
-
-  /** The model and effort a head of this engine would start with now (what a hot switch moves a running one to). */
-  private settingsTarget(): HotSettings {
-    if (this.engine === "agy") return { model: this.settingsView().agyModel, effort: this.owner.choices().efforts.agy ?? null };
-    const prompts = this.prompts();
-    const start = this.sessionStart(this.session.started, prompts);
-    if (this.engine === "codex") {
-      if (!this.options.codexConfig) return {};
-      const config = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
-      return { model: config.model ?? null, effort: config.effort ?? null };
-    }
-    const config = this.options.headConfig(this.profile, start);
-    return { model: config.model ?? null, effort: config.effort ?? null };
-  }
-
-  /** Whether the running head would take the pending model/effort change in place (no restart needed). */
-  private canSwitchInPlace(head: AgentHead): boolean {
-    const can = (head as { canApplySettings?: (target: HotSettings) => boolean }).canApplySettings;
-    try { return typeof can === "function" && can.call(head, this.settingsTarget()); }
-    catch { return false; }
-  }
-
-  /**
-   * The running head takes its new model/effort in place, without a restart (Claude: `set_model`; Codex: the
-   * next turn/start's override; Antigravity: `session/set_model`, where on). True: done, a divider says so,
-   * and no restart is needed for it. False: not supported, refused or failed; the restart path applies.
-   */
-  private async switchInPlace(head: AgentHead): Promise<boolean> {
-    const apply = (head as { applySettings?: (target: HotSettings) => Promise<boolean> }).applySettings;
-    if (typeof apply !== "function") return false;
-    const generation = this.settingsGeneration;
-    let switched = false;
-    try { switched = await apply.call(head, this.settingsTarget()); }
-    catch (error) { this.log(`switching its model/effort in place failed: ${(error as Error).message}`); }
-    if (!switched || this.head !== head || !head.running) {
-      this.log("its model/effort could not be switched in place: it restarts for it instead");
-      return false;
-    }
-    // Changed again meanwhile: the newer change still waits (a later message applies it).
-    if (generation !== this.settingsGeneration) return true;
-    this.modelSettingsPending = false;
-    const shown = this.restartReason?.shown ?? "new settings";
-    if (!this.restartNonModel) { this.restartPending = false; this.restartReason = null; this.restartForPluginsOnly = false; }
-    this.owner.add({ id: newId(), role: "divider", text: `Switched → ${shown}`, date: toSwiftDate() });
-    this.log(`switched to ${shown} in place, without a restart`);
-    return true;
-  }
-
-  /** A new session for the next wake (after a sleep, or a resume claude no longer had). */
-  private newSession() {
-    if (this.engine === "agy" && !this.readOnly) {
-      this.store.saveSetting("agyConversation", undefined);
-      this.store.saveSetting("agyRecovery", undefined);
-    }
-    this.queuedNote = null;
-    this.freshSessionPending = false;
-    this.session = { sessionId: randomUUID(), started: false };
-    this.briefing = true;
-    this.reactionsSeen = null;
-    this.briefedComponents = null;
-  }
-
-  /** The turn's reply line, put in the chat once it has something to show. */
-  private place(turn: Turn): ChatRecord {
-    if (turn.record) return turn.record;
-    const record: ChatRecord = { id: turn.messageId, role: "bot", text: "", date: toSwiftDate(), turnID: turn.id, state: "streaming", engine: this.engine };
-    if (this.sharesChat) record.seenBy = [this.engine];
-    turn.record = record;
-    this.add(record, { archive: false });
-    return record;
-  }
+  ensureHead(): AgentHead { return this.headRun.ensureHead(); }
+  sessionStart(resume: boolean, prompts: BotPrompts): SessionStart { return this.headRun.sessionStart(resume, prompts); }
+  canSwitchInPlace(head: AgentHead): boolean { return this.headRun.canSwitchInPlace(head); }
+  switchInPlace(head: AgentHead): Promise<boolean> { return this.headRun.switchInPlace(head); }
+  newSession() { this.headRun.newSession(); }
+  place(turn: Turn): ChatRecord { return this.headRun.place(turn); }
 
   /** Claude started a turn of its own (a background subagent told it something; `app`: the other head's words it answers). */
   private backgroundTurn(head: AgentHead, origin: "background" | "app" = "background"): Turn {
@@ -3331,7 +3108,7 @@ export class Bot {
     return turn;
   }
 
-  private onItem(head: AgentHead, item: CodexItem) {
+  onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
     // Workers' own items come through `onWorkerOutput` only.
     if (item.kind === "workerReport" || item.kind === "workerNote") return;
@@ -3903,7 +3680,7 @@ export class Bot {
   }
 
   /** The next waiting message, if any; else the idle clock starts. */
-  private next(): void {
+  next(): void {
     // While a stopped turn drains nothing begins (not even the turn set aside): stop() goes on here once it ended.
     if (this.turn || this.tidying || this.switching || this.draining) return;
     const deferred = this.deferred;
@@ -4076,7 +3853,7 @@ export class Bot {
     return { status };
   }
 
-  private onExit(head: AgentHead, exit: HeadExit) {
+  onExit(head: AgentHead, exit: HeadExit) {
     if (head.pid > 0) this.options.ledger.forget(head.pid);
     this.drained(head);
     if (head !== this.head) return;
@@ -4374,7 +4151,7 @@ export class Bot {
   }
 
   /** Background work still going that it started not too long ago (sleeping or a restart would end it). */
-  private get backgroundWorkRunning(): boolean {
+  get backgroundWorkRunning(): boolean {
     return hasBackgroundWorkRunning(this.ownRecords);
   }
 
@@ -4391,18 +4168,18 @@ export class Bot {
    * Work in this head's own process that a restart would end: its subagents or workers (hosted ones count,
    * whoever they report to), background tasks it started, or its wait for the network. Never a partner head's.
    */
-  private get ownWorkRunning(): boolean {
+  get ownWorkRunning(): boolean {
     // Your lines steered into a turn that claude has not read yet count: it still owes them an answer.
     return this.inHeadSubagents.length > 0 || this.managedPending || this.backgroundWorkRunning || !!this.outage || this.steered.size > 0;
   }
 
   /** Its subagents at work inside its head's process (a Claude worker is a process of its own: a restart or sleep leaves it be). */
-  private get inHeadSubagents(): SubagentRecord[] {
+  get inHeadSubagents(): SubagentRecord[] {
     return this.subagents.running.filter((subagent) => !ownProcessWorker(subagent.type));
   }
 
   /** Words for the work that holds a model/effort restart back (the queue card). */
-  private ownWorkWords(): string {
+  ownWorkWords(): string {
     const parts: string[] = [];
     const subagents = this.inHeadSubagents.length;
     if (subagents) parts.push(`${subagents} ${this.engine === "claude" ? "subagent" : "worker"}${subagents === 1 ? "" : "s"}`);
@@ -4412,54 +4189,13 @@ export class Bot {
     return parts.join(", ") || "its work";
   }
 
-  /** `turn` (your message) waits for this head's own work to finish before its model/effort restart; a card says so. */
-  private holdForSettings(turn: Turn) {
-    this.queue.unshift(turn);
-    if (!this.settingsHold) {
-      const id = newId();
-      const settings = this.restartReason?.shown ?? "the new model or effort";
-      const what = this.modelSettingsPending ? "Model or effort change" : "Moving to its new working folder";
-      const after = this.modelSettingsPending ? `on ${settings}` : "there";
-      this.owner.add({ id, role: "notice", text: `${what} is waiting for active work to finish (${displayName(this.engine)}: ${this.ownWorkWords()}). ${turn.origin === "user" ? "Your message is" : "Its next message is"} queued and is sent ${after} as soon as that work finishes.`, date: toSwiftDate() });
-      // Work whose end the app hears of without an event (a background task too old to hold the bot) is seen here.
-      const timer = setInterval(() => this.checkSettingsHold(), 15_000);
-      timer.unref?.();
-      this.settingsHold = { noticeId: id, timer };
-      this.log(`your message waits for its own work to finish before restarting for ${settings}`);
-    }
-    this.updated();
-  }
-
-  /**
-   * Whether `turn` waits for this head's own work before the restart it owes. Yours always; after a move every turn but
-   * the tidy (a routine, a worker's report, a follow-up, the resume note): none may go to the process in the old folder.
-   */
-  private waitsForRestart(turn: Turn): boolean {
-    return turn.origin === "user" || (this.folderPending && turn.origin !== "tidy");
-  }
-
-  /** Lets the held message go once this head's own work is done (or nothing waits any more). True: let go. */
-  private releaseSettingsHold(): boolean {
-    const hold = this.settingsHold;
-    if (!hold) return true;
-    const waiting = this.queue.some((turn) => turn.open && this.waitsForRestart(turn));
-    if (waiting && (this.modelSettingsPending || this.folderPending) && this.head?.running && this.ownWorkRunning) return false;
-    clearInterval(hold.timer);
-    this.settingsHold = null;
-    const card = this.owner.records.find((record) => record.id === hold.noticeId);
-    if (card) this.owner.remove(card);
-    if (waiting) this.log("its own work finished: your queued message goes now");
-    return true;
-  }
-
-  /** Something that may have ended this head's own work happened: a held message may go now. */
-  private checkSettingsHold() {
-    if (!this.settingsHold || !this.releaseSettingsHold()) return;
-    if (!this.turn && !this.tidying && !this.switching) this.next();
-  }
+  holdForSettings(turn: Turn) { this.restarts.holdForSettings(turn); }
+  waitsForRestart(turn: Turn): boolean { return this.restarts.waitsForRestart(turn); }
+  releaseSettingsHold(): boolean { return this.restarts.releaseSettingsHold(); }
+  checkSettingsHold() { this.restarts.checkSettingsHold(); }
 
   /** The interrupted-work note for a wake, once: those tasks count as told from now on (`takeInterruptedNote`). */
-  private takeInterruptedNote(): string {
+  takeInterruptedNote(): string {
     const note = interruptedNote(this.records);
     if (!note) return "";
     for (const record of markCutOffTasksTold(this.records)) this.changed(record);
@@ -4534,92 +4270,10 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Sleeping
 
-  private scheduleIdle() {
-    this.clearIdle();
-    if (!this.head?.running || this.turn || this.queue.length || this.approvals.size || this.tidying || this.shuttingDown || this.managedPending) return;
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = null;
-      void this.sleep();
-    }, this.options.idleMs);
-  }
-
-  private clearIdle() {
-    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
-  }
-
-  /** `Bot.sleep(tidy: true)`: memory.md is tidied, then the head ends. Nothing under way is cut off. */
-  async sleep({ tidyMs = this.options.tidyTimeoutMs ?? 5 * 60_000 } = {}): Promise<void> {
-    const head = this.head;
-    if (!head?.running || this.turn || this.queue.length || this.approvals.size || this.tidying) return;
-    // A subagent (or a Codex worker) at work in the background would end with the process: wait for it.
-    // So would a command or Monitor it left running in the background (1.x's `hasBackgroundWorkRunning`).
-    // Cut off by the network, it keeps its session for when the network is back.
-    if ((this.inHeadSubagents.length || this.managedPending || this.backgroundWorkRunning || this.outage || this.steered.size) && !this.shuttingDown) { this.scheduleIdle(); return; }
-    this.clearIdle();
-    this.tidying = true;
-    this.updated();
-    this.log("idle: tidying its notes, then going to sleep");
-    if (tidyMs > 0) {
-      const reply = await this.maintenance(this.prompts().tidy, tidyMs, head);
-      if (reply !== null && !isPlainOK(reply)) this.log(`its tidy reply was not a plain OK: ${reply.slice(0, 200)}`);
-    }
-    if (this.head === head && head.running) {
-      head.finish();
-      const exited = await Promise.race([head.exited.then(() => true), sleep(5_000).then(() => false)]);
-      if (!exited) await head.terminate(1_000);
-    }
-    this.tidying = false;
-    this.updated();
-    // What the user said meanwhile wakes it again, in a new session.
-    if (!this.shuttingDown) this.next();
-  }
-
-  /**
-   * An app turn nobody sees that updates memory.md (the tidy, a handoff): its reply, or null when it did
-   * not end in time. Codex hands the update to a worker and ends its turn: it is done when the worker's
-   * report turn answers (1.x keeps its `internalReply` open while work is pending).
-   */
-  private async maintenance(text: string, timeoutMs: number, head: AgentHead): Promise<string | null> {
-    const deadline = Date.now() + timeoutMs;
-    const wasTidying = this.tidying;
-    this.tidying = true;
-    try {
-      let reply = await this.internal(text, timeoutMs);
-      while (this.engine === "codex" && reply !== null && this.head === head && head.running && (this.managedPending || this.turn) && Date.now() < deadline) {
-        reply = await new Promise<string | null>((resolve) => {
-          const timer = Number.isFinite(deadline) ? setTimeout(() => { this.tidyFollowUp = null; resolve(null); }, Math.max(0, deadline - Date.now())) : undefined;
-          this.tidyFollowUp = (text) => { clearTimeout(timer); this.tidyFollowUp = null; resolve(text); };
-        });
-      }
-      return reply;
-    } finally {
-      this.tidying = wasTidying;
-    }
-  }
-
-  /** An app turn nobody sees (the tidy): its reply, or null when it did not end in time. */
-  private internal(text: string, timeoutMs: number): Promise<string | null> {
-    return new Promise((resolve) => {
-      const turn = this.newTurn("tidy", text, null);
-      let settled = false;
-      const settle = (value: string | null) => { if (!settled) { settled = true; clearTimeout(timer); resolve(value); } };
-      // No limit (quitting, as in 1.x): it takes as long as it takes.
-      const timer = Number.isFinite(timeoutMs) ? setTimeout(() => {
-        this.log("the tidy did not end in time");
-        if (turn.open) {
-          turn.open = false;
-          if (this.turn === turn) this.turn = null;
-          turn.resolve("stopped");
-          // Its result, if it comes, belongs to nobody.
-          if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }
-        }
-        settle(null);
-      }, timeoutMs) : undefined;
-      turn.onReply = (reply) => settle(reply);
-      void turn.done.then(() => settle(""));
-      this.begin(turn, this.head ?? undefined);
-    });
-  }
+  scheduleIdle() { this.headRun.scheduleIdle(); }
+  clearIdle() { this.headRun.clearIdle(); }
+  sleep(options: { tidyMs?: number } = {}): Promise<void> { return this.headRun.sleep(options); }
+  maintenance(text: string, timeoutMs: number, head: AgentHead): Promise<string | null> { return this.headRun.maintenance(text, timeoutMs, head); }
 
   // ------------------------------------------------------------------------------------------
   // Routines (Routines.swift, ScheduledRoutines.swift; the clock is the core's, `Core.checkRoutines`)
@@ -4874,7 +4528,7 @@ export class Bot {
   }
 
   /** Where its components' commands run: its own folder. */
-  private get commandFolder(): string {
+  get commandFolder(): string {
     return this.owner.profile.folder;
   }
 
@@ -5422,7 +5076,7 @@ export class Bot {
   }
 
   /** Rules for calls you allowed after auto mode blocked them: always, then this run's. */
-  private get allowRules(): string[] {
+  get allowRules(): string[] {
     const always = this.alwaysAllowed.filter(isRule);
     return [...always, ...this.sessionRules.filter((rule) => !always.includes(rule))];
   }
@@ -5752,199 +5406,29 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Core hot swap (hot-swap.ts): this bot and its partner head as one.
 
-  holdForSwap(hold: boolean) {
-    this.swapHold = hold;
-    for (const peer of this.peers) peer.holdForSwap(hold);
-    // Let go again (the swap was called off): what waited begins now.
-    if (!hold) { this.next(); for (const peer of this.peers) peer.next(); }
-  }
-
-  get swapBusy(): boolean {
-    const own = !!this.turn || this.tidying || this.switching || this.guestTurn || !!this.deferred || !!this.claimHold || !!this.paused
-      || this.subagents.running.length > 0 || this.managedPending;
-    return own || this.peers.some(peer => peer.swapBusy);
-  }
-
-  get swapToolInFlight(): boolean {
-    const own = !!this.turn?.steps.some((step) => step.kind === "tool" && !step.done);
-    return own || this.peers.some(peer => peer.swapToolInFlight);
-  }
-
-  /** Stops what is under way for a swap; the session goes on (the new core resumes it). */
-  async swapInterrupt(): Promise<void> {
-    this.paused = null;
-    const stops: Promise<unknown>[] = [];
-    for (const bot of this.members) {
-      if (bot.turn && bot.turn.origin !== "tidy") stops.push(bot.stop(bot.turn.id));
-      if (bot.deferred) stops.push(bot.stop(bot.deferred.id));
-    }
-    await Promise.all(stops);
-  }
-
-  /** Its heads' sessions and the turns that wait, for the new core. */
-  swapEntries(cutOff: boolean): SwapEntry[] {
-    const entries: SwapEntry[] = [];
-    for (const bot of this.members) {
-      const queued = bot.queue.filter((turn) => turn.open && turn.origin !== "tidy").map((turn) => ({ words: turn.words, userId: turn.userId, origin: turn.origin }));
-      const sessionId = bot.session.started ? bot.session.sessionId : null;
-      if (!sessionId && !queued.length) continue;
-      // Only a head that was at work is told to carry on.
-      entries.push({ botId: this.owner.id, engine: bot.engine, sessionId, continue: cutOff && !!sessionId && (bot.engine === this.engine || !!bot.head?.running), queued });
-    }
-    return entries;
-  }
-
-  async flushForSwap() {
-    this.persist();
-    for (const peer of this.peers) peer.persist();
-    const saved = await Promise.allSettled(this.members.map(async bot => {
-      try { bot.flushSubagents(); if (!bot.readOnly) bot.store.flushSubagents(); }
-      catch (error) { bot.log(`subagents save failed during core swap: ${String(error)}`); throw error; }
-      finally { if (bot.session.started) bot.store.saveHead(bot.session); }
-    }));
-    const failed = saved.find(result => result.status === "rejected");
-    if (failed?.status === "rejected") throw failed.reason;
-  }
-
-  /** Capture before shutdown cancels transports; never treat a pending approval as consent. */
-  restartEntries(): RestartEntry[] {
-    // The three-engine integration exposes all peers; older cores expose only partner.
-    const peers = (this as Bot & { readonly peers?: Bot[] }).peers;
-    return [this, ...(peers ?? (this.partner ? [this.partner] : []))].flatMap(bot => {
-      const turn = bot.turn;
-      const workers = bot.head instanceof CodexHead ? bot.head.restartWorkers : undefined;
-      const nativeChildren=bot.engine==="claude"?bot.subagents.running.filter(child=>!ownProcessWorker(child.type)).map(child=>({id:child.id,agentId:child.agentID,parentId:child.parentID?(bot.subagents.get(child.parentID)?.id??child.parentID):undefined,
-        checkpoint:child.steps.findLast(step=>step.kind==="tool"&&step.done&&!step.failed)?.id,
-        prompt:child.prompt,description:child.description,type:child.type})):undefined;
-      // Own-process Claude workers end as interrupted by the restart (their ledger says so); the coordinator is told their ids then.
-      const claudeWorkers=bot.engine==="claude"?bot.subagents.running.filter(child=>ownProcessWorker(child.type)).map(child=>child.id):undefined;
-      const nativeConfig=bot.head instanceof ClaudeHead?bot.head.config:undefined;
-      const active = !!turn?.open && turn.origin !== "tidy";
-      const queued=bot.queue.filter(t=>t.open&&!t.sent&&t.origin!=="tidy").map(t=>({words:t.words,userId:t.userId,origin:t.origin,turnId:t.id,messageId:t.messageId,handoffId:t.handoffId,conducted:t.conducted}));
-      if (!active && !queued.length && !bot.managedPending && !bot.subagents.running.length) return [];
-      const blocked = bot.readOnly ? "The conversation store is read-only."
-        : bot.approvals.size ? "A permission decision was pending. Review the original request before continuing."
-        : bot.engine === "agy" && bot.managedPending ? "Antigravity worker execution reconciliation is not supported; original worker identities are retained."
-        : bot.head instanceof CodexHead && bot.head.restartBlocker ? bot.head.restartBlocker
-        : active && bot.head instanceof CodexHead && !bot.head.restartTurn ? "Coordinator turn delivery is unconfirmed; reconcile the original thread."
-        : workers?.some(w=>w.reportDispatching) ? "Worker report delivery is uncertain. Inspect the original coordinator conversation before any retry."
-        : active && turn && !turn.reply.text && !turn.steps.length ? "Prompt delivery has no confirmed response yet; reconcile the original conversation before retrying."
-        : bot.turn?.steps.some(step=>step.kind==="tool"&&!step.done) ? "A tool call had no confirmed result. Reconcile its outcome before continuing."
-        : bot.deferred || bot.paused || bot.claimHold ? "Paused or deferred work needs explicit reconciliation."
-        : nativeChildren?.some(child=>!child.agentId) ? "Native child lacks an observed agent ID. Original assignment remains in subagent history; no replacement was started."
-        : bot.subagents.running.some(child=>!ownProcessWorker(child.type)) && !workers?.length && !nativeChildren?.length ? "This child transport has no safe restart contract."
-        : workers?.some(w => w.wasActive && (!w.restartSafe || !w.thread)) ? "A worker has pending approval, tool execution, or unconfirmed delivery. Reconcile the original task."
-        : active && !bot.session.started ? "Provider session creation was not confirmed." : undefined;
-      // Its workers are not written here: the member's ledger keeps what each needs to go on (`restartedAt` finds them).
-      return [{botId:this.owner.id,engine:bot.engine,sessionId:bot.session.sessionId,sessionStarted:bot.session.started,
-        continue:active||!!nativeChildren?.length||!!claudeWorkers?.length,queued,nativeChildren,nativeCwd:nativeConfig?.cwd,nativeConfigDir:nativeConfig?claudeConfigFolder({...process.env,...nativeConfig.env}):undefined,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,
-        blocked,restartedAt:Date.now(),providerTurnId:bot.head instanceof CodexHead ? bot.head.restartTurn : undefined}];
-    });
-  }
-
-  retainRestartIdentity(entry: RestartEntry): Bot {
-    const bot=this.botFor(entry.engine);
-    if(!bot || !entry.sessionId)throw Error("Original engine/session unavailable; no replacement was created.");
-    bot.session={sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.savedPromptHash(entry.sessionId)};bot.briefing=entry.sessionStarted===false;
-    bot.adoptedSession=!!entry.continue||!!entry.workers?.length||bot.restartedWorkers(entry).length>0;
-    bot.store.saveHead(bot.session);
-    bot.restartRecovery=true;
-    return bot;
-  }
+  holdForSwap(hold: boolean) { this.restarts.holdForSwap(hold); }
+  get swapBusy(): boolean { return this.restarts.swapBusy; }
+  get swapToolInFlight(): boolean { return this.restarts.swapToolInFlight; }
+  swapInterrupt(): Promise<void> { return this.restarts.swapInterrupt(); }
+  swapEntries(cutOff: boolean): SwapEntry[] { return this.restarts.swapEntries(cutOff); }
+  flushForSwap(): Promise<void> { return this.restarts.flushForSwap(); }
+  /** A fake `this` (a plain object a test passes to `Bot.prototype.restartEntries.call`) has no collaborator: one is made from it. */
+  restartEntries(): RestartEntry[] { return (this.restarts ?? new BotRestart(this, new BotContext(this))).restartEntries(); }
+  retainRestartIdentity(entry: RestartEntry): Bot { return this.restarts.retainRestartIdentity(entry); }
 
   /** Its workers this restart interrupted, as its ledger says (an entry from before the ledger names them itself). */
-  private restartedWorkers(entry: RestartEntry): WorkerLedgerRecord[] {
+  restartedWorkers(entry: RestartEntry): WorkerLedgerRecord[] {
     if (entry.restartedAt === undefined) return [];
     return [...this.workerViews.values()].filter((r) => r.status === "interrupted" && r.interruptedBy === "restart" && (r.endedAt ?? 0) >= entry.restartedAt!);
   }
 
-  /**
-   * An entry the restart did not continue (`reason`): said in this chat, with the messages that waited behind it. They never
-   * reached the provider, so sending them cannot repeat anything: the notice offers to send them now as they were (your own
-   * lines shown as you wrote them), so your words are never left behind with only a note (2026-11-09).
-   */
-  restartPaused(entry: RestartEntry, reason: string): string {
-    const waiting = (entry.queued ?? []).filter((saved) => ["user", "app", "background"].includes(saved.origin));
-    const own = (userId: string) => this.owner.records.find((record) => record.id === userId && record.role === "user")?.text ?? null;
-    const offered = waiting.length > 0 && !this.owner.readOnly && !!this.botFor(entry.engine);
-    const text = restartPausedNotice(entry, reason, own, offered);
-    if (!offered) return this.appNotice(text);
-    let sent = false;
-    return this.appNotice(text, [{ label: RESEND_WAITING, recommended: true }], (index) => {
-      if (index !== 0 || sent) return;
-      sent = true;
-      const bot = this.botFor(entry.engine);
-      if (!bot) return;
-      // As a continued restart sends them (`adoptRestart`): in their order, each a turn of its own, after any under way.
-      for (const saved of waiting) {
-        const userId = saved.userId && this.owner.records.some((record) => record.id === saved.userId) ? saved.userId : null;
-        const turn = bot.newTurn(userId ? saved.origin as Origin : saved.origin === "user" ? "app" : saved.origin as Origin, saved.words, userId);
-        turn.id = saved.turnId; turn.messageId = saved.messageId; turn.handoffId = saved.handoffId; turn.conducted = saved.conducted;
-        bot.queue.push(turn);
-      }
-      if (!bot.turn) bot.next();
-      this.log(`restart ${entry.botId}: the ${waiting.length} message(s) that waited were sent at the user's pick`);
-    });
-  }
+  /** An entry the restart did not continue (`reason`): said in this chat, with the messages that waited behind it (BotRestart). */
+  restartPaused(entry: RestartEntry, reason: string): string { return this.restarts.restartPaused(entry, reason); }
 
-  adoptRestart(entry: RestartEntry) {
-    const bot=this.retainRestartIdentity(entry);
-    const restarted=bot.restartedWorkers(entry);
-    bot.restartWorkerRecords=entry.workers;
-    bot.restartWorkersSince=entry.restartedAt;
-    bot.restartProviderTurn=entry.providerTurnId;
-    // The coordinator's own app workers (own processes) are told; a Codex head's workers the app reconciles itself.
-    const ownWorkers=[...(entry.claudeWorkers ?? []), ...restarted.filter(r=>r.adapter==="claude-process").map(r=>r.id)];
-    const reconciled=[...(entry.workers ?? []).map(w=>w.id), ...restarted.filter(r=>r.adapter!=="claude-process").map(r=>r.id)];
-    const nativeContext=entry.nativeChildren?.length?nativeRestartContext(entry.nativeChildren,{cwd:entry.nativeCwd??bot.commandFolder,configDir:entry.nativeConfigDir,sessionId:entry.sessionId!}):"";
-    if(entry.continue){
-      const turn=bot.newTurn(entry.userId ? "user" : "app",RESTART_NOTE+nativeContext+(reconciled.length ? "\nExisting worker task IDs (the app reconciles these; do not create replacements): "+reconciled.join(", ") : "")
-        +(ownWorkers.length ? "\nApp worker task IDs interrupted by the restart (nothing was replayed; continue any that are still needed with app_send_message to the same task_id, do not create replacements): "+ownWorkers.join(", ") : ""),entry.userId??null);
-      turn.handoffId=entry.handoffId??null;
-      // Keep task correlation, but use a new transport turn: the prior turn is visibly interrupted.
-      turn.retried=true; // A failed resume must never fall back to a fresh session/replay.
-      bot.queue.push(turn);
-    }
-    for(const saved of entry.queued){
-      if(!["user","app","background"].includes(saved.origin))throw Error("Queued work origin requires reconciliation.");
-      const turn=bot.newTurn(saved.origin as Origin,saved.words,saved.userId);
-      turn.id=saved.turnId;turn.messageId=saved.messageId;turn.handoffId=saved.handoffId;turn.conducted=saved.conducted;turn.retried=true;
-      bot.queue.push(turn);
-    }
-    if(bot.queue.length)bot.next();
-    // A Codex head's workers live in it: it starts to check and resume them (and hand over reports they still owe).
-    else if(entry.workers?.some(w=>w.wasActive||w.reportPending)||(bot.engine!=="claude"&&restarted.length))bot.ensureHead();
-  }
+  /** A fake `this` (a plain object a test passes to `Bot.prototype.adoptRestart.call`) has no collaborator: one is made from it. */
+  adoptRestart(entry: RestartEntry) { (this.restarts ?? new BotRestart(this, new BotContext(this))).adoptRestart(entry); }
 
-  private restartRecovery = false;
-  private restartProviderTurn?: string;
-  private restartWorkerRecords?: import('./agent/codex').WorkerRecord[];
-  /** The restart's time: its next Codex head checks and resumes the workers its ledger says that restart interrupted. */
-  private restartWorkersSince?: number;
-
-  /** At the new core's start: go on in the sessions the old core handed over (`--resume`), then what waited. */
-  adoptSwap(entries: SwapEntry[]) {
-    for (const entry of entries) {
-      const bot = this.botFor(entry.engine);
-      if (!bot) continue;
-      if (entry.sessionId) {
-        bot.session = { sessionId: entry.sessionId, started: true, ...bot.savedPromptHash(entry.sessionId) };
-        bot.adoptedSession = !!entry.continue;
-        // The same conversation: no wake briefing (what was cut off in the background is said with its next message).
-        bot.briefing = false;
-        bot.store.saveHead(bot.session);
-        const cut = bot.takeInterruptedNote();
-        if (cut) bot.queuedNote = cut;
-        this.log(`core swap: ${entry.engine} resumes session ${entry.sessionId}${entry.continue ? " and carries on" : ""}`);
-      }
-      if (entry.continue && entry.sessionId) this.deliverTo(entry.engine, CONTINUE_NOTE, null, { origin: "app" });
-      for (const turn of entry.queued) {
-        const origin = (["user", "app", "background"] as string[]).includes(turn.origin) ? turn.origin as Origin : "app";
-        const userId = turn.userId && this.owner.records.some((record) => record.id === turn.userId) ? turn.userId : null;
-        this.deliverTo(entry.engine, turn.words, userId, { origin: userId ? origin : origin === "user" ? "app" : origin });
-      }
-    }
-  }
+  adoptSwap(entries: SwapEntry[]) { this.restarts.adoptSwap(entries); }
 
   /** Ends the turn and the head (with its tree) and writes everything out; for quitting. An idle awake bot tidies first (1.x). */
   async shutdown({ tidy = true }: { tidy?: boolean } = {}) {
