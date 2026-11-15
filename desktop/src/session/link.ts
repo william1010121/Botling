@@ -33,6 +33,8 @@ const HEADER_BYTES = 13;
 const TAG_BYTES = 16;
 /** Frames that may wait unopened while a handshake step runs (HS3 and the first data frames follow at once). */
 const HANDSHAKE_INBOX_LIMIT = 64;
+/** After the transport closed, how long frames already received may still be opened and delivered before the session ends. */
+const TRANSPORT_CLOSE_GRACE_MS = 1_000;
 /** The largest frame the wire can carry: header, the largest plaintext, tag (bigger than every handshake message). */
 const WIRE_FRAME_LIMIT = HEADER_BYTES + SESSION_FRAME_LIMIT + TAG_BYTES;
 
@@ -200,8 +202,17 @@ export class SessionLink {
   }
   /** Resolves once the frames received so far were handled (opened and delivered, or the session ended on one). */
   received(): Promise<void> { return this.inbox.then(() => undefined, () => undefined); }
-  /** The transport closed under the session. */
-  transportClosed(): void { this.end("transport", "the transport closed"); }
+  /**
+   * The transport closed under the session. A close event comes right behind the last message, and opening a frame is
+   * asynchronous: the session ends once the frames already received were delivered (a final `join.declined` or `bye`
+   * is not lost), or after TRANSPORT_CLOSE_GRACE_MS when a receiver does not return.
+   */
+  transportClosed(): void {
+    if (this.ended) return;
+    const end = () => { clearTimeout(timer); this.end("transport", "the transport closed"); };
+    const timer = setTimeout(end, TRANSPORT_CLOSE_GRACE_MS);
+    void this.inbox.then(end);
+  }
 
   private fail(error: unknown): void {
     if (error instanceof SessionError) this.end(error.reason, error.message);
