@@ -12,7 +12,7 @@
 // is reloaded comes after the plugins that were not touched, in every slot it is in (registration order, P2).
 //
 // The feed owns only the instances it made: a name the kernel already holds (a built-in in-page plugin, `:shell`, `:chat`) is left alone.
-import type { Kernel } from "../../../../Web/src/plugin-kernel";
+import { canonicalSlot, type Kernel } from "../../../../Web/src/plugin-kernel";
 import type { PluginsView, WebPluginSpecView } from "../../contract";
 import { rendererKernel } from "../renderer-kernel";
 import { FEED_MENU_SLOTS, FEED_VIEWS } from "./feed-slots";
@@ -57,6 +57,8 @@ function planOf(view: PluginsView | null, web: FeedWeb): Map<string, Wanted> {
 export class PluginFeed {
   /** The instances this feed made, with the fingerprint each was loaded for. */
   private readonly owned = new Map<string, string>();
+  /** The last view and web answer reconciled (`refresh` reconciles them again). */
+  private last: { view: PluginsView | null; web: FeedWeb } = { view: null, web: undefined };
 
   constructor(private readonly kernel: Kernel) {}
 
@@ -65,6 +67,7 @@ export class PluginFeed {
    * done on return. Returns the plugins the feed holds, in load order.
    */
   reconcile(view: PluginsView | null, web?: FeedWeb): string[] {
+    this.last = { view, web };
     const wanted = planOf(view, web);
     for (const name of [...this.owned.keys()]) if (!wanted.has(name)) this.drop(name);
     for (const [name, plan] of wanted) {
@@ -82,6 +85,19 @@ export class PluginFeed {
       });
     }
     return this.loaded();
+  }
+
+  /**
+   * A plugin that owns `slots` has come or gone (an in-page built-in, shell/inpage-host.ts): the kernel refuses a contribution to a
+   * slot whose owner is away and does not ask again when it returns, so the instances that contribute to them are loaded again
+   * from the last view. Slots are given by either name. The other instances are not touched.
+   */
+  refresh(slots: readonly string[]): string[] {
+    const changed = new Set(slots.map(canonicalSlot));
+    for (const name of this.owned.keys()) {
+      if (this.kernel.declaration(name)?.contributes?.slots?.some((slot) => changed.has(slot))) this.owned.set(name, "");
+    }
+    return this.reconcile(this.last.view, this.last.web);
   }
 
   /** The plugins the feed holds. */
