@@ -6,6 +6,10 @@
 //   again: `risk` says what a second run does.
 // - read: changes nothing the server keeps; answered by the engine directly, never through a slot.
 // - app: handled by the desktop app's main process (windows, dialogs, Finder, updates); never reaches the server.
+// - local: botlingd's own phone pairing and relay setting (server/pairing/phone-desk.ts, Settings › Phone in the
+//   Botling 3 window): answered as a `req` on this machine's local socket only, never under a slot. A pairing link is
+//   a secret and must never reach a log entry (the offers live in memory only); the roster keeps its own signed
+//   statements. Sent as a `cmd` it is refused before any handler runs (legacy.ts); a device is refused (admin scope).
 // `Record<CommandType, …>` makes a new contract command a type error here until it is classified.
 import type { CommandType } from "../../contract";
 
@@ -15,11 +19,13 @@ export type CommandRoute =
   | { kind: "intent" }
   | { kind: "legacy"; why: string; risk: RerunRisk; rerun: string }
   | { kind: "read" }
-  | { kind: "app" };
+  | { kind: "app" }
+  | { kind: "local" };
 
 const intent: CommandRoute = { kind: "intent" };
 const read: CommandRoute = { kind: "read" };
 const app: CommandRoute = { kind: "app" };
+const local: CommandRoute = { kind: "local" };
 const legacy = (why: string, risk: RerunRisk, rerun: string): CommandRoute => ({ kind: "legacy", why, risk, rerun });
 
 const ASYNC = "its handler is asynchronous (it waits on a process, the network or plugin code), so it cannot run inside the writer's synchronous transaction";
@@ -63,7 +69,6 @@ export const COMMAND_ROUTES: Record<CommandType, CommandRoute> = {
   "settings.get": read,
   "agy.runtime.check": read,
   "bot.settings": read,
-  "mobile.view": read,
   "machines.view": read,
   "machines.hosts": read,
   "doctor.view": read,
@@ -75,6 +80,14 @@ export const COMMAND_ROUTES: Record<CommandType, CommandRoute> = {
   "waiting.list": read,
   "turn.await": read,
   "card.image": read,
+
+  // botlingd's own phone pairing and relay setting (local reqs, never a slot).
+  "mobile.view": local,
+  "mobile.pair": local,
+  "mobile.revoke": local,
+  "mobile.relay": local,
+  "mobile.cluster": local,
+  "mobile.confirm": local,
 
   // The desktop app's main process.
   "files.pick": app,
@@ -124,9 +137,6 @@ export const COMMAND_ROUTES: Record<CommandType, CommandRoute> = {
   "storage.remove": legacy(OUTSIDE, "none", "refused or nothing: already removed"),
   "waiting.ignore": legacy("the waiting list (core memory and settings)", "none", SAME),
   "engineDefaults.applyAll": legacy(OUTSIDE, "none", SAME),
-  "mobile.pair": legacy(ASYNC, "low", "a second pairing code; the first one expires unused"),
-  "mobile.revoke": legacy(OUTSIDE, "none", "already revoked"),
-  "mobile.relay": legacy(OUTSIDE, "none", SAME),
   "machines.add": legacy(ASYNC, "low", "finds the machine already added"),
   "machines.pair": legacy(ASYNC, "low", "a second pairing request; the first expires"),
   "machines.approve": legacy(ASYNC, "low", "approves an already approved machine (nothing new)"),

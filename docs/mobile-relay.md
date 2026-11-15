@@ -37,6 +37,12 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
   phones, but a phone that loads the page again gets Botling 3's. The `full-2x` image target keeps the 2.x page.
   `mobile/relay-client.ts` replaces the HTTPS transport; everything above it (`web-bridge.ts`, the desktop renderer)
   is unchanged.
+- **Botling 3** pairs from the window, never a command line: Settings › Phone (`desktop/src/renderer/PhoneSettingsV3.tsx`)
+  is answered by botlingd's own pairing (`desktop/src/server/pairing/phone-desk.ts`), not the 2.x core. The relay address
+  typed there is kept in `<botlingd data>/relay.json` and botlingd joins that room at once; the first pairing shows the
+  recovery code once and asks for it typed back; a pairing code is a QR of `https://<relay host>/v3/#pair=…`; the phone's
+  6-digit code is compared and accepted in the window. These requests are local `req`s only (a pairing link is never
+  stored).
 
 ### Files
 

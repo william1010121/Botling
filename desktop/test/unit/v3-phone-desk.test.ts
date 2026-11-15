@@ -37,7 +37,7 @@ afterEach(async () => {
 
 const PHONE: CommandType[] = ["mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "mobile.cluster", "mobile.confirm"];
 const PAGE = "https://relay.example/v3/";
-const DEVICE = "D".repeat(43);
+const DEVICE = "p".repeat(26);
 
 function fakeRelay(): PhoneRelay & { sets: Array<string | null> } {
   const state = { url: null as string | null };
@@ -184,14 +184,14 @@ describe("PhoneDesk: Settings › Phone over the v3 pairing", () => {
     const second = (await run(desk, { type: "mobile.pair" }) as { offer: string }).offer;
     emit({ kind: "pair.code", offer: second, code: "000001", deviceId: DEVICE, deviceName: "Stranger" });
     await run(desk, { type: "mobile.confirm", offer: second, accept: false });
-    expect(ops.at(-1)).toEqual({ op: "pair.confirm", offer: second, accept: false });
+    expect(ops.filter((op) => op.op === "pair.confirm").at(-1)).toEqual({ op: "pair.confirm", offer: second, accept: false });
     emit({ kind: "pair.declined", offer: second, reason: "code" });
     expect((await run(desk, { type: "mobile.view" }) as any).v3.offers.find((o: any) => o.offer === second)).toMatchObject({ state: "declined", reason: "code" });
 
     await expect(run(desk, { type: "mobile.revoke", deviceId: "../x" })).rejects.toThrow(ContractError);
     expect(ops.some((op) => op.op === "device.revoke")).toBe(false);
     await run(desk, { type: "mobile.revoke", deviceId: DEVICE });
-    expect(ops.at(-2)).toEqual({ op: "device.revoke", deviceId: DEVICE });
+    expect(ops.filter((op) => op.op === "device.revoke")).toEqual([{ op: "device.revoke", deviceId: DEVICE }]);
   });
 
   it("keeps the relay address through the relay port and says what to fix for a bad one", async () => {

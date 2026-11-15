@@ -3503,6 +3503,9 @@ First write a test that shows this, then fix it.`;
         await this.relay.setURL(cmd.url);
         return this.mobileView();
       }
+      // Botling 3's first pairing and code check (botlingd answers them itself); the 2.x renderer never sends them.
+      case "mobile.cluster":
+      case "mobile.confirm": throw new ContractError("conflict", "This is a Botling 3 pairing request.");
       case "machines.view": return this.machinesView();
       case "machines.hosts": return { hosts: this.machinesOr().sshHosts().slice(0, 500) };
       case "machines.add": {

@@ -49,9 +49,10 @@ import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, slotAuthori
 import { fixedIds } from "./fixed-ids";
 import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeyRecord, readVapidKeys, revokedServerIds } from "./identity";
 import { Gossip, PrefsStore, RosterStore, type RosterView } from "./roster";
-import { defaultPageDir, effectiveRelayUrl, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, redact, RELAY_KEY_FILE, RELAY_SETTING_FILE, RELAY_URL_ENV, relayConnectOrigin, RelayConnector, relayTestOptions } from "./net";
+import { changeRelaySetting, defaultPageDir, effectiveRelayUrl, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, redact, RELAY_KEY_FILE, RELAY_SETTING_FILE, RELAY_URL_ENV, relayConnectOrigin, RelayConnector, relayTestOptions } from "./net";
 import { relayDeviceToken, relayPageOrigin, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
+import { PhoneDesk } from "./pairing/phone-desk";
 import { attachedDeviceIds, PushSender, PushTriggers, type PushTransport } from "./push";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { VapidKeySync } from "./push";
@@ -113,6 +114,18 @@ export function pairingPageUrl(tailnet: string | null, relay: string | null): st
   if (tailnet) return `${tailnet}/v3/`;
   if (relay) return `${relayPageOrigin(relay)}/v3/`;
   return `${PLACEHOLDER_TAILNET_ORIGIN}/v3/`;
+}
+
+/** The relay as Settings › Phone shows it: its address, whether this server's room is connected, whether the environment fixes it. */
+export function relayShown(
+  address: RelayAddress | null,
+  relay: { readonly state: "connecting" | "ready" | "down" | "closed" } | null,
+  env: Record<string, string | undefined>,
+): { url: string | null; state: "off" | "connecting" | "online" | "offline"; fixed: boolean } {
+  const fixed = (env[RELAY_URL_ENV] ?? "").trim() !== "";
+  if (!address || !relay) return { url: null, state: "off", fixed };
+  const state = relay.state === "ready" ? "online" : relay.state === "down" ? "offline" : relay.state === "closed" ? "off" : "connecting";
+  return { url: address.url, state, fixed };
 }
 
 /** Where an offer says the device reaches this server: the placeholder tailnet address only when nothing else is there. */
@@ -438,6 +451,43 @@ export class Botlingd {
   remoteContent: RemoteContent | null = null;
   /** M2 step 13: this server's room on the relay (null: the relay path is off). */
   relay: RelayConnector | null = null;
+  /** Makes the room's connector for a relay address (set at start; useRelay makes a new one on each switch). */
+  private relayMaker: ((url: string, key: string) => RelayConnector) | null = null;
+  /** The port this server's address profile names for its listener's (the advertised-port setting). */
+  private advertise: (port: number) => number = (port) => port;
+  private relaySwitch: Promise<void> = Promise.resolve();
+
+  /**
+   * Settings › Phone switched the relay (relay.json is already written): leave the old room's connection (its sessions
+   * end; devices dial again) and join the room at `url` (the same room key, so the same room id), or stay off for null.
+   * Pairing links, the page's allowed origins and this server's address profile follow at once. One switch at a time.
+   */
+  useRelay(url: string | null): Promise<void> {
+    const run = this.relaySwitch.then(() => this.switchRelay(url));
+    this.relaySwitch = run.catch(() => undefined);
+    return run;
+  }
+
+  private async switchRelay(url: string | null): Promise<void> {
+    if (this.stopping) throw new Error("botlingd is stopping");
+    if ((this.relayAddress?.url ?? null) === url && (url === null) === (this.relay === null)) return;
+    const old = this.relay;
+    this.relay = null;
+    this.relayAddress = null;
+    old?.close();
+    if (url !== null) {
+      if (!this.relayMaker) throw new Error("botlingd is still starting; try again in a moment");
+      const key = loadRelayRoomKey(join(this.paths.dataDir, RELAY_KEY_FILE));
+      const room = await relayRoomOf(key);
+      if (this.stopping) return;
+      const relay = this.relayMaker(url, key);
+      this.relay = relay;
+      this.relayAddress = { url, room };
+      await relay.start();
+    }
+    this.log(url ? `relay: ${redact(url)} (from Settings › Phone)` : "relay: off (from Settings › Phone)");
+    await this.writeOwnProfile(this.advertise);
+  }
   /** M2 step 10: the media jobs (variants). */
   media: MediaJobs | null = null;
   /** M3 step 10: peers' content read through this server (attached side), and this server's content read by peers. */
@@ -732,9 +782,10 @@ export class Botlingd {
       const relayAddress: RelayAddress | null = relayRoom ? { url: relayRoom.url, room: relayRoom.room } : null;
       const pairing = new PairingService({
         roster, cluster: clusterSetup, identity, serverName: SERVER_NAME, log,
-        addresses: () => pairingAddresses(origin, relayAddress),
-        pageUrl: () => pairingPageUrl(origin, relayAddress?.url ?? null),
-        addressNote: () => (origin || relayAddress ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), and no relay (botlingd relay set <url>), so the link names a placeholder."),
+        // The relay in use now (Settings › Phone may switch it while botlingd runs: Botlingd.useRelay).
+        addresses: () => pairingAddresses(origin, daemon?.relayAddress ?? relayAddress),
+        pageUrl: () => pairingPageUrl(origin, (daemon?.relayAddress ?? relayAddress)?.url ?? null),
+        addressNote: () => (origin || (daemon?.relayAddress ?? relayAddress) ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), and no relay (botlingd relay set <url>), so the link names a placeholder."),
       });
       // M3 step 4: server pairing (`botlingd join` / `add-machine`), reached at the loopback listener's `/v3/ws`.
       const listenerPort = () => daemon?.listener?.port ?? null;
@@ -743,8 +794,9 @@ export class Botlingd {
         ownAddresses: () => {
           const at = listenerPort();
           const portArg = at === null ? null : advertisedPort(env, at);
-          if (portArg === null && !relayAddress) return null;
-          return addressesValue(portArg, { tailnet: origin, relay: relayAddress });
+          const relayNow = daemon?.relayAddress ?? relayAddress;
+          if (portArg === null && !relayNow) return null;
+          return addressesValue(portArg, { tailnet: origin, relay: relayNow });
         },
         joinAddresses: () => { const at = listenerPort(); return at === null ? [] : [`ws://${LISTEN_HOST}:${at}/v3/ws`]; },
         prefs,
@@ -808,6 +860,20 @@ export class Botlingd {
       let fetchApproval: FetchApproval | null = null;
       // M5-14c: the CLI's plugin list and grant (a local-window `plugin.grant` through the intent runtime).
       const pluginAdmin = new PluginAdmin({ runtime, reader: () => hub.reader(), serverId });
+      // Settings › Phone in the Botling 3 window: botlingd's own pairing and relay setting, never the 2.x core's (it has
+      // neither). The relay goes on, off or elsewhere at once (useRelay), and stays so across restarts (relay.json).
+      const phone = new PhoneDesk({
+        pairing,
+        relay: {
+          view: () => relayShown(daemon?.relayAddress ?? null, daemon?.relay ?? null, env),
+          set: async (url) => {
+            await changeRelaySetting({
+              env, dataDir: paths.dataDir, url,
+              apply: async (clean) => { if (!daemon) throw new Error("botlingd is still starting; try again in a moment"); await daemon.useRelay(clean); },
+            });
+          },
+        },
+      });
       const sessionHost: SessionHost = {
         serverId, serverName: SERVER_NAME, startedAt, minFeVersion: MIN_FE_VERSION,
         token: () => daemon?.token ?? "",
@@ -823,6 +889,7 @@ export class Botlingd {
           return true;
         },
         log,
+        phone,
         admin: {
           handle: async (op, session) => {
             if (op.op === "prefs.set") {
@@ -995,17 +1062,17 @@ export class Botlingd {
       daemon.tailnetOrigins = origin ? [origin] : [];
       daemon.relayAddress = relayAddress;
       daemon.tokenValue = writeToken(paths.token);
-      if (relayRoom) {
-        const allowList = relayAllowList({ roster, identity, pairing });
-        const relay = new RelayConnector({ url: relayRoom.url, roomKey: relayRoom.key, sessions: new SessionRouter(remote, peers, undefined, serverJoin), allowList, log, ...relayTestOptions(env) });
-        roster.onChange(() => { void relay.refreshAllow(); });
-        pairing.onOffersChanged(() => { void relay.refreshAllow(); });
-        daemon.relay = relay;
-      }
+      // The room on the relay: made here at start, and again whenever Settings › Phone switches the relay (useRelay).
+      const allowList = relayAllowList({ roster, identity, pairing });
+      daemon.relayMaker = (url, key) => new RelayConnector({ url, roomKey: key, sessions: new SessionRouter(remote, peers, undefined, serverJoin), allowList, log, ...relayTestOptions(env) });
+      daemon.advertise = (at) => advertisedPort(env, at);
+      roster.onChange(() => { void daemon?.relay?.refreshAllow(); });
+      pairing.onOffersChanged(() => { void daemon?.relay?.refreshAllow(); });
+      if (relayRoom) daemon.relay = daemon.relayMaker(relayRoom.url, relayRoom.key);
       await server.listen();
       await daemon.listen(port, options.outDir, origin);
       await daemon.relay?.start();
-      await daemon.writeOwnProfile((at) => advertisedPort(env, at));
+      await daemon.writeOwnProfile(daemon.advertise);
       peers.start();
       vapidSync.start();
       // M5-02b: a guest's answer to a call-in goes out as this server's own command (ServerOrigin checks it before it commits).

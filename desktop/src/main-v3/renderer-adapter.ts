@@ -100,11 +100,13 @@ export interface RendererAdapterOptions {
  * idempotent window hints, sent as reads so opening a chat does not write a log entry each time. Anything not listed
  * is a slot (a read sent as a slot still answers, from its `cmd.applied` result, but only when that result fits one log
  * entry: a large one is refused, so every server read, `COMMAND_ROUTES` kind "read", must be listed here; a test checks).
+ * The phone commands (`COMMAND_ROUTES` kind "local": botlingd's pairing, Settings › Phone) are listed too: botlingd
+ * answers them only as a req, and their answers (a pairing link, a recovery code) never enter the durable outbox.
  */
 export const READ_COMMANDS: ReadonlySet<CommandType> = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.read", "chat.shown", "task.output", "subagent.view", "turn.await", "routines.list",
   "results.list", "storage.list", "attachment.file", "link.authorize", "settings.get", "bot.settings", "engine.models", "codex.models",
-  "usage.view", "doctor.view", "doctor.run", "mobile.view", "machines.view", "machines.hosts", "waiting.list", "plugins.list", "plugins.store",
+  "usage.view", "doctor.view", "doctor.run", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "mobile.cluster", "mobile.confirm", "machines.view", "machines.hosts", "waiting.list", "plugins.list", "plugins.store",
   "plugins.panel", "plugins.web", "plugins.file", "plugins.linkTarget", "plugins.loaded", "plugins.failed", "plugins.notice", "card.image",
   "project.files", "project.preview", "worker.cwd", "agent.targets", "agy.runtime.check", "component.detail",
 ]);

@@ -61,7 +61,14 @@ export const REQ_ALSO: ReadonlySet<CommandType> = new Set<CommandType>([
   "plugins.secret",
 ]);
 export function servedAsReq(type: CommandType): boolean {
-  return routeOf(type).kind === "read" || REQ_ALSO.has(type);
+  const kind = routeOf(type).kind;
+  return kind === "read" || kind === "local" || REQ_ALSO.has(type);
+}
+
+/** botlingd's own answers to the `local` commands (Settings › Phone: server/pairing/phone-desk.ts), local sessions only. */
+export interface PhoneHost {
+  handles(type: CommandType): boolean;
+  run(cmd: Command): Promise<unknown>;
 }
 
 /** The content path's local part (step 13, src/server/content `ContentService.handle`). */
@@ -100,6 +107,8 @@ export interface SessionHost {
   log(text: string): void;
   /** Local `admin` requests (M2 step 5); without it they are answered with an error. */
   admin?: AdminHost;
+  /** The `local` commands (Settings › Phone in the Botling 3 window); without it the engine answers them as before. */
+  phone?: PhoneHost;
   /** M3 step 7: peer servers' states and their `srv:` tables from this server's copies (none on a lone server). */
   tables?: SessionTables;
   /** M3 step 9: commands and cancels for targets a peer owns go to the forward queue (none on a lone server). */
@@ -781,8 +790,15 @@ export abstract class SessionCore {
       this.send({ t: "res", req: message.req, ok: false, error: refused }, cmd.type);
       return;
     }
+    // A `local` command (botlingd's phone pairing) only from this machine's window (a device was refused above already).
+    const local = routeOf(cmd.type).kind === "local";
+    if (local && !this.kind.local) {
+      this.send({ t: "res", req: message.req, ok: false, error: { code: "forbidden", message: `${cmd.type} needs the desktop window on this machine` } }, cmd.type);
+      return;
+    }
     try {
-      const result = await this.host.engine.run(cmd);
+      const phone = local ? this.host.phone : undefined;
+      const result = phone?.handles(cmd.type) ? await phone.run(cmd) : await this.host.engine.run(cmd);
       this.sendRes({ t: "res", req: message.req, ok: true, result: result ?? null }, cmd.type);
     } catch (error) {
       const wire = error instanceof ContractError ? error.toWire() : { code: "internal" as const, message: errorText(error).slice(0, 2_000) };

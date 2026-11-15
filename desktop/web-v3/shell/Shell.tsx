@@ -18,6 +18,7 @@ import { SwBridge } from "./sw-bridge";
 import { safeBotId } from "../push-sw";
 import { disablePushNotifications, enablePushNotifications, PUSH_ENABLED_PREF, pushSupport, syncPushOnAttach, type PushPrefs } from "./push";
 import { PageUploads } from "./uploads";
+import { NOT_A_PAIR_LINK, SIGNIN_LEAD } from "./signin-text";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
 import { askedPath, bannerText, FE_VERSION, itemWords, newDiagnostics, openConnection, pairsThroughRelay, UNSETTLED_LEGACY_WARNING, type Connection, type Diagnostics, type DialPath } from "./connection";
@@ -124,7 +125,7 @@ export function Shell() {
   const take = useCallback((text: string) => {
     const found = /https?:\/\/[^\s<>"']+/i.exec(text.trim())?.[0] ?? text.trim();
     const offer = parsePairLink(found);
-    if (!offer) { setPhase({ kind: "pair", message: "That is not a Botling 3 pairing link. On the computer run botlingd pair, then scan its code or paste its link here." }); return; }
+    if (!offer) { setPhase({ kind: "pair", message: NOT_A_PAIR_LINK }); return; }
     void start(offer, null);
   }, [start]);
 
@@ -146,7 +147,7 @@ export function Shell() {
           <button type="button" className="web-secondary" onClick={() => attempt.current?.decline()}>The codes differ</button>
         </> : <p className="web-signin-lead">Pairing…</p>}
       </> : <>
-        <p className="web-signin-lead">Your bots, from anywhere. On your computer run <code>botlingd pair</code>, then scan its code or paste its link here.</p>
+        <p className="web-signin-lead">{SIGNIN_LEAD}</p>
         {phase.kind === "pair" && phase.message && <p className="web-signin-message" role="alert">{phase.message}</p>}
         {retry && <button type="button" className="web-primary" onClick={() => void start(retry.offer, retry.keys)}>Try again</button>}
         <div className="web-signin-actions">
