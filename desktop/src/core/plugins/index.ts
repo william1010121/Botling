@@ -21,7 +21,7 @@ import { z } from "zod";
 import { ContractError, type ApprovalAskView, type PluginsView, type WebPluginSpecView } from "../../contract";
 import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
-import { viewSurfaces } from "./views";
+import { tileView, viewSurfaces } from "./views";
 import { MarkedTabs } from "./marked-tabs";
 import { chatLinkAddress, tabMatches } from "../../browser-tab-menu";
 import { fileURLToPath } from "node:url";
@@ -413,6 +413,9 @@ export class Plugins {
   /** The version an install replaced and kept for Revert (maintainer.ts `previousOf`); the server sets it. */
   previousVersion: (name: string) => string | null = () => null;
 
+  /** The server sets it: `view()` then carries the tiles (`PluginsView.tiles`, for the page's slots). Off, a bare `view()` is as it was. */
+  tilesInView = false;
+
   view(): PluginsView {
     const sharedRegistered = new Set(this.host.running ? this.host.commands : []);
     return {
@@ -463,6 +466,7 @@ export class Plugins {
       secretsProblem: this.secrets.problem?.slice(0, 2_000) ?? null,
       ...commandSurfaces(this.contributions()),
       ...viewSurfaces(this.contributions(), (name) => !!this.registry.webPart(name), (plugin, view) => this.markedTabs.bots(plugin, view)),
+      ...(this.tilesInView ? tileView(this.contributions()) : {}),
       takeover: this.takeover ? { plugin: this.takeover.plugin, view: this.takeover.view, botId: this.takeover.botId, wide: this.takeover.wide } : null,
     };
   }

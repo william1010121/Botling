@@ -22,9 +22,7 @@ export class BotProgress {
   private log(line: string) { this.ctx.log(line); }
   private get head() { return this.host.head; }
   private get session() { return this.host.session; }
-  private set session(v) { this.host.session = v; }
-  private get briefing() { return this.host.briefing; }
-  private set briefing(v) { this.host.briefing = v; }
+  private sessionResumed(sessionId: string) { this.host.headRun.sessionResumed(sessionId); }
   private get turn() { return this.host.turn; }
   private get shuttingDown() { return this.host.shuttingDown; }
   private get problem() { return this.host.problem; }
@@ -88,8 +86,7 @@ export class BotProgress {
     this.updated();
     if (!this.head?.running && warm && outage.lostSession) {
       // The process went away with it: the same session again, while its cache is warm.
-      this.session = { sessionId: outage.lostSession, started: true };
-      this.briefing = false;
+      this.sessionResumed(outage.lostSession);
       this.store.saveHead(this.session);
       this.deliverTo(this.engine, this.withSavedMemory(note), null, { origin: "app" });
       return;

@@ -3,10 +3,15 @@
 // "bots with their own settings" line with "Apply to all bots" (which asks first), and a bot's panel marking its own choices.
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { expect, it } from 'vitest';
+import { expect, it, beforeEach, afterEach } from 'vitest';
 import { SettingsSheet, BotSettings } from '../../src/renderer/Settings';
 import { settingsView } from '../../src/core/settings';
 import type { Client } from '../../src/renderer/client';
+import { loadSettingsShell, type SettingsShell } from "../settings-shell";
+// Settings draws only from the settings plugin's slots (M7-02d): a test that renders it loads the plugin as the shell does.
+let settingsShell: SettingsShell;
+beforeEach(async () => { settingsShell = await loadSettingsShell(); });
+afterEach(async () => { await settingsShell.stop(); });
 
 const click = (el: Element) => act(async () => (el as HTMLElement).click());
 const button = (host: HTMLElement, text: string) => [...host.querySelectorAll('button')].find(b => b.textContent?.includes(text))!;

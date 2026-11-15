@@ -10,14 +10,19 @@
 // strip's bottom one, shows them in the overview's place, with Back. Workers open in the main area, not here
 // (navigation v5: the badge's menu, Workers.tsx).
 import { shortcutLabel } from "./shortcut-labels";
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { ShellOverlay } from "./ShellOverlay";
 import { settledRows, type BotView, type ResultView, type SubagentRowView, type WaitingItemView, type WaitingView } from "../contract";
 import { faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
 import { AgentMenuButton, OwnerMark } from "./Rail";
+import { PANEL_UNAVAILABLE, type PanelBlock } from "./panel-names";
+import { usePanelState } from "./panel-slot";
 
-type Section = "waiting" | "results" | "settled";
+// The overview's blocks (waiting, results, settled) and the folded strip's icons are the bot-panel plugin's contributions to `panel/main`
+// (M7-03a; plugins/bot-panel/index.ts): `usePanelState()` says which are registered, in order. The head, the Now card, the bot's own
+// settings page and the strip's face and settings button are the shell's; with the plugin away the plugin's part is the shell's line.
+type Section = PanelBlock;
 
 /** What waits on you in this panel: everything for the main bot. */
 export function panelWaiting(bot: BotView, waiting: WaitingView): WaitingItemView[] {
@@ -79,9 +84,37 @@ function OpenPanel(props: RightPanelProps) {
 }
 
 function Overview({ pluginSections, bot, bots, waiting, look, status, results, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onAgentMenu, onSettings }: RightPanelProps) {
+  const panel = usePanelState();
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
+  const blockOf = (name: PanelBlock): ReactNode => {
+    switch (name) {
+      case "waiting":
+        return items.length > 0 && (
+          <section className="detail-section">
+            <h3>Waiting on you</h3>
+            <WaitingList items={items} bots={bots} look={look} onSelect={onSelect} onIgnore={onIgnore} />
+          </section>
+        );
+      case "results":
+        return results.length > 0 && (
+          <section className="detail-section results-section">
+            <h3>{bot.role === "main" ? "Just done" : "Results"}</h3>
+            <div className="result-list">
+              {results.slice(0, 3).map((result) => <ResultRow key={`${result.label}\u0000${result.url}`} result={result} onOpen={onOpenResult} />)}
+            </div>
+          </section>
+        );
+      case "settled":
+        return settled.length > 0 && (
+          <section className="detail-section settled-section">
+            <h3>Settled</h3>
+            <SettledList avatar={bot.avatar} botId={bot.id} look={look} rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} onAgentMenu={onAgentMenu} />
+          </section>
+        );
+    }
+  };
   return (
     <aside className="detail-panel" aria-label="Details">
       <div className="detail-head">
@@ -97,27 +130,10 @@ function Overview({ pluginSections, bot, bots, waiting, look, status, results, w
         </div>
         {doing ? <div className="now-doing">{doing}</div> : !bot.working && <div className="now-none">Nothing under way</div>}
       </section>
-      {pluginSections}
-      {items.length > 0 && (
-        <section className="detail-section">
-          <h3>Waiting on you</h3>
-          <WaitingList items={items} bots={bots} look={look} onSelect={onSelect} onIgnore={onIgnore} />
-        </section>
-      )}
-      {results.length > 0 && (
-        <section className="detail-section results-section">
-          <h3>{bot.role === "main" ? "Just done" : "Results"}</h3>
-          <div className="result-list">
-            {results.slice(0, 3).map((result) => <ResultRow key={`${result.label}\u0000${result.url}`} result={result} onOpen={onOpenResult} />)}
-          </div>
-        </section>
-      )}
-      {settled.length > 0 && (
-        <section className="detail-section settled-section">
-          <h3>Settled</h3>
-          <SettledList avatar={bot.avatar} botId={bot.id} look={look} rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} onAgentMenu={onAgentMenu} />
-        </section>
-      )}
+      {panel.unavailable ? <p className="panel-unavailable" role="status">{PANEL_UNAVAILABLE}</p> : <>
+        {pluginSections}
+        {panel.blocks.map((name) => <Fragment key={name}>{blockOf(name)}</Fragment>)}
+      </>}
     </aside>
   );
 }
@@ -184,13 +200,11 @@ function SettledList({ avatar, botId, look, rows, watching, onOpen, onUnsettle, 
 function RightStrip({ bot, bots, waiting, look, status, results, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onAgentMenu, onSettings, onExpand }: RightPanelProps) {
   const [open, setOpen] = useState<Section | null>(null);
   const [tip, setTip] = useState(false);
+  const panel = usePanelState();
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
-  const counts = ([
-    { section: "waiting", count: items.length },
-    { section: "results", count: results.length },
-    { section: "settled", count: settled.length },
-  ] as { section: Section; count: number }[]).filter((entry) => entry.count > 0);
+  const sizes: Record<PanelBlock, number> = { waiting: items.length, results: results.length, settled: settled.length };
+  const counts = panel.blocks.map((section) => ({ section, count: sizes[section] })).filter((entry) => entry.count > 0);
   useEffect(() => { setOpen(null); }, [bot.id]);
   useEffect(() => {
     if (!open) return;
@@ -220,6 +234,7 @@ function RightStrip({ bot, bots, waiting, look, status, results, watching, onSel
         </div>
       )}
       <div className="strip-rule" />
+      {panel.unavailable && <div className="strip-unavailable" role="status" title={PANEL_UNAVAILABLE} aria-label={PANEL_UNAVAILABLE}>!</div>}
       {counts.map(({ section, count }) => (
         <div key={section} className="strip-slot">
           <button type="button" className={`strip-icon${open === section ? " on" : ""}`} data-section={section} title={title(section)}
