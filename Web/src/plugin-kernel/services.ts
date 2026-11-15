@@ -35,6 +35,14 @@ export type LoadOutcome = { status: "active" } | { status: "waiting"; missing: s
 
 export interface SlotEntry<T = unknown> { plugin: string; entry: T; registration: Registration }
 
+export interface KernelSlotOptions extends KernelOptions {
+  /**
+   * One name for each slot that has more than one (slot-names.ts: a slot and its alias are the same slot): every slot name the
+   * kernel is given, in a declaration or a call, goes through it first, so a registration is held once and found under both.
+   */
+  slotName?: (slot: string) => string;
+}
+
 const list = (values: readonly string[] | undefined) => [...new Set(values ?? [])];
 const isThenable = (value: unknown): value is PromiseLike<unknown> =>
   !!value && (typeof value === "object" || typeof value === "function") && typeof (value as { then?: unknown }).then === "function";
@@ -49,8 +57,11 @@ export class Kernel extends PluginKernel {
   private readonly loads = new Map<string, Promise<LoadOutcome>>();
   private retrying = false;
 
-  constructor(options: KernelOptions = {}) {
+  private readonly slotName: (slot: string) => string;
+
+  constructor(options: KernelSlotOptions = {}) {
     super(options);
+    this.slotName = options.slotName ?? ((slot) => slot);
   }
 
   // MARK: Declarations (install)
@@ -62,10 +73,10 @@ export class Kernel extends PluginKernel {
   install(declaration: PluginDeclaration): void {
     const next: PluginDeclaration = {
       name: declaration.name,
-      provides: { services: list(declaration.provides?.services), slots: list(declaration.provides?.slots) },
+      provides: { services: list(declaration.provides?.services), slots: this.slotList(declaration.provides?.slots) },
       requires: { services: list(declaration.requires?.services) },
       uses: { services: list(declaration.uses?.services) },
-      contributes: { slots: list(declaration.contributes?.slots) },
+      contributes: { slots: this.slotList(declaration.contributes?.slots) },
     };
     for (const other of this.declarations.values()) {
       if (other.name === next.name) continue;
@@ -149,8 +160,13 @@ export class Kernel extends PluginKernel {
 
   // MARK: Slots
 
+  private slotList(slots: readonly string[] | undefined): string[] {
+    return list(slots?.map((slot) => this.slotName(slot)));
+  }
+
   /** `plugin` owns `slot` (it must declare it). Refused when another owner holds it. */
-  provideSlot(plugin: string, slot: string): Registration | null {
+  provideSlot(plugin: string, name: string): Registration | null {
+    const slot = this.slotName(name);
     const declared = this.declarations.get(plugin)?.provides?.slots ?? [];
     if (!declared.includes(slot)) throw new KernelError("undeclared", `Plugin "${plugin}" does not declare that it provides slot "${slot}".`);
     const held = this.slots.get(slot);
@@ -164,11 +180,12 @@ export class Kernel extends PluginKernel {
   }
 
   slotOwner(slot: string): string | null {
-    return this.slots.get(slot)?.plugin ?? null;
+    return this.slots.get(this.slotName(slot))?.plugin ?? null;
   }
 
   /** The plugin that declares it provides `slot` (null: none installed). */
-  declaredOwner(slot: string): string | null {
+  declaredOwner(name: string): string | null {
+    const slot = this.slotName(name);
     for (const declaration of this.declarations.values()) if (declaration.provides?.slots?.includes(slot)) return declaration.name;
     return null;
   }
@@ -179,7 +196,8 @@ export class Kernel extends PluginKernel {
    * take back) runs at once. Returns null then. The declaration rule keeps the live contributions inside the declared
    * graph, which `install` keeps acyclic, so unloading dependents first always ends.
    */
-  contribute<T>(plugin: string, slot: string, entry: T, undo?: Undo): Registration | null {
+  contribute<T>(plugin: string, name: string, entry: T, undo?: Undo): Registration | null {
+    const slot = this.slotName(name);
     const owner = this.slots.get(slot);
     if ((owner?.plugin ?? this.declaredOwner(slot)) !== plugin && !this.declarations.get(plugin)?.contributes?.slots?.includes(slot)) {
       return this.refuse(plugin, "contribution", slot, () => undo?.(), `"${plugin}" does not declare that it contributes to slot "${slot}"`);
@@ -200,7 +218,8 @@ export class Kernel extends PluginKernel {
   }
 
   /** What `slot` shows: the contributions whose contributor and slot owner are both active, in registration order (P2). */
-  entries<T = unknown>(slot: string): SlotEntry<T>[] {
+  entries<T = unknown>(name: string): SlotEntry<T>[] {
+    const slot = this.slotName(name);
     const owner = this.slots.get(slot);
     if (!owner || this.state(owner.plugin) !== "active") return [];
     return [...this.contributions.values()]

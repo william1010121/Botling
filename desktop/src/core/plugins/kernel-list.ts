@@ -2,7 +2,8 @@
 // kernel instance and each entry of its contribution list (contributions.ts, as readManifest reads it) a registration it
 // owns, contributed into a slot the core owns: `:core` (a name no plugin can have) holds every 2.x slot: one per view
 // place (`view/mainTab`, …), menu (`menu/chat/link`, …), hook, status place, and one per other kind (`command`, `setting`,
-// …). The 2.x names stay the only names (aliases come in M7).
+// …). The 2.x ids stay the ids the kernel holds; the new names (plugin-kernel/slot-names.ts, M7-02a) are aliases of them: a slot
+// given by either name is the same slot (the kernel's `slotName` option), and `slotNameOf` answers a contribution's new name.
 //
 // A thin adapter, not a rewrite: the registry still decides what is enabled and reads each manifest as before (a plugin's
 // components folder can change without its fingerprint, so the list is read on every call), and `reconcile` makes the
@@ -10,7 +11,7 @@
 // a plugin whose list changed is unloaded and loaded again, a new one is loaded. The list it returns is read back from the
 // kernel's registrations, in the registry's plugin order and each plugin's own order: the same entries, in the same
 // order, as the list before the kernel (the step-1 goldens hold it byte for byte).
-import { Kernel, type KernelEvent, type UndoFailure } from "../../../../Web/src/plugin-kernel";
+import { Kernel, canonicalSlot, slotName, type KernelEvent, type UndoFailure } from "../../../../Web/src/plugin-kernel";
 import { HOOKS, MENU_SLOTS, STATUS_SLOTS, VIEW_SLOTS, type Contribution, type ContributionKind } from "./contributions";
 
 /** The core's instance in the kernel: owns every 2.x slot. Not a valid plugin name, so no plugin can take it. */
@@ -38,7 +39,12 @@ export function slotOf(contribution: Contribution): string {
   }
 }
 
-/** Every slot the core owns. */
+/** The new name of the slot a contribution goes into (`slotOf` is its 2.x id; the same slot): `chat/link` for `menu/chat/link`. */
+export function slotNameOf(contribution: Contribution): string {
+  return slotName(slotOf(contribution));
+}
+
+/** Every slot the core owns, by its 2.x id (each is also found under its new name, slot-names.ts). */
 export const CORE_SLOTS: readonly string[] = [
   ...KINDS.filter((kind) => !["view", "menu", "hook", "statusItem"].includes(kind)),
   ...VIEW_SLOTS.map((where) => `view/${where}`),
@@ -65,6 +71,7 @@ export class ContributionKernel {
   constructor(options: ContributionKernelOptions = {}) {
     const log = options.log;
     this.kernel = new Kernel({
+      slotName: canonicalSlot,
       log: log === true ? true : (event) => { if (typeof log === "function") log(event); for (const watcher of this.watchers) watcher(event); },
       ...(options.onUndoFailure ? { onUndoFailure: options.onUndoFailure } : {}),
     });
