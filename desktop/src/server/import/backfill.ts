@@ -545,6 +545,9 @@ function backfillIdMap(db: Db, bots: readonly Read2xBot[], sourceHash: string, p
     const saved = stored.get(upper);
     if (saved) {
       rows.push({ oldId: bot.id, newId: saved.newId, kind: saved.kind, name: bot.name });
+      if (!BACKFILL_KINDS.has(saved.kind)) {
+        problems.push(`${bot.name}: the import brought it over as a bot of its own (${saved.newId}, ${saved.kind}), not into this folder's ${fixed.kind === "main" ? "Main bot" : "Maintainer"}; its 2.x history is there, so it is not backfilled`);
+      }
       continue;
     }
     const newId = metaOf(db, fixed.key);
