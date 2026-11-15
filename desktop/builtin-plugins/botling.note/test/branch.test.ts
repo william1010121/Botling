@@ -4,7 +4,7 @@
 import { expect, it } from "vitest";
 // @ts-expect-error branch.js is plain JavaScript without types
 import { parseBranches, routeFacts, routeIsEmpty } from "../src/branch.js";
-import { classifyLines } from "../../../src/core/note-cells.ts";
+import { classifyLines } from "../../../src/core/note-cells";
 
 const read = (text: string) => {
   const lines = text.split("\n");
