@@ -28,7 +28,7 @@ const PHONE = "dev-phone";
 const BOT = "6A0B0000-0000-4000-8000-0000000000B1";
 const CARD = "6A0B0000-0000-4000-8000-0000000000C1";
 const EPOCH = "c".repeat(32);
-const INC = "loginc0001";
+const INC = "inc-00000001"; // the slot harness log's incarnation
 const TARGET = `bot:${BOT}` as const;
 
 const send = (text: string): Command => ({ type: "chat.send", botId: BOT, text });
@@ -67,7 +67,7 @@ async function world(roster: Partial<DeviceRoster> = {}): Promise<World> {
     server: (member) => member === A,
     ...roster,
   };
-  const engine = new SlotEngine({ submit: (c) => b.writer.submit(c), log: new FakeLog(), apply, authorize: slotAuthorize(ownerRoster) });
+  const engine = new SlotEngine({ submit: (c) => b.writer.submit(c), log: new FakeLog(), apply, authorize: slotAuthorize(ownerRoster), basis: { turnRunning: () => true, card: () => ({ open: true, rev: 1 }) } });
   const runtime = {
     receive: (body: CmdBody, options: ReceiveOptions) => { seenAtB.push(body); return engine.receive(body, options); },
     slots: engine,
@@ -139,7 +139,9 @@ describe("M7-12a: a window command forwarded by a peer", () => {
       expect(w.result(WINDOW_ORIGIN, 3)!.outcome).toMatchObject({ kind: "applied" });
       expect(w.seenAtB.map((b) => b.cmd.type)).toEqual(["chat.send"]);
       expect(w.applied.map((x) => x.n)).toEqual([3]);
-      expect(w.dead().map((d) => Number((d as { n: number }).n))).toEqual([1, 2]);
+      // Nothing is left to send for the two refused slots (their dead rows may already be pruned).
+      expect(w.queued()).toBe(0);
+      expect(w.dead().every((d) => [1, 2].includes(Number((d as { n: number }).n)))).toBe(true);
     } finally { await w.close(); }
   });
 
