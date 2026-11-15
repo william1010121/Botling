@@ -67,7 +67,7 @@ export class BotDelivery {
   private componentNote() { return this.host.componentNote(); }
   private withSavedMemory(prompt: string) { return this.host.withSavedMemory(prompt); }
   private get briefing() { return this.host.briefing; }
-  private set briefing(v) { this.host.briefing = v; }
+  private briefingGiven() { this.host.headRun.briefingGiven(); }
   private noteProgress() { return this.host.noteProgress(); }
   private markSeen(ids: string[], head: Engine) { return this.host.markSeen(ids, head); }
   private get records() { return this.host.records; }
@@ -146,7 +146,7 @@ export class BotDelivery {
       turn.words = `${this.withSavedMemory(note)}\n\n${turn.words}`;
     }
     const brief = waking && this.briefing;
-    if (brief) this.briefing = false;
+    if (brief) this.briefingGiven();
     try { head.send(this.compose(turn, brief), turn.userId ?? turn.messageId, this.turnImages(turn)); }
     catch (error) { this.finishTurn(turn, "failed", (error as Error).message); return; }
     this.noteProgress();

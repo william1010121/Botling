@@ -132,6 +132,26 @@ export class BotHead {
   /** A session handed over by the old core is resumed as it is once (a cut-off turn goes on exactly where it stopped). */
   adoptedSession = false;
 
+  // ---- Transitions (M7-S57): the only way another part of the bot changes `head`, `session`, `briefing` or `tidying` ----
+  /** Its process is running: this is the head now. */
+  attach(head: AgentHead) { this.head = head; }
+  /** Its process is gone: there is no head. */
+  detach() { this.head = null; }
+  /** The session's first line came: it has started. */
+  sessionStarted() { this.session.started = true; }
+  /** The session goes by this id from now on (the id its process reported). */
+  sessionRenamed(sessionId: string) { this.session.sessionId = sessionId; }
+  /** An earlier session goes on as it was (a conversation saved, or the one a lost network cut off): it is resumed, so no wake briefing. */
+  sessionResumed(sessionId: string) { this.session = { sessionId, started: true }; this.briefing = false; }
+  /** The briefing is due again, unless the session never started (an exit that keeps the session). */
+  briefingDue() { this.briefing = !this.session.started; }
+  /** The wake briefing has been given. */
+  briefingGiven() { this.briefing = false; }
+  /** It tidies its notes: nothing goes to sleep or switches meanwhile. */
+  tidyStart() { this.tidying = true; }
+  /** The tidy is over (or it goes back to what it was before a nested one: `was`). */
+  tidyEnd(was = false) { this.tidying = was; }
+
   ensureHead(): AgentHead {
     this.requireEngineRoute(this.engine, this.owner.engine);
     if (this.head?.running) return this.head;
@@ -205,7 +225,7 @@ export class BotHead {
       });
     }
     head.start();
-    this.head = head;
+    this.attach(head);
     // Workers it hosts for another bot: their host learns who owns them before any report goes out (a move made while it slept).
     if (this.engine !== "claude") this.syncWorkerOwners();
     this.sessionCost = { last: 0 };
@@ -327,7 +347,7 @@ export class BotHead {
     // Cut off by the network, it keeps its session for when the network is back.
     if ((this.inHeadSubagents.length || this.managedPending || this.backgroundWorkRunning || this.outage || this.steered.size) && !this.shuttingDown) { this.scheduleIdle(); return; }
     this.clearIdle();
-    this.tidying = true;
+    this.tidyStart();
     this.updated();
     this.log("idle: tidying its notes, then going to sleep");
     if (tidyMs > 0) {
@@ -339,7 +359,7 @@ export class BotHead {
       const exited = await Promise.race([head.exited.then(() => true), sleep(5_000).then(() => false)]);
       if (!exited) await head.terminate(1_000);
     }
-    this.tidying = false;
+    this.tidyEnd();
     this.updated();
     // What the user said meanwhile wakes it again, in a new session.
     if (!this.shuttingDown) this.next();
@@ -353,7 +373,7 @@ export class BotHead {
   async maintenance(text: string, timeoutMs: number, head: AgentHead): Promise<string | null> {
     const deadline = Date.now() + timeoutMs;
     const wasTidying = this.tidying;
-    this.tidying = true;
+    this.tidyStart();
     try {
       let reply = await this.internal(text, timeoutMs);
       while (this.engine === "codex" && reply !== null && this.head === head && head.running && (this.managedPending || this.turn) && Date.now() < deadline) {
@@ -364,7 +384,7 @@ export class BotHead {
       }
       return reply;
     } finally {
-      this.tidying = wasTidying;
+      this.tidyEnd(wasTidying);
     }
   }
 
