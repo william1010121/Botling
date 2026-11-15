@@ -24,14 +24,14 @@ import { computeRoster, Gossip, MAX_GOSSIP_SET, PrefsStore, RosterStore, STATEME
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import { PeerSessions, SessionRouter, type AcceptedSession, type PeerConnection, type PeerConnector, type PeerTimers } from "../../src/server/peer";
 import { testRoot } from "../botlingd-harness";
-import { sleep, until } from "../helpers";
+import { envCount, sleep, until } from "../helpers";
 import { makeCluster, profile, readServerKeys, sign, strangerKeys, writeStatements, type MemberKeysInfo } from "../support/peer-cluster";
 
 const root = testRoot("gossip-property");
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 const TIMERS: PeerTimers = { pingMs: 150, deadMs: 900, redialMinMs: 30, redialMaxMs: 200, revokedRedialMs: 700 };
-const SEEDS = [11, 23, 37, 41, 59, 73];
+const SEEDS = [11, 23, 37, 41, 59, 73].slice(0, envCount("V3_GOSSIP_PROPERTY_SEEDS", 6)); // CI lowers it on pull requests
 const STEPS = 45;
 
 function rng(seed: number) {

@@ -10,6 +10,15 @@ const macOnly = [
   "agy-mcp", "agy-acp", "agy-full-permission", "agy-runtime-settings", "agy-runtime-settings-core", "agy-workers",
 ].map((name) => `test/unit/${name}.test.ts`);
 
+// Heavy on a busy Mac, quick on Linux (M5-19's 10,000-case property test: 156 s on a loaded Mac, 3.6 s on the Linux
+// host). A local macOS run skips them; remote-test.sh (Linux) and CI run them, with their full case counts (never shrink
+// a case count to make a test fit here). BOTLING_TEST_HEAVY=1 runs them on the Mac anyway. A name whose file does not
+// exist yet does nothing.
+const heavyLocal = [
+  "grant-property",
+].map((name) => `test/unit/${name}.test.ts`);
+const skipHeavy = process.platform === "darwin" && !process.env.CI && process.env.BOTLING_TEST_HEAVY !== "1";
+
 // Reads the packaged helper, which only a macOS arm64 build whose clang output matches the reviewed pin produces.
 const needsHelper = existsSync("out/core/agy-file-helper.base64") ? [] : ["test/unit/agy-runtime-install.test.ts"];
 
@@ -30,6 +39,7 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       ...(process.platform === "darwin" ? [] : macOnly),
+      ...(skipHeavy ? heavyLocal : []),
       ...needsHelper,
     ],
     testTimeout: 30_000,

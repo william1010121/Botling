@@ -32,9 +32,9 @@ import { quoteIntoComposer, setComposerQuoter } from "../../src/renderer/compose
 import { CHAT_SURFACE, INSERT_QUOTE, rendererKernel } from "../../src/renderer/renderer-kernel";
 import { writeFixturePlugins } from "../kernel-goldens";
 import { deferred, flush, manualTimers, seeded } from "../kernel-driver";
-import { desktop } from "../helpers";
+import { desktop, envCount } from "../helpers";
 
-const RUNS = 500;
+const RUNS = envCount("KERNEL_ACCEPTANCE_RUNS", 500); // CI lowers it on pull requests
 const FIRST_SEED = 1001;
 const ONE = Number(process.env.KERNEL_ACCEPTANCE_SEED ?? "") || null;
 const seeds = () => (ONE ? [ONE] : Array.from({ length: RUNS }, (_, index) => FIRST_SEED + index));
