@@ -3,7 +3,6 @@
   "files": {
     "Web/host/src/api.ts": 963,
     "Web/src/chat.css": 905,
-    "Web/src/components.ts": 828,
     "Web/src/composer.ts": 856,
     "Web/src/messages.ts": 848,
     "desktop/builtin-plugins/botling.board/src/pins.ts": 1108,
