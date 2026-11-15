@@ -4,22 +4,22 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  ANTI_FLAP_MS, MemoryFeStorage, orderServerCandidates, serverHealthScore, UNREACHABLE_SWITCH_MS,
+  ANTI_FLAP_MS, MemoryFeStorage, mergeServerCandidates, orderServerCandidates, serverHealthScore, ServerSwitchController, UNREACHABLE_SWITCH_MS,
   type Clock, type Dial, type FeSocket, type SocketHandlers,
 } from "../../src/fe-link";
 import {
-  decodeFrame, encodeFrame, encodeWireFrame, GENESIS_HASH, slotKey, toBase64Url,
+  decodeFrame, encodeFrame, encodeWireFrame, GENESIS_HASH, PROTOCOL_VERSION, slotKey, toBase64Url,
   type CmdBody, type Cursor, type Entry, type Message, type Outcome, type ServerState, type Slot, type StreamId, type Target,
 } from "../../src/protocol";
 import type { SummaryRow } from "../../src/protocol/table-rows";
 import { SlotEngine, type ApplyContext, type SlotLog } from "../../src/server/slots";
 import type { Db } from "../../src/server/store";
-import { importDhKeyPair } from "../../src/session";
+import { generateDhKeyPair, importDhKeyPair, SessionLink, type SessionTransport } from "../../src/session";
 import {
   newDiagnostics, openConnection, openFallbackLink,
   type Connection, type DialPath, type FallbackLink, type ServerDialTarget,
 } from "../../web-v3/shell/connection";
-import { DEVICE_DB, loadPref, saveDevice, type DeviceRecord } from "../../web-v3/shell/device-store";
+import { DEVICE_DB, loadPref, mergeServers, saveDevice, type DeviceRecord } from "../../web-v3/shell/device-store";
 import { FakeClock, flush, react } from "./fe-link-harness";
 import { FakeLog, memoryStore } from "./server-slots-harness";
 
@@ -826,7 +826,7 @@ describe("M4-20a: server selection (§13.1), D72 switching, and 50+ in-flight D5
     }
   });
 
-  it("openConnection persists server pref across reload and builds per-server WS/relay dials", async () => {
+  it("openConnection + conn.link.start() switches on manual pickServer (F1) and persists server pref only after attach (F6)", async () => {
     const idb = memoryIdb();
     const prevIdb = (globalThis as { indexedDB?: IDBFactory }).indexedDB;
     (globalThis as { indexedDB?: IDBFactory }).indexedDB = idb;
@@ -835,37 +835,54 @@ describe("M4-20a: server selection (§13.1), D72 switching, and 50+ in-flight D5
     Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true, writable: true });
     Object.defineProperty(globalThis, "window", { value: new EventTarget(), configurable: true, writable: true });
 
-    // Build real X25519 keys for device + servers A and B so relayDeviceToken / wsDial identity checks run cleanly.
+    const clusterId = "c".repeat(32);
+    const DEV1 = "d".repeat(26);
+    const SRVA = "a".repeat(26);
+    const SRVB = "b".repeat(26);
+    const SRVGONE = "g".repeat(26);
     const rawDevDh = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]) as CryptoKeyPair;
     const devPkcs8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", rawDevDh.privateKey));
     const devDh = await importDhKeyPair(devPkcs8);
-    const srvADh = new Uint8Array(await crypto.subtle.exportKey("raw", (await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]) as CryptoKeyPair).publicKey));
-    const srvBDh = new Uint8Array(await crypto.subtle.exportKey("raw", (await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]) as CryptoKeyPair).publicKey));
+    const srvAKeys = await generateDhKeyPair();
+    const srvBKeys = await generateDhKeyPair();
 
     const record: DeviceRecord = {
       v: 1,
-      memberId: "dev1",
+      memberId: DEV1,
       name: "Phone",
       signKey: (await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]) as CryptoKeyPair).privateKey,
       signPub: "devSignPub",
       dhKey: devDh.privateKey,
       dhPub: devDh.publicKey,
-      cluster: "cluster1",
-      server: { memberId: "srvA", name: "Machine A", dhPub: srvADh },
-      addId: "add1",
+      cluster: clusterId,
+      server: { memberId: SRVA, name: "Machine A", dhPub: srvAKeys.publicKey },
+      addId: "e".repeat(32),
       scope: ["chat"],
       pairedAt: 1_000,
       relay: { url: "wss://relay.invalid/ws", room: "roomA" },
       servers: [
-        { id: "srvA", name: "Machine A", dh: toBase64Url(srvADh), state: "live", addresses: { tailnet: "wss://a.invalid/v3/ws", relay: { url: "wss://relay.invalid/ws", room: "roomA" } } },
-        { id: "srvB", name: "Machine B", dh: toBase64Url(srvBDh), state: "live", addresses: { tailnet: "wss://b.invalid/v3/ws", relay: { url: "wss://relay.invalid/ws", room: "roomB" } } },
-        { id: "srvGone", name: "Gone Box", dh: toBase64Url(srvBDh), state: "gone" },
+        { id: SRVA, name: "Machine A", dh: toBase64Url(srvAKeys.publicKey), state: "live", addresses: { tailnet: "wss://a.invalid/v3/ws", relay: { url: "wss://relay.invalid/ws", room: "roomA" } } },
+        { id: SRVB, name: "Machine B", dh: toBase64Url(srvBKeys.publicKey), state: "live", addresses: { tailnet: "wss://b.invalid/v3/ws", relay: { url: "wss://relay.invalid/ws", room: "roomB" } } },
+        { id: SRVGONE, name: "Gone Box", dh: toBase64Url(srvBKeys.publicKey), state: "gone" },
       ],
+    };
+
+    const waitUntil = async (cond: () => boolean, label: string) => {
+      for (let i = 0; i < 60; i++) {
+        if (cond()) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error(`timed out waiting for ${label}`);
     };
 
     try {
       await saveDevice(record, devPkcs8, idb);
       const seenUrls: string[] = [];
+      const holdWelcome = new Set<string>();
+      const pendingWelcomes = new Map<string, () => void>();
+      const enc = new TextEncoder();
+      const dec = new TextDecoder();
+
       class FakeWs {
         static OPEN = 1;
         readyState = 0;
@@ -874,9 +891,73 @@ describe("M4-20a: server selection (§13.1), D72 switching, and 50+ in-flight D5
         onmessage: ((e: { data: unknown }) => void) | null = null;
         onclose: ((e: { code: number; reason: string }) => void) | null = null;
         onerror: (() => void) | null = null;
-        constructor(public readonly url: string) { seenUrls.push(url); }
-        send() {}
-        close() { this.readyState = 3; }
+        private session: SessionLink;
+        constructor(public readonly url: string) {
+          seenUrls.push(url);
+          const serverId = url.includes("://b.invalid") ? SRVB : SRVA;
+          const serverKeys = serverId === SRVB ? srvBKeys : srvAKeys;
+          const transport: SessionTransport = {
+            send: (frame) => {
+              setTimeout(() => {
+                if (this.readyState !== 1) return;
+                const buf = frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength);
+                this.onmessage?.({ data: buf });
+              }, 0);
+            },
+            close: () => { this.close(); },
+          };
+          const sendMsg = (msg: Message) => {
+            const out = encodeFrame(msg, "server", REMOTE);
+            if (!out.ok) throw new Error(out.detail);
+            this.session.send("control", enc.encode(out.text));
+          };
+          this.session = SessionLink.respond(transport, {
+            modes: ["ik"],
+            transport: "tailnet",
+            cluster: clusterId,
+            self: { memberId: serverId, dhPub: serverKeys.publicKey, dhKey: serverKeys.privateKey },
+            checkPeer: (peer) => ({ ok: peer.memberId === DEV1 }),
+          }, {
+            onFrame: (bytes) => {
+              const parsed = decodeFrame(dec.decode(bytes), "fe", REMOTE);
+              if (!parsed.ok) return;
+              if (parsed.message.t === "hello") {
+                const sendWelcome = () => sendMsg({
+                  t: "welcome",
+                  serverId,
+                  protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION },
+                  minFeVersion: "3.0.0-m2",
+                  rosterDigest: null,
+                  servers: [
+                    { id: SRVA, name: "Machine A", state: "live", since: 1_000, dh: toBase64Url(srvAKeys.publicKey), addresses: { tailnet: "wss://a.invalid/v3/ws" } },
+                    { id: SRVB, name: "Machine B", state: "live", since: 1_000, dh: toBase64Url(srvBKeys.publicKey), addresses: { tailnet: "wss://b.invalid/v3/ws" } },
+                  ],
+                  next: {},
+                  views: {},
+                });
+                if (holdWelcome.has(serverId)) pendingWelcomes.set(serverId, sendWelcome);
+                else sendWelcome();
+              } else if (parsed.message.t === "sub" && parsed.message.stream === `srv:${serverId}`) {
+                sendMsg({ t: "snap", stream: parsed.message.stream, logId: `log-${serverId}-1`, seq: 0, hash: GENESIS_HASH, view: {} });
+              }
+            },
+          });
+          setTimeout(() => {
+            if (this.readyState !== 0) return;
+            this.readyState = 1;
+            this.onopen?.();
+          }, 0);
+        }
+        send(data: unknown) {
+          if (data instanceof Uint8Array) this.session.receive(data);
+          else if (data instanceof ArrayBuffer) this.session.receive(new Uint8Array(data));
+        }
+        close() {
+          if (this.readyState === 3) return;
+          this.readyState = 3;
+          this.session.transportClosed();
+          this.onclose?.({ code: 1000, reason: "closed" });
+        }
       }
       const prevWs = (globalThis as { WebSocket?: typeof WebSocket }).WebSocket;
       (globalThis as { WebSocket?: typeof WebSocket }).WebSocket = FakeWs as unknown as typeof WebSocket;
@@ -887,23 +968,38 @@ describe("M4-20a: server selection (§13.1), D72 switching, and 50+ in-flight D5
           onServer: (id) => picked.push(id),
         });
         connections.push(conn);
-        expect(conn.serverId).toBe("srvA");
-        expect(conn.pickServer?.("srvGone")).toBe(false);
-        expect(conn.pickServer?.("srvB")).toBe(true);
-        expect(conn.serverId).toBe("srvB");
-        expect(picked).toContain("srvB");
-        // Wait for async savePref write to flush, then verify loadPref("server") persisted "srvB".
-        await new Promise((r) => setTimeout(r, 30));
-        expect(await loadPref("server", idb)).toBe("srvB");
+        // Shell.tsx starts via conn.link.start() (NOT fb.start())!
+        conn.link.start();
+        await waitUntil(() => conn.link.attachedServerId() === SRVA, "attach srvA");
+        await new Promise((r) => setTimeout(r, 25));
+        expect(await loadPref("server", idb)).toBe(SRVA);
 
-        // Re-opening openConnection reads persisted "srvB" as lastGood first (§13.1)!
+        // Manual pick while srvB holds welcome: dial switches immediately (F1), pref stays SRVA until B attaches (F6).
+        holdWelcome.add(SRVB);
+        expect(conn.pickServer?.(SRVGONE)).toBe(false);
+        expect(conn.pickServer?.(SRVB)).toBe(true);
+        expect(conn.serverId).toBe(SRVB);
+        expect(picked).toContain(SRVB);
+        await waitUntil(() => seenUrls.includes("wss://b.invalid/v3/ws"), "dial srvB after conn.link.start()");
+        await waitUntil(() => pendingWelcomes.has(SRVB), "srvB hello received");
+        await new Promise((r) => setTimeout(r, 25));
+        expect(await loadPref("server", idb)).toBe(SRVA);
+
+        // Now let srvB welcome -> attaches to srvB and persists SRVB!
+        holdWelcome.delete(SRVB);
+        pendingWelcomes.get(SRVB)!();
+        await waitUntil(() => conn.link.attachedServerId() === SRVB, "attach srvB");
+        await new Promise((r) => setTimeout(r, 30));
+        expect(await loadPref("server", idb)).toBe(SRVB);
+
+        // Re-opening openConnection reads persisted SRVB as lastGood first (§13.1)!
         await conn.close();
+        seenUrls.length = 0;
         const conn2 = await openConnection(record, newDiagnostics(), "https://a.invalid/v3/");
         connections.push(conn2);
-        expect(conn2.serverId).toBe("srvB");
+        expect(conn2.serverId).toBe(SRVB);
         conn2.link.start();
-        await new Promise((r) => setTimeout(r, 20));
-        expect(seenUrls).toContain("wss://b.invalid/v3/ws");
+        await waitUntil(() => seenUrls.includes("wss://b.invalid/v3/ws"), "conn2 dials srvB");
       } finally {
         (globalThis as { WebSocket?: typeof WebSocket }).WebSocket = prevWs;
         await new Promise<void>((resolve) => {
@@ -918,5 +1014,247 @@ describe("M4-20a: server selection (§13.1), D72 switching, and 50+ in-flight D5
       if (prevNavDesc) Object.defineProperty(globalThis, "navigator", prevNavDesc); else delete (globalThis as { navigator?: unknown }).navigator;
       if (prevWinDesc) Object.defineProperty(globalThis, "window", prevWinDesc); else delete (globalThis as { window?: unknown }).window;
     }
+  });
+
+  it("F5 dedup: command held on A, re-sent and applied on B, then healForward on A causes zero duplicate apply", async () => {
+    const clock = new CountingClock();
+    const cluster = new MultiServerCluster(clock);
+    cluster.addServer("srvA", "Machine A", ["a1"]);
+    cluster.addServer("srvB", "Machine B", ["b1"]);
+
+    const fb = await openFallbackLink({
+      storage: new MemoryFeStorage(),
+      servers: cluster.dialTargets(),
+      designatedServerId: "srvA",
+      deviceId: "phone",
+      feVersion: "3.0.0",
+      local: false,
+      clock,
+      newEpoch: nextEpoch,
+    });
+    opened.push(fb);
+    const BOT1 = "bot:b1" as StreamId;
+    fb.link.subscribe(BOT1);
+    fb.start();
+    await flush();
+    expect(fb.link.attachedServerId()).toBe("srvA");
+
+    // Partition A->B so A holds the commands unsettled without forwarding to B.
+    cluster.partitionedFromOwner.add("srvA->srvB");
+    for (let i = 1; i <= 10; i++) {
+      await fb.link.submit(BOT1 as Target, react(`dup-${i}`));
+    }
+    await flush();
+    expect(cluster.heldForward.get("srvB")?.length).toBe(10);
+    expect(cluster.applied.filter((a) => a.slot.target === BOT1)).toHaveLength(0);
+
+    // Switch to B while A still holds its copies -> FE re-sends to B and B applies [1..10].
+    expect(fb.pickServer("srvB")).toBe(true);
+    await flush();
+    expect(fb.link.attachedServerId()).toBe("srvB");
+    expect(cluster.applied.filter((a) => a.slot.target === BOT1).map((a) => a.slot.n))
+      .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(fb.link.pending()).toEqual([]);
+
+    // Now heal A->B so A delivers its held copies to B; server-side slot dedup prevents any duplicate apply!
+    await cluster.healForward("srvB");
+    await flush();
+    expect(cluster.heldForward.get("srvB")).toBeUndefined();
+    expect(cluster.applied.filter((a) => a.slot.target === BOT1).map((a) => a.slot.n))
+      .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
+  it("F5 + F2: requires all paths attempted before auto-switch and never re-enters dial synchronously", async () => {
+    const clock = new CountingClock();
+    const cluster = new MultiServerCluster(clock);
+    cluster.addServer("srvA", "Machine A");
+    cluster.addServer("srvB", "Machine B");
+
+    let dialDepth = 0;
+    let maxDialDepth = 0;
+    let switchedDuringDial = false;
+    const rawTargets = cluster.dialTargets();
+    const wrappedTargets = rawTargets.map((t) => ({
+      ...t,
+      directDial: (h: SocketHandlers): FeSocket => {
+        dialDepth += 1;
+        maxDialDepth = Math.max(maxDialDepth, dialDepth);
+        try { return t.directDial!(h); } finally { dialDepth -= 1; }
+      },
+      relayDial: (h: SocketHandlers): FeSocket => {
+        dialDepth += 1;
+        maxDialDepth = Math.max(maxDialDepth, dialDepth);
+        try { return t.relayDial!(h); } finally { dialDepth -= 1; }
+      },
+    }));
+
+    const switched: Array<{ from: string; to: string; reason: string }> = [];
+    let directTimeoutMs = 25_000;
+    const fb = await openFallbackLink({
+      storage: new MemoryFeStorage(),
+      servers: wrappedTargets,
+      designatedServerId: "srvA",
+      directTimeoutMs,
+      switchAfterMs: UNREACHABLE_SWITCH_MS,
+      deviceId: "phone",
+      feVersion: "3.0.0",
+      local: false,
+      clock,
+      newEpoch: nextEpoch,
+      onSwitch: (ev) => {
+        switched.push(ev);
+        if (dialDepth > 0) switchedDuringDial = true;
+      },
+    });
+    opened.push(fb);
+    fb.link.start();
+    await flush();
+    expect(fb.link.attachedServerId()).toBe("srvA");
+
+    // Phase 1: direct hangs and relay opens at 25 s (< 30 s) -> relay succeeds and cancels switch window on srvA.
+    cluster.killServer("srvA");
+    cluster.reviveServer("srvA", { direct: "hang", relay: "open" });
+    await flush();
+    await advanceWithFlush(clock, 26_000, 5_000);
+    expect(fb.link.attachedServerId()).toBe("srvA");
+    expect(fb.path).toBe("relay");
+    expect(switched).toEqual([]);
+
+    // Phase 2: direct hangs + relay refuses with directTimeoutMs > 30 s (use a fresh link with 35 s directTimeoutMs):
+    await fb.close();
+    cluster.reviveServer("srvA", { direct: "open", relay: "open" });
+    const fb2 = await openFallbackLink({
+      storage: new MemoryFeStorage(),
+      servers: wrappedTargets,
+      designatedServerId: "srvA",
+      directTimeoutMs: 35_000,
+      switchAfterMs: UNREACHABLE_SWITCH_MS,
+      deviceId: "phone",
+      feVersion: "3.0.0",
+      local: false,
+      clock,
+      newEpoch: nextEpoch,
+      onSwitch: (ev) => {
+        switched.push(ev);
+        if (dialDepth > 0) switchedDuringDial = true;
+      },
+    });
+    opened.push(fb2);
+    fb2.link.start();
+    await flush();
+    expect(fb2.link.attachedServerId()).toBe("srvA");
+
+    cluster.killServer("srvA");
+    cluster.reviveServer("srvA", { direct: "hang", relay: "refuse" });
+    await flush();
+
+    // At 30 s, only direct was tried (relay NOT yet attempted because directTimeoutMs = 35 s) -> MUST NOT switch!
+    await advanceWithFlush(clock, UNREACHABLE_SWITCH_MS, 5_000);
+    expect(fb2.serverId).toBe("srvA");
+    expect(switched).toEqual([]);
+
+    // At 35 s (+ 250 ms reconnect backoff), directTimeoutMs fires, tries relay -> deferred timeout(0) switches cleanly!
+    await advanceWithFlush(clock, 6_000, 1_000);
+    expect(fb2.serverId).toBe("srvB");
+    expect(fb2.link.attachedServerId()).toBe("srvB");
+    expect(switchedDuringDial).toBe(false);
+    expect(maxDialDepth).toBe(1);
+    expect(switched).toEqual([{ from: "srvA", to: "srvB", reason: "auto" }]);
+  });
+
+  it("F2 + F3 controller invariants: defers auto-switch to timeout(0) and clears timer when no candidates remain", () => {
+    const clock = new CountingClock();
+    const switched: string[] = [];
+    const ctrl = new ServerSwitchController({
+      servers: [
+        { id: "srvA", name: "A", state: "live", dialable: true },
+        { id: "srvB", name: "B", state: "live", dialable: true },
+      ],
+      designatedId: "srvA",
+      clock,
+      onSwitch: ({ to }) => switched.push(to),
+    });
+    ctrl.noteDialStart("srvA", ["direct", "relay"]);
+    ctrl.notePathAttempt("srvA", "direct");
+    clock.advance(UNREACHABLE_SWITCH_MS);
+    // Still has not switched because relay was not tried yet.
+    expect(switched).toEqual([]);
+    // Trying relay past 30 s does NOT invoke onSwitch synchronously (F2), defers to timeout(0).
+    ctrl.notePathAttempt("srvA", "relay");
+    expect(switched).toEqual([]);
+    clock.advance(0);
+    expect(switched).toEqual(["srvB"]);
+
+    // F3: mark srvA gone so when srvB also stays unreachable, no candidates remain and timer is cleared (pending === 0).
+    ctrl.updateServers([{ id: "srvA", name: "A", state: "gone", dialable: false }]);
+    ctrl.noteDialStart("srvB", ["direct"]);
+    ctrl.notePathAttempt("srvB", "direct");
+    clock.advance(UNREACHABLE_SWITCH_MS);
+    expect(ctrl.current()).toBe("srvB");
+    expect(clock.pending).toBe(0);
+    ctrl.stop();
+  });
+
+  it("F4: gone is irreversible across mergeServerCandidates, mergeServers, and openFallbackLink syncServers", async () => {
+    // 1. FeLink server-switch layer: gone strips addresses and cannot revert to live.
+    const mergedCandidates = mergeServerCandidates(
+      [{ id: "srvB", name: "B", state: "gone", dh: "kB" }],
+      [{ id: "srvB", name: "B", state: "live", dialable: true, addresses: { tailnet: "wss://evil.invalid/v3/ws" } }],
+    );
+    expect(mergedCandidates).toEqual([{ id: "srvB", name: "B", state: "gone", dh: "kB", dialable: false }]);
+
+    // 2. device-store layer: gone strips addresses and cannot revert to live.
+    const stored = mergeServers(
+      [{ id: "srvB", name: "B", state: "live", dh: "kB", addresses: { tailnet: "wss://b.invalid/v3/ws" } }],
+      [{ id: "srvB", name: "B", state: "gone", since: 100 }],
+    );
+    expect(stored).toEqual([{ id: "srvB", name: "B", state: "gone", dh: "kB", since: 100 }]);
+    const afterFakeRevive = mergeServers(stored, [
+      { id: "srvB", name: "B", state: "live", since: 200, addresses: { tailnet: "wss://evil.invalid/v3/ws" } },
+    ]);
+    expect(afterFakeRevive).toEqual([{ id: "srvB", name: "B", state: "gone", dh: "kB", since: 100 }]);
+
+    // 3. connection.ts syncServers: strips previous addresses/dials on gone and resists peer{state: "live"}.
+    const clock = new CountingClock();
+    const cluster = new MultiServerCluster(clock);
+    cluster.addServer("srvA", "Machine A");
+    cluster.addServer("srvB", "Machine B");
+    const fb = await openFallbackLink({
+      storage: new MemoryFeStorage(),
+      servers: cluster.dialTargets(),
+      designatedServerId: "srvA",
+      deviceId: "phone",
+      feVersion: "3.0.0",
+      local: false,
+      clock,
+      newEpoch: nextEpoch,
+    });
+    opened.push(fb);
+    fb.link.start();
+    await flush();
+
+    cluster.markGone("srvB");
+    await flush();
+    expect(fb.pickServer("srvB")).toBe(false);
+
+    // Even if a rogue/stale frame claims srvB is live again with addresses, it stays gone and undialable!
+    for (const conn of cluster.openConns) {
+      if (conn.serverId === "srvA") {
+        const enc = encodeFrame({
+          t: "peer", serverId: "srvB", state: "live", since: 999,
+          addresses: { tailnet: "wss://evil.invalid/v3/ws" },
+        }, "server", REMOTE);
+        if (enc.ok) conn.handlers.frame(enc.text);
+      }
+    }
+    await flush();
+    expect(fb.pickServer("srvB")).toBe(false);
+
+    cluster.dialLog.length = 0;
+    cluster.killServer("srvA");
+    await flush();
+    await advanceWithFlush(clock, UNREACHABLE_SWITCH_MS, 5_000);
+    expect(fb.serverId).toBe("srvA");
+    expect(cluster.dialLog.some((d) => d.serverId === "srvB")).toBe(false);
   });
 });

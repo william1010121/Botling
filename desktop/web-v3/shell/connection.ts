@@ -169,9 +169,17 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
   const isLocal = options.local ?? false;
 
   const targetsById = new Map<string, ServerDialTarget>();
-  for (const s of options.servers ?? []) targetsById.set(s.id, { ...s });
+  for (const s of options.servers ?? []) {
+    targetsById.set(
+      s.id,
+      s.state === "gone"
+        ? { id: s.id, name: s.name || s.id, state: "gone", ...(s.dh ? { dh: s.dh } : {}) }
+        : { ...s },
+    );
+  }
 
   const resolveDialsFor = (target: ServerDialTarget): { directDial?: Dial; relayDial?: Dial } => {
+    if (target.state === "gone") return {};
     if (target.directDial || target.relayDial) {
       return {
         ...(target.directDial ? { directDial: target.directDial } : {}),
@@ -215,7 +223,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
       onLastGoodServer: options.onLastGoodServer,
       onSwitch: (ev) => {
         options.onSwitch?.(ev);
-        if (started && !revoked && !stopped) {
+        if (!revoked && !stopped) {
           switching = true;
           try { link.replaceSocket(); } finally { switching = false; }
         }
@@ -596,14 +604,28 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
     const syncServers = (views: ServerView[]): ServerCandidate[] => {
       for (const view of views) {
         const prev = targetsById.get(view.id);
-        targetsById.set(view.id, {
-          ...(prev ?? {}),
-          id: view.id,
-          name: view.name || prev?.name || view.id,
-          state: view.state,
-          ...(view.dh ? { dh: view.dh } : prev?.dh ? { dh: prev.dh } : {}),
-          ...(view.state === "gone" ? {} : view.addresses !== undefined ? { addresses: view.addresses } : prev?.addresses ? { addresses: prev.addresses } : {}),
-        });
+        const isGone = prev?.state === "gone" || view.state === "gone";
+        const dh = view.dh ?? prev?.dh;
+        const name = view.name || prev?.name || view.id;
+        if (isGone) {
+          targetsById.set(view.id, {
+            id: view.id,
+            name,
+            state: "gone",
+            ...(dh ? { dh } : {}),
+          });
+        } else {
+          const addresses = view.addresses !== undefined ? view.addresses : prev?.addresses;
+          targetsById.set(view.id, {
+            id: view.id,
+            name,
+            state: view.state,
+            ...(dh ? { dh } : {}),
+            ...(addresses ? { addresses } : {}),
+            ...(prev?.directDial ? { directDial: prev.directDial } : {}),
+            ...(prev?.relayDial ? { relayDial: prev.relayDial } : {}),
+          });
+        }
       }
       return views.map((view) => toCandidate(targetsById.get(view.id)!));
     };

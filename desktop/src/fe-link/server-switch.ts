@@ -84,16 +84,40 @@ export function mergeServerCandidates(
   updates: readonly ServerCandidate[],
 ): ServerCandidate[] {
   const byId = new Map<string, ServerCandidate>();
-  for (const entry of current) byId.set(entry.id, { ...entry });
+  for (const entry of current) {
+    if (entry.state === "gone") {
+      byId.set(entry.id, {
+        id: entry.id,
+        name: entry.name || entry.id,
+        state: "gone",
+        ...(entry.dh ? { dh: entry.dh } : {}),
+        dialable: false,
+      });
+    } else {
+      byId.set(entry.id, { ...entry });
+    }
+  }
   for (const next of updates) {
     const prev = byId.get(next.id);
+    const dh = next.dh ?? prev?.dh;
+    const name = next.name || prev?.name || next.id;
+    if (prev?.state === "gone" || next.state === "gone") {
+      byId.set(next.id, {
+        id: next.id,
+        name,
+        state: "gone",
+        ...(dh ? { dh } : {}),
+        dialable: false,
+      });
+      continue;
+    }
     const state = next.state ?? prev?.state;
-    const addresses = state === "gone" ? undefined : (next.addresses ?? prev?.addresses);
+    const addresses = next.addresses ?? prev?.addresses;
     byId.set(next.id, {
       id: next.id,
-      name: next.name || prev?.name || next.id,
+      name,
       ...(state !== undefined ? { state } : {}),
-      ...(next.dh ?? prev?.dh ? { dh: next.dh ?? prev?.dh } : {}),
+      ...(dh ? { dh } : {}),
       ...(addresses ? { addresses } : {}),
       ...(next.dialable !== undefined ? { dialable: next.dialable } : prev?.dialable !== undefined ? { dialable: prev.dialable } : {}),
     });
@@ -190,10 +214,6 @@ export class ServerSwitchController {
     if (!this.attached && this.unreachableSince === null) {
       this.unreachableSince = this.clock.now();
     }
-    if (!this.attached && this.unreachableSince !== null && this.clock.now() - this.unreachableSince >= this.switchAfterMs && this.allPathsAttempted()) {
-      this.tryAutoSwitch();
-      return;
-    }
     this.armTimer();
   }
 
@@ -234,8 +254,8 @@ export class ServerSwitchController {
   }
 
   /**
-   * Manual server pick (D72): switches immediately regardless of 30 s timer or 5-minute holdoff, and remembers the
-   * selection as last good. Returns false if the server is unknown, revoked (`gone`), or non-dialable.
+   * Manual server pick (D72): switches immediately regardless of 30 s timer or 5-minute holdoff; lastGood is persisted
+   * only once the selected server attaches. Returns false if unknown, revoked (`gone`), or non-dialable.
    */
   pickServer(serverId: string): boolean {
     if (this.stopped) return false;
@@ -243,10 +263,6 @@ export class ServerSwitchController {
     if (!target || target.state === "gone" || target.dialable === false) return false;
     this.holdoffs.delete(serverId);
     const from = this.currentId;
-    if (this.lastGoodId !== serverId) {
-      this.lastGoodId = serverId;
-      this.options.onLastGoodServer?.(serverId);
-    }
     if (from === serverId && this.attached) return true;
     this.currentId = serverId;
     this.attached = false;
@@ -340,6 +356,7 @@ export class ServerSwitchController {
     if (!this.allPathsAttempted()) return;
     const next = this.nextAutoCandidate(now);
     if (!next) {
+      this.clearTimer();
       const earliest = this.earliestHoldoffExpiry(now);
       if (earliest !== null) {
         this.switchTimer = this.clock.setTimeout(() => {
