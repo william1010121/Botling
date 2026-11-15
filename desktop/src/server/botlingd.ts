@@ -48,14 +48,35 @@ import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from ".
 import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { ShellBridge } from "./shell-bridge";
+import { PluginRow, RowKey } from "../protocol/table-rows";
 import { openServerStore, type Db, type ServerStore } from "./store";
-import { PluginRow } from "../protocol/table-rows";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, readRowBody, SummaryRows, TableFeeds } from "./replica";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
 import type { Command } from "../contract";
 import type { Target } from "../protocol";
 import { Directory, Forwarder, OwnerInbox, ServerOrigin } from "./forward";
 import { release as osRelease } from "node:os";
+
+/**
+ * M5-18a (D56, §18.3): a plugin's server (program) part runs only when the own `plugin:<name>` row says
+ * either it is a built-in at its shipped hash (`author === "builtin"` and `codeHash` matches), or its
+ * current `codeHash` holds a `write` grant.
+ */
+export function mayRunPluginServerPart(reader: () => Db, ownStream: string, name: string, codeHash: string): boolean {
+  const key = `plugin:${name}`;
+  if (!RowKey.safeParse(key).success) return false;
+  let raw: unknown;
+  try {
+    raw = readRowBody(reader(), ownStream, key);
+  } catch {
+    return false;
+  }
+  const parsed = PluginRow.safeParse(raw);
+  if (!parsed.success) return false;
+  const row = parsed.data;
+  if (row.author === "builtin") return row.codeHash === codeHash;
+  return row.grants[codeHash]?.tier === "write";
+}
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
 export const PLACEHOLDER_TAILNET_ORIGIN = "https://tailnet-name.invalid";
@@ -402,6 +423,7 @@ export class Botlingd {
         deferTurn,
         mainBotId: ids.main,
         maintainerId: ids.maintainer,
+        mayRunServerPart: (name, codeHash) => mayRunPluginServerPart(() => hub.reader(), `srv:${serverId}`, name, codeHash),
         pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
           read: async (ref, offset, length) => {
@@ -439,7 +461,12 @@ export class Botlingd {
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
         store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster)), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
-        pluginRowsChanged: () => core.pluginGrantsChanged(),
+        // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
+        // may run and re-announces its list once (core.pluginGrantsChanged).
+        pluginRowsChanged: () => {
+          feeds.notify(feeds.ownStream);
+          core.pluginGrantsChanged();
+        },
         tapHooks: {
           eventSeen: (event) => {
             summary?.seen(event);

@@ -1,5 +1,7 @@
 # Agent notes
 
+- **Before writing or reviewing code, read `docs/code-standards.md`** (hard rules: breaking one is FIX FIRST; the common-mistakes checklist every handoff includes) and the lessons in `docs/LESSONS.md` tagged for your area.
+
 ## 2.x desktop app (`desktop/`)
 
 - **Default check while working:** `cd desktop && npm run test:changed`. It typechecks, rebuilds
