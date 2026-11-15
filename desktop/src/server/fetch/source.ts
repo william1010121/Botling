@@ -1,22 +1,25 @@
 // Source side of on-demand fetch between servers (§16, D51, M5-07a).
 //
-// - Free requests (bot artifacts, referenced blobs) run with a `once` grant bound to `fetchId`; `ask` requests reuse an
-//   active `always` grant or call the approval hook (default `"deny"` until M5-06b wires Maintainer cards).
+// - Free requests (bot artifacts, referenced blobs with nlink === 1) run with a `once` grant bound to `fetchId`
+//   (10-minute TTL); `ask` requests reuse an active `always` grant (unless any target file has nlink > 1) or call the
+//   approval hook (default `"deny"` until M5-06b wires Maintainer cards).
 // - An audit row (`audit:<fetchId>`, `act: "fetch.serve"`) commits to `srv:<self>` BEFORE the first byte leaves.
-// - Before EVERY chunk frame: re-check grant validity/revocation/expiry, peer validity in the roster, string containment
-//   against the stored real prefix (never re-realpath the prefix), `isDeniedPath` on the real path, and open with
-//   `O_NOFOLLOW` verifying `(dev, ino)` via `fstat`.
-// - A `once` grant is marked used at `fetch.done` and refused for any other `fetchId` (D51 `bug_oncereuse`).
+// - Fixed 64 KiB (`PEER_CONTENT_FRAME`) frames on every transport (direct & relay) so resume indices never drift.
+// - Before EVERY chunk frame: wait if `queuedBytes > 1 MiB`, re-check grant validity/revocation/expiry, peer &
+//   requester validity (bot still live or device still valid, bound to asking server, holding reply/manage),
+//   string containment against stored real prefix, `isDeniedPath`, and open with `O_NOFOLLOW` re-verifying realpath,
+//   lstat `(dev, ino)` equality, size, and `mtimeNs`.
+// - Daily byte usage is persisted per day in `server.db` `meta` (`fetchDailyBytes:<day>`).
 import { createHash, randomUUID } from "node:crypto";
-import { constants, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { constants, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, sep } from "node:path";
-import {
-  CONTENT_FRAME_CHUNK_LIMIT, type ChunkMessage, type EntryRef, type WireMessage, type WireMessageOf,
-} from "../../protocol";
-import { FETCH_GRANT_BYTES_LIMIT, type FetchDenyReason, type FetchRequester } from "../../protocol/fetch";
+import { basename, isAbsolute, join, sep } from "node:path";
+import type { ChunkMessage, EntryRef, WireMessage, WireMessageOf } from "../../protocol";
+import type { FetchDenyReason, FetchRequester } from "../../protocol/fetch";
 import type { DeviceScope } from "../../protocol/scopes";
 import { PEER_CONTENT_FRAME } from "../content/peer-content";
+import { sameSig, statSig, type StatSig } from "../content/pin";
+import type { ContentService } from "../content/service";
 import { ownTableStream, putRow, readRowBody } from "../replica/tables";
 import type { RosterView } from "../roster";
 import type { Db, ServerStore } from "../store";
@@ -24,10 +27,14 @@ import { classify, isDeniedPath, Limits, type BotId, type FetchWhat } from "./po
 
 const realpath = realpathSync.native ?? realpathSync;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const ONCE_GRANT_TTL_MS = 10 * 60_000;
+const FETCH_HIGH_WATER = 1 * 1024 * 1024;
+const DAILY_FLUSH_INTERVAL = 16;
 
 export interface FetchSink {
   readonly peer: string | null;
   readonly state: string;
+  readonly queuedBytes: number;
   readonly transport?: "tailnet" | "relay";
   sendWire(message: WireMessage): boolean;
   sendChunk(message: ChunkMessage): boolean;
@@ -42,6 +49,7 @@ export interface FetchAskRequest {
   maxBytes: number;
   prefix: string;
   realPath: string;
+  hardLinks?: boolean;
 }
 
 export type FetchAskHook = (fetch: FetchAskRequest) => Promise<"once" | "always" | "deny">;
@@ -51,8 +59,13 @@ export interface FetchSourceOptions {
   dataDir: string;
   store: Pick<ServerStore, "submit">;
   reader(): Db;
-  roster: { readonly view: RosterView; device(member: string): { scope?: readonly DeviceScope[] } | null };
+  roster: {
+    readonly view: RosterView;
+    device(member: string): { scope?: readonly DeviceScope[]; by: string } | null;
+  };
   botFolders(): Map<BotId, string>;
+  content?: Pick<ContentService, "markChanged">;
+  dailyLimitBytes?: number;
   ask?: FetchAskHook;
   onAudit?: () => void;
   onChunk?: (fetchId: string, index: number) => void | Promise<void>;
@@ -78,10 +91,18 @@ interface FileEntry {
   sha256: string;
   dev: number;
   ino: number;
+  mtimeNs: bigint;
+  nlink: number;
 }
 
 interface ActiveServe {
   cancelled: boolean;
+}
+
+interface InflightEntry {
+  task: ActiveServe;
+  requesterServer: string | null;
+  done: Promise<void>;
 }
 
 function isSubpathOrEqual(prefix: string, target: string): boolean {
@@ -109,14 +130,37 @@ function sha256Hex(data: Uint8Array | string): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-/** Opens `path` with `O_NOFOLLOW`, reads its whole bytes and SHA-256 while capturing `(dev, ino)` from `fstat`. */
-async function hashRegularFile(path: string): Promise<
-  | { ok: true; size: number; sha256: string; dev: number; ino: number }
+function parseStatSig(raw: string | null | undefined): StatSig | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<StatSig>;
+    if (typeof parsed.size === "number" && typeof parsed.mtimeNs === "string" && typeof parsed.ino === "string") {
+      return { size: parsed.size, mtimeNs: parsed.mtimeNs, ino: parsed.ino };
+    }
+  } catch { /* ignore malformed sig */ }
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Opens `absPath` with `O_RDONLY | O_NOFOLLOW`, re-verifies realpath / lstat `(dev, ino)` / containment / deny-list
+ * AFTER opening (M5), and hashes its bytes while capturing `(dev, ino, mtimeNs, nlink)`.
+ */
+async function hashRegularFile(
+  absPath: string,
+  grantPrefix: string,
+  dataDir: string,
+  isBlob: boolean,
+): Promise<
+  | { ok: true; size: number; sha256: string; dev: number; ino: number; mtimeNs: bigint; nlink: number }
   | { ok: false; reason: FetchDenyReason }
 > {
   let handle;
   try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    handle = await open(absPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException)?.code;
     if (code === "ELOOP") return { ok: false, reason: "outside" };
@@ -124,8 +168,17 @@ async function hashRegularFile(path: string): Promise<
     return { ok: false, reason: "denied" };
   }
   try {
-    const st = await handle.stat();
+    const st = await handle.stat({ bigint: true });
     if (!st.isFile()) return { ok: false, reason: "denied" };
+    const resolved = safeRealpath(absPath);
+    if (!resolved.ok) return { ok: false, reason: resolved.symlink ? "outside" : "gone" };
+    if (resolved.path !== absPath) return { ok: false, reason: "outside" };
+    let lst;
+    try { lst = lstatSync(absPath, { bigint: true }); } catch { return { ok: false, reason: "gone" }; }
+    if (lst.isSymbolicLink() || lst.dev !== st.dev || lst.ino !== st.ino) return { ok: false, reason: "outside" };
+    if (!isBlob && !isSubpathOrEqual(grantPrefix, absPath)) return { ok: false, reason: "outside" };
+    if (!isBlob && isDeniedPath(absPath, dataDir)) return { ok: false, reason: "deny-list" };
+
     const hash = createHash("sha256");
     const buf = Buffer.allocUnsafe(64 * 1024);
     let total = 0;
@@ -135,7 +188,15 @@ async function hashRegularFile(path: string): Promise<
       hash.update(buf.subarray(0, bytesRead));
       total += bytesRead;
     }
-    return { ok: true, size: total, sha256: hash.digest("hex"), dev: Number(st.dev), ino: Number(st.ino) };
+    return {
+      ok: true,
+      size: total,
+      sha256: hash.digest("hex"),
+      dev: Number(st.dev),
+      ino: Number(st.ino),
+      mtimeNs: st.mtimeNs,
+      nlink: Number(st.nlink),
+    };
   } finally {
     await handle.close().catch(() => undefined);
   }
@@ -145,15 +206,19 @@ export class FetchSource {
   private readonly askHook: FetchAskHook;
   private readonly log: (line: string) => void;
   private readonly now: () => number;
+  private readonly dailyLimitBytes: number;
   private readonly active = new Map<FetchSink, Set<ActiveServe>>();
-  private readonly inflightIds = new Set<string>();
-  private readonly dailyBytes = new Map<string, { day: number; bytes: number }>();
+  private readonly inflight = new Map<string, InflightEntry>();
+  private readonly dailyBytes = new Map<number, Map<string, number>>();
+  private readonly pendingDaily = new Map<number, Map<string, number>>();
+  private dailyFlushQueue: Promise<void> = Promise.resolve();
   private closed = false;
 
   constructor(private readonly options: FetchSourceOptions) {
     this.askHook = options.ask ?? (async () => "deny");
     this.log = options.log ?? (() => undefined);
     this.now = options.now ?? Date.now;
+    this.dailyLimitBytes = options.dailyLimitBytes ?? Limits.PER_DAY_BYTES_PER_BOT;
   }
 
   onMessage(session: FetchSink, message: WireMessage): boolean {
@@ -162,16 +227,31 @@ export class FetchSource {
       this.deny(session, message.fetchId, "gone");
       return true;
     }
-    if (this.inflightIds.has(message.fetchId)) {
-      this.deny(session, message.fetchId, "denied", "fetchId already in progress");
-      return true;
+    const existing = this.inflight.get(message.fetchId);
+    if (existing) {
+      if (existing.requesterServer !== session.peer) {
+        this.deny(session, message.fetchId, "denied", "fetchId already in progress");
+        return true;
+      }
+      // Same requesterServer: cancel the in-flight attempt (racing resume) and run after it winds down.
+      existing.task.cancelled = true;
     }
-    this.inflightIds.add(message.fetchId);
+    const waitForPrior = existing?.done;
     const task: ActiveServe = { cancelled: false };
     let set = this.active.get(session);
     if (!set) { set = new Set(); this.active.set(session, set); }
     set.add(task);
-    void this.handleAsk(session, message as WireMessageOf<"fetch.ask">, task)
+
+    let markDone!: () => void;
+    const done = new Promise<void>((resolve) => { markDone = resolve; });
+    const entry: InflightEntry = { task, requesterServer: session.peer, done };
+    this.inflight.set(message.fetchId, entry);
+
+    void (async () => {
+      if (waitForPrior) await waitForPrior.catch(() => undefined);
+      if (task.cancelled) return;
+      await this.handleAsk(session, message as WireMessageOf<"fetch.ask">, task);
+    })()
       .catch((error) => {
         this.log(`fetch: serving ${message.fetchId} failed: ${String((error as Error)?.message ?? error)}`);
         if (!task.cancelled && session.state === "open") {
@@ -179,9 +259,10 @@ export class FetchSource {
         }
       })
       .finally(() => {
-        this.inflightIds.delete(message.fetchId);
+        if (this.inflight.get(message.fetchId) === entry) this.inflight.delete(message.fetchId);
         set!.delete(task);
         if (set!.size === 0) this.active.delete(session);
+        markDone();
       });
     return true;
   }
@@ -201,16 +282,81 @@ export class FetchSource {
     this.active.clear();
   }
 
+  /** Resolves once every active fetch stopped and pending daily byte increments committed to `server.db`. */
+  async flushed(): Promise<void> {
+    await Promise.allSettled([...this.inflight.values()].map((entry) => entry.done));
+    await this.flushDailyBytes();
+  }
+
+  private loadDay(day: number): Map<string, number> {
+    let map = this.dailyBytes.get(day);
+    if (map) return map;
+    map = new Map();
+    try {
+      const row = this.options.reader().prepare("SELECT value FROM meta WHERE key = ?").get(`fetchDailyBytes:${day}`) as
+        | { value?: string }
+        | undefined;
+      if (row?.value) {
+        const parsed = JSON.parse(String(row.value)) as Record<string, unknown>;
+        if (parsed && typeof parsed === "object") {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "number" && Number.isFinite(v) && v >= 0) map.set(k, v);
+          }
+        }
+      }
+    } catch { /* ignore malformed meta */ }
+    this.dailyBytes.set(day, map);
+    return map;
+  }
+
   private getDailyBytes(key: string, at: number): number {
     const day = Math.floor(at / DAY_MS);
-    const entry = this.dailyBytes.get(key);
-    return entry && entry.day === day ? entry.bytes : 0;
+    return this.loadDay(day).get(key) ?? 0;
   }
 
   private addDailyBytes(key: string, at: number, delta: number): void {
     const day = Math.floor(at / DAY_MS);
-    const prev = this.getDailyBytes(key, at);
-    this.dailyBytes.set(key, { day, bytes: prev + delta });
+    const dayMap = this.loadDay(day);
+    dayMap.set(key, (dayMap.get(key) ?? 0) + delta);
+    let pending = this.pendingDaily.get(day);
+    if (!pending) { pending = new Map(); this.pendingDaily.set(day, pending); }
+    pending.set(key, (pending.get(key) ?? 0) + delta);
+  }
+
+  private flushDailyBytes(): Promise<void> {
+    const snapshot = new Map<number, Map<string, number>>();
+    for (const [day, map] of this.pendingDaily) {
+      if (map.size > 0) snapshot.set(day, new Map(map));
+    }
+    this.pendingDaily.clear();
+    if (snapshot.size === 0) return this.dailyFlushQueue;
+    this.dailyFlushQueue = this.dailyFlushQueue.then(async () => {
+      await this.options.store.submit((tx) => {
+        for (const [day, deltas] of snapshot) {
+          const metaKey = `fetchDailyBytes:${day}`;
+          const existing = tx.prepare("SELECT value FROM meta WHERE key = ?").get(metaKey) as { value?: string } | undefined;
+          const counts: Record<string, number> = {};
+          if (existing?.value) {
+            try {
+              const parsed = JSON.parse(String(existing.value)) as Record<string, unknown>;
+              if (parsed && typeof parsed === "object") {
+                for (const [k, v] of Object.entries(parsed)) {
+                  if (typeof v === "number" && Number.isFinite(v) && v >= 0) counts[k] = v;
+                }
+              }
+            } catch { /* overwrite corrupt value */ }
+          }
+          for (const [k, delta] of deltas) {
+            counts[k] = (counts[k] ?? 0) + delta;
+          }
+          tx.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+            .run(metaKey, JSON.stringify(counts));
+        }
+      });
+    }).catch((error) => {
+      this.log(`fetch: persisting daily byte counts failed: ${String((error as Error)?.message ?? error)}`);
+    });
+    return this.dailyFlushQueue;
   }
 
   private deny(session: FetchSink, fetchId: string, reason: FetchDenyReason, detail?: string): void {
@@ -218,248 +364,390 @@ export class FetchSource {
     session.sendWire({ t: "fetch.denied", fetchId, reason, ...(detail ? { detail } : {}) } as WireMessage);
   }
 
+  private checkRequester(
+    db: Db,
+    requester: FetchRequester,
+    requesterServer: string,
+    midStream: boolean,
+  ): { ok: true; requesterId: string } | { ok: false; reason: "denied" | "revoked"; detail?: string } {
+    if ("bot" in requester) {
+      const botRow = db.prepare("SELECT 1 FROM rows WHERE stream = ? AND key = ? AND deleted = 0")
+        .get(`srv:${requesterServer}`, `bot:${requester.bot}`);
+      if (!botRow) {
+        return { ok: false, reason: midStream ? "revoked" : "denied", detail: "requester bot is not in the asking server's table" };
+      }
+      return { ok: true, requesterId: requester.bot };
+    }
+    const device = this.options.roster.device(requester.device);
+    if (!device) {
+      return { ok: false, reason: midStream ? "revoked" : "denied", detail: "unknown requester device" };
+    }
+    if (device.by !== requesterServer) {
+      return { ok: false, reason: midStream ? "revoked" : "denied", detail: "device is not attached to the asking server" };
+    }
+    const scope = device.scope ?? [];
+    if (!scope.includes("reply") && !scope.includes("manage")) {
+      return { ok: false, reason: midStream ? "revoked" : "denied", detail: "scope" };
+    }
+    return { ok: true, requesterId: requester.device };
+  }
+
   private async handleAsk(session: FetchSink, message: WireMessageOf<"fetch.ask">, task: ActiveServe): Promise<void> {
-    const deny = (reason: FetchDenyReason, detail?: string) => {
+    let onceGrantToRevoke: string | null = null;
+    const revokeOnce = async () => {
+      if (!onceGrantToRevoke) return;
+      const targetId = onceGrantToRevoke;
+      onceGrantToRevoke = null;
+      await this.options.store.submit((tx) => {
+        tx.prepare("UPDATE grants SET revokedAt = ? WHERE grantId = ? AND revokedAt IS NULL").run(this.now(), targetId);
+      }).catch((error) => {
+        this.log(`fetch: revoking grant ${targetId} failed: ${String((error as Error)?.message ?? error)}`);
+      });
+    };
+    const terminalDeny = async (reason: FetchDenyReason, detail?: string) => {
+      await this.flushDailyBytes();
+      if (task.cancelled || session.state !== "open") return;
+      await revokeOnce();
       if (!task.cancelled) this.deny(session, message.fetchId, reason, detail);
     };
-    const requesterServer = session.peer;
-    const view = this.options.roster.view;
-    if (!requesterServer || message.source !== this.options.self) { deny("denied"); return; }
-    if (!view.servers.has(requesterServer) || !view.valid.has(requesterServer) || !view.valid.has(view.self)) {
-      deny(view.revoked.has(requesterServer) ? "revoked" : "denied");
-      return;
-    }
 
-    const db = this.options.reader();
-    let requesterId: string;
-    if ("bot" in message.requester) {
-      const botRow = db.prepare("SELECT 1 FROM rows WHERE stream = ? AND key = ? AND deleted = 0")
-        .get(`srv:${requesterServer}`, `bot:${message.requester.bot}`);
-      if (!botRow) { deny("denied", "requester bot is not in the asking server's table"); return; }
-      requesterId = message.requester.bot;
-    } else {
-      const device = this.options.roster.device(message.requester.device);
-      if (!device) { deny("denied", "unknown requester device"); return; }
-      requesterId = message.requester.device;
-    }
+    try {
+      const requesterServer = session.peer;
+      const view = this.options.roster.view;
+      if (!requesterServer || message.source !== this.options.self) { await terminalDeny("denied"); return; }
+      if (!view.servers.has(requesterServer) || !view.valid.has(requesterServer) || !view.valid.has(view.self)) {
+        await terminalDeny(view.revoked.has(requesterServer) ? "revoked" : "denied");
+        return;
+      }
 
-    if (message.what.kind === "git") {
-      deny("denied", "git bundle fetch is handled separately");
-      return;
-    }
+      const db = this.options.reader();
+      const reqCheck = this.checkRequester(db, message.requester, requesterServer, false);
+      if (!reqCheck.ok) { await terminalDeny(reqCheck.reason, reqCheck.detail); return; }
+      const requesterId = reqCheck.requesterId;
 
-    const existingByFetch = db.prepare(
-      "SELECT grantId, requester, requesterServer, prefix, kind, fetchId, expires, revokedAt FROM grants WHERE fetchId = ?",
-    ).get(message.fetchId) as GrantRow | undefined;
-    if (existingByFetch && existingByFetch.revokedAt !== null) {
-      deny("denied", "fetchId already used or revoked");
-      return;
-    }
+      if (message.what.kind === "git") {
+        await terminalDeny("denied", "git bundle fetch is handled separately");
+        return;
+      }
 
-    const botFolders = this.options.botFolders();
-    const referenced = (id: string, entry: EntryRef) =>
-      Boolean(db.prepare("SELECT 1 FROM content_refs WHERE id = ? AND stream = ? AND seq = ?").get(id, entry.stream, entry.seq));
-    const classified = classify({ what: message.what, botFolders, referenced, dataDir: this.options.dataDir });
-    if (classified.kind === "denied") {
-      deny(classified.reason);
-      return;
-    }
-
-    const resolvedTarget = this.resolveTargetPath(db, message.what, botFolders);
-    if (!resolvedTarget.ok) { deny(resolvedTarget.reason); return; }
-    const realTarget = resolvedTarget.realPath;
-    const isBlob = message.what.kind === "blob";
-    if (!isBlob && isDeniedPath(realTarget, this.options.dataDir)) {
-      deny("deny-list");
-      return;
-    }
-
-    // Resolve or create grant. Never re-realpath a stored grant prefix.
-    const at = this.now();
-    let grantId: string;
-    let grantPrefix: string;
-    let grantKind: "once" | "always";
-    let grantExpires: number | null = null;
-    let isNewGrant = false;
-
-    if (existingByFetch) {
-      const matchesTarget = message.what.kind === "blob"
-        ? existingByFetch.prefix === message.what.id
-        : isSubpathOrEqual(existingByFetch.prefix, realTarget);
+      const existingByFetch = db.prepare(
+        "SELECT grantId, requester, requesterServer, prefix, kind, fetchId, expires, revokedAt FROM grants WHERE fetchId = ?",
+      ).get(message.fetchId) as GrantRow | undefined;
+      if (existingByFetch && existingByFetch.revokedAt !== null) {
+        await terminalDeny("denied", "fetchId already used or revoked");
+        return;
+      }
+      if (existingByFetch && !message.from) {
+        await terminalDeny("denied", "resuming a once grant requires from");
+        return;
+      }
       if (
-        existingByFetch.kind !== "once"
-        || existingByFetch.requester !== requesterId
-        || existingByFetch.requesterServer !== requesterServer
-        || !matchesTarget
+        existingByFetch
+        && existingByFetch.kind === "once"
+        && existingByFetch.requester === requesterId
+        && existingByFetch.requesterServer === requesterServer
       ) {
-        deny("denied");
+        onceGrantToRevoke = existingByFetch.grantId;
+      }
+
+      const botFolders = this.options.botFolders();
+      const referenced = (id: string, entry: EntryRef) =>
+        Boolean(db.prepare("SELECT 1 FROM content_refs WHERE id = ? AND stream = ? AND seq = ?").get(id, entry.stream, entry.seq));
+      const classified = classify({ what: message.what, botFolders, referenced, dataDir: this.options.dataDir });
+      if (classified.kind === "denied") {
+        await terminalDeny(classified.reason);
         return;
       }
-      if (existingByFetch.expires !== null && Number(existingByFetch.expires) <= at) {
-        deny("expired");
+
+      const resolvedTarget = this.resolveTargetPath(db, message.what, botFolders);
+      if (!resolvedTarget.ok) { await terminalDeny(resolvedTarget.reason); return; }
+      const realTarget = resolvedTarget.realPath;
+      const isBlob = message.what.kind === "blob";
+      if (!isBlob && isDeniedPath(realTarget, this.options.dataDir)) {
+        await terminalDeny("deny-list");
         return;
       }
-      grantId = existingByFetch.grantId;
-      grantPrefix = existingByFetch.prefix;
-      grantKind = "once";
-      grantExpires = existingByFetch.expires;
-    } else if (classified.kind === "free") {
-      grantId = randomUUID();
-      grantPrefix = classified.prefix;
-      grantKind = "once";
-      isNewGrant = true;
-    } else {
-      const alwaysRows = db.prepare(
-        "SELECT grantId, prefix, expires FROM grants WHERE requester = ? AND requesterServer = ? AND kind = 'always' AND mode = 'read' AND revokedAt IS NULL ORDER BY createdAt DESC",
-      ).all(requesterId, requesterServer) as Array<{ grantId: string; prefix: string; expires: number | null }>;
-      const blobId = message.what.kind === "blob" ? message.what.id : null;
-      const matched = alwaysRows.find((row) =>
-        (row.expires === null || Number(row.expires) > at)
-        && (blobId !== null ? row.prefix === blobId : isSubpathOrEqual(String(row.prefix), realTarget)),
-      );
-      if (matched) {
-        grantId = String(matched.grantId);
-        grantPrefix = String(matched.prefix);
-        grantKind = "always";
-        grantExpires = matched.expires == null ? null : Number(matched.expires);
-      } else {
-        const decision = await this.askHook({
-          fetchId: message.fetchId,
-          requester: message.requester,
-          requesterServer,
-          what: message.what,
-          purpose: message.purpose,
-          maxBytes: message.maxBytes,
-          prefix: classified.prefix,
-          realPath: realTarget,
-        });
-        if (task.cancelled || session.state !== "open") return;
-        if (decision === "deny") { deny("denied"); return; }
-        grantId = randomUUID();
-        grantKind = decision;
-        if (decision === "always" && !isBlob) {
-          grantPrefix = resolvedTarget.isDirectory ? realTarget : dirname(realTarget);
-        } else {
+
+      // M1: verify referenced blob has not changed on disk before scanning/hashing.
+      if (message.what.kind === "blob" && resolvedTarget.blobStatSig) {
+        let currentSig: StatSig | null = null;
+        try { currentSig = statSig(realTarget); } catch { currentSig = null; }
+        if (!sameSig(currentSig, resolvedTarget.blobStatSig)) {
+          if (resolvedTarget.blobPin === "path") { const targetId = message.what.id; await this.options.content?.markChanged(targetId).catch((err) => this.log(`fetch: markChanged ${targetId} failed: ${String((err as Error)?.message ?? err)}`)); }
+          await terminalDeny("gone");
+          return;
+        }
+      }
+
+      // Check existing once grant target & expiry BEFORE scanning/hashing.
+      const at = this.now();
+      let grantId: string;
+      let grantPrefix: string;
+      let grantKind: "once" | "always";
+      let grantExpires: number | null = null;
+      let isNewGrant = false;
+      let askedApproval = false;
+
+      if (existingByFetch) {
+        const matchesTarget = message.what.kind === "blob"
+          ? existingByFetch.prefix === message.what.id
+          : isSubpathOrEqual(existingByFetch.prefix, realTarget);
+        if (
+          existingByFetch.kind !== "once"
+          || existingByFetch.requester !== requesterId
+          || existingByFetch.requesterServer !== requesterServer
+          || !matchesTarget
+        ) {
+          onceGrantToRevoke = null;
+          await terminalDeny("denied");
+          return;
+        }
+        if (existingByFetch.expires !== null && Number(existingByFetch.expires) <= at) {
+          await terminalDeny("expired");
+          return;
+        }
+        grantId = existingByFetch.grantId;
+        grantPrefix = existingByFetch.prefix;
+        grantKind = "once";
+        grantExpires = existingByFetch.expires;
+      }
+
+      // H3 + L1 + L2: pre-hash scan via lstat/stat checks file count, 500 MiB size cap, symlink loops, and nlink > 1.
+      const scan = this.scanTarget(realTarget, isBlob);
+      if (!scan.ok) { await terminalDeny(scan.reason); return; }
+      const hasHardLinks = !isBlob && scan.hasHardLinks;
+
+      if (!existingByFetch) {
+        if (classified.kind === "free" && !hasHardLinks) {
+          grantId = randomUUID();
           grantPrefix = classified.prefix;
+          grantKind = "once";
+          isNewGrant = true;
+        } else {
+          const alwaysRows = hasHardLinks
+            ? []
+            : (db.prepare(
+              "SELECT grantId, prefix, expires FROM grants WHERE requester = ? AND requesterServer = ? AND kind = 'always' AND mode = 'read' AND revokedAt IS NULL ORDER BY createdAt DESC",
+            ).all(requesterId, requesterServer) as Array<{ grantId: string; prefix: string; expires: number | null }>);
+          const blobId = message.what.kind === "blob" ? message.what.id : null;
+          const matched = alwaysRows.find((row) =>
+            (row.expires === null || Number(row.expires) > at)
+            && (blobId !== null ? row.prefix === blobId : isSubpathOrEqual(String(row.prefix), realTarget)),
+          );
+          if (matched) {
+            grantId = String(matched.grantId);
+            grantPrefix = String(matched.prefix);
+            grantKind = "always";
+            grantExpires = matched.expires == null ? null : Number(matched.expires);
+          } else {
+            const decision = await this.askHook({
+              fetchId: message.fetchId,
+              requester: message.requester,
+              requesterServer,
+              what: message.what,
+              purpose: message.purpose,
+              maxBytes: message.maxBytes,
+              prefix: classified.prefix,
+              realPath: realTarget,
+              ...(hasHardLinks ? { hardLinks: true } : {}),
+            });
+            if (task.cancelled || session.state !== "open") return;
+            if (decision === "deny") { await terminalDeny("denied"); return; }
+            askedApproval = true;
+            grantId = randomUUID();
+            // H1: never widen a file's "always" grant to its parent directory.
+            grantPrefix = classified.prefix;
+            // L2: files with nlink > 1 are never covered by an "always" grant (always ask).
+            grantKind = (decision === "always" && !hasHardLinks) ? "always" : "once";
+            isNewGrant = true;
+          }
         }
-        isNewGrant = true;
       }
-    }
 
-    // Collect files & compute hashes / manifest.
-    const collected = await this.collectFiles(realTarget, isBlob ? realTarget : grantPrefix, isBlob);
-    if (!collected.ok) { deny(collected.reason); return; }
-    const { files, totalBytes, manifest } = collected;
-    if (totalBytes > FETCH_GRANT_BYTES_LIMIT) { deny("limit"); return; }
-    if (message.from && message.from.file !== "" && !files.some((f) => f.relPath === message.from!.file)) {
-      deny("gone");
-      return;
-    }
+      // Collect files, verify M5 post-open realpath/lstat/dev/ino, and compute SHA-256 & manifest.
+      const collected = await this.collectFiles(realTarget, isBlob ? realTarget : grantPrefix!, isBlob);
+      if (!collected.ok) { await terminalDeny(collected.reason); return; }
+      const { files, totalBytes, manifest } = collected;
+      if (totalBytes > Limits.PER_REQUEST_BYTES) { await terminalDeny("limit"); return; }
 
-    // Commit new grant + audit row BEFORE sending grant or any byte.
-    const auditKey = `audit:${message.fetchId}`;
-    const auditTime = this.now();
-    const auditName = (basename(realTarget) || realTarget).slice(0, 200);
-    await this.options.store.submit((tx) => {
-      if (isNewGrant) {
-        tx.prepare(
-          "INSERT INTO grants (grantId, requester, requesterServer, prefix, mode, kind, fetchId, expires, createdAt, revokedAt) VALUES (?, ?, ?, ?, 'read', ?, ?, ?, ?, NULL)",
-        ).run(grantId, requesterId, requesterServer, grantPrefix, grantKind, grantKind === "once" ? message.fetchId : null, grantExpires, auditTime);
+      // M1: for a blob, require the single target file's SHA-256 matches the content id.
+      if (message.what.kind === "blob" && (files.length !== 1 || `sha256:${files[0]!.sha256}` !== message.what.id)) {
+        if (resolvedTarget.blobPin === "path") { const targetId = message.what.id; await this.options.content?.markChanged(targetId).catch((err) => this.log(`fetch: markChanged ${targetId} failed: ${String((err as Error)?.message ?? err)}`)); }
+        await terminalDeny("gone");
+        return;
       }
-      const stream = ownTableStream(tx);
-      if (readRowBody(tx, stream, auditKey) === null) {
-        putRow(tx, stream, auditKey, {
-          act: "fetch.serve",
-          at: auditTime,
-          by: requesterServer,
-          member: requesterId,
-          name: auditName,
-          size: totalBytes,
-          hash: manifest,
-        });
+
+      // L2 race guard: if a hard link appeared after scanTarget under free or always, refuse.
+      if (!isBlob && !existingByFetch && !askedApproval && files.some((f) => f.nlink > 1)) {
+        await terminalDeny("denied");
+        return;
       }
-    });
-    this.options.onAudit?.();
 
-    if (task.cancelled || session.state !== "open") return;
-    session.sendWire({
-      t: "fetch.grant",
-      fetchId: message.fetchId,
-      prefix: grantPrefix,
-      mode: "read",
-      bytes: totalBytes,
-      files: files.length,
-      expires: grantExpires,
-    } as WireMessage);
-
-    const frameLimit = session.transport === "relay" ? CONTENT_FRAME_CHUNK_LIMIT : PEER_CONTENT_FRAME;
-    const effectiveMaxBytes = Math.min(message.maxBytes, Limits.PER_REQUEST_BYTES);
-    const botDailyKey = `${requesterServer}\0${requesterId}`;
-    let index = 0;
-    let bytesSent = 0;
-
-    for (const file of files) {
-      const totalSlices = file.size === 0 ? 1 : Math.ceil(file.size / frameLimit);
-      for (let slice = 0; slice < totalSlices; slice++, index++) {
-        if (message.from && index <= message.from.index) continue;
-
-        const check = this.checkBeforeChunk(session, task, requesterServer, grantId, grantPrefix, file.absPath, isBlob);
-        if (!check.ok) {
-          if (check.reason) deny(check.reason);
+      // M2: fixed 64 KiB frame size on every transport; validate from.index and that from.file owns that frame.
+      const frameLimit = PEER_CONTENT_FRAME;
+      if (message.from) {
+        let cursor = 0;
+        let ownerFile: FileEntry | null = null;
+        for (const f of files) {
+          const slices = f.size === 0 ? 1 : Math.ceil(f.size / frameLimit);
+          if (message.from.index >= cursor && message.from.index < cursor + slices) {
+            ownerFile = f;
+            break;
+          }
+          cursor += slices;
+        }
+        if (!ownerFile || ownerFile.relPath !== message.from.file) {
+          await terminalDeny("gone");
           return;
         }
-
-        const offset = slice * frameLimit;
-        const pieceLen = file.size === 0 ? 0 : Math.min(frameLimit, file.size - offset);
-        const read = await this.readVerifiedSlice(file, offset, pieceLen);
-        if (!read.ok) { deny(read.reason); return; }
-
-        if (bytesSent + read.bytes.length > effectiveMaxBytes) { deny("limit"); return; }
-        const nowAt = this.now();
-        if (this.getDailyBytes(botDailyKey, nowAt) + read.bytes.length > Limits.PER_DAY_BYTES_PER_BOT) {
-          deny("limit");
-          return;
-        }
-
-        const sent = session.sendChunk({
-          t: "fetch.chunk",
-          fetchId: message.fetchId,
-          index,
-          sha256: sha256Hex(read.bytes),
-          bytes: read.bytes,
-        });
-        if (!sent) return;
-
-        bytesSent += read.bytes.length;
-        this.addDailyBytes(botDailyKey, nowAt, read.bytes.length);
-
-        await this.options.onChunk?.(message.fetchId, index);
-        // Yield between frames so roster revocations, session closes, and control frames run promptly.
-        await new Promise<void>((resolve) => setImmediate(resolve));
       }
-    }
 
-    if (task.cancelled || session.state !== "open") return;
-    if (grantKind === "once") {
+      // Commit new grant + audit row BEFORE sending fetch.grant or any byte.
+      const auditKey = `audit:${message.fetchId}`;
+      const auditTime = this.now();
+      if (isNewGrant && grantKind! === "once") {
+        grantExpires = auditTime + ONCE_GRANT_TTL_MS;
+      }
+      const auditName = (basename(realTarget) || realTarget).slice(0, 200);
       await this.options.store.submit((tx) => {
-        tx.prepare("UPDATE grants SET revokedAt = ? WHERE grantId = ? AND revokedAt IS NULL").run(this.now(), grantId);
+        if (isNewGrant) {
+          tx.prepare(
+            "INSERT INTO grants (grantId, requester, requesterServer, prefix, mode, kind, fetchId, expires, createdAt, revokedAt) VALUES (?, ?, ?, ?, 'read', ?, ?, ?, ?, NULL)",
+          ).run(grantId!, requesterId, requesterServer, grantPrefix!, grantKind!, grantKind! === "once" ? message.fetchId : null, grantExpires, auditTime);
+        }
+        const stream = ownTableStream(tx);
+        if (readRowBody(tx, stream, auditKey) === null) {
+          putRow(tx, stream, auditKey, {
+            act: "fetch.serve",
+            at: auditTime,
+            by: requesterServer,
+            member: requesterId,
+            name: auditName,
+            size: totalBytes,
+            hash: manifest,
+          });
+        }
       });
+      if (grantKind! === "once") onceGrantToRevoke = grantId!;
+      this.options.onAudit?.();
+
+      if (task.cancelled || session.state !== "open") return;
+      const grantSent = session.sendWire({
+        t: "fetch.grant",
+        fetchId: message.fetchId,
+        prefix: grantPrefix!,
+        mode: "read",
+        bytes: totalBytes,
+        files: files.length,
+        expires: grantExpires,
+      } as WireMessage);
+      if (!grantSent) {
+        if (!task.cancelled && session.state === "open") await terminalDeny("gone");
+        return;
+      }
+
+      const effectiveMaxBytes = Math.min(message.maxBytes, Limits.PER_REQUEST_BYTES);
+      const botDailyKey = `${requesterServer}\0${requesterId}`;
+      const requireSingleLink = !isBlob && (classified.kind === "free" || grantKind! === "always");
+      let index = 0;
+      let bytesSent = 0;
+      let sentSinceFlush = 0;
+
+      for (const file of files) {
+        const totalSlices = file.size === 0 ? 1 : Math.ceil(file.size / frameLimit);
+        for (let slice = 0; slice < totalSlices; slice++, index++) {
+          if (message.from && index <= message.from.index) continue;
+
+          // M4: wait while the session's bulk queue has > 1 MiB waiting to seal.
+          while (!task.cancelled && session.state === "open" && session.queuedBytes > FETCH_HIGH_WATER) {
+            await sleep(2);
+          }
+          if (task.cancelled || session.state !== "open") {
+            await this.flushDailyBytes();
+            return;
+          }
+
+          const check = this.checkBeforeChunk(session, task, message.requester, requesterServer, grantId!, grantPrefix!, file.absPath, isBlob);
+          if (!check.ok) {
+            if (check.reason) await terminalDeny(check.reason, check.detail);
+            else await this.flushDailyBytes();
+            return;
+          }
+
+          const offset = slice * frameLimit;
+          const pieceLen = file.size === 0 ? 0 : Math.min(frameLimit, file.size - offset);
+          const read = await this.readVerifiedSlice(file, grantPrefix!, isBlob, requireSingleLink, offset, pieceLen);
+          if (!read.ok) {
+            if (read.reason === "gone" && message.what.kind === "blob" && resolvedTarget.blobPin === "path") {
+              { const targetId = message.what.id; await this.options.content?.markChanged(targetId).catch((err) => this.log(`fetch: markChanged ${targetId} failed: ${String((err as Error)?.message ?? err)}`)); }
+            }
+            await terminalDeny(read.reason);
+            return;
+          }
+
+          if (bytesSent + read.bytes.length > effectiveMaxBytes) { await terminalDeny("limit"); return; }
+          const nowAt = this.now();
+          if (this.getDailyBytes(botDailyKey, nowAt) + read.bytes.length > this.dailyLimitBytes) {
+            await terminalDeny("limit");
+            return;
+          }
+
+          const sent = session.sendChunk({
+            t: "fetch.chunk",
+            fetchId: message.fetchId,
+            index,
+            sha256: sha256Hex(read.bytes),
+            bytes: read.bytes,
+          });
+          if (!sent) {
+            // L5: while session is open, an unsent chunk is a terminal error rather than a silent hang.
+            if (!task.cancelled && session.state === "open") await terminalDeny("gone");
+            else await this.flushDailyBytes();
+            return;
+          }
+
+          bytesSent += read.bytes.length;
+          this.addDailyBytes(botDailyKey, nowAt, read.bytes.length);
+          if (++sentSinceFlush >= DAILY_FLUSH_INTERVAL) {
+            sentSinceFlush = 0;
+            void this.flushDailyBytes();
+          }
+
+          await this.options.onChunk?.(message.fetchId, index);
+          // Yield between frames so roster revocations, session closes, and control frames run promptly.
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+      }
+
+      await this.flushDailyBytes();
+      if (task.cancelled || session.state !== "open") return;
+      if (grantKind! === "once") {
+        onceGrantToRevoke = null;
+        await this.options.store.submit((tx) => {
+          tx.prepare("UPDATE grants SET revokedAt = ? WHERE grantId = ? AND revokedAt IS NULL").run(this.now(), grantId!);
+        });
+      }
+      if (task.cancelled || session.state !== "open") return;
+      session.sendWire({
+        t: "fetch.done",
+        fetchId: message.fetchId,
+        manifest,
+        bytes: totalBytes,
+      } as WireMessage);
+    } catch (error) {
+      this.log(`fetch: serving ${message.fetchId} failed: ${String((error as Error)?.message ?? error)}`);
+      await terminalDeny("gone");
     }
-    if (task.cancelled || session.state !== "open") return;
-    session.sendWire({
-      t: "fetch.done",
-      fetchId: message.fetchId,
-      manifest,
-      bytes: totalBytes,
-    } as WireMessage);
   }
 
   private resolveTargetPath(
     db: Db,
     what: Exclude<FetchWhat, { kind: "git" }>,
     botFolders: Map<BotId, string>,
-  ): { ok: true; realPath: string; isDirectory: boolean } | { ok: false; reason: FetchDenyReason } {
+  ): { ok: true; realPath: string; isDirectory: boolean; blobPin: string | null; blobStatSig: StatSig | null } | { ok: false; reason: FetchDenyReason } {
     let rawPath: string;
+    let blobPin: string | null = null;
+    let blobStatSig: StatSig | null = null;
     if (what.kind === "path") {
       rawPath = what.path;
     } else if (what.kind === "artifact") {
@@ -468,18 +756,93 @@ export class FetchSource {
       const artifactsDir = join(botFolder, ".bot", "artifacts");
       rawPath = isAbsolute(what.path) ? what.path : `${artifactsDir}${sep}${what.path}`;
     } else {
-      const row = db.prepare("SELECT path, state FROM content WHERE id = ?").get(what.id) as { path?: string; state?: string } | undefined;
+      const row = db.prepare("SELECT path, state, pin, statSig FROM content WHERE id = ?").get(what.id) as
+        | { path?: string; state?: string; pin?: string; statSig?: string | null }
+        | undefined;
       if (!row || row.state !== "ready" || !row.path) return { ok: false, reason: "gone" };
       rawPath = String(row.path);
+      blobPin = row.pin ? String(row.pin) : null;
+      blobStatSig = parseStatSig(row.statSig);
     }
     const resolved = safeRealpath(rawPath);
     if (!resolved.ok) return { ok: false, reason: resolved.symlink ? "outside" : "gone" };
     try {
       const st = lstatSync(resolved.path);
-      return { ok: true, realPath: resolved.path, isDirectory: st.isDirectory() };
+      return { ok: true, realPath: resolved.path, isDirectory: st.isDirectory(), blobPin, blobStatSig };
     } catch {
       return { ok: false, reason: "gone" };
     }
+  }
+
+  /** Pre-hash scan via lstat/stat: enforces 500 MiB and 20,000-file limits, avoids symlink loops (L1), and spots nlink > 1 (L2). */
+  private scanTarget(
+    realTarget: string,
+    isBlob: boolean,
+  ): { ok: true; hasHardLinks: boolean } | { ok: false; reason: FetchDenyReason } {
+    let rootStat;
+    try {
+      rootStat = lstatSync(realTarget, { bigint: true });
+    } catch {
+      return { ok: false, reason: "gone" };
+    }
+    if (rootStat.isFile()) {
+      if (Number(rootStat.size) > Limits.PER_REQUEST_BYTES) return { ok: false, reason: "limit" };
+      return { ok: true, hasHardLinks: Number(rootStat.nlink) > 1 };
+    }
+    if (!rootStat.isDirectory()) return { ok: false, reason: "denied" };
+
+    const visited = new Set<string>([`${rootStat.dev}:${rootStat.ino}`]);
+    let folders = 1;
+    let fileCount = 0;
+    let totalBytes = 0;
+    let hasHardLinks = false;
+
+    const walk = (dir: string): FetchDenyReason | null => {
+      let names: string[];
+      try {
+        names = readdirSync(dir).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      } catch {
+        return "denied";
+      }
+      for (const name of names) {
+        const full = join(dir, name);
+        let lst;
+        try { lst = lstatSync(full, { bigint: true }); } catch { continue; }
+        if (lst.isSymbolicLink()) {
+          const real = safeRealpath(full);
+          if (!real.ok) continue;
+          let targetSt;
+          try { targetSt = statSync(real.path, { bigint: true }); } catch { continue; }
+          if (targetSt.isDirectory()) continue; // L1: never follow symlinked directories.
+          if (!targetSt.isFile()) continue;
+          if (!isBlob && !isSubpathOrEqual(realTarget, real.path)) continue;
+          if (!isBlob && (isDeniedPath(full, this.options.dataDir) || isDeniedPath(real.path, this.options.dataDir))) continue;
+          if (++fileCount > Limits.PER_REQUEST_FILES) return "limit";
+          totalBytes += Number(targetSt.size);
+          if (totalBytes > Limits.PER_REQUEST_BYTES) return "limit";
+          if (Number(targetSt.nlink) > 1) hasHardLinks = true;
+        } else if (lst.isDirectory()) {
+          if (!isBlob && isDeniedPath(full, this.options.dataDir)) continue;
+          const key = `${lst.dev}:${lst.ino}`;
+          if (visited.has(key)) continue;
+          if (++folders > Limits.PER_REQUEST_FILES) return "limit";
+          visited.add(key);
+          const err = walk(full);
+          if (err) return err;
+        } else if (lst.isFile()) {
+          if (!isBlob && isDeniedPath(full, this.options.dataDir)) continue;
+          if (++fileCount > Limits.PER_REQUEST_FILES) return "limit";
+          totalBytes += Number(lst.size);
+          if (totalBytes > Limits.PER_REQUEST_BYTES) return "limit";
+          if (Number(lst.nlink) > 1) hasHardLinks = true;
+        }
+      }
+      return null;
+    };
+
+    const err = walk(realTarget);
+    if (err) return { ok: false, reason: err };
+    return { ok: true, hasHardLinks };
   }
 
   private async collectFiles(
@@ -490,31 +853,54 @@ export class FetchSource {
     const entries: Array<{ absPath: string; relPath: string }> = [];
     let rootStat;
     try {
-      rootStat = lstatSync(realTarget);
+      rootStat = lstatSync(realTarget, { bigint: true });
     } catch {
       return { ok: false, reason: "gone" };
     }
     if (rootStat.isFile()) {
+      if (Number(rootStat.size) > Limits.PER_REQUEST_BYTES) return { ok: false, reason: "limit" };
       entries.push({ absPath: realTarget, relPath: basename(realTarget) });
     } else if (rootStat.isDirectory()) {
+      const visited = new Set<string>([`${rootStat.dev}:${rootStat.ino}`]);
+      let folders = 1;
+      let estimatedBytes = 0;
+
       const walk = (dir: string, relDir: string): FetchDenyReason | null => {
         const names = readdirSync(dir).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
         for (const name of names) {
           const full = join(dir, name);
           const rel = relDir ? `${relDir}/${name}` : name;
-          const real = safeRealpath(full);
-          if (!real.ok) continue;
-          if (!isBlob && !isSubpathOrEqual(grantPrefix, real.path)) continue;
-          if (!isBlob && (isDeniedPath(full, this.options.dataDir) || isDeniedPath(real.path, this.options.dataDir))) continue;
-          let st;
-          try { st = lstatSync(real.path); } catch { continue; }
-          if (st.isDirectory()) {
-            if (!isBlob && !isSubpathOrEqual(realTarget, real.path)) continue;
-            const err = walk(real.path, rel);
-            if (err) return err;
-          } else if (st.isFile()) {
+          let lst;
+          try { lst = lstatSync(full, { bigint: true }); } catch { continue; }
+          if (lst.isSymbolicLink()) {
+            const real = safeRealpath(full);
+            if (!real.ok) continue;
+            let targetSt;
+            try { targetSt = statSync(real.path, { bigint: true }); } catch { continue; }
+            if (targetSt.isDirectory()) continue; // L1: never follow symlinked directories.
+            if (!targetSt.isFile()) continue;
+            if (!isBlob && !isSubpathOrEqual(grantPrefix, real.path)) continue;
+            if (!isBlob && (isDeniedPath(full, this.options.dataDir) || isDeniedPath(real.path, this.options.dataDir))) continue;
             if (entries.length >= Limits.PER_REQUEST_FILES) return "limit";
+            estimatedBytes += Number(targetSt.size);
+            if (estimatedBytes > Limits.PER_REQUEST_BYTES) return "limit";
             entries.push({ absPath: real.path, relPath: rel });
+          } else if (lst.isDirectory()) {
+            if (!isBlob && !isSubpathOrEqual(grantPrefix, full)) continue;
+            if (!isBlob && isDeniedPath(full, this.options.dataDir)) continue;
+            const key = `${lst.dev}:${lst.ino}`;
+            if (visited.has(key)) continue;
+            if (++folders > Limits.PER_REQUEST_FILES) return "limit";
+            visited.add(key);
+            const err = walk(full, rel);
+            if (err) return err;
+          } else if (lst.isFile()) {
+            if (!isBlob && !isSubpathOrEqual(grantPrefix, full)) continue;
+            if (!isBlob && isDeniedPath(full, this.options.dataDir)) continue;
+            if (entries.length >= Limits.PER_REQUEST_FILES) return "limit";
+            estimatedBytes += Number(lst.size);
+            if (estimatedBytes > Limits.PER_REQUEST_BYTES) return "limit";
+            entries.push({ absPath: full, relPath: rel });
           }
         }
         return null;
@@ -529,12 +915,20 @@ export class FetchSource {
     const files: FileEntry[] = [];
     let totalBytes = 0;
     for (const entry of entries) {
-      if (!isBlob && !isSubpathOrEqual(grantPrefix, entry.absPath)) return { ok: false, reason: "outside" };
-      if (!isBlob && isDeniedPath(entry.absPath, this.options.dataDir)) return { ok: false, reason: "deny-list" };
-      const hashed = await hashRegularFile(entry.absPath);
+      const hashed = await hashRegularFile(entry.absPath, grantPrefix, this.options.dataDir, isBlob);
       if (!hashed.ok) return hashed;
-      files.push({ absPath: entry.absPath, relPath: entry.relPath, size: hashed.size, sha256: hashed.sha256, dev: hashed.dev, ino: hashed.ino });
       totalBytes += hashed.size;
+      if (totalBytes > Limits.PER_REQUEST_BYTES) return { ok: false, reason: "limit" };
+      files.push({
+        absPath: entry.absPath,
+        relPath: entry.relPath,
+        size: hashed.size,
+        sha256: hashed.sha256,
+        dev: hashed.dev,
+        ino: hashed.ino,
+        mtimeNs: hashed.mtimeNs,
+        nlink: hashed.nlink,
+      });
     }
     const manifestLines = files.map((f) => `${f.relPath}\t${f.size}\t${f.sha256}\n`).join("");
     return { ok: true, files, totalBytes, manifest: sha256Hex(manifestLines) };
@@ -543,12 +937,13 @@ export class FetchSource {
   private checkBeforeChunk(
     session: FetchSink,
     task: ActiveServe,
+    requester: FetchRequester,
     requesterServer: string,
     grantId: string,
     grantPrefix: string,
     fileAbsPath: string,
     isBlob: boolean,
-  ): { ok: true } | { ok: false; reason: FetchDenyReason | null } {
+  ): { ok: true } | { ok: false; reason: FetchDenyReason | null; detail?: string } {
     if (task.cancelled || session.state !== "open") return { ok: false, reason: null };
 
     const view = this.options.roster.view;
@@ -557,6 +952,9 @@ export class FetchSource {
     }
 
     const db = this.options.reader();
+    const reqCheck = this.checkRequester(db, requester, requesterServer, true);
+    if (!reqCheck.ok) return { ok: false, reason: reqCheck.reason, detail: reqCheck.detail };
+
     const grant = db.prepare("SELECT expires, revokedAt FROM grants WHERE grantId = ?").get(grantId) as
       | { expires: number | null; revokedAt: number | null }
       | undefined;
@@ -576,6 +974,9 @@ export class FetchSource {
 
   private async readVerifiedSlice(
     file: FileEntry,
+    grantPrefix: string,
+    isBlob: boolean,
+    requireSingleLink: boolean,
     offset: number,
     length: number,
   ): Promise<{ ok: true; bytes: Uint8Array<ArrayBuffer> } | { ok: false; reason: FetchDenyReason }> {
@@ -589,10 +990,24 @@ export class FetchSource {
       return { ok: false, reason: "denied" };
     }
     try {
-      const st = await handle.stat();
+      const st = await handle.stat({ bigint: true });
       if (!st.isFile() || Number(st.dev) !== file.dev || Number(st.ino) !== file.ino) {
         return { ok: false, reason: "outside" };
       }
+      // M5: re-verify realpath and lstat (dev, ino) AFTER opening, plus containment and deny-list.
+      const resolved = safeRealpath(file.absPath);
+      if (!resolved.ok) return { ok: false, reason: resolved.symlink ? "outside" : "gone" };
+      if (resolved.path !== file.absPath) return { ok: false, reason: "outside" };
+      let lst;
+      try { lst = lstatSync(file.absPath, { bigint: true }); } catch { return { ok: false, reason: "gone" }; }
+      if (lst.isSymbolicLink() || lst.dev !== st.dev || lst.ino !== st.ino) {
+        return { ok: false, reason: "outside" };
+      }
+      if (!isBlob && !isSubpathOrEqual(grantPrefix, file.absPath)) return { ok: false, reason: "outside" };
+      if (!isBlob && isDeniedPath(file.absPath, this.options.dataDir)) return { ok: false, reason: "deny-list" };
+      if (requireSingleLink && Number(st.nlink) > 1) return { ok: false, reason: "denied" };
+      if (Number(st.size) !== file.size || st.mtimeNs !== file.mtimeNs) return { ok: false, reason: "gone" };
+
       if (length === 0) return { ok: true, bytes: new Uint8Array(0) };
       const buf = Buffer.allocUnsafe(length);
       let read = 0;

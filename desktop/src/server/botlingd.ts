@@ -579,6 +579,7 @@ export class Botlingd {
         store,
         reader: () => hub.reader(),
         roster,
+        content,
         botFolders: () => {
           const map = new Map<string, string>();
           for (const botId of engine.bots()) {
@@ -714,6 +715,7 @@ export class Botlingd {
     this.peerContent?.close();
     await step("peer log cache", () => this.peerLogs.idle());
     await step("peer content", () => this.peerContent?.flushed());
+    await step("fetch source", () => this.fetchSource?.flushed());
     this.feeds.close();
     await step("listener", () => this.listener?.close());
     rmSync(join(this.paths.dataDir, LISTEN_FILE), { force: true });

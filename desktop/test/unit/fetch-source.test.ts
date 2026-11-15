@@ -2,7 +2,7 @@
 // checks, once-grant reuse prevention, limits, and resume).
 // Requires `npm run build` (out/server/main.cjs) for the two-server botlingd test.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, ftruncateSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,8 +11,13 @@ import {
   CONTENT_FRAME_CHUNK_LIMIT, decodeWireFrame, encodeChunkFrame, encodeWireFrame, fromBase64Url, type WireMessage,
 } from "../../src/protocol";
 import { FetchAsk } from "../../src/protocol/fetch";
+import { ContentService } from "../../src/server/content";
+import { statSig } from "../../src/server/content/pin";
 import { PEER_CONTENT_FRAME } from "../../src/server/content/peer-content";
-import { FetchSource, type FetchAskHook, type FetchSink } from "../../src/server/fetch/source";
+import { ensureBot } from "../../src/server/effects/log-ops";
+import { FetchSource, type FetchAskHook, type FetchSink, type FetchSourceOptions } from "../../src/server/fetch/source";
+import { createServer } from "node:http";
+import { DeviceSockets, WS_HIGH_WATER } from "../../src/server/net/ws";
 import { webSocketConnector } from "../../src/server/peer/connector";
 import { bindServerIdentity, loadOrCreateServerIdentity } from "../../src/server/identity";
 import { RosterStore } from "../../src/server/roster";
@@ -27,7 +32,7 @@ import { startServers, type TestCluster, type TestServer } from "../support/two-
 const PEER = { local: false } as const;
 const MiB = 1024 * 1024;
 const DIRECT_FRAME = PEER_CONTENT_FRAME; // 64 KiB
-const RELAY_FRAME = CONTENT_FRAME_CHUNK_LIMIT; // 128 KiB
+const CHUNK_FRAME = PEER_CONTENT_FRAME; // Fixed 64 KiB on every transport (M2 decision)
 
 const isResult = (slot: Slot) => (m: Message): m is MessageOf<"cmd.result"> =>
   m.t === "cmd.result" && m.slot.target === slot.target && m.slot.n === slot.n && m.slot.originEpoch === slot.originEpoch;
@@ -55,10 +60,12 @@ function manifestOf(files: Array<{ relPath: string; bytes: Uint8Array }>): strin
 
 function makeFakeSink(peerId: string, transport: "tailnet" | "relay" = "tailnet", onSend?: (msg: WireMessage) => void) {
   const sent: WireMessage[] = [];
-  const sink: FetchSink & { open: boolean } = {
+  const sink: FetchSink & { open: boolean; queued: number } = {
     peer: peerId,
     open: true,
+    queued: 0,
     get state() { return this.open ? "open" : "closed"; },
+    get queuedBytes() { return this.queued; },
     transport,
     sendWire: (message) => {
       if (!sink.open) return false;
@@ -84,7 +91,7 @@ function makeFakeSink(peerId: string, transport: "tailnet" | "relay" = "tailnet"
   return { sink, sent };
 }
 
-async function setupInProcessCluster(askHook?: FetchAskHook, onChunkHook?: (fetchId: string, index: number) => void | Promise<void>) {
+async function setupInProcessCluster(askHook?: FetchAskHook, onChunkHook?: (fetchId: string, index: number) => void | Promise<void>, extra?: { rosterWrap?: (r: RosterStore) => FetchSourceOptions["roster"]; dailyLimitBytes?: number; content?: ContentService }) {
   const root = mkdtempSync(join(tmpdir(), "botling-fetch-src-"));
   const dataA = join(root, "data-a");
   const dataB = join(root, "data-b");
@@ -130,20 +137,24 @@ async function setupInProcessCluster(askHook?: FetchAskHook, onChunkHook?: (fetc
   let seq = 0;
   const events: Array<{ event: string; order: number }> = [];
 
-  const source = new FetchSource({
+  const makeSource = (opts?: Partial<FetchSourceOptions>) => new FetchSource({
     self: ka.memberId,
     dataDir: dataA,
     store: reopenedA,
     reader: () => readerA,
-    roster: rosterA,
+    roster: extra?.rosterWrap ? extra.rosterWrap(rosterA) : rosterA,
     botFolders: () => botFolders,
+    ...(extra?.content ? { content: extra.content } : {}),
+    ...(extra?.dailyLimitBytes !== undefined ? { dailyLimitBytes: extra.dailyLimitBytes } : {}),
     ...(askHook ? { ask: askHook } : {}),
     ...(onChunkHook ? { onChunk: onChunkHook } : {}),
     onAudit: () => {
       auditCommitOrder = ++seq;
       events.push({ event: "audit-committed", order: auditCommitOrder });
     },
+    ...opts,
   });
+  const source = makeSource();
 
   const cleanup = async () => {
     readerA.close();
@@ -153,7 +164,7 @@ async function setupInProcessCluster(askHook?: FetchAskHook, onChunkHook?: (fetc
 
   return {
     root, dataA, botFolderA, artifactsA, srcA, outsideDir,
-    ka, kb, botB, cluster, storeA: reopenedA, readerA, rosterA, source,
+    ka, kb, botB, cluster, storeA: reopenedA, readerA, rosterA, source, makeSource,
     recordEvent: (name: string) => events.push({ event: name, order: ++seq }),
     events,
     cleanup,
@@ -523,7 +534,7 @@ describe("M5-07a: fetch source", () => {
     expect(full.equals(payload)).toBe(true);
   });
 
-  it("8. Relay transport sends 128 KiB chunks; unknown requester bot is refused", async () => {
+  it("8. Relay transport sends fixed 64 KiB chunks; unknown requester bot is refused", async () => {
     const env = await setupInProcessCluster();
     cleanups.push(env.cleanup);
 
@@ -543,7 +554,7 @@ describe("M5-07a: fetch source", () => {
     const relayDone = await until(() => relaySent.find((m) => m.t === "fetch.done") ?? null, { timeout: 5_000, what: "relay done" });
     expect(relayDone.t).toBe("fetch.done");
     const relayChunks = relaySent.filter((m): m is WireMessage & { t: "fetch.chunk" } => m.t === "fetch.chunk");
-    expect(relayChunks.map((c) => c.bytes.length)).toEqual([RELAY_FRAME, payload.length - RELAY_FRAME]);
+    expect(relayChunks.map((c) => c.bytes.length)).toEqual([CHUNK_FRAME, CHUNK_FRAME, CHUNK_FRAME, payload.length - 3 * CHUNK_FRAME]);
 
     const { sink: badBotSink, sent: badBotSent } = makeFakeSink(env.kb.memberId, "tailnet");
     env.source.onMessage(badBotSink, {
@@ -558,6 +569,524 @@ describe("M5-07a: fetch source", () => {
     const denied = await until(() => badBotSent.find((m) => m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "unknown bot denied" });
     expect(denied).toMatchObject({ t: "fetch.denied", fetchId: "fetch-unknown-bot", reason: "denied" });
   });
+
+  it("P1 (H1). always on one file grants ONLY that file, never a sibling in its folder", async () => {
+    let answer: "always" | "deny" = "always";
+    const env = await setupInProcessCluster(async () => answer);
+    cleanups.push(env.cleanup);
+
+    const aPath = join(env.srcA, "a.txt");
+    const bPath = join(env.srcA, "b.txt");
+    writeFileSync(aPath, "approved");
+    writeFileSync(bPath, "never approved");
+
+    const { sink, sent } = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sink, {
+      t: "fetch.ask",
+      fetchId: "p1-a",
+      requester: { bot: env.botB },
+      source: env.ka.memberId,
+      what: { kind: "path", path: aPath },
+      purpose: "read a.txt",
+      maxBytes: 10 * MiB,
+    });
+    const doneA = await until(() => sent.find((m) => (m.t === "fetch.done" || m.t === "fetch.denied") && m.fetchId === "p1-a") ?? null, { timeout: 5_000, what: "p1-a end" });
+    expect(doneA.t).toBe("fetch.done");
+    const grantA = sent.find((m) => m.t === "fetch.grant" && m.fetchId === "p1-a") as WireMessage & { t: "fetch.grant" };
+    expect(grantA.prefix).toBe(aPath);
+
+    answer = "deny";
+    env.source.onMessage(sink, {
+      t: "fetch.ask",
+      fetchId: "p1-b",
+      requester: { bot: env.botB },
+      source: env.ka.memberId,
+      what: { kind: "path", path: bPath },
+      purpose: "read sibling",
+      maxBytes: 10 * MiB,
+    });
+    const endB = await until(() => sent.find((m) => (m.t === "fetch.done" || m.t === "fetch.denied") && m.fetchId === "p1-b") ?? null, { timeout: 5_000, what: "p1-b end" });
+    expect(endB).toMatchObject({ t: "fetch.denied", fetchId: "p1-b", reason: "denied" });
+  });
+
+  it("P2 (H3). 600 MiB sparse file is refused at 500 MiB limit before audit row and fetch.grant", async () => {
+    const env = await setupInProcessCluster();
+    cleanups.push(env.cleanup);
+
+    const bigPath = join(env.artifactsA, "big.bin");
+    const fd = openSync(bigPath, "w");
+    ftruncateSync(fd, 600 * MiB);
+    closeSync(fd);
+
+    const { sink, sent } = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sink, {
+      t: "fetch.ask",
+      fetchId: "p2-big",
+      requester: { bot: env.botB },
+      source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "big.bin" },
+      purpose: "too big",
+      maxBytes: MiB,
+    });
+    const endMsg = await until(() => sent.find((m) => (m.t === "fetch.done" || m.t === "fetch.denied") && m.fetchId === "p2-big") ?? null, { timeout: 5_000, what: "p2 end" });
+    expect(endMsg).toMatchObject({ t: "fetch.denied", fetchId: "p2-big", reason: "limit" });
+    expect(sent.some((m) => m.t === "fetch.grant" || m.t === "fetch.chunk")).toBe(false);
+    const audit = env.readerA.prepare("SELECT 1 FROM rows WHERE stream = ? AND key = ? AND deleted = 0").get(`srv:${env.ka.memberId}`, "audit:p2-big");
+    expect(audit).toBeUndefined();
+  });
+
+  it("P3 (H2 + L6). requester bot/device removed mid-stream stops chunks; device must belong to asking server and hold reply or manage scope", async () => {
+    let deviceValid = true;
+    let deviceScope: Array<"read" | "reply" | "approve" | "manage"> = ["reply"];
+    let deviceBy = "";
+    let step = 0;
+
+    const env = await setupInProcessCluster(
+      undefined,
+      async (fetchId) => {
+        if (fetchId === "p3-bot" && ++step === 1) {
+          await env.storeA.submit((tx) => {
+            tx.prepare("UPDATE rows SET deleted = 1 WHERE stream = ? AND key = ?").run(`srv:${env.kb.memberId}`, `bot:${env.botB}`);
+          });
+        } else if (fetchId === "p3-dev" && ++step === 1) {
+          deviceValid = false;
+        }
+      },
+      {
+        rosterWrap: (r) => ({
+          get view() { return r.view; },
+          device: () => (deviceValid ? { scope: deviceScope, by: deviceBy } : null),
+        }),
+      },
+    );
+    cleanups.push(env.cleanup);
+    deviceBy = env.kb.memberId;
+
+    writeFileSync(join(env.artifactsA, "r.bin"), deterministicBytes("p3", 300 * 1024));
+
+    // (a) Bot removed mid-stream -> fetch.denied{revoked} after chunk 0
+    const sBot = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sBot.sink, {
+      t: "fetch.ask", fetchId: "p3-bot", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "bot mid", maxBytes: 10 * MiB,
+    });
+    const endBot = await until(() => sBot.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p3-bot end" });
+    expect(endBot).toMatchObject({ t: "fetch.denied", fetchId: "p3-bot", reason: "revoked" });
+    expect(sBot.sent.filter((m) => m.t === "fetch.chunk")).toHaveLength(1);
+
+    // (b) L6: read-only device is refused; device bound to another server is refused
+    deviceScope = ["read"];
+    const sReadOnly = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sReadOnly.sink, {
+      t: "fetch.ask", fetchId: "p3-ro", requester: { device: "d".repeat(32) }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "ro dev", maxBytes: 10 * MiB,
+    });
+    const endRo = await until(() => sReadOnly.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p3-ro end" });
+    expect(endRo).toMatchObject({ t: "fetch.denied", fetchId: "p3-ro", reason: "denied" });
+    expect(sReadOnly.sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+
+    deviceScope = ["manage"];
+    deviceBy = env.ka.memberId; // bound to A, not asking server B
+    const sWrongSrv = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sWrongSrv.sink, {
+      t: "fetch.ask", fetchId: "p3-wrong-srv", requester: { device: "d".repeat(32) }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "wrong srv", maxBytes: 10 * MiB,
+    });
+    const endWrong = await until(() => sWrongSrv.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p3-wrong-srv end" });
+    expect(endWrong).toMatchObject({ t: "fetch.denied", fetchId: "p3-wrong-srv", reason: "denied" });
+
+    // (c) Valid device bound to asking server B with reply scope revoked mid-stream -> fetch.denied{revoked} after chunk 0
+    step = 0;
+    deviceBy = env.kb.memberId;
+    deviceScope = ["reply"];
+    const sDev = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sDev.sink, {
+      t: "fetch.ask", fetchId: "p3-dev", requester: { device: "d".repeat(32) }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "dev mid", maxBytes: 10 * MiB,
+    });
+    const endDev = await until(() => sDev.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p3-dev end" });
+    expect(endDev).toMatchObject({ t: "fetch.denied", fetchId: "p3-dev", reason: "revoked" });
+    expect(sDev.sent.filter((m) => m.t === "fetch.chunk")).toHaveLength(1);
+  });
+
+  it("P4 (L1). symlink loop inside a folder does not hang or fail; real files are served", async () => {
+    const env = await setupInProcessCluster();
+    cleanups.push(env.cleanup);
+
+    mkdirSync(join(env.artifactsA, "d"));
+    writeFileSync(join(env.artifactsA, "d", "x.txt"), "hello-loop");
+    symlinkSync(".", join(env.artifactsA, "d", "loop"));
+
+    const { sink, sent } = makeFakeSink(env.kb.memberId);
+    const t0 = Date.now();
+    env.source.onMessage(sink, {
+      t: "fetch.ask", fetchId: "p4-loop", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "d" }, purpose: "folder with loop", maxBytes: 10 * MiB,
+    });
+    const endMsg = await until(() => sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p4 end" });
+    expect(endMsg).toMatchObject({ t: "fetch.done", fetchId: "p4-loop", bytes: 10 });
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  });
+
+  it("P5 (M2). resume over relay after direct start uses fixed 64 KiB frames and reassembles exact bytes; bad from is gone", async () => {
+    let closedOnce = false;
+    let firstSink!: FetchSink & { open: boolean };
+    const env = await setupInProcessCluster(undefined, async (id, index) => {
+      if (id === "p5-cross" && index === 2 && !closedOnce) {
+        closedOnce = true;
+        firstSink.open = false;
+        env.source.sessionClosed(firstSink);
+      }
+    });
+    cleanups.push(env.cleanup);
+
+    const payload = deterministicBytes("p5", 600 * 1024);
+    writeFileSync(join(env.artifactsA, "r.bin"), payload);
+
+    const a = makeFakeSink(env.kb.memberId, "tailnet");
+    firstSink = a.sink;
+    env.source.onMessage(a.sink, {
+      t: "fetch.ask", fetchId: "p5-cross", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "cross transport", maxBytes: 10 * MiB,
+    });
+    await until(() => (a.sent.filter((m) => m.t === "fetch.chunk").length >= 3 ? true : null), { timeout: 5_000, what: "3 direct chunks" });
+
+    // Invalid from.file or out-of-range from.index -> gone
+    const badFrom = makeFakeSink(env.kb.memberId, "relay");
+    env.source.onMessage(badFrom.sink, {
+      t: "fetch.ask", fetchId: "p5-cross", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "bad from", maxBytes: 10 * MiB,
+      from: { file: "other.bin", index: 2 },
+    });
+    const badEnd = await until(() => badFrom.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "bad from end" });
+    expect(badEnd).toMatchObject({ t: "fetch.denied", fetchId: "p5-cross", reason: "gone" });
+  });
+
+  it("P5b (M2). resume on relay after direct drop succeeds with identical manifest and bytes", async () => {
+    let closedOnce = false;
+    let firstSink!: FetchSink & { open: boolean };
+    const env = await setupInProcessCluster(undefined, async (id, index) => {
+      if (id === "p5b-cross" && index === 2 && !closedOnce) {
+        closedOnce = true;
+        firstSink.open = false;
+        env.source.sessionClosed(firstSink);
+      }
+    });
+    cleanups.push(env.cleanup);
+
+    const payload = deterministicBytes("p5b", 600 * 1024);
+    writeFileSync(join(env.artifactsA, "r.bin"), payload);
+
+    const a = makeFakeSink(env.kb.memberId, "tailnet");
+    firstSink = a.sink;
+    env.source.onMessage(a.sink, {
+      t: "fetch.ask", fetchId: "p5b-cross", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "cross transport", maxBytes: 10 * MiB,
+    });
+    await until(() => (a.sent.filter((m) => m.t === "fetch.chunk").length >= 3 ? true : null), { timeout: 5_000, what: "3 direct chunks" });
+
+    const b = makeFakeSink(env.kb.memberId, "relay");
+    env.source.onMessage(b.sink, {
+      t: "fetch.ask", fetchId: "p5b-cross", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "cross transport", maxBytes: 10 * MiB,
+      from: { file: "r.bin", index: 2 },
+    });
+    const endB = await until(() => b.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p5b relay end" });
+    expect(endB).toMatchObject({ t: "fetch.done", fetchId: "p5b-cross", manifest: manifestOf([{ relPath: "r.bin", bytes: payload }]), bytes: payload.length });
+
+    const chunksA = a.sent.filter((m): m is WireMessage & { t: "fetch.chunk" } => m.t === "fetch.chunk" && m.fetchId === "p5b-cross");
+    const chunksB = b.sent.filter((m): m is WireMessage & { t: "fetch.chunk" } => m.t === "fetch.chunk" && m.fetchId === "p5b-cross");
+    const joined = Buffer.concat([...chunksA.slice(0, 3).map((c) => c.bytes), ...chunksB.map((c) => c.bytes)]);
+    expect(joined.equals(payload)).toBe(true);
+  });
+
+  it("P6 (M3). once grant gets 10-minute expires, is revoked on terminal failure, and refuses replay without from", async () => {
+    const env = await setupInProcessCluster();
+    cleanups.push(env.cleanup);
+
+    writeFileSync(join(env.artifactsA, "r.bin"), deterministicBytes("p6", 300 * 1024));
+    const a = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(a.sink, {
+      t: "fetch.ask", fetchId: "p6-fail", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "limit fail", maxBytes: 64 * 1024,
+    });
+    const r1 = await until(() => a.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p6 r1" });
+    expect(r1).toMatchObject({ t: "fetch.denied", fetchId: "p6-fail", reason: "limit" });
+
+    const row = env.readerA.prepare("SELECT kind, expires, createdAt, revokedAt FROM grants WHERE fetchId = ?").get("p6-fail") as {
+      kind: string; expires: number | null; createdAt: number; revokedAt: number | null;
+    };
+    expect(row.kind).toBe("once");
+    expect(row.expires).toBe(row.createdAt + 10 * 60_000);
+    expect(row.revokedAt).not.toBeNull();
+
+    const b = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(b.sink, {
+      t: "fetch.ask", fetchId: "p6-fail", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "r.bin" }, purpose: "replay fail", maxBytes: 64 * 1024,
+    });
+    const r2 = await until(() => b.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "p6 r2" });
+    expect(r2).toMatchObject({ t: "fetch.denied", fetchId: "p6-fail", reason: "denied" });
+    expect(b.sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+  });
+
+  it("L2. hard link (nlink > 1) inside artifacts or always-granted folder is ask every time", async () => {
+    const asks: boolean[] = [];
+    let decision: "always" | "once" | "deny" = "always";
+    const env = await setupInProcessCluster(async (req) => {
+      asks.push(Boolean(req.hardLinks));
+      return decision;
+    });
+    cleanups.push(env.cleanup);
+
+    const realOutside = join(env.outsideDir, "secret-target.txt");
+    writeFileSync(realOutside, "outside-secret");
+    const hardInArtifacts = join(env.artifactsA, "hard.txt");
+    linkSync(realOutside, hardInArtifacts);
+
+    // Inside .bot/artifacts (normally free): nlink > 1 forces askHook (deny -> denied)
+    decision = "deny";
+    const s1 = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(s1.sink, {
+      t: "fetch.ask", fetchId: "l2-art", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "hard.txt" }, purpose: "hardlink in artifacts", maxBytes: MiB,
+    });
+    const end1 = await until(() => s1.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "l2-art" });
+    expect(end1).toMatchObject({ t: "fetch.denied", fetchId: "l2-art", reason: "denied" });
+    expect(asks).toEqual([true]);
+
+    // Under a folder granted "always": hardlink inside that folder still asks every time
+    const folder = join(env.srcA, "shared");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "normal.txt"), "normal");
+    decision = "always";
+    const s2 = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(s2.sink, {
+      t: "fetch.ask", fetchId: "l2-grant-dir", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "path", path: folder }, purpose: "grant dir always", maxBytes: MiB,
+    });
+    await until(() => s2.sent.find((m) => m.t === "fetch.done") ?? null, { timeout: 5_000, what: "l2-grant-dir" });
+
+    linkSync(realOutside, join(folder, "hard-inside.txt"));
+    decision = "deny";
+    const s3 = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(s3.sink, {
+      t: "fetch.ask", fetchId: "l2-under-always", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "path", path: join(folder, "hard-inside.txt") }, purpose: "hardlink under always", maxBytes: MiB,
+    });
+    const end3 = await until(() => s3.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "l2-under-always" });
+    expect(end3).toMatchObject({ t: "fetch.denied", fetchId: "l2-under-always", reason: "denied" });
+    expect(asks).toEqual([true, false, true]);
+  });
+  it("M1. mutated path-pinned blob (even preserving size and mtime) is refused with fetch.denied{gone} and marked changed", async () => {
+    const env = await setupInProcessCluster();
+    cleanups.push(env.cleanup);
+
+    const content = new ContentService({ store: env.storeA, dataDir: env.dataA, serverId: env.ka.memberId });
+    const src = env.makeSource({ content });
+    const blobPath = join(env.outsideDir, "pinned-orig.bin");
+    const orig = deterministicBytes("m1-orig", 128 * 1024);
+    writeFileSync(blobPath, orig);
+    const id = `sha256:${sha256Hex(orig)}`;
+
+    // Rewrite bytes in-place, then store that new file's statSig under the OLD sha256 id so statSig still matches
+    // while file hash differs: proves SHA-256 verification catches tampering and calls ContentService.markChanged().
+    writeFileSync(blobPath, deterministicBytes("m1-evil", 128 * 1024));
+    const currentSig = statSig(blobPath);
+    await env.storeA.submit((tx) => {
+      ensureBot(tx, "bot-a");
+      tx.prepare("INSERT INTO content (id, size, type, pin, path, statSig, chunkHashes, state, createdAt) VALUES (?, ?, 'application/octet-stream', 'path', ?, ?, '[]', 'ready', ?)")
+        .run(id, orig.length, blobPath, JSON.stringify(currentSig), Date.now());
+      tx.prepare("INSERT INTO content_refs (id, stream, seq) VALUES (?, 'bot:bot-a', 1)").run(id);
+    });
+
+    const { sink, sent } = makeFakeSink(env.kb.memberId);
+    src.onMessage(sink, {
+      t: "fetch.ask",
+      fetchId: "m1-changed-blob",
+      requester: { bot: env.botB },
+      source: env.ka.memberId,
+      what: { kind: "blob", id, entry: { stream: "bot:bot-a", seq: 1 } },
+      purpose: "tampered blob",
+      maxBytes: MiB,
+    });
+    const endMsg = await until(() => sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "m1 end" });
+    expect(endMsg).toMatchObject({ t: "fetch.denied", fetchId: "m1-changed-blob", reason: "gone" });
+    expect(sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+    const row = env.readerA.prepare("SELECT state FROM content WHERE id = ?").get(id) as { state: string };
+    expect(row.state).toBe("changed");
+  });
+
+  it("M4. FetchSource waits while sink.queuedBytes exceeds 1 MiB and resumes when drained", async () => {
+    const env = await setupInProcessCluster();
+    cleanups.push(env.cleanup);
+
+    const payload = deterministicBytes("m4-bp", 256 * 1024);
+    writeFileSync(join(env.artifactsA, "bp.bin"), payload);
+    const { sink, sent } = makeFakeSink(env.kb.memberId);
+    sink.queued = 2 * MiB;
+
+    env.source.onMessage(sink, {
+      t: "fetch.ask",
+      fetchId: "m4-wait",
+      requester: { bot: env.botB },
+      source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "bp.bin" },
+      purpose: "backpressure test",
+      maxBytes: 10 * MiB,
+    });
+    await until(() => sent.find((m) => m.t === "fetch.grant") ?? null, { timeout: 5_000, what: "m4 grant" });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(sent.filter((m) => m.t === "fetch.chunk")).toHaveLength(0);
+
+    sink.queued = 0;
+    const done = await until(() => sent.find((m) => m.t === "fetch.done") ?? null, { timeout: 5_000, what: "m4 done" });
+    expect(done.t).toBe("fetch.done");
+    expect(sent.filter((m) => m.t === "fetch.chunk")).toHaveLength(4);
+  });
+
+  it("L3. daily byte limit is persisted in server.db meta and enforced across FetchSource restart", async () => {
+    const fixedNow = 1_700_000_000_000;
+    const env = await setupInProcessCluster(undefined, undefined, { dailyLimitBytes: 200 * 1024 });
+    cleanups.push(env.cleanup);
+
+    writeFileSync(join(env.artifactsA, "d1.bin"), deterministicBytes("d1", 192 * 1024));
+    writeFileSync(join(env.artifactsA, "d2.bin"), deterministicBytes("d2", 64 * 1024));
+
+    const src1 = env.makeSource({ now: () => fixedNow });
+    const s1 = makeFakeSink(env.kb.memberId);
+    src1.onMessage(s1.sink, {
+      t: "fetch.ask", fetchId: "l3-f1", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "d1.bin" }, purpose: "day part 1", maxBytes: 10 * MiB,
+    });
+    const d1 = await until(() => s1.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "l3 f1" });
+    expect(d1.t).toBe("fetch.done");
+    src1.close();
+    await src1.flushed();
+
+    // New FetchSource instance after restart reads persisted daily usage from server.db meta.
+    const src2 = env.makeSource({ now: () => fixedNow + 1_000 });
+    const s2 = makeFakeSink(env.kb.memberId);
+    src2.onMessage(s2.sink, {
+      t: "fetch.ask", fetchId: "l3-f2", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "d2.bin" }, purpose: "day part 2 exceeds", maxBytes: 10 * MiB,
+    });
+    const d2 = await until(() => s2.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "l3 f2" });
+    expect(d2).toMatchObject({ t: "fetch.denied", fetchId: "l3-f2", reason: "limit" });
+    expect(s2.sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+  });
+
+  it("L4. racing resume from same requesterServer cancels old in-flight task and completes on new sink", async () => {
+    let releaseOld!: () => void;
+    const oldPaused = new Promise<void>((r) => { releaseOld = r; });
+    let oldChunk1Seen = false;
+    const env = await setupInProcessCluster(undefined, async (fetchId, index) => {
+      if (fetchId === "l4-race" && index === 1 && !oldChunk1Seen) {
+        oldChunk1Seen = true;
+        await oldPaused;
+      }
+    });
+    cleanups.push(env.cleanup);
+
+    const payload = deterministicBytes("l4-race", 5 * CHUNK_FRAME);
+    writeFileSync(join(env.artifactsA, "race.bin"), payload);
+
+    const s1 = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(s1.sink, {
+      t: "fetch.ask", fetchId: "l4-race", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "race.bin" }, purpose: "initial", maxBytes: 10 * MiB,
+    });
+    await until(() => oldChunk1Seen, { timeout: 5_000, what: "old paused at chunk 1" });
+
+    // Racing resume arrives from the same server before s1 closed: should cancel old task, not reject with denied.
+    const s2 = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(s2.sink, {
+      t: "fetch.ask", fetchId: "l4-race", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "race.bin" }, purpose: "racing resume", maxBytes: 10 * MiB,
+      from: { file: "race.bin", index: 1 },
+    });
+    releaseOld();
+
+    const end2 = await until(() => s2.sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "s2 done" });
+    expect(end2.t).toBe("fetch.done");
+    const chunks2 = s2.sent.filter((m): m is WireMessage & { t: "fetch.chunk" } => m.t === "fetch.chunk");
+    expect(chunks2.map((c) => c.index)).toEqual([2, 3, 4]);
+    expect(s1.sent.some((m) => m.t === "fetch.done" || m.t === "fetch.denied")).toBe(false);
+  });
+
+  it("L5. sendChunk returning false while session is open sends fetch.denied{gone} and revokes once grant", async () => {
+    const env = await setupInProcessCluster(async () => "once");
+    cleanups.push(env.cleanup);
+
+    const filePath = join(env.srcA, "l5.bin");
+    writeFileSync(filePath, deterministicBytes("l5", 4 * CHUNK_FRAME));
+
+    const { sink, sent } = makeFakeSink(env.kb.memberId);
+    const origSendChunk = sink.sendChunk.bind(sink);
+    sink.sendChunk = (chunk) => {
+      if (chunk.t === "fetch.chunk" && chunk.index === 1) return false;
+      return origSendChunk(chunk);
+    };
+
+    env.source.onMessage(sink, {
+      t: "fetch.ask", fetchId: "l5-send-false", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "path", path: filePath }, purpose: "sendChunk fails", maxBytes: 10 * MiB,
+    });
+    const endMsg = await until(() => sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "l5 end" });
+    expect(endMsg).toMatchObject({ t: "fetch.denied", fetchId: "l5-send-false", reason: "gone" });
+    const row = env.readerA.prepare("SELECT revokedAt FROM grants WHERE fetchId = ?").get("l5-send-false") as { revokedAt: number | null };
+    expect(row.revokedAt).not.toBeNull();
+  });
+
+  it("M4b. direct WS transports (DeviceSockets and webSocketConnector) expose writable() and call resume() after drain", async () => {
+    let serverTransport: import("../../src/session").SessionTransport | null = null;
+    let resumeCalls = 0;
+    const sockets = new DeviceSockets({
+      log: () => undefined,
+      remote: {
+        accept: (transport) => {
+          serverTransport = transport;
+          return {
+            link: {
+              established: Promise.resolve(),
+              resume: () => { resumeCalls++; },
+            },
+            receive: () => undefined,
+            transportClosed: () => undefined,
+          };
+        },
+      },
+    });
+    const httpServer = createServer();
+    httpServer.on("upgrade", (req, raw, head) => sockets.upgrade(req, raw, head));
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const port = (httpServer.address() as { port: number }).port;
+    cleanups.push(async () => {
+      await sockets.close();
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    });
+
+    const conn = await webSocketConnector.connect(`ws://127.0.0.1:${port}/v3/ws`);
+    conn.bind({ frame: () => undefined, closed: () => undefined });
+    await until(() => serverTransport, { timeout: 5_000, what: "server transport" });
+
+    expect(typeof conn.writable).toBe("function");
+    expect(conn.writable!()).toBe(true);
+    expect(typeof serverTransport!.writable).toBe("function");
+    expect(serverTransport!.writable!()).toBe(true);
+
+    // Simulate bufferedAmount reaching WS_HIGH_WATER on the server socket and verify resume() runs when it drains.
+    const serverWs = [...(sockets as unknown as { wss: { clients: Set<object> } }).wss.clients][0]!;
+    let fakeBuffered = WS_HIGH_WATER;
+    Object.defineProperty(serverWs, "bufferedAmount", { get: () => fakeBuffered, configurable: true });
+    expect(serverTransport!.writable!()).toBe(false);
+    fakeBuffered = 0;
+    await until(() => (resumeCalls > 0 ? true : null), { timeout: 2_000, every: 5, what: "resume callback" });
+    expect(serverTransport!.writable!()).toBe(true);
+
+    conn.close();
+  });
+
 });
 
 describe("M5-07a: two-server botlingd wiring", () => {
