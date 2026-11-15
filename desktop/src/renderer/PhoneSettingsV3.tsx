@@ -1,6 +1,7 @@
 // Settings › Phone, Botling 3 (shown by PhoneSettings when botlingd's view carries `v3`; botlingd answers these requests
 // itself, server/pairing/phone-desk.ts). The relay (on, off, elsewhere: botlingd switches at once), the first pairing
-// (a recovery code shown once and typed back), a pairing code as a QR of the Botling 3 link, the phone's 6-digit code to
+// (a recovery code shown once and typed back; it is not the phone's code, and the pairing code follows once it is
+// confirmed), a pairing code as a QR of the Botling 3 link, the phone's 6-digit code to
 // compare and accept or reject, and the paired phones. Secrets (the link, the recovery code) live in this component's
 // state only until they are used, hidden or expire; they are never written anywhere or shown as plain text (the link).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -113,7 +114,9 @@ export function PhoneSettingsV3({ client, lang, view, setView, refresh }: Props)
     busy.current.cluster = true; setClusterBusy(true); setClusterError(null); setFailed(null);
     try {
       const result: MobileClusterView = await client.request({ type: "mobile.cluster", code: typed.trim() });
-      if (result.ok) { setRecovery(null); setTyped(""); await refresh(); }
+      // Confirmed: the cluster exists, so the pairing code follows at once (as `botlingd pair` does): the QR the phone
+      // scans comes right after the recovery code, with no second button to find.
+      if (result.ok) { setRecovery(null); setTyped(""); await refresh(); await createCode(); }
       else {
         const reason = result.reason ?? "refused";
         setClusterError(Object.hasOwn(t.clusterReason, reason) ? t.clusterReason[reason as keyof typeof t.clusterReason] : t.clusterReason.refused);

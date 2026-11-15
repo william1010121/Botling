@@ -31,7 +31,7 @@ const en: Words = {
   v3: {
     setup: "Set up phone pairing",
     setupNote: "Before the first phone, Botling makes your recovery code. It is shown once: write it down or keep it in a password manager (never in Botling). You need it only if this computer is ever lost.",
-    codeTitle: "Your recovery code (shown once)", codeNote: "Write it down now, then type it back below to finish setting up.",
+    codeTitle: "Your recovery code (shown once)", codeNote: "This is not the code the phone scans. Write it down now, then type it back below: the QR code for the phone appears as soon as it is confirmed.",
     typeBack: "Type the recovery code back", confirmCode: "Confirm", confirming: "Checking…", newCode: "Show a new code",
     waitingNote: "A recovery code was shown and waits to be typed back. If you did not keep it, show a new one.",
     clusterReason: {
@@ -65,7 +65,7 @@ const zh: Words = {
   v3: {
     setup: "設定手機配對",
     setupNote: "配對第一支手機前，Botling 會產生你的復原碼。它只會顯示一次：請寫下來或存進密碼管理器（不要存在 Botling 裡）。只有這台電腦遺失時才需要它。",
-    codeTitle: "你的復原碼（只顯示一次）", codeNote: "現在先寫下來，再在下方輸入一次以完成設定。",
+    codeTitle: "你的復原碼（只顯示一次）", codeNote: "這不是給手機掃描的代碼。現在先寫下來，再在下方輸入一次：確認後會立刻顯示給手機掃描的 QR code。",
     typeBack: "再輸入一次復原碼", confirmCode: "確認", confirming: "檢查中…", newCode: "產生新的復原碼",
     waitingNote: "已顯示過復原碼，正等待你輸入確認。如果沒有記下來，請產生新的。",
     clusterReason: {
