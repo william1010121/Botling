@@ -1,7 +1,7 @@
 // The chat page from Web/src (the Swift app's chat surface) draws a `ChatState`, which the Swift
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged; optional fields it does not receive are treated as absent.
-import type { BotView, ChatDecoration, ComponentInfoView, DisplayView, HeadsView, MessageView, PluginsView, RoutineView, SubagentView } from "../contract";
+import { isMaintainer, type BotView, type ChatDecoration, type ComponentInfoView, type DisplayView, type HeadsView, type MessageView, type PluginsView, type RoutineView, type SubagentView } from "../contract";
 import type { ComponentInfo, DisplayView as WebDisplay, PinSize, DecorationView, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskChipView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
@@ -149,14 +149,14 @@ export function slashLists(bot: BotView, names: string[]): { slashComponents: st
   return { slashComponents: names.filter((name) => own.has(name)), slashLibrary: names.filter((name) => !own.has(name)) };
 }
 
-/** The main bot's and Maintainer's ids: the bots the @ menu offers first (`offeredAfterAt`). */
-const OFFERED = ["6A0B0000-0000-4000-8000-000000000002", "DEC0DE00-0000-4000-8000-00000000DEC0"];
+/** The bots the @ menu offers first (`offeredAfterAt`): the main bot and Maintainer. */
+const isOffered = (other: BotView) => other.role === "main" || isMaintainer(other);
 
 /** The bots you can @ in `bot`'s chat (`callInView`): the main bot and Maintainer first, then every other bot. */
 export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[]; allMentions: string[] } {
   const callable = bots.filter((other) => other.id !== bot.id);
-  const first = callable.filter((other) => OFFERED.includes(other.id));
-  const rest = callable.filter((other) => !OFFERED.includes(other.id));
+  const first = callable.filter(isOffered);
+  const rest = callable.filter((other) => !isOffered(other));
   // A sub bot whose name another bot also has is offered by its full path, @Parent/Sub (what a bot's @ accepts too).
   const count = new Map<string, number>();
   for (const other of bots) count.set(other.name.toLowerCase(), (count.get(other.name.toLowerCase()) ?? 0) + 1);
