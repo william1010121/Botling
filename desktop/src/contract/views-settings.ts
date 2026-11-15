@@ -1,5 +1,3 @@
-// Settings, bot, routine, update, usage, mobile and machine views (moved out of index.ts, M7-S02b). PluginView stays in index.ts
-// until M7-S02c: it needs the command list (PluginCodeHash, CommandTypeEnum), which would make this file import index.ts.
 import { z } from "zod";
 import { ContractId } from "./editor-card";
 import { AnswerTarget, BotId, DelegationRowView, Engine, StepView, SubagentRowView } from "./views";

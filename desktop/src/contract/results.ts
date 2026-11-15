@@ -1,10 +1,15 @@
-// Results, storage rows, result links and the error types (moved out of index.ts, M7-S02a). The command and event schemas
-// (Command, Event, the envelopes) stay in index.ts until M7-S02c, so this file takes only types from there.
+// Results, storage rows, result links and the error types (moved out of index.ts, M7-S02a), and the events, envelopes and
+// `parseInbound` (moved out of index.ts, M7-S02c).
 import { z } from "zod";
-import type { DoctorView } from "./doctor";
+import { DoctorView } from "./doctor";
+import { ContractId } from "./editor-card";
 import type { ModelDiscovery } from "./model-discovery";
-import type { Engine, AgentTargetView, ApprovalAskView, ComponentInfoView, MessageState, MessageView, PendingFileView, StepView, SubagentView, WaitingView } from "./views";
-import type { BotSettingsView, BotView, ChatDecoration, CommandType, HeadsView, ImportView, MachinePairView, MachinesView, MobileClusterView, MobileDeskView, MobilePairView, PluginStoreView, PluginsView, RoutineView, RunView, RunningView, SettingsView, UpdateView, UsageView, WebPluginSpecView } from "./index";
+import { PROTOCOL_VERSION, RequestId, BotId, Engine, StepView, SubagentView, MessageView, PendingFileView, ComponentInfoView, WaitingView } from "./views";
+import type { AgentTargetView, ApprovalAskView, MessageState } from "./views";
+import { BotView, ChatDecoration, HeadsView, RoutineView, SettingsView, PluginName } from "./views-settings";
+import type { BotSettingsView, ImportView, MobileClusterView, MobileDeskView, MobilePairView, RunView, RunningView, UpdateView, UsageView } from "./views-settings";
+import { Command, PluginStoreView, PluginsView } from "./commands";
+import type { CommandType, MachinePairView, MachinesView, WebPluginSpecView } from "./commands";
 
 /** Commands the renderer may send. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
@@ -233,4 +238,104 @@ export class ContractError extends Error {
 /** A readable, bounded description of why a value did not match, for error responses and logs. */
 export function describeIssues(error: z.ZodError): string {
   return error.issues.slice(0, 5).map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ").slice(0, 1_000);
+}
+
+const id = ContractId;
+const botId = BotId;
+
+// ---------------------------------------------------------------------------------------------
+// Events (core → main → renderer). Every chat event names its bot.
+
+export const Event = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("bot.updated"), bot: BotView }),
+  z.strictObject({ type: z.literal("message.added"), botId, message: MessageView }),
+  /** A message changed as a whole (a question answered, a reply finished with its steps). */
+  z.strictObject({ type: z.literal("message.updated"), botId, message: MessageView }),
+  /** A line went (a reply with nothing to show: only <no-reply/> or reactions; a cut-off turn that had said nothing). */
+  z.strictObject({ type: z.literal("message.removed"), botId, messageId: id }),
+  z.strictObject({ type: z.literal("subagent.updated"), botId, subagent: SubagentView }),
+  // Identity is available before the reply record exists; optional for older event producers.
+  z.strictObject({ type: z.literal("turn.started"), botId, turnId: id, messageId: id, head: Engine.optional() }),
+  z.strictObject({ type: z.literal("turn.delta"), botId, turnId: id, messageId: id, text: z.string() }),
+  /** What the turn is doing now: its steps so far. */
+  z.strictObject({ type: z.literal("turn.steps"), botId, turnId: id, messageId: id, steps: z.array(StepView).max(500) }),
+  z.strictObject({
+    type: z.literal("turn.finished"), botId, turnId: id, messageId: id,
+    status: z.enum(["done", "stopped", "failed"]), text: z.string(), error: z.string().optional(),
+  }),
+  /** A bot with two heads: who new messages go to, the rounds line and the hand-offs changed (null: one head now). */
+  z.strictObject({ type: z.literal("heads.updated"), botId, heads: HeadsView.nullable() }),
+  /** What a plugin keeps for a chat's page to draw from changed (`chat.setData`). */
+  z.strictObject({ type: z.literal("chat.pluginData"), botId, plugin: PluginName, data: z.unknown() }),
+  /** The component library changed on disk: every component as the page draws it. */
+  z.strictObject({ type: z.literal("components.updated"), components: z.record(z.string().max(200), ComponentInfoView) }),
+  /** What plugins draw among a chat's messages changed (`chat.decorate`). */
+  z.strictObject({ type: z.literal("chat.decorations"), botId, decorations: z.array(ChatDecoration).max(1_000) }),
+  /** The plugin library changed (a plugin added, edited, turned off, broken; the host started or stopped). */
+  z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
+  z.strictObject({ type: z.literal("plugins.store"), store: PluginStoreView }),
+  /** A plugin's program part pushed something to its frames (`ui.emit`), those of the bot `forBot` only when it names one. Not part of any snapshot. */
+  z.strictObject({ type: z.literal("plugins.emit"), plugin: PluginName, name: z.string().min(1).max(100), forBot: z.string().max(128).optional(), data: z.unknown() }),
+  /** A plugin's program part opened one of its panels (`ui.openView`). */
+  z.strictObject({ type: z.literal("plugins.open"), plugin: PluginName, panel: z.string().max(100), title: z.string().max(200) }),
+  /** A plugin's `ui.showTab(…, { open: true })`: the main window shows that bot with that `mainTab` view. */
+  z.strictObject({ type: z.literal("plugins.openTab"), plugin: PluginName, view: z.string().max(100), botId: BotId }),
+  /** The app's settings changed. */
+  z.strictObject({ type: z.literal("settings.updated"), settings: SettingsView }),
+  z.strictObject({ type: z.literal("doctor.updated"), doctor: DoctorView }),
+  /** What waits on you across the bots (or a manager's "In progress") changed. */
+  z.strictObject({ type: z.literal("waiting.updated"), waiting: WaitingView }),
+  /** The files waiting in a bot's input box changed. */
+  z.strictObject({ type: z.literal("files.updated"), botId, files: z.array(PendingFileView).max(50) }),
+  /** Its routines changed (one ran, the bot or the app edited them). */
+  z.strictObject({ type: z.literal("routines.updated"), botId, routines: z.array(RoutineView).max(200), error: z.string().max(2_000).nullable() }),
+  /** A bot of its own or a project was taken out of the left column. */
+  z.strictObject({ type: z.literal("bot.removed"), botId }),
+  /** The core is being replaced by a newer build : draining, updating; null: called off. */
+  z.strictObject({ type: z.literal("core.swap"), phase: z.enum(["draining", "updating"]).nullable() }),
+]);
+export type Event = z.infer<typeof Event>;
+
+// ---------------------------------------------------------------------------------------------
+// Envelopes
+
+
+const v = z.literal(PROTOCOL_VERSION);
+export const RequestEnvelope = z.strictObject({ v, id: RequestId, cmd: Command });
+export const CancelEnvelope = z.strictObject({ v, cancel: RequestId });
+export const ResponseEnvelope = z.union([
+  z.strictObject({ v, id: RequestId, ok: z.literal(true), result: z.unknown() }),
+  z.strictObject({ v, id: RequestId, ok: z.literal(false), error: WireError }),
+]);
+export const EventEnvelope = z.strictObject({ v, epoch: z.string().min(1).max(64), seq: z.number().int().nonnegative(), event: Event });
+/** What may go towards the core (or main): a request or a cancel. */
+export const Inbound = z.union([RequestEnvelope, CancelEnvelope]);
+/** What comes back: a response or an event. */
+export const Outbound = z.union([ResponseEnvelope, EventEnvelope]);
+
+export type RequestEnvelope = z.infer<typeof RequestEnvelope>;
+export type CancelEnvelope = z.infer<typeof CancelEnvelope>;
+export type ResponseEnvelope = z.infer<typeof ResponseEnvelope>;
+export type EventEnvelope = z.infer<typeof EventEnvelope>;
+export type Inbound = z.infer<typeof Inbound>;
+export type Outbound = z.infer<typeof Outbound>;
+
+
+/** Validates something that should be a request or cancel; unsupported versions get their own code. */
+export function parseInbound(value: unknown): { ok: true; value: Inbound } | { ok: false; id: string | null; error: WireError } {
+  const result = Inbound.safeParse(value);
+  if (result.success) return { ok: true, value: result.data };
+  const raw = value as { v?: unknown; id?: unknown } | null;
+  const requestId = typeof raw?.id === "string" && RequestId.safeParse(raw.id).success ? raw.id : null;
+  if (raw && typeof raw === "object" && raw.v !== PROTOCOL_VERSION) {
+    return { ok: false, id: requestId, error: { code: "unsupported_version", message: `Protocol version ${String(raw.v)} is not ${PROTOCOL_VERSION}.` } };
+  }
+  return { ok: false, id: requestId, error: { code: "bad_request", message: describeIssues(result.error) } };
+}
+
+export function errorResponse(id: string, error: WireError): ResponseEnvelope {
+  return { v: PROTOCOL_VERSION, id, ok: false, error };
+}
+export function okResponse(id: string, result: unknown): ResponseEnvelope {
+  return { v: PROTOCOL_VERSION, id, ok: true, result };
 }
