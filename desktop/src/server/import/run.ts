@@ -1,7 +1,8 @@
 // 2.x -> 3.x full import runner (protocol v1 §14.4, §17; M6-01d).
 //
 // Orders the steps:
-//   reader -> id map -> chats (+ lists) -> approvals -> settings -> plugins -> tiers -> media -> report
+//   reader -> id map -> media (M6-05: plan + copy, before the chats remap their attachments) -> chats (+ lists) ->
+//   approvals -> settings -> plugins -> tiers -> report
 //
 // Strictly read-only on the 2.x source folder: source files are opened only for reading and never modified,
 // locked, or renamed. Holds botlingd's data-folder lock for the whole non-dry-run import, refuses when
@@ -38,6 +39,7 @@ import { canonicalJson } from "../../protocol";
 import { RowKey } from "../../protocol/table-rows";
 import { DbBotStores } from "../botstore";
 import { BOTLINGD_VERSION } from "../botlingd";
+import { ContentService } from "../content";
 import { fitBody } from "../effects/fit";
 import { bindServerIdentity, loadOrCreateServerIdentity } from "../identity/keys";
 import { installedFromRegistry, reconcilePluginRows } from "../replica/plugin-rows";
@@ -49,6 +51,7 @@ import { openReaderDb } from "../store/connection";
 import { importApprovals, readAlwaysAllowed, remapApprovalPath, type BotApprovalRef } from "./approvals";
 import { importBotChat, type ImportChatsOptions, type ImportedBotLists } from "./chats";
 import { liveBotIds, mapIds, readIdMap, saveIdMap, type IdMapRow } from "./id-map";
+import { copyMedia, mediaDryRunReport, mediaReport, planMedia } from "./media";
 import { importPlugins } from "./plugins";
 import { looksLike2x, read2x, readChat, type Read2xBot } from "./reader-2x";
 import {
@@ -752,6 +755,9 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
       });
     }
 
+    // M6-05: the media plan only (reads, no copy).
+    const mediaLines = mediaDryRunReport(planMedia(bots, idMap, sourceReal));
+
     const approvals = dryRunApprovalSummary(sourceReal, targetResolved, read, idMap, problems);
     const mappedSettings = mapSettings(read.settings, new Map(idMap.map((r) => [r.oldId, r.newId])));
 
@@ -803,6 +809,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
       },
       approvals,
       plugins: pluginEntries,
+      mediaLines,
       hasSecrets: read.hasSecrets,
       problems,
     });
@@ -842,7 +849,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
       const identity = await loadOrCreateServerIdentity(targetResolved, {
         create: store.meta("memberId") === undefined,
       });
-      const { memberId } = await store.submit((tx) => bindServerIdentity(tx, identity));
+      const { memberId, serverId } = await store.submit((tx) => bindServerIdentity(tx, identity));
 
       // 1. Reader
       const read = read2x(sourceReal);
@@ -876,9 +883,24 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
       const mapByOld = new Map(idMap.map((r) => [r.oldId, r]));
       const bots = mappedBots(read.bots, mapByOld, problems);
 
-      // 3 & 4. Chats + Lists per bot (via DbBotStores)
+      // 9 (before the chats). Media (M6-05): plan the attachments, copy the ones inside the 2.x folder under
+      // `<data>/imported/<sourceHash>/`, and hand the old -> new URL map to the chats so each line is written with (and its
+      // files indexed from) the copy. The target was checked against the source above (`sameOrNested`, `guardTargetTop`);
+      // `copyMedia` checks it again by real path before it writes anything.
+      const mediaPlan = planMedia(bots, idMap, sourceReal);
+      const mediaCopied = copyMedia(mediaPlan, targetResolved, sourceHash);
+      const mediaLines = mediaReport(mediaPlan, mediaCopied);
+
+      // 3 & 4. Chats + Lists per bot (via DbBotStores). The content service indexes each line's files in the line's own
+      // transaction, as botlingd does (no media jobs and no `recover()`: botlingd does both at its next start).
       const botReports: ImportBotReportEntry[] = [];
       const stores = new DbBotStores(store);
+      const content = new ContentService({
+        store,
+        dataDir: targetResolved,
+        serverId,
+        audit: (text) => options.log?.(`content: ${text}`),
+      });
       try {
         for (let i = 0; i < bots.length; i++) {
           const bot = bots[i]!;
@@ -888,6 +910,8 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
             now: options.now,
             log: options.log,
             onBatch: options.onBatch,
+            content,
+            attachmentMap: mediaCopied.map,
           });
           await stores.durable();
 
@@ -910,6 +934,11 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
           }
 
           problems.push(...result.problems, ...lists.problems);
+          if (result.content.failed > 0) {
+            problems.push(
+              `bot ${mapped.newId}: ${result.content.failed} attachment(s) could not be indexed; botlingd retries them when it starts.`,
+            );
+          }
           botReports.push({
             oldId: bot.id,
             newId: mapped.newId,
@@ -935,6 +964,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         }
       } finally {
         await stores.durable().catch(() => undefined);
+        await content.close().catch(() => undefined);
         await stores.close();
       }
 
@@ -1028,7 +1058,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         }
       }
 
-      // 9 & 10. Media/Secrets (M6-05/M6-06 placeholders until merged) + Report + final meta mark
+      // 10. Secrets (M6-06 placeholder until merged) + Report + final meta mark (media ran before the chats, above)
       const totalLines = botReports.reduce((sum, b) => sum + b.lines, 0);
       const totalSkipped = botReports.reduce((sum, b) => sum + b.skipped, 0);
       const totalPins = botReports.reduce((sum, b) => sum + b.pins, 0);
@@ -1057,6 +1087,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
           alwaysAllowedCount: approvalReport.alwaysAllowedCount,
         },
         plugins: pluginEntries,
+        mediaLines,
         hasSecrets: read.hasSecrets,
         problems,
       });

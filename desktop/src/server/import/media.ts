@@ -328,3 +328,14 @@ export function mediaReport(plan: MediaPlan, copied: MediaCopyResult, options: {
   }
   return lines;
 }
+
+/** The `--dry-run` media lines: what a real run would copy (the plan only; nothing is opened for writing). */
+export function mediaDryRunReport(plan: MediaPlan, options: { home?: string } = {}): string[] {
+  const inside = plan.entries.filter((entry) => entry.state === "inside");
+  const bytes = inside.reduce((sum, entry) => sum + entry.size, 0);
+  const lines =
+    inside.length > 0
+      ? [`Would copy ${plural(inside.length, "attachment", "attachments")} (${formatBytes(bytes)}) into Botling 3's folder.`]
+      : [];
+  return [...lines, ...mediaReport(plan, { map: new Map(), failed: [], count: 0, bytes: 0 }, options)];
+}
