@@ -388,6 +388,46 @@ describe("M3 step 3: peer settings, the /v3/ws router and the KK rule", () => {
     expect(seen.at(-1)).toBe("device");
   });
 
+  it("router: a mobile pairing offer's pair HS1 goes to the device acceptor; only a join offer goes to joins", async () => {
+    const seen: Array<{ target: string; kind: "tailnet" | "relay" }> = [];
+    const receivedFrames: Uint8Array[] = [];
+    const acceptor = (target: string) => ({
+      accept: (_transport: SessionTransport, kind: "tailnet" | "relay") => {
+        seen.push({ target, kind });
+        return {
+          link: { established: new Promise(() => undefined) },
+          receive: (frame: Uint8Array) => { receivedFrames.push(frame); },
+          transportClosed: () => undefined,
+        };
+      },
+    });
+    const joinOffer = "join-offer-id-0001";
+    const mobileOffer = "mobile-offer-id-01";
+    const joins = { ...acceptor("join"), isOffer: (offerId: string) => offerId === joinOffer };
+    const router = new SessionRouter(acceptor("device"), acceptor("peer"), 50, joins);
+    const self = await generateDhKeyPair();
+    const responder = await generateDhKeyPair();
+    const secret = new Uint8Array(32).fill(7);
+    const base = {
+      cluster: "0".repeat(32),
+      self: { memberId: "a".repeat(26), dhPub: self.publicKey, dhKey: self.privateKey },
+      responder: { memberId: "b".repeat(26), dhPub: responder.publicKey },
+    };
+    const mobileTailnetHs1 = await new Initiator({ ...base, transport: "tailnet", mode: "pair", pair: { offer: mobileOffer, secret } }).start();
+    const mobileRelayHs1 = await new Initiator({ ...base, transport: "relay", mode: "pair", pair: { offer: mobileOffer, secret } }).start();
+    const joinHs1 = await new Initiator({ ...base, transport: "relay", mode: "pair", pair: { offer: joinOffer, secret } }).start();
+    const t = () => ({ send: () => undefined, close: () => undefined });
+    router.accept(t(), "tailnet").receive(mobileTailnetHs1);
+    router.accept(t(), "relay").receive(mobileRelayHs1);
+    router.accept(t(), "relay").receive(joinHs1);
+    expect(seen).toEqual([
+      { target: "device", kind: "tailnet" },
+      { target: "device", kind: "relay" },
+      { target: "join", kind: "relay" },
+    ]);
+    expect(receivedFrames).toEqual([mobileTailnetHs1, mobileRelayHs1, joinHs1]);
+  });
+
   it("KK without an expected initiator is refused unless the responder checks the roster itself (kkFromRoster)", async () => {
     const i = await generateDhKeyPair(), r = await generateDhKeyPair();
     const cluster = "0".repeat(32);

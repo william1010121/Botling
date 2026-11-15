@@ -383,7 +383,8 @@ describe("M4-16a: peer servers in the relay room and SessionRouter", () => {
     }).start();
     badPeer.transport.send(badHs1);
     badPeer.transport.send(Uint8Array.of(0x20, 0, 0, 0, 1, 2, 3));
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await until(() => badPeer.closed !== null, { what: "bad peer closed after HS1 refusal" });
+    expect(badPeer.closed!.code).toBe(4403);
     expect(badFrames).toEqual([]);
     expect(a.peers.all.every((s) => s.parsed === 0)).toBe(true);
 
@@ -398,7 +399,8 @@ describe("M4-16a: peer servers in the relay room and SessionRouter", () => {
       responder: { memberId: a.memberId, dhPub: a.identity.dhPub },
     }).start();
     wrongTransport.transport.send(tailnetHs1);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await until(() => wrongTransport.closed !== null, { what: "wrong-transport peer closed after HS1 refusal" });
+    expect(wrongTransport.closed!.code).toBe(4403);
     expect(wrongFrames).toEqual([]);
 
     // (c) Valid KK HS1 with transport "relay" reaches PeerSessions, opens with transport "relay", and exchanges revocations.
@@ -527,7 +529,8 @@ describe("M4-16a: peer servers in the relay room and SessionRouter", () => {
       pair: { offer: "unknown-offer-id-1234", secret: offerSecret },
     }).start();
     wrongOfferConn.transport.send(unknownHs1);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await until(() => wrongOfferConn.closed !== null, { what: "unknown-offer transport closed after HS1 refusal" });
+    expect(wrongOfferConn.closed!.code).toBe(4403);
     expect(wrongFrames).toEqual([]);
 
     // (b) A pair HS1 naming the open offer reaches ServerJoin with transport 'relay', completes handshake, and gets join.hello.
