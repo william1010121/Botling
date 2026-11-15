@@ -17,6 +17,8 @@ export interface RoleRule {
   peer: boolean;
   /** Only on the local socket (the desktop window and its own server, §6.1). */
   localOnly?: true;
+  /** Only on a remote device session (never the local socket, §18.4). */
+  remoteOnly?: true;
 }
 
 const rule = (fe: boolean, server: boolean, peer: boolean, extra: Partial<RoleRule> = {}): RoleRule => ({ fe, server, peer, ...extra });
@@ -116,6 +118,8 @@ const ROLE_ROWS = {
   // Local socket only (M2): pairing and revoking from the desktop window or the CLI (§4.3).
   admin: rule(true, false, false, { localOnly: true }),
   "admin.event": rule(false, true, false, { localOnly: true }),
+  // Remote device only (§18.4, M4-22): a paired device sends its push subscription to its attached server.
+  "push.subscribe": rule(true, false, false, { remoteOnly: true }),
   // Local socket only (M1).
   "content.find": rule(true, false, false, { localOnly: true }),
   "content.found": rule(false, true, false, { localOnly: true }),
@@ -153,6 +157,7 @@ export function roleRefusal(type: string, sender: Sender, session: SessionKind):
   if (!row) return `unknown message "${type}"`;
   if (!row[sender]) return `a ${sender === "fe" ? "front end" : sender === "server" ? "server (to a front end)" : "peer server"} may not send "${type}"`;
   if (row.localOnly && !session.local) return `"${type}" is only for the local socket`;
+  if (row.remoteOnly && session.local) return `"${type}" is only for a remote device session`;
   if (isPair(type) && !session.pairing) return `"${type}" is only for a pairing session`;
   if (isJoin(type) && !session.pairing) return `"${type}" is only for a server pairing session`;
   if (session.pairing && !isPair(type) && !isJoin(type) && type !== "bye" && type !== "ping") return `a pairing session carries only pair.*, join.*, ping and bye`;
