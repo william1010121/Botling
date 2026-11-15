@@ -10,7 +10,22 @@
 import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+
+// M4-26 review: a hook run right after ensureVapidKeys resolves on the sponsor, to land a rotation in the gap before
+// the sponsor reads the key id for join.welcome. Pass-through while unset.
+const vapidHooks = vi.hoisted(() => ({ afterEnsure: null as null | ((dataDir: string) => void) }));
+vi.mock("../../src/server/identity/vapid", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/server/identity/vapid")>();
+  return {
+    ...actual,
+    ensureVapidKeys: async (dataDir: string) => {
+      const made = await actual.ensureVapidKeys(dataDir);
+      vapidHooks.afterEnsure?.(dataDir);
+      return made;
+    },
+  };
+});
 import {
   decodeFrame, decodeWireFrame, encodeFrame, encodeWireFrame, fromBase64Url, toBase64Url,
   type MessageOf, type VapidKeys,
@@ -408,12 +423,20 @@ describe("M4-26: VAPID key storage & highest-id invariant", () => {
       await sStore.close();
     });
 
+    // A third rotation lands between S's ensureVapidKeys and its join.welcome: N must get that pair with its id,
+    // never the old pair under the new id.
+    let rot3: ReturnType<typeof rotateVapidKeys> | null = null;
+    vapidHooks.afterEnsure = (dataDir) => { if (dataDir === sDir && !rot3) rot3 = rotateVapidKeys(sDir); };
+    cleanups.push(() => { vapidHooks.afterEnsure = null; });
     const offer = nJoin.createOffer();
     const added = await sJoin.addMachine(offer.link);
     const res = await sJoin.code(added.attempt, offer.code);
     expect(res.ok).toBe(true);
-    expect(readVapidKeyRecord(nDir)).toEqual(rot2);
-    // Because N received id=2, a stale id=1 key is rejected.
+    expect(rot3).not.toBeNull();
+    expect(rot3!.id).toBe(3);
+    expect(readVapidKeyRecord(nDir)).toEqual(rot3);
+    expect(readVapidKeyRecord(nDir)).toEqual(readVapidKeyRecord(sDir));
+    // Because N received id=3, a stale id=1 key is rejected.
     const oldKeys = generateTestVapidKeys();
     expect(acceptVapidKey(nDir, { id: 1, pub: oldKeys.publicKey, priv: oldKeys.privateKey })).toMatchObject({ accepted: false, reason: "stale" });
   });

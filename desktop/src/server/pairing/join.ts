@@ -577,8 +577,11 @@ export class ServerJoin {
       const peerAddress = addressesForUrl(attempt.url);
       if (peerAddress) await roster.writeProfile(peer.member, "addresses", peerAddress);
       const made = await ensureVapidKeys(this.options.dataDir);
-      vapid = made.keys;
-      vapidId = readVapidKeyRecord(this.options.dataDir)?.id ?? 0;
+      // M4-26 review: the pair and its id come from one read. A rotation landing after ensureVapidKeys must not send
+      // the old pair under the new id (N would keep the old key and refuse the real one as stale).
+      const record = readVapidKeyRecord(this.options.dataDir);
+      vapid = record?.keys ?? made.keys;
+      vapidId = record?.id ?? 0;
       if (made.created) this.log("server pairing: the cluster's Web Push key pair was made (first server pairing)");
     } catch (error) {
       const text = String((error as Error)?.message ?? error);
