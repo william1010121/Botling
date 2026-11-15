@@ -426,6 +426,20 @@ describe("orders that must not change", () => {
     expect(r.b.snapshot().messages.some((m: any) => String(m.text).includes("waiting for active work"))).toBe(false);
   });
 
+  it("routeTurn: the settings hold comes before begin: a line sent while another waits for the head's own work goes after it, and nothing begins", async () => {
+    const r = rig("claude");
+    r.b.send("first"); await r.sent(0, 1); r.reply(0, "Hi"); await flush();
+    r.peek.records.push({ id: "reply-own-task", role: "bot", text: "", date: toSwiftDate(), state: "done", engine: "claude", backgroundTasks: [{ id: "own-task", kind: "agent", title: "worker", status: "running", startedAt: toSwiftDate() }] });
+    r.b.configure({ model: "new-model" });
+    r.b.send("held"); await flush();
+    expect(r.peek.settingsHold != null).toBe(true);
+    expect(r.peek.turn == null).toBe(true);
+    r.b.send("held too"); await flush();
+    expect(r.peek.turn == null, "no turn began for the second line").toBe(true);
+    expect(r.peek.queue.length, "both lines wait").toBe(2);
+    expect(r.head(0).sent.length, "nothing went to the head").toBe(1);
+  });
+
   it("routeTurn: with nothing under way a turn begins at once, even with a model change pending", async () => {
     const r = rig("claude");
     r.b.send("first"); await r.sent(0, 1); r.reply(0, "Hi"); await flush();
