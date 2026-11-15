@@ -102,7 +102,8 @@ describe("Settings › Plugins: approving a plugin from the window", () => {
     const ui = await render(panel(client, [plugin()]));
     try {
       await pick(ui.host, "write");
-      await tap(ui.host);
+      // Two taps before React draws the disabled button: only the in-flight guard stops the second.
+      await act(async () => { allowButton(ui.host)!.click(); allowButton(ui.host)!.click(); });
       await tap(ui.host);
       expect(grants()).toEqual([{ type: "plugin.grant", plugin: "reading-coach", codeHash: HASH, tier: "write", reads: [], requests: ["bots.create", "chat.send"] }]);
       expect(allowButton(ui.host)?.disabled).toBe(true);
