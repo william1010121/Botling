@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Event } from "../../contract";
 import { attachmentKind, imageMediaType, namesPath } from "../attachments";
-import { reactionIntro, reactionUpdate, recentChat, seenReactions, type SeenReactions } from "../briefing";
+import { reactionIntro, reactionUpdate, recentChat, seenReactions } from "../briefing";
 import type { Bot, Status } from "../bot";
 import { lineMediaCopy } from "../chat-media";
 import type { Engine, Heads } from "../heads";
