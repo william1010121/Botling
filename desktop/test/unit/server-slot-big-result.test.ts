@@ -11,7 +11,7 @@
 // Real server.db (in memory), real log, slot engine and legacy apply; a fake engine whose `run` answers a big result.
 import { afterEach, describe, expect, it } from "vitest";
 import type { Command } from "../../src/contract";
-import { KeptResultMarker, type CmdBody, type Slot } from "../../src/protocol";
+import { KeptResultMarker, REMOTE_READS, type CmdBody, type Slot } from "../../src/protocol";
 import { ENTRY_BYTES_LIMIT } from "../../src/server/log";
 import { KEPT_RESULT_MAX_BYTES, keepResult, keptResult } from "../../src/server/slots";
 import { entriesOf, harness, outcomeOf, type Harness } from "./server-intents-harness";
@@ -95,5 +95,17 @@ describe("a slot whose result does not fit one entry", () => {
     expect(await Promise.all([1, 2, 3, 4].map(kept))).toEqual([false, true, true, true]);
     await h.writer.submit((tx) => keepResult(tx, slotOf(h, 5), { pad: "z".repeat(8_500) }, limits));
     expect(await Promise.all([2, 3, 4, 5].map(kept))).toEqual([false, false, true, true]);
+  });
+
+  it("the kept row is written in the slot's deciding transaction: a failed cmd.applied append keeps nothing (review probe)", async () => {
+    const h = await start(bigAnswer);
+    h.db.exec("CREATE TRIGGER fail_applied BEFORE INSERT ON entries WHEN NEW.kind = 'cmd.applied' BEGIN SELECT RAISE(ABORT, 'append failed (test)'); END;");
+    await expect(send(h, call)).rejects.toThrow(/append failed/);
+    expect(h.db.prepare("SELECT COUNT(*) AS c FROM slot_results").get()!.c).toBe(0);
+    expect(h.db.prepare("SELECT COUNT(*) AS c FROM receipts").get()!.c).toBe(0);
+  });
+
+  it("slot.result is local only: a remote front end may not ask for it (review probe)", () => {
+    expect(REMOTE_READS.has("slot.result")).toBe(false);
   });
 });
