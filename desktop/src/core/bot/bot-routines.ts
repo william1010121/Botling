@@ -42,7 +42,7 @@ export class BotRoutines {
 
   /** Its routines (the primary's): routines.cron, the app-owned schedules, when each cron job last ran. */
   private routineFile: RoutineFile | null = null;
-  private scheduledStore: ScheduledRoutineStore | null = null;
+  scheduledStore: ScheduledRoutineStore | null = null;
   private routineRuns: Record<string, number> = {};
   /** Its watch routines' last runs (bot.json `routineWatches`, by routine id as the view gives it), and those running now. */
   private routineWatches: Record<string, WatchState> = {};
@@ -67,7 +67,7 @@ export class BotRoutines {
   }
 
   /** routines.cron (made with the old bot.json routines, or the main bot's daily summary) and scheduled-routines.json beside it. */
-  private setUpRoutines() {
+  setUpRoutines() {
     const file = join(this.profile.folder, this.paths.routines);
     this.routineFile = new RoutineFile(file);
     this.scheduledStore = new ScheduledRoutineStore(join(dirname(file), "scheduled-routines.json"));
@@ -94,7 +94,7 @@ export class BotRoutines {
   }
 
   /** Its routines for spec/models/routines' trace lines (null unless BOTLING_SPEC_TRACE is set). */
-  private routinesSpec() {
+  routinesSpec() {
     return routinesSpecState(this.routineFile, this.routineRuns, this.scheduledStore);
   }
 
@@ -103,7 +103,7 @@ export class BotRoutines {
     return (this.owner.scheduledStore ?? null)?.file ?? null;
   }
 
-  private loadRoutines(): { jobs: Routine[]; scheduled: ScheduledRoutine[] } {
+  loadRoutines(): { jobs: Routine[]; scheduled: ScheduledRoutine[] } {
     const jobs = this.routineFile?.load() ?? [];
     let scheduled: ScheduledRoutine[] = [];
     try {
@@ -141,14 +141,14 @@ export class BotRoutines {
   }
 
   /** A watch routine's command and last run, for its row; nothing for a prompt routine. */
-  private watchView(key: string, task: string): Pick<RoutineView, "watch"> {
+  watchView(key: string, task: string): Pick<RoutineView, "watch"> {
     const command = watchCommand(task);
     if (!command) return {};
     const state = this.routineWatches[key];
     return { watch: { command: clip(command, 2_000) ?? "", state: !state ? "never" : state.ok ? "ok" : "failing", lastRun: state ? new Date(state.lastRun).toISOString() : null, exit: state?.exit ?? null, timedOut: state?.timedOut ?? false } };
   }
 
-  private routinesChanged(view = this.routinesView()) {
+  routinesChanged(view = this.routinesView()) {
     this.routinesShown = routinesKey(view);
     this.options.emit({ type: "routines.updated", botId: this.id, ...view });
   }
@@ -185,7 +185,7 @@ export class BotRoutines {
   }
 
   /** `isDue`: its latest time today has passed and it has not run since; a job seen for the first time starts from now. */
-  private isDue(job: Routine, now: number): boolean {
+  isDue(job: Routine, now: number): boolean {
     if (!job.enabled) return false;
     // A one-shot line runs at the first check that sees it (it is taken out of the file before it runs).
     if (job.once) return true;
@@ -199,7 +199,7 @@ export class BotRoutines {
     return time !== null && last < toSwiftDate(time);
   }
 
-  private saveRoutineRuns() {
+  saveRoutineRuns() {
     if (!this.readOnly) this.store.saveSetting("routineRuns", this.routineRuns);
   }
 
@@ -254,7 +254,7 @@ export class BotRoutines {
   }
 
   /** A routine whose time came: a watch's command runs in the app (the bot is woken only when it fails); any other is dispatched. */
-  private runRoutine(key: string, job: Routine, now: number) {
+  runRoutine(key: string, job: Routine, now: number) {
     const command = watchCommand(job.task);
     if (command) this.startWatch(key, job, command);
     else this.dispatchRoutine(job, now);
@@ -264,7 +264,7 @@ export class BotRoutines {
    * Runs a watch's command in the bot's folder, without waking it (routine-watch.ts). A failure wakes it once per
    * failing streak (`nextWatchState`); a run still going when its next time comes is not started twice.
    */
-  private startWatch(key: string, job: Routine, command: string) {
+  startWatch(key: string, job: Routine, command: string) {
     if (this.watchesRunning.has(key)) return;
     this.watchesRunning.add(key);
     const title = routineTitle(job.task);
@@ -289,7 +289,7 @@ export class BotRoutines {
   }
 
   /** Drops what it kept of watches that are gone (not while the schedules cannot be read). */
-  private forgetWatches(jobs: Routine[], scheduled: ScheduledRoutine[]) {
+  forgetWatches(jobs: Routine[], scheduled: ScheduledRoutine[]) {
     if (this.routineError) return;
     const live = new Set([...jobs.map((job) => `cron:${job.id}`.slice(0, 2_200)), ...scheduled.map((job) => job.id)]);
     const gone = Object.keys(this.routineWatches).filter((key) => !live.has(key) && !this.watchesRunning.has(key));
@@ -299,7 +299,7 @@ export class BotRoutines {
   }
 
   /** A divider with its time, then its prompt as a message nobody typed, to this bot's (first) head (`Bot.run`). */
-  private dispatchRoutine(job: Routine, now: number) {
+  dispatchRoutine(job: Routine, now: number) {
     this.add({ id: newId(), role: "divider", text: routineDivider(job, now), date: toSwiftDate(now) });
     const prompt = routinePrompt(job, this.profile.role, () => this.options.projectBriefing?.() ?? "");
     this.log(`routine "${routineTitle(job.task)}" runs`);
