@@ -4,8 +4,14 @@
 // (dropped), and the chat copy's message escape (escaped). Control characters (C0, C1, line separators) stay with each
 // caller: what to do with a newline differs. Everything here is in `server/`; nothing crosses a boundary.
 
-/** Soft hyphen, combining grapheme joiner, Arabic letter mark, Mongolian vowel separator, zero-width space and the left-to-right / right-to-left marks, bidi embeddings and overrides, word joiner and invisible operators, bidi isolates, BOM, and the tag characters and variation selector supplement (astral). */
-const ALWAYS = "\\u00ad\\u034f\\u061c\\u180e\\u200b\\u200e\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u2069\\ufeff\\u{e0000}-\\u{e007f}\\u{e0100}-\\u{e01ef}";
+/**
+ * Default_Ignorable_Code_Point without the joiners, the selectors (below) and the Hangul fillers (letters: `stripBlanks`):
+ * soft hyphen, combining grapheme joiner, Arabic letter mark, Khmer inherent vowels, Mongolian selectors and vowel
+ * separator, zero-width space and the left-to-right / right-to-left marks, bidi embeddings and overrides, word joiner,
+ * invisible operators, bidi isolates and the deprecated format characters, BOM, shorthand and musical format controls,
+ * and plane 14 (tag characters, variation selector supplement).
+ */
+const ALWAYS = "\\u00ad\\u034f\\u061c\\u17b4\\u17b5\\u180b-\\u180f\\u200b\\u200e\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufeff\\u{1bca0}-\\u{1bca3}\\u{1d173}-\\u{1d17a}\\u{e0000}-\\u{e0fff}";
 /** Variation selectors U+FE00–FE0F: dropped, except one U+FE0E / U+FE0F that picks how a pictograph is drawn (see `keeps`). */
 const SELECTORS = "\\ufe00-\\ufe0f";
 /** ZWNJ and ZWJ: invisible, but they make emoji families and some Persian and Indic words, so the prompt text keeps them. */

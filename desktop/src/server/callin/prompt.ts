@@ -18,11 +18,18 @@ const NEWLINES = /\r\n|[\n\r\u000B\u000C\u0085\u2028\u2029]/;
 const CONTROL = /[\u0000-\u0008\u000E-\u001F\u007F-\u0084\u0086-\u009F]/g;
 
 /**
- * `text` without control characters and unseen characters (`server/unseen.ts`: bidi and zero-width marks, soft hyphen,
- * selectors, tag characters); newlines are kept for `oneLine` to turn into " ⏎ ". ZWJ and ZWNJ stay: they hold emoji
- * families and Persian or Indic words together, and in a quoted prompt line they hide nothing a model can act on.
+ * A ZWJ / ZWNJ that is not between two other non-ASCII characters. Between an emoji or a Persian or Indic letter it
+ * holds the word together; next to ASCII it only splits what the guards here look for (`>\u200d>\u200d>` past
+ * `FENCE_RUN`, `<\u200dtag` past the host's tag escape, `U\u200dser:` past `LABEL`), so it goes (review of fu-peer-text).
  */
-export const stripControls = (text: string): string => stripUnseen(text.replace(CONTROL, ""));
+const LOOSE_JOINER = /(?<![^\u0000-\u007f\u200c\u200d])[\u200c\u200d]|[\u200c\u200d](?![^\u0000-\u007f\u200c\u200d])/gu;
+
+/**
+ * `text` without control characters and unseen characters (`server/unseen.ts`: bidi and zero-width marks, soft hyphen,
+ * selectors, tag characters); newlines are kept for `oneLine` to turn into " ⏎ ". ZWJ and ZWNJ stay only inside a
+ * non-ASCII word (`LOOSE_JOINER`): they hold emoji families and Persian or Indic words together.
+ */
+export const stripControls = (text: string): string => stripUnseen(text.replace(CONTROL, "")).replace(LOOSE_JOINER, "");
 
 /** Runs of 3+ `>` or `<` spaced out ("> > > >"): replacing only ">>>" would leave ">>>" behind in ">>>>>". */
 const FENCE_RUN = /[>]{3,}|[<]{3,}/g;
