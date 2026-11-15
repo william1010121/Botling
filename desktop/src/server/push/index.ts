@@ -35,3 +35,9 @@ export {
   type PushSenderOptions,
   type PushSendReport,
 } from "./sender";
+export {
+  VapidKeySync,
+  type VapidKeySyncOptions,
+  type VapidSyncRoster,
+  type VapidSyncSession,
+} from "./vapid-sync";

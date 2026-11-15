@@ -30,7 +30,7 @@ import {
   type AdminEvent, type AdminOp, type JoinOffer, type PrefRow, type SignedStatement, type WireMessage, type WireMessageOf,
 } from "../../protocol";
 import { signPairProof, verifyPairProof, SessionLink, type LocalStatic, type PeerClaim, type PeerDecision, type SessionEnd, type SessionInfo, type SessionTransport } from "../../session";
-import { ensureVapidKeys, readVapidKeys, vapidFilePath, writeVapidKeys } from "../identity/vapid";
+import { ensureVapidKeys, readVapidKeyRecord, readVapidKeys, vapidFilePath, writeVapidKeys } from "../identity/vapid";
 import { addressesForUrl } from "../peer/config";
 import { webSocketConnector, type PeerConnection, type PeerConnector } from "../peer/connector";
 import type { RosterStore } from "../roster/store";
@@ -400,7 +400,7 @@ export class ServerJoin {
     const hadVapid = readVapidKeys(this.options.dataDir) !== null;
     let joined: { clusterId: string; addId: string; add: SignedStatement };
     try {
-      writeVapidKeys(this.options.dataDir, welcome.vapid);
+      writeVapidKeys(this.options.dataDir, welcome.vapid, welcome.vapidId ?? 0);
       joined = await this.options.roster.joinCluster({
         add: welcome.add, roster: welcome.roster, sponsor: { member: sponsor.member, keys: { sign: sponsor.sign, dh: sponsor.dh }, name: sponsor.name },
         extra: (cluster) => (ownAddresses ? [{ type: "profile", cluster, member: this.options.identity.memberId, field: "addresses", value: ownAddresses, hlc: { ms: this.now(), c: 0 } }] : []),
@@ -569,6 +569,7 @@ export class ServerJoin {
     const peer = attempt.peer!;
     let added: { member: string; addId: string; created: boolean };
     let vapid;
+    let vapidId = 0;
     try {
       added = await roster.addServer({ keys: offer.keys, name: peer.name });
       const own = this.options.ownAddresses();
@@ -577,6 +578,7 @@ export class ServerJoin {
       if (peerAddress) await roster.writeProfile(peer.member, "addresses", peerAddress);
       const made = await ensureVapidKeys(this.options.dataDir);
       vapid = made.keys;
+      vapidId = readVapidKeyRecord(this.options.dataDir)?.id ?? 0;
       if (made.created) this.log("server pairing: the cluster's Web Push key pair was made (first server pairing)");
     } catch (error) {
       const text = String((error as Error)?.message ?? error);
@@ -593,7 +595,7 @@ export class ServerJoin {
       return { ok: false, reason: "refused", detail: `the roster holds more than ${JOIN_ROSTER_LIMIT} statements (gossip carries the rest from M3 step 5)` };
     }
     const add = statements.find((item) => item.id === added.addId)!.statement;
-    attempt.channel.send({ t: "join.welcome", add, roster: statements.map((item) => item.statement), vapid, prefs: (this.options.prefs?.rows() ?? []).slice(0, 500) });
+    attempt.channel.send({ t: "join.welcome", add, roster: statements.map((item) => item.statement), vapid, vapidId, prefs: (this.options.prefs?.rows() ?? []).slice(0, 500) });
     const done = await this.expect(attempt, this.options.replyTimeoutMs ?? JOIN_REPLY_TIMEOUT_MS);
     if (!done || done.t !== "join.done") {
       this.dropAttempt(attempt, done ? `${done.t} instead of join.done` : "no join.done");

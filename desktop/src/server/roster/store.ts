@@ -40,6 +40,8 @@ export interface RosterChange {
   view: RosterView;
   /** Members valid before the change and not after it. */
   invalidated: string[];
+  /** True only when this commit signed a new server revocation on the current revocation root (M4-26). */
+  serverRevokeSigned?: boolean;
 }
 
 export type AuditAct = "cluster.create" | "cluster.join" | "device.add" | "device.revoke" | "server.add" | "server.revoke" | "server.revoke.dropped" | "member.endorse" | "profile.write" | "statement.merge" | "root.change";
@@ -388,7 +390,7 @@ export class RosterStore {
         member,
         ...(info?.name ? { name: info.name } : {}),
         ...(cleanReason ? { reason: cleanReason } : {}),
-      }]);
+      }], undefined, { serverRevokeSigned: true });
       return { revokeId: revoke.id, already: false };
     });
   }
@@ -468,7 +470,7 @@ export class RosterStore {
             ...(oldInfo?.name ? { name: oldInfo.name } : {}),
           });
         }
-        await this.commit(fresh, cluster, audits);
+        await this.commit(fresh, cluster, audits, undefined, { serverRevokeSigned: revokeStmt !== null });
         return { rootId: rootStmt.id, revokeId: revokeStmt?.id ?? null, gen };
       } finally {
         recovery.publicKey.fill(0);
@@ -965,7 +967,7 @@ export class RosterStore {
     return view;
   }
 
-  private async commit(fresh: StoredStatement[], cluster: string, audits: Array<Omit<AuditBody, "at">>, extra?: (tx: Db) => void): Promise<RosterView> {
+  private async commit(fresh: StoredStatement[], cluster: string, audits: Array<Omit<AuditBody, "at">>, extra?: (tx: Db) => void, flags?: { serverRevokeSigned?: boolean }): Promise<RosterView> {
     const at = this.now();
     const stored = new Map(this.stored);
     for (const item of fresh) stored.set(item.id, { ...item, receivedAt: at });
@@ -987,8 +989,13 @@ export class RosterStore {
     this.current = view;
     if (this.pendingReplace && view.root?.id !== this.pendingReplace.rootId) this.clearPendingReplace();
     const invalidated = [...before.valid].filter((member) => !view.valid.has(member));
+    const change: RosterChange = {
+      view,
+      invalidated,
+      ...(flags?.serverRevokeSigned ? { serverRevokeSigned: true } : {}),
+    };
     for (const listener of this.listeners) {
-      try { listener({ view, invalidated }); } catch (error) { this.options.log?.(`roster: a change listener failed: ${String((error as Error)?.message ?? error)}`); }
+      try { listener(change); } catch (error) { this.options.log?.(`roster: a change listener failed: ${String((error as Error)?.message ?? error)}`); }
     }
     return view;
   }

@@ -115,6 +115,8 @@ export interface SessionHost {
   /** D70: roster + own DH key for filling `dh` and K12 Profile `addresses` on `welcome.servers` and `peer`. */
   roster?: SessionRoster;
   self?: { readonly dhPub: Uint8Array };
+  /** M4-26 (§18.4, Q-P3): current cluster VAPID public key sent in `welcome` so devices learn rotated keys on attach. */
+  vapidPublicKey?: () => string | null;
 }
 
 /** Shared subset of `RosterView` used by session hosts and remote rosters. */
@@ -420,9 +422,12 @@ export abstract class SessionCore {
     this.reader = this.host.hub.attach((message) => { this.send(message, streamOf(message)); this.onLogFrame(message); });
     let next: Record<string, number> = {};
     try { next = this.host.nextFor(hello.deviceId, hello.originEpoch); } catch (error) { this.host.log(`session: next for ${hello.deviceId}: ${errorText(error)}`); }
+    let vapidPublicKey: string | null = null;
+    try { vapidPublicKey = this.host.vapidPublicKey?.() ?? null; } catch (error) { this.host.log(`session: vapidPublicKey: ${errorText(error)}`); }
     this.send({
       t: "welcome", serverId: this.host.serverId, protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION }, minFeVersion: this.host.minFeVersion,
       rosterDigest: null, servers: [this.selfServerEntry(), ...this.peerList()], next, views: {},
+      ...(vapidPublicKey ? { vapidPublicKey } : {}),
     } as MessageOf<"welcome">);
     const tables = this.host.tables;
     if (tables) this.peerEvents = tables.onPeer((peer) => { this.send(this.peerMessage(peer)); });

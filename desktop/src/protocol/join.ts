@@ -97,10 +97,16 @@ export function memberFingerprint(memberId: string): string {
   return id.match(/.{1,4}/g)!.join(" ");
 }
 
+/** The cluster's Web Push public key (§18.4): P-256 uncompressed point (65 bytes, base64url). */
+export const VapidPublicKey = z.string().regex(/^[A-Za-z0-9_-]{87}$/).refine((text) => { const bytes = fromBase64Url(text); return bytes?.length === 65 && bytes[0] === 4; }, { message: "an uncompressed P-256 point" });
+/** The cluster's Web Push private scalar (§18.4): 32 bytes, base64url. */
+export const VapidPrivateKey = z.string().regex(/^[A-Za-z0-9_-]{43}$/).refine((text) => fromBase64Url(text)?.length === 32, { message: "a 32-byte scalar" });
+/** Monotonic cluster VAPID key generation counter raised by the revocation root (Q-P3, M4-26). */
+export const VapidKeyId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 /** The cluster's Web Push key pair (§18.4): P-256, the public key uncompressed (65 bytes), the private scalar (32 bytes). */
 export const VapidKeys = z.strictObject({
-  publicKey: z.string().regex(/^[A-Za-z0-9_-]{87}$/).refine((text) => { const bytes = fromBase64Url(text); return bytes?.length === 65 && bytes[0] === 4; }, { message: "an uncompressed P-256 point" }),
-  privateKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/).refine((text) => fromBase64Url(text)?.length === 32, { message: "a 32-byte scalar" }),
+  publicKey: VapidPublicKey,
+  privateKey: VapidPrivateKey,
 });
 export type VapidKeys = z.infer<typeof VapidKeys>;
 
@@ -126,6 +132,7 @@ export const JoinWelcome = msg("join.welcome", {
   add: ServerAdd,
   roster: z.array(SignedStatement).min(1).max(JOIN_ROSTER_LIMIT),
   vapid: VapidKeys,
+  vapidId: VapidKeyId.optional(),
   prefs: z.array(PrefRow).max(500),
 });
 /** N → S: N committed S's `Add` and the statements, and wrote its endorsements. */
