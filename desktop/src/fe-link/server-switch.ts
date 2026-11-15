@@ -263,7 +263,8 @@ export class ServerSwitchController {
     if (!target || target.state === "gone" || target.dialable === false) return false;
     this.holdoffs.delete(serverId);
     const from = this.currentId;
-    if (from === serverId && this.attached) return true;
+    // D72: re-picking the current target (attached or dialing) must not restart the 30 s window or re-dial.
+    if (from === serverId) return true;
     this.currentId = serverId;
     this.attached = false;
     this.unreachableSince = this.clock.now();

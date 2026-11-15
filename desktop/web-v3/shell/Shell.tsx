@@ -318,6 +318,15 @@ interface PickerServer {
   state?: ServerState;
 }
 
+function serverOptionLabel(server: PickerServer, targetId: string, attachedId: string | null): string {
+  const tags: string[] = [];
+  if (server.id === attachedId) tags.push("attached");
+  else if (server.id === targetId) tags.push("target");
+  if (server.state === "gone") tags.push("removed");
+  else if (server.state === "stale") tags.push("offline");
+  return tags.length > 0 ? `${server.name} ${tags.map((t) => `(${t})`).join(" ")}` : server.name;
+}
+
 /** Settings › This device: who this device is, which server it is paired with, and forgetting it. */
 export function ThisDevice({
   device,
@@ -339,6 +348,9 @@ export function ThisDevice({
   const [confirm, setConfirm] = useState(false);
   const [pendingItems, setPendingItems] = useState(() => connection?.link.pending() ?? []);
   const [attached, setAttached] = useState(() => connection?.link.attached ?? false);
+  const [attachedServerId, setAttachedServerId] = useState<string | null>(
+    () => (connection?.link.attached ? (connection.link.attachedServerId() ?? null) : null),
+  );
   const [liveServers, setLiveServers] = useState<PickerServer[]>(() => (connection?.link.attached ? connection.link.servers() : []));
   const [selectedServerId, setSelectedServerId] = useState<string>(
     () => serverId ?? connection?.serverId ?? connection?.link.attachedServerId() ?? device.server.memberId,
@@ -353,12 +365,14 @@ export function ThisDevice({
     if (!connection) {
       setPendingItems([]);
       setAttached(false);
+      setAttachedServerId(null);
       setLiveServers([]);
       return;
     }
     const syncLink = (attachedOverride?: boolean) => {
       const isAttached = attachedOverride ?? connection.link.attached;
       setAttached(isAttached);
+      setAttachedServerId(isAttached ? (connection.link.attachedServerId() ?? null) : null);
       setLiveServers(isAttached ? connection.link.servers() : []);
     };
     setPendingItems(connection.link.pending());
@@ -382,9 +396,19 @@ export function ThisDevice({
   const baseServers: readonly PickerServer[] = attached
     ? liveServers
     : (offlineServers.length > 0 ? offlineServers : [{ id: device.server.memberId, name: device.server.name }]);
-  const serverOptions: readonly PickerServer[] = baseServers.some((s) => s.id === selectedServerId)
-    ? baseServers
-    : [...baseServers, { id: selectedServerId, name: selectedServerId }];
+  const serverOptions: PickerServer[] = [...baseServers];
+  if (!serverOptions.some((s) => s.id === selectedServerId)) {
+    serverOptions.push({ id: selectedServerId, name: selectedServerId });
+  }
+  if (attachedServerId && !serverOptions.some((s) => s.id === attachedServerId)) {
+    serverOptions.push({ id: attachedServerId, name: attachedServerId });
+  }
+  const serverName = (id: string): string => serverOptions.find((s) => s.id === id)?.name ?? id;
+  const serverStatusText = attachedServerId
+    ? (attachedServerId === selectedServerId
+      ? `Attached to ${serverName(attachedServerId)}`
+      : `Switching to ${serverName(selectedServerId)}… (attached to ${serverName(attachedServerId)})`)
+    : `Connecting to ${serverName(selectedServerId)}…`;
 
   const pending = pendingItems.length;
   const stoppedItems = pendingItems.filter((item) => item.stopped);
@@ -402,6 +426,8 @@ export function ThisDevice({
             data-testid="server-picker"
             aria-label="Server"
             value={selectedServerId}
+            data-target={selectedServerId}
+            data-attached={attachedServerId ?? ""}
             disabled={!connection?.pickServer || serverOptions.length === 0}
             onChange={(event) => {
               const nextId = event.target.value;
@@ -412,10 +438,11 @@ export function ThisDevice({
           >
             {serverOptions.map((server) => (
               <option key={server.id} value={server.id} disabled={server.state === "gone"}>
-                {server.state === "gone" ? `${server.name} (removed)` : server.state === "stale" ? `${server.name} (offline)` : server.name}
+                {serverOptionLabel(server, selectedServerId, attachedServerId)}
               </option>
             ))}
           </select>
+          <div className="v3-server-status" data-testid="server-status">{serverStatusText}</div>
         </dd>
         <dt>Allowed</dt><dd>{device.scope.join(", ")}</dd>
         <dt>Paired</dt><dd>{new Date(device.pairedAt).toLocaleString()}</dd>

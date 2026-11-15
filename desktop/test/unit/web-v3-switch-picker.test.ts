@@ -383,9 +383,6 @@ describe("M4-20b (D72): Shell.tsx This device › Server picker", () => {
       });
       capturedFb = fb;
       activeLinks.push(fb);
-      // Bridge openFallbackLink.start() when Shell calls conn.link.start() (see M4-20b.md note on M4-20a).
-      const origStart = fb.link.start.bind(fb.link);
-      fb.link.start = () => { fb.link.start = origStart; fb.start(); };
       return {
         link: fb.link,
         port: fb.link as unknown as Connection["port"],
@@ -533,8 +530,6 @@ describe("M4-20b (D72): Shell.tsx This device › Server picker", () => {
       });
       fbRef = fb;
       activeLinks.push(fb);
-      const origStart = fb.link.start.bind(fb.link);
-      fb.link.start = () => { fb.link.start = origStart; fb.start(); };
       return {
         link: fb.link,
         port: fb.link as unknown as Connection["port"],
@@ -575,5 +570,204 @@ describe("M4-20b (D72): Shell.tsx This device › Server picker", () => {
     expect(dialedIds).toEqual([SRV_A, SRV_B]);
     expect(fbRef?.link.attachedServerId()).toBe(SRV_B);
     expect(select!.value).toBe(SRV_B);
+  });
+
+  it("distinguishes target (conn.serverId) vs attached (conn.link.attachedServerId()) states in ThisDevice", async () => {
+    const { ThisDevice } = await import("../../web-v3/shell/Shell");
+    const listeners = new Set<(e: { type: string; attached?: boolean }) => void>();
+    let currentAttached = true;
+    let currentAttachedId: string | null = SRV_A;
+    let currentTargetId = SRV_B;
+    const link = {
+      get attached() { return currentAttached; },
+      attachedServerId: () => currentAttachedId,
+      pending: () => [],
+      servers: () => [
+        { id: SRV_A, name: "Studio", state: "live" as const, since: null, self: true, dh: DH_A },
+        { id: SRV_B, name: "Linux", state: "live" as const, since: null, self: false, dh: DH_B },
+      ],
+      on: (fn: (e: { type: string; attached?: boolean }) => void) => {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+    } as unknown as FeLink;
+
+    const conn: Connection = {
+      link,
+      port: link as unknown as Connection["port"],
+      path: "direct",
+      revoked: false,
+      get serverId() { return currentTargetId; },
+      pickServer: vi.fn(() => true),
+      close: async () => undefined,
+    };
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    activeRoots.push({ root, el: host });
+
+    // Target is SRV_B while still attached to SRV_A: target and attached must both be visible & distinct.
+    await act(async () => {
+      root.render(createElement(ThisDevice, {
+        device: makeDevice(),
+        connection: conn,
+        path: "direct",
+        serverId: SRV_B,
+        onClose: () => undefined,
+        onForget: () => undefined,
+      }));
+    });
+
+    const select = host.querySelector('[data-testid="server-picker"]') as HTMLSelectElement;
+    const status = host.querySelector('[data-testid="server-status"]') as HTMLElement | null;
+    expect(select.value).toBe(SRV_B);
+    expect(select.getAttribute("data-target")).toBe(SRV_B);
+    expect(select.getAttribute("data-attached")).toBe(SRV_A);
+    expect(status).not.toBeNull();
+    expect(status!.textContent).toContain("Linux");
+    expect(status!.textContent).toContain("Studio");
+    expect(select.options[0]!.textContent).toContain("(attached)");
+    expect(select.options[1]!.textContent).toContain("(target)");
+
+    // Once SRV_B attaches, attachedServerId() becomes SRV_B and status reflects Attached to Linux.
+    currentAttachedId = SRV_B;
+    await act(async () => {
+      for (const fn of listeners) fn({ type: "attached", attached: true });
+    });
+    expect(select.getAttribute("data-target")).toBe(SRV_B);
+    expect(select.getAttribute("data-attached")).toBe(SRV_B);
+    expect(status!.textContent).toBe("Attached to Linux");
+    expect(select.options[1]!.textContent).toContain("(attached)");
+    expect(select.options[1]!.textContent).not.toContain("(target)");
+
+    // When disconnected, attachedServerId() is not shown as attached even if link.server cached SRV_B.
+    currentAttached = false;
+    await act(async () => {
+      for (const fn of listeners) fn({ type: "attached", attached: false });
+    });
+    expect(select.getAttribute("data-target")).toBe(SRV_B);
+    expect(select.getAttribute("data-attached")).toBe("");
+    expect(status!.textContent).toBe("Connecting to Linux…");
+  });
+
+  it("Shell + openFallbackLink: shows target vs attached while switching to a slow server, and re-picking current server does not restart 30 s window", async () => {
+    const dialed: Array<{ serverId: string; handlers: SocketHandlers; closed: boolean; holdWelcome: boolean; sendWelcome: () => void }> = [];
+    const serverViews = [
+      { id: SRV_A, name: "Studio", state: "live" as const, since: 100, dh: DH_A, addresses: { tailnet: "wss://studio.example.invalid/v3/ws" } },
+      { id: SRV_B, name: "Linux", state: "live" as const, since: 200, dh: DH_B, addresses: { tailnet: "wss://linux.example.invalid/v3/ws" } },
+    ];
+    let holdWelcomeFor: string | null = null;
+    const makeDial = (serverId: string): Dial => (handlers) => {
+      const rec = {
+        serverId,
+        handlers,
+        closed: false,
+        holdWelcome: holdWelcomeFor === serverId,
+        sendWelcome() {
+          const enc = encodeFrame({
+            t: "welcome",
+            serverId,
+            protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION },
+            minFeVersion: "3.0.0",
+            rosterDigest: null,
+            next: {},
+            servers: serverViews,
+            views: {},
+          }, "server", REMOTE);
+          if (enc.ok) handlers.frame(enc.text);
+        },
+      };
+      dialed.push(rec);
+      queueMicrotask(() => { if (!rec.closed) handlers.open(); });
+      return {
+        send(frame: string) {
+          const dec = decodeFrame(frame, "fe", REMOTE);
+          if (!dec.ok) return;
+          if (dec.message.t === "hello" && !rec.holdWelcome) rec.sendWelcome();
+          else if (dec.message.t === "sub" && dec.message.stream.startsWith("srv:")) {
+            const enc = encodeFrame({ t: "snap", stream: dec.message.stream, logId: `log-${serverId}`, seq: 0, hash: GENESIS_HASH, view: {} }, "server", REMOTE);
+            if (enc.ok) handlers.frame(enc.text);
+          }
+        },
+        close() { rec.closed = true; },
+      };
+    };
+
+    const clock = new FakeClock();
+    const storage = new MemoryFeStorage();
+    let fbRef: FallbackLink | undefined;
+    activeOpenConnectionImpl = async (device, _diag, _pageUrl, pathOrOpts) => {
+      const opts = typeof pathOrOpts === "string" ? {} : (pathOrOpts ?? {});
+      const fb = await openFallbackLink({
+        storage,
+        servers: [
+          { id: SRV_A, name: "Studio", dh: DH_A, addresses: { tailnet: "wss://studio.example.invalid/v3/ws" }, directDial: makeDial(SRV_A) },
+          { id: SRV_B, name: "Linux", dh: DH_B, addresses: { tailnet: "wss://linux.example.invalid/v3/ws" }, directDial: makeDial(SRV_B) },
+        ],
+        designatedServerId: device.server.memberId,
+        deviceId: device.memberId,
+        feVersion: FE_VERSION,
+        local: false,
+        clock,
+        newEpoch: nextEpoch,
+        onServer: opts.onServer,
+      });
+      fbRef = fb;
+      activeLinks.push(fb);
+      return {
+        link: fb.link,
+        port: fb.link as unknown as Connection["port"],
+        get path() { return fb.path; },
+        get revoked() { return fb.revoked; },
+        get serverId() { return fb.serverId ?? device.server.memberId; },
+        pickServer(id: string) { return fb.pickServer(id); },
+        close: () => fb.close(),
+      };
+    };
+
+    const { Shell } = await import("../../web-v3/shell/Shell");
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const root = createRoot(el);
+    activeRoots.push({ root, el });
+
+    await act(async () => { root.render(createElement(Shell)); });
+    await act(async () => { await flush(); });
+
+    const thisDeviceBtn = lastFooterEl?.querySelector("button");
+    await act(async () => { thisDeviceBtn!.click(); });
+
+    const select = el.querySelector('[data-testid="server-picker"]') as HTMLSelectElement;
+    const status = el.querySelector('[data-testid="server-status"]') as HTMLElement;
+    expect(select.getAttribute("data-target")).toBe(SRV_A);
+    expect(select.getAttribute("data-attached")).toBe(SRV_A);
+    expect(status.textContent).toBe("Attached to Studio");
+
+    // Pick SRV_B while SRV_B holds its welcome (target = SRV_B, attached = none yet).
+    holdWelcomeFor = SRV_B;
+    await act(async () => {
+      changeSelect(select, SRV_B);
+      await flush();
+    });
+    expect(select.value).toBe(SRV_B);
+    expect(select.getAttribute("data-target")).toBe(SRV_B);
+    expect(select.getAttribute("data-attached")).toBe("");
+    expect(status.textContent).toBe("Connecting to Linux…");
+
+    // Advance 20 s while SRV_B has not welded, then re-call pickServer(SRV_B): must NOT restart the 30 s timer.
+    clock.advance(20_000);
+    await act(async () => { await flush(); });
+    expect(fbRef!.pickServer(SRV_B)).toBe(true);
+    expect(fbRef!.serverId).toBe(SRV_B);
+
+    // Advance remaining 10 s (30 s total): auto-switch fires back to SRV_A (not postponed to 50 s!).
+    clock.advance(10_000);
+    await act(async () => { await flush(); });
+    expect(fbRef!.serverId).toBe(SRV_A);
+    expect(fbRef!.link.attachedServerId()).toBe(SRV_A);
+    expect(select.getAttribute("data-target")).toBe(SRV_A);
+    expect(select.getAttribute("data-attached")).toBe(SRV_A);
+    expect(status.textContent).toBe("Attached to Studio");
   });
 });

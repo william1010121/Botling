@@ -1257,4 +1257,46 @@ describe("M4-20a: server selection (§13.1), D72 switching, and 50+ in-flight D5
     expect(fb.serverId).toBe("srvA");
     expect(cluster.dialLog.some((d) => d.serverId === "srvB")).toBe(false);
   });
+
+  it("re-calling pickServer on the current unreachable server does not restart the 30 s switch window", async () => {
+    const clock = new CountingClock();
+    const cluster = new MultiServerCluster(clock);
+    cluster.addServer("srvA", "Machine A");
+    cluster.addServer("srvB", "Machine B");
+
+    const fb = await openFallbackLink({
+      storage: new MemoryFeStorage(),
+      servers: cluster.dialTargets(),
+      designatedServerId: "srvA",
+      deviceId: "phone",
+      feVersion: "3.0.0",
+      local: false,
+      clock,
+      newEpoch: nextEpoch,
+    });
+    opened.push(fb);
+    fb.link.start();
+    await flush();
+    expect(fb.link.attachedServerId()).toBe("srvA");
+
+    // Kill srvA so the 30 s unreachable window starts.
+    cluster.killServer("srvA");
+    await flush();
+    expect(fb.serverId).toBe("srvA");
+
+    // Advance 20 s into the 30 s window, then re-call pickServer("srvA") on the current target.
+    await advanceWithFlush(clock, 20_000, 1_000);
+    expect(fb.serverId).toBe("srvA");
+    const dialsBeforeRepick = cluster.dialLog.length;
+    expect(fb.pickServer("srvA")).toBe(true);
+    await flush();
+    expect(fb.serverId).toBe("srvA");
+    expect(cluster.dialLog.length).toBe(dialsBeforeRepick);
+
+    // Advance only 10 s more (30 s total since srvA went down — NOT 30 s since re-pick!).
+    // Must switch to srvB right at the original 30 s deadline.
+    await advanceWithFlush(clock, 10_000, 1_000);
+    expect(fb.serverId).toBe("srvB");
+    expect(fb.link.attachedServerId()).toBe("srvB");
+  });
 });
