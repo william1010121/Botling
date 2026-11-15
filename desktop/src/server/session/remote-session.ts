@@ -34,7 +34,7 @@ import {
   type Lane, type LocalStatic, type PeerClaim, type PeerDecision, type SessionEnd, type SessionInfo, type SessionLinkOptions, type SessionTransport, type TransportKind,
 } from "../../session";
 import { remoteReadRefusal, statedScope, type DeviceRoster } from "./remote-reads";
-import { errorText, MAX_BUFFERED, SessionCore, type SessionHost, type SessionOptions, type ShellRefusal } from "./session-core";
+import { errorText, MAX_BUFFERED, SessionCore, type SessionHost, type SessionOptions, type SessionRosterView, type ShellRefusal } from "./session-core";
 
 const REMOTE_KIND = { local: false } as const;
 const PAIRING_KIND = { local: false, pairing: true } as const;
@@ -49,10 +49,7 @@ const encoder = new TextEncoder();
 /** The roster as remote sessions use it: devices, the cluster, and changes. */
 export interface RemoteRoster extends DeviceRoster {
   readonly clusterId: string | null;
-  readonly view?: {
-    readonly revoked: ReadonlySet<string>;
-    readonly members: ReadonlyMap<string, { readonly kind: "server" | "device"; readonly keys: { readonly sign: string; readonly dh: string } }>;
-  };
+  readonly view?: SessionRosterView;
   onChange(listener: (change: { invalidated: string[] }) => void): () => void;
 }
 

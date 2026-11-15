@@ -16,7 +16,7 @@
 import type { Command } from "../contract";
 import {
   decodeWireFrame, encodeChunkFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, REFUSE_REASON_TEXT, ResAssembler, slotKey,
-  type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type ServerState, type Slot, type StreamId, type Target,
+  type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type ServerAddresses, type ServerState, type Slot, type StreamId, type Target,
 } from "../protocol";
 import type { Rows } from "../protocol/table-rows";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";
@@ -138,7 +138,7 @@ export interface PendingView {
 }
 
 /** A server as the attached server sees it (`welcome.servers`, `peer`, v1 §10.5). */
-export interface ServerView { id: string; name: string; state: ServerState; since: number | null; self: boolean }
+export interface ServerView { id: string; name: string; state: ServerState; since: number | null; self: boolean; dh?: string; addresses?: ServerAddresses }
 
 /** How many settled delivered items the link remembers for a later reset (D50, M3 step 11). */
 const SETTLED_KEPT = 200;
@@ -594,7 +594,14 @@ export class FeLink {
       void this.outbox.rotateEpoch().catch((error) => this.emit({ type: "error", error }));
     }
     this.serverViews.clear();
-    for (const server of welcome.servers) this.serverViews.set(server.id, { id: server.id, name: server.name, state: server.state, since: server.since, self: server.id === welcome.serverId });
+    for (const server of welcome.servers) {
+      const addresses = server.state === "gone" ? undefined : cleanServerAddresses(server.addresses);
+      this.serverViews.set(server.id, {
+        id: server.id, name: server.name, state: server.state, since: server.since, self: server.id === welcome.serverId,
+        ...(server.dh ? { dh: server.dh } : {}),
+        ...(addresses ? { addresses } : {}),
+      });
+    }
     if (!this.serverViews.has(welcome.serverId)) this.serverViews.set(welcome.serverId, { id: welcome.serverId, name: welcome.serverId, state: "live", since: null, self: true });
     for (const server of welcome.servers) if (server.id !== welcome.serverId) this.tables.add(`srv:${server.id}`);
     for (const stream of this.streams()) this.send(session, { t: "sub", stream, cursor: this.cursors.subCursor(stream) });
@@ -766,7 +773,13 @@ export class FeLink {
   private onPeer(session: Session, peer: MessageOf<"peer">): void {
     if (peer.serverId === this.serverId) return;
     const known = this.serverViews.get(peer.serverId);
-    this.serverViews.set(peer.serverId, { id: peer.serverId, name: known?.name ?? peer.serverId, state: peer.state, since: peer.since, self: false });
+    const dh = peer.dh ?? known?.dh;
+    const addresses = peer.state === "gone" ? undefined : (peer.addresses !== undefined ? cleanServerAddresses(peer.addresses) : known?.addresses);
+    this.serverViews.set(peer.serverId, {
+      id: peer.serverId, name: known?.name ?? peer.serverId, state: peer.state, since: peer.since, self: false,
+      ...(dh ? { dh } : {}),
+      ...(addresses ? { addresses } : {}),
+    });
     if (peer.state === "live") {
       for (const stream of [...this.staleStreams.keys()]) if (this.ownerOf(stream as StreamId) === peer.serverId) this.staleStreams.delete(stream);
     }
@@ -1030,4 +1043,12 @@ function reasonOf(outcome: Outcome): string {
     case "skipped": return "skipped";
     default: return "";
   }
+}
+
+function cleanServerAddresses(addresses?: ServerAddresses): ServerAddresses | undefined {
+  if (!addresses) return undefined;
+  const out: ServerAddresses = {};
+  if (addresses.tailnet) out.tailnet = addresses.tailnet;
+  if (addresses.relay) out.relay = addresses.relay;
+  return out.tailnet || out.relay ? out : undefined;
 }

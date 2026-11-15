@@ -72,12 +72,29 @@ export const Hello = msg("hello", {
   /** The local token (local socket only; other transports authenticate in the handshake, §5.1, §6.1). */
   token: z.string().min(16).max(256).optional(),
 });
+/** D70: a server's reachable front-end addresses (tailnet WebSocket and/or relay room). */
+export const ServerAddresses = z.strictObject({
+  tailnet: z.string().max(500).regex(/^wss:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?\/v3\/ws$/).optional(),
+  relay: z.strictObject({ url: z.string().max(500).regex(/^wss?:\/\/[^\s]+$/), room: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/) }).optional(),
+});
+export type ServerAddresses = z.infer<typeof ServerAddresses>;
+
+export const WelcomeServer = z.strictObject({
+  id: ServerId,
+  name: z.string().min(1).max(200),
+  state: ServerState,
+  since: z.number().int().nonnegative().nullable(),
+  dh: PublicKey.optional(),
+  addresses: ServerAddresses.optional(),
+});
+export type WelcomeServer = z.infer<typeof WelcomeServer>;
+
 export const Welcome = msg("welcome", {
   serverId: ServerId,
   protocol: z.strictObject({ min: z.number().int().min(1), max: z.number().int().min(1) }).refine((range) => range.min <= range.max, { message: "min above max" }),
   minFeVersion: Version,
   rosterDigest: EntryHash.nullable(),
-  servers: z.array(z.strictObject({ id: ServerId, name: z.string().min(1).max(200), state: ServerState, since: z.number().int().nonnegative().nullable() })).max(64),
+  servers: z.array(WelcomeServer).max(64),
   /** The owner's `next` for this front end's current epoch, per target this server owns (§11.4). */
   next: z.record(Target, z.number().int().min(1)),
   views: z.record(z.string().max(100), z.unknown()),
@@ -127,7 +144,13 @@ export const Reset = msg("reset", {
 /** The serving server lost the stream's owner (§10.2). */
 export const Stale = msg("stale", { stream: StreamId, since: z.number().int().nonnegative() });
 /** A server's state as the attached server sees it (§10.5). */
-export const Peer = msg("peer", { serverId: ServerId, state: ServerState, since: z.number().int().nonnegative().nullable() });
+export const Peer = msg("peer", {
+  serverId: ServerId,
+  state: ServerState,
+  since: z.number().int().nonnegative().nullable(),
+  dh: PublicKey.optional(),
+  addresses: ServerAddresses.optional(),
+});
 
 // ---------------------------------------------------------------------------------------------
 // Live channel (§9.2)
