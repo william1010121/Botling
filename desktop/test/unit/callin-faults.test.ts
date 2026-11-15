@@ -48,6 +48,8 @@ const SEED = Number(process.env.CALLIN_FAULT_SEED ?? 20261115);
 const TIMERS = { ping: 300, dead: 1_500, redial: 150, redialMax: 800, revoked: 2_500 };
 const TIMERS_ENV = Object.entries(TIMERS).map(([k, v]) => `${k}=${v}`).join(",");
 const STALE_MS = 2_500;
+/** The host's cap: a wait whose answer B lost (a kill between B's mark and its queue) ends here, with B live. */
+const CAP_MS = 10_000;
 const GUESTS = 8;
 const WAKE_MARK = "whom you called in with @";
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -359,7 +361,7 @@ beforeAll(async () => {
   cluster = await startServers({
     name: "callin-faults", count: 2,
     env: {
-      A: { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, BOTLING_SERVER_CALLIN_TIMERS: `stale=${STALE_MS},cap=30000,tick=200`, FAKE_CLAUDE_INPUT: aInput },
+      A: { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, BOTLING_SERVER_CALLIN_TIMERS: `stale=${STALE_MS},cap=${CAP_MS},tick=200`, FAKE_CLAUDE_INPUT: aInput },
       B: { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, FAKE_CLAUDE_INPUT: bInput, FAKE_CLAUDE_GUEST_MS: "250" },
     },
   });
