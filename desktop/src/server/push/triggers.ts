@@ -20,6 +20,11 @@ export const DEFAULT_PUSH_MAX_BACKOFF_MS = 5 * 60_000;
 export const DEFAULT_PUSH_MAX_RETRIES = 3;
 const MAX_GONE_ENDPOINTS = 4096;
 const MAX_PENDING_RETRIES = 256;
+/** Sends running at once (each one can hold a libuv thread in DNS until the OS resolver gives up, M4-23). */
+const MAX_CONCURRENT_SENDS = 4;
+const MAX_QUEUED_SENDS = 256;
+/** Longest a `Retry-After` beyond `maxBackoffMs` keeps an origin closed (no retry is scheduled for it). */
+const MAX_ORIGIN_BLOCK_MS = 60 * 60_000;
 
 export interface PushTriggersOptions {
   scope: TxScope;
@@ -43,6 +48,8 @@ export interface PushTriggersOptions {
   /** Maximum retry attempts after an initial failed attempt (default 3). */
   maxRetries?: number;
   now?: () => number;
+  /** Jitter source in [0, 1) (tests); a retry waits its delay plus up to half of it again. */
+  random?: () => number;
   log?: (line: string) => void;
 }
 
@@ -84,6 +91,10 @@ export class PushTriggers {
   private readonly goneEndpoints = new Set<string>();
   private readonly originBlockedUntil = new Map<string, number>();
   private readonly pendingRetries = new Map<string, { timer: NodeJS.Timeout; attempt: number }>();
+  /** Per bot: the trailing push at the end of a coalescing window, for cards opened inside it. */
+  private readonly trailing = new Map<string, { timer: NodeJS.Timeout; cards: Set<string> }>();
+  private readonly queue: Array<() => void> = [];
+  private active = 0;
   private readonly coalesceMs: number;
   private readonly backoffBaseMs: number;
   private readonly maxBackoffMs: number;
@@ -164,7 +175,7 @@ export class PushTriggers {
       this.options.scope.onRollback(() => { this.openCards.delete(key); });
       this.options.scope.afterCommit(() => {
         if (this.closed || !this.openCards.has(key)) return;
-        this.triggerBot(event.botId);
+        this.triggerBot(event.botId, key);
       });
       return;
     }
@@ -186,6 +197,9 @@ export class PushTriggers {
       clearTimeout(entry.timer);
     }
     this.pendingRetries.clear();
+    for (const entry of this.trailing.values()) clearTimeout(entry.timer);
+    this.trailing.clear();
+    this.queue.length = 0;
   }
 
   private botHasOpenCard(botId: string): boolean {
@@ -196,12 +210,27 @@ export class PushTriggers {
     return false;
   }
 
-  private triggerBot(botId: string): void {
+  private triggerBot(botId: string, card?: string): void {
     const now = this.now();
     const lastAt = this.lastBotPushAt.get(botId);
     if (this.coalesceMs > 0 && lastAt !== undefined && now - lastAt < this.coalesceMs) {
+      // Coalesced: one push at the window's end if a card opened in it is still open (never lost, never twice).
+      let entry = this.trailing.get(botId);
+      if (!entry) {
+        const timer = setTimeout(() => {
+          const due = this.trailing.get(botId);
+          this.trailing.delete(botId);
+          const open = due && [...due.cards].find((key) => this.openCards.has(key));
+          if (!this.closed && open) this.triggerBot(botId, open);
+        }, Math.max(1, lastAt + this.coalesceMs - now));
+        timer.unref?.();
+        entry = { timer, cards: new Set() };
+        this.trailing.set(botId, entry);
+      }
+      if (card) entry.cards.add(card);
       return;
     }
+    this.cancelTrailing(botId);
 
     const botName = this.currentBotName(botId);
     const attached = toDeviceSet(this.options.attachedDevices?.());
@@ -219,6 +248,7 @@ export class PushTriggers {
 
         const origin = safeOrigin(subscription.endpoint);
         const blockedUntil = this.originBlockedUntil.get(origin) ?? 0;
+        if (blockedUntil - now > this.maxBackoffMs) continue;
         if (blockedUntil > now + 5) {
           deferred.push({ device, delayMs: Math.min(this.maxBackoffMs, blockedUntil - now) });
         } else {
@@ -247,6 +277,22 @@ export class PushTriggers {
   }
 
   private dispatch(alert: PushAlert, attempt: number, endpoints: Map<string, string>): void {
+    if (this.active >= MAX_CONCURRENT_SENDS) {
+      if (this.queue.length >= MAX_QUEUED_SENDS) {
+        this.options.log?.(`push: send queue full, dropped a push for ${alert.botId}`);
+        return;
+      }
+      // Queued: decide again who may get it when it starts (L-008).
+      this.queue.push(() => {
+        if (!this.botHasOpenCard(alert.botId)) return;
+        if (!alert.devices) return this.dispatch(alert, attempt, endpoints);
+        const attached = toDeviceSet(this.options.attachedDevices?.());
+        const devices = alert.devices.filter((device) => !attached.has(device) && (this.options.canPushDevice?.(device) ?? true));
+        if (devices.length) this.dispatch({ ...alert, devices }, attempt, endpoints);
+      });
+      return;
+    }
+    this.active++;
     const task = Promise.resolve()
       .then(() => this.options.sender.notify(alert))
       .then((report) => {
@@ -257,6 +303,8 @@ export class PushTriggers {
       })
       .finally(() => {
         this.inFlight.delete(task);
+        this.active--;
+        while (!this.closed && this.active < MAX_CONCURRENT_SENDS && this.queue.length) this.queue.shift()!();
       });
     this.inFlight.add(task);
   }
@@ -264,6 +312,7 @@ export class PushTriggers {
   private handleReport(botId: string, report: PushSendReport, attempt: number, endpoints: Map<string, string>): void {
     if (this.closed) return;
     const now = this.now();
+    for (const [origin, until] of this.originBlockedUntil) if (until <= now) this.originBlockedUntil.delete(origin);
     for (const result of report.results) {
       const endpoint = endpoints.get(result.device);
       const origin = endpoint ? safeOrigin(endpoint) : result.device;
@@ -280,6 +329,14 @@ export class PushTriggers {
       }
 
       if (!result.retryable) continue;
+
+      if (result.retryAfterMs !== undefined && result.retryAfterMs > this.maxBackoffMs) {
+        // Honour a long Retry-After instead of retrying early: close the origin (bounded), schedule nothing.
+        const until = now + Math.min(MAX_ORIGIN_BLOCK_MS, result.retryAfterMs);
+        if (until > (this.originBlockedUntil.get(origin) ?? 0)) this.originBlockedUntil.set(origin, until);
+        this.options.log?.(`push: ${result.device} (${origin}) asked to wait ${Math.round(result.retryAfterMs / 1000)} s, not retrying`);
+        continue;
+      }
 
       if (attempt >= this.maxRetries) {
         this.options.log?.(`push: giving up retry for ${result.device} (${origin}) after ${attempt} attempt(s) (${result.reason})`);
@@ -312,7 +369,9 @@ export class PushTriggers {
       return;
     }
 
-    const boundedDelay = Math.max(1, Math.min(this.maxBackoffMs, delayMs));
+    // Jitter only adds (never earlier than Retry-After or a cooldown), so retries for one origin do not fire together.
+    const capped = Math.max(1, Math.min(this.maxBackoffMs, delayMs));
+    const boundedDelay = capped + Math.floor((this.options.random ?? Math.random)() * capped / 2);
     const timer = setTimeout(() => {
       this.pendingRetries.delete(key);
       this.runRetry(botId, device, attempt);
@@ -340,7 +399,7 @@ export class PushTriggers {
       const now = this.now();
       const blockedUntil = this.originBlockedUntil.get(origin) ?? 0;
       if (blockedUntil > now + 5) {
-        if (attempt >= this.maxRetries) return;
+        if (attempt >= this.maxRetries || blockedUntil - now > this.maxBackoffMs) return;
         this.scheduleRetry(botId, device, attempt + 1, blockedUntil - now);
         return;
       }
@@ -357,7 +416,14 @@ export class PushTriggers {
     this.pendingRetries.delete(key);
   }
 
+  private cancelTrailing(botId: string): void {
+    const entry = this.trailing.get(botId);
+    if (entry) clearTimeout(entry.timer);
+    this.trailing.delete(botId);
+  }
+
   private cancelBotRetries(botId: string): void {
+    this.cancelTrailing(botId);
     const prefix = `${botId}\0`;
     for (const [key, entry] of this.pendingRetries) {
       if (key.startsWith(prefix)) {

@@ -35,7 +35,7 @@ import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity, writeVapi
 import { IntentRuntime } from "../../src/server/intents";
 import { LiveChannel } from "../../src/server/live";
 import { LogHub } from "../../src/server/log";
-import { attachedDeviceIds, DEFAULT_PUSH_COALESCE_MS, parseRetryAfterMs, PushSender, PushTriggers, type PushTransport } from "../../src/server/push";
+import { attachedDeviceIds, DEFAULT_PUSH_COALESCE_MS, parseRetryAfterMs, PushSender, PushTriggers, type PushAlert, type PushSendReport, type PushTransport } from "../../src/server/push";
 import { RosterStore } from "../../src/server/roster";
 import { RemoteSession, RemoteSessions, Session, SessionHost, slotAuthorize, type RemoteHost, type SessionOptions } from "../../src/server/session";
 import { ShellBridge } from "../../src/server/shell-bridge";
@@ -324,6 +324,7 @@ async function setupHarness(options: {
   maxBackoffMs?: number;
   maxRetries?: number;
   now?: () => number;
+  random?: () => number;
   sender?: Pick<PushSender, "notify">;
 } = {}) {
   const dir = makeTempDir();
@@ -388,6 +389,7 @@ async function setupHarness(options: {
     ...(options.maxBackoffMs !== undefined ? { maxBackoffMs: options.maxBackoffMs } : {}),
     ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
     ...(options.now ? { now: options.now } : {}),
+    ...(options.random ? { random: options.random } : {}),
     log: (line) => logs.push(line),
   });
 
@@ -996,7 +998,7 @@ describe("M4-24 review items: read scope, gone memory, 429 Retry-After, backoff,
       ownedBots: [OWNED_BOT, bot2],
       coalesceMs: 0,
       backoffBaseMs: 10,
-      maxBackoffMs: 120,
+      maxBackoffMs: 2_000, // above the 1 s Retry-After, so it is honoured (a longer one schedules no retry)
       maxRetries: 2,
       responder: (req) => {
         if (req.origin === "https://origin-a.example" && req.url === "/sub/a1-cap-61") {
@@ -1037,7 +1039,7 @@ describe("M4-24 review items: read scope, gone memory, 429 Retry-After, backoff,
     );
     await h2.triggers.idle();
     const minOriginARetryAt = Math.min(...h2.fakePush.received.filter((r) => r.origin === "https://origin-a.example").slice(1).map((r) => r.at));
-    expect(minOriginARetryAt - t0).toBeGreaterThanOrEqual(80);
+    expect(minOriginARetryAt - t0).toBeGreaterThanOrEqual(1_000);
 
     // 2) Persistent 503 retries up to maxRetries (2) with bounded backoff and stops (1 + 2 = 3 total attempts).
     const h3 = await setupHarness({
@@ -1181,5 +1183,137 @@ describe("M4-24 review items: read scope, gone memory, 429 Retry-After, backoff,
     });
     await hErr.settle();
     expect(hErr.logs.some((l) => l.includes("vapid-keys vanished"))).toBe(true);
+  });
+});
+
+describe("M4-24 review fixes: send cap, jitter, trailing coalesce, long Retry-After", () => {
+  const card = (id: string) => makeMessage(id, { text: "Q", choices: [{ label: "OK", recommended: true, detail: null, action: null }] });
+  const commits = async (h: { runtime: { scope: { submit: (c: () => undefined) => Promise<unknown> } } }) => {
+    for (let i = 0; i < 4; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await h.runtime.scope.submit(() => undefined);
+    }
+  };
+
+  it("runs at most 4 sends at once, starts queued ones without losing or doubling any, and re-checks attachment when a queued send starts", async () => {
+    const bots = Array.from({ length: 7 }, (_, i) => `6A0B0000-0000-4000-8000-0000000001${String(i).padStart(2, "0")}`);
+    const calls: PushAlert[] = [];
+    const gates: Array<() => void> = [];
+    let running = 0;
+    let peak = 0;
+    const h = await setupHarness({
+      ownedBots: bots,
+      coalesceMs: 0,
+      sender: {
+        notify: (alert) => {
+          calls.push(alert);
+          peak = Math.max(peak, ++running);
+          return new Promise<PushSendReport>((resolve) => gates.push(() => { running--; resolve({ sent: 1, results: [] }); }));
+        },
+      },
+    });
+    const d = await h.addDevice("phone", 91);
+    for (const bot of bots) h.engine.emit({ type: "message.added", botId: bot, message: card(`cap-${bot}`) });
+    await commits(h);
+    expect(calls).toHaveLength(4);
+
+    gates.splice(0, 2).forEach((open) => open());
+    await until(() => (calls.length >= 6 ? true : null), { timeout: 5_000, what: "two queued sends started" });
+    expect(peak).toBe(4);
+
+    // The device attaches while the last send waits in the queue: it must not get it.
+    const tab = h.connectDevice(d.memberId, d.auth);
+    await tab.hello();
+    while (gates.length) gates.splice(0).forEach((open) => open());
+    await h.triggers.idle();
+    expect(calls).toHaveLength(6);
+    expect(new Set(calls.map((c) => c.botId)).size).toBe(6);
+    expect(peak).toBe(4);
+  });
+
+  it("adds jitter to a retry delay (never earlier than the backoff)", async () => {
+    const at: number[] = [];
+    let device = "";
+    const h = await setupHarness({
+      coalesceMs: 0,
+      backoffBaseMs: 60,
+      maxBackoffMs: 1_000,
+      maxRetries: 1,
+      random: () => 0.99,
+      sender: {
+        notify: async () => {
+          at.push(Date.now());
+          return { sent: 0, results: [{ device, ok: false, retryable: true, reason: "http-503" }] };
+        },
+      },
+    });
+    device = (await h.addDevice("jit", 92)).memberId;
+    h.engine.emit({ type: "message.added", botId: OWNED_BOT, message: card("jit-1") });
+    await until(() => (at.length >= 2 ? true : null), { timeout: 5_000, what: "one retry" });
+    // 60 ms backoff + floor(0.99 * 30) = 89 ms jitter-added delay.
+    expect(at[1] - at[0]).toBeGreaterThanOrEqual(85);
+  });
+
+  it("sends one trailing push at the end of a coalescing window when a card opened inside it is still open, and none when it was answered", async () => {
+    let clock = 1_000;
+    const calls: PushAlert[] = [];
+    const h = await setupHarness({
+      coalesceMs: 100,
+      now: () => clock,
+      sender: { notify: async (alert) => { calls.push(alert); return { sent: 1, results: [] }; } },
+    });
+    await h.addDevice("phone", 93);
+    const a = card("tr-a");
+    h.engine.emit({ type: "message.added", botId: OWNED_BOT, message: a });
+    await h.settle();
+    expect(calls).toHaveLength(1);
+
+    clock = 1_010; // inside the window: coalesced, trailing push due in 90 ms
+    h.engine.emit({ type: "message.added", botId: OWNED_BOT, message: card("tr-b") });
+    h.engine.emit({ type: "message.updated", botId: OWNED_BOT, message: { ...a, chosen: 0, answer: "OK" } });
+    await h.settle();
+    expect(calls).toHaveLength(1);
+    clock = 1_200;
+    await until(() => (calls.length >= 2 ? true : null), { timeout: 5_000, what: "trailing push for the card opened in the window" });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(calls).toHaveLength(2);
+
+    clock = 1_250; // inside the new window; the card is answered before the window ends
+    const c = card("tr-c");
+    h.engine.emit({ type: "message.added", botId: OWNED_BOT, message: c });
+    await h.settle();
+    h.engine.emit({ type: "message.updated", botId: OWNED_BOT, message: { ...c, chosen: 0, answer: "OK" } });
+    await h.settle();
+    h.engine.emit({ type: "message.updated", botId: OWNED_BOT, message: { ...card("tr-b"), chosen: 0, answer: "OK" } });
+    await h.settle();
+    clock = 1_400;
+    await new Promise((r) => setTimeout(r, 150));
+    expect(calls).toHaveLength(2);
+  });
+
+  it("does not retry early when Retry-After is longer than the cap, and keeps the origin closed for new cards", async () => {
+    const calls: PushAlert[] = [];
+    let device = "";
+    const h = await setupHarness({
+      coalesceMs: 0,
+      backoffBaseMs: 10,
+      maxBackoffMs: 50,
+      maxRetries: 3,
+      sender: {
+        notify: async (alert) => {
+          calls.push(alert);
+          return { sent: 0, results: [{ device, ok: false, retryable: true, retryAfterMs: 10_000, reason: "http-429" }] };
+        },
+      },
+    });
+    device = (await h.addDevice("slow", 94)).memberId;
+    h.engine.emit({ type: "message.added", botId: OWNED_BOT, message: card("ra-long-1") });
+    await h.settle();
+    await new Promise((r) => setTimeout(r, 200));
+    h.engine.emit({ type: "message.added", botId: OWNED_BOT, message: card("ra-long-2") });
+    await h.settle();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(calls).toHaveLength(1);
+    expect(h.logs.some((line) => line.includes("not retrying"))).toBe(true);
   });
 });
