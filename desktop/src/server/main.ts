@@ -18,6 +18,9 @@
 //                             puts a backup back with the server stopped (restore.ts says why); refused (exit 75) while
 //                             it runs, unless --stop, which stops it first. It is not started again here: a Botling 3
 //                             window starts it when it reconnects, or run botlingd start.
+//   botlingd import <2.x folder> [--dry-run]
+//                             (M6-01d) imports a Botling 2.x data folder into this folder (read-only on 2.x)
+//                             and writes <data>/import-report.md; --dry-run previews the report without writing
 //   botlingd pair [--name <device name>] [--scope read,reply,approve,manage] [--no-qr]
 //                             pairs a phone or browser with the running server (M2 step 5): the first pairing shows the
 //                             recovery code once and makes the cluster only after it is typed back; then a link and QR
@@ -50,6 +53,7 @@ import { LISTEN_FILE, LISTEN_HOST, listenPort, tailscaleServeCommand } from "./n
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
+import { ImportError, runImport } from "./import/run";
 import { RestoreError, restoreBackup } from "./restore";
 import { serviceCommand, ServiceError } from "./service";
 import { AdminClient, addMachineCommand, createStdinIo, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./pairing";
@@ -450,8 +454,24 @@ async function main(argv: string[]): Promise<void> {
       }
       return;
     }
+    case "import": {
+      const unknown = rest.find((arg) => arg.startsWith("-") && arg !== "--dry-run");
+      if (unknown) fail(`unknown option "${unknown}" (use: botlingd import <2.x folder> [--dry-run])`, 2);
+      const positional = rest.filter((arg) => !arg.startsWith("-"));
+      if (positional.length !== 1) fail("import needs one 2.x data folder: botlingd import <2.x folder> [--dry-run]", 2);
+      const dryRun = rest.includes("--dry-run");
+      try {
+        const result = await runImport({ sourceDir: positional[0]!, targetDir: paths.dataDir, dryRun });
+        process.stdout.write(result.reportText);
+      } catch (error) {
+        if (error instanceof ImportError) fail(error.message, error.exitCode);
+        if (error instanceof PathsError) fail(error.message, 2);
+        throw error;
+      }
+      return;
+    }
     default:
-      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, pair, join, add-machine, machines, recovery, reroot, devices, revoke-device)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, pair, join, add-machine, machines, recovery, reroot, devices, revoke-device)`, 2);
   }
 }
 
