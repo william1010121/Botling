@@ -233,8 +233,9 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     view.settingsSections = [...view.settingsSections!, { ...view.settingsSections![0]!, plugin: "botling.note", id: "botling.note.settings", title: "Note" }];
     feed.reconcile(view);
     startSettings(kernel);
-    // The late-started owner holds every PLUGIN_OWNED_SLOTS place now (the settings two and botling.bot-panel's, M7-03a): the feed is told all of them.
-    feed.refresh(["settings/section", "settings/quick", ...PLUGIN_OWNED_SLOTS.filter((slot) => slot.startsWith("view/rightPanel"))]);
+    // The late-started owner holds every PLUGIN_OWNED_SLOTS place now (the settings two, botling.bot-panel's M7-03a, botling.chat's M7-06a,
+    // botling.browser-pane's M7-06c, and whatever plugin takes a place next): the feed is told all of them.
+    feed.refresh(PLUGIN_OWNED_SLOTS);
     const fresh = setup().feed;
     fresh.reconcile(view);
     expect(fresh.rows("view/mainTab").map((row) => (row as { plugin: string }).plugin).slice(0, 2)).toEqual(["botling.note", "botling.whiteboard"]);
