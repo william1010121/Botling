@@ -227,7 +227,9 @@ describe("when the panel plugin is not there", () => {
     void kernel.requestUnload(BOT_PANEL_PLUGIN);
     await flush();
     expect(kernel.state(BOT_PANEL_PLUGIN)).toBe("unloading");
-    expect(kernel.entries("tile/board").length).toBeGreaterThan(0);
+    // The kernel still holds the registrations (their undo has not finished); it shows none of them.
+    expect(kernel.allContributions().filter((held) => held.slot === "tile/board").length).toBeGreaterThan(0);
+    expect(kernel.entries("tile/board")).toEqual([]);
     expect(tiles("board")).toEqual([]);
     slow.resolve();
     await flush();

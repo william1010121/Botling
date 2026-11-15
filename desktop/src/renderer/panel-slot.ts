@@ -39,12 +39,13 @@ export function usePanelState(): PanelState {
 
 /**
  * The tiles `surface` holds (M7-03b): the rows the feed put into `panel/tile/<surface>` for the plugins that are on, in the view's order. Fail closed:
- * none while the host says the bot-panel plugin is unavailable, or the kernel does not hold it active (unloading too: no tile outlives its owner, even
- * before its registrations are taken back). Only a registration of the plugin the row names counts, and the row must name this surface (the kernel
- * lets any plugin contribute to a slot someone else owns, so the slot's owner is not a filter). There is no data of its own to fall back on.
+ * none while the host says the bot-panel plugin is unavailable; the kernel shows a slot only while its owner and the contributor are active, so none
+ * while the plugin is unloading either (no tile outlives its owner, before its registrations are taken back too). Only a registration of the plugin
+ * the row names counts, and the row must name this surface (the kernel lets any plugin contribute to a slot someone else owns, so the slot's owner
+ * is not a filter). There is no data of its own to fall back on (the plugin never loaded: no tile).
  */
 export function tilesFor(surface: TileSurface, kernel: Kernel = rendererKernel, host: Pick<InPageHost, "unavailable"> = inPageHost): TileView[] {
-  if (host.unavailable(BOT_PANEL_PLUGIN) || kernel.state(BOT_PANEL_PLUGIN) !== "active") return [];
+  if (host.unavailable(BOT_PANEL_PLUGIN)) return [];
   const tiles: TileView[] = [];
   for (const { plugin, entry } of kernel.entries<Partial<FeedEntry<TileView>>>(TILE_SLOTS[surface])) {
     if (typeof entry !== "object" || entry === null || entry.kind !== "feed") continue;
