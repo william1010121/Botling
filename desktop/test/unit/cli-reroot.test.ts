@@ -3,7 +3,8 @@
 // with WebCrypto keys and real server.db stores in temp folders (no windows, no network listener).
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { format } from "node:util";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   AdminOp, decodeFrame, encodeFrame, memberIdFromKey, roleRefusal, toBase64Url, toHex,
   type AdminOp as AdminOpType, type Message, type MessageOf,
@@ -18,7 +19,7 @@ import { IntentRuntime } from "../../src/server/intents";
 import { LiveChannel } from "../../src/server/live";
 import { LogHub } from "../../src/server/log";
 import {
-  AdminClient, PairingService, parseRerootArgs, RerootArgsError, rerootCommand, type CliIo,
+  AdminClient, PairingError, PairingService, parseRerootArgs, RerootArgsError, rerootCommand, type CliIo,
 } from "../../src/server/pairing";
 import { readAudits, RosterStore } from "../../src/server/roster";
 import { RemoteSessions, SessionCore, SessionServer, slotAuthorize, writeToken, type RemoteHost, type SessionHost } from "../../src/server/session";
@@ -95,8 +96,9 @@ async function makeServer(serverName: string, now: () => number): Promise<Server
     ensureBotStream: async (botId) => { if (!engine.hasBot(botId)) return false; await store.submit((tx) => { ensureBot(tx, botId); }); return true; },
     log: (line) => logs.push(line),
     admin: {
-      handle: (op) => { adminCalls.push(op); return pairing.admin(op); },
+      handle: (op, session) => { adminCalls.push(op); return pairing.admin(op, session); },
       onEvent: (listener) => pairing.onEvent(listener),
+      sessionClosed: (session) => pairing.adminClosed(session),
     },
   };
   const host: RemoteHost = { ...base, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing };
@@ -141,11 +143,16 @@ async function connectAdmin(node: ServerNode): Promise<AdminClient> {
 function scriptedIo(answers: Array<string | null>) {
   const out: string[] = [];
   const asked: string[] = [];
+  const askOptions: Array<{ secret?: boolean } | undefined> = [];
   const io: CliIo = {
     out: (line) => { out.push(line); },
-    ask: async (prompt) => { asked.push(prompt); return answers.length ? answers.shift()! : null; },
+    ask: async (prompt, options) => {
+      asked.push(prompt);
+      askOptions.push(options);
+      return answers.length ? answers.shift()! : null;
+    },
   };
-  return { io, out, asked };
+  return { io, out, asked, askOptions };
 }
 
 function walkFiles(dir: string): string[] {
@@ -170,6 +177,18 @@ async function rawSeedFromCode(typed: string): Promise<Uint8Array> {
       256,
     ),
   );
+}
+
+function localMinute(ms: number): string {
+  const d = new Date(ms);
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function localDay(ms: number): string {
+  const d = new Date(ms);
+  const pad = (v: number) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /**
@@ -202,15 +221,19 @@ async function clusterFixture(options: { withRemovals?: boolean } = {}) {
     sponsor: { member: studio.identity.memberId, keys: studio.identity.keys, name: "studio" },
   });
 
-  // Pixel added by studio on 2026-11-10
-  clock = Date.UTC(2026, 10, 10, 8, 0, 0);
+  // Pixel added by studio on 2026-11-10 (at 20:00 UTC so UTC+8 local day differs from UTC day)
+  clock = Date.UTC(2026, 10, 10, 20, 0, 0);
   const pixel = await deviceKeys();
   await studio.roster.addDevice({ keys: pixel.keys, name: "Pixel" });
+  const pixelAddedAt = Date.UTC(2026, 10, 10, 20, 0, 0) + 60_000;
+  const laptopAddedAt = Date.UTC(2026, 10, 1, 12, 0, 0) + 60_000;
 
   let laptopOld: ServerNode | null = null;
   let testVm: ServerNode | null = null;
   let revLaptopOldId = "";
   let revTestVmId = "";
+  const rev1At = Date.UTC(2026, 10, 2, 14, 10, 0);
+  const rev2At = Date.UTC(2026, 10, 14, 9, 31, 0);
 
   if (options.withRemovals) {
     clock = Date.UTC(2026, 10, 2, 14, 0, 0);
@@ -231,11 +254,10 @@ async function clusterFixture(options: { withRemovals?: boolean } = {}) {
       sponsor: { member: studio.identity.memberId, keys: studio.identity.keys, name: "studio" },
     });
 
-    // Revoke laptop-old at 2026-11-02 14:10 and test-vm at 2026-11-14 09:31
-    clock = Date.UTC(2026, 10, 2, 14, 10, 0) - 60_000;
+    clock = rev1At - 60_000;
     const rev1 = await studio.roster.revokeServer(laptopOld.identity.memberId, false, "retired");
     revLaptopOldId = rev1.revokeId;
-    clock = Date.UTC(2026, 10, 14, 9, 31, 0) - 60_000;
+    clock = rev2At - 60_000;
     const rev2 = await studio.roster.revokeServer(testVm.identity.memberId, false, "compromised");
     revTestVmId = rev2.revokeId;
 
@@ -247,9 +269,9 @@ async function clusterFixture(options: { withRemovals?: boolean } = {}) {
       ...testVm.roster.statements(),
     ].map((item) => item.statement);
     await buildBox.roster.merge(allBase);
-    clock = Date.UTC(2026, 10, 2, 14, 10, 0) - 60_000;
+    clock = rev1At - 60_000;
     await buildBox.roster.merge([studio.roster.statements().find((s) => s.id === revLaptopOldId)!.statement]);
-    clock = Date.UTC(2026, 10, 14, 9, 31, 0) - 60_000;
+    clock = rev2At - 60_000;
     await buildBox.roster.merge([studio.roster.statements().find((s) => s.id === revTestVmId)!.statement]);
   } else {
     const all = [...studio.roster.statements(), ...laptop.roster.statements()].map((item) => item.statement);
@@ -258,6 +280,7 @@ async function clusterFixture(options: { withRemovals?: boolean } = {}) {
 
   return {
     studio, buildBox, laptop, pixel, laptopOld, testVm, revLaptopOldId, revTestVmId,
+    rev1At, rev2At, pixelAddedAt, laptopAddedAt,
     code: started.code,
   };
 }
@@ -286,26 +309,28 @@ describe("M4-11: botlingd reroot CLI", () => {
   });
 
   it("1. full flow with right code signs Root{g+1} and Revoke{oldRoot, cascade: false}, lists what old root added newest first", async () => {
-    const { studio, buildBox, laptop, pixel, code } = await clusterFixture();
+    const { studio, buildBox, laptop, pixel, pixelAddedAt, laptopAddedAt, code } = await clusterFixture();
     const client = await connectAdmin(buildBox);
     const spaced = code.toLowerCase().replace(/-/g, " ");
-    const { io, out, asked } = scriptedIo([spaced, "lost"]);
+    const { io, out, asked, askOptions } = scriptedIo([spaced, "lost"]);
 
     const exit = await rerootCommand(client, io);
     expect(exit).toBe(0);
 
     expect(out[0]).toBe('This makes "build-box" the revocation root of your machines.');
     expect(asked[0]).toBe("Type the recovery code (26 characters; spaces and dashes are fine): ");
+    expect(askOptions[0]).toEqual({ secret: true });
     expect(asked[1]).toBe('Is the old root "studio" lost or stolen? Type "lost" to remove it (what it added stays), or "keep" to leave it a member: ');
+    expect(askOptions[1]?.secret).toBeFalsy();
 
     const text = out.join("\n");
     expect(text).toContain('Done. "build-box" is the revocation root. "studio" was removed; what it added stays.');
     expect(text).toContain('Machines and phones "studio" added, newest first (remove any you do not know with "botlingd machines remove"):');
     expect(text).toContain('Replace the recovery code now? Run "botlingd recovery replace".');
 
-    // Pixel (2026-11-10) appears before laptop (2026-11-01).
-    const pixelAt = text.indexOf('phone "Pixel"   2026-11-10');
-    const laptopAt = text.indexOf('"laptop"        2026-11-01');
+    // Pixel appears before laptop, with local dates.
+    const pixelAt = text.indexOf(`phone "Pixel"   ${localDay(pixelAddedAt)}`);
+    const laptopAt = text.indexOf(`"laptop"        ${localDay(laptopAddedAt)}`);
     expect(pixelAt).toBeGreaterThan(-1);
     expect(laptopAt).toBeGreaterThan(pixelAt);
 
@@ -353,11 +378,14 @@ describe("M4-11: botlingd reroot CLI", () => {
     expect(buildBox.roster.view.root?.gen).toBe(1);
     expect(buildBox.roster.view.root?.root).toBe(studio.identity.memberId);
 
-    // Three wrong codes in one run end it.
+    // Three wrong codes in one run end it (all recovery code prompts use secret: true).
     const threeWrong = scriptedIo(["not-a-code", "lost", wrong, newRecoveryCode()]);
     expect(await rerootCommand(client, threeWrong.io)).toBe(1);
     expect(threeWrong.out.filter((line) => line === "That is not the recovery code. Nothing was changed.")).toHaveLength(3);
     expect(threeWrong.asked.filter((p) => p.startsWith("Type the recovery code"))).toHaveLength(3);
+    expect(threeWrong.askOptions[0]).toEqual({ secret: true });
+    expect(threeWrong.askOptions[2]).toEqual({ secret: true });
+    expect(threeWrong.askOptions[3]).toEqual({ secret: true });
     expect(buildBox.roster.view.root?.gen).toBe(1);
 
     // EOF at any prompt stops with nothing changed.
@@ -368,33 +396,42 @@ describe("M4-11: botlingd reroot CLI", () => {
     }
   });
 
-  it("3. keep follows the unticks (unticking '2' keeps 1 revoked and brings 2 back)", async () => {
-    const { buildBox, laptopOld, testVm, revLaptopOldId, revTestVmId, code } = await clusterFixture({ withRemovals: true });
-    const client = await connectAdmin(buildBox);
+  it("3. keep follows the unticks (unticking '2' keeps 1 revoked and brings 2 back) and displays local time", async () => {
+    const prevTz = process.env.TZ;
+    process.env.TZ = "Asia/Taipei";
+    try {
+      const { buildBox, laptopOld, testVm, revLaptopOldId, revTestVmId, code } = await clusterFixture({ withRemovals: true });
+      const client = await connectAdmin(buildBox);
 
-    expect(buildBox.roster.isValid(laptopOld!.identity.memberId)).toBe(false);
-    expect(buildBox.roster.isValid(testVm!.identity.memberId)).toBe(false);
+      expect(buildBox.roster.isValid(laptopOld!.identity.memberId)).toBe(false);
+      expect(buildBox.roster.isValid(testVm!.identity.memberId)).toBe(false);
 
-    const { io, out, asked } = scriptedIo([code, "lost", "2"]);
-    expect(await rerootCommand(client, io)).toBe(0);
+      const { io, out, asked } = scriptedIo([code, "lost", "2"]);
+      expect(await rerootCommand(client, io)).toBe(0);
 
-    const text = out.join("\n");
-    expect(text).toContain("Removals made by earlier roots (untick any you did not make):");
-    expect(text).toContain('[x] 1  "laptop-old"   removed by studio   2026-11-02 14:10');
-    expect(text).toContain('[x] 2  "test-vm"      removed by studio   2026-11-14 09:31');
-    expect(asked[2]).toBe('Type the numbers to UNtick (e.g. "2"), or press Enter to keep all: ');
+      const text = out.join("\n");
+      expect(text).toContain("Removals made by earlier roots (untick any you did not make):");
+      // rev1At = 14:10 UTC = 22:10 Asia/Taipei; rev2At = 09:31 UTC = 17:31 Asia/Taipei; Pixel = 20:00 UTC = next day 04:00
+      expect(text).toContain('[x] 1  "laptop-old"   removed by studio   2026-11-02 22:10');
+      expect(text).toContain('[x] 2  "test-vm"      removed by studio   2026-11-14 17:31');
+      expect(text).toContain('phone "Pixel"   2026-11-11');
+      expect(asked[2]).toBe('Type the numbers to UNtick (e.g. "2"), or press Enter to keep all: ');
 
-    const root2 = buildBox.roster.statements().find((s) => s.id === buildBox.roster.view.root?.id)?.statement;
-    expect(root2?.body.type).toBe("root");
-    if (root2?.body.type === "root") {
-      expect(root2.body.keep).toEqual([revLaptopOldId]);
-      expect(root2.body.keep).not.toContain(revTestVmId);
+      const root2 = buildBox.roster.statements().find((s) => s.id === buildBox.roster.view.root?.id)?.statement;
+      expect(root2?.body.type).toBe("root");
+      if (root2?.body.type === "root") {
+        expect(root2.body.keep).toEqual([revLaptopOldId]);
+        expect(root2.body.keep).not.toContain(revTestVmId);
+      }
+      expect(buildBox.roster.isValid(laptopOld!.identity.memberId)).toBe(false);
+      expect(buildBox.roster.isValid(testVm!.identity.memberId)).toBe(true);
+    } finally {
+      if (prevTz === undefined) delete process.env.TZ;
+      else process.env.TZ = prevTz;
     }
-    expect(buildBox.roster.isValid(laptopOld!.identity.memberId)).toBe(false);
-    expect(buildBox.roster.isValid(testVm!.identity.memberId)).toBe(true);
   });
 
-  it("4. the recovery code never appears in stdout, logs, errors, or the data folder (byte scan), and admin ops stay local-only", async () => {
+  it("4. the recovery code never appears in stdout, logs, console.*, errors, or the data folder (byte scan), and admin ops stay local-only", async () => {
     const { studio, buildBox, code } = await clusterFixture();
     const raw = normalizeRecoveryCode(code)!;
     const wrong = newRecoveryCode();
@@ -408,6 +445,19 @@ describe("M4-11: botlingd reroot CLI", () => {
       c.toLowerCase().match(/.{1,4}/g)!.join("-"),
       c.toLowerCase().match(/.{1,4}/g)!.join(" "),
     ];
+    const seedStrings = [
+      toHex(seed),
+      toBase64Url(seed),
+      Buffer.from(seed).toString("base64"),
+    ];
+
+    const consoleLines: string[] = [];
+    const consoleMethods = ["log", "info", "warn", "error", "debug"] as const;
+    const consoleSpies = consoleMethods.map((method) =>
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        consoleLines.push(format(...args));
+      }),
+    );
 
     try {
       const client = await connectAdmin(buildBox);
@@ -416,17 +466,15 @@ describe("M4-11: botlingd reroot CLI", () => {
       expect(await rerootCommand(client, io)).toBe(0);
 
       const allOut = out.join("\n");
-      const allLogs = buildBox.logs.join("\n");
-      for (const s of [...spellings(raw), ...spellings(wrong)]) {
+      const allLogs = `${buildBox.logs.join("\n")}\n${consoleLines.join("\n")}`;
+      for (const s of [...spellings(raw), ...spellings(wrong), ...seedStrings]) {
         expect(allOut).not.toContain(s);
         expect(allLogs).not.toContain(s);
       }
 
       const patterns: Buffer[] = [
         Buffer.from(seed),
-        Buffer.from(toHex(seed), "utf8"),
-        Buffer.from(toBase64Url(seed), "utf8"),
-        Buffer.from(Buffer.from(seed).toString("base64"), "utf8"),
+        ...seedStrings.map((s) => Buffer.from(s, "utf8")),
         ...spellings(raw).map((s) => Buffer.from(s, "utf8")),
         ...spellings(wrong).map((s) => Buffer.from(s, "utf8")),
       ];
@@ -469,6 +517,7 @@ describe("M4-11: botlingd reroot CLI", () => {
       await buildBox.close();
       scan();
     } finally {
+      for (const spy of consoleSpies) spy.mockRestore();
       seed.fill(0);
     }
   });
@@ -503,5 +552,17 @@ describe("M4-11: botlingd reroot CLI", () => {
     if (root2?.body.type === "root") {
       expect(root2.body.keep.sort()).toEqual([revLaptopOldId, revTestVmId].sort());
     }
+  });
+
+  it("6. bad-keep refusal from PairingService prints its own message instead of a generic error", async () => {
+    const { buildBox, code } = await clusterFixture();
+    const origReroot = buildBox.pairing.reroot.bind(buildBox.pairing);
+    vi.spyOn(buildBox.pairing, "reroot").mockRejectedValueOnce(new PairingError("bad-keep", "keep exceeds the maximum of 1000 revocations"));
+    const client = await connectAdmin(buildBox);
+    const { io, out } = scriptedIo([code, "keep"]);
+
+    expect(await rerootCommand(client, io)).toBe(1);
+    expect(out.join("\n")).toContain("Cannot reroot: keep list could not be accepted (keep exceeds the maximum of 1000 revocations).");
+    expect(origReroot).toBeTypeOf("function");
   });
 });
