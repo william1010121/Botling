@@ -1,11 +1,12 @@
 // Build check: `minFeVersion` names the shell only (M7-10b; plan-change §4.3 check 4, D55, N8).
 //   node scripts/check-shell-version.mjs [--repo <dir>] [--whole] [--no-baseline] [<base> [<head>]]      (default: main HEAD)
+//   (an empty or all-zero <base>, the `before` of a push that creates a branch, falls back to main, else origin/main; CI: .github/workflows/ci.yml)
 //   node scripts/check-shell-version.mjs [--repo <dir>] --update      rewrite desktop/fe-shell-baseline.json (MIN_FE_VERSION only) from the working tree
 //
 // A commit that touches only plugin sources (desktop/builtin-plugins/**, desktop/src/renderer/plugins/**; tests, docs and
 // notes beside them do not count) must leave both halves of the manifest's shell part as they were:
 //   - the value of `MIN_FE_VERSION` (found by name under desktop/src, so a card may move the constant), and
-//   - the shell hash (fe-shell-manifest.mjs: the files of the shell, never a plugin source).
+//   - the shell hash (fe-shell-manifest.mjs: the files the web-v3 build reads, never a plugin source; the list is the working tree's).
 // A commit that touches anything else may change them. Every non-merge commit of <base>..<head> is checked against its first
 // parent; `--whole` checks <base> → <head> as one change instead. Both values are read from git, nothing is checked out.
 // The build's manifest is not committed, so the committed baseline (desktop/fe-shell-baseline.json: `minFeVersion` only) is what the
@@ -16,9 +17,30 @@ import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFileSync } from "node:fs";
-import { findMinFeVersion, fsTree, gitTree, isNeutralPath, isPluginSourcePath, parseShellBaseline, SHELL_BASELINE_FILE, shellBaselineText, shellHash } from "../fe-shell-manifest.mjs";
+import { findMinFeVersion, fsTree, gitTree, isNeutralPath, isPluginSourcePath, parseShellBaseline, SHELL_BASELINE_FILE, shellBaselineText, shellHash, shellInputs } from "../fe-shell-manifest.mjs";
 
 const git = (repo, ...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+
+/** The shell hash of a tree, over the files the web-v3 build reads (M7-10c). The list comes from the working tree of `repo` (CI checks out the
+ * head), once, and only when a plugin-only commit needs it; it is applied to both sides of a commit, so the hash moves exactly when a file
+ * the head's shell is made of changes. An empty list (no build entry in the repo) throws: it would make every hash equal. */
+const shellHashOf = (repo) => {
+  let files;
+  return (tree) => {
+    files ??= shellInputs(repo);
+    if (files.length === 0) throw new Error(`the web-v3 build's entry files are not in ${repo} (cannot tell that the shell hash is unchanged)`);
+    return shellHash(tree, files);
+  };
+};
+
+/** A base that is empty or all zeros (the `before` of a push that creates a branch) means "main", or "origin/main" where there is no local main. */
+export function resolveBase(repo, base) {
+  if (base !== "" && !/^0+$/.test(base)) return base;
+  for (const ref of ["main", "origin/main"]) {
+    try { git(repo, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`); return ref; } catch { /* try the next */ }
+  }
+  throw new Error("the base is empty or all zeros and there is neither main nor origin/main to fall back to");
+}
 
 /** What a change is: "plugin-only" (plugin sources, with tests and docs at most), "none" (nothing but tests and docs), or "other". */
 export function classifyChange(paths) {
@@ -28,13 +50,13 @@ export function classifyChange(paths) {
 }
 
 /** The two values of the shell part at `ref`: { minFeVersion, hash }. */
-export const shellAt = (repo, ref, hash = shellHash) => { const tree = gitTree(repo, ref); return { minFeVersion: findMinFeVersion(tree), hash: hash(tree) }; };
+export const shellAt = (repo, ref, hash = shellHashOf(repo)) => { const tree = gitTree(repo, ref); return { minFeVersion: findMinFeVersion(tree), hash: hash(tree) }; };
 
 /**
  * Checks the change `from` → `to` (commits or refs). `paths` are the repo-relative paths it touches.
  * Returns { kind, problems: string[] }; a plugin-only change with a problem fails. `hash(tree)` is the shell hash (a test's way to try a wrong definition).
  */
-export function checkChange(repo, from, to, paths, { hash = shellHash } = {}) {
+export function checkChange(repo, from, to, paths, { hash = shellHashOf(repo) } = {}) {
   const kind = classifyChange(paths);
   const problems = [];
   if (kind !== "plugin-only") return { kind, problems };
@@ -58,7 +80,7 @@ export function checkBaseline(repo, ref) {
 const changedPaths = (repo, from, to) => git(repo, "diff", "--name-only", "-z", "--no-renames", from, to).split("\0").filter(Boolean);
 
 /** Checks every non-merge commit of base..head (or the whole range as one change). Returns [{ commit, subject, kind, problems }]. */
-export function checkRange(repo, base, head, { whole = false, hash = shellHash } = {}) {
+export function checkRange(repo, base, head, { whole = false, hash = shellHashOf(repo) } = {}) {
   if (whole) return [{ commit: head, subject: `${base}..${head}`, ...checkChange(repo, base, head, changedPaths(repo, base, head), { hash }) }];
   const commits = git(repo, "rev-list", "--reverse", "--no-merges", "--topo-order", `${base}..${head}`).split("\n").filter(Boolean);
   return commits.map((commit) => {
@@ -83,7 +105,8 @@ function main(argv) {
     console.log(`check-shell-version: ${SHELL_BASELINE_FILE} updated (${shell.minFeVersion})`);
     return 0;
   }
-  const [base = "main", head = "HEAD"] = args;
+  const [rawBase = "main", head = "HEAD"] = args;
+  const base = resolveBase(repo, rawBase);
   const results = checkRange(repo, base, head, { whole });
   const failed = results.filter((result) => result.problems.length > 0);
   const baseline = noBaseline ? [] : checkBaseline(repo, head);

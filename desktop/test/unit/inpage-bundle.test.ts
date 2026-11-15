@@ -2,12 +2,13 @@
 // window's CSP is connect-src 'none', so it cannot fetch the file); the bundled-module map reaches exactly the folders the
 // manifest lists; and web-v3/build.mjs writes the manifest too.
 import { build } from "esbuild";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FE_MANIFEST_FILE, feBuildManifestFile } from "../../fe-build-manifest.mjs";
+import { shellInputs } from "../../fe-shell-manifest.mjs";
 import { feManifestDefine } from "../../fe-manifest-define.mjs";
 import { bundledInPagePlugin } from "../../src/renderer/shell/inpage-bundled";
 import { embeddedFeManifest, parseFeManifest } from "../../src/renderer/shell/inpage-loader";
@@ -112,5 +113,12 @@ describe("web-v3/build.mjs", () => {
     expect(JSON.parse(written).plugins).toEqual(JSON.parse(feBuildManifestFile(desktop).toString("utf8")).plugins);
     const record = JSON.parse(readFileSync(`${out}.inputs.json`, "utf8")) as { sources: string[] };
     expect(record.sources).toContain(join(desktop, "fe-build-manifest.mjs"));
+    // M7-10c: shell.hash covers the files the build itself read (its `inputs`, relative to the build's cwd), less plugin sources:
+    // the entry list the hash is taken from cannot drift from the build's.
+    const repo = realpathSync.native(join(desktop, ".."));
+    const read = (JSON.parse(readFileSync(`${out}.inputs.json`, "utf8")) as { inputs: string[] }).inputs
+      .filter((input) => !input.startsWith("<")).map((input) => relative(repo, realpathSync.native(resolve(input))).split(sep).join("/"))
+      .filter((path) => !path.startsWith("..") && !path.includes("node_modules") && !/^desktop\/(?:builtin-plugins|src\/renderer\/plugins)\//.test(path)).sort();
+    expect(shellInputs(repo)).toEqual(read);
   }, 120_000);
 });

@@ -45,7 +45,7 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   // Every file the build reads (absolute paths), for the page tests' freshness check (test/acceptance/web-v3/page-fresh.ts).
   const sources = new Set([fileURLToPath(import.meta.url)]);
   // The in-page plugin list, written into the shell bundle (the same bytes as fe-build-manifest.json, checked before writing).
-  const feManifest = feBuildManifestFile(root);
+  const feManifest = feBuildManifestFile(root, undefined, { requireMinFeVersion: true });
   const [latex, chatExtras, catchup, boardPart] = await Promise.all(["ccb-latex", "botling.chat-extras", "botling.catchup", "botling.board"].map((name) => webPart(name, sources)));
   const browser = { bundle: true, format: "iife", target: ["chrome130", "safari17"], minify: !development, sourcemap: "linked", legalComments: "eof", write: false, nodePaths, metafile: true,
     logOverride: { "empty-glob": "silent" } }; // the in-page plugin folder (shell/inpage-bundled.ts) has no plugin yet
