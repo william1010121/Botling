@@ -19,12 +19,13 @@ import { tableLogId } from "../replica/tables";
 import { statedScope } from "../session/remote-reads";
 import { cmdHash } from "../slots";
 import type { Db } from "../store";
-import { commitRow, isRetired } from "./forward-queue";
+import { commitRow, isRetired, SERVER_ORIGIN_META_PREFIX } from "./forward-queue";
 import type { Forwarder } from "./forwarder";
 
-const META_PREFIX = "serverOrigin:";
+const META_PREFIX = SERVER_ORIGIN_META_PREFIX;
 const UNKNOWN_INC = "unknown0" as LogId;
 const OUTCOME_LIMIT = 10_000;
+const UNSENDABLE_OUTCOME: Outcome = { kind: "refused", reason: "invalid", detail: "this command could not be sent to the server that owns its target" };
 const REVOKED_OUTCOME: Outcome = { kind: "refused", reason: "revoked", detail: "the target server was removed from the roster" };
 
 interface PendingSubmit {
@@ -191,6 +192,7 @@ export class ServerOrigin {
     const db = this.options.reader();
     const unheldByOwner = new Map<string, PendingSubmit[]>();
     const retryOwners = new Set<string>();
+    const unsendable: PendingSubmit[] = [];
     for (const entry of this.pending.values()) {
       const stream = `srv:${entry.owner}`;
       if (entry.retryInc && !isRetired(db, stream, entry.retryInc)) {
@@ -202,10 +204,21 @@ export class ServerOrigin {
           .prepare("SELECT 1 FROM forwardq WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ?")
           .get(entry.slot.origin, entry.slot.originEpoch, entry.slot.target, entry.slot.n);
         if (held) continue;
+        // The forwarder moved it out as one that can never be sent (forwarddead) and its refusal was never heard: end it now.
+        const dead = db
+          .prepare("SELECT 1 FROM forwarddead WHERE origin = ? AND originEpoch = ? AND target = ? AND n = ?")
+          .get(entry.slot.origin, entry.slot.originEpoch, entry.slot.target, entry.slot.n);
+        if (dead) { unsendable.push(entry); continue; }
       }
       let list = unheldByOwner.get(entry.owner);
       if (!list) unheldByOwner.set(entry.owner, (list = []));
       list.push(entry);
+    }
+    for (const entry of unsendable) {
+      const key = slotKey(entry.slot);
+      if (this.resolving.has(key)) continue;
+      this.resolving.add(key);
+      await this.handleResult(entry.slot, UNSENDABLE_OUTCOME);
     }
     for (const [owner, entries] of unheldByOwner) await this.recommitUnheld(owner, entries);
     for (const owner of retryOwners) await this.recommitReady(owner);

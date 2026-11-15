@@ -12,13 +12,20 @@
 //                                        transaction; one `cmd.retry` per row
 //                                        that went is passed on. Never re-sent under a new `inc` by this server (D49)
 //   B: cancel.noted{slot}              → the cancel goes (the row stays until the result); relayed
+//   a row that can never be sent      → (it does not parse, its frame is too large, the encoder throws) it moves into
+//                                        `forwarddead` with its reason, its cancel goes with it, the origin hears
+//                                        `cmd.result{refused invalid}`, and the rest of its queue goes on. Rows after the dead
+//                                        slot carry a `floor` above it, and wait for the rows below it to be answered
+//                                        first, so the owner never holds a copy for a slot nobody sends. A refused send
+//                                        (`sendWire` false: the link, not the row) never settles a row; it is tried again
+//                                        on the next pump.
 //
 // It never answers a command with an outcome of its own (F3): no refusal, no scope or grant check (only the owner's
 // decision counts); the front end hears `held`, then the owner's answer. Who owns what is directory.ts.
-import { queueKey, type CmdBody, type Message, type MessageOf, type Slot, type WireMessage } from "../../protocol";
+import { encodeWireFrame, LogId, queueKey, type CmdBody, type Message, type MessageOf, type Slot, type WireMessage } from "../../protocol";
 import type { Db } from "../store";
 import { cmdHash } from "../slots";
-import { commitCancel, commitRow, dropOwner, isRetired, ownerWork, queueStats, takeNoted, takeResult, takeRetry, type ForwardRow } from "./forward-queue";
+import { commitCancel, commitRow, dropOwner, failRow, isRetired, ownerWork, queueStats, serverOriginPending, takeNoted, takeResult, takeRetry, type ForwardRow, type OwnerQueue, type QueuedRow } from "./forward-queue";
 import type { Directory } from "./directory";
 
 /** A peer session as the forwarder uses it (server/peer PeerSession). */
@@ -39,6 +46,8 @@ export interface ForwarderOptions {
   isRevoked?(owner: string): boolean;
   log(line: string): void;
   now?: () => number;
+  /** How a row is checked before it goes out (default: the peer session's own `encodeWireFrame`). A refusal is final for that row. */
+  encode?: (message: WireMessage) => { ok: true } | { ok: false; reason: string };
 }
 
 /** Where a front end session of an origin hears relayed answers. */
@@ -47,15 +56,25 @@ export type RelaySink = (message: Message) => boolean;
 type Answer = MessageOf<"cmd.result"> | MessageOf<"cmd.retry"> | MessageOf<"cancel.noted">;
 
 const slotKeyOf = (slot: Slot) => `${queueKey(slot)}\u0000${slot.n}`;
+const UNKNOWN_INC = "unknown0" as LogId;
+const SETTLE_RETRY_MS = 250;
+const SETTLE_RETRY_MAX_MS = 30_000;
+const encodeForPeer = (message: WireMessage) => encodeWireFrame(message, "peer", { local: false });
 
 export class Forwarder {
   /** Per live session: what it carried, slot key → the copy's fingerprint (rows) or "c" (cancels). */
   private readonly sent = new WeakMap<ForwardSession, { rows: Map<string, string>; cancels: Set<string> }>();
   private readonly sinks = new Map<string, Set<RelaySink>>();
   private readonly now: () => number;
+  private readonly encode: (message: WireMessage) => { ok: true } | { ok: false; reason: string };
+  /** Dead rows being moved out right now (slot key + command hash), so a second pump does not submit them again. */
+  private readonly settling = new Set<string>();
+  /** Per owner: failed attempts to move a dead row out, and the timer for the next one. */
+  private readonly settleRetries = new Map<string, { tries: number; timer: ReturnType<typeof setTimeout> | null }>();
 
   constructor(private readonly options: ForwarderOptions) {
     this.now = options.now ?? Date.now;
+    this.encode = options.encode ?? encodeForPeer;
   }
 
   /** The peer that owns `target`, or null when this server decides it. */
@@ -137,7 +156,9 @@ export class Forwarder {
 
   /**
    * Sends `owner` every row and cancel its live session has not carried yet, each queue in slot order. Synchronous: it
-   * reads the committed queue and writes frames in one turn, so nothing interleaves.
+   * reads the committed queue and writes frames in one turn, so nothing interleaves. A row that can never be sent is
+   * handed to `settle` (an async commit) and its queue waits at that row; other queues go on. A refused `sendWire` ends
+   * the pump: that is the link, and the next pump tries again.
    */
   pump(owner: string): void {
     if (this.options.isRevoked?.(owner)) return;
@@ -148,27 +169,117 @@ export class Forwarder {
     let work;
     try { work = ownerWork(this.options.reader(), owner); } catch (error) { this.options.log(`forward: reading the queue for ${owner} failed: ${errorText(error)}`); return; }
     for (const queue of work.queues) {
-      let c = 0;
-      for (let r = 0; r <= queue.rows.length; r++) {
-        const row = queue.rows[r];
-        // A slot's cancel goes right after its own row; a cancel whose row is not here goes at its place in slot order.
-        while (c < queue.cancels.length && (!row || queue.cancels[c]!.slot.n < row.slot.n)) {
-          if (!this.sendCancel(session, sent.cancels, queue.cancels[c]!.slot)) return;
-          c++;
-        }
-        if (!row) break;
-        const key = slotKeyOf(row.slot);
-        const print = `${row.cmdHash}\u0000${row.envelope.inc}`;
-        if (sent.rows.get(key) !== print) {
-          if (!session.sendWire({ t: "cmd", ...row.envelope } as WireMessage)) return;
-          sent.rows.set(key, print);
-        }
-        if (c < queue.cancels.length && queue.cancels[c]!.slot.n === row.slot.n) {
-          if (!this.sendCancel(session, sent.cancels, queue.cancels[c]!.slot)) return;
-          c++;
-        }
+      if (!this.pumpQueue(owner, session, sent, queue)) return;
+    }
+  }
+
+  /** One queue of `pump`; false when a send was refused (stop everything), true to go on with the next queue. */
+  private pumpQueue(owner: string, session: ForwardSession, sent: { rows: Map<string, string>; cancels: Set<string> }, queue: OwnerQueue): boolean {
+    let c = 0;
+    for (let r = 0; r <= queue.rows.length; r++) {
+      const row = queue.rows[r];
+      // A slot's cancel goes right after its own row; a cancel whose row is not here goes at its place in slot order.
+      while (c < queue.cancels.length && (!row || queue.cancels[c]!.slot.n < row.slot.n)) {
+        if (!queue.holes.includes(queue.cancels[c]!.slot.n) && !this.sendCancel(session, sent.cancels, queue.cancels[c]!.slot)) return false;
+        c++;
+      }
+      if (!row) break;
+      const key = slotKeyOf(row.slot);
+      const print = `${row.cmdHash}\u0000${row.envelope?.inc}`;
+      if (sent.rows.get(key) !== print) {
+        const bad = this.unsendable(row);
+        if (bad) { this.settle(owner, row, bad); return true; }
+        const envelope = this.stamped(queue, row, row.envelope!);
+        if (!envelope) return true;
+        if (!session.sendWire({ t: "cmd", ...envelope } as WireMessage)) return false;
+        sent.rows.set(key, print);
+      }
+      if (c < queue.cancels.length && queue.cancels[c]!.slot.n === row.slot.n) {
+        if (!this.sendCancel(session, sent.cancels, queue.cancels[c]!.slot)) return false;
+        c++;
       }
     }
+    return true;
+  }
+
+  /** Why this row can never be sent (a fixed word, never the row's own text), or null when it can. */
+  private unsendable(row: QueuedRow): string | null {
+    const envelope = row.envelope;
+    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) return "unreadable";
+    try {
+      const encoded = this.encode({ t: "cmd", ...envelope } as WireMessage);
+      return encoded.ok ? null : encoded.reason;
+    } catch {
+      return "encoder error";
+    }
+  }
+
+  /**
+   * The envelope to send for `row`: as stored, unless a dead slot of its queue lies between its `floor` and its own `n`.
+   * Then the owner would wait for that slot, so the floor goes above it, to the smallest slot this origin still holds
+   * (rows here, and this server's own pending submits). While a slot below the dead one is unanswered the row waits
+   * (null): a floor above the dead slot would make the owner skip that slot too.
+   */
+  private stamped(queue: OwnerQueue, row: QueuedRow, envelope: CmdBody): CmdBody | null {
+    const dead = queue.holes.filter((h) => h >= envelope.floor && h < row.slot.n);
+    if (dead.length === 0) return envelope;
+    const top = Math.max(...dead);
+    const held = new Set(queue.rows.map((r) => r.slot.n));
+    if (row.slot.origin === this.options.self) {
+      try { for (const n of serverOriginPending(this.options.reader(), row.slot)) held.add(n); } catch { return null; }
+    }
+    for (const h of queue.holes) held.delete(h);
+    let floor = row.slot.n;
+    for (const n of held) {
+      if (n >= envelope.floor && n < top) return null;
+      if (n > top && n < floor) floor = n;
+    }
+    return { ...envelope, floor };
+  }
+
+  /** Moves a row that can never be sent out of the queue (one commit), tells its origin, then pumps again. */
+  private settle(owner: string, row: QueuedRow, reason: string): void {
+    const id = `${slotKeyOf(row.slot)}\u0000${row.cmdHash}`;
+    if (this.settling.has(id)) return;
+    this.settling.add(id);
+    this.options.submit((tx) => failRow(tx, row, reason, this.now())).then((moved) => {
+      this.settling.delete(id);
+      this.settleRetries.delete(owner);
+      try {
+        if (moved) {
+          this.options.log(`forward: the command for slot ${row.slot.n} of ${JSON.stringify(row.slot.target)} to ${owner} can never be sent (${reason}); moved out of the queue and refused`);
+          const inc = LogId.safeParse(row.envelope?.inc).success ? row.envelope!.inc : UNKNOWN_INC;
+          const detail = `this command could not be sent to the server that owns its target (${reason})`;
+          this.relay(row.slot.origin, { t: "cmd.result", slot: row.slot, outcome: { kind: "refused", reason: "invalid", detail }, logId: inc, seq: null });
+        }
+        this.pump(owner);
+      } catch (error) {
+        this.options.log(`forward: after moving an unsendable command out of the queue for ${owner}: ${errorText(error)}`);
+      }
+    }, (error: unknown) => {
+      this.settling.delete(id);
+      this.options.log(`forward: moving an unsendable command out of the queue for ${owner} failed: ${errorText(error)}`);
+      this.retrySettle(owner);
+    });
+  }
+
+  /** Pumps `owner` again after a failed settle, with a growing wait (250 ms up to 30 s). */
+  private retrySettle(owner: string): void {
+    const state = this.settleRetries.get(owner) ?? { tries: 0, timer: null };
+    if (state.timer) return;
+    const wait = Math.min(SETTLE_RETRY_MAX_MS, SETTLE_RETRY_MS * 2 ** state.tries);
+    state.tries += 1;
+    state.timer = setTimeout(() => { state.timer = null; this.pump(owner); }, wait);
+    state.timer.unref?.();
+    this.settleRetries.set(owner, state);
+  }
+
+  /** Pumps `owner` when a dead slot is waiting in its queues: an answer may have freed the rows above it. */
+  private pumpAfterAnswer(owner: string): void {
+    try {
+      if (!this.options.reader().prepare("SELECT 1 AS x FROM forwarddead WHERE owner = ? LIMIT 1").get(owner)) return;
+    } catch { return; }
+    this.pump(owner);
   }
 
   private sendCancel(session: ForwardSession, sent: Set<string>, slot: Slot): boolean {
@@ -189,6 +300,7 @@ export class Forwarder {
       const taken = await this.options.submit((tx) => takeResult(tx, slot, peer));
       forget(slot);
       if (taken.row || taken.cancel || this.ownerOf(slot.target) === peer) this.relay(slot.origin, message);
+      this.pumpAfterAnswer(peer);
       return;
     }
     if (message.t === "cancel.noted") {
@@ -203,6 +315,7 @@ export class Forwarder {
       forget(s);
       this.relay(s.origin, { t: "cmd.retry", slot: s, inc: message.inc });
     }
+    this.pumpAfterAnswer(peer);
   }
 
   private refusedRevoked(slot: Slot, inc: CmdBody["inc"]): MessageOf<"cmd.result"> {
