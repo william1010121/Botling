@@ -61,6 +61,7 @@ async function waitFor<T>(probe: () => T | null | undefined | false, what: strin
 
 interface Server {
   store: ServerStore;
+  identity: Awaited<ReturnType<typeof loadOrCreateServerIdentity>>;
   roster: RosterStore;
   engine: FakeTurnEngine;
   runtime: IntentRuntime;
@@ -112,7 +113,7 @@ async function server(options: RemoteSessionOptions = {}, extraHost: Partial<Ses
     await store.close();
   });
   return {
-    store, roster, engine, runtime, host, remote, serverId, logs,
+    store, identity, roster, engine, runtime, host, remote, serverId, logs,
     inc: () => String(hub.reader().prepare("SELECT logId FROM streams WHERE stream = ?").get(`srv:${serverId}`)!.logId),
     entries: (stream) => hub.reader().prepare("SELECT kind, body, slot FROM entries WHERE stream = ? ORDER BY seq").all(stream)
       .map((row) => ({ kind: String(row.kind), body: JSON.parse(String(row.body)), slot: row.slot ? JSON.parse(String(row.slot)) : null })),
@@ -360,12 +361,77 @@ describe("revocation (§4.6)", () => {
     await waitFor(() => s.entries(bot).filter((e) => e.kind === "cmd.refused").length === 2 || null, "both slots refused");
     expect(s.entries(bot).filter((e) => e.kind === "cmd.refused").map((e) => [e.slot?.n, e.body.reason])).toEqual([[1, "origin"], [2, "origin"]]);
     expect(s.entries(bot).some((e) => e.kind === "message.added" || e.kind === "cmd.applied")).toBe(false);
-    // A new handshake from the revoked key is refused by the roster check: no session, nothing parsed.
+    // D73: a new handshake from the known revoked key proves the key and gets bye{revoked}; nothing is opened or registered.
     const again = new Device(s, device.member).dial(keys);
-    await expect(again.link.established).rejects.toBeTruthy();
-    await waitFor(() => again.session.link.ending, "the server side ends");
-    expect(again.session.link.ending).toMatchObject({ reason: "roster" });
+    await again.link.established;
+    expect(await again.bye()).toMatchObject({ reason: "revoked" });
+    await waitFor(() => again.ended, "the revoked device's link ends");
+    expect(s.remote.open).toHaveLength(0);
+    expect(again.session.isOpen).toBe(false);
     expect(again.session.link.delivered).toBe(0);
+  });
+
+  it("D73: a revoked device sending hello right after the handshake gets bye{revoked} and no welcome; a wrong key or unknown key gets nothing", async () => {
+    const s = await server();
+    const { device, keys } = await paired(s);
+    await s.roster.revokeDevice(device.member);
+    await device.bye();
+
+    // Known revoked key sends hello right after established: gets bye{revoked}, never welcomed.
+    const revokedHello = new Device(s, device.member).dial(keys);
+    await revokedHello.link.established;
+    revokedHello.sendRaw({ t: "hello", deviceId: device.member, feVersion: "3.0.0", protocol: 1, originEpoch: EPOCH, cursors: {}, outbox: [], want: [] });
+    expect(await revokedHello.bye()).toMatchObject({ reason: "revoked" });
+    await waitFor(() => revokedHello.ended, "revoked hello session ends");
+    expect(revokedHello.got.some((m) => m.t === "welcome")).toBe(false);
+    expect(s.remote.open).toHaveLength(0);
+
+    // Known revoked memberId presenting a different DH key is refused silently at HS1 (no bye).
+    const otherKeys = await deviceKeys();
+    const imposter = new Device(s, device.member).dial({ ...otherKeys, member: device.member });
+    await expect(imposter.link.established).rejects.toBeTruthy();
+    await waitFor(() => imposter.session.link.ending, "imposter rejected at handshake");
+    expect(imposter.session.link.ending).toMatchObject({ reason: "roster" });
+    expect(imposter.got).toEqual([]);
+    expect(imposter.session.link.delivered).toBe(0);
+
+    // Unknown key gets nothing at HS1 (no bye).
+    const strangerKeys = await deviceKeys();
+    const stranger = new Device(s, strangerKeys.member).dial(strangerKeys);
+    await expect(stranger.link.established).rejects.toBeTruthy();
+    await waitFor(() => stranger.session.link.ending, "stranger rejected at handshake");
+    expect(stranger.session.link.ending).toMatchObject({ reason: "roster" });
+    expect(stranger.got).toEqual([]);
+    expect(stranger.session.link.delivered).toBe(0);
+  });
+
+  it("D73: a device revoked via cascading server revocation also proves its key and gets bye{revoked}", async () => {
+    const s = await server();
+    const dir2 = `${root}/d${++folders}`;
+    const store2 = await openServerStore(dir2);
+    const id2 = await loadOrCreateServerIdentity(dir2, { create: true });
+    await store2.submit((tx) => bindServerIdentity(tx, id2));
+    const roster2 = await RosterStore.open(store2, id2);
+    cleanups.push(() => store2.close());
+
+    const addS2 = await s.roster.addServer({ keys: id2.keys, name: "Peer" });
+    const addS2Stmt = s.roster.statements().find((st) => st.id === addS2.addId)!.statement;
+    await roster2.joinCluster({
+      add: addS2Stmt,
+      roster: s.roster.statements().map((st) => st.statement),
+      sponsor: { member: s.identity.memberId, keys: s.identity.keys, name: "Root" },
+    });
+    const keys = await deviceKeys();
+    await roster2.addDevice({ keys: keys.keys, name: "Phone" });
+    await s.roster.merge(roster2.statements().map((st) => st.statement));
+    await s.roster.revokeServer(id2.memberId, true);
+
+    const cascaded = new Device(s, keys.member).dial(keys);
+    await cascaded.link.established;
+    expect(await cascaded.bye()).toMatchObject({ reason: "revoked" });
+    await waitFor(() => cascaded.ended, "cascaded revoked device's link ends");
+    expect(s.remote.open).toHaveLength(0);
+    expect(cascaded.session.link.delivered).toBe(0);
   });
 
   it("without the listener, the device's next frame ends the session; its commands after that never reach the runtime", async () => {

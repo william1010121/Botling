@@ -21,6 +21,8 @@ export const OFFLINE_AFTER_MS = 45_000;
 export const DIRECT_TIMEOUT_MS = 2_000;
 /** §6.2 / M4-17: while on the relay, re-probe direct every 60 s. */
 export const REPROBE_INTERVAL_MS = 60_000;
+/** D73 / §13.3: shown when the server tells this device bye{revoked}. */
+export const REVOKED_BANNER = "This device was removed. Pair it again.";
 
 export interface Diagnostics {
   /** `performance.now()` of every live frame the link handed up. */
@@ -56,6 +58,7 @@ export interface Connection {
   link: FeLink;
   port: LinkPort;
   readonly path: DialPath;
+  readonly revoked: boolean;
   close(): Promise<void>;
 }
 
@@ -93,11 +96,13 @@ export interface FallbackLinkOptions {
   visibility?: VisibilitySource;
   onPath?: (path: DialPath) => void;
   onProbe?: (result: "welcomed" | "failed" | "timeout") => void;
+  onRevoked?: () => void;
 }
 
 export interface FallbackLink {
   readonly link: FeLink;
   readonly path: DialPath;
+  readonly revoked: boolean;
   start(): void;
   close(): Promise<void>;
 }
@@ -106,6 +111,16 @@ function isWelcomeFrame(frame: string | Uint8Array): boolean {
   if (typeof frame !== "string" || !frame.includes('"welcome"')) return false;
   try {
     return (JSON.parse(frame) as { t?: unknown }).t === "welcome";
+  } catch {
+    return false;
+  }
+}
+
+function isRevokedByeFrame(frame: string | Uint8Array): boolean {
+  if (typeof frame !== "string" || !frame.includes('"bye"') || !frame.includes('"revoked"')) return false;
+  try {
+    const parsed = JSON.parse(frame) as { t?: unknown; reason?: unknown };
+    return parsed.t === "bye" && parsed.reason === "revoked";
   } catch {
     return false;
   }
@@ -126,6 +141,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
 
   let currentPath: DialPath = forced === "relay" && relayDial ? "relay" : "direct";
   let stopped = false;
+  let revoked = false;
   let attachedOnRelay = false;
   let probeTimer: unknown = undefined;
   let activeProbe: { cancel(): void } | null = null;
@@ -146,6 +162,16 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
     clearProbeTimer();
     activeProbe?.cancel();
     activeProbe = null;
+  };
+
+  const markRevoked = () => {
+    if (revoked) return;
+    revoked = true;
+    stopped = true;
+    attachedOnRelay = false;
+    nextProbeAt = null;
+    cancelProbe();
+    options.visibility?.removeEventListener("visibilitychange", onVisibility);
   };
 
   const isHidden = () => options.visibility?.hidden === true;
@@ -214,6 +240,15 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
         },
         frame(frame) {
           if (cancelled || welcomed) return;
+          if (isRevokedByeFrame(frame)) {
+            cancelled = true;
+            cleanup();
+            try { socket?.close(); } catch { /* ignore */ }
+            markRevoked();
+            void link.stop();
+            options.onRevoked?.();
+            return;
+          }
           if (isWelcomeFrame(frame)) {
             welcomed = true;
             cleanup();
@@ -252,14 +287,28 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
     attachedOnRelay = false;
     nextProbeAt = null;
 
+    if (revoked || stopped) {
+      return { send() { /* revoked */ }, close() { /* revoked */ } };
+    }
+
+    const forwardFrame = (f: string | Uint8Array) => {
+      const hit = isRevokedByeFrame(f);
+      if (hit) markRevoked();
+      handlers.frame(f);
+      if (hit) {
+        void link.stop();
+        options.onRevoked?.();
+      }
+    };
+
     if (forced === "relay" && relayDial) {
       setPath("relay");
-      return relayDial(handlers);
+      return relayDial({ ...handlers, frame: forwardFrame });
     }
 
     if (!relayDial) {
       setPath("direct");
-      return options.directDial(handlers);
+      return options.directDial({ ...handlers, frame: forwardFrame });
     }
 
     let cancelled = false;
@@ -305,7 +354,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
               attachedOnRelay = true;
               scheduleProbe(true);
             }
-            handlers.frame(f);
+            forwardFrame(f);
           },
           close(detail) {
             if (cancelled || phase !== "relay") return;
@@ -352,12 +401,12 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
             welcomed = true;
             clearDirectTimer();
           }
-          handlers.frame(f);
+          forwardFrame(f);
         },
         close(detail) {
           if (cancelled || phase !== "direct") return;
           clearDirectTimer();
-          if (welcomed) handlers.close(detail);
+          if (welcomed || revoked) handlers.close(detail);
           else startRelay();
         },
       });
@@ -410,6 +459,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
   return {
     link,
     get path() { return currentPath; },
+    get revoked() { return revoked; },
     start() { link.start(); },
     async close() {
       stopped = true;
@@ -425,6 +475,7 @@ export async function openFallbackLink(options: FallbackLinkOptions): Promise<Fa
 export interface OpenConnectionOptions {
   forcedPath?: DialPath;
   onPath?: (path: DialPath) => void;
+  onRevoked?: () => void;
   directTimeoutMs?: number;
   reprobeIntervalMs?: number;
 }
@@ -478,12 +529,22 @@ export async function openConnection(device: DeviceRecord, diag: Diagnostics, pa
     ...(opts.reprobeIntervalMs !== undefined ? { reprobeIntervalMs: opts.reprobeIntervalMs } : {}),
     ...(typeof document !== "undefined" ? { visibility: document } : {}),
     onPath: opts.onPath,
+    onRevoked: () => {
+      revoked = true;
+      if (diag.conn[diag.conn.length - 1] !== "needs pairing") diag.conn.push("needs pairing");
+      opts.onRevoked?.();
+    },
   });
 
   const { link } = fb;
+  let revoked = fb.revoked;
   link.on((event) => {
+    if (event.type === "bye" && event.reason === "revoked") {
+      revoked = true;
+      if (diag.conn[diag.conn.length - 1] !== "needs pairing") diag.conn.push("needs pairing");
+    }
     if (event.type === "live" && !event.stale && event.view) diag.live.push(performance.now());
-    if (event.type === "state") { const last = diag.conn[diag.conn.length - 1]; if (last !== event.status.state) diag.conn.push(event.status.state); }
+    if (event.type === "state" && !revoked) { const last = diag.conn[diag.conn.length - 1]; if (last !== event.status.state) diag.conn.push(event.status.state); }
     if (event.type === "pending" || event.type === "outcome" || event.type === "servers") recordStates(diag, link.pending());
     if (event.type === "servers") recordServers(diag, link.servers());
   });
@@ -491,6 +552,7 @@ export async function openConnection(device: DeviceRecord, diag: Diagnostics, pa
     link,
     port: link as unknown as LinkPort,
     get path() { return fb.path; },
+    get revoked() { return fb.revoked; },
     async close() { await fb.close(); },
   };
 }
@@ -531,7 +593,8 @@ const hhmm = (ms: number) => {
 };
 
 /** The banner's words for a connection state (v1 §13.3), or null while live with nothing waiting. */
-export function bannerText(status: ConnModel, pending: PendingView[], servers: ServerView[] = []): string | null {
+export function bannerText(status: ConnModel, pending: PendingView[], servers: ServerView[] = [], revoked = false): string | null {
+  if (revoked || status.state === "needs pairing") return REVOKED_BANNER;
   const waiting = pending.filter((item) => !item.lost && (item.state === "waiting" || item.state === "held")).length;
   const tail = waiting ? ` · ${waiting} waiting` : "";
   switch (status.state) {
