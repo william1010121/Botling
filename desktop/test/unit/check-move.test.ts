@@ -102,7 +102,7 @@ describe("check-move", () => {
     // 11 lines of methods moved; the class line and the class's closing brace are new (the three braces deleted are used up)
     expect(row(r, "src/b.ts")).toMatchObject({ changed: 0, added: 2, movedIn: 11 });
     expect(row(r, "src/a.ts")).toMatchObject({ changed: 0, movedOut: 11, added: 0 });
-    expect(row(r, "src/b.ts").ignored).toBe(2);
+    expect(row(r, "src/b.ts").ignored).toBe(4); // two import lines and two blank lines
     expect(r.json!.ok).toBe(true);
   });
 
