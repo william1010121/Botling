@@ -146,6 +146,21 @@ describe("Forwarder.pump does not stall on a row that can never be sent", () => 
     }
   });
 
+  it("another queue of the same owner is sent in the same pump even while the dead row cannot be moved out yet", async () => {
+    const h = harness({ failSubmit: () => true });
+    try {
+      const forwarder = h.make();
+      await h.writer.submit((tx) => commitRow(tx, envelopeOf(1, {}, { target: `bot:${BOT_B2}` }), hashOf(envelopeOf(1, {}, { target: `bot:${BOT_B2}` })), OWNER, NOW));
+      await h.writer.submit((tx) => tx.prepare("INSERT INTO forwardq (origin, originEpoch, target, n, owner, cmdHash, envelope, heldAt) VALUES (?, ?, ?, 1, ?, 'x', ?, ?)")
+        .run("desktop", "a".repeat(32), `bot:${BOT_B}`, OWNER, JSON.stringify(SCHEMA_BAD), NOW));
+      forwarder.pump(OWNER);
+      expect(h.cmds().map((c) => c.slot.target)).toEqual([`bot:${BOT_B2}`]);
+      expect(h.dead()).toEqual([]);
+    } finally {
+      await h.close();
+    }
+  });
+
   it("a restart with a dead row in the queue (written by older code) does not stall", async () => {
     const h = harness();
     try {
