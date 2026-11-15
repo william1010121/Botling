@@ -211,7 +211,7 @@ describe("subagents", () => {
     reply = (await c.chat()).messages.find((m: { id: string }) => m.id === messageId);
     expect(reply.steps[0]).toMatchObject({ status: "completed", count: 1, done: true });
     expect(c.events.some((e) => e.event.type === "bot.updated" && (e.event as any).bot.phase === "tidying" && e.seq < c.of("message.added").find((m) => (m.event as any).message.id === news.id)!.seq)).toBe(false);
-  });
+  }, 60_000); // no timer to beat any more; on a starved host the steps just take long
 
   it("claude's own turn that says only <no-reply/> shows nothing; a finished subagent's news is then asked for once", async () => {
     const dir = tempDir("sub");
