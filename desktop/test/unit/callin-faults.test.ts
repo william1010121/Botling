@@ -330,8 +330,9 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       expect(chatOf(run.hostId).filter((entry) => entry.text.startsWith("Late answer from ")).length, `seed ${seed}: ${run.token}: late notice`).toBe(1);
     }
     if (kind === "lateKill" && got.turns === 1 && got.line === 0) totals.lostLate++;
-    // An answer lost to B's second kill (marked sent, not yet queued: M5-02b's at-most-once) ends A's wait only at the cap.
-    if (kind === "killBmid" && inputLines(aInput).some((text) => text.includes(run.token) && text.includes(WAKE_MARK) && text.includes("is not reachable"))) totals.lostAnswers++;
+    // B's one answer for an interrupted row reached a wait (else A gave up while B was down, or a kill between B's mark and its
+    // queue lost the answer and A's wait ended at the cap).
+    if (kind === "killBmid" && inputLines(aInput).some((text) => text.includes(run.token) && text.includes(WAKE_MARK) && text.includes("restarted during the answer"))) totals.restartAnswers++;
     if (kind === "killBmid" && got.turns === 1 && callInRows().some((row) => row.asked.includes(run.token) && row.state === "interrupted")) totals.interruptedTurns++;
     totals.runs++;
     totals.lines += got.line;
@@ -341,6 +342,9 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
   // The crash kinds: every call-in A gave up on was answered by B, and each answer used its record up (M5-03a: a record left
   // behind would make a second reply for the same call-in late again).
   if (kind === "gaveUpCrash" || kind === "lateKill") expect(gaveUpRows(), `seed ${seed}: callin:gaveup records left after the wave`).toBe(gaveUpBefore);
+  // B never drops an answer it marked sent: the roster does not change here, so every answer can be queued (only a crash
+  // between the mark and the queue loses one, and that leaves no log line).
+  expect(b.log.split("\n").filter((line) => /callin: (even )?the (short )?answer to .* was not sent/.test(line)), `seed ${seed}: answers B could not queue`).toEqual([]);
   // Every call-in of the wave is over: nothing is left in either forward queue (also `converge`'s quiet condition).
   expect({ a: [count(a, "forwardq"), count(a, "fwdcancels")], b: [count(b, "forwardq"), count(b, "fwdcancels")] }, `seed ${seed}: forward queues`).toEqual({ a: [0, 0], b: [0, 0] });
   if (kind === "down") totals.down += runs.length;
@@ -383,7 +387,7 @@ afterAll(async () => {
 describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => {
   it(`${PLAN.reduce((sum, [, n]) => sum + n, 0)} seeded call-ins: never two guest turns, never two lines, never two wakes (seed ${SEED})`, async () => {
     console.log(`callin-faults: seed ${SEED} (CALLIN_FAULT_SEED); ${PLAN.length} waves`);
-    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, interruptedTurns: 0, lostAnswers: 0 };
+    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, interruptedTurns: 0, restartAnswers: 0 };
     for (let index = 0; index < PLAN.length; index++) await wave(index, PLAN[index]![0], PLAN[index]![1], totals);
     console.log(`callin-faults: ${JSON.stringify(totals)}`);
     expect(totals.runs, `seed ${SEED}: runs`).toBeGreaterThanOrEqual(50);
