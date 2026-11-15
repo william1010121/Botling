@@ -423,7 +423,7 @@ export abstract class SessionCore {
     let next: Record<string, number> = {};
     try { next = this.host.nextFor(hello.deviceId, hello.originEpoch); } catch (error) { this.host.log(`session: next for ${hello.deviceId}: ${errorText(error)}`); }
     let vapidPublicKey: string | null = null;
-    try { vapidPublicKey = this.host.vapidPublicKey?.() ?? null; } catch (error) { this.host.log(`session: vapidPublicKey: ${errorText(error)}`); }
+    if (!this.kind.local) { try { vapidPublicKey = this.host.vapidPublicKey?.() ?? null; } catch (error) { this.host.log(`session: vapidPublicKey: ${errorText(error)}`); } }
     this.send({
       t: "welcome", serverId: this.host.serverId, protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION }, minFeVersion: this.host.minFeVersion,
       rosterDigest: null, servers: [this.selfServerEntry(), ...this.peerList()], next, views: {},
