@@ -20,7 +20,7 @@ import {
   type KernelEvent, type PluginDeclaration, type UndoFailure,
 } from "../../Web/src/plugin-kernel";
 import type { PluginsView } from "../src/contract";
-import { FEED_MENU_SLOTS, FEED_SLOTS, FEED_VIEWS } from "../src/renderer/shell/feed-slots";
+import { FEED_MENU_SLOTS, FEED_SLOTS, FEED_VIEWS, PLUGIN_OWNED_SLOTS } from "../src/renderer/shell/feed-slots";
 import { PluginFeed, type FeedEntry } from "../src/renderer/shell/plugin-feed";
 import { deferred, flush, manualTimers, seeded } from "./kernel-driver";
 import { ruleWatcher } from "./kernel-invariants";
@@ -28,7 +28,10 @@ import { ruleWatcher } from "./kernel-invariants";
 const SHELL = ":shell";
 const CHAT = ":chat";
 const QUOTE = "composer.insertQuote";
+/** Stands in for `botling.settings` (M7-02c): the in-page plugin that owns the two settings slots, not `:shell`. */
+const SETTINGS = ":settings";
 const SHELL_SLOTS = [...ROOT_SLOTS, ...FEED_SLOTS];
+const ALL_SLOTS = [...SHELL_SLOTS, ...PLUGIN_OWNED_SLOTS];
 const PAGE_PLUGINS = ["page.a", "page.b", "page.c"] as const; // in-page plugins: component entries
 const FRAMED_PLUGINS = ["frame.a", "frame.b", "frame.quoter"] as const; // framed plugins: frame entries (`frame.quoter` requires the chat surface's service)
 const MENUS = FEED_MENU_SLOTS.map((slot) => slot.slice("menu/".length));
@@ -70,7 +73,8 @@ function readView(view: PluginsView): { rows: Rows; names: Set<string> } {
   return { rows, names };
 }
 
-const SHELL_CANONICAL = [...new Set(SHELL_SLOTS.map(canonicalSlot))];
+const ALL_CANONICAL = [...new Set(ALL_SLOTS.map(canonicalSlot))];
+const OWNED_CANONICAL = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 type SlotEntries = { plugin: string; entry: unknown }[];
 /** The feed rows one plugin holds in a slot's entries, in order. */
 const feedRows = (entries: SlotEntries, plugin: string): unknown[] => entries.filter((held) => held.plugin === plugin && (held.entry as Partial<FeedEntry>).kind === "feed").map((held) => (held.entry as FeedEntry).row);
@@ -95,6 +99,7 @@ export interface RendererRunResult {
   componentEntries: number;
   shellUnloads: number;
   chatUnloads: number;
+  settingsUnloads: number;
 }
 
 export async function rendererKernelRun(seed: number, input: RendererRunInput, maxActions = 30): Promise<RendererRunResult> {
@@ -112,7 +117,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
     log: (event) => { trace.push(event); if (watching) watcher(event); },
     onUndoFailure: (failure) => failures.push(failure),
   });
-  const result: RendererRunResult = { events: 0, rounds: 0, failures: 0, aliasShown: 0, feedCompared: 0, frameEntries: 0, componentEntries: 0, shellUnloads: 0, chatUnloads: 0 };
+  const result: RendererRunResult = { events: 0, rounds: 0, failures: 0, aliasShown: 0, feedCompared: 0, frameEntries: 0, componentEntries: 0, shellUnloads: 0, chatUnloads: 0, settingsUnloads: 0 };
 
   // What each registration with an undo stands for (deleted by its undo), and the failing undos that ran (by item name).
   const world = new Map<string, string>();
@@ -160,9 +165,10 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   // The shell and the chat surface, as renderer-kernel.ts declares them; the plugins that contribute to slots declare the
   // slots they use (each plugin its own few, given by either name).
   const wanted = new Map<string, string[]>();
-  for (const name of [...PAGE_PLUGINS, ...FRAMED_PLUGINS]) wanted.set(name, Array.from({ length: 1 + random.int(4) }, () => random.pick(SHELL_SLOTS)));
+  for (const name of [...PAGE_PLUGINS, ...FRAMED_PLUGINS]) wanted.set(name, Array.from({ length: 1 + random.int(4) }, () => random.pick(ALL_SLOTS)));
   kernel.install({ name: CHAT, provides: { services: [QUOTE] } });
   kernel.install({ name: SHELL, provides: { slots: SHELL_SLOTS.map(form) } });
+  kernel.install({ name: SETTINGS, provides: { slots: PLUGIN_OWNED_SLOTS.map(form) } });
   for (const [name, slots] of wanted) {
     kernel.install({
       name, contributes: { slots: slots.map(form) },
@@ -178,6 +184,11 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   };
   const shellLoader = (name: string) => {
     for (const slot of SHELL_SLOTS) kernel.provideSlot(name, form(slot));
+    if (random.chance(0.3)) addItem(name);
+    return maybeAsync(name);
+  };
+  const settingsLoader = (name: string) => {
+    for (const slot of PLUGIN_OWNED_SLOTS) kernel.provideSlot(name, form(slot));
     if (random.chance(0.3)) addItem(name);
     return maybeAsync(name);
   };
@@ -199,6 +210,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   };
   void kernel.load(CHAT, chatLoader);
   void kernel.load(SHELL, shellLoader);
+  void kernel.load(SETTINGS, settingsLoader);
 
   const feed = new PluginFeed(kernel);
   const last: { view: PluginsView | null } = { view: null };
@@ -247,7 +259,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
       if (owner && kernel.state(owner) === "active" && kernel.state(c.plugin) === "active") held.set(c.slot, [...(held.get(c.slot) ?? []), c.entry]);
     }
     const shownBy = new Map<string, SlotEntries>(); // each shell slot's entries, read once (under its 2.x id)
-    for (const slot of SHELL_CANONICAL) shownBy.set(slot, kernel.entries(slot));
+    for (const slot of ALL_CANONICAL) shownBy.set(slot, kernel.entries(slot));
     const entriesOf = (slot: string) => shownBy.get(slot) ?? kernel.entries(slot);
     const same = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((entry, at) => entry === b[at]);
     for (const alias of SLOT_ALIASES) {
@@ -275,7 +287,10 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
       const own = read.rows.get(name) ?? new Map<string, unknown[]>();
       for (const [slot, entries] of shownBy) {
         const rows = feedRows(entries, name);
-        const expected = own.get(slot) ?? [];
+        // A place a plugin owns shows the rows only while it is there (a row refused while it was away is registered again by the
+        // feed's `refresh`, which the host calls once the owner is back: by the time a step is checked it has).
+        const owner = kernel.slotOwner(slot);
+        const expected = OWNED_CANONICAL.has(slot) && (!owner || kernel.state(owner) !== "active") ? [] : own.get(slot) ?? [];
         if (!sameRows(rows, expected)) fail(`feed plugin ${name} holds ${rows.length} row(s) in ${slot}, the view has ${expected.length}`);
       }
       result.feedCompared += 1;
@@ -284,6 +299,15 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   };
 
   const loads: Promise<unknown>[] = [];
+  const unloadSettings = () => kernel.requestUnload(SETTINGS).then(() => {
+    if (kernel.state(SETTINGS) === "absent") kernel.uninstall(SETTINGS);
+    feed.refresh(PLUGIN_OWNED_SLOTS);
+  });
+  const loadSettings = async () => {
+    if (!kernel.installed().includes(SETTINGS)) kernel.install({ name: SETTINGS, provides: { slots: PLUGIN_OWNED_SLOTS.map(form) } });
+    const outcome = await kernel.load(SETTINGS, settingsLoader);
+    if (outcome.status === "active") feed.refresh(PLUGIN_OWNED_SLOTS);
+  };
   const lower = [...PAGE_PLUGINS, ...FRAMED_PLUGINS];
   for (let index = 0; index < maxActions; index += 1) {
     const choice = random.int(12);
@@ -294,12 +318,21 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
     else if (choice === 4) { const name = random.pick(lower); action = `swap ${name}`; loads.push(kernel.swap(name, pluginLoader)); }
     else if (choice === 5) {
       // The shell and the chat surface go and come back under everything that depends on them.
-      const name = random.chance(0.6) ? SHELL : CHAT;
-      const loader = name === SHELL ? shellLoader : chatLoader;
+      const which = random.int(20);
+      const name = which < 8 ? SHELL : which < 14 ? CHAT : SETTINGS;
       const what = random.int(10);
-      if (what < 5) { action = `unload ${name}`; if (kernel.state(name) === "active") result[name === SHELL ? "shellUnloads" : "chatUnloads"] += 1; loads.push(kernel.requestUnload(name)); }
-      else if (what < 9) { action = `load ${name}`; loads.push(kernel.load(name, loader)); }
-      else { action = `swap ${name}`; loads.push(kernel.swap(name, loader)); }
+      if (name === SETTINGS) {
+        // The in-page host's way (inpage-host.ts `define`): the declaration is installed with the load and forgotten with the unload,
+        // and the feed is told after each, so the rows refused while the owner was away are registered again.
+        if (what < 5) { action = `unload ${name}`; if (kernel.state(name) === "active") result.settingsUnloads += 1; loads.push(unloadSettings()); }
+        else if (what < 9) { action = `load ${name}`; loads.push(loadSettings()); }
+        else { action = `swap ${name}`; loads.push(kernel.swap(name, settingsLoader).then(() => { feed.refresh(PLUGIN_OWNED_SLOTS); })); }
+      } else {
+        const loader = name === SHELL ? shellLoader : chatLoader;
+        if (what < 5) { action = `unload ${name}`; if (kernel.state(name) === "active") result[name === SHELL ? "shellUnloads" : "chatUnloads"] += 1; loads.push(kernel.requestUnload(name)); }
+        else if (what < 9) { action = `load ${name}`; loads.push(kernel.load(name, loader)); }
+        else { action = `swap ${name}`; loads.push(kernel.swap(name, loader)); }
+      }
     }
     else if (choice === 6 && gates.length) { action = "settle undo"; gates.splice(random.int(gates.length), 1)[0]!(random.chance(0.7)); }
     else if (choice === 7 && loaderGates.length) { action = "settle loader"; loaderGates.splice(random.int(loaderGates.length), 1)[0]!(); }
@@ -308,7 +341,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
       // A contribution from any plugin (a feed plugin's, which declared other slots, included) to any shell slot, under either
       // name: refused unless the plugin declared the slot and its owner is active (K2).
       const target = random.pick([...lower, SHELL, ...feed.loaded()]);
-      const slot = form(random.pick(SHELL_SLOTS));
+      const slot = form(random.pick(ALL_SLOTS));
       action = `contribute ${target} → ${slot}`;
       addContribution(target, slot);
     }
@@ -338,10 +371,12 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   // reloads what a hanging unload or the shell's going held back, and what the page shows is what the view says).
   void kernel.load(CHAT, chatLoader);
   void kernel.load(SHELL, shellLoader);
+  void loadSettings();
   const converged = () => !last.view || ([...read.names].sort().join() === feed.loaded().sort().join() && [...read.names].every((name) => kernel.state(name) === "active"));
   for (let step = 0; step < 4; step += 1) {
     await settle(() => true);
     if (last.view) reconcile(last.view);
+    feed.refresh(PLUGIN_OWNED_SLOTS);
     await flush();
     if (converged() && !gates.length && !loaderGates.length) break;
   }
@@ -350,7 +385,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
     const expected = [...read.names].sort();
     if (feed.loaded().sort().join() !== expected.join()) throw new Error(`seed ${seed}: after settling the feed holds [${feed.loaded().sort()}], the view names [${expected}]`);
     for (const name of expected) if (kernel.state(name) !== "active") throw new Error(`seed ${seed}: after settling ${name} is ${kernel.state(name)}`);
-    for (const slot of SHELL_CANONICAL) {
+    for (const slot of ALL_CANONICAL) {
       const rows = kernel.entries(slot).filter((entry) => (entry.entry as Partial<FeedEntry>).kind === "feed");
       for (const name of expected) {
         const mine = feedRows(rows, name);
@@ -393,7 +428,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   if (world.size || kernel.allContributions().length || kernel.allRegistrations().length || kernel.providerOf(QUOTE) || kernel.plugins().length || kernel.wanted().length) throw new Error(`seed ${seed}: residue after unload-all`);
   if (feed.loaded().length) throw new Error(`seed ${seed}: the feed still holds [${feed.loaded()}]`);
   const installed = kernel.installed().sort();
-  const fixed = [CHAT, SHELL, ...lower].sort();
+  const fixed = [CHAT, SHELL, ...lower, ...(installed.includes(SETTINGS) ? [SETTINGS] : [])].sort();
   if (installed.join() !== fixed.join()) throw new Error(`seed ${seed}: the declarations left are [${installed}], not [${fixed}]`);
   // Check 5: each failing undo is reported, once.
   const keys = failures.filter((failure) => failure.registration.includes("#")).map((failure) => `${failure.plugin}#${failure.generation}#${failure.registration}`);

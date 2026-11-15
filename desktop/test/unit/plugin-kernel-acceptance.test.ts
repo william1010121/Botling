@@ -572,7 +572,7 @@ describe("check 2 (no residue, P1) with check 3's invariants, check 5 and check 
     const started = Date.now();
     const base = (JSON.parse(readFileSync(join(desktop, "test", "fixtures", "kernel-goldens", "plugins-list.json"), "utf8")) as PluginsView).plugins[0]!;
     const input = { plugins: PLUGINS.map((plugin) => plugin.name), base };
-    const total = { events: 0, rounds: 0, failures: 0, aliasShown: 0, feedCompared: 0, frameEntries: 0, componentEntries: 0, shellUnloads: 0, chatUnloads: 0 };
+    const total = { events: 0, rounds: 0, failures: 0, aliasShown: 0, feedCompared: 0, frameEntries: 0, componentEntries: 0, shellUnloads: 0, chatUnloads: 0, settingsUnloads: 0 };
     for (const seed of seeds()) {
       const result = await rendererKernelRun(seed, input);
       for (const key of Object.keys(total) as (keyof typeof total)[]) total[key] += result[key];
