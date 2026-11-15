@@ -116,7 +116,7 @@ describe("the fixture matches App.tsx and TaskDetails.tsx", () => {
     const rail = app.indexOf('<ColumnDivider column="rail" />'), chat = app.indexOf('<RegionSlot region="main" />');
     expect(app).toContain('<section className="chat-pane">');
     expect(app).toContain("main: mainRegion");
-    const browser = app.indexOf('<ColumnDivider column="browser" />'), pane = app.indexOf("<BrowserPane bot={bot}"), tasks = app.indexOf("<TaskDetails");
+    const browser = app.indexOf('<ColumnDivider column="browser" />'), pane = app.indexOf("<BrowserPane bot={bot}"), tasks = app.indexOf('<RegionSlot region="side" />');
     expect(rail).toBeGreaterThan(app.indexOf("</aside>"));
     expect(chat).toBeGreaterThan(rail);
     expect(browser).toBeGreaterThan(chat);
