@@ -12,7 +12,7 @@
 //   now and its roster scope allows the command (and the stated scope is the one it needs).
 import type { Command } from "../../contract";
 import { commandScope, remoteCmdRefusal, remoteReqRefusal, REMOTE_READS, type DeviceScope, type Scope } from "../../protocol";
-import type { Authorize } from "../slots";
+import { CARD_COMMANDS, type Authorize } from "../slots";
 
 export { REMOTE_READS };
 
@@ -23,7 +23,15 @@ export interface DeviceRoster {
   server?(member: string): boolean;
   /** This server's own member id, so a slot naming itself gets a dedicated origin refusal. */
   readonly memberId?: string;
+  /**
+   * M5-06c (§16): true for a card this server put up itself and only a user may answer (a fetch approval in the
+   * Maintainer's chat, `Core.serverAsk`). A peer server is the side that asks; it must never pick, answer or dismiss it.
+   */
+  userOnlyCard?(messageId: string): boolean;
 }
+
+/** The refusal detail for a peer server's answer to a card only a user answers (M5-06c). */
+export const USER_ONLY_CARD_DETAIL = "this card is answered only by a user (a device or this machine's window), never by another server";
 
 const DEVICE_SCOPES: ReadonlySet<Scope> = new Set<Scope>(["read", "reply", "approve", "manage"]);
 
@@ -58,6 +66,13 @@ export function slotAuthorize(roster: DeviceRoster): Authorize {
     if (roster.server?.(slot.origin)) {
       if (cmd.type === "plugin.grant") {
         return { reason: "origin", detail: "plugin.grant is only from a user (a device or this machine's window)" };
+      }
+      // M5-06c: a fetch approval is the user's decision on the asking server's request; fail closed if the check throws.
+      const cardId = CARD_COMMANDS.has(cmd.type) ? (cmd as { messageId?: unknown }).messageId : undefined;
+      if (typeof cardId === "string" && roster.userOnlyCard) {
+        let userOnly = true;
+        try { userOnly = roster.userOnlyCard(cardId); } catch { userOnly = true; }
+        if (userOnly) return { reason: "origin", detail: USER_ONLY_CARD_DETAIL };
       }
       const needed = commandScope(cmd);
       // `server` commands (M5-01) are stated as `read` (statedScope: not a device scope), so only that statement passes.
