@@ -278,6 +278,14 @@ describe("shell.storage kernel service", () => {
     expect(frameA.posted[2]).toEqual({ ccb: "reply", id: 3, ok: true, value: undefined });
     expect(frameA.posted[3]).toEqual({ ccb: "reply", id: 4, ok: true, value: undefined });
 
+    // A refusal thrown at once (a plugin name that is no namespace) is still answered, never left hanging.
+    const odd = makeFrame();
+    registerPluginFrame(broker, host, { frame: odd.element, plugin: "plugin..odd" });
+    sendFromFrame(odd.element, { ccb: "storage", id: 30, op: "get", key: "state" });
+    await until(() => odd.posted.length === 1);
+    expect(odd.posted[0]).toMatchObject({ ccb: "reply", id: 30, ok: false });
+    expect(String(odd.posted[0].value)).toMatch(/invalid shell storage namespace/);
+
     // A broker host without storage fails closed.
     const minimal = makeFrame();
     registerPluginFrame(broker, { call: async () => null, command: async () => null }, { frame: minimal.element, plugin: "plugin.c" });

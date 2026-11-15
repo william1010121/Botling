@@ -92,7 +92,8 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       if (!bots().some((each) => each.id === botId)) return { inserted: false };
       return { inserted: await quoteIntoComposer(botId, text, focus, plugin).catch(() => false) };
     },
-    storage(plugin, req) {
+    // async: a refusal that throws at once (a name that is no namespace, `:shell` not loaded) still answers the frame.
+    async storage(plugin, req) {
       const store = shellStorage(plugin);
       if (req.op === "get") return store.get(req.key);
       if (req.op === "set") return store.set(req.key, req.value);
