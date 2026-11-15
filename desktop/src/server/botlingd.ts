@@ -734,7 +734,7 @@ export class Botlingd {
         roster, cluster: clusterSetup, identity, serverName: SERVER_NAME, log,
         addresses: () => pairingAddresses(origin, relayAddress),
         pageUrl: () => pairingPageUrl(origin, relayAddress?.url ?? null),
-        addressNote: () => (origin || relayAddress ? null : "no tailnet address or relay is set yet (BOTLING_SERVER_TAILNET_ORIGIN once tailscale serve publishes this server, or botlingd relay set <url>), so the link names a placeholder."),
+        addressNote: () => (origin || relayAddress ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), and no relay (botlingd relay set <url>), so the link names a placeholder."),
       });
       // M3 step 4: server pairing (`botlingd join` / `add-machine`), reached at the loopback listener's `/v3/ws`.
       const listenerPort = () => daemon?.listener?.port ?? null;
