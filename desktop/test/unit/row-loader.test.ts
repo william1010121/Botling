@@ -264,6 +264,15 @@ describe("a web part that cannot be had, and a row that moves on", () => {
     expect(loader.webSource("a")?.source).toBe(text);
   });
 
+  // M7-09b-F review: the cap counts UTF-8 bytes, not UTF-16 units (CJK is 3 bytes a character), whatever the fetcher checked.
+  it("bundleMatches refuses text over the size cap even when it hashes to the reference", async () => {
+    const big = "\u4e2d".repeat(Math.ceil((MAX_BUNDLE_BYTES + 1) / 3));
+    expect(big.length).toBeLessThan(MAX_BUNDLE_BYTES);
+    expect(bundleMatches(big, `sha256:${hex(big)}`)).toBe(false);
+    const fits = "\u4e2d".repeat(Math.floor(MAX_BUNDLE_BYTES / 3));
+    expect(bundleMatches(fits, `sha256:${hex(fits)}`)).toBe(true);
+  });
+
   it("a newer row wins over a fetch still on its way: the stale bytes are never activated", async () => {
     let release!: () => void;
     const until = new Promise<void>((resolve) => { release = resolve; });
@@ -479,6 +488,16 @@ describe("the ticket fetcher", () => {
     const { fetchImpl } = web(big);
     const fetchBundle = ticketBundleFetcher({ link, base: "http://page.example", fetch: fetchImpl });
     await expect(fetchBundle({ plugin: "a", ref: `sha256:${hex(big)}` })).rejects.toThrow(/too large/);
+  });
+
+  // M7-09b-F review: the fetcher hashes the raw bytes and the consumers re-hash the text (`bundleMatches`); a decoder that dropped the
+  // byte order mark would make every bundle that starts with one disagree with its own reference.
+  it("keeps a leading byte order mark: the text it returns hashes back to the bytes it checked", async () => {
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode("export const bom = 1;")]);
+    const ref = `sha256:${hex(bytes)}`;
+    const text = await ticketBundleFetcher({ link: port().link, base: "http://page.example", fetch: web(bytes).fetchImpl })({ plugin: "a", ref });
+    expect(text.charCodeAt(0)).toBe(0xfeff);
+    expect(bundleMatches(text, ref)).toBe(true);
   });
 
   it("refuses bytes that hash to the reference but are not UTF-8 text (no replacement characters run)", async () => {
