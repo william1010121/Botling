@@ -69,7 +69,7 @@ async function waitFor(what: string, ok: () => unknown) {
 }
 
 type Engine = "claude" | "codex" | "agy";
-interface RigOptions { engines?: Engine[]; insertOk?: boolean; interruptGraceMs?: number; stamp?: () => unknown }
+interface RigOptions { engines?: Engine[]; insertOk?: boolean; interruptGraceMs?: number; stamp?: () => string[] }
 
 /** A Bot on fake heads that writes one transcript: its events, its heads' calls, and `mark` lines in the order they happened. */
 function rig(engine: Engine = "claude", options: RigOptions = {}) {
@@ -234,7 +234,7 @@ describe("golden transcripts of an unchanged Bot", () => {
     r.delta(0, "Starting"); await flush();
     r.head(0).onInterrupt = () => queueMicrotask(() => r.head(0).item({ kind: "result", ok: false, text: "", error: "error_during_execution", subtype: "error_during_execution" }));
     r.mark("before stop");
-    expect(await r.b.stop(sent.turnId)).toEqual({ stopped: true, killed: [], forced: false });
+    expect(await r.b.stop(sent.turnId!)).toEqual({ stopped: true, killed: [], forced: false });
     r.mark("stopped");
     // The stop closed the turn, and said so, before the head heard of it.
     expect(index(r, /ev turn\.finished .*status=stopped/)).toBeGreaterThan(-1);
@@ -248,7 +248,7 @@ describe("golden transcripts of an unchanged Bot", () => {
     const r = rig();
     const sent = r.b.send("work please"); await r.sent(0, 1);
     r.delta(0, "Starting"); await flush();
-    await r.b.stop(sent.turnId); await flush(); r.mark("stopped, head ended");
+    await r.b.stop(sent.turnId!); await flush(); r.mark("stopped, head ended");
     r.b.send("after the stop"); await r.sent(1, 1); r.reply(1, "Fine"); await flush(); r.mark("next message on a new head");
     expect(r.head(1).config.resume).toBe(true);
     check("stop with no answer", r);
@@ -257,7 +257,7 @@ describe("golden transcripts of an unchanged Bot", () => {
   it("stop while draining: a message sent before the head ended the stopped turn waits for it, then goes", async () => {
     const r = rig("claude", { interruptGraceMs: 60_000 });
     const sent = r.b.send("work please"); await r.sent(0, 1);
-    const stopping = r.b.stop(sent.turnId); await flush(); r.mark("draining");
+    const stopping = r.b.stop(sent.turnId!); await flush(); r.mark("draining");
     expect(r.peek.draining).not.toBeNull();
     r.b.send("quick one"); await flush(); r.mark("message sent while draining");
     expect(r.head(0).sent).toHaveLength(1);
@@ -352,7 +352,7 @@ describe("golden transcripts of an unchanged Bot", () => {
 
   it("plugin reload: an awake bot restarts just before its next message, so the new plugins are there", async () => {
     let stamp = "a";
-    const r = rig("claude", { stamp: () => ({ v: stamp }) });
+    const r = rig("claude", { stamp: () => [stamp] });
     r.b.send("first"); await r.sent(0, 1); r.reply(0, "Hi"); await flush();
     stamp = "b"; r.b.reloadPlugins(); await flush(); r.mark("plugins changed");
     expect(r.head(0).sent).toHaveLength(1);
