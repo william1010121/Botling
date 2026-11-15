@@ -1,0 +1,13 @@
+[
+ {
+  "botling": "composerBar",
+  "bar": {
+   "plugin": "zed.tools",
+   "view": "zed.tools.bar",
+   "title": "Zed bar",
+   "width": 300,
+   "compact": "botling-card://page/1",
+   "expanded": "botling-card://page/2"
+  }
+ }
+]

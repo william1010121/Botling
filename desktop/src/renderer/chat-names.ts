@@ -8,7 +8,7 @@ export const CHAT_PLUGIN = "botling.chat";
 export const CHAT_MENUS = ["message/context", "message/preview", "chat/link", "composer/plus"] as const;
 export type ChatMenu = (typeof CHAT_MENUS)[number];
 
-/** The chat's view slots: the composer bar (2.x `view/composerBar`) and the chat header (2.x `view/chatHeader`). Still drawn by the old chat (M7-06b moves them). */
+/** The chat's view slots: the composer bar (2.x `view/composerBar`) and the chat header (2.x `view/chatHeader`). The header's buttons (ChatHeaderViews.tsx) and the bar's one view (ComposerBar.ts `useComposerBarView`) are drawn from them (M7-06b, chat-slot.ts `slotViews`). */
 export const CHAT_VIEW_SLOTS = ["composer/bar", "chat/header"] as const;
 
 /** Every slot `botling.chat` provides. */
