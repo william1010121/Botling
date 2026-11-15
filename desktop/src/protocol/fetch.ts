@@ -32,6 +32,12 @@ export type FetchRequester = z.infer<typeof FetchRequester>;
 export const FetchDenyReason = z.enum(["denied", "limit", "deny-list", "outside", "revoked", "expired", "gone"]);
 export type FetchDenyReason = z.infer<typeof FetchDenyReason>;
 
+export const FetchFrom = z.strictObject({
+  file: z.string().max(4_096).refine((value) => !value.includes("\0"), { message: "a path may not hold NUL" }),
+  index: Seq,
+});
+export type FetchFrom = z.infer<typeof FetchFrom>;
+
 const msg = <T extends string, S extends z.core.$ZodLooseShape>(t: T, shape: S) => z.strictObject({ t: z.literal(t), ...shape });
 
 export const FetchAsk = msg("fetch.ask", {
@@ -41,6 +47,7 @@ export const FetchAsk = msg("fetch.ask", {
   what: FetchWhat,
   purpose: z.string().max(500),
   maxBytes: z.number().int().min(1).max(FETCH_MAX_BYTES),
+  from: FetchFrom.optional(),
 });
 
 export const FetchGrant = msg("fetch.grant", {
