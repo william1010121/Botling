@@ -778,7 +778,8 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         name: item.name,
         author: item.author,
         ask: item.manifest.tier,
-        granted: (item.author === "builtin" ? "write" : "read") as PluginReportDryRunEntry["granted"],
+        // A dry run reports what the live import writes: a built-in's fixed grant, no grant for anything else (B-20(a)).
+        granted: (item.author === "builtin" ? "write" : null) as PluginReportDryRunEntry["granted"],
       }))
       .sort((a, b) => {
         const aBuiltIn = a.author === "builtin" ? 0 : 1;
