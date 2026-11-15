@@ -65,6 +65,13 @@ export interface RemoteTurnRequest {
   onBegin?: () => void;
 }
 
+/** A remote guest's answer that came late (M5-03a): the host chat, who answered, the cleaned reply. */
+export interface LateAnswer {
+  chatId: string;
+  member: Member;
+  answer: Extract<GuestAnswer, { kind: "reply" }>;
+}
+
 const isRemoteMember = (member: Member): member is RemoteMember => "server" in member && typeof (member as RemoteMember).server === "string";
 
 export interface ConversationsDeps {
@@ -607,6 +614,19 @@ export class Conversations {
     if (by) return;
     this.followUps.set(chat.id, { depth: 1, until: Date.now() + 30 * 60_000 });
     chat.appMessage(botFollowUpMissedNote({ callee: name, question: asked, why }));
+  }
+
+  /**
+   * D51 (Botling 3 M5-03a): a remote guest's answer that came after the host gave up ("Did not answer this time: …").
+   * The chat says so, then shows the guest's line; nothing else happens: nobody is handed a turn, no follow-up is set, no
+   * pending call-in is touched, and no tag in the line acts (`tagsAct: false`). One call, one line.
+   */
+  async postLate(late: LateAnswer): Promise<void> {
+    const chat = this.deps.bot(late.chatId);
+    if (!chat) { this.deps.log("callin: a late answer was dropped: its chat is gone"); return; }
+    if (!late.answer.text.trim()) { this.deps.log("callin: a late answer was dropped: it had no words"); return; }
+    chat.appNotice(`Late answer from ${late.member.name} (after its machine was not reachable): nobody was woken for it.`);
+    await this.postGuestReply(late.answer, late.member, null, chat, { passes: false, tagsAct: false });
   }
 
   /** Who answers in `chatId` now (null: nobody); `guest`, the bot that starts or stops answering there, is drawn again too. */

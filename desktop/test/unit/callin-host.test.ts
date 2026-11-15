@@ -343,7 +343,8 @@ describe("M5-02c: the host asks and waits (host.ts, the callin.reply handler)", 
     // already aborted: nothing is asked
     const pre = new AbortController(); pre.abort();
     await expect(host.remoteTurn({ ...request(), signal: pre.signal })).resolves.toEqual({ kind: "failed", why: "cancelled" });
-    expect(asks).toHaveLength(2);
+    // M5-03a: the aborted wait also told B (one callin.cancel); no third ask went out.
+    expect(asks.filter((entry) => entry.cmd.type === "callin.ask")).toHaveLength(2);
   });
 
   it("21. a reply the guest cut to its limit parses here: the largest legal reply goes through the handler", async () => {

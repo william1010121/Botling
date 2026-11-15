@@ -74,7 +74,7 @@ export class IntentRuntime {
     this.now = options.now ?? Date.now;
     this.scope = new TxScope(options.store, (streams) => options.hub?.committed(streams), (error) => log?.(`intents: an after-commit step failed (${error instanceof Error ? error.message : String(error)})`));
     this.callIns = new CallInGuest({ scope: this.scope, engine: options.engine, now: this.now, log });
-    this.callHost = new CallInHost({ log });
+    this.callHost = new CallInHost({ log, scope: this.scope, now: this.now });
     this.worker = new EffectWorker({ scope: this.scope, engine: options.engine, now: this.now, log, callIns: this.callIns });
     this.tap = new EventTap({
       scope: this.scope,
