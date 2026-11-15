@@ -9,7 +9,8 @@ import { useMemo, useSyncExternalStore } from "react";
 import type { Kernel } from "../../../Web/src/plugin-kernel";
 import { rendererKernel, slotsVersion, subscribeSlots } from "./renderer-kernel";
 import { inPageHost, type InPageHost } from "./shell/inpage-host";
-import { BOT_PANEL_PLUGIN, MAIN_SLOT, PANEL_BLOCKS, type PanelBlock, type PanelBlockEntry } from "./panel-names";
+import { BOT_PANEL_PLUGIN, MAIN_SLOT, PANEL_BLOCKS, TILE_SLOTS, type PanelBlock, type PanelBlockEntry, type TileSurface, type TileView } from "./panel-names";
+import type { FeedEntry } from "./shell/plugin-feed";
 
 export interface PanelState { blocks: readonly PanelBlock[]; unavailable: boolean }
 
@@ -34,4 +35,30 @@ export function usePanelState(): PanelState {
   const version = useSyncExternalStore(subscribeSlots, slotsVersion, slotsVersion);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => panelState(), [version]);
+}
+
+/**
+ * The tiles `surface` holds (M7-03b): the rows the feed put into `panel/tile/<surface>` for the plugins that are on, in the view's order. Fail closed:
+ * none while the host says the bot-panel plugin is unavailable; the kernel shows a slot only while its owner and the contributor are active, so none
+ * while the plugin is unloading either (no tile outlives its owner, before its registrations are taken back too). Only a registration of the plugin
+ * the row names counts, and the row must name this surface (the kernel lets any plugin contribute to a slot someone else owns, so the slot's owner
+ * is not a filter). There is no data of its own to fall back on (the plugin never loaded: no tile).
+ */
+export function tilesFor(surface: TileSurface, kernel: Kernel = rendererKernel, host: Pick<InPageHost, "unavailable"> = inPageHost): TileView[] {
+  if (host.unavailable(BOT_PANEL_PLUGIN)) return [];
+  const tiles: TileView[] = [];
+  for (const { plugin, entry } of kernel.entries<Partial<FeedEntry<TileView>>>(TILE_SLOTS[surface])) {
+    if (typeof entry !== "object" || entry === null || entry.kind !== "feed") continue;
+    const row = entry.row;
+    if (plugin === BOT_PANEL_PLUGIN || typeof row !== "object" || row === null || row.plugin !== plugin || !Array.isArray(row.surfaces) || !row.surfaces.includes(surface)) continue;
+    tiles.push(row);
+  }
+  return tiles;
+}
+
+/** `tilesFor(surface)`, drawn again when the kernel's slots or the host's answer change. */
+export function useTiles(surface: TileSurface, host: Pick<InPageHost, "unavailable"> = inPageHost): TileView[] {
+  const version = useSyncExternalStore(subscribeSlots, slotsVersion, slotsVersion);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => tilesFor(surface, rendererKernel, host), [surface, host, version]);
 }

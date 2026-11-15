@@ -168,6 +168,11 @@ export const PluginsView = z.strictObject({
   takeovers: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(5).optional(),
   /** The takeover open now (null: none): which view, for which bot, and whether it is wide. */
   takeover: z.strictObject({ plugin: PluginName, view: z.string().max(100), botId: z.string().max(100), wide: z.boolean() }).nullable().optional(),
+  /**
+   * The `tile` contributions of the plugins that are on (a component folder's cards, a manifest's `tiles`), only when the server asks for them and
+   * there is one: the page's feed puts each into the slot of every surface it names (`panel/tile/board`, …: the bot-panel plugin's).
+   */
+  tiles: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), sizes: z.array(z.string().max(20)).max(10), surfaces: z.array(z.enum(["board", "whiteboard", "pin"])).max(3) })).max(200).optional(),
   /** Plugin views that are blocks in the sidebar gear's popover (`where: "quickSettings"`). */
   quickSettings: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(10).optional(),
 });

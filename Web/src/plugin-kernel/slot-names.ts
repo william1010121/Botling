@@ -7,12 +7,16 @@
 //
 // The 2.x id of a slot is what kernel-list.ts has always used: `view/<where>`, `menu/<menu>`, `statusItem/<where>`.
 
-/** The three groups of 2.x slots that have new names (contributions.ts: VIEW_SLOTS, MENU_SLOTS, STATUS_SLOTS). */
-export type SlotGroup = "view" | "menu" | "statusItem";
+/**
+ * The groups of slots that have new names: three of 2.x (contributions.ts: VIEW_SLOTS, MENU_SLOTS, STATUS_SLOTS) and the tile surfaces
+ * (M7-03b: `tile/board` = `panel/tile/board`, …; slots of the bot-panel plugin in the renderer, not core slots of the main process's list,
+ * which keeps its one `tile` slot).
+ */
+export type SlotGroup = "view" | "menu" | "statusItem" | "tile";
 
 export interface SlotAlias {
   group: SlotGroup;
-  /** The 2.x name: the place (`mainTab`), the menu (`chat/link`) or the status place (`botRow`). */
+  /** The 2.x name: the place (`mainTab`), the menu (`chat/link`), the status place (`botRow`) or the tile surface (`board`). */
   legacy: string;
   /** The new name. */
   name: string;
@@ -43,6 +47,9 @@ export const SLOT_ALIASES: readonly SlotAlias[] = [
   { group: "menu", legacy: "chat/link", name: "chat/link" },
   { group: "statusItem", legacy: "chatHeader", name: "chat/status" },
   { group: "statusItem", legacy: "botRow", name: "bot/row" },
+  { group: "tile", legacy: "board", name: "panel/tile/board" },
+  { group: "tile", legacy: "whiteboard", name: "panel/tile/whiteboard" },
+  { group: "tile", legacy: "pin", name: "panel/tile/pin" },
 ];
 
 /**
