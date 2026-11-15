@@ -175,7 +175,7 @@ describe("check-move", () => {
     expect(r.json!.rows.map((x) => x.path)).toEqual(["src/m.ts"]);
   });
 
-  it("an import statement split over lines is ignored, a call to import() is not", () => {
+  it("an import statement split over lines is ignored, a dynamic import() line is counted", () => {
     put("src/a.ts", BASE_A.replace('import {\n  p,\n  q,\n} from "./pq";', 'import {\n  p,\n  q,\n  r,\n} from "./pq";\nconst lazy = import("./lazy");'));
     const head = commit();
     const r = check(`${base}..${head}`, "--json", "--max-changed", "9");
@@ -183,11 +183,23 @@ describe("check-move", () => {
     expect(r.json!.total.ignored).toBe(1); // `r,` inside the import statement (a hunk of 0 context lines does not show the statement's other lines)
   });
 
+  it("an `export { name };` list is no re-export: the code after it is not swallowed by a later import line", () => {
+    put("src/e.ts", 'export { local };\nconst middle = 1;\nimport tail from "./tail";\n');
+    const mid = commit();
+    put("src/e.ts", 'export { local };\nconst middle = 2;\nimport tail from "./tail";\n');
+    const head = commit();
+    const r = check(`${mid}..${head}`, "--json", "--max-changed", "9");
+    expect(r.json!.total).toMatchObject({ changed: 1, added: 1, ignored: 0 });
+  });
+
   it("refuses a bad range, a revision that is an option, and an unknown revision", () => {
     expect(check("HEAD").code).toBe(2);
-    expect(check("--output=x..HEAD").code).toBe(2);
     expect(check(`${base}..no-such-branch`).code).toBe(2);
     expect(check(`${base}...HEAD`).code).toBe(2);
-    expect(check(`-x..HEAD`).code).toBe(2);
+    for (const range of ["--output=x..HEAD", "-x..HEAD", `${base}..--all`]) {
+      const r = check(range);
+      expect(r.code, range).toBe(2);
+      expect(r.err, range).toContain("Not a revision");
+    }
   });
 });

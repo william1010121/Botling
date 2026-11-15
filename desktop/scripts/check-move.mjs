@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isProductFile } from './check-lines.mjs';
 
 const CODE_FILE = /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/;
-const IMPORT_START = /^import(?:\s|\{|\*|['"])(?!\s*\()/;
+const IMPORT_START = /^import(?:\s|\{|\*|['"])/; // `import(` (a call) does not start a statement
 const EXPORT_FROM_START = /^export\s+(?:type\s+)?(?:\*|\{)/;
 const STATEMENT_END = /(?:\bfrom\s*|^import\s*)(['"])[^'"]*\1\s*(?:with\s*\{[^}]*\}\s*)?;?\s*(?:\/\/.*|\/\*.*\*\/\s*)?$/;
 const MAX_STATEMENT_LINES = 200;
