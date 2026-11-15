@@ -45,10 +45,10 @@ import { Layout, TOOLBOX, type BotProfile } from "./store/workspace";
 export { MAINTAINER_ID };
 
 /** Maintainer's profile (`BotProfile.maintainer`): a manager whose folder is the plugin library. */
-export function maintainerProfile(root: string, instructions: string): BotProfile {
+export function maintainerProfile(root: string, instructions: string, id = MAINTAINER_ID): BotProfile {
   return {
-    id: MAINTAINER_ID, name: "Maintainer", role: "manager", avatar: "diamond", folder: join(root, "plugins"), memoryPath: ".bot/memory.md",
-    storeDir: Layout.bot(root, MAINTAINER_ID), tools: [...TOOLBOX, "Bash"], job: null, problem: null, instructions,
+    id, name: "Maintainer", role: "manager", avatar: "diamond", folder: join(root, "plugins"), memoryPath: ".bot/memory.md",
+    storeDir: Layout.bot(root, id), tools: [...TOOLBOX, "Bash"], job: null, problem: null, instructions,
   };
 }
 
@@ -344,8 +344,9 @@ interface ComponentAsk {
 
 export interface MaintainerDeps {
   root: string;
+  maintainerId?: string;
   maintainer: () => Bot | null;
-  mainBot: () => Bot;
+  mainBot: () => Bot | null;
   bots: () => Bot[];
   library: ComponentLibrary;
   plugins: () => Plugins | null;
@@ -414,6 +415,7 @@ export class MaintainerDesk {
     this.git.onPrepared = () => deps.library.forgetHistory();
   }
 
+  private get maintainerId() { return this.deps.maintainerId ?? MAINTAINER_ID; }
   private get maintainer() { return this.deps.maintainer(); }
 
   /** Gives Maintainer a job, the way the main bot hands work to a manager (`handToMaintainer`); `files` go with it. */
@@ -430,16 +432,17 @@ export class MaintainerDesk {
 
   /** The requests in a bot's reply the app acts on (`Workspace.handle`); what it cannot do yet comes back. Acting waits until the reply is done. */
   handle(from: Bot, requests: BotRequest[]): BotRequest[] {
-    const isMaintainer = from.id === MAINTAINER_ID;
+    const isMaintainer = from.id === this.maintainerId;
+    const mainId = this.deps.mainBot()?.id;
     const left: BotRequest[] = [];
     const later: (() => void)[] = [];
     for (const request of requests) {
       switch (request.kind) {
         case "component":
-          later.push(() => this.requestComponentChange(request.name, request.request, from.id === this.deps.mainBot().id ? "Main bot" : from.profile.name, from));
+          later.push(() => this.requestComponentChange(request.name, request.request, from.id === mainId ? "Main bot" : from.profile.name, from));
           break;
         case "plugin":
-          if (!isMaintainer) later.push(() => this.handTo(`${from.id === this.deps.mainBot().id ? "Main bot" : from.profile.name}'s request for Botling: ${request.request}`));
+          if (!isMaintainer) later.push(() => this.handTo(`${from.id === mainId ? "Main bot" : from.profile.name}'s request for Botling: ${request.request}`));
           break;
         case "install":
           later.push(() => this.proposeInstall(request.source));
@@ -494,7 +497,7 @@ export class MaintainerDesk {
     maintainer.appNotice(`Maintainer wants to read "${folder}". It will only read, never change files there. Allow it?`,
       [{ label: "Allow", detail: "Won't ask again" }, { label: "Don't allow" }],
       (index) => this.answerFolder(folder, index === 0),
-      { sourceID: MAINTAINER_ID });
+      { sourceID: this.maintainerId });
   }
 
   /** Your answer to a folder question (`answerFolder`): kept, and its process starts again with the folder before it carries on. */
@@ -592,7 +595,7 @@ export class MaintainerDesk {
   }
 
   private nameOf(bot: Bot) {
-    return bot.id === this.deps.mainBot().id ? "Main bot" : bot.profile.name;
+    return bot.id === this.deps.mainBot()?.id ? "Main bot" : bot.profile.name;
   }
 
   /** `componentArrived`: the bot now has `name` (by Maintainer, or the app at once); it is woken to answer what the user wanted. */
@@ -657,7 +660,7 @@ export class MaintainerDesk {
   holder(name: string): Bot | null {
     const wanted = name.trim().toLowerCase();
     const main = this.deps.mainBot();
-    if (wanted === "main bot" || wanted === main.profile.name.toLowerCase()) return main;
+    if (main && (wanted === "main bot" || wanted === main.profile.name.toLowerCase())) return main;
     return this.deps.bots().find((bot) => bot.profile.name.toLowerCase() === wanted) ?? null;
   }
 
@@ -700,7 +703,7 @@ export class MaintainerDesk {
     try {
       proposal = fetchPlugin(source, join(this.deps.root, "install-staging"), this.git.git);
     } catch (error) {
-      main.appNotice(`Couldn't install "${source}": ${(error as Error).message}`);
+      main?.appNotice(`Couldn't install "${source}": ${(error as Error).message}`);
       this.installing.delete(source);
       return;
     } finally {
@@ -708,7 +711,7 @@ export class MaintainerDesk {
     }
     this.installing.delete(source);
     if (proposal.problems.length) {
-      main.appNotice(`"${title(proposal.manifest)}" failed the checks and was not installed: ${proposal.problems.join("; ")}`);
+      main?.appNotice(`"${title(proposal.manifest)}" failed the checks and was not installed: ${proposal.problems.join("; ")}`);
       rmSync(proposal.work, { recursive: true, force: true });
       return;
     }
@@ -721,6 +724,7 @@ export class MaintainerDesk {
    */
   offerInstall(proposal: InstallProposal, answered?: (installed: boolean, problem: string | null) => void) {
     const main = this.deps.mainBot();
+    if (!main) { rmSync(proposal.work, { recursive: true, force: true }); answered?.(false, null); return; }
     main.appNotice(installSummary(proposal), [{ label: "Install" }, { label: "Don't install" }], (index) => {
       if (index === 0) {
         const problem = this.finishInstall(proposal);
@@ -759,7 +763,7 @@ export class MaintainerDesk {
       // A built-in plugin may be replaced by one of the same name, as 1.x.
       if (existing && !existing.builtIn && !existing.installedFrom) {
         const problem = `The plugin library already has its own "${name}"; it won't be replaced by an outside one.`;
-        main.appNotice(`"${shown}" could not be installed: ${problem}`);
+        main?.appNotice(`"${shown}" could not be installed: ${problem}`);
         return problem;
       }
       this.git.prepare();
@@ -778,11 +782,11 @@ export class MaintainerDesk {
       this.git.run(["add", "-A", "--", name]);
       this.git.run(["commit", "-q", "-m", `Install ${name} ${proposal.manifest.version} (${proposal.source})`, "--", name]);
       plugins?.registry.noteInstalled(name, proposal.source);
-      main.appNotice(`Installed: ${shown} ${proposal.manifest.version}. You can turn it off under Plugins (the header's Plugins button).`);
+      main?.appNotice(`Installed: ${shown} ${proposal.manifest.version}. You can turn it off under Plugins (the header's Plugins button).`);
       return null;
     } catch (error) {
       const problem = `Couldn't put it into the plugin library: ${(error as Error).message}`;
-      main.appNotice(`"${shown}" could not be installed: ${problem}`);
+      main?.appNotice(`"${shown}" could not be installed: ${problem}`);
       return problem;
     } finally {
       rmSync(proposal.work, { recursive: true, force: true });
