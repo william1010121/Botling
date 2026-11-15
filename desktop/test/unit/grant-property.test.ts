@@ -13,6 +13,9 @@
 //      gets the stored outcome, `fresh: false`, and nothing runs again. A copy held ahead is decided under the table
 //      at the moment it is decided.
 //   3. `plugin.grant` is applied only from `local` or a `manage` device, never with `via`, never from a server origin.
+//   5. A peer server never settles a card (`chat.choose`, `chat.answer`, `chat.ignoreQuestion`, `component.approve`): refused
+//      `origin`, before any lookup and for every stated scope. Its `waiting.ignore` is applied only for a plain waiting
+//      item of the bot the slot targets, else refused `scope` (peer-answer-guard, `.bot/artifacts/v3-m5/peer-answer-guard-review.md`).
 //   4. A hash swap never widens: a command with `via` h2 is never decided under h1's grant (and a resend of a decided
 //      slot with another `via` is a slot conflict, never the old outcome).
 //
@@ -53,6 +56,10 @@ const SELF = "srv-self";
 const PEER = "srv-peer";
 const ALL_TYPES = Object.keys(COMMAND_SCOPES) as Array<keyof typeof COMMAND_SCOPES>;
 const GRANTABLE = ALL_TYPES.filter((type) => COMMAND_SCOPES[type] !== "server"); // a grant's `requests` cannot name a call-in
+/** peer-answer-guard: the card commands only a user settles. Written out here, not imported from the code under test. */
+const USER_ONLY_CARDS = ["chat.choose", "chat.answer", "chat.ignoreQuestion", "component.approve"];
+/** Texts a `waiting.ignore` can carry: the first two are plain waiting items of BOT (when `world.plain` holds them), the third is never plain. */
+const WAITING_TEXTS = ["plain-1", "plain-2", "card-text"];
 const REQUEST_POOL = ["chat.send", "chat.react", "plugins.call", "plugins.command", "plugins.linkCommand", "plugins.tabCommand", "plugin.grant", "plugins.remove", "bots.create", "settings.set", "link.authorize"];
 
 // --- the model ---------------------------------------------------------------------------------------------------------
@@ -61,7 +68,8 @@ type Entry = { kind: "row"; row: PluginRow } | { kind: "malformed"; body: unknow
 type Model = Map<string, Entry>;
 type OriginKind = "local" | "device" | "server" | "unknown" | "self";
 interface Origin { kind: OriginKind; id: string; scope: DeviceScope[] }
-interface World { table: Model; devices: Map<string, DeviceScope[]>; servers: Set<string> }
+/** `plain`: the texts that are plain waiting items (no card) of BOT in the owner's waiting list right now (the `plainWaiting` hook's answer). */
+interface World { table: Model; devices: Map<string, DeviceScope[]>; servers: Set<string>; plain: Set<string> }
 type Expect = { applied: true } | { applied: false; reason: "origin" | "scope" | "grant" };
 
 const four = (type: string): boolean => (FOUR as readonly string[]).includes(type);
@@ -77,6 +85,11 @@ function oracle(world: World, origin: Origin, stated: Scope, cmd: Command, via: 
     return { applied: false, reason: "origin" };
   } else if (world.servers.has(origin.id)) {
     if (cmd.type === "plugin.grant") return { applied: false, reason: "origin" };
+    // peer-answer-guard: a card is a user's to settle, so a server is refused `origin` before anything else is looked at.
+    if (USER_ONLY_CARDS.includes(cmd.type)) return { applied: false, reason: "origin" };
+    // peer-answer-guard: `waiting.ignore` from a server sets aside only a plain waiting item of the bot it names (every slot here
+    // targets `bot:BOT` and every command names BOT, so the target rule always holds); anything else is refused `scope`.
+    if (cmd.type === "waiting.ignore" && !world.plain.has(cmd.text)) return { applied: false, reason: "scope" };
     if (needed === "server") { if (stated !== "read") return { applied: false, reason: "scope" }; }
     else if (!["reply", "manage"].includes(needed) || stated !== honest) return { applied: false, reason: "scope" };
   } else {
@@ -119,6 +132,7 @@ function make(r: Random, type: string, plugin: string): Command {
     case "plugins.linkCommand": return { type, id: `${plugin}.${pick(r, ["go", "plugin.go"])}`, botId: BOT, messageId: "m1", url: "https://x.test/a.pdf" } as unknown as Command;
     case "plugins.tabCommand": return { type, id: `${plugin}.${pick(r, ["go", "deep.go"])}`, botId: BOT, tabId: "t1", url: "https://x.test/a.pdf" } as unknown as Command;
     case "plugin.grant": return { type, plugin, codeHash: pick(r, HASHES), tier: "write", reads: [], requests: [], botId: BOT } as unknown as Command;
+    case "waiting.ignore": return { type, botId: BOT, text: pick(r, WAITING_TEXTS) } as unknown as Command;
     case "settings.set": return { type, change: { key: pick(r, ["theme", "developerMode", "claudeBypassPermissions", "density"]), value: "x" }, botId: BOT } as unknown as Command;
     default: return { type, botId: BOT, messageId: "m1", turnId: "t1" } as unknown as Command;
   }
@@ -155,6 +169,8 @@ function genMalformed(r: Random): unknown {
     default: return { codeHash: H1, manifest, author: "user", grants: Object.fromEntries(HASHES.map((h) => [h, { tier: "admin", reads: [], requests: [...REQUEST_POOL], grantedBy: "user", at: 1 }])) };
   }
 }
+
+function genPlain(r: Random): Set<string> { return new Set(WAITING_TEXTS.slice(0, 2).filter(() => chance(r, 0.5))); }
 
 function genTable(r: Random): Model {
   const table: Model = new Map();
@@ -204,6 +220,7 @@ function genCommand(r: Random, world: World, via: Via | undefined): Command {
   if (roll < 0.78) return make(r, pick(r, FOUR), pick(r, PLUGINS));
   if (roll < 0.86) return make(r, "plugin.grant", pick(r, PLUGINS));
   if (roll < 0.9) return make(r, "settings.set", "");
+  if (roll < 0.95) return make(r, pick(r, [...USER_ONLY_CARDS, "waiting.ignore"]), ""); // peer-answer-guard: the commands a server may not send, or only for a plain item
   return make(r, pick(r, ALL_TYPES), "");
 }
 
@@ -236,12 +253,13 @@ interface Applied { origin: string; epoch: string; n: number; type: string; scop
 function setup() {
   const { db, writer } = memoryStore();
   const log = new FakeLog();
-  const world: World = { table: new Map(), devices: new Map(), servers: new Set([PEER]) };
+  const world: World = { table: new Map(), devices: new Map(), servers: new Set([PEER]), plain: new Set() };
   const applied: Applied[] = [];
   const roster: DeviceRoster = {
     memberId: SELF,
     device: (member) => (world.devices.has(member) ? { keys: { sign: "s", dh: "d" }, scope: world.devices.get(member) } : null),
     server: (member) => member !== SELF && world.servers.has(member),
+    plainWaiting: (botId, text) => botId === BOT && world.plain.has(text), // the model's waiting list, read when the slot is decided
   };
   const apply: ApplyFn = ({ tx, slot, cmd, scope, via, log: l }) => {
     l.appendEntry(tx, slot.target, "test.intent", { n: slot.n }, slot);
@@ -277,6 +295,7 @@ async function runCase(h: ReturnType<typeof setup>, seed: number, index: number)
   };
   const { world, engine, applied } = h;
   world.table = genTable(r);
+  world.plain = genPlain(r);
   const origin = genOrigin(r);
   world.devices = new Map(origin.kind === "device" ? [[origin.id, origin.scope]] : []);
   world.servers = new Set([PEER]);
@@ -341,6 +360,8 @@ async function runCase(h: ReturnType<typeof setup>, seed: number, index: number)
     if (kind === "applied" && via) hit("applied:via");
     if (kind === "applied" && !via && origin.kind === "local") hit("applied:local-novia");
     if (kind === "applied" && origin.kind === "server") hit("applied:server");
+    if (origin.kind === "server" && USER_ONLY_CARDS.includes(cmd.type)) hit(`server:card:${kind}`);
+    if (origin.kind === "server" && cmd.type === "waiting.ignore") hit(`server:waiting-ignore:${world.plain.has(cmd.text) ? "plain" : "not-plain"}:${kind}`);
     if (kind === "applied" && origin.kind === "device") hit("applied:device");
     if (via) {
       if (HOSTILE_HASHES.includes(via.codeHash)) hit("via:hostile-hash");
@@ -361,6 +382,7 @@ async function runCase(h: ReturnType<typeof setup>, seed: number, index: number)
     if (first.status !== "held") fail("2", "slot 2 was not held while slot 1 is missing", { status: first.status });
     const change = changeTable(r, world);
     if (change !== "none") { hit(`tablechange:held:${change}`); await writeTable(h); }
+    if (chance(r, 0.5)) world.plain = genPlain(r); // the waiting list changes while the copy is held; it is decided under the list of that moment
     const result1 = await send(body(1, cmd1, via1, 1), stated1);
     check(1, cmd1, via1, stated1, result1, 0, "slot 1 (predecessor)");
     // Slot 2 was decided in the same turn of the queue, under the same table.
@@ -388,6 +410,7 @@ async function runCase(h: ReturnType<typeof setup>, seed: number, index: number)
   const change = changeTable(r, world);
   hit(`tablechange:${change}`);
   if (change !== "none") await writeTable(h);
+  if (chance(r, 0.5)) world.plain = genPlain(r);
   // The device may be revoked, narrowed or widened after the decision too.
   if (origin.kind === "device" && chance(r, 0.4)) { hit("devicechange"); if (chance(r, 0.5)) world.devices.delete(origin.id); else world.devices.set(origin.id, chance(r, 0.5) ? [...SCOPES] : ["read"]); }
   if (origin.kind === "server" && chance(r, 0.3)) { hit("serverchange"); world.servers.delete(PEER); }
@@ -458,7 +481,11 @@ describe("M5-19: nothing is applied outside device scope ∩ the plugin's grant 
       "plugin.grant:applied:novia:local", "plugin.grant:refused:via:local", "plugin.grant:refused:novia:server",
       // review: every command scope class, and the read / request tiers at a hash other than the row's current one.
       "cmdscope:read", "cmdscope:reply", "cmdscope:approve", "cmdscope:manage", "cmdscope:admin", "cmdscope:machine", "cmdscope:server",
-      "via:grant-read:other-hash", "via:grant-request:other-hash"]) need(key, 25);
+      "via:grant-read:other-hash", "via:grant-request:other-hash",
+      // peer-answer-guard: a server's card answer is refused, its waiting.ignore is applied for a plain item and refused for the rest.
+      "server:card:refused", "server:waiting-ignore:plain:applied", "server:waiting-ignore:not-plain:refused"]) need(key, 25);
+    expect(cover.get("server:card:applied") ?? 0, "a server must never apply a card answer").toBe(0);
+    expect(cover.get("server:waiting-ignore:not-plain:applied") ?? 0, "a server must never set aside a non-plain item").toBe(0);
     for (const change of ["regen", "swap-keep-grants", "swap-drop-grants", "widen", "narrow", "remove", "malform"]) need(`tablechange:${change}`, 100);
     // Every device scope subset (16) is reached.
     for (let mask = 0; mask < 16; mask++) need(`devicescope:${SCOPES.filter((_, i) => mask & (1 << i)).sort().join("+") || "none"}`, 25);
@@ -510,6 +537,7 @@ describe("M5-19 review: a remote origin claiming local or admin is decided as re
           if (ONLY_CASE !== null && index !== ONLY_CASE) continue;
           const r = rng(Math.imul(seed ^ 0x5eed, 2246822519) ^ Math.imul(index + 1, 3266489917));
           h.world.table = genTable(r);
+          h.world.plain = genPlain(r);
           const roll = r();
           const origin: Origin = roll < 0.45 ? { kind: "device", id: "dev-a", scope: chance(r, 0.5) ? [...SCOPES] : subset(r, SCOPES) }
             : roll < 0.8 ? { kind: "server", id: PEER, scope: [] }
