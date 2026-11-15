@@ -125,6 +125,13 @@ export class RendererAdapter {
 
   async request(cmd: Command, via?: RequestVia): Promise<AdapterAnswer> {
     try {
+      // M7-12b: what needs this desktop's own machine is refused here for a peer's bot, with the reason; the rest goes to
+      // its owner. First, so a plugin's attributed request (`via`) is refused the same way.
+      const peerOwner = botIdOf(cmd) ? this.peerOf(botIdOf(cmd)!) : null;
+      if (peerOwner) {
+        const why = peerActionRefusal(cmd, this.serverView(peerOwner)?.name ?? "that machine");
+        if (why) return { ok: false, error: { code: "forbidden", message: `not sent: ${why}` } };
+      }
       let validVia: RequestVia | undefined;
       if (via !== undefined) {
         const parsed = RequestViaSchema.safeParse(via);
@@ -140,12 +147,6 @@ export class RendererAdapter {
       if (cmd.type === "chat.shown" && cmd.botId) { this.show(cmd.botId); this.refreshLinkMenus(); }
       // A peer's bot: the window hints go nowhere (the attached server's core does not have the bot; M3 step 11).
       if ((cmd.type === "chat.shown" || cmd.type === "chat.read") && cmd.botId && this.peerOf(cmd.botId)) return { ok: true, result: {} };
-      // M7-12b: what needs this desktop's own machine is refused here for a peer's bot, with the reason; the rest goes to its owner.
-      const peerOwner = botIdOf(cmd) ? this.peerOf(botIdOf(cmd)!) : null;
-      if (peerOwner) {
-        const why = peerActionRefusal(cmd, this.serverView(peerOwner)?.name ?? "that machine");
-        if (why) return { ok: false, error: { code: "forbidden", message: `not sent: ${why}` } };
-      }
       // F1 (M6-06): plugin secrets never enter the durable outbox (fe-link.sqlite); send as a non-persisted req.
       if (cmd.type === "plugins.secret") return await this.read(cmd);
       if (READ_COMMANDS.has(cmd.type)) return await this.read(cmd);

@@ -52,7 +52,10 @@ async function rig() {
   await adapter.snapshot();
   const sentTo = (target: string) => server.copies.filter((copy) => copy.slot.target === target);
   const asked = (type: string) => reqs.filter((cmd) => cmd.type === type);
-  return { adapter, sentTo, asked, ask: (cmd: Record<string, unknown>) => adapter.request(cmd as Command) };
+  return {
+    adapter, sentTo, asked,
+    ask: (cmd: Record<string, unknown>, via?: { plugin: string }) => adapter.request(cmd as Command, via as never),
+  };
 }
 
 /** Each: a command the owner decides (device scopes), about the peer's bot. */
@@ -105,6 +108,14 @@ describe("the window on a peer's bot (M7-12b)", () => {
     await flush();
     expect(sentTo(FAR_STREAM)).toEqual([]);
     expect(asked(String(cmd.type))).toEqual([]);
+  });
+
+  it("a plugin's attributed request (via) for a peer's bot is refused the same way, before the plugin check", async () => {
+    const { ask, sentTo } = await rig();
+    const cmd = { type: "chat.feedback", botId: FAR, messageId: "m1", text: "x", images: [], rect: null };
+    expect(await ask(cmd, { plugin: "notes" })).toEqual({ ok: false, error: { code: "forbidden", message: "not sent: chat.feedback needs the desktop window on Linux box (machine)" } });
+    await flush();
+    expect(sentTo(FAR_STREAM)).toEqual([]);
   });
 
   it("the attached server's own bot: the same commands are unchanged (a read is asked, a command is queued)", async () => {
