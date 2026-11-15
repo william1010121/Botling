@@ -12,6 +12,8 @@
 //   2. A grant (or device, or hash) change after a command was decided never changes that command's outcome: a resend
 //      gets the stored outcome, `fresh: false`, and nothing runs again. A copy held ahead is decided under the table
 //      at the moment it is decided.
+//      A server origin never applies a plugin command (`plugins.call|command|linkCommand|tabCommand`), with or without
+//      `via`: refused `origin` before any grant is read (fu-plugin-call-server-origin).
 //   3. `plugin.grant` is applied only from `local` or a `manage` device, never with `via`, never from a server origin.
 //   5. A peer server never settles a card (`chat.choose`, `chat.answer`, `chat.ignoreQuestion`, `component.approve`): refused
 //      `origin`, before any lookup and for every stated scope. Its `waiting.ignore` is applied only for a plain waiting
@@ -96,6 +98,9 @@ function authority(world: World, origin: Origin, stated: Scope, cmd: Command, vi
     if (cmd.type === "plugin.grant") return { applied: false, reason: "origin" };
     // peer-answer-guard: a card is a user's to settle, so a server is refused `origin` before anything else is looked at.
     if (USER_ONLY_CARDS.includes(cmd.type)) return { applied: false, reason: "origin" };
+    // fu-plugin-call-server-origin: a plugin's method or button is run by a user, never by another server (a write
+    // grant must not be a way around the card and waiting rules), grant or no grant, whatever scope is stated.
+    if (four(cmd.type)) return { applied: false, reason: "origin" };
     // peer-answer-guard: `waiting.ignore` from a server sets aside only a plain waiting item of the bot it names, sent to that bot
     // (every slot here targets `bot:BOT`); another bot, a non-plain text or an unreadable waiting list is refused `scope`.
     if (cmd.type === "waiting.ignore" && (cmd.botId !== BOT || !world.plain?.has(cmd.text))) return { applied: false, reason: "scope" };

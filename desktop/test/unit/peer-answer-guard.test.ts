@@ -7,6 +7,11 @@
 // - `waiting.ignore` is an allowlist: accepted only when the slot targets `bot:<botId>` AND the owner's waiting list
 //   holds, right now, a plain item (messageId null) of that bot with exactly that text; everything else is
 //   `scope`, a hook that throws or is missing included (fail closed).
+// - The four plugin commands (`plugins.call`, `plugins.command`, `plugins.linkCommand`, `plugins.tabCommand`) are refused
+//   with `origin` too, before any grant is read: a plugin method (the whiteboard's `ignore` reaches
+//   `Core.ignoreWaiting`) could otherwise run a peer's way around the two rules above when the owner gave that plugin a
+//   write grant (`fu-plugin-call-server-origin`). No honest flow sends one with a server origin; a forwarded phone
+//   command keeps the phone as its origin.
 // - Devices (a phone, also one forwarded by another server, with the device as origin), the local window and `admin`
 //   are unchanged.
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,7 +22,7 @@ import { saveProjectRow } from "../../src/core/projects";
 import { Core } from "../../src/core/server";
 import type { Slot } from "../../src/protocol";
 import { authorizeRoster } from "../../src/server/botlingd";
-import { slotAuthorize, USER_ONLY_CARD_DETAIL, WAITING_PLAIN_ONLY_DETAIL, WAITING_TARGET_DETAIL, type DeviceRoster } from "../../src/server/session";
+import { PLUGIN_ORIGIN_DETAIL, slotAuthorize, USER_ONLY_CARD_DETAIL, WAITING_PLAIN_ONLY_DETAIL, WAITING_TARGET_DETAIL, type DeviceRoster } from "../../src/server/session";
 import { tempDir } from "../helpers";
 
 const BOT = "6A0B0000-0000-4000-8000-0000000000B1";
@@ -134,6 +139,45 @@ describe("peer-answer-guard: waiting.ignore from a peer server sets aside only a
     const authorize = slotAuthorize(roster(list));
     expect(authorize(tx, { slot: slot("srv-gone"), cmd: ignore("Which domain?"), scope: "reply" })).toMatchObject({ reason: "origin" });
     expect(authorize(tx, { slot: slot("srv-gone"), cmd: settling[0]!, scope: "reply" })).toMatchObject({ reason: "origin", detail: "srv-gone is not a valid device of this cluster" });
+  });
+});
+
+describe("fu-plugin-call-server-origin: a peer server never runs a plugin method or button", () => {
+  const FOUR: Command[] = [
+    { type: "plugins.call", name: "botling.whiteboard", method: "ignore", params: { botId: BOT, text: "Allow Bash?" }, from: "frame" } as unknown as Command,
+    { type: "plugins.command", id: "botling.whiteboard.go", from: "frame", name: "botling.whiteboard" } as unknown as Command,
+    { type: "plugins.linkCommand", id: "botling.whiteboard.go", botId: BOT, messageId: CARD, url: "https://x.test/a.pdf" } as unknown as Command,
+    { type: "plugins.tabCommand", id: "botling.whiteboard.go", botId: BOT, tabId: "t1", url: "https://x.test/a.pdf" } as unknown as Command,
+  ];
+
+  it("refuses all four with origin, whatever the stated scope, the target or the hooks (nothing is looked up)", () => {
+    for (const authorize of [slotAuthorize(roster()), slotAuthorize(roster(() => true)), slotAuthorize(roster(() => { throw new Error("gone"); }))]) {
+      for (const cmd of FOUR) {
+        for (const scope of ["reply", "approve", "manage", "read"] as const) {
+          for (const target of [`bot:${BOT}`, "srv:srv-self"] as Array<Slot["target"]>) {
+            expect(authorize(tx, { slot: slot("srv-peer", target), cmd, scope }), `${cmd.type} ${scope} ${target}`).toEqual({ reason: "origin", detail: PLUGIN_ORIGIN_DETAIL });
+          }
+        }
+      }
+    }
+  });
+
+  it("a phone (also one forwarded by another server), the local window and admin still run them", () => {
+    const authorize = slotAuthorize(roster());
+    for (const cmd of FOUR) {
+      expect(authorize(tx, { slot: slot("dev-phone"), cmd, scope: "reply" }), cmd.type).toBeNull();
+      expect(authorize(tx, { slot: slot("desktop"), cmd, scope: "local" }), cmd.type).toBeNull();
+      expect(authorize(tx, { slot: slot("desktop"), cmd, scope: "admin" }), cmd.type).toBeNull();
+    }
+  });
+
+  it("an unknown or revoked server and this server itself keep their own origin refusals; the other plugin commands are unchanged", () => {
+    const authorize = slotAuthorize(roster());
+    expect(authorize(tx, { slot: slot("srv-gone"), cmd: FOUR[0]!, scope: "reply" })).toEqual({ reason: "origin", detail: "srv-gone is not a valid device of this cluster" });
+    expect(authorize(tx, { slot: slot("srv-self"), cmd: FOUR[0]!, scope: "reply" })).toEqual({ reason: "origin", detail: "a server does not send commands to itself" });
+    // Not plugin methods or buttons: the helper commands keep the rule they had (`manage`, then the owner's grant).
+    const helper = { type: "plugins.tileImages", name: "botling.whiteboard", botId: BOT, data: "{}" } as unknown as Command;
+    expect(authorize(tx, { slot: slot("srv-peer"), cmd: helper, scope: "manage" })).toBeNull();
   });
 });
 
