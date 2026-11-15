@@ -11,7 +11,9 @@ import { AdminOp } from "../../src/protocol";
 import { AuditRow, PluginRow } from "../../src/protocol/table-rows";
 import { Botlingd } from "../../src/server/botlingd";
 import { AdminClient } from "../../src/server/pairing";
-import { grantTierAt } from "../../src/server/plugin-admin";
+import { grantTierAt, PluginAdmin } from "../../src/server/plugin-admin";
+import type { CmdBody } from "../../src/protocol";
+import type { Db } from "../../src/server/store";
 import { pluginsCommand } from "../../src/server/plugin-cli";
 import { botlingdEnv, botlingdScript, testRoot } from "../botlingd-harness";
 import { desktop } from "../helpers";
@@ -191,6 +193,35 @@ describe("M5-14c: botlingd plugins / plugins grant (in-process botlingd, temp da
     expect(s.audits()).toHaveLength(0);
   }, 60_000);
 
+  it("4c. (review) one name and one --tier only: another word, a second --tier or a flag is the usage line, nothing granted", async () => {
+    const s = await start({ my: ["composer"], "my-tool": ["composer"] });
+    const before = readRows(s.dataDir, s.stream);
+    const usage = "usage: botlingd plugins [grant <name> --tier read|request|write]";
+    for (const args of [
+      ["grant", "my", "tool", "--tier", "read"],
+      ["grant", "my-tool", "--tier", "read", "--tier", "write"],
+      ["grant", "my-tool", "--tier", "read", "--json"],
+      ["grant", "--tier", "read", "--json"],
+      ["grant", "--json", "--tier", "read"],
+    ]) expect(await s.cli(args)).toEqual({ code: 2, lines: [usage] });
+    expect(readRows(s.dataDir, s.stream)).toEqual(before);
+    // Either order is the same grant.
+    expect(await s.cli(["grant", "--tier", "read", "my-tool"])).toEqual({ code: 0, lines: [`my-tool may now: Read only (code ${s.hash("my-tool").slice(0, 8)}).`] });
+  }, 60_000);
+
+  it("4d. (review) a name or tier with a line break or terminal escape is echoed escaped on one line; a name no row can have is exit 2", async () => {
+    const s = await start({ "my-tool": ["composer"] });
+    const before = readRows(s.dataDir, s.stream);
+    const fake = "evil\nmy-tool may now: Change its own data on the server (code deadbeef).";
+    expect(await s.cli(["grant", fake, "--tier", "read"])).toEqual({ code: 2, lines: ['no plugin named "evil\\u000amy-tool may now: Change its own data on the server (code deadbeef)." on this machine'] });
+    expect(await s.cli(["grant", "\u001b]0;x\u0007\u202e", "--tier", "read"])).toEqual({ code: 2, lines: ['no plugin named "\\u001b]0;x\\u0007\\u202e" on this machine'] });
+    expect(await s.cli(["grant", "my-tool", "--tier", "read\r"])).toEqual({ code: 2, lines: ['unknown tier "read\\u000d" (use read, request or write)'] });
+    // Over the wire's 200 characters: still "no plugin named" and exit 2, not a malformed-request error.
+    const long = "x".repeat(201);
+    expect(await s.cli(["grant", long, "--tier", "read"])).toEqual({ code: 2, lines: [`no plugin named "${long}" on this machine`] });
+    expect(readRows(s.dataDir, s.stream)).toEqual(before);
+  }, 60_000);
+
   it("8. the built botlingd: exit codes and the same lines over the real socket", async () => {
     const s = await start({ "my-tool": ["composer"] });
     const run = (args: string[]) => new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
@@ -220,6 +251,32 @@ describe("M5-14c: wire and own-property checks", () => {
     expect(AdminOp.safeParse({ op: "plugins.grant", plugin: "my" }).success).toBe(false);
     expect(AdminOp.safeParse({ op: "plugins.grant", plugin: "my", tier: "read", codeHash: "a" }).success).toBe(false);
     expect(AdminOp.safeParse({ op: "plugins.list", extra: 1 }).success).toBe(false);
+  });
+
+  it("9b. (review) a manifest that lists plugin.grant: the grant sent leaves it out (D54) and keeps the rest; local scope, no via", async () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE rows (stream TEXT, key TEXT, body TEXT, deleted INTEGER, rev INTEGER); CREATE TABLE streams (stream TEXT, logId TEXT)");
+    const manifest = { tier: "request", reads: ["bots"], requests: ["chat.send", "plugin.grant"], owns: [], provides: [], requires: [], uses: [], clients: [], needsShell: [] };
+    db.prepare("INSERT INTO rows VALUES ('srv:S', 'plugin:p', ?, 0, 1)").run(JSON.stringify({ codeHash: "H1", manifest, author: "user", grants: {} }));
+    db.prepare("INSERT INTO streams VALUES ('srv:S', 'L1')").run();
+    const sent: Array<{ body: CmdBody; scope: unknown }> = [];
+    const admin = new PluginAdmin({
+      serverId: "S",
+      reader: () => ({ prepare: (sql: string) => db.prepare(sql) }) as unknown as Db,
+      runtime: { receive: async (body, options) => { sent.push({ body, scope: options?.scope }); return { status: "result", fresh: true, message: { outcome: { kind: "applied" } } } as never; } },
+    });
+    expect(await admin.grant("p", "request")).toEqual({ ok: true, name: "p", codeHash: "H1", tier: "request" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.scope).toBe("local");
+    expect(sent[0]!.body.via).toBeUndefined();
+    expect(sent[0]!.body).toMatchObject({ slot: { origin: "desktop", target: "srv:S", n: 1 }, floor: 1, inc: "L1" });
+    expect(sent[0]!.body.cmd).toEqual({ type: "plugin.grant", plugin: "p", codeHash: "H1", tier: "request", reads: ["bots"], requests: ["chat.send"] });
+    expect(await admin.grant("q", "read")).toEqual({ ok: false, reason: "no-plugin" });
+    expect(sent).toHaveLength(1);
+    // A row whose body is not JSON is left out of the list; it does not hide the others.
+    db.prepare("INSERT INTO rows VALUES ('srv:S', 'plugin:bad', '{not json', 0, 2)").run();
+    expect(admin.list()).toEqual([{ name: "p", codeHash: "H1", tier: "none", asks: "request" }]);
+    db.close();
   });
 
   it("10. grantTierAt looks the hash up as an own key: prototype names and old hashes give none", () => {

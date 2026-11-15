@@ -57,7 +57,9 @@ export class PluginAdmin {
     const rows = this.options.reader().prepare("SELECT key, body FROM rows WHERE stream = ? AND deleted = 0 AND substr(key, 1, 7) = 'plugin:' ORDER BY key").all(this.stream);
     const out: PluginListRow[] = [];
     for (const row of rows) {
-      const parsed = PluginRow.safeParse(JSON.parse(String(row.body)));
+      let body: unknown;
+      try { body = JSON.parse(String(row.body)); } catch { continue; }
+      const parsed = PluginRow.safeParse(body);
       if (!parsed.success) continue;
       out.push({ name: String(row.key).slice(7), codeHash: parsed.data.codeHash, tier: grantTierAt(parsed.data), asks: parsed.data.manifest.tier });
     }
