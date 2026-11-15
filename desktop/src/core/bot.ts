@@ -4,7 +4,7 @@ import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
 import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
-import { AgyAcpHead } from "./agent/agy-acp";
+import { AgyAcpHead, isAgyConversationGone } from "./agent/agy-acp";
 import { AGY_EXECUTION_BLOCKED } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
 // claude process), the turn under way, the tool approvals it is waiting on, and its subagents
