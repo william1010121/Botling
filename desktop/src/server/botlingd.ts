@@ -439,6 +439,7 @@ export class Botlingd {
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
         store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster)), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        pluginRowsChanged: () => core.pluginGrantsChanged(),
         tapHooks: {
           eventSeen: (event) => {
             summary?.seen(event);
@@ -491,6 +492,7 @@ export class Botlingd {
             let touched = false;
             const pluginResult = reconcilePluginRows(tx, stream, installed, Date.now(), { log, onWritten: () => { touched = true; } });
             const machineRev = putRow(tx, stream, "machine", machineRow(pluginResult.digest));
+            if (touched) runtime.scope.afterCommit(() => core.pluginGrantsChanged());
             if (touched || machineRev != null) runtime.scope.afterCommit(() => feeds.notify(feeds.ownStream));
           });
           if (botWrites) {

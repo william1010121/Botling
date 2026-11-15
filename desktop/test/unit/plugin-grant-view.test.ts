@@ -3,7 +3,11 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { folderHash } from "../../src/core/plugins/catalog";
+import { Botlingd, readPluginGrant } from "../../src/server/botlingd";
+import { botlingdEnv, testRoot } from "../botlingd-harness";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, PluginView, type Outbound, type PluginsView } from "../../src/contract";
 import { coreProcessOptions } from "../../src/core/core-process";
@@ -11,11 +15,10 @@ import { Plugins, type PluginWorld } from "../../src/core/plugins";
 import { Core, type CoreOptions } from "../../src/core/server";
 import { PluginsPanel } from "../../src/renderer/Plugins";
 import type { Client } from "../../src/renderer/client";
-import { readPluginGrant } from "../../src/server/botlingd";
 import { deleteRow, putRow } from "../../src/server/replica/tables";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import type { PluginRow } from "../../src/protocol/table-rows";
-import { fakeCli, tempDir, until } from "../helpers";
+import { desktop, fakeCli, tempDir, until } from "../helpers";
 
 const openCores: Core[] = [];
 const openStores: ServerStore[] = [];
@@ -279,6 +282,10 @@ describe("M5-14d: readPluginGrant from server.db", () => {
         .run(stream, "plugin:broken", JSON.stringify({ codeHash: "sha256:x", grants: "bad" }));
     });
     expect(readPluginGrant(reader, serverId, "broken")).toBe("none");
+
+    // A reader that throws (closed store, shutdown) -> fail closed ("none").
+    const throwing = { prepare() { throw new Error("database is closed"); } } as unknown as typeof reader;
+    expect(readPluginGrant(throwing, serverId, "my-tool")).toBe("none");
   });
 });
 
@@ -310,4 +317,50 @@ describe("M5-14d: PluginsPanel renderer", () => {
     expect(v3Html.match(/<button/g) ?? []).toEqual(v2Html.match(/<button/g) ?? []);
     expect(v3Html.match(/<input/g) ?? []).toEqual(v2Html.match(/<input/g) ?? []);
   });
+});
+
+describe("M5-14d: botlingd keeps the window's list on the running hash", () => {
+  it("re-announces the list after plugin.grant and after a hot swap (no stale hash shown as current)", async () => {
+    const dir = testRoot("plugin-grant-view-daemon");
+    const daemon = await Botlingd.start({ env: botlingdEnv(dir, { BOTLING_SERVER_PORT: "off", BOTLING_SERVER_BACKUP_CHECK_MS: "0" }), outDir: join(desktop, "out") });
+    const stream = `srv:${daemon.serverId}`;
+    const sql = <T>(q: string, ...args: string[]): T | undefined => {
+      const db = new DatabaseSync(join(dir, "server.db"), { readOnly: true });
+      try { db.exec("PRAGMA busy_timeout = 10000"); return db.prepare(q).get(...args) as T | undefined; } finally { db.close(); }
+    };
+    const codeHash = () => { const row = sql<{ body: string }>("SELECT body FROM rows WHERE stream = ? AND key = 'plugin:probe.tool' AND deleted = 0", stream); return row ? JSON.parse(row.body).codeHash : null; };
+    // The last list the core announced (snapshot or plugins.updated): what the window shows.
+    const shown = () => (JSON.parse((daemon.core as any).lastPlugins).plugins as PluginView[]).find((p) => p.name === "probe.tool");
+    const write = (version: string, code: string) => {
+      const folder = join(dir, "plugins", "probe.tool");
+      mkdirSync(join(folder, "dist"), { recursive: true });
+      writeFileSync(join(folder, "package.json"), JSON.stringify({ name: "probe.tool", version, engines: { ccb: "^2.0.0" }, ccb: { permissions: ["composer"], web: "dist/web.js" } }));
+      writeFileSync(join(folder, "dist", "web.js"), code);
+      return folder;
+    };
+    try {
+      const folder = write("1.0.0", "export function activate() { return 1; }\n");
+      daemon.core.plugins.scan();
+      const h1 = folderHash(folder);
+      await until(() => codeHash() === h1 || null, { timeout: 5_000, every: 50, what: "row at h1" });
+      expect(shown()?.grant).toBe("none");
+
+      const status = await daemon.runtime.receive({
+        slot: { origin: "desktop", originEpoch: "a".repeat(32), target: stream, n: 1 }, floor: 1,
+        inc: String(sql<{ logId: string }>("SELECT logId FROM streams WHERE stream = ?", stream)!.logId),
+        cmd: { type: "plugin.grant", plugin: "probe.tool", codeHash: h1, tier: "request", reads: [], requests: ["chat.send"] },
+      } as any, { scope: "local" });
+      expect((status as any).message.outcome).toMatchObject({ kind: "applied" });
+      await until(() => shown()?.grant === "request" || null, { timeout: 2_000, every: 20, what: "window shows the grant" });
+
+      write("1.0.1", "export function activate() { return 2; }\n");
+      daemon.core.plugins.scan();
+      const h2 = folderHash(folder);
+      await until(() => codeHash() === h2 || null, { timeout: 5_000, every: 50, what: "row at h2" });
+      await until(() => (shown()?.version === "1.0.1" && shown()?.grant === "none") || null, { timeout: 2_000, every: 20, what: "window drops the old hash's grant" });
+    } finally {
+      await daemon.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

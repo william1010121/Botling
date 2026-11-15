@@ -292,6 +292,15 @@ export class Core {
 
   mainBot(): Bot | null { return this.bots.get(this.mainBotId) ?? null; }
 
+  /** Botling 3's server only: a plugin row changed (a grant, or the running hash); tells front ends when the list now reads differently. */
+  pluginGrantsChanged(): void {
+    const view = this.plugins.view();
+    const text = JSON.stringify(view);
+    if (text === this.lastPlugins) return;
+    this.lastPlugins = text;
+    this.event({ type: "plugins.updated", plugins: view });
+  }
+
   constructor(private options: CoreOptions) {
     this.mainBotId = options.mainBotId ?? MAIN_BOT_ID;
     this.maintainerId = options.maintainerId ?? MAINTAINER_ID;
