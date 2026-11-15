@@ -12,5 +12,8 @@
     "desktop/src/server/botlingd.ts": 950,
     "desktop/src/server/fetch/source.ts": 1054,
     "desktop/src/server/roster/store.ts": 1048
+  },
+  "frozen": {
+    "desktop/src/main/main.ts": "Botling 2 only, user 2026-11-16: not split"
   }
 }

@@ -6,6 +6,8 @@
 // number, an unlisted file fails when it is over the limit. A listed file that is at or under the limit, or gone,
 // fails too: the card that gets it there removes its entry (the last card of a file removes it). Every other card
 // ends by lowering its own entry; a file smaller than its entry is reported as a note and does not fail.
+// A file may also be frozen (line-baseline.json `frozen`: path -> reason). It is never split: it fails when it grows
+// past its recorded size (the message names the reason), passes when it shrinks, and its entry may not be removed.
 // Lines are counted like `wc -l` (a last line without a newline counts too). Tracked files and untracked files that
 // git does not ignore are looked at, from the working tree.
 import { execFileSync } from 'node:child_process';
@@ -34,13 +36,21 @@ export function countLines(content) {
 
 /**
  * `sizes` is a Map from repo-relative product path to line count (only existing files), `baseline` the `files` object
- * of line-baseline.json. Returns { errors, notes } (errors fail the check).
+ * of line-baseline.json, `frozen` its `frozen` object (path -> reason). Returns { errors, notes } (errors fail the check).
  */
-export function checkSizes(sizes, baseline, limit = LIMIT) {
+export function checkSizes(sizes, baseline, limit = LIMIT, frozen = {}) {
   const errors = [];
   const notes = [];
   for (const [path, lines] of [...sizes].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const recorded = Object.hasOwn(baseline, path) ? baseline[path] : undefined;
+    const reason = Object.hasOwn(frozen, path) ? frozen[path] : undefined;
+    if (reason !== undefined) {
+      if (recorded === undefined) errors.push(`${path}: frozen (${reason}) but its entry is gone from the baseline; put it back, no card removes it`);
+      else if (lines > recorded) errors.push(`${path}: frozen (${reason}); grew to ${lines} lines, its baseline is ${recorded}`);
+      else if (lines < recorded) notes.push(`${path}: frozen (${reason}); ${lines} lines, baseline says ${recorded}; the entry is not lowered`);
+      else notes.push(`${path}: frozen (${reason}); ${lines} lines`);
+      continue;
+    }
     if (recorded === undefined) {
       if (lines > limit) errors.push(`${path}: ${lines} lines is over ${limit} and the file is not in the baseline (split it; do not add it to line-baseline.json)`);
     } else if (lines > recorded) {
@@ -85,7 +95,8 @@ function main(argv) {
   if (!Number.isInteger(limit) || limit < 1) throw new Error('--limit must be a positive integer');
   const baseline = JSON.parse(readFileSync(baselineFile, 'utf8')).files ?? {};
   const sizes = productSizes(root);
-  const { errors, notes } = checkSizes(sizes, baseline, limit);
+  const frozen = JSON.parse(readFileSync(baselineFile, 'utf8')).frozen ?? {};
+  const { errors, notes } = checkSizes(sizes, baseline, limit, frozen);
   const over = [...sizes].filter(([, lines]) => lines > limit).sort(([, a], [, b]) => b - a);
   console.log(`check-lines: ${sizes.size} product files, ${over.length} over ${limit} lines, ${Object.keys(baseline).length} in the baseline`);
   for (const [path, lines] of over) console.log(`  ${String(lines).padStart(6)}  ${path}`);
