@@ -16,7 +16,7 @@
 import type { Command } from "../contract";
 import {
   decodeWireFrame, encodeChunkFrame, encodeFrame, PROTOCOL_VERSION, PushSubscribe, REFUSE_REASON_TEXT, ResAssembler, slotKey,
-  type ConnectionState, type Cursor, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type StreamId, type Target, type VapidKeyId, type Via,
+  type ConnectionState, type Cursor, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type Slot, type StreamId, type Target, type VapidKeyId, type Via,
 } from "../protocol";
 import type { Rows } from "../protocol/table-rows";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";

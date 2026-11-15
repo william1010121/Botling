@@ -4,12 +4,11 @@
 import { outcomeOf, slotKey } from "../protocol";
 import type { Entry, LogId, Message, MessageOf, Outcome, Slot, StreamId, Target } from "../protocol";
 import type { Rows } from "../protocol/table-rows";
-import { connReduce, type ConnEvent } from "./connection-state";
+import { connReduce, writesSent, type ConnEvent } from "./connection-state";
 import { cleanServerAddresses, SETTLED_KEPT, TURN_END, UNSETTLED_STOP_AFTER } from "./link-types";
-import type { ContentAnswer, LinkHost, LinkTimers, RemoteContentAnswer, Session } from "./link-types";
-import type { PendingRequest } from "./link-types";
+import type { ContentAnswer, FeLinkEvent, LinkHost, LinkTimers, PendingRequest, RemoteContentAnswer, Session } from "./link-types";
 import type { ResolveResult } from "./outbox";
-import type { RetiredLog, StoredCursor } from "./storage";
+import type { OutboxItem, RetiredLog, StoredCursor } from "./storage";
 
 export class LinkStreams {
   constructor(private readonly host: LinkHost) {}
