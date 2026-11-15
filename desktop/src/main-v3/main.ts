@@ -24,6 +24,19 @@ export function packagedAppId(root = resolve(__dirname, "..", "..")): string | u
   }
 }
 
+/**
+ * The commands a packaged botlingd hands Maintainer and the bots (core-process.ts): this build's own flags, as 2.x main
+ * names them (main/main.ts `coreEnvironment`). Without them the core falls back to `ELECTRON_RUN_AS_NODE=1 <app> <script>`,
+ * which with the RunAsNode fuse off starts the Botling 3 window instead. Always this build's own (scrubbed or inherited
+ * values are replaced).
+ */
+export function setPackagedSelfCommands(env: Record<string, string | undefined>, execPath: string): void {
+  const self = `env -u ELECTRON_RUN_AS_NODE '${execPath.replaceAll("'", "'\\''")}'`;
+  env.BOTLING_APP_COMMAND = self;
+  env.BOTLING_CHECK_COMMAND = `${self} --check-plugin`;
+  env.BOTLING_SHOT_COMMAND = `${self} --component-shot`;
+}
+
 export interface MainV3Deps {
   argv?: readonly string[];
   platform?: NodeJS.Platform;
@@ -31,6 +44,7 @@ export interface MainV3Deps {
   electron?: ElectronMainLike;
   root?: string;
   outDir?: string;
+  execPath?: string;
   runServerCli?: (argv: string[], options: ServerCliOptions) => Promise<void>;
   loadWindowMain?: () => void;
   exit?: (code: number) => void;
@@ -50,6 +64,7 @@ export async function runMainV3(deps: MainV3Deps = {}): Promise<void> {
     }
     const packaged = isPackagedElectron(electron);
     scrubEnvironment(env, packaged);
+    if (packaged) setPackagedSelfCommands(env, deps.execPath ?? process.execPath);
     if (packaged && !env.BOTLING_BUILTIN_PLUGINS && process.resourcesPath) {
       env.BOTLING_BUILTIN_PLUGINS = join(process.resourcesPath, "builtin-plugins");
     }
