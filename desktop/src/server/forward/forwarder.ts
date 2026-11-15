@@ -189,11 +189,13 @@ export class Forwarder {
       const key = slotKeyOf(row.slot);
       const print = `${row.cmdHash}\u0000${row.envelope?.inc}`;
       if (sent.rows.get(key) !== print) {
-        // The frame checked is the one sent: a raised floor can make a frame that fit no longer fit.
+        // Checked with the largest floor this row can ever carry (its own n; a raise never goes above it), so the answer
+        // depends only on the stored row: the same on every pump, session and restart. A row that went once is never
+        // refused later, and the frame sent (floor <= n) is never larger than the one checked.
         const readable = !!row.envelope && typeof row.envelope === "object" && !Array.isArray(row.envelope);
         const envelope = readable ? this.stamped(queue, row, row.envelope!) : undefined;
         if (envelope === null) return true;
-        const bad = this.unsendable(envelope);
+        const bad = this.unsendable(envelope && { ...envelope, floor: Math.max(envelope.floor, row.slot.n) });
         if (bad) { this.settle(owner, row, bad); return true; }
         if (!session.sendWire({ t: "cmd", ...envelope } as WireMessage)) return false;
         sent.rows.set(key, print);
