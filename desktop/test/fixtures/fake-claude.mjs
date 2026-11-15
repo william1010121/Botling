@@ -19,7 +19,8 @@
 //   react    — "/react <message id>": a reaction-only reply (👍 on that line)
 //   agent    — (long-lived) sends a subagent (Agent tool) that reads a file and reports back, then says so
 //   bgagent  — (long-lived) sends one to the background; it reports a moment later, and claude starts
-//              a turn of its own to say so ("/bgagent:silent": that turn says only <no-reply/>)
+//              a turn of its own to say so ("/bgagent:silent": that turn says only <no-reply/>); it ends after
+//              FAKE_CLAUDE_BG_DELAY_MS (default 300), or, with FAKE_CLAUDE_BG_GATE=<file>, once that file exists
 //   worker   — (long-lived) "/worker <instructions>": calls the app's app_handoff tool (its in-process MCP server, an
 //              mcp_message control request) and replies "Handed off: <task_id>" (or "Handoff failed: <error>")
 //   notify   — (long-lived, a Claude app worker) "/notify:report <words>" or "/notify:question <words>": calls the app's
@@ -597,11 +598,16 @@ async function turn(job) {
       out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
       const text = await stream("It is at work.");
       result(`${intro}\n\n${text}`);
+      // FAKE_CLAUDE_BG_GATE=<file>: it ends when that file exists (a test opens the gate after it has
+      // seen the subagent running), not after a time that a loaded host can overrun.
+      const gate = process.env.FAKE_CLAUDE_BG_GATE;
       setTimeout(async () => {
+        if (gate) while (!existsSync(gate) && !closed) await sleep(20);
+        if (closed) return;
         await subagentWork(id);
         queue.push({ background: true, id, silent: tool === "silent" });
         wake?.();
-      }, Number(process.env.FAKE_CLAUDE_BG_DELAY_MS ?? 300));
+      }, gate ? 0 : Number(process.env.FAKE_CLAUDE_BG_DELAY_MS ?? 300));
       return;
     }
     await subagentWork(id);
