@@ -99,8 +99,9 @@ describe("check-move", () => {
     const r = check(`${base}..${head}`, "--json");
     expect(r.code).toBe(0);
     expect(r.json!.total.changed).toBe(0);
-    expect(row(r, "src/b.ts")).toMatchObject({ changed: 0, added: 1, movedIn: 13 }); // 12 lines of methods and the closing brace; the class line is new
-    expect(row(r, "src/a.ts")).toMatchObject({ changed: 0, movedOut: 12, added: 0 });
+    // 11 lines of methods moved; the class line and the class's closing brace are new (the three braces deleted are used up)
+    expect(row(r, "src/b.ts")).toMatchObject({ changed: 0, added: 2, movedIn: 11 });
+    expect(row(r, "src/a.ts")).toMatchObject({ changed: 0, movedOut: 11, added: 0 });
     expect(row(r, "src/b.ts").ignored).toBe(2);
     expect(r.json!.ok).toBe(true);
   });
@@ -114,7 +115,7 @@ describe("check-move", () => {
     expect(strict.text).toContain("FAIL: 1 lines changed, the limit is 0");
     const allowed = check(`${base}..${head}`, "--json", "--max-changed", "1");
     expect(allowed.code).toBe(0);
-    expect(allowed.json!.total).toMatchObject({ changed: 1, added: 1, movedIn: 12 });
+    expect(allowed.json!.total).toMatchObject({ changed: 1, added: 3, movedIn: 10 }); // the old line is changed; its new text, the class line and the class brace are added
   });
 
   it("new code is added, not moved, and a brace beside new lines does not count as moved", () => {
@@ -178,8 +179,8 @@ describe("check-move", () => {
     put("src/a.ts", BASE_A.replace('import {\n  p,\n  q,\n} from "./pq";', 'import {\n  p,\n  q,\n  r,\n} from "./pq";\nconst lazy = import("./lazy");'));
     const head = commit();
     const r = check(`${base}..${head}`, "--json", "--max-changed", "9");
-    expect(r.json!.total).toMatchObject({ added: 1, changed: 0 }); // the lazy import line; `r,` and the import lines are ignored
-    expect(r.json!.total.ignored).toBe(10); // the 4-line statement deleted, the 5-line one added, and one blank line
+    expect(r.json!.total).toMatchObject({ added: 1, changed: 0 }); // the dynamic import() line
+    expect(r.json!.total.ignored).toBe(1); // `r,` inside the import statement (a hunk of 0 context lines does not show the statement's other lines)
   });
 
   it("refuses a bad range, a revision that is an option, and an unknown revision", () => {
