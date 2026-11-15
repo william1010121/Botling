@@ -44,6 +44,9 @@ export const PLUGIN_OWNED_SLOTS: readonly string[] = [
   "view/rightPanel.section",
   "view/rightPanel.takeover",
 
+  // botling.browser-pane (M7-06c): browser/tab
+  "menu/browser/tab",
+
   // botling.bot-panel (M7-03b): panel/tile/board, panel/tile/whiteboard, panel/tile/pin
   "tile/board",
   "tile/whiteboard",

@@ -22,6 +22,7 @@ import { isMaintainer, resultLinks, type BotView, type ResultView, type RoutineV
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { browserTabActions, browserTabAddress, keybindingsOf, menuItems } from "./plugin-commands";
+import { browserPlugins, useBrowserSlotsVersion } from "./browser-slot";
 import { sameHeldColors, setBotColors } from "./avatars";
 import { MainTabFrame, PanelFrame, SlotFrame } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
@@ -64,6 +65,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const toggleRail = useCallback((collapse?: boolean) => {
     changeLayout((now) => ({ railCollapsed: collapse ?? !now.railCollapsed }));
   }, [changeLayout]);
+  useBrowserSlotsVersion(); // the pane's toolbar buttons come from the kernel's `browser/tab` slot (browser-slot.ts): draw again when it changes
   // Bots whose colours clash get the least clashing one (avatars.ts); before any face below is drawn.
   // Once settled a colour is held in settings.json `botColors`, so nothing later moves it.
   const heldColors = setBotColors(view.bots, layout.pinnedBots, view.settings?.botColors);
@@ -600,7 +602,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         <BrowserPane bot={bot} state={browserState ?? { botId: bot.id, tabs: [], active: null }} full={browserFull} look={view.settings?.botLook ?? "original"}
           miniChat={miniChat} onMiniChat={setMiniChat} line={stripLine} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}/${floatMemory.browser.docked}`}
           onAskTool={async (text) => { await client.request({ type: "chat.send", botId: bot.id, text }); }}
-          tabActions={browserTabActions(view.plugins, browserTabAddress(browserState?.tabs.find((candidate) => candidate.id === browserState.active) ?? browserState?.tabs[0]), view.settings?.effectiveLanguage)
+          tabActions={browserTabActions(browserPlugins(view.plugins), browserTabAddress(browserState?.tabs.find((candidate) => candidate.id === browserState.active) ?? browserState?.tabs[0]), view.settings?.effectiveLanguage)
             .map((action) => ({ ...action, icon: action.icon && isIconName(action.icon) ? <Icon name={action.icon} size={15} /> : undefined }))}
           onTabAction={(command, tab) => { void client.request({ type: "plugins.tabCommand", id: command, botId: bot.id, tabId: tab.id, url: browserTabAddress(tab) ?? tab.url }).catch(fail); }} />
       )}
