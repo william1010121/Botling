@@ -112,7 +112,10 @@ describe("the fixture matches App.tsx and TaskDetails.tsx", () => {
   const app = readFileSync(join(desktop, "src/renderer/App.tsx"), "utf8");
   const details = readFileSync(join(desktop, "src/renderer/TaskDetails.tsx"), "utf8");
   it("puts each divider beside its column, as direct children of .shell", () => {
-    const rail = app.indexOf('<ColumnDivider column="rail" />'), chat = app.indexOf('<section className="chat-pane">');
+    // The chat column is the chat plugin's claim to `app/main` (M7-07a): its markup is `mainRegion`, drawn where `<RegionSlot region="main" />` stands.
+    const rail = app.indexOf('<ColumnDivider column="rail" />'), chat = app.indexOf('<RegionSlot region="main" />');
+    expect(app).toContain('<section className="chat-pane">');
+    expect(app).toContain("main: mainRegion");
     const browser = app.indexOf('<ColumnDivider column="browser" />'), pane = app.indexOf("<BrowserPane bot={bot}"), tasks = app.indexOf("<TaskDetails");
     expect(rail).toBeGreaterThan(app.indexOf("</aside>"));
     expect(chat).toBeGreaterThan(rail);
