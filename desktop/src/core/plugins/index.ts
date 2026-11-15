@@ -669,7 +669,7 @@ export class Plugins {
   tileImages(name: string, botId: string, data: string): { images: Record<string, string> } { return hostEvents.tileImages.call(this, name, botId, data); }
   approve(name: string, botId: string, command: string, folder: string, component?: string, detail?: string | null): { accepted: boolean } { return hostEvents.approve.call(this, name, botId, command, folder, component, detail); }
   loaded(name: unknown) { return hostEvents.loaded.call(this, name); }
-  asked<T extends z.ZodTypeAny>(schema: T, params: unknown, owner?: string): { plugin: InstalledPlugin; data: z.infer<T> } { return hostEvents.asked.call(this, schema, params, owner); }
+  asked<T extends z.ZodTypeAny>(schema: T, params: unknown, owner?: string): { plugin: InstalledPlugin; data: z.infer<T> } { return hostEvents.asked.call(this, schema, params, owner) as { plugin: InstalledPlugin; data: z.infer<T> }; }
   cardsAllowed(plugin: InstalledPlugin) { return hostEvents.cardsAllowed.call(this, plugin); }
   noteFile(botId: string): string { return hostEvents.noteFile.call(this, botId); }
   noteAssetUrl(noteFile: string, ref: string): string | null { return hostEvents.noteAssetUrl.call(this, noteFile, ref); }
