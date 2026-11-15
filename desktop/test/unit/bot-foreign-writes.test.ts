@@ -420,6 +420,8 @@ describe("call sites the S55 and S56 reviews found unguarded", () => {
 
   it("A8, onExit: a deferred turn is taken back and ends as failed when its head exits", async () => {
     const { A, turn } = await withDeferred();
+    // No turn under way (it ended: `next` would otherwise take the deferred turn back first, and drop it without a line).
+    A.peek.turns.close();
     const seen = A.events.length;
     A.head(0).finish();
     expect(A.peek.deferred).toBeNull(); expect(turn.open).toBe(false);
