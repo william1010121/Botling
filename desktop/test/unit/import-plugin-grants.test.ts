@@ -12,7 +12,7 @@ import { MemorySecretStore } from "../../src/core/plugins/secrets";
 import type { Message, MessageOf, Slot } from "../../src/protocol";
 import { PluginRow } from "../../src/protocol/table-rows";
 import { Botlingd, mayRunPluginServerPart, readPluginGrant } from "../../src/server/botlingd";
-import { formatPluginsReportSection, readPluginReportEntries } from "../../src/server/import/report";
+import { formatImportReport, formatPluginsReportSection, readPluginReportEntries } from "../../src/server/import/report";
 import { runImport } from "../../src/server/import/run";
 import {
   PluginHashCache,
@@ -395,4 +395,35 @@ export function activate(ccb) {
       await daemon2.stop();
     }
   }, 60_000);
+
+  it("review fix: 2.x folder names and bot names reach the report as one escaped line (L-004)", async () => {
+    const root = makeTempRoot("report-escape");
+    const src = join(root, "v2");
+    make2xFolder(src);
+    // A 2.x plugin folder whose name forges a granted-looking plugin line, with an ESC, and a broken package.json.
+    const forged = "bad\n  my-tool         from Botling 2  can change its own data\u001b[2J";
+    mkdirSync(join(src, "plugins", forged), { recursive: true });
+    writeFileSync(join(src, "plugins", forged, "package.json"), "{ not json");
+    const live = await runImport({ sourceDir: src, targetDir: join(root, "v3"), dryRun: false });
+    const problems = live.reportText.slice(live.reportText.indexOf("\nProblems\n"));
+    expect(problems).toContain("plugins/bad\\x0a  my-tool         from Botling 2  can change its own data\\x1b[2J/package.json");
+    expect(problems).not.toContain("\n  my-tool");
+    expect(live.reportText).not.toContain("\u001b");
+
+    const text = formatImportReport({
+      dryRun: true,
+      reportPath: "/tmp/r.md",
+      bots: [{ oldId: "old\n1", newId: "n1", kind: "bot", name: "Ann\n  - forged\u2028x\u009b", lines: 0, skipped: 0, pins: 0, missingPinLines: 0, specs: 0, tasks: 0, subagents: 0, subagentSteps: 0 }],
+      totalLines: 0, totalSkipped: 0, totalPins: 0, totalMissingPinLines: 0,
+      idMap: [{ oldId: "old\n1", newId: "n1", kind: "bot", name: "Ann\n  - forged" }],
+      settings: { movedPrefs: [], machineKeys: [], layoutKeys: [], oversizedKeys: [] },
+      approvals: { folders: 0, movedFolders: 0, approvedCommandFolders: 0, movedCommandFolders: 0, alwaysAllowedCount: 0 },
+      plugins: [],
+      problems: ["p\r\n  - forged"],
+    });
+    expect(text).toContain("  Ann\\x0a  - forged\\u2028x\\x9b [bot]");
+    expect(text).toContain("  old\\x0a1 -> n1  (bot, Ann\\x0a  - forged)");
+    expect(text).toContain("  - p\\x0d\\x0a  - forged");
+    expect(text.split("\n").filter((line) => line.includes("forged"))).toHaveLength(3);
+  });
 });
