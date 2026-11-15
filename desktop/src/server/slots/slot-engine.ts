@@ -42,7 +42,7 @@ import { PluginRow } from "../../protocol/table-rows";
 import { ownTableStream, readRowBody } from "../replica/tables";
 import type { Command as StoreCommand, Db } from "../store";
 import { checkBasis, checkTarget, dbBasisReader, localOnly } from "./basis";
-import { grantAllows } from "./grant-check";
+import { grantAllows, pluginCommandNeedsGrant } from "./grant-check";
 import { cmdHash } from "./hash";
 import { addCancel, findReceipt, isCancelled, readNext, removeCancel, writeNext, writeReceipt, writeSkip, type QueueRef } from "./tables";
 import { SlotRefusal, type ApplyFn, type Audit, type Authorize, type BasisReader, type SlotLog } from "./types";
@@ -222,8 +222,10 @@ export class SlotEngine {
       if (installed === null) return { reason: "grant", detail: `plugin ${input.via.plugin} may not do this on ${ownServerName(tx)}` };
       const decision = grantAllows(readPluginRow(tx, input.via.plugin), input.via, input.cmd, ownServerName(tx), installed);
       if (!decision.ok) return { reason: "grant", detail: decision.detail };
+      return null;
     }
-    return null;
+    // M5-16: with the four plugin commands at `reply`, only the local window may send one without `via`.
+    return pluginCommandNeedsGrant(input.cmd, input.scope);
   }
 
   /** The owner's `next` for a queue (`welcome.next`, §11.4). */
@@ -388,7 +390,7 @@ export class SlotEngine {
       try {
         checkTarget(input.slot.target, input.cmd);
         checkBasis(tx, this.basis, log, input.slot.target, input.cmd, input.basis);
-        const applied = this.options.apply({ tx, slot: input.slot, cmd: input.cmd, scope: input.scope, basis: input.basis, log });
+        const applied = this.options.apply({ tx, slot: input.slot, cmd: input.cmd, scope: input.scope, basis: input.basis, ...(input.via ? { via: input.via } : {}), log });
         if (applied && typeof (applied as unknown as PromiseLike<unknown>).then === "function") {
           (applied as unknown as Promise<unknown>).then(undefined, () => {});
           throw new TypeError("slots: an apply step must be synchronous (it returned a promise)");

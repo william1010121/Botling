@@ -115,10 +115,12 @@ export const COMMAND_SCOPES: Record<CommandType, CommandScope> = {
   "plugins.setting": manage,
   // Local desktop window only until a non-persisting remote secret path exists (M6-06 F1).
   "plugins.secret": admin,
-  "plugins.command": manage,
-  "plugins.linkCommand": manage,
-  "plugins.tabCommand": manage,
-  "plugins.call": manage,
+  // M5-16 (§11.7, C6, Q-C11): a plugin's own buttons and calls need `reply`; the owner's grant check does the limiting
+  // (a device sends them only with `via`, within the plugin's grant at that hash). Every other plugin command stays `manage`.
+  "plugins.command": reply,
+  "plugins.linkCommand": reply,
+  "plugins.tabCommand": reply,
+  "plugins.call": reply,
   "plugins.approvalAsk": manage,
   "plugins.tileImages": manage,
   "plugin.grant": manage,

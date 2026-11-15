@@ -48,6 +48,11 @@
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
+//   botlingd plugins          (M5-14c) every plugin on this machine: name, what it is allowed (a tier word) and the first
+//                             8 characters of its code hash
+//   botlingd plugins grant <name> --tier read|request|write
+//                             allows the plugin that tier for its current code, with what it asks for (a local-window
+//                             `plugin.grant`; a built-in's grant is fixed, and a tier above its asks is refused)
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/store/data-dir-lock";
@@ -59,11 +64,14 @@ import { dropInheritedImport } from "./inherited-env";
 import { ImportError, runImport } from "./import/run";
 import { RestoreError, restoreBackup } from "./restore";
 import { serviceCommand, ServiceError } from "./service";
+import { pluginsCommand } from "./plugin-cli";
 import { AdminClient, addMachineCommand, createStdinIo, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./pairing";
+import { fetchCommand } from "./fetch/cli";
 import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
+import type { ElectronUtilityContext } from "./packaged-electron";
 import { machineLabel } from "./designated";
 
 const out = (line: string) => process.stdout.write(`${line}\n`);
@@ -79,13 +87,20 @@ function holderPid(dataDir: string): number | null {
   return holder && alive(holder.pid) ? holder.pid : null;
 }
 
-async function start(): Promise<void> {
+export interface ServerCliOptions { packaged?: boolean; appId?: string; outDir?: string; execPath?: string; electronUtility?: ElectronUtilityContext }
+
+async function start(options: ServerCliOptions = {}): Promise<void> {
   // Importing 1.x/2.x data is M6's explicit step: an inherited BOTLING_IMPORT_FROM / BOTLING_1X_DIR is not acted on.
   const ignored = dropInheritedImport(process.env);
   if (ignored.length) process.stderr.write(`botlingd: ignoring ${ignored.join(" and ")} from the environment (Botling 3 does not import 1.x/2.x data yet)\n`);
   let daemon: Botlingd;
   try {
-    daemon = await Botlingd.start({ env: process.env, outDir: join(__dirname, "..") });
+    daemon = await Botlingd.start({
+      env: process.env,
+      outDir: options.outDir ?? join(__dirname, ".."),
+      ...(options.packaged ? { packaged: true } : {}),
+      ...(options.electronUtility ? { electronUtility: options.electronUtility } : {}),
+    });
   } catch (error) {
     if (error instanceof DataDirInUseError) fail(error.message, process.env.BOTLING_SERVICE === "1" ? 0 : CORE_EXIT_DATA_DIR_IN_USE);
     if (error instanceof PathsError) fail(error.message, 2);
@@ -237,14 +252,14 @@ function flag(args: string[], name: string): string | undefined {
   return at >= 0 ? args[at + 1] : undefined;
 }
 
-async function main(argv: string[]): Promise<void> {
+export async function main(argv: string[], options: ServerCliOptions = {}): Promise<void> {
   const [command = "start", ...rest] = argv;
   let paths!: BotlingdPaths;
   if (command !== "service") {
     try { paths = botlingdPaths(process.env); } catch (error) { fail((error as Error).message, 2); return; }
   }
   switch (command) {
-    case "start": await start(); return;
+    case "start": await start(options); return;
     case "stop": await stopCommand(paths.dataDir); return;
     case "status": {
       const report = await status(paths.dataDir, paths.socket);
@@ -470,9 +485,20 @@ async function main(argv: string[]): Promise<void> {
       try { process.exitCode = await revokeDeviceCommand(client, { out, ask: async () => null }, id!, flag(rest, "--reason")); } finally { client.close(); }
       return;
     }
+    case "fetch": {
+      const client = await adminSession(paths);
+      try { process.exitCode = await fetchCommand(client, { out, err: (line) => process.stderr.write(`${line}\n`) }, rest); } finally { client.close(); }
+      return;
+    }
+    case "plugins": {
+      // `plugins` lists, `plugins grant <name> --tier read|request|write` grants (M5-14c), over the local admin socket.
+      const client = await adminSession(paths);
+      try { process.exitCode = await pluginsCommand(client, { out, ask: async () => null }, rest); } finally { client.close(); }
+      return;
+    }
     case "service": {
       try {
-        await serviceCommand(rest, process.env, out);
+        await serviceCommand(rest, process.env, out, { packaged: options.packaged, appId: options.appId, execPath: options.execPath });
       } catch (error) {
         if (error instanceof PathsError) fail(error.message, 2);
         if (error instanceof ServiceError) fail(error.message, error.exitCode);
@@ -524,8 +550,10 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
     default:
-      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device, fetch, plugins)`, 2);
   }
 }
 
-main(process.argv.slice(2)).catch((error) => fail((error as Error)?.stack ?? String(error)));
+if (!(globalThis as { __vitest_worker__?: unknown }).__vitest_worker__ && !(globalThis as { __botlingdManualMain?: boolean }).__botlingdManualMain) {
+  main(process.argv.slice(2)).catch((error) => fail((error as Error)?.stack ?? String(error)));
+}
