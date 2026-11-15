@@ -1,0 +1,100 @@
+<div class="note">
+  <div class="note-status">
+    <span class="nb-btitle">
+      <b>
+        "白板預覽"
+      <span>
+        "只能看 · 雙擊卡片跳到那一格"
+    <button type="button" class="nb-crumb" hidden="" title="" aria-haspopup="true">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"/>
+      <span>
+        "路線："
+    <span class="nb-st">
+      "Saved"
+    <span class="nb-sep" aria-hidden="true">
+    <button type="button" class="nb-board" aria-pressed="false" title="白板預覽：把這份 Note 畫成由上往下的流程（再按一次或 Esc 回來）">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"/>
+      <span>
+        "白板"
+      <kbd>
+        "Esc"
+  <div class="note-warn" hidden="">
+  <div class="note-warn note-kept" hidden="">
+  <div class="note-body">
+    <div class="note-page">
+      <div class="note-doc">
+        <div class="cell cell-markdown" data-type="markdown" data-start="0" data-end="0" data-a="0" data-b="0">
+          <button type="button" class="cell-ask" title="引用到對話裡問" aria-label="引用到對話裡問">
+          <div class="cell-grip" title="拖曳來移動這一格（也可以用 ⌥↑ / ⌥↓）" aria-label="拖曳來移動這一格">
+          <div class="cell-bar">
+          <div class="nl nl-first" data-i="0">
+            "intro"
+        <div class="cell cell-card" data-type="card" data-start="2" data-end="3" data-a="2" data-b="3">
+          <button type="button" class="cell-ask" title="引用到對話裡問" aria-label="引用到對話裡問">
+          <div class="cell-grip" title="拖曳來移動這一格（也可以用 ⌥↑ / ⌥↓）" aria-label="拖曳來移動這一格">
+          <div class="cell-bar">
+          <div class="nl nc-box" data-i="2" data-j="2">
+            <div class="nc-head">
+              <span class="nc-title">
+                "weather"
+              <span class="nc-status" data-state="static">
+              <button type="button" class="nc-btn nc-allow" title="允許這張卡片的指令在 bot 的資料夾執行" aria-label="允許這張卡片的指令在 bot 的資料夾執行" hidden="">
+                "允許並執行"
+              <button type="button" class="nc-btn " title="重新執行指令" aria-label="重新執行指令" hidden="">
+                "↻"
+              <button type="button" class="nc-btn " title="把卡片現在的樣子存成圖片，取代這行 <show>（⌘Z 可復原）" aria-label="把卡片現在的樣子存成圖片，取代這行 <show>（⌘Z 可復原）">
+                "凍結成圖片"
+              <button type="button" class="nc-btn " title="編輯原始碼（<show> 那幾行）" aria-label="編輯原始碼（<show> 那幾行）">
+                "</>"
+            <div class="nc-slot" style="height: 120px;" data-msg="">
+          <div class="nl nl-empty nl-edge" data-i="3">
+      <div class="nc-layer">
+        <iframe class="nc-frame" sandbox="allow-scripts" aria-label="weather" tabindex="-1" src="https://card.invalid/weather" style="display: block; left: 0px; top: 0px; width: 0px; height: 120px;">
+      <div class="nd-zone" hidden="">
+      <div class="nd-line" hidden="">
+        <span class="nd-tag">
+  <div class="nw" hidden="" tabindex="-1" role="region" aria-label="白板預覽">
+    <div class="nw-world">
+      <svg class="nw-lines" aria-hidden="true"/>
+    <div class="nw-legend">
+      <span>
+        <i style="background:var(--n-c-text)">
+        "Markdown"
+      <span>
+        <i style="background:var(--n-c-code)">
+        "程式碼"
+      <span>
+        <i style="background:var(--n-c-card)">
+        "即時卡片"
+      <span>
+        <i style="background:var(--n-c-branch)">
+        "分岔 / 路線"
+    <div class="nw-map" title="小地圖：藍框是現在看到的範圍；按一下移到那裡">
+    <div class="nw-zoom">
+      <button type="button" aria-label="縮小">
+        "−"
+      <output>
+        "100%"
+      <button type="button" aria-label="放大">
+        "+"
+      <i>
+      <button class="nw-fit" type="button" title="整份縮到剛好看完（⌘ + 滾輪縮放）">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"/>
+        "符合畫面"
+    <div class="nw-none" hidden="">
+      "這份 Note 還是空的"
+  <input type="file" accept="image/*" multiple="" hidden="" value="">
+  <textarea class="nsel-sink" tabindex="-1" aria-label="選取的內容" value="">
+--- host calls
+viewGet
+read
+parse
+localizeImages
+cards
+write "intro\n<!-- cell -->\n![weather](note-assets/frozen1.png)\n" base=1
+parse
+cards
+write "intro\n<!-- cell -->\n<show name=\"weather\">{\"city\":\"Taipei\"}</show>\n" base=2
+parse
+--- saved note
+"intro\n<!-- cell -->\n<show name=\"weather\">{\"city\":\"Taipei\"}</show>\n"
