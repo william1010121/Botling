@@ -83,6 +83,8 @@ async function checked(id: string, statement: SignedStatement, pub: string): Pro
 export interface StoredStatement {
   id: string;
   statement: SignedStatement;
+  /** Local receipt time (`roster.receivedAt`), when known from the store. */
+  receivedAt?: number;
 }
 
 /**
@@ -102,20 +104,21 @@ export async function verifyStatements(statements: Iterable<StoredStatement>, se
   const recoveryKeys = [...new Set(list.flatMap(({ statement }) => (statement.body.type === "root" ? [statement.body.recoveryPub] : [])))].sort();
   const clusterOf = new Map<string, string>();
   const out: VerifiedStatement[] = [];
-  for (const { id, statement } of list) {
+  for (const { id, statement, receivedAt } of list) {
     if (badAdds.has(id)) continue;
+    const at = receivedAt !== undefined ? { receivedAt } : {};
     if (statement.body.type === "root") {
       for (const pub of recoveryKeys) {
         if (!(await checked(id, statement, pub))) continue;
         let cluster = clusterOf.get(pub);
         if (cluster === undefined) { cluster = await clusterIdFromRecoveryKey(fromBase64Url(pub)!); clusterOf.set(pub, cluster); }
-        out.push({ id, body: statement.body, signer: "recovery", recoveryKey: pub, recoveryKeyCluster: cluster });
+        out.push({ id, body: statement.body, signer: "recovery", recoveryKey: pub, recoveryKeyCluster: cluster, ...at });
         break;
       }
       continue;
     }
     const pub = signKeys.get(statement.signer);
-    if (pub && (await checked(id, statement, pub))) out.push({ id, body: statement.body, signer: statement.signer });
+    if (pub && (await checked(id, statement, pub))) out.push({ id, body: statement.body, signer: statement.signer, ...at });
   }
   return out;
 }
