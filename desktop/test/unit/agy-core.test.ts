@@ -3,6 +3,7 @@ import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {Bot} from '../../src/core/bot';
 import {botPrompts} from '../../src/core/prompts';
+import {AGY_CONVERSATION_GONE} from '../../src/core/agent/agy-acp';
 import {ProcessLedger} from '../../src/core/process/ledger';
 import {mainProfile} from '../../src/core/store/workspace';
 import {tempDir,until} from '../helpers';
@@ -24,6 +25,30 @@ it('preserves failed resume identity and recovery across next message and restar
  await h.say(b);expect(h.launches).toHaveLength(1);expect(h.launches[0]).toMatchObject({sessionId:session,resume:true});
  await b.shutdown({tidy:false});await h.say(h.make());expect(h.launches).toHaveLength(2);expect(h.launches[1]).toMatchObject({sessionId:session,resume:true});
  expect(h.saved()).toMatchObject({agyConversation:session,agyRecovery:{state:'resume-required'}});
+});
+// A conversation the profile no longer holds (ACP -32002) never comes back: the message goes again on a new one, once.
+async function exitedWith(stderr:string,make:(b:any,head:any)=>any){
+ const h=harness(),b=h.make(),head={pid:-1,running:false};(b as any).head=head;
+ const turn=make(b,head);(b as any).turn=turn;
+ (b as any).onExit(head,{code:null,signal:'SIGTERM',stderr,expected:false,silent:true});
+ await new Promise(r=>setTimeout(r,50));return {h,turn};
+}
+const openTurn=(origin:string,guest=false)=>(b:any,head:any)=>{const t=b.newTurn(origin,'hello',null);t.open=true;t.head=head;t.sent=true;if(guest)t.guest=true;return t;};
+it('a conversation missing from the profile (-32002) restarts on a new one and sends the message again',async()=>{
+ const {h,turn}=await exitedWith(AGY_CONVERSATION_GONE,openTurn('user'));
+ expect(turn.retried).toBe(true);expect(h.launches).toHaveLength(1);
+ expect(h.launches[0].resume).toBe(false);expect(h.launches[0].sessionId).not.toBe(session);
+ expect(h.saved().agyConversation).toBeUndefined();expect(h.saved().agyRecovery).toBeUndefined();
+});
+it('a call-in turn (a guest) also moves to a new conversation when the old one is gone',async()=>{
+ const {h,turn}=await exitedWith(AGY_CONVERSATION_GONE,openTurn('tidy',true));
+ expect(turn.retried).toBe(true);expect(h.launches).toHaveLength(1);expect(h.launches[0].resume).toBe(false);
+});
+it('any other failed resume keeps the conversation identity and does not start a new one',async()=>{
+ for(const [stderr,origin] of [['ACP request failed (-32000). Conversation retained; check ACP authentication and availability.','user'],[AGY_CONVERSATION_GONE,'background']] as const){
+  const {h,turn}=await exitedWith(stderr,openTurn(origin));
+  expect(turn.retried).toBeFalsy();expect(h.launches).toHaveLength(0);expect(h.saved()).toMatchObject({agyConversation:session});
+ }
 });
 it('refuses engine selection and clears identity only on intentional new-session',async()=>{
  const h=harness(),b=h.make();await expect(b.setHeads(['agy'])).rejects.toThrow('pre-task policy barrier');
