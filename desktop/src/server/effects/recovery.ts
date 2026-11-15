@@ -3,6 +3,8 @@
 //   text when `bots.liveTurnId` is that turn, else empty) and the row `interrupted`: it is never started again;
 // - a turn's checkpoint left without a started row (a turn whose row the crash lost with its batch) is interrupted too;
 // - `started` remove rows go back to `queued` (removing a bot is idempotent; the worker runs them again);
+// - a `started` call-in row (M5-02b) becomes `interrupted` (its guest turn, if it began, has its own turn row above);
+//   the guest's runner sends its one `failed` answer once it is attached (`CallInGuest.attach`), never a second turn;
 // - `queued` rows stay: their intent committed, nothing began them, the worker runs them now.
 // - first, the user's line of every `chat.send` turn row still queued or started goes into the engine's own chat
 //   (`engine.userLine`, which leaves a line it has alone): the intent put it there, but the core's rows commit in the
@@ -47,6 +49,10 @@ export function recoverEffects(scope: TxScope, tx: Db, now: number, log?: (line:
   for (const row of effectsIn(tx, "started")) {
     if (row.kind === "remove") {
       if (moveEffect(tx, row.effectId, ["started"], "queued", now)) report.requeued += 1;
+      continue;
+    }
+    if (row.kind === "callin") {
+      moveEffect(tx, row.effectId, ["started"], "interrupted", now);
       continue;
     }
     const turnId = row.turnId!;
