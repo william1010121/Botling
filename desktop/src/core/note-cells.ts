@@ -174,6 +174,8 @@ export function classifyLines(lines: readonly string[]): LineInfo[] {
 // ---- branches (branch.js) ----
 
 const MARKER = /^\s*<!--\s*(end[\s_-]*branch|branch|route)\s*(?::\s*([\s\S]*?))?\s*-->\s*$/i;
+/** Whether a line is a branch / route / end-branch marker line (the same rule parseBranches reads; it does not look at code fences). */
+export const isBranchMarker = (line: string | undefined): boolean => MARKER.test(line ?? "");
 export const cleanName = (s: string | undefined): string => String(s ?? "").replace(/\s+/g, " ").replace(/-->/g, "→").replace(/<!--/g, "‹!--").trim();
 export const DEFAULT_FORK = "分支";
 export const IMPLICIT_ROUTE = "主線";
