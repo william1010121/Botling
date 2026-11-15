@@ -3,7 +3,8 @@
 //
 // - Bundles: every source map under out/ (built by `npm run build`, the same build.mjs as the release) lists the files
 //   its bundle was made from. The 2.x bundles (main, core, preloads, renderer, chat page, CLI, plugin host checker,
-//   phone pairing) must list nothing from src/server, src/fe-link, src/main-v3, src/protocol or src/session. The 3.x bundles are
+//   phone pairing) must list nothing from src/server (net, media … included), src/fe-link, src/main-v3, src/protocol,
+//   src/session or web-v3 (M2 brief §5 check 1). The 3.x bundles are
 //   listed with the 2.x modules they share, for the record.
 // - botlingd on a folder shaped like 2.x data (synthetic: projects/, main/, settings.json; never a real data folder) is
 //   refused (exit 2) and writes nothing into it.
@@ -21,7 +22,7 @@ import { botlingdScript } from "../botlingd-harness";
 import { desktop, fakeCli } from "../helpers";
 import { Daemon, removeTree, runtimeCommand, runtimeOf, testRoot, writeReport } from "./m1-accept";
 
-const V3 = /(^|\/)src\/(server|fe-link|main-v3|protocol|session)\//;
+const V3 = /(^|\/)(src\/(server|fe-link|main-v3|protocol|session)|web-v3)\//;
 const out = join(desktop, "out");
 
 function maps(dir: string): string[] {

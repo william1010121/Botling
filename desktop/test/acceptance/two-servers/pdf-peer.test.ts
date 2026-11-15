@@ -20,11 +20,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { contentUrlPath, type Message, type MessageOf, type Slot } from "../../../src/protocol";
 import { until } from "../../helpers";
 import { writeReport } from "../m1-accept";
+import { assertPageFresh } from "../web-v3/page-fresh";
 import type { FaultProxy } from "../../support/fault-proxy";
 import { FIND_PAGE, FIND_WORD, makeTextPdf, type MadePdf } from "../../support/make-pdf";
 import { makeCluster, profile, readServerKeys, writeStatements, type MemberKeysInfo } from "../../support/peer-cluster";
 import { startServers, type TestCluster, type TestServer } from "../../support/two-servers";
 import { pairPhone, PhoneSession } from "../../support/ws-device";
+
+assertPageFresh();
 
 const TMP = process.env.V3_PAGE_TMP || (existsSync("/Volumes/My-SSD/botling-work/tmp") ? "/Volumes/My-SSD/botling-work/tmp" : tmpdir());
 const ALL = [["chromium", chromium], ["webkit", webkit]] as const;

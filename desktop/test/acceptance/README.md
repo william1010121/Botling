@@ -30,3 +30,16 @@ Every harness takes `V3_ACCEPT_RUNTIME=electron` to run botlingd under Electron 
 
 Typical durations on a loaded machine: check 2 about 25 min for 20 × 200, check 4 about 2 min, check 6 about 1 min,
 check 9 about 1 min, the rest under 30 s.
+
+## Botling 3 M2 (m2-brief §5): the page harnesses under `web-v3/`
+
+Build first: `npm run build && node web-v3/build.mjs`. The page harness (`web-v3/page-harness.ts`, and
+`two-servers/pdf-peer.test.ts`) refuses to start when `web-v3/dist` is older than any file its build read
+(`web-v3/page-fresh.ts`, from the `sources` list `web-v3/build.mjs` writes to `web-v3/dist.inputs.json`).
+Browsers come from `PLAYWRIGHT_BROWSERS_PATH` (headless Chromium and WebKit, nothing downloaded); `V3_ENGINES=chromium,webkit`
+picks engines. Per-check files and numbers: `.bot/artifacts/v3-m2/acceptance.md`.
+
+| Check | File | Knobs |
+|---|---|---|
+| 2 airplane mode on the page | `web-v3/airplane.test.ts`: runs × commands, each run a fresh data folder, profile and pairing, with seeded offline toggles, reloads, browser SIGKILLs and botlingd SIGKILLs; 0 accepted lost, 0 applied twice, 0 shown "not sent"/"lost"; run 1 also times send → delivered (check 7) | `V3_ACCEPT_RUNS` (20), `V3_ACCEPT_CMDS` (100), `V3_ACCEPT_SPEED_CMDS` (50), `V3_ACCEPT_SEED` |
+| 3, 4 (page part), 5, 6, 8 | `web-v3/page`, `content`, `player`, `upload`, `pdf`, `relay`, `sw`, `idb-storage`, `session-vectors` | see each file's header |
