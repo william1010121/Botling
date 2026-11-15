@@ -89,7 +89,9 @@ describe("the whole app page, as the code before the move drew it", () => {
 const bySlot = (slot: string) => rendererKernel.entries<{ kind?: string; region?: string; row?: { id?: string; plugin?: string } }>(slot);
 const pressed = (page: Page) => { const one = page.host.querySelector('.board-switch button[aria-pressed="true"]'); return one ? one.getAttribute("data-tab") ?? "chat" : null; };
 const switches = (page: Page) => [...page.host.querySelectorAll(".board-switch button")].map((one) => one.getAttribute("data-tab") ?? "chat");
-const column = (page: Page) => page.host.querySelector("section.chat-pane:not(.chat-unavailable)");
+const column = (page: Page) => [...page.host.querySelectorAll("section.chat-pane")].find((one) => !one.classList.contains("chat-unavailable")) ?? null;
+/** What the page asked main to remember as a bot's tab (the page asks main for other settings too, such as the bots' colours). */
+const asks = (page: Page) => page.requests.filter((request) => request.type === "settings.set" && (request as { change?: { key?: string } }).change?.key === "mainTab");
 const lineOf = (page: Page) => page.host.querySelector(".chat-unavailable [role=status]")?.textContent ?? null;
 const settle = (check: () => void) => act(async () => { await vi.waitFor(check); });
 /** The page with `botling.chat` loaded (the page reads the test host's answers) and the feed's rows in its slots. */
@@ -300,21 +302,21 @@ describe("the whole app with the chat column and the tabs from the chat plugin",
         await settle(() => { expect(pressed(page)).toBe("chat"); });
         await page.update({ shown: SITE });
         await settle(() => { expect(pressed(page)).toBe(NOTE_TAB); });
-        expect(page.requests.filter((request) => request.type === "settings.set")).toEqual([]);
+        expect(asks(page)).toEqual([]);
       });
 
       it("asks main to remember a pick once, as the bot's tab; a pick that is already remembered asks nothing", async () => {
         const page = await open({});
         const note = page.host.querySelector<HTMLButtonElement>(`.board-switch button[data-tab="${NOTE_TAB}"]`)!;
         await act(async () => { note.click(); });
-        expect(page.requests.filter((request) => request.type === "settings.set")).toEqual([{ type: "settings.set", change: { key: "mainTab", value: { botId: SITE, tab: NOTE_TAB } } }]);
+        expect(asks(page)).toEqual([{ type: "settings.set", change: { key: "mainTab", value: { botId: SITE, tab: NOTE_TAB } } }]);
         await page.update({ mainTabs: { [SITE]: NOTE_TAB } });
         await settle(() => { expect(pressed(page)).toBe(NOTE_TAB); });
         await act(async () => { page.host.querySelector<HTMLButtonElement>(`.board-switch button[data-tab="${NOTE_TAB}"]`)!.click(); });
-        expect(page.requests.filter((request) => request.type === "settings.set")).toHaveLength(1);
+        expect(asks(page)).toHaveLength(1);
         const chat = page.host.querySelector<HTMLButtonElement>(".board-switch button:not([data-tab])")!;
         await act(async () => { chat.click(); });
-        expect(page.requests.filter((request) => request.type === "settings.set").at(-1)).toEqual({ type: "settings.set", change: { key: "mainTab", value: { botId: SITE, tab: null } } });
+        expect(asks(page).at(-1)).toEqual({ type: "settings.set", change: { key: "mainTab", value: { botId: SITE, tab: null } } });
       });
     });
   }
@@ -328,7 +330,7 @@ describe("the whole app with the chat column and the tabs from the chat plugin",
     await settle(() => { expect(switches(page)).toEqual(["chat", "botling/storage"]); });
     expect(pressed(page)).toBe("chat");
     expect(page.host.querySelector(".main-tab")).toBeNull();
-    expect(page.requests.filter((request) => request.type === "settings.set")).toEqual([]);
+    expect(asks(page)).toEqual([]);
     // The plugin's row comes back with its next load: the remembered tab shows again.
     const view = fixtureView();
     await page.update({ plugins: { ...view, plugins: view.plugins.map((plugin) => (plugin.name === "botling.note" ? { ...plugin, version: "9.9.9" } : plugin)) } });
