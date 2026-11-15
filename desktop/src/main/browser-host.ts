@@ -21,7 +21,7 @@ import { BROWSER_CHANNEL, isWebUrl, urlFromInput, type BrowserDown, type Browser
 import { runOptions, siteOf, toolIsOn, toolsFor, type RunFile, type SiteToolOptions } from "../browser-site-tools";
 import { NetCapture } from "../browser-bot";
 import { droppedPdfPaths, fileNavigation, isOpenablePdf, localPdfPath, pdfFileUrl } from "../browser-pdf";
-import { paneUserAgent, popupWay } from "../browser-auth";
+import { captureFor, paneUserAgent, popupWay, type Debuggee } from "../browser-auth";
 import { HintAsks, acceptLanguages, withHints, type HintFacts } from "../browser-hints";
 import type { BotBrowserWindow } from "./browser-bot-host";
 import { BrowserTabs, type TabPage } from "./browser-tabs";
@@ -248,12 +248,29 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
     });
   }
 
-  /** The tab's traffic, always on (no panel): the Network domain of its page's DevTools protocol, into a bounded ring. */
+  /** The tab's traffic, always on (no panel): the Network domain of its page's DevTools protocol, into a bounded ring.
+   * Off while the top frame is on Google's sign-in, which refuses a DevTools-controlled browser (browser-auth.ts). */
   function capture(tabId: string, contents: WebContents) {
     const ring = new NetCapture();
     captures.set(tabId, ring);
     const cdp = contents.debugger;
-    try { cdp.attach("1.3"); } catch (error) { options.note(`browser: no network capture for a tab (${(error as Error).message})`); return; }
+    let failed = false;
+    const debuggee: Debuggee = {
+      isAttached: () => !contents.isDestroyed() && cdp.isAttached(),
+      attach: () => {
+        if (failed || contents.isDestroyed()) return;
+        try { cdp.attach("1.3"); } catch (error) { failed = true; options.note(`browser: no network capture for a tab (${(error as Error).message})`); return; }
+        void cdp.sendCommand("Network.enable", { maxTotalBufferSize: 50_000_000, maxResourceBufferSize: 10_000_000 }).catch(() => {});
+      },
+      detach: () => { try { cdp.detach(); } catch { /* already off */ } },
+    };
+    const follow = (details: { url: string; isMainFrame: boolean; isSameDocument?: boolean }) => {
+      if (details.isMainFrame && !details.isSameDocument) captureFor(details.url, debuggee);
+    };
+    contents.on("did-start-navigation", follow);
+    contents.on("did-redirect-navigation", follow);
+    // A navigation that never committed (cancelled, a download, a 204) leaves the page where it was.
+    contents.on("did-stop-loading", () => { if (!contents.isDestroyed()) captureFor(contents.getURL(), debuggee); });
     cdp.on("message", (_event, method, params) => {
       const wanted = ring.handle(method, params);
       if (!wanted) return;
@@ -261,7 +278,7 @@ export function createBrowserHost(owner: BrowserWindow, options: BrowserHostOpti
         .then((got) => ring.setBody(wanted, got.body, got.base64Encoded), () => {});
     });
     cdp.on("detach", (_event, reason) => { if (reason !== "target closed") options.note(`browser: network capture stopped for a tab (${reason})`); });
-    void cdp.sendCommand("Network.enable", { maxTotalBufferSize: 50_000_000, maxResourceBufferSize: 10_000_000 }).catch(() => {});
+    debuggee.attach();
   }
 
   const bot: BotBrowserWindow = {
