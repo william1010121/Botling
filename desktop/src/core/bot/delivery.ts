@@ -41,25 +41,18 @@ export class BotDelivery {
   private emit(event: Event) { this.ctx.emit(event); }
   private get draining() { return this.host.draining; }
   private get turn() { return this.host.turn; }
-  private set turn(v) { this.host.turn = v; }
+  private get turns() { return this.host.turns; }
   private get head() { return this.host.head; }
   private get session() { return this.host.session; }
   private get restartPending() { return this.host.restartPending; }
-  private set restartPending(v) { this.host.restartPending = v; }
   private get restartForPluginsOnly() { return this.host.restartForPluginsOnly; }
-  private set restartForPluginsOnly(v) { this.host.restartForPluginsOnly = v; }
   private hasCurrentPlugins() { return this.host.hasCurrentPlugins(); }
-  private set restartNonModel(v: boolean) { this.host.restartNonModel = v; }
-  private get restartReason() { return this.host.restartReason; }
-  private set restartReason(v) { this.host.restartReason = v; }
   private get modelSettingsPending() { return this.host.modelSettingsPending; }
   private switchInPlace(head: AgentHead) { return this.host.switchInPlace(head); }
   private waitsForRestart(turn: Turn) { return this.host.waitsForRestart(turn); }
   private get folderPending() { return this.host.folderPending; }
-  private set folderPending(v) { this.host.folderPending = v; }
   private get ownWorkRunning() { return this.host.ownWorkRunning; }
   private holdForSettings(turn: Turn) { return this.host.holdForSettings(turn); }
-  private set restarting(v: AgentHead | null) { this.host.restarting = v; }
   private ensureHead() { return this.host.ensureHead(); }
   private finishTurn(turn: Turn, status: Status, error?: string) { return this.host.finishTurn(turn, status, error); }
   private get startedFresh() { return this.host.startedFresh; }
@@ -85,12 +78,7 @@ export class BotDelivery {
     const old = this.head;
     let restarted: { told: string; shown: string } | null = null;
     // The restart waiting was only for plugins, and they came back to what its session has (`restartWaiting`).
-    if (!given && this.restartPending && this.restartForPluginsOnly && this.hasCurrentPlugins()) {
-      this.restartPending = false;
-      this.restartNonModel = false;
-      this.restartForPluginsOnly = false;
-      this.restartReason = null;
-    }
+    if (!given && this.restartPending && this.restartForPluginsOnly && this.hasCurrentPlugins()) this.host.dropPluginsOnlyRestart();
     // A head that takes the new model/effort in place needs no restart, so nothing has to wait for its work.
     if (!given && this.modelSettingsPending && old?.running) {
       await this.switchInPlace(old);
@@ -99,7 +87,7 @@ export class BotDelivery {
     // Keep workers alive, but never send a user turn under a known stale model/effort: it waits for this
     // head's own work to finish (a partner head's work does not count), then the restart, then it goes.
     if (!given && this.waitsForRestart(turn) && (this.modelSettingsPending || this.folderPending) && old?.running && this.ownWorkRunning) {
-      this.turn = null;
+      this.turns.close();
       turn.head = null;
       turn.sent = false;
       // It was shown as under way: no longer (its reply line does not exist yet).
@@ -108,13 +96,7 @@ export class BotDelivery {
       return;
     }
     if (!given && this.restartPending && old?.running && !this.ownWorkRunning) {
-      this.restartPending = false;
-      this.folderPending = false;
-      this.restartNonModel = false;
-      this.restartForPluginsOnly = false;
-      this.restarting = old;
-      restarted = this.restartReason;
-      this.restartReason = null;
+      restarted = this.host.consumeRestart(old);
       this.log("starting its process again before this message");
       old.finish();
       const exited = await Promise.race([old.exited.then(() => true), sleep(5_000).then(() => false)]);

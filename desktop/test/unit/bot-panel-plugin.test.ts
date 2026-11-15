@@ -179,8 +179,10 @@ describe("the bot-panel plugin as the FE build ships it", () => {
       expect(PLUGIN_OWNED_SLOTS, legacy).toContain(legacy);
       expect(FEED_SLOTS, legacy).not.toContain(legacy);
     }
-    expect(botPanelDeclaration.provides?.slots?.map(canonicalSlot).sort()).toEqual([MAIN, SECTION, TAKEOVER].sort());
-    expect(rendererKernel.declaration(BOT_PANEL_PLUGIN)?.provides?.slots?.slice().sort()).toEqual([MAIN, SECTION, TAKEOVER].sort());
+    // M7-03b: and the three tile slots (bot-panel-tiles.test.ts owns the details).
+    const provided = [MAIN, SECTION, TAKEOVER, "tile/board", "tile/whiteboard", "tile/pin"];
+    expect(botPanelDeclaration.provides?.slots?.map(canonicalSlot).sort()).toEqual(provided.sort());
+    expect(rendererKernel.declaration(BOT_PANEL_PLUGIN)?.provides?.slots?.slice().sort()).toEqual(provided.sort());
   });
 
   it("registers the three overview blocks in panel/main, one registration each, in the panel's order, and nothing in the other two slots", async () => {

@@ -41,6 +41,11 @@ export const PLUGIN_OWNED_SLOTS: readonly string[] = [
 
   // botling.browser-pane (M7-06c): browser/tab
   "menu/browser/tab",
+
+  // botling.bot-panel (M7-03b): panel/tile/board, panel/tile/whiteboard, panel/tile/pin
+  "tile/board",
+  "tile/whiteboard",
+  "tile/pin",
 ];
 const OWNED_ELSEWHERE = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 

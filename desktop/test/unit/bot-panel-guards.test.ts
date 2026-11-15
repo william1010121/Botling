@@ -4,7 +4,7 @@
 // methods the code under test calls.
 import { describe, expect, it, vi } from "vitest";
 import type { Kernel } from "../../../Web/src/plugin-kernel";
-import { BOT_PANEL_PLUGIN, MAIN_SLOT, PANEL_BLOCKS, SECTION_SLOT, TAKEOVER_SLOT } from "../../src/renderer/panel-names";
+import { BOT_PANEL_PLUGIN, MAIN_SLOT, PANEL_BLOCKS, SECTION_SLOT, TAKEOVER_SLOT, TILE_SLOTS } from "../../src/renderer/panel-names";
 import { panelState, registeredPanelBlocks } from "../../src/renderer/panel-slot";
 import { activate } from "../../src/renderer/plugins/bot-panel";
 
@@ -34,7 +34,7 @@ describe("panelState: the host's answer comes first", () => {
 });
 
 describe("activate: a block the kernel refuses fails the load", () => {
-  it("rejects when contribute answers null, after owning the three slots", async () => {
+  it("rejects when contribute answers null, after owning its slots (the panel's three and the three tile surfaces, M7-03b)", async () => {
     const provideSlot = vi.fn();
     const contribute = vi.fn(() => null);
     const api = { define: async (declaration: { name: string }, register: (kernel: Kernel, plugin: string) => void) => {
@@ -42,7 +42,7 @@ describe("activate: a block the kernel refuses fails the load", () => {
       return () => {};
     } };
     await expect(activate(api)).rejects.toThrow(`the kernel refused the ${PANEL_BLOCKS[0]} block`);
-    expect(provideSlot.mock.calls.map(([, slot]) => slot)).toEqual([MAIN_SLOT, SECTION_SLOT, TAKEOVER_SLOT]);
+    expect(provideSlot.mock.calls.map(([, slot]) => slot)).toEqual([MAIN_SLOT, SECTION_SLOT, TAKEOVER_SLOT, TILE_SLOTS.board, TILE_SLOTS.whiteboard, TILE_SLOTS.pin]);
     expect(contribute).toHaveBeenCalledTimes(1);
   });
 });
