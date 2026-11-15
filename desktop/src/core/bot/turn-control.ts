@@ -142,6 +142,30 @@ export class TurnControl {
   forgetSent() { this.contextSent.clear(); this.steered.clear(); }
   /** Your line `next` was offered into an Antigravity turn under `id`. */
   insertOffered(id: string, next: Turn) { this.inserting.set(id, next); }
+  /** Work was paused for your message (`pause`): it carries on once you are answered. */
+  startPause(paused: NonNullable<TurnControl["paused"]>) { this.paused = paused; }
+  /** No work waits for your answer any more (carried on, stopped, or the process is gone). */
+  endPause() { this.paused = null; }
+  /** A stopped turn drains: nothing begins until its head ends it (`drained`, or `endDrain` once the wait is over). */
+  startDrain(draining: NonNullable<TurnControl["draining"]>) { this.draining = draining; }
+  /** The wait for `draining` is over: it no longer holds the line, unless a newer drain replaced it. */
+  endDrain(draining: NonNullable<TurnControl["draining"]>) { if (this.draining === draining) this.draining = null; }
+  /** The next result belongs to nobody (a turn ended early, a tidy or guest turn that ran late). */
+  ignoreNext() { this.ignoreResults += 1; }
+  /** A result that belonged to nobody came. */
+  ignoredArrived() { this.ignoreResults -= 1; }
+  /** The head's process is gone: no result is to come. */
+  ignoreNone() { this.ignoreResults = 0; }
+  /** `head` is being ended: nothing it prints counts any more. */
+  headEnding(head: AgentHead) { this.ending.add(head); }
+  /** How turn `id` ended. */
+  recordFinished(id: string, status: Status) { this.finished.set(id, status); }
+  /** A subagent ended between turns: the next turn claude starts itself reports it. */
+  subagentEnded(id: string) { this.pendingEnded.push(id); }
+  /** The subagents that ended between turns, handed to the turn that reports them. */
+  takeEnded(): string[] { return this.pendingEnded.splice(0); }
+  /** What a reply said covers the subagents that ended so far. */
+  clearEnded() { this.pendingEnded = []; }
   /** `turn` is the turn under way (`Bot.begin`'s name is taken by the forwarder to it below). */
   start(turn: Turn) { this.turn = turn; }
   /** No turn is under way. */
@@ -221,7 +245,7 @@ export class TurnControl {
       this.enqueue(next);
       return next;
     }
-    this.paused = paused;
+    this.startPause(paused);
     this.log("you wrote while it worked on something you did not start: that work is paused for your message");
     return current;
   }
@@ -230,7 +254,7 @@ export class TurnControl {
   private resumePaused(): boolean {
     const paused = this.paused;
     if (!paused) return false;
-    this.paused = null;
+    this.endPause();
     if (!this.head?.running) return false;
     // A hand-off stopped (or settled) meanwhile has nothing left to carry on.
     if (paused.handoffId && !this.owner.conductor.records.some((record) => record.id === paused.handoffId && isActive(record))) return false;
@@ -400,7 +424,7 @@ export class TurnControl {
     const status: Status = state === "completed" ? "done" : "stopped";
     deferred.open = false;
     this.emit({ type: "turn.finished", botId: this.id, turnId: deferred.id, messageId: deferred.messageId, status, text: "" });
-    this.finished.set(deferred.id, status);
+    this.recordFinished(deferred.id, status);
     deferred.resolve(status);
     this.log(state === "completed" ? "claude took a message into the turn under way: it gets no turn of its own" : `claude dropped a message it had taken into a turn (${state})`);
     this.updated();
@@ -443,7 +467,7 @@ export class TurnControl {
       this.takeBack();
       if (deferred.open && deferred.head === this.head && this.head?.running) { this.start(deferred); this.awaitBegin(deferred, this.head); return; }
       // Stopped meanwhile: what claude does with it belongs to nobody.
-      if (!deferred.open && deferred.head === this.head && this.head?.running) { this.ignoreResults += 1; this.head.interrupt(); }
+      if (!deferred.open && deferred.head === this.head && this.head?.running) { this.ignoreNext(); this.head.interrupt(); }
     }
     if (this.swapHold) return;
     if (this.resumePaused()) return;
@@ -497,7 +521,7 @@ export class TurnControl {
         this.withdrawInsert(waiting);
         waiting.open = false;
         this.emit({ type: "turn.finished", botId: this.id, turnId, messageId: waiting.messageId, status: "stopped", text: "" });
-        this.finished.set(turnId, "stopped");
+        this.recordFinished(turnId, "stopped");
         waiting.resolve("stopped");
         // The message that waited for a model/effort restart was taken back: its card goes too.
         this.checkSettingsHold();
@@ -508,7 +532,7 @@ export class TurnControl {
         const deferred = this.deferred;
         deferred.open = false;
         this.emit({ type: "turn.finished", botId: this.id, turnId, messageId: deferred.messageId, status: "stopped", text: "" });
-        this.finished.set(turnId, "stopped");
+        this.recordFinished(turnId, "stopped");
         deferred.resolve("stopped");
         return { stopped: true, killed: [], forced: false };
       }
@@ -528,7 +552,7 @@ export class TurnControl {
       return { stopped: false, killed: [], forced: false };
     }
     // Stop stops the work paused for the user too.
-    this.paused = null;
+    this.endPause();
     // Order matters: the turn is closed (and says so) before claude hears of it.
     turn.open = false;
     this.close();
@@ -545,7 +569,7 @@ export class TurnControl {
     }
     this.emit({ type: "turn.finished", botId: this.id, turnId, messageId: turn.messageId, status: "stopped", text });
     if (record) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
-    this.finished.set(turnId, "stopped");
+    this.recordFinished(turnId, "stopped");
     turn.resolve("stopped");
     this.settleTurnApprovals();
     this.updated();
@@ -554,7 +578,7 @@ export class TurnControl {
     const head = turn.head;
     if (!head || !head.running || !turn.sent) { this.next(); return { stopped: true, killed: [], forced: false }; }
     if (quitting) {
-      this.ending.add(head);
+      this.headEnding(head);
       const result = await head.terminate(1_000);
       return { stopped: true, killed: result.killed, forced: result.forced };
     }
@@ -562,20 +586,20 @@ export class TurnControl {
     let resolve!: () => void;
     const promise = new Promise<void>((r) => (resolve = r));
     const draining = { head, resolve, promise };
-    this.draining = draining;
+    this.startDrain(draining);
     head.interrupt();
     const ended = await Promise.race([promise.then(() => true), sleep(this.options.interruptGraceMs).then(() => false)]);
     if (ended) {
-      if (this.draining === draining) this.draining = null;
+      this.endDrain(draining);
       this.log(`turn ${turnId} stopped; claude ended it`);
       this.next();
       return { stopped: true, killed: [], forced: false };
     }
     // It did not answer: end its whole tree. The next message starts the head again (--resume). What waits goes only
     // once the process is gone (onExit), never to the process being ended.
-    this.ending.add(head);
+    this.headEnding(head);
     const result = await head.terminate(1_500);
-    if (this.draining === draining) this.draining = null;
+    this.endDrain(draining);
     resolve();
     this.log(`turn ${turnId} stopped; claude did not end it in time, so its tree was ended: ${result.killed.join(",")} forced=${result.forced}`);
     this.next();

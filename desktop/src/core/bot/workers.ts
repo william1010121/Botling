@@ -61,7 +61,7 @@ export class BotWorkers {
   private get approvals() { return this.host.approvals; }
   private get session() { return this.host.session; }
   private get shuttingDown() { return this.host.shuttingDown; }
-  private get pendingEnded() { return this.host.pendingEnded; }
+  private get turns() { return this.host.turns; }
   private get swapHold() { return this.host.swapHold; }
   private get dirtySubagents() { return this.host.dirtySubagents; }
   private get speaker() { return this.host.speaker; }
@@ -655,7 +655,7 @@ export class BotWorkers {
     }
     if (moved) { /* routed to its owner */ }
     else if (this.turn && this.turn.origin !== "tidy") this.turn.ended.push(id);
-    else this.pendingEnded.push(id);
+    else this.turns.subagentEnded(id);
     if (!this.turn && !this.queue.length && !this.tidying) this.scheduleIdle();
     this.checkSettingsHold();
   }

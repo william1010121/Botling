@@ -60,7 +60,6 @@ export class HeadEvents {
   private get cutOffByNetwork(): Set<string> { return this.host.cutOffByNetwork; }
   private get draining(): Bot["draining"] { return this.host.draining; }
   private get ending(): WeakSet<AgentHead> { return this.host.ending; }
-  private get finished(): Map<string, Status> { return this.host.finished; }
   private get managedHandbacks(): Set<string> { return this.host.managedHandbacks; }
   private get managedTaskHandoffs(): Map<string, string> { return this.host.managedTaskHandoffs; }
   private get outage(): Bot["outage"] { return this.host.outage; }
@@ -85,13 +84,8 @@ export class HeadEvents {
   private get head(): AgentHead | null { return this.host.head; }
   private set head(v: AgentHead | null) { this.host.head = v; }
   private get ignoreResults(): number { return this.host.ignoreResults; }
-  private set ignoreResults(v: number) { this.host.ignoreResults = v; }
   private get managedPending(): boolean { return this.host.managedPending; }
   private set managedPending(v: boolean) { this.host.managedPending = v; }
-  private get paused(): Bot["paused"] { return this.host.paused; }
-  private set paused(v: Bot["paused"]) { this.host.paused = v; }
-  private get pendingEnded(): string[] { return this.host.pendingEnded; }
-  private set pendingEnded(v: string[]) { this.host.pendingEnded = v; }
   private get restarting(): AgentHead | null { return this.host.restarting; }
   private set restarting(v: AgentHead | null) { this.host.restarting = v; }
   private get retryingConnection(): boolean { return this.host.retryingConnection; }
@@ -303,7 +297,7 @@ export class HeadEvents {
     // The tail of a turn that was cut off: it belongs to nobody.
     if (this.ignoreResults > 0) {
       if (item.kind === "permission") head.answer(item.requestId, false, item.input, "Not now: that turn has ended.");
-      if (item.kind === "result") this.ignoreResults -= 1;
+      if (item.kind === "result") this.turns.ignoredArrived();
       return;
     }
     let turn = this.turn;
@@ -451,7 +445,7 @@ export class HeadEvents {
     if (turn.origin === "tidy") {
       if (turn.callIn) this.updated();
       turn.onReply?.(status === "done" ? turn.reply.text : "");
-      this.finished.set(turn.id, status);
+      this.turns.recordFinished(turn.id, status);
       turn.resolve(status);
       this.settleTurnApprovals();
       return; // sleep() goes on from here.
@@ -460,7 +454,7 @@ export class HeadEvents {
     const parsed = parseReply(raw);
     // A hand-off to the other head is the app's, not the chat's.
     const tags = status === "done" ? parseHeadTags(parsed.body) : { body: parsed.body, handoff: null };
-    const ended = turn.origin === "background" ? [...this.pendingEnded.splice(0), ...turn.ended] : turn.ended;
+    const ended = turn.origin === "background" ? [...this.turns.takeEnded(), ...turn.ended] : turn.ended;
     if (status === "done") this.applyReactions(parsed.reactions);
     if (status === "done" && parsed.pluginTags) this.options.pluginTags?.(this.owner, parsed.pluginTags);
     // Nothing for the user, whoever started the turn: no bubble (`headTurnContent` says what the head keeps out).
@@ -470,7 +464,7 @@ export class HeadEvents {
       if (turn.record) this.remove(turn.record);
       this.keepTasks(turn, null);
       this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: "" });
-      this.finished.set(turn.id, status);
+      this.turns.recordFinished(turn.id, status);
       turn.resolve(status);
       this.relayFollowUp(turn, status, null, error);
       this.afterTurn();
@@ -506,7 +500,7 @@ export class HeadEvents {
         if (this.owner.updateCards(record) && !turn.steps.length) {
           if (!fresh) this.remove(record);
           this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: "" });
-          this.finished.set(turn.id, status);
+          this.turns.recordFinished(turn.id, status);
           turn.resolve(status);
           this.afterTurn();
           if (this.sharesChat) this.headStopped(this.engine);
@@ -534,7 +528,7 @@ export class HeadEvents {
       ...(error ? { error: error.slice(0, 2_000) } : {}),
     });
     this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
-    this.finished.set(turn.id, status);
+    this.turns.recordFinished(turn.id, status);
     turn.resolve(status);
     if (status === "done") {
       this.bumpUnread();
@@ -545,7 +539,7 @@ export class HeadEvents {
       }
       this.afterReplyHooks(record);
       // What it said covers the subagents that ended so far.
-      this.pendingEnded = [];
+      this.turns.clearEnded();
     }
     this.relayFollowUp(turn, status, record, error);
     this.afterTurn();
@@ -576,9 +570,9 @@ export class HeadEvents {
     this.retryingConnection = false;
     this.codexRetry = null;
     this.clearIdle();
-    this.ignoreResults = 0;
+    this.turns.ignoreNone();
     // Paused work went with the process (1.x drops `pausedWork` when the process exits).
-    this.paused = null;
+    this.turns.endPause();
     this.turns.forgetSent();
     for (const [id, approval] of [...this.approvals]) if (approval.head === head) this.settle(id, NO_LONGER_NEEDED, false);
     // Its subagents (and Codex's workers) run inside its process: they went with it.
