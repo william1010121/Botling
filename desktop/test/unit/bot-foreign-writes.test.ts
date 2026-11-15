@@ -277,7 +277,8 @@ describe("the places that write another bot's state, in their old order", () => 
     A.peek.adoptSwap([{ engine: "claude", sessionId: "sess-5", continue: false, queued: [] }]);
     expect(A.peek.delivery.queuedNote).toBe("older");
     A.peek.adoptSwap([{ engine: "claude", sessionId: "sess-6", continue: true, queued: [] }]);
-    expect(saved.map((s) => [s.session.sessionId, s.adopted])).toEqual([["sess-5", false], ["sess-6", true]]);
+    // (A "continue" entry also delivers its note, which starts the head and saves again: only the first two saves are the swap's.)
+    expect(saved.slice(0, 2).map((s) => [s.session.sessionId, s.adopted])).toEqual([["sess-5", false], ["sess-6", true]]);
   });
 
   it("restartNow: a claude head asks for a fresh session, a codex one does not", () => {
