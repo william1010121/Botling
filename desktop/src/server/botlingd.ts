@@ -470,8 +470,10 @@ export class Botlingd {
       // M5-04a: this server acting as its own command origin (call-ins, main bot); slot.origin is always roster.memberId.
       const serverOrigin = new ServerOrigin({
         self: roster.memberId, submit: (command) => openStore.submit(command), reader: () => hub.reader(), forwarder,
+        isRevoked: (peer) => !roster.view.valid.has(peer),
         subscribeTable: (stream, sink) => feeds.subscribe(stream, null, sink), log,
       });
+      roster.onChange((change) => { void serverOrigin.revoked(change.invalidated); });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);
@@ -593,7 +595,7 @@ export class Botlingd {
       daemon.peerContentOwner = peerContentOwner;
       daemon.chunkCache = chunkCache;
       daemon.serverOrigin = serverOrigin;
-      if (env[TEST_ORIGIN_HOOK_ENV] === "1") daemon.originHookStop = startOriginTestHook(paths.dataDir, serverOrigin, log);
+      if (originTestHookEnabled(env)) daemon.originHookStop = startOriginTestHook(paths.dataDir, serverOrigin, log);
       daemon.media = media;
       daemon.pluginTimer = pluginTimer;
       daemon.tailnetOrigins = origin ? [origin] : [];
@@ -742,8 +744,14 @@ export function testCorruptContent(env: Record<string, string | undefined>): str
 }
 
 
-/** Test hook (M5-04a): `BOTLING_SERVER_TEST_ORIGIN_HOOK=1` lets two-server tests submit via ServerOrigin and record outcomes. Unset in real use. */
+/** Test hook (M5-04a): requires `BOTLING_AGENT=fake` and both test flags (`BOTLING_SERVER_TEST_ORIGIN_HOOK=1` and `BOTLING_SERVER_TEST_ORIGIN_HOOK_ALLOW=1`). */
 export const TEST_ORIGIN_HOOK_ENV = "BOTLING_SERVER_TEST_ORIGIN_HOOK";
+export const TEST_ORIGIN_HOOK_ALLOW_ENV = "BOTLING_SERVER_TEST_ORIGIN_HOOK_ALLOW";
+export function originTestHookEnabled(env: Record<string, string | undefined>): boolean {
+  return env.BOTLING_AGENT === "fake"
+    && env[TEST_ORIGIN_HOOK_ENV] === "1"
+    && env[TEST_ORIGIN_HOOK_ALLOW_ENV] === "1";
+}
 function startOriginTestHook(dataDir: string, serverOrigin: ServerOrigin, log: (line: string) => void): () => void {
   const reqDir = join(dataDir, "test-server-origin-requests");
   const submittedFile = join(dataDir, "test-server-origin-submitted.jsonl");
@@ -763,12 +771,20 @@ function startOriginTestHook(dataDir: string, serverOrigin: ServerOrigin, log: (
           const full = join(reqDir, name);
           let raw: string;
           try { raw = readFileSync(full, "utf8"); unlinkSync(full); } catch { continue; }
-          const req = JSON.parse(raw) as { id: string; target: Target; cmd: Command };
+          let req: { id?: unknown; target?: unknown; cmd?: unknown } | null = null;
           try {
-            const slot = await serverOrigin.submit(req.target, req.cmd);
+            req = JSON.parse(raw) as { id?: unknown; target?: unknown; cmd?: unknown };
+            if (!req || typeof req.id !== "string" || typeof req.target !== "string" || !req.cmd || typeof req.cmd !== "object") {
+              throw new TypeError("malformed server-origin test hook request");
+            }
+            const slot = await serverOrigin.submit(req.target as Target, req.cmd as Command);
             appendFileSync(submittedFile, `${JSON.stringify({ id: req.id, slot })}\n`, { mode: 0o600 });
           } catch (error) {
-            appendFileSync(submittedFile, `${JSON.stringify({ id: req.id, error: String((error as Error)?.message ?? error) })}\n`, { mode: 0o600 });
+            if (req && typeof req.id === "string") {
+              appendFileSync(submittedFile, `${JSON.stringify({ id: req.id, error: String((error as Error)?.message ?? error) })}\n`, { mode: 0o600 });
+            } else {
+              log(`server-origin hook: bad request ${name}: ${String((error as Error)?.message ?? error)}`);
+            }
           }
         }
       } finally {

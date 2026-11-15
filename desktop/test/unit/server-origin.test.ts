@@ -12,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Command } from "../../src/contract";
 import { slotKey, type LogId, type MessageOf, type Outcome, type Slot, type WireMessage } from "../../src/protocol";
-import { authorizeRoster, Botlingd } from "../../src/server/botlingd";
+import { authorizeRoster, Botlingd, originTestHookEnabled } from "../../src/server/botlingd";
 import { Directory, Forwarder, ServerOrigin, type ForwardSession } from "../../src/server/forward";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "../../src/server/identity";
 import { TableFeeds } from "../../src/server/replica";
@@ -46,7 +46,7 @@ function seedPeerStream(db: Db, owner: string, logId: LogId, bots: string[]): vo
   }
 }
 
-function makeInMemoryHarness(opts: { failCommit?: () => boolean; withFeeds?: boolean } = {}) {
+function makeInMemoryHarness(opts: { failCommit?: () => boolean; withFeeds?: boolean; isRevoked?: (owner: string) => boolean } = {}) {
   let shouldFail = false;
   const { db, writer } = memoryStore({
     beforeCommit: () => {
@@ -72,6 +72,7 @@ function makeInMemoryHarness(opts: { failCommit?: () => boolean; withFeeds?: boo
     reader: () => db,
     directory,
     session: (peer) => (peer === PEER ? fakeSession : null),
+    ...(opts.isRevoked ? { isRevoked: opts.isRevoked } : {}),
     log: () => undefined,
   });
   const feeds = opts.withFeeds ? new TableFeeds({ reader: () => db, ownStream: `srv:${SELF}`, log: () => undefined }) : null;
@@ -81,6 +82,7 @@ function makeInMemoryHarness(opts: { failCommit?: () => boolean; withFeeds?: boo
     submit: (cmd) => writer.submit(cmd),
     reader: () => db,
     forwarder,
+    ...(opts.isRevoked ? { isRevoked: opts.isRevoked } : {}),
     ...(feeds ? { subscribeTable: (stream, sink) => feeds.subscribe(stream, null, sink) } : {}),
     log: (line) => logs.push(line),
   });
@@ -208,13 +210,15 @@ describe("M5-04a: ServerOrigin unit tests", () => {
     }
   });
 
-  it("6. slot conflict deletes myorigins row, logs it, and the next submit uses a new epoch", async () => {
+  it("6. slot conflict creates a new originEpoch and re-sends the item under it (§11.4)", async () => {
     const h = makeInMemoryHarness();
     try {
       const heard: Array<{ slot: Slot; outcome: Outcome }> = [];
       h.origin.on((slot, outcome) => heard.push({ slot, outcome }));
 
       const s1 = await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "conflict" });
+      expect(h.cmdFrames()).toHaveLength(1);
+
       await h.deliverFromOwner({
         t: "cmd.result",
         slot: s1,
@@ -222,15 +226,83 @@ describe("M5-04a: ServerOrigin unit tests", () => {
         logId: INC_1,
         seq: null,
       });
-      await until(() => heard.length === 1, { what: "slot conflict heard" });
 
-      expect(heard[0]!.outcome).toEqual({ kind: "refused", reason: "slot conflict", detail: "epoch reset" });
-      expect(h.db.prepare("SELECT 1 FROM myorigins WHERE target = ?").get(TARGET_B1)).toBeUndefined();
+      await until(() => h.cmdFrames().length >= 2, { timeout: 500, what: "re-send under new originEpoch" });
+      const resent = h.cmdFrames()[1]!;
+      expect(resent.slot.originEpoch).not.toBe(s1.originEpoch);
+      expect(resent.slot.origin).toBe(SELF);
+      expect(resent.slot.target).toBe(TARGET_B1);
+      expect(resent.slot.n).toBe(1);
+      expect(resent.floor).toBe(1);
+      expect(resent.cmd).toEqual({ type: "waiting.ignore", botId: BOT_B1, text: "conflict" });
       expect(h.logs.some((line) => line.includes("slot conflict"))).toBe(true);
+      // Not resolved for the caller until the re-sent slot gets a non-conflict outcome.
+      expect(heard).toEqual([]);
+      expect(h.origin.outcome(s1)).toBeNull();
 
       const sNext = await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "new-epoch" });
-      expect(sNext.originEpoch).not.toBe(s1.originEpoch);
-      expect(sNext.n).toBe(1);
+      expect(sNext.originEpoch).toBe(resent.slot.originEpoch);
+      expect(sNext.n).toBe(2);
+      expect(h.cmdFrames()[2]!.floor).toBe(1);
+
+      await h.deliverFromOwner({ t: "cmd.result", slot: resent.slot, outcome: { kind: "applied" }, logId: INC_1, seq: 1 });
+      await h.deliverFromOwner({ t: "cmd.result", slot: sNext, outcome: { kind: "applied" }, logId: INC_1, seq: 2 });
+      await until(() => heard.length === 2, { timeout: 1_000, what: "re-sent and next slots applied" });
+      expect(heard.map((e) => [slotKey(e.slot), e.outcome.kind])).toEqual([
+        [slotKey(s1), "applied"],
+        [slotKey(sNext), "applied"],
+      ]);
+      expect(h.origin.outcome(s1)).toEqual({ kind: "applied" });
+      expect(h.origin.outcome(resent.slot)).toEqual({ kind: "applied" });
+      expect(h.origin.outcome(sNext)).toEqual({ kind: "applied" });
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM meta WHERE key LIKE 'serverOrigin:%'").get() as { c: number }).c).toBe(0);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("6b. slot conflict wave moves both refused slots into one new epoch and survives restart before final outcome", async () => {
+    const h = makeInMemoryHarness();
+    try {
+      const s1 = await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "wave-1" });
+      const s2 = await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "wave-2" });
+
+      await h.deliverFromOwner({ t: "cmd.result", slot: s1, outcome: { kind: "refused", reason: "slot conflict", detail: "c1" }, logId: INC_1, seq: null });
+      await h.deliverFromOwner({ t: "cmd.result", slot: s2, outcome: { kind: "refused", reason: "slot conflict", detail: "c2" }, logId: INC_1, seq: null });
+
+      await until(() => h.cmdFrames().length >= 4, { timeout: 500, what: "both conflicted slots re-sent in new epoch" });
+      const moved1 = h.cmdFrames()[2]!;
+      const moved2 = h.cmdFrames()[3]!;
+      expect(moved1.slot.originEpoch).not.toBe(s1.originEpoch);
+      expect(moved2.slot.originEpoch).toBe(moved1.slot.originEpoch);
+      expect(moved1.slot.n).toBe(1);
+      expect(moved2.slot.n).toBe(2);
+      expect(moved2.floor).toBe(1);
+
+      h.origin.close();
+      const restarted = new ServerOrigin({
+        self: SELF,
+        submit: (c) => h.writer.submit(c),
+        reader: () => h.db,
+        forwarder: h.forwarder,
+        log: () => undefined,
+      });
+      try {
+        const heard: Array<{ slot: Slot; outcome: Outcome }> = [];
+        restarted.on((slot, outcome) => heard.push({ slot, outcome }));
+
+        await h.deliverFromOwner({ t: "cmd.result", slot: moved1.slot, outcome: { kind: "applied" }, logId: INC_1, seq: 1 });
+        await h.deliverFromOwner({ t: "cmd.result", slot: moved2.slot, outcome: { kind: "applied" }, logId: INC_1, seq: 2 });
+        await until(() => heard.length === 2, { timeout: 1_000, what: "restarted origin maps outcomes back to original slots" });
+        expect(heard.map((e) => [slotKey(e.slot), e.outcome.kind])).toEqual([
+          [slotKey(s1), "applied"],
+          [slotKey(s2), "applied"],
+        ]);
+        expect(restarted.outcome(s1)).toEqual({ kind: "applied" });
+        expect(restarted.outcome(s2)).toEqual({ kind: "applied" });
+      } finally {
+        restarted.close();
+      }
     } finally {
       await h.close();
     }
@@ -294,6 +366,171 @@ describe("M5-04a: ServerOrigin unit tests", () => {
         [3, "applied"],
       ]);
       restarted.close();
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("R1. crash between takeRetry commit and retryInc write reconciles on restart and does not strand the slot", async () => {
+    const h = makeInMemoryHarness({ withFeeds: true });
+    try {
+      const s1 = await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "r1" });
+      h.origin.close(); // process dies right after forwarder commits takeRetry (sink detached)
+      await h.deliverFromOwner({ t: "cmd.retry", slot: s1, inc: INC_2 });
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c).toBe(0);
+
+      const restarted = new ServerOrigin({
+        self: SELF,
+        submit: (c) => h.writer.submit(c),
+        reader: () => h.db,
+        forwarder: h.forwarder,
+        subscribeTable: (stream, sink) => h.feeds!.subscribe(stream, null, sink),
+        log: () => undefined,
+      });
+      try {
+        h.db.prepare("UPDATE streams SET logId = ? WHERE stream = ?").run(INC_2, `srv:${PEER}`);
+        h.feeds!.notify(`srv:${PEER}`);
+        await restarted.syncTable(PEER);
+
+        await until(() => h.cmdFrames().some((f) => f.slot.n === 1 && f.inc === INC_2), { timeout: 500, what: "s1 re-sent under INC_2" });
+        expect(h.cmdFrames().filter((f) => f.slot.n === 1 && f.inc === INC_2)).toHaveLength(1);
+        expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq WHERE n = 1").get() as { c: number }).c).toBe(1);
+
+        const s2 = await restarted.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "r2" });
+        expect(s2.n).toBe(2);
+        const f2 = h.cmdFrames().find((f) => f.slot.n === 2);
+        expect(f2?.floor).toBe(1);
+
+        const heard: Array<{ slot: Slot; outcome: Outcome }> = [];
+        restarted.on((slot, outcome) => heard.push({ slot, outcome }));
+        await h.deliverFromOwner({ t: "cmd.result", slot: s1, outcome: { kind: "applied" }, logId: INC_2, seq: 1 });
+        await h.deliverFromOwner({ t: "cmd.result", slot: s2, outcome: { kind: "applied" }, logId: INC_2, seq: 2 });
+        await until(() => heard.length === 2, { timeout: 1_000, what: "r1 and r2 outcomes" });
+        expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c).toBe(0);
+        expect((h.db.prepare("SELECT COUNT(*) AS c FROM meta WHERE key LIKE 'serverOrigin:%'").get() as { c: number }).c).toBe(0);
+      } finally {
+        restarted.close();
+      }
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("R2. crash between takeResult commit and meta delete reconciles on restart so owner replays stored outcome and clears meta", async () => {
+    const h = makeInMemoryHarness();
+    try {
+      const s1 = await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "r1" });
+      const sentBefore = h.cmdFrames().length;
+      h.origin.close();
+      await h.deliverFromOwner({ t: "cmd.result", slot: s1, outcome: { kind: "applied" }, logId: INC_1, seq: 1 });
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c).toBe(0);
+
+      const restarted = new ServerOrigin({
+        self: SELF,
+        submit: (c) => h.writer.submit(c),
+        reader: () => h.db,
+        forwarder: h.forwarder,
+        log: () => undefined,
+      });
+      try {
+        const heard: Array<{ slot: Slot; outcome: Outcome }> = [];
+        restarted.on((slot, outcome) => heard.push({ slot, outcome }));
+
+        await until(() => h.cmdFrames().length > sentBefore, { timeout: 500, what: "orphaned slot reconciled and pumped" });
+        expect(h.cmdFrames().slice(sentBefore).map((f) => f.slot)).toEqual([s1]);
+        expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq WHERE n = 1").get() as { c: number }).c).toBe(1);
+
+        // Owner replays the stored outcome for the already-decided slot (§11.3).
+        await h.deliverFromOwner({ t: "cmd.result", slot: s1, outcome: { kind: "applied" }, logId: INC_1, seq: 1 });
+        await until(() => heard.length === 1, { timeout: 1_000, what: "restarted listener hears stored outcome" });
+        expect(heard[0]).toEqual({ slot: s1, outcome: { kind: "applied" } });
+        expect(restarted.outcome(s1)).toEqual({ kind: "applied" });
+        expect((h.db.prepare("SELECT COUNT(*) AS c FROM meta WHERE key LIKE 'serverOrigin:%'").get() as { c: number }).c).toBe(0);
+        expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c).toBe(0);
+      } finally {
+        restarted.close();
+      }
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("F1-retired. cmd.retry naming a retired logId reconciles under current tableLogId instead of stranding the slot", async () => {
+    const h = makeInMemoryHarness({ withFeeds: true });
+    try {
+      const s1 = await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "retired-retry" });
+      expect(h.cmdFrames().filter((f) => f.inc === INC_1)).toHaveLength(1);
+
+      h.db.prepare("INSERT INTO retired (stream, logId, n, keptSeq, reason, retiredAt) VALUES (?, ?, 1, 0, 'reset', 1)").run(`srv:${PEER}`, INC_1);
+      h.db.prepare("UPDATE streams SET logId = ? WHERE stream = ?").run(INC_2, `srv:${PEER}`);
+
+      await h.deliverFromOwner({ t: "cmd.retry", slot: s1, inc: INC_1 });
+
+      await until(() => h.cmdFrames().some((f) => f.slot.n === 1 && f.inc === INC_2), { timeout: 500, what: "retired retry re-commits under INC_2" });
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq WHERE n = 1").get() as { c: number }).c).toBe(1);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("R3. submit to a revoked owner does not queue or send, ends with refused{revoked}, and notifies listeners", async () => {
+    const h = makeInMemoryHarness({ isRevoked: () => true });
+    try {
+      const heard: Array<{ slot: Slot; outcome: Outcome }> = [];
+      h.origin.on((slot, outcome) => heard.push({ slot, outcome }));
+
+      const s1 = await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "x" });
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c).toBe(0);
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM meta WHERE key LIKE 'serverOrigin:%'").get() as { c: number }).c).toBe(0);
+      expect(h.sent).toHaveLength(0);
+      expect(h.origin.outcome(s1)).toEqual({
+        kind: "refused",
+        reason: "revoked",
+        detail: "the target server was removed from the roster",
+      });
+      expect(heard).toEqual([
+        {
+          slot: s1,
+          outcome: {
+            kind: "refused",
+            reason: "revoked",
+            detail: "the target server was removed from the roster",
+          },
+        },
+      ]);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("F2-revoked. revoking an owner ends both forwardq rows and pending retryInc entries with refused{revoked}", async () => {
+    let revoked = false;
+    const h = makeInMemoryHarness({ withFeeds: true, isRevoked: (owner) => revoked && owner === PEER });
+    try {
+      const heard: Array<{ slot: Slot; outcome: Outcome }> = [];
+      h.origin.on((slot, outcome) => heard.push({ slot, outcome }));
+
+      // s1 sits in forwardq; s2 receives cmd.retry so its forwardq row is gone and only meta retryInc remains.
+      const s1 = await h.origin.submit(TARGET_B1, { type: "waiting.ignore", botId: BOT_B1, text: "queued" });
+      const s2 = await h.origin.submit(TARGET_B2, { type: "waiting.ignore", botId: BOT_B2, text: "retrying" });
+      await h.deliverFromOwner({ t: "cmd.retry", slot: s2, inc: INC_2 });
+      await h.origin.syncTable(PEER);
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c).toBe(1);
+
+      revoked = true;
+      await h.forwarder.revoked([PEER]);
+      await h.origin.revoked([PEER]);
+
+      await until(() => heard.length === 2, { timeout: 500, what: "both queued and retrying slots ended with refused{revoked}" });
+      expect(heard.map((e) => [e.slot.target, e.outcome.kind, e.outcome.kind === "refused" ? e.outcome.reason : null]).sort())
+        .toEqual([
+          [TARGET_B1, "refused", "revoked"],
+          [TARGET_B2, "refused", "revoked"],
+        ]);
+      expect(h.origin.outcome(s1)).toMatchObject({ kind: "refused", reason: "revoked" });
+      expect(h.origin.outcome(s2)).toMatchObject({ kind: "refused", reason: "revoked" });
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM forwardq").get() as { c: number }).c).toBe(0);
+      expect((h.db.prepare("SELECT COUNT(*) AS c FROM meta WHERE key LIKE 'serverOrigin:%'").get() as { c: number }).c).toBe(0);
     } finally {
       await h.close();
     }
@@ -366,7 +603,7 @@ describe("M5-04a: ServerOrigin across two real botlingd processes", () => {
       name: "server-origin",
       count: 2,
       env: {
-        A: { ...TIMERS_ENV, BOTLING_SERVER_TEST_ORIGIN_HOOK: "1" },
+        A: { ...TIMERS_ENV, BOTLING_SERVER_TEST_ORIGIN_HOOK: "1", BOTLING_SERVER_TEST_ORIGIN_HOOK_ALLOW: "1" },
         B: TIMERS_ENV,
       },
     });
@@ -651,4 +888,12 @@ describe("M5-04a: real RosterStore authorization and legacy serverId wiring", ()
       await daemon.stop();
     }
   }, 60_000);
+
+  it("10. F4 originTestHookEnabled requires BOTLING_AGENT=fake and both test hook flags", () => {
+    expect(originTestHookEnabled({})).toBe(false);
+    expect(originTestHookEnabled({ BOTLING_SERVER_TEST_ORIGIN_HOOK: "1" })).toBe(false);
+    expect(originTestHookEnabled({ BOTLING_AGENT: "fake", BOTLING_SERVER_TEST_ORIGIN_HOOK: "1" })).toBe(false);
+    expect(originTestHookEnabled({ BOTLING_AGENT: "claude", BOTLING_SERVER_TEST_ORIGIN_HOOK: "1", BOTLING_SERVER_TEST_ORIGIN_HOOK_ALLOW: "1" })).toBe(false);
+    expect(originTestHookEnabled({ BOTLING_AGENT: "fake", BOTLING_SERVER_TEST_ORIGIN_HOOK: "1", BOTLING_SERVER_TEST_ORIGIN_HOOK_ALLOW: "1" })).toBe(true);
+  });
 });
