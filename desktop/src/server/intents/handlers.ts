@@ -22,6 +22,8 @@
 //                      worker runs after the commit (the core's removal is asynchronous; removing again is harmless).
 import { randomUUID } from "node:crypto";
 import { ContractError, type Command } from "../../contract";
+import { PluginRow, RowKey, type PluginGrant } from "../../protocol/table-rows";
+import { ownTableStream, putRow, readRowBody, RowBodyError } from "../replica/tables";
 import { readStream } from "../log";
 import { dbBasisReader, SlotRefusal, type ApplyContext, type BasisReader } from "../slots";
 import type { Db } from "../store";
@@ -164,6 +166,88 @@ function remove(deps: IntentDeps, { tx }: ApplyContext, cmd: Extract<Command, { 
   return { result: { removed: true } };
 }
 
+const GRANT_TIER_RANK: Record<PluginGrant["tier"] | "none", number> = {
+  none: 0,
+  read: 1,
+  request: 2,
+  write: 3,
+};
+
+const MAX_PLUGIN_GRANTS = 20;
+
+const dedupe = <T>(items: readonly T[]): T[] => [...new Set(items)];
+
+function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<Command, { type: "plugin.grant" }>) {
+  const stream = ownTableStream(tx);
+  if (slot.target !== stream) {
+    throw new SlotRefusal("invalid", `plugin.grant target ${slot.target} is not this server (${stream})`);
+  }
+  const key = `plugin:${cmd.plugin}`;
+  if (!RowKey.safeParse(key).success) {
+    throw new SlotRefusal("invalid", `plugin name ${cmd.plugin} is not a valid table row key`);
+  }
+  const raw = readRowBody(tx, stream, key);
+  if (raw === null) {
+    throw new SlotRefusal("changed", `plugin ${cmd.plugin} is not installed on this server`);
+  }
+  const parsed = PluginRow.safeParse(raw);
+  if (!parsed.success) {
+    throw new SlotRefusal("invalid", `plugin ${cmd.plugin} row is malformed`);
+  }
+  const row = parsed.data;
+  const knownExisting = Object.prototype.hasOwnProperty.call(row.grants, cmd.codeHash);
+  if (cmd.codeHash !== row.codeHash && !knownExisting) {
+    throw new SlotRefusal("changed", `codeHash ${cmd.codeHash} is not known for plugin ${cmd.plugin}`);
+  }
+  if (cmd.tier !== "none") {
+    const allowedReads = new Set(row.manifest.reads);
+    const allowedRequests = new Set(row.manifest.requests);
+    if (
+      GRANT_TIER_RANK[cmd.tier] > GRANT_TIER_RANK[row.manifest.tier]
+      || cmd.reads.some((item) => !allowedReads.has(item))
+      || cmd.requests.some((item) => !allowedRequests.has(item))
+    ) {
+      throw new SlotRefusal("invalid", "above what the plugin asks");
+    }
+  }
+  const now = deps.now();
+  const nextGrants: Record<string, PluginGrant> = { ...row.grants };
+  if (cmd.tier === "none") {
+    delete nextGrants[cmd.codeHash];
+  } else {
+    if (!knownExisting && Object.keys(nextGrants).length >= MAX_PLUGIN_GRANTS) {
+      const evictable = Object.entries(nextGrants)
+        .filter(([hash]) => hash !== row.codeHash && hash !== cmd.codeHash)
+        .sort(([hashA, grantA], [hashB, grantB]) => (grantA.at - grantB.at) || (hashA < hashB ? -1 : hashA > hashB ? 1 : 0));
+      while (Object.keys(nextGrants).length >= MAX_PLUGIN_GRANTS && evictable.length > 0) {
+        const [oldest] = evictable.shift()!;
+        delete nextGrants[oldest];
+      }
+    }
+    nextGrants[cmd.codeHash] = {
+      tier: cmd.tier,
+      reads: dedupe(cmd.reads),
+      requests: cmd.tier === "read" ? [] : dedupe(cmd.requests),
+      grantedBy: "user",
+      at: now,
+    };
+  }
+  try {
+    putRow(tx, stream, key, { ...row, grants: nextGrants });
+    putRow(tx, stream, `audit:grant:${randomUUID()}`, {
+      act: "plugin.grant",
+      at: now,
+      member: slot.origin,
+      name: cmd.plugin,
+      hash: cmd.codeHash.slice(0, 80),
+    });
+  } catch (error) {
+    if (error instanceof RowBodyError) throw new SlotRefusal("invalid", error.message);
+    throw error;
+  }
+  return { result: { applied: true } };
+}
+
 function applyNow(deps: IntentDeps, cmd: ApplyNowCommand) {
   if ("botId" in cmd) requireBot(deps.engine, cmd.botId);
   let result: unknown;
@@ -174,6 +258,7 @@ function applyNow(deps: IntentDeps, cmd: ApplyNowCommand) {
 export const INTENT_TYPES: ReadonlySet<string> = new Set([
   "chat.send", "turn.stop", "bots.remove",
   "chat.react", "chat.choose", "chat.answer", "chat.ignoreQuestion", "component.approve", "settings.set", "bots.create",
+  "plugin.grant",
 ]);
 
 /** The core set's apply step (the slot engine's `apply` for `kind: "intent"` commands). */
@@ -183,6 +268,7 @@ export function applyIntent(deps: IntentDeps, context: ApplyContext): { result?:
     case "chat.send": return send(deps, context, cmd);
     case "turn.stop": return stop(deps, context, cmd);
     case "bots.remove": return remove(deps, context, cmd);
+    case "plugin.grant": return grantPlugin(deps, context, cmd);
     case "chat.react":
     case "chat.choose":
     case "chat.answer":

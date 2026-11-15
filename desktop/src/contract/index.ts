@@ -1009,7 +1009,8 @@ export const PluginsView = z.strictObject({
 });
 export type PluginsView = z.infer<typeof PluginsView>;
 
-export const Command = z.discriminatedUnion("type", [
+const PluginCodeHash = z.string().min(1).max(100).regex(/^[A-Za-z0-9:_.-]+$/);
+const BASE_COMMANDS = [
   z.strictObject({ type: z.literal("project.files"), botId, query: z.string().max(200) }),
   z.strictObject({ type: z.literal("project.preview"), botId, path: z.string().min(1).max(4096) }),
   z.strictObject({ type: z.literal("boot.commit") }),
@@ -1310,6 +1311,23 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.file"), name: PluginName, path: z.string().min(1).max(1_000) }),
   /** Main only: the picture a component's data named, by its token. */
   z.strictObject({ type: z.literal("card.image"), token: z.string().regex(/^[0-9a-f]{40}$/) }),
+] as const;
+type BaseCommandType = (typeof BASE_COMMANDS)[number]["shape"]["type"]["value"];
+const BASE_COMMAND_TYPES = BASE_COMMANDS.map((schema) => schema.shape.type.value) as [BaseCommandType, ...BaseCommandType[]];
+/** Every contract command name; used to bound `plugin.grant.requests` (§11.7). */
+export const CommandTypeEnum = z.enum([...BASE_COMMAND_TYPES, "plugin.grant"]);
+
+export const Command = z.discriminatedUnion("type", [
+  ...BASE_COMMANDS,
+  /** Raises, lowers, or revokes (`tier: "none"`) one plugin grant at one code hash on the target server (D54, §11.7). */
+  z.strictObject({
+    type: z.literal("plugin.grant"),
+    plugin: PluginName,
+    codeHash: PluginCodeHash,
+    tier: z.enum(["none", "read", "request", "write"]),
+    reads: z.array(z.string().min(1).max(200)).max(50),
+    requests: z.array(CommandTypeEnum).max(100),
+  }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command["type"];
@@ -1319,7 +1337,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.output", "subagent.view", "chat.read", "chat.shown", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
-  "plugins.list", "plugins.enable", "plugins.store", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.linkCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
+  "plugins.list", "plugins.enable", "plugins.store", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.linkCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink", "plugin.grant",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "link.drag", "worker.file",
@@ -1461,6 +1479,7 @@ export interface Results {
   "plugins.call": { result: unknown };
   "plugins.approvalAsk": { needsApproval: ApprovalAskView | null };
   "plugins.approve": { accepted: boolean };
+  "plugin.grant": { applied: true };
   "plugins.tileImages": { images: Record<string, string> };
   "plugins.noteSnapshot": { ref: string; url: string | null };
   "plugins.openLink": { opened: boolean; previewURL?: string };

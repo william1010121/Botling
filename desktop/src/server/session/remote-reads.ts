@@ -52,6 +52,9 @@ export function slotAuthorize(roster: DeviceRoster): Authorize {
       return { reason: "origin", detail: "a server does not send commands to itself" };
     }
     if (roster.server?.(slot.origin)) {
+      if (cmd.type === "plugin.grant") {
+        return { reason: "origin", detail: "plugin.grant is only from a user (a device or this machine's window)" };
+      }
       const needed = commandScope(cmd);
       if (needed === "read") return { reason: "scope", detail: `${cmd.type} is a read: send it as a req` };
       if (needed !== "reply" && needed !== "manage") {
