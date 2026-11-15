@@ -1,7 +1,7 @@
 // `BotlingApi` and what the host keeps of a loaded plugin (moved byte for byte out of api.ts; api.ts re-exports them).
 import { Children, type ChildHandle, type ExecOptions, type ExecResult, type SpawnOptions } from "./exec";
 import type {
-  AppApi, AppSettingKey, BotInfo, BotNote, CardsApi, ChatData, ContentRef, Dispose, EngineCli, Incoming, JSONValue, Keybinding,
+  AppApi, AppSettingKey, BotInfo, BotNote, CardsApi, ChatData, CommandRun, ContentRef, Dispose, EngineCli, Incoming, JSONValue, Keybinding,
   MessageDecoration, NewBot, NoteAsset, NoteCardState, NoteComponent, NoteLocalized, NoteOutline, NoteParsed, NoteRoutePicks, NoteSave, Outgoing,
   PluginEventName, PluginEvents, ReplyTag, RoutinesList, SessionsApi, StatusItem, StudioApi, UsageApi, WorkspaceApi,
 } from "./api-types";
