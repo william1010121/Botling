@@ -16,6 +16,7 @@
 //   now and its roster scope allows the command (and the stated scope is the one it needs).
 import type { Command } from "../../contract";
 import { commandScope, remoteCmdRefusal, remoteReqRefusal, REMOTE_READS, type DeviceScope, type Scope } from "../../protocol";
+import { windowOwnerCheck } from "../forward/window-scope";
 import { CARD_COMMANDS, PLUGIN_FRAME_COMMANDS, type Authorize } from "../slots";
 
 export { REMOTE_READS };
@@ -77,6 +78,9 @@ export function slotAuthorize(roster: DeviceRoster): Authorize {
       return { reason: "scope", detail: `${cmd.type} is only sent by another server` };
     }
     if (scope === "local" || scope === "admin") return null;
+    // M7-12a (Q-M7-C8): a desktop window's command a peer forwarded under `manage`: decided as a user (forward/window-scope.ts).
+    const window = windowOwnerCheck(slot, cmd, scope, roster.device(slot.origin) !== null);
+    if (window) return "allowed" in window ? null : window;
     // M5-04b (§11.7, D13, D58): server origins.
     // - origin is this server itself -> refused origin ("a server does not send commands to itself").
     // - origin is a valid server (!== self) -> allowed when commandScope(cmd) is `reply` or `manage` and the stated

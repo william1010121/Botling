@@ -15,156 +15,23 @@
 // Pure TypeScript: no Electron, no core, no Node built-ins; time comes from an injected clock.
 import type { Command } from "../contract";
 import {
-  decodeWireFrame, encodeChunkFrame, encodeFrame, outcomeOf, PROTOCOL_VERSION, PushSubscribe, REFUSE_REASON_TEXT, ResAssembler, slotKey,
-  type ConnectionState, type Cursor, type DeliveryState, type Entry, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type ServerAddresses, type ServerState, type Slot, type StreamId, type Target, type VapidKeyId, type Via,
+  decodeWireFrame, encodeChunkFrame, encodeFrame, PROTOCOL_VERSION, PushSubscribe, REFUSE_REASON_TEXT, ResAssembler, slotKey,
+  type ConnectionState, type Cursor, type LogId, type Message, type MessageOf, type OriginEpoch, type Outcome, type Slot, type StreamId, type Target, type VapidKeyId, type Via,
 } from "../protocol";
 import type { Rows } from "../protocol/table-rows";
 import { LiveReceiver, type LiveSegmentView } from "../server/live/receiver";
-import { connReduce, initialConn, versionBelow, writesSent, type ConnEvent, type ConnModel } from "./connection-state";
+import { initialConn, versionBelow, type ConnEvent, type ConnModel } from "./connection-state";
 import { StreamCursors } from "./cursors";
+import { LinkStreams } from "./link-streams";
+import { cleanServerAddresses, systemClock } from "./link-types";
+import type { Clock, ContentAnswer, ContentReadMessage, Dial, FeLinkEvent, FeLinkOptions, PendingRequest, PendingView, RemoteContentAnswer, ServerView, Session, SocketHandlers } from "./link-types";
 import { OwnRows } from "./own-rows";
-import { Outbox, type ResolveResult } from "./outbox";
+import { Outbox } from "./outbox";
 import { TableCopies } from "./tables";
-import { SerialWriter, type FeStorage, type OutboxItem, type RetiredLog, type StoredCursor } from "./storage";
+import { SerialWriter, type OutboxItem, type RetiredLog, type StoredCursor } from "./storage";
 
-/** One transport connection. Frames are whole messages (a byte-stream transport packs them with `packFrame`). */
-export interface FeSocket {
-  send(frame: string): void;
-  /** A binary frame (an upload's `content.chunk`, M2 step 12) on the bulk lane; absent: the transport carries none. */
-  sendBytes?(frame: Uint8Array): void;
-  close(): void;
-}
-/** What a content read hears from the server (M2 step 14). */
-export type ContentReadMessage = MessageOf<"content.meta"> | MessageOf<"content.chunk"> | MessageOf<"content.gone">;
-
-export interface SocketHandlers {
-  open(): void;
-  frame(frame: string | Uint8Array): void;
-  close(detail?: string): void;
-}
-/** Opens a connection; reports through the handlers (open may come before or after it returns). */
-export type Dial = (handlers: SocketHandlers) => FeSocket;
-
-export interface Clock {
-  now(): number;
-  setTimeout(fn: () => void, ms: number): unknown;
-  clearTimeout(handle: unknown): void;
-}
-export const systemClock: Clock = {
-  now: () => Date.now(),
-  setTimeout: (fn, ms) => setTimeout(fn, ms),
-  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-};
-
-export interface FeLinkOptions {
-  storage: FeStorage;
-  dial: Dial;
-  /** The origin of this front end's slots (§2). */
-  deviceId: string;
-  feVersion: string;
-  /** The local token (local socket, §6.1). */
-  token?: string;
-  /** The session runs on the local socket (default true). */
-  local?: boolean;
-  clock?: Clock;
-  newEpoch?: () => OriginEpoch;
-  /** Reconnect backoff (default 250 ms doubling to 5 s). */
-  reconnectMinMs?: number;
-  reconnectMaxMs?: number;
-  /** Without a session this long, "connecting" turns "offline" (default 10 s). */
-  offlineAfterMs?: number;
-  /** §5.2: ping after 15 s of sending nothing; no frame for 45 s ends the session. */
-  pingAfterMs?: number;
-  deadAfterMs?: number;
-  /**
-   * M3 step 11: a peer's `srv:` table the attached server has no copy of (no catch-up comes) stops holding the outbox
-   * after this long (default 5 s); a table the front end had is always waited for.
-   */
-  absentTableMs?: number;
-  /** §13.4: the "sending" marker shows only after this long without `held` or an outcome (default 150 ms). */
-  sendingMarkerMs?: number;
-}
-
-export type FeLinkEvent =
-  | { type: "state"; status: ConnModel }
-  | { type: "pending" }
-  /** An item got its outcome (also for items removed right away). */
-  | { type: "outcome"; item: OutboxItem }
-  | { type: "snap"; snap: MessageOf<"snap"> }
-  | { type: "entries"; stream: StreamId; entries: Entry[] }
-  | { type: "reset"; reset: MessageOf<"reset"> }
-  /** The stream's cache must be dropped (hash mismatch); a snap follows. */
-  | { type: "dropped"; stream: StreamId; why: string }
-  | { type: "live"; stream: StreamId; view: LiveSegmentView | null; stale: boolean }
-  /** Any other server message (stale, peer, shell.*, content.*). */
-  | { type: "message"; message: Message }
-  /** A session was welcomed (true) or ended (false): uploads (M2 step 12) put again from what the server has. */
-  | { type: "attached"; attached: boolean }
-  /**
-   * M3 step 11: what the link knows of the servers changed: a server's state (`welcome.servers`, `peer`), a peer's
-   * `srv:` table (`table`: its stream, the row keys changed and removed), or a stream served from the attached server's
-   * cache (`stale`).
-   */
-  | { type: "servers"; table?: { stream: string; changed: string[]; removed: string[] } }
-  /** The server ended the session with `bye` (M2 step 11: `revoked` tells the page to drop what it cached). */
-  | { type: "bye"; reason: string; detail?: string }
-  | { type: "error"; error: unknown };
-
-/** An outbox item as the UI renders it in place (§11.6, §13.4). */
-export interface PendingView {
-  key: string;
-  slot: Slot;
-  cmd: Command;
-  basis?: Cursor;
-  state: DeliveryState;
-  heldAt?: string;
-  /** For "not sent": refused reason, "cancelled" or "skipped". */
-  reason?: string;
-  /** For "not sent": the reason's words when it has words of its own (`REFUSE_REASON_TEXT`, e.g. `grant`, N2). */
-  reasonText?: string;
-  /** "delivered, then lost when <machine> was restored" (D50). */
-  lost: boolean;
-  /** Show the "sending" marker (waiting longer than ~150 ms). */
-  sending: boolean;
-  /** The owner committed this item's cancel (D59 `cancel.noted`): its outcome will be "cancelled". */
-  cancelNoted?: true;
-  /** D67: 5 consecutive sessions ended `unsettled` on this slot; stopped sending until the user gives up. */
-  stopped?: true;
-  createdAt: number;
-  /** M3 step 11: the server that owns the target (the directory), and its name and state as the attached server says. */
-  owner?: string;
-  ownerName?: string;
-  /** The name of the server that holds it (`heldAt`): "held at <S>". */
-  heldAtName?: string;
-  /** "waiting for <machine>": unresolved while its owner is stale or gone (§11.6). */
-  waitingFor?: string;
-}
-
-/** A server as the attached server sees it (`welcome.servers`, `peer`, v1 §10.5). */
-export interface ServerView { id: string; name: string; state: ServerState; since: number | null; self: boolean; dh?: string; addresses?: ServerAddresses }
-
-/** How many settled delivered items the link remembers for a later reset (D50, M3 step 11). */
-const SETTLED_KEPT = 200;
-/** D67: consecutive `bye{unsettled}` endings on the same slot before the FE stops sending it. */
-const UNSETTLED_STOP_AFTER = 5;
-
-const TURN_END = new Set(["turn.finished", "turn.interrupted", "turn.cancelled"]);
-
-interface Session {
-  socket: FeSocket | null;
-  openedEarly: boolean;
-  helloSent: boolean;
-  welcomed: boolean;
-  closed: boolean;
-  /** Slots sent on this session (each unresolved item goes once per session, again after cmd.retry). */
-  sent: Set<string>;
-}
-
-interface PendingRequest { resolve(value: never): void; reject(error: Error): void; kind: "res" | "history.page" | "content"; stream?: string }
-/** What a content request is answered with (§9A.4, local part). */
-export type ContentAnswer = MessageOf<"content.found"> | MessageOf<"content.file"> | MessageOf<"content.gone">;
-/** What a remote page's content request is answered with (§9A.4 tailnet part, M2 step 9). */
-export type RemoteContentAnswer = MessageOf<"content.located"> | MessageOf<"content.granted"> | MessageOf<"content.gone">;
+export { systemClock } from "./link-types";
+export type { Clock, ContentAnswer, ContentReadMessage, Dial, FeLinkEvent, FeLinkOptions, FeSocket, PendingView, RemoteContentAnswer, ServerView, SocketHandlers } from "./link-types";
 
 export class FeLink {
   private readonly clock: Clock;
@@ -205,6 +72,8 @@ export class FeLink {
   private backoff: number;
   private dialFn: Dial;
   private timers: { reconnect?: unknown; offline?: unknown; ping?: unknown; dead?: unknown; absentTable?: unknown } = {};
+  /** The stream half (link-streams.ts); the state stays here and is lent to it through `LinkHost`. */
+  private readonly half: LinkStreams;
 
   private constructor(private readonly options: FeLinkOptions, private readonly writer: SerialWriter, private readonly outbox: Outbox, private readonly cursors: StreamCursors, tablesRetired: Record<string, RetiredLog[]> = {}) {
     this.clock = options.clock ?? systemClock;
@@ -212,6 +81,21 @@ export class FeLink {
     this.backoff = options.reconnectMinMs ?? 250;
     this.dialFn = options.dial;
     this.tables = new TableCopies(tablesRetired);
+    const link = this;
+    this.half = new LinkStreams({
+      options, clock: this.clock, writer, outbox, cursors, tables: this.tables, ownRows: this.ownRows, receiver: this.receiver, liveStale: this.liveStale, subs: this.subs, listeners: this.listeners,
+      requests: this.requests, resParts: this.resParts, contentReaders: this.contentReaders, visibleAt: this.visibleAt, cancelNoted: this.cancelNoted, unsettledCounts: this.unsettledCounts,
+      unsettledStopped: this.unsettledStopped, serverViews: this.serverViews, staleStreams: this.staleStreams, timers: this.timers,
+      get session() { return link.session; }, set session(value) { link.session = value; },
+      get conn() { return link.conn; }, set conn(value) { link.conn = value; },
+      get settledRecent() { return link.settledRecent; }, set settledRecent(value) { link.settledRecent = value; },
+      get backoff() { return link.backoff; }, set backoff(value) { link.backoff = value; },
+      get lastByeUnsettled() { return link.lastByeUnsettled; }, set lastByeUnsettled(value) { link.lastByeUnsettled = value; },
+      get reqCounter() { return link.reqCounter; }, set reqCounter(value) { link.reqCounter = value; },
+      get serverId() { return link.serverId; }, get stopped() { return link.stopped; }, get final() { return link.final; }, get local() { return link.local; },
+      send: (session, message) => this.send(session, message), sendSub: (session, stream) => this.sendSub(session, stream), srvStream: () => this.srvStream(),
+      streams: () => this.streams(), ownerOf: (target) => this.ownerOf(target), dial: () => this.dial(),
+    });
   }
 
   /** Loads the storage (a fresh or wiped one gets a new origin epoch) and returns a link that has not dialed yet. */
@@ -694,465 +578,37 @@ export class FeLink {
     this.updateCatching();
   }
 
-  private canSend(): boolean {
-    return !!this.session?.welcomed && writesSent(this.conn.state);
-  }
-
-  /**
-   * The `inc` a command carries: its owner's `srv:` logId as this front end knows it (§11.1, §13.1). Null until every
-   * `srv:` table had its catch-up on this session (the outbox waits for all of them, §13.1 step 2 before 3), so the
-   * directory and the incarnations are current when anything is (re-)sent.
-   */
-  private incFor(target: Target): LogId | null {
-    const srv = this.srvStream();
-    if (!srv || !this.tablesCaught()) return null;
-    const owner = this.ownerOf(target);
-    if (owner && owner !== this.serverId) return this.tables.get(`srv:${owner}`)?.logId ?? null;
-    return this.cursors.currentLogId(srv);
-  }
-
-  private sendOutbox(session: Session): void {
-    if (!this.canSend()) return;
-    for (const item of this.outbox.unresolved()) this.trySend(session, item);
-  }
-
-  private isQueueStopped(slot: Slot): boolean {
-    if (this.unsettledStopped.size === 0) return false;
-    for (const item of this.outbox.unresolved()) {
-      if (
-        item.slot.originEpoch === slot.originEpoch
-        && item.slot.target === slot.target
-        && item.slot.n <= slot.n
-        && this.unsettledStopped.has(slotKey(item.slot))
-      ) return true;
-    }
-    return false;
-  }
-
-  private onByeUnsettled(slot?: Slot): void {
-    // D67: skip backoff reset on the next welcome after an unsettled end (including slotless bye{unsettled}).
-    this.lastByeUnsettled = true;
-    if (!slot) return;
-    const key = slotKey(slot);
-    for (const other of this.unsettledCounts.keys()) if (other !== key) this.unsettledCounts.delete(other);
-    const item = this.outbox.get(key);
-    if (!item || (item.state !== "waiting" && item.state !== "held")) return;
-    const count = (this.unsettledCounts.get(key) ?? 0) + 1;
-    this.unsettledCounts.set(key, count);
-    if (count >= UNSETTLED_STOP_AFTER && !this.unsettledStopped.has(key)) {
-      this.unsettledStopped.add(key);
-      this.emit({ type: "pending" });
-    }
-  }
-
-  private trySend(session: Session, item: OutboxItem): void {
-    const key = slotKey(item.slot);
-    if (session.sent.has(key) || session.closed || this.isQueueStopped(item.slot)) return;
-    const inc = this.incFor(item.slot.target);
-    if (!inc) return; // the owner's srv: stream is not known yet: sent once its snap comes
-    if (item.retryInc && item.retryInc !== inc) return; // D49: wait for the owner's reset
-    if (!this.send(session, { t: "cmd", ...this.outbox.envelope(item, inc) } as Message)) return;
-    session.sent.add(key);
-    if (item.cancel) this.send(session, { t: "cancel", slot: item.slot });
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // Streams
-
-  private onBatch(session: Session, batch: MessageOf<"batch">): void {
-    if (!this.followed(batch.stream)) return;
-    this.freshFrom(batch.stream);
-    const decision = this.cursors.onBatch(batch);
-    switch (decision.kind) {
-      case "drop": return;
-      case "gap": this.send(session, { t: "sub", stream: batch.stream, cursor: decision.cursor }); return;
-      case "mismatch":
-        this.cursors.drop(batch.stream);
-        this.persistCursor(batch.stream, null);
-        this.emit({ type: "dropped", stream: batch.stream, why: "hash mismatch" });
-        this.sendSub(session, batch.stream);
-        return;
-      case "apply": {
-        this.emit({ type: "entries", stream: batch.stream, entries: decision.entries });
-        this.persistCursor(batch.stream, decision.cursor);
-        this.send(session, { t: "ack", stream: batch.stream, cursor: { logId: decision.cursor.logId, seq: decision.cursor.seq } });
-        this.takeEntries(batch.stream, decision.entries);
-        void this.settle(batch.stream as Target);
-        this.updateCatching();
-      }
-    }
-  }
-
-  private takeEntries(stream: StreamId, entries: Entry[]): void {
-    for (const entry of entries) {
-      if (TURN_END.has(entry.kind)) this.dropLive(stream);
-      const body = entry.body as Record<string, unknown>;
-      const outcome = outcomeOf(entry);
-      const slot = (entry.slot ?? body.slot) as Slot | undefined;
-      if (outcome && entry.kind !== "cmd.skipped" && slot && slot.origin === this.options.deviceId) {
-        void this.resolveSlot(slot, outcome, { logId: entry.logId, seq: entry.seq });
-      }
-      if (entry.kind === "cmd.skipped" && body.origin === this.options.deviceId) {
-        void this.outbox.skipped({ originEpoch: String(body.originEpoch), target: String(body.target) as Target }, Number(body.from), Number(body.to), { logId: entry.logId, seq: entry.seq })
-          .then((changed) => {
-            if (changed?.length) {
-              for (const item of changed) {
-                const key = slotKey(item.slot);
-                this.unsettledCounts.delete(key);
-                this.unsettledStopped.delete(key);
-                this.emit({ type: "outcome", item });
-              }
-              this.emit({ type: "pending" });
-            }
-          }, (error) => this.emit({ type: "error", error }));
-      }
-    }
-  }
-
-  private onSnap(session: Session, snap: MessageOf<"snap">): void {
-    if (!this.followed(snap.stream)) return;
-    this.freshFrom(snap.stream);
-    if (!this.cursors.onSnap(snap)) return;
-    this.emit({ type: "snap", snap });
-    this.persistCursor(snap.stream, { logId: snap.logId, seq: snap.seq, hash: snap.hash });
-    this.send(session, { t: "ack", stream: snap.stream, cursor: { logId: snap.logId, seq: snap.seq } });
-    this.dropLive(snap.stream);
-    void this.settle(snap.stream as Target);
-    if (snap.stream === this.srvStream()) this.sendOutbox(session);
-    this.updateCatching();
-  }
-
-  private onReset(session: Session, reset: MessageOf<"reset">): void {
-    if (this.tables.has(reset.stream)) { this.onTableReset(session, reset); return; }
-    if (!this.followed(reset.stream)) return;
-    const added = this.cursors.onReset(reset);
-    if (added === null) return;
-    void this.writer.run(() => ({ ops: [{ op: "retired", stream: reset.stream, retired: reset.retired.map((old) => ({ logId: old.logId, keptSeq: old.keptSeq })) }], commit: () => undefined }))
-      .catch((error) => this.emit({ type: "error", error }));
-    void this.outbox.markLost(reset.stream as Target, reset.retired).then((changed) => { if (changed?.length) this.emit({ type: "pending" }); }, (error) => this.emit({ type: "error", error }));
-    this.reviveLost(reset.stream as Target, reset.retired);
-    this.dropLive(reset.stream);
-    // A bot another server owns was reset by that server's restore: its words are the item's ("delivered, then lost
-    // when <P> was restored"), never "this machine's history was restored".
-    const peerBot = reset.stream.startsWith("bot:") ? this.tables.lastOwnerOfBot(reset.stream.slice(4)) : null;
-    if (!peerBot || peerBot === this.serverId) this.reduce({ type: "reset", ...(reset.restoredTo !== undefined ? { restoredTo: reset.restoredTo } : {}) });
-    this.emit({ type: "reset", reset });
-    // The owner's srv: stream moved: items told to retry under this inc go out now (D49).
-    if (reset.stream === this.srvStream()) this.sendOutbox(session);
-    this.updateCatching();
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // Other servers (M3 step 11)
-
-  private onRows(session: Session, batch: Rows): void {
-    if (batch.stream === this.srvStream()) {
-      // M5-14e: the own table's rows (the server sends them after the log sub); not a peer table, so no resub or catch-up.
-      const own = this.ownRows.onRows(batch);
-      if (own) this.emit({ type: "servers", table: { stream: batch.stream, changed: own.changed, removed: own.removed } });
-      return;
-    }
-    const decision = this.tables.onRows(batch);
-    switch (decision.kind) {
-      case "wait": case "drop": return;
-      case "resub": this.send(session, { t: "sub", stream: batch.stream as StreamId, cursor: decision.cursor }); this.updateCatching(); return;
-      case "apply": {
-        this.emit({ type: "servers", table: { stream: batch.stream, changed: decision.changed, removed: decision.removed } });
-        // Every table caught up: the outbox goes out with each owner's current inc (§13.1).
-        this.sendOutbox(session);
-        this.updateCatching();
-        this.emit({ type: "pending" });
-      }
-    }
-  }
-
-  private onTableReset(session: Session, reset: MessageOf<"reset">): void {
-    const taken = this.tables.onReset(reset);
-    if (!taken) return;
-    if (taken.added.length) {
-      void this.writer.run(() => ({ ops: [{ op: "retired", stream: reset.stream, retired: taken.added }], commit: () => undefined })).catch((error) => this.emit({ type: "error", error }));
-    }
-    void this.outbox.markLost(reset.stream as Target, reset.retired).then((changed) => { if (changed?.length) this.emit({ type: "pending" }); }, (error) => this.emit({ type: "error", error }));
-    this.reviveLost(reset.stream as Target, reset.retired);
-    this.emit({ type: "servers", table: { stream: reset.stream, changed: [], removed: taken.removed } });
-    this.emit({ type: "reset", reset });
-    this.updateCatching();
-    // The whole table of the new logId follows (`after: 0`); items wait for it.
-    void session;
-  }
-
-  private onPeer(session: Session, peer: MessageOf<"peer">): void {
-    if (peer.serverId === this.serverId) return;
-    const known = this.serverViews.get(peer.serverId);
-    const dh = peer.dh ?? known?.dh;
-    const addresses = peer.state === "gone" ? undefined : (peer.addresses !== undefined ? cleanServerAddresses(peer.addresses) : known?.addresses);
-    this.serverViews.set(peer.serverId, {
-      id: peer.serverId, name: known?.name ?? peer.serverId, state: peer.state, since: peer.since, self: false,
-      ...(dh ? { dh } : {}),
-      ...(addresses ? { addresses } : {}),
-    });
-    if (peer.state === "live") {
-      for (const stream of [...this.staleStreams.keys()]) if (this.ownerOf(stream as StreamId) === peer.serverId) this.staleStreams.delete(stream);
-    }
-    const stream = `srv:${peer.serverId}`;
-    if (!this.tables.has(stream)) {
-      this.tables.add(stream);
-      this.send(session, { t: "sub", stream: stream as StreamId, cursor: this.tables.subCursor(stream, this.clock.now()) });
-      this.updateCatching();
-    }
-    this.emit({ type: "servers" });
-    this.emit({ type: "pending" });
-  }
-
-  /** A frame of the stream came from its owner (through the attached server): it is not stale any more. */
-  private freshFrom(stream: StreamId): void {
-    if (this.staleStreams.delete(stream)) this.emit({ type: "servers" });
-  }
-
-  /** Settled delivered items whose entry a reset took away come back as "delivered, then lost" (D50). */
-  private reviveLost(target: Target, retired: RetiredLog[]): void {
-    const settled = this.settledRecent.filter((item) => item.slot.target === target);
-    if (!settled.length) return;
-    void this.outbox.reviveLost(target, retired, settled).then((back) => {
-      if (!back?.length) return;
-      const keys = new Set(back.map((item) => slotKey(item.slot)));
-      this.settledRecent = this.settledRecent.filter((item) => !keys.has(slotKey(item.slot)));
-      for (const item of back) this.emit({ type: "outcome", item });
-      this.emit({ type: "pending" });
-    }, (error) => this.emit({ type: "error", error }));
-  }
-
-  private onLive(session: Session, frame: MessageOf<"live">): void {
-    if (!this.followed(frame.stream)) return;
-    const applied = this.receiver.apply(frame);
-    if (applied === "resync") this.send(session, { t: "live.resync", stream: frame.stream });
-    if (applied !== "applied") return;
-    this.freshFrom(frame.stream);
-    this.liveStale.delete(frame.stream);
-    this.emit({ type: "live", stream: frame.stream, view: this.receiver.view(frame.stream), stale: false });
-  }
-
-  private dropLive(stream: StreamId): void {
-    if (!this.receiver.view(stream)) return;
-    this.receiver.drop(stream);
-    this.liveStale.delete(stream);
-    this.emit({ type: "live", stream, view: null, stale: false });
-  }
-
-  private followed(stream: StreamId): boolean {
-    return this.subs.has(stream) || stream === this.srvStream() || this.tables.has(stream);
-  }
-
-  private persistCursor(stream: StreamId, cursor: StoredCursor | null): void {
-    void this.writer.run(() => ({ ops: [{ op: "cursor", stream, cursor }], commit: () => undefined })).catch((error) => this.emit({ type: "error", error }));
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // Commands
-
-  private onResult(result: MessageOf<"cmd.result">): void {
-    if (this.cursors.isRetired(result.slot.target, result.logId)) return; // D50: never an outcome of a retired incarnation
-    void this.resolveSlot(result.slot, result.outcome, { logId: result.logId, seq: result.seq });
-  }
-
-  /** D59: the owner committed the cancel; the slot's outcome (cancelled) follows as a `cmd.result` or log entry. */
-  private onCancelNoted(noted: MessageOf<"cancel.noted">): void {
-    const key = slotKey(noted.slot);
-    const item = this.outbox.get(key);
-    if (!item || !item.cancel || (item.state !== "waiting" && item.state !== "held") || this.cancelNoted.has(key)) return;
-    this.unsettledCounts.delete(key);
-    this.unsettledStopped.delete(key);
-    this.cancelNoted.add(key);
-    this.emit({ type: "pending" });
-  }
-
-  private onRetry(session: Session, retry: MessageOf<"cmd.retry">): void {
-    const key = slotKey(retry.slot);
-    const item = this.outbox.get(key);
-    if (!item || (item.state !== "waiting" && item.state !== "held")) return; // no longer held: ignore (§11.2)
-    void this.outbox.retry(retry.slot, retry.inc).then((updated) => {
-      session.sent.delete(key);
-      const current = updated ?? this.outbox.get(key);
-      if (current && this.session === session && this.canSend()) this.trySend(session, current);
-    }, (error) => this.emit({ type: "error", error }));
-  }
-
-  private async resolveSlot(slot: Slot, outcome: Outcome, from: { logId: LogId; seq: number | null }): Promise<void> {
-    let result: ResolveResult | undefined;
-    try {
-      result = await this.outbox.resolve(slot, outcome, from);
-    } catch (error) {
-      this.emit({ type: "error", error });
-      return;
-    }
-    if (!result) return;
-    const key = slotKey(slot);
-    this.visibleAt.delete(key);
-    this.cancelNoted.delete(key);
-    this.unsettledCounts.delete(key);
-    this.unsettledStopped.delete(key);
-    if (result.kind === "moved") {
-      this.visibleAt.set(slotKey(result.item.slot), this.clock.now());
-      if (this.session && this.canSend()) this.trySend(this.session, result.item);
-    } else {
-      this.emit({ type: "outcome", item: result.item });
-      if (result.kind === "delivered") await this.settle(slot.target);
-    }
-    this.emit({ type: "pending" });
-  }
-
-  /** Delivered items whose entry the cursor now covers leave the outbox; all of them for a stream nobody follows. */
-  private async settle(target: Target): Promise<void> {
-    try {
-      const gone = await this.outbox.settle(target, this.cursors.get(target), !this.followed(target));
-      if (gone?.length) {
-        this.settledRecent = [...this.settledRecent, ...gone].slice(-SETTLED_KEPT);
-        this.emit({ type: "pending" });
-      }
-    } catch (error) {
-      this.emit({ type: "error", error });
-    }
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // Requests
-
-  private nextReq(): string { return `r${++this.reqCounter}`; }
-
-  private ask(message: Message & { req: string }, kind: PendingRequest["kind"], stream?: string): Promise<unknown> {
-    const session = this.session;
-    if (!session?.welcomed) return Promise.reject(new Error("fe-link: not attached"));
-    return new Promise((resolve, reject) => {
-      this.requests.set(message.req, { resolve: resolve as (value: never) => void, reject, kind, stream });
-      if (!this.send(session, message)) { this.requests.delete(message.req); reject(new Error("fe-link: not sent")); }
-    });
-  }
-
-  private onContentAnswer(message: ContentAnswer | RemoteContentAnswer): void {
-    const pending = this.requests.get(message.req);
-    if (!pending || pending.kind !== "content") return;
-    this.requests.delete(message.req);
-    pending.resolve(message as never);
-  }
-
-  /** A part of a `res` over the frame limit: the answer once its last part is in; parts no request waits for are dropped. */
-  private onResPart(part: MessageOf<"res.part">): void {
-    const pending = this.requests.get(part.req);
-    if (!pending || pending.kind !== "res") { this.resParts.drop(part.req); return; }
-    const joined = this.resParts.push(part, { local: this.local });
-    if (!joined.ok) {
-      this.requests.delete(part.req);
-      pending.reject(Object.assign(new Error(`fe-link: ${joined.detail}`), { wire: { code: "internal", message: joined.detail.slice(0, 2_000) } }));
-      return;
-    }
-    if (joined.message) this.onAnswer(joined.message);
-  }
-
-  private onAnswer(message: MessageOf<"res"> | MessageOf<"history.page">): void {
-    const pending = this.requests.get(message.req);
-    if (!pending || pending.kind !== message.t) return;
-    this.requests.delete(message.req);
-    if (message.t === "history.page") {
-      if (this.cursors.isRetired(message.stream, message.logId)) pending.reject(new Error("fe-link: a page of a retired logId"));
-      else pending.resolve(message as never);
-    } else if (message.ok) {
-      pending.resolve(message.result as never);
-    } else {
-      pending.reject(Object.assign(new Error(message.error.message), { wire: message.error }));
-    }
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // Ending, reconnecting, timers
-
-  private endSession(session: Session, why: string): void {
-    if (session.closed) return;
-    try { session.socket?.close(); } catch { /* already gone */ }
-    this.onClosed(session, why);
-  }
-
-  private onClosed(session: Session, _why: string): void {
-    if (session.closed) return;
-    session.closed = true;
-    if (session.welcomed) this.emit({ type: "attached", attached: false });
-    if (this.session === session) this.session = null;
-    this.clearTimer("ping");
-    this.clearTimer("dead");
-    this.clearTimer("absentTable");
-    for (const [req, pending] of this.requests) { this.requests.delete(req); pending.reject(new Error("fe-link: the session ended")); }
-    for (const [req, reader] of [...this.contentReaders]) { this.contentReaders.delete(req); reader(null); }
-    this.resParts.drop();
-    this.cursors.detach();
-    this.tables.detach();
-    this.ownRows.detach();
-    for (const stream of this.subs) {
-      const view = this.receiver.view(stream);
-      if (view && !this.liveStale.has(stream)) { this.liveStale.add(stream); this.emit({ type: "live", stream, view: { ...view }, stale: true }); }
-    }
-    this.reduce({ type: "lost" });
-    if (this.stopped || this.final) return;
-    this.armOffline();
-    const delay = this.backoff;
-    this.backoff = Math.min(this.backoff * 2, this.options.reconnectMaxMs ?? 5_000);
-    this.clearTimer("reconnect");
-    this.timers.reconnect = this.clock.setTimeout(() => { this.timers.reconnect = undefined; this.dial(); }, delay);
-  }
-
-  private armOffline(): void {
-    if (this.timers.offline !== undefined || this.conn.offline) return;
-    this.timers.offline = this.clock.setTimeout(() => { this.timers.offline = undefined; this.reduce({ type: "offline" }); }, this.options.offlineAfterMs ?? 10_000);
-  }
-
-  private armPing(session: Session): void {
-    this.clearTimer("ping");
-    this.timers.ping = this.clock.setTimeout(() => {
-      this.timers.ping = undefined;
-      if (this.session === session) this.send(session, { t: "ping", at: this.clock.now() });
-    }, this.options.pingAfterMs ?? 15_000);
-  }
-
-  private armDead(session: Session): void {
-    this.clearTimer("dead");
-    this.timers.dead = this.clock.setTimeout(() => {
-      this.timers.dead = undefined;
-      if (this.session !== session) return;
-      this.send(session, { t: "bye", reason: "dead" });
-      this.endSession(session, "no frame for too long");
-    }, this.options.deadAfterMs ?? 45_000);
-  }
-
-  private clearTimer(name: keyof FeLink["timers"]): void {
-    const handle = this.timers[name];
-    if (handle !== undefined) this.clock.clearTimeout(handle);
-    this.timers[name] = undefined;
-  }
-
-  private updateCatching(): void {
-    if (!this.session?.welcomed) return;
-    this.reduce({ type: "catching", catching: this.catchingNow() });
-  }
-
-  private tablesCaught(): boolean { return this.tables.allCaught(this.clock.now(), this.options.absentTableMs ?? 5_000); }
-
-  /** A snap or catch-up pages are due on a followed stream, or a peer's table has not had its catch-up yet. */
-  private catchingNow(): boolean {
-    return this.cursors.catching(this.streams()) || !this.tablesCaught();
-  }
-
-  private reduce(event: ConnEvent): void {
-    const next = connReduce(this.conn, event, this.clock.now());
-    if (next === this.conn) return;
-    const changed = next.state !== this.conn.state || next.restoredAt !== this.conn.restoredAt || next.restoredTo !== this.conn.restoredTo;
-    this.conn = next;
-    if (changed) this.emit({ type: "state", status: next });
-  }
-
-  private emit(event: FeLinkEvent): void {
-    for (const listener of this.listeners) {
-      try { listener(event); } catch { /* a listener's error is its own */ }
-    }
-  }
+  // The stream half lives in link-streams.ts (LinkStreams); these are its one-line delegates.
+  private canSend(): boolean { return this.half.canSend(); }
+  private sendOutbox(session: Session): void { this.half.sendOutbox(session); }
+  private trySend(session: Session, item: OutboxItem): void { this.half.trySend(session, item); }
+  private onBatch(session: Session, batch: MessageOf<"batch">): void { this.half.onBatch(session, batch); }
+  private onSnap(session: Session, snap: MessageOf<"snap">): void { this.half.onSnap(session, snap); }
+  private onReset(session: Session, reset: MessageOf<"reset">): void { this.half.onReset(session, reset); }
+  private onRows(session: Session, batch: Rows): void { this.half.onRows(session, batch); }
+  private onPeer(session: Session, peer: MessageOf<"peer">): void { this.half.onPeer(session, peer); }
+  private onLive(session: Session, frame: MessageOf<"live">): void { this.half.onLive(session, frame); }
+  private onResult(result: MessageOf<"cmd.result">): void { this.half.onResult(result); }
+  private onCancelNoted(noted: MessageOf<"cancel.noted">): void { this.half.onCancelNoted(noted); }
+  private onRetry(session: Session, retry: MessageOf<"cmd.retry">): void { this.half.onRetry(session, retry); }
+  private onAnswer(message: MessageOf<"res"> | MessageOf<"history.page">): void { this.half.onAnswer(message); }
+  private onResPart(part: MessageOf<"res.part">): void { this.half.onResPart(part); }
+  private onContentAnswer(message: ContentAnswer | RemoteContentAnswer): void { this.half.onContentAnswer(message); }
+  private onByeUnsettled(slot?: Slot): void { this.half.onByeUnsettled(slot); }
+  private ask(message: Message & { req: string }, kind: PendingRequest["kind"], stream?: string): Promise<unknown> { return this.half.ask(message, kind, stream); }
+  private nextReq(): string { return this.half.nextReq(); }
+  private endSession(session: Session, why: string): void { this.half.endSession(session, why); }
+  private onClosed(session: Session, _why: string): void { this.half.onClosed(session, _why); }
+  private armOffline(): void { this.half.armOffline(); }
+  private armPing(session: Session): void { this.half.armPing(session); }
+  private armDead(session: Session): void { this.half.armDead(session); }
+  private clearTimer(name: keyof FeLink["timers"]): void { this.half.clearTimer(name); }
+  private updateCatching(): void { this.half.updateCatching(); }
+  private catchingNow(): boolean { return this.half.catchingNow(); }
+  private reduce(event: ConnEvent): void { this.half.reduce(event); }
+  private emit(event: FeLinkEvent): void { this.half.emit(event); }
 }
+
 
 function reasonOf(outcome: Outcome): string {
   switch (outcome.kind) {
@@ -1161,12 +617,4 @@ function reasonOf(outcome: Outcome): string {
     case "skipped": return "skipped";
     default: return "";
   }
-}
-
-function cleanServerAddresses(addresses?: ServerAddresses): ServerAddresses | undefined {
-  if (!addresses) return undefined;
-  const out: ServerAddresses = {};
-  if (addresses.tailnet) out.tailnet = addresses.tailnet;
-  if (addresses.relay) out.relay = addresses.relay;
-  return out.tailnet || out.relay ? out : undefined;
 }

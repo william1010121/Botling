@@ -7,7 +7,7 @@ import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
 import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
-import { AgyAcpHead, verifyAcpRuntime } from "./agent/agy-acp";
+import { AgyAcpHead, isAgyConversationGone, verifyAcpRuntime } from "./agent/agy-acp";
 import { AGY_EXECUTION_BLOCKED } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
 // claude process), the turn under way, the tool approvals it is waiting on, and its subagents
@@ -79,7 +79,7 @@ import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation,
 import { addSample, speedView, type RequestEvent, type SpeedTotals } from "./token-speed";
 import { commandEnded, ReplyText, type CommandState, type StreamItem } from "./agent/stream";
 import { applyingReaction, archiveAll, archiveLine, compareReactions, reactionIntro, reactionUpdate, recentChat, REACTION_PALETTE, reportNote, seenReactions, type SeenReactions } from "./briefing";
-import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
+import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, RESUME_NOTE, withoutPartsNote, type BotPrompts } from "./prompts";
 import { parseReply, unsupportedRequest, type BotRequest } from "./reply";
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, type SubagentRecord } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
@@ -118,6 +118,7 @@ import { HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, newId,
 import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./agent/workers";
 import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
 import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
+import { BotContext } from "./bot/context";
 import { RECENT_TOOL_CALLS, NO_LONGER_NEEDED, NO_ANSWER, NEVER_ALWAYS, PLUGINS_RESTART, PROMPT_SESSION_DIVIDER, NEW_SESSION_DIVIDER, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
 import { keepable, resolvePath, union, firstLine, sleep, turnCommandId, preview, streamingText, subagentOf, isReviewRefusal, isRule, allowRule, permissionText, clip, stepView, routinesKey, iso, subagentView, messageView, approvalSummary } from "./bot/view-functions";
 export type Status = "done" | "stopped" | "failed";
@@ -138,7 +139,8 @@ export class Bot {
   private managedHandbacks = new Set<string>();
   /** Components being made from its replies (specs.json, 1.x's format; the primary's): the component studio's records, kept as they are. */
   private specList: StoredSpec[] = [];
-  private records: ChatRecord[] = [];
+  /** Read by BotContext (M7-S41). */
+  records: ChatRecord[] = [];
   /** Set when its chat file could not be read: nothing is written over it then. */
   private problem: string | null = null;
   private readOnly = false;
@@ -152,19 +154,23 @@ export class Bot {
   /** Which CLI this bot's head is. */
   readonly engine: Engine;
   /** Its heads (bot.json `heads`, 1.x's format). Kept by the primary; a partner reads it. */
-  private headsSettings: Heads;
+  /** Read by BotContext (M7-S41). */
+  headsSettings: Heads;
   private startupActive = false;
   /** App-owned peers keyed by engine (on the conversation owner only). */
-  private partners = new Map<Engine, Bot>();
+  /** Read by BotContext (M7-S41). */
+  partners = new Map<Engine, Bot>();
   /** Compatibility view for integrations that inspect the first peer. Routing uses all peers. */
-  get partner(): Bot | null { return this.partners.values().next().value ?? null; }
-  get peers(): Bot[] { return [...this.partners.values()]; }
-  private get members(): Bot[] { return [this, ...this.peers]; }
-  private ownsTurn(id: string): boolean { return this.turn?.id === id || this.deferred?.id === id || this.queue.some(t => t.id === id) || this.claimHold?.turn.id === id; }
+  get partner(): Bot | null { return this.ctx.partner; }
+  get peers(): Bot[] { return this.ctx.peers; }
+  /** Read by BotContext (M7-S41): it stays here because it names `this` as the Bot itself. */
+  get members(): Bot[] { return [this, ...this.peers]; }
+  private ownsTurn(id: string): boolean { return this.ctx.ownsTurn(id); }
 
   private conductor: Conductor;
   /** A message to both, kept from the head that does not lead until the lead says what it takes on. */
-  private claimHold: { id: string; lead: Engine; held: Engine; turn: Turn; timer: NodeJS.Timeout } | null = null;
+  /** Read by BotContext (M7-S41). */
+  claimHold: { id: string; lead: Engine; held: Engine; turn: Turn; timer: NodeJS.Timeout } | null = null;
   private lastLead: Engine | null = null;
   /** What this head should hear with its next message (what the other head said), and the lines it covers. */
   private pendingNote: string | null = null;
@@ -193,9 +199,11 @@ export class Bot {
   private stallReminded = new Set<string>();
   /** Tidying memory.md before it sleeps. */
   private tidying = false;
-  private turn: Turn | null = null;
+  /** Read by BotContext (M7-S41). */
+  turn: Turn | null = null;
   /** Messages that wait for the turn under way (or the tidy) to end. */
-  private queue: Turn[] = [];
+  /** Read by BotContext (M7-S41). */
+  queue: Turn[] = [];
   private finished = new Map<string, Status>();
   private approvals = new Map<string, Approval>();
   private draining: { head: AgentHead; resolve: () => void; promise: Promise<void> } | null = null;
@@ -211,7 +219,8 @@ export class Bot {
   private queuedNote: string | null = null;
   /** Work paused for the user's message (1.x's `pausedWork`): carried on once the user has been answered. */
   private paused: { conducted: boolean; handoffId: string | null } | null = null;
-  private session: HeadState;
+  /** Read by BotContext (M7-S41). */
+  session: HeadState;
   /** The next head is a new session: its first message carries the wake briefing. */
   private briefing = true;
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
@@ -243,7 +252,8 @@ export class Bot {
   /** What its process has cost so far (claude's `total_cost_usd`, a running total; 1.x's `sessionCost`). */
   private sessionCost = { last: 0 };
   /** Its head runs on another CLI from its next message on (1.x's `switchEngine`): a handoff through memory.md first. */
-  private switchTo: Engine | null = null;
+  /** Read by BotContext (M7-S41). */
+  switchTo: Engine | null = null;
   /** Writing that handoff (1.x's `.switching(.writing)`). */
   private switching = false;
   private idleTimer: NodeJS.Timeout | null = null;
@@ -286,7 +296,8 @@ export class Bot {
   /** Your lines offered into an Antigravity turn (`offerInsert`), by id: in the queue ("Queued") until it reads them. */
   private inserting = new Map<string, Turn>();
   /** Our turn that claude has not begun yet, set aside while it answers the other head's words first. */
-  private deferred: Turn | null = null;
+  /** Read by BotContext (M7-S41). */
+  deferred: Turn | null = null;
   /**
    * The deferred turn back as the turn under way that claude has not begun yet (no "started", no output), and the clock
    * that ends it if claude never does: its words were taken into the turn that just ended, so nothing more comes for it.
@@ -312,7 +323,11 @@ export class Bot {
   private briefedComponents: ComponentKnowledge | null = null;
   private componentsMayHaveChanged = false;
 
-  constructor(private options: BotOptions) {
+  /** Made on first use, from this bot: a fake `Object.create(Bot.prototype)` has one too. */
+  private botContext: BotContext | null = null;
+  private get ctx(): BotContext { return this.botContext ??= new BotContext(this); }
+
+  constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
     const primary = options.primary;
     this.engine = options.engine ?? "claude";
     const storeDir = primary ? join(primary.profile.storeDir, `partner-${this.engine}`) : options.profile.storeDir;
@@ -378,56 +393,19 @@ export class Bot {
     return this.store.loadAlwaysAllowed();
   }
 
-  /** The bot whose chat this is (itself, or a partner's primary). */
-  private get owner(): Bot {
+  /** The bot whose chat this is (itself, or a partner's primary). Read by BotContext (M7-S41): it names `this` as the Bot itself. */
+  get owner(): Bot {
     return this.options.primary ?? this;
   }
 
-  /** The chat it speaks in: its own, or for a partner the primary's. */
-  private get chat(): ChatRecord[] {
-    return this.owner.records;
-  }
-
-  /** It shares its chat with another head. */
-  private get sharesChat(): boolean {
-    return !!this.options.primary || this.peers.length > 0 || hasTwo(this.heads);
-  }
-
-  get heads(): Heads {
-    return this.owner.headsSettings;
-  }
-
-  private peerEngine(head: Engine): Engine {
-    const owner = this.owner;
-    return owner.engine !== head ? owner.engine : owner.partner?.engine ?? otherHead(head, this.heads);
-  }
-
-  private get singleActionApprovals(): boolean { return this.engine === "agy"; }
-
-  /** Execution policy, including on-demand and restored routes (not just selected heads). */
-  private allowsEngineRoute(head: Engine, from: Engine = this.engine): boolean {
-    return head === from || this.owner.headsSettings.engines.includes(head) || (head !== "agy" && from !== "agy" && !this.owner.headsSettings.engines.includes("agy"));
-  }
-
-  private requireEngineRoute(head: Engine, from: Engine = this.engine): void {
-    if (!this.allowsEngineRoute(head, from)) throw new ContractError("conflict", "This collaboration route is not enabled. Nothing was routed.");
-    // Peer sessions use the existing provider lifecycle, never the dormant ACP worker bridge.
-    // Verify app-owned provider availability before constructing any peer or submitting work.
-    if (head === "codex" && !this.options.codexConfig) throw new ContractError("conflict", "Codex is not available here.");
-    if (head === "agy" && head !== from) {
-      const config = this.options.agyConfig?.(this.profile, {command:"agy",cwd:this.profile.folder,sessionId:this.session.sessionId,resume:false});
-      if (config?.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
-      verifyAcpRuntime(config.command);
-    }
-  }
-
-  /** The bot that runs `head`: this one, or its partner. */
-  private botFor(head: Engine): Bot | null {
-    const owner = this.owner;
-    if (owner.engine === head || owner.switchTo === head) return owner;
-    if (owner.partners.has(head)) return owner.partners.get(head)!;
-    return null;
-  }
+  private get chat(): ChatRecord[] { return this.ctx.chat; }
+  private get sharesChat(): boolean { return this.ctx.sharesChat; }
+  get heads(): Heads { return this.ctx.heads; }
+  private peerEngine(head: Engine): Engine { return this.ctx.peerEngine(head); }
+  private get singleActionApprovals(): boolean { return this.ctx.singleActionApprovals; }
+  private allowsEngineRoute(head: Engine, from?: Engine): boolean { return this.ctx.allowsEngineRoute(head, from); }
+  private requireEngineRoute(head: Engine, from?: Engine): void { this.ctx.requireEngineRoute(head, from); }
+  private botFor(head: Engine): Bot | null { return this.ctx.botFor(head); }
 
   /**
    * The other head (1.x's `makePartner`): for a bot with two heads, or made when a bot with one first hands
@@ -461,28 +439,15 @@ export class Bot {
     return partner;
   }
 
-  get id() {
-    return this.options.profile.id;
-  }
-  get profile() {
-    return this.options.profile;
-  }
-  private get paths() {
-    return profilePaths(this.profile);
-  }
-
-  private log(line: string) {
-    this.options.log(`[${this.profile.name}${this.sharesChat ? ` · ${displayName(this.engine)}` : ""}] ${line}`);
-  }
-
-  private emit(event: Event) {
-    const primary = this.options.primary;
-    if (primary) primary.fromPartner(this, event);
-    else this.options.emit(event);
-  }
+  get id() { return this.ctx.id; }
+  get profile() { return this.ctx.profile; }
+  private get paths() { return this.ctx.paths; }
+  private log(line: string) { this.ctx.log(line); }
+  private emit(event: Event) { this.ctx.emit(event); }
 
   /** What the partner's chat did, in this chat (`mirror`): its lines are this chat's lines too. */
-  private fromPartner(partner: Bot, event: Event) {
+  /** Called by BotContext.emit (M7-S41). */
+  fromPartner(partner: Bot, event: Event) {
     switch (event.type) {
       case "bot.updated":
         return this.updated();
@@ -4137,8 +4102,8 @@ export class Bot {
     const turn = this.turn;
     let failedTurn = false;
     if (turn?.open && turn.head === head) {
-      // A resume of a session claude no longer has: start a new session and send the message again, once.
-      if (!this.restartRecovery && this.engine !== "agy" && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
+      // A resume of a session claude (or Antigravity: its conversation is not found) no longer has: start a new session and send the message again, once.
+      if (!this.restartRecovery && (this.engine !== "agy" || isAgyConversationGone(exit.stderr)) && exit.silent && this.session.started && !turn.retried && !exit.expected && (turn.origin !== "tidy" || (turn.guest && this.engine === "agy")) && turn.origin !== "background") {
         this.log(`resuming session ${this.session.sessionId} failed (${why}: ${exit.stderr.slice(0, 200)}); starting a new session`);
         this.newSession();
         this.store.saveHead(this.session);

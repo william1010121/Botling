@@ -458,7 +458,7 @@ describe("the v3 path loads no `file:` URL for chat media or PDFs", () => {
       ["src/renderer/plugin-commands.ts", /return text\.startsWith\("file:"\) \? text : null/], // a link's file URL, for matching
       ["Web/src/link-menu.ts", /startsWith\("file:"\) \? text : null|\/\^\(https\?\|file\):\/i\.test\(text\)/], // link matching
       ["Web/src/lightbox.ts", /url\.startsWith\("file:"\) \|\||\/\^file:\\\/\\\/\/i\.test\(url\)\) return url/], // "show in Finder" / drag-out checks
-      ["Web/src/components.ts", /if \(\/\^file:\/i\.test\(value\)\)/], // a card's file URL to its path
+      ["Web/src/component-frames.ts", /if \(\/\^file:\/i\.test\(value\)\)/], // a card's file URL to its path
       ["Web/src/source-snapshot.ts", /csp\.content = /], // the snapshot page's policy
       ["Web/src/chat.html", /Content-Security-Policy/], // the 1.x Swift app's page (desktop serves src/renderer/chat-frame/chat.html)
     ];

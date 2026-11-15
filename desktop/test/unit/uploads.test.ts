@@ -18,7 +18,7 @@ import { BridgeV3, type AdapterPort } from "../../web-v3/bridge-v3";
 import type { PageUploadsPort } from "../../web-v3/shell/uploads";
 import { testRoot } from "../botlingd-harness";
 import { CoreHarness, MAIN } from "../core-harness";
-import { expectSameBytes, tempDir } from "../helpers";
+import { expectSameBytes, sleep, tempDir, until } from "../helpers";
 import { harness, outcomeOf, type Harness } from "./server-intents-harness";
 
 const root = testRoot("uploads");
@@ -199,7 +199,13 @@ class StoreLink implements UploadLink {
 }
 
 const source = (data: Uint8Array): UploadSource => ({ size: data.length, read: async (offset, length) => data.subarray(offset, offset + length) });
-const settleAll = async (link: StoreLink) => { for (let i = 0; i < 50; i += 1) { await link.idle(); await new Promise((r) => setImmediate(r)); } };
+/** Wait for the condition (polled, 30 s ceiling), not for a fixed number of event-loop rounds: under host load the real
+ * disk behind the store can take far longer than any fixed count. The link's chain is drained after it so a failure
+ * message is not a half-finished write. */
+const settled = async (link: StoreLink, what: string, condition: () => boolean) => { await until(condition, { timeout: 30_000, what }); await link.idle(); };
+/** A "must not happen" check keeps a quiet window: the chain is drained, then a fixed stretch of time passes in which
+ * nothing may arrive. Load only makes it quieter, so it cannot fail for a good build. */
+const quiet = async (link: StoreLink, ms = 100) => { await link.idle(); await sleep(ms); await link.idle(); };
 
 describe("Uploader (the front end)", () => {
   it("hashes, puts and sends within the credit until the server has it all", async () => {
@@ -208,7 +214,7 @@ describe("Uploader (the front end)", () => {
     const data = randomBytes(1_500 * KiB);
     const view = uploader.add({ name: "talk.mp4", type: "video/mp4", source: source(data) });
     expect(await uploader.id(view.key)).toBe(idOf(data));
-    await settleAll(link);
+    await settled(link, "the upload to be done", () => uploader.get(view.key)?.state === "done");
     expect(uploader.get(view.key)).toMatchObject({ state: "done", sent: data.length, puts: 1, resumedAt: [] });
     expect(link.store.complete(idOf(data))?.size).toBe(data.length);
     expect(link.puts[0]).toMatchObject({ id: idOf(data), size: data.length, type: "video/mp4", name: "talk.mp4" });
@@ -220,11 +226,10 @@ describe("Uploader (the front end)", () => {
     const uploader = new Uploader(link, { chunkBytes: 32 * KiB });
     const data = randomBytes(1_000 * KiB);
     const view = uploader.add({ name: "a.pdf", type: "application/pdf", source: source(data) });
-    await settleAll(link);
-    expect(uploader.get(view.key)!.state).toBe("waiting");
+    await settled(link, "the dropped upload to wait", () => !link.attached && uploader.get(view.key)?.state === "waiting");
     const before = link.chunks;
     link.attach();
-    await settleAll(link);
+    await settled(link, "the resumed upload to be done", () => uploader.get(view.key)?.state === "done");
     const done = uploader.get(view.key)!;
     expect(done).toMatchObject({ state: "done", puts: 2 });
     expect(done.resumedAt).toEqual([10 * 32 * KiB]);
@@ -241,7 +246,7 @@ describe("Uploader (the front end)", () => {
     expect(huge).toMatchObject({ state: "failed", error: TOO_LARGE_TEXT, puts: 0, id: null });
     await expect(uploader.id(huge.key)).rejects.toThrow(/500 MB/);
     expect(uploader.add({ name: "empty", type: "text/plain", source: source(new Uint8Array(0)) })).toMatchObject({ state: "failed" });
-    await settleAll(link);
+    await quiet(link);
     expect(reads).toBe(0);
     expect(link.puts).toEqual([]);
   });
@@ -251,7 +256,7 @@ describe("Uploader (the front end)", () => {
     const uploader = new Uploader(link);
     const data = randomBytes(100 * KiB);
     const view = uploader.add({ name: "x.pdf", type: "application/pdf", source: source(data) });
-    await settleAll(link);
+    await settled(link, "the upload to fail", () => uploader.get(view.key)?.state === "failed");
     expect(uploader.get(view.key)).toMatchObject({ state: "failed", error: expect.stringMatching(/did not match their hash/) });
     expect(link.store.complete(idOf(data))).toBeNull();
   });
@@ -323,7 +328,10 @@ function openSession(uploads: Uploads, options: { uploadIdleMs?: number } = {}) 
   return { socket, session, received, log };
 }
 
-const wait = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms));
+/** A quiet window for a "must not happen" check (nothing may arrive in it); never a wait for something that must. */
+const wait = (ms = 15) => sleep(ms);
+const framesOf = (socket: FakeSocket, type: string) => socket.frames().filter((f) => f.t === type);
+const stored = (socket: FakeSocket, have: number) => framesOf(socket, "content.stored").some((f) => (f as { have?: number }).have === have);
 const sendCmd = (socket: FakeSocket, n: number, files: UploadedFile[]) => socket.feed({
   t: "cmd", slot: { origin: "test", originEpoch: EPOCH, target: `bot:${BOT}`, n }, floor: n, inc: "logAAAAAAAAA",
   cmd: { type: "chat.send", botId: BOT, text: "the file", files },
@@ -337,19 +345,24 @@ describe("a session holds a chat.send with files until their bytes are in", () =
     const data = randomBytes(150 * KiB);
     socket.feed(put("r1", data));
     sendCmd(socket, 1, [fileOf(data)]);
-    await wait();
-    expect(socket.frames().filter((f) => f.t === "held")).toHaveLength(1);
-    expect(socket.frames().find((f) => f.t === "content.stored")).toMatchObject({ req: "r1", have: 0 });
+    await until(() => framesOf(socket, "held").length > 0 && stored(socket, 0), { what: "held and stored(0)" });
+    expect(framesOf(socket, "held")).toHaveLength(1);
+    expect(framesOf(socket, "content.stored").find((f) => (f as { have?: number }).have === 0)).toMatchObject({ req: "r1", have: 0 });
     expect(received).toEqual([]);
     for (let at = 0; at < data.length; at += 50 * KiB) {
-      socket.feed(chunk("r1", at, data.subarray(at, at + 50 * KiB)));
-      await wait(5);
-      if (at + 50 * KiB < data.length) expect(received).toEqual([]);
+      const end = Math.min(data.length, at + 50 * KiB);
+      socket.feed(chunk("r1", at, data.subarray(at, end)));
+      // The server answers only when it tops up the credit, not per chunk; the chunk is in once the store has it.
+      // Only then may the not-yet-complete check run (the last chunk completes the file, so it is waited on below).
+      if (end < data.length) await until(() => uploads.have(idOf(data), data.length) === end, { what: `the store to have ${end} bytes` });
+      if (end < data.length) { await wait(20); expect(received).toEqual([]); }
     }
-    await wait();
+    await until(() => received.length > 0, { what: "the command handed on" });
+    await wait(20); // quiet window: handed on once, not twice
     expect(received).toHaveLength(1);
     expect(received[0]!.complete).toBe(true);
-    expect(socket.frames().filter((f) => f.t === "content.stored").at(-1)).toMatchObject({ have: data.length });
+    await until(() => stored(socket, data.length), { what: "stored(size)" });
+    expect(framesOf(socket, "content.stored").at(-1)).toMatchObject({ have: data.length });
     session.close();
   });
 
@@ -360,8 +373,8 @@ describe("a session holds a chat.send with files until their bytes are in", () =
     await uploads.chunk("x", chunk("r0", 0, data));
     const { socket, session, received } = openSession(uploads);
     sendCmd(socket, 1, [fileOf(data)]);
-    await wait();
-    expect(socket.frames().filter((f) => f.t === "held")).toEqual([]);
+    await until(() => received.length > 0, { what: "the command handed on" });
+    expect(framesOf(socket, "held")).toEqual([]);
     expect(received).toHaveLength(1);
     session.close();
   });
@@ -371,9 +384,9 @@ describe("a session holds a chat.send with files until their bytes are in", () =
     const { socket, session, received } = openSession(uploads);
     const data = randomBytes(10 * KiB);
     sendCmd(socket, 1, [fileOf(data)]);
-    await wait();
+    await until(() => framesOf(socket, "held").length > 0, { what: "held" });
     session.close();
-    await wait();
+    await wait(50); // quiet window: a closed session hands nothing on
     expect(received).toEqual([]);
   });
 
@@ -382,7 +395,7 @@ describe("a session holds a chat.send with files until their bytes are in", () =
     const { socket, session, received } = openSession(uploads, { uploadIdleMs: 30 });
     const data = randomBytes(10 * KiB);
     sendCmd(socket, 1, [fileOf(data)]);
-    await wait(80);
+    await until(() => received.length > 0, { what: "the idle wait to end and the handler to run" });
     expect(received).toHaveLength(1);
     expect(received[0]!.complete).toBe(false);
     session.close();
@@ -391,11 +404,11 @@ describe("a session holds a chat.send with files until their bytes are in", () =
     const other = randomBytes(10 * KiB);
     second.socket.feed(put("r2", other));
     sendCmd(second.socket, 1, [fileOf(other)]);
-    await wait();
+    await until(() => framesOf(second.socket, "held").length > 0, { what: "held" });
     const wrong = new Uint8Array(other);
     wrong[5]! ^= 1;
     second.socket.feed(chunk("r2", 0, wrong));
-    await wait(30);
+    await until(() => framesOf(second.socket, "content.gone").length > 0 && second.received.length > 0, { what: "content.gone and the handler's decision" });
     expect(second.socket.frames().find((f) => f.t === "content.gone")).toMatchObject({ req: "r2", reason: "changed" });
     expect(second.received).toHaveLength(1);
     second.session.close();
@@ -491,7 +504,7 @@ function bridgeWith(uploads: FakeUploads, answer: (cmd: Command) => unknown = ()
   bridge.subscribe((message) => { if ((message as { id?: string }).id) responses.push(message as never); });
   const ask = async (id: string, cmd: Command) => {
     bridge.post({ v: PROTOCOL_VERSION, id, cmd });
-    for (let i = 0; i < 20 && !responses.some((r) => r.id === id); i += 1) await wait(1);
+    await until(() => responses.some((r) => r.id === id), { what: `the answer to ${id}` });
     return responses.find((r) => r.id === id)!;
   };
   return { bridge, sent, ask };
