@@ -1,6 +1,6 @@
 // Botling 3 M2 step 5: the built botlingd's pairing commands (out/server/main.cjs under plain Node, no window, no
-// network listener): `botlingd pair` makes the cluster only after the recovery code is typed back (the status note says
-// so meanwhile), prints the link; `devices`, `revoke-device`; a restart keeps the cluster; the code is nowhere in the
+// network listener): `botlingd pair` makes the cluster at once and shows its recovery code once (Enter goes on, nothing
+// typed back), prints the link; `devices`, `revoke-device`; a restart keeps the cluster; the code is nowhere in the
 // data folder. Needs `npm run build` first (test:changed does it).
 import { spawn } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -46,7 +46,7 @@ function filesUnder(dir: string): string[] {
 }
 
 describe("botlingd pair / devices / revoke-device (built, plain Node)", () => {
-  it("the first pairing makes the cluster only after the code is typed back; status notes it meanwhile; a restart keeps the cluster", async () => {
+  it("the first pairing makes the cluster at once (code shown once, Enter goes on); status shows it; a restart keeps the cluster", async () => {
     const dir = join(root, "d1");
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     expect(botlingdCommand(dir, ["pair"]).code).toBe(3); // not running

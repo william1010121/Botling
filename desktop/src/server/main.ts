@@ -26,8 +26,8 @@
 //                             streams were not empty) to their Botling 3 history, merged by time; Botling 3 lines are
 //                             kept unchanged. Backs up server.db first; --dry-run only reads and reports what it would add
 //   botlingd pair [--name <device name>] [--scope read,reply,approve,manage] [--no-qr]
-//                             pairs a phone or browser with the running server (M2 step 5): the first pairing shows the
-//                             recovery code once and makes the cluster only after it is typed back; then a link and QR
+//                             pairs a phone or browser with the running server (M2 step 5): the first pairing makes the
+//                             cluster at once and shows its recovery code once (Enter goes on); then a link and QR
 //                             code (5 min, single use), the 6-digit code to compare, and the device's ack
 //   botlingd join [--name <name>]
 //                             (M3 step 4) offers this server to join a cluster: prints its fingerprint, a code and a link

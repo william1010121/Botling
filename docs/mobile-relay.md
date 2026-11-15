@@ -39,8 +39,8 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
   is unchanged.
 - **Botling 3** pairs from the window, never a command line: Settings › Phone (`desktop/src/renderer/PhoneSettingsV3.tsx`)
   is answered by botlingd's own pairing (`desktop/src/server/pairing/phone-desk.ts`), not the 2.x core. The relay address
-  typed there is kept in `<botlingd data>/relay.json` and botlingd joins that room at once; the first pairing shows the
-  recovery code once and asks for it typed back; a pairing code is a QR of `https://<relay host>/v3/#pair=…`; the phone's
+  typed there is kept in `<botlingd data>/relay.json` and botlingd joins that room at once; the first pairing (one button) makes the
+  cluster at once and shows its recovery code once in a dialog (Copy, I've saved it; never typed back), then the QR; a pairing code is a QR of `https://<relay host>/v3/#pair=…`; the phone's
   6-digit code is compared and accepted in the window. These requests are local `req`s only (a pairing link is never
   stored).
 

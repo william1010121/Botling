@@ -203,8 +203,8 @@ describe("M2 step 13: the relay transport (local relay)", () => {
       await script.connect(server.daemon.socket, server.daemon.token);
 
       // 1. Two devices pair through the relay (the cluster first, as `botlingd pair` does on a first pairing).
-      const started = await admin(script, { op: "cluster.create" }) as { code: string };
-      await admin(script, { op: "cluster.confirm", code: started.code });
+      // cluster.create makes it at once (the recovery code is shown once, never typed back).
+      await admin(script, { op: "cluster.create" });
       const one = await pairViaRelay(script, "Phone one");
       const two = await pairViaRelay(script, "Phone two");
       result.pairMs = [one.ms, two.ms];
