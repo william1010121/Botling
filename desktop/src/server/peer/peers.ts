@@ -99,8 +99,8 @@ export class PeerSessions {
   }
 
   /** A transport whose first frame is a KK HS1 (server/peer/router.ts): this side answers it. */
-  accept(transport: SessionTransport): PeerSession {
-    const session = new PeerSession(transport, { accept: true }, this.host, this.sessionEvents());
+  accept(transport: SessionTransport, kind: "tailnet" | "relay" = "tailnet"): PeerSession {
+    const session = new PeerSession(transport, { accept: true, transport: kind }, this.host, this.sessionEvents());
     this.sessions.add(session);
     if (this.closed) session.close("botlingd is stopping");
     return session;

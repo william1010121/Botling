@@ -298,11 +298,11 @@ export class ServerJoin {
   }
 
   /** A transport whose first frame is a `pair` HS1 naming one of this server's join offers. */
-  accept(transport: SessionTransport): { readonly link: { readonly established: Promise<unknown> }; receive(frame: Uint8Array): void; transportClosed(): void } {
+  accept(transport: SessionTransport, kind: "tailnet" | "relay" = "tailnet"): { readonly link: { readonly established: Promise<unknown>; resume?(): void }; receive(frame: Uint8Array): void; transportClosed(): void } {
     const session: NSession = { channel: null!, offer: null, sponsor: null, checked: false, joining: false, timer: null };
     session.channel = new JoinChannel(transport, {
       accept: {
-        transport: "tailnet", cluster: JOIN_CLUSTER, self: this.self, modes: ["pair"],
+        transport: kind, cluster: JOIN_CLUSTER, self: this.self, modes: ["pair"],
         checkPeer: (claim) => this.checkClaim(claim),
         offerSecret: (offerId) => {
           const offer = this.offers.get(offerId);
