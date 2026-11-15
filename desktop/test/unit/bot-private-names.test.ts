@@ -10,6 +10,9 @@
 //      `(x as any).name`, `(x as unknown as {..}).name`, `["name"]`, and `vi.spyOn(x, "name")` / `Bot.prototype`;
 //      false hits (a `remove` of a CLI prompt, a `notice` object key) were read and dropped; 49 names remained.
 //   3. the names the S40 characterization test (bot-split-characterization.test.ts) itself reads or patches.
+//   4. (review) a wider second scan (Object.assign / Object.create(Bot.prototype) fakes, `as unknown as {..}` blocks of the spec adapters,
+//      calls on a fake `this`) added 23 names the first scan missed. Both scans are heuristics: a name that is reached some other way
+//      shows up as a failing test in the 72 importers of bot.ts that every card of the lane runs, not here.
 // Public members that the card also calls "private names" (`subagents`) are listed too: they are reached the same way.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -40,6 +43,10 @@ const FIELDS = [
   "partners", "queue", "records", "session", "steered", "subagents", "turn",
   // read or set by the S40 characterization test
   "ignoreResults", "paused", "settingsHold", "swapHold", "switching", "switchTo", "tidying",
+  // found by the review of the card (a second scan): `Object.assign(bot, {...})` on `Object.create(Bot.prototype)` in
+  // src/mobile-bridge/choices.test.ts, casts in agy-core.test.ts, `inner.folderPending` in spec-adapters/turns-adapter.ts
+  "options", "rounds", "pendingNote", "denialAsks", "appQuestions", "appAnswers", "cardPicks", "sessionRules", "rulesGivenAfter", "toolCalls",
+  "folderPending",
 ] as const;
 /** Methods: they must exist on `Bot.prototype` (tests spy there) and be callable on an instance. */
 const METHODS = [
@@ -49,9 +56,12 @@ const METHODS = [
   "tellHead", "workerNoted", "workerReport", "workerReported",
   // read or set by the S40 characterization test
   "handOver", "next", "routeTurn",
+  // found by the review (see FIELDS): fetch-tool.test.ts `botTool`, agy-core.test.ts `conduct` `tell` `allowsEngineRoute` `hearNow`,
+  // subagent-store.test.ts `saveSubagents`, choices.test.ts `tellReviewOutcome` `updated` `log`, native-child-restart.test.ts `subagentEnded`
+  "botTool", "conduct", "tell", "allowsEngineRoute", "hearNow", "saveSubagents", "tellReviewOutcome", "updated", "log", "subagentEnded",
 ] as const;
 /** Getters: they exist on the prototype chain and reading one on a fresh bot does not throw. */
-const GETTERS = ["allowRules", "chat", "switchReady", "working"] as const;
+const GETTERS = ["allowRules", "chat", "switchReady", "working", "shownTurn", "commandFolder"] as const;
 /** Public methods that tests replace on `Bot.prototype` (vi.spyOn(Bot.prototype, ...)). */
 const PROTOTYPE_SPIED = ["relay", "workerNote"] as const;
 
@@ -70,10 +80,10 @@ function make() {
 const settle = () => new Promise((r) => setImmediate(r));
 
 describe("the private names of Bot that tests and spec adapters reach", () => {
-  it("the list has the names it had when it was made (49 reached through a cast, 14 more the S40 test and the spies use)", () => {
+  it("the list has the names it had when it was made (49 reached through a cast, 14 the S40 test and the spies use, 23 more found by the review)", () => {
     const all = [...FIELDS, ...METHODS, ...GETTERS];
     expect(new Set(all).size).toBe(all.length);
-    expect(all.length).toBe(63);
+    expect(all.length).toBe(86);
   });
 
   it("every field is on a Bot instance", () => {
