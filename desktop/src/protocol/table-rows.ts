@@ -9,10 +9,11 @@
 // transaction: the reader's table then equals the owner's at `to`. The §8.2 limits (≤ 5 waiting items, ≤ 3 lines of
 // ≤ 140 characters, a small row) are enforced here, so an over-size summary is refused as malformed.
 import { z } from "zod";
-import { BotId, Engine } from "../contract";
+import { BotId, type CommandType, Engine } from "../contract";
 import { canonicalJson } from "./entries";
 import { ContentId, EntryHash, Id, LogId, Seq, ServerId } from "./ids";
 import { SubTag } from "./messages";
+import { COMMAND_SCOPES } from "./scopes";
 
 /** At most this many waiting items in a bot's summary (§8.2, §20). */
 export const SUMMARY_WAITING_LIMIT = 5;
@@ -21,7 +22,7 @@ export const SUMMARY_LINES_LIMIT = 3;
 export const SUMMARY_LINE_CHARS = 140;
 /** The most a summary row's canonical JSON may be (v1 plans 0.5–1 KB; this leaves room, never a page of text). */
 export const SUMMARY_ROW_CHARS = 3 * 1024;
-/** The most a `machine`, `settings` or `audit:` row's canonical JSON may be. */
+/** The most a `machine`, `settings`, `audit:` or `plugin:` row's canonical JSON may be. */
 export const TABLE_ROW_CHARS = 32 * 1024;
 /** At most this many rows in one `rows` frame (as a catch-up page of entries, §20). */
 export const ROWS_LIMIT = 500;
@@ -38,10 +39,10 @@ const fitsIn = (limit: number) => (value: unknown) => {
 export const TableStreamId = z.string().max(80).regex(/^srv:[A-Za-z0-9_.:-]{1,64}$/);
 
 /**
- * A row key: `bot:<botId>`, `machine`, `settings`, `audit:<id>` (§8.2), or a kind this version does not know yet
- * (`plugin:<name>` from D52 in M5, or later ones): `<kind>` or `<kind>:<id>`, kind in lower case. Plan change N4:
- * readers keep and pass on rows of a kind they do not know, and ignore them; they never refuse or drop them, so servers
- * of different versions can share one cluster.
+ * A row key: `bot:<botId>`, `machine`, `settings`, `audit:<id>` (§8.2), `plugin:<name>` (D52, M5), or a kind this
+ * version does not know yet: `<kind>` or `<kind>:<id>`, kind in lower case. Plan change N4: readers keep and pass on
+ * rows of a kind they do not know, and ignore them; they never refuse or drop them, so servers of different versions
+ * can share one cluster.
  */
 export const RowKey = z.string().max(100).regex(/^[a-z][a-z0-9_-]{0,31}(:[A-Za-z0-9_.:-]{1,64})?$/);
 export type RowKey = z.infer<typeof RowKey>;
@@ -113,12 +114,58 @@ export const AuditRow = z.strictObject({
 }).refine(fitsIn(TABLE_ROW_CHARS), { message: "an audit row is too large" });
 export type AuditRow = z.infer<typeof AuditRow>;
 
+/** A plugin grant tier (D52, §8.2). */
+export const Tier = z.enum(["read", "request", "write"]);
+export type Tier = z.infer<typeof Tier>;
+
+/** Same format as `Via.codeHash` (protocol/messages.ts). */
+const PluginCodeHash = z.string().min(1).max(100).regex(/^[A-Za-z0-9:_.-]+$/);
+const PluginManifestItem = z.string().max(200);
+const PluginManifestList = z.array(PluginManifestItem).max(100);
+const PluginCommandType = z.enum(Object.keys(COMMAND_SCOPES) as [CommandType, ...CommandType[]]);
+
+/** One per-codeHash grant recorded in a `plugin:<name>` row (D52, §8.2). */
+export const PluginGrant = z.strictObject({
+  tier: Tier,
+  reads: z.array(PluginManifestItem).max(50),
+  requests: z.array(PluginCommandType).max(100),
+  grantedBy: z.enum(["user", "import", "builtin"]),
+  at: z.number().int().nonnegative(),
+});
+export type PluginGrant = z.infer<typeof PluginGrant>;
+
+const PluginManifest = z.strictObject({
+  tier: Tier,
+  reads: PluginManifestList,
+  requests: z.array(PluginCommandType).max(100),
+  owns: PluginManifestList,
+  provides: PluginManifestList,
+  requires: PluginManifestList,
+  uses: PluginManifestList,
+  clients: PluginManifestList,
+  needsShell: PluginManifestList,
+});
+
+/**
+ * `plugin:<name>` — an installed plugin and its per-codeHash grants (D52, §8.2). `files` is left optional and never
+ * written in 3.0 so a later version can add it without breaking readers (Q-C9).
+ */
+export const PluginRow = z.strictObject({
+  codeHash: PluginCodeHash,
+  manifest: PluginManifest,
+  author: z.enum(["builtin", "user", "bot", "import"]),
+  files: z.unknown().optional(),
+  grants: z.record(PluginCodeHash, PluginGrant).refine((grants) => Object.keys(grants).length <= 20, { message: "at most 20 grants" }),
+}).refine(fitsIn(TABLE_ROW_CHARS), { message: "a plugin row is too large" });
+export type PluginRow = z.infer<typeof PluginRow>;
+
 /** The body schema a row key takes; null for a kind this version does not know (kept as it is, N4). */
 export function rowBodySchema(key: string): z.ZodType | null {
   if (key.startsWith("bot:")) return SummaryRow;
   if (key === "machine") return MachineRow;
   if (key === "settings") return SettingsRow;
   if (key.startsWith("audit:")) return AuditRow;
+  if (key.startsWith("plugin:")) return PluginRow;
   return null;
 }
 
