@@ -11,7 +11,7 @@
 //
 // Not in botlingd (M1): the 2.x phone bridge and relay connector, the restart checkpoint and core hot swap (botlingd
 // outlives windows), plugin secrets (risk 3: no safe storage without the window, see `noSafeStorage`).
-import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
 import type { Sealer } from "../core/plugins/secrets";
@@ -48,7 +48,9 @@ import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, SummaryRows, TableFeeds } from "./replica";
 import { installedFromRegistry, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
-import { Directory, Forwarder, OwnerInbox } from "./forward";
+import type { Command } from "../contract";
+import type { Target } from "../protocol";
+import { Directory, Forwarder, OwnerInbox, ServerOrigin } from "./forward";
 import { release as osRelease } from "node:os";
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
@@ -256,6 +258,9 @@ export class Botlingd {
   peerContent: PeerContent | null = null;
   peerContentOwner: PeerContentOwner | null = null;
   chunkCache: ChunkCache | null = null;
+  /** M5-04a: this server acting as its own command origin. */
+  serverOrigin: ServerOrigin | null = null;
+  private originHookStop: (() => void) | null = null;
 
   get token(): string { return this.tokenValue; }
 
@@ -451,6 +456,11 @@ export class Botlingd {
         isRevoked: (peer) => !roster.view.valid.has(peer),
       });
       roster.onChange((change) => { void forwarder.revoked(change.invalidated); });
+      // M5-04a: this server acting as its own command origin (call-ins, main bot).
+      const serverOrigin = new ServerOrigin({
+        self: serverId, submit: (command) => openStore.submit(command), reader: () => hub.reader(), forwarder,
+        subscribeTable: (stream, sink) => feeds.subscribe(stream, null, sink), log,
+      });
       const inbox = new OwnerInbox({ self: serverId, runtime, log });
       // M3 step 8: a front end's sub of a bot a peer owns passes through to that peer; this server caches what it relays.
       const passSettings = passThroughSettings(env);
@@ -571,6 +581,8 @@ export class Botlingd {
       daemon.peerContent = peerContent;
       daemon.peerContentOwner = peerContentOwner;
       daemon.chunkCache = chunkCache;
+      daemon.serverOrigin = serverOrigin;
+      if (env[TEST_ORIGIN_HOOK_ENV] === "1") daemon.originHookStop = startOriginTestHook(paths.dataDir, serverOrigin, log);
       daemon.media = media;
       daemon.pluginTimer = pluginTimer;
       daemon.tailnetOrigins = origin ? [origin] : [];
@@ -671,6 +683,8 @@ export class Botlingd {
     this.peerContent?.close();
     await step("peer log cache", () => this.peerLogs.idle());
     await step("peer content", () => this.peerContent?.flushed());
+    this.originHookStop?.();
+    this.serverOrigin?.close();
     this.feeds.close();
     await step("listener", () => this.listener?.close());
     rmSync(join(this.paths.dataDir, LISTEN_FILE), { force: true });
@@ -714,6 +728,46 @@ export const TEST_CORRUPT_CONTENT_ENV = "BOTLING_SERVER_TEST_CORRUPT_CONTENT";
 export function testCorruptContent(env: Record<string, string | undefined>): string | null {
   const value = (env[TEST_CORRUPT_CONTENT_ENV] ?? "").trim();
   return /^sha256:[0-9a-f]{64}$/.test(value) ? value : null;
+}
+
+
+/** Test hook (M5-04a): `BOTLING_SERVER_TEST_ORIGIN_HOOK=1` lets two-server tests submit via ServerOrigin and record outcomes. Unset in real use. */
+export const TEST_ORIGIN_HOOK_ENV = "BOTLING_SERVER_TEST_ORIGIN_HOOK";
+function startOriginTestHook(dataDir: string, serverOrigin: ServerOrigin, log: (line: string) => void): () => void {
+  const reqDir = join(dataDir, "test-server-origin-requests");
+  const submittedFile = join(dataDir, "test-server-origin-submitted.jsonl");
+  const outcomesFile = join(dataDir, "test-server-origin-outcomes.jsonl");
+  const off = serverOrigin.on((slot, outcome) => {
+    try { appendFileSync(outcomesFile, `${JSON.stringify({ slot, outcome })}\n`, { mode: 0o600 }); } catch (error) {
+      log(`server-origin hook: writing outcome failed: ${String((error as Error)?.message ?? error)}`);
+    }
+  });
+  let busy = false;
+  const poll = () => {
+    if (busy || !existsSync(reqDir)) return;
+    busy = true;
+    void (async () => {
+      try {
+        for (const name of readdirSync(reqDir).filter((f) => f.endsWith(".json")).sort()) {
+          const full = join(reqDir, name);
+          let raw: string;
+          try { raw = readFileSync(full, "utf8"); unlinkSync(full); } catch { continue; }
+          const req = JSON.parse(raw) as { id: string; target: Target; cmd: Command };
+          try {
+            const slot = await serverOrigin.submit(req.target, req.cmd);
+            appendFileSync(submittedFile, `${JSON.stringify({ id: req.id, slot })}\n`, { mode: 0o600 });
+          } catch (error) {
+            appendFileSync(submittedFile, `${JSON.stringify({ id: req.id, error: String((error as Error)?.message ?? error) })}\n`, { mode: 0o600 });
+          }
+        }
+      } finally {
+        busy = false;
+      }
+    })();
+  };
+  const timer = setInterval(poll, 25);
+  timer.unref();
+  return () => { clearInterval(timer); off(); };
 }
 
 /** Where the built server's out/ folder is: `<out>/server/main.cjs` → `<out>`. */
