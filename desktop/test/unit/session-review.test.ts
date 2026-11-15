@@ -119,6 +119,34 @@ describe("session layer: the transport closing right behind the last frame", () 
     expect(pair.r.ended?.reason).toBe("transport");
   });
 
+  it("the session ends as soon as the frames received before the close were handled, not after the grace", async () => {
+    const pair = await connect();
+    await Promise.all([pair.i.link.established, pair.r.link.established]);
+    const receive = pair.r.link.receive.bind(pair.r.link);
+    pair.r.link.receive = (frame) => { receive(frame); pair.r.link.transportClosed(); };
+    pair.i.link.send("control", text("last words"));
+    await until(() => pair.r.got.length > 0, { what: "the last frame to be delivered" });
+    await pair.r.link.received();
+    // No timer involved: the end is chained on the inbox before `received()` is, so it has run by now.
+    expect(pair.r.ended?.reason).toBe("transport");
+  });
+
+  it("a frame handed over after the transport closed is not delivered", async () => {
+    const pair = await connect();
+    await Promise.all([pair.i.link.established, pair.r.link.established]);
+    const receive = pair.r.link.receive.bind(pair.r.link);
+    const held: Uint8Array[] = [];
+    pair.r.link.receive = (frame) => { held.push(frame); };
+    pair.i.link.send("control", text("after the close"));
+    await until(() => held.length > 0, { what: "the sealed frame" });
+    pair.r.link.transportClosed();
+    receive(held[0]!);
+    await until(() => pair.r.ended !== null, { what: "the responder's session to end" });
+    await pair.r.link.received();
+    expect(pair.r.got).toEqual([]);
+    expect(pair.r.link.delivered).toBe(0);
+  });
+
   it("a transport that closes while onFrame never returns still ends the session (bounded wait)", async () => {
     const pair = await connect({ onFrameR: () => new Promise<void>(() => undefined) });
     await Promise.all([pair.i.link.established, pair.r.link.established]);
