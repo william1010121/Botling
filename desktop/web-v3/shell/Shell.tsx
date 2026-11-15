@@ -19,7 +19,8 @@ import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
 import { askedPath, bannerText, FE_VERSION, itemWords, newDiagnostics, openConnection, UNSETTLED_LEGACY_WARNING, type Connection, type Diagnostics, type DialPath } from "./connection";
-import type { DeviceScope, ServerState } from "../../src/protocol";
+import { slotKey, type DeviceScope, type ServerState, type Slot } from "../../src/protocol";
+import { grantCommands, linkPluginSource, listPlugins, ONLY_MANAGE, pluginSheet, type GrantTier, type PluginSource } from "./plugins";
 
 /** Diagnostics for the headless harness and support (not a capability; the renderer never sees it). */
 export const diagnostics: Diagnostics = newDiagnostics();
@@ -346,6 +347,7 @@ export function ThisDevice({
   onForget: () => void;
 }) {
   const [confirm, setConfirm] = useState(false);
+  const [plugins, setPlugins] = useState(false);
   const [pendingItems, setPendingItems] = useState(() => connection?.link.pending() ?? []);
   const [attached, setAttached] = useState(() => connection?.link.attached ?? false);
   const [attachedServerId, setAttachedServerId] = useState<string | null>(
@@ -456,6 +458,9 @@ export function ThisDevice({
           </div>
         </div>)}
       </div>}
+      <div className="v3-sheet-actions">
+        <button type="button" className="web-secondary" data-testid="plugins-open" onClick={() => setPlugins(true)}>Plugins</button>
+      </div>
       {device.relay && <div className="v3-sheet-actions">
         <button type="button" className="web-secondary" data-testid="switch-path" onClick={() => void savePref("path", path === "relay" ? "auto" : "relay").then(() => location.reload())}>
           {path === "relay" ? "Connect directly" : "Connect via relay"}</button>
@@ -464,6 +469,102 @@ export function ThisDevice({
         ? <><p className="v3-sheet-warn">Forget this device? Messages still waiting here are dropped, and you pair again with a new link. To stop it everywhere, revoke it on the computer (botlingd revoke-device).</p>
           <div className="v3-sheet-actions"><button type="button" className="web-secondary" onClick={() => setConfirm(false)}>Keep</button><button type="button" className="web-primary" onClick={onForget}>Forget</button></div></>
         : <div className="v3-sheet-actions"><button type="button" className="web-secondary" onClick={() => setConfirm(true)}>Forget this device…</button><button type="button" className="web-primary" onClick={onClose}>Done</button></div>}
+    </section>
+    {plugins && <PluginsSheet device={device} connection={connection} onClose={() => setPlugins(false)} />}
+  </div>;
+}
+
+const NO_PLUGIN_SOURCE: PluginSource = { servers: () => [], rows: () => null };
+
+/**
+ * This device › Plugins (M5-14b, D54, §11.7): the list, and the grant sheet. It is the shell's own sheet, never drawn in a
+ * plugin frame. [Allow] sends one `plugin.grant` per machine that holds the shown code hash, each as that machine's own
+ * item (no `via`), and then shows each one's delivery words as for any command.
+ */
+export function PluginsSheet({ device, connection, onClose }: { device: DeviceRecord; connection: Connection | null; onClose: () => void }) {
+  const [, setTick] = useState(0);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const [choice, setChoice] = useState<GrantTier | null>(null);
+  const [sent, setSent] = useState<Array<{ name: string; slot: Slot }> | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const link = connection?.link ?? null;
+  const source = useMemo(() => (link ? linkPluginSource(link) : NO_PLUGIN_SOURCE), [link]);
+  const canManage = device.scope.includes("manage");
+
+  useEffect(() => {
+    if (!link) return;
+    // Rows (a peer's table changed) and delivery states change what the sheet shows.
+    return link.on((event) => { if (event.type === "servers" || event.type === "pending" || event.type === "outcome" || event.type === "attached") setTick((n) => n + 1); });
+  }, [link]);
+
+  const review = (name: string) => {
+    setSent(null);
+    setFailure(null);
+    setChoice(pluginSheet(source, name)?.selected ?? null);
+    setReviewing(name);
+  };
+  const sheet = reviewing ? pluginSheet(source, reviewing) : null;
+  const back = () => { setReviewing(null); setSent(null); setFailure(null); };
+
+  const allow = async () => {
+    if (!link || !sheet || !canManage || choice === null) return;
+    try {
+      const items = grantCommands(sheet, choice);
+      const slots: Array<{ name: string; slot: Slot }> = [];
+      for (const [index, item] of items.entries()) slots.push({ name: sheet.targets[index]!.serverName, slot: (await link.submit(item.target, item.cmd)).slot });
+      setSent(slots);
+      setFailure(null);
+    } catch (error) {
+      setFailure((error as Error).message);
+    }
+  };
+
+  if (reviewing && sheet) {
+    const views = link?.pending() ?? [];
+    return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
+      <section className="v3-sheet" role="dialog" aria-label="Plugin grant" data-testid="grant-sheet" onClick={(event) => event.stopPropagation()}>
+        <h2>{sheet.title}</h2>
+        <p>{sheet.askLine}</p>
+        {sheet.differing.map((line) => <p key={line} className="v3-sheet-warn">{line}</p>)}
+        {sheet.builtIn
+          ? <p className="v3-sheet-warn">built in</p>
+          : <fieldset className="v3-grant-options">
+            <legend>Allow it to:</legend>
+            {sheet.options.map((option) => <label key={option.tier} className="v3-grant-option">
+              <input type="radio" name="v3-grant-tier" value={option.tier} checked={choice === option.tier} disabled={sent !== null}
+                onChange={() => setChoice(option.tier)} /> {option.words}</label>)}
+          </fieldset>}
+        {sent && <div data-testid="grant-sent">
+          <p>{`Sent to ${sent.length} ${sent.length === 1 ? "machine" : "machines"}.`}</p>
+          {sent.map(({ name, slot }) => {
+            const view = views.find((item) => item.key === slotKey(slot));
+            return <p key={name} className="v3-sheet-warn">{view ? `${name}: ${itemWords(view)}` : name}</p>;
+          })}
+        </div>}
+        {failure && <p className="v3-sheet-warn" role="alert">{failure}</p>}
+        <div className="v3-sheet-actions">
+          <button type="button" className="web-secondary" onClick={back}>{sent ? "Done" : "Cancel"}</button>
+          {!sent && <button type="button" className="web-primary" disabled={!canManage || choice === null || sheet.targets.length === 0} onClick={() => void allow()}>Allow</button>}
+        </div>
+      </section>
+    </div>;
+  }
+
+  const list = listPlugins(source);
+  return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
+    <section className="v3-sheet" role="dialog" aria-label="Plugins" data-testid="plugins-sheet" onClick={(event) => event.stopPropagation()}>
+      <h2>This device › Plugins</h2>
+      <div className="v3-plugin-list">
+        {list.map((plugin) => <div key={plugin.name} className="v3-plugin-row" data-testid="plugin-row">
+          <span className="v3-plugin-name">{plugin.name}</span>
+          <span>{plugin.authorWords}</span>
+          <span>{plugin.tierWords}</span>
+          {!plugin.builtIn && (canManage
+            ? <button type="button" className="web-secondary" onClick={() => review(plugin.name)}>Review</button>
+            : <span className="v3-sheet-warn">{ONLY_MANAGE}</span>)}
+        </div>)}
+      </div>
+      <div className="v3-sheet-actions"><button type="button" className="web-primary" onClick={onClose}>Done</button></div>
     </section>
   </div>;
 }
