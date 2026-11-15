@@ -664,6 +664,26 @@ describe("M4-25 page push opt-in UI and iOS Home Screen rules", () => {
     expect(prefsMap.get("pushVapidKey")).toBe(newKey);
   });
 
+  it("syncPushOnAttach subscribes and sends only after the user opted in and permission is granted (review probe)", async () => {
+    let subscribeCalls = 0;
+    let getRegCalls = 0;
+    const sent: unknown[] = [];
+    const reg = { pushManager: { getSubscription: async () => null, subscribe: async () => { subscribeCalls += 1; return makeFakeSubscription(); } } };
+    const run = (permission: NotificationPermission, enabled: string | null) => syncPushOnAttach({
+      vapidPublicKey: makeVapidPub(40),
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs: { load: async (k) => (k === "pushEnabled" ? enabled : null), save: async () => undefined },
+      permission,
+      getRegistration: async () => { getRegCalls += 1; return reg as unknown as ServiceWorkerRegistration; },
+    });
+    for (const permission of ["default", "denied"] as const) expect(await run(permission, "1")).toBe("off");
+    expect(await run("granted", null)).toBe("off");
+    expect(await run("granted", "0")).toBe("off");
+    expect([subscribeCalls, getRegCalls, sent.length]).toEqual([0, 0, 0]);
+    expect(await run("granted", "1")).toBe("resubscribed");
+    expect([subscribeCalls, sent.length]).toEqual([1, 1]);
+  });
+
   it("enablePushNotifications refuses when permission is denied without subscribing", async () => {
     let subscribeCalls = 0;
     const res = await enablePushNotifications({
