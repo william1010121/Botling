@@ -80,7 +80,7 @@ describe("ShellFrame and the plugin feed", () => {
     let version = "1";
     const request = vi.fn(async (command: { type: string }) => (command.type === "plugins.web" ? { specs: [{ name: "botling.terminal", version }] } : null));
     const client = { request } as unknown as Client;
-    const ids = (slot: string) => rendererKernel.entries<{ row: { plugin: string } }>(slot).map(({ entry, registration }) => [entry.row.plugin, registration.id]);
+    const ids = (slot: string) => rendererKernel.entries<{ kind: string; row: { plugin: string } }>(slot).filter(({ entry }) => entry.kind === "feed").map(({ entry, registration }) => [entry.row.plugin, registration.id]);
     const shown = await mount(createElement(ShellFrame, { legacy: page, plugins: view, client }));
     expect(request).toHaveBeenCalledWith({ type: "plugins.web" });
     expect(pluginFeed.rows("app/bottom")).toEqual(view.bottomPanels);
@@ -120,7 +120,7 @@ describe("ShellFrame and the plugin feed", () => {
     const shown = await mount(createElement(ShellFrame, { legacy: page, plugins: view, client }));
     await shown.render(createElement(ShellFrame, { legacy: page, plugins: { ...view }, client }));
     await act(async () => { answers[1]!("new"); });
-    const ids = () => rendererKernel.entries<{ row: { plugin: string } }>("app/bottom").map(({ registration }) => registration.id);
+    const ids = () => rendererKernel.entries<{ kind: string }>("app/bottom").filter(({ entry }) => entry.kind === "feed").map(({ registration }) => registration.id);
     const before = ids();
     expect(before.length).toBe(view.bottomPanels!.length);
     await act(async () => { answers[0]!("old"); });

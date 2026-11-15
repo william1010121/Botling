@@ -221,8 +221,8 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     expect(feed.rows("view/settings.section")).toEqual(view.settingsSections);
     expect(feed.rows("settings/quick")).toEqual(view.quickSettings);
     expect(new Set(events.slice(before).map((event) => event.plugin).filter((name) => quiet.includes(name)))).toEqual(new Set());
-    // The stand-in owner holds main/tab too, but the feed was not told: the tabs come when it is.
-    expect(feed.rows("view/mainTab")).toEqual([]);
+    // The stand-in owner holds main/tab too, but the feed was not told: only the plugin the refresh above reloaded (zed.tools has settings rows) put its tab in; the rest come when it is told.
+    expect(feed.rows("view/mainTab").map((row) => (row as { plugin: string }).plugin)).toEqual(["zed.tools"]);
     feed.refresh(["main/tab"]);
     expect(feed.rows("view/mainTab")).toEqual(view.mainTabs);
     // A slot nobody here contributes to: no step at all.
