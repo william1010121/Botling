@@ -215,7 +215,7 @@ describe("M2 step 13: the relay transport (local relay)", () => {
       const srvSnap = await script.wait((m): m is MessageOf<"snap"> => m.t === "snap" && m.stream === script!.srv, "srv snap");
       const bots = [MAIN];
       for (let n = 1; n <= 2; n++) {
-        script.cmd({ origin: "script", originEpoch: script.originEpoch, target: script.srv, n } as Slot, { type: "bots.create", name: `Relay bot ${n}`, job: "relay test" }, srvSnap.logId);
+        script.cmd({ origin: script.deviceId, originEpoch: script.originEpoch, target: script.srv, n } as Slot, { type: "bots.create", name: `Relay bot ${n}`, job: "relay test" }, srvSnap.logId);
         const created = await script.wait((m): m is MessageOf<"cmd.result"> => m.t === "cmd.result" && m.slot.n === n && m.slot.target === script!.srv, "bots.create");
         bots.push((created.outcome as { result: { botId: string } }).result.botId);
       }
