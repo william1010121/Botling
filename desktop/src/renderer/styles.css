@@ -122,6 +122,14 @@ button { font: inherit; color: inherit; }
 .plugin-buttons button, .plugin-secret button { background: var(--chip); border: 0; border-radius: 8px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
 .plugin-buttons button:hover:not(:disabled), .plugin-secret button:hover:not(:disabled) { background: var(--selected); }
 .plugin-buttons button:disabled, .plugin-secret button:disabled { opacity: 0.5; cursor: default; }
+/* Botling 3: approve a plugin from the window (Plugins.tsx GrantChoice); the same chips as the plugin buttons. */
+.plugin-grant { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 6px; }
+.plugin-grant .plugin-asks { flex-basis: 100%; }
+.plugin-grant-option { display: flex; align-items: center; gap: 4px; color: var(--muted); cursor: pointer; }
+.plugin-grant-allow { background: var(--chip); border: 0; border-radius: 8px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+.plugin-grant-allow:hover:not(:disabled) { background: var(--selected); }
+.plugin-grant-allow:disabled { opacity: 0.5; cursor: default; }
+.plugin-grant .plugin-grant-sent, .plugin-grant .plugins-problem { flex-basis: 100%; }
 .plugins-problem { color: var(--error); margin: 2px 0 6px; }
 .plugins-result { color: var(--green); margin: 2px 0 6px; }
 .plugins-empty { color: var(--faint); margin: 2px 0; }

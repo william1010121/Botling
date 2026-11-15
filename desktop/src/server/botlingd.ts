@@ -62,7 +62,7 @@ import { PeerChatMirror, type MirrorBot } from "./replica/peer-chat-mirror";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, readRowBody, SummaryRows, TableFeeds } from "./replica";
 import { PluginAdmin } from "./plugin-admin";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
-import type { Command } from "../contract";
+import type { Command, PluginView } from "../contract";
 import type { Target } from "../protocol";
 import { Directory, Forwarder, OwnerInbox, ServerOrigin } from "./forward";
 import { designatedServer, machineLabel } from "./designated";
@@ -212,6 +212,22 @@ export function readPluginGrant(db: Db, serverId: string, name: string): "none" 
     return (Object.hasOwn(parsed.data.grants, parsed.data.codeHash) ? parsed.data.grants[parsed.data.codeHash]?.tier : undefined) ?? "none";
   } catch {
     return "none";
+  }
+}
+
+/**
+ * What this server's `plugin:<name>` row asks at its running hash, for the window's Settings › Plugins approval: the hash
+ * the window shows and grants at, and the manifest's tier, reads and requests (`plugin.grant` left out: never grantable,
+ * D54). Null when there is no valid row or the read fails (L-009: the window then offers no approval).
+ */
+export function readPluginAsks(db: Db, serverId: string, name: string): PluginView["asks"] | null {
+  try {
+    const parsed = PluginRow.safeParse(readRowBody(db, `srv:${serverId}`, `plugin:${name}`));
+    if (!parsed.success) return null;
+    const { codeHash, manifest } = parsed.data;
+    return { codeHash, tier: manifest.tier, reads: [...manifest.reads], requests: manifest.requests.filter((type) => type !== "plugin.grant") };
+  } catch {
+    return null;
   }
 }
 
@@ -567,6 +583,7 @@ export class Botlingd {
         remoteTurn: (call) => hostCallIns ? hostCallIns.remoteTurn(call) : Promise.resolve({ kind: "failed", why: "its machine cannot take call-ins yet" }),
         fetch: createAppFetch({ roster, requester: () => fetchRequesterRef }),
         pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
+        pluginAsks: (name) => readPluginAsks(hub.reader(), serverId, name),
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory, ids.main);
           opened.set(key, directory);
