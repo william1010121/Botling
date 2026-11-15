@@ -17,7 +17,7 @@
 //   are handled one at a time in order (the link awaits onFrame: D58).
 // - Keepalive: `ping` after `pingMs` of this side's silence, `bye{dead}` after `deadMs` heard nothing.
 import {
-  decodeWireFrame, encodeChunkFrame, encodeWireFrame, fromBase64Url, statementId, type MessageOf, type SignedStatement, type WireMessage,
+  decodeWireFrame, encodeChunkFrame, encodeWireFrame, fromBase64Url, statementId, type ChunkMessage, type MessageOf, type SignedStatement, type WireMessage,
 } from "../../protocol";
 import { SessionLink, type LocalStatic, type PeerClaim, type PeerDecision, type PeerStatic, type SessionEnd, type SessionInfo, type SessionTransport } from "../../session";
 import type { RosterChange, RosterView } from "../roster";
@@ -102,6 +102,7 @@ export interface PeerSessionEvents {
 
 export class PeerSession {
   readonly link: SessionLink;
+  readonly transport: "tailnet" | "relay";
   /** The member id of the side that dialled. */
   initiator: string | null;
   peer: string | null;
@@ -128,6 +129,7 @@ export class PeerSession {
   private readonly now: () => number;
 
   constructor(transport: SessionTransport, side: { dial: PeerStatic; transport?: "tailnet" | "relay" } | { accept: true; transport?: "tailnet" | "relay" }, private readonly host: PeerSessionHost, private readonly events: PeerSessionEvents = {}) {
+    this.transport = side.transport ?? "tailnet";
     this.now = host.now ?? Date.now;
     this.lastHeard = this.lastSent = this.now();
     const cluster = host.roster.clusterId ?? "0".repeat(32);
@@ -202,13 +204,13 @@ export class PeerSession {
   }
 
   /**
-   * Sends a `content.chunk` as a binary frame on the bulk lane (M3 step 10, §5.3: control frames still go first, so an
-   * approval waits at most one chunk). False: not open, or not sent.
+   * Sends a `content.chunk` or `fetch.chunk` as a binary frame on the bulk lane (M3 step 10, M5-07a, §5.3: control
+   * frames still go first, so an approval waits at most one chunk). False: not open, or not sent.
    */
-  sendChunk(message: MessageOf<"content.chunk">): boolean {
+  sendChunk(message: ChunkMessage): boolean {
     if (this.state !== "open" || this.flushing || this.link.state === "ended") return false;
     const encoded = encodeChunkFrame(message, "peer", PEER_KIND);
-    if (!encoded.ok) { this.host.log(`peer ${this.peer ?? "?"}: cannot send content.chunk: ${encoded.detail}`); return false; }
+    if (!encoded.ok) { this.host.log(`peer ${this.peer ?? "?"}: cannot send ${message.t}: ${encoded.detail}`); return false; }
     try { this.link.send("bulk", encoded.bytes); } catch { return false; }
     this.lastSent = this.now();
     return true;

@@ -218,7 +218,7 @@ export class PeerSessions {
     if (this.closed) { connection.close(); entry.dialing = false; return; }
     const session = new PeerSession(connection, { dial: keys }, this.host, this.sessionEvents(entry));
     this.sessions.add(session);
-    connection.bind({ frame: (frame) => session.receive(frame), closed: () => session.transportClosed() });
+    connection.bind({ frame: (frame) => session.receive(frame), closed: () => session.transportClosed(), resume: () => session.link.resume() });
   }
 
   private sessionEvents(dialled?: Entry) {
