@@ -190,6 +190,11 @@ describe("Plugins.view() and readPluginAsks", () => {
       tx.prepare("INSERT OR REPLACE INTO rows (stream, key, rev, body, deleted) VALUES (?, ?, 99, ?, 0)").run(stream, "plugin:broken", JSON.stringify({ codeHash: HASH, grants: "bad" }));
     });
     expect(readPluginAsks(reader, serverId, "broken")).toBeNull();
+    // Review: asks the row allows but PluginView (and plugin.grant) cannot carry offer no approval instead of an invalid view.
+    for (const reads of [[""], Array.from({ length: 51 }, (_, i) => `r${i}`)]) {
+      await store.submit((tx) => { putRow(tx, stream, "plugin:wide", { ...row, manifest: { ...row.manifest, reads } }); });
+      expect(readPluginAsks(reader, serverId, "wide")).toBeNull();
+    }
     const throwing = { prepare() { throw new Error("database is closed"); } } as unknown as typeof reader;
     expect(readPluginAsks(throwing, serverId, "reading-coach")).toBeNull();
   });

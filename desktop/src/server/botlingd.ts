@@ -62,7 +62,7 @@ import { PeerChatMirror, type MirrorBot } from "./replica/peer-chat-mirror";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, readRowBody, SummaryRows, TableFeeds } from "./replica";
 import { PluginAdmin } from "./plugin-admin";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
-import type { Command, PluginView } from "../contract";
+import { PluginView, type Command } from "../contract";
 import type { Target } from "../protocol";
 import { Directory, Forwarder, OwnerInbox, ServerOrigin } from "./forward";
 import { designatedServer, machineLabel } from "./designated";
@@ -225,7 +225,11 @@ export function readPluginAsks(db: Db, serverId: string, name: string): PluginVi
     const parsed = PluginRow.safeParse(readRowBody(db, `srv:${serverId}`, `plugin:${name}`));
     if (!parsed.success) return null;
     const { codeHash, manifest } = parsed.data;
-    return { codeHash, tier: manifest.tier, reads: [...manifest.reads], requests: manifest.requests.filter((type) => type !== "plugin.grant") };
+    const asks = { codeHash, tier: manifest.tier, reads: [...manifest.reads], requests: manifest.requests.filter((type) => type !== "plugin.grant") };
+    // The row allows asks the view (and a `plugin.grant`) cannot carry, e.g. an empty or 51st read: such a plugin is offered
+    // no approval, rather than one bad PluginView making the adapter drop every `plugins.updated` (EventEnvelope check).
+    const fits = PluginView.shape.asks.safeParse(asks);
+    return fits.success && fits.data ? fits.data : null;
   } catch {
     return null;
   }
