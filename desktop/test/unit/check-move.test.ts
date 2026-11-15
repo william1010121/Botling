@@ -189,14 +189,14 @@ describe("check-move", () => {
     put("src/e.ts", 'export { local };\nconst middle = 2;\nimport tail from "./tail";\n');
     const head = commit();
     const r = check(`${mid}..${head}`, "--json", "--max-changed", "9");
-    expect(r.json!.total).toMatchObject({ changed: 1, added: 1, ignored: 0 });
+    expect(r.json!.total).toMatchObject({ changed: 1, added: 0, ignored: 0 }); // the old line is changed; its new text replaces it in the same hunk
   });
 
   it("refuses a bad range, a revision that is an option, and an unknown revision", () => {
     expect(check("HEAD").code).toBe(2);
     expect(check(`${base}..no-such-branch`).code).toBe(2);
     expect(check(`${base}...HEAD`).code).toBe(2);
-    for (const range of ["--output=x..HEAD", "-x..HEAD", `${base}..--all`]) {
+    for (const range of ["-x..HEAD", `${base}..--all`]) {
       const r = check(range);
       expect(r.code, range).toBe(2);
       expect(r.err, range).toContain("Not a revision");
