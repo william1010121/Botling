@@ -123,6 +123,12 @@ describe("M5-14b sheet model and commands", () => {
     for (const item of grantCommands(sheet, "request")) expect(item.cmd.requests).toEqual(["chat.send"]);
   });
 
+  it("re-review: a quote inside a reads item cannot close the quoting", () => {
+    const m = { ...manifest("read"), reads: ['x"; it never sends; "y'] };
+    const sheet = pluginSheet(source({ [SRV_A]: { "plugin:p": row({ manifest: m }) } }), "p")!;
+    expect(sheet.askLine).toBe('It asks to: read the chat it is shown in; read "x\\"; it never sends; \\"y".');
+  });
+
   it("review: reads are quoted and other requests say send, not use", () => {
     const m = { ...manifest("request", ["chat.send", "settings.set"]), reads: ["nothing else; it never sends"] };
     const sheet = pluginSheet(source({ [SRV_A]: { "plugin:p": row({ manifest: m }) } }), "p")!;
@@ -234,6 +240,59 @@ describe("M5-14b the sheet in Shell.tsx", () => {
     await click(buttonNamed(el, "Review"));
     expect(buttonNamed(el, "Allow")).toBeUndefined();
     expect(sent).toHaveLength(2);
+  });
+
+  it("re-review: after sending request, Done then Review again shows it sent and locked, and sends nothing more", async () => {
+    const sent: Sent[] = [];
+    const el = await mountSheet(["read", "reply", "manage"], peers(row({ grants: { [HASH]: grant("read") } }), row({ grants: { [HASH]: grant("read") } })), sent);
+    await click(buttonNamed(el, "Review"));
+    await click([...el.querySelectorAll<HTMLInputElement>("input[type=radio]")][1]!);
+    await click(buttonNamed(el, "Allow"));
+    expect(sent.map((s) => s.cmd.tier)).toEqual(["request", "request"]);
+    await click(buttonNamed(el, "Done"));
+    await click(buttonNamed(el, "Review"));
+    const allow = buttonNamed(el, "Allow");
+    if (allow) await click(allow);
+    expect(sent.map((s) => s.cmd.tier)).toEqual(["request", "request"]);
+  });
+
+  it("re-review: a part-way failure at request, then Done and Review: the retry still sends request, only to the missing machine", async () => {
+    const sent: Sent[] = [];
+    const el = await mountSheet(["read", "reply", "manage"], peers(row({ grants: { [HASH]: grant("read") } }), row({ grants: { [HASH]: grant("read") } })), sent, `srv:${SRV_C}`);
+    await click(buttonNamed(el, "Review"));
+    await click([...el.querySelectorAll<HTMLInputElement>("input[type=radio]")][1]!);
+    await click(buttonNamed(el, "Allow"));
+    await click(buttonNamed(el, "Done"));
+    await click(buttonNamed(el, "Review"));
+    const radios = [...el.querySelectorAll<HTMLInputElement>("input[type=radio]")];
+    expect(radios.map((r) => [r.checked, r.disabled])).toEqual([[false, true], [true, true]]);
+    expect(el.textContent).toContain("Sent to 1 machine.");
+    const allow = buttonNamed(el, "Allow");
+    if (allow) await click(allow);
+    expect(sent.map((s) => `${s.target.slice(4, 8)}:${s.cmd.tier}`)).toEqual(["srvb:request", "srvc:request"]);
+  });
+
+  it("re-review: a radio change while Allow is sending cannot split the act or unlock another tier", async () => {
+    const sent: Sent[] = [];
+    const el = await mountSheet(["read", "reply", "manage"], peers(row({ grants: { [HASH]: grant("read") } }), row({ grants: { [HASH]: grant("read") } })), sent);
+    await click(buttonNamed(el, "Review"));
+    await click([...el.querySelectorAll<HTMLInputElement>("input[type=radio]")][1]!);
+    const allow = buttonNamed(el, "Allow");
+    await act(async () => { allow.click(); [...el.querySelectorAll<HTMLInputElement>("input[type=radio]")][0]!.click(); });
+    expect(sent.map((s) => s.cmd.tier)).toEqual(["request", "request"]);
+    expect([...el.querySelectorAll<HTMLInputElement>("input[type=radio]")].map((r) => [r.checked, r.disabled])).toEqual([[false, true], [true, true]]);
+    expect(buttonNamed(el, "Allow")).toBeUndefined();
+  });
+
+  it("re-review: when the first send fails nothing is locked, and the user may pick another tier", async () => {
+    const sent: Sent[] = [];
+    const el = await mountSheet(["read", "reply", "manage"], peers(row({ grants: { [HASH]: grant("read") } }), row({ grants: { [HASH]: grant("read") } })), sent, `srv:${SRV_B}`);
+    await click(buttonNamed(el, "Review"));
+    await click([...el.querySelectorAll<HTMLInputElement>("input[type=radio]")][1]!);
+    await click(buttonNamed(el, "Allow"));
+    expect(sent).toEqual([]);
+    expect(el.textContent).toContain("outbox is full");
+    expect([...el.querySelectorAll<HTMLInputElement>("input[type=radio]")].map((r) => r.disabled)).toEqual([false, false]);
   });
 
   it("3. a device without manage: no Review button and no submit, the text shown", async () => {

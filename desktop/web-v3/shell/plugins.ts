@@ -138,7 +138,9 @@ export interface SheetModel {
 }
 
 function askLine(row: PluginRow): string {
-  const parts = ["read the chat it is shown in", ...row.manifest.reads.map((item) => `read "${item}"`)];
+  // Manifest text is the plugin author's (maybe a bot's): quoted with its own quotes escaped, so it cannot close the quote
+  // and read as the sheet's words.
+  const parts = ["read the chat it is shown in", ...row.manifest.reads.map((item) => `read ${JSON.stringify(item)}`)];
   for (const type of row.manifest.requests) {
     if (type === "plugin.grant") continue; // D54: never offered as a request
     parts.push(type === "chat.send" ? "send messages in that chat (chat.send)" : `send ${type}`);
