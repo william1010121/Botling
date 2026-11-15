@@ -1039,7 +1039,7 @@ export class Botlingd {
       | "peerLogs" | "passOwner" | "remoteContent" | "peerContent" | "peerContentOwner" | "chunkCache" | "serverOrigin"
       | "fetchSource" | "fetchRequester" | "vapidSync" | "media" | "pluginTimer" | "utilityHost" | "origin" | "relayAddress"
       | "relayRoom">,
-  ): Promise<Botlingd> {
+  ) {
     const { env, paths, log, later, lock, store, serverId, identity, roster, clusterSetup, hub, live, exports, stores, core, runtime,
       content, shell, server, remote, pairing, summary, push, peers, serverJoin, feeds, peerTables, passThrough, peerLogs, passOwner,
       remoteContent, peerContent, peerContentOwner, chunkCache, serverOrigin, fetchSource, fetchRequester, vapidSync, media,
@@ -1085,10 +1085,11 @@ export class Botlingd {
    */
   private static async listenAll(
     s: Pick<StartContext, "options" | "env" | "paths" | "log" | "port" | "origin" | "later"
-      | "store" | "hub" | "core" | "runtime" | "roster" | "server" | "peers" | "vapidSync" | "forwarder" | "serverOrigin" | "daemon">,
+      | "store" | "serverId" | "hub" | "core" | "runtime" | "roster" | "server" | "peers" | "vapidSync" | "forwarder"
+      | "serverOrigin" | "daemon">,
   ): Promise<void> {
-    const { options, env, paths, log, port, origin, later, store, hub, core, runtime, roster, server, peers, vapidSync, forwarder,
-      serverOrigin, daemon } = s;
+    const { options, env, paths, log, port, origin, later, store, serverId, hub, core, runtime, roster, server, peers, vapidSync,
+      forwarder, serverOrigin, daemon } = s;
     await server.listen();
     await daemon.listen(port, options.outDir, origin);
     await daemon.relay?.start();
