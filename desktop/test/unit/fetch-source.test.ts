@@ -1043,11 +1043,15 @@ describe("M5-07a: fetch source", () => {
     deep(join(env.artifactsA, "ok64"), FETCH_MAX_DEPTH);
     deep(join(env.artifactsA, "bad65"), FETCH_MAX_DEPTH + 1);
     // A file reached through a link counts at the folder the link sits in, like any other file.
-    const linkRoot = join(env.artifactsA, "bad65link");
-    const linkFolders = Array.from({ length: FETCH_MAX_DEPTH + 1 }, (_, i) => `f${i}`);
-    mkdirSync(join(linkRoot, ...linkFolders), { recursive: true });
-    writeFileSync(join(linkRoot, "real.txt"), "real");
-    symlinkSync(join(linkRoot, "real.txt"), join(linkRoot, ...linkFolders, "leaf.txt"));
+    const linked = (name: string, depth: number) => {
+      const root = join(env.artifactsA, name);
+      const folders = Array.from({ length: depth }, (_, i) => `f${i}`);
+      mkdirSync(join(root, ...folders), { recursive: true });
+      writeFileSync(join(root, "real.txt"), "real");
+      symlinkSync(join(root, "real.txt"), join(root, ...folders, "leaf.txt"));
+    };
+    linked("ok64link", FETCH_MAX_DEPTH);
+    linked("bad65link", FETCH_MAX_DEPTH + 1);
     deep(join(env.srcA, "bad65"), FETCH_MAX_DEPTH + 1); // outside the artifacts: this one would need an approval card
     const ask = async (fetchId: string, what: { kind: "artifact"; botId: string; path: string } | { kind: "path"; path: string }) => {
       const sink = makeFakeSink(env.kb.memberId);
@@ -1058,6 +1062,8 @@ describe("M5-07a: fetch source", () => {
 
     const good = await ask("fa-ok", { kind: "artifact", botId: "bot-a", path: "ok64" });
     expect(good.end.t).toBe("fetch.done");
+
+    expect((await ask("fa-ok-link", { kind: "artifact", botId: "bot-a", path: "ok64link" })).end.t).toBe("fetch.done");
 
     const bad = await ask("fa-bad", { kind: "artifact", botId: "bot-a", path: "bad65" });
     expect(bad.end).toMatchObject({ t: "fetch.denied", fetchId: "fa-bad", reason: "limit" });
