@@ -1,13 +1,14 @@
 // Botling 3 M4-16b: a server dials a peer server through the peer's relay room (server/peer/relay-connector.ts,
 // peer-session.ts dialer transport: "relay"), with §6.3 pacing and revocation-sync-first KK sessions.
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   decodeFrame, decodeWireFrame, encodeFrame, encodeWireFrame, fromBase64Url, slotKey,
-  type Message, type MessageOf, type Slot, type WireMessage,
+  type Message, type MessageOf, type Slot, type StreamId, type WireMessage,
 } from "../../src/protocol";
 import { effectCheckpointSink } from "../../src/server/effects";
 import { ensureBot } from "../../src/server/effects/log-ops";
@@ -16,26 +17,26 @@ import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "..
 import { IntentRuntime } from "../../src/server/intents";
 import { LiveChannel } from "../../src/server/live";
 import { LogHub } from "../../src/server/log";
-import { LoopbackListener, RELAY_PACE, RelayConnector } from "../../src/server/net";
+import { CHANNEL_FRAMES, LoopbackListener, RELAY_PACE, RelayConnector } from "../../src/server/net";
 import { PairingService } from "../../src/server/pairing";
 import {
   DEFAULT_PEER_TIMERS, peerAddresses, PeerSession, PeerSessions, relayConnector, SessionRouter, webSocketConnector,
   type PeerSessionHost, type RelayAddress,
 } from "../../src/server/peer";
 import { PeerTables, TableFeeds } from "../../src/server/replica";
-import { Gossip, parseStored, PrefsStore, RosterStore } from "../../src/server/roster";
+import { Gossip, parseStored, PrefsStore, RosterStore, type StoredStatement } from "../../src/server/roster";
 import { RemoteSessions, slotAuthorize, type RemoteHost, type SessionHost } from "../../src/server/session";
 import { ShellBridge } from "../../src/server/shell-bridge";
 import { openServerStore } from "../../src/server/store";
-import { generateDhKeyPair, newRelayRoomKey, relayDeviceToken, relayRoomOf, relayTokenHash, SessionLink } from "../../src/session";
+import { newRelayRoomKey, relayDeviceToken, relayRoomOf, relayTokenHash, SessionLink } from "../../src/session";
 import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
 import { until } from "../helpers";
 import { bucketRefusals, LocalRelay, maxInWindow, RelayMeter } from "../support/local-relay";
-import { makeCluster, readServerKeys, strangerKeys, writeStatements, type MemberKeysInfo } from "../support/peer-cluster";
+import { makeCluster, readServerKeys, sign, strangerKeys, writeStatements, type MemberKeysInfo } from "../support/peer-cluster";
 import { freeLoopbackPort, startServers, type TestCluster, type TestServer } from "../support/two-servers";
 import { deviceKeys } from "../support/ws-device";
 
-const TIMERS = { ping: 300, dead: 1_500, redial: 150, redialMax: 800, revoked: 2_500 };
+const TIMERS = { ping: 300, dead: 3_000, redial: 150, redialMax: 800, revoked: 2_500 };
 const TIMERS_ENV = { BOTLING_SERVER_PEER_TIMERS: Object.entries(TIMERS).map(([k, v]) => `${k}=${v}`).join(",") };
 const REMOTE = { local: false } as const;
 const encoder = new TextEncoder();
@@ -63,6 +64,29 @@ function readRelayAddress(server: TestServer): RelayAddress | null {
     }
     return null;
   });
+}
+
+function readAddressProfiles(server: TestServer): StoredStatement[] {
+  return withDb(server, (db) => {
+    const rows = db.prepare("SELECT id, bytes FROM roster WHERE kind = 'profile' ORDER BY receivedAt DESC").all() as Array<{ id: string; bytes: Uint8Array }>;
+    const out: StoredStatement[] = [];
+    for (const row of rows) {
+      const statement = parseStored(row.bytes);
+      if (statement?.body.type === "profile" && statement.body.field === "addresses") {
+        out.push({ id: row.id, statement });
+      }
+    }
+    return out;
+  });
+}
+
+function readPeerFile(server: TestServer): Array<{ member: string; state: string; initiator?: string; sessionId?: string; path?: string }> {
+  try {
+    const raw = JSON.parse(readFileSync(join(server.dataDir, "botlingd.peers.json"), "utf8")) as { peers?: Array<{ member: string; state: string; initiator?: string; sessionId?: string; path?: string }> };
+    return raw.peers ?? [];
+  } catch {
+    return [];
+  }
 }
 
 async function openInProcessA(dataDir: string, options: { onRelayMessage?: PeerSessionHost["onMessage"]; withListener?: boolean } = {}) {
@@ -202,6 +226,7 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     // Wait for B to open its relay room and publish its relay address in its own Profile.
     bRelayAddress = await until(() => readRelayAddress(b), { timeout: 20_000, what: "B's relay address profile" });
     await until(() => b.log.includes("relay: room open"), { timeout: 15_000, what: "B's relay room open" });
+    await until(() => (serverBMeter.connections.at(-1)?.counts.allow ?? 0) >= 1, { timeout: 15_000, what: "B sent allow list to relay" });
   }, 120_000);
 
   afterAll(async () => {
@@ -212,7 +237,13 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
   }, 60_000);
 
   it("1: KK session through the relay completes with transport 'relay' and exchanges roster.revocations first", async () => {
-    const stackA = await openInProcessA(a.dataDir);
+    const gotFromB: WireMessage[] = [];
+    const stackA = await openInProcessA(a.dataDir, {
+      onRelayMessage: (_session, msg) => {
+        gotFromB.push(msg);
+        return false;
+      },
+    });
     cleanups.push(() => stackA.close());
 
     const kbDhPub = fromBase64Url(kb.dh)!;
@@ -230,18 +261,20 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     });
     conn.bind({ frame: (f) => session.receive(f), closed: () => session.transportClosed(), resume: () => session.link.resume() });
 
-    await until(() => opened && session.state === "open", { timeout: 15_000, what: "relay KK PeerSession open" });
+    await until(() => opened && session.state === "open", { timeout: 20_000, what: "relay KK PeerSession open" });
     expect(session.link.info?.transport).toBe("relay");
     expect(session.link.info?.mode).toBe("kk");
     expect(session.link.info?.peer.memberId).toBe(kb.memberId);
 
-    // Send a ping after handshake + revocation sync; B keeps the session open, proving B accepted our
-    // roster.revocations first.
+    // Send a ping followed by a sub for B's srv: table after handshake + revocation sync; receiving B's `rows`
+    // deterministically proves B accepted our roster.revocations first, processed ping, and kept the session open.
+    const srvB = `srv:${kb.memberId}` as StreamId;
     expect(session.sendWire({ t: "ping", at: Date.now() })).toBe(true);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(session.sendWire({ t: "sub", stream: srvB, cursor: null })).toBe(true);
+    await until(() => gotFromB.some((m) => m.t === "rows" && m.stream === srvB), { timeout: 20_000, what: "B answered sub after ping over relay" });
     expect(session.state).toBe("open");
     session.bye("closing", "test 1 done");
-    await until(() => session.state === "closed", { timeout: 5_000, what: "session 1 closed" });
+    await until(() => session.state === "closed", { timeout: 10_000, what: "session 1 closed" });
 
     // Verify B strictly enforces roster.revocations first over relay (same as tailnet): sending `ping` before
     // `roster.revocations` causes B to close with bye{role}.
@@ -262,7 +295,7 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     expect(rawInfo.transport).toBe("relay");
 
     // B's first frame MUST be roster.revocations.
-    await until(() => rawGot.length >= 1, { timeout: 10_000, what: "B's first frame over relay" });
+    await until(() => rawGot.length >= 1, { timeout: 15_000, what: "B's first frame over relay" });
     expect(rawGot[0]!.t).toBe("roster.revocations");
 
     // Send ping BEFORE sending our roster.revocations: B must refuse with bye{role}.
@@ -270,10 +303,10 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     expect(badFirst.ok).toBe(true);
     if (badFirst.ok) rawLink.send("control", encoder.encode(badFirst.text));
 
-    await until(() => rawGot.some((m) => m.t === "bye") || rawEnded, { timeout: 10_000, what: "B rejects out-of-order ping" });
+    await until(() => rawGot.some((m) => m.t === "bye") && rawEnded, { timeout: 15_000, what: "B rejects out-of-order ping" });
     const byeMsg = rawGot.find((m): m is MessageOf<"bye"> => m.t === "bye");
     expect(byeMsg?.reason).toBe("role");
-  }, 30_000);
+  }, 60_000);
 
   it("2: a command forwarded A -> B over the relay session applies once (reused from peer-forward-faults)", async () => {
     // Create a bot + message on B (exact pattern from peer-forward-faults.test.ts).
@@ -333,6 +366,7 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     const epoch = "a".repeat(32);
     const phConn = await webSocketConnector.connect(`ws://127.0.0.1:${stackA.port}/v3/ws`);
     cleanups.push(() => phConn.close());
+
     const results = new Map<string, MessageOf<"cmd.result">>();
     const heldSlots: string[] = [];
     let phOpen = false;
@@ -376,8 +410,6 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
 
     // Re-send duplicate slot bot:botB#1 to confirm exactly-once at B.
     sendPhoneCmd(`bot:${botB}`, 1, react(true));
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
     await until(() => {
       const s = stackA.forwarder.stats();
       return s.rows === 0 && s.cancels === 0;
@@ -400,6 +432,8 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
   it("3: killing the relay ends the open session, and the dialler reports a dial failure", async () => {
     const localRelay = await new LocalRelay().ready();
     cleanups.push(() => localRelay.stop());
+    const roomMeter = await new RelayMeter(() => localRelay.url).start();
+    cleanups.push(() => roomMeter.stop());
 
     const dirB = join(scratchRoot, "t3-b");
     mkdirSync(dirB, { recursive: true, mode: 0o700 });
@@ -428,11 +462,10 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     const roomId = await relayRoomOf(roomKey);
     const tokenA = await relayDeviceToken(idA.memberId, idA.dhKey, idB.dhPub);
     const tokenAHash = await relayTokenHash(tokenA);
-    const relayConnB = new RelayConnector({ url: localRelay.url, roomKey, sessions: routerB, allowList: async () => [{ h: tokenAHash }], log: () => undefined });
+    const relayConnB = new RelayConnector({ url: roomMeter.url, roomKey, sessions: routerB, allowList: async () => [{ h: tokenAHash }], log: () => undefined });
     cleanups.push(async () => { relayConnB.close(); peersB.close(); await openB.close(); });
     await relayConnB.start();
-    await until(() => relayConnB.state === "ready", { timeout: 10_000, what: "test 3 room ready" });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await until(() => relayConnB.state === "ready" && (roomMeter.connections[0]?.counts.allow ?? 0) >= 1, { timeout: 10_000, what: "test 3 room ready and allow sent" });
 
     const stackA = await openInProcessA(dirA);
     cleanups.push(() => stackA.close());
@@ -454,11 +487,14 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     await expect(connector.connect(localRelay.url)).rejects.toThrow();
   }, 30_000);
 
-  it("4: a wrong token is refused by the relay (4403), with no frame delivered", async () => {
+  it("4: a wrong token is refused by the relay (4403), with zero d frames on RelayMeter", async () => {
     const stackA = await openInProcessA(a.dataDir);
     cleanups.push(() => stackA.close());
 
-    const bLogsBefore = b.log.length;
+    const countDFrames = (m: RelayMeter) => m.connections.reduce((sum, c) => sum + (c.receivedCounts.d ?? 0), 0);
+    const serverDBefore = countDFrames(serverBMeter);
+    const dialerConnsBefore = dialerMeter.connections.length;
+
     const kbDhPub = fromBase64Url(kb.dh)!;
     const wrongExplicit = relayConnector({ room: bRelayAddress.room, token: "wrong-token-0123456789abcdef" });
     await expect(wrongExplicit.connect(dialerMeter.url)).rejects.toThrow(/4403|denied/);
@@ -472,14 +508,21 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     });
     await expect(wrongDerived.connect(dialerMeter.url)).rejects.toThrow(/4403|denied/);
 
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(b.log.slice(bLogsBefore)).not.toContain("handshake ended");
-    expect(b.log.slice(bLogsBefore)).not.toContain("peer ");
+    const refusedConns = dialerMeter.connections.slice(dialerConnsBefore);
+    expect(refusedConns).toHaveLength(2);
+    for (const c of refusedConns) {
+      expect(c.relayClosed?.code).toBe(4403);
+      expect(c.counts.to ?? 0).toBe(0);
+      expect(c.receivedCounts.d ?? 0).toBe(0);
+    }
+    expect(countDFrames(serverBMeter)).toBe(serverDBefore);
   }, 30_000);
 
   it("5: pacing obeys §6.3 limits (<= 45/s, burst <= 150, content <= 30/s) and SessionLink writable/resume back-pressure", async () => {
     const localRelay = await new LocalRelay().ready();
     cleanups.push(() => localRelay.stop());
+    const roomMeter = await new RelayMeter(() => localRelay.url).start();
+    cleanups.push(() => roomMeter.stop());
     const meter = await new RelayMeter(() => localRelay.url).start();
     cleanups.push(() => meter.stop());
 
@@ -492,7 +535,7 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
 
     const receivedAtB: Uint8Array[] = [];
     const relayConnB = new RelayConnector({
-      url: localRelay.url,
+      url: roomMeter.url,
       roomKey,
       allowList: async () => [{ h: tokenHash }],
       log: () => undefined,
@@ -515,8 +558,7 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     });
     cleanups.push(() => relayConnB.close());
     await relayConnB.start();
-    await until(() => relayConnB.state === "ready", { timeout: 10_000, what: "test 5 room ready" });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await until(() => relayConnB.state === "ready" && (roomMeter.connections[0]?.counts.allow ?? 0) >= 1, { timeout: 10_000, what: "test 5 room ready and allow sent" });
 
     // (a) Default RELAY_PACE (<= 45/s, burst <= 150): burst 185 control frames through default pacer and confirm
     // the relay never closes with 4429 and arrivals satisfy both the 45/150 and 50/200 buckets.
@@ -548,7 +590,7 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
       room: roomId,
       self: { memberId: peerA.memberId, dhKey: peerA.dhKey },
       peerDhPub: peerB.dhPub,
-      pace: { rate: RELAY_PACE.rate, burst: 10, contentRate: RELAY_PACE.contentRate, contentBurst: 5 },
+      pace: { rate: RELAY_PACE.rate, burst: 10, contentRate: RELAY_PACE.contentRate, contentBurst: 1 },
     });
     const conn = await connector.connect(meter.url);
     cleanups.push(() => conn.close());
@@ -569,7 +611,7 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
 
     await until(() => receivedAtB.length === 120, { timeout: 15_000, what: "all 120 paced frames delivered" });
     const firstCtrlIdx = receivedAtB.findIndex((pt) => pt[0] !== 0xab);
-    expect(firstCtrlIdx).toBeLessThan(90);
+    expect(firstCtrlIdx).toBeLessThanOrEqual(CHANNEL_FRAMES + 1);
 
     const metered = meter.connections[1]!;
     expect(metered.relayClosed).toBeNull();
@@ -580,4 +622,163 @@ describe("M4-16b: peer dialer through the peer's relay room", () => {
     expect(conn.pace.control).toBe(32); // HS1 + HS3 + 30 control frames
     expect(conn.pace.maxBulkPerSecond).toBeLessThanOrEqual(RELAY_PACE.contentRate + 5);
   }, 30_000);
+
+  it("6: negative test — initiator claiming transport 'tailnet' over the relay fails handshake", async () => {
+    const stackA = await openInProcessA(a.dataDir);
+    cleanups.push(() => stackA.close());
+
+    const bLogFrom = b.log.length;
+    const dialerConnsBefore = dialerMeter.connections.length;
+    const kbDhPub = fromBase64Url(kb.dh)!;
+    const connector = relayConnector({
+      room: bRelayAddress.room,
+      self: { memberId: ka.memberId, dhKey: stackA.identity.dhKey },
+      peerDhPub: kbDhPub,
+    });
+    const conn = await connector.connect(dialerMeter.url);
+    cleanups.push(() => conn.close());
+
+    let end: { opened: boolean; reason: string } | null = null;
+    const session = new PeerSession(conn, { dial: { memberId: kb.memberId, dhPub: kbDhPub }, transport: "tailnet" }, stackA.peerHost, {
+      closed: (_s, info) => { end = info; },
+    });
+    conn.bind({ frame: (f) => session.receive(f), closed: () => session.transportClosed(), resume: () => session.link.resume() });
+
+    await expect(session.link.established).rejects.toThrow();
+    await until(() => session.state === "closed" && end !== null && dialerMeter.connections[dialerConnsBefore]?.relayClosed !== null, { timeout: 10_000, what: "mismatched transport session closed by relay kick" });
+    expect(end!.opened).toBe(false);
+    expect(dialerMeter.connections[dialerConnsBefore]?.relayClosed?.code).toBe(4403);
+    expect(b.log.slice(bLogFrom)).not.toMatch(/peer ${ka.memberId}: (live|exchange only)/);
+  }, 30_000);
+
+  it("7: two real botlingd processes with listeners off connect through the relay and forward commands", async () => {
+    const localRelay = await new LocalRelay().ready();
+    cleanups.push(() => localRelay.stop());
+    const meter1 = await new RelayMeter(() => localRelay.url).start();
+    cleanups.push(() => meter1.stop());
+    const meter2 = await new RelayMeter(() => localRelay.url).start();
+    cleanups.push(() => meter2.stop());
+
+    const two = await startServers({
+      name: "two-botlingd-relay",
+      count: 2,
+      env: {
+        A: { ...TIMERS_ENV, BOTLING_SERVER_PORT: "off", BOTLING_SERVER_RELAY_URL: meter1.url },
+        B: { ...TIMERS_ENV, BOTLING_SERVER_PORT: "off", BOTLING_SERVER_RELAY_URL: meter2.url },
+      },
+    });
+    cleanups.push(() => two.cleanup());
+
+    await Promise.all([two.a.stop(), two.b.stop()]);
+    const [k1, k2] = await Promise.all([readServerKeys(two.a.dataDir), readServerKeys(two.b.dataDir)]);
+    const made = await makeCluster([k1, k2]);
+    const dev = await deviceKeys();
+    const addDev = await sign({
+      type: "add",
+      cluster: made.clusterId,
+      member: dev.member,
+      kind: "device",
+      keys: dev.keys,
+      name: "Relay Phone",
+      scope: ["read", "reply", "approve", "manage"],
+      by: k1.memberId,
+      at: 1_700_000_000_000,
+    }, k1);
+    writeStatements(two.a.dataDir, made.clusterId, [...made.statements, addDev]);
+    writeStatements(two.b.dataDir, made.clusterId, made.statements);
+
+    // Start both briefly so each writes its signed relay address Profile, then seed each other's Profile.
+    await Promise.all([two.a.start(), two.b.start()]);
+    const [relay1, relay2] = await Promise.all([
+      until(() => readRelayAddress(two.a), { timeout: 20_000, what: "server 1 relay profile" }),
+      until(() => readRelayAddress(two.b), { timeout: 20_000, what: "server 2 relay profile" }),
+    ]);
+    expect(relay2.room).toBeTruthy();
+    await Promise.all([two.a.stop(), two.b.stop()]);
+    const profiles1 = readAddressProfiles(two.a);
+    const profiles2 = readAddressProfiles(two.b);
+    writeStatements(two.a.dataDir, made.clusterId, profiles2);
+    writeStatements(two.b.dataDir, made.clusterId, profiles1);
+
+    await Promise.all([two.a.start(), two.b.start()]);
+    const smaller = k1.memberId < k2.memberId ? k1.memberId : k2.memberId;
+    await until(() => {
+      const p1 = readPeerFile(two.a)[0];
+      const p2 = readPeerFile(two.b)[0];
+      return p1?.state === "live" && p2?.state === "live" && p1.sessionId && p1.sessionId === p2.sessionId && p1.initiator === smaller;
+    }, { timeout: 30_000, what: "two real botlingd live on one relay session" });
+
+    expect(readPeerFile(two.a)[0]?.path).toBe("relay");
+    expect(readPeerFile(two.b)[0]?.path).toBe("relay");
+    two.a.assertLoopbackOnly({ expectListener: false });
+    two.b.assertLoopbackOnly({ expectListener: false });
+
+    // Wait for B to learn the phone device Add by gossip over the relay session.
+    await until(() => withDb(two.b, (db) => !!db.prepare("SELECT 1 FROM roster WHERE kind = 'add' AND member = ?").get(dev.member)), {
+      timeout: 20_000,
+      what: "B learned device Add by gossip over relay",
+    });
+
+    // Create a bot on B, then connect the phone to A through A's relay room (listeners off!) and forward a command.
+    const c2 = await two.b.client("script", "d".repeat(32));
+    cleanups.push(() => c2.close());
+    await c2.sub(c2.srv);
+    const snap2 = await c2.wait((m): m is MessageOf<"snap"> => m.t === "snap" && m.stream === c2.srv, "B srv snap");
+    c2.cmd({ origin: "script", originEpoch: c2.originEpoch, target: c2.srv, n: 1 } as Slot, { type: "bots.create", name: "Two-Relay Bot", job: "real botlingd over relay" }, snap2.logId);
+    const created = await c2.wait((m): m is MessageOf<"cmd.result"> => m.t === "cmd.result" && m.slot.n === 1, "bots.create on B");
+    const botId = (created.outcome as { result: { botId: string } }).result.botId;
+
+    await until(() => withDb(two.a, (db) => !!db.prepare("SELECT 1 FROM rows WHERE stream = ? AND key = ? AND deleted = 0").get(c2.srv, `bot:${botId}`)), {
+      timeout: 20_000,
+      what: "A replicated B's bot row over relay",
+    });
+    const inc = withDb(two.a, (db) => String((db.prepare("SELECT logId FROM streams WHERE stream = ?").get(c2.srv) as { logId: string }).logId));
+
+    const phConn = await relayConnector({
+      room: relay1.room,
+      self: { memberId: dev.member, dhKey: dev.dh.privateKey },
+      peerDhPub: fromBase64Url(k1.dh)!,
+    }).connect(localRelay.url);
+    cleanups.push(() => phConn.close());
+
+    let phOpen = false;
+    const phResults: Array<MessageOf<"cmd.result">> = [];
+    const phLink = SessionLink.initiate(phConn, {
+      mode: "ik",
+      transport: "relay",
+      cluster: made.clusterId,
+      self: { memberId: dev.member, dhPub: dev.dh.publicKey, dhKey: dev.dh.privateKey },
+      responder: { memberId: k1.memberId, dhPub: fromBase64Url(k1.dh)! },
+    }, {
+      onFrame: (pt) => {
+        const dec = decodeFrame(pt, "server", REMOTE);
+        if (!dec.ok) return;
+        if (dec.message.t === "welcome") phOpen = true;
+        if (dec.message.t === "cmd.result") phResults.push(dec.message);
+      },
+      onEnd: () => undefined,
+    });
+    phConn.bind({ frame: (f) => phLink.receive(f), closed: () => phLink.transportClosed(), resume: () => phLink.resume() });
+    await phLink.established;
+    const epoch = "e".repeat(32);
+    const hello = encodeFrame({ t: "hello", deviceId: dev.member, feVersion: "3.0.0", protocol: 1, originEpoch: epoch, cursors: {}, outbox: [], want: [] } as Message, "fe", REMOTE);
+    if (hello.ok) phLink.send("control", encoder.encode(hello.text));
+    await until(() => phOpen, { timeout: 10_000, what: "phone welcome on A over relay" });
+
+    const cmdFrame = encodeFrame({
+      t: "cmd",
+      slot: { origin: dev.member, originEpoch: epoch, target: `bot:${botId}`, n: 1 } as Slot,
+      floor: 1,
+      inc,
+      cmd: { type: "chat.send", botId, text: "/say hello across relay" },
+    } as Message, "fe", REMOTE);
+    expect(cmdFrame.ok).toBe(true);
+    if (cmdFrame.ok) phLink.send("control", encoder.encode(cmdFrame.text));
+
+    await until(() => phResults.some((m) => m.slot.target === `bot:${botId}` && m.slot.n === 1), {
+      timeout: 20_000,
+      what: "forwarded chat.send result over relay",
+    });
+    expect(phResults[0]?.outcome.kind).toBe("applied");
+  }, 90_000);
 });

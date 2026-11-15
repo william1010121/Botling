@@ -4,7 +4,7 @@ import type { SessionTransport } from "../../session";
 
 /** A dialled connection: a session transport whose incoming frames are handed over once the session is bound. */
 export interface PeerConnection extends SessionTransport {
-  bind(events: { frame(frame: Uint8Array): void; closed(): void }): void;
+  bind(events: { frame(frame: Uint8Array): void; closed(): void; resume?(): void }): void;
 }
 
 export interface PeerConnector {
@@ -22,7 +22,7 @@ export const webSocketConnector: PeerConnector = {
       try { ws = new WebSocket(url); } catch (error) { reject(error); return; }
       ws.binaryType = "arraybuffer";
       const waiting: Uint8Array[] = [];
-      let bound: { frame(frame: Uint8Array): void; closed(): void } | null = null;
+      let bound: { frame(frame: Uint8Array): void; closed(): void; resume?(): void } | null = null;
       let closed = false;
       let opened = false;
       const timer = setTimeout(() => { if (!opened) { try { ws.close(); } catch { /* gone */ } reject(new Error("the connection did not open in time")); } }, CONNECT_TIMEOUT_MS);
