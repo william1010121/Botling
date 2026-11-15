@@ -2,7 +2,8 @@
 //
 // - Free requests (bot artifacts, referenced blobs with nlink === 1) run with a `once` grant bound to `fetchId`
 //   (10-minute TTL); `ask` requests reuse an active `always` grant (unless any target file has nlink > 1) or call the
-//   approval hook (default `"deny"` until M5-06b wires Maintainer cards).
+//   approval hook (`approval.ts`'s card in the Maintainer's chat; without one, `"deny"`). Anything but "once" /
+//   "always" from the hook is a deny (M5-06c).
 // - An audit row (`audit:<fetchId>`, `act: "fetch.serve"`) commits to `srv:<self>` BEFORE the first byte leaves.
 // - Fixed 64 KiB (`PEER_CONTENT_FRAME`) frames on every transport (direct & relay) so resume indices never drift.
 // - Before EVERY chunk frame: wait if `queuedBytes > 1 MiB`, re-check grant validity/revocation/expiry, peer &
@@ -52,7 +53,8 @@ export interface FetchAskRequest {
   hardLinks?: boolean;
 }
 
-export type FetchAskHook = (fetch: FetchAskRequest) => Promise<"once" | "always" | "deny">;
+/** `cancelled` settles when the serve is over (session closed, source stopping, a racing resume): the card is then dead. */
+export type FetchAskHook = (fetch: FetchAskRequest, cancelled: Promise<void>) => Promise<"once" | "always" | "deny">;
 
 export interface FetchSourceOptions {
   self: string;
@@ -67,6 +69,8 @@ export interface FetchSourceOptions {
   content?: Pick<ContentService, "markChanged">;
   dailyLimitBytes?: number;
   ask?: FetchAskHook;
+  /** M5-06c: why a fetchId may not be asked at all (it was waiting for its card when the source restarted), or null. */
+  gone?: (fetchId: string) => string | null;
   onAudit?: () => void;
   onChunk?: (fetchId: string, index: number) => void | Promise<void>;
   log?: (line: string) => void;
@@ -439,6 +443,10 @@ export class FetchSource {
       if (!reqCheck.ok) { await terminalDeny(reqCheck.reason, reqCheck.detail); return; }
       const requesterId = reqCheck.requesterId;
 
+      // M5-06c: an ask whose card was open at the last restart is `gone`, never carded a second time.
+      const goneDetail = this.options.gone?.(message.fetchId) ?? null;
+      if (goneDetail) { await terminalDeny("gone", goneDetail); return; }
+
       if (message.what.kind === "git") {
         await terminalDeny("denied", "git bundle fetch is handled separately");
         return;
@@ -566,9 +574,10 @@ export class FetchSource {
               prefix: classified.prefix,
               realPath: realTarget,
               ...(hasHardLinks ? { hardLinks: true } : {}),
-            }), task.whenCancelled.then(() => "deny" as const)]);
+            }, task.whenCancelled), task.whenCancelled.then(() => "deny" as const)]);
             if (task.cancelled || session.state !== "open") return;
-            if (decision === "deny") { await terminalDeny("denied"); return; }
+            // M5-06c: fail closed. Only an explicit "once" / "always" serves; null, undefined or anything else is a deny.
+            if (decision !== "once" && decision !== "always") { await terminalDeny("denied"); return; }
             askedApproval = true;
             grantId = randomUUID();
             // H1: never widen a file's "always" grant to its parent directory.
@@ -593,8 +602,11 @@ export class FetchSource {
         return;
       }
 
-      // L2 race guard: if a hard link appeared after scanTarget under free or always, refuse.
-      if (!isBlob && !existingByFetch && !askedApproval && files.some((f) => f.nlink > 1)) {
+      // L2 race guard: a hard link the user was not told about refuses. Only an approval whose card said "this file has
+      // other names on disk" (asked with hardLinks) may serve one; a link that appeared after the scan (also while a card
+      // without that line waited) under free, always, a plain Allow once or a resume, is refused (M5-06c review).
+      const toldHardLinks = askedApproval && hasHardLinks;
+      if (!isBlob && !toldHardLinks && files.some((f) => f.nlink > 1)) {
         await terminalDeny("denied");
         return;
       }
@@ -664,7 +676,10 @@ export class FetchSource {
 
       const effectiveMaxBytes = Math.min(message.maxBytes, Limits.PER_REQUEST_BYTES);
       const botDailyKey = `${requesterServer}\0${requesterId}`;
-      const requireSingleLink = !isBlob && (classified.kind === "free" || grantKind! === "always");
+      // M5-06c: a file that already had other names when this ask began went through the card with the hard-link line
+      // (the user was told), so its approval counts; a link that appears mid-stream in any other fetch (free, always, a
+      // plain Allow once, a resume) stops it. dev/ino is checked before every chunk either way (readVerifiedSlice).
+      const requireSingleLink = !isBlob && !toldHardLinks;
       let index = 0;
       let bytesSent = 0;
       let sentSinceFlush = 0;
@@ -712,6 +727,8 @@ export class FetchSource {
             t: "fetch.chunk",
             fetchId: message.fetchId,
             index,
+            // M5-07b: the requester splits the stream into files by this name.
+            file: file.relPath,
             sha256: sha256Hex(read.bytes),
             bytes: read.bytes,
           });
@@ -927,7 +944,13 @@ export class FetchSource {
       return { ok: false, reason: "denied" };
     }
 
+    // M5-07b: names go on the wire in NFC (the chunk's `file` schema); the manifest and `from.file` use the same form.
+    // Two names that become one after NFC cannot be told apart by the requester, so the fetch is refused.
+    for (const entry of entries) entry.relPath = entry.relPath.normalize("NFC");
     entries.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
+    for (let i = 1; i < entries.length; i++) {
+      if (entries[i]!.relPath === entries[i - 1]!.relPath) return { ok: false, reason: "denied" };
+    }
     const files: FileEntry[] = [];
     let totalBytes = 0;
     for (const entry of entries) {

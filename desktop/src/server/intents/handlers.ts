@@ -48,6 +48,8 @@ export interface IntentDeps {
   log?: (line: string) => void;
   /** M2 step 12: files a page uploaded, named by `chat.send.files` (none: such a command is refused). */
   uploads?: UploadedFiles | null;
+  /** Botling 3's server: a `plugin:` row's grants changed (after the commit), so the window's plugin list is redrawn. */
+  pluginRowsChanged?: () => void;
 }
 
 const newLineId = () => randomUUID().toUpperCase();
@@ -70,6 +72,7 @@ function refuseFrom(error: unknown): never {
 }
 
 function requireBot(engine: TurnEngine, botId: string): void {
+  try { engine.checkBot?.(botId); } catch (error) { refuseFrom(error); }
   if (!engine.hasBot(botId)) throw new SlotRefusal("invalid", `no bot ${botId}`);
 }
 
@@ -142,6 +145,7 @@ function send(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<Command
 }
 
 function stop(deps: IntentDeps, { tx }: ApplyContext, cmd: Extract<Command, { type: "turn.stop" }>) {
+  try { deps.engine.checkBot?.(cmd.botId); } catch (error) { refuseFrom(error); }
   const row = findTurnEffect(tx, cmd.botId, cmd.turnId);
   // checkBasis already refused a turn whose row is not queued or started.
   if (!row) throw new SlotRefusal("changed", `turn ${cmd.turnId} already ended`);
@@ -266,6 +270,7 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
       hash: cmd.codeHash.slice(0, 80),
       reason: `tier ${cmd.tier}`,
     });
+    deps.scope.afterCommit(() => deps.pluginRowsChanged?.());
   } catch (error) {
     if (error instanceof RowBodyError) throw new SlotRefusal("invalid", error.message);
     throw error;
@@ -283,7 +288,7 @@ function applyNow(deps: IntentDeps, cmd: ApplyNowCommand) {
 export const INTENT_TYPES: ReadonlySet<string> = new Set([
   "chat.send", "turn.stop", "bots.remove",
   "chat.react", "chat.choose", "chat.answer", "chat.ignoreQuestion", "component.approve", "settings.set", "bots.create",
-  "plugin.grant",
+  "plugin.grant", "callin.ask", "callin.reply", "callin.cancel",
 ]);
 
 /** The core set's apply step (the slot engine's `apply` for `kind: "intent"` commands). */
@@ -294,6 +299,11 @@ export function applyIntent(deps: IntentDeps, context: ApplyContext): { result?:
     case "turn.stop": return stop(deps, context, cmd);
     case "bots.remove": return remove(deps, context, cmd);
     case "plugin.grant": return grantPlugin(deps, context, cmd);
+    // M5-01: accepted on the wire, not run yet (the handlers are M5-02b / M5-02c).
+    case "callin.ask":
+    case "callin.reply":
+    case "callin.cancel":
+      throw new SlotRefusal("invalid", "call-ins arrive with M5-02");
     case "chat.react":
     case "chat.choose":
     case "chat.answer":

@@ -72,6 +72,8 @@ export interface TurnEngine {
   /** The engine's current view of a bot (M3 summary rows at start); optional, null when not known. */
   botView?(botId: string): import("../../contract").BotView | null;
   hasBot(botId: string): boolean;
+  /** Throws the designated-server refusal when a command names "main" without a main bot here. */
+  checkBot?(botId: string): void;
   /** Files waiting in a bot's input box: they go with the next message, so an empty message is not "nothing to send". */
   pendingFiles(botId: string): number;
   /** Throws what `bots.remove` would be refused with (the main bot, Maintainer, an unknown bot). */

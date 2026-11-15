@@ -217,6 +217,8 @@ describe("M5-07a: fetch source", () => {
     expect(chunks[1]!.bytes.length).toBe(DIRECT_FRAME);
     expect(chunks[2]!.bytes.length).toBe(payload.length - 2 * DIRECT_FRAME);
     for (const c of chunks) expect(c.sha256).toBe(sha256Hex(c.bytes));
+    // M5-07b: every chunk names its file (relative to the target).
+    for (const c of chunks) expect(c.file).toBe("r.html");
 
     const reassembled = Buffer.concat(chunks.map((c) => c.bytes));
     expect(reassembled.equals(payload)).toBe(true);
@@ -532,6 +534,27 @@ describe("M5-07a: fetch source", () => {
     const first3 = sent1.filter((m): m is WireMessage & { t: "fetch.chunk" } => m.t === "fetch.chunk").map((c) => c.bytes);
     const full = Buffer.concat([...first3, ...resumedChunks.map((c) => c.bytes)]);
     expect(full.equals(payload)).toBe(true);
+  });
+
+  it("7b. M5-06c: a resume after the approved file got a second name is refused (the card never said so; resume asks nobody)", async () => {
+    const env = await setupInProcessCluster(async () => "once");
+    cleanups.push(env.cleanup);
+    const payload = deterministicBytes("resume-hl", 4 * DIRECT_FRAME);
+    const bigPath = join(env.srcA, "hl.bin");
+    writeFileSync(bigPath, payload);
+    const ask = { t: "fetch.ask", fetchId: "fetch-resume-hl", requester: { bot: env.botB }, source: env.ka.memberId, what: { kind: "path", path: bigPath }, purpose: "resume test", maxBytes: 10 * MiB } as const;
+    const { sink: sink1, sent: sent1 } = makeFakeSink(env.kb.memberId, "tailnet", (msg) => {
+      if (msg.t === "fetch.chunk" && msg.index === 0) sink1.open = false;
+    });
+    env.source.onMessage(sink1, ask);
+    await until(() => sent1.some((m) => m.t === "fetch.chunk"), { timeout: 5_000, what: "first chunk" });
+    env.source.sessionClosed(sink1);
+    linkSync(bigPath, join(env.outsideDir, "second-name.bin"));
+    const { sink: sink2, sent: sent2 } = makeFakeSink(env.kb.memberId, "tailnet");
+    env.source.onMessage(sink2, { ...ask, from: { file: "hl.bin", index: 0 } });
+    const end = await until(() => sent2.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "resume end" });
+    expect(end).toMatchObject({ t: "fetch.denied", reason: "denied" });
+    expect(sent2.some((m) => m.t === "fetch.chunk")).toBe(false);
   });
 
   it("8. Relay transport sends fixed 64 KiB chunks; unknown requester bot is refused", async () => {
@@ -1217,7 +1240,7 @@ describe("M5-07a: two-server botlingd wiring", () => {
 
   afterAll(async () => { await cluster?.cleanup(); }, 60_000);
 
-  it("serves free artifact over live PeerSession and denies ask-gated path with default hook", async () => {
+  it("serves free artifact over live PeerSession and holds an ask-gated path for its approval card", async () => {
     const artifact = deterministicBytes("two-server-art", 90 * 1024);
     writeFileSync(join(botFolderA, ".bot", "artifacts", "r.html"), artifact);
     writeFileSync(join(botFolderA, "src", "private.txt"), "private");
@@ -1304,11 +1327,51 @@ describe("M5-07a: two-server botlingd wiring", () => {
     }, "peer", PEER);
     if (!ask2.ok) throw new Error(ask2.detail);
     link.send("control", encoder.encode(ask2.text));
-    const denied2 = await until(() => received.find((m) => m.t === "fetch.denied" && m.fetchId === "two-srv-ask") ?? null, {
-      timeout: 10_000, what: "two-srv-ask denied",
-    });
-    expect(denied2).toEqual({ t: "fetch.denied", fetchId: "two-srv-ask", reason: "denied" });
+    // M5-06c: botlingd now wires the approval card, so an ask-gated path waits for the user (the card is in the
+    // Maintainer's chat; fetch-approval-botlingd.test.ts answers it). Nothing is sent until then.
+    await until(() => {
+      const db = new DatabaseSync(join(a.dataDir, "server.db"), { readOnly: true });
+      try { return db.prepare("SELECT 1 FROM meta WHERE key = 'fetch:pending:two-srv-ask'").get() ?? null; } finally { db.close(); }
+    }, { timeout: 10_000, what: "pending approval for two-srv-ask" });
+    expect(received.filter((m) => "fetchId" in m && m.fetchId === "two-srv-ask")).toEqual([]);
 
     link.close();
   }, 60_000);
+});
+
+
+describe("M5-07b: fetch chunks name their file", () => {
+  const cleanups: Array<() => Promise<void>> = [];
+  afterEach(async () => { for (const fn of cleanups.splice(0)) await fn(); });
+
+  it("a folder sends its files in sorted order, each chunk with its relative path, an empty file as one empty chunk, names in NFC", async () => {
+    const env = await setupInProcessCluster();
+    cleanups.push(env.cleanup);
+    const dir = join(env.artifactsA, "pack");
+    mkdirSync(join(dir, "sub"), { recursive: true });
+    const nfd = "cafe\u0301.txt"; // decomposed on disk (APFS keeps what it is given, other file systems too)
+    const big = deterministicBytes("big", DIRECT_FRAME + 10);
+    writeFileSync(join(dir, "b.bin"), big);
+    writeFileSync(join(dir, "empty.txt"), "");
+    writeFileSync(join(dir, "sub", "c.txt"), "hello");
+    writeFileSync(join(dir, nfd), "accent");
+
+    const { sink, sent } = makeFakeSink(env.kb.memberId);
+    env.source.onMessage(sink, {
+      t: "fetch.ask", fetchId: "fetch-names-1", requester: { bot: env.botB }, source: env.ka.memberId,
+      what: { kind: "artifact", botId: "bot-a", path: "pack" }, purpose: "names", maxBytes: 10 * MiB,
+    });
+    const end = await until(() => sent.find((m) => m.t === "fetch.done" || m.t === "fetch.denied") ?? null, { timeout: 5_000, what: "fetch end" });
+    expect(end.t).toBe("fetch.done");
+    const chunks = sent.filter((m): m is WireMessage & { t: "fetch.chunk" } => m.t === "fetch.chunk");
+    const names = chunks.map((c) => c.file);
+    expect(names.every((n) => n === n.normalize("NFC"))).toBe(true);
+    const order = [...new Set(names)];
+    expect(order).toEqual([...order].sort());
+    expect(order).toContain("caf\u00e9.txt");
+    expect(order).toContain("sub/c.txt");
+    expect(names.filter((n) => n === "b.bin")).toHaveLength(2);
+    expect(chunks.find((c) => c.file === "empty.txt")!.bytes.length).toBe(0);
+    expect(chunks.map((c) => c.index)).toEqual(chunks.map((_, i) => i));
+  });
 });

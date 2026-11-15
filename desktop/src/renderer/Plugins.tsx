@@ -119,6 +119,13 @@ function AskMaintainer({ onSend }: { onSend: (text: string) => void }) {
   );
 }
 
+const GRANT_WORDS: Record<NonNullable<PluginView["grant"]>, string> = {
+  none: "nothing yet",
+  read: "Read only",
+  request: "Send what it asks for",
+  write: "Change its own data on the server",
+};
+
 function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEnable, onSetting, onSecret, onCommand, onPanel }: {
   plugin: PluginView;
   lang: Lang | null;
@@ -149,6 +156,12 @@ function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEna
       {plugin.failure && <div className="plugins-problem">Turned off: {plugin.failure}</div>}
       {plugin.skipped?.length ? <div className="plugins-problem plugins-skipped">Skipped (this Botling does not know or cannot read these; the rest loads): {plugin.skipped.join("; ")}</div> : null}
       {plugin.builtIn && <div className="plugin-meta">Built into Botling{plugin.ignoredLibraryVersion !== undefined ? " (in use)" : ""}</div>}
+      {plugin.grant !== undefined && (
+        <>
+          <div className="plugin-meta">Allowed on this machine: {GRANT_WORDS[plugin.grant]}</div>
+          {!plugin.builtIn && <div className="plugin-meta">To change it: botlingd plugins grant {plugin.name} --tier read|request|write</div>}
+        </>
+      )}
       {/* Which copy runs when the library has one too (core/plugins/versions.ts): the library's at the built-in's version or newer. */}
       {plugin.ignoredLibraryVersion !== undefined && <div className="plugin-meta plugin-copy-ignored">Your plugin library's copy ({plugin.ignoredLibraryVersion}) is older and is ignored</div>}
       {plugin.replacesBuiltIn !== undefined && <div className="plugin-meta plugin-copy-library">Your plugin library's copy (in use) replaces the built-in {plugin.replacesBuiltIn}</div>}
