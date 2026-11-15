@@ -1918,7 +1918,7 @@ First write a test that shows this, then fix it.`;
    * this machine, one peer, none, or more than one with that name. The peer list needs a way to send, and an id that is
    * not a plain id is never a target (a peer's rows are schema-checked only).
    */
-  private machineNamed(raw: string): { kind: "here" } | { kind: "peer"; id: string; name: string } | { kind: "ambiguous" | "unknown"; name: string } {
+  private machineNamed(raw: string): { kind: "here" } | { kind: "peer"; id: string; name: string } | { kind: "ambiguous"; name: string } | { kind: "unknown"; name: string } {
     const name = botName(raw);
     const key = name.toLowerCase();
     const peers = this.options.remoteCommand ? (this.options.machines?.() ?? []).map((machine) => ({ id: machine.id, name: botName(machine.name) }))
