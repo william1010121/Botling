@@ -159,15 +159,19 @@ const proxies = () => [pa, pb];
 const heal = () => { for (const proxy of proxies()) { proxy.schedule(null); proxy.heal(); } };
 const isolate = () => { for (const proxy of proxies()) { proxy.partition(); proxy.cut(); } };
 
-/** Waits until the call-ins are over: both forward queues empty, every `callin` row of B ended, and nothing changed for a while. */
-async function converge(runs: Run[], what: string): Promise<void> {
+/**
+ * Waits until the call-ins are over: both forward queues empty, every `callin` row of B ended, every asker woken while A kept
+ * its waits (a lost answer ends A's wait only at the cap), and nothing changed for a while.
+ */
+async function converge(runs: Run[], what: string, aKilled: boolean): Promise<void> {
   const snapshot = () => JSON.stringify([
     runs.map((run) => chatOf(run.hostId).length), inputLines(aInput).length, inputLines(bInput).length,
     count(a, "forwardq"), count(a, "fwdcancels"), count(b, "forwardq"), count(b, "fwdcancels"), callInRows().map((row) => row.state),
   ]);
   const quiet = () => count(a, "forwardq") === 0 && count(a, "fwdcancels") === 0 && count(b, "forwardq") === 0 && count(b, "fwdcancels") === 0
     && callInRows().every((row) => row.state !== "queued" && row.state !== "started")
-    && runs.every((run) => callInRows().some((row) => row.asked.includes(run.token)));
+    && runs.every((run) => callInRows().some((row) => row.asked.includes(run.token)))
+    && (aKilled || runs.every((run) => inputLines(aInput).some((text) => text.includes(run.token) && text.includes(WAKE_MARK))));
   let last = "";
   let since = Date.now();
   const why = () => JSON.stringify({
@@ -313,7 +317,7 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
     } else {
       await sendAll(a, sends);
     }
-    await converge(runs, seed);
+    await converge(runs, seed, aKilled);
   } catch (error) {
     if (error instanceof SeedFailure) throw error;
     throw new SeedFailure(seed, error instanceof Error ? error.message : String(error));
@@ -326,6 +330,8 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       expect(chatOf(run.hostId).filter((entry) => entry.text.startsWith("Late answer from ")).length, `seed ${seed}: ${run.token}: late notice`).toBe(1);
     }
     if (kind === "lateKill" && got.turns === 1 && got.line === 0) totals.lostLate++;
+    // An answer lost to B's second kill (marked sent, not yet queued: M5-02b's at-most-once) ends A's wait only at the cap.
+    if (kind === "killBmid" && inputLines(aInput).some((text) => text.includes(run.token) && text.includes(WAKE_MARK) && text.includes("is not reachable"))) totals.lostAnswers++;
     if (kind === "killBmid" && got.turns === 1 && callInRows().some((row) => row.asked.includes(run.token) && row.state === "interrupted")) totals.interruptedTurns++;
     totals.runs++;
     totals.lines += got.line;
@@ -377,7 +383,7 @@ afterAll(async () => {
 describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => {
   it(`${PLAN.reduce((sum, [, n]) => sum + n, 0)} seeded call-ins: never two guest turns, never two lines, never two wakes (seed ${SEED})`, async () => {
     console.log(`callin-faults: seed ${SEED} (CALLIN_FAULT_SEED); ${PLAN.length} waves`);
-    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, interruptedTurns: 0 };
+    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, interruptedTurns: 0, lostAnswers: 0 };
     for (let index = 0; index < PLAN.length; index++) await wave(index, PLAN[index]![0], PLAN[index]![1], totals);
     console.log(`callin-faults: ${JSON.stringify(totals)}`);
     expect(totals.runs, `seed ${SEED}: runs`).toBeGreaterThanOrEqual(50);
