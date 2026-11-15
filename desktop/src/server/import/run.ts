@@ -113,7 +113,7 @@ function alive(pid: number): boolean {
   }
 }
 
-function holderPid(dataDir: string): number | null {
+export function holderPid(dataDir: string): number | null {
   const holder = readLockHolder(dataDir);
   return holder && alive(holder.pid) ? holder.pid : null;
 }
@@ -130,7 +130,7 @@ const FIRMLINK_DATA = "/System/Volumes/Data";
  * case-insensitive volume (the Mac's default) the JS one keeps the caller's case, so `/x/V2` and `/x/v2` would look like
  * two folders. Every path used to compare or identify folders here goes through it.
  */
-function realPath(path: string): string {
+export function realPath(path: string): string {
   const real = realpathSync.native(path);
   // A macOS firmlink spelling (/System/Volumes/Data/Users/... for /Users/...) is not folded by any realpath: fold it
   // when the short spelling is the same folder, so one folder has one identity (`sourceHash`) and one spelling.
@@ -169,7 +169,7 @@ function existingChain(path: string): { dev: number; ino: number }[] {
  * realpath folds (macOS firmlinks such as /System/Volumes/Data/Users, a case-insensitive volume reached by another
  * path).
  */
-function sameOrNested(a: string, b: string): boolean {
+export function sameOrNested(a: string, b: string): boolean {
   if (isInside(a, b) || isInside(b, a)) return true;
   const chainA = existingChain(a);
   const chainB = existingChain(b);
@@ -183,7 +183,7 @@ function sameOrNested(a: string, b: string): boolean {
 }
 
 /** `path` with symlinks resolved, also when its last parts do not exist yet (the nearest existing folder is resolved). */
-function realPathOrNearest(path: string): string {
+export function realPathOrNearest(path: string): string {
   const tail: string[] = [];
   let current = resolve(path);
   while (!existsSync(current)) {
@@ -200,7 +200,7 @@ function realPathOrNearest(path: string): string {
 }
 
 /** Throws before a write that would land in the 2.x folder. Every write of the import goes through one. */
-type WriteGuard = (path: string) => void;
+export type WriteGuard = (path: string) => void;
 
 /**
  * Where a write to `path` lands: its real path, or its nearest existing parent's real path plus the rest. A symbolic
@@ -236,7 +236,7 @@ function writeDestination(path: string): string {
  * device and inode (a symlink, another case, a firmlink, a bind mount). The 2.x folder is never written, even through a
  * link the user made in botlingd's folder.
  */
-function makeWriteGuard(sourceReal: string): WriteGuard {
+export function makeWriteGuard(sourceReal: string): WriteGuard {
   const source = statSync(sourceReal);
   return (path) => {
     const real = writeDestination(path);
@@ -250,7 +250,7 @@ function makeWriteGuard(sourceReal: string): WriteGuard {
 }
 
 /** The target folder and each entry at its top, checked before the lock, server.db and the identity are written. */
-function guardTargetTop(targetDir: string, guard: WriteGuard): void {
+export function guardTargetTop(targetDir: string, guard: WriteGuard): void {
   guard(targetDir);
   let names: string[] = [];
   try {
@@ -275,7 +275,7 @@ function sameNode(stat: { dev: number; ino: number }, node: { dev: number; ino: 
   return node !== null && stat.dev === node.dev && stat.ino === node.ino;
 }
 
-function sha256Text(text: string): string {
+export function sha256Text(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 

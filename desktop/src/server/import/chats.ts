@@ -29,7 +29,7 @@ import { appendEntries } from "../log";
 import type { Db, ServerStore } from "../store";
 import type { IdMapKind, IdMapRow } from "./id-map";
 import { remapAttachments } from "./media";
-import { readChat, type Read2xBot, type Read2xChat } from "./reader-2x";
+import { readChat, type Read2xBot, type Read2xChat, type Read2xSubagent } from "./reader-2x";
 
 export const CHAT_IMPORT_BATCH_SIZE = 500;
 
@@ -97,7 +97,7 @@ export interface ImportChatsOptions {
   onBatch?: (info: { oldId: string; newId: string; batch: number; totalBatches: number }) => void;
 }
 
-interface PreparedLine {
+export interface PreparedLine {
   body: Record<string, unknown>;
   full: string | null;
   msgId: string;
@@ -179,6 +179,26 @@ function pinLineId(pin: unknown): string | null {
   return null;
 }
 
+/** Stages each subagent's 2.x steps and runs (in their order) for the next `commitSubagents`; returns the step count. */
+export function stageSubagents(botStore: DbBotStore, subagents: readonly Read2xSubagent[]): number {
+  let steps = 0;
+  for (const sub of subagents) {
+    const subId = String(sub.index.id);
+    for (const earlier of sub.history.runs) {
+      for (const step of earlier.steps) {
+        botStore.stageSubagentLine(subId, { k: "step", step });
+        steps += 1;
+      }
+      botStore.stageSubagentLine(subId, { k: "run", run: earlier.run });
+    }
+    for (const step of sub.history.steps) {
+      botStore.stageSubagentLine(subId, { k: "step", step });
+      steps += 1;
+    }
+  }
+  return steps;
+}
+
 /** Copies a bot's 2.x lists (`pins.json`, `specs.json`, `tasks.json`) and subagent index + steps via `DbBotStore`. */
 export async function importLists(
   botStore: DbBotStore,
@@ -208,21 +228,7 @@ export async function importLists(
     }
   }
 
-  let subagentSteps = 0;
-  for (const sub of chatData.subagents) {
-    const subId = String(sub.index.id);
-    for (const earlier of sub.history.runs) {
-      for (const step of earlier.steps) {
-        botStore.stageSubagentLine(subId, { k: "step", step });
-        subagentSteps += 1;
-      }
-      botStore.stageSubagentLine(subId, { k: "run", run: earlier.run });
-    }
-    for (const step of sub.history.steps) {
-      botStore.stageSubagentLine(subId, { k: "step", step });
-      subagentSteps += 1;
-    }
-  }
+  const subagentSteps = stageSubagents(botStore, chatData.subagents);
   botStore.commitSubagents(chatData.subagents.map((s) => s.index));
   await botStore.durable();
 
@@ -237,7 +243,7 @@ export async function importLists(
   };
 }
 
-function prepareLines(
+export function prepareLines(
   records: readonly ChatRecord[],
   newId: string,
   log?: (line: string) => void,

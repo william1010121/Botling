@@ -78,7 +78,7 @@ const TIER_RANK: Record<Tier, number> = {
 
 const COUNT_FORMAT = new Intl.NumberFormat("en-US");
 
-function fmtCount(n: number): string {
+export function fmtCount(n: number): string {
   return COUNT_FORMAT.format(n);
 }
 
@@ -105,7 +105,7 @@ function askTierPhrase(tier: Tier): string {
 }
 
 /** Outside text (plugin, folder and bot names, problem lines) as one report line: control and line-break characters escaped (L-004). */
-function cleanName(text: string): string {
+export function cleanName(text: string): string {
   return text.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, (ch) => {
     const code = ch.charCodeAt(0);
     return code > 0xff ? `\\u${code.toString(16).padStart(4, "0")}` : `\\x${code.toString(16).padStart(2, "0")}`;
