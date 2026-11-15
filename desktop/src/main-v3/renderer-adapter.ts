@@ -33,233 +33,33 @@
 //
 // Pure TypeScript over two ports (the link, and the renderer's event sink): no Electron, no Node built-ins.
 import {
-  EventEnvelope, MESSAGE_TEXT_LIMIT, PROTOCOL_VERSION,
-  type BotView, type Command, type CommandType, type Event, type EventEnvelope as EventEnvelopeT, type MessageView, type PluginsView as PluginsViewT, type ResultOf, type WireError,
+  type BotView, type Command, type Event, type MessageView, type PluginsView as PluginsViewT, type ResultOf, type WireError,
 } from "../contract";
 import { z } from "zod";
 import {
-  BotSnapView, interruptedLine, KeptResultMarker, ProtocolEntryEvent, REFUSE_REASON_TEXT, slotKey,
-  type ConnectionState, type Cursor, type Entry, type MessageOf, type Outcome, type Slot, type StreamId, type Target, type Via,
+  slotKey,
+  type Entry, type MessageOf, type StreamId, type Target, type Via,
 } from "../protocol";
 import { PluginName } from "../protocol/content-url";
 import { PluginRow, type SummaryRow } from "../protocol/table-rows";
-import type { Clock, ConnModel, FeLinkEvent, OutboxItem, PendingView, ServerView, StoredCursor } from "../fe-link";
+import type { ConnModel, FeLinkEvent, OutboxItem, ServerView } from "../fe-link";
 import type { RequestVia } from "../renderer/client";
-import { apply, type ChatView, type WorkspaceView } from "../renderer/store";
 import { chatLinkPlugin, linkMenuKey, withOwnerLinkMenus } from "./peer-link-menu";
+import {
+  botIdOf, botOfStream, botViewOfSummary, CARD_COMMANDS, emptyChat, pendingLineId, READ_COMMANDS, streamOf,
+  type AdapterAnswer, type BotModel, type ChatSnapshot, type RendererAdapterOptions, type Snapshot,
+} from "./adapter-types";
+import { AdapterEntries } from "./adapter-entries";
+
+// The names that used to be defined here, still exported from this path.
+export { NOTICE_ID, botViewOfSummary, noticeText, pendingLine, pendingLineId, peerNoticeText, READ_COMMANDS } from "./adapter-types";
+export type { AdapterAnswer, LinkPort, RendererAdapterOptions } from "./adapter-types";
 
 export const RequestViaSchema = z.strictObject({ plugin: PluginName });
 
-/** What the adapter needs of the front-end link (src/fe-link FeLink has it all). */
-export interface LinkPort {
-  readonly status: ConnModel;
-  /** The server's id from `welcome`. */
-  readonly server: string | null;
-  on(listener: (event: FeLinkEvent) => void): () => void;
-  subscribe(stream: StreamId): void;
-  unsubscribe(stream: StreamId): void;
-  dropCache(stream: StreamId): Promise<void>;
-  submit(target: Target, cmd: Command, basis?: Cursor, via?: Via): Promise<OutboxItem>;
-  dismiss(slot: Slot): Promise<void>;
-  dismissRestored(): void;
-  pending(target?: Target): PendingView[];
-  cursor(stream: StreamId): StoredCursor | null;
-  request(cmd: Command): Promise<unknown>;
-  history(stream: StreamId, before: string, bytes?: number): Promise<MessageOf<"history.page">>;
-  /** M3 step 11 (FeLink has them; a one-server port may leave them out): every server, the directory, peers' tables. */
-  servers?(): ServerView[];
-  ownerOf?(target: Target | StreamId): string | null;
-  table?(serverId: string): { rows: ReadonlyMap<string, unknown> } | null;
-  staleSince?(stream: StreamId): number | null;
-}
-
-export type AdapterAnswer = { ok: true; result: unknown } | { ok: false; error: WireError };
-type Snapshot = ResultOf<"chat.snapshot">;
-type ChatSnapshot = NonNullable<Snapshot["chat"]>;
-
-export interface RendererAdapterOptions {
-  link: LinkPort;
-  /** The renderer port: every event goes to every app window (main's `broadcast`). */
-  emit: (envelope: EventEnvelopeT) => void;
-  clock: Clock;
-  /** A new epoch id (default: random). */
-  newEpoch?: () => string;
-  /** Bot streams followed at once (the shown one, recently shown ones, and any with pending lines). Default 8. */
-  followLimit?: number;
-  /** How long a snapshot waits for the bot stream's `snap` before it answers from the server's chat (default 3 s). */
-  snapWaitMs?: number;
-  /** Before the first attach, how long reads wait for it (default 15 s); later, reads fail at once while detached. */
-  firstAttachWaitMs?: number;
-  /** "connecting" / "offline" / "catching up" show only after this long (default 400 ms). */
-  noticeDelayMs?: number;
-  audit?: (text: string) => void;
-}
-
-/**
- * Commands that only read (requests on the session, §11.1): no slot, no outcome. `chat.read` and `chat.shown` are
- * idempotent window hints, sent as reads so opening a chat does not write a log entry each time. Anything not listed
- * is a slot. Every server read, `COMMAND_ROUTES` kind "read", must be listed here (a test checks): a slot's result that
- * does not fit one log entry is kept by the owner and fetched with one more round trip (`slot.result`, N2).
- * The phone commands (`COMMAND_ROUTES` kind "local": botlingd's pairing, Settings › Phone) are listed too: botlingd
- * answers them only as a req, and their answers (a pairing link, a recovery code) never enter the durable outbox.
- */
-export const READ_COMMANDS: ReadonlySet<CommandType> = new Set<CommandType>([
-  "chat.snapshot", "chat.history", "chat.read", "chat.shown", "task.output", "subagent.view", "turn.await", "routines.list",
-  "results.list", "storage.list", "attachment.file", "link.authorize", "settings.get", "bot.settings", "engine.models", "codex.models",
-  "usage.view", "doctor.view", "doctor.run", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "mobile.cluster", "mobile.confirm", "machines.view", "machines.hosts", "waiting.list", "plugins.list", "plugins.store",
-  "plugins.panel", "plugins.web", "plugins.file", "plugins.linkTarget", "plugins.loaded", "plugins.failed", "plugins.notice", "card.image",
-  "project.files", "project.preview", "worker.cwd", "agent.targets", "agy.runtime.check", "component.detail", "slot.result",
-]);
-/** Card answers carry the bot cursor the window showed as `basis` (§11.5). */
-const CARD_COMMANDS: ReadonlySet<string> = new Set(["chat.choose", "chat.answer", "chat.ignoreQuestion", "component.approve"]);
-const PROTOCOL_KINDS: ReadonlySet<string> = new Set(ProtocolEntryEvent.options.map((option) => option.shape.type.value));
-
-/** The id of the connection-state notice line. */
-export const NOTICE_ID = "fe-conn-notice";
-
-const streamOf = (botId: string) => `bot:${botId}` as StreamId;
-const botOfStream = (stream: string) => (stream.startsWith("bot:") ? stream.slice(4) : null);
-const botIdOf = (cmd: Command): string | null => {
-  const value = (cmd as { botId?: unknown }).botId;
-  return typeof value === "string" ? value : null;
-};
-
-/** A short stable id for a pending line, from its slot (FNV-1a, 64 bits as two 32-bit halves). */
-export function pendingLineId(slot: Slot): string {
-  const text = slotKey(slot);
-  let a = 0x811c9dc5;
-  let b = 0x01000193 ^ 0x5bd1e995;
-  for (let i = 0; i < text.length; i += 1) {
-    const c = text.charCodeAt(i);
-    a = Math.imul(a ^ c, 0x01000193) >>> 0;
-    b = Math.imul(b ^ c, 0x5bd1e995) >>> 0;
-  }
-  return `fe-p-${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}`;
-}
-
-function randomEpoch(): string {
-  const bytes = new Uint8Array(8);
-  globalThis.crypto.getRandomValues(bytes);
-  return `v3-${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
-}
-
-const hhmm = (ms: number | null) => {
-  if (ms === null) return "";
-  const date = new Date(ms);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-};
-
-/** A backup's time as the notice says it: the date (YYYY-MM-DD) and hh:mm, local time. */
-const stamp = (ms: number): string => {
-  const date = new Date(ms);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${hhmm(ms)}`;
-};
-
-/** The words of the notice line for a connection state; null: no notice ("live"). */
-export function noticeText(status: ConnModel): string | null {
-  switch (status.state) {
-    case "live": return null;
-    case "connecting": return "Connecting to the Botling server…";
-    case "offline": return `Offline${status.asOf !== null ? ` · as of ${hhmm(status.asOf)}` : ""}. New messages wait here and go when the Botling server is back.`;
-    case "catching up": return "Catching up…";
-    case "history restored":
-      if (status.restoredTo != null) return `This machine's history was restored to ${stamp(status.restoredTo)} from a backup. Lines after that are gone.`;
-      return `This machine's history was restored from a backup${status.restoredAt !== null ? ` (noticed at ${hhmm(status.restoredAt)})` : ""}. Lines after the backup are gone.`;
-    case "update required": return `This Botling window needs an update to use the server${status.minFeVersion ? ` (version ${status.minFeVersion} or later)` : ""}. What you write is kept until then.`;
-    default: return `Botling server: ${status.state}.`;
-  }
-}
-
-/**
- * The notice over a peer's bot while its machine is not live (M3 step 11, §13.3 "one machine stale"): "<machine>
- * offline · as of <time>" over the cached chat, and the messages held for it ("waiting for <machine>", held at the
- * attached server). Null while the owner is live (or is the attached server).
- */
-export function peerNoticeText(owner: ServerView | null, attached: ServerView | null, pending: PendingView[], staleSince: number | null = null): string | null {
-  if (!owner || owner.self || owner.state === "live") return null;
-  const name = owner.name;
-  const at = attached?.name ?? "this server";
-  const asOf = owner.since ?? staleSince;
-  const head = owner.state === "gone" ? `${name} removed · read-only.` : `${name} offline${asOf !== null ? ` · as of ${hhmm(asOf)}` : ""}.`;
-  const held = pending.filter((item) => !item.lost && item.waitingFor === name && (item.state === "held" || item.state === "waiting"));
-  const heldAt = held.filter((item) => item.state === "held").length;
-  const tail = held.length
-    ? ` ${held.length} ${held.length === 1 ? "message" : "messages"} waiting for ${name}${heldAt ? ` (held at ${held.find((item) => item.state === "held")?.heldAtName ?? at})` : ""}; ${held.length === 1 ? "it goes" : "they go"} when ${name} is back.`
-    : ` New messages are held at ${at} and go when ${name} is back.`;
-  return head + tail;
-}
-
-/** A summary row of a peer's table as the renderer's bot list shows it (no folder paths: the folder's name only). */
-export function botViewOfSummary(botId: string, row: SummaryRow): BotView {
-  return {
-    id: botId, name: row.name, role: row.role, avatar: row.face?.avatar ?? "circle", folder: row.folderName ?? "",
-    phase: row.status === "running" ? "awake" : "asleep", working: row.status === "running", approvals: row.waiting.length,
-    unread: row.unread, subagents: 0, problem: row.status === "error" ? "This bot reports an error on its machine." : null,
-    heads: [row.engine], job: null, parent: row.parent, subagentRows: [],
-    lastActivity: row.lastAt !== null ? new Date(row.lastAt).toISOString() : null,
-  } as BotView;
-}
-
-/** A byte count as people read it ("1.2 MB"). */
-function sizeText(bytes: number): string {
-  if (bytes < 1_000) return `${bytes} bytes`;
-  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} kB`;
-  return `${(bytes / 1_000_000).toFixed(1)} MB`;
-}
-
-const IMMEDIATE_NOTICE: ReadonlySet<ConnectionState> = new Set(["history restored", "update required"]);
-
-function wireError(outcome: Outcome): WireError {
-  switch (outcome.kind) {
-    case "refused": {
-      const code = outcome.reason === "changed" || outcome.reason === "turn ended" ? "conflict" : outcome.reason === "invalid" ? "bad_request" : "forbidden";
-      return { code, message: `Not sent: ${REFUSE_REASON_TEXT[outcome.reason] ?? outcome.reason}${outcome.detail ? ` (${outcome.detail})` : ""}`.slice(0, 2_000) };
-    }
-    case "cancelled": return { code: "cancelled", message: "Not sent: cancelled." };
-    case "skipped": return { code: "cancelled", message: "Not sent: skipped after a restore." };
-    default: return { code: "internal", message: "No outcome." };
-  }
-}
-
-interface LiveOverlay {
-  turnId: string;
-  seg: number;
-  /** Text of the turn's earlier segments. */
-  prefix: string;
-  /** The current segment. */
-  segText: string;
-}
-
-interface BotModel {
-  botId: string;
-  stream: StreamId;
-  /** A `snap` was applied: `chat` mirrors the renderer's lines. */
-  ready: boolean;
-  chat: ChatView;
-  /** Message ids the renderer may hold for this chat (lines, history pages, pending lines, notice). */
-  known: Set<string>;
-  /** Each line's text as the log has it (live text not included), for the live overlay. */
-  committed: Map<string, string>;
-  /** Running turns this stream told of: turnId → the reply line's id. */
-  turns: Map<string, string>;
-  live: LiveOverlay | null;
-  /** A live view that came before its `turn.started`. */
-  liveWaiting: { turnId: string; seg: number; text: string } | null;
-  /** A snapshot answered without this stream's snap: the snap, when it comes, makes a new epoch. */
-  servedFallback: boolean;
-  waiters: Array<() => void>;
-  shownAt: number;
-}
-
-interface PendingLine { botId: string; id: string; rendered: string }
-
 export class RendererAdapter {
-  private epoch: string;
-  private seq = 0;
-  private readonly newEpoch: () => string;
+  private readonly entries: AdapterEntries;
   private readonly models = new Map<string, BotModel>();
-  /** The global parts of the last server snapshot, kept up to date by the events emitted since (the offline answer). */
-  private base: Omit<Snapshot, "epoch" | "seq" | "chat"> | null = null;
   /** The server's last chat part per bot (decorations, plugin data, heads… that the log does not carry in M1). */
   private readonly chatBase = new Map<string, ChatSnapshot>();
   private shown: string | null = null;
@@ -268,15 +68,6 @@ export class RendererAdapter {
   /** A snapshot was answered, so the renderer holds an epoch to keep in step with. */
   private served = false;
   private readonly attachWaiters = new Set<() => void>();
-  /** Renderer requests waiting for a slot's outcome, by slot key. */
-  private readonly waiting = new Map<string, (answer: AdapterAnswer) => void>();
-  /** Outcomes no request waited for (yet), by slot key; bounded. */
-  private readonly early = new Map<string, OutboxItem>();
-  /** Pending lines shown, by slot key; `swapped` once the entry with the slot replaced it. */
-  private readonly lines = new Map<string, PendingLine>();
-  private readonly swapped = new Set<string>();
-  private notice: { botId: string; text: string } | null = null;
-  private noticeTimer: unknown;
   private unsubscribe: (() => void) | null = null;
   /**
    * The last `plugins.web` answer (every web part's source, ~2 MB with the built-in plugins). The 2.x window asks for it
@@ -290,9 +81,22 @@ export class RendererAdapter {
   private readonly linkRuns = new Map<string, Promise<AdapterAnswer>>();
 
   constructor(private readonly options: RendererAdapterOptions) {
-    this.newEpoch = options.newEpoch ?? randomEpoch;
-    this.epoch = this.newEpoch();
+    this.entries = new AdapterEntries(options, {
+      models: this.models, chatBase: this.chatBase, shown: () => this.shown,
+      peerOf: (botId) => this.peerOf(botId), serverView: (id) => this.serverView(id),
+      shownPlugins: (plugins) => this.shownPlugins(plugins), clearPluginsWeb: () => { this.pluginsWeb = null; },
+    });
   }
+
+  // The state the entries half owns, read here.
+  private get epoch() { return this.entries.epoch; }
+  private get seq() { return this.entries.seq; }
+  private get base() { return this.entries.base; }
+  private set base(value: AdapterEntries["base"]) { this.entries.base = value; }
+  private get waiting() { return this.entries.waiting; }
+  private get early() { return this.entries.early; }
+  private get notice() { return this.entries.notice; }
+  private get noticeTimer() { return this.entries.noticeTimer; }
 
   /** Starts listening to the link (call before the link dials). */
   start(): void {
@@ -699,405 +503,17 @@ export class RendererAdapter {
     this.renderNotice();
   }
 
-  private onSnap(snap: MessageOf<"snap">): void {
-    const botId = botOfStream(snap.stream);
-    const model = botId ? this.models.get(botId) : undefined;
-    if (!model) return;
-    const parsed = BotSnapView.safeParse(snap.view);
-    const view = parsed.success ? parsed.data : { bot: null, messages: [], history: { hasMore: false, older: 0 }, cards: [] };
-    if (!parsed.success) this.audit(`snap of ${snap.stream}: not a bot view; shown empty`);
-    const replaced = model.ready || model.servedFallback;
-    model.ready = true;
-    model.servedFallback = false;
-    model.chat = { ...emptyChat(model.botId), messages: view.messages, ...(view.history.hasMore ? { history: view.history } : {}) };
-    model.known = new Set(view.messages.map((message) => message.id));
-    model.committed = new Map(view.messages.map((message) => [message.id, message.text]));
-    model.turns = new Map();
-    model.live = null;
-    model.liveWaiting = null;
-    // Pending lines of this chat are drawn again over the new lines.
-    for (const [key, line] of this.lines) if (line.botId === model.botId) this.lines.delete(key);
-    if (this.notice?.botId === model.botId) this.notice = null;
-    for (const done of model.waiters.splice(0)) done();
-    if (replaced) this.bumpEpoch();
-    this.reconcile();
-    this.renderNotice();
-  }
-
-  private onEntries(stream: StreamId, entries: Entry[]): void {
-    const botId = botOfStream(stream);
-    const model = botId ? this.models.get(botId) : undefined;
-    for (const entry of entries) {
-      if (PROTOCOL_KINDS.has(entry.kind)) { if (model) this.onProtocolEntry(model, entry); continue; }
-      const event = { type: entry.kind, ...entry.body } as Event;
-      if (!model) {
-        // A server-wide stream (srv:): its contract events are the renderer's too (bots, settings, plugins…).
-        if (!("botId" in event)) this.emitEvent(event);
-        continue;
-      }
-      this.onContractEntry(model, event, entry);
-    }
-  }
-
-  private onContractEntry(model: BotModel, event: Event, entry: Entry): void {
-    switch (event.type) {
-      case "message.added":
-      case "message.updated": {
-        const message = event.message;
-        if (entry.slot) this.swapPending(model, entry.slot);
-        model.committed.set(message.id, message.text);
-        const live = this.overlayFor(model, message.id);
-        const shown = live !== null && (message.state === undefined || message.state === "streaming") ? { ...message, text: live } : message;
-        // A line the renderer already holds exactly so (a checkpoint of text the live frames showed, an entry seen again)
-        // is not sent again: the chat page would draw its row anew, and a video in it would start over (M1 demo bug 1).
-        if (model.known.has(message.id) && sameLine(model.chat.messages.find((held) => held.id === message.id), shown)) return;
-        // The renderer ignores an `added` for a line it holds (a pending or live line drawn first): update it instead.
-        if (event.type === "message.added" && !model.known.has(message.id)) this.emitEvent({ ...event, message: shown }, model);
-        else this.emitEvent({ type: "message.updated", botId: model.botId, message: shown }, model);
-        return;
-      }
-      case "message.removed":
-        model.committed.delete(event.messageId);
-        this.emitEvent(event, model);
-        model.known.delete(event.messageId);
-        return;
-      case "turn.started": {
-        model.turns.set(event.turnId, event.messageId);
-        this.emitEvent(event, model);
-        const waiting = model.liveWaiting;
-        if (waiting && waiting.turnId === event.turnId) { model.liveWaiting = null; this.applyLive(model, waiting); }
-        return;
-      }
-      case "turn.finished":
-        model.turns.delete(event.turnId);
-        if (model.live?.turnId === event.turnId) model.live = null;
-        // A reply with nothing to show (the core kept it out: only <no-reply/> or reactions, or cut off before it said
-        // anything): the log holds no line for it, so neither does the renderer, as in 2.x. A line only the live frames
-        // drew goes; none is made. A failed turn that says something (an error message or text) or that the log holds a
-        // line for still gets its line (the server ends a turn the core never did so). A failed turn with none of the three
-        // is one the server absorbed into a failed main turn (worker.ts turnEnded): no bubble, as the read model draws none.
-        // Blank text counts as none, as the core's own rule does (hasVisibleContent: a stop's raw body may be "\n").
-        if (!event.text.trim() && (event.status !== "failed" || !event.error) && !model.committed.has(event.messageId)) {
-          if (model.known.has(event.messageId)) {
-            this.emitEvent({ type: "message.removed", botId: model.botId, messageId: event.messageId }, model);
-            model.known.delete(event.messageId);
-          }
-          this.emitEvent(event, model);
-          return;
-        }
-        model.committed.set(event.messageId, event.text);
-        this.ensureLine(model, event.messageId, event.turnId, event.text, event.status);
-        this.emitEvent(event, model);
-        return;
-      default:
-        this.emitEvent(event, model);
-    }
-  }
-
-  private onProtocolEntry(model: BotModel, entry: Entry): void {
-    const body = entry.body as Record<string, unknown>;
-    if (entry.kind === "turn.interrupted") {
-      const turnId = String(body.turnId);
-      const text = typeof body.text === "string" ? body.text : "";
-      const messageId = typeof body.messageId === "string" ? body.messageId : model.turns.get(turnId) ?? `fe-int-${turnId}`.slice(0, 64);
-      model.turns.delete(turnId);
-      if (model.live?.turnId === turnId) model.live = null;
-      // Shown as 2.x shows a reply its core died during (protocol/interrupted.ts): the checkpoint text and the note,
-      // "failed", nothing re-run (§9.3, §12). The server's read model makes the same line, so a later snap matches.
-      const held = model.known.has(messageId) ? model.chat.messages.find((message) => message.id === messageId) : undefined;
-      const line = interruptedLine(held, { turnId, text }, { id: messageId, time: new Date(this.options.clock.now()).toISOString() });
-      model.committed.set(messageId, line.text);
-      this.emitEvent({ type: "turn.finished", botId: model.botId, turnId, messageId, status: "failed", text: line.text }, model);
-      this.emitEvent({ type: "message.updated", botId: model.botId, message: line }, model);
-      return;
-    }
-    if (entry.kind === "turn.cancelled") {
-      const turnId = String(body.turnId);
-      const messageId = model.turns.get(turnId);
-      model.turns.delete(turnId);
-      if (model.live?.turnId === turnId) model.live = null;
-      if (messageId) this.emitEvent({ type: "turn.finished", botId: model.botId, turnId, messageId, status: "stopped", text: model.committed.get(messageId) ?? "" }, model);
-    }
-    // turn.queued, cmd.* (outcomes come through the outbox), content.* (step 13): nothing for the renderer.
-  }
-
-  /** Makes sure the renderer holds line `messageId` (a reply whose `message.added` it never got). */
-  private ensureLine(model: BotModel, messageId: string, turnId: string, text: string, state: MessageView["state"]): void {
-    if (model.known.has(messageId)) return;
-    const message: MessageView = { id: messageId, role: "bot", text: text.slice(0, MESSAGE_TEXT_LIMIT * 4), time: new Date(this.options.clock.now()).toISOString(), turnId, ...(state ? { state } : {}), ...(state === "stopped" ? { interrupted: true } : {}) };
-    this.emitEvent({ type: "message.updated", botId: model.botId, message }, model);
-  }
-
   // -------------------------------------------------------------------------------------------
-  // Live text
+  // The entries half (M7-S95): one-line delegates to AdapterEntries
 
-  private messageOfTurn(model: BotModel, turnId: string): string | null {
-    return model.turns.get(turnId) ?? model.chat.runs?.find((run) => run.turnId === turnId)?.messageId
-      ?? (model.chat.running?.turnId === turnId ? model.chat.running.messageId : null)
-      ?? this.chatBase.get(model.botId)?.runs?.find((run) => run.turnId === turnId)?.messageId
-      ?? null;
-  }
-
-  /** The whole text shown for line `messageId` while its turn's live overlay runs, else null. */
-  private overlayFor(model: BotModel, messageId: string): string | null {
-    const live = model.live;
-    if (!live || this.messageOfTurn(model, live.turnId) !== messageId) return null;
-    return live.prefix + live.segText;
-  }
-
-  private onLive(stream: StreamId, view: { turnId: string; seg: number; text: string } | null): void {
-    const model = this.models.get(botOfStream(stream) ?? "");
-    if (!model?.ready) return;
-    if (!view) { model.live = null; model.liveWaiting = null; return; }
-    if (!this.messageOfTurn(model, view.turnId)) { model.liveWaiting = { turnId: view.turnId, seg: view.seg, text: view.text }; return; }
-    this.applyLive(model, view);
-  }
-
-  private applyLive(model: BotModel, view: { turnId: string; seg: number; text: string }): void {
-    const messageId = this.messageOfTurn(model, view.turnId)!;
-    let live = model.live;
-    if (!live || live.turnId !== view.turnId) {
-      // A first frame of this turn: earlier segments are what the log committed of the reply line.
-      live = { turnId: view.turnId, seg: view.seg, prefix: view.seg === 0 ? "" : (model.committed.get(messageId) ?? ""), segText: "" };
-    } else if (view.seg !== live.seg) {
-      live.prefix = view.seg === live.seg + 1 ? live.prefix + live.segText : (model.committed.get(messageId) ?? live.prefix + live.segText);
-      live.seg = view.seg;
-      live.segText = "";
-    }
-    live.segText = view.text;
-    model.live = live;
-    const text = live.prefix + live.segText;
-    const line = model.chat.messages.find((message) => message.id === messageId);
-    if (line && model.known.has(messageId) && text.startsWith(line.text)) {
-      if (text.length > line.text.length) this.emitEvent({ type: "turn.delta", botId: model.botId, turnId: view.turnId, messageId, text: text.slice(line.text.length) }, model);
-      return;
-    }
-    const message: MessageView = line
-      ? { ...line, text, state: "streaming" }
-      : { id: messageId, role: "bot", text, time: new Date(this.options.clock.now()).toISOString(), turnId: view.turnId, state: "streaming" };
-    this.emitEvent({ type: "message.updated", botId: model.botId, message }, model);
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // Pending lines and outcomes
-
-  private swapPending(model: BotModel, slot: Slot): void {
-    const key = slotKey(slot);
-    if (this.swapped.has(key)) return;
-    this.swapped.add(key);
-    const line = this.lines.get(key);
-    if (line) {
-      this.lines.delete(key);
-      this.emitEvent({ type: "message.removed", botId: model.botId, messageId: line.id }, model);
-      model.known.delete(line.id);
-    }
-  }
-
-  /** Draws the outbox's `chat.send` items of followed chats as lines, and takes away lines whose item is gone. */
-  private reconcile(): void {
-    const items = this.options.link.pending();
-    const present = new Set<string>();
-    for (const item of items) {
-      if (item.cmd.type !== "chat.send") continue;
-      const botId = item.cmd.botId;
-      const model = this.models.get(botId);
-      if (!model?.ready || this.swapped.has(item.key)) continue;
-      present.add(item.key);
-      const message = pendingLine(item);
-      const rendered = JSON.stringify(message);
-      const line = this.lines.get(item.key);
-      if (line?.rendered === rendered) continue;
-      this.lines.set(item.key, { botId, id: message.id, rendered });
-      this.emitEvent({ type: line ? "message.updated" : "message.added", botId, message }, model);
-    }
-    for (const [key, line] of this.lines) {
-      if (present.has(key)) continue;
-      this.lines.delete(key);
-      const model = this.models.get(line.botId);
-      if (model) { this.emitEvent({ type: "message.removed", botId: line.botId, messageId: line.id }, model); model.known.delete(line.id); }
-    }
-    // Swapped keys can be forgotten once the outbox no longer holds them.
-    const held = new Set(items.map((item) => item.key));
-    for (const key of this.swapped) if (!held.has(key)) this.swapped.delete(key);
-  }
-
-  private onOutcome(item: OutboxItem): void {
-    const keys = [slotKey(item.slot), ...(item.movedFrom ? [slotKey(item.movedFrom)] : [])];
-    if (!item.outcome) return;
-    if (!keys.some((key) => this.waiting.has(key))) {
-      if (item.cmd.type === "chat.send") return;
-      this.early.set(keys[0], item);
-      while (this.early.size > 200) this.early.delete(this.early.keys().next().value!);
-      return;
-    }
-    const outcome = item.outcome;
-    const resolvers: Array<(answer: AdapterAnswer) => void> = [];
-    for (const key of keys) {
-      const resolve = this.waiting.get(key);
-      if (!resolve) continue;
-      this.waiting.delete(key);
-      resolvers.push(resolve);
-    }
-    if (outcome.kind !== "applied") {
-      for (const resolve of resolvers) resolve({ ok: false, error: wireError(outcome) });
-      // A "not sent" item answered to the window that asked needs no line or later dismissal.
-      void this.options.link.dismiss(item.slot).catch(() => undefined);
-      return;
-    }
-    void this.appliedAnswer(item, outcome.result).then((answer) => { for (const resolve of resolvers) resolve(answer); });
-  }
-
-  /**
-   * What an applied slot answers: its result, or (N2) the result the owner kept because it did not fit the slot's
-   * `cmd.applied` entry, fetched with a `slot.result` req. The command ran either way, so an error here says so and
-   * never reads as "not sent".
-   */
-  private async appliedAnswer(item: OutboxItem, result: unknown): Promise<AdapterAnswer> {
-    const marker = KeptResultMarker.safeParse(result);
-    if (!marker.success) return { ok: true, result: result ?? {} };
-    const { bytes, kept } = marker.data.resultKept;
-    const ran = `${item.cmd.type} ran, but its result (${sizeText(bytes)})`;
-    if (!kept) return { ok: false, error: { code: "internal", message: `${ran} is too large to send back; the server did not keep it.` } };
-    try {
-      return { ok: true, result: await this.options.link.request({ type: "slot.result", slot: item.slot }) };
-    } catch (error) {
-      const text = String((error as Error)?.message ?? error);
-      return { ok: false, error: { code: "internal", message: `${ran} could not be fetched: ${text}`.slice(0, 2_000) } };
-    }
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // The connection notice
-
-  /** The notice line's words: the connection state's, else a peer's bot whose machine is not live. */
-  private noticeNow(): string | null {
-    const link = this.options.link;
-    const own = noticeText(link.status);
-    if (own) return own;
-    const botId = this.shown;
-    if (!botId || !link.servers) return null;
-    const owner = this.peerOf(botId);
-    if (!owner) return null;
-    return peerNoticeText(this.serverView(owner), this.serverView(link.server), link.pending(), link.staleSince?.(streamOf(botId)) ?? null);
-  }
-
-  private renderNotice(): void {
-    const status = this.options.link.status;
-    const text = this.noticeNow();
-    const botId = this.shown;
-    const model = botId ? this.models.get(botId) : undefined;
-    if (!text || !model?.ready) {
-      if (this.noticeTimer !== undefined) { this.options.clock.clearTimeout(this.noticeTimer); this.noticeTimer = undefined; }
-      if (!text) this.removeNotice();
-      return;
-    }
-    if (this.notice && this.notice.botId === botId) {
-      if (this.notice.text !== text) this.drawNotice(model, text);
-      return;
-    }
-    if (IMMEDIATE_NOTICE.has(status.state)) { this.drawNotice(model, text); return; }
-    if (this.noticeTimer !== undefined) return;
-    this.noticeTimer = this.options.clock.setTimeout(() => {
-      this.noticeTimer = undefined;
-      const now = this.noticeNow();
-      const shown = this.shown ? this.models.get(this.shown) : undefined;
-      if (now && shown?.ready) this.drawNotice(shown, now);
-    }, this.options.noticeDelayMs ?? 400);
-  }
-
-  private drawNotice(model: BotModel, text: string): void {
-    this.notice = { botId: model.botId, text };
-    const message: MessageView = { id: NOTICE_ID, role: "notice", text, time: new Date(this.options.clock.now()).toISOString() };
-    // `updated`, not `added`: it is not chat activity, so the bot does not move up the column.
-    this.emitEvent({ type: "message.updated", botId: model.botId, message }, model);
-  }
-
-  private removeNotice(): void {
-    const notice = this.notice;
-    if (!notice) return;
-    this.notice = null;
-    const model = this.models.get(notice.botId);
-    if (model) { this.emitEvent({ type: "message.removed", botId: notice.botId, messageId: NOTICE_ID }, model); model.known.delete(NOTICE_ID); }
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // Emitting
-
-  private bumpEpoch(): void {
-    this.epoch = this.newEpoch();
-    this.seq = 0;
-    this.pluginsWeb = null;
-    // One event under the new epoch so the renderer notices at once; `core.swap{null}` changes nothing it shows.
-    this.emitEvent({ type: "core.swap", phase: null });
-  }
-
-  /** Emits one contract event to the renderer and runs it through the mirror (the renderer's own reducer). */
-  private emitEvent(event: Event, model?: BotModel): void {
-    const envelope = { v: PROTOCOL_VERSION, epoch: this.epoch, seq: this.seq + 1, event };
-    const checked = EventEnvelope.safeParse(envelope);
-    if (!checked.success) { this.audit(`dropped an event the renderer would refuse: ${event.type}`); return; }
-    this.seq += 1;
-    if (event.type === "plugins.updated") this.pluginsWeb = null;
-    this.mirror(event, model);
-    // The window's copy of the plugin view hides link buttons the shown peer's machine cannot run (the mirror keeps the whole view).
-    if (event.type === "plugins.updated") {
-      const shown = this.shownPlugins(event.plugins);
-      this.options.emit(shown === event.plugins ? checked.data : { ...checked.data, event: { ...event, plugins: shown } });
-      return;
-    }
-    this.options.emit(checked.data);
-  }
-
-  private mirror(event: Event, model?: BotModel): void {
-    if (model) {
-      if ((event.type === "message.added" || event.type === "message.updated")) model.known.add(event.message.id);
-      const view = apply({ ...this.workspace(), chat: model.chat }, event);
-      model.chat = view.chat ?? model.chat;
-      this.keepBase(view);
-    } else {
-      this.keepBase(apply(this.workspace(), event));
-    }
-  }
-
-  private workspace(): WorkspaceView {
-    const base = this.base;
-    return {
-      ready: true, bots: base?.bots ?? [], imported: base?.imported ?? null, chat: null, subagent: null, resyncs: 0, components: base?.components ?? {},
-      plugins: base?.plugins ?? null, settings: base?.settings ?? null, doctor: base?.doctor ?? null, waiting: base?.waiting ?? { items: [], doing: {} },
-    };
-  }
-
-  private keepBase(view: WorkspaceView): void {
-    if (!this.base) return;
-    this.base = {
-      ...this.base, bots: view.bots, components: view.components, ...(view.plugins ? { plugins: view.plugins } : {}),
-      ...(view.settings ? { settings: view.settings } : {}), ...(view.doctor ? { doctor: view.doctor } : {}), waiting: view.waiting,
-    };
-  }
-
-  private audit(text: string): void { this.options.audit?.(text); }
-}
-
-/** The renderer's reducer stores an updated line as it comes, so the same JSON is the same row. */
-function sameLine(held: MessageView | undefined, next: MessageView): boolean {
-  return !!held && JSON.stringify(held) === JSON.stringify(next);
-}
-
-function emptyChat(botId: string): ChatView {
-  return { botId, messages: [], running: null, live: [], runs: [] };
-}
-
-/** How an outbox `chat.send` item is drawn in place (§11.6, §13.4). */
-export function pendingLine(item: PendingView): MessageView {
-  const cmd = item.cmd as Extract<Command, { type: "chat.send" }>;
-  const id = pendingLineId(item.slot);
-  const time = new Date(item.createdAt).toISOString();
-  if (item.lost) return { id, role: "error", text: `Delivered, then lost when ${item.ownerName ?? "this machine's history"} was restored: ${cmd.text}`, time };
-  if (item.state === "not sent") return { id, role: "error", text: `Not sent (${item.reasonText ?? item.reason ?? "refused"}): ${cmd.text}`, time };
-  return {
-    id, role: "user", text: cmd.text, time,
-    ...(cmd.replyTo ? { replyTo: cmd.replyTo } : {}),
-    // The "sending" marker only after ~150 ms with no outcome (the link says when), so a normal ack never flashes it.
-    ...(item.sending && (item.state === "waiting" || item.state === "held") ? { queued: true } : {}),
-  };
+  private onSnap(snap: MessageOf<"snap">): void { this.entries.onSnap(snap); }
+  private onEntries(stream: StreamId, entries: Entry[]): void { this.entries.onEntries(stream, entries); }
+  private onLive(stream: StreamId, view: { turnId: string; seg: number; text: string } | null): void { this.entries.onLive(stream, view); }
+  private reconcile(): void { this.entries.reconcile(); }
+  private onOutcome(item: OutboxItem): void { this.entries.onOutcome(item); }
+  private renderNotice(): void { this.entries.renderNotice(); }
+  private removeNotice(): void { this.entries.removeNotice(); }
+  private bumpEpoch(): void { this.entries.bumpEpoch(); }
+  private emitEvent(event: Event, model?: BotModel): void { this.entries.emitEvent(event, model); }
+  private audit(text: string): void { this.entries.audit(text); }
 }
