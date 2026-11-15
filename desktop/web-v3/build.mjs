@@ -32,14 +32,17 @@ const nodePaths = [join(root, "node_modules")];
 
 const WEB_BASE = JSON.stringify("/v3/");
 
-async function webPart(name) {
+async function webPart(name, sources) {
   const result = await build({ entryPoints: [join(root, `builtin-plugins/${name}/src/web.ts`)], bundle: true, format: "esm", target: "chrome130",
-    minify: true, legalComments: "eof", write: false, nodePaths, tsconfigRaw: { compilerOptions: {} } });
+    minify: true, legalComments: "eof", write: false, nodePaths, metafile: true, tsconfigRaw: { compilerOptions: {} } });
+  for (const input of Object.keys(result.metafile.inputs)) if (!input.startsWith("<")) sources.add(resolve(input));
   return result.outputFiles[0].text;
 }
 
 export async function buildPage({ out = outdir, development = false } = {}) {
-  const [latex, chatExtras, catchup, boardPart] = await Promise.all(["ccb-latex", "botling.chat-extras", "botling.catchup", "botling.board"].map(webPart));
+  // Every file the build reads (absolute paths), for the page tests' freshness check (test/acceptance/web-v3/page-fresh.ts).
+  const sources = new Set([fileURLToPath(import.meta.url)]);
+  const [latex, chatExtras, catchup, boardPart] = await Promise.all(["ccb-latex", "botling.chat-extras", "botling.catchup", "botling.board"].map((name) => webPart(name, sources)));
   const browser = { bundle: true, format: "iife", target: ["chrome130", "safari17"], minify: !development, sourcemap: "linked", legalComments: "eof", write: false, nodePaths, metafile: true };
   const [shell, chat, pdfViewer, worker] = await Promise.all([
     build({ ...browser, entryPoints: [join(here, "shell/main.tsx")], outfile: join(out, "web.js"), jsx: "automatic",
@@ -52,7 +55,7 @@ export async function buildPage({ out = outdir, development = false } = {}) {
     build({ ...browser, entryPoints: [join(here, "sw.ts")], outfile: join(out, "sw.js") }),
   ]);
   const files = new Map([shell, chat, pdfViewer, worker].flatMap((result) => result.outputFiles.map((file) => [file.path, file.contents])));
-  const asset = (from, to, tokens = false) => files.set(join(out, to), tokens ? Buffer.from(inlineTokens(readFileSync(from, "utf8"), from)) : readFileSync(from));
+  const asset = (from, to, tokens = false) => sources.add(resolve(from)) && files.set(join(out, to), tokens ? Buffer.from(inlineTokens(readFileSync(from, "utf8"), from)) : readFileSync(from));
   for (const name of ["index.html", "manifest.webmanifest"]) asset(join(here, name), name);
   asset(join(here, "shell/shell.css"), "shell.css");
   asset(join(here, "pdf-viewer/pdf.html"), "pdf.html");
@@ -91,7 +94,10 @@ export async function buildPage({ out = outdir, development = false } = {}) {
     try { writeFileSync(temporary, contents); renameSync(temporary, file); } finally { rmSync(temporary, { force: true }); }
   }
   // Inputs of the two bundles, for the build checks (no node: import, no 2.x HTTPS bridge module); beside dist, not served.
-  writeFileSync(`${out}.inputs.json`, `${JSON.stringify({ build: id, inputs: [...new Set([shell, chat, pdfViewer, worker].flatMap((r) => Object.keys(r.metafile.inputs)))].sort() })}\n`);
+  // `sources`: every file read, absolute; written last, so this file's mtime is the build's time.
+  const inputs = [...new Set([shell, chat, pdfViewer, worker].flatMap((r) => Object.keys(r.metafile.inputs)))].sort();
+  for (const input of inputs) if (!input.startsWith("<")) sources.add(resolve(input)); // not esbuild's <define:…> pseudo-inputs
+  writeFileSync(`${out}.inputs.json`, `${JSON.stringify({ build: id, inputs, sources: [...sources].sort() })}\n`);
   return { out, id };
 }
 

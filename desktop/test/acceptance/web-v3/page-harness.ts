@@ -8,6 +8,10 @@ import type { BrowserContext, BrowserType, FrameLocator, Page } from "@playwrigh
 import { BotlingdProcess, botlingdEnv, botlingdScript, MAIN, ScriptClient } from "../../botlingd-harness";
 import { until } from "../../helpers";
 import type { MessageView } from "../../../src/contract";
+import { assertPageFresh } from "./page-fresh";
+
+// Every page test imports this harness: refuse a web-v3/dist older than its sources before any test runs.
+assertPageFresh();
 
 export { MAIN };
 
