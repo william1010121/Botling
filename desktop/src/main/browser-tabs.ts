@@ -31,6 +31,8 @@ export interface BrowserTabsOptions {
   onChange(state: BrowserBotState, reveal: boolean): void;
   /** A page was made or is about to go (for later phases that attach to it). */
   onPage?(event: "created" | "destroyed", tab: Tab): void;
+  /** The file: URL of the local PDF a tab at `url` shows when that is another address (BrowserTabInfo `fileUrl`). */
+  fileUrl?(url: string): string | null;
   max?: number;
 }
 
@@ -189,7 +191,9 @@ export class BrowserTabs {
     tab.page.destroy();
   }
   private info(tab: Tab): BrowserTabInfo {
-    return { id: tab.id, url: tab.url, title: tab.title, favicon: tab.favicon, loading: tab.loading, canGoBack: tab.canGoBack, canGoForward: tab.canGoForward, ...(tab.crashed ? { crashed: true } : {}), ...(tab.reading ? { reading: true } : {}) };
+    // Worked out from the address each time, so it never outlives the PDF the tab was on.
+    const fileUrl = this.options.fileUrl?.(tab.url) ?? null;
+    return { id: tab.id, url: tab.url, title: tab.title, favicon: tab.favicon, loading: tab.loading, canGoBack: tab.canGoBack, canGoForward: tab.canGoForward, ...(tab.crashed ? { crashed: true } : {}), ...(tab.reading ? { reading: true } : {}), ...(fileUrl ? { fileUrl } : {}) };
   }
   private emit(botId: string, reveal: boolean): void {
     this.options.onChange(this.state(botId), reveal);

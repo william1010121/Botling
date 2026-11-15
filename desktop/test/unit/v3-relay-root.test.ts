@@ -52,6 +52,12 @@ describe("the durable relay setting in the data folder", () => {
     writeRelaySetting(dir, null); // clearing twice is fine
   });
 
+  it("a data folder the setting creates is owner-only", () => {
+    const dir = join(root("relay-setting-new"), "data");
+    writeRelaySetting(dir, RELAY);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
   it("refuses a bad address before writing anything", () => {
     const dir = root("relay-setting-bad");
     expect(() => writeRelaySetting(dir, "http://relay.example/ws")).toThrow(RelaySettingError);
@@ -74,7 +80,9 @@ describe("the durable relay setting in the data folder", () => {
   it("refuses a malformed file: bad JSON, extra keys, a bad address, a folder, an oversized file", () => {
     const dir = root("relay-setting-malformed");
     const file = join(dir, RELAY_SETTING_FILE);
-    for (const text of ["{", "[]", '{"url":"wss://relay.example/ws","roomKey":"x"}', '{"url":"http://relay.example/ws"}', `{"url":"wss://a.example/ws","pad":"${"x".repeat(8_000)}"}`]) {
+    for (const text of ["{", "[]", '{"url":"wss://relay.example/ws","roomKey":"x"}', '{"url":"http://relay.example/ws"}', `{"url":"wss://a.example/ws","pad":"${"x".repeat(8_000)}"}`,
+      // An address that is valid but not in its plain form (what relay set would have written) is not ours either.
+      '{"url":"wss://relay.example"}', '{"url":"wss://RELAY.example/ws"}']) {
       writeFileSync(file, text);
       expect(() => readRelaySetting(dir), text.slice(0, 40)).toThrow(RelaySettingError);
     }
@@ -224,6 +232,24 @@ describe("import carries the 2.x relay address (never its keys)", () => {
     expect(readRelaySetting(target)).toBe("wss://mine.example/ws");
     expect(result.reportText).toContain("Phone relay: wss://mine.example/ws (already set; 2.x had wss://relay.example/ws)");
   }, 120_000);
+
+  it("never follows a link: a symlinked 2.x mobile folder or relay.json carries nothing", async () => {
+    for (const kind of ["folder", "file"] as const) {
+      const base = root(`import-relay-link-${kind}`);
+      const src = join(base, "v2");
+      const target = join(base, "v3");
+      const outside = join(base, "outside");
+      make2xFolder(src);
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(join(outside, "relay.json"), relayJson("wss://evil.example/ws"));
+      if (kind === "folder") symlinkSync(outside, join(src, "mobile"));
+      else { mkdirSync(join(src, "mobile")); symlinkSync(join(outside, "relay.json"), join(src, "mobile", "relay.json")); }
+      const result = await runImport({ sourceDir: src, targetDir: target });
+      expect(readRelaySetting(target), kind).toBeNull();
+      expect(result.problems.join("\n"), kind).toContain("phone relay: not carried");
+      expect(result.reportText, kind).not.toContain("evil.example");
+    }
+  }, 240_000);
 
   it("no relay.json, a relay that was off, or a bad address: nothing is set", async () => {
     for (const url of [undefined, null, "http://relay.example/ws"] as const) {

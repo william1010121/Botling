@@ -22,10 +22,18 @@ import { errorText, MAX_BUFFERED, servedAsReq, SessionCore, type SessionHost, ty
 export { REQ_ALSO, servedAsReq, type ContentHandler, type SessionHost, type SessionOptions } from "./session-core";
 
 const SESSION_KIND = { local: true } as const;
+/**
+ * N1 (D67): after a `bye`, how long the socket may take to write what is still queued in front of the `bye` (log
+ * frames of a catch-up: up to MAX_BUFFERED) before it is destroyed. The front end counts `bye{unsettled}` endings only
+ * when the `bye` arrives; destroying the socket at once threw it away with the queued frames.
+ */
+const BYE_FLUSH_MS = 5_000;
 
 export class Session extends SessionCore implements ShellWindow {
   protected readonly kind = SESSION_KIND;
   private readonly splitter = new FrameSplitter();
+  /** endTransport began: the socket is writing what is queued, then ends (destroyTransport leaves it alone). */
+  private ending = false;
 
   constructor(private readonly socket: Socket, host: SessionHost, options: SessionOptions = {}) {
     super(host, options);
@@ -75,9 +83,18 @@ export class Session extends SessionCore implements ShellWindow {
     return true;
   }
 
-  protected endTransport(): void { this.socket.end(); }
+  /** Lets the queued frames (the `bye` last) leave, then ends the socket; a front end that does not read is cut off. */
+  protected endTransport(): void {
+    if (this.ending || this.socket.destroyed) return;
+    this.ending = true;
+    const socket = this.socket;
+    const timer = setTimeout(() => { if (!socket.destroyed) socket.destroy(); }, this.options.byeFlushMs ?? BYE_FLUSH_MS);
+    timer.unref?.();
+    socket.once("close", () => clearTimeout(timer));
+    socket.end();
+  }
 
-  protected destroyTransport(): void { if (!this.socket.destroyed) this.socket.destroy(); }
+  protected destroyTransport(): void { if (!this.ending && !this.socket.destroyed) this.socket.destroy(); }
 
   protected closing(): void { this.host.shell.detach(this); }
 
@@ -103,7 +120,7 @@ export class Session extends SessionCore implements ShellWindow {
     for (const frame of split.frames) {
       if ((this.state as string) === "closed") return;
       const decoded = decodeFrame(frame, "fe", SESSION_KIND);
-      if (!decoded.ok) { this.send(decoded.bye); this.socket.end(); this.close(); return; }
+      if (!decoded.ok) { this.send(decoded.bye); this.endTransport(); this.close(); return; }
       try {
         this.onMessage(decoded.message);
       } catch (error) {

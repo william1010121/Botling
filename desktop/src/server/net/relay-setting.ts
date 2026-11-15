@@ -10,7 +10,7 @@
 // - Symlink-safe (L-002): written through a temporary file beside it and one rename (core/durable/atomic.ts), which
 //   replaces a link rather than following it; read with O_NOFOLLOW and required to be a small regular file.
 // - Fail closed (L-009): a file that cannot be read or does not parse leaves the relay off and is logged by name only.
-import { closeSync, constants, fstatSync, openSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { writeFileAtomic } from "../../core/durable/atomic";
@@ -79,6 +79,7 @@ export function writeRelaySetting(dataDir: string, url: string | null): void {
   const file = join(dataDir, RELAY_SETTING_FILE);
   if (url === null) { rmSync(file, { force: true }); return; }
   const clean = relaySettingUrl(url);
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 }); // a folder made here (before botlingd's first start) is owner-only
   writeFileAtomic(file, `${JSON.stringify({ url: clean })}\n`);
 }
 

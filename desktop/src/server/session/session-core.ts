@@ -215,6 +215,8 @@ export interface SessionOptions {
   liveClock?: LiveGateClock;
   /** A held `chat.send` waits this long without a new byte of its files before its handler decides (UPLOAD_IDLE_MS). */
   uploadIdleMs?: number;
+  /** After a `bye`, the local socket gets this long to write what is queued (the `bye` last) before it is destroyed. */
+  byeFlushMs?: number;
 }
 
 /** §5.2: `ping` after 15 s of silence, dead after 45 s heard nothing (the session layer's constants, step 3). */

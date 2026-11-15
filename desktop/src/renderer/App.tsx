@@ -25,7 +25,7 @@ import { Client, RequestFailed } from "./client";
 import { DELIVERY_UNCONFIRMED } from "./delivery";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
-import { browserTabActions, chatLinkOffered, commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
+import { browserTabActions, browserTabAddress, chatLinkOffered, commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL, sameHeldColors, setBotColors } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
@@ -794,9 +794,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         <BrowserPane bot={bot} state={browserState ?? { botId: bot.id, tabs: [], active: null }} full={browserFull} look={view.settings?.botLook ?? "original"}
           miniChat={miniChat} onMiniChat={setMiniChat} line={stripLine} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}/${floatMemory.browser.docked}`}
           onAskTool={async (text) => { await client.request({ type: "chat.send", botId: bot.id, text }); }}
-          tabActions={browserTabActions(view.plugins, (browserState?.tabs.find((candidate) => candidate.id === browserState.active) ?? browserState?.tabs[0])?.url, view.settings?.effectiveLanguage)
+          tabActions={browserTabActions(view.plugins, browserTabAddress(browserState?.tabs.find((candidate) => candidate.id === browserState.active) ?? browserState?.tabs[0]), view.settings?.effectiveLanguage)
             .map((action) => ({ ...action, icon: action.icon && isIconName(action.icon) ? <Icon name={action.icon} size={15} /> : undefined }))}
-          onTabAction={(command, tab) => { void client.request({ type: "plugins.tabCommand", id: command, botId: bot.id, tabId: tab.id, url: tab.url }).catch(fail); }} />
+          onTabAction={(command, tab) => { void client.request({ type: "plugins.tabCommand", id: command, botId: bot.id, tabId: tab.id, url: browserTabAddress(tab) ?? tab.url }).catch(fail); }} />
       )}
       {bot && takeover && takeoverView && (
         <TakeoverPage key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}
