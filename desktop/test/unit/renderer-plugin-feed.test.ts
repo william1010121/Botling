@@ -236,7 +236,13 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     expect(feed.rows("view/mainTab")).toEqual([]);
     expect(() => feed.reconcile(view)).not.toThrow();
     await kernel.load(SHELL);
-    for (const slot of allSlots()) expect(feed.rows(slot), slot).toEqual(expectedRows(view, slot));
+    // Each plugin's own rows, in order. The plugins that contribute only to a slot another plugin owns (the settings slots) did not wait for
+    // the shell, so they are not reloaded in the list's order; the order across plugins is registration order (see the file header).
+    const byPlugin = (rows: unknown[]) => { const list = rows as { plugin: string }[]; return [...new Set(list.map((row) => row.plugin))].sort().map((plugin) => list.filter((row) => row.plugin === plugin)); };
+    for (const slot of allSlots()) {
+      expect(feed.rows(slot), slot).toHaveLength(expectedRows(view, slot).length);
+      expect(byPlugin(feed.rows(slot)), slot).toEqual(byPlugin(expectedRows(view, slot)));
+    }
     feed.reconcile(null);
     expect(kernel.plugins().filter((name) => !name.startsWith(":"))).toEqual([]);
   });
