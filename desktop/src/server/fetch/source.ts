@@ -602,8 +602,11 @@ export class FetchSource {
         return;
       }
 
-      // L2 race guard: if a hard link appeared after scanTarget under free or always, refuse.
-      if (!isBlob && !existingByFetch && !askedApproval && files.some((f) => f.nlink > 1)) {
+      // L2 race guard: a hard link the user was not told about refuses. Only an approval whose card said "this file has
+      // other names on disk" (asked with hardLinks) may serve one; a link that appeared after the scan (also while a card
+      // without that line waited) under free, always, a plain Allow once or a resume, is refused (M5-06c review).
+      const toldHardLinks = askedApproval && hasHardLinks;
+      if (!isBlob && !toldHardLinks && files.some((f) => f.nlink > 1)) {
         await terminalDeny("denied");
         return;
       }
@@ -673,10 +676,10 @@ export class FetchSource {
 
       const effectiveMaxBytes = Math.min(message.maxBytes, Limits.PER_REQUEST_BYTES);
       const botDailyKey = `${requesterServer}\0${requesterId}`;
-      // M5-06c: a free file that already had other names when this ask began went through the card (hardLinks: the user
-      // was told), so its approval counts; a link that appears mid-stream on any other free file, or under an "always"
-      // grant, still stops the fetch.
-      const requireSingleLink = !isBlob && (grantKind! === "always" || (classified.kind === "free" && !hasHardLinks));
+      // M5-06c: a file that already had other names when this ask began went through the card with the hard-link line
+      // (the user was told), so its approval counts; a link that appears mid-stream in any other fetch (free, always, a
+      // plain Allow once, a resume) stops it. dev/ino is checked before every chunk either way (readVerifiedSlice).
+      const requireSingleLink = !isBlob && !toldHardLinks;
       let index = 0;
       let bytesSent = 0;
       let sentSinceFlush = 0;

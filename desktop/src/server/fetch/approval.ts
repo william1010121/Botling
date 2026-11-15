@@ -41,9 +41,15 @@ export interface FetchNames {
 // ---------------------------------------------------------------------------------------------
 // The card (texts are user-approved, B-12: byte for byte)
 
-/** One line of text: control characters and line breaks (a peer's words must not fake more card lines) become a space. */
+/**
+ * One line of text: control characters and line breaks (a peer's words must not fake more card lines) become a space;
+ * invisible format characters (bidi overrides and isolates, zero-width marks) go, so a peer's name cannot reorder or
+ * hide the rest of the line (the path, the machine) in the card or the terminal.
+ */
 export function oneLine(text: string, limit = 4_096): string {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim().slice(0, limit);
+  return text
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim().slice(0, limit);
 }
 
 /** `12 MB`: under 1,000,000 bytes `<n> KB` (at least `1 KB`), under 10^9 `<n> MB` (rounded), else `<n.n> GB`. */

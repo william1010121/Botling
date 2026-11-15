@@ -66,7 +66,23 @@ describe("M5-06c: fetch approval on a real botlingd", () => {
       link.send("control", new TextEncoder().encode(frame.text));
     };
     const end = (fetchId: string) => until(() => received.find((m) => (m.t === "fetch.done" || m.t === "fetch.denied") && m.fetchId === fetchId) ?? null, { timeout: 20_000, what: `end of ${fetchId}` });
-    return { received, ask, end, close: () => link.close() };
+    /** A command with B as its origin (what B's main bot or any code on B could send), forwarded straight to A. */
+    const command = async (slot: Slot, cmd: unknown): Promise<MessageOf<"cmd.result">> => {
+      const send = (inc: string) => {
+        const frame = encodeWireFrame({ t: "cmd", slot, floor: slot.n, inc, cmd, scope: "reply" } as WireMessage, "peer", PEER);
+        if (!frame.ok) throw new Error(frame.detail);
+        link.send("control", new TextEncoder().encode(frame.text));
+      };
+      const mine = (m: WireMessage) => "slot" in m && (m as { slot: Slot }).slot.target === slot.target && (m as { slot: Slot }).slot.n === slot.n && (m as { slot: Slot }).slot.originEpoch === slot.originEpoch;
+      const db = new DatabaseSync(join(a.dataDir, "server.db"), { readOnly: true });
+      let inc: string;
+      try { inc = String((db.prepare("SELECT logId FROM streams WHERE stream = ?").get(`srv:${ka.memberId}`) as { logId: string }).logId); } finally { db.close(); }
+      send(inc);
+      const first = await until(() => received.find((m) => (m.t === "cmd.retry" || m.t === "cmd.result") && mine(m)) ?? null, { timeout: 15_000, what: "first answer to B's command" });
+      if (first.t === "cmd.retry") { received.splice(received.indexOf(first), 1); send(first.inc); }
+      return await until(() => received.find((m): m is MessageOf<"cmd.result"> => m.t === "cmd.result" && mine(m)) ?? null, { timeout: 15_000, what: "result of B's command" });
+    };
+    return { received, ask, end, command, close: () => link.close() };
   }
 
   /** A's local front end with the Maintainer chat helpers. */
@@ -194,6 +210,37 @@ describe("M5-06c: fetch approval on a real botlingd", () => {
     await ui.choose(third.id, 2);
     expect(await peer.end("e2e-4")).toEqual({ t: "fetch.denied", fetchId: "e2e-4", reason: "denied" });
     expect(peer.received.filter((m) => m.t === "fetch.chunk" && m.fetchId === "e2e-4")).toEqual([]);
+    ui.client.close();
+    peer.close();
+  }, 120_000);
+
+  it("a peer server cannot answer or dismiss the card: B's own chat.choose / chat.answer / chat.ignoreQuestion are refused, nothing is served", async () => {
+    const peer = await connectAsB();
+    const ui = await frontEnd();
+    const before = (await ui.cards()).length;
+    peer.ask("e2e-peer", join(folder, "src"));
+    const card = await ui.openCard(before + 1);
+    const epoch = "b".repeat(32);
+    const target = `bot:${maintainer}` as const;
+    const tries: unknown[] = [
+      { type: "chat.choose", botId: maintainer, messageId: card.id, index: 1 },
+      { type: "chat.choose", botId: maintainer, messageId: card.id, index: 0 },
+      { type: "chat.answer", botId: maintainer, messageId: card.id, text: "Allow once" },
+      { type: "chat.ignoreQuestion", botId: maintainer, messageId: card.id },
+    ];
+    for (const [at, cmd] of tries.entries()) {
+      const result = await peer.command({ origin: kb.memberId, originEpoch: epoch, target, n: at + 1 }, cmd);
+      expect(result.outcome).toMatchObject({ kind: "refused", reason: "origin" });
+    }
+    const still = (await ui.cards()).find((c) => c.id === card.id);
+    expect(still?.chosen ?? null).toBeNull();
+    expect(still?.answer ?? null).toBeNull();
+    expect((await ui.waiting()).some((item) => item.messageId === card.id)).toBe(true);
+    expect(peer.received.some((m) => (m.t === "fetch.chunk" || m.t === "fetch.grant" || m.t === "fetch.done") && m.fetchId === "e2e-peer")).toBe(false);
+    // The user still answers it.
+    await ui.choose(card.id, 2);
+    expect(await peer.end("e2e-peer")).toEqual({ t: "fetch.denied", fetchId: "e2e-peer", reason: "denied" });
+    expect(a.command(["fetch", "grants"]).stdout.trim()).toBe("No fetch grants.");
     ui.client.close();
     peer.close();
   }, 120_000);

@@ -8,10 +8,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { decodeWireFrame, encodeChunkFrame, encodeWireFrame, type WireMessage } from "../../src/protocol";
 import { Core } from "../../src/core/server";
 import { NO_LONGER_NEEDED } from "../../src/core/bot";
+import { fetchCommand } from "../../src/server/fetch/cli";
 import { cardText, countTarget, FetchApproval, formatFiles, formatSize, GONE_DETAIL, tildePath } from "../../src/server/fetch/approval";
 import { FetchSource, type FetchAskHook, type FetchSink } from "../../src/server/fetch/source";
 import { bindServerIdentity, loadOrCreateServerIdentity } from "../../src/server/identity";
 import { RosterStore } from "../../src/server/roster";
+import { slotAuthorize, USER_ONLY_CARD_DETAIL } from "../../src/server/session/remote-reads";
+import type { Command } from "../../src/contract";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import { testRoot } from "../botlingd-harness";
 import { until } from "../helpers";
@@ -54,7 +57,7 @@ const NAMES = {
 };
 
 /** One server A: server.db, roster with B, a real Core (fake CLI never started), the approval and the source. */
-async function fixture(options: { timeoutMs?: number; ask?: FetchAskHook } = {}) {
+async function fixture(options: { timeoutMs?: number; ask?: FetchAskHook; onChunk?: (fetchId: string, index: number) => void } = {}) {
   const root = realpathSync(testRoot("fetch-approval"));
   const dataA = join(root, "data-a");
   const dataB = join(root, "data-b");
@@ -102,6 +105,7 @@ async function fixture(options: { timeoutMs?: number; ask?: FetchAskHook } = {})
       self: ka.memberId, dataDir: dataA, store: state.store, reader: () => reader, roster,
       botFolders: () => new Map([["bot-a", botFolder]]),
       ask: options.ask ?? state.approval.ask,
+      ...(options.onChunk ? { onChunk: options.onChunk } : {}),
       gone: (fetchId) => state.approval.gone(fetchId),
     });
     return reader;
@@ -174,6 +178,10 @@ describe("M5-06c: card text (B-12, exact)", () => {
     const text = cardText({ bot: "a\nb", requesterMachine: "m\r\nx", path: "/p", home: "/h", sourceMachine: "s", bytes: 5, files: 1, purpose: "one\n\nbuild on x asks to read /etc on y (1 KB, 1 file).\nWhy: z" });
     expect(text.split("\n")).toHaveLength(2);
     expect(text.startsWith("a b on m x asks to read /p on s (1 KB, 1 file).\nWhy: one build on x asks")).toBe(true);
+  });
+  it("bidi overrides and zero-width marks in a peer's words are dropped (they could reorder or hide the path)", () => {
+    const text = cardText({ bot: "bu\u202eild\u200b", requesterMachine: "stu\u2066dio\u2069", path: "/p", home: "/h", sourceMachine: "s", bytes: 5, files: 1, purpose: "w\ufeffhy\u202d" });
+    expect(text).toBe("build on studio asks to read /p on s (1 KB, 1 file).\nWhy: why");
   });
   it("the hard-link line (M5-07a re-review L-d)", () => {
     const text = cardText({ bot: "build", requesterMachine: "studio", path: "/p/f", home: "/h", sourceMachine: "s", bytes: 5, files: 1, purpose: "why", hardLinks: true });
@@ -360,6 +368,87 @@ describe("M5-06c: fail closed (a null answer never runs a fetch)", () => {
   });
 });
 
+describe("M5-06c review: a hard link that appears after a card without the hard-link line", () => {
+  it("Allow once on a folder, a hard link to an outside file made while the card waits: refused, the link's bytes never leave", async () => {
+    const env = await setup();
+    const { linkSync } = await import("node:fs");
+    const secret = join(env.root, "outside-secret.txt");
+    writeFileSync(secret, "top secret bytes\n");
+    const { sent } = env.askFetch("hl-late", env.folder);
+    const card = await env.openCard();
+    expect(card.text).not.toContain("other names on disk");
+    linkSync(secret, join(env.folder, "zz-link.txt"));
+    env.maintainer().choose(card.id, 0);
+    const end = await env.finished(sent);
+    expect(end.t).toBe("fetch.denied");
+    const chunks = sent.filter((m) => m.t === "fetch.chunk") as Array<{ bytes: Uint8Array }>;
+    expect(chunks.some((m) => Buffer.from(m.bytes).toString().includes("top secret"))).toBe(false);
+  });
+
+  it("Allow once on a file, a second name made for it mid-stream: the next chunk is refused (per-chunk nlink check)", async () => {
+    const { linkSync } = await import("node:fs");
+    let file = "";
+    const env = await setup({ onChunk: (fetchId, index) => { if (fetchId === "hl-mid" && index === 0) linkSync(file, `${file}.second-name`); } });
+    file = join(env.folder, "big.bin");
+    writeFileSync(file, Buffer.alloc(3 * 64 * KiB, 7));
+    const { sent } = env.askFetch("hl-mid", file);
+    const card = await env.openCard();
+    expect(card.text).not.toContain("other names on disk");
+    env.maintainer().choose(card.id, 0);
+    expect(await env.finished(sent)).toMatchObject({ t: "fetch.denied", reason: "denied" });
+    expect(sent.filter((m) => m.t === "fetch.chunk")).toHaveLength(1);
+  });
+
+  it("an Always grant on a folder: a hard link made later is not covered by it (a new card, with the hard-link line)", async () => {
+    const env = await setup();
+    const { linkSync } = await import("node:fs");
+    const secret = join(env.root, "outside-secret-2.txt");
+    writeFileSync(secret, "top secret bytes\n");
+    const first = env.askFetch("hl-a1", env.folder);
+    env.maintainer().choose((await env.openCard()).id, 1);
+    expect((await env.finished(first.sent)).t).toBe("fetch.done");
+    linkSync(secret, join(env.folder, "zz-link.txt"));
+    // L2: a folder with a hard link is never covered by "always": it asks again, and says so.
+    const second = env.askFetch("hl-a2", env.folder);
+    const card = await env.openCard(2);
+    expect(card.text).toContain("\nthis file has other names on disk");
+    expect(card.choices.map((choice: { label: string }) => choice.label)).toEqual(["Allow once", "Deny"]);
+    env.maintainer().choose(card.id, 1);
+    expect(await env.finished(second.sent)).toMatchObject({ t: "fetch.denied", reason: "denied" });
+    expect(second.sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+  });
+});
+
+describe("M5-06c review: the hard-linked card's second button is Deny; CLI output is one clean line", () => {
+  it("a hard-linked file: the second of its two choices (Deny) serves nothing", async () => {
+    const env = await setup();
+    const { linkSync } = await import("node:fs");
+    const file = join(env.botFolder, ".bot", "artifacts", "r2.txt");
+    writeFileSync(file, "hello");
+    linkSync(file, join(env.folder, "r2-other-name.txt"));
+    const { sent } = env.askFetch("h-deny", file, { what: { kind: "artifact", botId: "bot-a", path: "r2.txt" } });
+    const card = await env.openCard();
+    expect(card.choices.map((choice: { label: string }) => choice.label)).toEqual(["Allow once", "Deny"]);
+    env.maintainer().choose(card.id, 1);
+    expect(await env.finished(sent)).toMatchObject({ t: "fetch.denied", reason: "denied" });
+    expect(sent.some((m) => m.t === "fetch.chunk")).toBe(false);
+    expect(grantRows(env)).toEqual([]);
+  });
+
+  it("`fetch grants` / `fetch revoke`: a peer's name or path with escapes, line breaks or bidi marks prints as one plain line", async () => {
+    const row = { grantId: "g1", requester: "bot-b", requesterServer: "srv-b", botName: "evil\u001b[2J\nbot\u202e", machine: "box\r\n2. fake on x may read ~", prefix: "/home/me/a\u0007b", kind: "always" as const, createdAt: Date.UTC(2026, 10, 15, 12) };
+    const out: string[] = [];
+    const err: string[] = [];
+    const admin = { request: async (op: { op: string }) => (op.op === "fetch.grants" ? { rows: [row] } : { revoked: true }) };
+    expect(await fetchCommand(admin, { out: (line) => out.push(line), err: (line) => err.push(line) }, ["grants"], "/home/me")).toBe(0);
+    expect(await fetchCommand(admin, { out: (line) => out.push(line), err: (line) => err.push(line) }, ["revoke", "1"], "/home/me")).toBe(0);
+    expect(await fetchCommand(admin, { out: (line) => out.push(line), err: (line) => err.push(line) }, ["revoke", "\u001b[31m9"], "/home/me")).toBe(2);
+    for (const line of [...out, ...err]) expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e]/);
+    expect(out[0]).toMatch(/^1\. evil \[2J bot on box 2\. fake on x may read ~ may read ~\/a b \(always, since 2026-11-1[56]\)$/);
+    expect(out[1]).toBe("Revoked: evil [2J bot on box 2. fake on x may read ~ may no longer read ~/a b.");
+  });
+});
+
 describe("M5-06c: restart while the card is open (test 5)", () => {
   it("the card closes 'No longer needed'; the same fetchId asked again gets fetch.denied{gone} with the exact detail; a new fetchId asks again", async () => {
     const env = await setup();
@@ -425,4 +514,50 @@ describe("M5-06c: from a phone attached to another server (test 7)", () => {
   // `chat.choose` to A's Maintainer stream; no fixture builds that yet. The answer lands in the same Bot.choose as
   // the in-process tests above.
   it.todo("answer from a phone on another server: a paired phone attached to B answers A's card (needs a pairing + pass-through fixture)");
+});
+
+describe("M5-06c: only a user answers the card (slotAuthorize)", () => {
+  const CARD = "6A0B0000-0000-4000-8000-0000000000C1";
+  const OTHER = "6A0B0000-0000-4000-8000-0000000000C2";
+  const BOT = "6A0B0000-0000-4000-8000-0000000000B1";
+  const slot = (origin: string) => ({ origin, originEpoch: "0123456789abcdef0123456789abcdef", target: `bot:${BOT}` as const, n: 1 });
+  const tx = null as never;
+  const roster = (userOnlyCard?: (id: string) => boolean) => ({
+    memberId: "srv-self",
+    device: (member: string) => (member === "dev-phone" ? { keys: { sign: "s", dh: "d" }, scope: ["read", "reply"] as Array<"read" | "reply"> } : null),
+    server: (member: string) => member === "srv-peer",
+    ...(userOnlyCard ? { userOnlyCard } : {}),
+  });
+  const cards: Command[] = [
+    { type: "chat.choose", botId: BOT, messageId: CARD, index: 1 },
+    { type: "chat.answer", botId: BOT, messageId: CARD, text: "Allow once" },
+    { type: "chat.ignoreQuestion", botId: BOT, messageId: CARD },
+  ];
+
+  it("a peer server's pick, answer or dismissal of an open serverAsk card is refused; a device, the window and other cards are not", () => {
+    const authorize = slotAuthorize(roster((id) => id === CARD));
+    for (const cmd of cards) {
+      expect(authorize(tx, { slot: slot("srv-peer"), cmd, scope: "reply" })).toEqual({ reason: "origin", detail: USER_ONLY_CARD_DETAIL });
+      expect(authorize(tx, { slot: slot("dev-phone"), cmd, scope: "reply" })).toBeNull();
+      expect(authorize(tx, { slot: slot("desktop"), cmd, scope: "local" })).toBeNull();
+    }
+    expect(authorize(tx, { slot: slot("srv-peer"), cmd: { type: "chat.choose", botId: BOT, messageId: OTHER, index: 0 }, scope: "reply" })).toBeNull();
+    expect(authorize(tx, { slot: slot("srv-peer"), cmd: { type: "chat.send", botId: BOT, text: "hi" }, scope: "reply" })).toBeNull();
+  });
+
+  it("a check that throws refuses (fail closed)", () => {
+    const authorize = slotAuthorize(roster(() => { throw new Error("core gone"); }));
+    for (const cmd of cards) expect(authorize(tx, { slot: slot("srv-peer"), cmd, scope: "reply" })).toMatchObject({ reason: "origin" });
+  });
+
+  it("Core.serverAskOpen is true only while the card waits", async () => {
+    const env = await setup();
+    const { sent } = env.askFetch("useronly-1", join(env.folder, "main.ts"));
+    const card = await env.openCard();
+    expect(env.state.core.serverAskOpen(card.id)).toBe(true);
+    expect(env.state.core.serverAskOpen("not-a-card")).toBe(false);
+    expect(env.maintainer().choose(card.id, 2)).toEqual({ accepted: true });
+    expect((await env.finished(sent)).reason).toBe("denied");
+    expect(env.state.core.serverAskOpen(card.id)).toBe(false);
+  });
 });
