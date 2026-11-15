@@ -1,0 +1,29 @@
+// The slots the renderer's plugin feed fills (M7-02b; plugin-feed.ts) and the PluginsView array each view place is read from.
+// Pure: renderer-kernel.ts reads `FEED_SLOTS` (the `:shell` instance owns them, so a plugin's contribution to one is accepted),
+// plugin-feed.ts reads the rest. Every slot is given by its 2.x id; the kernel finds it under the new name too (slot-names.ts).
+import { SLOT_ALIASES, ROOT_SLOTS, canonicalSlot, legacySlotId } from "../../../../Web/src/plugin-kernel";
+
+/** The PluginsView arrays that hold view entries, and the view place each one is. */
+export const FEED_VIEWS = [
+  ["mainTabs", "view/mainTab"],
+  ["settingsSections", "view/settings.section"],
+  ["quickSettings", "view/quickSettings"],
+  ["rightPanelSections", "view/rightPanel.section"],
+  ["takeovers", "view/rightPanel.takeover"],
+  ["bottomPanels", "view/bottomPanel"],
+  ["chatHeaderViews", "view/chatHeader"],
+  ["composerBarViews", "view/composerBar"],
+] as const;
+export type FeedViewKey = (typeof FEED_VIEWS)[number][0];
+
+/** Every menu slot (`PluginsView.menus` rows go to `menu/<menu>`), by 2.x id. */
+export const FEED_MENU_SLOTS: readonly string[] = SLOT_ALIASES.filter((alias) => alias.group === "menu").map(legacySlotId);
+
+const ROOT_IDS = new Set(ROOT_SLOTS.map(canonicalSlot));
+
+/**
+ * What `:shell` owns besides the root slots (renderer-kernel.ts): the places the feed fills that are not a root slot already
+ * (`view/bottomPanel` is `app/bottom`, a root slot: it is not listed twice). A card that gives one of these a real owner (the
+ * settings plugin for `view/settings.section`, …) takes it off this list in the same change.
+ */
+export const FEED_SLOTS: readonly string[] = [...new Set([...FEED_VIEWS.map(([, slot]) => slot), ...FEED_MENU_SLOTS])].filter((slot) => !ROOT_IDS.has(slot));
