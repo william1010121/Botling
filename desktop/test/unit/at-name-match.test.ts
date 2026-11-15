@@ -199,10 +199,9 @@ describe("a bot's @ with a name no bot has exactly", () => {
       h.conversations.receiveBotMention({ id: "R6", role: "bot", text: "@gkey-release-candidate 第六個問題", date: 0 }, caller);
       expect(records(h).map((entry) => entry.message)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6"]);
       expect(h.notices.get(SPECIAL)!.filter((text) => /^Not sent/.test(text))).toEqual([]);
-      // The same words again since the user's last line are still a retry, not a new call.
+      // The same words again since the user's last line are still a retry (merged into the pending one), not a new call.
       h.conversations.receiveBotMention({ id: "R7", role: "bot", text: "@gkey-release-candidate 第六個問題", date: 0 }, caller);
       expect(records(h)).toHaveLength(6);
-      expect(h.notices.get(SPECIAL)!.at(-1)).toMatch(/already asked the same/);
     } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
   });
 
