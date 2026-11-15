@@ -33,6 +33,7 @@ import {
   BULK_FRAME_LIMIT, RELAY_BULK_FRAME_LIMIT, SessionLink,
   type Lane, type LocalStatic, type PeerClaim, type PeerDecision, type SessionEnd, type SessionInfo, type SessionLinkOptions, type SessionTransport, type TransportKind,
 } from "../../session";
+import type { LiveGateClock } from "./live-gate";
 import { remoteReadRefusal, statedScope, type DeviceRoster } from "./remote-reads";
 import { errorText, MAX_BUFFERED, SessionCore, type SessionHost, type SessionOptions, type SessionRosterView, type ShellRefusal } from "./session-core";
 
@@ -108,8 +109,153 @@ export interface RemoteContentHook {
   ticket(deviceId: string, message: MessageOf<"content.ticket">): Promise<MessageOf<"content.granted"> | MessageOf<"content.gone">>;
 }
 
+/** Minimum interval between stored `push` Profile writes per device on this server (M4-25 F1). */
+export const PUSH_PROFILE_WINDOW_MS = 60_000;
+
+const systemPushClock: LiveGateClock = {
+  now: () => Date.now(),
+  setTimeout: (fn, ms) => { const timer = setTimeout(fn, ms); timer.unref?.(); return timer; },
+  clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+};
+
+interface DevicePushEntry {
+  inFlight: boolean;
+  pending: { value: string; session: RemoteSession } | null;
+  lastWrittenAt: number | null;
+  timer: unknown;
+}
+
+/**
+ * Per-device `push.subscribe` rate limiter and coalescer (M4-25 F1, M4-22 R2):
+ * - at most one `writeProfile` in flight per device; newer values coalesce onto a single pending slot;
+ * - at most one written `push` Profile per device per `windowMs` (default 60 s); newer values wait for the window;
+ * - identical values returning `null` from `writeProfile` do not consume the window;
+ * - invalidated/revoked devices drop any held value immediately and never write; timers are unref'd and cleared on close.
+ */
+export class PushProfileLimiter {
+  private readonly entries = new Map<string, DevicePushEntry>();
+  private readonly clock: LiveGateClock;
+  private readonly windowMs: number;
+  private closed = false;
+
+  constructor(
+    private readonly roster: RemoteRoster,
+    private readonly log: (text: string) => void,
+    options: { windowMs?: number; clock?: LiveGateClock } = {},
+  ) {
+    this.clock = options.clock ?? systemPushClock;
+    this.windowMs = Math.max(0, options.windowMs ?? PUSH_PROFILE_WINDOW_MS);
+  }
+
+  submit(member: string, value: string, session: RemoteSession): void {
+    if (this.closed || !this.roster.writeProfile) return;
+    if (!this.roster.device(member)) return;
+    let entry = this.entries.get(member);
+    if (!entry) {
+      entry = { inFlight: false, pending: null, lastWrittenAt: null, timer: null };
+      this.entries.set(member, entry);
+    }
+    this.schedule(member, entry, value, session);
+  }
+
+  drop(member: string): void {
+    const entry = this.entries.get(member);
+    if (!entry) return;
+    entry.pending = null;
+    if (entry.timer !== null) {
+      this.clock.clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    if (!entry.inFlight) this.entries.delete(member);
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const entry of this.entries.values()) {
+      entry.pending = null;
+      if (entry.timer !== null) {
+        this.clock.clearTimeout(entry.timer);
+        entry.timer = null;
+      }
+    }
+    this.entries.clear();
+  }
+
+  private schedule(member: string, entry: DevicePushEntry, value: string, session: RemoteSession): void {
+    if (entry.inFlight || entry.timer !== null) {
+      entry.pending = { value, session };
+      return;
+    }
+    if (entry.lastWrittenAt !== null && this.windowMs > 0) {
+      const elapsed = Math.max(0, this.clock.now() - entry.lastWrittenAt);
+      if (elapsed < this.windowMs) {
+        entry.pending = { value, session };
+        this.armTimer(member, entry, this.windowMs - elapsed);
+        return;
+      }
+    }
+    void this.run(member, entry, value, session);
+  }
+
+  private armTimer(member: string, entry: DevicePushEntry, delayMs: number): void {
+    const handle = this.clock.setTimeout(() => {
+      entry.timer = null;
+      if (this.closed || entry.inFlight) return;
+      const next = entry.pending;
+      entry.pending = null;
+      if (!next) return;
+      if (!this.roster.device(member)) {
+        this.entries.delete(member);
+        return;
+      }
+      this.schedule(member, entry, next.value, next.session);
+    }, delayMs);
+    (handle as { unref?: () => void } | undefined)?.unref?.();
+    entry.timer = handle;
+  }
+
+  private async run(member: string, entry: DevicePushEntry, value: string, session: RemoteSession): Promise<void> {
+    const writeProfile = this.roster.writeProfile;
+    if (!writeProfile || this.closed || !this.roster.device(member)) {
+      entry.pending = null;
+      if (!this.roster.device(member)) this.entries.delete(member);
+      return;
+    }
+    entry.inFlight = true;
+    try {
+      const wrote = await writeProfile.call(this.roster, member, "push", value);
+      if (wrote !== null && wrote !== undefined) {
+        entry.lastWrittenAt = this.clock.now();
+      }
+    } catch (error) {
+      session.handlePushWriteFailure(error);
+    } finally {
+      entry.inFlight = false;
+      if (this.closed || !this.roster.device(member)) {
+        entry.pending = null;
+        if (entry.timer !== null) {
+          this.clock.clearTimeout(entry.timer);
+          entry.timer = null;
+        }
+        this.entries.delete(member);
+      } else {
+        const next = entry.pending;
+        entry.pending = null;
+        if (next) this.schedule(member, entry, next.value, next.session);
+      }
+    }
+  }
+}
+
 export interface RemoteSessionOptions extends SessionOptions {
   link?: SessionLinkOptions;
+  /** Minimum interval between stored `push` Profile writes per device on this server (default 60 s; 0 disables delay). */
+  pushWindowMs?: number;
+  /** Injected clock for the per-device `push.subscribe` rate limit window (tests). */
+  pushClock?: LiveGateClock;
+  /** Shared per-server rate limiter (passed by `RemoteSessions`). */
+  pushLimiter?: PushProfileLimiter;
 }
 
 /** The roster check of a handshake claim. Reads only: the claim is not proven when it runs. */
@@ -138,9 +284,15 @@ export class RemoteSession extends SessionCore {
   private pair: { onMessage(message: Message): void; closed(): void } | null = null;
   private contentSink: DeviceContentSink | null = null;
   private readonly contentSizes: { frame: number; window: number };
+  private readonly ownPushLimiter: PushProfileLimiter | null;
+  private readonly pushLimiter: PushProfileLimiter;
 
   constructor(transport: SessionTransport, transportKind: TransportKind, private readonly remote: RemoteHost, options: RemoteSessionOptions = {}) {
     super(remote, options);
+    this.ownPushLimiter = options.pushLimiter
+      ? null
+      : new PushProfileLimiter(remote.roster, (text) => remote.log(text), { windowMs: options.pushWindowMs, clock: options.pushClock });
+    this.pushLimiter = options.pushLimiter ?? this.ownPushLimiter!;
     const cluster = remote.roster.clusterId;
     this.bulkLimit = options.link?.bulkFrameLimit ?? (transportKind === "relay" ? RELAY_BULK_FRAME_LIMIT : BULK_FRAME_LIMIT);
     this.contentSizes = transportKind === "relay" ? DEVICE_CONTENT.relay : DEVICE_CONTENT.direct;
@@ -218,6 +370,7 @@ export class RemoteSession extends SessionCore {
   }
 
   protected closing(): void {
+    this.ownPushLimiter?.close();
     const pair = this.pair;
     this.pair = null;
     pair?.closed();
@@ -301,20 +454,21 @@ export class RemoteSession extends SessionCore {
     super.onMessage(message);
   }
 
-  private async pushSubscribe(message: MessageOf<"push.subscribe">): Promise<void> {
+  private pushSubscribe(message: MessageOf<"push.subscribe">): void {
     const member = this.member;
-    const writeProfile = this.remote.roster.writeProfile;
-    if (!member || this.state !== "open" || !writeProfile) return;
-    try {
-      await writeProfile.call(this.remote.roster, member, "push", encodePushSubscription({ endpoint: message.endpoint, keys: message.keys }));
-    } catch (error) {
-      if (this.state === "open") {
-        const after = this.frameRefusal();
-        if (after) { this.bye(after.reason, after.detail); return; }
-      }
-      const reason = (error as { reason?: unknown })?.reason;
-      this.host.log(`session: push.subscribe not stored${typeof reason === "string" ? ` (${reason})` : ""}`);
+    if (!member || this.state !== "open" || !this.remote.roster.writeProfile) return;
+    const encoded = encodePushSubscription({ endpoint: message.endpoint, keys: message.keys });
+    this.pushLimiter.submit(member, encoded, this);
+  }
+
+  /** @internal */
+  handlePushWriteFailure(error: unknown): void {
+    if (this.state === "open") {
+      const after = this.frameRefusal();
+      if (after) { this.bye(after.reason, after.detail); return; }
     }
+    const reason = (error as { reason?: unknown })?.reason;
+    this.host.log(`session: push.subscribe not stored${typeof reason === "string" ? ` (${reason})` : ""}`);
   }
 
   private async remoteContent(message: MessageOf<"content.locate"> | MessageOf<"content.ticket">): Promise<void> {
@@ -427,12 +581,15 @@ export class RemoteSessions {
   private readonly sessions = new Set<RemoteSession>();
   private readonly pending = new Set<RemoteSession>();
   private readonly pairs = new Set<RemoteSession>();
+  private readonly pushLimiter: PushProfileLimiter;
   private readonly unlisten: () => void;
   private closed = false;
 
   constructor(private readonly host: RemoteHost, private readonly options: RemoteSessionOptions = {}) {
+    this.pushLimiter = options.pushLimiter ?? new PushProfileLimiter(host.roster, (text) => host.log(text), { windowMs: options.pushWindowMs, clock: options.pushClock });
     this.unlisten = host.roster.onChange((change) => {
       const gone = new Set(change.invalidated);
+      for (const member of gone) this.pushLimiter.drop(member);
       for (const session of [...this.sessions]) if (session.memberId && gone.has(session.memberId)) session.bye("revoked", "this device was removed from the roster");
     });
   }
@@ -448,7 +605,7 @@ export class RemoteSessions {
 
   /** A new transport: the session waits for HS1 on it. Feed it with `receive`, tell it `transportClosed`. */
   accept(transport: SessionTransport, kind: TransportKind): RemoteSession {
-    const session = new RemoteSession(transport, kind, this.host, this.options);
+    const session = new RemoteSession(transport, kind, this.host, { ...this.options, pushLimiter: this.pushLimiter });
     if (this.closed) { session.close(); return session; }
     this.pending.add(session);
     session.onClosed(() => { this.pending.delete(session); this.sessions.delete(session); });
@@ -464,6 +621,7 @@ export class RemoteSessions {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.pushLimiter.close();
     this.unlisten();
     for (const session of [...this.sessions]) session.bye("closing", "botlingd is stopping");
     for (const session of [...this.pending]) session.close();

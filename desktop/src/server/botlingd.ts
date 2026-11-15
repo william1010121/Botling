@@ -817,11 +817,17 @@ export class Botlingd {
       const peerContentOwner = new PeerContentOwner({ service: content, roster, log, corruptId: testCorruptContent(env) });
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
       const remoteContent = new RemoteContent({ service: content, tickets, roster, reader: () => hub.reader(), log, peer: peerContent });
-      if (roster.clusterId) await ensureVapidKeys(paths.dataDir);
+      const vapidState: VapidSyncState = { known: false, warnedMissing: false };
+      if (roster.clusterId) {
+        await ensureSoleServerVapidKeys(paths.dataDir, roster, log, vapidState).catch((error) => {
+          log(`vapid: ${String((error as Error)?.message ?? error)}`);
+        });
+      }
       roster.onChange(() => {
-        if (roster.clusterId && !readVapidKeys(paths.dataDir)) {
-          void ensureVapidKeys(paths.dataDir).catch((error) => log(`vapid: ${String((error as Error)?.message ?? error)}`));
-        }
+        if (!roster.clusterId || vapidState.known) return;
+        void ensureSoleServerVapidKeys(paths.dataDir, roster, log, vapidState).catch((error) => {
+          log(`vapid: ${String((error as Error)?.message ?? error)}`);
+        });
       });
       const remote = new RemoteSessions({ ...sessionHost, peerReads: undefined, peerLocate: undefined, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, pairing, remoteContent, deviceContent: peerContentOwner, vapidPublicKey: () => readVapidKeys(paths.dataDir)?.publicKey ?? null }, options.session);
       // M5-06c: a fetch that asks puts a card into the Maintainer's chat; asks left open by the last run are `gone`.
@@ -1103,6 +1109,49 @@ function startOriginTestHook(dataDir: string, serverOrigin: ServerOrigin, log: (
   const timer = setInterval(poll, 25);
   timer.unref();
   return () => { clearInterval(timer); off(); };
+}
+
+export interface VapidSyncState {
+  known: boolean;
+  warnedMissing: boolean;
+}
+
+/** True when this server belongs to a cluster and is the sole server member in the current roster view (M4-25 F4). */
+export function isSoleServerInRoster(roster: Pick<RosterStore, "clusterId" | "memberId" | "view">): boolean {
+  if (!roster.clusterId) return false;
+  const servers = roster.view.servers;
+  return servers.size === 1 && servers.has(roster.memberId);
+}
+
+/**
+ * Ensures `vapid-keys.json` exists only when this server is the sole server in the cluster roster (M4-25 F4).
+ * In a multi-server cluster, a missing or unreadable key file fails closed (logs once, leaves Web Push disabled)
+ * instead of minting a divergent pair that would desync from peers.
+ */
+export async function ensureSoleServerVapidKeys(
+  dataDir: string,
+  roster: Pick<RosterStore, "clusterId" | "memberId" | "view">,
+  log: (line: string) => void,
+  state: VapidSyncState,
+): Promise<boolean> {
+  if (!roster.clusterId) return false;
+  if (state.known) return true;
+  if (readVapidKeys(dataDir)) {
+    state.known = true;
+    state.warnedMissing = false;
+    return true;
+  }
+  if (isSoleServerInRoster(roster)) {
+    await ensureVapidKeys(dataDir);
+    state.known = true;
+    state.warnedMissing = false;
+    return true;
+  }
+  if (!state.warnedMissing) {
+    state.warnedMissing = true;
+    log("vapid: cluster vapid-keys.json is missing or invalid in a multi-server cluster; leaving Web Push disabled on this server");
+  }
+  return false;
 }
 
 /** Where the built server's out/ folder is: `<out>/server/main.cjs` → `<out>`. */

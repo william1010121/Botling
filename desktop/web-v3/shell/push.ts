@@ -10,6 +10,32 @@ import { fromBase64Url, PushSubscription as PushSubscriptionSchema, toBase64Url,
 
 export const PUSH_ENABLED_PREF = "pushEnabled";
 export const PUSH_VAPID_PREF = "pushVapidKey";
+export const PUSH_VAPID_HISTORY_PREF = "pushVapidKeys";
+const MAX_VAPID_HISTORY = 16;
+
+function parseVapidHistory(raw: string | null, storedKey: string | null): string[] {
+  const keys: string[] = [];
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (typeof item === "string" && item.length > 0 && !keys.includes(item)) keys.push(item);
+        }
+      }
+    } catch {
+      // Ignore corrupt pref; re-seed from storedKey below if present.
+    }
+  }
+  if (storedKey && !keys.includes(storedKey)) keys.push(storedKey);
+  return keys.slice(-MAX_VAPID_HISTORY);
+}
+
+function appendVapidHistory(history: readonly string[], key: string): string[] {
+  const next = history.filter((item) => item !== key);
+  next.push(key);
+  return next.slice(-MAX_VAPID_HISTORY);
+}
 
 export interface PushPrefs {
   load(name: string): Promise<string | null>;
@@ -175,6 +201,7 @@ export async function enablePushNotifications(options: EnablePushOptions): Promi
   const sent = options.sendPushSubscribe(wire);
   await options.prefs.save(PUSH_ENABLED_PREF, "1").catch(() => undefined);
   await options.prefs.save(PUSH_VAPID_PREF, options.vapidPublicKey).catch(() => undefined);
+  await options.prefs.save(PUSH_VAPID_HISTORY_PREF, JSON.stringify([options.vapidPublicKey])).catch(() => undefined);
   return { ok: true, sent };
 }
 
@@ -190,7 +217,7 @@ export interface SyncPushOptions {
  * Re-syncs (and re-subscribes if the cluster VAPID key rotated) on attach ONLY if the user previously opted in.
  * Never registers a service worker or asks permission if the user has not opted in.
  */
-export async function syncPushOnAttach(options: SyncPushOptions): Promise<"off" | "missing-key" | "no-registration" | "synced" | "resubscribed" | "invalid"> {
+export async function syncPushOnAttach(options: SyncPushOptions): Promise<"off" | "missing-key" | "no-registration" | "synced" | "resubscribed" | "key-mismatch" | "invalid"> {
   const permission = options.permission ?? (typeof Notification !== "undefined" ? Notification.permission : "default");
   if (permission !== "granted") return "off";
   const enabled = await options.prefs.load(PUSH_ENABLED_PREF).catch(() => null);
@@ -204,10 +231,18 @@ export async function syncPushOnAttach(options: SyncPushOptions): Promise<"off" 
   if (!registration?.pushManager) return "no-registration";
 
   const storedKey = await options.prefs.load(PUSH_VAPID_PREF).catch(() => null);
+  const history = parseVapidHistory(
+    await options.prefs.load(PUSH_VAPID_HISTORY_PREF).catch(() => null),
+    storedKey,
+  );
   let sub = await registration.pushManager.getSubscription().catch(() => null);
   let resubscribed = false;
-  if (!sub || !subscriptionMatchesKey(sub, options.vapidPublicKey, storedKey)) {
-    if (sub) await sub.unsubscribe().catch(() => false);
+  if (sub && !subscriptionMatchesKey(sub, options.vapidPublicKey, storedKey)) {
+    if (history.includes(options.vapidPublicKey)) return "key-mismatch";
+    await sub.unsubscribe().catch(() => false);
+    sub = null;
+  }
+  if (!sub) {
     sub = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appServerKey });
     resubscribed = true;
   }
@@ -216,6 +251,10 @@ export async function syncPushOnAttach(options: SyncPushOptions): Promise<"off" 
   const sent = options.sendPushSubscribe(wire);
   if (!sent) return "invalid";
   await options.prefs.save(PUSH_VAPID_PREF, options.vapidPublicKey).catch(() => undefined);
+  await options.prefs.save(
+    PUSH_VAPID_HISTORY_PREF,
+    JSON.stringify(appendVapidHistory(history, options.vapidPublicKey)),
+  ).catch(() => undefined);
   return resubscribed ? "resubscribed" : "synced";
 }
 
@@ -225,6 +264,7 @@ export async function disablePushNotifications(
 ): Promise<void> {
   await prefs.save(PUSH_ENABLED_PREF, "0").catch(() => undefined);
   await prefs.save(PUSH_VAPID_PREF, "").catch(() => undefined);
+  await prefs.save(PUSH_VAPID_HISTORY_PREF, "").catch(() => undefined);
   const reg = await getRegistration().catch(() => undefined);
   const sub = await reg?.pushManager?.getSubscription().catch(() => null);
   if (sub) await sub.unsubscribe().catch(() => false);

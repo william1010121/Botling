@@ -2,15 +2,18 @@
 // Botling 3 M4-25: Page-side Web Push subscription ("This device" opt-in, never on load) and service worker
 // `push` / `notificationclick` handlers (protocol v1 §18.4, Q-P1..Q-P4).
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Command } from "../../src/contract";
 import { FeLink, MemoryFeStorage, type Dial } from "../../src/fe-link";
-import { decodeFrame, FrameSplitter, packFrame, toBase64Url, Welcome, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind } from "../../src/protocol";
-import { Session, SessionCore, type SessionHost } from "../../src/server/session";
+import { decodeFrame, encodeFrame, FrameSplitter, memberIdFromKey, packFrame, toBase64Url, Welcome, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind } from "../../src/protocol";
+import { ensureSoleServerVapidKeys, isSoleServerInRoster, type VapidSyncState } from "../../src/server/botlingd";
+import { bindServerIdentity, ClusterSetup, ensureVapidKeys, loadOrCreateServerIdentity, readVapidKeys, vapidFilePath } from "../../src/server/identity";
+import { RosterStore } from "../../src/server/roster";
+import { RemoteSessions, Session, SessionCore, slotAuthorize, type LiveGateClock, type RemoteHost, type SessionHost } from "../../src/server/session";
 import { effectCheckpointSink } from "../../src/server/effects";
 import { ensureBot } from "../../src/server/effects/log-ops";
 import { IntentRuntime } from "../../src/server/intents";
@@ -18,9 +21,11 @@ import { LiveChannel } from "../../src/server/live";
 import { LogHub } from "../../src/server/log";
 import { ShellBridge } from "../../src/server/shell-bridge";
 import { openServerStore } from "../../src/server/store";
+import { generateDhKeyPair, SessionLink, type SessionTransport } from "../../src/session";
 import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
-import { formatPushNotification, handleNotificationClick, handlePush, resolveNotificationUrl, type PushNotificationOptions } from "../../web-v3/push-sw";
-import { decodeApplicationServerKey, enablePushNotifications, extractPushSubscription, pushSupport, syncPushOnAttach, type PushPrefs } from "../../web-v3/shell/push";
+import { testRoot } from "../botlingd-harness";
+import { cleanPushText, formatPushNotification, handleNotificationClick, handlePush, resolveNotificationUrl, type PushNotificationOptions } from "../../web-v3/push-sw";
+import { decodeApplicationServerKey, disablePushNotifications, enablePushNotifications, extractPushSubscription, pushSupport, syncPushOnAttach, type PushPrefs } from "../../web-v3/shell/push";
 import { ThisDevice } from "../../web-v3/shell/Shell";
 import type { Connection } from "../../web-v3/shell/connection";
 import type { DeviceRecord } from "../../web-v3/shell/device-store";
@@ -712,5 +717,423 @@ describe("M4-25 page push opt-in UI and iOS Home Screen rules", () => {
 
     const bad = makeFakeSubscription("http://127.0.0.1/bad");
     expect(extractPushSubscription(bad as unknown as PushSubscription)).toBeNull();
+  });
+});
+
+describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
+  class RateClock implements LiveGateClock {
+    time = 10_000;
+    private timers: Array<{ id: number; at: number; fn: () => void }> = [];
+    private seq = 0;
+    now(): number { return this.time; }
+    setTimeout(fn: () => void, ms: number): unknown {
+      const id = ++this.seq;
+      this.timers.push({ id, at: this.time + ms, fn });
+      return id;
+    }
+    clearTimeout(handle: unknown): void {
+      this.timers = this.timers.filter((t) => t.id !== handle);
+    }
+    get pendingCount(): number { return this.timers.length; }
+    async advance(ms: number): Promise<void> {
+      const end = this.time + ms;
+      for (;;) {
+        this.timers.sort((a, b) => a.at - b.at);
+        const next = this.timers[0];
+        if (!next || next.at > end) break;
+        this.timers.shift();
+        this.time = next.at;
+        next.fn();
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      this.time = end;
+      await Promise.resolve();
+    }
+  }
+
+  async function flushMicrotasks(): Promise<void> {
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  }
+
+  async function makeRealServer(options: { clock?: LiveGateClock; windowMs?: number; cluster?: boolean } = {}) {
+    const rootDir = testRoot("m4-25-fixes");
+    mkdirSync(rootDir, { recursive: true, mode: 0o700 });
+    const store = await openServerStore(rootDir);
+    const identity = await loadOrCreateServerIdentity(rootDir, { create: true });
+    const { serverId, memberId } = await store.submit((tx) => bindServerIdentity(tx, identity));
+    const logs: string[] = [];
+    const roster = await RosterStore.open(store, identity, { log: (line) => logs.push(line) });
+    if (options.cluster !== false) {
+      const setup = new ClusterSetup(roster);
+      const began = await setup.begin();
+      expect((await setup.confirm(began.code)).ok).toBe(true);
+    }
+    const engine = new FakeTurnEngine({ bots: ["6A0B0000-0000-4000-8000-000000000002"] });
+    const hub = new LogHub(store, { serverStreams: true });
+    const live = new LiveChannel({ sink: effectCheckpointSink(store), checkpointIntervalMs: 5 });
+    const runtime = new IntentRuntime({ store, engine, hub, live, log: (l) => logs.push(l), authorize: slotAuthorize(roster), serverEvents: "all" });
+    await runtime.start();
+    const shell = new ShellBridge();
+    const host: RemoteHost = {
+      serverId,
+      serverName: "Mac",
+      startedAt: Date.now(),
+      minFeVersion: "3.0.0",
+      token: () => "t".repeat(32),
+      hub,
+      live,
+      runtime,
+      engine,
+      content: null,
+      shell,
+      nextFor: () => ({}),
+      ensureBotStream: async (botId) => { await store.submit((tx) => { ensureBot(tx, botId); }); return true; },
+      log: (l) => logs.push(l),
+      roster,
+      self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey },
+      vapidPublicKey: () => readVapidKeys(rootDir)?.publicKey ?? null,
+    };
+    const remote = new RemoteSessions(host, {
+      pushWindowMs: options.windowMs,
+      pushClock: options.clock,
+    });
+    cleanups.push(async () => {
+      remote.close();
+      await runtime.scope.submit(() => undefined);
+      engine.close();
+      runtime.close();
+      shell.close();
+      live.close();
+      hub.close();
+      await roster.idle();
+      await store.close();
+      rmSync(rootDir, { recursive: true, force: true });
+    });
+    return { dir: rootDir, store, identity, roster, host, remote, logs };
+  }
+
+  async function makeDevice() {
+    const sign = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
+    const dh = await generateDhKeyPair();
+    const signPub = new Uint8Array(await crypto.subtle.exportKey("raw", sign.publicKey));
+    const member = await memberIdFromKey(signPub);
+    return { member, dh, keys: { sign: toBase64Url(signPub), dh: toBase64Url(dh.publicKey) } };
+  }
+
+  function dialReal(s: Awaited<ReturnType<typeof makeRealServer>>, dev: Awaited<ReturnType<typeof makeDevice>>) {
+    const got: Message[] = [];
+    let link!: SessionLink;
+    const toDevice: SessionTransport = {
+      send: (f) => link.receive(f),
+      close: () => { void (link?.received() ?? Promise.resolve()).then(() => setTimeout(() => link.transportClosed(), 0)); },
+    };
+    const session = s.remote.accept(toDevice, "memory");
+    const toServer: SessionTransport = {
+      send: (f) => session.receive(f),
+      close: () => { void session.link.received().then(() => setTimeout(() => session.transportClosed(), 0)); },
+    };
+    link = SessionLink.initiate(toServer, {
+      mode: "ik",
+      transport: "memory",
+      cluster: s.roster.clusterId!,
+      self: { memberId: dev.member, dhPub: dev.dh.publicKey, dhKey: dev.dh.privateKey },
+      responder: { memberId: s.host.self.memberId, dhPub: s.host.self.dhPub },
+    }, {
+      onFrame: (bytes) => {
+        const decoded = decodeFrame(bytes, "server", { local: false });
+        if (decoded.ok) got.push(decoded.message);
+      },
+      onEnd: () => undefined,
+    });
+    const encoder = new TextEncoder();
+    return {
+      got,
+      session,
+      async hello(): Promise<MessageOf<"welcome">> {
+        await link.established;
+        link.send("control", encoder.encode(JSON.stringify({
+          t: "hello", deviceId: dev.member, feVersion: "3.0.0", protocol: 1,
+          originEpoch: "0123456789abcdef0123456789abcdef", cursors: {}, outbox: [], want: [],
+        })));
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const w = got.find((m): m is MessageOf<"welcome"> => m.t === "welcome");
+          if (w) return w;
+          await new Promise((r) => setTimeout(r, 2));
+        }
+        throw new Error("timed out waiting for welcome");
+      },
+      sendPush(sub: { endpoint: string; keys: { p256dh: string; auth: string } }) {
+        const enc = encodeFrame({ t: "push.subscribe", ...sub }, "fe", { local: false });
+        if (!enc.ok) throw new Error(enc.detail);
+        link.send("control", encoder.encode(enc.text));
+      },
+    };
+  }
+
+  it("F1 server: coalesces A/B x50 in one 60s window to <= 2 statements and flushes latest when window opens", async () => {
+    const clock = new RateClock();
+    const s = await makeRealServer({ clock, windowMs: 60_000 });
+    const dev = await makeDevice();
+    await s.roster.addDevice({ keys: dev.keys, name: "Phone" });
+
+    // Two concurrent sessions for the same device share one per-device limiter.
+    const c1 = dialReal(s, dev);
+    const c2 = dialReal(s, dev);
+    await c1.hello();
+    await c2.hello();
+
+    const subA = { endpoint: "https://push.example/sub/A", keys: { p256dh: makeP256Pub(1), auth: makeAuth(1) } };
+    const subB = { endpoint: "https://push.example/sub/B", keys: { p256dh: makeP256Pub(2), auth: makeAuth(2) } };
+    const subLast = { endpoint: "https://push.example/sub/LAST", keys: { p256dh: makeP256Pub(3), auth: makeAuth(3) } };
+
+    c1.sendPush(subA);
+    for (let i = 0; i < 25; i++) {
+      c1.sendPush(subB);
+      c2.sendPush(subA);
+    }
+    c2.sendPush(subLast);
+    await new Promise((r) => setTimeout(r, 40));
+    await s.roster.idle();
+
+    const beforeWindow = s.roster.statements().filter((st) => st.statement.body.type === "profile" && st.statement.body.field === "push");
+    expect(beforeWindow).toHaveLength(1);
+    expect(s.roster.pushSubscription(dev.member)).toEqual(subA);
+    expect(clock.pendingCount).toBe(1);
+
+    // Identical write (subA again) must not reset or consume window; subLast stays pending and flushes at 60s.
+    await clock.advance(59_999);
+    await s.roster.idle();
+    expect(s.roster.statements().filter((st) => st.statement.body.type === "profile" && st.statement.body.field === "push")).toHaveLength(1);
+
+    await clock.advance(1);
+    await new Promise((r) => setTimeout(r, 30));
+    await s.roster.idle();
+    const afterWindow = s.roster.statements().filter((st) => st.statement.body.type === "profile" && st.statement.body.field === "push");
+    expect(afterWindow).toHaveLength(2);
+    expect(s.roster.pushSubscription(dev.member)).toEqual(subLast);
+  });
+
+  it("F1 server: held write is discarded when device is revoked and timer is cleared on close", async () => {
+    const clock = new RateClock();
+    const s = await makeRealServer({ clock, windowMs: 60_000 });
+    const dev = await makeDevice();
+    await s.roster.addDevice({ keys: dev.keys, name: "Phone" });
+    const c = dialReal(s, dev);
+    await c.hello();
+
+    const sub1 = { endpoint: "https://push.example/sub/1", keys: { p256dh: makeP256Pub(4), auth: makeAuth(4) } };
+    const sub2 = { endpoint: "https://push.example/sub/2", keys: { p256dh: makeP256Pub(5), auth: makeAuth(5) } };
+    c.sendPush(sub1);
+    await new Promise((r) => setTimeout(r, 30));
+    await s.roster.idle();
+    expect(s.roster.pushSubscription(dev.member)).toEqual(sub1);
+
+    // Queue sub2 inside window, then revoke device before 60s elapses.
+    c.sendPush(sub2);
+    await new Promise((r) => setTimeout(r, 20));
+    await flushMicrotasks();
+    expect(clock.pendingCount).toBe(1);
+
+    await s.roster.revokeDevice(dev.member);
+    await s.roster.idle();
+    expect(clock.pendingCount).toBe(0);
+
+    await clock.advance(60_000);
+    await s.roster.idle();
+    const pushStmts = s.roster.statements().filter((st) => st.statement.body.type === "profile" && st.statement.body.field === "push");
+    expect(pushStmts).toHaveLength(1);
+    expect(s.roster.pushSubscription(dev.member)).toBeNull();
+  });
+
+  it("F1 page: re-subscribes at most once per key on mismatch and never flips back between server keys", async () => {
+    const keyA = makeVapidPub(60);
+    const keyB = makeVapidPub(61);
+    const keyBytes = (k: string) => decodeApplicationServerKey(k)!.buffer;
+
+    let currentKey = keyA;
+    let subscribeCalls = 0;
+    const makeSubWithKey = (ep: string, vapidKey: string) => ({
+      ...makeFakeSubscription(ep),
+      options: { applicationServerKey: keyBytes(vapidKey) },
+    });
+    let activeSub = makeSubWithKey("https://push.example/sub-A", keyA);
+
+    const prefsMap = new Map<string, string>([["pushEnabled", "1"], ["pushVapidKey", keyA]]);
+    const prefs: PushPrefs = {
+      load: async (k) => prefsMap.get(k) ?? null,
+      save: async (k, v) => { prefsMap.set(k, v); },
+    };
+    const sent: Array<{ endpoint: string }> = [];
+    const reg = {
+      pushManager: {
+        getSubscription: async () => activeSub,
+        subscribe: async () => {
+          subscribeCalls += 1;
+          activeSub = makeSubWithKey(`https://push.example/sub-${subscribeCalls}`, currentKey);
+          return activeSub;
+        },
+      },
+    } as unknown as ServiceWorkerRegistration;
+
+    // 1. Attach to server B (new keyB): re-subscribes once for keyB.
+    currentKey = keyB;
+    const r1 = await syncPushOnAttach({
+      vapidPublicKey: keyB,
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs,
+      permission: "granted",
+      getRegistration: async () => reg,
+    });
+    expect(r1).toBe("resubscribed");
+    expect(subscribeCalls).toBe(1);
+    expect(sent).toHaveLength(1);
+
+    // 2. Attach back to server A (already seen keyA): must NOT flip back or unsubscribe sub-1.
+    currentKey = keyA;
+    const prevSub = activeSub;
+    const r2 = await syncPushOnAttach({
+      vapidPublicKey: keyA,
+      sendPushSubscribe: (sub) => { sent.push(sub); return true; },
+      prefs,
+      permission: "granted",
+      getRegistration: async () => reg,
+    });
+    expect(r2).toBe("key-mismatch");
+    expect(prevSub.wasUnsubscribed).toBe(false);
+    expect(subscribeCalls).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("F3 & F5: disablePushNotifications unsubscribes and Turn off notifications button resets UI", async () => {
+    const fakeSub = makeFakeSubscription("https://push.example/sub-turnoff");
+    const prefsMap = new Map<string, string>([
+      ["pushEnabled", "1"],
+      ["pushVapidKey", makeVapidPub(70)],
+      ["pushVapidKeys", JSON.stringify([makeVapidPub(70)])],
+    ]);
+    const prefs: PushPrefs = {
+      load: async (k) => prefsMap.get(k) ?? null,
+      save: async (k, v) => { prefsMap.set(k, v); },
+    };
+
+    await disablePushNotifications(prefs, async () => ({
+      pushManager: { getSubscription: async () => fakeSub },
+    } as unknown as ServiceWorkerRegistration));
+
+    expect(fakeSub.wasUnsubscribed).toBe(true);
+    expect(prefsMap.get("pushEnabled")).toBe("0");
+    expect(prefsMap.get("pushVapidKey")).toBe("");
+    expect(prefsMap.get("pushVapidKeys")).toBe("");
+
+    // UI "Turn off notifications" button test in ThisDevice.
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const subUi = makeFakeSubscription("https://push.example/sub-ui-off");
+    const uiPrefsMap = new Map<string, string>([["pushEnabled", "1"], ["pushVapidKey", makeVapidPub(71)]]);
+    const uiPrefs: PushPrefs = {
+      load: async (k) => uiPrefsMap.get(k) ?? null,
+      save: async (k, v) => { uiPrefsMap.set(k, v); },
+    };
+    const origSW = Object.getOwnPropertyDescriptor(navigator, "serviceWorker");
+    const origNotif = Object.getOwnPropertyDescriptor(globalThis, "Notification");
+    const origPushMgr = Object.getOwnPropertyDescriptor(globalThis, "PushManager");
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { getRegistration: async () => ({ pushManager: { getSubscription: async () => subUi } }) },
+    });
+    Object.defineProperty(globalThis, "Notification", {
+      configurable: true,
+      value: { permission: "granted" },
+    });
+    Object.defineProperty(globalThis, "PushManager", { configurable: true, value: function PushManager() {} });
+    cleanups.push(() => {
+      if (origSW) Object.defineProperty(navigator, "serviceWorker", origSW);
+      else delete (navigator as { serviceWorker?: unknown }).serviceWorker;
+      if (origNotif) Object.defineProperty(globalThis, "Notification", origNotif);
+      else delete (globalThis as { Notification?: unknown }).Notification;
+      if (origPushMgr) Object.defineProperty(globalThis, "PushManager", origPushMgr);
+      else delete (globalThis as { PushManager?: unknown }).PushManager;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    });
+
+    const hostEl = document.createElement("div");
+    document.body.append(hostEl);
+    const root = createRoot(hostEl);
+    cleanups.push(async () => { await act(async () => root.unmount()); hostEl.remove(); });
+
+    await act(async () => {
+      root.render(createElement(ThisDevice, {
+        device: DEVICE,
+        connection: null,
+        path: "direct",
+        serverId: DEVICE.server.memberId,
+        pushPrefs: uiPrefs,
+        onClose: () => undefined,
+        onForget: () => undefined,
+      }));
+      await flush();
+    });
+
+    const offBtn = hostEl.querySelector('[data-testid="disable-notifications"]') as HTMLButtonElement | null;
+    expect(offBtn).not.toBeNull();
+    await act(async () => {
+      offBtn!.click();
+      await flush();
+    });
+    expect(subUi.wasUnsubscribed).toBe(true);
+    expect(uiPrefsMap.get("pushEnabled")).toBe("0");
+    expect(hostEl.querySelector('[data-testid="push-status"]')?.textContent).toBe("Off");
+  });
+
+  it("F4 & F5: sole server mints vapid-keys.json, joined server fails closed if missing/corrupt, and RemoteSession wires botlingd vapidPublicKey", async () => {
+    const s1 = await makeRealServer({ windowMs: 0 });
+    const s2 = await makeRealServer({ cluster: false, windowMs: 0 });
+
+    // Sole server (only s1 in view.servers) mints vapid-keys.json.
+    expect(isSoleServerInRoster(s1.roster)).toBe(true);
+    const state1: VapidSyncState = { known: false, warnedMissing: false };
+    expect(await ensureSoleServerVapidKeys(s1.dir, s1.roster, (l) => s1.logs.push(l), state1)).toBe(true);
+    const minted = readVapidKeys(s1.dir);
+    expect(minted).not.toBeNull();
+
+    // Multi-server cluster (s2 joins s1): if s1's vapid-keys.json goes missing or corrupt, s1 refuses to mint a divergent pair and logs once.
+    const addS2 = await s1.roster.addServer({ keys: s2.identity.keys, name: "S2" });
+    const addS2Stmt = s1.roster.statements().find((st) => st.id === addS2.addId)!.statement;
+    const joined = await s2.roster.joinCluster({
+      add: addS2Stmt,
+      roster: s1.roster.statements().map((st) => st.statement),
+      sponsor: { member: s1.identity.memberId, keys: s1.identity.keys, name: "Mac" },
+    });
+    await s1.roster.merge([joined.add]);
+    expect(isSoleServerInRoster(s1.roster)).toBe(false);
+    expect(isSoleServerInRoster(s2.roster)).toBe(false);
+
+    // Remove/corrupt s2's vapid-keys.json: must NOT mint a new pair!
+    writeFileSync(vapidFilePath(s2.dir), "{corrupt", { mode: 0o600 });
+    const state2: VapidSyncState = { known: false, warnedMissing: false };
+    expect(await ensureSoleServerVapidKeys(s2.dir, s2.roster, (l) => s2.logs.push(l), state2)).toBe(false);
+    expect(await ensureSoleServerVapidKeys(s2.dir, s2.roster, (l) => s2.logs.push(l), state2)).toBe(false);
+    expect(readVapidKeys(s2.dir)).toBeNull();
+    expect(s2.logs.filter((l) => l.includes("vapid:"))).toHaveLength(1);
+
+    // End-to-end RemoteSession using dataDir vapid-keys.json (F5).
+    const dev = await makeDevice();
+    await s1.roster.addDevice({ keys: dev.keys, name: "Phone" });
+    const client = dialReal(s1, dev);
+    const welcome = await client.hello();
+    expect(welcome.vapidPublicKey).toBe(minted!.publicKey);
+
+    const sub = { endpoint: "https://push.example/e2e/1", keys: { p256dh: makeP256Pub(80), auth: makeAuth(80) } };
+    client.sendPush(sub);
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && !s1.roster.pushSubscription(dev.member)) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(s1.roster.pushSubscription(dev.member)).toEqual(sub);
+  });
+
+  it("F6: cleanPushText strips bidi overrides and zero-width characters", () => {
+    expect(cleanPushText("Alpha​Beta‮Gamma⁦Delta‏")).toBe("Alpha Beta Gamma Delta");
   });
 });

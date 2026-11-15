@@ -193,6 +193,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     mounted.current?.unmount();
     mounted.current = null;
     await connection?.close().catch(() => undefined);
+    await disablePushNotifications({ load: loadPref, save: savePref }).catch(() => undefined);
     await forgetDevice([DEFAULT_IDB_NAME]);
     await clearCachedContent("sign-out");
     onForget();
@@ -215,7 +216,14 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     // outbox stays unsent, and the banner tells the user to pair again.
     let deviceRevoked = false;
     let updateBanner: (() => void) | null = null;
-    const revoked = (why: string) => { deviceRevoked = true; media?.dropCached(); void clearCachedContent(why); updateBanner?.(); };
+    const revoked = (why: string) => {
+      if (deviceRevoked) return;
+      deviceRevoked = true;
+      media?.dropCached();
+      void clearCachedContent(why);
+      void disablePushNotifications({ load: loadPref, save: savePref }).catch(() => undefined);
+      updateBanner?.();
+    };
     const applyPath = (nextPath: DialPath) => {
       if (cancelled) return;
       setPath(nextPath);
@@ -246,7 +254,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     })().then((conn) => {
       if (cancelled) { void conn.close(); return; }
       opened = conn;
-      if (conn.revoked) deviceRevoked = true;
+      if (conn.revoked && !deviceRevoked) revoked("revoked (bye)");
       if (conn.serverId) setServerId(conn.serverId);
       const update = () => {
         const text = bannerText(conn.link.status, conn.link.pending(), conn.link.servers(), deviceRevoked);

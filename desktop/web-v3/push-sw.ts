@@ -58,12 +58,12 @@ export interface NotificationClickEventLike {
   };
 }
 
-/** Strips control characters (including CSI ANSI / newlines) and collapses whitespace to one safe line (L-004). */
+/** Strips control characters (including CSI ANSI / newlines), bidi overrides, and zero-width chars and collapses whitespace to one safe line (L-004). */
 export function cleanPushText(value: unknown, maxLen = 80): string {
   if (typeof value !== "string") return "";
   return value
     .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, " ")
-    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maxLen);
