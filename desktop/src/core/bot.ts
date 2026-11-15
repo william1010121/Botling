@@ -7,7 +7,7 @@ import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
 import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
-import { AgyAcpHead, isAgyConversationGone, verifyAcpRuntime } from "./agent/agy-acp";
+import { AgyAcpHead, isAgyConversationGone } from "./agent/agy-acp";
 import { AGY_EXECUTION_BLOCKED } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
 // claude process), the turn under way, the tool approvals it is waiting on, and its subagents
@@ -67,12 +67,12 @@ import { sameJSON } from "./same-json";
 import { parseFeedback } from "./feedback";
 import { hostKind, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
 import { ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type ChatSnapshot, type Event, type HeadsView, type MessageView, type ResultOf, type BotSettingsView, type ResultView, resultLinks } from "../contract";
-import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
+import type { EngineEfforts } from "./engine-defaults";
 import { ClaudeHead, type HeadExit } from "./agent/head";
 import type { HotSettings } from "./agent/hot-settings";
 import { CodexHead, type CodexItem } from "./agent/codex";
 import {
-  Conductor, displayName, fitted, hasTwo, headsJSON, isActive, otherHead, parseHeadTags, readHeads, resolvePrimary, roundsText,
+  Conductor, displayName, fitted, hasTwo, isActive, otherHead, parseHeadTags, readHeads, resolvePrimary, roundsText,
   type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
 } from "./heads";
 import { scheduleCall, scheduledTask, scheduleCancellation, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
@@ -97,7 +97,6 @@ import {
 import { fromRoutineWatches, nextWatchState, runWatch, watchCommand, watchPrompt, type WatchState } from "./routine-watch";
 import { specTrace } from "./spec-trace";
 import { CallInWorkBook, type CallInRelay } from "./call-in-work";
-import { codexWorkerDefaults, codexWorkersJSON } from "./settings";
 import { PAGE_COMPONENT } from "./page-preview";
 import { totalTokens } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
@@ -118,6 +117,8 @@ import { BotQuestions } from "./bot/questions";
 import { BotCards } from "./bot/cards";
 import { BotProgress } from "./bot/progress";
 import { BotTasks } from "./bot/tasks";
+import { BotGuests } from "./bot/guests";
+import { BotSettings } from "./bot/settings";
 import { NO_LONGER_NEEDED, PLUGINS_RESTART, PROMPT_SESSION_DIVIDER, NEW_SESSION_DIVIDER, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
 import { union, firstLine, sleep, turnCommandId, preview, streamingText, subagentOf, isRule, allowRule, permissionText, clip, stepView, routinesKey, iso, subagentView, messageView } from "./bot/view-functions";
 export type Status = "done" | "stopped" | "failed";
@@ -154,7 +155,8 @@ export class Bot {
   readonly engine: Engine;
   /** Its heads (bot.json `heads`, 1.x's format). Kept by the primary; a partner reads it. */
   /** Read by BotContext (M7-S41). */
-  headsSettings: Heads;
+  get headsSettings(): Heads { return this.settings.headsSettings; }
+  set headsSettings(v: Heads) { this.settings.headsSettings = v; }
   private startupActive = false;
   /** App-owned peers keyed by engine (on the conversation owner only). */
   /** Read by BotContext (M7-S41). */
@@ -172,10 +174,11 @@ export class Bot {
   claimHold: { id: string; lead: Engine; held: Engine; turn: Turn; timer: NodeJS.Timeout } | null = null;
   private lastLead: Engine | null = null;
   /** What this head should hear with its next message (what the other head said), and the lines it covers. */
-  private pendingNote: string | null = null;
+  pendingNote: string | null = null;
   private pendingAbout: string[] = [];
   /** The conductor's cards waiting for a pick: what each button does. */
-  cardPicks = new Map<string, CardPick[]>();
+  get cardPicks() { return this.guests.cardPicks; }
+  set cardPicks(v) { this.guests.cardPicks = v; }
   /** The questions handed over with each hand-off (`handoffDecisions`). */
   private handoffDecisions = new Map<string, Set<string>>();
   private rounds: RoundsProgress | null = null;
@@ -202,11 +205,13 @@ export class Bot {
   set approvals(value: Map<string, Approval>) { this.questions.approvals = value; }
   private draining: { head: AgentHead; resolve: () => void; promise: Promise<void> } | null = null;
   /** Results still to come from turns ended early (a tidy or a guest turn that ran late): they belong to nobody. */
-  private ignoreResults = 0;
+  ignoreResults = 0;
   /** The app's own questions in this chat (installing a plugin): what a pick does. */
-  appQuestions = new Map<string, (index: number) => void>();
+  get appQuestions() { return this.guests.appQuestions; }
+  set appQuestions(v) { this.guests.appQuestions = v; }
   /** …and what words typed on one do instead of going to the bot (a copy of another bot's question). */
-  appAnswers = new Map<string, (text: string, files: string[]) => boolean>();
+  get appAnswers() { return this.guests.appAnswers; }
+  set appAnswers(v) { this.guests.appAnswers = v; }
   /** The subagent rows as the windows last saw them (a change sends bot.updated). */
   private lastRows = "";
   /** What the app tells it with its next message (`queueNote`). */
@@ -247,14 +252,16 @@ export class Bot {
   private sessionCost = { last: 0 };
   /** Its head runs on another CLI from its next message on (1.x's `switchEngine`): a handoff through memory.md first. */
   /** Read by BotContext (M7-S41). */
-  switchTo: Engine | null = null;
+  get switchTo(): Engine | null { return this.settings.switchTo; }
+  set switchTo(v: Engine | null) { this.settings.switchTo = v; }
   /** Writing that handoff (1.x's `.switching(.writing)`). */
-  private switching = false;
+  get switching() { return this.settings.switching; }
+  set switching(v: boolean) { this.settings.switching = v; }
   private idleTimer: NodeJS.Timeout | null = null;
   private get alwaysAllowed(): string[] { return this.questions.alwaysAllowed; }
   private set alwaysAllowed(value: string[]) { this.questions.alwaysAllowed = value; }
-  private get denialAsks(): Map<string, Denial> { return this.questions.denialAsks; }
-  private set denialAsks(value: Map<string, Denial>) { this.questions.denialAsks = value; }
+  get denialAsks(): Map<string, Denial> { return this.questions.denialAsks; }
+  set denialAsks(value: Map<string, Denial>) { this.questions.denialAsks = value; }
   private get sessionRules(): string[] { return this.questions.sessionRules; }
   private set sessionRules(value: string[]) { this.questions.sessionRules = value; }
   private get rulesGivenAfter(): Map<string, string | null> { return this.questions.rulesGivenAfter; }
@@ -331,6 +338,10 @@ export class Bot {
   private get progress(): BotProgress { return this.botProgress ??= new BotProgress(this, this.ctx); }
   private botTasks: BotTasks | null = null;
   private get tasks(): BotTasks { return this.botTasks ??= new BotTasks(this, this.ctx); }
+  private botGuests: BotGuests | null = null;
+  private get guests(): BotGuests { return this.botGuests ??= new BotGuests(this, this.ctx); }
+  private botSettings: BotSettings | null = null;
+  private get settings(): BotSettings { return this.botSettings ??= new BotSettings(this, this.ctx); }
 
   constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
     const primary = options.primary;
@@ -544,7 +555,7 @@ export class Bot {
     if (changed) this.persist();
   }
 
-  private persist(soon = false) {
+  persist(soon = false) {
     if (this.readOnly) return;
     if (soon) {
       this.saveTimer ??= setTimeout(() => { this.saveTimer = null; this.persist(); }, 500);
@@ -635,30 +646,9 @@ export class Bot {
     this.add({ id: newId(), role: "notice", text, date: toSwiftDate() });
   }
 
-  /**
-   * A line from the app in this chat (`Workspace.tell`): a plugin's notice, Maintainer's news. With
-   * `choices` and `onPick` it is the app's own question (installing a plugin): a pick goes to `onPick`,
-   * never to the bot; after a restart nobody waits for it, so it is closed ("No longer needed").
-   */
   appNotice(text: string, choices?: { label: string; recommended?: boolean; detail?: string }[], onPick?: (index: number) => void,
-    more: { onAnswer?: (text: string, files: string[]) => boolean; sourceID?: string; sourceMessageID?: string; moveNotice?: string; questions?: ChatRecord["questions"] } = {}): string {
-    if (this.options.primary) return this.options.primary.appNotice(text, choices, onPick, more);
-    const record: ChatRecord = { id: newId(), role: "notice", text, date: toSwiftDate() };
-    // An agent move's notice: keyed so a move's notices are posted once, even when they are sent again after a crash.
-    if (more.moveNotice) record.moveNotice = more.moveNotice;
-    if (choices?.length) record.choices = choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: !!choice.recommended }));
-    if (choices?.length && more.questions?.length) record.questions = more.questions;
-    // 1.x's keys: the project or bot a line came from, and the question it is a copy of.
-    if (more.sourceID) record.sourceID = more.sourceID;
-    if (more.sourceMessageID) record.sourceMessageID = more.sourceMessageID;
-    if (choices?.length && onPick) {
-      record.appQuestion = true;
-      this.appQuestions.set(record.id, onPick);
-      if (more.onAnswer) this.appAnswers.set(record.id, more.onAnswer);
-    }
-    this.add(record);
-    this.bumpUnread();
-    return record.id;
+    more?: { onAnswer?: (text: string, files: string[]) => boolean; sourceID?: string; sourceMessageID?: string; moveNotice?: string; questions?: ChatRecord["questions"] }): string {
+    return this.guests.appNotice(text, choices, onPick, more);
   }
 
   /**
@@ -693,235 +683,36 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Turns in other chats (1.x's `groupTurn`, `post`, `keepCallIn`)
 
-  private guestTurn = false;
+  private get guestTurn() { return this.guests.guestTurn; }
+  private set guestTurn(v: boolean) { this.guests.guestTurn = v; }
   /** The core is being swapped: no turn begins (hot-swap.ts). */
   private swapHold = false;
 
-  /**
-   * Says `text` (its turn in a chat it was called into) and returns the reply,
-   * showing neither in this chat. Wakes it if asleep. While it is busy with its own chat it waits up to
-   * `waitForMs`, then gives up (busy); once asked, it has `answerWithinMs` to reply.
-   */
-  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked, by, onBegin, signal }: { callIn?: string; asked?: string; by?: "user"; onBegin?: () => void; signal?: AbortSignal } = {}): Promise<GuestAnswer> {
-    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked, by, onBegin, signal });
-    const deadline = Date.now() + waitForMs;
-    while (this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold) {
-      if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
-      // Botling 3 M5-02b: `signal` (a call-in the host gave up, D51) ends the wait and the turn; 2.x passes none.
-      if (signal?.aborted) return { kind: "failed", why: "cancelled" };
-      if (Date.now() >= deadline) return { kind: "busy" };
-      await sleep(300);
-    }
-    if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
-    if (signal?.aborted) return { kind: "failed", why: "cancelled" };
-    const problem = this.problem ?? this.profile.problem;
-    if (problem) return { kind: "failed", why: problem };
-    this.guestTurn = true;
-    const engine = this.engine;
-    try {
-      return await new Promise<GuestAnswer>((resolve) => {
-        const turn = this.newTurn("tidy", text, null);
-        turn.guest = true;
-        if (callIn) { turn.callIn = callIn; turn.callInAsked = asked ?? ""; if (by) turn.callInBy = by; }
-        let settled = false;
-        const settle = (answer: GuestAnswer) => { if (!settled) { settled = true; clearTimeout(timer); resolve(answer); } };
-        const giveUp = (why: string) => {
-          if (turn.open) {
-            turn.open = false;
-            if (this.turn === turn) this.turn = null;
-            if (turn.callIn) this.updated();
-            turn.resolve("stopped");
-            // Its reply, when it comes, belongs to nobody now.
-            if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }
-          }
-          settle({ kind: "failed", why });
-        };
-        const timer = setTimeout(() => giveUp("No answer in time."), answerWithinMs);
-        const aborted = () => giveUp("cancelled");
-        signal?.addEventListener("abort", aborted, { once: true });
-        void turn.done.finally(() => signal?.removeEventListener("abort", aborted));
-        // A failed or stopped turn hands "" here (finishTurn): not a reply; turn.done says what happened.
-        turn.onReply = (reply) => { if (reply) settle({ kind: "reply", text: reply, steps: turn.steps.slice(-500), engine }); };
-        void turn.done.then((status) => settle(status === "done" ? { kind: "reply", text: turn.reply.text, steps: turn.steps.slice(-500), engine } : { kind: "failed", why: status === "failed" ? "It could not answer." : "It was stopped." }));
-        if (signal?.aborted) { giveUp("cancelled"); return; }
-        onBegin?.();
-        this.begin(turn);
-      });
-    } finally {
-      this.guestTurn = false;
-      if (!this.shuttingDown) this.next();
-    }
+  groupTurn(text: string, waitForMs: number, answerWithinMs: number, options?: { callIn?: string; asked?: string; by?: "user"; onBegin?: () => void; signal?: AbortSignal }): Promise<GuestAnswer> {
+    return this.guests.groupTurn(text, waitForMs, answerWithinMs, options);
   }
+  get takesGuest(): boolean { return this.guests.takesGuest; }
+  post(record: ChatRecord, options?: { unread?: boolean }) { return this.guests.post(record, options); }
 
-  /** Free to take a turn in another chat now (`groupTurn` would not wait): no turn under way or waiting, not tidying. */
-  get takesGuest(): boolean {
-    if (this.options.primary) return this.options.primary.takesGuest;
-    return !this.shuttingDown && !(this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold);
-  }
-
-  /** A line in this chat that is not part of its own conversation (a guest's line, a group's lines): `Bot.post`. */
-  post(record: ChatRecord, { unread = true } = {}) {
-    if (this.options.primary) { this.options.primary.post(record, { unread }); return; }
-    this.add(record);
-    if (unread) this.bumpUnread();
-  }
-
-  /**
-   * A turn it took in another chat, called in there with @ (`keepCallIn`): kept in its own chat and
-   * archive too, as what it was asked there and its reply. Not unread: you read it where you called it in.
-   */
-  keepCallIn(asked: string, at: number, line: ChatRecord) {
-    if (this.options.primary) { this.options.primary.keepCallIn(asked, at, line); return; }
-    this.add({ id: newId(), role: "notice", text: asked, date: at });
-    const copy: ChatRecord = { id: newId(), role: "bot", text: line.text, date: toSwiftDate() };
-    if (line.displays) copy.displays = line.displays;
-    if (line.steps?.length) copy.steps = line.steps;
-    if (line.engine) copy.engine = line.engine;
-    copy.session = this.session.sessionId;
-    if (!copy.text && !copy.displays) return;
-    this.add(copy);
-  }
-
-  /** Files you sent with a line that is not a message to it, copied where they stay (1.x's `keep`). */
-  keepFiles(files: string[]): { url: string; kind: string; path: string }[] {
-    return files.flatMap((file) => keep(file, attachmentsFolder(this.profile)) ?? []).map((kept) => ({ url: kept.url, kind: kept.kind, path: kept.path }));
-  }
-
-  /** A guest's reactions on this chat's lines (`applyReactions(actor: "guest:…")`). */
-  guestReactions(actions: { messageId: string; emoji: string; present: boolean }[], actor: string) {
-    for (const action of actions) {
-      try { this.owner.setReaction(action.messageId, action.emoji, action.present, actor); } catch { /* A line it named that is not here. */ }
-    }
-  }
+  keepCallIn(asked: string, at: number, line: ChatRecord) { return this.guests.keepCallIn(asked, at, line); }
+  keepFiles(files: string[]): { url: string; kind: string; path: string }[] { return this.guests.keepFiles(files); }
+  guestReactions(actions: { messageId: string; emoji: string; present: boolean }[], actor: string) { return this.guests.guestReactions(actions, actor); }
 
   /** Marks the chat read when you are looking at it (`markRead`). */
   markRead() {
     void this.read();
   }
 
-  /** Its latest question still waiting for you (1.x's `openQuestion`), if any (not tool approvals). */
-  openQuestion(): { id: string; text: string; choices: { label: string; detail?: string; recommended: boolean }[]; questions?: NonNullable<ChatRecord["questions"]> } | null {
-    const owner = this.owner;
-    // The bot's own (1.x: role .bot), not the app's cards in its chat.
-    const record = owner.records.findLast((candidate) => candidate.role === "bot" && isOpenQuestion(candidate) && !candidate.permissionTool && typeof candidate.sourceID !== "string");
-    const questions = savedQuestions(record?.questions);
-    return record ? { id: record.id, text: record.text, choices: (record.choices ?? []).map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: !!choice.recommended })), ...(questions ? { questions } : {}) } : null;
-  }
-
-  /** Its chat's lines as they stand (read only). */
-  lines(): readonly ChatRecord[] {
-    return this.owner.records;
-  }
-
-  /** A line of its chat as it stands (a question's pick or answer), or null. */
-  line(id: string): ChatRecord | null {
-    return this.owner.records.find((candidate) => candidate.id === id) ?? null;
-  }
-
-  /** User dismissal, kept separate from chosen/answer. No callbacks, messages or task transitions. */
-  ignoreQuestion(id: string, at = new Date().toISOString()): ResultOf<"chat.ignoreQuestion"> {
-    if (this.options.primary) return this.options.primary.ignoreQuestion(id, at);
-    this.refuseIfClosed();
-    const view = this.records.find(record => record.id === id);
-    if (!view || !isOpenQuestion(view)) return { accepted: false };
-    const source = view.decisionID ? this.records.find(record => record.id === view.decisionID) : view;
-    if (!source || !isOpenQuestion(source)) return { accepted: false };
-    const records = source.decisionID ? this.records.filter(record => record.decisionID === source.decisionID) : [source];
-    // Authorization cards retain their pending decision and their existing Review flow.
-    if (records.some(record => record.permissionTool || this.denialAsks.has(record.id) || this.peers.some(peer => peer.denialAsks.has(record.id))
-      || this.approvals.has(record.id) || this.peers.some(peer => peer.approvals.has(record.id)))) return { accepted: false };
-    for (const record of records) {
-      if (!isOpenQuestion(record)) continue;
-      record.ignoredAt = at;
-      this.appQuestions.delete(record.id);
-      this.appAnswers.delete(record.id);
-      this.cardPicks.delete(record.id);
-    }
-    this.persist();
-    for (const peer of this.peers) peer.persist();
-    for (const record of records) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
-    this.log(`Question ${source.id} ignored by user at ${at}; no answer or authorization.`);
-    this.updated();
-    return { accepted: true };
-  }
-
-  /** The original was ignored: synchronize open or explicitly startup-invalidated copies only. */
-  syncIgnoredCopies(sourceID: string, sourceMessageID: string, at: string): void {
-    if (this.options.primary) { this.options.primary.syncIgnoredCopies(sourceID, sourceMessageID, at); return; }
-    for (const record of this.records) {
-      if ((record.role !== "notice" && record.role !== "bot") || record.sourceID !== sourceID || record.sourceMessageID !== sourceMessageID
-        || record.chosen != null || record.answer != null || record.ignoredAt != null
-        || !(isOpenQuestion(record) || record.questionInvalidatedAt != null)
-        || record.permissionTool || this.approvals.has(record.id) || this.peers.some(peer => peer.approvals.has(record.id))
-        || this.denialAsks.has(record.id) || this.peers.some(peer => peer.denialAsks.has(record.id))) continue;
-      this.refuseIfClosed();
-      record.ignoredAt = at;
-      this.appQuestions.delete(record.id);
-      this.appAnswers.delete(record.id);
-      this.cardPicks.delete(record.id);
-      this.changed(record);
-      this.log(`Question copy ${record.id} inherited Ignore from ${sourceID}/${sourceMessageID} at ${at}; no answer or authorization.`);
-    }
-  }
-
-  /** Closes one of the app's own questions in this chat without a pick going anywhere: shows `chosen` or `answer` (1.x's `markChosen` / `markAnswered`). */
-  settleAppQuestion(id: string, outcome: { chosen?: number; answer?: string }): void {
-    if (this.options.primary) { this.options.primary.settleAppQuestion(id, outcome); return; }
-    const record = this.records.find((candidate) => candidate.id === id);
-    this.appQuestions.delete(id);
-    this.appAnswers.delete(id);
-    if (!record || !isOpenQuestion(record)) return;
-    if (outcome.chosen !== undefined && record.choices?.[outcome.chosen]) record.chosen = outcome.chosen;
-    else record.answer = outcome.answer ?? NO_LONGER_NEEDED;
-    this.changed(record);
-  }
-
-  /**
-   * Your answer on a called-in bot's card in this chat (`outcome`) waits to reach that bot (`to`, its name): the card
-   * shows it "Queued" and cannot be answered again until `releaseCardAnswer` says whether it got there.
-   */
-  holdCardAnswer(id: string, outcome: { chosen?: number; answer?: string }, to: string): boolean {
-    if (this.options.primary) return this.options.primary.holdCardAnswer(id, outcome, to);
-    const record = this.records.find((candidate) => candidate.id === id);
-    if (!record || !isOpenQuestion(record)) return false;
-    record.pendingAnswer = { ...outcome, to };
-    delete record.notDelivered;
-    this.changed(record);
-    return true;
-  }
-
-  /** The answer `holdCardAnswer` kept reached the bot (the card shows it answered), or never will (it is open again, with a note). */
-  releaseCardAnswer(id: string, delivered: boolean): void {
-    if (this.options.primary) { this.options.primary.releaseCardAnswer(id, delivered); return; }
-    const record = this.records.find((candidate) => candidate.id === id);
-    const pending = record?.pendingAnswer;
-    if (!record || !pending) return;
-    delete record.pendingAnswer;
-    if (delivered) { this.settleAppQuestion(id, pending.chosen !== undefined ? { chosen: pending.chosen } : { answer: pending.answer ?? "" }); return; }
-    record.notDelivered = pending.to;
-    delete record.picks;
-    this.changed(record);
-  }
-
-  /** The app's questions in this chat that are copies of `botId`'s questions (`sourceMessageID`), still open. */
-  openCopies(botId?: string): ChatRecord[] {
-    return this.records.filter((record) => record.role === "notice" && typeof record.sourceMessageID === "string" && isOpenQuestion(record) && (!botId || record.sourceID === botId));
-  }
-
-  /** Settles a subagent's row into the right panel's "Settled", or brings it back (`settleSubagent`). */
-  settleSubagent(id: string, settled: boolean): ResultOf<"subagent.settle"> {
-    if (this.options.primary) return this.options.primary.settleSubagent(id, settled);
-    for (const bot of this.members) {
-      if (!bot.subagents.get(id)) continue;
-      const changed = bot.subagents.settle(id, settled);
-      if (changed) { bot.saveSubagents(false, bot.subagents.get(id)); this.rowsChanged(true); }
-      return { changed };
-    }
-    // An agent it owns that another bot hosts: its row here is the registry's.
-    const moved = this.options.agents?.settle(this.id, id, settled) ?? null;
-    if (moved) { if (moved.changed) this.rowsChanged(true); return moved; }
-    throw new ContractError("not_found", "No such subagent.");
-  }
+  openQuestion() { return this.guests.openQuestion(); }
+  lines(): readonly ChatRecord[] { return this.guests.lines(); }
+  line(id: string): ChatRecord | null { return this.guests.line(id); }
+  ignoreQuestion(id: string, at?: string): ResultOf<"chat.ignoreQuestion"> { return this.guests.ignoreQuestion(id, at); }
+  syncIgnoredCopies(sourceID: string, sourceMessageID: string, at: string): void { return this.guests.syncIgnoredCopies(sourceID, sourceMessageID, at); }
+  settleAppQuestion(id: string, outcome: { chosen?: number; answer?: string }): void { return this.guests.settleAppQuestion(id, outcome); }
+  holdCardAnswer(id: string, outcome: { chosen?: number; answer?: string }, to: string): boolean { return this.guests.holdCardAnswer(id, outcome, to); }
+  releaseCardAnswer(id: string, delivered: boolean): void { return this.guests.releaseCardAnswer(id, delivered); }
+  openCopies(botId?: string): ChatRecord[] { return this.guests.openCopies(botId); }
+  settleSubagent(id: string, settled: boolean): ResultOf<"subagent.settle"> { return this.guests.settleSubagent(id, settled); }
 
   /** Each head's session, this one first (null: none started yet), for plugins' `workspace.current`. */
   headSessions(): { engine: Engine; sessionId: string | null }[] {
@@ -1393,7 +1184,7 @@ export class Bot {
   }
 
   /** The rows changed: the windows hear of it once (`force`: always). */
-  private rowsChanged(force = false) {
+  rowsChanged(force = false) {
     const primary = this.options.primary ?? this;
     const text = JSON.stringify(primary.subagentRows());
     if (!force && text === primary.lastRows) return;
@@ -1483,7 +1274,7 @@ export class Bot {
   private readonly dirtySubagents = new Set<string>();
   private allSubagentsDirty = false;
 
-  private saveSubagents(progress = false, changed?: SubagentRecord) {
+  saveSubagents(progress = false, changed?: SubagentRecord) {
     if (this.readOnly) return;
     this.subagentsDirty = true;
     if (changed) {
@@ -1626,7 +1417,7 @@ export class Bot {
     if (!this.options.primary && !this.headsSettings.answerWith && hasTwo(this.headsSettings)) this.headsChanged();
   }
 
-  private headsChanged(): void {
+  headsChanged(): void {
     if (this.options.primary) return this.options.primary.headsChanged();
     this.options.emit({ type: "heads.updated", botId: this.id, heads: this.headsView() });
   }
@@ -1880,7 +1671,7 @@ export class Bot {
     return { turnId: turn.id, done: turn.done };
   }
 
-  private newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn {
+  newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn {
     // Your message (or the app's) goes on with the session: the try waiting after an API error is not needed.
     if (origin === "user" || origin === "app") this.clearApiRetry();
     let resolve!: Turn["resolve"];
@@ -2081,282 +1872,21 @@ export class Bot {
   }
 
   /** The app's default primary engine (Settings → Engines and models); null: none chosen. */
-  private appPrimary(): Engine | null {
+  appPrimary(): Engine | null {
     return (this.owner.options.launch?.().defaultPrimaryEngine ?? null) as Engine | null;
   }
 
-  /** One head or two (1.x's Settings → Heads). An awake head that goes away tidies first. */
-  async setHeads(engines: Engine[]): Promise<ResultOf<"heads.set">> {
-    if (this.options.primary) return this.options.primary.setHeads(engines);
-    const kept = (["claude", "codex", "agy"] as Engine[]).filter((engine) => engines.includes(engine));
-    if (!kept.length) throw new ContractError("bad_request", "A bot needs a head.");
-    if (kept.includes("codex") && !this.options.codexConfig) throw new ContractError("conflict", "Codex is not available here.");
-    if (kept.length > 3) throw new ContractError("bad_request", "Choose at most three engines.");
-    if (kept.includes("agy")) {
-      const config = this.options.agyConfig?.(this.profile, {command:"agy",cwd:this.profile.folder,sessionId:this.session.sessionId,resume:this.session.started});
-      if (config?.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
-      verifyAcpRuntime(config.command);
-    }
-    const settings = this.headsSettings;
-    // Its own head goes (1.x's `setHeads` / `switchEngine`): it runs on the other one, through a handoff.
-    const target = kept.includes(this.engine) ? this.engine : kept[0]!;
-    if (target === this.engine) this.switchTo = null;
-    const switching = target !== this.engine ? target : null;
-    settings.engines = kept;
-    // A bot with no primary of its own keeps following the app's; one it has is kept if it still has that engine.
-    if (settings.answerWith && !kept.includes(settings.answerWith as Engine)) settings.answerWith = fitted(settings, settings.answerWith, this.appPrimary());
-    this.conductor.settings = settings;
-    this.saveHeads(switching ?? undefined);
-    for (const partner of this.peers.filter(peer => !kept.includes(peer.engine) || peer.engine === switching)) {
-      if (target === "agy" && partner.engine === "agy") {
-        const saved = partner.store.loadSettings();
-        if (typeof saved.agyConversation === "string") this.store.saveSetting("agyConversation", saved.agyConversation);
-        if (saved.agyRecovery) this.store.saveSetting("agyRecovery", saved.agyRecovery);
-      }
-      await partner.shutdown();
-      this.partners.delete(partner.engine);
-    }
-    if (switching) this.switchEngine(switching);
-    for (const bot of this.members) if (bot.head?.running) bot.pendingNote = [bot.pendingNote, `(App: Collaboration settings changed. Available engines: ${settings.engines.join(", ")}. Each message has one primary recipient. Delegate only when useful, using a handoff tag with the intended engine in its to attribute and task, review or discuss in its kind attribute. Include the authorized phase, scope, constraints and acceptance criteria. Never delegate a refused action to bypass it.)`].filter(Boolean).join("\n\n");
-    this.updated();
-    this.headsChanged();
-    return { engines: settings.engines };
-  }
-
-  /** Its own choices in bot.json (1.x's `model`, `effort`, `subagentModel`, `codexWorkers`). */
-  private choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; subagentEffort: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null; agyWorkerModel: string | null; agyWorkerEffort: string | null; workerMachine: string | null } {
-    const settings = this.store.loadSettings();
-    const pick = (value: unknown, list: readonly string[]) => (typeof value === "string" && list.includes(value) ? value : null);
-    const workers = codexWorkerDefaults(settings.codexWorkers);
-    return {
-      model: typeof settings.model === "string" ? settings.model : null,
-      effort: pick(settings.effort, ["low", "medium", "high", "xhigh", "max"]),
-      // Each engine's own effort, the old single one standing in where an engine has none.
-      efforts: effortsFor(settings),
-      subagentModel: typeof settings.subagentModel === "string" ? settings.subagentModel : null,
-      subagentEffort: pick(settings.subagentEffort, EFFORTS_BY_ENGINE.claude),
-      // None set: Codex's own config (~/.codex/config.toml).
-      codexWorkers: workers.model || workers.effort || workers.fast !== null ? workers : null,
-      // Antigravity workers' own model and effort; none: the same as its Antigravity head (agy-workers.ts).
-      agyWorkerModel: typeof settings.agyWorkerModel === "string" && settings.agyWorkerModel.trim() ? settings.agyWorkerModel.trim() : null,
-      agyWorkerEffort: pick(settings.agyWorkerEffort, EFFORTS_BY_ENGINE.agy),
-      // Where its Claude workers run when app_handoff names no machine (Settings › Machines); none: here.
-      workerMachine: typeof settings.workerMachine === "string" && settings.workerMachine.trim() ? settings.workerMachine.trim() : null,
-    };
-  }
-
-  /**
-   * "Apply to all bots": this bot's engine set, models, effort and primary become the app's defaults
-   * (its own primary is cleared, so it follows the app's). Heads go away or start as with Settings → Engines in
-   * this bot; a head already running keeps its model until it next wakes, as with its own settings.
-   */
-  async applyEngineChoices(choices: { engines: Engine[]; model: string | null; efforts: EngineEfforts; codexModel: string | null; agyModel: string | null }) {
-    const owner = this.owner;
-    if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
-    if (owner.headsSettings.engines.join() !== choices.engines.join()) await owner.setHeads(choices.engines);
-    // The old single effort goes: every engine has exactly the app's value for it (or its own default).
-    owner.configure({ model: choices.model, effort: null, efforts: choices.efforts, codexModel: choices.codexModel, agyModel: choices.agyModel, primary: null });
-  }
-
-  /**
-   * The app's engine defaults changed (1.x's `setSubagentModelDefault` / `setCodexWorkerDefaults`, which
-   * set every bot): written into its bot.json and its other head's; a head already running keeps its own
-   * until it next wakes, as with its own settings.
-   */
-  applyEngineDefaults(change: { subagentModel?: string | null; subagentEffort?: string | null; codexWorkers?: Record<string, unknown> | undefined; agyWorkerModel?: string | null; agyWorkerEffort?: string | null }) {
-    const owner = this.owner;
-    if (owner.readOnly) return;
-    for (const store of owner.members.map(bot => bot.store)) {
-      if (change.subagentModel !== undefined) store.saveSetting("subagentModel", change.subagentModel ?? undefined);
-      if (change.subagentEffort !== undefined) store.saveSetting("subagentEffort", change.subagentEffort ?? undefined);
-      if ("codexWorkers" in change) store.saveSetting("codexWorkers", change.codexWorkers);
-      if (change.agyWorkerModel !== undefined) store.saveSetting("agyWorkerModel", change.agyWorkerModel ?? undefined);
-      if (change.agyWorkerEffort !== undefined) store.saveSetting("agyWorkerEffort", change.agyWorkerEffort ?? undefined);
-    }
-  }
-
-  /** What the bot's settings page shows. */
-  settingsView(): BotSettingsView {
-    const owner = this.owner;
-    const choices = owner.choices();
-    return {
-      botId: owner.id, engines: [...owner.headsSettings.engines] as Engine[],
-      primary: owner.headsSettings.answerWith && owner.headsSettings.answerWith !== "both" ? owner.headsSettings.answerWith : null,
-      primaryEffective: resolvePrimary(owner.headsSettings, owner.appPrimary()),
-      model: choices.model as BotSettingsView["model"], effort: choices.effort as BotSettingsView["effort"], efforts: choices.efforts as BotSettingsView["efforts"],
-      subagentModel: choices.subagentModel as BotSettingsView["subagentModel"], subagentEffort: choices.subagentEffort as BotSettingsView["subagentEffort"], codexModel: owner.headsSettings.codexModel ?? null,
-      agyModel: typeof owner.store.loadSettings().agyModel === "string" ? owner.store.loadSettings().agyModel as string : null,
-      codexWorkers: choices.codexWorkers as BotSettingsView["codexWorkers"],
-      agyWorkerModel: choices.agyWorkerModel, agyWorkerEffort: choices.agyWorkerEffort as BotSettingsView["agyWorkerEffort"],
-      workerMachine: choices.workerMachine,
-    };
-  }
-
-  /** Changes its own choices; a head already running keeps its own until it next wakes. */
-  configure(change: { workerMachine?: string | null; agyModel?: string | null; agyWorkerModel?: string | null; agyWorkerEffort?: string | null; codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null; model?: string | null; effort?: string | null; subagentModel?: string | null; subagentEffort?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView {
-    const owner = this.owner;
-    if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
-    const before = owner.settingsView();
-    if (change.primary !== undefined) {
-      // Its own primary engine, or null to follow the app's; one the bot does not have is refused.
-      if (change.primary !== null && !owner.headsSettings.engines.includes(change.primary)) throw new ContractError("bad_request", `This bot does not have ${displayName(change.primary)}.`);
-      owner.headsSettings.answerWith = change.primary;
-      owner.saveHeads();
-      owner.headsChanged();
-    }
-    if (change.efforts) {
-      for (const [engine, level] of Object.entries(change.efforts) as [Engine, string | null | undefined][]) {
-        if (level && !(EFFORTS_BY_ENGINE[engine] as readonly string[]).includes(level)) throw new ContractError("bad_request", `${displayName(engine)} has no ${level} effort.`);
-      }
-    }
-    // The subagents' effort is read when each worker starts: nothing to restart.
-    if (change.subagentEffort && !(EFFORTS_BY_ENGINE.claude as readonly string[]).includes(change.subagentEffort)) throw new ContractError("bad_request", `Claude has no ${change.subagentEffort} effort.`);
-    if (change.agyWorkerEffort && !(EFFORTS_BY_ENGINE.agy as readonly string[]).includes(change.agyWorkerEffort)) throw new ContractError("bad_request", `Antigravity has no ${change.agyWorkerEffort} effort.`);
-    // The Antigravity workers' model and effort are read when each worker starts, and the Codex workers' choice at a
-    // Codex head's next wake (as the app's own Codex workers setting): nothing to restart.
-    for (const key of ["model", "effort", "subagentModel", "subagentEffort", "agyModel", "agyWorkerModel", "agyWorkerEffort"] as const) {
-      if (change[key] !== undefined) owner.store.saveSetting(key, change[key] ?? undefined);
-    }
-    // Read when each Claude worker starts: nothing to restart. A machine Settings › Machines does not have is refused.
-    if (change.workerMachine !== undefined) {
-      const name = change.workerMachine?.trim() || null;
-      if (name && name !== "local") {
-        const remote = owner.options.remoteWorkers?.();
-        if (!remote) throw new ContractError("conflict", "Workers on other machines are not available here.");
-        const found = remote.resolve(name);
-        if ("error" in found) throw new ContractError("bad_request", found.error.replace(/ Nothing was started\.$/, ""));
-        owner.store.saveSetting("workerMachine", found.name);
-      } else owner.store.saveSetting("workerMachine", undefined);
-    }
-    if (change.codexWorkers !== undefined) owner.store.saveSetting("codexWorkers", change.codexWorkers ? codexWorkersJSON(change.codexWorkers) : undefined);
-    if (change.codexModel !== undefined) {
-      owner.headsSettings.codexModel = change.codexModel ?? null;
-      owner.saveHeads();
-    }
-    // Switching (1.x's `switchModel`, `setEffort`, `setSubagentModel`, a Codex model): awake, each head goes on in
-    // the same session on it just before its next message; asleep, the next wake has it.
-    const heads = owner.members;
-    const name = (model: string) => ({ haiku: "Haiku", sonnet: "Sonnet", opus: "Opus" } as Record<string, string>)[model] ?? model;
-    const effortName = (level: string | null) => (level ? ({ low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" } as Record<string, string>)[level] ?? level : "default");
-    if (change.model !== undefined && change.model !== before.model) {
-      const claude = heads.find((bot) => bot.engine === "claude");
-      const model = change.model ? name(change.model) : "Claude's default model";
-      if (claude?.head?.running) claude.restartFor({ told: model, shown: model }, true);
-      else if (claude) owner.add({ id: newId(), role: "divider", text: `Switched to ${model}`, date: toSwiftDate() });
-    }
-    if (change.efforts) {
-      const saved = owner.store.loadSettings().efforts;
-      const merged: Record<string, unknown> = { ...(saved && typeof saved === "object" && !Array.isArray(saved) ? saved as Record<string, unknown> : {}) };
-      for (const [engine, level] of Object.entries(change.efforts)) { if (level === undefined) continue; if (level === null) delete merged[engine]; else merged[engine] = level; }
-      owner.store.saveSetting("efforts", Object.keys(merged).length ? merged : undefined);
-    }
-    // An engine whose effort (its own, or the old one it uses) changed: only its heads are told.
-    const after = owner.settingsView();
-    for (const engine of ["claude", "codex", "agy"] as const) {
-      const was = before.efforts?.[engine] ?? null, now = after.efforts?.[engine] ?? null;
-      if (was === now) continue;
-      for (const bot of heads) if (bot.engine === engine) bot.restartFor({ told: `${now ?? "default"} effort`, shown: `${effortName(now)} effort` }, true);
-    }
-    if (change.subagentModel !== undefined && change.subagentModel !== before.subagentModel) {
-      const model = change.subagentModel;
-      for (const bot of heads) if (bot.engine === "claude") bot.restartFor({ told: `subagents on ${model ? name(model) : "the same model"}`, shown: model ? `subagents on ${name(model)}` : "subagents on the same model" });
-    }
-    if (change.codexModel !== undefined && change.codexModel !== before.codexModel) {
-      for (const bot of heads) if (bot.engine === "codex") bot.restartFor({ told: `Codex model ${change.codexModel ?? "default"}`, shown: change.codexModel ?? "Codex's default model" }, true);
-    }
-    if (change.agyModel !== undefined && change.agyModel !== before.agyModel) {
-      for (const bot of heads) if (bot.engine === "agy") bot.restartFor({ told: `Antigravity model ${change.agyModel ?? "default"}`, shown: change.agyModel ?? "Antigravity default" }, true);
-    }
-    return owner.settingsView();
-  }
-
-  private saveHeads(engine: Engine = this.switchTo ?? this.engine) {
-    if (!this.readOnly) {
-      this.store.saveSetting("heads", headsJSON(this.headsSettings));
-      this.store.saveSetting("engine", engine);
-    }
-  }
-
-  /**
-   * Runs on the other CLI from now on (1.x's `switchEngine`). Asleep: the next wake starts on it
-   * ("Switched to …"). Awake: just before its next message, a handoff — it writes what it is doing
-   * into memory.md, ends, and a new session on the other engine reads it (one CLI cannot resume the
-   * other's conversation). A running turn or a subagent at work is not cut off.
-   */
-  private switchEngine(to: Engine) {
-    if (to === this.engine && !this.switchTo) return;
-    if (to === this.engine) { this.switchTo = null; return; }
-    if (this.head?.running) { this.switchTo = to; return; }
-    this.switchTo = null;
-    this.becomeEngine(to);
-    this.add({ id: newId(), role: "divider", text: `Switched to ${displayName(to)}`, date: toSwiftDate() });
-  }
-
-  /** Its head is `to` now; the next head is a new session. */
-  private becomeEngine(to: Engine) {
-    (this as { engine: Engine }).engine = to;
-    const saved = to === "agy" ? this.store.loadSettings().agyConversation : null;
-    if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) {
-      this.session = {sessionId:saved,started:true}; this.briefing = false;
-    } else this.newSession();
-    this.store.saveHead(this.session);
-    this.saveHeads(to);
-  }
-
-  /** The switch can be done now: nothing would be lost (`restartsBeforeMessage`). */
-  private get switchReady(): boolean {
-    return !!this.switchTo && !this.turn && !this.tidying && !this.switching && !!this.head?.running && !this.approvals.size
-      && !this.inHeadSubagents.length && !this.managedPending && !this.shuttingDown;
-  }
-
-  /**
-   * 1.x's `handOver(reason: .engine)`: the old head writes the handoff, ends, a divider "Handoff → …",
-   * the new engine's head starts in a new session and reads it (its resume note, with the wake
-   * briefing; Codex is given the memory and recent chat, `withSavedMemory`); a reply that is more than
-   * OK shows. Then the messages that waited go on.
-   */
-  private async handOver(): Promise<void> {
-    const to = this.switchTo;
-    const old = this.head;
-    if (!to || !old?.running) return;
-    this.switchTo = null;
-    this.clearIdle();
-    this.switching = true;
-    this.updated();
-    this.log(`handing over to ${displayName(to)}: writing a handoff into memory.md`);
-    try {
-      // The head that writes it is told in its own terms (1.x sends the new engine's words; see the README).
-      const timeout = this.options.tidyTimeoutMs ?? 5 * 60_000;
-      const written = await this.maintenance(this.prompts().handoff, timeout, old);
-      if (written !== null && !isPlainOK(written)) this.log(`its handoff reply was not a plain OK: ${written.slice(0, 200)}`);
-      if (this.shuttingDown) return;
-      if (this.head === old && old.running) {
-        old.finish();
-        const exited = await Promise.race([old.exited.then(() => true), sleep(5_000).then(() => false)]);
-        if (!exited) await old.terminate(1_000);
-      }
-      if (this.shuttingDown) return;
-      this.becomeEngine(to);
-      this.add({ id: newId(), role: "divider", text: `Handoff → ${displayName(to)}`, date: toSwiftDate() });
-      let head: AgentHead;
-      try {
-        head = this.ensureHead();
-      } catch (error) {
-        this.add({ id: newId(), role: "error", text: `Restart after handoff failed: ${(error as Error).message}`, date: toSwiftDate() });
-        return;
-      }
-      this.briefing = false;
-      const briefing = [this.wakeNote(), this.componentNote()].filter(Boolean).join("\n\n");
-      const resume = this.prompts().resume;
-      const reply = await this.maintenance(this.withSavedMemory(briefing ? `${resume}\n\n${briefing}` : resume), timeout, head);
-      if (reply && !isPlainOK(reply) && !this.shuttingDown) this.showAppReply(reply);
-      if (head.running) this.scheduleIdle();
-    } finally {
-      this.switching = false;
-      this.updated();
-      if (!this.shuttingDown) this.next();
-    }
-  }
+  setHeads(engines: Engine[]): Promise<ResultOf<"heads.set">> { return this.settings.setHeads(engines); }
+  choices() { return this.settings.choices(); }
+  applyEngineChoices(choices: { engines: Engine[]; model: string | null; efforts: EngineEfforts; codexModel: string | null; agyModel: string | null }) { return this.settings.applyEngineChoices(choices); }
+  applyEngineDefaults(change: { subagentModel?: string | null; subagentEffort?: string | null; codexWorkers?: Record<string, unknown> | undefined; agyWorkerModel?: string | null; agyWorkerEffort?: string | null }) { return this.settings.applyEngineDefaults(change); }
+  settingsView(): BotSettingsView { return this.settings.settingsView(); }
+  configure(change: { workerMachine?: string | null; agyModel?: string | null; agyWorkerModel?: string | null; agyWorkerEffort?: string | null; codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null; model?: string | null; effort?: string | null; subagentModel?: string | null; subagentEffort?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView { return this.settings.configure(change); }
+  saveHeads(engine?: Engine) { return this.settings.saveHeads(engine); }
+  private switchEngine(to: Engine) { return this.settings.switchEngine(to); }
+  private becomeEngine(to: Engine) { return this.settings.becomeEngine(to); }
+  private get switchReady(): boolean { return this.settings.switchReady; }
+  private handOver(): Promise<void> { return this.settings.handOver(); }
 
   /** 1.x's `withSavedMemory`: a Codex head is given its saved memory and the recent chat with a prompt. */
   withSavedMemory(prompt: string): string {
@@ -2371,7 +1901,7 @@ export class Bot {
   }
 
   /** An app-only reply that is more than OK, read like any reply (its choices, components and requests). */
-  private showAppReply(raw: string) {
+  showAppReply(raw: string) {
     const parsed = parseReply(raw);
     if (parsed.pluginTags) this.options.pluginTags?.(this.owner, parsed.pluginTags);
     const record: ChatRecord = { id: newId(), role: "bot", text: "", date: toSwiftDate(), state: "done", engine: this.engine };
@@ -2782,7 +2312,7 @@ export class Bot {
   }
 
   /** Makes `turn` the one under way and sends it (waking the bot if it sleeps). */
-  private begin(turn: Turn, head?: AgentHead) {
+  begin(turn: Turn, head?: AgentHead) {
     this.turn = turn;
     this.delivered(turn);
     this.redrawQueued(turn);
@@ -2814,7 +2344,7 @@ export class Bot {
   }
 
   /** This head starts again in the same session before its next message, for `reason` (`restart(_:)`). Asleep: the next wake has it. */
-  private restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) {
+  restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) {
     this.restartForPluginsOnly = false;
     if (!this.head?.running) { this.restartPending = false; this.restartNonModel = false; this.folderPending = false; return; }
     this.restartPending = true;
@@ -3096,16 +2626,16 @@ export class Bot {
   }
 
   /** The note it wakes with after its wake line (1.x's order: wake line, note, components, …). */
-  private wakeNote(): string {
+  wakeNote(): string {
     return this.owner.options.wakeNote?.() ?? "";
   }
 
   /** This head's instructions now. */
-  private prompts(): BotPrompts {
+  prompts(): BotPrompts {
     return this.options.prompts(this.engine, this.sharesChat ? this.heads : null);
   }
 
-  private ensureHead(): AgentHead {
+  ensureHead(): AgentHead {
     this.requireEngineRoute(this.engine, this.owner.engine);
     if (this.head?.running) return this.head;
     // It fell asleep before its switch of engine was done: it wakes on the new one.
@@ -3255,7 +2785,7 @@ export class Bot {
   }
 
   /** A new session for the next wake (after a sleep, or a resume claude no longer had). */
-  private newSession() {
+  newSession() {
     if (this.engine === "agy" && !this.readOnly) {
       this.store.saveSetting("agyConversation", undefined);
       this.store.saveSetting("agyRecovery", undefined);
@@ -3866,7 +3396,7 @@ export class Bot {
   }
 
   /** The next waiting message, if any; else the idle clock starts. */
-  private next(): void {
+  next(): void {
     // While a stopped turn drains nothing begins (not even the turn set aside): stop() goes on here once it ended.
     if (this.turn || this.tidying || this.switching || this.draining) return;
     const deferred = this.deferred;
@@ -4244,7 +3774,7 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Sleeping
 
-  private scheduleIdle() {
+  scheduleIdle() {
     this.clearIdle();
     if (!this.head?.running || this.turn || this.queue.length || this.approvals.size || this.tidying || this.shuttingDown || this.managedPending) return;
     this.idleTimer = setTimeout(() => {
@@ -4289,7 +3819,7 @@ export class Bot {
    * not end in time. Codex hands the update to a worker and ends its turn: it is done when the worker's
    * report turn answers (1.x keeps its `internalReply` open while work is pending).
    */
-  private async maintenance(text: string, timeoutMs: number, head: AgentHead): Promise<string | null> {
+  async maintenance(text: string, timeoutMs: number, head: AgentHead): Promise<string | null> {
     const deadline = Date.now() + timeoutMs;
     const wasTidying = this.tidying;
     this.tidying = true;
@@ -4582,7 +4112,7 @@ export class Bot {
   private giveFirstComponents() { this.cards.giveFirstComponents(); }
   private drewComponents(names: string[]) { this.cards.drewComponents(names); }
   private ownComponents(): string[] { return this.cards.ownComponents(); }
-  private componentNote(): string { return this.cards.componentNote(); }
+  componentNote(): string { return this.cards.componentNote(); }
   componentsChanged() { this.cards.componentsChanged(); }
   private componentNotes(user: ChatRecord): string[] { return this.cards.componentNotes(user); }
   previews(record: ChatRecord): string[] | null { return this.cards.previews(record); }
@@ -4643,7 +4173,7 @@ export class Bot {
     return { changed: this.setReaction(messageId, emoji, present, "user") };
   }
 
-  private setReaction(messageId: string, emoji: string, present: boolean, actor: string): boolean {
+  setReaction(messageId: string, emoji: string, present: boolean, actor: string): boolean {
     const record = this.records.slice(-HISTORY_LIMIT).find((candidate) => candidate.id === messageId && candidate.role !== "divider");
     if (!record) throw new ContractError("not_found", "No such line.");
     const before = JSON.stringify(record.reactions ?? []);
