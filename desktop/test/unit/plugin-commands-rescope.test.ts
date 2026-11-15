@@ -299,6 +299,21 @@ describe("fu-plugin-call-server-origin: a peer server with a write grant still c
     expect(ran(s)).toEqual([]);
   });
 
+  it("the frame helpers (tileImages, approvalAsk, noteSnapshot) from a peer server: refused origin with or without via, under a write grant; the handler never runs", async () => {
+    const s = await startServer();
+    await seed(s, "note", row({ tier: "write", grants: { [H1]: grant("write", ["plugins.tileImages", "plugins.approvalAsk", "plugins.noteSnapshot"]) } }));
+    const helpers = [
+      { type: "plugins.tileImages", name: "note", botId: BOT, data: "{}" },
+      { type: "plugins.approvalAsk", name: "note", botId: BOT, command: "ls", folder: "/x" },
+      { type: "plugins.noteSnapshot", name: "note", botId: BOT, rect: { x: 0, y: 0, width: 10, height: 10 } },
+    ] as unknown as Command[];
+    for (const cmd of helpers) {
+      expect(await outcome(s, PEER_ID, cmd, "manage"), `no via ${cmd.type}`).toEqual(ORIGIN_REFUSED);
+      expect(await outcome(s, PEER_ID, cmd, statedScope(cmd), via("note")), `via ${cmd.type}`).toEqual(ORIGIN_REFUSED);
+    }
+    expect(ran(s)).toEqual([]);
+  });
+
   it("a revoked peer is still refused origin by its own rule, and a peer's other reply command is not affected", async () => {
     const s = await startServer();
     await seed(s, "note", row({ tier: "write", grants: { [H1]: grant("write") } }));

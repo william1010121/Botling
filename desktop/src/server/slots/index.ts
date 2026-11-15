@@ -6,4 +6,4 @@ export { cmdHash } from "./hash";
 export { KEPT_RESULT_MAX_BYTES, KEPT_RESULTS_LIMITS, keepResult, keptResult, type KeptLimits } from "./kept-results";
 export { findReceipt, readNext, type QueueRef, type StoredReceipt } from "./tables";
 export { SlotRefusal, type ApplyContext, type ApplyFn, type Audit, type AuditEvent, type Authorize, type BasisReader, type SlotLog } from "./types";
-export { OWN_PLUGIN_COMMANDS } from "./grant-check";
+export { PLUGIN_FRAME_COMMANDS } from "./grant-check";

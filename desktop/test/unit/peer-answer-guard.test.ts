@@ -175,9 +175,24 @@ describe("fu-plugin-call-server-origin: a peer server never runs a plugin method
     const authorize = slotAuthorize(roster());
     expect(authorize(tx, { slot: slot("srv-gone"), cmd: FOUR[0]!, scope: "reply" })).toEqual({ reason: "origin", detail: "srv-gone is not a valid device of this cluster" });
     expect(authorize(tx, { slot: slot("srv-self"), cmd: FOUR[0]!, scope: "reply" })).toEqual({ reason: "origin", detail: "a server does not send commands to itself" });
-    // Not plugin methods or buttons: the helper commands keep the rule they had (`manage`, then the owner's grant).
-    const helper = { type: "plugins.tileImages", name: "botling.whiteboard", botId: BOT, data: "{}" } as unknown as Command;
-    expect(authorize(tx, { slot: slot("srv-peer"), cmd: helper, scope: "manage" })).toBeNull();
+    // A peer's other manage command is not affected.
+    expect(authorize(tx, { slot: slot("srv-peer", "srv:srv-self"), cmd: { type: "bots.create", name: "x" } as unknown as Command, scope: "manage" })).toBeNull();
+  });
+
+  it("the frame helpers (tileImages, approvalAsk, noteSnapshot) are refused origin too; a phone and the window still send them", () => {
+    const HELPERS: Command[] = [
+      { type: "plugins.tileImages", name: "botling.whiteboard", botId: BOT, data: "{}" } as unknown as Command,
+      { type: "plugins.approvalAsk", name: "botling.whiteboard", botId: BOT, command: "ls", folder: "/x" } as unknown as Command,
+      { type: "plugins.noteSnapshot", name: "botling.whiteboard", botId: BOT, rect: { x: 0, y: 0, width: 1, height: 1 } } as unknown as Command,
+    ];
+    const authorize = slotAuthorize(roster(() => { throw new Error("gone"); }));
+    for (const cmd of HELPERS) {
+      for (const scope of ["manage", "reply", "read"] as const) {
+        expect(authorize(tx, { slot: slot("srv-peer"), cmd, scope }), `${cmd.type} ${scope}`).toEqual({ reason: "origin", detail: PLUGIN_ORIGIN_DETAIL });
+      }
+      expect(authorize(tx, { slot: slot("desktop"), cmd, scope: "local" }), cmd.type).toBeNull();
+    }
+    expect(authorize(tx, { slot: slot("dev-phone"), cmd: HELPERS[0]!, scope: "manage" })).toEqual({ reason: "scope", detail: "plugins.tileImages needs the manage scope" });
   });
 });
 
