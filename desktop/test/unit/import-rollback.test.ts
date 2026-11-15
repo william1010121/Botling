@@ -4,7 +4,7 @@
 // untouched (identical file list, sizes, mtimes, and SHA-256 hashes) and the 2.x Core opens it
 // with 2.x options and sees every bot, line, pin, subagent, plugin, and setting as before.
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION, type Outbound } from "../../src/contract";
@@ -15,6 +15,7 @@ import { FileBotStore } from "../../src/core/store/bot-store";
 import { readLockHolder } from "../../src/core/store/data-dir-lock";
 import { MAIN_BOT_ID, MAINTAINER_ID } from "../../src/core/store/records";
 import { Layout } from "../../src/core/store/workspace";
+import { runImport } from "../../src/server/import/run";
 import type { Message, MessageOf, Slot } from "../../src/protocol";
 import { BotlingdProcess, botlingdCommand, mainBotOf, ScriptClient, testRoot } from "../botlingd-harness";
 import { desktop, fakeCli, fakeCodex, until } from "../helpers";
@@ -22,6 +23,7 @@ import { make2xFolder, type Fixture2xResult } from "../support/fixture-2x";
 
 interface FileSnapshot {
   rel: string;
+  kind: "file" | "dir" | "symlink";
   size: number;
   mtimeMs: number;
   sha256: string;
@@ -30,13 +32,17 @@ interface FileSnapshot {
 function collectFiles(root: string, dir = root, out: FileSnapshot[] = []): FileSnapshot[] {
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const full = join(dir, entry.name);
-    if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory()) {
+    const rel = relative(root, full);
+    // Folders and links are listed too: a new empty folder or link in the 2.x root is a write as well.
+    if (entry.isSymbolicLink()) {
+      out.push({ rel, kind: "symlink", size: 0, mtimeMs: 0, sha256: readlinkSync(full) });
+    } else if (entry.isDirectory()) {
+      out.push({ rel, kind: "dir", size: 0, mtimeMs: 0, sha256: "" });
       collectFiles(root, full, out);
     } else if (entry.isFile()) {
       const stat = statSync(full);
       const sha256 = createHash("sha256").update(readFileSync(full)).digest("hex");
-      out.push({ rel: relative(root, full), size: stat.size, mtimeMs: stat.mtimeMs, sha256 });
+      out.push({ rel, kind: "file", size: stat.size, mtimeMs: stat.mtimeMs, sha256 });
     }
   }
   return out;
@@ -366,6 +372,29 @@ describe("M6-09: rollback to 2.x at any time", () => {
       setModeRecursive(src, 0o755, 0o644);
     }
 
+    expect(collectFiles(src)).toEqual(before);
+    await assert2xCoreRollbackIntact(src, fx);
+  }, 120_000);
+
+  it("an import interrupted part way leaves the 2.x folder untouched, and 2.x opens it with everything", async () => {
+    const root = makeRoot("rollback-interrupted");
+    const src = join(root, "v2");
+    const v3DataDir = join(root, "v3");
+    const fx = make2xFolder(src);
+    const before = collectFiles(src);
+
+    // Stop the import after the second bot (Maintainer): the rest is not imported and the run is not recorded.
+    await expect(
+      runImport({
+        sourceDir: src,
+        targetDir: v3DataDir,
+        onBotDone: ({ index }) => {
+          if (index === 1) throw new Error("injected stop after second bot");
+        },
+      }),
+    ).rejects.toThrow("injected stop after second bot");
+
+    expect(readLockHolder(src)).toBeNull();
     expect(collectFiles(src)).toEqual(before);
     await assert2xCoreRollbackIntact(src, fx);
   }, 120_000);
