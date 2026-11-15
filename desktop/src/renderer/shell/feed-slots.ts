@@ -26,6 +26,19 @@ export const PLUGIN_OWNED_SLOTS: readonly string[] = [
   "view/settings.section",
   "view/quickSettings",
 
+  // botling.sidebar (M7-05a): bot/row, not in FEED_SLOTS: no feed rows go there yet
+  "statusItem/botRow",
+  // botling.sidebar (M7-05b): bot/context, the bot row's menu
+  "menu/bot/context",
+
+  // botling.chat (M7-06a): message/context, message/preview, chat/link, composer/plus, composer/bar, chat/header
+  "menu/message/context",
+  "menu/message/preview",
+  "menu/chat/link",
+  "menu/composer/plus",
+  "view/composerBar",
+  "view/chatHeader",
+
   // botling.bot-panel (M7-03a): panel/main, panel/section, panel/takeover
   "view/rightPanel",
   "view/rightPanel.section",

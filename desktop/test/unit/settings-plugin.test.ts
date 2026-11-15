@@ -35,10 +35,12 @@ const manifest = { ...built, plugins: [shipped] };
 const golden = JSON.parse(readFileSync(join(desktop, "test", "fixtures", "settings-nav-golden.json"), "utf8")) as { all: unknown; phone: unknown; none: unknown };
 const fixture = (): PluginsView => JSON.parse(readFileSync(join(desktop, "test", "fixtures", "kernel-goldens", "plugins-list.json"), "utf8")) as PluginsView;
 
+// M7-06a: the build ships a second plugin (botling.chat); these tests are about the settings plugin, so their hosts run only that one.
+const settingsOnly = { plugins: manifest.plugins.filter((entry) => entry.name === SETTINGS_PLUGIN) };
 const lines: string[] = [];
 const hosts: InPageHost[] = [];
 function host(options: ConstructorParameters<typeof InPageHost>[0] = {}) {
-  const made = new InPageHost({ manifest, log: (line) => lines.push(line), ...options });
+  const made = new InPageHost({ manifest: settingsOnly, log: (line) => lines.push(line), ...options });
   hosts.push(made);
   return made;
 }
@@ -179,7 +181,8 @@ describe("plugins' pages in the same slot", () => {
     // The plugins stay registered: they are loaded, and every row that does not need the settings slots is still there.
     for (const name of ["botling.git", "botling.usage", "zed.tools"]) expect(rendererKernel.state(name), name).toBe("active");
     expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
-    expect(pluginFeed.rows("chat/link")).toEqual(view.menus!.filter((row) => row.menu === "chat/link"));
+    // (a menu :shell still owns; `chat/link` is botling.chat's since M7-06a)
+    expect(pluginFeed.rows("browser/tab")).toEqual(view.menus!.filter((row) => row.menu === "browser/tab"));
     expect(rows()).toEqual([]);
     // Back: core pages first, the plugins' pages after them.
     await one.start();
