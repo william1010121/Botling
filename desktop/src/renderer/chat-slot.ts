@@ -17,6 +17,8 @@ import { rendererKernel, slotsVersion, subscribeSlots } from "./renderer-kernel"
 import { inPageHost, type InPageHost } from "./shell/inpage-host";
 import type { FeedEntry } from "./shell/plugin-feed";
 
+/** The two view places, by their 2.x ids (the kernel finds them under `chat/header` and `composer/bar` too). */
+export type ChatViewSlot = "view/chatHeader" | "view/composerBar";
 type Menus = NonNullable<PluginsView["menus"]>;
 const OWNED = new Set<string>(CHAT_MENUS);
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
@@ -39,6 +41,20 @@ export function chatPlugins(view: PluginsView | null | undefined, kernel: Kernel
   const held = up ? slotRows(kernel) : [];
   const menus = (view.menus ?? []).filter((row) => !OWNED.has(row.menu) || held.some((one) => same(one, row)));
   return menus.length === (view.menus ?? []).length ? view : { ...view, menus };
+}
+
+/**
+ * The views of `chat/header` (2.x `view/chatHeader`) or `composer/bar` (`view/composerBar`) to draw (M7-06b): `views` is the `PluginsView`
+ * array, a row counts only when the slot holds it AND the array still has it (the same rule as the menus), in the array's order. Owner
+ * away (refused, failed, unloaded) → none: the header shows no plugin button and the bar no view (the chat itself still works); a host that never
+ * touched it (a component test, a page without the shell) → `views` itself.
+ */
+export function slotViews<Row>(slot: ChatViewSlot, views: readonly Row[], kernel: Kernel = rendererKernel, host: Pick<InPageHost, "unavailable"> = inPageHost): readonly Row[] {
+  const up = kernel.state(CHAT_PLUGIN) === "active";
+  if (!up && !host.unavailable(CHAT_PLUGIN)) return views;
+  const held = up ? kernel.entries<Partial<FeedEntry<Row>>>(slot).flatMap(({ entry }) => (entry.kind === "feed" && entry.row !== undefined ? [entry.row] : [])) : [];
+  const shown = views.filter((row) => held.some((one) => same(one, row)));
+  return shown.length === views.length ? views : shown;
 }
 
 /** The version of the slots, to draw again when one changes (a useSyncExternalStore snapshot of the kernel's slots). */

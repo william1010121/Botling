@@ -1,6 +1,6 @@
 import { BottomPanels } from "./BottomPanels";
 import { ChatHeaderViews } from "./ChatHeaderViews";
-import { useComposerBar } from "./ComposerBar";
+import { useComposerBar, useComposerBarView } from "./ComposerBar";
 // The app page: React chrome around the reused chat page, drawn inside shell/ShellFrame as the legacy surface of `app/main`.
 // The left column lists the bots (as the Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin
 // frame (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts what the user does
@@ -22,7 +22,7 @@ import { browserPlugins, useBrowserSlotsVersion } from "./browser-slot";
 import { sameHeldColors, setBotColors } from "./avatars";
 import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
-import { composerBarFor, mainTabsFor, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { mainTabsFor, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { StorageTab } from "./StorageTab";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
@@ -372,7 +372,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     runBuiltin(asked.plugin, { id: "botling.openTab", botId: asked.botId, plugin: asked.plugin, view: asked.view });
   }, [openTabSeq]);
   // A plugin's view at the right end of the row above the input box (`composerBar`), drawn in the chat page.
-  useComposerBar({ client, view: bot && !web ? composerBarFor(view.plugins, bot) : null, botId: bot?.id ?? null, onBuiltin: runBuiltin, components: view.components, bots: view.bots, ask: approval.ask });
+  useComposerBar({ client, view: useComposerBarView(view.plugins, bot && !web ? bot : null), botId: bot?.id ?? null, onBuiltin: runBuiltin, components: view.components, bots: view.bots, ask: approval.ask });
 
   // A result opens in the browser, the app's Markdown preview or with its own app; main checks it is one of this chat's links.
   const openResult = useCallback((result: ResultView) => {

@@ -4,8 +4,10 @@
 // answers what those frames post exactly as it answers a plugin frame of its own (frame-broker.ts): the
 // frames sit in the chat page, so the chat page passes their messages here and their replies back.
 import { useEffect, useRef } from "react";
-import type { PluginsView } from "../contract";
+import type { BotView, PluginsView } from "../contract";
+import { slotViews, useChatSlotsVersion } from "./chat-slot";
 import type { Client } from "./client";
+import { composerBarFor } from "./main-tabs";
 import { frameEvent } from "../../../Web/src/frame-protocol";
 import { FrameBroker, registerPluginFrame } from "./frame-broker";
 import { pluginFrameHost } from "./plugin-frame-host";
@@ -15,6 +17,15 @@ import type { BuiltinRunner, FrameServices } from "./Plugins";
 import type { ComposerBarFrame, ComposerBarSpec, FrameMessage, ShellMessage } from "./chat-frame/protocol";
 
 export type ComposerBarView = NonNullable<PluginsView["composerBarViews"]>[number];
+
+/**
+ * The one view the bar shows for `bot` (null: none): the first of the `composerBarViews` that the `composer/bar` slot holds too and that is for
+ * the bot's role (M7-06b). The slot filters the array first, so the first-one-only rule picks among the rows the slot has, not among the view's.
+ */
+export function useComposerBarView(plugins: PluginsView | null | undefined, bot: Pick<BotView, "role" | "parent"> | null): ComposerBarView | null {
+  useChatSlotsVersion();
+  return bot ? composerBarFor({ ...plugins, composerBarViews: [...slotViews("view/composerBar", plugins?.composerBarViews ?? [])] } as PluginsView, bot) : null;
+}
 
 /** The text size of both frames (the pin chips' 12px). */
 const FONT_SIZE = 12;
