@@ -69,6 +69,12 @@ if (sources.length) {
   // `vitest related` takes source files and runs the tests that depend on them; a test file passed
   // in counts as its own dependent, so the name-matched tests ride along.
   const files = [...new Set([...sources, ...named])].map((path) => relative(desktop, path));
+  // heavyLocal tests (vitest.config.mts) are skipped on a local Mac run; say so when this change names one.
+  if (process.platform === "darwin" && !process.env.CI && process.env.BOTLING_TEST_HEAVY !== "1") {
+    const list = /const heavyLocal = \[([\s\S]*?)\]/.exec(readFileSync(join(desktop, "vitest.config.mts"), "utf8"))?.[1] ?? "";
+    const heavy = (list.match(/"[^"]+"/g) ?? []).map((n) => `test/unit/${n.slice(1, -1)}.test.ts`).filter((f) => files.includes(f));
+    if (heavy.length) console.log(`\nSkipped here (heavyLocal, heavy on the Mac): ${heavy.join(", ")}. Run them on the Linux host: scripts/remote-test.sh <sha> ${heavy.join(" ")}`);
+  }
   ok = step(`unit tests related to ${files.length} file(s)`, bin("vitest"), ["related", "--run", "--passWithNoTests", "--exclude", "test/live/**", ...files]) && ok;
 } else {
   console.log("\nNo changed desktop source or test files: nothing to unit test.");
