@@ -90,18 +90,20 @@ export class PluginFeed {
   /**
    * A plugin that owns `slots` has come or gone (an in-page built-in, shell/inpage-host.ts): the kernel refuses a contribution to a
    * slot whose owner is away and does not ask again when it returns, so the instances that contribute to them are loaded again
-   * from the last view. Slots are given by either name. The instances before the first of them in the list are not touched.
+   * from the last view. Slots are given by either name. The other instances are not touched, unless they share a slot with one that is loaded again and come after it in the list (their order in that slot).
    */
   refresh(slots: readonly string[]): string[] {
     const changed = new Set(slots.map(canonicalSlot));
-    // From the first affected plugin (in the list's order) onward, every one is loaded again: the ones that are not affected would
-    // otherwise stay before it, and its other slots would hold them in a different order than a fresh load (F1). Those before it
-    // are untouched, so every slot keeps the list's order.
-    let reload = false;
-    for (const name of planOf(this.last.view, this.last.web).keys()) {
+    // A plugin that is loaded again comes after the ones that were not touched, in every slot it is in; so every later plugin (the
+    // list's order) that shares a slot with one that is loaded again is loaded again too, and every slot keeps the list's order as a
+    // fresh load gives it (F1). A plugin that shares no slot with them is not touched.
+    const moved = new Set<string>();
+    for (const [name, plan] of planOf(this.last.view, this.last.web)) {
       if (!this.owned.has(name)) continue;
-      if (!reload && this.kernel.declaration(name)?.contributes?.slots?.some((slot) => changed.has(slot))) reload = true;
-      if (reload) this.owned.set(name, "");
+      const slots = this.kernel.declaration(name)?.contributes?.slots ?? [];
+      if (!slots.some((slot) => changed.has(slot) || moved.has(slot))) continue;
+      this.owned.set(name, "");
+      for (const { slot } of plan.rows) moved.add(canonicalSlot(slot));
     }
     return this.reconcile(this.last.view, this.last.web);
   }
