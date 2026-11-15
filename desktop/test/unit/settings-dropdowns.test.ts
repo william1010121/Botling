@@ -4,12 +4,17 @@
 // dropdowns. Codex models come from `codex.models` (the local Codex's `model/list`); a saved model the list lacks stays.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { BotSettings, SettingsSheet } from "../../src/renderer/Settings";
 import type { Client } from "../../src/renderer/client";
 import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView } from "../../src/contract";
 import { applySetting, settingsView } from "../../src/core/settings";
 import summaries from "../../builtin-plugins/botling.catchup/package.json";
+import { loadSettingsShell, type SettingsShell } from "../settings-shell";
+// Settings draws only from the settings plugin's slots (M7-02d): a test that renders it loads the plugin as the shell does.
+let settingsShell: SettingsShell;
+beforeEach(async () => { settingsShell = await loadSettingsShell(); });
+afterEach(async () => { await settingsShell.stop(); });
 
 /** The Plugins view with botling.catchup on and its settings (Settings → General → Chat summaries draws them). */
 function plugins(values: Record<string, unknown> = {}): PluginsView {
