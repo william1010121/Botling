@@ -1,6 +1,6 @@
 // Botling 3 M5-18b: each non-built-in plugin's server (program) part runs in its own host process,
 // from a content-addressed copy of the hashed folder; built-ins keep sharing one host (D56, §18.3).
-import { cpSync, existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PluginsView } from "../../src/contract";
@@ -357,6 +357,22 @@ describe("M5-18b: per-plugin host processes and content-addressed execution", ()
     unit.plugins.rowsChanged();
     await until(() => !alive(first.pid), { timeout: 10_000, what: "the host that could read the edit ended" });
     await registered(unit, ["user.x"]);
+    expect(await unit.plugins.command("user.x.lazy")).toMatchObject({ label: "granted-v1" });
+  });
+
+  it("a snapshot folder planted as a link to the right bytes is not followed", async () => {
+    const unit = createUnit({ separateHosts: true, builtIns: null, mayRunServerPart: () => true });
+    const xFolder = copyFixture("user.x", join(unit.dataDir, "plugins"));
+    const outside = join(unit.dataDir, "outside-copy");
+    cpSync(xFolder, outside, { recursive: true });
+    const snapshot = join(unit.dataDir, "plugin-snapshots", folderHash(xFolder));
+    mkdirSync(join(unit.dataDir, "plugin-snapshots"), { recursive: true });
+    symlinkSync(outside, snapshot, "dir");
+    unit.plugins.scan();
+    await unit.plugins.start();
+    await registered(unit, ["user.x"]);
+    expect(lstatSync(snapshot).isSymbolicLink()).toBe(false);
+    writeFileSync(join(outside, "lib", "lazy.mjs"), `export const label = "via-link";\n`);
     expect(await unit.plugins.command("user.x.lazy")).toMatchObject({ label: "granted-v1" });
   });
 

@@ -289,15 +289,19 @@ function readPluginSnapshot(dir: string): { codeHash: string; files: SnapshotFil
  * Materializes a verified content-addressed copy of `files` at `<snapshotRoot>/<codeHash>` so lazy `import()`
  * and `api.plugin.dir` read only the bytes that were hashed.
  */
+/** The copy is the same user's files: reuse it only as a real folder, with no links, holding exactly these bytes. */
+function snapshotIntact(dest: string, codeHash: string): boolean {
+  try {
+    return !lstatSync(dest).isSymbolicLink() && readPluginSnapshot(dest).codeHash === codeHash;
+  } catch { return false; /* missing or corrupt snapshot */ }
+}
+
 function materializeSnapshot(snapshotRoot: string, codeHash: string, files: readonly SnapshotFile[]): { dir: string; repaired: boolean } {
   const dest = join(snapshotRoot, codeHash);
   let repaired = false;
   if (lstatSync(dest, { throwIfNoEntry: false })) {
-    // The copy is the same user's files: reuse it only as a real folder, with no links, holding exactly these bytes
-    // (M5-18b review: an edit or a link planted in it is replaced, and the caller starts that host afresh).
-    try {
-      if (!lstatSync(dest).isSymbolicLink() && readPluginSnapshot(dest).codeHash === codeHash) return { dir: dest, repaired };
-    } catch { /* corrupt snapshot: replace below */ }
+    // M5-18b review: an edit or a link planted in it is replaced, and the caller starts that host afresh.
+    if (snapshotIntact(dest, codeHash)) return { dir: dest, repaired };
     rmSync(dest, { recursive: true, force: true });
     repaired = true;
   }
@@ -314,7 +318,7 @@ function materializeSnapshot(snapshotRoot: string, codeHash: string, files: read
     try {
       renameSync(tmp, dest);
     } catch (error) {
-      if (existsSync(dest) && folderHash(dest) === codeHash) {
+      if (snapshotIntact(dest, codeHash)) {
         rmSync(tmp, { recursive: true, force: true });
         return { dir: dest, repaired };
       }
