@@ -72,7 +72,7 @@ interface Server {
   entries(stream: string): Array<{ kind: string; body: Record<string, unknown>; slot: Slot | null }>;
 }
 
-async function server(options: RemoteSessionOptions = {}): Promise<Server> {
+async function server(options: RemoteSessionOptions = {}, extraHost: Partial<SessionHost> = {}): Promise<Server> {
   const dir = `${root}/d${++folders}`;
   const store = await openServerStore(dir);
   const identity = await loadOrCreateServerIdentity(dir, { create: true });
@@ -99,7 +99,7 @@ async function server(options: RemoteSessionOptions = {}): Promise<Server> {
     ensureBotStream: async (botId) => { if (!engine.hasBot(botId)) return false; await store.submit((tx) => { ensureBot(tx, botId); }); return true; },
     log: (line) => logs.push(line),
   };
-  const host: RemoteHost = { ...base, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey } };
+  const host: RemoteHost = { ...base, ...extraHost, roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey } };
   const remote = new RemoteSessions(host, options);
   cleanups.push(async () => {
     remote.close();
@@ -699,5 +699,51 @@ describe("D59: a cancel after the slot's handler began is too late", () => {
     // Cancel first: noted, and the slot is cancelled when its cmd comes. Cmd first: applied, and the cancel gets that result.
     if (device.got.some((m) => m.t === "cancel.noted")) { expect(kinds).toEqual(["cmd.cancelled#1"]); expect(result.outcome.kind).toBe("cancelled"); }
     else { expect(kinds).toEqual(["cmd.applied#1"]); expect(device.got.filter((m) => m.t === "cmd.result").every((m) => (m as MessageOf<"cmd.result">).outcome.kind === "applied")).toBe(true); }
+  });
+});
+
+describe("M4-01a M1: remote sessions never reach peerReads or peerLocate", () => {
+  it("a remote session with spy peerReads / peerLocate never invokes them on content.get, content.credit, content.cancel, content.find, or close", async () => {
+    const peerReadsCalls: string[] = [];
+    const peerLocateCalls: unknown[] = [];
+    const fakePeerReads = {
+      get: async () => { peerReadsCalls.push("get"); },
+      credit: () => { peerReadsCalls.push("credit"); },
+      cancel: () => { peerReadsCalls.push("cancel"); },
+      closeSession: () => { peerReadsCalls.push("closeSession"); },
+    };
+    const s = await server({}, {
+      peerReads: () => { peerReadsCalls.push("peerReads"); return fakePeerReads as never; },
+      peerLocate: async (m) => { peerLocateCalls.push(m); return null; },
+    });
+    const { device } = await paired(s);
+    const id = `sha256:${"a".repeat(64)}`;
+    const entry = { stream: bot, seq: 1 };
+
+    // Over the encrypted link while open: RemoteSession handles content.get/credit/cancel itself and never touches peerReads.
+    device.send({ t: "content.get", req: "rg1", owner: "peer-server-1", id, variant: "original", offset: 0, length: 64, entry });
+    device.send({ t: "content.credit", req: "rg1", bytes: 1024 });
+    device.send({ t: "content.cancel", req: "rg1" });
+    await device.wait((m): m is MessageOf<"content.gone"> => m.t === "content.gone" && m.req === "rg1", "content.gone");
+
+    // Defense in depth: even if content.find reaches SessionCore on a non-local session, kind.local blocks peerLocate.
+    (device.session as unknown as { onMessage(m: Message): void }).onMessage({
+      t: "content.find", req: "rf1", botId: BOT, line: "line-1", url: "file:///tmp/x.txt",
+    });
+    await waitFor(() => s.logs.some((l) => l.includes("cannot send content.found")), "content.found blocked on remote kind");
+
+    // Closing a non-local session never calls peerReads().closeSession.
+    device.session.close();
+    await waitFor(() => device.ended, "ended");
+
+    // Defense in depth: after close(), RemoteSession.onMessage falls through to SessionCore.onMessage; kind.local still blocks peerReads.
+    const onMsg = (device.session as unknown as { onMessage(m: Message): void }).onMessage.bind(device.session);
+    onMsg({ t: "content.get", req: "rg2", owner: "peer-server-1", id, variant: "original", offset: 0, length: 64, entry });
+    onMsg({ t: "content.credit", req: "rg2", bytes: 1024 });
+    onMsg({ t: "content.cancel", req: "rg2" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(peerReadsCalls).toEqual([]);
+    expect(peerLocateCalls).toEqual([]);
   });
 });

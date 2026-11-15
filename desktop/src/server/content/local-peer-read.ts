@@ -1,11 +1,13 @@
 // Local socket peer-content reads (M4-01a, protocol v1 §9A.4 desktop row, §9A.3, §9A.7, D69 / Q-C1):
 // bridges a local `Session` (`content.get` / `content.credit` / `content.cancel`) to `PeerContent.respond` with
 // `LOCAL_WINDOW = null` (so the peer wire omits `device`), pumping verified bytes as `content.meta` and <= 64 KiB
-// `content.chunk` frames bounded by the 4 MiB credit window.
+// `content.chunk` frames bounded by the 4 MiB per-read window and a shared session budget (< 32 MiB MAX_BUFFERED).
 import { CONTENT_CHUNK_BYTES, type Message, type MessageOf } from "../../protocol";
 import { GoneReason, LOCAL_WINDOW, PEER_CONTENT_FRAME, PEER_CONTENT_WINDOW, PeerContent, PeerReadError } from "./peer-content";
 
 const MAX_READS_PER_SESSION = 32;
+// Shared session-wide unreturned credit cap: <= MAX_BUFFERED / 2 (session.ts drops the session above 32 MiB queued).
+export const MAX_SESSION_PEER_CONTENT_CREDIT = 16 * CONTENT_CHUNK_BYTES;
 
 export interface LocalPeerReadSink {
   send(message: Message): boolean;
@@ -16,25 +18,35 @@ export interface LocalPeerReadsOptions {
   peer: Pick<PeerContent, "respond" | "meta">;
   self: string;
   maxReadsPerSession?: number;
+  maxSessionCredit?: number;
   log?: (line: string) => void;
+}
+
+interface SessionState {
+  reads: Map<string, OpenRead>;
+  credit: number;
 }
 
 interface OpenRead {
   session: object;
+  state: SessionState;
   req: string;
   credit: number;
+  unreturned: number;
   cancelled: boolean;
   reader: ReadableStreamDefaultReader<Uint8Array> | null;
   wake: (() => void) | null;
 }
 
 export class LocalPeerReads {
-  private readonly sessions = new Map<object, Map<string, OpenRead>>();
+  private readonly sessions = new Map<object, SessionState>();
   private readonly maxReadsPerSession: number;
+  private readonly maxSessionCredit: number;
   private readonly log: (line: string) => void;
 
   constructor(private readonly options: LocalPeerReadsOptions) {
     this.maxReadsPerSession = options.maxReadsPerSession ?? MAX_READS_PER_SESSION;
+    this.maxSessionCredit = options.maxSessionCredit ?? MAX_SESSION_PEER_CONTENT_CREDIT;
     this.log = options.log ?? (() => undefined);
   }
 
@@ -43,28 +55,31 @@ export class LocalPeerReads {
       sink.send({ t: "content.gone", req: m.req, id: m.id, reason: "denied" });
       return;
     }
-    let map = this.sessions.get(session);
-    if (!map) {
-      map = new Map();
-      this.sessions.set(session, map);
+    let state = this.sessions.get(session);
+    if (!state) {
+      state = { reads: new Map(), credit: this.maxSessionCredit };
+      this.sessions.set(session, state);
     }
-    const prior = map.get(m.req);
+    const prior = state.reads.get(m.req);
     if (prior) {
+      this.releaseRead(prior);
       this.stopRead(prior);
-    } else if (map.size >= this.maxReadsPerSession) {
+    } else if (state.reads.size >= this.maxReadsPerSession) {
       sink.send({ t: "content.gone", req: m.req, id: m.id, reason: "offline" });
       return;
     }
 
     const read: OpenRead = {
       session,
+      state,
       req: m.req,
       credit: PEER_CONTENT_WINDOW,
+      unreturned: 0,
       cancelled: false,
       reader: null,
       wake: null,
     };
-    map.set(m.req, read);
+    state.reads.set(m.req, read);
 
     try {
       const rangeEnd = m.offset + m.length - 1;
@@ -121,7 +136,7 @@ export class LocalPeerReads {
 
       try {
         while (!read.cancelled && sent < m.length) {
-          while (!read.cancelled && read.credit <= 0) await waitForWake(read);
+          while (!read.cancelled && (read.credit <= 0 || state.credit <= 0)) await waitForWake(read);
           if (read.cancelled) break;
 
           const { done, value } = await reader.read();
@@ -133,15 +148,18 @@ export class LocalPeerReads {
 
           let pos = 0;
           while (!read.cancelled && pos < value.length && sent < m.length) {
-            while (!read.cancelled && read.credit <= 0) await waitForWake(read);
+            while (!read.cancelled && (read.credit <= 0 || state.credit <= 0)) await waitForWake(read);
             if (read.cancelled) break;
-            const piece = Math.min(PEER_CONTENT_FRAME, value.length - pos, m.length - sent, read.credit);
+            const piece = Math.min(PEER_CONTENT_FRAME, value.length - pos, m.length - sent, read.credit, state.credit);
             const bytes = value.subarray(pos, pos + piece);
             if (!sink.chunk({ t: "content.chunk", req: m.req, offset, bytes })) {
               read.cancelled = true;
+              sink.send({ t: "content.gone", req: m.req, id: m.id, reason: "offline" });
               break;
             }
             read.credit -= piece;
+            read.unreturned += piece;
+            state.credit -= piece;
             offset += piece;
             sent += piece;
             pos += piece;
@@ -165,41 +183,64 @@ export class LocalPeerReads {
         sink.send({ t: "content.gone", req: m.req, id: m.id, reason: "offline" });
       }
     } finally {
-      const current = this.sessions.get(session);
-      if (current?.get(m.req) === read) {
-        current.delete(m.req);
-        if (current.size === 0) this.sessions.delete(session);
+      this.releaseRead(read);
+      if (state.reads.get(m.req) === read) {
+        state.reads.delete(m.req);
+        if (state.reads.size === 0) this.sessions.delete(session);
       }
     }
   }
 
   credit(session: object, m: MessageOf<"content.credit">): void {
-    const read = this.sessions.get(session)?.get(m.req);
-    if (!read || read.cancelled) return;
+    const state = this.sessions.get(session);
+    const read = state?.reads.get(m.req);
+    if (!state || !read || read.cancelled) return;
     read.credit += m.bytes;
-    const wake = read.wake;
-    read.wake = null;
-    wake?.();
+    const returned = Math.min(m.bytes, read.unreturned);
+    read.unreturned -= returned;
+    state.credit = Math.min(this.maxSessionCredit, state.credit + returned);
+    this.wakeSession(state);
   }
 
   cancel(session: object, m: MessageOf<"content.cancel">): void {
-    const map = this.sessions.get(session);
-    const read = map?.get(m.req);
-    if (!read) return;
-    map!.delete(m.req);
-    if (map!.size === 0) this.sessions.delete(session);
+    const state = this.sessions.get(session);
+    const read = state?.reads.get(m.req);
+    if (!state || !read) return;
+    state.reads.delete(m.req);
+    if (state.reads.size === 0) this.sessions.delete(session);
+    this.releaseRead(read);
     this.stopRead(read);
   }
 
   closeSession(session: object): void {
-    const map = this.sessions.get(session);
-    if (!map) return;
+    const state = this.sessions.get(session);
+    if (!state) return;
     this.sessions.delete(session);
-    for (const read of map.values()) this.stopRead(read);
+    for (const read of state.reads.values()) {
+      read.unreturned = 0;
+      this.stopRead(read);
+    }
   }
 
   close(): void {
     for (const session of [...this.sessions.keys()]) this.closeSession(session);
+  }
+
+  private releaseRead(read: OpenRead): void {
+    if (read.unreturned <= 0) return;
+    read.state.credit = Math.min(this.maxSessionCredit, read.state.credit + read.unreturned);
+    read.unreturned = 0;
+    this.wakeSession(read.state);
+  }
+
+  private wakeSession(state: SessionState): void {
+    for (const read of state.reads.values()) {
+      if (read.cancelled || (read.credit > 0 && state.credit > 0)) {
+        const wake = read.wake;
+        read.wake = null;
+        wake?.();
+      }
+    }
   }
 
   private stopRead(read: OpenRead): void {

@@ -6,8 +6,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CONTENT_CHUNK_BYTES, type DeviceScope, type EntryRef, type Message, type MessageOf, type StreamId, type WireMessage } from "../../src/protocol";
+import { EventEmitter } from "node:events";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CONTENT_CHUNK_BYTES, decodeFrame, encodeFrame, FRAME_LIMIT, FrameSplitter, packFrame, type DeviceScope, type EntryRef, type Message, type MessageOf, type StreamId, type WireMessage } from "../../src/protocol";
 import { decodeWireFrame, encodeChunkFrame, encodeWireFrame } from "../../src/protocol/frame";
 import { ContentService, type LineLike } from "../../src/server/content";
 import { ChunkCache, PeerCacheBudget } from "../../src/server/content/chunk-cache";
@@ -15,6 +16,8 @@ import { LocalPeerReads, type LocalPeerReadSink } from "../../src/server/content
 import { LOCAL_WINDOW, PEER_CONTENT_FRAME, PEER_CONTENT_WINDOW, PeerContent, PeerContentOwner } from "../../src/server/content/peer-content";
 import { ensureStream } from "../../src/server/log";
 import type { PeerSession } from "../../src/server/peer";
+import { Session, type SessionHost } from "../../src/server/session/session";
+import { MAX_BUFFERED } from "../../src/server/session/session-core";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 
 const MiB = CONTENT_CHUNK_BYTES;
@@ -421,8 +424,10 @@ describe("M4-01a: LocalPeerReads (local socket reads a peer's file)", () => {
     expect(sink.messages.some((m) => m.t === "content.gone")).toBe(false);
   });
 
-  it("8. m.owner === self -> content.gone{denied}", async () => {
+  it("8. m.owner === self -> content.gone{denied} without touching peer", async () => {
     const w = await world();
+    const respondSpy = vi.spyOn(w.peer, "respond");
+    w.link.reset();
     const sink = new RecordingSink();
     await w.reads.get(sessionKey, {
       t: "content.get", req: "r8", owner: w.aId, id: `sha256:${"a".repeat(64)}`, variant: "original",
@@ -431,6 +436,8 @@ describe("M4-01a: LocalPeerReads (local socket reads a peer's file)", () => {
 
     expect(sink.messages).toEqual([{ t: "content.gone", req: "r8", id: `sha256:${"a".repeat(64)}`, reason: "denied" }]);
     expect(sink.chunks).toEqual([]);
+    expect(respondSpy).not.toHaveBeenCalled();
+    expect(w.link.upRaw).toEqual([]);
   });
 
   it("9. offset >= size -> content.meta and zero chunks", async () => {
@@ -449,14 +456,14 @@ describe("M4-01a: LocalPeerReads (local socket reads a peer's file)", () => {
     expect(sink.chunks).toEqual([]);
   });
 
-  it("10. closeSession cancels every open read of that session and enforces at most 32 open reads per session", async () => {
+  it("10. closeSession cancels every open read of that session, enforces at most 32 open reads per session, and caps total unreturned credit below MAX_BUFFERED", async () => {
     const w = await world();
     const size = 8 * MiB;
     const item = await posted(w, "limit", size);
     const sessionA = { id: "A" };
     const beforeCancelled = w.owner.counts.cancelled;
 
-    // Open 32 reads that each block at the 4 MiB credit boundary.
+    // Open 32 reads concurrently without returning credit; all 32 open (meta sent), bounded by the shared session budget.
     const sinks: RecordingSink[] = [];
     const pending: Array<Promise<void>> = [];
     for (let i = 0; i < 32; i++) {
@@ -467,7 +474,14 @@ describe("M4-01a: LocalPeerReads (local socket reads a peer's file)", () => {
         offset: 0, length: size, entry: item.ref.entry,
       }, s));
     }
-    await Promise.all(sinks.map((s) => s.waitUntil(() => s.totalChunkBytes() === PEER_CONTENT_WINDOW)));
+    await Promise.all(sinks.map((s) => s.waitUntil(() => s.messages.some((m) => m.t === "content.meta"))));
+    const totalUnreturned = () => sinks.reduce((sum, s) => sum + s.totalChunkBytes(), 0);
+    await sinks[0].waitUntil(() => totalUnreturned() >= 16 * MiB);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(totalUnreturned()).toBeLessThan(MAX_BUFFERED);
+    expect(totalUnreturned()).toBe(16 * MiB);
+    for (const s of sinks) expect(s.totalChunkBytes()).toBeLessThanOrEqual(PEER_CONTENT_WINDOW);
 
     // 33rd read on the same session is refused with content.gone{offline}.
     const extraSink = new RecordingSink();
@@ -481,6 +495,159 @@ describe("M4-01a: LocalPeerReads (local socket reads a peer's file)", () => {
     await Promise.all(pending);
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(w.owner.counts.cancelled).toBeGreaterThan(beforeCancelled);
-    for (const s of sinks) expect(s.totalChunkBytes()).toBe(PEER_CONTENT_WINDOW);
+    expect(totalUnreturned()).toBe(16 * MiB);
+  });
+
+  it("11. L1: 10 concurrent reads on a Session share one credit budget < MAX_BUFFERED so a stalled socket does not drop the session", async () => {
+    const w = await world();
+    const size = 6 * MiB;
+    const item = await posted(w, "gallery", size);
+    const LOCAL = { local: true } as const;
+    const TOKEN = "t".repeat(32);
+    const EPOCH = "0123456789abcdef0123456789abcdef";
+
+    class BufferedFakeSocket extends EventEmitter {
+      destroyed = false;
+      writableLength = 0;
+      readonly writes: Uint8Array[] = [];
+      write(bytes: Uint8Array): boolean {
+        this.writes.push(bytes);
+        this.writableLength += bytes.length;
+        return true;
+      }
+      end(): void {}
+      destroy(): void { this.destroyed = true; }
+      frames(): Message[] {
+        const splitter = new FrameSplitter();
+        const out: Message[] = [];
+        for (const chunk of this.writes) {
+          const split = splitter.push(chunk);
+          if (!split.ok) throw new Error(split.detail);
+          for (const frame of split.frames) {
+            expect(frame.length).toBeLessThanOrEqual(FRAME_LIMIT);
+            const decoded = decodeFrame(frame, "server", LOCAL);
+            if (!decoded.ok) throw new Error(decoded.detail);
+            out.push(decoded.message);
+          }
+        }
+        return out;
+      }
+      feed(message: Message): void {
+        const encoded = encodeFrame(message, "fe", LOCAL);
+        if (!encoded.ok) throw new Error(encoded.detail);
+        this.emit("data", Buffer.from(packFrame(encoded.text)));
+      }
+    }
+
+    const host = {
+      serverId: w.aId, serverName: "Mac", startedAt: 0, minFeVersion: "3.0.0", token: () => TOKEN,
+      hub: { attach: () => ({ close() {}, sub: async () => ({ ok: false, reason: "unknown stream" }), ack() {}, history: () => null }), reader: () => null },
+      live: { subscribe: () => ({ close() {}, resync() {} }) },
+      runtime: {}, engine: { run: async () => null }, content: null,
+      shell: { attach() {}, detach() {}, answer() {} },
+      nextFor: () => ({}), ensureBotStream: async () => false, log: () => {},
+      peerReads: () => w.reads,
+    } as unknown as SessionHost;
+
+    const socket = new BufferedFakeSocket();
+    const session = new Session(socket as never, host, { helloTimeoutMs: 60_000, pingAfterMs: 60_000, deadAfterMs: 120_000 });
+    cleanups.push(() => session.close());
+    socket.feed({ t: "hello", deviceId: "desktop", feVersion: "3.0.0", protocol: 1, originEpoch: EPOCH, cursors: {}, outbox: [], want: [], token: TOKEN } as never);
+
+    const nReads = 10;
+    for (let i = 0; i < nReads; i++) {
+      socket.feed({
+        t: "content.get", req: `gal-${i}`, owner: item.ref.owner, id: item.ref.id, variant: "original",
+        offset: 0, length: size, entry: item.ref.entry,
+      });
+    }
+
+    const chunkBytesByReq = () => {
+      const map = new Map<string, Buffer[]>();
+      for (const frame of socket.frames()) {
+        if (frame.t === "content.chunk") {
+          const list = map.get(frame.req) ?? [];
+          list.push(Buffer.from(frame.bytes));
+          map.set(frame.req, list);
+        }
+      }
+      return map;
+    };
+    const totalChunkBytes = () => {
+      let total = 0;
+      for (const list of chunkBytesByReq().values()) for (const b of list) total += b.length;
+      return total;
+    };
+
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+      if (!session.isOpen) break;
+      const frames = socket.frames();
+      const metas = frames.filter((f) => f.t === "content.meta").length;
+      if (metas === nReads && totalChunkBytes() >= 16 * MiB) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(session.isOpen).toBe(true);
+    expect(socket.destroyed).toBe(false);
+    expect(socket.writableLength).toBeLessThan(MAX_BUFFERED);
+    expect(totalChunkBytes()).toBeLessThan(MAX_BUFFERED);
+    expect(totalChunkBytes()).toBe(16 * MiB);
+
+    // Drain socket and return credit as bytes arrive until all 10 reads finish.
+    const credited = new Array<number>(nReads).fill(0);
+    const finishDeadline = Date.now() + 10_000;
+    while (Date.now() < finishDeadline) {
+      socket.writableLength = 0;
+      const byReq = chunkBytesByReq();
+      let allDone = true;
+      for (let i = 0; i < nReads; i++) {
+        const got = (byReq.get(`gal-${i}`) ?? []).reduce((s, b) => s + b.length, 0);
+        if (got < size) allDone = false;
+        const delta = got - credited[i];
+        if (delta > 0) {
+          credited[i] += delta;
+          socket.feed({ t: "content.credit", req: `gal-${i}`, bytes: delta });
+        }
+      }
+      if (allDone) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(session.isOpen).toBe(true);
+    const finalByReq = chunkBytesByReq();
+    for (let i = 0; i < nReads; i++) {
+      const joined = Buffer.concat(finalByReq.get(`gal-${i}`) ?? []);
+      expect(joined.equals(item.data)).toBe(true);
+    }
+  });
+
+  it("12. N1: sink.chunk returning false sends content.gone{offline} and stops the read", async () => {
+    const w = await world();
+    const item = await posted(w, "chunkfail", 256 * 1024);
+    const messages: Message[] = [];
+    let chunkCalls = 0;
+    const sink: LocalPeerReadSink = {
+      send(message) {
+        messages.push(message);
+        return true;
+      },
+      chunk() {
+        chunkCalls += 1;
+        return false;
+      },
+    };
+
+    await w.reads.get(sessionKey, {
+      t: "content.get", req: "r12", owner: item.ref.owner, id: item.ref.id, variant: "original",
+      offset: 0, length: 256 * 1024, entry: item.ref.entry,
+    }, sink);
+
+    expect(chunkCalls).toBe(1);
+    expect(messages).toEqual([
+      { t: "content.meta", req: "r12", id: item.ref.id, size: 256 * 1024, type: "video/mp4", chunkSize: CONTENT_CHUNK_BYTES, variants: [] },
+      { t: "content.gone", req: "r12", id: item.ref.id, reason: "offline" },
+    ]);
   });
 });
