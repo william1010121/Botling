@@ -384,6 +384,59 @@ describe("a server switch (Q-M7-C1)", () => {
     expect(page.loader.loaded()).toEqual([{ name: "a", where: "frame", codeHash: code(A(1)) }]);
   });
 
+  it("A → B → A quickly: the first fetch from A, ending after both switches, is not used; A's rows are fetched anew (review, L-008)", async () => {
+    const clock = new FakeClock();
+    const serverA = new HotServer("srvA");
+    const serverB = new HotServer("srvB");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const calls: BundleRequest[] = [];
+    const fetch: BundleFetcher = async (request) => {
+      calls.push(request);
+      if (calls.length === 1) await gate;
+      return SOURCES[request.ref]!;
+    };
+    const page = await openPage(serverA, clock, { fetch, calls });
+    serverA.publish({ a: row(A(1)) });
+    await flush();
+    expect(calls).toHaveLength(1);
+    page.link.replaceSocket(serverB.dial);
+    await flush();
+    expect(page.link.server).toBe("srvB");
+    serverB.publish({ a: row(A(2)) });
+    // B's step is not held behind A's stuck fetch (the same plugin's steps are chained).
+    await until(clock, () => page.runs("a") === A(2));
+    expect(page.runs("a")).toBe(A(2));
+    page.link.replaceSocket(serverA.dial);
+    await flush();
+    expect(page.link.server).toBe("srvA");
+    // Back on A, before its rows come: B's code keeps running (nothing torn down on a guess).
+    expect(page.runs("a")).toBe(A(2));
+    serverA.publish({});
+    await until(clock, () => page.runs("a") === A(1));
+    expect(page.runs("a")).toBe(A(1));
+    expect(calls.map((call) => call.ref)).toEqual([refOf(A(1)), refOf(A(2)), refOf(A(1))]);
+    const generation = page.kernel.generation(webInstance("a"));
+    release();
+    await flush(8);
+    // The first fetch's late answer changes nothing and records no failure.
+    expect(page.kernel.generation(webInstance("a"))).toBe(generation);
+    expect(page.loader.loaded()).toEqual([{ name: "a", where: "frame", codeHash: code(A(1)) }]);
+    expect(page.lines.filter((line) => line.startsWith("row loader:"))).toEqual([]);
+  });
+
+  it("stop() lets go a fetch that never answers instead of waiting for it (review)", async () => {
+    const kernel = new Kernel({ log: true });
+    const loader = new RowLoader({ kernel, fetch: () => new Promise<string>(() => undefined), manifest: { plugins: [] }, log: () => undefined });
+    void loader.reconcile(new Map<string, unknown>([["plugin:a", row(A(1))]]));
+    await flush(8);
+    let stopped = false;
+    void loader.stop().then(() => { stopped = true; });
+    await flush(8);
+    expect(stopped).toBe(true);
+    expect(loader.loaded()).toEqual([]);
+  });
+
   it("a plugin that failed on the old server is tried again on the new one (same plan)", async () => {
     const clock = new FakeClock();
     const serverA = new HotServer("srvA");
