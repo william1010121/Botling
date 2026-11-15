@@ -122,6 +122,9 @@ export interface NoteCardState {
   chatData: string | null;
 }
 
+/** A reference to a content item as plugins get it (`content.read`): owner, hash and the entry that holds it. */
+export interface LineContentRef { owner: string; id: string; entry: { stream: StreamId; seq: number } }
+
 export interface PluginWorld {
   bots(): BotInfo[];
   /** A message to a bot (`bots.send`, `bots.wake`): shown as sent `via` that plugin (its title), or as the user's own (null). Throws why not. */
@@ -195,6 +198,11 @@ export interface PluginWorld {
     read(ref: { owner: string; id: string; entry: { stream: StreamId; seq: number } }, offset: number, length: number): Promise<Uint8Array>;
     fetch?(storageDir: string, ref: { owner: string; id: string; entry: { stream: StreamId; seq: number } }): Promise<string>;
   };
+  /**
+   * Botling 3 only (M5-09): the content reference of the file a chat line's link names (the line's `content_names` row, its hash
+   * ready), or null when the line holds none for that link. `link` is the address `linkCommand` matched (a file: URL). Absent in 2.x.
+   */
+  lineContent?(botId: string, messageId: string, link: string): LineContentRef | null;
   /** A chat's newest `limit` lines (`chat.messages`; null: no such bot). Absent: a world without chats (tests, spec adapters). */
   chat?(botId: string, limit: number): PluginChat | null;
   /** The bot a plugin names ("main" too) as the core knows it (null: none). */
@@ -259,6 +267,10 @@ export interface PluginsOptions {
 }
 
 const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
+/** Whether `path` is a regular file on this machine now (a missing file, a folder, an unreadable one: no). */
+function isRegularFile(path: string): boolean {
+  try { return statSync(path).isFile(); } catch { return false; }
+}
 
 interface SnapshotFile { rel: string; data: Buffer; mode: number }
 
@@ -975,9 +987,16 @@ export class Plugins {
     if (!host) throw new ContractError("not_found", `No command "${id}".`);
     let path: string | undefined;
     try { if (address && new URL(address).protocol === "file:") path = fileURLToPath(address); } catch { /* not a local file */ }
+    // Botling 3 (M5-09, §9A.8): `path` only when the file is on this machine; otherwise the line's content reference, which the
+    // plugin reads with `content.read`. A lookup that fails gives no reference (never a made-up path or a skipped check).
+    let content: LineContentRef | undefined;
+    if (path && this.options.world.lineContent && !isRegularFile(path) && address) {
+      try { content = this.options.world.lineContent(link.botId, link.messageId, address) ?? undefined; } catch { content = undefined; }
+      if (content) path = undefined;
+    }
     const botId = this.options.world.botId?.("main") === link.botId ? "main" : link.botId;
     try {
-      return await host.command(id, [{ botId, messageId: link.messageId, url: link.url, ...(path ? { path } : {}) }]);
+      return await host.command(id, [{ botId, messageId: link.messageId, url: link.url, ...(path ? { path } : {}), ...(content ? { content } : {}) }]);
     } catch (error) {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
       throw new ContractError("conflict", (error as Error).message);

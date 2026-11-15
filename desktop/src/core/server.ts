@@ -241,6 +241,8 @@ export interface CoreOptions {
   mainBotMachine?: () => string | null;
   /** Botling 3's server only (2.x leaves it unset): content read/fetch for plugins (`content.read`, `content.fetch`). */
   content?: PluginWorld["content"];
+  /** Botling 3's server only (2.x leaves it unset): the content reference of a chat line's file, for `plugins.linkCommand` (M5-09). */
+  lineContent?: PluginWorld["lineContent"];
   /** Botling 3's server only (2.x leaves it unset): `app_fetch`, files from another machine into the bot's folder (M5-07d). */
   fetch?: (botId: string, request: FetchRequest) => Promise<string>;
   /** Botling 3's server only (2.x leaves it unset): whether a plugin's program part may start at `codeHash` (M5-18a). */
@@ -573,6 +575,7 @@ export class Core {
         workspace: this.workspaceSource(),
         workspaceWatch: (on) => this.watchWorkspace(on),
         ...(options.content ? { content: options.content } : {}),
+        ...(options.lineContent ? { lineContent: options.lineContent } : {}),
       },
     });
     // Settings that are a built-in plugin's now (the paste limits: botling.chat-extras) move to its settings once.
