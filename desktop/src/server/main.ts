@@ -49,6 +49,11 @@
 //   botlingd recovery replace (M4-12) on the revocation root: verifies the old recovery code and replaces it
 //   botlingd reroot [--keep-all] [--old-root lost|keep]
 //                             (M4-11) makes this server the revocation root; recovery code is read from stdin only
+//   botlingd relay [set <url> | clear]
+//                             the relay this server keeps its room on (the Botling 3 phone page and its pairing link
+//                             are then on that relay when no tailnet origin is set): shows it, keeps one (wss://…/ws)
+//                             in <data>/relay.json, or removes it; takes effect when botlingd next starts.
+//                             BOTLING_SERVER_RELAY_URL, when set, wins
 //   botlingd devices [--json] the paired devices (valid and revoked)
 //   botlingd revoke-device <id> [--reason <text>]
 //                             revokes a device: its sessions end at once and it can never connect again
@@ -60,8 +65,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/store/data-dir-lock";
-import { Botlingd, BOTLINGD_VERSION, DataDirInUseError, PLACEHOLDER_TAILNET_ORIGIN, tailnetOrigin } from "./botlingd";
-import { LISTEN_FILE, LISTEN_HOST, listenPort, tailscaleServeCommand } from "./net";
+import { Botlingd, BOTLINGD_VERSION, DataDirInUseError, pairingPageUrl, PLACEHOLDER_TAILNET_ORIGIN, tailnetOrigin } from "./botlingd";
+import { LISTEN_FILE, LISTEN_HOST, listenPort, readRelaySetting, RELAY_URL_ENV, RelaySettingError, tailscaleServeCommand, writeRelaySetting } from "./net";
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
@@ -72,7 +77,7 @@ import { serviceCommand, ServiceError } from "./service";
 import { pluginsCommand } from "./plugin-cli";
 import { AdminClient, addMachineCommand, createStdinIo, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./pairing";
 import { fetchCommand } from "./fetch/cli";
-import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
+import { botlingdPaths, PathsError, readToken, refuse2xData, socketAnswers, type BotlingdPaths } from "./session";
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
@@ -478,6 +483,28 @@ export async function main(argv: string[], options: ServerCliOptions = {}): Prom
       process.exit(code);
       return;
     }
+    case "relay": {
+      const [action, value, ...extra] = rest;
+      if (extra.length || (action === "set" && !value) || (action === "clear" && value) || (action !== undefined && action !== "set" && action !== "clear")) {
+        return fail("use: botlingd relay | botlingd relay set <wss://…/ws> | botlingd relay clear", 2);
+      }
+      if (action === "set" || action === "clear") {
+        try {
+          refuse2xData(paths.dataDir); // never a file in a 2.x data folder
+          writeRelaySetting(paths.dataDir, action === "set" ? value! : null);
+        } catch (error) {
+          if (error instanceof RelaySettingError || error instanceof PathsError) return fail(error.message, 2);
+          throw error;
+        }
+      }
+      let kept: string | null = null;
+      try { kept = readRelaySetting(paths.dataDir); } catch (error) { out(`note: ${(error as Error).message}`); }
+      out(kept ? `relay: ${kept}` : "relay: off");
+      if (kept) out(`  phones open ${pairingPageUrl(tailnetOrigin(process.env), kept)} to pair (when no tailnet origin is set)`);
+      if ((process.env[RELAY_URL_ENV] ?? "").trim() !== "") out(`note: ${RELAY_URL_ENV} is set, so botlingd uses it instead of this setting`);
+      if (action) out(holderPid(paths.dataDir) === null ? "botlingd uses it at its next start." : "botlingd is running: it uses this at its next start (quit and reopen Botling 3).");
+      return;
+    }
     case "devices": {
       const client = await adminSession(paths);
       try { process.exitCode = await devicesCommand(client, { out, ask: async () => null }, { json: rest.includes("--json") }); } finally { client.close(); }
@@ -570,7 +597,7 @@ export async function main(argv: string[], options: ServerCliOptions = {}): Prom
       return;
     }
     default:
-      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, backfill-history, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device, fetch, plugins)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, backfill-history, relay, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device, fetch, plugins)`, 2);
   }
 }
 

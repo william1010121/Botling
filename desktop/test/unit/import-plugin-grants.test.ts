@@ -149,13 +149,13 @@ describe("M6-04 (B-20a): imported third-party plugins start read-only with appro
 
     const section = extractPluginsSection(live.reportText);
     expect(section).toContain("note            built in        can change its own data");
-    expect(section).toContain("disabled-tool   from Botling 2  read only now · asks to change its own data · approve to restore");
-    expect(section).toContain("data-tool       from Botling 2  read only now · asks to change its own data · approve to restore");
-    expect(section).toContain("host-tool       from Botling 2  read only now · asks to change its own data · approve to restore");
-    expect(section).toContain("reading-coach   from Botling 2  read only now · asks to send messages · approve to restore");
-    expect(section).toContain("plain-reader    from Botling 2  read only");
-    expect(section).not.toContain("plain-reader    from Botling 2  read only now");
-    expect(live.reportText).toContain("plugins: 7 (5 read only until you approve them)");
+    expect(section).toContain("disabled-tool   from Botling 2  nothing allowed yet · asks to change its own data · approve in Settings › Plugins");
+    expect(section).toContain("data-tool       from Botling 2  nothing allowed yet · asks to change its own data · approve in Settings › Plugins");
+    expect(section).toContain("host-tool       from Botling 2  nothing allowed yet · asks to change its own data · approve in Settings › Plugins");
+    expect(section).toContain("reading-coach   from Botling 2  nothing allowed yet · asks to send messages · approve in Settings › Plugins");
+    // No grant at the running hash refuses every command (grant-check.ts): a plugin that asks only to read waits for approval too.
+    expect(section).toContain("plain-reader    from Botling 2  nothing allowed yet · asks to read only · approve in Settings › Plugins");
+    expect(live.reportText).toContain("plugins: 7 (6 wait for your approval in Settings › Plugins)");
 
     // Verify server.db has zero grantedBy: "import" and zero grants on every non-built-in plugin.
     const rows = readAllPluginRows(liveTarget);
@@ -267,7 +267,7 @@ describe("M6-04 (B-20a): imported third-party plugins start read-only with appro
     expect(readPluginGrant(db, stream.slice("srv:".length), "proto-check")).toBe("none");
     const entries = readPluginReportEntries(db, stream);
     expect(formatPluginsReportSection(entries)).toContain(
-      "proto-check     from Botling 2  read only now · asks to change its own data · approve to restore",
+      "proto-check     from Botling 2  nothing allowed yet · asks to change its own data · approve in Settings › Plugins",
     );
   });
 
@@ -298,7 +298,7 @@ export function activate(ccb) {
     const importRes = await runImport({ sourceDir: src, targetDir: dataDir, dryRun: false });
     expect(importRes.problems).toEqual([]);
     expect(importRes.reportText).toContain("host-tool");
-    expect(importRes.reportText).toContain("approve to restore");
+    expect(importRes.reportText).toContain("approve in Settings › Plugins");
 
     const hostToolHash = folderHash(srcHostTool);
 

@@ -1,5 +1,6 @@
 // Static phone web apps served by the relay:
-// - /mobile/ (2.x desktop/mobile/dist) when STATIC_DIR is set: headers match desktop/src/mobile-bridge/bridge.ts.
+// - /mobile/ (2.x desktop/mobile/dist) when STATIC_DIR is set and STATIC_V3_DIR is not: headers match
+//   desktop/src/mobile-bridge/bridge.ts. With STATIC_V3_DIR, server.ts sends / and /mobile… to /v3/ instead.
 // - /v3/ (3.x desktop/web-v3/dist) when STATIC_V3_DIR is set (D22, §6.3): CSP matches desktop/src/server/net/http.ts
 //   with connect-src 'self' (the relay's own WebSocket), keeping /mobile/ and /v3/ in separate service-worker scopes.
 // Note: whoever serves this code can change it. The threat model (docs/mobile-relay.md) says what that means.

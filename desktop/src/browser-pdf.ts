@@ -31,6 +31,15 @@ export function localPdfPath(url: string): string | null {
   return isAbsolute(path) && isPdfName(path) ? path : null;
 }
 
+/**
+ * The file: URL of the local PDF a tab at `url` shows, when the tab's own address is another one (Botling 3 loads it from
+ * `botling-content://file/…`, browser-pdf-v3.ts); null otherwise. 2.x: always null, a PDF tab's address is its file: URL.
+ * Plugins' toolbar buttons (menu "browser/tab") match this address and their command gets it (BrowserTabInfo `fileUrl`).
+ */
+export function pdfTabFileUrl(_url: string): string | null {
+  return null;
+}
+
 /** The local PDF a chat link names (a file: URL or an absolute path, as main's links are); null otherwise. */
 export function linkPdfPath(url: string): string | null {
   if (url.startsWith("file:")) return localPdfPath(url);

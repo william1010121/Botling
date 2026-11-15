@@ -7,7 +7,7 @@ import {
   type Clock, type ConnModel, type Dial, type FeSocket, type FeStorage, type PendingView, type ServerCandidate, type ServerView, type SocketHandlers, type SwitchPath,
 } from "../../src/fe-link";
 import { encodeFrame, fromBase64Url, PROTOCOL_VERSION, toBase64Url, type OriginEpoch, type ServerAddresses, type ServerState } from "../../src/protocol";
-import { relayDeviceToken } from "../../src/session";
+import { relayDeviceToken, relayPageOrigin } from "../../src/session";
 import type { LinkPort } from "../../src/main-v3/renderer-adapter";
 import type { DeviceRecord } from "./device-store";
 import { newPlayerDiagnostics, type MediaDiagnostics, type PlayerDiagnostics } from "./media";
@@ -77,6 +77,17 @@ export type DialPath = "direct" | "relay";
 export function askedPath(search: string): "relay" | "tailnet" | null {
   const via = new URLSearchParams(search).get("via");
   return via === "relay" || via === "tailnet" ? via : null;
+}
+
+/**
+ * Whether pairing runs through the offer's relay room: when `?via=relay` asks for it, or when this page was loaded from
+ * that relay (its root sends phones to `/v3/`; a Home Screen app opens `/v3/` with no `?via`), where there is no
+ * `/v3/ws` to dial. `?via=tailnet` keeps it direct. Never without a relay in the offer.
+ */
+export function pairsThroughRelay(asked: "relay" | "tailnet" | null, relay: { url: string } | undefined, pageOrigin: string): boolean {
+  if (!relay || asked === "tailnet") return false;
+  if (asked === "relay") return true;
+  try { return relayPageOrigin(relay.url) === pageOrigin; } catch { return false; }
 }
 
 export interface VisibilitySource {

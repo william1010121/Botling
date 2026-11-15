@@ -2,6 +2,7 @@
 // PDF tab loads `botling-content://file/<token>/<name>` instead of a `file:` URL. The v3 build resolves the 2.x main's
 // `../browser-pdf` imports to this module (build.mjs `browserPdfToContent`); 2.x itself is unchanged.
 import { basename } from "node:path";
+import { pathToFileURL } from "node:url";
 import * as base from "../browser-pdf";
 import { fileGrants } from "./content-protocol";
 
@@ -15,6 +16,12 @@ export function pdfFileUrl(path: string): string {
 /** The local path of a PDF tab's URL (a granted content URL), or what 2.x reads from a `file:` URL. */
 export function localPdfPath(url: string): string | null {
   return fileGrants.path(url) ?? base.localPdfPath(url);
+}
+
+/** The file: URL of the granted PDF a content URL stands for (what plugins' toolbar buttons see); null for any other URL. */
+export function pdfTabFileUrl(url: string): string | null {
+  const path = fileGrants.path(url);
+  return path ? pathToFileURL(path).href : null;
 }
 
 /** A tab's label for a local file: its name. */
