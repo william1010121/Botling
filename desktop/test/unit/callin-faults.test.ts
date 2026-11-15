@@ -51,9 +51,19 @@ import { startServers, type TestCluster, type TestServer } from "../support/two-
 const SEED = Number(process.env.CALLIN_FAULT_SEED ?? 20261115);
 const TIMERS = { ping: 300, dead: 1_500, redial: 150, redialMax: 800, revoked: 2_500 };
 const TIMERS_ENV = Object.entries(TIMERS).map(([k, v]) => `${k}=${v}`).join(",");
+/** The host's timers (BOTLING_SERVER_CALLIN_TIMERS): `stale` is how long B may be silent before A gives up on a wait. */
+const timersOf = (staleMs: number, capMs: number) => `stale=${staleMs},cap=${capMs},tick=200`;
 const STALE_MS = 2_500;
 /** The host's cap: a wait whose answer B lost (a kill between B's mark and its queue) ends here, with B live. */
 const CAP_MS = 10_000;
+/**
+ * The killBmid wave needs A to still be waiting when B's "restarted during the answer" reply comes, so it runs with a stale
+ * window and a cap far beyond what two boots of B can take. With the short window above, B's two restarts (2.1 to 3.0 s on a
+ * Linux host running six of these at once, 2.5 s being the window) left A giving up first in every run: no reply reached a
+ * wait and the wave's count of them was 0. The other waves need the short window (A must give up on a B that stays down).
+ */
+const PATIENT_STALE_MS = 30_000;
+const PATIENT_CAP_MS = 60_000;
 const GUESTS = 8;
 const WAKE_MARK = "whom you called in with @";
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -71,6 +81,7 @@ const bInput = join(scratch, "b-input.jsonl");
 const aCrash = join(scratch, "a-crash.txt");
 const bCrash = join(scratch, "b-crash.txt");
 let cluster: TestCluster;
+const aEnv: Record<string, string> = {};
 let a: TestServer, b: TestServer;
 let pa: FaultProxy, pb: FaultProxy;
 let ka: MemberKeysInfo, kb: MemberKeysInfo;
@@ -229,10 +240,18 @@ function check(seed: string, run: Run, aKilled: boolean): { line: number; wake: 
   return { line, wake, turns };
 }
 
+/** Restarts A with other call-in timers (between waves: both forward queues are empty, no call-in is open). */
+async function setHostTimers(staleMs: number, capMs: number): Promise<void> {
+  aEnv.BOTLING_SERVER_CALLIN_TIMERS = timersOf(staleMs, capMs);
+  await a.kill();
+  await a.start();
+}
+
 async function wave(index: number, kind: Kind, size: number, totals: Record<string, number>): Promise<void> {
   const seed = `${SEED}/w${index}/${kind}`;
   const random = seededRandom(SEED + index * 7_919);
   const pick = (low: number, high: number) => Math.floor(low + random() * (high - low + 1));
+  if (kind === "killBmid") await setHostTimers(PATIENT_STALE_MS, PATIENT_CAP_MS);
   const hosts = await createBots(a, Array.from({ length: size }, (_, i) => `Host${index}x${i}`));
   // The crash kinds give each run a guest of its own (their slot counters are edited or watched one by one).
   const own = kind === "gaveUpCrash" || kind === "lateKill";
@@ -285,12 +304,14 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
       const running = () => runs.some((run) => inputLines(bInput).some((text) => text.includes(run.token) && text.includes("called you in"))
         && callInRows().some((row) => row.asked.includes(run.token) && row.state === "started"));
       await until(running, { timeout: 60_000, every: 5, what: `${seed}: a guest turn running at B` });
+      const downFrom = Date.now();
       await b.kill();
       await b.start();
       await sleep(pick(0, 300));
       await b.kill();
       totals.kills += 2;
       await b.start();
+      totals.killBmidDownMs = Date.now() - downFrom;
     } else if (kind === "down") {
       await b.kill();
       totals.kills++;
@@ -399,6 +420,7 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
   expect(b.log.split("\n").filter((line) => /callin: (even )?the (short )?answer to .* was not sent/.test(line)), `seed ${seed}: answers B could not queue`).toEqual([]);
   // Every call-in of the wave is over: nothing is left in either forward queue (also `converge`'s quiet condition).
   expect({ a: [count(a, "forwardq"), count(a, "fwdcancels")], b: [count(b, "forwardq"), count(b, "fwdcancels")] }, `seed ${seed}: forward queues`).toEqual({ a: [0, 0], b: [0, 0] });
+  if (kind === "killBmid") await setHostTimers(STALE_MS, CAP_MS);
   if (kind === "down") totals.down += runs.length;
   if (kind === "killB") totals.killB += runs.length;
   if (kind === "killA") totals.killA += runs.length;
@@ -411,7 +433,8 @@ beforeAll(async () => {
   cluster = await startServers({
     name: "callin-faults", count: 2,
     env: {
-      A: { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, BOTLING_SERVER_CALLIN_TIMERS: `stale=${STALE_MS},cap=${CAP_MS},tick=200`, BOTLING_SERVER_CALLIN_CRASH: `host=${aCrash}`, FAKE_CLAUDE_INPUT: aInput },
+      // `aEnv` is the object A is started with every time (TestServer reads it at each start): `setHostTimers` changes it.
+      A: Object.assign(aEnv, { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, BOTLING_SERVER_CALLIN_TIMERS: timersOf(STALE_MS, CAP_MS), BOTLING_SERVER_CALLIN_CRASH: `host=${aCrash}`, FAKE_CLAUDE_INPUT: aInput }),
       B: { BOTLING_SERVER_PEER_TIMERS: TIMERS_ENV, BOTLING_SERVER_CALLIN_CRASH: `guest=${bCrash}`, FAKE_CLAUDE_INPUT: bInput, FAKE_CLAUDE_GUEST_MS: "250" },
     },
   });
@@ -439,7 +462,7 @@ afterAll(async () => {
 describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => {
   it(`${PLAN.reduce((sum, [, n]) => sum + n, 0)} seeded call-ins: never two guest turns, never two lines, never two wakes (seed ${SEED})`, async () => {
     console.log(`callin-faults: seed ${SEED} (CALLIN_FAULT_SEED); ${PLAN.length} waves`);
-    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, guestHits: 0, guestAnswersKept: 0, interruptedTurns: 0, interruptedGaveUp: 0, restartAnswers: 0 };
+    const totals: Record<string, number> = { runs: 0, lines: 0, wakes: 0, turns: 0, kills: 0, faults: 0, seen: 0, heldReplies: 0, down: 0, killA: 0, killB: 0, lostLate: 0, lateKills: 0, guestHits: 0, guestAnswersKept: 0, interruptedTurns: 0, interruptedGaveUp: 0, restartAnswers: 0, killBmidDownMs: 0 };
     for (let index = 0; index < PLAN.length; index++) await wave(index, PLAN[index]![0], PLAN[index]![1], totals);
     console.log(`callin-faults: ${JSON.stringify(totals)}`);
     expect(totals.runs, `seed ${SEED}: runs`).toBeGreaterThanOrEqual(50);
@@ -454,6 +477,6 @@ describe("M5-03b: call-ins under faults (real processes, fault proxies)", () => 
     expect(totals.guestAnswersKept, `seed ${SEED}: the answers B had committed when it died, all kept`).toBe(totals.guestHits);
     expect(totals.interruptedTurns, `seed ${SEED}: guest turns B was killed in`).toBeGreaterThan(0);
     // B's restart answer reached an asker's wait at least once (the rest were given up on while B was down; each one's receipt is checked per run).
-    expect(totals.restartAnswers, `seed ${SEED}: restart answers that reached a wait`).toBeGreaterThan(0);
+    expect(totals.restartAnswers, `seed ${SEED}: restart answers that reached a wait (killBmid: B down ${totals.killBmidDownMs} ms in the last wave, A gave up on ${totals.interruptedGaveUp} interrupted turns)`).toBeGreaterThan(0);
   }, 600_000);
 });

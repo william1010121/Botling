@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import { fsTree, shellManifest } from "./fe-shell-manifest.mjs";
+import { fsTree, shellInputs, shellManifest } from "./fe-shell-manifest.mjs";
 
 export const FE_MANIFEST_FILE = "fe-build-manifest.json";
 export const INPAGE_PLUGINS_DIR = "src/renderer/plugins";
@@ -37,10 +37,14 @@ export function inpagePluginFolders(root) {
 }
 
 /** The manifest object for the build rooted at `root` (desktop/). `shell` (M7-10b) names the shell alone: `MIN_FE_VERSION` and the hash of
- * the shell's files, neither of which a plugin-only change moves (fe-shell-manifest.mjs, scripts/check-shell-version.mjs). */
-export function feBuildManifest(root, repoRoot = resolve(root, "..")) {
-  return { version: 1, shell: shellManifest(fsTree(repoRoot)), plugins: inpagePluginFolders(root).map(({ name, folder }) => ({ name, codeHash: folderHash(folder) })) };
+ * the shell's files (the web-v3 build's inputs, M7-10c), neither of which a plugin-only change moves (fe-shell-manifest.mjs,
+ * scripts/check-shell-version.mjs). `requireMinFeVersion`: a real build passes it and fails when the constant is not found (M7-10c);
+ * a scratch root of a test has none and gets `null`. */
+export function feBuildManifest(root, repoRoot = resolve(root, ".."), { requireMinFeVersion = false } = {}) {
+  const shell = shellManifest(fsTree(repoRoot), shellInputs(repoRoot));
+  if (requireMinFeVersion && shell.minFeVersion === null) throw new Error("MIN_FE_VERSION is not defined exactly once under desktop/src: the build would write minFeVersion: null into fe-build-manifest.json");
+  return { version: 1, shell, plugins: inpagePluginFolders(root).map(({ name, folder }) => ({ name, codeHash: folderHash(folder) })) };
 }
 
 /** The manifest as the file's bytes (a build puts these at FE_MANIFEST_FILE next to its page). */
-export const feBuildManifestFile = (root, repoRoot) => Buffer.from(`${JSON.stringify(feBuildManifest(root, repoRoot), null, 2)}\n`);
+export const feBuildManifestFile = (root, repoRoot, options) => Buffer.from(`${JSON.stringify(feBuildManifest(root, repoRoot, options), null, 2)}\n`);

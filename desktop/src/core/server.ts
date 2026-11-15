@@ -1,12 +1,10 @@
 import { setBrowserBridge } from "./browser-tools";
 import { configureNotes, noteService, setNoteBots } from "./note-tools";
 import { ROUTINE_TICK_MS } from "./routines";
-import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
 import { RestartJournal, restartPausedNotice } from './restart-continuation';
 import { specTrace } from './spec-trace';
 import { AgyRuntimeInstaller } from './agy-runtime-install';
 import { agyRuntimeStatus } from "./agy-runtime-settings";
-import type { AgyConfig } from "./agent/agy";
 import { mobileCommand } from '../mobile-bridge/adapter';
 // The core: owns every bot's chat and head, and answers the contract's commands. It is
 // transport-agnostic: `receive` takes whatever arrived, `emit` is where answers and events go. It
@@ -21,36 +19,30 @@ import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { PendingFiles, writeIncoming } from "./attachments";
-import type { CodexModel } from "./agent/codex-models";
 import { moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { botName, MemoryFiles } from "./projects";
-import { ContractError, PROTOCOL_VERSION, type Command, type Outbound, type ResultOf, type PluginView } from "../contract";
+import { ContractError, PROTOCOL_VERSION, type ResultOf } from "../contract";
 import { AgentRegistry, isDetached } from "./agent-registry";
 import { AgentStore, migrationRecords } from "./store/agent-store";
-import { Bot, type DeferredTurn, type SessionStart, type SessionStartCodex } from "./bot";
-import type { FetchRequest } from "./bot-tools";
-import type { HeadConfig } from "./agent/head";
-import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
+import { Bot } from "./bot";
+import { CodexThreads } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
 import { StorageBook } from "./storage";
-import { BotStore, readJSON } from "./store/bot-store";
+import { readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook } from "./usage";
 import { MAIN_BOT_ID } from "./store/records";
 import { status } from "../contract/bot-status";
-import { Layout, loadProfiles, type BotProfile } from "./store/workspace";
+import { Layout, loadProfiles } from "./store/workspace";
 import { notePath } from "./bot-note";
 import { unsupportedRequest } from "./reply";
-import { Conversations, type ConversationsDeps, type RemoteMember } from "./conversations";
-import { type GROUP_TIMING } from "./groups";
+import { Conversations } from "./conversations";
 import { ComponentsContext } from "./components/service";
 import { readdirSync } from "node:fs";
 import { FolderWatch } from "./folder-watch";
 import { agentStamp } from "./plugins/agent-contributions";
-import { Plugins, type EngineCli, type PluginWorld } from "./plugins";
-import type { HostCommand, HostTiming } from "./plugins/host-client";
-import type { Sealer } from "./plugins/secrets";
+import { Plugins } from "./plugins";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
 import { PluginStore } from "./plugin-store";
 import { INDEX_URL_SETTING } from "./plugins/catalog";
@@ -64,8 +56,6 @@ import { CoreProjects } from "./server/projects";
 import { CoreBots } from "./server/bots";
 import { CorePluginWorld } from "./server/plugin-world";
 import { CoreSubBots } from "./server/sub-bots";
-import type { ApplyNowCommand, BotMaking, CoreOptions } from "./server/types";
-export type { ApplyNowCommand, BotMaking, CoreOptions } from "./server/types";
 import { CoreAgents } from "./server/agents";
 import { CoreCopies } from "./server/copies";
 import { CoreWaiting } from "./server/waiting";
@@ -74,26 +64,11 @@ import { CorePluginSide } from "./server/plugin-side";
 import { CoreSend } from "./server/send";
 import { CoreEvents } from "./server/events";
 
-/** What the core asks of main (self-update.ts, plugins/app-seam.ts). */
-export type AppOp = "screenshot" | "quit" | "installRelease" | "browser";
-export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown; data?: unknown }
+// AppOp, AppAnswer, PEER_ID, PEER_MESSAGE_BYTES, oneLine, CoreOptions, ApplyNowCommand and BotMaking live in ./server/options (M7-S70b) and are re-exported here.
+import type { CoreOptions } from "./server/options";
+export { PEER_ID, PEER_MESSAGE_BYTES, oneLine } from "./server/options";
+export type { AppOp, AppAnswer, ApplyNowCommand, BotMaking, CoreOptions } from "./server/options";
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
-
-/** An id from a peer's rows that is safe as a path part and as a stream key (M5-04c F2). */
-export const PEER_ID = /^[A-Za-z0-9_-]{1,64}$/;
-/**
- * The most a peer message may take on the wire, counted as the JSON-escaped UTF-8 bytes of its text (M5-04d, checklist 6): a
- * frame is at most 256 KiB (`protocol/frame.ts` FRAME_LIMIT, which a test keeps this under) and the slot, scope and counters
- * around the text need under 2 KiB; 16 KiB is left. Characters alone are not enough: 100,000 CJK characters are about 300 KB.
- */
-export const PEER_MESSAGE_BYTES = 240 * 1024;
-
-/** Text from a peer or a model as one clean line for a note, a log or a report: control characters gone, runs of spaces one, at most 300 characters, no closing full stop (the note adds its own). */
-export function oneLine(text: string): string {
-  const line = text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
-  const characters = [...line];
-  return characters.length > 300 ? `${characters.slice(0, 299).join("")}…` : line || "no reason given";
-}
 
 export class Core {
   readonly mainBotId: string;
@@ -156,7 +131,7 @@ export class Core {
   private madeEvents?: CoreEvents;
   private get coreEvents(): CoreEvents { return (this.madeEvents ??= new CoreEvents(this)); }
   get seq() { return this.coreEvents.seq; }
-  set seq(value: CoreEvents["seq"]) { this.coreEvents.seq = value; }
+  nextSeq(...a: Parameters<CoreEvents["nextSeq"]>) { return this.coreEvents.nextSeq(...a); }
   private get inflight() { return this.coreEvents.inflight; }
   get mobileDesk() { return this.coreEvents.mobileDesk; }
   get relay() { return this.coreEvents.relay; }
@@ -185,7 +160,7 @@ export class Core {
   /** The public plugin catalog (Explore, Updates on the Plugins page). */
   readonly pluginStore: PluginStore;
   get lastPlugins() { return this.coreWatch.lastPlugins; }
-  set lastPlugins(value: CoreWatch["lastPlugins"]) { this.coreWatch.lastPlugins = value; }
+  markPluginsShown(...a: Parameters<CoreWatch["markPluginsShown"]>) { return this.coreWatch.markPluginsShown(...a); }
   private get loadedClaudeParts() { return this.coreWatch.loadedClaudeParts; }
   private set loadedClaudeParts(value: CoreWatch["loadedClaudeParts"]) { this.coreWatch.loadedClaudeParts = value; }
   /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
@@ -272,7 +247,7 @@ export class Core {
     this.components.library.rescan();
     this.componentStamp = this.components.library.stamp;
     // What the snapshot shows already is no event (an event comes only when something changes).
-    this.lastPlugins = JSON.stringify(this.plugins.view());
+    this.markPluginsShown(JSON.stringify(this.plugins.view()));
     this.loadedClaudeParts = JSON.stringify(agentStamp(this.plugins.registry));
     // Quota files must be imported before their first in-memory reading.
     this.usage = new UsageBook(options.dataDir, undefined, undefined, options.quotaRetriever);
