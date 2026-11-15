@@ -55,7 +55,7 @@ export async function buildPage({ out = outdir, development = false } = {}) {
     build({ ...browser, entryPoints: [join(here, "sw.ts")], outfile: join(out, "sw.js") }),
   ]);
   const files = new Map([shell, chat, pdfViewer, worker].flatMap((result) => result.outputFiles.map((file) => [file.path, file.contents])));
-  const asset = (from, to, tokens = false) => sources.add(resolve(from)) && files.set(join(out, to), tokens ? Buffer.from(inlineTokens(readFileSync(from, "utf8"), from)) : readFileSync(from));
+  const asset = (from, to, tokens = false) => sources.add(resolve(from)) && files.set(join(out, to), tokens ? Buffer.from(inlineTokens(readFileSync(from, "utf8"), from, (file) => sources.add(file))) : readFileSync(from));
   for (const name of ["index.html", "manifest.webmanifest"]) asset(join(here, name), name);
   asset(join(here, "shell/shell.css"), "shell.css");
   asset(join(here, "pdf-viewer/pdf.html"), "pdf.html");

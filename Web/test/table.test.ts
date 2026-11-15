@@ -1,8 +1,7 @@
 /// <reference types="node" />
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderMarkdown, tableColumnWidths } from "../src/markdown";
+import { readChatCss } from "./helpers/chat-css";
 
 // The release-notes table from the "排版怪怪的" feedback: a short version column next to a long one.
 const releases = [
@@ -47,7 +46,7 @@ describe("markdown tables", () => {
   });
 
   it("wrap cells between words, not inside tokens, and align them to the top", () => {
-    const css = readFileSync(join(__dirname, "../src/chat.css"), "utf8");
+    const css = readChatCss();
     const cells = css.match(/\.markdown th, \.markdown td \{([^}]*)\}/)![1];
     // The bubble's overflow-wrap: anywhere shrinks a column to one letter ("v1. / 6. / 0").
     expect(cells).toContain("overflow-wrap: break-word");

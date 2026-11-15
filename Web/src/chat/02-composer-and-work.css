@@ -1,0 +1,318 @@
+/* An answered question, folded to what was picked */
+.folded-choice {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin-top: 10px;
+  min-height: 34px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--info-line);
+  background: var(--info-bg); color: var(--text); font-size: 14px; text-align: left; cursor: pointer;
+}
+.folded-choice .picked-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folded-choice svg { flex-shrink: 0; color: var(--muted); }
+.folded-choice:hover { border-color: var(--blue); }
+.unfolded { display: flex; flex-direction: column; }
+.fold {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
+  min-height: 28px; padding: 0 4px; border: none; background: transparent; color: var(--muted);
+  font-size: 12px; cursor: pointer;
+}
+.fold svg { transform: rotate(180deg); }
+
+.report {
+  position: fixed; z-index: 10; width: 300px; padding: 16px;
+  background: var(--popover); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.report-title { font-size: 13px; font-weight: 600; }
+.report textarea {
+  width: 100%; resize: none; border-radius: 8px; border: 1px solid var(--strong-line);
+  background: var(--ground); color: var(--text); font: inherit; font-size: 14px; padding: 8px;
+}
+.report-actions { display: flex; align-items: center; gap: 8px; }
+.report-actions span { flex: 1; }
+button.plain { border: none; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; }
+button.primary {
+  min-height: 32px; padding: 0 14px; border: none; border-radius: 8px;
+  background: var(--blue); color: #fff; font-size: 13px; cursor: pointer;
+}
+button.primary:disabled { opacity: 0.4; cursor: default; }
+
+/* Typing bubble */
+.worker-waiting { padding: 6px 16px 6px 52px; color: var(--muted); font-size: 13px; }
+.call-in-status { padding: 4px 16px 4px 52px; color: var(--muted); font-size: 13px; }
+.dots { display: flex; gap: 5px; padding: 16px; }
+.dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+.dots .think-note { font-size: 13px; font-style: normal; color: var(--muted); margin-left: 6px; white-space: nowrap; align-self: center; }
+.dots .think-note[hidden] { display: none; }
+.dots span:nth-child(2) { animation-delay: 0.2s; }
+.dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+/* The input box */
+#composer-slot { max-width: 640px; width: 100%; margin: 0 auto; padding: 8px 24px 24px; }
+.composer { position: relative; background: var(--bubble); border: 1px solid var(--border); border-radius: 16px; container: composer / inline-size; }
+/* Under the text: + and "Answer with" on the left, send on the right. */
+.composer-tools { display: flex; align-items: center; gap: 8px; padding: 0 8px 8px; flex-wrap: wrap; }
+.composer-gap { flex: 1; }
+/* "Answer with", in a bot with two heads: Both / Claude / Codex as one segmented control */
+.answer-with {
+  display: inline-flex; align-items: center; gap: 2px; height: var(--control-h); padding: 2px; flex: none;
+  border: 1px solid var(--border); border-radius: var(--control-radius);
+}
+.answer-with[hidden], .answer-hint[hidden] { display: none; }
+.answer-chip {
+  height: calc(var(--control-h) - 6px); padding: 0 10px; border-radius: 8px; border: none; background: transparent;
+  display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+}
+.answer-chip:hover { color: var(--text); }
+.answer-chip.picked { color: var(--text); background: var(--raised); box-shadow: 0 1px 2px rgb(0 0 0 / calc(0.25 * var(--shade, 1))); }
+.answer-chip.picked::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.answer-chip[data-head="claude"].picked::before { background: var(--claude); }
+.answer-chip[data-head="codex"].picked::before { background: var(--codex); }
+.answer-chip[data-head="both"].picked::before { background: linear-gradient(90deg, var(--claude) 50%, var(--codex) 50%); }
+.answer-hint { font-size: 11.5px; color: var(--faint); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@container composer (max-width: 430px) { .answer-hint { display: none; } }
+/* The dot each head has (Claude warm, Codex blue) */
+.head-dot { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.head-dot[data-head="claude"] { background: var(--claude); }
+.head-dot[data-head="codex"] { background: var(--codex); }
+/* Which heads a line has reached (a bot with two heads) */
+.seen-marks { display: flex; gap: 3px; margin-top: 3px; font-size: 10px; line-height: 1; letter-spacing: 0.02em; }
+.user-body .seen-marks { justify-content: flex-end; }
+.seen-mark { color: var(--faint); opacity: 0.35; font-weight: 600; }
+.seen-mark.on { opacity: 1; }
+.head-receipt { position: relative; display: inline-flex; }
+.seen-check { display: none; }
+/* Cute user heads show recipients; actual read status has its own tiny check. */
+body.seen-heads .seen-marks { gap: 2px; }
+body.seen-heads .seen-mark { width: 14px; height: 14px; font-size: 0; color: transparent; background: center / contain no-repeat; opacity: 1; }
+body.seen-heads .seen-mark:not(.on) { opacity: 0.32; filter: grayscale(1); }
+body.seen-heads .seen-mark.recipient-mark { opacity: 0.32; filter: grayscale(1); }
+body.seen-heads .seen-mark.recipient { opacity: 1; filter: none; }
+body.seen-heads .seen-check { display: block; position: absolute; right: -1px; bottom: -2px; color: var(--green); background: var(--ground); border-radius: 50%; padding: 1px; font-size: 7px; line-height: 1; }
+@keyframes head-arrival { 0% { transform: translateY(2px) scale(.88); } 55% { transform: translateY(-2px) scale(1.07); } 100% { transform: none; } }
+@keyframes head-working { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-1.5px) rotate(1deg); } }
+body.seen-heads .head-arrive, body.seen-heads .receipt-arrive { animation: head-arrival 340ms ease-out both; }
+body.seen-heads .typing > .avatar { animation: head-working 1.8s ease-in-out infinite; transform-origin: 50% 85%; }
+@media (prefers-reduced-motion: reduce) {
+  body.seen-heads .head-arrive, body.seen-heads .receipt-arrive, body.seen-heads .typing > .avatar { animation: none; transform: none; }
+}
+.reply-bar { display: flex; align-items: center; gap: 10px; padding: 10px 18px 0; }
+.reply-bar[hidden], .pending-files[hidden] { display: none; }
+.reply-line { width: 3px; height: 30px; border-radius: 2px; background: var(--blue); flex-shrink: 0; }
+.reply-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.reply-who { font-size: 12px; color: var(--link); }
+.reply-preview { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reply-bar .close, .pending .remove {
+  width: 28px; height: 28px; border: none; background: transparent; color: var(--muted); font-size: 16px; cursor: pointer;
+}
+.pending-files { display: flex; gap: 8px; padding: 12px 18px 0; overflow-x: auto; scrollbar-width: none; }
+.pending { position: relative; width: 64px; height: 64px; flex-shrink: 0; border-radius: 10px; background: var(--chip); overflow: visible; }
+.pending img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; }
+.pending-name { display: block; padding: 6px; font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; word-break: break-all; height: 64px; }
+.pending .remove {
+  position: absolute; top: -8px; right: -8px; width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.7); color: var(--text); font-size: 13px; line-height: 1;
+}
+.composer-row { display: flex; padding: 12px 14px 6px; }
+.plus, .send {
+  width: var(--control-h); height: var(--control-h); flex-shrink: 0; border-radius: var(--control-radius);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.plus { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+.plus:hover { color: var(--text); }
+.send { background: var(--text); color: var(--ground); border: none; }
+.send:disabled { background: var(--muted); cursor: default; }
+.plus svg, .send svg { width: 16px; height: 16px; }
+.editor { flex: 1; min-width: 0; padding: 2px 0; }
+.editor .cm-editor { background: transparent; color: var(--text); font-size: 15px; }
+.editor .cm-editor.cm-focused { outline: none; }
+.editor .cm-scroller { max-height: 160px; font-family: inherit; line-height: 1.55; scrollbar-width: none; }
+.editor .cm-content { padding: 0; caret-color: var(--text); }
+.editor .cm-line { padding: 0; }
+.editor .cm-placeholder { color: var(--faint); }
+.editor .cm-cursor { border-left-color: var(--text); }
+.editor .cm-selectionBackground, .editor .cm-editor.cm-focused .cm-selectionBackground { background: var(--selection) !important; }
+
+/* A plugin's floating box above the input box (the formula preview) */
+.composer-popover {
+  position: fixed; z-index: 20; max-width: min(560px, calc(100vw - 24px));
+  padding: 10px 14px; background: var(--popover); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / calc(0.45 * var(--shade, 1))); pointer-events: none; overflow: hidden;
+}
+.plugin-component { margin-top: 10px; }
+
+/* Panel mode: one plugin's page in the right column instead of the chat */
+body.panel-mode #scroller, body.panel-mode #composer-slot { display: none; }
+#panel-root { position: fixed; inset: 0; overflow: auto; padding: 16px 20px; color: var(--text); }
+.panel-empty { color: var(--faint); font-size: 13px; }
+
+/* What a bot did on the way to a reply: folded above it, one line per step when open. */
+.steps { margin: -2px 0 8px; font-size: 13px; line-height: 1.5; }
+.steps.live { margin: 0; }
+.steps-toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 0; border: 0; background: none;
+  color: var(--faint); cursor: pointer; font-size: 13px;
+}
+.steps-toggle:hover { color: var(--text); }
+.steps-toggle svg { transition: transform 0.15s; flex-shrink: 0; }
+.steps.open > .steps-toggle svg, .steps-run.open > .steps-toggle svg { transform: rotate(90deg); }
+/* The bot's own words between tool calls: folded with the calls to one line once the turn is done
+   (in sight while it works); opened, quieter than the reply below, with each run of tool calls
+   between them folded to a chip. A hairline sets the opened process off from the reply. */
+.steps-body { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.steps-body[hidden] { display: none; }
+.steps.with-text.open, .steps.live.with-text { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+.steps.live.with-text { display: flex; flex-direction: column; gap: 6px; padding-bottom: 6px; margin-bottom: 6px; }
+.step-prose { color: var(--muted); font-size: 13.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.step-prose p { margin: 0 0 6px; }
+.step-prose code { font-size: 12px; }
+.steps-run { margin: -2px 0; }
+.steps-run > .step-list { margin-bottom: 2px; }
+.steps-earlier { color: var(--faint); font-size: 12px; margin-bottom: 4px; }
+.step-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.step-list[hidden] { display: none; }
+.step-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 3px 6px; margin: 0 -6px;
+  border: 0; border-radius: 8px; background: none; color: var(--muted); text-align: left; cursor: pointer;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+}
+.step-head:hover { background: var(--chip); color: var(--text); }
+.step.failed .step-head { color: var(--error); }
+.step-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-icon { flex-shrink: 0; width: 12px; text-align: center; color: var(--green); }
+.step-icon.failed { color: var(--error); }
+.step-icon.spinner {
+  height: 12px; border: 2px solid var(--line); border-top-color: var(--blue); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.step-body { margin: 4px 0 6px 20px; display: flex; flex-direction: column; gap: 6px; }
+.step-body[hidden] { display: none; }
+.step-label { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.step-block pre {
+  margin: 2px 0 0; padding: 8px 10px; max-height: 240px; overflow: auto; border-radius: 8px;
+  background: var(--code); color: var(--text); font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+/* A picture a tool call gave back, fit to the OUT box; click for full size. */
+.step-image {
+  display: block; margin-top: 4px; max-width: 100%; max-height: 320px; width: auto; height: auto;
+  object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--code); cursor: zoom-in;
+}
+.step-image:hover { border-color: var(--blue); }
+.step.text { color: var(--muted); padding: 2px 0 2px 20px; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* A subagent the bot sent off: click to watch its own conversation. */
+.subagent-card {
+  display: flex; align-items: center; gap: 10px; width: 100%; margin: 4px 0; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--notice); text-align: left; cursor: pointer;
+}
+.subagent-card:hover { border-color: var(--blue); }
+.subagent-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.subagent-card.running .subagent-dot { background: var(--blue); animation: blink 1.2s infinite; }
+.subagent-card.failed .subagent-dot { background: var(--error); }
+.subagent-card.stopped .subagent-dot { background: var(--faint); }
+.subagent-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.subagent-title { font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-meta { font-size: 12px; color: var(--faint); }
+.subagent-open { flex-shrink: 0; font-size: 12px; color: var(--link); }
+/* Keep tool traces readable without pushing past the avatar on narrow chats. */
+.bubble.working { min-width: min(280px, calc(100% - var(--chat-avatar-size) - 10px)); }
+.bubble.working .dots { padding: 8px 0 0; }
+/* Codex waiting to try a refused request again (429): why the dots go on so long. */
+.bubble.working .retry-note { font-size: 13px; color: var(--orange-text); }
+.bubble.working > * + .retry-note { padding-top: 6px; }
+
+/* Watching a subagent (read only): "Main › Review PR #7  [Claude subagent]   Sonnet · …", no input box. */
+#subagent-bar {
+  display: flex; align-items: center; gap: 10px; min-width: 0; padding: 40px 20px 12px; border-bottom: 1px solid var(--line);
+  background: var(--ground); font-size: 14px;
+}
+#subagent-bar .crumb-owner {
+  flex-shrink: 0; padding: 2px 6px; margin: 0 -6px; border: 0; border-radius: 6px; background: none;
+  color: var(--muted); cursor: pointer;
+}
+#subagent-bar .crumb-owner:hover { color: var(--text); background: var(--chip); }
+#subagent-bar .crumb-sep { flex-shrink: 0; color: var(--faint); }
+#subagent-bar .title { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.engine-badge {
+  flex-shrink: 0; padding: 1px 8px; border: 1px solid var(--orange-line); border-radius: 6px;
+  color: var(--orange-text); font-size: 12px; line-height: 1.6; white-space: nowrap;
+}
+.engine-badge.codex { border-color: var(--blue); color: var(--link); }
+.engine-badge.agy { border-color: var(--blue); color: var(--link); }
+#subagent-bar .meta { flex: 1 1 auto; min-width: 0; text-align: right; font-size: 12px; color: var(--faint); line-height: 1.5; white-space: normal; }
+body.watching #composer-slot, #composer-slot[hidden] { display: none; }
+
+/* Its conversation: what the bot sent it as compact boxes, its work one dense line per step. */
+body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720px; padding-top: 18px; }
+.row.sub-from, .row.sub-work { display: flex; flex-direction: column; align-items: stretch; gap: 0; max-width: 680px; }
+.row.sub-from { gap: 4px; margin: 10px 0 6px; }
+.row.sub-from:first-child { margin-top: 0; }
+.sub-from-label { font-size: 12px; color: var(--faint); }
+.sub-from-label .who { color: var(--orange-text); }
+.queued-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--faint); border-radius: 8px; font-size: 11px; line-height: 16px; color: var(--faint); vertical-align: baseline; }
+.user-body > .queued-badge { display: block; width: fit-content; margin: 4px 0 0 auto; }
+.sub-from-body {
+  padding: 8px 14px; border: 1px solid color-mix(in srgb, var(--orange-line) 75%, var(--ground)); border-radius: 12px;
+  background: color-mix(in srgb, var(--orange-line) 16%, var(--ground));
+  font-size: 14px; line-height: 1.55; overflow-wrap: anywhere;
+}
+.sub-from-body > :last-child { margin-bottom: 0; }
+.row.sub-work .step-list { gap: 0; margin-top: 0; }
+.row.sub-work .steps-run, .row.sub-work .steps.live { margin: 2px 0; }
+.row.sub-work .step-head { padding: 1px 6px; line-height: 1.6; }
+.row.sub-work .step.text { font-size: 13px; }
+.row.sub-work .step-icon.done { color: var(--faint); }
+.row.sub-work .step.running .step-head { color: var(--text); }
+.sub-text { margin: 6px 0 4px; font-size: 15px; overflow-wrap: anywhere; }
+.sub-text > :last-child { margin-bottom: 0; }
+.sub-text.error { color: var(--error); }
+.sub-dots { padding: 6px 0 0; }
+/* Its words not delivered yet: what they wait for, in the header (instead of "Running") and under its work. */
+#subagent-bar .waiting-on { flex: 0 1 auto; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--orange-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-waiting { padding: 6px 0 0; font-size: 13px; color: var(--orange-text); overflow-wrap: anywhere; }
+
+/* Pictures going with a component report. */
+.report.dropping { border-color: var(--blue); }
+.report-images { display: flex; flex-wrap: wrap; gap: 6px; }
+.report-images[hidden] { display: none; }
+.report-image { position: relative; }
+.report-image img { width: 64px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); display: block; }
+.report-image .remove {
+  position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border: none; border-radius: 50%;
+  background: var(--strong-line); color: var(--text); font-size: 12px; line-height: 18px; cursor: pointer;
+}
+.report-shot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.relay-column { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
+/* A "not right" report handed over: short, with the full report folded. */
+.feedback-relay { width: 100%; }
+.feedback-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.feedback-title { color: var(--text); font-weight: 600; }
+.feedback-words { white-space: pre-wrap; word-break: break-word; padding-left: 10px; border-left: 3px solid var(--line); color: var(--text); }
+.feedback-words.empty { color: var(--faint); font-style: italic; }
+.feedback-toggle {
+  display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; padding: 0;
+  border: none; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer;
+}
+.feedback-toggle:hover { color: var(--text); }
+.feedback-toggle.open svg { transform: rotate(180deg); }
+.feedback-full {
+  white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto;
+  font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 6px;
+}
+.feedback-full[hidden] { display: none; }
+
+/* Developer mode: reply and "not right" stacked beside a bot's reply. */
+.message-actions { display: flex; flex-direction: column; gap: 2px; align-self: center; }
+.row:hover .message-actions .reply-button, .message-actions .reply-button:focus-visible { opacity: 1; }
+.feedback-button:hover { color: var(--orange-text); }
+/* Plugins' commands for a reply ("⋯" in its hover column), drawn like the / list. */
+.message-menu {
+  position: fixed; z-index: 20; min-width: 160px; max-width: 280px; padding: 4px;
+  background: var(--popover); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 28px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
+}
+.message-menu button {
+  display: block; width: 100%; padding: 7px 10px; border: none; border-radius: 8px; background: transparent;
+  color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.message-menu button:hover, .message-menu button:focus-visible { background: var(--active); }

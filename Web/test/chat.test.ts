@@ -1,6 +1,7 @@
 /// <reference types="node" />
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
+import { readChatCss } from "./helpers/chat-css";
 import { Composer } from "../src/composer";
 import { feedback, messageElement, messageMenu, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
 import type { ChatState, MessageView, PinSize } from "../src/types";
@@ -500,10 +501,8 @@ describe("messages", () => {
   });
 
   it("draw a component in a reply wide and frameless: the whole column, its widest size, no card in a card", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
     const style = document.createElement("style");
-    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    style.textContent = readChatCss();
     document.head.append(style);
     try {
       const info = { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false };
@@ -574,10 +573,8 @@ describe("messages", () => {
   });
 
   it("keep the Updated label on one line without squeezing the component", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
     const style = document.createElement("style");
-    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    style.textContent = readChatCss();
     document.head.append(style);
     try {
       const row = messageElement(message({
@@ -1142,10 +1139,8 @@ describe("composer", () => {
   });
 
   it("shows the / list wide enough to read: whole names, descriptions wrap instead of being cut", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
     const style = document.createElement("style");
-    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    style.textContent = readChatCss();
     document.head.append(style);
     try {
       const composer = new Composer(document.body);

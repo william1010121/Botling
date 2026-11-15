@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { readChatCss } from "../../../../Web/test/helpers/chat-css";
 import { closeLightbox, handleMediaClicks } from "../../../../Web/src/lightbox";
 import { renderMarkdown, setMediaSource } from "../../../../Web/src/markdown";
 import { messageElement } from "../../../../Web/src/messages";
@@ -106,7 +107,7 @@ it('touch swipes navigate once and suppress their synthetic preview click', () =
 // A wide diagram once sat in a fixed 320px grey frame: big bands above and below, and the pager
 // centred on the frame instead of on the image's edge.
 // The gallery's rules are the plugin's; a focused image's are the chat page's.
-const css = [join(__dirname, "../src/chat-extras.css"), join(__dirname, "../../../../Web/src/chat.css")].map((file) => readFileSync(file, "utf8")).join("\n");
+const css = [readFileSync(join(__dirname, "../src/chat-extras.css"), "utf8"), readChatCss()].join("\n");
 const rule = (selector: string) => {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return css.match(new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`))?.[1] ?? "";

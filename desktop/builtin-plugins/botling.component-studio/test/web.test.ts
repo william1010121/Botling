@@ -11,6 +11,7 @@ import { Composer } from "../../../../Web/src/composer";
 import { extensions, messageElement } from "../../../../Web/src/messages";
 import { PluginHost, studioSeam, type PluginSpec } from "../../../../Web/src/plugins";
 import type { ChatState, ComponentInfo, DisplayView, MessageView, SpecChipView } from "../../../../Web/src/types";
+import { readChatCss } from "../../../../Web/test/helpers/chat-css";
 import { activate, VIEW } from "../src/web";
 import type { SpecState } from "../src/types";
 
@@ -260,6 +261,6 @@ describe("the stylesheet", () => {
   it("draws the chips and the panel with the plugin's own rules (moved out of chat.css)", () => {
     const css = readFileSync(resolve(__dirname, "../studio.css"), "utf8");
     for (const selector of [".spec-chip", ".spec-built", ".spec-panel", ".spec-block", ".bot-column.tiled"]) expect(css).toContain(selector);
-    expect(readFileSync(resolve(__dirname, "../../../../Web/src/chat.css"), "utf8")).not.toMatch(/\.spec-(chip|built|panel|block)\b/);
+    expect(readChatCss()).not.toMatch(/\.spec-(chip|built|panel|block)\b/);
   });
 });

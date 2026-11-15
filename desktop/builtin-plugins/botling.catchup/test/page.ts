@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { desktop } from "../../../test/helpers";
 import { PluginHost, type PluginSpec } from "../../../../Web/src/plugins";
 import type { ChatState, DecorationView, MessageView } from "../../../../Web/src/types";
+import { readChatCss } from "../../../../Web/test/helpers/chat-css";
 import manifest from "../package.json";
 import type { CatchUpView } from "../src/types";
 import { activate } from "../src/web";
 
 export const catchupCSS = readFileSync(join(desktop, "builtin-plugins", "botling.catchup", "catchup.css"), "utf8");
-export const chatCSS = readFileSync(join(desktop, "..", "Web", "src", "chat.css"), "utf8");
+export const chatCSS = readChatCss();
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 

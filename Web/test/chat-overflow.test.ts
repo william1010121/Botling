@@ -1,8 +1,7 @@
 /// <reference types="node" />
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderMarkdown } from "../src/markdown";
+import { readChatCss } from "./helpers/chat-css";
 import { messageElement } from "../src/messages";
 import type { MessageView } from "../src/types";
 
@@ -10,7 +9,7 @@ import type { MessageView } from "../src/types";
 // a long handoff divider ("Claude → Codex: Claude 頭要停了，請你接手…", 1334px on one line) once
 // made #scroller 1430px wide in a 760px window, so the whole chat could be swiped (or scrolled)
 // left and every bubble, subagent card and preview card was cut off at the left edge.
-const css = readFileSync(join(__dirname, "../src/chat.css"), "utf8");
+const css = readChatCss();
 const rule = (selector: string) => {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return css.match(new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`))?.[1] ?? "";

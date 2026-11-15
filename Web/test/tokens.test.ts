@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { inlineTokens } from "../kit/build.mjs";
+import { readChatCss } from "./helpers/chat-css";
 
 // One set of design tokens (Web/src/tokens.css) for the app shell (desktop/src/renderer/styles.css),
 // the chat page (chat.css) and the component kit. Moving them there must change no colour: each
@@ -80,9 +81,9 @@ describe("tokens.css", () => {
   });
 
   it("leaves the chat page's colours as they were", () => {
-    const own = read("src/chat.css");
-    expect(own).toMatch(/^@import "\.\/tokens\.css";/);
-    const css = inlineTokens(own, join(web, "src/chat.css"));
+    const own = readChatCss(); // chat.css with its section files in place (tokens.css not), so `used(own)` and `rootVars(own)` see the page's own rules
+    expect(read("src/chat.css")).toMatch(/^@import "\.\/tokens\.css";/);
+    const css = inlineTokens(read("src/chat.css"), join(web, "src/chat.css")); // everything in, as the app builds it
     expect(css).not.toContain("@import");
     const vars = rootVars(css);
     for (const [name, value] of Object.entries(chatBefore)) expect(vars[name], name).toBe(value);

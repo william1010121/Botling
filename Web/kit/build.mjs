@@ -3,20 +3,27 @@
 // and writes generated/kit-v1.ts, the same text as a string that Web/src/components.ts puts into a
 // component's page. Both are committed (the app builds import them; Web/test/kit-build.test.ts checks
 // they are fresh). Also `inlineTokens`, which the app builds use to put Web/src/tokens.css in
-// place of a stylesheet's `@import "…/tokens.css";`.
+// place of a stylesheet's `@import "…/tokens.css";` and to inline its other relative `@import`s.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const tokensImport = /^@import "([^"]*tokens\.css)";[ \t]*\r?\n?/m;
+// An `@import` line a build puts in place: the design tokens (any spelling of the path) or a relative stylesheet ("./…css", "../…css").
+const cssImport = /^@import "((?:\.{1,2}\/[^"]*\.css)|(?:[^"]*tokens\.css))";[ \t]*\r?\n?/gm;
 
-/** `css` (read from `from`) with its `@import "…/tokens.css";` line replaced by that file's text. */
-export function inlineTokens(css, from) {
-  const match = css.match(tokensImport);
-  if (!match) return css;
-  const tokens = readFileSync(resolve(dirname(from), match[1]), "utf8");
-  return css.replace(tokensImport, () => (tokens.endsWith("\n") ? tokens : tokens + "\n"));
+/**
+ * `css` (read from `from`) with each `@import "…/tokens.css";` and each relative `@import "./….css";` line replaced by
+ * that file's text (itself inlined, relative to it). `onFile`, when given, gets the absolute path of each file read.
+ */
+export function inlineTokens(css, from, onFile, depth = 0) {
+  if (depth > 8) throw new Error(`@import nested too deep: ${from}`);
+  return css.replace(cssImport, (_line, path) => {
+    const file = resolve(dirname(from), path);
+    onFile?.(file);
+    const text = inlineTokens(readFileSync(file, "utf8"), file, onFile, depth + 1);
+    return text.endsWith("\n") ? text : text + "\n";
+  });
 }
 
 const vendor = { preact: "vendor/preact.module.js", "preact/hooks": "vendor/hooks.module.js", htm: "vendor/htm.module.js" };
