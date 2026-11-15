@@ -287,6 +287,7 @@ async function withInstallRequest<T>(action: () => Promise<T>): Promise<T> {
 const updatesFile = join(dataDir, "updates.json");
 const updater = new Updater({
   current: app.getVersion(),
+  channel: process.env.BOTLING_UPDATE_CHANNEL,
   updater: autoUpdater,
   unavailable: () => !app.isPackaged ? "this is a development run, which does not update itself."
     : process.platform === "linux" && !process.env.APPIMAGE ? "this Linux package (.deb) cannot update itself; download the new version from the release page."

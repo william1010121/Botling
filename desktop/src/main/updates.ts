@@ -51,6 +51,7 @@ export interface UpdaterLike {
   autoInstallOnAppQuit: boolean;
   allowPrerelease: boolean;
   allowDowngrade: boolean;
+  channel: string | null;
   checkForUpdates(): Promise<{ isUpdateAvailable?: boolean; updateInfo: UpdateInfoLike } | null>;
   downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
@@ -60,6 +61,7 @@ export interface UpdaterLike {
 
 export interface UpdaterOptions {
   current: string;
+  channel?: string;
   updater: UpdaterLike;
   /** Whether Settings has the check on (asked each time: the core keeps settings.json). */
   enabled: () => Promise<boolean>;
@@ -100,6 +102,12 @@ export class Updater {
     updater.allowDowngrade = false;
     // A prerelease build (a trial) follows prereleases; a stable one does not.
     updater.allowPrerelease = (parseVersion(options.current)?.pre.length ?? 0) > 0;
+    if (options.channel) {
+      updater.channel = options.channel;
+      // electron-updater turns allowDowngrade on when a channel is set; keep downgrades off.
+      updater.allowDowngrade = false;
+      updater.allowPrerelease = true;
+    }
     updater.on("update-downloaded", (info) => { this.downloaded = info.version; });
     updater.on("download-progress", (progress) => {
       this.percent = Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, Math.round(progress.percent))) : null;
