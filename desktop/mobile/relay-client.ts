@@ -44,6 +44,8 @@ export interface RelayClientOptions {
   /** How long a request is tried before it is given up (default: a message 120 s, a read 60 s). */
   giveUpMs?: number;
   waits?: number[];
+  /** How long relay refusals of a saved pairing must go on (DENIED_LIMIT of them) before they count as a sign-out. */
+  deniedForMs?: number;
 }
 
 /** The relay's WebSocket for a link: the one it names, or this page's own /ws. */
@@ -67,6 +69,8 @@ const stillTaking = (env: unknown) => {
  * before its allow list arrives, every phone is refused. Only this many refusals in a row (with the usual waits
  * between) count as one. The desktop's own word (`revoked`, or a handshake refusal) counts at once. */
 const DENIED_LIMIT = 3;
+/** ...and only once they have gone on this long: a desktop or relay coming back can take a few seconds. */
+const DENIED_FOR_MS = 10_000;
 interface Pending {
   id: string; cmd: Command; resolve: (value: unknown) => void; reject: (error: unknown) => void;
   /** Gives the request up (giveUpMs). */
@@ -96,6 +100,8 @@ export class RelayClient {
   private fresh = false;
   /** Relay refusals in a row (reset once the desktop confirms the channel). */
   private denials = 0;
+  /** When the first of those refusals came. */
+  private deniedSince = 0;
   /** The last connection ended with a relay refusal that is tried again. */
   private refused = false;
   /** When the connection last carried something back (or, waiting for nothing, when a request was sent on it). */
@@ -206,7 +212,8 @@ export class RelayClient {
       if (msg.code === 'denied') {
         if (this.hello.kind === 'pair') throw new MobileError('This code has expired or already been used. Show a new code on your computer.', true);
         // A pairing whose ack was lost is refused for good at once; a saved pairing is tried again a few times.
-        if (this.fresh || ++this.denials >= DENIED_LIMIT) throw new MobileError(this.signedOut(), true);
+        if (!this.denials++) this.deniedSince = Date.now();
+        if (this.fresh || (this.denials >= DENIED_LIMIT && Date.now() - this.deniedSince >= (this.options.deniedForMs ?? DENIED_FOR_MS))) throw new MobileError(this.signedOut(), true);
         this.refused = true;
         return; // the close follows and we try again
       }
