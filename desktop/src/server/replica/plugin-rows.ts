@@ -1,19 +1,25 @@
-// M5-13b: each server's own `plugin:<name>` rows in its `srv:` table (D52, D56, §8.2, §14.3, §14.4, §18.3, C12, C14).
-import { createHash } from "node:crypto";
+// M5-13b/M5-13c: each server's own `plugin:<name>` rows in its `srv:` table (D52, D56, §8.2, §14.3, §14.4, §18.3, C12, C14).
+import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, statSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { folderHash } from "../../core/plugins/catalog";
 import type { InstalledPlugin } from "../../core/plugins/registry";
-import { RowKey, type PluginGrant, type PluginRow, type Tier } from "../../protocol/table-rows";
+import { RowKey, type AuditRow, type PluginGrant, type PluginRow, type Tier } from "../../protocol/table-rows";
 import type { Db } from "../store";
 import { deleteRow, putRow, readRowBody } from "./tables";
 
 const WRITE_PERMISSIONS = new Set(["network", "files", "exec", "sessions", "routines", "cards", "app", "studio"]);
 const REQUEST_PERMISSIONS = new Set(["composer", "bots", "claude"]);
 
+/** Maximum number of per-codeHash grants allowed on one `plugin:<name>` row (`PluginRow` schema). */
+export const MAX_PLUGIN_GRANTS = 20;
+
 export interface InstalledPluginInput {
   name: string;
   codeHash: string;
   manifest: PluginRow["manifest"];
   author: PluginRow["author"];
+  writtenBy?: { botId: string; at?: number };
 }
 
 export interface ReconcilePluginRowsOptions {
@@ -62,6 +68,124 @@ export function pluginsDigestOf(installed: ReadonlyArray<{ name: string; codeHas
   return createHash("sha256").update(lines).digest("hex");
 }
 
+function collectFileStats(dir: string, root: string, out: string[]): boolean {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!collectFileStats(full, root, out)) return false;
+    } else {
+      try {
+        const stat = statSync(full, { bigint: true });
+        const rel = relative(root, full).split(sep).join("/");
+        out.push(`${rel}\0${stat.size}\0${stat.mtimeNs}\0${stat.ctimeNs}`);
+      } catch {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Fast mtime/size stat signature (`readdirSync` + `statSync`, zero file reads); null if unreadable. */
+export function folderStatSignature(dir: string): string | null {
+  const entries: string[] = [];
+  if (!collectFileStats(dir, dir, entries)) return null;
+  entries.sort();
+  return entries.join("\n");
+}
+
+export interface PluginHashCacheOptions {
+  hashFolder?: (folder: string) => string;
+  statSignature?: (folder: string) => string | null;
+}
+
+interface CachedPluginHash {
+  folder: string;
+  builtIn: boolean;
+  permissionsKey: string;
+  statSig: string;
+  input: InstalledPluginInput;
+}
+
+/** Caches `folderHash` per plugin keyed by folder, builtIn flag, permissions, and stat signature. */
+export class PluginHashCache {
+  private readonly hashFolder: (folder: string) => string;
+  private readonly statFolder: (folder: string) => string | null;
+  private cache = new Map<string, CachedPluginHash>();
+
+  constructor(options: PluginHashCacheOptions = {}) {
+    this.hashFolder = options.hashFolder ?? folderHash;
+    this.statFolder = options.statSignature ?? folderStatSignature;
+  }
+
+  /** Stat-only signature across `plugins`; returns null if any plugin folder could not be stat-scanned. */
+  statSignature(plugins: readonly InstalledPlugin[]): string | null {
+    const parts: string[] = [];
+    for (const plugin of plugins) {
+      const sig = this.statFolder(plugin.folder);
+      if (sig === null) return null;
+      const permissionsKey = JSON.stringify(plugin.manifest.ccb?.permissions ?? []);
+      parts.push(`${plugin.manifest.name}\0${plugin.builtIn ? 1 : 0}\0${permissionsKey}\0${plugin.folder}\0${sig}`);
+    }
+    return createHash("sha256").update(parts.join("\n")).digest("hex");
+  }
+
+  /** Reads installed plugin inputs, only recomputing `folderHash` for plugins whose stat signature or metadata changed. */
+  read(plugins: readonly InstalledPlugin[], log?: (line: string) => void): InstalledPluginInput[] {
+    const out: InstalledPluginInput[] = [];
+    const nextCache = new Map<string, CachedPluginHash>();
+    for (const plugin of plugins) {
+      const permissions = plugin.manifest.ccb?.permissions ?? [];
+      const permissionsKey = JSON.stringify(permissions);
+      const statSig = this.statFolder(plugin.folder);
+      const cached = this.cache.get(plugin.manifest.name);
+      if (
+        statSig !== null
+        && cached
+        && cached.folder === plugin.folder
+        && cached.builtIn === plugin.builtIn
+        && cached.permissionsKey === permissionsKey
+        && cached.statSig === statSig
+      ) {
+        nextCache.set(plugin.manifest.name, cached);
+        out.push(cached.input);
+        continue;
+      }
+      let codeHash: string;
+      try {
+        codeHash = this.hashFolder(plugin.folder);
+      } catch (error) {
+        log?.(`plugin row skipped: failed to hash ${plugin.manifest.name} (${String((error as Error)?.message ?? error)})`);
+        continue;
+      }
+      const input: InstalledPluginInput = {
+        name: plugin.manifest.name,
+        codeHash,
+        manifest: manifestAsks(permissions),
+        author: plugin.builtIn ? "builtin" : "user",
+      };
+      if (statSig !== null) {
+        nextCache.set(plugin.manifest.name, {
+          folder: plugin.folder,
+          builtIn: plugin.builtIn,
+          permissionsKey,
+          statSig,
+          input,
+        });
+      }
+      out.push(input);
+    }
+    this.cache = nextCache;
+    return out;
+  }
+}
+
 /** Reads the installed plugin inputs from the core's registry using the catalog's folder hash (C14). */
 export function installedFromRegistry(plugins: readonly InstalledPlugin[], log?: (line: string) => void): InstalledPluginInput[] {
   const out: InstalledPluginInput[] = [];
@@ -91,8 +215,31 @@ function existingGrants(body: unknown): Record<string, PluginGrant> {
 }
 
 /**
- * Writes changed `plugin:<name>` rows and tombstones removed ones in `stream`.
- * Never drops an existing grant on a hash change (C12); built-ins keep a `write` grant at their current hash (§14.4).
+ * Keeps `grants` within `limit` (20) by pruning the oldest entries whose hash is not `currentCodeHash`.
+ */
+export function prunePluginGrants(
+  grants: Record<string, PluginGrant>,
+  currentCodeHash: string,
+  limit = MAX_PLUGIN_GRANTS,
+): Record<string, PluginGrant> {
+  const out: Record<string, PluginGrant> = { ...grants };
+  const keys = Object.keys(out);
+  if (keys.length <= limit) return out;
+  const removable = keys
+    .filter((hash) => hash !== currentCodeHash)
+    .sort((a, b) => (out[a]!.at - out[b]!.at) || (a < b ? -1 : a > b ? 1 : 0));
+  let count = keys.length;
+  for (const hash of removable) {
+    if (count <= limit) break;
+    delete out[hash];
+    count -= 1;
+  }
+  return out;
+}
+
+/**
+ * Writes changed `plugin:<name>` rows (plus an `audit:plugin-write` row when `writtenBy` is set) and tombstones removed ones in `stream`.
+ * Never drops an existing grant on a hash change (C12) beyond the 20-grant limit; built-ins keep a `write` grant at their current hash (§14.4).
  */
 export function reconcilePluginRows(
   tx: Db,
@@ -121,24 +268,43 @@ export function reconcilePluginRows(
     activeKeys.add(key);
     digestEntries.push({ name: plugin.name, codeHash: plugin.codeHash });
 
-    const grants = existingGrants(readRowBody(tx, stream, key));
-    if (plugin.author === "builtin") {
-      const current = grants[plugin.codeHash];
+    const prev = readRowBody(tx, stream, key) as Partial<PluginRow> | null;
+    const rawGrants = existingGrants(prev);
+    const author: PluginRow["author"] = plugin.writtenBy
+      ? "bot"
+      : plugin.author === "user" && prev?.author === "bot" && prev?.codeHash === plugin.codeHash
+        ? "bot"
+        : plugin.author;
+    if (author === "builtin") {
+      const current = rawGrants[plugin.codeHash];
       if (!current || (current.grantedBy === "builtin" && current.tier !== "write")) {
-        grants[plugin.codeHash] = { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: now };
+        rawGrants[plugin.codeHash] = { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: now };
       }
     }
+    const grants = prunePluginGrants(rawGrants, plugin.codeHash);
 
     const body: PluginRow = {
       codeHash: plugin.codeHash,
       manifest: plugin.manifest,
-      author: plugin.author,
+      author,
       grants,
     };
     const rev = putRow(tx, stream, key, body);
     if (rev != null) {
       written += 1;
       options.onWritten?.(key, rev);
+    }
+    if (plugin.writtenBy) {
+      const auditKey = `audit:plugin-write.${randomUUID()}`;
+      const auditBody: AuditRow = {
+        act: "plugin.write",
+        at: plugin.writtenBy.at ?? now,
+        member: plugin.writtenBy.botId,
+        name: plugin.name,
+        hash: plugin.codeHash,
+      };
+      const auditRev = putRow(tx, stream, auditKey, auditBody);
+      if (auditRev != null) options.onWritten?.(auditKey, auditRev);
     }
   }
 

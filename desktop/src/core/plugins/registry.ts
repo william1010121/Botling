@@ -127,6 +127,8 @@ export class PluginRegistry {
   onSkipped: (plugin: string, skipped: string[]) => void = () => {};
   /** Anything that matters changed (`revision` moved). */
   onChanged: () => void = () => {};
+  /** A non-built-in plugin was added or edited on disk outside user-initiated store installs/removals. */
+  onPluginWritten: (name: string) => void = () => {};
 
   private state: State;
   /** What `onSkipped` last said for each plugin. */
@@ -142,6 +144,7 @@ export class PluginRegistry {
   private lastGood = new Map<string, WebSpec>();
   private lastSent = new Map<string, WebSpec>();
   private scanned = false;
+  private suppressWriteNotice = false;
   /** The plugin kernel holding each enabled plugin's contributions (kernel step 1; kernel-list.ts). */
   readonly contributionKernel = new ContributionKernel();
 
@@ -297,7 +300,8 @@ export class PluginRegistry {
     (this.state.installed ??= {})[name] = source;
     delete this.state.failures[name];
     this.saveState();
-    this.rescan(true);
+    this.suppressWriteNotice = true;
+    try { this.rescan(true); } finally { this.suppressWriteNotice = false; }
   }
 
   /** Where a library plugin was installed from (the catalog, git, a folder), whichever copy runs; null: the library's own. */
@@ -310,7 +314,8 @@ export class PluginRegistry {
     if (this.state.installed) delete this.state.installed[name];
     delete this.state.failures[name];
     this.saveState();
-    this.rescan(true);
+    this.suppressWriteNotice = true;
+    try { this.rescan(true); } finally { this.suppressWriteNotice = false; }
   }
 
   // ------------------------------------------------------------------------------------------
@@ -524,14 +529,20 @@ export class PluginRegistry {
       : a.manifest.name < b.manifest.name ? -1 : a.manifest.name > b.manifest.name ? 1 : 0);
     const changed = force || JSON.stringify(prints) !== JSON.stringify(this.fingerprints) || JSON.stringify(sorted) !== JSON.stringify(this.plugins)
       || JSON.stringify(problems) !== JSON.stringify(this.problems);
+    const written: string[] = [];
     for (const plugin of sorted) {
       const old = this.plugins.find((candidate) => candidate.manifest.name === plugin.manifest.name);
       if (old && old.manifest.version !== plugin.manifest.version) this.onUpdated(plugin, old.manifest.version);
+      if (this.scanned && !this.suppressWriteNotice && !plugin.builtIn) {
+        const oldPrint = this.fingerprints[plugin.manifest.name];
+        if (!old || old.builtIn || prints[plugin.manifest.name] !== oldPrint) written.push(plugin.manifest.name);
+      }
     }
     this.fingerprints = prints;
     this.plugins = sorted;
     this.problems = problems;
     this.scanned = true;
+    for (const name of written) this.onPluginWritten(name);
     // A plugin turned off, failed, removed or changed: the kernel takes its contributions back now (newest first).
     if (changed) this.contributions();
     if (changed) this.bump();

@@ -47,7 +47,7 @@ import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, SummaryRows, TableFeeds } from "./replica";
-import { installedFromRegistry, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
+import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
 import { Directory, Forwarder, OwnerInbox } from "./forward";
 import { release as osRelease } from "node:os";
 
@@ -100,6 +100,8 @@ export const MIN_FE_VERSION = "3.0.0-m1";
 /** How `welcome.servers` names this server (M1: one server, this Mac). */
 export const SERVER_NAME = "This Mac";
 export const BOTLINGD_VERSION = "3.0.0-m1";
+/** Fallback poll interval (ms) for catching non-manifest plugin edits when plugins.updated does not fire. */
+export const PLUGIN_POLL_MS = 60_000;
 /** Each peer server's state (`botlingd.peers.json`, 0600), rewritten on every change, removed on stop (M3 step 3). */
 export const PEERS_FILE = "botlingd.peers.json";
 
@@ -310,12 +312,15 @@ export class Botlingd {
       const shell = new ShellBridge({ appDataDir: env.BOTLING_APP_DATA_DIR || null });
       const { emit, deferTurn } = coreEngine.coreOptions();
       let pluginRead: PluginContentRead | null = null;
+      const pendingBotWrites = new Map<string, { botId: string; at: number }>();
+      let syncPlugins: (force?: boolean) => Promise<void> = async () => undefined;
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
           node: plainHostNode(env as NodeJS.ProcessEnv), sealer: noSafeStorage, app: shell.appBridge(),
         }),
         deferTurn,
+        pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
           read: async (ref, offset, length) => {
             if (!pluginRead) throw new Error("The machine that has this file is not reachable.");
@@ -341,7 +346,6 @@ export class Botlingd {
       const peerTables = new PeerTables({ store, reader: () => hub.reader(), feeds, log });
       // M3 step 6: the server's own summary rows in its srv: table (written from what the event tap stores).
       let summary: SummaryRows | null = null;
-      let syncPlugins: (force?: boolean) => Promise<void> = async () => undefined;
       // M2 step 12: uploads from pages (`content.put`), kept in <data>/uploads; a chat.send naming them waits for them.
       const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
@@ -361,7 +365,8 @@ export class Botlingd {
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
       });
-      const readInstalledPlugins = () => installedFromRegistry(core.plugins.registry.plugins, log);
+      const pluginHashCache = new PluginHashCache();
+      const readInstalledPlugins = () => pluginHashCache.read(core.plugins.registry.plugins, log);
       const machineRow = (pluginsDigest: string | null) => ({
         name: SERVER_NAME,
         os: `${process.platform} ${osRelease()}`.slice(0, 100),
@@ -379,14 +384,24 @@ export class Botlingd {
       const reconciled = await runtime.scope.submit((tx) => summaries.reconcile(tx));
       log(`summary rows: ${JSON.stringify({ ...reconciled, unknown: reconciled.unknown.length })}`);
       summaries.startPurging();
-      // M5-13b: publish one plugin:<name> row per installed plugin and keep machine.pluginsDigest current.
+      // M5-13b/M5-13c: publish one plugin:<name> row per installed plugin (plus audit row for bot writes) and keep machine.pluginsDigest current.
       let lastPluginsSignature = "";
+      let lastPluginsStatSignature: string | null = null;
       let pluginSyncQueue: Promise<void> = Promise.resolve();
       syncPlugins = (force = false) => {
         pluginSyncQueue = pluginSyncQueue.then(async () => {
-          const installed = readInstalledPlugins();
+          const botWrites = pendingBotWrites.size ? new Map(pendingBotWrites) : null;
+          const statSig = pluginHashCache.statSignature(core.plugins.registry.plugins);
+          if (!force && !botWrites && statSig !== null && statSig === lastPluginsStatSignature) return;
+          const installed = readInstalledPlugins().map((plugin) => {
+            const write = botWrites?.get(plugin.name);
+            return write ? { ...plugin, author: "bot" as const, writtenBy: write } : plugin;
+          });
           const signature = JSON.stringify(installed);
-          if (!force && signature === lastPluginsSignature) return;
+          if (!force && !botWrites && signature === lastPluginsSignature) {
+            lastPluginsStatSignature = statSig;
+            return;
+          }
           await runtime.scope.submit((tx) => {
             const stream = ownTableStream(tx);
             let touched = false;
@@ -394,13 +409,19 @@ export class Botlingd {
             const machineRev = putRow(tx, stream, "machine", machineRow(pluginResult.digest));
             if (touched || machineRev != null) runtime.scope.afterCommit(() => feeds.notify(feeds.ownStream));
           });
+          if (botWrites) {
+            for (const [name, write] of botWrites) {
+              if (pendingBotWrites.get(name) === write) pendingBotWrites.delete(name);
+            }
+          }
           lastPluginsSignature = signature;
+          lastPluginsStatSignature = statSig;
         }).catch((error) => { log(`plugin rows: ${String((error as Error)?.message ?? error)}`); });
         return pluginSyncQueue;
       };
       await syncPlugins(true);
-      // core/server.ts suppresses plugins.updated when only non-manifest plugin files change (codeHash changes without PluginsView changing), so also poll every 5 s.
-      const pluginTimer = setInterval(() => { void syncPlugins(); }, 5_000);
+      // core/server.ts suppresses plugins.updated when only non-manifest plugin files change (codeHash changes without PluginsView changing), so also poll every 60 s using mtime/size stat signatures.
+      const pluginTimer = setInterval(() => { void syncPlugins(); }, PLUGIN_POLL_MS);
       pluginTimer.unref?.();
       // Step 13: pins left by a crash are swept and every file still preparing is hashed before front ends attach.
       const recovered = await content.recover();

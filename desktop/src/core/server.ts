@@ -23,7 +23,7 @@ import type { RelayConnector } from '../mobile-relay/connector';
 // empty folder it imports a 1.x folder when one is given (read-only; store/importer.ts).
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join, resolve as resolvePath, sep } from "node:path";
 import { commandGuidePath } from "./plugins/app-command";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
@@ -199,6 +199,8 @@ export interface CoreOptions {
   botStore?: (directory: string) => BotStore;
   /** Botling 3's server only (2.x leaves it unset): content read for plugins (`content.read`). */
   content?: PluginWorld["content"];
+  /** Botling 3's server only (2.x leaves it unset): a bot created or edited a plugin in `<data>/plugins`. */
+  pluginWritten?: (name: string, botId: string) => void;
 }
 
 /** The core-set commands Botling 3's server applies inside its own transaction (`Core.applyNow`). */
@@ -256,6 +258,7 @@ export class Core {
   /** The public plugin catalog (Explore, Updates on the Plugins page). */
   readonly pluginStore: PluginStore;
   private lastPlugins = "";
+  private settlingMaintainer = false;
   /** The plugins' Claude parts as bots last heard of them (`followClaudeParts`). */
   private loadedClaudeParts = "[]";
   /** Whether the first chat.snapshot was held already (`firstSnapshotDelayMs`). */
@@ -420,6 +423,7 @@ export class Core {
           this.lastPlugins = text;
           this.event({ type: "plugins.updated", plugins: view });
         },
+        pluginWritten: (name) => { const botId = this.activePluginWriter(); if (botId) options.pluginWritten?.(name, botId); },
         broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
         log: (line) => this.log(line),
         app: {
@@ -2440,6 +2444,20 @@ First write a test that shows this, then fix it.`;
     }
   }
 
+  private activePluginWriter(): string | null {
+    if (this.settlingMaintainer) return MAINTAINER_ID;
+    const maintainer = this.bots.get(MAINTAINER_ID);
+    if (maintainer && (maintainer.view().working || maintainer.subagentsAtWork)) return MAINTAINER_ID;
+    const pluginsRoot = join(this.options.dataDir, "plugins");
+    for (const bot of this.bots.values()) {
+      if (bot.id === MAIN_BOT_ID) continue;
+      const folder = bot.profile.folder;
+      if (folder !== pluginsRoot && !pluginsRoot.startsWith(folder + sep) && !folder.startsWith(pluginsRoot + sep)) continue;
+      if (bot.view().working || bot.subagentsAtWork) return bot.id;
+    }
+    return null;
+  }
+
   private botInfo(bot: Bot): BotInfo {
     return { id: bot.id === MAIN_BOT_ID ? "main" : bot.id, name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
   }
@@ -2453,7 +2471,8 @@ First write a test that shows this, then fix it.`;
     // What the main bot wrote into an inbox goes to that bot now (1.x: after every main-bot reply).
     if (bot.id === MAIN_BOT_ID) this.deliverInboxes();
     if (bot.id === MAINTAINER_ID) {
-      this.maintainer.settle(record);
+      this.settlingMaintainer = true;
+      try { this.maintainer.settle(record); } finally { this.settlingMaintainer = false; }
       this.plugins.event("libraryChanged", {});
       // After the reply's own tags are acted on: a change from a spec panel that did not land is said there.
       setImmediate(() => setImmediate(() => { this.plugins.event("maintainerReplied", { role: record.role, text: record.text.slice(0, 2_000), running: bot.subagentsAtWork }); this.componentsTick(); }));
