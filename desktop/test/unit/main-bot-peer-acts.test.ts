@@ -104,6 +104,18 @@ describe("M5-04d 2/3/6: <new-bot machine> makes a bot on a peer", () => {
     expect(h.sent).toHaveLength(1);
   });
 
+  it("2c. two outcomes in one turn are both kept: each is a line in the main chat as well as a note (queueNote holds one)", async () => {
+    const h = fixture({ machines: [{ id: SERVER_B, name: "build-box" }, { id: SERVER_C, name: "test-box" }] });
+    h.act(h.main, h.tag('<new-bot name="nightly" machine="build-box">job</new-bot><new-bot name="checker" machine="test-box">job</new-bot>'));
+    await until(() => h.sent.length === 2);
+    h.sent[0]!.settle({ ok: true });
+    h.sent[1]!.settle({ ok: false, why: "a bot of that name exists" });
+    await until(() => h.notes.length === 2);
+    const shown = h.main.lines().filter((line) => line.role === "notice").map((line) => line.text);
+    expect(shown).toEqual(expect.arrayContaining(['The bot "nightly" was made on build-box.', 'test-box did not make the bot "checker": a bot of that name exists.']));
+    expect(h.notes).toEqual(expect.arrayContaining(['(App: The bot "nightly" was made on build-box.)', '(App: test-box did not make the bot "checker": a bot of that name exists.)']));
+  });
+
   it("3. a refusal from the peer: the did-not-make note with its reason on one clean line", async () => {
     const h = fixture();
     h.act(h.main, h.tag('<new-bot name="Maintainer" machine="build-box">job</new-bot>'));
@@ -291,20 +303,22 @@ describe("M5-04d 5: ignoring a waiting item of a peer's bot", () => {
     expect(h.sent).toHaveLength(2);
   });
 
-  it("the waiting.ignore command for a peer's bot does the same and returns the current view", () => {
+  it("the waiting.ignore command is never sent on to another machine (it reached its owner; no second hop) and returns the current view", () => {
+    // Review M5-04d: the legacy handler runs before the slot engine's target check, so a peer's waiting.ignore for bot:<this
+    // server's bot> naming a third machine's bot would otherwise be sent on to that machine as this server.
     const h = fixture();
     const view = h.core.ignoreWaiting(PEER_BUILD, "x");
-    expect(h.sent.map((entry) => entry.cmd)).toEqual([{ type: "waiting.ignore", botId: PEER_BUILD, text: "x" }]);
+    expect(h.sent).toEqual([]);
     expect(view).toEqual(h.core.waiting());
   });
 
   it("a refusal or a failed send is logged on one line and the next call may try again", async () => {
     const h = fixture();
-    h.core.ignoreWaiting(PEER_BUILD, "x");
+    workspace(h.core).ignoreWaiting(PEER_BUILD, "x");
     h.sent[0]!.settle({ ok: false, why: "gone\nnow" });
     await until(() => h.logs.some((line) => line.includes("waiting item")));
     expect(h.logs.filter((line) => line.includes("waiting item"))).toEqual(["ignoring a waiting item of build on build-box failed: gone now"]);
-    h.core.ignoreWaiting(PEER_BUILD, "x");
+    workspace(h.core).ignoreWaiting(PEER_BUILD, "x");
     expect(h.sent).toHaveLength(2);
   });
 

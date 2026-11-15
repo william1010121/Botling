@@ -1930,9 +1930,15 @@ First write a test that shows this, then fix it.`;
     return { kind: found.length ? "ambiguous" : "unknown", name };
   }
 
-  /** What the main bot hears with its next message (`queueNote`: a later note replaces an earlier one; none is kept for a bot not awake). */
-  private tellMain(note: string) {
-    this.mainBot()?.queueNote(note);
+  /**
+   * What the main bot is told about its acts on other machines (M5-04d): a line in its chat, and the same words as an
+   * `(App: …)` note with its next message. The line is what keeps it: `queueNote` holds one note and none for a bot that is
+   * not awake, and an outcome from another machine can come late (after a sleep, or two in one turn).
+   */
+  private tellMain(words: string) {
+    const main = this.mainBot();
+    main?.appNotice(words);
+    main?.queueNote(`(App: ${words})`);
   }
 
   /**
@@ -1942,7 +1948,7 @@ First write a test that shows this, then fix it.`;
   private botRequestedOn(machineName: string, rawName: string, rawJob: string, sentOnce: Set<string>) {
     const machine = this.machineNamed(machineName);
     if (machine.kind === "here") { this.botRequested(rawName, rawJob, null); return; }
-    if (machine.kind === "unknown") { this.tellMain(`(App: There is no machine named "${machine.name}"; the bot was not made.)`); return; }
+    if (machine.kind === "unknown") { this.tellMain(`There is no machine named "${machine.name}"; the bot was not made.`); return; }
     const name = botName(rawName);
     const job = rawJob.trim();
     if (!name || !job) return;
@@ -1951,7 +1957,7 @@ First write a test that shows this, then fix it.`;
     const tell = (why: string | null) => {
       if (told) return;
       told = true;
-      this.tellMain(why === null ? `(App: The bot "${name}" was made on ${machine.name}.)` : `(App: ${machine.name} did not make the bot "${name}": ${oneLine(why)}.)`);
+      this.tellMain(why === null ? `The bot "${name}" was made on ${machine.name}.` : `${machine.name} did not make the bot "${name}": ${oneLine(why)}.`);
     };
     if (machine.kind === "ambiguous") { tell("more than one machine has that name"); return; }
     if (job.length > BOT_JOB_LIMIT) { tell(`the job is longer than ${BOT_JOB_LIMIT} characters`); return; }
@@ -2196,7 +2202,7 @@ First write a test that shows this, then fix it.`;
         // U3: the file is kept and logged on every turn, but the main bot is told once (again after it fits and went).
         if (!this.peerOverTold.has(peer.id)) {
           this.peerOverTold.add(peer.id);
-          this.tellMain(`(App: The message for "${peer.name}" on ${peer.serverName} is too long to send, so it was not sent. Cut it down in its inbox file.)`);
+          this.tellMain(`The message for "${peer.name}" on ${peer.serverName} is too long to send, so it was not sent. Cut it down in its inbox file.`);
         }
         continue;
       }
@@ -2219,7 +2225,7 @@ First write a test that shows this, then fix it.`;
         if (outcome.ok) return;
         const why = oneLine(outcome.why);
         this.log(`message to ${who} was not delivered: ${why}`);
-        this.tellMain(`(App: The message to "${peer.name}" on ${peer.serverName} was not delivered: ${why}.)`);
+        this.tellMain(`The message to "${peer.name}" on ${peer.serverName} was not delivered: ${why}.`);
       }, () => undefined);
     }
     // A bot that left (its server was removed): its text stays in the file, and the log says so once.
@@ -2357,7 +2363,8 @@ First write a test that shows this, then fix it.`;
       ignoreWaiting: (botId, text) => {
         // A bot of this machine first ("main" is the local main bot whatever a peer's rows say: `peerBotFor`), then a peer's (M5-04d).
         const peer = this.peerBotFor(botId);
-        this.ignoreWaiting(peer ? peer.id : this.workspaceBot(botId).bot.id, text);
+        if (peer) this.ignoreWaitingOn(peer, text);
+        else this.ignoreWaiting(this.workspaceBot(botId).bot.id, text);
       },
       pendingApprovals: (botId) => this.workspaceBot(botId).bot.pendingApprovals(),
       face: (botId, look) => {
@@ -2455,9 +2462,10 @@ First write a test that shows this, then fix it.`;
 
   /** Takes one off the list without answering it (settings' `ignoredWaiting`, 1.x's ids). */
   ignoreWaiting(botId: string, text: string): WaitingView {
-    // M5-04d: a bot on another machine keeps its own list; this server asks that machine to set the item aside.
-    const peer = this.peerBotFor(botId);
-    if (peer) { this.ignoreWaitingOn(peer, text); return this.waiting(); }
+    // A command reached this server because it owns the target (the front end sends a peer bot's command to its owner,
+    // and the slot engine refuses a target that is not `bot:<botId>`), so it is never sent on to another machine (§11.2
+    // step 5: no second hop). The legacy handler runs before that target check, so forwarding here would let a peer send
+    // a command to a third machine as this server. A peer's item is set aside from the workspace source (M5-04d).
     const file = Layout.settings(this.options.dataDir);
     const raw = readSettings(file);
     const ignored = readSettingsList(raw.ignoredWaiting);
@@ -2534,12 +2542,10 @@ First write a test that shows this, then fix it.`;
       const machine = this.machineNamed(request.machine);
       if (machine.kind === "here") return true;
       if (machine.kind === "unknown") {
-        this.tellMain(`(App: There is no machine named "${machine.name}"; the project was not added.)`);
+        this.tellMain(`There is no machine named "${machine.name}"; the project was not added.`);
       } else if (!told.has(machine.name.toLowerCase())) {
         told.add(machine.name.toLowerCase());
-        const words = `Adding a project on ${machine.name} needs ${machine.name}'s own window.`;
-        main.appNotice(words);
-        this.tellMain(`(App: ${words})`);
+        this.tellMain(`Adding a project on ${machine.name} needs ${machine.name}'s own window.`);
       }
       return false;
     });
