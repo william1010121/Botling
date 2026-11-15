@@ -1107,7 +1107,7 @@ export class Bot {
       const card = this.owner.records.find((record) => record.id === held.noticeId);
       if (card) { card.text = "Model or effort change was waiting for active work to finish; the app quit first, so the queued message was not sent."; this.owner.changed(card); }
     }
-    if (this.deferred) { this.deferred.open = false; this.deferred.resolve("stopped"); this.deferred = null; }
+    if (this.deferred) { this.deferred.open = false; this.deferred.resolve("stopped"); this.turns.takeBack(); }
     // A running turn's tree is ended at once (what it said so far stays); such a head does not tidy.
     const working = this.shownTurn;
     if (working) await this.stop(working.id, { quitting: true }).catch(() => {});

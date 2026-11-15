@@ -38,6 +38,11 @@ export const PLUGIN_OWNED_SLOTS: readonly string[] = [
   "view/rightPanel",
   "view/rightPanel.section",
   "view/rightPanel.takeover",
+
+  // botling.bot-panel (M7-03b): panel/tile/board, panel/tile/whiteboard, panel/tile/pin
+  "tile/board",
+  "tile/whiteboard",
+  "tile/pin",
 ];
 const OWNED_ELSEWHERE = new Set(PLUGIN_OWNED_SLOTS.map(canonicalSlot));
 

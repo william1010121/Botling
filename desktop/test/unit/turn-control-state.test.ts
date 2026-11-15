@@ -213,3 +213,144 @@ describe("TurnBook transitions of queue and turn (M7-S54)", () => {
     expect(waiting.open).toBe(false);
   });
 });
+
+describe("TurnBook transitions of the set-aside turn, steered lines and inserts (M7-S55)", () => {
+  it("setAside clears the turn under way and keeps it as the deferred one; takeBack hands it back and clears it", async () => {
+    const r = rig("claude");
+    r.b.send("hello"); await r.sent(0, 1);
+    const book = r.peek.turns; const turn = r.peek.turn;
+    book.setAside(turn);
+    expect(book.turn).toBeNull(); expect(book.deferred).toBe(turn);
+    expect(r.peek.turn).toBeNull(); expect(r.peek.deferred).toBe(turn);
+    expect(book.takeBack()).toBe(turn);
+    expect(book.deferred).toBeNull(); expect(book.takeBack()).toBeNull();
+  });
+
+  it("next begins the set-aside turn again when it is open and its head runs: it is the turn under way, not begun", async () => {
+    const r = rig("claude");
+    r.b.send("hello"); await r.sent(0, 1);
+    const turn = r.peek.turn;
+    r.peek.turns.setAside(turn);
+    r.peek.next();
+    expect(r.peek.turn).toBe(turn); expect(r.peek.deferred).toBeNull();
+    expect(r.peek.unbegun?.turn).toBe(turn);
+    r.peek.clearUnbegun();
+    expect(r.peek.unbegun).toBeNull();
+  });
+
+  it("a stopped set-aside turn still bumps ignoreResults and interrupts the head when next takes it back (order 5)", async () => {
+    const r = rig("claude");
+    r.b.send("hello"); await r.sent(0, 1);
+    const turn = r.peek.turn; let interrupts = 0;
+    r.head(0).onInterrupt = () => { interrupts++; };
+    r.peek.turns.setAside(turn);
+    turn.open = false;
+    r.peek.next();
+    expect(r.peek.deferred).toBeNull(); expect(r.peek.turn).toBeNull();
+    expect(r.peek.ignoreResults).toBe(1); expect(interrupts).toBe(1);
+  });
+
+  it("steered lines and the other head's words: set, settle, and forget when the process is gone", () => {
+    const { peek } = rig("claude"); const book = peek.turns;
+    const [a, b] = [{ id: "a" }, { id: "b" }] as any[];
+    book.steerStarted("s1", a); book.steerStarted("s2", b);
+    expect(peek.steered.get("s1")).toBe(a); expect(peek.steered.size).toBe(2);
+    book.steerSettled("s1"); expect(peek.steered.has("s1")).toBe(false); expect(peek.steered.has("s2")).toBe(true);
+    book.contextWritten("c1"); book.contextWritten("c2");
+    expect(book.contextSettled("c1")).toBe(true); expect(book.contextSettled("c1")).toBe(false);
+    book.forgetSent();
+    expect(peek.steered.size).toBe(0); expect(peek.contextSent.size).toBe(0);
+  });
+
+  it("insertOffered keeps the line offered into an Antigravity turn by id until it is delivered", async () => {
+    const r = rig("agy", { insertOk: true });
+    r.b.send("first"); await r.sent(0, 1);
+    r.b.send("second"); await flush();
+    const offered = r.peek.inserting;
+    expect(offered.size).toBe(1);
+    const [id, turn] = [...offered.entries()][0]!;
+    expect(r.peek.queue).toContain(turn);
+    r.peek.insertDelivered(r.head(0), id);
+    expect(offered.size).toBe(0); expect(r.peek.queue).not.toContain(turn);
+  });
+});
+
+describe("TurnBook transitions of stop, drain, pause and results to ignore (M7-S56)", () => {
+  it("startPause and endPause keep the work paused for your message; the Bot's accessor shows it", () => {
+    const { peek } = rig("claude"); const book = peek.turns;
+    const paused = { conducted: true, handoffId: "h1" };
+    book.startPause(paused);
+    expect(book.paused).toBe(paused); expect(peek.paused).toBe(paused);
+    book.endPause();
+    expect(book.paused).toBeNull(); expect(peek.paused).toBeNull();
+  });
+
+  it("endDrain clears only the drain it was given: a newer drain keeps holding the line", () => {
+    const { peek } = rig("claude"); const book = peek.turns;
+    const first = { head: {}, resolve() {}, promise: Promise.resolve() } as any;
+    const newer = { head: {}, resolve() {}, promise: Promise.resolve() } as any;
+    book.startDrain(first);
+    expect(peek.draining).toBe(first);
+    book.startDrain(newer);
+    book.endDrain(first);
+    expect(peek.draining).toBe(newer);
+    book.endDrain(newer);
+    expect(peek.draining).toBeNull();
+  });
+
+  it("ignoreNext, ignoredArrived and ignoreNone count the results that belong to nobody", () => {
+    const { peek } = rig("claude"); const book = peek.turns;
+    book.ignoreNext(); book.ignoreNext();
+    expect(peek.ignoreResults).toBe(2);
+    book.ignoredArrived();
+    expect(peek.ignoreResults).toBe(1);
+    book.ignoreNone();
+    expect(peek.ignoreResults).toBe(0);
+  });
+
+  it("recordFinished, headEnding and the ended subagents: take and clear", () => {
+    const { peek } = rig("claude"); const book = peek.turns;
+    book.recordFinished("t1", "done"); book.recordFinished("t2", "stopped");
+    expect(peek.finished.get("t1")).toBe("done"); expect(peek.finished.get("t2")).toBe("stopped");
+    const head = {} as any;
+    expect(peek.ending.has(head)).toBe(false);
+    book.headEnding(head);
+    expect(peek.ending.has(head)).toBe(true);
+    book.subagentEnded("s1"); book.subagentEnded("s2");
+    expect(peek.pendingEnded).toEqual(["s1", "s2"]);
+    expect(book.takeEnded()).toEqual(["s1", "s2"]); expect(peek.pendingEnded).toEqual([]);
+    book.subagentEnded("s3"); book.clearEnded();
+    expect(peek.pendingEnded).toEqual([]);
+  });
+
+  it("stop holds the drain before the head is asked to interrupt, and lets it go when the head ended the turn", async () => {
+    const r = rig("claude", { interruptGraceMs: 2000 });
+    r.b.send("hello"); await r.sent(0, 1);
+    const turnId = r.peek.turn.id; const head = r.head(0);
+    const seen: unknown[] = [];
+    head.onInterrupt = () => { seen.push(r.peek.draining?.head); queueMicrotask(() => r.peek.drained(head)); };
+    const result = await r.b.stop(turnId);
+    expect(result).toEqual({ stopped: true, killed: [], forced: false });
+    expect(seen).toEqual([head]);
+    expect(r.peek.draining).toBeNull();
+    expect(r.peek.ending.has(head)).toBe(false);
+  });
+
+  it("stop of a turn whose head ignores the interrupt ends the head: it is marked as ending, and the drain is let go", async () => {
+    const r = rig("claude", { interruptGraceMs: 5 });
+    r.b.send("hello"); await r.sent(0, 1);
+    const head = r.head(0);
+    const result = await r.b.stop(r.peek.turn.id);
+    expect(result.stopped).toBe(true);
+    expect(r.peek.ending.has(head)).toBe(true);
+    expect(r.peek.draining).toBeNull();
+  });
+
+  it("stop also stops the work paused for your message", async () => {
+    const r = rig("claude");
+    r.b.send("hello"); await r.sent(0, 1);
+    r.peek.turns.startPause({ conducted: false, handoffId: null });
+    await r.b.stop(r.peek.turn.id);
+    expect(r.peek.paused).toBeNull();
+  });
+});
