@@ -1,7 +1,7 @@
 // Plan change N1 + N2 (D52–D57, plugin kernel): the optional `via {plugin, codeHash}` on the `cmd` envelope and the
 // `grant` refusal reason. `via` counts in the command hash only when present (every hash and receipt from before stays
-// valid); until M5 the owner refuses every command that carries it with `refused{grant}`, on the intent path and on
-// legacy apply (whose core handler never runs); the UI words `grant` as "the plugin may not do this".
+// valid); the owner refuses a command that carries it with `refused{grant}` unless its plugin row grants it (M5-15), on
+// the intent path and on legacy apply (whose core handler never runs). Here no plugin row exists, so every one is refused; the UI words `grant` as "the plugin may not do this".
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
@@ -94,10 +94,13 @@ describe("N1: via on the cmd envelope", () => {
     });
     const body = { ...react(1), via } as CmdBody;
     const status = await engine.receive(body, { scope: "local", reply: (m) => replies.push(m) });
-    expect(status.status === "result" && status.message.outcome).toEqual({ kind: "refused", reason: "grant", detail: GRANT_REFUSAL_DETAIL });
+    // M5-15: no plugin row, so the owner says the plugin differs here (a machine without a name row uses its server id).
+    const serverId = String(db.prepare("SELECT value FROM meta WHERE key = 'serverId'").get()!.value);
+    const detail = `plugin notes-helper differs on ${serverId}`;
+    expect(status.status === "result" && status.message.outcome).toEqual({ kind: "refused", reason: "grant", detail });
     expect(applied).toEqual([]);
     const refusal = entries(db).find((entry) => entry.kind === "cmd.refused");
-    expect(refusal?.body).toEqual({ slot: slot(1), reason: "grant", detail: GRANT_REFUSAL_DETAIL });
+    expect(refusal?.body).toEqual({ slot: slot(1), reason: "grant", detail });
     expect(String(db.prepare("SELECT cmdHash FROM receipts").get()!.cmdHash)).toBe(cmdHash({ cmd: body.cmd, scope: "local", via }));
     // The same copy again: the same outcome; the same slot without via is another command (slot conflict), never applied.
     const again = await engine.receive(body, { scope: "local" });
@@ -117,7 +120,7 @@ describe("N1: via on the cmd envelope", () => {
     await h.runtime.idle();
     const body = { slot: { origin: "desktop", originEpoch: EPOCH_A, target: "bot:B1", n: 1 }, floor: 1, inc: h.inc, cmd: { type: "chat.read", botId: "B1" }, via } as CmdBody;
     const outcome = outcomeOf(await h.runtime.receive(body, { scope: "local" }));
-    expect(outcome).toEqual({ kind: "refused", reason: "grant", detail: GRANT_REFUSAL_DETAIL });
+    expect(outcome).toMatchObject({ kind: "refused", reason: "grant", detail: expect.stringMatching(/^plugin notes-helper differs on /) });
     expect(h.engine.runs).toHaveLength(0);
     // Intent path through the runtime too (chat.react is a core-set intent).
     const react2 = { ...body, slot: { ...body.slot, n: 2 }, floor: 2, cmd: { type: "chat.react", botId: "B1", messageId: "m1", emoji: "👍", present: true } } as CmdBody;

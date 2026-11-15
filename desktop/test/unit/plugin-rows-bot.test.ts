@@ -178,15 +178,18 @@ describe("M5-13c: reconcilePluginRows bot writes and single-transaction audit", 
     withEnv({ FAKE_CLAUDE_LINGER_MS: "450" });
     const { daemon, client, inc, originEpoch } = await startBotlingd(dataDir);
     const srvStream = `srv:${daemon.serverId}`;
-    const maintainerStream = `bot:${MAINTAINER_ID}`;
+    // A new data folder mints its own Maintainer id (M5-04g); the 2.x constant is only kept by pre-M5 folders.
+    const maintainerId = daemon.core.maintainerId;
+    expect(maintainerId).not.toBe(MAINTAINER_ID);
+    const maintainerStream = `bot:${maintainerId}`;
     await client.sub(maintainerStream);
 
     const slot: Slot = { origin: "script", originEpoch, target: maintainerStream, n: 1 };
-    client.cmd(slot, { type: "chat.send", botId: MAINTAINER_ID, text: "/linger write plugin" }, inc);
+    client.cmd(slot, { type: "chat.send", botId: maintainerId, text: "/linger write plugin" }, inc);
     expect((await client.wait(isResult(slot), "maintainer chat.send result")).outcome.kind).toBe("applied");
 
     // Wait until Maintainer's turn is actively running, then write the plugin into <dataDir>/plugins during the turn.
-    await until(() => (daemon.core.snapshot(MAINTAINER_ID).bots.find((b) => b.id === MAINTAINER_ID)?.working ? true : null), { timeout: 15_000, every: 20, what: "maintainer working" });
+    await until(() => (daemon.core.snapshot(maintainerId).bots.find((b) => b.id === maintainerId)?.working ? true : null), { timeout: 15_000, every: 20, what: "maintainer working" });
     const botPluginName = "maintainer.crafted";
     const botPluginFolder = writePlugin(join(dataDir, "plugins"), botPluginName, { permissions: ["files", "exec"] });
     const expectedHash = folderHash(botPluginFolder);
@@ -212,14 +215,14 @@ describe("M5-13c: reconcilePluginRows bot writes and single-transaction audit", 
     expect(auditBody).toEqual({
       act: "plugin.write",
       at: expect.any(Number),
-      member: MAINTAINER_ID,
+      member: maintainerId,
       name: botPluginName,
       hash: expectedHash,
     });
     expect(auditEntries[0]!.rev).toBe(pluginEntry.rev + 1);
 
     // Verify a manual drop when Maintainer is idle still records author "user" and no plugin.write audit row.
-    await until(() => (!daemon.core.snapshot(MAINTAINER_ID).bots.find((b) => b.id === MAINTAINER_ID)?.working ? true : null), { timeout: 15_000, every: 20, what: "maintainer idle" });
+    await until(() => (!daemon.core.snapshot(maintainerId).bots.find((b) => b.id === maintainerId)?.working ? true : null), { timeout: 15_000, every: 20, what: "maintainer idle" });
     writePlugin(join(dataDir, "plugins"), "user.manual.plugin", { permissions: ["composer"] });
     const withUserRows = await until(() => {
       const current = readSrvRows(dataDir, srvStream);
@@ -234,7 +237,10 @@ describe("M5-13c: reconcilePluginRows bot writes and single-transaction audit", 
     withEnv({ FAKE_CLAUDE_LINGER_MS: "450" });
     const { daemon, client, inc, originEpoch } = await startBotlingd(dataDir);
     const srvStream = `srv:${daemon.serverId}`;
-    const maintainerStream = `bot:${MAINTAINER_ID}`;
+    // A new data folder mints its own Maintainer id (M5-04g); the 2.x constant is only kept by pre-M5 folders.
+    const maintainerId = daemon.core.maintainerId;
+    expect(maintainerId).not.toBe(MAINTAINER_ID);
+    const maintainerStream = `bot:${maintainerId}`;
     await client.sub(maintainerStream);
 
     const builtInName = "ccb-latex";
@@ -246,8 +252,8 @@ describe("M5-13c: reconcilePluginRows bot writes and single-transaction audit", 
     expect(initialBuiltIn.grants[oldHash]?.grantedBy).toBe("builtin");
 
     const slot: Slot = { origin: "script", originEpoch, target: maintainerStream, n: 1 };
-    client.cmd(slot, { type: "chat.send", botId: MAINTAINER_ID, text: "/linger override built-in" }, inc);
-    await until(() => (daemon.core.snapshot(MAINTAINER_ID).bots.find((b) => b.id === MAINTAINER_ID)?.working ? true : null), { timeout: 15_000, every: 20, what: "maintainer working on override" });
+    client.cmd(slot, { type: "chat.send", botId: maintainerId, text: "/linger override built-in" }, inc);
+    await until(() => (daemon.core.snapshot(maintainerId).bots.find((b) => b.id === maintainerId)?.working ? true : null), { timeout: 15_000, every: 20, what: "maintainer working on override" });
 
     const overrideFolder = writePlugin(join(dataDir, "plugins"), builtInName, {
       version: builtInVersion,
@@ -277,7 +283,7 @@ describe("M5-13c: reconcilePluginRows bot writes and single-transaction audit", 
     expect(AuditRow.parse(audits[0]!.body)).toEqual({
       act: "plugin.write",
       at: expect.any(Number),
-      member: MAINTAINER_ID,
+      member: maintainerId,
       name: builtInName,
       hash: newHash,
     });

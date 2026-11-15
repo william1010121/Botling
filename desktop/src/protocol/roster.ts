@@ -111,7 +111,7 @@ export const PushEndpoint = z.string().min(1).max(1_900).refine((value) => {
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" || url.username || url.password || url.port !== "") return false;
-    const host = url.hostname.toLowerCase().replace(/\.$/, "");
+    const host = url.hostname.toLowerCase().replace(/\.+$/, "");
     if (!host.includes(".") || host.startsWith("[") || /^[0-9.]+$/.test(host) || PRIVATE_HOST.test(host)) return false;
     return true;
   } catch {

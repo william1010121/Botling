@@ -254,10 +254,10 @@ describe("M4-22 protocol: Profile push field and push.subscribe", () => {
     const ok = ["https://fcm.googleapis.com/fcm/send/abc", "https://updates.push.services.mozilla.com/wpush/v2/x", "https://web.push.apple.com:443/Q", "https://PUSH.Example./sub"];
     for (const endpoint of ok) expect(decodeFrame(JSON.stringify({ t: "push.subscribe", endpoint, keys }), "fe", REMOTE).ok, endpoint).toBe(true);
     const refused = [
-      "http://127.0.0.1:41234/push", "http://localhost/push", "http://[::1]/push",
+      "http://push.example/sub", "http://127.0.0.1:41234/push", "http://localhost/push", "http://[::1]/push",
       "https://127.0.0.1/push", "https://2130706433/push", "https://0x7f.1/push", "https://10.0.0.5/push", "https://169.254.169.254/latest",
       "https://[::1]/push", "https://[fd00::1]/push",
-      "https://localhost/push", "https://localhost./push", "https://a.localhost/push", "https://printer.local/push", "https://metadata.google.internal/x",
+      "https://localhost/push", "https://localhost./push", "https://localhost../push", "https://printer.local../push", "https://a.localhost/push", "https://printer.local/push", "https://metadata.google.internal/x",
       "https://router.home.arpa/push", "https://intranet/push", "https://push.example:8443/sub", "https://push.example:22/sub",
     ];
     for (const endpoint of refused) {

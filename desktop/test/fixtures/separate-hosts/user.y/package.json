@@ -1,0 +1,20 @@
+{
+  "name": "user.y",
+  "version": "1.0.0",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "permissions": ["files"],
+    "web": "lib/web.js",
+    "host": "lib/host.mjs",
+    "contributes": {
+      "commands": [
+        { "id": "user.y.info", "title": "Y Info" },
+        { "id": "user.y.calls", "title": "Y Calls" }
+      ],
+      "settings": {
+        "secretY": { "type": "string", "title": "Secret Y", "secret": true },
+        "secretX": { "type": "string", "title": "Unused", "secret": false }
+      }
+    }
+  }
+}

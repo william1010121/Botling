@@ -39,6 +39,10 @@ export const COMMAND_ROUTES: Record<CommandType, CommandRoute> = {
   "bots.remove": intent,
   "settings.set": intent,
   "plugin.grant": intent,
+  // M5-01: the call-in commands; their handlers arrive with M5-02b/02c (Q-C1).
+  "callin.ask": intent,
+  "callin.reply": intent,
+  "callin.cancel": intent,
 
   // Reads.
   "project.files": read,
