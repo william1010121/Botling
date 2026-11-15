@@ -22,7 +22,6 @@
     "desktop/src/main/main.ts": 1169,
     "desktop/src/renderer/App.tsx": 1036,
     "desktop/src/renderer/styles.css": 1328,
-    "desktop/src/server/botlingd.ts": 950,
     "desktop/src/server/content/peer-content.ts": 878,
     "desktop/src/server/fetch/source.ts": 1282,
     "desktop/src/server/import/run.ts": 1142,
