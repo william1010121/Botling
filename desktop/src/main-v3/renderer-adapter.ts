@@ -34,7 +34,7 @@
 // Pure TypeScript over two ports (the link, and the renderer's event sink): no Electron, no Node built-ins.
 import {
   EventEnvelope, MESSAGE_TEXT_LIMIT, PROTOCOL_VERSION,
-  type BotView, type Command, type CommandType, type Event, type EventEnvelope as EventEnvelopeT, type MessageView, type ResultOf, type WireError,
+  type BotView, type Command, type CommandType, type Event, type EventEnvelope as EventEnvelopeT, type MessageView, type PluginsView as PluginsViewT, type ResultOf, type WireError,
 } from "../contract";
 import { z } from "zod";
 import {
@@ -46,6 +46,7 @@ import { PluginRow, type SummaryRow } from "../protocol/table-rows";
 import type { Clock, ConnModel, FeLinkEvent, OutboxItem, PendingView, ServerView, StoredCursor } from "../fe-link";
 import type { RequestVia } from "../renderer/client";
 import { apply, type ChatView, type WorkspaceView } from "../renderer/store";
+import { chatLinkPlugin, linkMenuKey, withOwnerLinkMenus } from "./peer-link-menu";
 
 export const RequestViaSchema = z.strictObject({ plugin: PluginName });
 
@@ -273,6 +274,10 @@ export class RendererAdapter {
    * the library: kept until a `plugins.updated` event, a plugins command, or a new epoch (M1 demo bug 1).
    */
   private pluginsWeb: Promise<unknown> | null = null;
+  /** M5-09: the `chat/link` entries the window was last given (`linkMenuKey`), to tell when the shown chat's list changed. */
+  private linkMenus: string | null = null;
+  /** M5-09: a peer bot's link button already on its way, by bot, line, link and command: a second press joins it (L-007). */
+  private readonly linkRuns = new Map<string, Promise<AdapterAnswer>>();
 
   constructor(private readonly options: RendererAdapterOptions) {
     this.newEpoch = options.newEpoch ?? randomEpoch;
@@ -317,12 +322,13 @@ export class RendererAdapter {
       }
       if (cmd.type === "chat.snapshot") return { ok: true, result: await this.snapshot(cmd.botId) };
       if (cmd.type === "chat.history") return { ok: true, result: await this.history(cmd) };
-      if (cmd.type === "chat.shown" && cmd.botId) this.show(cmd.botId);
+      if (cmd.type === "chat.shown" && cmd.botId) { this.show(cmd.botId); this.refreshLinkMenus(); }
       // A peer's bot: the window hints go nowhere (the attached server's core does not have the bot; M3 step 11).
       if ((cmd.type === "chat.shown" || cmd.type === "chat.read") && cmd.botId && this.peerOf(cmd.botId)) return { ok: true, result: {} };
       // F1 (M6-06): plugin secrets never enter the durable outbox (fe-link.sqlite); send as a non-persisted req.
       if (cmd.type === "plugins.secret") return await this.read(cmd);
       if (READ_COMMANDS.has(cmd.type)) return await this.read(cmd);
+      if (cmd.type === "plugins.linkCommand") return await this.linkCommand(cmd);
       return await this.command(cmd);
     } catch (error) {
       const wire = (error as { wire?: WireError }).wire;
@@ -351,7 +357,54 @@ export class RendererAdapter {
       if (!wait || !(await this.whenAttached(wait))) return { ok: false, error: { code: "core_unavailable", message: "The Botling server is not connected." } };
     }
     if (cmd.type === "plugins.web") return { ok: true, result: await this.pluginsWebAnswer() };
-    return { ok: true, result: await this.options.link.request(cmd) };
+    const result = await this.options.link.request(cmd);
+    if (cmd.type === "plugins.list") return { ok: true, result: this.shownPlugins(result as PluginsViewT) };
+    return { ok: true, result };
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // A peer bot's link buttons (M5-09)
+
+  /** The server whose plugins decide what the shown chat's link buttons may be: the owner of a peer's bot, else null (the attached one's). */
+  private linkOwner(): string | null {
+    return this.shown ? this.peerOf(this.shown) : null;
+  }
+
+  /**
+   * The plugin view the window gets while a peer's bot is shown: its `chat/link` entries only for plugins that machine has. What the
+   * window is given is noted, so a later change of the shown chat or of that machine's plugins sends the list again (`refreshLinkMenus`).
+   */
+  private shownPlugins(plugins: PluginsViewT): PluginsViewT {
+    const owner = this.linkOwner();
+    const view = owner ? withOwnerLinkMenus(plugins, this.options.link.table?.(owner)?.rows) : plugins;
+    this.linkMenus = linkMenuKey(view);
+    return view;
+  }
+
+  /** The shown chat or its owner's plugin rows changed: when that changes the offered link buttons, tell the window with a `plugins.updated`. */
+  private refreshLinkMenus(): void {
+    const full = this.base?.plugins;
+    if (!this.served || !full || this.linkMenus === null) return;
+    const owner = this.linkOwner();
+    const view = owner ? withOwnerLinkMenus(full, this.options.link.table?.(owner)?.rows) : full;
+    if (linkMenuKey(view) !== this.linkMenus) this.emitEvent({ type: "plugins.updated", plugins: full });
+  }
+
+  /**
+   * `plugins.linkCommand` from the window. For the attached server's own bot it goes as it always did (the window needs no `via`). For
+   * a peer's bot it runs on that machine as the plugin that contributes the button, so it goes with that plugin's `via`, stamped from
+   * the owner's row (never the attached server's); a button no entry offers is refused here.
+   */
+  private async linkCommand(cmd: Extract<Command, { type: "plugins.linkCommand" }>): Promise<AdapterAnswer> {
+    if (!this.peerOf(cmd.botId)) return await this.command(cmd);
+    const plugin = chatLinkPlugin(this.base?.plugins, cmd.id);
+    if (!plugin) return { ok: false, error: { code: "forbidden", message: "not sent: that link button is not offered" } };
+    const key = JSON.stringify([cmd.botId, cmd.messageId, cmd.url, cmd.id]);
+    const running = this.linkRuns.get(key);
+    if (running) return await running;
+    const run = this.command(cmd, { plugin }).finally(() => { this.linkRuns.delete(key); });
+    this.linkRuns.set(key, run);
+    return await run;
   }
 
   private pluginsWebAnswer(): Promise<unknown> {
@@ -363,8 +416,8 @@ export class RendererAdapter {
     return asked;
   }
 
-  private resolveVia(via: RequestVia): Via | null {
-    const serverId = this.options.link.server;
+  /** `serverId`: whose `plugin:` row stamps the hash: the owner of the bot the command is for (M5-09), else the attached server. */
+  private resolveVia(via: RequestVia, serverId: string | null = this.options.link.server): Via | null {
     const table = serverId ? this.options.link.table?.(serverId) ?? null : null;
     const rawRow = table?.rows.get(`plugin:${via.plugin}`);
     const parsedRow = rawRow ? PluginRow.safeParse(rawRow) : null;
@@ -373,11 +426,12 @@ export class RendererAdapter {
   }
 
   private async command(cmd: Command, via?: RequestVia): Promise<AdapterAnswer> {
-    if (via && !this.resolveVia(via)) {
-      return { ok: false, error: { code: "forbidden", message: "not sent: the plugin is not installed on this machine" } };
-    }
-    if (cmd.type.startsWith("plugins.")) this.pluginsWeb = null;
     const botId = botIdOf(cmd);
+    // A command for a peer's bot is decided on that machine: its row, its code hash (M5-09).
+    const viaServer = (botId ? this.peerOf(botId) : null) ?? this.options.link.server;
+    const missing = (): AdapterAnswer => ({ ok: false, error: { code: "forbidden", message: `not sent: the plugin is not installed on ${viaServer === this.options.link.server ? "this" : "that"} machine` } });
+    if (via && !this.resolveVia(via, viaServer)) return missing();
+    if (cmd.type.startsWith("plugins.")) this.pluginsWeb = null;
     let target: Target;
     if (botId) target = streamOf(botId);
     else {
@@ -393,8 +447,8 @@ export class RendererAdapter {
     // Authority at use (L-008): re-read the plugin row after any await so hot swaps or uninstalls never stamp a stale hash.
     let resolvedVia: Via | undefined;
     if (via) {
-      const fresh = this.resolveVia(via);
-      if (!fresh) return { ok: false, error: { code: "forbidden", message: "not sent: the plugin is not installed on this machine" } };
+      const fresh = this.resolveVia(via, viaServer);
+      if (!fresh) return missing();
       resolvedVia = fresh;
     }
     const basis = botId && CARD_COMMANDS.has(cmd.type) ? link.cursor(target) : null;
@@ -449,7 +503,9 @@ export class RendererAdapter {
     }
     const chat = chatId ? this.chatOf(chatId, fresh) : null;
     this.served = true;
-    return { ...this.base!, epoch: this.epoch, seq: this.seq, chat };
+    const answer = { ...this.base!, epoch: this.epoch, seq: this.seq, chat };
+    if (answer.plugins) answer.plugins = this.shownPlugins(answer.plugins);
+    return answer;
   }
 
   /** The chat part of a snapshot: the server's (or the last known) with the lines and runs this adapter mirrors. */
@@ -624,6 +680,8 @@ export class RendererAdapter {
         if (this.base.bots.some((bot) => bot.id === botId) && !this.peerOf(botId)) this.emitEvent({ type: "bot.removed", botId });
       }
     }
+    // M5-09: a peer's plugin rows decide which link buttons its bots' chats offer.
+    if (table && [...table.changed, ...table.removed].some((key) => key.startsWith("plugin:"))) this.refreshLinkMenus();
     this.renderNotice();
   }
 
@@ -928,6 +986,12 @@ export class RendererAdapter {
     this.seq += 1;
     if (event.type === "plugins.updated") this.pluginsWeb = null;
     this.mirror(event, model);
+    // The window's copy of the plugin view hides link buttons the shown peer's machine cannot run (the mirror keeps the whole view).
+    if (event.type === "plugins.updated") {
+      const shown = this.shownPlugins(event.plugins);
+      this.options.emit(shown === event.plugins ? checked.data : { ...checked.data, event: { ...event, plugins: shown } });
+      return;
+    }
     this.options.emit(checked.data);
   }
 

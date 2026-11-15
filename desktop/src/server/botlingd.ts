@@ -28,6 +28,7 @@ import { ContentService } from "./content";
 import { ChunkCache, PeerCacheBudget } from "./content/chunk-cache";
 import { LocalPeerReads } from "./content/local-peer-read";
 import { LOCAL_WINDOW, PeerContent, PeerContentOwner } from "./content/peer-content";
+import { lineContentRef } from "./content/line-content";
 import { PluginContentRead } from "./content/plugin-read";
 import { RemoteContent } from "./content/remote";
 import { Uploads } from "./content/put";
@@ -552,6 +553,8 @@ export class Botlingd {
             return pluginRead.fetch(storageDir, ref);
           },
         },
+        // M5-09: a link button's file that is no longer on this disk is given as the line's content reference.
+        lineContent: (botId, messageId, link) => lineContentRef(hub.reader(), serverId, botId, messageId, link),
         remoteMembers: () => peerRemoteMembers(roster, hub.reader()),
         machines: () => peerMachines(roster, hub.reader()),
         // M5-04c: the origin is built below, after the core; a call before then is "not ready".
