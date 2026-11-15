@@ -196,6 +196,7 @@ async function setupClusterNodes(
     const port = basePort + i;
     const roster = await RosterStore.open(stores[i]!, identities[i]!, { log: (l) => logs.push(l) });
     let peers!: PeerSessions;
+    let node!: Node;
     const vapidSync = new VapidKeySync({
       dataDir: dirs[i]!,
       roster,
@@ -208,8 +209,9 @@ async function setupClusterNodes(
       self: { memberId: identities[i]!.memberId, dhPub: identities[i]!.dhPub, dhKey: identities[i]!.dhKey },
       timers: TIMERS,
       log: (l) => logs.push(l),
-      onMessage: async (session, message) => vapidSync.onMessage(session, message),
-      sessionOpened: (session) => { vapidSync.sessionOpened(session); },
+      // Through `node.vapidSync`, so a test that restarts the sync (F1) gets the frames and session opens too.
+      onMessage: async (session, message) => node.vapidSync.onMessage(session, message),
+      sessionOpened: (session) => { node.vapidSync.sessionOpened(session); },
     }, { connector: net.connector(names[i]!) });
 
     const router = new SessionRouter(
@@ -222,7 +224,7 @@ async function setupClusterNodes(
       vapidSync.start();
     }
 
-    const node: Node = {
+    node = {
       name: names[i]!,
       port,
       dir: dirs[i]!,
@@ -582,6 +584,9 @@ describe("M4-26: root minting & encrypted peer distribution on server revocation
       log: (l) => rootNode.logs.push(l),
     });
     cleanups.push(() => restartedSync.close());
+    // A restarted process wires its new sync into the peer sessions: a duplicate session settling after start()
+    // (one per pair) gets the key through sessionOpened, as in botlingd. Without this the test failed 1 run in 10.
+    rootNode.vapidSync = restartedSync;
     restartedSync.start();
 
     const rec = readVapidKeyRecord(rootNode.dir);
