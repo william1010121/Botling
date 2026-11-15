@@ -29,6 +29,7 @@ import { randomUUID } from "node:crypto";
 import type { Bot } from "./bot";
 import type { ComponentLibrary } from "./components/library";
 import { COMPONENT_LIMIT, safeName } from "./components/library";
+import { writeFileAtomic } from "./durable/atomic";
 import { title } from "./plugins/manifest";
 import type { BotRequest } from "./reply";
 import { MAINTAINER_ID } from "./store/records";
