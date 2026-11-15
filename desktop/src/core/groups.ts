@@ -4,7 +4,7 @@
 //   copy; the chat's own bot is told who else answers and later hears what they said;
 // - a bot's @ (BotMentions.swift): a line of its reply that starts with @ and another bot's name calls
 //   that bot in with the words after the name, as a fellow bot's question (its tags do not act), once
-//   per reply (bot-mentions.json), at most 3 times per message of the user's;
+//   per reply (bot-mentions.json), no cap per message of the user's (a hand-back chain ends at MAX_FOLLOW_DEPTH);
 //
 // This file holds the pure parts (names, mentions, the prompts, the transcript), checked string for
 // string against the Swift code (test/fixtures/groups-golden.json); `Conversations` in server.ts runs
@@ -21,8 +21,6 @@ export interface Member { id: string; name: string }
 export const CALLED_IN_LEAD = "(App: The user called you into ";
 /** How a prompt starts for a bot another bot called in with @ (`botCalledInLead`). */
 export const BOT_CALLED_IN_LEAD = "(App: A bot called you in with @. ";
-/** The most bot @s one chat's bot may deliver per message of the user's (`botMentionsPerUserLine`). */
-export const BOT_MENTIONS_PER_USER_LINE = 3;
 /** How many lines of a chat a guest is shown (`guestTranscriptLines`). */
 export const GUEST_TRANSCRIPT_LINES = 15;
 /** How long a guest waits for a busy bot, and how long it may take to answer, in ms (`groupTiming`). */

@@ -180,7 +180,7 @@ describe("a bot's @ with a name no bot has exactly", () => {
     } finally { vi.restoreAllMocks(); }
   });
 
-  it("the resolved call is delivered once and counts toward the per-message cap", async () => {
+  it("the resolved call is delivered once, and there is no cap on how many one message of the user's may bring", async () => {
     const h = fixture();
     try {
       const caller = h.watch(SPECIAL);
@@ -191,12 +191,45 @@ describe("a bot's @ with a name no bot has exactly", () => {
       // The same reply heard again: no new call.
       h.conversations.receiveBotMention(line, caller);
       expect(records(h)).toHaveLength(1);
-      // Two more by the full name, then the fourth (written short) is over the cap.
+      // The 2nd, 3rd, 4th (written short, it used to be over the cap of 3), 5th and 6th @ since the user's last line are all delivered.
       h.conversations.receiveBotMention({ id: "R2", role: "bot", text: "@gkey-release-candidate 第二個問題", date: 0 }, caller);
       h.conversations.receiveBotMention({ id: "R3", role: "bot", text: "@gkey-release-candidate 第三個問題", date: 0 }, caller);
       h.conversations.receiveBotMention({ id: "R4", role: "bot", text: "@gkey 第四個問題", date: 0 }, caller);
-      expect(records(h)).toHaveLength(3);
-      expect(h.notices.get(SPECIAL)!.at(-1)).toMatch(/^Not sent to gkey-release-candidate with @: a bot can call others in at most 3 times/);
+      h.conversations.receiveBotMention({ id: "R5", role: "bot", text: "@gkey-release-candidate 第五個問題", date: 0 }, caller);
+      h.conversations.receiveBotMention({ id: "R6", role: "bot", text: "@gkey-release-candidate 第六個問題", date: 0 }, caller);
+      expect(records(h).map((entry) => entry.message)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6"]);
+      expect(h.notices.get(SPECIAL)!.filter((text) => /^Not sent/.test(text))).toEqual([]);
+      // The same words again since the user's last line are still a retry (merged into the pending one), not a new call.
+      h.conversations.receiveBotMention({ id: "R7", role: "bot", text: "@gkey-release-candidate 第六個問題", date: 0 }, caller);
+      expect(records(h)).toHaveLength(6);
+    } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
+  });
+
+  it("a bot and the bot it calls cannot ping-pong: the hand-back chain ends at MAX_FOLLOW_DEPTH, with no cap to do it", async () => {
+    const h = fixture();
+    try {
+      const caller = h.watch(SPECIAL);
+      const rc = h.bots.get(GKEY_RC)!;
+      const answers: ((answer: GuestAnswer) => void)[] = [];
+      vi.spyOn(rc, "groupTurn").mockImplementation(() => new Promise<GuestAnswer>((resolve) => answers.push(resolve)));
+      const ok = (i: number) => answers[i]!({ kind: "reply", text: "好了。", steps: [], engine: "claude" });
+      // The user's message brings the 1st @ (depth 1); the callee answers and the caller is woken with the answer.
+      h.conversations.receiveBotMention({ id: "P1", role: "bot", text: "@gkey-release-candidate 第一輪", date: 0 }, caller);
+      await vi.waitFor(() => expect(answers).toHaveLength(1));
+      ok(0);
+      await vi.waitFor(() => expect(h.conversations.followUps.get(SPECIAL)?.depth).toBe(1));
+      // The reply to that wake @s again (depth 2); the callee answers, and this time nobody is woken.
+      h.conversations.receiveBotMention({ id: "P2", role: "bot", text: "@gkey-release-candidate 第二輪", date: 0 }, caller);
+      await vi.waitFor(() => expect(answers).toHaveLength(2));
+      ok(1);
+      await vi.waitFor(() => expect(h.conversations.pending.get(SPECIAL) ?? []).toEqual([]));
+      expect(h.conversations.followUps.get(SPECIAL)).toBeUndefined();
+      // A third in a row (the wake at depth 2) is refused whatever the words, and nothing more is delivered.
+      h.conversations.followUps.set(SPECIAL, { depth: 2, until: Date.now() + 60_000 });
+      h.conversations.receiveBotMention({ id: "P3", role: "bot", text: "@gkey-release-candidate 第三輪", date: 0 }, caller);
+      expect(records(h).map((entry) => entry.message)).toEqual(["P1", "P2"]);
+      expect(h.notices.get(SPECIAL)!.at(-1)).toMatch(/^Not sent to gkey-release-candidate with @: bots have already called each other in 2 times in a row/);
+      expect(answers).toHaveLength(2);
     } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
   });
 });

@@ -1,6 +1,7 @@
 // @ routing and call-ins (spec/models/callin) against the real Core, through spec-adapters/callin-adapter.ts.
 // (a) Conformance: seeded random walks of the reference, and a few fixed ones, are driven into the app;
-//     after every step what the app shows must be what the reference says.
+//     after every step what the app shows must be what the reference says, and the reference keeps the model's
+//     invariants and action properties (no new round of @s without a user line).
 // (b) Trace check: the same walks run with BOTLING_SPEC_TRACE set; every line the app wrote must be a step
 //     the reference allows (after steps the app does not trace: a callee's turn beginning, an own turn
 //     ending with nothing to show, a sub bot removed).
@@ -34,17 +35,17 @@ const temp = (name: string) => { const dir = mkdtempSync(join(tmpdir(), name)); 
 async function open(): Promise<{ driver: CallinDriver; ref: CallinReference }> {
   const driver = await createCallinDriver({ dataDir: temp("spec-callin-") });
   drivers.push(driver);
-  // The app's BOT_MENTIONS_PER_USER_LINE and MAX_FOLLOW_DEPTH.
-  return { driver, ref: new CallinReference({ top: driver.top, parent: driver.parent, cap: 3, maxDepth: 2, bug: BUG }) };
+  // The app's MAX_FOLLOW_DEPTH (there is no cap per message of the user's).
+  return { driver, ref: new CallinReference({ top: driver.top, parent: driver.parent, maxDepth: 2, bug: BUG }) };
 }
 
-/** Runs the steps the app takes by itself until none is left. */
-function internal(ref: CallinReference, s: CallinState): CallinState {
+/** Runs the steps the app takes by itself until none is left; adds the action properties they break to `broken`. */
+function internal(ref: CallinReference, s: CallinState, broken: string[]): CallinState {
   for (let moved = true; moved;) {
     moved = false;
     for (const c of ref.config.top) for (const name of INTERNAL) {
       const next = ref.step(s, { name, c });
-      if (next) { s = next; moved = true; }
+      if (next) { broken.push(...ref.stepProperties(s, { name, c }, next)); s = next; moved = true; }
     }
   }
   return s;
@@ -79,8 +80,10 @@ async function walk(pick: (enabled: CallinAction[], step: number, s: CallinState
     const next = ref.step(s, a);
     if (!next) throw new Error(`${label(a)} is not enabled after ${done.join(" ")}`);
     await drive(driver, s, a, ids);
-    s = internal(ref, next);
+    const broken = ref.stepProperties(s, a, next);
+    s = internal(ref, next, broken);
     done.push(label(a));
+    expect(broken, done.join(" ")).toEqual([]);
     expect(ref.invariants(s), done.join(" ")).toEqual([]);
     expect(driver.view(), done.join(" ")).toEqual(viewOf(ref, s));
   }
@@ -131,6 +134,21 @@ describe("callin conformance", () => {
   ] as [string, CallinAction[]][])("%s", async (_, actions) => {
     const { done } = await walk(fixed(actions), actions.length);
     expect(done).toHaveLength(actions.length);
+  });
+
+  // Was: a 4th bot @ since the user's last message was dropped with a notice (BOT_MENTIONS_PER_USER_LINE = 3).
+  it("a 4th bot @ since your last message is delivered: no cap per message, the depth limit ends each chain", async () => {
+    const [first, second] = BODIES as [string, string];
+    const { driver, s } = await walk(fixed([
+      { name: "UserLine", c: "A", t: null }, { name: "UserLine", c: "A", t: null },
+      { name: "BotReply", c: "A", t: "B", b: first }, { name: "BotReply", c: "A", t: "C", b: first },
+      { name: "Answer", c: "A" }, { name: "Answer", c: "A" },
+      // Both answers handed back: the next reply goes one level deeper (the last), the one after starts again.
+      { name: "BotReply", c: "A", t: "B", b: second }, { name: "BotReply", c: "A", t: "C", b: second },
+      { name: "Answer", c: "A" }, { name: "Answer", c: "A" },
+    ]), 10);
+    expect(s.ev.map((e) => `${e.by} ${e.to} ${e.st} d${e.depth}`)).toEqual(["bot B answered d1", "bot C answered d1", "bot B answered d2", "bot C answered d1"]);
+    expect(driver.view()).toMatchObject({ pending: { A: [] }, notices: { A: 0 }, answers: { A: 4 }, wakes: { A: 3 }, followUp: { A: 1 } });
   });
 
   it.each(SEEDS)("random walk, seed %i", async (seed) => {
