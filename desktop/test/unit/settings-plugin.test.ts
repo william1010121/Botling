@@ -181,8 +181,8 @@ describe("plugins' pages in the same slot", () => {
     // The plugins stay registered: they are loaded, and every row that does not need the settings slots is still there.
     for (const name of ["botling.git", "botling.usage", "zed.tools"]) expect(rendererKernel.state(name), name).toBe("active");
     expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
-    // (a menu :shell still owns; `chat/link` is botling.chat's since M7-06a)
-    expect(pluginFeed.rows("browser/tab")).toEqual(view.menus!.filter((row) => row.menu === "browser/tab"));
+    // (a menu :shell keeps for good, `app/palette`; `chat/link` is botling.chat's since M7-06a, `browser/tab` botling.browser-pane's since M7-06c)
+    expect(pluginFeed.rows("app/palette")).toEqual(view.menus!.filter((row) => row.menu === "commandPalette"));
     expect(rows()).toEqual([]);
     // Back: core pages first, the plugins' pages after them.
     await one.start();
