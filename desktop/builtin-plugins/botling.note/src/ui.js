@@ -26,7 +26,7 @@ import {
 export { inline, classify };
 
 function mount(root, ccb) {
-  const st = { botId: ccb.context?.botId ?? "" }; // the editor state (part 1: the document and selection)
+  const st = { botId: ccb.context?.botId ?? "" }; // the editor state (parts 1 and 2: the document, the selection, the view, popups, tables, cards, drag, map)
   for (const [id, css] of [["botling-note-katex", katexCss], ["botling-note-css", CSS + BOARD_CSS]]) {
     document.getElementById(id)?.remove();
     const style = document.createElement("style");
@@ -78,7 +78,7 @@ function mount(root, ccb) {
   fileInput.multiple = true;
   fileInput.hidden = true;
   wrap.append(status, warn, kept, st.body, fileInput);
-  let folds = {}; // whiteboard: the branches folded into one card (fork key -> true); kept with the view, never in note.md
+  st.folds = {}; // whiteboard: the branches folded into one card (fork key -> true); kept with the view, never in note.md
   root.append(wrap);
   // The note is 100vh tall, but the frame around it may add padding: shrink by the overflow so the frame itself never
   // scrolls (a scrolled frame hides the status bar), and pin the frame's own scroll at 0 if anything nudges it.
@@ -97,14 +97,14 @@ function mount(root, ccb) {
 
   st.lines = [""];
   st.active = -1; // the line the cursor is in; -1: none
-  let caret = 0;
+  st.caret = 0;
   st.mtime = 0;
   st.dirty = false;
   st.saving = false;
   st.loaded = false;
   st.timer = null;
-  let gone = false;
-  let state = "loading";
+  st.gone = false;
+  st.state = "loading";
 
   // Which route of each fork is shown: `sel` maps fork.key -> route name. A nested fork's key holds its parent fork's key
   // and route ("層1#1/A>層2#1"), so it is a next[node] pointer per route: switching a fork changes only its own entry, and
@@ -114,38 +114,38 @@ function mount(root, ccb) {
   // usually sandboxed (no localStorage); localStorage is only a fallback for an app without plugin storage.
   const SEL_KEY = `botling.note.routes.${st.botId}`;
   const POS_KEY = `botling.note.pos.${st.botId}`;
-  let sel = {};
-  let pos = null; // where the reader was, restored once on open: { line, caret, scroll, editing, text }
+  st.sel = {};
+  st.pos = null; // where the reader was, restored once on open: { line, caret, scroll, editing, text }
   try {
     const raw = JSON.parse(localStorage.getItem(SEL_KEY) ?? "{}");
-    if (raw && typeof raw === "object" && !Array.isArray(raw)) sel = raw;
-    pos = JSON.parse(localStorage.getItem(POS_KEY) ?? "null");
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) st.sel = raw;
+    st.pos = JSON.parse(localStorage.getItem(POS_KEY) ?? "null");
   } catch {
-    sel = {};
+    st.sel = {};
   }
-  let viewTimer = null;
-  let viewReady = false; // the stored view has been read (nothing is written before that)
-  let lastLine = -1; // the line last edited, its caret, and whether a line was being edited (focus leaving the frame
-  let lastCaret = 0; // closes the line editor; reopening still puts the cursor back)
-  let wasEditing = false;
-  let viewSent = "";
+  st.viewTimer = null;
+  st.viewReady = false; // the stored view has been read (nothing is written before that)
+  st.lastLine = -1; // the line last edited, its caret, and whether a line was being edited (focus leaving the frame
+  st.lastCaret = 0; // closes the line editor; reopening still puts the cursor back)
+  st.wasEditing = false;
+  st.viewSent = "";
   function viewNow() {
     const ta = st.doc.querySelector(".nl-active textarea");
-    if (ta) lastCaret = ta.selectionStart ?? caret;
-    const line = Math.max(0, Math.min(st.lines.length - 1, st.active >= 0 ? st.active : tcell ? tcell.start : lastLine));
+    if (ta) st.lastCaret = ta.selectionStart ?? st.caret;
+    const line = Math.max(0, Math.min(st.lines.length - 1, st.active >= 0 ? st.active : st.tcell ? st.tcell.start : st.lastLine));
     return {
-      routes: sel,
-      folds,
-      pos: { line, caret: lastCaret, scroll: Math.round(st.body.scrollTop), editing: wasEditing && !tcell && !st.msel, text: st.lines[line] ?? "" },
+      routes: st.sel,
+      folds: st.folds,
+      pos: { line, caret: st.lastCaret, scroll: Math.round(st.body.scrollTop), editing: st.wasEditing && !st.tcell && !st.msel, text: st.lines[line] ?? "" },
     };
   }
   async function flushView() {
-    clearTimeout(viewTimer);
-    if (!viewReady || !st.loaded) return;
+    clearTimeout(st.viewTimer);
+    if (!st.viewReady || !st.loaded) return;
     const v = viewNow();
     const s = JSON.stringify(v);
-    if (s === viewSent) return;
-    viewSent = s;
+    if (s === st.viewSent) return;
+    st.viewSent = s;
     try {
       localStorage.setItem(SEL_KEY, JSON.stringify(v.routes));
       localStorage.setItem(POS_KEY, JSON.stringify(v.pos));
@@ -159,14 +159,14 @@ function mount(root, ccb) {
     }
   }
   const saveView = () => {
-    clearTimeout(viewTimer);
-    viewTimer = setTimeout(flushView, 500);
+    clearTimeout(st.viewTimer);
+    st.viewTimer = setTimeout(flushView, 500);
   };
   const saveSel = () => saveView();
   // Back to where the reader was: the same line (found again by its text if lines moved), its caret, the scroll.
   function restorePos() {
-    const p = pos;
-    pos = null;
+    const p = st.pos;
+    st.pos = null;
     if (!p || typeof p !== "object") return;
     let line = Math.min(Number(p.line) || 0, st.lines.length - 1);
     if (typeof p.text === "string" && st.lines[line] !== p.text) {
@@ -176,19 +176,19 @@ function mount(root, ccb) {
     }
     const m = model();
     if (p.editing && m.editable(line) && m.info[line].kind === "text") activate(line, Math.min(Number(p.caret) || 0, st.lines[line].length));
-    lastLine = line;
+    st.lastLine = line;
     const top = Number(p.scroll) || 0;
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!gone) st.body.scrollTop = top;
+      if (!st.gone) st.body.scrollTop = top;
     }));
   }
 
   st.edit = null; // an inline rename: { fkey, route: name | null (the fork's own name) }
-  let popup = null; // { el, kind: "insert" | "menu", items, idx }
-  let mapEl = null; // the overview panel
-  let menuLine = -1; // the line the insert menu belongs to
-  let plusMode = false; // the menu was opened with "+" (an empty line), not by typing "/"
-  let dismissed = false; // Esc closed the "/" menu; stays closed until the text stops being a slash command
+  st.popup = null; // { el, kind: "insert" | "menu", items, idx }
+  st.mapEl = null; // the overview panel
+  st.menuLine = -1; // the line the insert menu belongs to
+  st.plusMode = false; // the menu was opened with "+" (an empty line), not by typing "/"
+  st.dismissed = false; // Esc closed the "/" menu; stays closed until the text stops being a slash command
 
   const setStatus = (text, action) => {
     statusText.textContent = text;
@@ -200,7 +200,7 @@ function mount(root, ccb) {
     }
   };
   const showState = (s) => {
-    state = s;
+    st.state = s;
     setStatus(s === "saved" ? "Saved" : s === "dirty" ? "Editing…" : s === "saving" ? "Saving…" : s === "error" ? "Could not save" : "Loading…",
       s === "error" ? { label: "Retry", run: () => flush() } : undefined);
   };
@@ -219,25 +219,25 @@ function mount(root, ccb) {
   function model() {
     const info = classify(st.lines);
     const meta = parseBranches(st.lines, info);
-    const vis = (i) => pathVisible(meta.at[i].path, sel);
+    const vis = (i) => pathVisible(meta.at[i].path, st.sel);
     const editable = (i) => i >= 0 && i < st.lines.length && meta.at[i].marker === null && !(info[i].kind === "text" && isCellLine(st.lines[i])) && vis(i);
     let cells = cellRuns(st.lines, info, meta);
-    if (appCut && appCut.text === text()) cells = appCut.cells;
+    if (st.appCut && st.appCut.text === text()) cells = st.appCut.cells;
     return { info, meta, vis, editable, cells };
   }
   // The app (note.db) is where cells are cut: src/note-cells.ts is its rules, bundled unchanged, so drawing stays instant.
   // After a read and after each save the app is asked how it cuts that same text (notes.parse `cells` / `branches`); if
   // its cells differ (the app moved on to newer rules than this copy), its cells are drawn while the text stays the same.
   // An app without these fields (older) answers null: ours are used.
-  let appCut = null; // { text, cells: { runs, at } }
-  let cutWarned = false;
+  st.appCut = null; // { text, cells: { runs, at } }
+  st.cutWarned = false;
   const runKey = (r) => [r.start, r.end, r.above, r.below, !!r.softAbove, !!r.softBelow, !!r.aboveCell, !!r.belowCell, r.first, r.last, !!r.empty, r.type].join(",");
   async function checkCut(sent) {
     let res = null;
     try {
       res = await ccb.host.call("parse", { botId: st.botId, text: sent });
     } catch {}
-    if (gone || !res || !Array.isArray(res.cells) || text() !== sent) return;
+    if (st.gone || !res || !Array.isArray(res.cells) || text() !== sent) return;
     const n = st.lines.length;
     const runs = res.cells;
     let ok = true;
@@ -254,26 +254,26 @@ function mount(root, ccb) {
     if (Array.isArray(res.branches)) {
       const fk = (f) => [f.key, f.start, f.endLine, f.depth, ...f.routes.map((r) => [r.name, r.marker, r.start, r.end, !!r.implicit].join(":"))].join("|");
       const theirs = res.branches.map(fk).join("\n");
-      if (theirs !== meta.forks.map(fk).join("\n") && !cutWarned) {
-        cutWarned = true;
+      if (theirs !== meta.forks.map(fk).join("\n") && !st.cutWarned) {
+        st.cutWarned = true;
         console.warn("botling.note: the app reads the branches of this note differently from the bundled note-cells.ts (an app of another version)");
       }
     }
-    const had = appCut;
+    const had = st.appCut;
     if (same || !ok) {
-      appCut = null;
+      st.appCut = null;
     } else {
       const at = new Array(n).fill(-1);
       runs.forEach((r, k) => {
         for (let i = r.start; i <= r.end; i++) at[i] = k;
       });
-      appCut = { text: sent, cells: { runs: runs.map((r) => ({ ...r })), at } };
-      if (!cutWarned) {
-        cutWarned = true;
+      st.appCut = { text: sent, cells: { runs: runs.map((r) => ({ ...r })), at } };
+      if (!st.cutWarned) {
+        st.cutWarned = true;
         console.warn("botling.note: the app cuts this note into cells differently from the bundled note-cells.ts (an app of another version); drawing the app's cells");
       }
     }
-    if ((had || appCut) && !drag && !st.msel) render();
+    if ((had || st.appCut) && !st.drag && !st.msel) render();
   }
   const prevEditable = (i) => {
     const m = model();
@@ -292,17 +292,17 @@ function mount(root, ccb) {
   };
 
   const selectRoute = (fork, route) => {
-    sel[fork.key] = route.name;
+    st.sel[fork.key] = route.name;
     saveSel();
   };
   // Rename keeps the remembered choices: keys that start with the old fork / route path move to the new one.
   const migrate = (from, to) => {
     if (from === to) return;
-    for (const k of Object.keys(sel)) {
+    for (const k of Object.keys(st.sel)) {
       const nk = k === from || k.startsWith(`${from}/`) ? to + k.slice(from.length) : k;
       if (nk !== k) {
-        sel[nk] = sel[k];
-        delete sel[k];
+        st.sel[nk] = st.sel[k];
+        delete st.sel[k];
       }
     }
     saveSel();
@@ -313,8 +313,8 @@ function mount(root, ccb) {
 
   // ---- popups (insert menu, block menu, route menu) ----
   function closePopup() {
-    if (popup) popup.el.remove();
-    popup = null;
+    if (st.popup) st.popup.el.remove();
+    st.popup = null;
   }
   function openPopup(kind, rect, items) {
     closePopup();
@@ -373,21 +373,21 @@ function mount(root, ccb) {
     const below = rect.bottom + 4;
     el.style.left = `${left}px`;
     el.style.top = `${below + h > window.innerHeight - 8 ? Math.max(8, rect.top - h - 4) : below}px`;
-    popup = { el, kind, items: shown, idx: Math.max(0, shown.findIndex((s) => !s.it.disabled)) };
+    st.popup = { el, kind, items: shown, idx: Math.max(0, shown.findIndex((s) => !s.it.disabled)) };
     markPopup();
   }
   function markPopup() {
-    if (!popup) return;
-    popup.items.forEach((s, n) => s.b.setAttribute("aria-selected", String(n === popup.idx && popup.kind === "insert")));
-    popup.items[popup.idx]?.b.scrollIntoView?.({ block: "nearest" });
+    if (!st.popup) return;
+    st.popup.items.forEach((s, n) => s.b.setAttribute("aria-selected", String(n === st.popup.idx && st.popup.kind === "insert")));
+    st.popup.items[st.popup.idx]?.b.scrollIntoView?.({ block: "nearest" });
   }
   function movePopup(d) {
-    if (!popup) return;
-    const n = popup.items.length;
+    if (!st.popup) return;
+    const n = st.popup.items.length;
     for (let k = 1; k <= n; k++) {
-      const j = (popup.idx + d * k + n * k) % n;
-      if (!popup.items[j].it.disabled) {
-        popup.idx = j;
+      const j = (st.popup.idx + d * k + n * k) % n;
+      if (!st.popup.items[j].it.disabled) {
+        st.popup.idx = j;
         break;
       }
     }
@@ -402,34 +402,34 @@ function mount(root, ccb) {
   function syncInsertMenu(ta) {
     const val = ta.value;
     const slash = /^\/\S*$/.test(val);
-    if (!slash) dismissed = false;
-    const want = !dismissed && (slash || (plusMode && val === ""));
+    if (!slash) st.dismissed = false;
+    const want = !st.dismissed && (slash || (st.plusMode && val === ""));
     if (!want) {
-      if (!slash) plusMode = false;
-      if (popup?.kind === "insert") closePopup();
-      menuLine = -1;
+      if (!slash) st.plusMode = false;
+      if (st.popup?.kind === "insert") closePopup();
+      st.menuLine = -1;
       return;
     }
     const items = insertItems(slash ? val.slice(1) : "");
     if (!items.length) {
-      if (popup?.kind === "insert") closePopup();
+      if (st.popup?.kind === "insert") closePopup();
       return;
     }
-    const keep = popup?.kind === "insert" ? popup.items[popup.idx]?.it.id : null;
-    menuLine = st.active;
+    const keep = st.popup?.kind === "insert" ? st.popup.items[st.popup.idx]?.it.id : null;
+    st.menuLine = st.active;
     openPopup("insert", ta.getBoundingClientRect(), [
       { head: "基本" },
       ...items.map((it) => ({ ...it, run: () => applyInsert(it.id, st.active) })),
     ]);
-    const at = popup.items.findIndex((s) => s.it.id === keep && !s.it.disabled);
-    if (at >= 0) popup.idx = at;
+    const at = st.popup.items.findIndex((s) => s.it.id === keep && !s.it.disabled);
+    if (at >= 0) st.popup.idx = at;
     markPopup();
   }
 
   function applyInsert(id, i) {
     closePopup();
-    plusMode = false;
-    menuLine = -1;
+    st.plusMode = false;
+    st.menuLine = -1;
     if (i < 0 || i >= st.lines.length) return;
     const level = /^h([1-3])$/.exec(id);
     if (level) {
@@ -452,7 +452,7 @@ function mount(root, ccb) {
       st.lines[i] = "";
       changed();
       activate(i, 0);
-      imageAt = i;
+      st.imageAt = i;
       fileInput.click();
     } else if (id === "branch") {
       st.lines[i] = "";
@@ -480,14 +480,14 @@ function mount(root, ccb) {
   const redos = [];
   // A structural edit (move, split, merge, drag...) first saves what was typed before it, and is saved right after: note.db
   // keeps a cell's id by its text, so an edit and a move of the same cell are best two saves, not one.
-  const look = () => ({ text: text(), sel: JSON.stringify(sel) });
+  const look = () => ({ text: text(), sel: JSON.stringify(st.sel) });
   const snap = () => {
-    if (st.dirty && st.loaded && !gone && warn.hidden && state !== "error") flush();
+    if (st.dirty && st.loaded && !st.gone && warn.hidden && st.state !== "error") flush();
     return look();
   };
-  let tail = null; // { rec, line }: typing right after an edit over a selection joins that edit's undo step
+  st.tail = null; // { rec, line }: typing right after an edit over a selection joins that edit's undo step
   const record = (before) => {
-    tail = null;
+    st.tail = null;
     if (text() === before.text) return;
     undos.push({ before, after: snap() });
     if (undos.length > 100) undos.shift();
@@ -503,13 +503,13 @@ function mount(root, ccb) {
     setText(to.text);
     try {
       const v = JSON.parse(to.sel);
-      if (v && typeof v === "object") sel = v;
+      if (v && typeof v === "object") st.sel = v;
     } catch {
       /* keep the routes shown now */
     }
     saveSel();
     st.active = -1;
-    tcell = null;
+    st.tcell = null;
     st.msel = null;
     closePopup();
     changed();
@@ -518,7 +518,7 @@ function mount(root, ccb) {
     return true;
   }
   const onUndoKey = (e) => {
-    if (e.isComposing || e.altKey || !(e.metaKey || e.ctrlKey) || (e.key ?? "").toLowerCase() !== "z" || drag || boardOpen) return;
+    if (e.isComposing || e.altKey || !(e.metaKey || e.ctrlKey) || (e.key ?? "").toLowerCase() !== "z" || st.drag || st.boardOpen) return;
     if (undoStep(e.shiftKey)) {
       e.preventDefault();
       e.stopPropagation();
@@ -546,7 +546,7 @@ function mount(root, ccb) {
   // Where the cursor is now: the edited line and the caret inside it (the textarea knows it better than `caret`).
   const cursorNow = () => {
     const ta = st.doc.querySelector(".nl-active textarea");
-    return st.active >= 0 ? { i: st.active, pos: ta ? ta.selectionStart ?? caret : caret } : null;
+    return st.active >= 0 ? { i: st.active, pos: ta ? ta.selectionStart ?? st.caret : st.caret } : null;
   };
   const after = (res) => {
     closePopup();
@@ -579,7 +579,7 @@ function mount(root, ccb) {
     const res = insertCellBelow(st.lines, got.run);
     changed();
     record(b);
-    plusMode = !!withMenu;
+    st.plusMode = !!withMenu;
     activate(res.at, 0);
     if (withMenu) {
       queueMicrotask(() => {
@@ -603,7 +603,7 @@ function mount(root, ccb) {
     if (!res.error) res.end = res.start + run.end - run.start;
     else {
       const m = model();
-      const gaps = cellGaps(st.lines, m.meta, m.cells).filter((g) => pathVisible(g.path, sel));
+      const gaps = cellGaps(st.lines, m.meta, m.cells).filter((g) => pathVisible(g.path, st.sel));
       const p = gaps.findIndex((g) => g.next === got.idx);
       const target = p < 0 ? null : gaps[dir < 0 ? p - 1 : p + 2];
       if (!target) return flash(dir < 0 ? "已經是最上面一格" : "已經是最下面一格");
@@ -616,7 +616,7 @@ function mount(root, ccb) {
     changed();
     record(b);
     if (into) flash(`已移到「${into}」 · ⌘Z 復原`);
-    if (was >= 0) activate(Math.max(res.start, Math.min(res.end ?? res.start, res.start + (was - base))), caret);
+    if (was >= 0) activate(Math.max(res.start, Math.min(res.end ?? res.start, res.start + (was - base))), st.caret);
     else {
       st.active = -1;
       render();
@@ -760,10 +760,10 @@ function mount(root, ccb) {
     const old = route ? route.name : fork.name;
     if (name && name !== old) {
       if (route) {
-        const wasSelected = chosenRoute(fork, sel) === route;
+        const wasSelected = chosenRoute(fork, st.sel) === route;
         renameRoute(st.lines, fork, route, name);
         migrate(`${fork.key}/${old}>`, `${fork.key}/${name}>`);
-        if (wasSelected) sel[fork.key] = name;
+        if (wasSelected) st.sel[fork.key] = name;
         saveSel();
       } else {
         renameFork(st.lines, fork, name);
@@ -822,27 +822,27 @@ function mount(root, ccb) {
   // tcell: the table cell being edited { start (the table's first line), r (-1 = header), c, before (undo snapshot) }.
   // Typing rewrites only that table, tidy (padded columns), and only once something is typed: a table nobody edits
   // keeps its bytes. Each cell's typing is one undo step (Cmd+Z), as is each add / delete / align.
-  let tcell = null;
-  let tHover = null; // the cell under the pointer: { start, r, c }
+  st.tcell = null;
+  st.tHover = null; // the cell under the pointer: { start, r, c }
   const tableEnd = (start) => {
     const k = classify(st.lines)[start];
     return k && k.kind === "table" && k.start === start ? k.end : -1;
   };
   function commitCell() {
-    if (tcell) record(tcell.before);
-    if (tcell) tcell.before = snap();
+    if (st.tcell) record(st.tcell.before);
+    if (st.tcell) st.tcell.before = snap();
   }
   function enterCell(start, r, c, selectAll) {
     clearSel();
     commitCell();
     st.active = -1;
     closePopup();
-    tcell = { start, r, c, before: snap(), selectAll: !!selectAll };
+    st.tcell = { start, r, c, before: snap(), selectAll: !!selectAll };
     render();
   }
   function leaveTable() {
     commitCell();
-    tcell = null;
+    st.tcell = null;
     render();
   }
   // Go to line j from a line editor or a table: a table line is entered at its header (from above) or last row (from below).
@@ -876,10 +876,10 @@ function mount(root, ccb) {
     writeTable(start, t, to === "removed");
     record(b);
     if (to === "removed" || !to) {
-      tcell = null;
+      st.tcell = null;
       render();
     } else {
-      tcell = { start, r: to.r, c: to.c, before: snap() };
+      st.tcell = { start, r: to.r, c: to.c, before: snap() };
       render();
     }
   }
@@ -910,7 +910,7 @@ function mount(root, ccb) {
       }) },
       { ic: ICONS.trash, label: "刪除整個表格", danger: true, run: () => tableOp(start, () => "removed") },
       { sep: true },
-      { ic: "M↓", label: "編輯原始 Markdown", run: () => { commitCell(); tcell = null; closePopup(); activate(start + (r < 0 ? 0 : r + 2), 0); } },
+      { ic: "M↓", label: "編輯原始 Markdown", run: () => { commitCell(); st.tcell = null; closePopup(); activate(start + (r < 0 ? 0 : r + 2), 0); } },
     ]);
   }
 
@@ -923,7 +923,7 @@ function mount(root, ccb) {
     scroll.className = "nt-scroll";
     const table = document.createElement("table");
     table.className = "nt";
-    const editing = tcell && tcell.start === start ? tcell : null;
+    const editing = st.tcell && st.tcell.start === start ? st.tcell : null;
     if (editing) box.classList.add("nt-editing");
     const cellEl = (tag, r, c) => {
       const el = document.createElement(tag);
@@ -943,7 +943,7 @@ function mount(root, ccb) {
         e.preventDefault();
         enterCell(start, r, c);
       });
-      el.addEventListener("mouseenter", () => { tHover = { start, r, c }; });
+      el.addEventListener("mouseenter", () => { st.tHover = { start, r, c }; });
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         tableMenu(start, r, c, { left: e.clientX, top: e.clientY, bottom: e.clientY, right: e.clientX });
@@ -966,7 +966,7 @@ function mount(root, ccb) {
     const bar = document.createElement("div");
     bar.className = "nt-bar";
     const here = () => {
-      const p = tcell && tcell.start === start ? tcell : tHover && tHover.start === start ? tHover : null;
+      const p = st.tcell && st.tcell.start === start ? st.tcell : st.tHover && st.tHover.start === start ? st.tHover : null;
       return p ? { r: p.r, c: p.c } : { r: t.rows.length - 1, c: t.header.length - 1 };
     };
     const btn = (label, title, run) => {
@@ -1061,14 +1061,14 @@ function mount(root, ccb) {
         if (r >= 0) go(r - 1, c);
         else {
           const p = prevEditable(start);
-          if (p >= 0) { commitCell(); tcell = null; goLine(p, st.lines[p].length, true); }
+          if (p >= 0) { commitCell(); st.tcell = null; goLine(p, st.lines[p].length, true); }
         }
       } else if (e.key === "ArrowDown" && !e.altKey && !e.shiftKey) {
         e.preventDefault();
         if (r < last) go(r + 1, c);
         else {
           const n = nextEditable(end);
-          if (n >= 0) { commitCell(); tcell = null; goLine(n, 0, false); }
+          if (n >= 0) { commitCell(); st.tcell = null; goLine(n, 0, false); }
         }
       } else if (e.key === "ArrowLeft" && pos === 0 && !e.shiftKey && !e.altKey && (c > 0 || r >= 0)) {
         e.preventDefault();
@@ -1085,7 +1085,7 @@ function mount(root, ccb) {
     });
     ed.addEventListener("blur", () => {
       setTimeout(() => {
-        if (!gone && tcell === editing && !root.contains(document.activeElement)) leaveTable();
+        if (!st.gone && st.tcell === editing && !root.contains(document.activeElement)) leaveTable();
       }, 0);
     });
     queueMicrotask(() => {
@@ -1117,9 +1117,9 @@ function mount(root, ccb) {
   cardLayer.className = "nc-layer";
   page.append(cardLayer);
   const views = new Map(); // local key -> { lk, name, frame, shape, data, height, state, key, msg, slot, head, timer, every, autoRan, drawing }
-  let cardSig = "";
-  let cardTimer = null;
-  let cardsOff = null; // why the app cannot draw cards (an older app), or null
+  st.cardSig = "";
+  st.cardTimer = null;
+  st.cardsOff = null; // why the app cannot draw cards (an older app), or null
   const cardKeyOf = (info) => {
     const seen = new Map();
     const out = [];
@@ -1141,20 +1141,20 @@ function mount(root, ccb) {
     }
     return v;
   };
-  let renderingKeys = null; // the blocks of the render in progress
+  st.renderingKeys = null; // the blocks of the render in progress
   const STATUS = { approve: "等你允許執行", idle: "等待執行", running: "執行中…", static: "" };
   const hhmm = (t) => {
     const d = new Date(t);
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   };
   function cardStatus(v) {
-    if (cardsOff) return cardsOff;
-    const st = v.state;
-    if (!st) return "載入中…";
-    if (!st.exists) return `組件庫裡沒有「${st.name}」`;
-    if (st.status === "failed") return `執行失敗${st.error ? `：${st.error}` : ""}`;
-    if (st.status === "done") return `${st.ranAt ? `更新於 ${hhmm(st.ranAt)}` : "已更新"}${st.every ? ` · 每 ${st.every >= 60 && st.every % 60 === 0 ? `${st.every / 60} 分` : `${st.every} 秒`}更新` : ""}`;
-    return STATUS[st.status] ?? "";
+    if (st.cardsOff) return st.cardsOff;
+    const vs = v.state;
+    if (!vs) return "載入中…";
+    if (!vs.exists) return `組件庫裡沒有「${vs.name}」`;
+    if (vs.status === "failed") return `執行失敗${vs.error ? `：${vs.error}` : ""}`;
+    if (vs.status === "done") return `${vs.ranAt ? `更新於 ${hhmm(vs.ranAt)}` : "已更新"}${vs.every ? ` · 每 ${vs.every >= 60 && vs.every % 60 === 0 ? `${vs.every / 60} 分` : `${vs.every} 秒`}更新` : ""}`;
+    return STATUS[vs.status] ?? "";
   }
   function paintHead(v) {
     const h = v.head;
@@ -1172,7 +1172,7 @@ function mount(root, ccb) {
     }
   }
   function cardEl(start, end, card) {
-    const lk = renderingKeys?.find((b) => b.start === start)?.lk ?? `${card.name}\n${card.command ?? ""}#1`;
+    const lk = st.renderingKeys?.find((b) => b.start === start)?.lk ?? `${card.name}\n${card.command ?? ""}#1`;
     const v = viewOf(lk, card.name);
     const box = document.createElement("div");
     box.className = "nl nc-box";
@@ -1225,7 +1225,7 @@ function mount(root, ccb) {
   // After a render: lay the frames over their slots, drop the cards that are gone, and ask for fresh states when the cards'
   // text changed.
   function afterCards(info) {
-    const blocks = renderingKeys ?? cardKeyOf(info);
+    const blocks = st.renderingKeys ?? cardKeyOf(info);
     const live = new Set(blocks.map((b) => b.lk));
     for (const v of [...views.values()]) {
       if (!live.has(v.lk)) dropView(v);
@@ -1239,8 +1239,8 @@ function mount(root, ccb) {
     // unchanged no sync follows to repaint it
     for (const v of views.values()) if (v.slot && v.state) paintHead(v);
     const sig = blocks.map((b) => `${b.lk}\u0002${st.lines.slice(b.start, b.end + 1).join("\n")}`).join("\u0001");
-    if (sig !== cardSig) {
-      cardSig = sig;
+    if (sig !== st.cardSig) {
+      st.cardSig = sig;
       if (blocks.length) syncSoon(350);
     }
     for (const v of views.values()) if (v.slot) armTimer(v);
@@ -1250,9 +1250,9 @@ function mount(root, ccb) {
     v.frame?.remove();
     views.delete(v.lk);
   }
-  let hoverLk = null;
+  st.hoverLk = null;
   function hoverCell() {
-    const cell = hoverLk ? views.get(hoverLk)?.slot?.closest(".cell") : null;
+    const cell = st.hoverLk ? views.get(st.hoverLk)?.slot?.closest(".cell") : null;
     for (const c of st.doc.querySelectorAll(".cell.nc-hover")) if (c !== cell) c.classList.remove("nc-hover");
     cell?.classList.add("nc-hover");
   }
@@ -1260,7 +1260,7 @@ function mount(root, ccb) {
     if (!views.size) return;
     hoverCell();
     const pr = page.getBoundingClientRect();
-    const pass = !!(drag || press);
+    const pass = !!(st.drag || st.press);
     for (const v of views.values()) {
       if (!v.frame) continue;
       const slot = v.slot && v.slot.isConnected ? v.slot : null;
@@ -1297,30 +1297,30 @@ function mount(root, ccb) {
   window.addEventListener("message", onCardMsg);
 
   const syncSoon = (ms) => {
-    clearTimeout(cardTimer);
-    cardTimer = setTimeout(syncCards, ms);
+    clearTimeout(st.cardTimer);
+    st.cardTimer = setTimeout(syncCards, ms);
   };
-  let syncing = false;
-  let syncAgain = false;
+  st.syncing = false;
+  st.syncAgain = false;
   async function syncCards() {
-    if (gone) return;
-    if (syncing) {
-      syncAgain = true;
+    if (st.gone) return;
+    if (st.syncing) {
+      st.syncAgain = true;
       return;
     }
     const blocks = cardKeyOf(classify(st.lines));
     if (!blocks.length) return;
-    syncing = true;
+    st.syncing = true;
     const sent = text();
     try {
       let list = null;
       try {
         list = await ccb.host.call("cards", { botId: st.botId, text: sent });
-        cardsOff = null;
+        st.cardsOff = null;
       } catch (error) {
-        cardsOff = /unavailable/.test(String(error?.message ?? error)) ? "這個 App 版本還不能執行卡片的指令（缺少 notes.cards）" : `讀不到卡片：${error?.message ?? error}`;
+        st.cardsOff = /unavailable/.test(String(error?.message ?? error)) ? "這個 App 版本還不能執行卡片的指令（缺少 notes.cards）" : `讀不到卡片：${error?.message ?? error}`;
       }
-      if (gone) return;
+      if (st.gone) return;
       const now = cardKeyOf(classify(st.lines));
       for (const b of now) {
         const v = viewOf(b.lk, b.card.name);
@@ -1344,9 +1344,9 @@ function mount(root, ccb) {
       }
       if (running) syncSoon(2000); // the event says when a run ends; this is the fallback
     } finally {
-      syncing = false;
-      if (syncAgain) {
-        syncAgain = false;
+      st.syncing = false;
+      if (st.syncAgain) {
+        st.syncAgain = false;
         syncSoon(50);
       }
     }
@@ -1379,7 +1379,7 @@ function mount(root, ccb) {
       v.drawing = true;
       try {
         const url = await ccb.card({ component: cs.name, data, botId: st.botId });
-        if (gone || views.get(v.lk) !== v) return;
+        if (st.gone || views.get(v.lk) !== v) return;
         const frame = document.createElement("iframe");
         frame.className = "nc-frame";
         frame.setAttribute("sandbox", "allow-scripts");
@@ -1387,11 +1387,11 @@ function mount(root, ccb) {
         frame.tabIndex = -1;
         // the frame is not inside its cell: the pointer over it still counts as over the cell (its bar and grip show)
         frame.addEventListener("mouseenter", () => {
-          hoverLk = v.lk;
+          st.hoverLk = v.lk;
           hoverCell();
         });
         frame.addEventListener("mouseleave", () => {
-          if (hoverLk === v.lk) hoverLk = null;
+          if (st.hoverLk === v.lk) st.hoverLk = null;
           hoverCell();
         });
         frame.src = url;
@@ -1439,7 +1439,7 @@ function mount(root, ccb) {
     if (!every) return;
     v.every = every;
     v.timer = setInterval(() => {
-      if (!gone && document.visibilityState !== "hidden" && v.slot) runView(v, true, true);
+      if (!st.gone && document.visibilityState !== "hidden" && v.slot) runView(v, true, true);
     }, Math.max(2000, every * 1000));
   }
   function stopTimer(v) {
@@ -1472,7 +1472,7 @@ function mount(root, ccb) {
     } finally {
       wrap.classList.remove("nc-freezing");
     }
-    if (!res?.ref || gone) return;
+    if (!res?.ref || st.gone) return;
     rememberAsset(res.ref, res.url);
     const b = cardKeyOf(classify(st.lines)).find((x) => x.lk === lk);
     if (!b) return flash("卡片已經不在筆記裡了；圖片留在 Note 的資產裡");
@@ -1503,7 +1503,7 @@ function mount(root, ccb) {
       closePopup();
       return flash(/unavailable/.test(String(error?.message ?? error)) ? "這個 App 版本還不能插入卡片（缺少 notes.components）" : `讀不到組件清單：${error?.message ?? error}`);
     }
-    if (gone || st.active !== i) return;
+    if (st.gone || st.active !== i) return;
     const comps = list?.components ?? [];
     if (!comps.length) {
       closePopup();
@@ -1540,21 +1540,21 @@ function mount(root, ccb) {
   // ---- whiteboard preview (./board.js): the note as a top-to-bottom flow; view and light actions only ----
   // The toggle sits at the right end of the status bar; it (again) or Esc brings the editor back where it was. Which
   // branches are folded is kept with the view (viewSet, the app's plugin storage), never in note.md; nothing else is kept.
-  let boardOpen = false;
-  let boardBack = null; // the editor as the board found it: { active, caret, scroll }
+  st.boardOpen = false;
+  st.boardBack = null; // the editor as the board found it: { active, caret, scroll }
   const board = createBoard({
     inline,
     imgSrc: (ref) => srcFor(ref),
     liveCard: (start) => {
-      const b = renderingKeys?.find((x) => x.start === start);
+      const b = st.renderingKeys?.find((x) => x.start === start);
       return (b && views.get(b.lk)?.state) ?? null;
     },
-    chosen: (fork) => chosenRoute(fork, sel),
-    visible: (path) => pathVisible(path, sel),
-    isFolded: (key) => !!folds[key],
+    chosen: (fork) => chosenRoute(fork, st.sel),
+    visible: (path) => pathVisible(path, st.sel),
+    isFolded: (key) => !!st.folds[key],
     onFold(key, folded) {
-      if (folded) folds[key] = true;
-      else delete folds[key];
+      if (folded) st.folds[key] = true;
+      else delete st.folds[key];
       saveView();
       drawBoard();
     },
@@ -1566,44 +1566,44 @@ function mount(root, ccb) {
   });
   st.body.after(board.el);
   function drawBoard() {
-    if (!boardOpen) return;
+    if (!st.boardOpen) return;
     const m = model();
     board.update({ lines: st.lines, info: m.info, tree: boardTree(st.lines, m.meta, m.cells) });
   }
   function setBoardButton() {
-    wrap.classList.toggle("nw-on", boardOpen);
-    boardBtn.classList.toggle("on", boardOpen);
-    boardBtn.setAttribute("aria-pressed", String(boardOpen));
-    boardBtn.setAttribute("aria-label", boardOpen ? "白板預覽，開啟中（按一下或 Esc 回到編輯器）" : "白板預覽");
+    wrap.classList.toggle("nw-on", st.boardOpen);
+    boardBtn.classList.toggle("on", st.boardOpen);
+    boardBtn.setAttribute("aria-pressed", String(st.boardOpen));
+    boardBtn.setAttribute("aria-label", st.boardOpen ? "白板預覽，開啟中（按一下或 Esc 回到編輯器）" : "白板預覽");
   }
   function openBoard() {
-    if (boardOpen || drag) return;
+    if (st.boardOpen || st.drag) return;
     const ta = st.doc.querySelector(".nl-active textarea");
-    boardBack = { active: st.active, caret: ta ? ta.selectionStart ?? caret : caret, scroll: st.body.scrollTop };
+    st.boardBack = { active: st.active, caret: ta ? ta.selectionStart ?? st.caret : st.caret, scroll: st.body.scrollTop };
     closePopup();
     closeMap();
     st.msel = null;
-    tcell = null;
+    st.tcell = null;
     st.active = -1;
-    boardOpen = true;
+    st.boardOpen = true;
     setBoardButton();
     board.show();
     render();
     board.el.focus({ preventScroll: true });
   }
   function closeBoard(then) {
-    if (!boardOpen) return;
-    boardOpen = false;
+    if (!st.boardOpen) return;
+    st.boardOpen = false;
     board.hide();
     setBoardButton();
-    const back = boardBack;
-    boardBack = null;
+    const back = st.boardBack;
+    st.boardBack = null;
     if (then) return then();
     st.active = -1;
     render();
     if (back && back.active >= 0 && model().editable(back.active)) activate(back.active, Math.min(back.caret, st.lines[back.active].length));
     requestAnimationFrame(() => {
-      if (!gone && back) st.body.scrollTop = back.scroll;
+      if (!st.gone && back) st.body.scrollTop = back.scroll;
     });
   }
   // Double-click on a card: back to the editor at that cell (its routes shown).
@@ -1618,11 +1618,11 @@ function mount(root, ccb) {
       el.classList.remove("cell-dropped");
       void el.offsetWidth;
       el.classList.add("cell-dropped");
-      lastLine = start;
+      st.lastLine = start;
       saveView();
     });
   }
-  boardBtn.addEventListener("click", () => (boardOpen ? closeBoard() : openBoard()));
+  boardBtn.addEventListener("click", () => (st.boardOpen ? closeBoard() : openBoard()));
 
   // ---- ask: quote a cell (or a branch as shown) into this bot's chat ----
   // The quote is Markdown ("> " per line): a text cell its raw Markdown, a table its pipe text, a card its name and the <show>
@@ -1644,7 +1644,7 @@ function mount(root, ccb) {
   async function noteLabel(find) {
     if (typeof ccb.host?.call !== "function") return "";
     const ask = (async () => {
-      if (st.dirty && st.loaded && warn.hidden && state !== "error") await flush();
+      if (st.dirty && st.loaded && warn.hidden && st.state !== "error") await flush();
       const sent = text();
       const o = await ccb.host.call("outline", { botId: st.botId, text: sent });
       if (!o || o.mode !== "db" || text() !== sent) return "";
@@ -1668,7 +1668,7 @@ function mount(root, ccb) {
     const m = model();
     const text = shownMarkdown(m, fork.start, Math.min(fork.endLine, st.lines.length - 1));
     if (!text.trim()) return flash("這個分叉顯示的路線是空的");
-    const shown = chosenRoute(fork, sel)?.name ?? "";
+    const shown = chosenRoute(fork, st.sel)?.name ?? "";
     const label = await noteLabel((o) => {
       const hit = (Array.isArray(o.forks) ? o.forks : []).find((x) => x && x.start === fork.start);
       if (!hit?.id) return "";
@@ -1732,7 +1732,7 @@ function mount(root, ccb) {
   // out between two lines of text a blank line keeps them apart) and nothing from routes that are not shown. Deleting or
   // typing over it removes the shown lines and the `cell` lines between them, never branch / route / end-branch lines.
   st.msel = null; // { anchor, head }: line indexes
-  let press = null; // a left-button press on a line: { line, moved }
+  st.press = null; // a left-button press on a line: { line, moved }
   const sink = document.createElement("textarea");
   sink.className = "nsel-sink";
   sink.tabIndex = -1;
@@ -1773,9 +1773,9 @@ function mount(root, ccb) {
   const stepDown = (i) => nextEditable(blockOf(classify(st.lines), i).end);
   const stepUp = (i) => prevEditable(blockOf(classify(st.lines), i).start);
   function startSel(anchor, head) {
-    if (tcell) {
+    if (st.tcell) {
       commitCell();
-      tcell = null;
+      st.tcell = null;
     }
     st.active = -1;
     closePopup();
@@ -1844,7 +1844,7 @@ function mount(root, ccb) {
     record(before);
     const at = first + add.length - 1;
     activate(at, add[add.length - 1].length);
-    if (undos.length && undos[undos.length - 1].after.text === text()) tail = { rec: undos[undos.length - 1], line: at };
+    if (undos.length && undos[undos.length - 1].after.text === text()) st.tail = { rec: undos[undos.length - 1], line: at };
   }
   // `>` over a selection quotes every selected line ("> " in front, one more level where there already is one);
   // Cmd/Ctrl+Shift+. toggles: all quoted takes one level off, else the lines without one get it. Only text lines change
@@ -1943,7 +1943,7 @@ function mount(root, ccb) {
   });
   sink.addEventListener("blur", () => {
     setTimeout(() => {
-      if (!gone && st.msel && document.activeElement !== sink && root.contains(document.activeElement)) {
+      if (!st.gone && st.msel && document.activeElement !== sink && root.contains(document.activeElement)) {
         clearSel();
         render();
       }
@@ -1962,30 +1962,30 @@ function mount(root, ccb) {
     return Math.max(0, Math.min(st.lines.length - 1, y < r.top + r.height / 2 ? a : b));
   }
   st.doc.addEventListener("mousedown", (e) => {
-    if (e.button !== 0 || drag || e.target.closest("button, a, .cell-grip, .cell-bar, .nt-bar, .nb-fork, input")) {
-      press = null;
+    if (e.button !== 0 || st.drag || e.target.closest("button, a, .cell-grip, .cell-bar, .nt-bar, .nb-fork, input")) {
+      st.press = null;
       return;
     }
     const at = lineAtEl(e.target, e.clientY);
     if (at < 0 || !e.target.closest("[data-i]")) {
-      press = null;
+      st.press = null;
       return;
     }
     if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      const from = st.msel ? st.msel.anchor : st.active >= 0 ? st.active : tcell ? tcell.start : -1;
+      const from = st.msel ? st.msel.anchor : st.active >= 0 ? st.active : st.tcell ? st.tcell.start : -1;
       if (from >= 0 && from !== at) {
         e.preventDefault();
         e.stopPropagation();
-        press = { line: from, moved: true };
+        st.press = { line: from, moved: true };
         startSel(from, at);
         return;
       }
     }
     if (st.msel) clearSel();
-    press = { line: at, moved: false };
+    st.press = { line: at, moved: false };
   }, true);
   const onSelMove = (e) => {
-    if (!press || !(e.buttons & 1) || drag) return;
+    if (!st.press || !(e.buttons & 1) || st.drag) return;
     const br = st.body.getBoundingClientRect();
     if (e.clientY < br.top + 24) st.body.scrollTop -= 18;
     else if (e.clientY > br.bottom - 24) st.body.scrollTop += 18;
@@ -1993,12 +1993,12 @@ function mount(root, ccb) {
     const x = Math.max(br.left + 2, Math.min(br.right - 2, e.clientX));
     let at = lineAtEl(document.elementFromPoint(x, y), y);
     if (at < 0) return;
-    if (!press.moved && at === press.line) return;
+    if (!st.press.moved && at === st.press.line) return;
     e.preventDefault();
-    if (!press.moved) {
-      press.moved = true;
+    if (!st.press.moved) {
+      st.press.moved = true;
       window.getSelection()?.removeAllRanges();
-      startSel(press.line, at);
+      startSel(st.press.line, at);
     } else if (st.msel && st.msel.head !== at) {
       st.msel.head = at;
       render();
@@ -2006,15 +2006,15 @@ function mount(root, ccb) {
     }
   };
   const onSelUp = () => {
-    if (press?.moved && st.msel) focusSink();
-    press = null;
+    if (st.press?.moved && st.msel) focusSink();
+    st.press = null;
   };
   document.addEventListener("mousemove", onSelMove);
   document.addEventListener("mouseup", onSelUp);
   // Cmd/Ctrl+A with nothing being edited (the note itself has the focus): the whole note.
   const onSelAll = (e) => {
     if (e.defaultPrevented || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || (e.key ?? "").toLowerCase() !== "a") return;
-    if (st.msel || st.active >= 0 || tcell || drag || boardOpen) return;
+    if (st.msel || st.active >= 0 || st.tcell || st.drag || st.boardOpen) return;
     const f = document.activeElement;
     if (f && f !== document.body && !wrap.contains(f)) return;
     if (f && (f.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(f.tagName))) return;
@@ -2041,7 +2041,7 @@ function mount(root, ccb) {
   // A drop goes into the gap nearest the pointer: between cells, before / after a fork, into the route a fork shows (an empty
   // route too). Hovering a route tab for a moment shows that route; dropping on a tab puts the cell at the end of that route.
   // The text moves as in cells.js moveCellTo; Cmd+Z takes the whole drag back (view included).
-  let drag = null; // { start, x, y, lx, ly, on, text, before, ghost, gaps, target, tabKey, tabTimer, raf, dx, dy }
+  st.drag = null; // { start, x, y, lx, ly, on, text, before, ghost, gaps, target, tabKey, tabTimer, raf, dx, dy }
   const GRIP_SVG = `<svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true">${[3, 8, 13]
     .map((y) => `<circle cx="2.5" cy="${y}" r="1.4"/><circle cx="7.5" cy="${y}" r="1.4"/>`).join("")}</svg>`;
   const dropLine = document.createElement("div");
@@ -2084,11 +2084,11 @@ function mount(root, ccb) {
       e.stopPropagation();
     });
     g.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0 || drag) return;
+      if (e.button !== 0 || st.drag) return;
       e.preventDefault();
       e.stopPropagation();
       const r = c.getBoundingClientRect();
-      drag = { start: Number(c.dataset.start), x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, on: false, text: text(), before: snap(),
+      st.drag = { start: Number(c.dataset.start), x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, on: false, text: text(), before: snap(),
         dx: e.clientX - r.left, dy: e.clientY - r.top, gaps: [], target: null, tabKey: "", tabTimer: null, raf: 0 };
       document.addEventListener("pointermove", onDragMove, true);
       document.addEventListener("pointerup", onDragUp, true);
@@ -2101,17 +2101,17 @@ function mount(root, ccb) {
   function beginDrag() {
     closePopup();
     closeMap();
-    drag.on = true;
-    if (tcell) {
+    st.drag.on = true;
+    if (st.tcell) {
       commitCell();
-      tcell = null;
+      st.tcell = null;
       render();
     }
     if (st.active >= 0) {
       st.active = -1;
       render(); // the cell is drawn without its text box first, so the copy that follows the pointer looks rendered
     }
-    const src = st.doc.querySelector(`.cell[data-start="${drag.start}"]`);
+    const src = st.doc.querySelector(`.cell[data-start="${st.drag.start}"]`);
     if (src) {
       const r = src.getBoundingClientRect();
       const ghost = document.createElement("div");
@@ -2121,37 +2121,37 @@ function mount(root, ccb) {
       copy.classList.remove("cell-active", "cell-dragging");
       ghost.append(copy);
       root.append(ghost);
-      drag.ghost = ghost;
-      drag.dx = Math.min(drag.dx, 40);
+      st.drag.ghost = ghost;
+      st.drag.dx = Math.min(st.drag.dx, 40);
     }
     wrap.classList.add("nd-on");
     dragRefresh();
     const tick = () => {
-      if (!drag?.on) return;
+      if (!st.drag?.on) return;
       const br = st.body.getBoundingClientRect();
       const edge = 56;
-      const v = drag.ly < br.top + edge ? -(br.top + edge - drag.ly) : drag.ly > br.bottom - edge ? drag.ly - (br.bottom - edge) : 0;
+      const v = st.drag.ly < br.top + edge ? -(br.top + edge - st.drag.ly) : st.drag.ly > br.bottom - edge ? st.drag.ly - (br.bottom - edge) : 0;
       if (v) {
         const before = st.body.scrollTop;
         st.body.scrollTop += Math.max(-24, Math.min(24, v / 2.5));
         if (st.body.scrollTop !== before) aim();
       }
-      drag.raf = requestAnimationFrame(tick);
+      st.drag.raf = requestAnimationFrame(tick);
     };
-    drag.raf = requestAnimationFrame(tick);
+    st.drag.raf = requestAnimationFrame(tick);
   }
 
   // After every render while dragging: dim the cell, measure where each gap is drawn, aim again.
   function dragRefresh() {
-    st.doc.querySelector(`.cell[data-start="${drag.start}"]`)?.classList.add("cell-dragging");
+    st.doc.querySelector(`.cell[data-start="${st.drag.start}"]`)?.classList.add("cell-dragging");
     const { meta, cells } = model();
     const pr = page.getBoundingClientRect();
     const els = [...st.doc.children].filter((el) => el.dataset.a !== undefined).map((el) => {
       const r = el.getBoundingClientRect();
       return { a: Number(el.dataset.a), b: Number(el.dataset.b), top: r.top - pr.top, bottom: r.bottom - pr.top, el };
     });
-    drag.idx = cells.at[drag.start];
-    drag.gaps = cellGaps(st.lines, meta, cells).filter((g) => pathVisible(g.path, sel)).map((gap) => {
+    st.drag.idx = cells.at[st.drag.start];
+    st.drag.gaps = cellGaps(st.lines, meta, cells).filter((g) => pathVisible(g.path, st.sel)).map((gap) => {
       const own = els.find((x) => x.a === gap.g); // an empty route's "start writing" line stands for its gap
       if (own) return { gap, y: (own.top + own.bottom) / 2, zone: own.el };
       let prev = null;
@@ -2170,38 +2170,38 @@ function mount(root, ccb) {
   }
 
   function onDragMove(e) {
-    if (!drag) return;
-    drag.lx = e.clientX;
-    drag.ly = e.clientY;
-    if (!drag.on) {
-      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
+    if (!st.drag) return;
+    st.drag.lx = e.clientX;
+    st.drag.ly = e.clientY;
+    if (!st.drag.on) {
+      if (Math.hypot(e.clientX - st.drag.x, e.clientY - st.drag.y) < 4) return;
       beginDrag();
     }
     e.preventDefault();
-    if (drag.ghost) {
-      drag.ghost.style.left = `${e.clientX - drag.dx}px`;
-      drag.ghost.style.top = `${e.clientY - Math.min(drag.dy, 18)}px`;
+    if (st.drag.ghost) {
+      st.drag.ghost.style.left = `${e.clientX - st.drag.dx}px`;
+      st.drag.ghost.style.top = `${e.clientY - Math.min(st.drag.dy, 18)}px`;
     }
     aim();
   }
 
   // Pick the target under the pointer: a route tab, else the nearest gap; then draw it.
   function aim() {
-    if (!drag?.on) return;
-    const hit = document.elementFromPoint(drag.lx, drag.ly);
+    if (!st.drag?.on) return;
+    const hit = document.elementFromPoint(st.drag.lx, st.drag.ly);
     const tab = hit?.closest?.(".nb-tab[data-route]");
     const bar = tab?.closest(".nb-fork");
     if (tab && bar) {
       const key = `${bar.dataset.fork}\u0000${tab.dataset.route}`;
-      drag.target = { tab: { fork: bar.dataset.fork, route: tab.dataset.route } };
-      if (drag.tabKey !== key) {
-        drag.tabKey = key;
-        clearTimeout(drag.tabTimer);
+      st.drag.target = { tab: { fork: bar.dataset.fork, route: tab.dataset.route } };
+      if (st.drag.tabKey !== key) {
+        st.drag.tabKey = key;
+        clearTimeout(st.drag.tabTimer);
         if (tab.getAttribute("aria-selected") !== "true") {
-          drag.tabTimer = setTimeout(() => {
-            if (!drag?.on) return;
-            const fork = model().meta.forks.find((f) => f.key === drag.target?.tab?.fork);
-            const route = fork?.routes.find((r) => r.name === drag.target?.tab?.route);
+          st.drag.tabTimer = setTimeout(() => {
+            if (!st.drag?.on) return;
+            const fork = model().meta.forks.find((f) => f.key === st.drag.target?.tab?.fork);
+            const route = fork?.routes.find((r) => r.name === st.drag.target?.tab?.route);
             if (!route) return;
             selectRoute(fork, route);
             render(); // dragRefresh() runs at its end
@@ -2209,12 +2209,12 @@ function mount(root, ccb) {
         }
       }
     } else {
-      drag.tabKey = "";
-      clearTimeout(drag.tabTimer);
-      const y = drag.ly - page.getBoundingClientRect().top;
+      st.drag.tabKey = "";
+      clearTimeout(st.drag.tabTimer);
+      const y = st.drag.ly - page.getBoundingClientRect().top;
       let best = null;
-      for (const g of drag.gaps) if (!best || Math.abs(g.y - y) < Math.abs(best.y - y)) best = g;
-      drag.target = best && !gapTouches(best.gap, drag.idx) ? best : null;
+      for (const g of st.drag.gaps) if (!best || Math.abs(g.y - y) < Math.abs(best.y - y)) best = g;
+      st.drag.target = best && !gapTouches(best.gap, st.drag.idx) ? best : null;
     }
     drawTarget();
   }
@@ -2223,7 +2223,7 @@ function mount(root, ccb) {
     for (const el of st.doc.querySelectorAll(".nb-tab-drop, .nd-into")) el.classList.remove("nb-tab-drop", "nd-into");
     dropLine.hidden = true;
     dropZone.hidden = true;
-    const t = drag?.target;
+    const t = st.drag?.target;
     if (!t) return;
     let forkKey = "";
     let routeName = "";
@@ -2233,7 +2233,7 @@ function mount(root, ccb) {
       routeName = t.tab.route;
       const fork = model().meta.forks.find((f) => f.key === forkKey);
       label = `${fork?.name ?? ""} › ${routeName}（最後）`;
-      const last = drag.gaps.filter((g) => g.gap.path.length && g.gap.path[g.gap.path.length - 1].fork.key === forkKey
+      const last = st.drag.gaps.filter((g) => g.gap.path.length && g.gap.path[g.gap.path.length - 1].fork.key === forkKey
         && g.gap.path[g.gap.path.length - 1].route.name === routeName).pop();
       if (last) showLine(last, label);
     } else {
@@ -2267,8 +2267,8 @@ function mount(root, ccb) {
   }
 
   function endDrag() {
-    const d = drag;
-    drag = null;
+    const d = st.drag;
+    st.drag = null;
     if (!d) return null;
     document.removeEventListener("pointermove", onDragMove, true);
     document.removeEventListener("pointerup", onDragUp, true);
@@ -2289,7 +2289,7 @@ function mount(root, ccb) {
   }
 
   function onDragUp(e) {
-    if (!drag) return;
+    if (!st.drag) return;
     e.preventDefault();
     const d = endDrag();
     if (!d.on) return;
@@ -2336,7 +2336,7 @@ function mount(root, ccb) {
     const bar = document.createElement("div");
     bar.className = "nb-fork";
     bar.dataset.fork = fork.key;
-    const chosen = chosenRoute(fork, sel);
+    const chosen = chosenRoute(fork, st.sel);
     const editing = st.edit && st.edit.fkey === fork.key ? st.edit : null;
     const done = { v: false };
     const input = (value, label, onCommit, onCancel) => {
@@ -2361,7 +2361,7 @@ function mount(root, ccb) {
         }
       });
       inp.addEventListener("blur", () => {
-        if (!done.v && !gone) { done.v = true; onCommit(inp.value); }
+        if (!done.v && !st.gone) { done.v = true; onCommit(inp.value); }
       });
       inp.addEventListener("mousedown", (e) => e.stopPropagation());
       queueMicrotask(() => {
@@ -2479,14 +2479,14 @@ function mount(root, ccb) {
   function crumbText(meta) {
     const parts = [];
     for (const f of childForks(meta, null)) {
-      const r = chosenRoute(f, sel);
+      const r = chosenRoute(f, st.sel);
       const before = parts.length;
       parts.push(`${f.name} › ${r.name}`);
       const nested = [];
       const walk = (route) => {
         const kids = childForks(meta, route);
         if (!kids.length) return;
-        const rr = chosenRoute(kids[0], sel);
+        const rr = chosenRoute(kids[0], st.sel);
         nested.push(rr.name);
         walk(rr);
       };
@@ -2498,16 +2498,16 @@ function mount(root, ccb) {
 
   // The overview hangs under the route button, fixed to the frame's viewport, in the panel root (not inside .note).
   function placeMap() {
-    if (!mapEl) return;
+    if (!st.mapEl) return;
     const r = crumb.getBoundingClientRect();
-    const w = mapEl.offsetWidth;
-    mapEl.style.left = `${Math.max(12, Math.min(r.left, window.innerWidth - w - 12))}px`;
-    mapEl.style.top = `${r.bottom + 6}px`;
-    mapEl.style.maxHeight = `${Math.max(160, window.innerHeight - r.bottom - 24)}px`;
+    const w = st.mapEl.offsetWidth;
+    st.mapEl.style.left = `${Math.max(12, Math.min(r.left, window.innerWidth - w - 12))}px`;
+    st.mapEl.style.top = `${r.bottom + 6}px`;
+    st.mapEl.style.maxHeight = `${Math.max(160, window.innerHeight - r.bottom - 24)}px`;
   }
   function closeMap() {
-    mapEl?.remove();
-    mapEl = null;
+    st.mapEl?.remove();
+    st.mapEl = null;
     crumb.setAttribute("aria-expanded", "false");
   }
   function goRoute(route) {
@@ -2552,8 +2552,8 @@ function mount(root, ccb) {
     map.append(node("共用開頭", heading ? `標題 · ${heading[1].slice(0, 18)}` : "", { glyph: "≡", run: () => { closeMap(); st.active = -1; render(); st.body.scrollTo({ top: 0, behavior: "smooth" }); } }));
     const here = new Set();
     for (const f of meta.forks) {
-      const r = chosenRoute(f, sel);
-      if (pathVisible(f.parentPath, sel)) here.add(r);
+      const r = chosenRoute(f, st.sel);
+      if (pathVisible(f.parentPath, st.sel)) here.add(r);
     }
     const drawForks = (parent, into) => {
       for (const f of childForks(meta, parent)) {
@@ -2573,7 +2573,7 @@ function mount(root, ccb) {
             if (facts.todos) bits.push(`${facts.todos} 個待辦`);
             if (!facts.cards && !facts.todos) bits.push(`${facts.content} 行`);
           }
-          const deeper = childForks(meta, r).some((c) => here.has(chosenRoute(c, sel)) && pathVisible(c.parentPath, sel));
+          const deeper = childForks(meta, r).some((c) => here.has(chosenRoute(c, st.sel)) && pathVisible(c.parentPath, st.sel));
           const on = here.has(r);
           if (on && !deeper) bits.unshift("你在這裡");
           kids.append(node(r.name, bits.join(" · "), { on, run: () => goRoute(r) }));
@@ -2590,9 +2590,9 @@ function mount(root, ccb) {
     return map;
   }
   function toggleMap() {
-    if (mapEl) return closeMap();
-    mapEl = drawMap();
-    root.append(mapEl);
+    if (st.mapEl) return closeMap();
+    st.mapEl = drawMap();
+    root.append(st.mapEl);
     placeMap();
     crumb.setAttribute("aria-expanded", "true");
   }
@@ -2601,20 +2601,20 @@ function mount(root, ccb) {
     toggleMap();
   });
   const onDocDown = (e) => {
-    if (mapEl && !mapEl.contains(e.target) && !crumb.contains(e.target)) closeMap();
-    if (popup && popup.kind !== "insert" && !popup.el.contains(e.target)) closePopup();
+    if (st.mapEl && !st.mapEl.contains(e.target) && !crumb.contains(e.target)) closeMap();
+    if (st.popup && st.popup.kind !== "insert" && !st.popup.el.contains(e.target)) closePopup();
   };
   const onEsc = (e) => {
     if (e.key !== "Escape") return;
-    if (drag) {
+    if (st.drag) {
       e.preventDefault();
       e.stopPropagation();
       cancelDrag();
       return;
     }
-    if (mapEl) closeMap();
-    else if (popup && popup.kind !== "insert") closePopup();
-    else if (boardOpen) {
+    if (st.mapEl) closeMap();
+    else if (st.popup && st.popup.kind !== "insert") closePopup();
+    else if (st.boardOpen) {
       e.preventDefault();
       closeBoard();
     }
@@ -2626,12 +2626,12 @@ function mount(root, ccb) {
   function render() {
     st.doc.textContent = "";
     const { info, meta, vis, editable, cells } = model();
-    renderingKeys = cardKeyOf(info);
+    st.renderingKeys = cardKeyOf(info);
     if (st.active >= 0 && !editable(st.active)) st.active = -1;
-    if (st.active >= 0) tcell = null;
-    if (st.msel && (st.active >= 0 || tcell || Math.max(st.msel.anchor, st.msel.head) >= st.lines.length)) st.msel = null;
-    if (tcell && !(info[tcell.start]?.kind === "table" && info[tcell.start].start === tcell.start && vis(tcell.start))) tcell = null;
-    if (st.active < 0 && popup?.kind === "insert") closePopup();
+    if (st.active >= 0) st.tcell = null;
+    if (st.msel && (st.active >= 0 || st.tcell || Math.max(st.msel.anchor, st.msel.head) >= st.lines.length)) st.msel = null;
+    if (st.tcell && !(info[st.tcell.start]?.kind === "table" && info[st.tcell.start].start === st.tcell.start && vis(st.tcell.start))) st.tcell = null;
+    if (st.active < 0 && st.popup?.kind === "insert") closePopup();
     const inBlock = st.active >= 0 && info[st.active].kind !== "text" ? info[st.active] : null;
 
     const ends = new Map();
@@ -2669,7 +2669,7 @@ function mount(root, ccb) {
 
     for (let i = 0; i <= st.lines.length; i++) {
       for (const f of ends.get(i) ?? []) {
-        if (!pathVisible(f.parentPath, sel)) continue;
+        if (!pathVisible(f.parentPath, st.sel)) continue;
         cur = null;
         const end = forkEndEl(f);
         end.dataset.forkEnd = f.key;
@@ -2688,7 +2688,7 @@ function mount(root, ccb) {
         c.dataset.a = c.dataset.b = String(i);
         c.append(cellAsk(() => askFork(at.fork)), forkBar(at.fork, meta));
         st.doc.append(c);
-        const r = chosenRoute(at.fork, sel);
+        const r = chosenRoute(at.fork, st.sel);
         if (routeIsEmpty(st.lines, r) && !(st.active >= r.start && st.active < r.end)) {
           const empty = emptyRouteEl(at.fork, r);
           empty.dataset.a = empty.dataset.b = String(r.start - 0.5); // where the route's only gap is (cells.js cellGaps)
@@ -2734,7 +2734,7 @@ function mount(root, ccb) {
             let off = ta.selectionStart ?? ta.value.length;
             while (k < parts.length - 1 && off > parts[k].length) { off -= parts[k].length + 1; k++; }
             st.active = i + k;
-            caret = off;
+            st.caret = off;
             changed();
             render();
             return;
@@ -2743,7 +2743,7 @@ function mount(root, ccb) {
           quoteBox();
           grow(ta);
           changed();
-          if (tail && tail.line === i && undos[undos.length - 1] === tail.rec) tail.rec.after = look(); // typing: saved as typing is
+          if (st.tail && st.tail.line === i && undos[undos.length - 1] === st.tail.rec) st.tail.rec.after = look(); // typing: saved as typing is
           if (info[i].kind === "text") syncInsertMenu(ta);
         });
         ta.addEventListener("keydown", (e) => keydown(e, ta, i));
@@ -2757,7 +2757,7 @@ function mount(root, ccb) {
         ta.addEventListener("blur", () => {
           // Leaving the box for somewhere outside the note: render the line.
           setTimeout(() => {
-            if (!gone && st.active === i && !root.contains(document.activeElement)) {
+            if (!st.gone && st.active === i && !root.contains(document.activeElement)) {
               st.active = -1;
               render();
             }
@@ -2768,13 +2768,13 @@ function mount(root, ccb) {
         quoteBox();
         queueMicrotask(() => {
           ta.focus();
-          const pos = Math.min(caret, ta.value.length);
+          const pos = Math.min(st.caret, ta.value.length);
           ta.setSelectionRange(pos, pos);
           grow(ta);
-          if (popup?.kind === "insert") {
+          if (st.popup?.kind === "insert") {
             const r = ta.getBoundingClientRect();
-            popup.el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - popup.el.offsetWidth - 8))}px`;
-            popup.el.style.top = `${r.bottom + 4 + popup.el.offsetHeight > window.innerHeight - 8 ? Math.max(8, r.top - popup.el.offsetHeight - 4) : r.bottom + 4}px`;
+            st.popup.el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - st.popup.el.offsetWidth - 8))}px`;
+            st.popup.el.style.top = `${r.bottom + 4 + st.popup.el.offsetHeight > window.innerHeight - 8 ? Math.max(8, r.top - st.popup.el.offsetHeight - 4) : r.bottom + 4}px`;
           }
         });
       } else if (nfo.kind === "card" && !raw) {
@@ -2784,7 +2784,7 @@ function mount(root, ccb) {
         if (i !== nfo.start) continue; // the whole table is drawn at its first line
         const tb = tableEl(nfo.start, nfo.end);
         tb.dataset.j = String(nfo.end);
-        put(tb, !!(tcell && tcell.start === nfo.start));
+        put(tb, !!(st.tcell && st.tcell.start === nfo.start));
       } else if (nfo.kind === "mathb" && !raw) {
         if (i !== nfo.start) continue; // the whole block is drawn at its first line
         const el = mathBlockEl(st.lines, nfo.start, nfo.end);
@@ -2823,34 +2823,34 @@ function mount(root, ccb) {
     crumb.append(label);
     crumb.title = crumbStr;
     crumb.setAttribute("aria-haspopup", "true");
-    if (!meta.forks.length && mapEl) closeMap();
-    else if (mapEl) {
+    if (!meta.forks.length && st.mapEl) closeMap();
+    else if (st.mapEl) {
       const fresh = drawMap();
-      mapEl.replaceWith(fresh);
-      mapEl = fresh;
+      st.mapEl.replaceWith(fresh);
+      st.mapEl = fresh;
       placeMap();
     }
     joinQuotes(st.doc);
     drawSel({ info, meta, vis, editable, cells });
     afterCards(info, vis);
-    if (boardOpen) drawBoard();
+    if (st.boardOpen) drawBoard();
     if (st.active >= 0) {
-      lastLine = st.active;
-      lastCaret = caret;
-      wasEditing = true;
-    } else if (tcell || st.msel) wasEditing = false;
-    if (viewReady) saveView();
-    if (drag?.on) dragRefresh();
+      st.lastLine = st.active;
+      st.lastCaret = st.caret;
+      st.wasEditing = true;
+    } else if (st.tcell || st.msel) st.wasEditing = false;
+    if (st.viewReady) saveView();
+    if (st.drag?.on) dragRefresh();
   }
 
   function activate(i, at) {
     clearSel();
-    if (tcell) {
+    if (st.tcell) {
       commitCell();
-      tcell = null;
+      st.tcell = null;
     }
     st.active = Math.max(0, Math.min(st.lines.length - 1, i));
-    caret = at;
+    st.caret = at;
     render();
   }
 
@@ -2858,7 +2858,7 @@ function mount(root, ccb) {
     const atStart = ta.selectionStart === 0 && ta.selectionEnd === 0;
     const atEnd = ta.selectionStart === ta.value.length && ta.selectionEnd === ta.value.length;
     if (e.isComposing) return;
-    if (popup?.kind === "insert") {
+    if (st.popup?.kind === "insert") {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         movePopup(e.key === "ArrowDown" ? 1 : -1);
@@ -2866,7 +2866,7 @@ function mount(root, ccb) {
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        const s = popup.items[popup.idx];
+        const s = st.popup.items[st.popup.idx];
         if (s && !s.it.disabled) s.it.run();
         else if (s) s.it.onDisabled?.();
         return;
@@ -2874,8 +2874,8 @@ function mount(root, ccb) {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        dismissed = true;
-        plusMode = false;
+        st.dismissed = true;
+        st.plusMode = false;
         closePopup();
         return;
       }
@@ -3016,19 +3016,19 @@ function mount(root, ccb) {
   }
   // Paste / drop of an image goes through the adapter (./assets.js): file -> ref, inserted as a line.
   const imageFiles = (dt) => [...(dt?.files ?? [])].filter((f) => /^image\//.test(f.type));
-  let notice = null;
+  st.notice = null;
   const flash = (msg) => {
     setStatus(msg);
-    clearTimeout(notice);
-    notice = setTimeout(() => !gone && showState(state), 4000);
+    clearTimeout(st.notice);
+    st.notice = setTimeout(() => !st.gone && showState(st.state), 4000);
   };
-  let imageAt = -1; // where the "圖片" menu item wants the picture
+  st.imageAt = -1; // where the "圖片" menu item wants the picture
   async function addImages(files, startAt) {
     let at = typeof startAt === "number" && startAt >= 0 ? startAt : st.active >= 0 ? st.active : Math.max(0, lastEditable());
     for (const file of files) {
       try {
         const ref = await importImage(file);
-        if (gone) return;
+        if (st.gone) return;
         at = Math.max(0, Math.min(at, st.lines.length - 1));
         const md = `![${(file.name || "").replace(/\.[^.]+$/, "").replace(/[\[\]]/g, "")}](${ref})`;
         if (!st.lines[at].trim()) st.lines[at] = md;
@@ -3044,8 +3044,8 @@ function mount(root, ccb) {
   fileInput.addEventListener("change", () => {
     const files = imageFiles({ files: fileInput.files });
     fileInput.value = "";
-    const at = imageAt;
-    imageAt = -1;
+    const at = st.imageAt;
+    st.imageAt = -1;
     if (files.length) addImages(files, at);
   });
   st.body.addEventListener("paste", (e) => {
@@ -3089,11 +3089,11 @@ function mount(root, ccb) {
     st.timer = setTimeout(flush, SAVE_MS);
   }
 
-  let soon = false; // a save was asked for while one was on its way: the next one goes right after it
+  st.soon = false; // a save was asked for while one was on its way: the next one goes right after it
   async function flush() {
     clearTimeout(st.timer);
-    if (st.saving && st.dirty) soon = true;
-    if (!st.dirty || st.saving || !st.loaded || gone) return;
+    if (st.saving && st.dirty) st.soon = true;
+    if (!st.dirty || st.saving || !st.loaded || st.gone) return;
     st.saving = true;
     const sent = text();
     st.dirty = false;
@@ -3114,9 +3114,9 @@ function mount(root, ccb) {
       showState("error");
     } finally {
       st.saving = false;
-      const next = soon;
-      soon = false;
-      if (st.dirty && warn.hidden && state !== "error") st.timer = setTimeout(flush, next ? 0 : SAVE_MS);
+      const next = st.soon;
+      st.soon = false;
+      if (st.dirty && warn.hidden && st.state !== "error") st.timer = setTimeout(flush, next ? 0 : SAVE_MS);
     }
   }
 
@@ -3154,13 +3154,13 @@ function mount(root, ccb) {
       if (initial) {
         const v = await view;
         if (v && typeof v === "object") {
-          if (v.routes && typeof v.routes === "object" && !Array.isArray(v.routes)) sel = { ...v.routes };
-          if (v.pos && typeof v.pos === "object") pos = v.pos;
-          if (v.folds && typeof v.folds === "object" && !Array.isArray(v.folds)) folds = { ...v.folds };
+          if (v.routes && typeof v.routes === "object" && !Array.isArray(v.routes)) st.sel = { ...v.routes };
+          if (v.pos && typeof v.pos === "object") st.pos = v.pos;
+          if (v.folds && typeof v.folds === "object" && !Array.isArray(v.folds)) st.folds = { ...v.folds };
         }
       }
-      if (gone) return;
-      if (!initial && (note.mtime === st.mtime || st.dirty || st.saving || drag)) return; // mid-drag: the next poll picks it up
+      if (st.gone) return;
+      if (!initial && (note.mtime === st.mtime || st.dirty || st.saving || st.drag)) return; // mid-drag: the next poll picks it up
       st.mtime = note.mtime;
       setText(note.text);
       st.loaded = true;
@@ -3171,8 +3171,8 @@ function mount(root, ccb) {
       showState("saved");
       if (initial) {
         restorePos();
-        viewReady = true;
-        viewSent = JSON.stringify(viewNow());
+        st.viewReady = true;
+        st.viewSent = JSON.stringify(viewNow());
         localize();
       }
     } catch (error) {
@@ -3184,7 +3184,7 @@ function mount(root, ccb) {
   async function localize() {
     const base = st.mtime;
     const res = await localizeNote(base);
-    if (!res || gone || st.dirty || st.saving || st.mtime !== base) return;
+    if (!res || st.gone || st.dirty || st.saving || st.mtime !== base) return;
     st.mtime = res.mtime;
     setText(res.text);
     if (st.active >= st.lines.length) st.active = -1;
@@ -3244,17 +3244,17 @@ function mount(root, ccb) {
 
   return () => {
     flushView();
-    gone = true;
+    st.gone = true;
     flush();
     clearInterval(poll);
-    clearTimeout(cardTimer);
+    clearTimeout(st.cardTimer);
     for (const v of views.values()) stopTimer(v);
     views.clear();
     cardLayer.remove();
     relayout.disconnect();
     window.removeEventListener("message", onCardMsg);
     clearTimeout(st.timer);
-    clearTimeout(notice);
+    clearTimeout(st.notice);
     for (const off of offs) off();
     window.removeEventListener("pagehide", hide);
     document.removeEventListener("visibilitychange", hide);
