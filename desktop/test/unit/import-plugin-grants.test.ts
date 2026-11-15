@@ -327,7 +327,7 @@ export function activate(ccb) {
 
       // Server part did not run and command is refused
       expect(existsSync(join(dataDir, "plugin-data", "host-tool", "started.flag"))).toBe(false);
-      const cmdBeforeSlot: Slot = { origin: "script", originEpoch, target: client1.srv, n: 1 };
+      const cmdBeforeSlot: Slot = { origin: client1.deviceId, originEpoch, target: client1.srv, n: 1 };
       client1.cmd(cmdBeforeSlot, { type: "plugins.command", id: "host-tool.ping" }, inc);
       const cmdBeforeRes = await client1.wait(isResult(cmdBeforeSlot), "host-tool.ping before grant");
       expect(cmdBeforeRes.outcome.kind).toBe("refused");
@@ -342,7 +342,7 @@ export function activate(ccb) {
 
       // User restores data-tool to write via plugin.grant (fails if botlingd downgraded manifest.tier to "read")
       const dataToolHash = rowsAfterStart.get("plugin:data-tool")!.codeHash;
-      const grantDataSlot: Slot = { origin: "script", originEpoch, target: client1.srv, n: 2 };
+      const grantDataSlot: Slot = { origin: client1.deviceId, originEpoch, target: client1.srv, n: 2 };
       client1.cmd(
         grantDataSlot,
         { type: "plugin.grant", plugin: "data-tool", codeHash: dataToolHash, tier: "write", reads: [], requests: [] },
@@ -351,7 +351,7 @@ export function activate(ccb) {
       expect((await client1.wait(isResult(grantDataSlot), "grant data-tool")).outcome.kind).toBe("applied");
 
       // User restores host-tool to write via plugin.grant -> server part starts and command works
-      const grantHostSlot: Slot = { origin: "script", originEpoch, target: client1.srv, n: 3 };
+      const grantHostSlot: Slot = { origin: client1.deviceId, originEpoch, target: client1.srv, n: 3 };
       client1.cmd(
         grantHostSlot,
         { type: "plugin.grant", plugin: "host-tool", codeHash: hostToolHash, tier: "write", reads: [], requests: [] },
@@ -364,7 +364,7 @@ export function activate(ccb) {
         { timeout: 10_000, what: "host-tool started.flag after grant" },
       );
 
-      const cmdAfterSlot: Slot = { origin: "script", originEpoch, target: client1.srv, n: 4 };
+      const cmdAfterSlot: Slot = { origin: client1.deviceId, originEpoch, target: client1.srv, n: 4 };
       client1.cmd(cmdAfterSlot, { type: "plugins.command", id: "host-tool.ping" }, inc);
       const cmdAfterRes = await client1.wait(isResult(cmdAfterSlot), "host-tool.ping after grant");
       expect(cmdAfterRes.outcome.kind).toBe("applied");
