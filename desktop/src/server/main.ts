@@ -21,6 +21,10 @@
 //   botlingd import <2.x folder> [--dry-run]
 //                             (M6-01d) imports a Botling 2.x data folder into this folder (read-only on 2.x)
 //                             and writes <data>/import-report.md; --dry-run previews the report without writing
+//   botlingd backfill-history <2.x folder> [--dry-run]
+//                             adds the 2.x Main bot's and Maintainer's lines the import refused (their Botling 3
+//                             streams were not empty) to their Botling 3 history, merged by time; Botling 3 lines are
+//                             kept unchanged. Backs up server.db first; --dry-run only reads and reports what it would add
 //   botlingd pair [--name <device name>] [--scope read,reply,approve,manage] [--no-qr]
 //                             pairs a phone or browser with the running server (M2 step 5): the first pairing shows the
 //                             recovery code once and makes the cluster only after it is typed back; then a link and QR
@@ -67,6 +71,7 @@ import { LISTEN_FILE, LISTEN_HOST, listenPort, readRelaySetting, RELAY_URL_ENV, 
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
+import { runBackfill } from "./import/backfill";
 import { ImportError, runImport } from "./import/run";
 import { RestoreError, restoreBackup } from "./restore";
 import { serviceCommand, ServiceError } from "./service";
@@ -577,8 +582,23 @@ export async function main(argv: string[], options: ServerCliOptions = {}): Prom
       }
       return;
     }
+    case "backfill-history": {
+      const unknown = rest.find((arg) => arg.startsWith("-") && arg !== "--dry-run");
+      if (unknown) fail(`unknown option "${unknown}" (use: botlingd backfill-history <2.x folder> [--dry-run])`, 2);
+      const positional = rest.filter((arg) => !arg.startsWith("-"));
+      if (positional.length !== 1) fail("backfill-history needs one 2.x data folder: botlingd backfill-history <2.x folder> [--dry-run]", 2);
+      try {
+        const result = await runBackfill({ sourceDir: positional[0]!, targetDir: paths.dataDir, dryRun: rest.includes("--dry-run") });
+        process.stdout.write(result.reportText);
+      } catch (error) {
+        if (error instanceof ImportError) fail(error.message, error.exitCode);
+        if (error instanceof PathsError) fail(error.message, 2);
+        throw error;
+      }
+      return;
+    }
     default:
-      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, relay, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device, fetch, plugins)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, backfill-history, relay, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device, fetch, plugins)`, 2);
   }
 }
 
