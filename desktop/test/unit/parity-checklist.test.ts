@@ -379,7 +379,7 @@ describe("M6-10a: Botling 3 parity checklist after 2.x fixture import", () => {
     return async (target: string, cmd: unknown, what: string) => {
       const n = seqs.get(target) ?? 1;
       seqs.set(target, n + 1);
-      const slot: Slot = { origin: "script", originEpoch, target, n };
+      const slot: Slot = { origin: client.deviceId, originEpoch, target, n };
       client.cmd(slot, cmd, inc);
       const result = await client.wait(isResult(slot), what);
       expect(result.outcome.kind).toBe("applied");
