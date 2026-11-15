@@ -144,7 +144,7 @@ async function coreWith(lineContent?: PluginWorld["lineContent"]) {
     },
   };
   const world = {
-    bots: () => [], notice: () => {}, botId: (botId: string) => (botId === "main" ? "MAIN-ID" : null), changed: () => {}, broken: () => {}, log: () => {},
+    bots: () => [], notice: () => {}, appSettings: () => ({ language: "en", botLook: "cute", workerLimit: 4 }), shortcutOverrides: () => ({}), workspaceWatch: () => {}, botId: (botId: string) => (botId === "main" ? "MAIN-ID" : null), changed: () => {}, broken: () => {}, log: () => {},
     ...(lineContent ? { lineContent } : {}),
   } as unknown as PluginWorld;
   const plugins = new Plugins({ dataDir: dir, world, node, hostScript: "host.mjs", sealer: testSealer("test-key") });
@@ -244,9 +244,10 @@ async function rig(rows: Record<string, PluginRow> = {}) {
     { id: SERVER_ID, name: "Studio", state: "live", since: 1 },
     { id: B, name: "Linux box", state: "live", since: 2 },
   ];
+  // Revisions rise one row at a time (the table's own rule).
   const table = new Map<string, { rev: number; body?: unknown }>([[`bot:${FAR}`, { rev: 1, body: summary() }]]);
-  for (const [name, row] of Object.entries(rows)) table.set(`plugin:${name}`, { rev: 1, body: row });
-  server.tables.set(SRV_B, { logId: "incb-0001", rev: 1, rows: table, retired: [] });
+  for (const [name, row] of Object.entries(rows)) table.set(`plugin:${name}`, { rev: table.size + 1, body: row });
+  server.tables.set(SRV_B, { logId: "incb-0001", rev: table.size, rows: table, retired: [] });
   server.peerTargets.add(FAR_STREAM);
   const clock = new FakeClock();
   server.onMessage = (message: Message) => {
