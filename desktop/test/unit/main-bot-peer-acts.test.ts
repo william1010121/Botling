@@ -29,7 +29,7 @@ const cores: Core[] = [];
 afterEach(async () => { for (const core of cores.splice(0)) await core.shutdown().catch(() => {}); });
 
 /** A core whose remote commands are recorded; each one is committed at once and answered by the test (`settle`). */
-function fixture(options: { machines?: Array<{ id: string; name: string }>; machineName?: string; members?: Array<{ id: string; name: string }>; remoteCommand?: RemoteCommand } = {}) {
+function fixture(options: { machines?: Array<{ id: string; name: string }>; machineName?: string; serverName?: string; members?: Array<{ id: string; name: string }>; remoteCommand?: RemoteCommand } = {}) {
   const dir = tempDir("peer-acts");
   const logs: string[] = [];
   const sent: Sent[] = [];
@@ -44,7 +44,7 @@ function fixture(options: { machines?: Array<{ id: string; name: string }>; mach
     headConfig() { throw new Error("No agent allowed"); },
     emit() {}, deferStartup: true, routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0,
     log: (line) => logs.push(line),
-    remoteMembers: () => (options.members ?? [{ id: PEER_BUILD, name: "build" }]).map((member) => ({ ...member, server: SERVER_B, serverName: "build-box" })),
+    remoteMembers: () => (options.members ?? [{ id: PEER_BUILD, name: "build" }]).map((member) => ({ ...member, server: SERVER_B, serverName: options.serverName ?? "build-box" })),
     remoteCommand,
     machines: () => options.machines ?? [{ id: SERVER_B, name: "build-box" }],
     machineName: options.machineName ?? "studio",
@@ -149,6 +149,48 @@ describe("M5-04d 2/3/6: <new-bot machine> makes a bot on a peer", () => {
       expect(html).toContain("[x](https://example.invalid)");
     }
     expect(h.notes[0]).toBe(`(App: ${link} did not make the bot "nightly": see ${link} or <https://example.invalid/a> ![i](https://example.invalid/i.png).)`);
+  });
+
+  it("2f. peer text that is only special at the start of a line (#, >, -, +, 1., ---) cannot format the notice line", async () => {
+    // (`>` and a backtick never reach here: botName drops them from a machine name; `plainMarkdown` escapes them anyway.)
+    const starts = ["# Big", "- item", "+ item", "1. first", "12) first", "---", "###", "-x", "  # indented"];
+    for (const start of starts) {
+      const h = fixture({ machines: [{ id: SERVER_B, name: start }] });
+      h.act(h.main, h.tag(`<new-bot name="nightly" machine="${start.trim()}">job</new-bot>`));
+      await until(() => h.sent.length === 1);
+      h.sent[0]!.settle({ ok: false, why: "no" });
+      await until(() => h.notes.length === 1);
+      const shown = h.main.lines().filter((line) => line.role === "notice").map((line) => line.text);
+      expect(shown, start).toHaveLength(1);
+      const html = renderMarkdown(shown[0]!);
+      expect(html, start).not.toMatch(/<(h[1-6]|ul|ol|li|hr|blockquote|pre)\b/);
+      // The text itself shows as written (a backslash escape renders as the character).
+      expect(html, start).toContain(start.trim());
+      expect(h.notes[0], start).toBe(`(App: ${start.trim()} did not make the bot "nightly": no.)`);
+    }
+  });
+
+  it("2g. a peer server named like a link or a heading is plain text in the not-delivered and too-long notices", async () => {
+    for (const serverName of ["[x](https://example.invalid)", "# Big", "- item"]) {
+      const h = fixture({ serverName });
+      h.core.projectBriefing();
+      writeFileSync(h.inbox(PEER_BUILD), "do it\n");
+      h.core.deliverInboxes();
+      await until(() => h.sent.length === 1);
+      h.sent[0]!.settle({ ok: false, why: "gone" });
+      await until(() => h.notes.length === 1);
+      writeFileSync(h.inbox(PEER_BUILD), "x".repeat(100_001));
+      h.core.deliverInboxes();
+      await until(() => h.notes.length === 2);
+      const shown = h.main.lines().filter((line) => line.role === "notice").map((line) => line.text);
+      expect(shown, serverName).toHaveLength(2);
+      for (const text of shown) {
+        const html = renderMarkdown(text);
+        expect(html, serverName).not.toMatch(/<(a|img|h[1-6]|ul|li)\b|data-url/);
+        expect(html, serverName).toContain(serverName);
+      }
+      expect(h.notes[0], serverName).toBe(`(App: The message to "build" on ${serverName} was not delivered: gone.)`);
+    }
   });
 
   it("3. a refusal from the peer: the did-not-make note with its reason on one clean line", async () => {
