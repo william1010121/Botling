@@ -5,6 +5,7 @@
 //   cascade: s3 and d invalid everywhere, s2 valid) and RogueContained (s3, already revoked, signs a joining Add{d2};
 //   s1 endorses d2; d2 is invalid wherever the revocation is held), order-independent;
 // - K3 `Revoke.cascade` boolean (or M2's `[]`): `[]` verifies with the same id and counts as false; a list is refused;
+// - K10: a device revocation signed by a server that is later removed still counts (D61, pending D66 part 4);
 // - K12: a Profile signed by a revoked server never wins over the member's own, however new;
 // - joinCluster: the joining server takes the cluster, writes `Add{S, joined: false}`, endorses every valid member;
 //   refused when it already has a cluster or the welcome does not name it.
@@ -13,7 +14,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { AddStatement, memberIdFromKey, RevokeStatement, SignedStatement, statementId, toBase64Url, type StatementBody } from "../../src/protocol";
 import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "../../src/server/identity";
-import { computeRoster, RosterStore, signStatement, signWith, verifyStatements, type VerifiedStatement } from "../../src/server/roster";
+import { computeRoster, RosterStore, signStatement, signWith, verifyStatements, type StoredStatement, type VerifiedStatement } from "../../src/server/roster";
 import { openServerStore, type ServerStore } from "../../src/server/store";
 import { testRoot } from "../botlingd-harness";
 
@@ -282,5 +283,109 @@ describe("server pairing acts on the roster", () => {
     const hlc = (st: SignedStatement | null) => (st!.body as { hlc: { ms: number; c: number } }).hlc;
     expect(hlc(next).ms > hlc(first).ms || (hlc(next).ms === hlc(first).ms && hlc(next).c > hlc(first).c)).toBe(true);
     expect(s.roster.profile(s.identity.memberId, "addresses")).toContain("4101");
+  });
+});
+
+describe("K10: device revocations by a removed server keep counting (D61, pending D66 part 4)", () => {
+  /** Real signed statements: s1 (root) adds s2 and s3; s2 pairs phone d; s1 and s3 endorse d; s2 revokes d; s1 revokes s2 (cascade: false). */
+  async function k10Scenario() {
+    const s1 = await withCluster();
+    const s2 = await server();
+    const s3 = await server();
+    const phone = await memberKeys();
+    const cluster = s1.clusterId;
+    const s1Id = s1.identity.memberId;
+    const s2Id = s2.identity.memberId;
+    const s3Id = s3.identity.memberId;
+    const dId = phone.member;
+
+    const rootStmt = s1.roster.statements()[0];
+    const addS2 = await signStatement({ type: "add", cluster, member: s2Id, kind: "server", keys: s2.identity.keys, name: "S2", by: s1Id, at: 1, joined: true }, s1Id, (b) => s1.identity.sign(b));
+    const wbS1ByS2 = await signStatement({ type: "add", cluster, member: s1Id, kind: "server", keys: s1.identity.keys, name: "S1", by: s2Id, at: 2, joined: false }, s2Id, (b) => s2.identity.sign(b));
+    const addS3 = await signStatement({ type: "add", cluster, member: s3Id, kind: "server", keys: s3.identity.keys, name: "S3", by: s1Id, at: 3, joined: true }, s1Id, (b) => s1.identity.sign(b));
+    const wbS1ByS3 = await signStatement({ type: "add", cluster, member: s1Id, kind: "server", keys: s1.identity.keys, name: "S1", by: s3Id, at: 4, joined: false }, s3Id, (b) => s3.identity.sign(b));
+    const addD = await signStatement({ type: "add", cluster, member: dId, kind: "device", keys: phone.keys, name: "Phone", scope: ["read"], by: s2Id, at: 5 }, s2Id, (b) => s2.identity.sign(b));
+    // s1 and s3 endorse d so that, without s2's revocation of d, removing s2 with cascade: false would keep d valid.
+    const endorseDByS1 = await signStatement({ type: "endorse", cluster, member: dId, addId: addD.id, by: s1Id }, s1Id, (b) => s1.identity.sign(b));
+    const endorseDByS3 = await signStatement({ type: "endorse", cluster, member: dId, addId: addD.id, by: s3Id }, s3Id, (b) => s3.identity.sign(b));
+
+    const revokeD = await signStatement({ type: "revoke", cluster, member: dId, reason: "lost", by: s2Id, gen: 1, cascade: false }, s2Id, (b) => s2.identity.sign(b));
+    const revokeS2 = await signStatement({ type: "revoke", cluster, member: s2Id, reason: "retired", by: s1Id, gen: 1, cascade: false }, s1Id, (b) => s1.identity.sign(b));
+
+    const base = [rootStmt, addS2, wbS1ByS2, addS3, wbS1ByS3, addD, endorseDByS1, endorseDByS3];
+    const viewsFor = async (stmts: StoredStatement[]) => Promise.all(
+      [s1, s2, s3].map(async (srv) => {
+        const verified = await verifyStatements(stmts, { memberId: srv.identity.memberId, signPub: srv.identity.keys.sign });
+        return { srv, view: computeRoster(srv.identity.memberId, cluster, verified) };
+      }),
+    );
+
+    return { s1, s2, s3, s1Id, s2Id, s3Id, dId, base, revokeD, revokeS2, viewsFor };
+  }
+
+  it("s2 revokes phone d, then the root revokes s2 with cascade: false; d is not valid on any server view", async () => {
+    const { s1Id, s2Id, s3Id, dId, base, revokeD, revokeS2, viewsFor } = await k10Scenario();
+
+    // Baseline check: without revokeD, removing s2 (cascade: false) leaves the endorsed phone d valid on s1 and s3.
+    for (const { srv, view } of await viewsFor([...base, revokeS2])) {
+      expect(view.valid.has(s2Id)).toBe(false);
+      if (srv.identity.memberId !== s2Id) expect(view.valid.has(dId)).toBe(true);
+    }
+
+    for (const { srv, view } of await viewsFor([...base, revokeD, revokeS2])) {
+      expect(view.valid.has(dId)).toBe(false);
+      expect(view.revoked.has(dId)).toBe(true);
+      expect(view.valid.has(s2Id)).toBe(false);
+      expect(view.revoked.has(s2Id)).toBe(true);
+      if (srv.identity.memberId !== s2Id) {
+        expect(view.valid.has(s1Id)).toBe(true);
+        expect(view.valid.has(s3Id)).toBe(true);
+      }
+    }
+  });
+
+  it("produces the same views when the statements are verified in another order", async () => {
+    const { s1Id, s2Id, s3Id, dId, base, revokeD, revokeS2, viewsFor } = await k10Scenario();
+    const all = [...base, revokeD, revokeS2];
+    const baseline = await viewsFor(all);
+
+    for (const ordered of [[...all].reverse(), ...Array.from({ length: 15 }, (_, i) => shuffled(all, i + 1))]) {
+      const views = await viewsFor(ordered);
+      for (let i = 0; i < views.length; i++) {
+        expect(views[i].view.valid.has(dId)).toBe(false);
+        expect(views[i].view.revoked.has(dId)).toBe(true);
+        expect([...views[i].view.valid].sort()).toEqual([...baseline[i].view.valid].sort());
+        expect([...views[i].view.revoked].sort()).toEqual([...baseline[i].view.revoked].sort());
+        if (views[i].srv.identity.memberId !== s2Id) {
+          expect(views[i].view.valid.has(s1Id)).toBe(true);
+          expect(views[i].view.valid.has(s3Id)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("d stays invalid when s2's device revocation arrives after the root's revocation of s2", async () => {
+    const { s1, s1Id, s2Id, s3Id, dId, base, revokeD, revokeS2, viewsFor } = await k10Scenario();
+
+    // Pure computeRoster with revokeD placed after revokeS2.
+    for (const { srv, view } of await viewsFor([...base, revokeS2, revokeD])) {
+      expect(view.valid.has(dId)).toBe(false);
+      expect(view.revoked.has(dId)).toBe(true);
+      expect(view.valid.has(s2Id)).toBe(false);
+      if (srv.identity.memberId !== s2Id) {
+        expect(view.valid.has(s1Id)).toBe(true);
+        expect(view.valid.has(s3Id)).toBe(true);
+      }
+    }
+
+    // Stateful RosterStore.merge: s1 already holds revokeS2 before revokeD arrives.
+    await s1.roster.merge([...base.slice(1).map((item) => item.statement), revokeS2.statement]);
+    expect(s1.roster.isValid(s2Id)).toBe(false);
+    expect(s1.roster.isValid(dId)).toBe(true);
+    await s1.roster.merge([revokeD.statement]);
+    expect(s1.roster.isValid(dId)).toBe(false);
+    expect(s1.roster.view.revoked.has(dId)).toBe(true);
+    expect(s1.roster.isValid(s1Id)).toBe(true);
+    expect(s1.roster.isValid(s3Id)).toBe(true);
   });
 });
