@@ -135,10 +135,24 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   const entryFor = (plugin: string, tag: string) => (FRAMED_PLUGINS as readonly string[]).includes(plugin)
     ? { kind: "frame" as const, frame: "slot" as const, plugin, view: "v", title: "t", tag }
     : { kind: "component" as const, render: () => null, tag };
+  /**
+   * `kernel.contribute`, and the answer checked: accepted exactly when the instance is loading or active, the plugin owns the slot
+   * or declares it (the slot given by either name), and the slot's owner is the plugin itself or active (K2); otherwise refused.
+   */
+  const contribute = (plugin: string, slot: string, entry: unknown, undo?: () => unknown): boolean => {
+    const canonical = canonicalSlot(slot);
+    const up = kernel.state(plugin) === "loading" || kernel.state(plugin) === "active";
+    const allowed = kernel.declaredOwner(canonical) === plugin || (kernel.declaration(plugin)?.contributes?.slots ?? []).includes(canonical);
+    const owner = kernel.slotOwner(canonical);
+    const expected = up && allowed && owner !== null && (owner === plugin || kernel.state(owner) === "active");
+    const accepted = kernel.contribute(plugin, slot, entry, undo) !== null;
+    if (accepted !== expected) problems.push(`${plugin}'s contribution to ${slot} was ${accepted ? "accepted" : "refused"}, expected ${expected ? "accepted" : "refused"} (${up ? "up" : kernel.state(plugin)}, ${allowed ? "declared" : "undeclared"}, owner ${owner ?? "none"} ${owner ? kernel.state(owner) : ""})`);
+    return accepted;
+  };
   const addContribution = (plugin: string, slot: string) => {
     const tag = `${plugin}→${slot}-${++item}`;
     world.set(tag, plugin);
-    if (!kernel.contribute(plugin, slot, entryFor(plugin, tag), undoFor(tag, false))) world.delete(tag);
+    if (!contribute(plugin, slot, entryFor(plugin, tag), undoFor(tag, false))) world.delete(tag);
   };
   /** Either name of a slot, at random (a plugin may use the 2.x id or the new name). */
   const form = (slot: string) => random.pick(slotForms(slot));
@@ -173,7 +187,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
     return maybeAsync(name);
   };
   const pluginLoader = (name: string) => {
-    for (const slot of wanted.get(name)!) for (let n = 1 + random.int(2); n > 0; n -= 1) kernel.contribute(name, form(slot), entryFor(name, ""));
+    for (const slot of wanted.get(name)!) for (let n = 1 + random.int(2); n > 0; n -= 1) contribute(name, form(slot), entryFor(name, ""));
     if (random.chance(0.5)) addContribution(name, form(random.pick(wanted.get(name)!)));
     if (name === "page.c") kernel.call(name, QUOTE, "text");
     for (let n = random.int(3); n > 0; n -= 1) addItem(name);

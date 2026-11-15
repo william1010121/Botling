@@ -5,7 +5,7 @@ import type { Kernel, KernelEvent, PluginDeclaration } from "../../Web/src/plugi
 /**
  * The kernel rules as invariants on the event log: P4/K1/D64 (a provider or slot owner begins undoing only once everything
  * depending on it is absent), P3/K2/D65 (a load starts only with its providers and slot owners active), K2 at each
- * accepted contribution, and P2 as the model states it (NoOrphan) after every step. Problems found are pushed to `problems`.
+ * accepted contribution (and the declaration rule: only to a slot the plugin declares), and P2 as the model states it (NoOrphan) after every step. Problems found are pushed to `problems`.
  *
  * `declarations` is a fixed list, or a function that gives the declarations installed now (a feed installs and forgets plugins
  * while the run goes on: pass `() => kernel.installed().map((name) => kernel.declaration(name)!)`).
@@ -37,6 +37,8 @@ export function ruleWatcher(declarations: PluginDeclaration[] | (() => PluginDec
       }
     } else if (event.action === "Register" && !event.note && event.registration?.startsWith("contribution:")) {
       const slot = event.registration.slice("contribution:".length, event.registration.lastIndexOf("#"));
+      // The declaration rule: a contribution is accepted only to a slot its plugin declares it contributes to (or owns).
+      if (![...(declared?.contributes?.slots ?? []), ...(declared?.provides?.slots ?? [])].includes(slot)) problems.push(`${event.plugin}'s contribution to ${slot} was accepted without the plugin declaring the slot`);
       const owner = k.slotOwner(slot);
       if (!owner || (owner !== event.plugin && k.state(owner) !== "active")) problems.push(`${event.plugin}'s contribution to ${slot} was accepted while its owner was ${owner ? k.state(owner) : "missing"}`);
     }
