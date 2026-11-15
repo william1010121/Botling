@@ -352,14 +352,16 @@ describe("a session holds a chat.send with files until their bytes are in", () =
     for (let at = 0; at < data.length; at += 50 * KiB) {
       const end = Math.min(data.length, at + 50 * KiB);
       socket.feed(chunk("r1", at, data.subarray(at, end)));
-      // The chunk is in once the server answers where it is now; only then may the not-yet-complete check run.
-      await until(() => stored(socket, end), { what: `stored(${end})` });
+      // The server answers only when it tops up the credit, not per chunk; the chunk is in once the store has it.
+      // Only then may the not-yet-complete check run (the last chunk completes the file, so it is waited on below).
+      if (end < data.length) await until(() => uploads.have(idOf(data), data.length) === end, { what: `the store to have ${end} bytes` });
       if (end < data.length) { await wait(20); expect(received).toEqual([]); }
     }
     await until(() => received.length > 0, { what: "the command handed on" });
     await wait(20); // quiet window: handed on once, not twice
     expect(received).toHaveLength(1);
     expect(received[0]!.complete).toBe(true);
+    await until(() => stored(socket, data.length), { what: "stored(size)" });
     expect(framesOf(socket, "content.stored").at(-1)).toMatchObject({ have: data.length });
     session.close();
   });
