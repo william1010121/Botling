@@ -50,6 +50,7 @@ import {
   type AdapterAnswer, type BotModel, type ChatSnapshot, type RendererAdapterOptions, type Snapshot,
 } from "./adapter-types";
 import { AdapterEntries } from "./adapter-entries";
+import { peerActionRefusal } from "./peer-actions";
 
 // The names that used to be defined here, still exported from this path.
 export { NOTICE_ID, botViewOfSummary, noticeText, pendingLine, pendingLineId, peerNoticeText, READ_COMMANDS } from "./adapter-types";
@@ -139,6 +140,12 @@ export class RendererAdapter {
       if (cmd.type === "chat.shown" && cmd.botId) { this.show(cmd.botId); this.refreshLinkMenus(); }
       // A peer's bot: the window hints go nowhere (the attached server's core does not have the bot; M3 step 11).
       if ((cmd.type === "chat.shown" || cmd.type === "chat.read") && cmd.botId && this.peerOf(cmd.botId)) return { ok: true, result: {} };
+      // M7-12b: what needs this desktop's own machine is refused here for a peer's bot, with the reason; the rest goes to its owner.
+      const peerOwner = botIdOf(cmd) ? this.peerOf(botIdOf(cmd)!) : null;
+      if (peerOwner) {
+        const why = peerActionRefusal(cmd, this.serverView(peerOwner)?.name ?? "that machine");
+        if (why) return { ok: false, error: { code: "forbidden", message: `not sent: ${why}` } };
+      }
       // F1 (M6-06): plugin secrets never enter the durable outbox (fe-link.sqlite); send as a non-persisted req.
       if (cmd.type === "plugins.secret") return await this.read(cmd);
       if (READ_COMMANDS.has(cmd.type)) return await this.read(cmd);
