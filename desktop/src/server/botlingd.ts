@@ -772,6 +772,13 @@ export class Botlingd {
         onAudit: () => feeds.notify(feeds.ownStream),
         log,
       });
+      // Staging folders of a fetch that a killed process never finished are removed now, before any session exists.
+      try {
+        const folders: string[] = [];
+        for (const botId of engine.bots()) { const folder = engine.botView(botId)?.folder; if (folder) folders.push(folder); }
+        const removed = fetchRequester.removeLeftoverStaging(folders);
+        if (removed > 0) log(`fetch: removed ${removed} unfinished staging folder(s) left by an earlier run`);
+      } catch (error) { log(`fetch: leftover staging cleanup failed: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 200))}`); }
       // M3 step 3: peer servers. A lone server has no server in its roster, so it dials nothing.
       const peers: PeerSessions = new PeerSessions({
         roster, self: { memberId, dhPub: identity.dhPub, dhKey: identity.dhKey }, timers, log,

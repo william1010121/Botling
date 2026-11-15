@@ -10,6 +10,10 @@ import { CONTENT_FRAME_CHUNK_LIMIT } from "./messages";
 /** Per-request limits (§16): 500 MiB and 20,000 files; per-day default 2 GiB per bot. */
 export const FETCH_MAX_BYTES = 500 * 2 ** 20;
 export const FETCH_MAX_FILES = 20_000;
+/** What the requester will make on disk for one fetch (not on the wire; going over is `limit`): at most this many folders
+ * (the source walks at most `FETCH_MAX_FILES` folders), nested at most this deep (folders above the file). */
+export const FETCH_MAX_DIRS = 20_000;
+export const FETCH_MAX_DEPTH = 64;
 export const FETCH_GRANT_BYTES_LIMIT = 2 ** 31;
 
 /** A filesystem path or prefix in a fetch message: 1..4096 characters, no NUL. */
