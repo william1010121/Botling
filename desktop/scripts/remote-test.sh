@@ -37,6 +37,9 @@
 #   BOTLING_REMOTE_TIMEOUT  seconds before a run is stopped (default 3600)
 #   BOTLING_REMOTE_LOGS     local folder for the saved output (default <main checkout>/.bot/remote-test-logs)
 #   BOTLING_REMOTE_KEEP=1   keep the host worktree after the run (for poking at a failure; remove it by hand)
+# Run counts and the seed of the seeded property tests are forwarded to the host when set here, digits only (nothing else is):
+#   KERNEL_ACCEPTANCE_RUNS=10000 desktop/scripts/remote-test.sh <sha> test/unit/plugin-kernel-acceptance.test.ts
+#   (KERNEL_ACCEPTANCE_SEED replays one seed; PLUGIN_FEED_RUNS sets the plugin feed's random view sequences)
 #
 # Test filters (vitest args that are file names): one argument per file, relative to desktop/ ("test/unit/a.test.ts" or the
 # short name "a"). A leading "desktop/" or "./" is stripped; an argument with a space or comma is refused (exit 2). After the
@@ -84,7 +87,7 @@ on_host() {
 
 if [ "$1" = --setup ]; then
   h=${2:-$BOTLING_TEST_HOST}
-  on_host "$h" "$rdir" "" "" setup "$NODE_VERSION" 0 0 0 "" 0
+  on_host "$h" "$rdir" "" "" setup "$NODE_VERSION" 0 0 0 "" 0 ""
   exit
 fi
 
@@ -125,6 +128,15 @@ if [ "$mode" = vitest ] || [ "$mode" = unit ]; then
   set -- "${fargs[@]+"${fargs[@]}"}"
 fi
 
+# The replay knobs of the seeded property tests (see the header): only these names, only a number, else the run is refused.
+envs=
+for name in KERNEL_ACCEPTANCE_RUNS KERNEL_ACCEPTANCE_SEED PLUGIN_FEED_RUNS; do
+  value=${!name:-}
+  [ -n "$value" ] || continue
+  [[ $value =~ ^[0-9]{1,9}$ ]] || { echo "remote-test: $name must be a number (got '$value')" >&2; exit 2; }
+  envs+="$name=$value "
+done
+
 host=$BOTLING_TEST_HOST
 fallback=${BOTLING_TEST_FALLBACK:-}
 dslots=${BOTLING_TEST_HOST_SLOTS:-2}
@@ -162,7 +174,7 @@ git push -q "$host:$rdir/repo.git" "${refs[@]}" || {
   echo "remote-test: push to $host failed; set the host up once with: desktop/scripts/remote-test.sh --setup $host" >&2; exit 2; }
 
 set +e
-on_host "$host" "$rdir" "$run" "$sha" "$mode" "$basesha" "$slots" "$timeout" "$keep" "$workers" "$tc" "$@" 2>&1 | tee "$log"
+on_host "$host" "$rdir" "$run" "$sha" "$mode" "$basesha" "$slots" "$timeout" "$keep" "$workers" "$tc" "$envs" "$@" 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 set -e
 echo "remote-test: exit $status on $host; output saved to $log"
@@ -170,12 +182,12 @@ exit "$status"
 
 #==REMOTE==
 # Runs on the host (bash 5), sent over ssh as one string; stdin carries the heartbeat (see on_host). Arguments: dir run sha mode base slots timeout
-# keep workers typecheck(0|1|only) [vitest args...]; for mode "setup", base is the Node version. Node comes from <dir>/tools/node (no shell
+# keep workers typecheck(0|1|only) envs (NAME=digits words) [vitest args...]; for mode "setup", base is the Node version. Node comes from <dir>/tools/node (no shell
 # rc changes on the host). Paths here are the host's own.
 set -uo pipefail
 export LC_ALL=C
-dir=$HOME/$1 run=$2 sha=$3 mode=$4 base=$5 slots=$6 timeout=$7 keep=$8 workers=$9 tc=${10}
-shift 10
+dir=$HOME/$1 run=$2 sha=$3 mode=$4 base=$5 slots=$6 timeout=$7 keep=$8 workers=$9 tc=${10} envs=${11}
+shift 11
 export PATH="$dir/tools/node/bin:$PATH"
 repo=$dir/repo.git wt=$dir/runs/$run out=$dir/logs/$run
 tmp=/tmp/botling-rt-$run
@@ -306,7 +318,7 @@ fi
 
 # The tests run in their own process group (setsid, no fork here) so a timeout or a dropped ssh stops all of them.
 t0=$(date +%s)
-NO_COLOR=1 TMPDIR=$tmp setsid "${cmd[@]}" >"$out/output.log" 2>&1 </dev/null &
+NO_COLOR=1 TMPDIR=$tmp setsid env $envs "${cmd[@]}" >"$out/output.log" 2>&1 </dev/null &
 tpid=$!
 tail -n +1 -f --pid="$tpid" "$out/output.log" &
 tailpid=$!
