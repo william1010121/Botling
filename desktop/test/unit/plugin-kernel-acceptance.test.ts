@@ -39,8 +39,8 @@ import { desktop, envCount } from "../helpers";
 const RUNS = envCount("KERNEL_ACCEPTANCE_RUNS", 500); // CI lowers it on pull requests
 const FIRST_SEED = 1001;
 const ONE = Number(process.env.KERNEL_ACCEPTANCE_SEED ?? "") || null;
-/** One check's time budget: a random run is a few ms, so it grows with the run count (10,000 on the Linux host for the M7-11a evidence). */
-const BUDGET = ONE ? 20_000 : Math.max(120_000, RUNS * 40);
+/** One check's time budget: a random run is a few ms (the jsdom frame run about 40 ms), so it grows with the run count (10,000 on the Linux host for the M7-11a evidence). */
+const BUDGET = ONE ? 20_000 : Math.max(120_000, RUNS * 100);
 const seeds = () => (ONE ? [ONE] : Array.from({ length: RUNS }, (_, index) => FIRST_SEED + index));
 /** Run counts and the most steps an unload-all took, per check, for the evidence file (printed at the end). */
 const evidence: Record<string, unknown> = {};

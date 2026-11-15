@@ -70,6 +70,13 @@ function readView(view: PluginsView): { rows: Rows; names: Set<string> } {
   return { rows, names };
 }
 
+const SHELL_CANONICAL = [...new Set(SHELL_SLOTS.map(canonicalSlot))];
+type SlotEntries = { plugin: string; entry: unknown }[];
+/** The feed rows one plugin holds in a slot's entries, in order. */
+const feedRows = (entries: SlotEntries, plugin: string): unknown[] => entries.filter((held) => held.plugin === plugin && (held.entry as Partial<FeedEntry>).kind === "feed").map((held) => (held.entry as FeedEntry).row);
+/** The same rows: the same objects (the feed keeps the view's rows as they are), or equal by value. */
+const sameRows = (a: unknown[], b: unknown[]) => (a.length === b.length && a.every((row, at) => row === b[at])) || JSON.stringify(a) === JSON.stringify(b);
+
 export interface RendererRunInput {
   /** The real plugin set's names (built-ins and the two fixtures): the feed's plugins. */
   plugins: readonly string[];
@@ -191,12 +198,13 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   const check = (where: string) => {
     const fail = (text: string) => problems.push(`${where}: ${text}`);
     const names = new Set([...kernel.installed(), ...kernel.plugins()]);
+    const contributions = kernel.allContributions();
     // P1/P5: what a plugin registered with an undo is held by its instance or undone.
     const live = new Map<string, Set<unknown>>();
     for (const [thing, owner] of world) {
       let held = live.get(owner);
       if (!held) {
-        held = new Set([...kernel.registrations(owner).map((reg) => reg.key), ...kernel.allContributions<{ tag?: string }>().filter((c) => c.plugin === owner).map((c) => c.entry.tag)]);
+        held = new Set([...kernel.registrations(owner).map((reg) => reg.key), ...contributions.filter((c) => c.plugin === owner).map((c) => (c.entry as { tag?: string }).tag)]);
         live.set(owner, held);
       }
       if (!held.has(thing)) fail(`${owner} left ${thing}`);
@@ -210,7 +218,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
         }
       }
     }
-    for (const contribution of kernel.allContributions()) {
+    for (const contribution of contributions) {
       if (kernel.state(contribution.plugin) === "absent") fail(`absent ${contribution.plugin} still contributes`);
       if (canonicalSlot(contribution.slot) !== contribution.slot) fail(`a contribution is held under ${contribution.slot}, not ${canonicalSlot(contribution.slot)}`);
     }
@@ -220,41 +228,41 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
     // P2 and the aliases: what a slot shows is exactly the held contributions whose contributor and owner are active, and the
     // two names of a slot show the same.
     const held = new Map<string, unknown[]>();
-    for (const c of kernel.allContributions()) {
+    for (const c of contributions) {
       const owner = kernel.slotOwner(c.slot);
       if (owner && kernel.state(owner) === "active" && kernel.state(c.plugin) === "active") held.set(c.slot, [...(held.get(c.slot) ?? []), c.entry]);
     }
-    const shown = (slot: string) => kernel.entries(slot).map(({ entry }) => entry);
+    const shownBy = new Map<string, SlotEntries>(); // each shell slot's entries, read once (under its 2.x id)
+    for (const slot of SHELL_CANONICAL) shownBy.set(slot, kernel.entries(slot));
+    const entriesOf = (slot: string) => shownBy.get(slot) ?? kernel.entries(slot);
     const same = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((entry, at) => entry === b[at]);
     for (const alias of SLOT_ALIASES) {
       const legacy = legacySlotId(alias);
-      const old = shown(legacy);
-      if (!same(old, shown(alias.name))) fail(`${legacy} and ${alias.name} show different entries`);
+      const old = entriesOf(legacy).map(({ entry }) => entry);
+      if (!same(old, kernel.entries(alias.name).map(({ entry }) => entry))) fail(`${legacy} and ${alias.name} show different entries`);
       if (kernel.slotOwner(legacy) !== kernel.slotOwner(alias.name)) fail(`${legacy} and ${alias.name} have different owners`);
       if (!same(old, held.get(legacy) ?? [])) fail(`${legacy} shows ${old.length} entries, the held contributions say ${(held.get(legacy) ?? []).length}`);
       if (old.length) result.aliasShown += 1;
     }
     for (const slot of ROOT_SLOTS) {
-      if (!same(shown(slot), held.get(canonicalSlot(slot)) ?? [])) fail(`${slot} shows other entries than the held contributions say`);
+      if (!same(entriesOf(canonicalSlot(slot)).map(({ entry }) => entry), held.get(canonicalSlot(slot)) ?? [])) fail(`${slot} shows other entries than the held contributions say`);
     }
     // What a plugin's entries look like: in-page plugins' components, framed plugins' frames.
-    for (const slot of SHELL_SLOTS) {
-      for (const { plugin, entry } of kernel.entries<{ kind: string }>(slot)) {
+    for (const [slot, entries] of shownBy) {
+      for (const { plugin, entry } of entries as { plugin: string; entry: { kind: string } }[]) {
         if ((PAGE_PLUGINS as readonly string[]).includes(plugin)) { if (entry.kind !== "component") fail(`${plugin}'s entry in ${slot} is a ${entry.kind}`); else result.componentEntries += 1; }
         else if ((FRAMED_PLUGINS as readonly string[]).includes(plugin)) { if (entry.kind !== "frame") fail(`${plugin}'s entry in ${slot} is a ${entry.kind}`); else result.frameEntries += 1; }
       }
     }
-    // The feed: each active feed plugin holds exactly its rows of the last view, under both names of each slot.
+    // The feed: each active feed plugin holds exactly its rows of the last view in each slot (a slot and its alias show the same, above).
     for (const name of feed.loaded()) {
       if (kernel.state(name) !== "active") continue;
       if (!read.names.has(name)) { fail(`feed plugin ${name} is active but the view does not name it`); continue; }
       const own = read.rows.get(name) ?? new Map<string, unknown[]>();
-      for (const slot of [...FEED_SLOTS, ...ROOT_SLOTS]) {
-        const expected = own.get(canonicalSlot(slot)) ?? [];
-        for (const asked of slotForms(slot)) {
-          const rows = kernel.entries<Partial<FeedEntry>>(asked).filter((entry) => entry.plugin === name && entry.entry.kind === "feed").map((entry) => entry.entry.row);
-          if (JSON.stringify(rows) !== JSON.stringify(expected)) fail(`feed plugin ${name} holds ${rows.length} row(s) in ${asked}, the view has ${expected.length}`);
-        }
+      for (const [slot, entries] of shownBy) {
+        const rows = feedRows(entries, name);
+        const expected = own.get(slot) ?? [];
+        if (!sameRows(rows, expected)) fail(`feed plugin ${name} holds ${rows.length} row(s) in ${slot}, the view has ${expected.length}`);
       }
       result.feedCompared += 1;
     }
@@ -304,32 +312,39 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
     timers.advance(TIMEOUT);
     await flush();
   };
+  /** Rounds until nothing is pending (no gate, no timer), at most `most`. */
+  const settle = async (ok: () => boolean, most = 20) => {
+    for (let n = 0; n < most; n += 1) {
+      await round(ok);
+      if (!gates.length && !loaderGates.length && !timers.pending()) return;
+    }
+  };
 
   // Quiescence: the shell and the chat surface come back, everything settles, and the last view is held exactly (the feed
   // reloads what a hanging unload or the shell's going held back, and what the page shows is what the view says).
   void kernel.load(CHAT, chatLoader);
   void kernel.load(SHELL, shellLoader);
+  const converged = () => !last.view || ([...read.names].sort().join() === feed.loaded().sort().join() && [...read.names].every((name) => kernel.state(name) === "active"));
   for (let step = 0; step < 4; step += 1) {
-    for (let n = 0; n < 6; n += 1) await round(() => true);
+    await settle(() => true);
     if (last.view) reconcile(last.view);
     await flush();
+    if (converged() && !gates.length && !loaderGates.length) break;
   }
-  for (let n = 0; n < 6; n += 1) await round(() => true);
+  await settle(() => true);
   if (last.view) {
     const expected = [...read.names].sort();
     if (feed.loaded().sort().join() !== expected.join()) throw new Error(`seed ${seed}: after settling the feed holds [${feed.loaded().sort()}], the view names [${expected}]`);
     for (const name of expected) if (kernel.state(name) !== "active") throw new Error(`seed ${seed}: after settling ${name} is ${kernel.state(name)}`);
-    for (const slot of [...FEED_SLOTS, ...ROOT_SLOTS]) {
-      const rowsOf = (asked: string) => kernel.entries<Partial<FeedEntry>>(asked).filter((entry) => entry.entry.kind === "feed");
-      for (const asked of slotForms(slot)) {
-        for (const name of expected) {
-          const rows = rowsOf(asked).filter((entry) => entry.plugin === name).map((entry) => entry.entry.row);
-          const wantedRows = read.rows.get(name)?.get(canonicalSlot(slot)) ?? [];
-          if (JSON.stringify(rows) !== JSON.stringify(wantedRows)) throw new Error(`seed ${seed}: after settling ${name} holds ${rows.length} row(s) in ${asked}, the view has ${wantedRows.length}`);
-        }
-        const total = [...read.rows.values()].reduce((sum, bySlot) => sum + (bySlot.get(canonicalSlot(slot))?.length ?? 0), 0);
-        if (rowsOf(asked).length !== total) throw new Error(`seed ${seed}: after settling ${asked} holds ${rowsOf(asked).length} feed row(s), the view has ${total}`);
+    for (const slot of SHELL_CANONICAL) {
+      const rows = kernel.entries(slot).filter((entry) => (entry.entry as Partial<FeedEntry>).kind === "feed");
+      for (const name of expected) {
+        const mine = feedRows(rows, name);
+        const wantedRows = read.rows.get(name)?.get(slot) ?? [];
+        if (!sameRows(mine, wantedRows)) throw new Error(`seed ${seed}: after settling ${name} holds ${mine.length} row(s) in ${slot}, the view has ${wantedRows.length}`);
       }
+      const total = [...read.rows.values()].reduce((sum, bySlot) => sum + (bySlot.get(slot)?.length ?? 0), 0);
+      if (rows.length !== total) throw new Error(`seed ${seed}: after settling ${slot} holds ${rows.length} feed row(s), the view has ${total}`);
     }
   }
   check("settled");
@@ -350,7 +365,7 @@ export async function rendererKernelRun(seed: number, input: RendererRunInput, m
   for (let pass = 0; pass < 3 && (kernel.plugins().length || kernel.wanted().length); pass += 1) {
     for (const name of kernel.wanted()) void kernel.requestUnload(name);
     const again = kernel.unloadAll();
-    for (let n = 0; n < 10; n += 1) await round(() => true);
+    await settle(() => true, 10);
     await again;
   }
   timers.advance(TIMEOUT);
