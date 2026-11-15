@@ -10,10 +10,11 @@
 //   in); `Add` of a device, `Revoke` of a device it has in its roster, `Revoke` of a server when this server is the
 //   current revocation root (D46, D61), and `Endorse` of a member it finds valid that it neither added nor endorsed yet.
 // - Listeners hear which members stopped being valid (sessions close, M2 step 4).
-import { addJoins, clusterIdFromRecoveryKey, DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, revokeCascades, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
+import { addJoins, clusterIdFromRecoveryKey, DEFAULT_DEVICE_SCOPE, DeviceScope, fromBase64Url, MemberKeys, memberIdFromKey, RevocationStatement, revokeCascades, RootStatement, rosterDigest, SignedStatement, statementId, type StatementBody } from "../../protocol";
+import { normalizeRecoveryCode, recoveryKeyFromCode } from "../identity/recovery";
 import type { Command, Db } from "../store";
 import { computeRoster, validDevice, type MemberInfo, type RosterView, type VerifiedStatement } from "./validity";
-import { parseStored, signStatement, storedBytes, verifySignature, verifyStatements, type StoredStatement } from "./verify";
+import { parseStored, signStatement, signWith, storedBytes, verifySignature, verifyStatements, type StoredStatement } from "./verify";
 
 export interface RosterBackend {
   submit<T>(command: Command<T>): Promise<T>;
@@ -29,7 +30,7 @@ export interface RosterIdentity {
 
 export type RosterRefusal =
   | "no-cluster" | "cluster-exists" | "bad-root" | "self-revoked" | "bad-keys" | "revoked" | "not-a-device" | "server-revoke-root-only"
-  | "cannot-revoke-root" | "not-a-server" | "bad-join";
+  | "cannot-revoke-root" | "not-a-server" | "bad-join" | "bad-code" | "already-root" | "bad-keep";
 
 export class RosterError extends Error {
   constructor(readonly reason: RosterRefusal, message: string) { super(message); this.name = "RosterError"; }
@@ -41,7 +42,7 @@ export interface RosterChange {
   invalidated: string[];
 }
 
-export type AuditAct = "cluster.create" | "cluster.join" | "device.add" | "device.revoke" | "server.add" | "server.revoke" | "member.endorse" | "profile.write" | "statement.merge";
+export type AuditAct = "cluster.create" | "cluster.join" | "device.add" | "device.revoke" | "server.add" | "server.revoke" | "member.endorse" | "profile.write" | "statement.merge" | "root.change";
 
 export interface AuditBody {
   act: AuditAct;
@@ -310,6 +311,89 @@ export class RosterStore {
         ...(cleanReason ? { reason: cleanReason } : {}),
       }]);
       return { revokeId: revoke.id, already: false };
+    });
+  }
+
+  /**
+   * Reroots the cluster onto this server from the recovery code (§4.8, D48, D62): allowed on any non-root server
+   * (valid or not). Signs `Root{g+1, root: self, recoveryPub, keep, prev}` with the recovery key and, when
+   * `oldRootLost` is true, signs `Revoke{oldRoot, gen: g+1, cascade: false, seen}` in one transaction; drops the
+   * code and key immediately.
+   */
+  reroot(input: { code: string; oldRootLost: boolean; keep: string[] }): Promise<{ rootId: string; revokeId: string | null; gen: number }> {
+    return this.serial(async () => {
+      const cluster = this.cluster;
+      const root = this.current.root;
+      if (cluster === null || !root) throw new RosterError("no-cluster", "there is no cluster yet (it is made at the first pairing)");
+      if (root.root === this.identity.memberId) throw new RosterError("already-root", "this server is already the revocation root");
+
+      const keep = [...new Set(input.keep)].sort();
+      if (keep.length > 1_000) throw new RosterError("bad-keep", "keep exceeds the maximum of 1000 revocations");
+      const verifiedById = new Map(this.verified.map((item) => [item.id, item]));
+      for (const id of keep) {
+        const item = verifiedById.get(id);
+        if (!item || item.body.type !== "revoke" || !this.current.servers.has(item.body.member)) {
+          throw new RosterError("bad-keep", "keep may list only server revocations this server holds");
+        }
+      }
+
+      if (!normalizeRecoveryCode(input.code)) throw new RosterError("bad-code", "the recovery code is malformed");
+      const recovery = await recoveryKeyFromCode(input.code);
+      try {
+        if (recovery.recoveryPub !== root.recoveryPub) {
+          throw new RosterError("bad-code", "the recovery code does not match this cluster");
+        }
+        const gen = root.gen + 1;
+        const rootBody = RootStatement.parse({
+          type: "root",
+          cluster,
+          gen,
+          root: this.identity.memberId,
+          recoveryPub: root.recoveryPub,
+          keep,
+          prev: root.id,
+        });
+        const rootStmt = await signStatement(rootBody, "recovery", signWith(recovery.privateKey));
+
+        let revokeStmt: StoredStatement | null = null;
+        if (input.oldRootLost) {
+          const oldRoot = root.root;
+          // D66: record every joining Add signed by the old root that this server holds; D62: never cascade.
+          const seen = this.verified
+            .filter((item) => item.body.type === "add" && item.body.cluster === cluster && item.body.by === oldRoot && addJoins(item.body))
+            .map((item) => item.id)
+            .sort();
+          revokeStmt = await this.sign({
+            type: "revoke",
+            cluster,
+            member: oldRoot,
+            reason: "",
+            by: this.identity.memberId,
+            gen,
+            cascade: false,
+            seen,
+          });
+        }
+
+        const fresh = revokeStmt ? [rootStmt, revokeStmt] : [rootStmt];
+        const audits: Array<Omit<AuditBody, "at">> = [
+          { act: "root.change", statement: rootStmt.id, by: "recovery", member: this.identity.memberId },
+        ];
+        if (revokeStmt) {
+          const oldInfo = this.current.members.get(root.root);
+          audits.push({
+            act: "server.revoke",
+            statement: revokeStmt.id,
+            by: this.identity.memberId,
+            member: root.root,
+            ...(oldInfo?.name ? { name: oldInfo.name } : {}),
+          });
+        }
+        await this.commit(fresh, cluster, audits);
+        return { rootId: rootStmt.id, revokeId: revokeStmt?.id ?? null, gen };
+      } finally {
+        recovery.publicKey.fill(0);
+      }
     });
   }
 
