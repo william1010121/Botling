@@ -15,6 +15,9 @@ import { SESSION_FRAME_LIMIT, type SessionTransport } from "../../session";
 
 /** Header (kind, epoch, counter) + the largest plaintext + the GCM tag: the largest frame a session ever sends. */
 export const WS_MAX_PAYLOAD = 13 + SESSION_FRAME_LIMIT + 16;
+/** Socket bytes not yet flushed past which SessionLink pauses sealing and wakes on drain. */
+export const WS_HIGH_WATER = 1024 * 1024;
+const WS_DRAIN_POLL_MS = 5;
 /** Connections whose session handshake is still under way. */
 export const MAX_HANDSHAKING = 32;
 /** Every device WebSocket at once. */
@@ -28,7 +31,7 @@ const CLOSE_GRACE_MS = 1_500;
  */
 export interface SessionAcceptor {
   accept(transport: SessionTransport, kind: "tailnet"): {
-    readonly link: { readonly established: Promise<unknown> };
+    readonly link: { readonly established: Promise<unknown>; resume?(): void };
     receive(frame: Uint8Array): void;
     transportClosed(): void;
   };
@@ -65,32 +68,55 @@ export class DeviceSockets {
   private connected(ws: WebSocket): void {
     if (this.closed) { ws.terminate(); return; }
     let ended = false;
+    let drainTimer: ReturnType<typeof setTimeout> | null = null;
+    let session: ReturnType<SessionAcceptor["accept"]> | null = null;
+    const clearDrain = () => {
+      if (drainTimer) { clearTimeout(drainTimer); drainTimer = null; }
+    };
+    const scheduleDrain = () => {
+      if (ended || drainTimer || ws.readyState !== 1) return;
+      drainTimer = setTimeout(() => {
+        drainTimer = null;
+        if (ended || ws.readyState !== 1) return;
+        if (ws.bufferedAmount < WS_HIGH_WATER) session?.link.resume?.();
+        else scheduleDrain();
+      }, WS_DRAIN_POLL_MS);
+      drainTimer.unref?.();
+    };
     const transport: SessionTransport = {
       send: (frame) => { if (!ended && ws.readyState === 1) ws.send(frame, { binary: true }); },
       close: () => {
         if (ended) return;
         ended = true;
+        clearDrain();
         try { ws.close(1000); } catch { /* already gone */ }
         const cut = setTimeout(() => ws.terminate(), CLOSE_GRACE_MS);
         cut.unref?.();
+      },
+      writable: () => {
+        if (ended || ws.readyState !== 1) return false;
+        if (ws.bufferedAmount < WS_HIGH_WATER) return true;
+        scheduleDrain();
+        return false;
       },
     };
     this.handshaking++;
     let counted = true;
     const settle = () => { if (counted) { counted = false; this.handshaking--; } };
-    const session = this.options.remote.accept(transport, "tailnet");
+    session = this.options.remote.accept(transport, "tailnet");
     session.link.established.then(settle, settle);
     ws.on("message", (data, isBinary) => {
       if (ended) return;
-      if (!isBinary) { this.options.log("device socket: a text message; closing"); ended = true; ws.close(1003, "binary frames only"); session.transportClosed(); return; }
+      if (!isBinary) { this.options.log("device socket: a text message; closing"); ended = true; clearDrain(); ws.close(1003, "binary frames only"); session!.transportClosed(); return; }
       const bytes = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
       // A copy: the session keeps frames while it opens them, the socket reuses nothing it hands out, but be sure.
-      session.receive(new Uint8Array(bytes));
+      session!.receive(new Uint8Array(bytes));
     });
-    ws.on("close", () => { ended = true; settle(); session.transportClosed(); });
+    ws.on("close", () => { ended = true; clearDrain(); settle(); session!.transportClosed(); });
     ws.on("error", (error) => {
       this.options.log(`device socket: ${error.message}`);
       ended = true;
+      clearDrain();
       ws.terminate();
     });
   }

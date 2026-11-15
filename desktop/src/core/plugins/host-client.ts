@@ -81,6 +81,11 @@ export class PluginHostClient {
   onPluginFailure: (plugin: string | null, message: string, fatal: boolean) => void = () => {};
   /** Registered hooks or commands changed. */
   onRegistered: () => void = () => {};
+  /**
+   * Asked right before the host starts again after it exited (M5-18a): the plugins' files may have changed since the
+   * last `update`, so what it runs is decided again (it may call `update`, which then starts the host itself).
+   */
+  beforeRestart: (() => void) | null = null;
 
   private specs: HostSpec[] = [];
   /** The plugins the host's last load ran (not the ones that failed). */
@@ -94,6 +99,7 @@ export class PluginHostClient {
   private blame = new Map<number, string>();
   private nextId = 1;
   private stopping = false;
+  private shutDown = false;
   private restartTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -116,8 +122,25 @@ export class PluginHostClient {
     else if (this.running) void this.load();
   }
 
+  /**
+   * Ends the running host and starts a fresh one for `specs` (M5-18a: a plugin lost its grant or its granted code; Node
+   * cannot unload an ES module, so an unload would leave that module's own timers and sockets running).
+   */
+  replace(specs: HostSpec[]) {
+    this.specs = specs;
+    if (this.process) this.stop();
+    else if (specs.length) this.start();
+  }
+
   stop() {
     this.stopping = true;
+    this.running = false;
+    this.beforeSendHooks = 0;
+    this.afterReplyHooks = 0;
+    this.commands = [];
+    this.exposed.clear();
+    this.events.clear();
+    this.loaded.clear();
     if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     const process = this.process;
     if (process) void process.terminate(1_000);
@@ -126,6 +149,7 @@ export class PluginHostClient {
   /** Ends it and waits (quitting). */
   async shutdown() {
     this.stopping = true;
+    this.shutDown = true;
     if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     const process = this.process;
     if (!process) return;
@@ -258,6 +282,7 @@ export class PluginHostClient {
     }
     this.problem = null;
     this.stopping = false;
+    this.shutDown = false;
     mkdirSync(this.cwd, { recursive: true });
     let child: HostProcess;
     const handlers: HostHandlers = {
@@ -314,7 +339,10 @@ export class PluginHostClient {
     this.loaded.clear();
     this.events.clear();
     for (const id of [...this.pending.keys()]) this.finish(id, new Error("The plugin host exited."));
-    if (this.stopping) return;
+    if (this.stopping) {
+      if (!this.shutDown && this.specs.length) this.restart();
+      return;
+    }
     const status = signal ?? code ?? "?";
     this.log(`plugin host exited (${status})${this.stderr ? `: ${this.stderr.slice(-400)}` : ""}`);
     if (!blamed.size) this.onPluginFailure(null, `The plugin host exited (${status})`, false);
@@ -322,9 +350,14 @@ export class PluginHostClient {
     this.restarts++;
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      if (!this.process && !this.stopping && this.specs.length) this.start();
+      if (!this.process && !this.stopping && this.specs.length) this.restart();
     }, this.timing.restartDelay);
     this.restartTimer.unref?.();
+  }
+
+  private restart() {
+    this.beforeRestart?.();
+    if (!this.process && !this.shutDown && this.specs.length) this.start();
   }
 
   private write(message: HostMessage) {

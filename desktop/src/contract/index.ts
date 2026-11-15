@@ -42,8 +42,11 @@ const id = ContractId;
 export const RequestId = id;
 /** A bot: the Swift app's ids (UUIDs, upper case) are kept, so imported chats keep theirs. */
 export const BotId = id;
-/** Maintainer's fixed id (1.x's `Workspace.maintainerID`): it cannot be removed. */
+/** Maintainer's fixed 2.x id (`Workspace.maintainerID`), kept for the 2.x fallback in `isMaintainer`. */
 export const MAINTAINER_BOT_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
+
+/** True when a BotView is marked as Maintainer, or matches the 2.x id when the core does not send the flag. */
+export const isMaintainer = (bot: { id: string; maintainer?: true }): boolean => bot.maintainer === true || bot.id === MAINTAINER_BOT_ID;
 
 // ---------------------------------------------------------------------------------------------
 // Shared views
@@ -483,6 +486,8 @@ export const BotView = z.strictObject({
   name: z.string().max(200),
   /** main: the front desk; manager: works in a project folder; bot: a bot of its own. */
   role: z.enum(["main", "manager", "bot"]),
+  /** True on the Maintainer bot only (absent on every other bot). */
+  maintainer: z.literal(true).optional(),
   /** An avatar shape (`AvatarShape` in the Swift app: circle, square, …). */
   avatar: z.string().max(40),
   folder: z.string().max(4_000),
@@ -642,6 +647,8 @@ export const PluginView = z.strictObject({
   installedFrom: z.string().max(2_000).nullable(),
   /** Shipped with Botling (step M11): read-only, can only be turned off. */
   builtIn: z.boolean().optional(),
+  /** What this machine grants this plugin at its running hash (Botling 3 only; 2.x leaves it unset). */
+  grant: z.enum(["none", "read", "request", "write"]).optional(),
   /** A library plugin running in place of the built-in one of the same name (its version is the same or newer): the built-in's version. */
   replacesBuiltIn: z.string().max(100).optional(),
   /** A built-in plugin running while the library holds an older copy (or one whose version is not a semver), which is ignored: that copy's version. */
@@ -1009,7 +1016,8 @@ export const PluginsView = z.strictObject({
 });
 export type PluginsView = z.infer<typeof PluginsView>;
 
-export const Command = z.discriminatedUnion("type", [
+const PluginCodeHash = z.string().min(1).max(100).regex(/^[A-Za-z0-9:_.-]+$/);
+const BASE_COMMANDS = [
   z.strictObject({ type: z.literal("project.files"), botId, query: z.string().max(200) }),
   z.strictObject({ type: z.literal("project.preview"), botId, path: z.string().min(1).max(4096) }),
   z.strictObject({ type: z.literal("boot.commit") }),
@@ -1310,6 +1318,62 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.file"), name: PluginName, path: z.string().min(1).max(1_000) }),
   /** Main only: the picture a component's data named, by its token. */
   z.strictObject({ type: z.literal("card.image"), token: z.string().regex(/^[0-9a-f]{40}$/) }),
+] as const;
+type BaseCommandType = (typeof BASE_COMMANDS)[number]["shape"]["type"]["value"];
+const BASE_COMMAND_TYPES = BASE_COMMANDS.map((schema) => schema.shape.type.value) as [BaseCommandType, ...BaseCommandType[]];
+/** Every contract command name; used to bound `plugin.grant.requests` (§11.7). */
+export const CommandTypeEnum = z.enum([...BASE_COMMAND_TYPES, "plugin.grant"]);
+
+/** A call-in's transcript slice is at most 64 KiB of UTF-8 (the host cuts the oldest lines first, M5-02c). */
+const CALLIN_TRANSCRIPT_BYTES = 64 * 1024;
+const CALLIN_REPLY_BYTES = 200 * 1024;
+/** UTF-8 bytes of `text` as it travels in a frame (JSON-escaped, quotes not counted), so a valid call-in always fits FRAME_LIMIT. */
+const wireBytes = (text: string): number => new TextEncoder().encode(JSON.stringify(text)).length - 2;
+/**
+ * Cross-server call-ins (Q-C1, D51, protocol v1 §15): slots whose origin is a server, never a device or the window
+ * (`COMMAND_SCOPES` scope `server`). They sit outside `BASE_COMMANDS` so `plugin.grant.requests` cannot name them: a plugin is
+ * never given a server-only command. No `picks` in 3.0 (the guest's cards stay in the guest's chat).
+ */
+const CALLIN_COMMANDS = [
+  /** Host server A asks the guest's owner B to run `botId`'s turn: the host chat's transcript slice and what was asked. */
+  z.strictObject({
+    type: z.literal("callin.ask"),
+    botId,
+    callId: id,
+    host: z.strictObject({ server: z.string().min(1).max(200), botId, name: z.string().min(1).max(200) }),
+    transcript: z.string().max(CALLIN_TRANSCRIPT_BYTES).refine((text) => wireBytes(text) <= CALLIN_TRANSCRIPT_BYTES, "transcript is over 64 KiB"),
+    asked: z.string().max(4_000),
+    by: z.enum(["user", "bot"]),
+    depth: z.number().int().min(1).max(2),
+  }),
+  /** The guest's owner B answers the host bot `botId` on server A: the reply, or why there is none (applied once by the slot). */
+  z.strictObject({
+    type: z.literal("callin.reply"),
+    botId,
+    callId: id,
+    guest: z.strictObject({ botId, name: z.string().min(1).max(200) }),
+    outcome: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("reply"), text: z.string().max(CALLIN_REPLY_BYTES).refine((text) => wireBytes(text) <= CALLIN_REPLY_BYTES, "reply text is over 200 KiB"), engine: Engine }),
+      z.strictObject({ kind: z.literal("failed"), why: z.string().max(1_000) }),
+      z.strictObject({ kind: z.literal("busy") }),
+    ]),
+  }),
+  /** The host gave up (D51): B skips the call-in if it has not started, and stops the guest turn if it has. */
+  z.strictObject({ type: z.literal("callin.cancel"), botId, callId: id }),
+] as const;
+
+export const Command = z.discriminatedUnion("type", [
+  ...BASE_COMMANDS,
+  /** Raises, lowers, or revokes (`tier: "none"`) one plugin grant at one code hash on the target server (D54, §11.7). */
+  z.strictObject({
+    type: z.literal("plugin.grant"),
+    plugin: PluginName,
+    codeHash: PluginCodeHash,
+    tier: z.enum(["none", "read", "request", "write"]),
+    reads: z.array(z.string().min(1).max(200)).max(50),
+    requests: z.array(CommandTypeEnum).max(100),
+  }),
+  ...CALLIN_COMMANDS,
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command["type"];
@@ -1319,7 +1383,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.output", "subagent.view", "chat.read", "chat.shown", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
-  "plugins.list", "plugins.enable", "plugins.store", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.linkCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
+  "plugins.list", "plugins.enable", "plugins.store", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.linkCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink", "plugin.grant",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "link.drag", "worker.file",
@@ -1461,6 +1525,10 @@ export interface Results {
   "plugins.call": { result: unknown };
   "plugins.approvalAsk": { needsApproval: ApprovalAskView | null };
   "plugins.approve": { accepted: boolean };
+  "plugin.grant": { applied: true };
+  "callin.ask": { applied: true };
+  "callin.reply": { applied: true };
+  "callin.cancel": { applied: true };
   "plugins.tileImages": { images: Record<string, string> };
   "plugins.noteSnapshot": { ref: string; url: string | null };
   "plugins.openLink": { opened: boolean; previewURL?: string };

@@ -5,7 +5,7 @@
 import { z } from "zod";
 import { BotId, Command, MessageView, WireError } from "../contract";
 import { ContentRef, ContentVariant, Entry } from "./entries";
-import { ContentTicket, EntryRef, VariantName } from "./content-url";
+import { ContentTicket, EntryRef, PluginName, VariantName } from "./content-url";
 import { AdminEvent, AdminOp } from "./pairing";
 import { MemberId, PublicKey, RevocationStatement, Signature, SignedStatement, StatementId } from "./roster";
 import {
@@ -34,7 +34,7 @@ export const BATCH_ENTRIES_LIMIT = 500;
  * present, and until M5 an owner refuses a command that carries it with `refused{grant}` (after the scope check).
  */
 export const Via = z.strictObject({
-  plugin: z.string().min(1).max(214).regex(/^[a-z0-9][a-z0-9._-]*$/),
+  plugin: PluginName,
   codeHash: z.string().min(1).max(100).regex(/^[A-Za-z0-9:_.-]+$/),
 });
 export type Via = z.infer<typeof Via>;
@@ -282,7 +282,7 @@ export const ContentCredit = msg("content.credit", { req: ReqId, bytes: z.number
 /** The player seeked away or closed. */
 export const ContentCancel = msg("content.cancel", { req: ReqId });
 /** Ask for a URL ticket for one reference (Q1). */
-export const ContentTicketReq = msg("content.ticket", { req: ReqId, owner: ServerId, id: ContentId, entry: EntryRef });
+export const ContentTicketReq = msg("content.ticket", { req: ReqId, owner: ServerId, id: ContentId, entry: EntryRef, plugin: PluginName.optional() });
 /** The ticket: bound to this device, the id and the entry; re-checked on every request (Q1). */
 export const ContentGranted = msg("content.granted", { req: ReqId, ticket: ContentTicket, expiresAt: z.number().int().nonnegative() });
 /**
@@ -369,6 +369,8 @@ export const ShellBrowser = msg("shell.browser", { req: ReqId, args: ShellArgs.o
 /** Install the newer release (the core's `installRelease`). */
 export const ShellInstall = msg("shell.install", { req: ReqId, args: ShellArgs.optional() });
 export const ShellQuit = msg("shell.quit", { req: ReqId, args: ShellArgs.optional() });
+export const ShellSeal = msg("shell.seal", { req: ReqId, text: z.string().max(100_000) });
+export const ShellOpen = msg("shell.open", { req: ReqId, sealed: z.string().max(140_000) });
 /** The window's answer to a `shell.*` request; `data` is what a browser request answered (the 2.x app op's `data`). */
 export const ShellDone = msg("shell.done", { req: ReqId, ok: z.boolean(), file: z.string().max(4_096).optional(), error: z.string().max(2_000).optional(), data: z.unknown().optional() });
 
@@ -398,7 +400,7 @@ export const MESSAGES = {
   "pair.hello": PairHello, "pair.added": PairAdded, "pair.ack": PairAck, "pair.declined": PairDeclined,
   "roster.have": RosterHave, "roster.ids": RosterIds, "roster.want": RosterWant, "roster.statements": RosterStatements, "roster.revocations": RosterRevocations,
   admin: Admin, "admin.event": AdminEventMsg,
-  "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.done": ShellDone,
+  "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.seal": ShellSeal, "shell.open": ShellOpen, "shell.done": ShellDone,
   ping: Ping, bye: Bye,
 } as const;
 export type MessageType = keyof typeof MESSAGES;

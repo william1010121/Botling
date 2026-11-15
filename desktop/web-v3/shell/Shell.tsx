@@ -11,7 +11,7 @@ import { Icon } from "../../src/renderer/icons";
 import { QrScanner, cameraError, openCamera } from "../../mobile/QrScanner";
 import { PHONE_QUERY, phoneWidth } from "../../mobile/layout";
 import { mountRenderer, type MountedRenderer, type PageCapabilities } from "../bridge-v3";
-import { forgetDevice, loadDevice, loadPref, saveDevice, saveDeviceServers, savePref, type DeviceRecord } from "./device-store";
+import { forgetDevice, loadDevice, loadPref, saveDevice, saveDeviceServers, savePref, type DeviceRecord, type StoredServer } from "./device-store";
 import { makePairKeys, pair, pairingSupported, PairingError, type PairAttempt, type PairKeys } from "./pairing";
 import { MediaBroker } from "./media";
 import { SwBridge } from "./sw-bridge";
@@ -19,7 +19,8 @@ import { PageUploads } from "./uploads";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
 import { askedPath, bannerText, FE_VERSION, itemWords, newDiagnostics, openConnection, UNSETTLED_LEGACY_WARNING, type Connection, type Diagnostics, type DialPath } from "./connection";
-import type { DeviceScope } from "../../src/protocol";
+import { slotKey, type DeviceScope, type ServerState, type Slot } from "../../src/protocol";
+import { grantCommands, linkPluginSource, listPlugins, ONLY_MANAGE, pluginSheet, type GrantTier, type PluginSource } from "./plugins";
 
 /** Diagnostics for the headless harness and support (not a capability; the renderer never sees it). */
 export const diagnostics: Diagnostics = newDiagnostics();
@@ -171,7 +172,14 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
   const [sheet, setSheet] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [path, setPath] = useState<DialPath>("direct");
+  const [serverId, setServerId] = useState<string>(device.server.memberId);
+  const [deviceServers, setDeviceServers] = useState<StoredServer[]>(() => device.servers ?? []);
   const mounted = useRef<MountedRenderer | null>(null);
+
+  useEffect(() => {
+    setServerId(device.server.memberId);
+    setDeviceServers(device.servers ?? []);
+  }, [device]);
 
   const capabilities = useMemo<Omit<PageCapabilities, "uploads">>(() => ({
     openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer"); },
@@ -229,6 +237,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       return openConnection(device, diagnostics, location.href, {
         ...(forcedPath ? { forcedPath } : {}),
         onPath: applyPath,
+        onServer: (nextServerId) => { if (!cancelled) setServerId(nextServerId); },
         onRevoked: () => revoked("revoked (bye)"),
         ...(reprobeIntervalMs !== undefined ? { reprobeIntervalMs } : {}),
       });
@@ -236,6 +245,7 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       if (cancelled) { void conn.close(); return; }
       opened = conn;
       if (conn.revoked) deviceRevoked = true;
+      if (conn.serverId) setServerId(conn.serverId);
       const update = () => {
         const text = bannerText(conn.link.status, conn.link.pending(), conn.link.servers(), deviceRevoked);
         const last = diagnostics.banners[diagnostics.banners.length - 1];
@@ -246,8 +256,14 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
       conn.link.on((event) => { if (event.type === "bye" && event.reason === "revoked") revoked("revoked (bye)"); });
       conn.link.on((event) => { if (event.type === "state" || event.type === "pending" || event.type === "outcome" || event.type === "servers") update(); });
       conn.link.on((event) => {
+        if (event.type === "attached" && event.attached) {
+          const nextId = conn.serverId ?? conn.link.attachedServerId();
+          if (nextId) setServerId(nextId);
+        }
         if ((event.type === "attached" && event.attached) || (event.type === "message" && event.message.t === "peer")) {
-          void saveDeviceServers(conn.link.servers()).catch(() => undefined);
+          void saveDeviceServers(conn.link.servers()).then((merged) => {
+            if (!cancelled && Array.isArray(merged)) setDeviceServers(merged);
+          }, () => undefined);
         }
       });
       // A line's media (step 9): the chat frame names a file, the shell answers with its ticketed /v3/c/ URL.
@@ -293,21 +309,106 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     <div id="v3-renderer" className="v3-renderer" ref={rendererRoot} />
     {failure && <div className="banner bottom web-banner" role="alert">{failure}</div>}
     <div className="web-scrim" aria-hidden="true" onClick={() => setNavOpen(false)} />
-    {sheet && <ThisDevice device={device} connection={connection} path={path} onClose={() => setSheet(false)} onForget={() => void forget()} />}
+    {sheet && <ThisDevice device={device} connection={connection} path={path} serverId={serverId} knownServers={deviceServers} onClose={() => setSheet(false)} onForget={() => void forget()} />}
   </div>;
 }
 
+interface PickerServer {
+  id: string;
+  name: string;
+  state?: ServerState;
+}
+
+function serverOptionLabel(server: PickerServer, targetId: string, attachedId: string | null): string {
+  const tags: string[] = [];
+  if (server.id === attachedId) tags.push("attached");
+  else if (server.id === targetId) tags.push("target");
+  if (server.state === "gone") tags.push("removed");
+  else if (server.state === "stale") tags.push("offline");
+  return tags.length > 0 ? `${server.name} ${tags.map((t) => `(${t})`).join(" ")}` : server.name;
+}
+
 /** Settings › This device: who this device is, which server it is paired with, and forgetting it. */
-export function ThisDevice({ device, connection, path, onClose, onForget }: { device: DeviceRecord; connection: Connection | null; path: DialPath; onClose: () => void; onForget: () => void }) {
+export function ThisDevice({
+  device,
+  connection,
+  path,
+  serverId,
+  knownServers,
+  onClose,
+  onForget,
+}: {
+  device: DeviceRecord;
+  connection: Connection | null;
+  path: DialPath;
+  serverId: string;
+  knownServers?: readonly StoredServer[];
+  onClose: () => void;
+  onForget: () => void;
+}) {
   const [confirm, setConfirm] = useState(false);
+  const [plugins, setPlugins] = useState(false);
   const [pendingItems, setPendingItems] = useState(() => connection?.link.pending() ?? []);
+  const [attached, setAttached] = useState(() => connection?.link.attached ?? false);
+  const [attachedServerId, setAttachedServerId] = useState<string | null>(
+    () => (connection?.link.attached ? (connection.link.attachedServerId() ?? null) : null),
+  );
+  const [liveServers, setLiveServers] = useState<PickerServer[]>(() => (connection?.link.attached ? connection.link.servers() : []));
+  const [selectedServerId, setSelectedServerId] = useState<string>(serverId);
+
   useEffect(() => {
-    if (!connection) { setPendingItems([]); return; }
+    setSelectedServerId(serverId);
+  }, [serverId]);
+
+  useEffect(() => {
+    if (!connection) {
+      setPendingItems([]);
+      setAttached(false);
+      setAttachedServerId(null);
+      setLiveServers([]);
+      return;
+    }
+    const syncLink = (attachedOverride?: boolean) => {
+      const isAttached = attachedOverride ?? connection.link.attached;
+      setAttached(isAttached);
+      setAttachedServerId(isAttached ? (connection.link.attachedServerId() ?? null) : null);
+      setLiveServers(isAttached ? connection.link.servers() : []);
+    };
     setPendingItems(connection.link.pending());
+    syncLink();
     return connection.link.on((event) => {
       if (event.type === "pending" || event.type === "outcome") setPendingItems(connection.link.pending());
+      if (event.type === "state") {
+        syncLink();
+      } else if (event.type === "attached") {
+        syncLink(event.attached);
+      } else if (event.type === "servers" || (event.type === "message" && event.message.t === "peer")) {
+        syncLink();
+      }
     });
   }, [connection]);
+
+  const stickyServers = knownServers ?? device.servers ?? [];
+  const goneIds = new Set(stickyServers.filter((s) => s.state === "gone").map((s) => s.id));
+  const baseServers: readonly PickerServer[] = attached
+    ? liveServers
+    : (stickyServers.length > 0 ? stickyServers : [{ id: device.server.memberId, name: device.server.name }]);
+  const serverOptions: PickerServer[] = baseServers.map((s) => (
+    goneIds.has(s.id) && s.state !== "gone" ? { ...s, state: "gone" as const } : s
+  ));
+  if (!serverOptions.some((s) => s.id === selectedServerId)) {
+    serverOptions.push({ id: selectedServerId, name: selectedServerId, ...(goneIds.has(selectedServerId) ? { state: "gone" as const } : {}) });
+  }
+  if (attachedServerId && !serverOptions.some((s) => s.id === attachedServerId)) {
+    serverOptions.push({ id: attachedServerId, name: attachedServerId, ...(goneIds.has(attachedServerId) ? { state: "gone" as const } : {}) });
+  }
+  const serverName = (id: string): string => serverOptions.find((s) => s.id === id)?.name ?? id;
+  const serverStatusText = attachedServerId
+    ? (attachedServerId === selectedServerId
+      ? `Attached to ${serverName(attachedServerId)}`
+      : `Switching to ${serverName(selectedServerId)}… (attached to ${serverName(attachedServerId)})`)
+    : `Connecting to ${serverName(selectedServerId)}…`;
+
   const pending = pendingItems.length;
   const stoppedItems = pendingItems.filter((item) => item.stopped);
   return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
@@ -317,6 +418,31 @@ export function ThisDevice({ device, connection, path, onClose, onForget }: { de
         <dt>Name</dt><dd>{device.name}</dd>
         <dt>Device id</dt><dd><code>{device.memberId}</code></dd>
         <dt>Paired with</dt><dd>{device.server.name}</dd>
+        <dt><label htmlFor="v3-server-picker">Server</label></dt>
+        <dd>
+          <select
+            id="v3-server-picker"
+            data-testid="server-picker"
+            aria-label="Server"
+            value={selectedServerId}
+            data-target={selectedServerId}
+            data-attached={attachedServerId ?? ""}
+            disabled={!connection?.pickServer || serverOptions.length === 0}
+            onChange={(event) => {
+              const nextId = event.target.value;
+              if (!nextId || nextId === selectedServerId) return;
+              // D72: M4-20a owns server switching and preference persistence; M4-20b only invokes pickServer.
+              if (connection?.pickServer?.(nextId)) setSelectedServerId(nextId);
+            }}
+          >
+            {serverOptions.map((server) => (
+              <option key={server.id} value={server.id} disabled={server.state === "gone"}>
+                {serverOptionLabel(server, selectedServerId, attachedServerId)}
+              </option>
+            ))}
+          </select>
+          <div className="v3-server-status" data-testid="server-status">{serverStatusText}</div>
+        </dd>
         <dt>Allowed</dt><dd>{device.scope.join(", ")}</dd>
         <dt>Paired</dt><dd>{new Date(device.pairedAt).toLocaleString()}</dd>
         <dt>Waiting to send</dt><dd>{pending}</dd>
@@ -332,6 +458,9 @@ export function ThisDevice({ device, connection, path, onClose, onForget }: { de
           </div>
         </div>)}
       </div>}
+      <div className="v3-sheet-actions">
+        <button type="button" className="web-secondary" data-testid="plugins-open" onClick={() => setPlugins(true)}>Plugins</button>
+      </div>
       {device.relay && <div className="v3-sheet-actions">
         <button type="button" className="web-secondary" data-testid="switch-path" onClick={() => void savePref("path", path === "relay" ? "auto" : "relay").then(() => location.reload())}>
           {path === "relay" ? "Connect directly" : "Connect via relay"}</button>
@@ -340,6 +469,129 @@ export function ThisDevice({ device, connection, path, onClose, onForget }: { de
         ? <><p className="v3-sheet-warn">Forget this device? Messages still waiting here are dropped, and you pair again with a new link. To stop it everywhere, revoke it on the computer (botlingd revoke-device).</p>
           <div className="v3-sheet-actions"><button type="button" className="web-secondary" onClick={() => setConfirm(false)}>Keep</button><button type="button" className="web-primary" onClick={onForget}>Forget</button></div></>
         : <div className="v3-sheet-actions"><button type="button" className="web-secondary" onClick={() => setConfirm(true)}>Forget this device…</button><button type="button" className="web-primary" onClick={onClose}>Done</button></div>}
+    </section>
+    {plugins && <PluginsSheet device={device} connection={connection} onClose={() => setPlugins(false)} />}
+  </div>;
+}
+
+const NO_PLUGIN_SOURCE: PluginSource = { servers: () => [], rows: () => null };
+
+/**
+ * This device › Plugins (M5-14b, D54, §11.7): the list, and the grant sheet. It is the shell's own sheet, never drawn in a
+ * plugin frame. [Allow] sends one `plugin.grant` per machine that holds the shown code hash, each as that machine's own
+ * item (no `via`), and then shows each one's delivery words as for any command.
+ */
+export function PluginsSheet({ device, connection, onClose }: { device: DeviceRecord; connection: Connection | null; onClose: () => void }) {
+  const [, setTick] = useState(0);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const [choice, setChoice] = useState<GrantTier | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const link = connection?.link ?? null;
+  const source = useMemo(() => (link ? linkPluginSource(link) : NO_PLUGIN_SOURCE), [link]);
+  const canManage = device.scope.includes("manage");
+
+  useEffect(() => {
+    if (!link) return;
+    // Rows (a peer's table changed) and delivery states change what the sheet shows.
+    return link.on((event) => { if (event.type === "servers" || event.type === "pending" || event.type === "outcome" || event.type === "attached") setTick((n) => n + 1); });
+  }, [link]);
+
+  const review = (name: string) => {
+    setFailure(null);
+    setChoice(pluginSheet(source, name)?.selected ?? null);
+    setReviewing(name);
+  };
+  const sheet = reviewing ? pluginSheet(source, reviewing) : null;
+  const back = () => { setReviewing(null); setFailure(null); };
+
+  // What this sheet already put in the outbox, by plugin, hash and machine, and the one tier it sent for that plugin and
+  // hash: a retry after a part-way failure, or a second Review, sends only that tier and only to the machines that have
+  // not got it (a resend would be a new slot and a new audit row; another tier would undo the first act on some machines
+  // while the rows still show the old grant).
+  const delivered = useRef(new Map<string, { name: string; slot: Slot }>());
+  const lockedTier = useRef(new Map<string, GrantTier>());
+  const sheetKey = (name: string, hash: string) => `${name}\u0000${hash}`;
+  const deliveredKey = (name: string, hash: string, serverId: string) => `${sheetKey(name, hash)}\u0000${serverId}`;
+  // One user act sends once: a second tap while the first is still being written to the outbox does nothing.
+  const allowing = useRef(false);
+  const allow = async () => {
+    if (!link || !sheet || !canManage || allowing.current) return;
+    const lock = sheetKey(sheet.name, sheet.codeHash);
+    const tier = lockedTier.current.get(lock) ?? choice;
+    if (tier === null) return;
+    allowing.current = true;
+    try {
+      const items = grantCommands(sheet, tier);
+      lockedTier.current.set(lock, tier); // before the first await: a radio change mid-send cannot split the act
+      for (const item of items) {
+        const serverId = item.target.slice("srv:".length);
+        const key = deliveredKey(sheet.name, sheet.codeHash, serverId);
+        if (delivered.current.has(key)) continue;
+        const slot = (await link.submit(item.target, item.cmd)).slot;
+        delivered.current.set(key, { name: sheet.targets.find((h) => h.serverId === serverId)?.serverName ?? serverId, slot });
+        setTick((n) => n + 1);
+      }
+      setFailure(null);
+    } catch (error) {
+      // What was already sent stays shown, and [Allow] stays for the machines that have not got it. Nothing sent yet:
+      // the tier is free again.
+      if (!sheet.targets.some((h) => delivered.current.has(deliveredKey(sheet.name, sheet.codeHash, h.serverId)))) lockedTier.current.delete(lock);
+      setFailure((error as Error).message);
+    } finally {
+      allowing.current = false;
+      setTick((n) => n + 1);
+    }
+  };
+
+  if (reviewing && sheet) {
+    const views = link?.pending() ?? [];
+    const locked = lockedTier.current.get(sheetKey(sheet.name, sheet.codeHash));
+    const shownChoice = locked ?? choice;
+    const sent = sheet.targets.flatMap((h) => delivered.current.get(deliveredKey(sheet.name, sheet.codeHash, h.serverId)) ?? []);
+    return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
+      <section className="v3-sheet" role="dialog" aria-label="Plugin grant" data-testid="grant-sheet" onClick={(event) => event.stopPropagation()}>
+        <h2>{sheet.title}</h2>
+        <p>{sheet.askLine}</p>
+        {sheet.differing.map((line) => <p key={line} className="v3-sheet-warn">{line}</p>)}
+        {sheet.builtIn
+          ? <p className="v3-sheet-warn">built in</p>
+          : <fieldset className="v3-grant-options">
+            <legend>Allow it to:</legend>
+            {sheet.options.map((option) => <label key={option.tier} className="v3-grant-option">
+              <input type="radio" name="v3-grant-tier" value={option.tier} checked={shownChoice === option.tier} disabled={locked !== undefined}
+                onChange={() => setChoice(option.tier)} /> {option.words}</label>)}
+          </fieldset>}
+        {sent.length > 0 && <div data-testid="grant-sent">
+          <p>{`Sent to ${sent.length} ${sent.length === 1 ? "machine" : "machines"}.`}</p>
+          {sent.map(({ name, slot }) => {
+            const view = views.find((item) => item.key === slotKey(slot));
+            return <p key={slotKey(slot)} className="v3-sheet-warn">{view ? `${name}: ${itemWords(view)}` : name}</p>;
+          })}
+        </div>}
+        {failure && <p className="v3-sheet-warn" role="alert">{failure}</p>}
+        <div className="v3-sheet-actions">
+          <button type="button" className="web-secondary" onClick={back}>{sent.length > 0 ? "Done" : "Cancel"}</button>
+          {sent.length < sheet.targets.length && <button type="button" className="web-primary" disabled={!canManage || shownChoice === null || sheet.targets.length === 0} onClick={() => void allow()}>Allow</button>}
+        </div>
+      </section>
+    </div>;
+  }
+
+  const list = listPlugins(source);
+  return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
+    <section className="v3-sheet" role="dialog" aria-label="Plugins" data-testid="plugins-sheet" onClick={(event) => event.stopPropagation()}>
+      <h2>This device › Plugins</h2>
+      <div className="v3-plugin-list">
+        {list.map((plugin) => <div key={plugin.name} className="v3-plugin-row" data-testid="plugin-row">
+          <span className="v3-plugin-name">{plugin.name}</span>
+          <span>{plugin.authorWords}</span>
+          <span>{plugin.tierWords}</span>
+          {!plugin.builtIn && (canManage
+            ? <button type="button" className="web-secondary" onClick={() => review(plugin.name)}>Review</button>
+            : <span className="v3-sheet-warn">{ONLY_MANAGE}</span>)}
+        </div>)}
+      </div>
+      <div className="v3-sheet-actions"><button type="button" className="web-primary" onClick={onClose}>Done</button></div>
     </section>
   </div>;
 }

@@ -23,11 +23,11 @@ export type ComponentEditorAction =
   | { kind: "answer"; task: string; run: number; requestId: string; allow: boolean; input: Record<string, unknown>; message?: string };
 
 /** Only the exact profile Core created can acquire the route. Names, folders and copied IDs cannot. */
-export function maintainerEditorBinding(owner: BotProfile, root: string, headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig) {
+export function maintainerEditorBinding(owner: BotProfile, root: string, headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig, maintainerId = MAINTAINER_ID) {
   const library = resolve(root, "plugins");
   return (profile: BotProfile, session: SessionStart): ComponentEditorRoute | null => {
-    if (profile !== owner || profile.id !== MAINTAINER_ID || profile.role !== "manager"
-      || resolve(profile.folder) !== library || resolve(profile.storeDir) !== resolve(Layout.bot(root, MAINTAINER_ID))) return null;
+    if (profile !== owner || profile.id !== maintainerId || profile.role !== "manager"
+      || resolve(profile.folder) !== library || resolve(profile.storeDir) !== resolve(Layout.bot(root, maintainerId))) return null;
     const parent = headConfig(profile, session);
     if (resolve(parent.cwd) !== library) return { error: "The Maintainer editor's working folder does not match the app's plugin library. No editor was launched." };
     const file = join(library, "ccb-core", "claude", "agents", "component-editor.md");

@@ -239,8 +239,28 @@ export class ServerClient {
     }
   }
 
-  /** The server's asks of the window (§6.3 `shell.*`): the 2.x app ops, answered with `shell.done`. */
+  /** The server's asks of the window (§6.3 `shell.*`): `shell.seal`/`shell.open` and the 2.x app ops, answered with `shell.done`. */
   private async onServerMessage(message: Message): Promise<void> {
+    if (message.t === "shell.seal" || message.t === "shell.open") {
+      let answer: { ok: boolean; error?: string; data?: unknown };
+      if (!this.options.seal) answer = { ok: false, error: "This window cannot keep secrets." };
+      else {
+        try {
+          answer = message.t === "shell.seal"
+            ? { ok: true, data: { sealed: this.options.seal("seal", message.text) } }
+            : { ok: true, data: { text: this.options.seal("open", message.sealed) } };
+        } catch (error) {
+          answer = { ok: false, error: String((error as Error)?.message ?? error) };
+        }
+      }
+      const done = {
+        t: "shell.done" as const, req: message.req, ok: answer.ok,
+        ...(answer.error ? { error: answer.error.slice(0, 2_000) } : {}),
+        ...(answer.data !== undefined ? { data: answer.data } : {}),
+      };
+      if (!this.link?.post(done)) this.options.audit(`${message.t}: the answer was not sent (link detached)`);
+      return;
+    }
     const op = SHELL_OPS[message.t];
     if (!op) return;
     const { req, args } = message as { req: string; args?: Record<string, string> };

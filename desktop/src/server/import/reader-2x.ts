@@ -206,8 +206,9 @@ export function read2x(dir: string): Read2x {
         );
       }
     }
-  } catch (error) {
-    problems.push(`plugin-secrets.json: ${errorText(error)}`);
+  } catch {
+    // Never echo the parser's message: it quotes a piece of the file, and this file holds (sealed) secrets.
+    problems.push("plugin-secrets.json: could not be read (not valid JSON); its contents are not shown");
   }
 
   // folders.json

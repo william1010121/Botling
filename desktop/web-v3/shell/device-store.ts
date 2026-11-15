@@ -94,14 +94,17 @@ export function mergeServers(current: readonly StoredServer[] | undefined, updat
     const prev = byId.get(next.id);
     const dh = next.dh ?? prev?.dh;
     const name = next.name || prev?.name || next.id;
-    if (next.state === "gone") {
-      // D70: a revoked server is listed `gone` with no addresses.
+    if (prev?.state === "gone" || next.state === "gone") {
+      // D70: a revoked server stays permanently `gone` with no addresses.
+      const since = prev?.state === "gone"
+        ? (prev.since !== undefined ? prev.since : next.since)
+        : (next.since !== undefined ? next.since : prev?.since);
       byId.set(next.id, {
         id: next.id,
         name,
         ...(dh ? { dh } : {}),
         state: "gone",
-        ...(next.since !== undefined ? { since: next.since } : prev?.since !== undefined ? { since: prev.since } : {}),
+        ...(since !== undefined ? { since } : {}),
       });
       continue;
     }

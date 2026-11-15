@@ -67,10 +67,10 @@ export interface BotProfile {
   instructionsFile?: string;
 }
 
-export function mainProfile(root: string): BotProfile {
+export function mainProfile(root: string, id = MAIN_BOT_ID): BotProfile {
   const home = Layout.mainBot(root);
   // The main bot asks before each command: its folder is no project to build or test in.
-  return { id: MAIN_BOT_ID, name: "Main bot", role: "main", avatar: "circle", folder: home, memoryPath: "memory.md", storeDir: home, tools: TOOLBOX, job: null, problem: null };
+  return { id, name: "Main bot", role: "main", avatar: "circle", folder: home, memoryPath: "memory.md", storeDir: home, tools: TOOLBOX, job: null, problem: null };
 }
 
 export function projectProfile(root: string, project: ProjectRecord): BotProfile {
@@ -108,20 +108,20 @@ export function projectProfile(root: string, project: ProjectRecord): BotProfile
 }
 
 /** projects.json's rows (Maintainer is never in it; a broken file reads as none, as in 1.x). */
-export function loadProjects(root: string): { projects: ProjectRecord[]; problem: string | null } {
+export function loadProjects(root: string, maintainerId = MAINTAINER_ID): { projects: ProjectRecord[]; problem: string | null } {
   try {
     const value = readJSON(Layout.projectsFile(root));
     if (value === undefined) return { projects: [], problem: null };
     if (!Array.isArray(value)) return { projects: [], problem: "projects.json is not a list" };
-    return { projects: value.filter(isProjectRecord).filter((project) => project.id !== MAINTAINER_ID), problem: null };
+    return { projects: value.filter(isProjectRecord).filter((project) => project.id !== maintainerId), problem: null };
   } catch (error) {
     return { projects: [], problem: (error as Error).message };
   }
 }
 
 /** The main bot and every project and bot, in the left column's order. */
-export function loadProfiles(root: string): { profiles: BotProfile[]; problem: string | null } {
+export function loadProfiles(root: string, ids: { mainBotId?: string; maintainerId?: string } = {}): { profiles: BotProfile[]; problem: string | null } {
   mkdirSync(Layout.mainBot(root), { recursive: true });
-  const { projects, problem } = loadProjects(root);
-  return { profiles: [mainProfile(root), ...projects.map((project) => projectProfile(root, project))], problem };
+  const { projects, problem } = loadProjects(root, ids.maintainerId);
+  return { profiles: [mainProfile(root, ids.mainBotId), ...projects.map((project) => projectProfile(root, project))], problem };
 }

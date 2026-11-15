@@ -33,6 +33,7 @@ import { fileURLToPath } from "node:url";
 import { CORE_PROMPT_SECTIONS } from "../prompts";
 import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
+import { folderHash } from "./catalog";
 import { title, type JSONValue } from "./manifest";
 import { PluginRegistry, type InstalledPlugin } from "./registry";
 import { SealedSecretStore, type Sealer } from "./secrets";
@@ -219,6 +220,8 @@ export interface PluginWorld {
   routinesChange?(botId: string, operation: "pause" | "resume" | "cancel", id: string): ResultOf<"routines.change"> | null;
   /** The library changed: the app shows it. */
   changed(view: PluginsView): void;
+  /** A non-built-in plugin was written or changed on disk outside store installs/removals. */
+  pluginWritten?(name: string): void;
   /** A plugin broke: Maintainer is asked to fix it. */
   broken(plugin: string, problem: string): void;
   log(line: string): void;
@@ -241,10 +244,18 @@ export interface PluginsOptions {
   /** The plugins shipped with the app (out/builtin-plugins, or the app's Resources/builtin-plugins). */
   builtIns?: string | null;
   sealer: Sealer | null;
+  /** Botling 3 binds each sealed secret blob to plugin/key (M6-06 F3); 2.x leaves it unset. */
+  boundSecrets?: boolean;
   timing?: HostTiming;
   /** The plugin host's pid, for the process ledger. */
   onPid?: (pid: number, alive: boolean) => void;
+  /** Botling 3 (M5-18a): whether a plugin's program part may start at its current code hash (absent: always allowed). */
+  mayRunServerPart?: (name: string, codeHash: string) => boolean;
+  /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash, or null to omit. */
+  pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
 }
+
+export const SERVER_PART_HELD_NOTICE = "Its program part is off until you allow it to change its own data on this server.";
 
 const str = (max: number) => z.string().max(max);
 const NotifyParams = z.object({ plugin: str(214), text: str(20_000) });
@@ -360,6 +371,8 @@ export class Plugins {
   readonly secrets: SealedSecretStore;
   private readonly dataRoot: string;
   private started = false;
+  /** Enabled plugins whose program part is held back by mayRunServerPart. */
+  private heldBack = new Set<string>();
   /** Reply tags whose plugin was not loaded yet, kept until it is (pending-tags.ts). */
   private readonly held: PendingTags;
   /** The folders built-in plugins assigned to bots' sessions (`sessions.folder`), kept on disk (session-folders.ts). */
@@ -386,7 +399,7 @@ export class Plugins {
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
     this.markedTabs = new MarkedTabs(dataDir);
-    this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer);
+    this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer, options.boundSecrets ? { bound: true } : undefined);
     this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
     this.dataRoot = join(dataDir, "plugin-data");
     this.held = new PendingTags(join(dataDir, "plugin-pending-tags.json"));
@@ -400,6 +413,7 @@ export class Plugins {
     // The registry's first scan ran before this was set: say what it skipped too.
     for (const plugin of this.registry.plugins) if (plugin.skipped?.length) this.registry.onSkipped(plugin.manifest.name, plugin.skipped);
     this.registry.onUpdated = (plugin, from) => world.notice(`Plugin "${title(plugin.manifest)}" updated: ${from} → ${plugin.manifest.version}`);
+    this.registry.onPluginWritten = (name) => world.pluginWritten?.(name);
     this.registry.onChanged = () => this.sync();
     this.host.onPluginFailure = (plugin, message, fatal) => {
       // The host may have died: nobody listens until it says so again.
@@ -417,6 +431,8 @@ export class Plugins {
     };
     this.host.onNotification = (method, params) => this.notified(method, params);
     this.host.onRequest = (method, params) => this.requested(method, params);
+    // M5-18a: a restart after a crash runs only what may run now (a file the fingerprint does not cover may have changed).
+    if (options.mayRunServerPart) this.host.beforeRestart = () => this.sync();
     setPluginTags([...this.replyTagOwners().keys()]);
   }
 
@@ -427,9 +443,34 @@ export class Plugins {
     this.sync();
   }
 
+  /**
+   * Botling 3 (M5-14d, M5-18a): a `plugin:` row changed (a grant, or the running hash). Which program parts may run is
+   * decided again, and the list is announced once (the world drops one that reads the same).
+   */
+  rowsChanged() {
+    if (this.started) this.sync();
+    else this.announce();
+  }
+
+  /** D74 (M6-06): re-opens sealed secrets once a window sealer attaches, then reloads the host with them. */
+  async reloadSecrets() {
+    this.secrets.problem = null;
+    await this.secrets.load();
+    this.sync();
+  }
+
   /** The library is looked at again (the core's 1.5 s clock). */
   scan() {
     this.registry.rescan();
+  }
+
+  private serverPartAllowed(plugin: InstalledPlugin): boolean {
+    if (!this.options.mayRunServerPart) return true;
+    try {
+      return this.options.mayRunServerPart(plugin.manifest.name, folderHash(plugin.folder));
+    } catch {
+      return false;
+    }
   }
 
   private sync() {
@@ -437,7 +478,19 @@ export class Plugins {
     setPluginTags([...this.replyTagOwners().keys()]);
     if (!this.started) return;
     const app = this.options.world.appSettings();
-    this.host.update(this.registry.hostSpecs(this.dataRoot).map((spec) => ({ ...spec, app })));
+    const nextHeldBack = new Set<string>();
+    const specs = this.registry.hostSpecs(this.dataRoot).flatMap((spec) => {
+      const plugin = this.registry.plugin(spec.name);
+      if (plugin && !this.serverPartAllowed(plugin)) {
+        nextHeldBack.add(spec.name);
+        return [];
+      }
+      return [{ ...spec, app }];
+    });
+    this.heldBack = nextHeldBack;
+    // M5-18a: a plugin the host still runs lost its grant (or its granted code): a fresh host, not an unload (§18.3).
+    if ([...nextHeldBack].some((name) => this.host.runs(name))) this.host.replace(specs);
+    else this.host.update(specs);
     for (const name of [...this.status.keys()]) if (!this.loaded(name)) this.status.delete(name);
     if (this.takeover && !this.drawing(this.takeover.plugin)) this.takeover = null;
     this.dropDecorations();
@@ -563,20 +616,25 @@ export class Plugins {
   previousVersion: (name: string) => string | null = () => null;
 
   view(): PluginsView {
-    const registered = new Set(this.host.commands);
+    const registered = new Set(this.host.running ? this.host.commands : []);
     return {
       plugins: this.registry.plugins.slice(0, 200).map((plugin) => {
         const ccb = plugin.manifest.ccb;
         const parts = (["web", "host", "claude"] as const).filter((part) => ccb?.[part]);
+        const heldBack = plugin.enabled && !plugin.failure && !!ccb?.host
+          && (this.started ? this.heldBack.has(plugin.manifest.name) : !this.serverPartAllowed(plugin));
+        const failure = plugin.failure ?? (heldBack ? SERVER_PART_HELD_NOTICE : null);
+        const grant = this.options.pluginGrant?.(plugin.manifest.name) ?? null;
         return {
           name: plugin.manifest.name,
           title: title(plugin.manifest).slice(0, 200),
           version: plugin.manifest.version.slice(0, 100),
           description: plugin.manifest.description?.slice(0, 2_000) ?? null,
           enabled: plugin.enabled,
-          failure: plugin.failure?.slice(0, 2_000) ?? null,
+          failure: failure?.slice(0, 2_000) ?? null,
           installedFrom: plugin.installedFrom?.slice(0, 2_000) ?? null,
           ...(plugin.builtIn ? { builtIn: true } : {}),
+          ...(grant !== null ? { grant } : {}),
           ...(plugin.replacesBuiltIn ? { replacesBuiltIn: plugin.replacesBuiltIn.slice(0, 100) } : {}),
           ...(plugin.ignoredLibraryCopy ? { ignoredLibraryVersion: plugin.ignoredLibraryCopy.version.slice(0, 100) } : {}),
           ...(plugin.skipped?.length ? { skipped: plugin.skipped.slice(0, 50).map((problem) => problem.slice(0, 2_000)) } : {}),
@@ -665,7 +723,7 @@ export class Plugins {
     if (from === "chat" && !this.registry.plugins.some((plugin) => plugin.enabled && !plugin.failure && plugin.manifest.ccb?.web && id.startsWith(`${plugin.manifest.name}.`))) {
       throw new ContractError("forbidden", `The chat page may not run "${id}" (no web part of its plugin runs there).`);
     }
-    if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
+    if (!this.host.running || !this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
     try {
       return await this.host.command(id, args);
     } catch (error) {
@@ -682,7 +740,7 @@ export class Plugins {
   async tabCommand(id: string, tab: { botId: string; tabId: string; url: string }): Promise<unknown> {
     const offered = ofKind(this.contributions(), "menu").some((entry) => entry.menu === "browser/tab" && entry.command === id && entry.plugin && id.startsWith(`${entry.plugin}.`) && tabMatches(entry.when, tab.url));
     if (!offered) throw new ContractError("forbidden", `"${id}" is not offered for this browser tab.`);
-    if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
+    if (!this.host.running || !this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
     let path: string | null = null;
     try { if (new URL(tab.url).protocol === "file:") path = fileURLToPath(tab.url); } catch { /* not a local file */ }
     const botId = this.options.world.botId?.("main") === tab.botId ? "main" : tab.botId;
@@ -703,7 +761,7 @@ export class Plugins {
     const address = chatLinkAddress(link.url);
     const offered = address !== null && ofKind(this.contributions(), "menu").some((entry) => entry.menu === "chat/link" && entry.command === id && id.startsWith(`${entry.plugin}.`) && tabMatches(entry.when, address));
     if (!offered) throw new ContractError("forbidden", `"${id}" is not offered for this link.`);
-    if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
+    if (!this.host.running || !this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
     let path: string | undefined;
     try { if (address && new URL(address).protocol === "file:") path = fileURLToPath(address); } catch { /* not a local file */ }
     const botId = this.options.world.botId?.("main") === link.botId ? "main" : link.botId;
@@ -780,6 +838,7 @@ export class Plugins {
   async call(name: string, method: string, params: unknown, from: "frame" | "chat"): Promise<unknown> {
     const plugin = this.known(name);
     if (!plugin.enabled || plugin.failure || !plugin.manifest.ccb?.web) throw new ContractError("conflict", `Plugin "${name}" is not on.`);
+    if (this.heldBack.has(name)) throw new ContractError("conflict", SERVER_PART_HELD_NOTICE);
     try {
       return await this.host.webCall(name, method, params, from);
     } catch (error) {
@@ -1025,7 +1084,7 @@ export class Plugins {
   private loaded(name: unknown) {
     if (typeof name !== "string") return null;
     const plugin = this.registry.plugin(name);
-    return plugin && plugin.enabled && !plugin.failure && plugin.manifest.ccb?.host ? plugin : null;
+    return plugin && plugin.enabled && !plugin.failure && plugin.manifest.ccb?.host && !this.heldBack.has(plugin.manifest.name) ? plugin : null;
   }
 
   /** A request's params and the loaded plugin it names; throws when either is wrong. */

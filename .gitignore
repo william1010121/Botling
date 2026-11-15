@@ -9,3 +9,6 @@ spec/traces/*.out/
 spec/**/states/
 specs/screens/
 relay/node_modules
+
+# Local test hosts for desktop/scripts/remote-test.sh (the .example file is tracked)
+desktop/scripts/remote-test.local.env

@@ -125,6 +125,8 @@ const ROLE_ROWS = {
   "shell.browser": rule(false, true, false, { localOnly: true }),
   "shell.install": rule(false, true, false, { localOnly: true }),
   "shell.quit": rule(false, true, false, { localOnly: true }),
+  "shell.seal": rule(false, true, false, { localOnly: true }),
+  "shell.open": rule(false, true, false, { localOnly: true }),
   "shell.done": rule(true, false, false, { localOnly: true }),
 } satisfies Record<string, RoleRule>;
 
