@@ -183,11 +183,14 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
   });
 
   it("skips a menu row whose menu is not a menu slot", () => {
-    const { feed, kernel } = setup();
+    const { feed, kernel, events } = setup();
     const view = { ...fixture(), menus: [{ menu: "no/such", command: "c", plugin: "zed.tools", title: "T" }, { menu: "chat/link", command: "c", plugin: "zed.tools", title: "T" }] } as unknown as PluginsView;
     feed.reconcile(view);
     expect(feed.rows("menu/chat/link")).toHaveLength(1);
     expect(kernel.allContributions().filter(({ entry }) => (entry as FeedEntry<{ menu?: string }>).row.menu === "no/such")).toEqual([]);
+    // Dropped by the feed, not refused by the kernel: the plugin never declared the slot and no step was refused.
+    expect(kernel.declaration("zed.tools")?.contributes?.slots).not.toContain("menu/no/such");
+    expect(events.filter((event) => event.note?.startsWith("refused"))).toEqual([]);
   });
 
   it("holds the rows again when the shell goes away and comes back", async () => {
