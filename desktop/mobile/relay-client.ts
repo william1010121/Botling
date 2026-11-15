@@ -16,7 +16,8 @@ import { DeskHandshake, DeskMessage, RELAY_PAIR_ACK, type RelayLink } from '../s
 import { MobileError, type MobileCommand } from './transport';
 import { DELIVERY_UNCONFIRMED } from '../src/renderer/delivery';
 
-/** What the phone keeps after pairing (relay-session.ts stores it; the private key is never exportable). */
+/** What the phone keeps after pairing (relay-session.ts stores it, with the private key only wrapped under a
+ * non-extractable key: the key made when pairing can be wrapped once, a key loaded again cannot be exported). */
 export interface RelaySession {
   ws: string; room: string; deskKey: string; deviceId: string; token: string; keys: KeyPair;
   coreId: string; botIds: string[]; expiresAt: number;
@@ -43,6 +44,8 @@ export interface RelayClientOptions {
   /** How long a request is tried before it is given up (default: a message 120 s, a read 60 s). */
   giveUpMs?: number;
   waits?: number[];
+  /** How long relay refusals of a saved pairing must go on (DENIED_LIMIT of them) before they count as a sign-out. */
+  deniedForMs?: number;
 }
 
 /** The relay's WebSocket for a link: the one it names, or this page's own /ws. */
@@ -66,6 +69,8 @@ const stillTaking = (env: unknown) => {
  * before its allow list arrives, every phone is refused. Only this many refusals in a row (with the usual waits
  * between) count as one. The desktop's own word (`revoked`, or a handshake refusal) counts at once. */
 const DENIED_LIMIT = 3;
+/** ...and only once they have gone on this long: a desktop or relay coming back can take a few seconds. */
+const DENIED_FOR_MS = 10_000;
 interface Pending {
   id: string; cmd: Command; resolve: (value: unknown) => void; reject: (error: unknown) => void;
   /** Gives the request up (giveUpMs). */
@@ -95,6 +100,8 @@ export class RelayClient {
   private fresh = false;
   /** Relay refusals in a row (reset once the desktop confirms the channel). */
   private denials = 0;
+  /** When the first of those refusals came. */
+  private deniedSince = 0;
   /** The last connection ended with a relay refusal that is tried again. */
   private refused = false;
   /** When the connection last carried something back (or, waiting for nothing, when a request was sent on it). */
@@ -205,7 +212,8 @@ export class RelayClient {
       if (msg.code === 'denied') {
         if (this.hello.kind === 'pair') throw new MobileError('This code has expired or already been used. Show a new code on your computer.', true);
         // A pairing whose ack was lost is refused for good at once; a saved pairing is tried again a few times.
-        if (this.fresh || ++this.denials >= DENIED_LIMIT) throw new MobileError(this.signedOut(), true);
+        if (!this.denials++) this.deniedSince = Date.now();
+        if (this.fresh || (this.denials >= DENIED_LIMIT && Date.now() - this.deniedSince >= (this.options.deniedForMs ?? DENIED_FOR_MS))) throw new MobileError(this.signedOut(), true);
         this.refused = true;
         return; // the close follows and we try again
       }
@@ -215,7 +223,8 @@ export class RelayClient {
     if (msg.t === 'joined') {
       this.ephemeral = await generateKeyPair();
       if (this.hello.kind === 'pair') {
-        const keys = await generateKeyPair();
+        // Extractable only so relay-session.ts can wrap it for storage (WebKit cannot store an X25519 CryptoKey).
+        const keys = await generateKeyPair(true);
         this.session = { ws: this.hello.link.ws!, room: this.hello.link.room, deskKey: this.hello.link.deskKey, deviceId: await deviceIdOf(keys.publicKey),
           token: '', keys, coreId: '', botIds: [], expiresAt: 0 };
         this.send({ t: 'd', d: JSON.stringify({ h: 'pair', v: 1, offer: await offerIdOf(this.hello.secret), device: b64u.encode(keys.publicKey), eph: b64u.encode(this.ephemeral.publicKey) }) });

@@ -45,7 +45,7 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
 | `desktop/src/mobile-relay/connector.ts` | desktop side: relay connection, pairing, per-phone channels, command dispatch, revocation |
 | `desktop/src/mobile-relay/start.ts` | started by `core/main.ts`; idle until an address is set |
 | `desktop/mobile/relay-client.ts` | phone side: pair, connect, requests, reconnect |
-| `desktop/mobile/relay-session.ts` | phone's saved pairing in IndexedDB (non-extractable private key) |
+| `desktop/mobile/relay-session.ts` | phone's saved pairing in IndexedDB (private key stored only wrapped under a non-extractable key) |
 | `desktop/src/renderer/PhoneSettings.tsx` | Settings › Phone: relay address on/off and state, pair via relay, phones list |
 
 ## Pairing (QR)

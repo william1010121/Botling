@@ -1,10 +1,23 @@
 // The phone's relay pairing, kept so the phone does not need a new code every time the page opens. It lives in this
-// origin's IndexedDB. The private key is a non-extractable CryptoKey: a script on this page can use it while the page
-// is open, but cannot read it out. Nothing of any chat is stored. Sign out (or a revocation) deletes the record.
+// origin's IndexedDB. Nothing of any chat is stored. Sign out (or a revocation) deletes the record.
+//
+// The phone's private key (X25519) is stored only wrapped: encrypted under a non-extractable AES-GCM key in this
+// origin's key store, and unwrapped on load as a non-extractable key. A script on this page can use it while the page
+// is open, but a copy of the browser's storage carries no usable key. It is not stored as a CryptoKey: WebKit (Safari,
+// every iPhone browser, a home-screen app) writes a record holding an X25519 CryptoKey without an error and reads it
+// back as null, so a phone paired there lost its pairing on every reload. A save is checked by reading it back.
+import type { KeyPair } from '../src/mobile-relay/e2e';
 import type { RelaySession } from './relay-client';
 
-const DB = 'botling-relay', STORE = 'session', KEY = 'current';
+const DB = 'botling-relay', STORE = 'session', KEY = 'current', SESSION_KEY = 'session-key';
+const WRAP_AAD = new TextEncoder().encode('botling-relay-key/v1');
 let memory: RelaySession | null = null;
+/** The wrapped form of each private key this page wrapped or unwrapped (a renewal saves a non-extractable key again). */
+const wrappedOf = new WeakMap<CryptoKey, SealedKey>();
+
+export interface SealedKey { iv: Uint8Array<ArrayBuffer>; data: ArrayBuffer }
+/** The record as stored: the session with its private key wrapped. */
+interface StoredSession extends Omit<RelaySession, 'keys'> { keys: { publicKey: Uint8Array; sealed: SealedKey } }
 
 function open(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
@@ -28,22 +41,84 @@ function run<T>(db: IDBDatabase, mode: IDBTransactionMode, body: (store: IDBObje
   });
 }
 
-/** Keeps the pairing; false when this browser cannot store it (private mode): it then lasts only for this page. */
+export function makeWrapKey(): Promise<CryptoKey> {
+  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['wrapKey', 'unwrapKey']) as Promise<CryptoKey>;
+}
+/** Wraps an extractable private key (the one made when pairing) for storage. */
+export async function wrapPrivateKey(wrapKey: CryptoKey, privateKey: CryptoKey): Promise<SealedKey> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = await crypto.subtle.wrapKey('pkcs8', privateKey, wrapKey, { name: 'AES-GCM', iv, additionalData: WRAP_AAD });
+  return { iv, data };
+}
+/** The stored private key, unwrapped as a non-extractable key, or null (another key, or tampered). */
+export async function unwrapPrivateKey(wrapKey: CryptoKey, sealed: SealedKey): Promise<CryptoKey | null> {
+  try {
+    const key = await crypto.subtle.unwrapKey('pkcs8', sealed.data, wrapKey, { name: 'AES-GCM', iv: sealed.iv, additionalData: WRAP_AAD },
+      { name: 'X25519' }, false, ['deriveBits']);
+    wrappedOf.set(key, sealed);
+    return key;
+  } catch { return null; }
+}
+
+/** This origin's wrapping key, made (and stored) the first time; null when it cannot be stored. */
+async function wrapKeyOf(db: IDBDatabase, create: boolean): Promise<CryptoKey | null> {
+  const kept = await run<CryptoKey | undefined>(db, 'readonly', store => store.get(SESSION_KEY));
+  if (kept instanceof CryptoKey || !create) return kept instanceof CryptoKey ? kept : null;
+  const key = await makeWrapKey();
+  if (await run(db, 'readwrite', store => store.put(key, SESSION_KEY)) === null) return null;
+  const back = await run<CryptoKey | undefined>(db, 'readonly', store => store.get(SESSION_KEY));
+  return back instanceof CryptoKey ? back : null;
+}
+
+/** The usable session in a stored record, or null. A record from before wrapping (a CryptoKey stored as is) is read
+ * as it was, where the browser kept it. */
+async function revive(db: IDBDatabase, value: unknown): Promise<RelaySession | null> {
+  const v = value as Partial<StoredSession> & { keys?: Partial<KeyPair> & { sealed?: SealedKey } } | null | undefined;
+  if (!v || typeof v !== 'object' || !v.keys || !(v.keys.publicKey instanceof Uint8Array) || typeof v.deviceId !== 'string' || typeof v.token !== 'string'
+    || typeof v.ws !== 'string' || typeof v.room !== 'string' || typeof v.deskKey !== 'string' || !(typeof v.expiresAt === 'number' && v.expiresAt > Date.now())) return null;
+  let privateKey: CryptoKey | null = null;
+  if (v.keys.sealed?.iv && v.keys.sealed.data) {
+    const wrapKey = await wrapKeyOf(db, false);
+    privateKey = wrapKey && await unwrapPrivateKey(wrapKey, v.keys.sealed);
+  } else if (v.keys.privateKey instanceof CryptoKey) privateKey = v.keys.privateKey;
+  if (!privateKey) return null;
+  return { ws: v.ws, room: v.room, deskKey: v.deskKey, deviceId: v.deviceId, token: v.token, coreId: v.coreId ?? '', botIds: Array.isArray(v.botIds) ? v.botIds : [],
+    expiresAt: v.expiresAt, keys: { privateKey, publicKey: v.keys.publicKey } };
+}
+
+/** Keeps the pairing, and says whether it was kept: false when this browser cannot store it (a private tab, storage
+ * turned off) or does not give it back. The pairing then lasts only while this page is open. */
 export async function saveRelaySession(session: RelaySession): Promise<boolean> {
   memory = session;
   const db = await open();
   if (!db) return false;
-  const saved = await run(db, 'readwrite', store => store.put(session, KEY));
-  db.close();
-  return saved !== null;
+  try {
+    const { privateKey, publicKey } = session.keys;
+    let sealed = wrappedOf.get(privateKey) ?? null;
+    if (!sealed && privateKey.extractable) {
+      const wrapKey = await wrapKeyOf(db, true);
+      if (wrapKey) { sealed = await wrapPrivateKey(wrapKey, privateKey); wrappedOf.set(privateKey, sealed); }
+    }
+    if (!sealed) {
+      // A key this page did not wrap (a renewal of a session loaded from before wrapping): the stored copy of the same
+      // phone keeps its wrapped key.
+      const stored = await run<Partial<StoredSession> | undefined>(db, 'readonly', store => store.get(KEY));
+      if (stored?.deviceId === session.deviceId && stored.keys?.sealed) sealed = stored.keys.sealed;
+    }
+    const record: StoredSession | RelaySession = sealed ? { ...session, keys: { publicKey, sealed } } : session;
+    if (await run(db, 'readwrite', store => store.put(record, KEY)) === null) return false;
+    // Read it back: a browser may take a record it cannot give back (WebKit and an X25519 CryptoKey).
+    const back = await revive(db, await run(db, 'readonly', store => store.get(KEY)));
+    return back !== null && back.deviceId === session.deviceId;
+  } catch { return false; } finally { db.close(); }
 }
 export async function loadRelaySession(): Promise<RelaySession | null> {
   const db = await open();
   if (!db) return memory;
-  const value = await run<RelaySession | undefined>(db, 'readonly', store => store.get(KEY));
-  db.close();
-  if (!value || typeof value !== 'object' || !value.keys?.privateKey || !(value.expiresAt > Date.now())) return memory;
-  return value;
+  try {
+    const value = await revive(db, await run(db, 'readonly', store => store.get(KEY)));
+    return value ?? memory;
+  } catch { return memory; } finally { db.close(); }
 }
 export async function forgetRelaySession(): Promise<void> {
   memory = null;

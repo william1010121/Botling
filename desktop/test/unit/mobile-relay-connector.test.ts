@@ -288,7 +288,19 @@ describe("relay connector + phone client", () => {
     const { connect, pairPhone } = await setup();
     const { session, client } = await pairPhone();
     client.close();
-    await expect(RelayClient.connect(session, { socket: refusedJoins(connect, 99), waits: [20] })).rejects.toMatchObject({ auth: true });
+    await expect(RelayClient.connect(session, { socket: refusedJoins(connect, 99), waits: [20], deniedForMs: 100 })).rejects.toMatchObject({ auth: true });
+  });
+
+  it("refusals in quick succession (a desktop or relay coming back) are not a sign-out until they have gone on a while", async () => {
+    const { connect, pairPhone } = await setup();
+    const { session, client } = await pairPhone();
+    client.close();
+    let revoked: MobileError | undefined;
+    // Five refusals 20 ms apart: more than the count, well inside the time.
+    const again = await RelayClient.connect(session, { socket: refusedJoins(connect, 5), waits: [20], deniedForMs: 5_000, onRevoked: error => { revoked = error; } });
+    cleanup.push(() => again.close());
+    expect(((await again.request({ type: "chat.snapshot", botId: "main" })) as any).chat.botId).toBe("main");
+    expect(revoked).toBeUndefined();
   });
 
   it("coming back to the page (resume) replaces a socket that went silent; a request asked meanwhile is answered once", async () => {
@@ -488,7 +500,8 @@ describe("relay connector + phone client", () => {
     await until(() => revoked !== undefined);
     expect(revoked!.auth).toBe(true);
     expect(live.closed).toBe(true);
-    await expect(RelayClient.connect(session, { socket: connect, waits: [20] })).rejects.toMatchObject({ auth: true });
+    // The relay refuses its token from now on (counted as a sign-out once the refusals have gone on a while).
+    await expect(RelayClient.connect(session, { socket: connect, waits: [20], deniedForMs: 100 })).rejects.toMatchObject({ auth: true });
     expect(connector.devices()).toEqual([]);
   });
 
