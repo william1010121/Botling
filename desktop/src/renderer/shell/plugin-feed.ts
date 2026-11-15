@@ -90,12 +90,18 @@ export class PluginFeed {
   /**
    * A plugin that owns `slots` has come or gone (an in-page built-in, shell/inpage-host.ts): the kernel refuses a contribution to a
    * slot whose owner is away and does not ask again when it returns, so the instances that contribute to them are loaded again
-   * from the last view. Slots are given by either name. The other instances are not touched.
+   * from the last view. Slots are given by either name. The instances before the first of them in the list are not touched.
    */
   refresh(slots: readonly string[]): string[] {
     const changed = new Set(slots.map(canonicalSlot));
-    for (const name of this.owned.keys()) {
-      if (this.kernel.declaration(name)?.contributes?.slots?.some((slot) => changed.has(slot))) this.owned.set(name, "");
+    // From the first affected plugin (in the list's order) onward, every one is loaded again: the ones that are not affected would
+    // otherwise stay before it, and its other slots would hold them in a different order than a fresh load (F1). Those before it
+    // are untouched, so every slot keeps the list's order.
+    let reload = false;
+    for (const name of planOf(this.last.view, this.last.web).keys()) {
+      if (!this.owned.has(name)) continue;
+      if (!reload && this.kernel.declaration(name)?.contributes?.slots?.some((slot) => changed.has(slot))) reload = true;
+      if (reload) this.owned.set(name, "");
     }
     return this.reconcile(this.last.view, this.last.web);
   }

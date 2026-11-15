@@ -13,12 +13,13 @@
 //
 // The contribution reads the page through a ref the frame keeps current, so it is registered once, not on every render of App;
 // it is registered while the frame renders (the first draw already holds it) and taken back when the frame unmounts.
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ROOT_SLOTS } from "../../../../Web/src/plugin-kernel";
 import type { PluginsView } from "../../contract";
 import { rendererKernel, SHELL_SURFACE } from "../renderer-kernel";
 import { inPageHost } from "./inpage-host";
-import { reconcileView } from "./plugin-feed";
+import type { Client } from "../client";
+import { reconcileView, type FeedWeb } from "./plugin-feed";
 import { KernelSlot, type SlotEntry, type SlotFrames } from "./KernelSlot";
 
 /** The slot the legacy surface is contributed to. */
@@ -32,7 +33,8 @@ export function contributeToShell(slot: string, entry: SlotEntry): (() => void) 
 
 let framesMade = 0;
 
-export function ShellFrame({ legacy, frames: services, plugins = null }: { /** The whole page as App draws it today. */ legacy: ReactNode; frames?: SlotFrames; /** The plugin list App has now (null: none yet). */ plugins?: PluginsView | null }) {
+export function ShellFrame({ legacy, frames: services, plugins = null, client }: { /** The whole page as App draws it today. */ legacy: ReactNode; frames?: SlotFrames; /** The plugin list App has now (null: none yet). */ plugins?: PluginsView | null;
+  /** Asked for `plugins.web` whenever the list changes: the web parts' versions are part of the feed's fingerprints (M7-02c F3). */ client?: Pick<Client, "request"> }) {
   // A name for this frame's entries (not useId: that would move the ids every other component of the page gets).
   const named = useRef("");
   const scope = (named.current ||= `shell-${++framesMade}`);
@@ -47,7 +49,19 @@ export function ShellFrame({ legacy, frames: services, plugins = null }: { /** T
     take.current ??= contributeToShell(LEGACY_SLOT, { kind: "component", scope, render: () => page.current });
     return () => { take.current?.(); take.current = null; };
   }, [scope]);
-  useEffect(() => { reconcileView(plugins); }, [plugins]);
+  // The `plugins.web` answer (undefined: not answered yet; null: it failed). With a client the feed waits for the first answer, so the web
+  // parts' versions do not reload (and reorder) the plugins that have one right after the first load.
+  const [web, setWeb] = useState<FeedWeb>(client ? undefined : null);
+  useEffect(() => {
+    if (!client) return;
+    let live = true;
+    const answer = (next: FeedWeb) => { if (live) setWeb((held) => (JSON.stringify(held) === JSON.stringify(next) ? held : next)); };
+    void (async () => {
+      try { answer({ specs: (await client.request({ type: "plugins.web" })).specs.map(({ name, version }) => ({ name, version })) }); } catch { answer(null); }
+    })();
+    return () => { live = false; };
+  }, [client, plugins]);
+  useEffect(() => { if (web !== undefined) reconcileView(plugins, web); }, [plugins, web]);
   useEffect(() => () => { reconcileView(null); }, []);
   // The in-page built-in plugins (botling.settings, …) the build shipped are loaded while the frame is up (M7-02c).
   useEffect(() => inPageHost.acquire(), []);
