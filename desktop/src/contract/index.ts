@@ -1216,6 +1216,15 @@ const BASE_COMMANDS = [
    */
   z.strictObject({ type: z.literal("plugins.call"), name: PluginName, method: z.string().min(1).max(200), params: z.unknown(), from: PluginCaller }),
   /**
+   * Botling 3 only (N2): the result the owner kept for a slot of this front end whose result did not fit its
+   * `cmd.applied` entry (the outcome carried a `resultKept` marker). A read, sent as a req on the local socket by the
+   * window's main process, never by the renderer; the server answers it itself (session-core), the core never sees it.
+   */
+  z.strictObject({
+    type: z.literal("slot.result"),
+    slot: z.strictObject({ origin: z.string().min(1).max(200), originEpoch: z.string().regex(/^[0-9a-f]{32}$/), target: z.string().min(1).max(300), n: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }),
+  }),
+  /**
    * A plugin frame's `ccb.requestApproval` (plugin-extraction.md W4), from the app page that bound the frame to `name`:
    * what its ApprovalSheet shows for a bot's command in that bot's folder (null: allowed already). It allows nothing.
    */
@@ -1523,6 +1532,7 @@ export interface Results {
   "plugins.linkCommand": { result: unknown };
   "plugins.panel": { title: string; source: string; settings: Record<string, boolean | number | string | null> };
   "plugins.call": { result: unknown };
+  "slot.result": unknown;
   "plugins.approvalAsk": { needsApproval: ApprovalAskView | null };
   "plugins.approve": { accepted: boolean };
   "plugin.grant": { applied: true };

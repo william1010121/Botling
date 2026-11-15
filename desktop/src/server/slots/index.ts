@@ -3,5 +3,6 @@
 export { admit, cancelAnswer, cancelAnswered, HELD_LIMIT, SlotEngine, requiredSlotScope, type Admission, type BegunEnd, type CancelAnswer, type CancelNotedMessage, type CancelStatus, type CmdResultMessage, type CmdRetryMessage, type ReceiveOptions, type ReceiveStatus, type ReplySink, type SlotEngineOptions, type SlotInput, type SlotReply } from "./slot-engine";
 export { CARD_COMMANDS, checkBasis, checkTarget, dbBasisReader, localOnly } from "./basis";
 export { cmdHash } from "./hash";
+export { KEPT_RESULT_MAX_BYTES, KEPT_RESULTS_LIMITS, keepResult, keptResult, type KeptLimits } from "./kept-results";
 export { findReceipt, readNext, type QueueRef, type StoredReceipt } from "./tables";
 export { SlotRefusal, type ApplyContext, type ApplyFn, type Audit, type AuditEvent, type Authorize, type BasisReader, type SlotLog } from "./types";

@@ -9,13 +9,13 @@
 // Everything that writes goes through one TxScope over the store's writer, so the tap and the handlers share the
 // command's transaction and LogHub hears about every stream a commit touched.
 import type { Event as ContractEvent } from "../../contract";
-import type { CmdBody } from "../../protocol";
+import type { CmdBody, Slot } from "../../protocol";
 import { CallInGuest, CallInHost, type CallInHostOptions } from "../callin";
 import { contentLineHook, type ContentService } from "../content";
 import { ensureStream, type LogHub } from "../log";
 import { ContractLiveFeed, type LiveChannel } from "../live";
 import type { TapHooks } from "../effects/tap";
-import { SlotEngine, type Audit, type Authorize, type ReceiveOptions, type ReceiveStatus } from "../slots";
+import { keptResult, SlotEngine, type Audit, type Authorize, type ReceiveOptions, type ReceiveStatus } from "../slots";
 import {
   ensureBot, EffectWorker, EventTap, recoverEffects, serverStreamOf, TxScope,
   type DeferredTurnRequest, type RecoveryReport, type Submitter, type TurnEngine,
@@ -124,6 +124,11 @@ export class IntentRuntime {
     if (route.kind === "intent") return this.slots.receive(body, options);
     if (route.kind === "legacy") return this.legacy.receive(body, options);
     return Promise.reject(new NotASlotCommandError(body.cmd.type, route.kind));
+  }
+
+  /** The result this server kept for a slot too large for its `cmd.applied` entry (N2; the `slot.result` req). */
+  keptResult(slot: Slot): Promise<{ found: true; result: unknown } | { found: false }> {
+    return this.scope.submit((tx) => keptResult(tx, slot));
   }
 
   /** Waits until the worker has nothing in hand (tests, shutdown). */

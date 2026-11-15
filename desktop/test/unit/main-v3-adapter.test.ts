@@ -491,7 +491,7 @@ describe("pending lines → delivered by slot", () => {
 
   describe("a plugins.call whose result the owner kept (too large for one log entry; N2)", () => {
     const call = { type: "plugins.call", name: "note", method: "load", params: {}, from: "frame" } as Command;
-    const big = { result: { doc: "筆記".repeat(2_000) } }; // the fake server sends one frame; res.parts are server-session-frames's
+    const big = { result: { doc: "筆記".repeat(50) } }; // the fake server sends one frame; res.parts are server-session-frames's
     /** The owner answers the call with a kept-result marker; `answer` is how it answers the `slot.result` req. */
     async function keptRig(marker: { bytes: number; kept: boolean }, answer: (message: Extract<Message, { t: "req" }>, server: FakeServer) => void) {
       const r = await rig((server) => {

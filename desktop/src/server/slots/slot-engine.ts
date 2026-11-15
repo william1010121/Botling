@@ -44,6 +44,7 @@ import type { Command as StoreCommand, Db } from "../store";
 import { checkBasis, checkTarget, dbBasisReader, localOnly } from "./basis";
 import { grantAllows, pluginCommandNeedsGrant } from "./grant-check";
 import { cmdHash } from "./hash";
+import { keepResult } from "./kept-results";
 import { addCancel, findReceipt, isCancelled, readNext, removeCancel, writeNext, writeReceipt, writeSkip, type QueueRef } from "./tables";
 import { SlotRefusal, type ApplyFn, type Audit, type Authorize, type BasisReader, type SlotLog } from "./types";
 
@@ -174,9 +175,6 @@ function ownServerName(tx: Db): string {
 const queueOf = (slot: Slot): QueueRef => ({ origin: slot.origin, originEpoch: slot.originEpoch, target: slot.target });
 const truncate = (text: string) => (text.length > DETAIL_LIMIT ? `${text.slice(0, DETAIL_LIMIT - 1)}…` : text);
 
-/** Why a slot whose result does not fit one log entry was refused (the result itself is not kept anywhere). */
-export const tooLargeDetail = (type: string) =>
-  `the result of ${type} is too large to keep in one log entry; nothing was kept (a read goes as a req, whose answer may be large)`;
 
 /** The checks of §11.3 in order, read-only. `next` is read in `tx`, so the answer holds for that transaction. */
 export function admit(tx: Db, log: SlotLog, input: SlotInput): Admission {
@@ -412,10 +410,12 @@ export class SlotEngine {
           (applied as unknown as Promise<unknown>).then(undefined, () => {});
           throw new TypeError("slots: an apply step must be synchronous (it returned a promise)");
         }
-        const result = applied ? applied.result : undefined;
-        // A result `cmd.applied` cannot hold (one frame) is refused here, with the apply's writes rolled back, instead of
-        // failing the store: that ended the session and the front end re-sent the slot forever (2026-11-15).
-        if (result !== undefined && !log.fits("cmd.applied", { slot: input.slot, result })) throw new SlotRefusal("invalid", tooLargeDetail(input.cmd.type));
+        let result = applied ? applied.result : undefined;
+        // A result `cmd.applied` cannot hold (one frame): storing it failed the store, which ended the session, and the
+        // front end re-sent the slot forever (2026-11-15). Refusing it was wrong too, for a handler that already ran
+        // (`plugins.call`, N2). The owner keeps it beside the receipt and the outcome carries a marker; the front end
+        // fetches the result with a `slot.result` req (kept-results.ts).
+        if (result !== undefined && !log.fits("cmd.applied", { slot: input.slot, result })) result = keepResult(tx, input.slot, result);
         tx.exec("RELEASE slot_apply");
         outcome = result === undefined ? { kind: "applied" } : { kind: "applied", result };
       } catch (error) {

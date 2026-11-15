@@ -75,6 +75,8 @@ export const COMMAND_ROUTES: Record<CommandType, CommandRoute> = {
   "waiting.list": read,
   "turn.await": read,
   "card.image": read,
+  // N2: answered by the session itself from slot_results (session-core `slotResult`), never by the engine.
+  "slot.result": read,
 
   // The desktop app's main process.
   "files.pick": app,

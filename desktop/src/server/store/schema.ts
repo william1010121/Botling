@@ -240,6 +240,16 @@ CREATE TABLE forwarddead (
 CREATE INDEX forwarddead_by_owner ON forwarddead (owner, origin, originEpoch, target, n);
 `;
 
+// v14 (N2, src/server/slots/kept-results.ts): the result of a slot too large for its `cmd.applied` entry, kept beside the
+// receipt for the front end's `slot.result` req; only the newest few (oldest `id` first out).
+const V14 = `
+CREATE TABLE slot_results (
+  id INTEGER PRIMARY KEY, origin TEXT NOT NULL, originEpoch TEXT NOT NULL, target TEXT NOT NULL, n INTEGER NOT NULL,
+  bytes INTEGER NOT NULL, result TEXT NOT NULL
+);
+CREATE UNIQUE INDEX slot_results_by_slot ON slot_results (origin, originEpoch, target, n);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -334,6 +344,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "forward queue rows that could never be sent (src/server/forward): forwarddead, kept for audit",
     up(db) {
       db.exec(V13);
+    },
+  },
+  {
+    version: 14,
+    description: "slot results too large for their cmd.applied entry (src/server/slots/kept-results.ts): slot_results",
+    up(db) {
+      db.exec(V14);
     },
   },
 ];

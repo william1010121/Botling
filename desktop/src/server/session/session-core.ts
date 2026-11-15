@@ -35,7 +35,7 @@
 // botlingd pings after 15 s of its own silence and drops a session it has not heard from for 45 s (§5.2; fe-link does
 // the same the other way).
 import { ContractError, type Command, type CommandType } from "../../contract";
-import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type VapidKeyId, type WelcomeServer, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type Slot, type StreamId } from "../../protocol";
+import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type VapidKeyId, type WelcomeServer, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, Slot, type StreamId } from "../../protocol";
 import { DEAD_AFTER_MS, PING_AFTER_MS } from "../../session";
 import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
@@ -781,12 +781,34 @@ export abstract class SessionCore {
       this.send({ t: "res", req: message.req, ok: false, error: refused }, cmd.type);
       return;
     }
+    if (cmd.type === "slot.result") { await this.slotResult(message.req, cmd.slot); return; }
     try {
       const result = await this.host.engine.run(cmd);
       this.sendRes({ t: "res", req: message.req, ok: true, result: result ?? null }, cmd.type);
     } catch (error) {
       const wire = error instanceof ContractError ? error.toWire() : { code: "internal" as const, message: errorText(error).slice(0, 2_000) };
       this.sendRes({ t: "res", req: message.req, ok: false, error: wire }, cmd.type);
+    }
+  }
+
+  /**
+   * `slot.result` (N2): the result this server kept for one of this session's own slots whose result did not fit its
+   * `cmd.applied` entry (server/slots/kept-results.ts). Another origin's slot is refused without a lookup; a large result
+   * goes as `res.part`s. Answered here, never by the engine.
+   */
+  private async slotResult(req: string, raw: unknown): Promise<void> {
+    const refuse = (code: "bad_request" | "forbidden" | "not_found" | "internal", text: string) =>
+      this.send({ t: "res", req, ok: false, error: { code, message: text.slice(0, 2_000) } }, "slot.result");
+    const parsed = Slot.safeParse(raw);
+    if (!parsed.success) { refuse("bad_request", "slot.result names no valid slot"); return; }
+    const slot = parsed.data;
+    if (!this.deviceId || slot.origin !== this.deviceId) { refuse("forbidden", "slot.result answers only this session's own slots"); return; }
+    try {
+      const kept = await this.host.runtime.keptResult(slot);
+      if (!kept.found) { refuse("not_found", `the result of slot ${slot.n} is no longer kept (the server keeps only the newest few)`); return; }
+      this.sendRes({ t: "res", req, ok: true, result: kept.result ?? null }, "slot.result");
+    } catch (error) {
+      refuse("internal", `the result of slot ${slot.n} could not be read: ${errorText(error)}`);
     }
   }
 

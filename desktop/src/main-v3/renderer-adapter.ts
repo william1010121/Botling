@@ -38,7 +38,7 @@ import {
 } from "../contract";
 import { z } from "zod";
 import {
-  BotSnapView, interruptedLine, ProtocolEntryEvent, REFUSE_REASON_TEXT, slotKey,
+  BotSnapView, interruptedLine, KeptResultMarker, ProtocolEntryEvent, REFUSE_REASON_TEXT, slotKey,
   type ConnectionState, type Cursor, type Entry, type MessageOf, type Outcome, type Slot, type StreamId, type Target, type Via,
 } from "../protocol";
 import { PluginName } from "../protocol/content-url";
@@ -98,15 +98,15 @@ export interface RendererAdapterOptions {
 /**
  * Commands that only read (requests on the session, §11.1): no slot, no outcome. `chat.read` and `chat.shown` are
  * idempotent window hints, sent as reads so opening a chat does not write a log entry each time. Anything not listed
- * is a slot (a read sent as a slot still answers, from its `cmd.applied` result, but only when that result fits one log
- * entry: a large one is refused, so every server read, `COMMAND_ROUTES` kind "read", must be listed here; a test checks).
+ * is a slot. Every server read, `COMMAND_ROUTES` kind "read", must be listed here (a test checks): a slot's result that
+ * does not fit one log entry is kept by the owner and fetched with one more round trip (`slot.result`, N2).
  */
 export const READ_COMMANDS: ReadonlySet<CommandType> = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.read", "chat.shown", "task.output", "subagent.view", "turn.await", "routines.list",
   "results.list", "storage.list", "attachment.file", "link.authorize", "settings.get", "bot.settings", "engine.models", "codex.models",
   "usage.view", "doctor.view", "doctor.run", "mobile.view", "machines.view", "machines.hosts", "waiting.list", "plugins.list", "plugins.store",
   "plugins.panel", "plugins.web", "plugins.file", "plugins.linkTarget", "plugins.loaded", "plugins.failed", "plugins.notice", "card.image",
-  "project.files", "project.preview", "worker.cwd", "agent.targets", "agy.runtime.check", "component.detail",
+  "project.files", "project.preview", "worker.cwd", "agent.targets", "agy.runtime.check", "component.detail", "slot.result",
 ]);
 /** Card answers carry the bot cursor the window showed as `basis` (§11.5). */
 const CARD_COMMANDS: ReadonlySet<string> = new Set(["chat.choose", "chat.answer", "chat.ignoreQuestion", "component.approve"]);
@@ -196,6 +196,13 @@ export function botViewOfSummary(botId: string, row: SummaryRow): BotView {
     heads: [row.engine], job: null, parent: row.parent, subagentRows: [],
     lastActivity: row.lastAt !== null ? new Date(row.lastAt).toISOString() : null,
   } as BotView;
+}
+
+/** A byte count as people read it ("1.2 MB"). */
+function sizeText(bytes: number): string {
+  if (bytes < 1_000) return `${bytes} bytes`;
+  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} kB`;
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
 const IMMEDIATE_NOTICE: ReadonlySet<ConnectionState> = new Set(["history restored", "update required"]);
@@ -921,14 +928,39 @@ export class RendererAdapter {
       while (this.early.size > 200) this.early.delete(this.early.keys().next().value!);
       return;
     }
+    const outcome = item.outcome;
+    const resolvers: Array<(answer: AdapterAnswer) => void> = [];
     for (const key of keys) {
       const resolve = this.waiting.get(key);
       if (!resolve) continue;
       this.waiting.delete(key);
-      const outcome = item.outcome!;
-      resolve(outcome.kind === "applied" ? { ok: true, result: outcome.result ?? {} } : { ok: false, error: wireError(outcome) });
+      resolvers.push(resolve);
+    }
+    if (outcome.kind !== "applied") {
+      for (const resolve of resolvers) resolve({ ok: false, error: wireError(outcome) });
       // A "not sent" item answered to the window that asked needs no line or later dismissal.
-      if (outcome.kind !== "applied") void this.options.link.dismiss(item.slot).catch(() => undefined);
+      void this.options.link.dismiss(item.slot).catch(() => undefined);
+      return;
+    }
+    void this.appliedAnswer(item, outcome.result).then((answer) => { for (const resolve of resolvers) resolve(answer); });
+  }
+
+  /**
+   * What an applied slot answers: its result, or (N2) the result the owner kept because it did not fit the slot's
+   * `cmd.applied` entry, fetched with a `slot.result` req. The command ran either way, so an error here says so and
+   * never reads as "not sent".
+   */
+  private async appliedAnswer(item: OutboxItem, result: unknown): Promise<AdapterAnswer> {
+    const marker = KeptResultMarker.safeParse(result);
+    if (!marker.success) return { ok: true, result: result ?? {} };
+    const { bytes, kept } = marker.data.resultKept;
+    const ran = `${item.cmd.type} ran, but its result (${sizeText(bytes)})`;
+    if (!kept) return { ok: false, error: { code: "internal", message: `${ran} is too large to send back; the server did not keep it.` } };
+    try {
+      return { ok: true, result: await this.options.link.request({ type: "slot.result", slot: item.slot }) };
+    } catch (error) {
+      const text = String((error as Error)?.message ?? error);
+      return { ok: false, error: { code: "internal", message: `${ran} could not be fetched: ${text}`.slice(0, 2_000) } };
     }
   }
 
