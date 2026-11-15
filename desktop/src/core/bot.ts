@@ -75,7 +75,7 @@ import {
   Conductor, displayName, fitted, hasTwo, headsJSON, isActive, otherHead, parseHeadTags, readHeads, resolvePrimary, roundsText,
   type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
 } from "./heads";
-import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
+import { scheduleCall, scheduledTask, scheduleCancellation, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
 import { addSample, speedView, type RequestEvent, type SpeedTotals } from "./token-speed";
 import { commandEnded, ReplyText, type CommandState, type StreamItem } from "./agent/stream";
 import { applyingReaction, archiveAll, archiveLine, compareReactions, reactionIntro, reactionUpdate, recentChat, REACTION_PALETTE, reportNote, seenReactions, type SeenReactions } from "./briefing";
@@ -103,15 +103,12 @@ import { cardData, PAGE_COMPONENT, previewCards } from "./page-preview";
 import { totalTokens } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import { alwaysAllows } from "./permission-rules";
-import {
-  WARM_WINDOW_MS, connectionErrorLine, isConnectionError, lostText, mentionsConnectionError, restoredText, resumeMode, resumeNote,
-  type CutOff, type Outage,
-} from "./network-resume";
-import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "./api-retry";
+import { connectionErrorLine, isConnectionError, lostText, mentionsConnectionError, type Outage } from "./network-resume";
+import { apiGaveUpText, apiRetryDelays } from "./api-retry";
 import { CONTINUE_NOTE, type SwapEntry } from "./hot-swap";
 import { MAX_PAGE_BYTES, PAGE_BYTES, pageBack, sliceViews } from "./history-page";
 import {
-  backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
+  interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
   type BackgroundKind, type BackgroundTask,
 } from "./background-tasks";
 import { HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord } from "./store/records";
@@ -119,6 +116,8 @@ import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type Wor
 import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, CLAUDE_ROUTINE_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
 import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
 import { BotContext } from "./bot/context";
+import { BotProgress } from "./bot/progress";
+import { BotTasks } from "./bot/tasks";
 import { RECENT_TOOL_CALLS, NO_LONGER_NEEDED, NO_ANSWER, NEVER_ALWAYS, PLUGINS_RESTART, PROMPT_SESSION_DIVIDER, NEW_SESSION_DIVIDER, readStoredSpec, type SessionStart, type BotOptions, type PresetTurnIds, type Origin, type AgentHead, type Turn, type GuestAnswer, type Approval, type Denial, type StoredSpec } from "./bot/types";
 import { keepable, resolvePath, union, firstLine, sleep, turnCommandId, preview, streamingText, subagentOf, isReviewRefusal, isRule, allowRule, permissionText, clip, stepView, routinesKey, iso, subagentView, messageView, approvalSummary } from "./bot/view-functions";
 export type Status = "done" | "stopped" | "failed";
@@ -142,7 +141,7 @@ export class Bot {
   /** Read by BotContext (M7-S41). */
   records: ChatRecord[] = [];
   /** Set when its chat file could not be read: nothing is written over it then. */
-  private problem: string | null = null;
+  problem: string | null = null;
   private readOnly = false;
   /** Who else has this bot's project open, when someone does: shown once as a notice, never a block. */
   private saveTimer: NodeJS.Timeout | null = null;
@@ -150,7 +149,7 @@ export class Bot {
   private subagentSaveTimer: NodeJS.Timeout | null = null;
   private subagentsDirty = false;
   private subagentSaveRetryMs = 1_000;
-  private head: AgentHead | null = null;
+  head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
   readonly engine: Engine;
   /** Its heads (bot.json `heads`, 1.x's format). Kept by the primary; a partner reads it. */
@@ -181,31 +180,25 @@ export class Bot {
   private handoffDecisions = new Map<string, Set<string>>();
   private rounds: RoundsProgress | null = null;
   /** Codex: workers at work or their reports waiting (the bot stays awake). */
-  private managedPending = false;
-  /** Cut off by the network (1.x's `outage`): it waits for the network to come back (`networkRestored`) to carry on. */
-  outage: Outage | null = null;
-  private retryingConnection = false;
-  /** Turns tried again in a row after an API error that passes (api-retry.ts), and the wait before the next try. */
-  private apiRetries = 0;
-  private apiRetryTimer: NodeJS.Timeout | null = null;
-  /** Its Codex head waits to try a refused request again (BotView.codexRetry): until its next item, or the turn's end. */
-  private codexRetry: NonNullable<BotView["codexRetry"]> | null = null;
+  managedPending = false;
+  get outage(): Outage | null { return this.progress.outage; }
+  private get retryingConnection() { return this.progress.retryingConnection; }
+  private set retryingConnection(v: boolean) { this.progress.retryingConnection = v; }
+  private get apiRetries() { return this.progress.apiRetries; }
+  private set apiRetries(v: number) { this.progress.apiRetries = v; }
+  private get codexRetry() { return this.progress.codexRetry; }
+  private set codexRetry(v: NonNullable<BotView["codexRetry"]> | null) { this.progress.codexRetry = v; }
   /** Subagents whose last line was claude's connection error (1.x's `cutOffByNetwork`). */
   private cutOffByNetwork = new Set<string>();
-  /** When the turn under way last showed a step (1.x's `lastProgress`, ms), and each subagent's (`subagentProgress`). */
-  private lastProgress: number | null = null;
-  private subagentProgress = new Map<string, number>();
-  /** Quiet spells already reminded of ("": its own turn; else a subagent's id), once each (`stallReminded`). */
-  private stallReminded = new Set<string>();
   /** Tidying memory.md before it sleeps. */
-  private tidying = false;
+  tidying = false;
   /** Read by BotContext (M7-S41). */
   turn: Turn | null = null;
   /** Messages that wait for the turn under way (or the tidy) to end. */
   /** Read by BotContext (M7-S41). */
   queue: Turn[] = [];
   private finished = new Map<string, Status>();
-  private approvals = new Map<string, Approval>();
+  approvals = new Map<string, Approval>();
   private draining: { head: AgentHead; resolve: () => void; promise: Promise<void> } | null = null;
   /** Results still to come from turns ended early (a tidy or a guest turn that ran late): they belong to nobody. */
   private ignoreResults = 0;
@@ -222,7 +215,7 @@ export class Bot {
   /** Read by BotContext (M7-S41). */
   session: HeadState;
   /** The next head is a new session: its first message carries the wake briefing. */
-  private briefing = true;
+  briefing = true;
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
   private restartPending = false;
   private modelSettingsPending = false;
@@ -264,16 +257,14 @@ export class Bot {
   private sessionRules: string[] = [];
   /** Rules given to claude while it runs, with the last call it had made then: a block of a call up to that one is no news. */
   private rulesGivenAfter = new Map<string, string | null>();
-  /** Session schedule calls waiting for their structured results, and the next due clock. */
-  private scheduleCalls = new Map<string, ScheduleCall>();
-  private scheduleDueAt: number | null = null;
+  private get scheduleCalls() { return this.tasks.scheduleCalls; }
   /** Recent tool calls by id, oldest first: to show and allow a blocked one. */
   private toolCalls = new Map<string, { tool: string; detail: string; parent: string | null }>();
   /** `permission_denied` frames waiting for their tool result; blocked calls already shown. */
   private deniedFrames = new Map<string, { tool: string | null; reason: string }>();
   private deniedCalls = new Set<string>();
   private unread: number;
-  private shuttingDown = false;
+  shuttingDown = false;
   /** What this head's session has been told of the chat's reactions (null: tell it from scratch). */
   private reactionsSeen: SeenReactions | null = null;
   /** Finished subagents a silent turn has already been asked to report, once. */
@@ -287,7 +278,7 @@ export class Bot {
   /** The other head's words written to claude mid-turn, by message uuid: one that gets a turn of its own is the app's. */
   private contextSent = new Set<string>();
   /** Your lines written to claude while its turn ran, by message uuid: one claude begins a turn of its own for is answered there. */
-  private steered = new Map<string, Turn>();
+  steered = new Map<string, Turn>();
   /**
    * claude has a turn under way: it said "started" for a line, or its turn said something, and no result came since.
    * A "started" for a line then means claude read it into that turn (3353d2d9), never a turn of its own.
@@ -326,6 +317,10 @@ export class Bot {
   /** Made on first use, from this bot: a fake `Object.create(Bot.prototype)` has one too. */
   private botContext: BotContext | null = null;
   private get ctx(): BotContext { return this.botContext ??= new BotContext(this); }
+  private botProgress: BotProgress | null = null;
+  private get progress(): BotProgress { return this.botProgress ??= new BotProgress(this, this.ctx); }
+  private botTasks: BotTasks | null = null;
+  private get tasks(): BotTasks { return this.botTasks ??= new BotTasks(this, this.ctx); }
 
   constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
     const primary = options.primary;
@@ -605,14 +600,14 @@ export class Bot {
   }
 
   /** A new line; `archive: false` for a reply still being written (it is archived when it ends). */
-  private add(record: ChatRecord, { archive = true } = {}) {
+  add(record: ChatRecord, { archive = true } = {}) {
     this.records.push(record);
     this.persist();
     if (archive) archiveLine(this.paths.archive, record);
     this.emit({ type: "message.added", botId: this.id, message: this.messageView(record) });
   }
 
-  private changed(record: ChatRecord) {
+  changed(record: ChatRecord) {
     this.persist();
     this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
   }
@@ -1663,7 +1658,7 @@ export class Bot {
     this.options.emit({ type: "heads.updated", botId: this.id, heads: this.headsView() });
   }
 
-  private updated() {
+  updated() {
     this.emit({ type: "bot.updated", bot: this.view() });
   }
 
@@ -1876,7 +1871,7 @@ export class Bot {
   }
 
   /** A turn for `head` (this bot's or its partner's), routed there now. */
-  private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds } = {}): Turn {
+  deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds } = {}): Turn {
     // Work for a head the bot does not have (a hand-off from a bot with one head): made when first needed (1.x's `bot(for:)`).
     this.requireEngineRoute(head);
     const bot = this.botFor(head) ?? this.owner.makePartner(head);
@@ -2396,7 +2391,7 @@ export class Bot {
   }
 
   /** 1.x's `withSavedMemory`: a Codex head is given its saved memory and the recent chat with a prompt. */
-  private withSavedMemory(prompt: string): string {
+  withSavedMemory(prompt: string): string {
     if (this.engine === "claude") return prompt;
     const parts = [prompt];
     let memory = "";
@@ -2451,7 +2446,7 @@ export class Bot {
     if (changed) owner.persist(true);
   }
 
-  private bumpUnread() {
+  bumpUnread() {
     const owner = this.owner;
     owner.unread += 1;
     owner.store.saveSetting("unread", owner.unread);
@@ -3738,7 +3733,7 @@ export class Bot {
     this.emit({ type: "turn.steps", botId: this.id, turnId: turn.id, messageId: turn.messageId, steps: turn.steps.slice(-500).map((step) => stepView(step, this.subagents)) });
   }
 
-  private finishTurn(turn: Turn, status: Status, error?: string) {
+  finishTurn(turn: Turn, status: Status, error?: string) {
     if (this.unbegun?.turn === turn) this.clearUnbegun();
     if (!turn.open) return;
     turn.open = false;
@@ -4169,237 +4164,39 @@ export class Bot {
     this.recordOutage({ subagents: [id] });
   }
 
-  private recordOutage({ turnFailed = false, subagents = [], lostSession = null }: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) {
-    const record: Outage = this.outage ? { ...this.outage, subagents: [...this.outage.subagents] } : { since: Date.now(), turnFailed: false, subagents: [], lostSession: null };
-    if (turnFailed) record.turnFailed = true;
-    for (const id of subagents) if (!record.subagents.includes(id)) record.subagents.push(id);
-    if (lostSession) record.lostSession = lostSession;
-    this.outage = record;
-    this.retryingConnection = false;
-    this.clearIdle();
-    this.updated();
-  }
-
-  /**
-   * The network is back (`now`: when that was seen). Within the warm window of the failure it goes on in the
-   * same session and continues its subagents; later, cut-off subagents start over as new ones in their
-   * worktree with their prompt and one added line. (A partner head's outage is looked at too.)
-   */
-  networkRestored(now = Date.now()) {
-    for (const peer of this.peers) peer.networkRestored(now);
-    const outage = this.outage;
-    if (!outage) return;
-    this.outage = null;
-    this.retryingConnection = false;
-    queueMicrotask(() => this.checkSettingsHold());
-    const elapsed = Math.max(0, now - outage.since);
-    const warm = elapsed <= WARM_WINDOW_MS;
-    const cut: CutOff[] = outage.subagents.flatMap((id) => {
-      const subagent = this.subagents.get(id);
-      return subagent ? [{ description: subagent.description, type: subagent.type ?? null, prompt: subagent.prompt, agentId: subagent.agentID ?? null }] : [];
-    });
-    const note = resumeNote(elapsed, outage.turnFailed || outage.lostSession !== null, cut);
-    const mode = resumeMode(elapsed, cut.length);
-    this.add({ id: newId(), role: "divider", text: restoredText(elapsed, mode), date: toSwiftDate() });
-    this.updated();
-    if (!this.head?.running && warm && outage.lostSession) {
-      // The process went away with it: the same session again, while its cache is warm.
-      this.session = { sessionId: outage.lostSession, started: true };
-      this.briefing = false;
-      this.store.saveHead(this.session);
-      this.deliverTo(this.engine, this.withSavedMemory(note), null, { origin: "app" });
-      return;
-    }
-    this.deliverTo(this.engine, note, null, { origin: "app" });
-  }
-
-  /**
-   * The turn ended on an API error that passes: it ends stopped with the line "API 暫時擋住，30 秒後重試（1/3）" (its steps
-   * kept), and after the wait the same session is told to carry on (API_RETRY_NOTE) in a turn of the app's, which
-   * takes over its call-in relay. Claude already did the turn's tools; it goes on from there and redoes none. False:
-   * no try left (or a turn in another chat, which is not tried again here).
-   */
-  private retryApiLater(turn: Turn): boolean {
-    const delays = apiRetryDelays();
-    const attempt = this.apiRetries + 1;
-    if (attempt > delays.length || turn.guest || turn.callIn) return false;
-    this.apiRetries = attempt;
-    const delay = delays[attempt - 1]!;
-    const relay = turn.relayTo;
-    turn.relayTo = undefined;
-    turn.reply = new ReplyText();
-    turn.reply.add({ kind: "assistantText", text: apiRetryText(attempt, delays.length, delay) });
-    this.log(`API error that passes; trying the turn again in ${Math.round(delay / 1000)} s (${attempt}/${delays.length})`);
-    this.finishTurn(turn, "stopped");
-    this.clearApiRetry();
-    this.apiRetryTimer = setTimeout(() => {
-      this.apiRetryTimer = null;
-      if (this.shuttingDown || this.problem) return;
-      try {
-        const next = this.deliverTo(this.engine, API_RETRY_NOTE, null, { origin: "app" });
-        if (relay) next.relayTo = relay;
-      } catch (error) { this.log(`API retry not delivered: ${(error as Error).message}`); }
-    }, delay);
-    this.apiRetryTimer.unref?.();
-    return true;
-  }
-
-  private clearApiRetry() {
-    if (this.apiRetryTimer) { clearTimeout(this.apiRetryTimer); this.apiRetryTimer = null; }
-  }
+  private recordOutage(opts: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { this.progress.recordOutage(opts); }
+  networkRestored(now = Date.now()) { this.progress.networkRestored(now); }
+  private retryApiLater(turn: Turn): boolean { return this.progress.retryApiLater(turn); }
+  private clearApiRetry() { this.progress.clearApiRetry(); }
 
   // ------------------------------------------------------------------------------------------
   // Background work (1.x's BackgroundTask: a chip in the reply, and what a wake is told was cut off)
 
-  private refreshScheduleDue() {
-    const due = [...this.records.flatMap((record) => Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : []), ...(this.turn?.tasks ?? [])]
-      .flatMap((task) => { const time = scheduleDue(task); return time === null ? [] : [time]; });
-    this.scheduleDueAt = due.length ? Math.min(...due) : null;
-  }
-
-  private settleSessionSchedules() {
-    const now = Date.now();
-    if (this.scheduleDueAt === null || now < this.scheduleDueAt) return;
-    if (this.turn?.tasks) settleSchedules(this.turn.tasks, now);
-    for (const record of this.records) {
-      if (Array.isArray(record.backgroundTasks) && settleSchedules(record.backgroundTasks as BackgroundTask[], now)) this.changed(record);
-    }
-    this.refreshScheduleDue();
-  }
-
-  /** Background work the bot itself started in the turn under way (not one of its subagents'), once (`addTask`). */
-  private addBackgroundTask(id: string, kind: BackgroundKind, title: string) {
-    const turn = this.turn;
-    const step = turn?.open ? turn.steps.findLast((candidate) => candidate.id === id) : undefined;
-    if (!turn || !step || turn.tasks?.some((task) => task.id === id)) return;
-    const task = backgroundTask(id, kind, title || this.subagents.get(id)?.description || step.title, step.detail);
-    if (kind === "monitor") {
-      task.title = `Coordinator monitor: ${task.title}`;
-      task.detail = `Owner session: ${this.session.sessionId.toLowerCase()}\n${task.detail ?? ""}`;
-      // Claude reports the watch lifecycle, but no independent callback acknowledgement.
-      task.monitor = { ownerSession: this.session.sessionId.toLowerCase(), threadId: null, turnId: turn.id,
-        execution: "running", callback: "unknown" };
-    }
-    (turn.tasks ??= []).push(task);
-  }
-
-  /** A wake-up or cron job was cancelled: out of the turn under way and of the replies that kept it. */
-  private cancelScheduled(cancellation: ScheduleCancellation, turn: Turn | null) {
-    if (turn?.tasks) turn.tasks = turn.tasks.filter((task) => !matchesCancellation(task, cancellation));
-    for (const record of this.records) {
-      const tasks = record.backgroundTasks as BackgroundTask[] | undefined;
-      if (!Array.isArray(tasks) || !tasks.some((task) => matchesCancellation(task, cancellation))) continue;
-      const kept = tasks.filter((task) => !matchesCancellation(task, cancellation));
-      if (kept.length) record.backgroundTasks = kept;
-      else delete record.backgroundTasks;
-      this.changed(record);
-    }
-  }
-
-  /** A kept task by its call's id: in the turn under way, or in a reply. */
-  private findTask(id: string): BackgroundTask | undefined {
-    return this.turn?.tasks?.find((task) => task.id === id)
-      ?? this.records.flatMap((record) => Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : []).find((task) => task.id === id);
-  }
-
-  private touchTask(id: string) {
-    if (this.turn?.tasks?.some((task) => task.id === id)) return;
-    const record = this.records.findLast((candidate) => Array.isArray(candidate.backgroundTasks) && (candidate.backgroundTasks as BackgroundTask[]).some((task) => task.id === id));
-    if (record) this.changed(record);
-  }
-
-  /** Background work a subagent started (the row labels it with the subagent), once. */
-  private addSubagentTask(ownerId: string, id: string, kind: BackgroundKind, title: string, detail: string) {
-    const owner = this.subagents.get(ownerId);
-    const call = owner?.steps.findLast((step) => step.id === id);
-    this.placeSubagentTask(ownerId, backgroundTask(id, kind, title || call?.title || detail, detail || call?.detail));
-  }
-
-  /** Keeps a task of a subagent: in the turn under way, else in the reply that has the subagent's step (or the head's latest). */
-  private placeSubagentTask(ownerId: string, task: BackgroundTask) {
-    const owner = this.subagents.get(ownerId);
-    if (!owner || owner.status !== "running" || this.findTask(task.id)) return;
-    task.owner = { id: owner.id, label: owner.description || owner.name || owner.type || "Subagent" };
-    const turn = this.turn;
-    if (turn?.open && turn.origin !== "tidy") { (turn.tasks ??= []).push(task); this.refreshScheduleDue(); return; }
-    const target = this.records.findLast((record) => record.steps?.some((step) => step.id === owner.id))
-      ?? this.records.findLast((record) => record.role === "bot" && !record.permissionTool && (record.engine ?? "claude") === this.engine);
-    if (!target) return;
-    target.backgroundTasks = [...(Array.isArray(target.backgroundTasks) ? target.backgroundTasks as BackgroundTask[] : []), task];
-    this.changed(target);
-    this.refreshScheduleDue();
-  }
-
-  /** The subagent is over: its background work went with it, so the row must not keep it running. */
-  private endSubagentTasks(ownerId: string) {
-    const summary = "Ended with its subagent.";
-    for (const task of this.turn?.tasks ?? []) if (task.owner?.id === ownerId && task.status === "running") endTask(task, "killed", summary);
-    for (const record of this.records) {
-      const tasks = Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : [];
-      let changed = false;
-      for (const task of tasks) if (task.owner?.id === ownerId && task.status === "running") { endTask(task, "killed", summary); changed = true; }
-      if (changed) this.changed(record);
-    }
-    this.refreshScheduleDue();
-  }
-
-  /** A background task reported back (`endBackgroundTask`): in the turn under way, or in the reply it belongs to. */
-  private endBackground(id: string, status: string, summary: string | null) {
-    const pending = this.turn?.tasks?.find((task) => task.id === id && task.status === "running");
-    if (pending) { endTask(pending, status, summary); return; }
-    const record = endBackgroundTask(this.records, id, status, summary);
-    if (record) this.changed(record);
-    this.checkSettingsHold();
-  }
-
-  /** The turn's background work goes in its reply (`message.backgroundTasks = trace.takeTasks()`). */
-  private keepTasks(turn: Turn, record: ChatRecord | null) {
-    const tasks = turn.tasks;
-    if (!tasks?.length) return;
-    turn.tasks = [];
-    // A silent turn keeps them in this head's latest reply.
-    const target = record ?? this.records.findLast((candidate) => candidate.role === "bot" && !candidate.permissionTool && (candidate.engine ?? "claude") === this.engine);
-    if (!target) return;
-    target.backgroundTasks = [...(Array.isArray(target.backgroundTasks) ? target.backgroundTasks as BackgroundTask[] : []), ...tasks];
-    if (!record) this.changed(target);
-  }
-
-  /** Its process went away: whatever had not reported never will (`stopBackgroundTasks(as: .stopped)`). */
-  private stopTasks() {
-    this.scheduleCalls.clear();
-    this.scheduleDueAt = null;
-    // Only this head's: a partner head's tasks run in its own process, which goes on.
-    const changed = stopBackgroundTasks(this.ownRecords, "stopped");
-    for (const record of changed) this.changed(record);
-  }
-
-  /** Background work still going that it started not too long ago (sleeping or a restart would end it). */
-  private get backgroundWorkRunning(): boolean {
-    return hasBackgroundWorkRunning(this.ownRecords);
-  }
+  private refreshScheduleDue() { this.tasks.refreshScheduleDue(); }
+  private settleSessionSchedules() { this.tasks.settleSessionSchedules(); }
+  private addBackgroundTask(id: string, kind: BackgroundKind, title: string) { (this.tasks ?? new BotTasks(this)).addBackgroundTask(id, kind, title); }
+  private cancelScheduled(cancellation: ScheduleCancellation, turn: Turn | null) { this.tasks.cancelScheduled(cancellation, turn); }
+  private findTask(id: string): BackgroundTask | undefined { return this.tasks.findTask(id); }
+  private touchTask(id: string) { this.tasks.touchTask(id); }
+  private addSubagentTask(ownerId: string, id: string, kind: BackgroundKind, title: string, detail: string) { this.tasks.addSubagentTask(ownerId, id, kind, title, detail); }
+  private placeSubagentTask(ownerId: string, task: BackgroundTask) { this.tasks.placeSubagentTask(ownerId, task); }
+  private endSubagentTasks(ownerId: string) { this.tasks.endSubagentTasks(ownerId); }
+  private endBackground(id: string, status: string, summary: string | null) { this.tasks.endBackground(id, status, summary); }
+  private keepTasks(turn: Turn, record: ChatRecord | null) { this.tasks.keepTasks(turn, record); }
+  private stopTasks() { this.tasks.stopTasks(); }
+  private get backgroundWorkRunning(): boolean { return this.tasks.backgroundWorkRunning; }
 
   /**
    * The chat lines whose background tasks are this head's. A shared chat holds the partner head's replies
    * too (their tasks, e.g. an Antigravity worker, run in the partner's process): they are left out.
    */
-  private get ownRecords(): ChatRecord[] {
+  get ownRecords(): ChatRecord[] {
     if (!this.sharesChat) return this.records;
     return this.records.filter((record) => (record.engine ?? "claude") === this.engine);
   }
 
-  /**
-   * Work in this head's own process that a restart would end: its subagents or workers (hosted ones count,
-   * whoever they report to), background tasks it started, or its wait for the network. Never a partner head's.
-   */
-  private get ownWorkRunning(): boolean {
-    // Your lines steered into a turn that claude has not read yet count: it still owes them an answer.
-    return this.inHeadSubagents.length > 0 || this.managedPending || this.backgroundWorkRunning || !!this.outage || this.steered.size > 0;
-  }
-
-  /** Its subagents at work inside its head's process (a Claude worker is a process of its own: a restart or sleep leaves it be). */
-  private get inHeadSubagents(): SubagentRecord[] {
-    return this.subagents.running.filter((subagent) => !ownProcessWorker(subagent.type));
-  }
+  private get ownWorkRunning(): boolean { return this.tasks.ownWorkRunning; }
+  private get inHeadSubagents(): SubagentRecord[] { return this.tasks.inHeadSubagents; }
 
   /** Words for the work that holds a model/effort restart back (the queue card). */
   private ownWorkWords(): string {
@@ -4453,7 +4250,7 @@ export class Bot {
   }
 
   /** Something that may have ended this head's own work happened: a held message may go now. */
-  private checkSettingsHold() {
+  checkSettingsHold() {
     if (!this.settingsHold || !this.releaseSettingsHold()) return;
     if (!this.turn && !this.tidying && !this.switching) this.next();
   }
@@ -4469,67 +4266,12 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Quiet runs (1.x's `checkStall`, `noteProgress`)
 
-  /** Something happened in the turn under way (or one starts). */
-  private noteCodexRetry(item: Extract<CodexItem, { kind: "apiRetry" }>) {
-    const shown = this.codexRetry;
-    // A late time for an attempt no longer shown (the turn moved on, or a newer attempt came) is dropped.
-    if (item.retryAt !== null && (!shown || shown.attempt !== item.attempt || shown.retryAt !== null)) return;
-    if (item.retryAt === null && !this.turn?.open) return;
-    this.codexRetry = { attempt: item.attempt, max: item.max, reason: item.reason, retryAt: item.retryAt };
-    this.updated();
-  }
-
-  private clearCodexRetry() {
-    if (!this.codexRetry) return;
-    this.codexRetry = null;
-    this.updated();
-  }
-
-  private noteProgress() {
-    this.lastProgress = Date.now();
-    this.stallReminded.delete("");
-  }
-
-  private noteProgressOf(item: CodexItem) {
-    const id = subagentOf(item);
-    if (id) { this.subagentProgress.set(id, Date.now()); this.stallReminded.delete(id); }
-    this.noteProgress();
-    if (this.retryingConnection) { this.retryingConnection = false; this.updated(); }
-  }
-
-  /**
-   * Reminds you once per quiet spell when the turn under way, or a subagent at work, has shown no new step
-   * for `intervalMs` (0 or less: never). Not while it waits for you (1.x: or for the network). Its lines: who is quiet.
-   */
-  checkStall(now: number, intervalMs: number): string[] {
-    if (intervalMs <= 0 || !this.head?.running || this.approvals.size || this.outageBlocksStall()) return [];
-    const minutes = Math.max(1, Math.round(intervalMs / 60_000));
-    const lines: string[] = [];
-    let quietForeground = false;
-    for (const subagent of this.subagents.running) {
-      if (this.stallReminded.has(subagent.id)) continue;
-      const last = this.subagentProgress.get(subagent.id) ?? fromSwiftDateMs(subagent.startedAt);
-      if (now - last < intervalMs) continue;
-      this.stallReminded.add(subagent.id);
-      if (!subagent.background) quietForeground = true;
-      lines.push(`子代理「${subagent.description || "Subagent"}」已經 ${minutes} 分鐘沒有新的步驟了。`);
-    }
-    const working = !!this.turn?.open && !this.tidying;
-    if (working && this.lastProgress !== null && now - this.lastProgress >= intervalMs && !this.stallReminded.has("")) {
-      this.stallReminded.add("");
-      // Waiting on a quiet subagent is that subagent's quiet spell, already said.
-      if (!quietForeground) lines.unshift(`${this.profile.name} 已經 ${minutes} 分鐘沒有新的步驟了。`);
-    }
-    if (!lines.length) return [];
-    this.add({ id: newId(), role: "notice", text: `${lines.join("\n")}\n可能卡住了：可以再等等，或傳訊息問它在做什麼。`, date: toSwiftDate() });
-    this.bumpUnread();
-    return lines;
-  }
-
-  /** Not while it waits for the network. */
-  private outageBlocksStall(): boolean {
-    return this.outage !== null;
-  }
+  private noteCodexRetry(item: Extract<CodexItem, { kind: "apiRetry" }>) { this.progress.noteCodexRetry(item); }
+  private clearCodexRetry() { this.progress.clearCodexRetry(); }
+  private noteProgress() { this.progress.noteProgress(); }
+  private noteProgressOf(item: CodexItem) { this.progress.noteProgressOf(item); }
+  checkStall(now: number, intervalMs: number): string[] { return this.progress.checkStall(now, intervalMs); }
+  private outageBlocksStall(): boolean { return this.progress.outageBlocksStall(); }
 
   // ------------------------------------------------------------------------------------------
   // Sleeping
@@ -4543,7 +4285,7 @@ export class Bot {
     }, this.options.idleMs);
   }
 
-  private clearIdle() {
+  clearIdle() {
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
   }
 
