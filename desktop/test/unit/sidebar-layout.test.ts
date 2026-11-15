@@ -2,7 +2,7 @@
 // how a change in an old key is told from this store's own write coming back.
 import { describe, expect, it, vi } from "vitest";
 import { LAYOUT_STORAGE_KEY } from "../../src/renderer/sidebar-names";
-import { layoutOfSettings, RailLayoutStore, readLayout, type RailLayout } from "../../src/renderer/sidebar-layout";
+import { layoutOfSettings, RailLayoutStore, readLayout, type LayoutStorage, type RailLayout } from "../../src/renderer/sidebar-layout";
 
 const layout = (over: Partial<RailLayout> = {}): RailLayout => ({ railCollapsed: false, pinnedBots: [], idleBots: [], ...over });
 const fakeStorage = (held?: unknown) => {
@@ -77,7 +77,7 @@ describe("RailLayoutStore", () => {
   });
   it("a late answer of a storage that was detached does not settle the next one", async () => {
     let release!: (value: unknown) => void;
-    const slow = { get: () => new Promise((resolve) => { release = resolve; }), set: async () => {} } as ReturnType<typeof fakeStorage>;
+    const slow: LayoutStorage = { get: () => new Promise((resolve) => { release = resolve; }), set: async () => {} };
     const store = new RailLayoutStore();
     store.observe(layout());
     store.attach(slow);

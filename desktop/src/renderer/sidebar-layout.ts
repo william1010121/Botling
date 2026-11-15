@@ -12,7 +12,6 @@
 //   - when no plugin is attached (a page without the shell, the sidebar unloaded or refused, the storage unreadable) the old keys are the
 //     layout, as they were before. A page of Botling Web keeps them too: its layout is the bridge's (phone layout), not this store's.
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import type { PluginShellStorage } from "./shell/storage";
 import { LAYOUT_STORAGE_KEY } from "./sidebar-names";
 
 export interface RailLayout { railCollapsed: boolean; pinnedBots: string[]; idleBots: string[] }
@@ -22,7 +21,9 @@ export const LAYOUT_KEYS: readonly LayoutKey[] = ["railCollapsed", "pinnedBots",
 export const LAYOUT_LIST_MAX = 200;
 const ID_MAX = 100;
 
-type Storage = Pick<PluginShellStorage, "get" | "set">;
+/** What the store needs of a plugin's shell storage handle (`shellStorage(plugin)`, shell/storage.ts). */
+export interface LayoutStorage { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<void> }
+type Storage = LayoutStorage;
 /** Writes one key to where the core reads it (`settings.set`). */
 export type Mirror = (key: LayoutKey, value: RailLayout[LayoutKey]) => void;
 
