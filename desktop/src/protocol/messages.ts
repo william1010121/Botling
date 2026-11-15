@@ -369,6 +369,8 @@ export const ShellBrowser = msg("shell.browser", { req: ReqId, args: ShellArgs.o
 /** Install the newer release (the core's `installRelease`). */
 export const ShellInstall = msg("shell.install", { req: ReqId, args: ShellArgs.optional() });
 export const ShellQuit = msg("shell.quit", { req: ReqId, args: ShellArgs.optional() });
+export const ShellSeal = msg("shell.seal", { req: ReqId, text: z.string().max(100_000) });
+export const ShellOpen = msg("shell.open", { req: ReqId, sealed: z.string().max(140_000) });
 /** The window's answer to a `shell.*` request; `data` is what a browser request answered (the 2.x app op's `data`). */
 export const ShellDone = msg("shell.done", { req: ReqId, ok: z.boolean(), file: z.string().max(4_096).optional(), error: z.string().max(2_000).optional(), data: z.unknown().optional() });
 
@@ -398,7 +400,7 @@ export const MESSAGES = {
   "pair.hello": PairHello, "pair.added": PairAdded, "pair.ack": PairAck, "pair.declined": PairDeclined,
   "roster.have": RosterHave, "roster.ids": RosterIds, "roster.want": RosterWant, "roster.statements": RosterStatements, "roster.revocations": RosterRevocations,
   admin: Admin, "admin.event": AdminEventMsg,
-  "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.done": ShellDone,
+  "shell.screenshot": ShellScreenshot, "shell.browser": ShellBrowser, "shell.install": ShellInstall, "shell.quit": ShellQuit, "shell.seal": ShellSeal, "shell.open": ShellOpen, "shell.done": ShellDone,
   ping: Ping, bye: Bye,
 } as const;
 export type MessageType = keyof typeof MESSAGES;

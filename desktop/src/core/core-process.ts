@@ -182,6 +182,8 @@ export interface CoreProcessParts {
   /** The plugin host's Node (null: plugins' program parts do not run). */
   node: HostCommand | null;
   sealer: Sealer | null;
+  /** Botling 3 (botlingd) passes true for bound plugin secret blobs; 2.x leaves it unset. */
+  boundSecrets?: boolean;
   app: CoreOptions["app"];
 }
 
@@ -249,7 +251,7 @@ export function coreProcessOptions(parts: CoreProcessParts): CoreOptions {
     // The library and memory files are watched; these are the slow looks that catch what a watcher missed.
     componentScanMs: envNumber(env.BOTLING_COMPONENT_SCAN_MS, 60_000),
     waitingScanMs: envNumber(env.BOTLING_WAITING_SCAN_MS, 60_000),
-    plugins: { node: parts.node, hostScript, sealer: parts.sealer, builtIns: builtinPlugins },
+    plugins: { node: parts.node, hostScript, sealer: parts.sealer, ...(parts.boundSecrets ? { boundSecrets: true } : {}), builtIns: builtinPlugins },
     checkCommand,
     shotCommand: env.BOTLING_SHOT_COMMAND || null,
     runCommand,

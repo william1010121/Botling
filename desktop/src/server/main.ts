@@ -18,6 +18,9 @@
 //                             puts a backup back with the server stopped (restore.ts says why); refused (exit 75) while
 //                             it runs, unless --stop, which stops it first. It is not started again here: a Botling 3
 //                             window starts it when it reconnects, or run botlingd start.
+//   botlingd import <2.x folder> [--dry-run]
+//                             (M6-01d) imports a Botling 2.x data folder into this folder (read-only on 2.x)
+//                             and writes <data>/import-report.md; --dry-run previews the report without writing
 //   botlingd pair [--name <device name>] [--scope read,reply,approve,manage] [--no-qr]
 //                             pairs a phone or browser with the running server (M2 step 5): the first pairing shows the
 //                             recovery code once and makes the cluster only after it is typed back; then a link and QR
@@ -32,6 +35,9 @@
 //                             (M3 step 13) this server's fingerprint and every other server of its cluster: name,
 //                             fingerprint, state (live / stale / gone) and since, and how many commands wait for it;
 //                             read from the data folder, so it answers whether or not botlingd runs
+//   botlingd designate <machine>
+//                             (M5-04i) sets the cluster's designatedServer preference to that machine (takes effect at
+//                             each server's next start)
 //   botlingd machines remove <name-or-id> [--yes | --only]
 //                             (M4-05) on the revocation root: previews what it added, asks once, and revokes it
 //   botlingd machines dropped [--json]
@@ -50,6 +56,7 @@ import { LISTEN_FILE, LISTEN_HOST, listenPort, tailscaleServeCommand } from "./n
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
+import { ImportError, runImport } from "./import/run";
 import { RestoreError, restoreBackup } from "./restore";
 import { serviceCommand, ServiceError } from "./service";
 import { AdminClient, addMachineCommand, createStdinIo, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./pairing";
@@ -58,6 +65,7 @@ import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
+import { machineLabel } from "./designated";
 
 const out = (line: string) => process.stdout.write(`${line}\n`);
 const fail = (line: string, code = 1): never => { process.stderr.write(`botlingd: ${line}\n`); process.exit(code); };
@@ -367,6 +375,55 @@ async function main(argv: string[]): Promise<void> {
       }
       return;
     }
+    case "designate": {
+      const unknown = rest.find((arg) => arg.startsWith("--"));
+      if (unknown) fail(`unknown option "${unknown}"`, 2);
+      const target = rest.find((arg) => !arg.startsWith("--"))?.trim();
+      if (!target) return fail("designate needs a machine name or id: botlingd designate <machine> (botlingd machines lists them)", 2);
+      const file = join(paths.dataDir, "server.db");
+      const pid = holderPid(paths.dataDir);
+      const db = existsSync(file) ? openReaderDb(file) : null;
+      let machines: MachinesReport;
+      try {
+        machines = readMachines(paths.dataDir, db, pid);
+      } finally {
+        db?.close();
+      }
+      const candidates: Array<{ member: string; name: string | null; fingerprint: string }> = [
+        ...(machines.self ? [machines.self] : []),
+        ...machines.peers,
+      ];
+      let resolved: { member: string; name: string | null; fingerprint: string } | null = null;
+      const byId = candidates.find((item) => item.member === target);
+      if (byId) {
+        resolved = byId;
+      } else {
+        const byName = candidates.filter((item) => item.name === target);
+        if (byName.length > 1) {
+          const choices = byName.map((item) => `${item.member} (${item.fingerprint})`).join(", ");
+          fail(`more than one machine is named "${machineLabel(target)}" (${choices}); pass the id instead`, 2);
+        }
+        if (byName.length === 1) {
+          resolved = byName[0]!;
+        } else {
+          const fpKey = target.replace(/[\s-]/g, "").toLowerCase();
+          if (/^[a-z2-7]{26}$/.test(fpKey)) {
+            resolved = candidates.find((item) => item.member === fpKey) ?? null;
+          }
+        }
+      }
+      if (!resolved) return fail(`no machine named "${machineLabel(target)}" (botlingd machines lists them)`, 2);
+      const client = await adminSession(paths);
+      try {
+        await client.request({ op: "prefs.set", key: "designatedServer", value: resolved.member });
+      } catch (error) {
+        fail(`cannot designate ${machineLabel(resolved.name ?? target)}: ${(error as Error).message}`, 2);
+      } finally {
+        client.close();
+      }
+      out(`designated ${machineLabel(resolved.name ?? target)}; its main bot takes over when each server next starts.`);
+      return;
+    }
     case "recovery": {
       if (rest[0] !== "replace") fail(`unknown recovery command "${rest[0] ?? ""}" (use: botlingd recovery replace)`, 2);
       if (rest.length > 1) fail("recovery replace takes no arguments (recovery codes are read from stdin)", 2);
@@ -456,8 +513,24 @@ async function main(argv: string[]): Promise<void> {
       }
       return;
     }
+    case "import": {
+      const unknown = rest.find((arg) => arg.startsWith("-") && arg !== "--dry-run");
+      if (unknown) fail(`unknown option "${unknown}" (use: botlingd import <2.x folder> [--dry-run])`, 2);
+      const positional = rest.filter((arg) => !arg.startsWith("-"));
+      if (positional.length !== 1) fail("import needs one 2.x data folder: botlingd import <2.x folder> [--dry-run]", 2);
+      const dryRun = rest.includes("--dry-run");
+      try {
+        const result = await runImport({ sourceDir: positional[0]!, targetDir: paths.dataDir, dryRun });
+        process.stdout.write(result.reportText);
+      } catch (error) {
+        if (error instanceof ImportError) fail(error.message, error.exitCode);
+        if (error instanceof PathsError) fail(error.message, 2);
+        throw error;
+      }
+      return;
+    }
     default:
-      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, pair, join, add-machine, machines, recovery, reroot, devices, revoke-device, fetch)`, 2);
+      fail(`unknown command "${command}" (start, stop, status, service, backup, restore, import, pair, join, add-machine, machines, designate, recovery, reroot, devices, revoke-device, fetch)`, 2);
   }
 }
 

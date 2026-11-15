@@ -10,12 +10,11 @@
 //     127.0.0.1 only, the page and the device WebSocket; `tailscale serve` publishes it) → daily backups (step 12).
 //
 // Not in botlingd (M1): the 2.x phone bridge and relay connector, the restart checkpoint and core hot swap (botlingd
-// outlives windows), plugin secrets (risk 3: no safe storage without the window, see `noSafeStorage`).
+// outlives windows), and plugin secrets when no window is attached (bound per plugin/key, sealed via `ShellBridge.sealer()`).
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import type { RemoteMember } from "../core/conversations";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
-import type { Sealer } from "../core/plugins/secrets";
 import { Core } from "../core/server";
 import { MAIN_BOT_ID, MAINTAINER_ID } from "../core/store/records";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "../core/store/data-dir-lock";
@@ -48,14 +47,37 @@ import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey,
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
-import { ShellBridge } from "./shell-bridge";
+import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
+import { PluginRow, RowKey } from "../protocol/table-rows";
 import { openServerStore, type Db, type ServerStore } from "./store";
-import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, SummaryRows, TableFeeds } from "./replica";
+import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, readRowBody, SummaryRows, TableFeeds } from "./replica";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
 import type { Command } from "../contract";
 import type { Target } from "../protocol";
 import { Directory, Forwarder, OwnerInbox, ServerOrigin } from "./forward";
+import { designatedServer, machineLabel } from "./designated";
 import { release as osRelease } from "node:os";
+
+/**
+ * M5-18a (D56, §18.3): a plugin's server (program) part runs only when the own `plugin:<name>` row says
+ * either it is a built-in at its shipped hash (`author === "builtin"` and `codeHash` matches), or its
+ * current `codeHash` holds a `write` grant.
+ */
+export function mayRunPluginServerPart(reader: () => Db, ownStream: string, name: string, codeHash: string): boolean {
+  const key = `plugin:${name}`;
+  if (!RowKey.safeParse(key).success) return false;
+  let raw: unknown;
+  try {
+    raw = readRowBody(reader(), ownStream, key);
+  } catch {
+    return false;
+  }
+  const parsed = PluginRow.safeParse(raw);
+  if (!parsed.success) return false;
+  const row = parsed.data;
+  if (row.author === "builtin") return row.codeHash === codeHash;
+  return Object.hasOwn(row.grants, codeHash) && row.grants[codeHash]?.tier === "write";
+}
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
 export const PLACEHOLDER_TAILNET_ORIGIN = "https://tailnet-name.invalid";
@@ -127,17 +149,7 @@ export const PLUGIN_POLL_MS = 60_000;
 /** Each peer server's state (`botlingd.peers.json`, 0600), rewritten on every change, removed on stop (M3 step 3). */
 export const PEERS_FILE = "botlingd.peers.json";
 
-/**
- * Risk 3: plugin secrets were sealed with Electron's safeStorage (the Keychain key of the app), which a plain Node
- * process cannot reach. M1 does not seal them another way: a plugin that asks to keep a secret is told to wait for
- * the window to provide safe storage (a later step seals through the attached window). A fresh botlingd data folder
- * holds no sealed secrets, so nothing already stored is lost.
- */
-export const NO_SAFE_STORAGE = "Plugin secrets need the Botling 3 window's safe storage (the Keychain), which this M1 server does not reach yet; open Botling 2.x for plugins that keep secrets.";
-const noSafeStorage: Sealer = {
-  seal: async () => { throw new Error(NO_SAFE_STORAGE); },
-  open: async () => { throw new Error(NO_SAFE_STORAGE); },
-};
+export { NO_SAFE_STORAGE };
 
 export class DataDirInUseError extends Error {
   readonly exitCode = CORE_EXIT_DATA_DIR_IN_USE;
@@ -180,6 +192,17 @@ export function relayAllowList(options: {
     }
     return tokens;
   };
+}
+
+/** Reads this server's `plugin:<name>` row (M5-13b) and returns its grant tier at the row's current `codeHash`, or `"none"`. */
+export function readPluginGrant(db: Db, serverId: string, name: string): "none" | "read" | "request" | "write" {
+  try {
+    const parsed = PluginRow.safeParse(readRowBody(db, `srv:${serverId}`, `plugin:${name}`));
+    if (!parsed.success) return "none";
+    return (Object.hasOwn(parsed.data.grants, parsed.data.codeHash) ? parsed.data.grants[parsed.data.codeHash]?.tier : undefined) ?? "none";
+  } catch {
+    return "none";
+  }
 }
 
 /** The key of the bot store kept in `directory`: the bot's id, or `<id>/partner-<engine>` for a second head's store. */
@@ -378,6 +401,22 @@ export class Botlingd {
       });
       const stores: DbBotStores = new DbBotStores(store, { onCommitted: (botId, directory) => exports.committed(botId, directory) });
       const opened = new Map<string, string>();
+      let peerSessions: PeerSessions | null = null;
+      const resolveDesignated = (raw: unknown): string => designatedServer(roster.view, raw);
+      const machineName = (id: string): string =>
+        peerSessions?.states().find((state) => state.member === id)?.name
+        ?? roster.profile(id, "name")
+        ?? roster.view.members.get(id)?.name
+        ?? (id === memberId ? SERVER_NAME : id);
+      const machineLine = (id: string): string => machineLabel(machineName(id));
+      const designated = resolveDesignated(prefs.get("designatedServer")?.value);
+      prefs.onChange((rows) => {
+        for (const row of rows) {
+          if (row.key === "designatedServer") {
+            log(`designatedServer is now ${machineLine(resolveDesignated(row.value))}; the main bot moves when each server next starts.`);
+          }
+        }
+      });
       const coreEngine = new CoreEngine();
       const shell = new ShellBridge({ appDataDir: env.BOTLING_APP_DATA_DIR || null });
       const { emit, deferTurn } = coreEngine.coreOptions();
@@ -387,11 +426,14 @@ export class Botlingd {
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
-          node: plainHostNode(env as NodeJS.ProcessEnv), sealer: noSafeStorage, app: shell.appBridge(),
+          node: plainHostNode(env as NodeJS.ProcessEnv), sealer: shell.sealer(), boundSecrets: true, app: shell.appBridge(),
         }),
         deferTurn,
         mainBotId: ids.main,
         maintainerId: ids.maintainer,
+        runMainBot: designated === memberId,
+        mainBotMachine: () => (designated === memberId ? null : machineLine(designated)),
+        mayRunServerPart: (name, codeHash) => mayRunPluginServerPart(() => hub.reader(), `srv:${serverId}`, name, codeHash),
         pluginWritten: (name, botId) => { pendingBotWrites.set(name, { botId, at: Date.now() }); void syncPlugins(); },
         content: {
           read: async (ref, offset, length) => {
@@ -404,6 +446,7 @@ export class Botlingd {
           },
         },
         remoteMembers: () => peerRemoteMembers(roster, hub.reader()),
+        pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory, ids.main);
           opened.set(key, directory);
@@ -411,6 +454,7 @@ export class Botlingd {
         },
       });
       coreEngine.bind(core);
+      shell.onAttach(() => { void core.reloadPluginSecrets().catch((error) => log(`plugins: ${String((error as Error)?.message ?? error)}`)); });
       const engine = new BotlingdEngine(coreEngine, { live, feed: (event) => { void exports.feed(event)?.catch?.(() => undefined); } });
       const content = new ContentService({
         store, dataDir: paths.dataDir, serverId, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: (text) => log(`content: ${text}`),
@@ -428,6 +472,12 @@ export class Botlingd {
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
         store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, (messageId) => core.serverAskOpen(messageId))), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
+        // may run and re-announces its list once (core.pluginGrantsChanged).
+        pluginRowsChanged: () => {
+          feeds.notify(feeds.ownStream);
+          core.pluginGrantsChanged();
+        },
         tapHooks: {
           eventSeen: (event) => {
             summary?.seen(event);
@@ -438,7 +488,7 @@ export class Botlingd {
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
       });
-      const pluginHashCache = new PluginHashCache();
+      const pluginHashCache = new PluginHashCache({ dataRoot: join(paths.dataDir, "plugin-data") });
       const readInstalledPlugins = () => pluginHashCache.read(core.plugins.registry.plugins, log);
       const machineRow = (pluginsDigest: string | null) => ({
         name: SERVER_NAME,
@@ -480,6 +530,7 @@ export class Botlingd {
             let touched = false;
             const pluginResult = reconcilePluginRows(tx, stream, installed, Date.now(), { log, onWritten: () => { touched = true; } });
             const machineRev = putRow(tx, stream, "machine", machineRow(pluginResult.digest));
+            if (touched) runtime.scope.afterCommit(() => core.pluginGrantsChanged());
             if (touched || machineRev != null) runtime.scope.afterCommit(() => feeds.notify(feeds.ownStream));
           });
           if (botWrites) {
@@ -593,7 +644,13 @@ export class Botlingd {
         log,
         admin: {
           handle: async (op, session) => {
-            if (op.op === "prefs.set") return { row: await prefs.set(op.key, op.value) };
+            if (op.op === "prefs.set") {
+              // M5-04i: only a server this one holds valid can be designated (the CLI and every window are told why not).
+              if (op.key === "designatedServer" && designatedServer(roster.view, op.value) !== op.value) {
+                throw new Error(`${JSON.stringify(op.value)?.slice(0, 80) ?? "undefined"} is not a server of this cluster that can run the main bot (unknown, revoked or not valid)`);
+              }
+              return { row: await prefs.set(op.key, op.value) };
+            }
             if (op.op === "prefs.list") return { rows: prefs.rows() };
             if (op.op === "fetch.grants" || op.op === "fetch.revoke") {
               if (!fetchApproval) throw new Error("fetch is not ready yet");
@@ -693,6 +750,7 @@ export class Botlingd {
         sessionOpened: (session) => { gossip.opened(session); void peerTables.opened(session); forwarder.opened(session); passThrough.sessionOpened(session); passThrough.ensureFollowed([...followed()]); },
         sessionClosed: (session) => { gossip.closed(session); peerTables.sessionClosed(session); forwarder.closed(session); inbox.closed(session); passThrough.sessionClosed(session); passOwner.sessionClosed(session); peerContent.sessionClosed(session); peerContentOwner.sessionClosed(session); fetchSource.sessionClosed(session); },
       }, { stateFile: join(paths.dataDir, PEERS_FILE) });
+      peerSessions = peers;
       peers.onState((state) => { void peerTables.peerState(state.member, state.state, state.since); passThrough.peerStateChanged(state.member, state.state, state.since); });
       feeds.start();
       gossip.start();
