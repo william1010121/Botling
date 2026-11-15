@@ -128,6 +128,27 @@ describe("Outbox rules without a socket", () => {
     ]);
   });
 
+  it("giveUp moves an unresolved slot out of unresolved() into persisted not sent / skipped, advancing floor", async () => {
+    const { box, storage } = await outbox();
+    const a = await box.submit("bot:b1", react("m1"));
+    const b = await box.submit("bot:b1", react("m2"));
+    const given = await box.giveUp(a.slot);
+    expect(given).toMatchObject({ slot: a.slot, state: "not sent", outcome: { kind: "skipped" } });
+    expect(box.unresolved().map((i) => i.slot.n)).toEqual([2]);
+    expect(box.envelope(b, "inc-0000001").floor).toBe(2);
+    // Persisted across reopen until dismissed.
+    const reloaded = await Outbox.open({ origin: "desktop", state: await storage.load(), writer: new SerialWriter(storage), now: () => 2 });
+    expect(reloaded.list().map((i) => [i.slot.n, i.state, i.outcome?.kind])).toEqual([
+      [1, "not sent", "skipped"],
+      [2, "waiting", undefined],
+    ]);
+    expect(reloaded.unresolved().map((i) => i.slot.n)).toEqual([2]);
+    // Calling giveUp again on an already-resolved item is a no-op.
+    const writes = storage.writes;
+    expect(await reloaded.giveUp(a.slot)).toBeUndefined();
+    expect(storage.writes).toBe(writes);
+  });
+
   it("a reset marks delivered items above the kept seq lost and settle leaves them for the UI", async () => {
     const { box } = await outbox();
     const a = await box.submit("bot:b1", react("m1"));

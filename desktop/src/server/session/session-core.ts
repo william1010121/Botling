@@ -35,7 +35,7 @@
 // botlingd pings after 15 s of its own silence and drops a session it has not heard from for 45 s (§5.2; fe-link does
 // the same the other way).
 import { ContractError, type Command, type CommandType } from "../../contract";
-import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type WelcomeServer, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type StreamId } from "../../protocol";
+import { encodeFrame, encodeResFrames, encodeWireFrame, PROTOCOL_VERSION, toBase64Url, type Cursor, type ServerAddresses, type ServerState, type WelcomeServer, type WireMessage, queueKey, type AdminEvent, type AdminOp, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind, type Slot, type StreamId } from "../../protocol";
 import { DEAD_AFTER_MS, PING_AFTER_MS } from "../../session";
 import type { TurnEngine } from "../effects";
 import { routeOf, type IntentRuntime } from "../intents";
@@ -313,9 +313,9 @@ export abstract class SessionCore {
   }
 
   /** Ends the session with a `bye` (§5.2). */
-  bye(reason: MessageOf<"bye">["reason"], detail?: string): void {
+  bye(reason: MessageOf<"bye">["reason"], detail?: string, slot?: Slot): void {
     if (this.state === "closed") return;
-    this.send({ t: "bye", reason, ...(detail ? { detail: detail.slice(0, 500) } : {}) });
+    this.send({ t: "bye", reason, ...(detail ? { detail: detail.slice(0, 500) } : {}), ...(slot ? { slot } : {}) });
     this.endTransport();
     this.close();
   }
@@ -399,12 +399,12 @@ export abstract class SessionCore {
    */
   protected frameFailed(message: Message, error: unknown): void {
     this.host.log(`session: ${message.t} failed: ${errorText(error)}`);
-    if (message.t === "cmd" || message.t === "cancel") this.unsettled(`${message.t} for slot ${message.slot.n} failed: ${errorText(error)}`);
+    if (message.t === "cmd" || message.t === "cancel") this.unsettled(`${message.t} for slot ${message.slot.n} failed: ${errorText(error)}`, message.slot);
   }
 
-  /** D58: a `cmd` or `cancel` this session carried could not be settled: end the session, the outbox re-sends. */
-  private unsettled(detail: string): void {
-    if (this.state === "open") this.bye("unsettled", detail);
+  /** D58 / D67: a `cmd` or `cancel` this session carried could not be settled: end the session with `bye{unsettled, slot}`, the outbox re-sends. */
+  private unsettled(detail: string, slot?: Slot): void {
+    if (this.state === "open") this.bye("unsettled", detail, slot);
   }
 
   /** The window the shell bridge knows this session as (the local session itself). */
@@ -580,7 +580,7 @@ export abstract class SessionCore {
       .then(work)
       .catch((error) => {
         this.host.log(`session: ${what} not settled: ${errorText(error)}`);
-        this.unsettled(`${what} was not settled: ${errorText(error)}`);
+        this.unsettled(`${what} was not settled: ${errorText(error)}`, slot);
       });
     this.cmdChains.set(key, run);
     void run.then(() => { if (this.cmdChains.get(key) === run) this.cmdChains.delete(key); });
@@ -599,7 +599,7 @@ export abstract class SessionCore {
     if (this.cancelRefusal(message)) return;
     const forward = this.host.forward;
     let owner: string | null;
-    try { owner = this.peerOwner(message.slot.target); } catch (error) { this.unsettled(`cancel of slot ${message.slot.n}: no owner (${errorText(error)})`); return; }
+    try { owner = this.peerOwner(message.slot.target); } catch (error) { this.unsettled(`cancel of slot ${message.slot.n}: no owner (${errorText(error)})`, message.slot); return; }
     if (!forward || owner === null) { void this.cancel(message, true); return; }
     this.chain(message.slot, async () => { if (this.state !== "closed") await forward.cancel(message.slot, owner); }, `cancel of slot ${message.slot.n}`);
   }
@@ -630,12 +630,12 @@ export abstract class SessionCore {
         : await this.host.runtime.legacy.receive(body, { scope, reply });
       // D58: the copy waits on a slot this session did not send before it, and the owner kept no copy: the session
       // broke FIFO. End it; the front end re-attaches and re-sends its outbox in slot order.
-      if (status.status === "dropped") this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) came before an earlier slot of its queue (D58)`);
+      if (status.status === "dropped") this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) came before an earlier slot of its queue (D58)`, body.slot);
     } catch (error) {
       // Nothing was stored (the store failed, or the handler threw before its result was kept). Going on would let the
       // next slot of this queue be checked without its predecessor (D58): end the session; the outbox re-sends both.
       this.host.log(`session: cmd ${body.cmd.type} (slot ${body.slot.n}) not settled: ${errorText(error)}`);
-      this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) was not settled: ${errorText(error)}`);
+      this.unsettled(`cmd ${body.cmd.type} (slot ${body.slot.n}) was not settled: ${errorText(error)}`, body.slot);
     }
   }
 
@@ -694,7 +694,7 @@ export abstract class SessionCore {
       if (status && this.state !== "closed") this.send(cancelAnswer(message.slot, status));
     } catch (error) {
       this.host.log(`session: cancel of slot ${message.slot.n} not settled: ${errorText(error)}`);
-      this.unsettled(`cancel of slot ${message.slot.n} was not settled: ${errorText(error)}`);
+      this.unsettled(`cancel of slot ${message.slot.n} was not settled: ${errorText(error)}`, message.slot);
     }
   }
 

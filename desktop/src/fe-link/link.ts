@@ -127,6 +127,8 @@ export interface PendingView {
   sending: boolean;
   /** The owner committed this item's cancel (D59 `cancel.noted`): its outcome will be "cancelled". */
   cancelNoted?: true;
+  /** D67: 5 consecutive sessions ended `unsettled` on this slot; stopped sending until the user gives up. */
+  stopped?: true;
   createdAt: number;
   /** M3 step 11: the server that owns the target (the directory), and its name and state as the attached server says. */
   owner?: string;
@@ -142,6 +144,8 @@ export interface ServerView { id: string; name: string; state: ServerState; sinc
 
 /** How many settled delivered items the link remembers for a later reset (D50, M3 step 11). */
 const SETTLED_KEPT = 200;
+/** D67: consecutive `bye{unsettled}` endings on the same slot before the FE stops sending it. */
+const UNSETTLED_STOP_AFTER = 5;
 
 const TURN_END = new Set(["turn.finished", "turn.interrupted", "turn.cancelled"]);
 
@@ -190,6 +194,9 @@ export class FeLink {
   private started = false;
   private stopped = false;
   private final = false;
+  private lastByeUnsettled = false;
+  private readonly unsettledCounts = new Map<string, number>();
+  private readonly unsettledStopped = new Set<string>();
   private backoff: number;
   private dialFn: Dial;
   private timers: { reconnect?: unknown; offline?: unknown; ping?: unknown; dead?: unknown } = {};
@@ -240,6 +247,7 @@ export class FeLink {
     if (dial) this.dialFn = dial;
     if (!this.started || this.stopped || this.final) return;
     this.clearTimer("reconnect");
+    this.lastByeUnsettled = false;
     this.backoff = this.options.reconnectMinMs ?? 250;
     const session = this.session;
     if (session) {
@@ -278,7 +286,7 @@ export class FeLink {
     const item = await this.outbox.submit(target, cmd, basis);
     const key = slotKey(item.slot);
     this.visibleAt.set(key, this.clock.now());
-    this.clock.setTimeout(() => { if (this.outbox.get(key)?.state === "waiting") this.emit({ type: "pending" }); }, this.markerMs);
+    this.clock.setTimeout(() => { if (this.outbox.get(key)?.state === "waiting" && !this.unsettledStopped.has(key)) this.emit({ type: "pending" }); }, this.markerMs);
     this.emit({ type: "pending" });
     if (this.session && this.canSend()) this.trySend(this.session, item);
     return item;
@@ -287,7 +295,25 @@ export class FeLink {
   /** Asks the owner to drop an item it has not applied (§11.3); exactly one outcome still comes. */
   async cancel(slot: Slot): Promise<void> {
     const item = await this.outbox.requestCancel(slot);
-    if (item && this.session?.welcomed) this.send(this.session, { t: "cancel", slot });
+    if (item && this.session?.welcomed && !this.unsettledStopped.has(slotKey(slot))) this.send(this.session, { t: "cancel", slot });
+  }
+
+  /**
+   * D67: the user gave up on a slot stopped after 5 consecutive `bye{unsettled}`. Transitions it out of
+   * `unresolved()` into persisted `state: "not sent"` / `outcome: { kind: "skipped" }`, and immediately sends any
+   * later items waiting in the same queue with `floor` past it.
+   */
+  async giveUp(slot: Slot): Promise<void> {
+    const item = await this.outbox.giveUp(slot);
+    if (!item) return;
+    const key = slotKey(slot);
+    this.visibleAt.delete(key);
+    this.cancelNoted.delete(key);
+    this.unsettledCounts.delete(key);
+    this.unsettledStopped.delete(key);
+    this.emit({ type: "outcome", item });
+    this.emit({ type: "pending" });
+    if (this.session && this.canSend()) this.sendOutbox(this.session);
   }
 
   /** The UI is done with a resolved item. */
@@ -324,14 +350,16 @@ export class FeLink {
     return this.outbox.list().filter((item) => !target || item.slot.target === target).map((item) => {
       const key = slotKey(item.slot);
       const shown = this.visibleAt.get(key) ?? item.createdAt;
+      const stopped = this.unsettledStopped.has(key) && (item.state === "waiting" || item.state === "held");
       return {
         key, slot: item.slot, cmd: item.cmd, ...(item.basis ? { basis: item.basis } : {}),
         state: item.state, ...(item.heldAt ? { heldAt: item.heldAt } : {}),
         ...(item.state === "not sent" && item.outcome ? { reason: reasonOf(item.outcome) } : {}),
         ...(item.state === "not sent" && item.outcome?.kind === "refused" && REFUSE_REASON_TEXT[item.outcome.reason] ? { reasonText: REFUSE_REASON_TEXT[item.outcome.reason] } : {}),
         lost: item.lost === true,
-        sending: item.state === "waiting" && now - shown >= this.markerMs,
+        sending: item.state === "waiting" && !stopped && now - shown >= this.markerMs,
         ...(this.cancelNoted.has(key) && (item.state === "waiting" || item.state === "held") ? { cancelNoted: true as const } : {}),
+        ...(stopped ? { stopped: true as const } : {}),
         createdAt: item.createdAt,
         ...this.ownerWords(item),
       };
@@ -570,6 +598,7 @@ export class FeLink {
       case "bye":
         if (message.reason === "version") this.updateRequired(session, "a newer version");
         else {
+          if (message.reason === "unsettled") this.onByeUnsettled(message.slot);
           this.emit({ type: "bye", reason: message.reason, ...(message.detail ? { detail: message.detail } : {}) });
           this.endSession(session, `bye: ${message.reason}`);
         }
@@ -586,7 +615,8 @@ export class FeLink {
     if (versionBelow(this.options.feVersion, welcome.minFeVersion)) { this.updateRequired(session, welcome.minFeVersion); return; }
     session.welcomed = true;
     this.serverId = welcome.serverId;
-    this.backoff = this.options.reconnectMinMs ?? 250;
+    if (!this.lastByeUnsettled) this.backoff = this.options.reconnectMinMs ?? 250;
+    this.lastByeUnsettled = false;
     this.clearTimer("offline");
     // §11.4: the owner is past this store's counter for a target (a storage restored from an older copy): new slots go
     // under a new epoch, so they never collide with slots the owner already has.
@@ -650,9 +680,38 @@ export class FeLink {
     for (const item of this.outbox.unresolved()) this.trySend(session, item);
   }
 
+  private isQueueStopped(slot: Slot): boolean {
+    if (this.unsettledStopped.size === 0) return false;
+    for (const item of this.outbox.unresolved()) {
+      if (
+        item.slot.originEpoch === slot.originEpoch
+        && item.slot.target === slot.target
+        && item.slot.n <= slot.n
+        && this.unsettledStopped.has(slotKey(item.slot))
+      ) return true;
+    }
+    return false;
+  }
+
+  private onByeUnsettled(slot?: Slot): void {
+    // D67: skip backoff reset on the next welcome after an unsettled end (including slotless bye{unsettled}).
+    this.lastByeUnsettled = true;
+    if (!slot) return;
+    const key = slotKey(slot);
+    for (const other of this.unsettledCounts.keys()) if (other !== key) this.unsettledCounts.delete(other);
+    const item = this.outbox.get(key);
+    if (!item || (item.state !== "waiting" && item.state !== "held")) return;
+    const count = (this.unsettledCounts.get(key) ?? 0) + 1;
+    this.unsettledCounts.set(key, count);
+    if (count >= UNSETTLED_STOP_AFTER && !this.unsettledStopped.has(key)) {
+      this.unsettledStopped.add(key);
+      this.emit({ type: "pending" });
+    }
+  }
+
   private trySend(session: Session, item: OutboxItem): void {
     const key = slotKey(item.slot);
-    if (session.sent.has(key) || session.closed) return;
+    if (session.sent.has(key) || session.closed || this.isQueueStopped(item.slot)) return;
     const inc = this.incFor(item.slot.target);
     if (!inc) return; // the owner's srv: stream is not known yet: sent once its snap comes
     if (item.retryInc && item.retryInc !== inc) return; // D49: wait for the owner's reset
@@ -699,7 +758,17 @@ export class FeLink {
       }
       if (entry.kind === "cmd.skipped" && body.origin === this.options.deviceId) {
         void this.outbox.skipped({ originEpoch: String(body.originEpoch), target: String(body.target) as Target }, Number(body.from), Number(body.to), { logId: entry.logId, seq: entry.seq })
-          .then((changed) => { if (changed?.length) { for (const item of changed) this.emit({ type: "outcome", item }); this.emit({ type: "pending" }); } }, (error) => this.emit({ type: "error", error }));
+          .then((changed) => {
+            if (changed?.length) {
+              for (const item of changed) {
+                const key = slotKey(item.slot);
+                this.unsettledCounts.delete(key);
+                this.unsettledStopped.delete(key);
+                this.emit({ type: "outcome", item });
+              }
+              this.emit({ type: "pending" });
+            }
+          }, (error) => this.emit({ type: "error", error }));
       }
     }
   }
@@ -849,6 +918,8 @@ export class FeLink {
     const key = slotKey(noted.slot);
     const item = this.outbox.get(key);
     if (!item || !item.cancel || (item.state !== "waiting" && item.state !== "held") || this.cancelNoted.has(key)) return;
+    this.unsettledCounts.delete(key);
+    this.unsettledStopped.delete(key);
     this.cancelNoted.add(key);
     this.emit({ type: "pending" });
   }
@@ -873,8 +944,11 @@ export class FeLink {
       return;
     }
     if (!result) return;
-    this.visibleAt.delete(slotKey(slot));
-    this.cancelNoted.delete(slotKey(slot));
+    const key = slotKey(slot);
+    this.visibleAt.delete(key);
+    this.cancelNoted.delete(key);
+    this.unsettledCounts.delete(key);
+    this.unsettledStopped.delete(key);
     if (result.kind === "moved") {
       this.visibleAt.set(slotKey(result.item.slot), this.clock.now());
       if (this.session && this.canSend()) this.trySend(this.session, result.item);
