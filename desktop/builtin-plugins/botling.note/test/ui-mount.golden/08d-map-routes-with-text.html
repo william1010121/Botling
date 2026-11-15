@@ -5,7 +5,7 @@
         "白板預覽"
       <span>
         "只能看 · 雙擊卡片跳到那一格"
-    <button type="button" class="nb-crumb" title="A › a1 › b1" aria-haspopup="true">
+    <button type="button" class="nb-crumb" title="A › a1 › b1" aria-haspopup="true" aria-expanded="true">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"/>
       <span>
         "路線：A › a1 › b1"
@@ -116,6 +116,47 @@
       "這份 Note 還是空的"
   <input type="file" accept="image/*" multiple="" hidden="" value="">
   <textarea class="nsel-sink" tabindex="-1" aria-label="選取的內容" value="">
+<nav class="nb-map" aria-label="分支總覽" style="left: 12px; top: 6px; max-height: 744px;">
+  <button type="button" class="nb-node">
+    <span class="" style="color: var(--n-faint);">
+      "≡"
+    <span class="nm">
+      "共用開頭"
+    <span class="meta">
+  <div class="nb-fk">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"/>
+    "A · 2 條路線"
+  <div class="nb-kids">
+    <button type="button" class="nb-node on">
+      <span class="dot">
+      <span class="nm">
+        "a1"
+      <span class="meta">
+        "3 行"
+    <div class="nb-fk">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"/>
+      "B · 2 條路線"
+    <div class="nb-kids">
+      <button type="button" class="nb-node on">
+        <span class="dot">
+        <span class="nm">
+          "b1"
+        <span class="meta">
+          "你在這裡 · 1 行"
+      <button type="button" class="nb-node">
+        <span class="dot">
+        <span class="nm">
+          "b2"
+        <span class="meta">
+          "1 行"
+    <button type="button" class="nb-node">
+      <span class="dot">
+      <span class="nm">
+        "a2"
+      <span class="meta">
+        "1 行"
+  <div class="nb-maphint">
+    "點一條路線：切過去並捲到分叉處。分頁上雙擊或按右鍵可以改名、刪除。"
 --- host calls
 viewGet
 read

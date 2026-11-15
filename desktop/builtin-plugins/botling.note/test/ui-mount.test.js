@@ -370,20 +370,20 @@ describe("the Note page, mounted from source", () => {
     await pin(env, "08c-map-closed");
   });
 
-  // BUG pinned, not fixed (this card changes no product file): branch.js routeFacts (what the overview prints for a route
-  // that has text in it) uses a MARKER that the file never defines, so drawMap throws and the overview does not open for any
-  // note whose routes are not all empty. When that is fixed this test fails: give it the map's golden then.
-  it("map: with a route that has text in it the overview throws a ReferenceError (routeFacts uses an undefined MARKER) and does not open", async () => {
+  // This was a pinned bug (branch.js routeFacts used an undefined MARKER, so drawMap threw for any note with text in a route);
+  // fixed on main by bot/fix-note-routefacts, so the test now pins the overview that opens for such a note.
+  it("map: with a route that has text in it the overview opens and lists every fork and route", async () => {
     const errors = [];
     const onError = (e) => { e.preventDefault(); errors.push(e.error); };
     window.addEventListener("error", onError);
     try {
       const env = await open(NESTED);
       click(q(env, ".nb-crumb"));
-      expect(q(env, ".nb-map")).toBeNull();
-      expect(errors.map(String)).toEqual(["ReferenceError: MARKER is not defined"]);
-      expect(q(env, ".nb-crumb").getAttribute("aria-expanded")).not.toBe("true");
-      await pin(env, "08d-map-throws-on-routes-with-text");
+      expect(errors).toEqual([]);
+      expect(q(env, ".nb-map")).not.toBeNull();
+      expect(q(env, ".nb-crumb").getAttribute("aria-expanded")).toBe("true");
+      expect(qa(env, ".nb-map .nb-node .nm").map((n) => n.textContent)).toEqual(["共用開頭", "a1", "b1", "b2", "a2"]);
+      await pin(env, "08d-map-routes-with-text");
     } finally {
       window.removeEventListener("error", onError);
     }
