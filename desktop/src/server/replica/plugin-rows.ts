@@ -151,25 +151,30 @@ export function folderStatSignature(dir: string): string | null {
 export interface PluginHashCacheOptions {
   hashFolder?: (folder: string) => string;
   statSignature?: (folder: string) => string | null;
+  /** Plugin data root (`<dataDir>/plugin-data`); non-built-ins with non-empty data ask `"write"`. */
+  dataRoot?: string;
 }
 
 interface CachedPluginHash {
   folder: string;
   builtIn: boolean;
   permissionsKey: string;
+  hasData: boolean;
   statSig: string;
   input: InstalledPluginInput;
 }
 
-/** Caches `folderHash` per plugin keyed by folder, builtIn flag, permissions, and stat signature. */
+/** Caches `folderHash` per plugin keyed by folder, builtIn flag, permissions, data presence, and stat signature. */
 export class PluginHashCache {
   private readonly hashFolder: (folder: string) => string;
   private readonly statFolder: (folder: string) => string | null;
+  private readonly dataRoot: string | undefined;
   private cache = new Map<string, CachedPluginHash>();
 
   constructor(options: PluginHashCacheOptions = {}) {
     this.hashFolder = options.hashFolder ?? folderHash;
     this.statFolder = options.statSignature ?? folderStatSignature;
+    this.dataRoot = options.dataRoot;
   }
 
   /** Stat-only signature across `plugins`; returns null if any plugin folder could not be stat-scanned. */
@@ -179,7 +184,8 @@ export class PluginHashCache {
       const sig = this.statFolder(plugin.folder);
       if (sig === null) return null;
       const permissionsKey = JSON.stringify(plugin.manifest.ccb?.permissions ?? []);
-      parts.push(`${plugin.manifest.name}\0${plugin.builtIn ? 1 : 0}\0${permissionsKey}\0${plugin.folder}\0${sig}`);
+      const hasData = !plugin.builtIn && this.dataRoot ? hasPluginData(this.dataRoot, plugin.manifest.name) : false;
+      parts.push(`${plugin.manifest.name}\0${plugin.builtIn ? 1 : 0}\0${hasData ? 1 : 0}\0${permissionsKey}\0${plugin.folder}\0${sig}`);
     }
     return createHash("sha256").update(parts.join("\n")).digest("hex");
   }
@@ -191,6 +197,7 @@ export class PluginHashCache {
     for (const plugin of plugins) {
       const permissions = plugin.manifest.ccb?.permissions ?? [];
       const permissionsKey = JSON.stringify(permissions);
+      const hasData = !plugin.builtIn && this.dataRoot ? hasPluginData(this.dataRoot, plugin.manifest.name) : false;
       const statSig = this.statFolder(plugin.folder);
       const cached = this.cache.get(plugin.manifest.name);
       if (
@@ -199,6 +206,7 @@ export class PluginHashCache {
         && cached.folder === plugin.folder
         && cached.builtIn === plugin.builtIn
         && cached.permissionsKey === permissionsKey
+        && cached.hasData === hasData
         && cached.statSig === statSig
       ) {
         nextCache.set(plugin.manifest.name, cached);
@@ -215,7 +223,7 @@ export class PluginHashCache {
       const input: InstalledPluginInput = {
         name: plugin.manifest.name,
         codeHash,
-        manifest: manifestAsks(permissions),
+        manifest: manifestAsks(permissions, { hasData }),
         author: plugin.builtIn ? "builtin" : "user",
       };
       if (statSig !== null) {
@@ -223,6 +231,7 @@ export class PluginHashCache {
           folder: plugin.folder,
           builtIn: plugin.builtIn,
           permissionsKey,
+          hasData,
           statSig,
           input,
         });
@@ -328,11 +337,11 @@ export function reconcilePluginRows(
     const rawGrants = existingGrants(prev);
     const author: PluginRow["author"] = plugin.writtenBy
       ? "bot"
-      : plugin.author === "user" && prev?.author === "bot" && prev?.codeHash === plugin.codeHash
-        ? "bot"
+      : plugin.author === "user" && (prev?.author === "bot" || prev?.author === "import") && prev?.codeHash === plugin.codeHash
+        ? prev.author
         : plugin.author;
     if (author === "builtin") {
-      const current = rawGrants[plugin.codeHash];
+      const current = Object.hasOwn(rawGrants, plugin.codeHash) ? rawGrants[plugin.codeHash] : undefined;
       if (!current || (current.grantedBy === "builtin" && current.tier !== "write")) {
         rawGrants[plugin.codeHash] = { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: now };
       }

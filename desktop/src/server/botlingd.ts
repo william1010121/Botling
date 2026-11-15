@@ -75,7 +75,7 @@ export function mayRunPluginServerPart(reader: () => Db, ownStream: string, name
   if (!parsed.success) return false;
   const row = parsed.data;
   if (row.author === "builtin") return row.codeHash === codeHash;
-  return row.grants[codeHash]?.tier === "write";
+  return Object.hasOwn(row.grants, codeHash) && row.grants[codeHash]?.tier === "write";
 }
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
@@ -207,7 +207,7 @@ export function readPluginGrant(db: Db, serverId: string, name: string): "none" 
   try {
     const parsed = PluginRow.safeParse(readRowBody(db, `srv:${serverId}`, `plugin:${name}`));
     if (!parsed.success) return "none";
-    return parsed.data.grants[parsed.data.codeHash]?.tier ?? "none";
+    return (Object.hasOwn(parsed.data.grants, parsed.data.codeHash) ? parsed.data.grants[parsed.data.codeHash]?.tier : undefined) ?? "none";
   } catch {
     return "none";
   }
@@ -477,7 +477,7 @@ export class Botlingd {
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
       });
-      const pluginHashCache = new PluginHashCache();
+      const pluginHashCache = new PluginHashCache({ dataRoot: join(paths.dataDir, "plugin-data") });
       const readInstalledPlugins = () => pluginHashCache.read(core.plugins.registry.plugins, log);
       const machineRow = (pluginsDigest: string | null) => ({
         name: SERVER_NAME,

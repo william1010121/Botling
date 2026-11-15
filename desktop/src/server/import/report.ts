@@ -104,6 +104,10 @@ function askTierPhrase(tier: Tier): string {
   }
 }
 
+function cleanName(text: string): string {
+  return text.replace(/[\x00-\x1f\x7f]/g, (ch) => `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`);
+}
+
 function normalizeEntry(entry: PluginReportEntry): {
   name: string;
   author: PluginRow["author"];
@@ -111,16 +115,16 @@ function normalizeEntry(entry: PluginReportEntry): {
   granted: Tier;
 } {
   if ("row" in entry) {
-    const granted = entry.row.grants[entry.row.codeHash]?.tier ?? "read";
+    const granted = (Object.hasOwn(entry.row.grants, entry.row.codeHash) ? entry.row.grants[entry.row.codeHash]?.tier : undefined) ?? "read";
     return {
-      name: entry.name,
+      name: cleanName(entry.name),
       author: entry.row.author,
       ask: entry.row.manifest.tier,
       granted,
     };
   }
   return {
-    name: entry.name,
+    name: cleanName(entry.name),
     author: entry.author,
     ask: entry.ask,
     granted: entry.granted ?? "read",
