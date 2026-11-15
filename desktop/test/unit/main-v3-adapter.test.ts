@@ -3,7 +3,8 @@
 // its snapshots and history pages from the adapter and applies every event the adapter emits, resyncing on a new epoch
 // or a seq gap exactly as the window does. The server is the fe-link test's fake botlingd (real slot rules).
 import { afterEach, describe, expect, it } from "vitest";
-import type { BotView, Command, EventEnvelope, MessageView, ResultOf } from "../../src/contract";
+import type { BotView, Command, CommandType, EventEnvelope, MessageView, ResultOf } from "../../src/contract";
+import { COMMAND_ROUTES } from "../../src/server/intents/commands";
 import { SlotRefusal } from "../../src/server/slots";
 import { FeLink, MemoryFeStorage } from "../../src/fe-link";
 import { INTERRUPTED_NOTE, type Message, type StreamId } from "../../src/protocol";
@@ -309,6 +310,20 @@ describe("pending lines → delivered by slot", () => {
     expect(r.reqs.map((c) => c.type)).toContain("settings.get");
     expect(READ_COMMANDS.has("chat.send")).toBe(false);
     expect(r.server.copies.map((c) => c.cmd.type)).toEqual(["chat.react", "chat.react"]);
+  });
+
+  it("plugins.panel goes as a request with no slot (a slot's cmd.applied cannot hold a large panel; 2026-11-15 hang)", async () => {
+    const r = await rig();
+    await r.store.resync();
+    expect(await r.adapter.request({ type: "plugins.panel", name: "note", panel: "main" })).toEqual({ ok: true, result: { read: "plugins.panel" } });
+    expect(r.reqs.map((c) => c.type)).toContain("plugins.panel");
+    expect(r.server.copies).toEqual([]);
+  });
+
+  it("every command the server takes only as a read is sent as a request, never as a slot", () => {
+    const reads = (Object.keys(COMMAND_ROUTES) as CommandType[]).filter((type) => COMMAND_ROUTES[type].kind === "read");
+    expect(reads.length).toBeGreaterThan(10);
+    expect(reads.filter((type) => !READ_COMMANDS.has(type))).toEqual([]);
   });
 
   it("pending line ids are stable per slot and valid message ids", () => {
