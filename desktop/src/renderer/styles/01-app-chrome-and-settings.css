@@ -189,6 +189,7 @@ button { font: inherit; color: inherit; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .settings-row:last-child { border-bottom: 0; }
 .settings-hint { color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+.settings-unavailable { padding: 6px 10px; }
 /* Settings → Usage (Phase 5c, 1.x's usage page). */
 .usage-number { font-variant-numeric: tabular-nums; }
 .usage-faint { color: var(--muted); font-variant-numeric: tabular-nums; }

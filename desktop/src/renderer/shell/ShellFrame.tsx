@@ -8,12 +8,16 @@
 // it has, the feed reconciles the kernel with it, and the plugins' rows are taken back when the frame unmounts. A mirror only: the
 // feed's rows are not drawn (KernelSlot draws components and frames), so the page is still exactly what App rendered.
 //
+// The frame also holds the shell's in-page loader (inpage-host.ts, M7-02c): the built-in plugins the FE build shipped are loaded into
+// the kernel while it is up and unloaded when it goes.
+//
 // The contribution reads the page through a ref the frame keeps current, so it is registered once, not on every render of App;
 // it is registered while the frame renders (the first draw already holds it) and taken back when the frame unmounts.
 import { useEffect, useRef, type ReactNode } from "react";
 import { ROOT_SLOTS } from "../../../../Web/src/plugin-kernel";
 import type { PluginsView } from "../../contract";
 import { rendererKernel, SHELL_SURFACE } from "../renderer-kernel";
+import { inPageHost } from "./inpage-host";
 import { reconcileView } from "./plugin-feed";
 import { KernelSlot, type SlotEntry, type SlotFrames } from "./KernelSlot";
 
@@ -45,6 +49,8 @@ export function ShellFrame({ legacy, frames: services, plugins = null }: { /** T
   }, [scope]);
   useEffect(() => { reconcileView(plugins); }, [plugins]);
   useEffect(() => () => { reconcileView(null); }, []);
+  // The in-page built-in plugins (botling.settings, …) the build shipped are loaded while the frame is up (M7-02c).
+  useEffect(() => inPageHost.acquire(), []);
   // The kernel did not take the page (the shell instance is not up): the page is drawn directly rather than not at all.
   if (!take.current) return <>{legacy}</>;
   return <>{ROOT_SLOTS.map((slot) => <KernelSlot key={slot} slot={slot} scope={scope} {...(services ? { frames: services } : {})} />)}</>;
