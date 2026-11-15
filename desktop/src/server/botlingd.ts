@@ -41,7 +41,7 @@ import { Gossip, PrefsStore, RosterStore } from "./roster";
 import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey, LoopbackListener, RELAY_KEY_FILE, relayConnectOrigin, RelayConnector, relayTestOptions, relayUrl } from "./net";
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
-import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter, type PeerSession } from "./peer";
+import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
 import { ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
 import { followedStreams, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, SummaryRows, TableFeeds } from "./replica";
@@ -150,19 +150,27 @@ export class Botlingd {
   ) {}
 
   /**
-   * M3 step 4: this server's own `Profile{addresses}` (its loopback `/v3/ws`), written when it is in a cluster with
-   * another server and the value changed (a lone server writes nothing, as before). Peers dial what it names.
+   * M3 step 4 / M4-14: this server's own `Profile{addresses}` (loopback, tailnet, relay room), written when it is in
+   * a cluster with another server and the value changed (a lone server writes nothing, as before). Peers dial what it
+   * names.
    */
   async writeOwnProfile(advertise: (port: number) => number = (port) => port): Promise<void> {
     const listening = this.listener?.port;
-    const port = listening === undefined ? undefined : advertise(listening);
+    const port = listening === undefined ? null : advertise(listening);
     const view = this.roster.view;
-    if (port === undefined || this.roster.clusterId === null || !view.valid.has(view.self)) return;
+    if (this.roster.clusterId === null || !view.valid.has(view.self)) return;
     if (![...view.members.values()].some((info) => info.kind === "server" && info.member !== view.self)) return;
+    if (port === null && !this.relayAddress) return;
+    const value = addressesValue(port, { tailnet: this.tailnetOrigins, relay: this.relayAddress });
     try {
-      if (await this.roster.writeProfile(view.self, "addresses", addressesValue(port))) this.log(`roster: this server's address profile written (port ${port})`);
+      if (await this.roster.writeProfile(view.self, "addresses", value)) {
+        this.log(`roster: this server's address profile written (${port !== null ? `port ${port}` : "relay"})`);
+      }
     } catch (error) { this.log(`roster: the address profile was not written: ${String((error as Error)?.message ?? error)}`); }
   }
+
+  private tailnetOrigins: string[] = [];
+  private relayAddress: RelayAddress | null = null;
 
   /** M2 step 9: `/v3/c/…` and the sessions' content lookups and tickets. */
   remoteContent: RemoteContent | null = null;
@@ -285,9 +293,10 @@ export class Botlingd {
       // M2 step 13: the relay path (off unless BOTLING_SERVER_RELAY_URL names a relay): botlingd's own room, named in offers.
       const relayAt = relayUrl(env);
       const relayRoom = relayAt ? await (async () => { const key = loadRelayRoomKey(join(paths.dataDir, RELAY_KEY_FILE)); return { url: relayAt, key, room: await relayRoomOf(key) }; })() : null;
+      const relayAddress: RelayAddress | null = relayRoom ? { url: relayRoom.url, room: relayRoom.room } : null;
       const pairing = new PairingService({
         roster, cluster: clusterSetup, identity, serverName: SERVER_NAME, log,
-        addresses: () => ({ tailnet: origin ?? PLACEHOLDER_TAILNET_ORIGIN, ...(relayRoom ? { relay: { url: relayRoom.url, room: relayRoom.room } } : {}) }),
+        addresses: () => ({ tailnet: origin ?? PLACEHOLDER_TAILNET_ORIGIN, ...(relayAddress ? { relay: relayAddress } : {}) }),
         pageUrl: () => `${origin ?? PLACEHOLDER_TAILNET_ORIGIN}/v3/`,
         addressNote: () => (origin ? null : "no tailnet address is set yet (BOTLING_SERVER_TAILNET_ORIGIN, once tailscale serve publishes this server), so the link names a placeholder."),
       });
@@ -295,7 +304,12 @@ export class Botlingd {
       const listenerPort = () => daemon?.listener?.port ?? null;
       const serverJoin = new ServerJoin({
         roster, identity, serverName: SERVER_NAME, version: BOTLINGD_VERSION, dataDir: paths.dataDir, log,
-        ownAddresses: () => { const at = listenerPort(); return at === null ? null : addressesValue(advertisedPort(env, at)); },
+        ownAddresses: () => {
+          const at = listenerPort();
+          const portArg = at === null ? null : advertisedPort(env, at);
+          if (portArg === null && !relayAddress) return null;
+          return addressesValue(portArg, { tailnet: origin, relay: relayAddress });
+        },
         joinAddresses: () => { const at = listenerPort(); return at === null ? [] : [`ws://${LISTEN_HOST}:${at}/v3/ws`]; },
         prefs,
       });
@@ -422,6 +436,8 @@ export class Botlingd {
       daemon.peerContentOwner = peerContentOwner;
       daemon.chunkCache = chunkCache;
       daemon.media = media;
+      daemon.tailnetOrigins = origin ? [origin] : [];
+      daemon.relayAddress = relayAddress;
       daemon.tokenValue = writeToken(paths.token);
       if (relayRoom) {
         // Join tokens of the valid devices (derived from the static DH with each, cached by key) and of pending offers.
