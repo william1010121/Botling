@@ -57,6 +57,7 @@ import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
+import type { ElectronUtilityContext } from "./packaged-electron";
 
 const out = (line: string) => process.stdout.write(`${line}\n`);
 const fail = (line: string, code = 1): never => { process.stderr.write(`botlingd: ${line}\n`); process.exit(code); };
@@ -71,7 +72,7 @@ function holderPid(dataDir: string): number | null {
   return holder && alive(holder.pid) ? holder.pid : null;
 }
 
-export interface ServerCliOptions { packaged?: boolean; appId?: string; outDir?: string; execPath?: string }
+export interface ServerCliOptions { packaged?: boolean; appId?: string; outDir?: string; execPath?: string; electronUtility?: ElectronUtilityContext }
 
 async function start(options: ServerCliOptions = {}): Promise<void> {
   // Importing 1.x/2.x data is M6's explicit step: an inherited BOTLING_IMPORT_FROM / BOTLING_1X_DIR is not acted on.
@@ -79,7 +80,12 @@ async function start(options: ServerCliOptions = {}): Promise<void> {
   if (ignored.length) process.stderr.write(`botlingd: ignoring ${ignored.join(" and ")} from the environment (Botling 3 does not import 1.x/2.x data yet)\n`);
   let daemon: Botlingd;
   try {
-    daemon = await Botlingd.start({ env: process.env, outDir: options.outDir ?? join(__dirname, "..") });
+    daemon = await Botlingd.start({
+      env: process.env,
+      outDir: options.outDir ?? join(__dirname, ".."),
+      ...(options.packaged ? { packaged: true } : {}),
+      ...(options.electronUtility ? { electronUtility: options.electronUtility } : {}),
+    });
   } catch (error) {
     if (error instanceof DataDirInUseError) fail(error.message, process.env.BOTLING_SERVICE === "1" ? 0 : CORE_EXIT_DATA_DIR_IN_USE);
     if (error instanceof PathsError) fail(error.message, 2);

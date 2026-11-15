@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { isPackagedElectron } from "../packaged-electron";
 import { botlingdPaths } from "../session";
 import { DEFAULT_SERVICE_LABEL, launchAgentPath, launchAgentPlist, serviceLabel } from "./launchd";
 import { SYSTEMD_UNIT_NAME, systemdUnit, systemdUnitPath } from "./systemd";
@@ -26,17 +27,6 @@ export class ServiceError extends Error {
   constructor(message: string, readonly exitCode = 1) {
     super(message);
     this.name = "ServiceError";
-  }
-}
-
-function isPackagedElectron(): boolean {
-  if (!process.versions.electron) return false;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const electron = require("electron") as { app?: { isPackaged?: boolean } } | string;
-    return typeof electron === "object" && electron?.app?.isPackaged === true;
-  } catch {
-    return false;
   }
 }
 

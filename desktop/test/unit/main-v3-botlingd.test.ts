@@ -206,6 +206,89 @@ describe("M6-07c main-v3 --botlingd flag path", () => {
     expect(exit).toHaveBeenCalledWith(0);
   });
 
+  it("awaits app.whenReady() before starting packaged --botlingd and forwards electronUtility", async () => {
+    const appDir = tempDir("pkg-ready");
+    writeFileSync(join(appDir, "package.json"), JSON.stringify({ name: "botling-desktop", appId: v3Config.appId }));
+
+    const order: string[] = [];
+    let releaseReady!: () => void;
+    const readyPromise = new Promise<void>((resolveReady) => {
+      releaseReady = () => {
+        order.push("whenReady.resolved");
+        resolveReady();
+      };
+    });
+    const utilityProcess = { fork: vi.fn() };
+    const MessageChannelMain = vi.fn();
+    const mockElectron: Record<string, unknown> = {
+      app: {
+        isPackaged: true,
+        isReady: () => false,
+        setActivationPolicy: () => { order.push("setActivationPolicy"); },
+        dock: { hide: () => { order.push("dock.hide"); } },
+        whenReady: () => {
+          order.push("whenReady.called");
+          return readyPromise;
+        },
+      },
+      utilityProcess,
+      MessageChannelMain,
+    };
+
+    const runServerCli = vi.fn(async () => { order.push("runServerCli"); });
+    const pending = runMainV3({
+      argv: ["/Applications/Botling 3.app/Contents/MacOS/Botling 3", "--botlingd", "start"],
+      platform: "darwin",
+      env: { BOTLING_SERVER_DATA_DIR: "/tmp/v3-srv" },
+      electron: mockElectron as any,
+      root: appDir,
+      outDir: "/app.asar/out",
+      runServerCli,
+    });
+
+    await flush();
+    expect(order).toEqual(["setActivationPolicy", "dock.hide", "whenReady.called"]);
+    expect(runServerCli).not.toHaveBeenCalled();
+
+    releaseReady();
+    await pending;
+
+    expect(order).toEqual(["setActivationPolicy", "dock.hide", "whenReady.called", "whenReady.resolved", "runServerCli"]);
+    expect(runServerCli).toHaveBeenCalledWith(["start"], {
+      packaged: true,
+      appId: v3Config.appId,
+      outDir: "/app.asar/out",
+      electronUtility: { utilityProcess, MessageChannelMain },
+    });
+  });
+
+  it("does not await whenReady or forward electronUtility when unpackaged", async () => {
+    const whenReady = vi.fn(() => { throw new Error("whenReady should not run when unpackaged"); });
+    const runServerCli = vi.fn(async () => undefined);
+    await runMainV3({
+      argv: ["electron", ".", "--botlingd", "start"],
+      platform: "darwin",
+      env: { BOTLING_SERVER_DATA_DIR: "/tmp/v3-dev" },
+      electron: {
+        app: {
+          isPackaged: false,
+          isReady: () => false,
+          whenReady,
+        },
+        utilityProcess: { fork: vi.fn() },
+        MessageChannelMain: vi.fn(),
+      } as any,
+      outDir: "/repo/desktop/out",
+      runServerCli,
+    });
+    expect(whenReady).not.toHaveBeenCalled();
+    expect(runServerCli).toHaveBeenCalledWith(["start"], {
+      packaged: false,
+      appId: undefined,
+      outDir: "/repo/desktop/out",
+    });
+  });
+
   it("loads the window main only when --botlingd is absent", async () => {
     const runServerCli = vi.fn(async () => undefined);
     const loadWindowMain = vi.fn();

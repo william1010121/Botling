@@ -20,6 +20,7 @@ import type { AppOp, CoreClient as CoreClient2x, CoreClientOptions } from "../ma
 import { RendererAdapter, type LinkPort } from "./renderer-adapter";
 import { unixDial } from "./unix-dial";
 import { INHERITED_IMPORT_VARS } from "../server/inherited-env";
+import { isPackagedElectron } from "../server/packaged-electron";
 
 /** The frontend's version told in `hello` (an update is asked for when the server needs a newer one). */
 export const FE_VERSION = "3.0.0-m1";
@@ -47,17 +48,6 @@ export function serverPaths(env: Record<string, string | undefined>): ServerPath
     token: join(serverDir, "botlingd.token"),
     feStorage: join(appData, "electron", "fe-link.sqlite"),
   };
-}
-
-function isPackagedElectron(): boolean {
-  if (!process.versions.electron) return false;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const electron = require("electron") as { app?: { isPackaged?: boolean } } | string;
-    return typeof electron === "object" && electron?.app?.isPackaged === true;
-  } catch {
-    return false;
-  }
 }
 
 /**

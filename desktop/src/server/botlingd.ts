@@ -14,6 +14,8 @@
 import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
+import type { ElectronUtilityContext } from "./packaged-electron";
+import { createUtilityHostLauncher, createUtilityScriptRunner } from "./utility-process";
 import type { Sealer } from "../core/plugins/secrets";
 import { Core } from "../core/server";
 import { MAIN_BOT_ID } from "../core/store/records";
@@ -175,6 +177,9 @@ export interface BotlingdOptions {
   session?: SessionOptions;
   /** How long to wait for another holder of the data folder to let go (ms). */
   lockWaitMs?: number;
+  /** Packaged Electron run: launch child Node work (plugin host, pdf-text) via utilityProcess.fork. */
+  packaged?: boolean;
+  electronUtility?: ElectronUtilityContext;
 }
 
 export class Botlingd {
@@ -256,6 +261,7 @@ export class Botlingd {
   peerContent: PeerContent | null = null;
   peerContentOwner: PeerContentOwner | null = null;
   chunkCache: ChunkCache | null = null;
+  private utilityHostShutdown: (() => Promise<void>) | null = null;
 
   get token(): string { return this.tokenValue; }
 
@@ -309,11 +315,25 @@ export class Botlingd {
       const coreEngine = new CoreEngine();
       const shell = new ShellBridge({ appDataDir: env.BOTLING_APP_DATA_DIR || null });
       const { emit, deferTurn } = coreEngine.coreOptions();
+      const utilityHost = options.packaged && options.electronUtility
+        ? createUtilityHostLauncher({
+            ...options.electronUtility,
+            utilityScript: join(options.outDir, "host", "host-utility.mjs"),
+            ledgerFile: join(paths.dataDir, "core", "children.json"),
+            log: (text) => log(`plugin host: ${text}`),
+          })
+        : null;
+      const pluginNode = options.packaged
+        ? (utilityHost ? { command: "", launch: utilityHost.launch } : null)
+        : plainHostNode(env as NodeJS.ProcessEnv);
+      const pdfTextRunner = options.packaged && options.electronUtility
+        ? createUtilityScriptRunner(options.electronUtility.utilityProcess)
+        : undefined;
       let pluginRead: PluginContentRead | null = null;
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
-          node: plainHostNode(env as NodeJS.ProcessEnv), sealer: noSafeStorage, app: shell.appBridge(),
+          node: pluginNode, sealer: noSafeStorage, app: shell.appBridge(),
         }),
         deferTurn,
         content: {
@@ -338,7 +358,11 @@ export class Botlingd {
         store, dataDir: paths.dataDir, serverId, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: (text) => log(`content: ${text}`),
       });
       // M2 step 10: media jobs (posters, previews, thumbnails) for every content made ready; tools found on PATH.
-      const media = new MediaJobs({ store, dataDir: paths.dataDir, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: log });
+      const media = new MediaJobs({
+        store, dataDir: paths.dataDir, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: log,
+        ...(options.packaged ? { packaged: true } : {}),
+        ...(pdfTextRunner ? { pdfTextRunner } : {}),
+      });
       content.attachMedia(media);
       // M3 step 7: the own table's feed (to peers and front ends) and the copies of peers' tables.
       const feeds = new TableFeeds({ reader: () => hub.reader(), ownStream: `srv:${serverId}`, log });
@@ -573,6 +597,7 @@ export class Botlingd {
       daemon.chunkCache = chunkCache;
       daemon.media = media;
       daemon.pluginTimer = pluginTimer;
+      daemon.utilityHostShutdown = utilityHost?.shutdown ?? null;
       daemon.tailnetOrigins = origin ? [origin] : [];
       daemon.relayAddress = relayAddress;
       daemon.tokenValue = writeToken(paths.token);
@@ -677,6 +702,7 @@ export class Botlingd {
     rmSync(join(this.paths.dataDir, PEERS_FILE), { force: true });
     this.shell.close();
     await step("core", () => this.core.shutdown());
+    await step("plugin host utility", () => this.utilityHostShutdown?.());
     // What the core emitted while stopping is written (with the summary rows still waiting), then the worker stops.
     await step("events", () => this.runtime.scope.submit(() => undefined));
     await step("summary rows", () => this.summary.flush());
