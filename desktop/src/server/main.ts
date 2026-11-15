@@ -42,7 +42,6 @@
 //                             revokes a device: its sessions end at once and it can never connect again
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/store/data-dir-lock";
 import { Botlingd, BOTLINGD_VERSION, DataDirInUseError, PLACEHOLDER_TAILNET_ORIGIN, tailnetOrigin } from "./botlingd";
 import { LISTEN_FILE, LISTEN_HOST, listenPort, tailscaleServeCommand } from "./net";
@@ -50,7 +49,7 @@ import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
 import { RestoreError, restoreBackup } from "./restore";
-import { AdminClient, addMachineCommand, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./pairing";
+import { AdminClient, addMachineCommand, createStdinIo, devicesCommand, droppedMachinesCommand, joinCommand, pairCommand, parseRerootArgs, recoveryReplaceCommand, removeMachineCommand, RerootArgsError, rerootCommand, revokeDeviceCommand, type CliIo, type RerootOptions } from "./pairing";
 import { botlingdPaths, PathsError, readToken, socketAnswers, type BotlingdPaths } from "./session";
 import { DeviceScope } from "../protocol";
 import { takeBackup } from "./store";
@@ -205,24 +204,9 @@ async function status(dataDir: string, socket: string): Promise<Status> {
   return result;
 }
 
-/** Line input for the CLI's questions (null once stdin ended). */
+/** Line input for the CLI's questions (null once stdin ended; suppresses TTY echo for secret prompts). */
 function stdinIo(): CliIo & { close(): void } {
-  const lines: string[] = [];
-  const waiters: Array<(line: string | null) => void> = [];
-  let ended = false;
-  const reader = createInterface({ input: process.stdin, terminal: false });
-  reader.on("line", (line) => { const waiter = waiters.shift(); if (waiter) waiter(line); else lines.push(line); });
-  reader.on("close", () => { ended = true; for (const waiter of waiters.splice(0)) waiter(null); });
-  return {
-    out,
-    ask: (prompt) => {
-      process.stdout.write(prompt.endsWith("\n") ? prompt : `${prompt}\n`);
-      if (lines.length) return Promise.resolve(lines.shift()!);
-      if (ended) return Promise.resolve(null);
-      return new Promise((resolve) => waiters.push(resolve));
-    },
-    close: () => reader.close(),
-  };
+  return createStdinIo(process.stdin, process.stdout);
 }
 
 /** A local admin session with the running server, or exit with why not. */

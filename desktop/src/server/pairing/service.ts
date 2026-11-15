@@ -143,7 +143,7 @@ export type RerootResult =
 
 export class PairingError extends Error {
   constructor(
-    readonly code: "no-cluster" | "limit" | "unknown" | "state" | "no-address" | "not-a-device" | "bad-request" | "not-root" | "cannot-revoke-root" | "not-a-server" | "ambiguous" | "bad-code" | "already-root" | "bad-keep",
+    readonly code: "no-cluster" | "limit" | "unknown" | "state" | "no-address" | "not-a-device" | "bad-request" | "not-root" | "cannot-revoke-root" | "not-a-server" | "ambiguous" | "bad-code" | "already-root" | "bad-keep" | "self-revoked",
     message: string,
   ) {
     super(message);
@@ -201,6 +201,8 @@ export class PairingService {
   private readonly now: () => number;
   private closedAll = false;
   private readonly offerListeners = new Set<() => void>();
+  private recoveryReplaceOwner: object | null = null;
+  private readonly closedAdminSessions = new WeakSet<object>();
 
   constructor(private readonly options: PairingOptions) {
     this.now = options.now ?? Date.now;
@@ -274,7 +276,7 @@ export class PairingService {
   }
 
   /** One `admin` request; the result is the `res` body. Throws PairingError (or RosterError) for a refusal. */
-  async admin(op: AdminOp): Promise<unknown> {
+  async admin(op: AdminOp, session?: object): Promise<unknown> {
     switch (op.op) {
       case "cluster.status": {
         const waiting = this.options.cluster.waiting;
@@ -300,9 +302,9 @@ export class PairingService {
       case "roster.dropped": return this.droppedList();
       case "roster.dismiss": return this.dismissDropped(op.revokeId);
       case "recovery.status": return this.recoveryStatus();
-      case "recovery.replace": return this.beginRecoveryReplace(op.code);
+      case "recovery.replace": return this.beginRecoveryReplace(op.code, session);
       case "recovery.confirm": return this.confirmRecoveryReplace(op.code);
-      case "recovery.cancel": this.options.roster.cancelRecoveryReplace(); return { ok: true };
+      case "recovery.cancel": this.recoveryReplaceOwner = null; this.options.roster.cancelRecoveryReplace(); return { ok: true };
       case "roster.rerootPreview": return this.rerootPreview();
       case "roster.reroot": return this.reroot(op.code, op.oldRootLost, op.keep);
       default: throw new PairingError("bad-request", `${op.op} is not a device pairing request`);
@@ -533,15 +535,33 @@ export class PairingService {
     };
   }
 
+  /** Clears any pending recovery-code replacement started by a local admin session that disconnected. */
+  adminClosed(session: object): void {
+    this.closedAdminSessions.add(session);
+    if (this.recoveryReplaceOwner === session) {
+      this.recoveryReplaceOwner = null;
+      this.options.roster.cancelRecoveryReplace();
+    }
+  }
+
   /** Starts replacing the recovery code on the current root; never logs either code. */
-  async beginRecoveryReplace(oldCode: string) {
+  async beginRecoveryReplace(oldCode: string, session?: object) {
+    if (session && this.closedAdminSessions.has(session)) {
+      throw new PairingError("state", "the admin session closed");
+    }
     try {
       const started = await this.options.roster.replaceRecovery(oldCode);
+      if (session && this.closedAdminSessions.has(session)) {
+        this.options.roster.cancelRecoveryReplace();
+        throw new PairingError("state", "the admin session closed");
+      }
+      this.recoveryReplaceOwner = session ?? null;
       this.options.log?.(`pairing: a new recovery code was shown for cluster ${started.clusterId} (not stored; waiting to be typed back)`);
       return started;
     } catch (error) {
       if (error instanceof RosterError) {
         if (error.reason === "no-cluster") throw new PairingError("no-cluster", error.message);
+        if (error.reason === "self-revoked") throw new PairingError("self-revoked", error.message);
         if (error.reason === "not-root") {
           const view = this.options.roster.view;
           const rootId = view.root?.root;
@@ -614,13 +634,24 @@ export class PairingService {
 
   /** Confirms the new recovery code and commits the new Root statement; never logs any code. */
   async confirmRecoveryReplace(newCode: string) {
-    const result = await this.options.roster.confirmRecovery(newCode);
-    this.options.log?.(
-      result.ok
-        ? `pairing: recovery code replaced (Root gen ${result.gen})`
-        : `pairing: new recovery code not confirmed (${result.reason})`,
-    );
-    return result;
+    try {
+      const result = await this.options.roster.confirmRecovery(newCode);
+      if (result.ok || (result.reason !== "malformed" && result.reason !== "wrong-code")) {
+        this.recoveryReplaceOwner = null;
+      }
+      this.options.log?.(
+        result.ok
+          ? `pairing: recovery code replaced (Root gen ${result.gen})`
+          : `pairing: new recovery code not confirmed (${result.reason})`,
+      );
+      return result;
+    } catch (error) {
+      if (error instanceof RosterError) {
+        if (error.reason === "bad-keep") throw new PairingError("bad-keep", error.message);
+        if (error.reason === "self-revoked") throw new PairingError("self-revoked", error.message);
+      }
+      throw error;
+    }
   }
 
   /** Valid members staying in the cluster whose joining Add was signed by `oldRoot`, newest first (§4.8). */
@@ -657,6 +688,7 @@ export class PairingService {
   /** botlingd stops: every offer is forgotten, every pairing session ends. */
   close(): void {
     this.closedAll = true;
+    this.recoveryReplaceOwner = null;
     this.options.roster.cancelRecoveryReplace();
     for (const offer of [...this.offers.values()]) this.burn(offer, "cancelled");
   }
