@@ -1,9 +1,11 @@
-// Peer session settings (M3 step 3, M4-14): timers and where a peer server is dialled.
+// Peer session settings (M3 step 3, M4-14, M4-15): timers and where a peer server is dialled.
 //
-// - Timers (protocol v1 §5.2, §4.6, §20): `ping` after 15 s of this side's silence, a session that heard nothing for
-//   45 s is dead; redial with backoff (1 s doubling to 60 s, ±25 %); a server that finds itself removed dials each peer
-//   every 10 min for the revocation exchange only (D47). Tests shorten them with BOTLING_SERVER_PEER_TIMERS
-//   ("ping=200,dead=600,redial=100,redialMax=1000,revoked=1500", milliseconds; unknown names are refused).
+// - Timers (protocol v1 §5.2, §4.6, §6.2, §20): `ping` after 15 s of this side's silence, a session that heard
+//   nothing for 45 s is dead; redial with backoff (1 s doubling to 60 s, ±25 %); a server that finds itself removed
+//   dials each peer every 10 min for the revocation exchange only (D47); dial paths stagger by `staggerMs` (300 ms)
+//   and a worse path re-probes better ones every `reprobeMs` (60 s). Tests shorten them with
+//   BOTLING_SERVER_PEER_TIMERS ("ping=200,dead=600,redial=100,redialMax=1000,revoked=1500,stagger=80,reprobe=400",
+//   milliseconds; unknown names are refused).
 // - Addresses (§6.2): a member advertises them in its `Profile{field: "addresses"}`, whose value is a JSON object of
 //   path kind → address (`loopback`, `tailnet`, `relay`). Unknown kinds are ignored (forward compatibility).
 import { isIP } from "node:net";
@@ -14,31 +16,36 @@ export interface PeerTimers {
   redialMinMs: number;
   redialMaxMs: number;
   revokedRedialMs: number;
+  staggerMs?: number;
+  reprobeMs?: number;
 }
 
-export const DEFAULT_PEER_TIMERS: PeerTimers = {
+export const DEFAULT_PEER_TIMERS: Required<PeerTimers> = {
   pingMs: 15_000,
   deadMs: 45_000,
   redialMinMs: 1_000,
   redialMaxMs: 60_000,
   revokedRedialMs: 10 * 60_000,
+  staggerMs: 300,
+  reprobeMs: 60_000,
 };
 
 export const PEER_TIMERS_ENV = "BOTLING_SERVER_PEER_TIMERS";
 
 const NAMES: Record<string, keyof PeerTimers> = {
   ping: "pingMs", dead: "deadMs", redial: "redialMinMs", redialMax: "redialMaxMs", revoked: "revokedRedialMs",
+  stagger: "staggerMs", reprobe: "reprobeMs",
 };
 
 /** The timers from the environment (defaults when unset); a malformed value throws at start. */
-export function peerTimers(env: Record<string, string | undefined>): PeerTimers {
+export function peerTimers(env: Record<string, string | undefined>): Required<PeerTimers> {
   const text = (env[PEER_TIMERS_ENV] ?? "").trim();
-  const timers = { ...DEFAULT_PEER_TIMERS };
+  const timers: Required<PeerTimers> = { ...DEFAULT_PEER_TIMERS };
   if (!text) return timers;
   for (const part of text.split(",")) {
     const match = /^\s*([A-Za-z]+)\s*=\s*(\d{1,9})\s*$/.exec(part);
     const key = match ? NAMES[match[1]] : undefined;
-    if (!match || !key || Number(match[2]) < 10) throw new Error(`${PEER_TIMERS_ENV}: "${part}" is not name=milliseconds (ping, dead, redial, redialMax, revoked; at least 10)`);
+    if (!match || !key || Number(match[2]) < 10) throw new Error(`${PEER_TIMERS_ENV}: "${part}" is not name=milliseconds (ping, dead, redial, redialMax, revoked, stagger, reprobe; at least 10)`);
     timers[key] = Number(match[2]);
   }
   if (timers.deadMs <= timers.pingMs) throw new Error(`${PEER_TIMERS_ENV}: dead must be longer than ping`);

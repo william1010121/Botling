@@ -58,6 +58,8 @@ export interface MeteredConnection {
   kinds: string[];
   /** Messages per kind. */
   counts: Record<string, number>;
+  /** Messages delivered from the relay to this connection, per kind (`d`, `welcome`, `bye`). */
+  receivedCounts: Record<string, number>;
   /** The relay's close of the connection to it (code, reason), when it closed it. */
   relayClosed: { code: number; reason: string } | null;
   botlingdClosed: { code: number } | null;
@@ -109,7 +111,7 @@ export class RelayMeter {
 
   /** One connection: the browser's Origin goes on to the relay (its ALLOWED_ORIGINS check still applies). */
   private pipe(inbound: WebSocket, origin: string | undefined): void {
-    const seen: MeteredConnection = { times: [], kinds: [], counts: {}, relayClosed: null, botlingdClosed: null };
+    const seen: MeteredConnection = { times: [], kinds: [], counts: {}, receivedCounts: {}, relayClosed: null, botlingdClosed: null };
     this.connections.push(seen);
     const outbound = new WebSocket(this.relayUrl(), origin ? { origin } : undefined);
     const early: string[] = [];
@@ -123,7 +125,13 @@ export class RelayMeter {
       if (outbound.readyState === 1) outbound.send(text); else early.push(text);
     });
     outbound.on("open", () => { for (const text of early.splice(0)) outbound.send(text); });
-    outbound.on("message", (data) => { if (inbound.readyState === 1) inbound.send(String(data)); });
+    outbound.on("message", (data) => {
+      const text = String(data);
+      let kind = "?";
+      try { kind = String((JSON.parse(text) as { t?: unknown }).t); } catch { /* counted as ? */ }
+      seen.receivedCounts[kind] = (seen.receivedCounts[kind] ?? 0) + 1;
+      if (inbound.readyState === 1) inbound.send(text);
+    });
     outbound.on("close", (code: number, reason: Buffer) => {
       if (!seen.botlingdClosed) seen.relayClosed = { code, reason: String(reason) };
       try { inbound.close(code >= 4000 ? code : 1001, String(reason).slice(0, 100)); } catch { /* gone */ }
