@@ -197,7 +197,7 @@ export interface CoreOptions {
    * kept in `directory` (its folder, or a second head's partner-<engine>/ in it), on server.db rows.
    */
   botStore?: (directory: string) => BotStore;
-  /** Botling 3's server only (2.x leaves it unset): content read for plugins (`content.read`). */
+  /** Botling 3's server only (2.x leaves it unset): content read/fetch for plugins (`content.read`, `content.fetch`). */
   content?: PluginWorld["content"];
 }
 

@@ -645,6 +645,8 @@ export interface BotlingApi {
   content: {
     /** Reads up to 4 MiB of a chat-referenced file starting at `offset` (requires Botling 3). */
     read(ref: ContentRef, offset: number, length: number): Promise<Uint8Array>;
+    /** Copies a chat-referenced file (<= 500 MiB) into the plugin storage folder and returns its local path (requires Botling 3). */
+    fetch(ref: ContentRef): Promise<string>;
   };
   engines: {
     /** How to start `claude` or `codex` here (null: that engine is not available). */
@@ -944,6 +946,10 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
         const { data } = (await ask("content.read", { ref: ref as unknown as JSONValue, offset, length })) as { data: string };
         const buf = Buffer.from(data, "base64");
         return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+      },
+      fetch: async (ref) => {
+        const { path } = (await ask("content.fetch", { ref: ref as unknown as JSONValue })) as { path: string };
+        return path;
       },
     },
     engines: {
