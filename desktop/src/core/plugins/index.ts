@@ -430,6 +430,13 @@ export class Plugins {
     this.sync();
   }
 
+  /** D74 (M6-06): re-opens sealed secrets once a window sealer attaches, then reloads the host with them. */
+  async reloadSecrets() {
+    this.secrets.problem = null;
+    await this.secrets.load();
+    this.sync();
+  }
+
   /** The library is looked at again (the core's 1.5 s clock). */
   scan() {
     this.registry.rescan();

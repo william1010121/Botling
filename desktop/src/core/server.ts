@@ -2533,6 +2533,11 @@ First write a test that shows this, then fix it.`;
     return this.profiles.map((profile) => profile.id);
   }
 
+  /** Botling 3's server (M6-06): re-opens plugin secrets once a window attaches and syncs the host. */
+  reloadPluginSecrets(): Promise<void> {
+    return this.plugins.reloadSecrets();
+  }
+
   /** Botling 3's server: files waiting in a bot's input box (they go with the next message, even an empty one). */
   pendingFiles(botId: string): number {
     return this.pending.list(botId).length;

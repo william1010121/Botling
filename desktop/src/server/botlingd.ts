@@ -14,7 +14,6 @@
 import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
-import type { Sealer } from "../core/plugins/secrets";
 import { Core } from "../core/server";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "../core/store/data-dir-lock";
 import { fromBase64Url, type StreamId } from "../protocol";
@@ -44,7 +43,7 @@ import { defaultPageDir, LISTEN_FILE, LISTEN_HOST, listenPort, loadRelayRoomKey,
 import { relayDeviceToken, relayPairToken, relayRoomOf, relayTokenHash } from "../session";
 import { PairingService, ServerJoin } from "./pairing";
 import { addressesValue, advertisedPort, peerAddresses, PeerSessions, peerTimers, SessionRouter, type PeerSession, type RelayAddress } from "./peer";
-import { ShellBridge } from "./shell-bridge";
+import { NO_SAFE_STORAGE, ShellBridge } from "./shell-bridge";
 import { openServerStore, type ServerStore } from "./store";
 import { followedStreams, ownTableStream, PassThrough, PassThroughOwner, passThroughSettings, PEER_CACHE_BYTES, PeerLogCache, PeerTables, putRow, SummaryRows, TableFeeds } from "./replica";
 import { PluginHashCache, pluginsDigestOf, reconcilePluginRows } from "./replica/plugin-rows";
@@ -105,17 +104,7 @@ export const PLUGIN_POLL_MS = 60_000;
 /** Each peer server's state (`botlingd.peers.json`, 0600), rewritten on every change, removed on stop (M3 step 3). */
 export const PEERS_FILE = "botlingd.peers.json";
 
-/**
- * Risk 3: plugin secrets were sealed with Electron's safeStorage (the Keychain key of the app), which a plain Node
- * process cannot reach. M1 does not seal them another way: a plugin that asks to keep a secret is told to wait for
- * the window to provide safe storage (a later step seals through the attached window). A fresh botlingd data folder
- * holds no sealed secrets, so nothing already stored is lost.
- */
-export const NO_SAFE_STORAGE = "Plugin secrets need the Botling 3 window's safe storage (the Keychain), which this M1 server does not reach yet; open Botling 2.x for plugins that keep secrets.";
-const noSafeStorage: Sealer = {
-  seal: async () => { throw new Error(NO_SAFE_STORAGE); },
-  open: async () => { throw new Error(NO_SAFE_STORAGE); },
-};
+export { NO_SAFE_STORAGE };
 
 export class DataDirInUseError extends Error {
   readonly exitCode = CORE_EXIT_DATA_DIR_IN_USE;
@@ -322,7 +311,7 @@ export class Botlingd {
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
-          node: plainHostNode(env as NodeJS.ProcessEnv), sealer: noSafeStorage, app: shell.appBridge(),
+          node: plainHostNode(env as NodeJS.ProcessEnv), sealer: shell.sealer(), app: shell.appBridge(),
         }),
         deferTurn,
         mainBotId: ids.main,
@@ -345,6 +334,7 @@ export class Botlingd {
         },
       });
       coreEngine.bind(core);
+      shell.onAttach(() => { void core.reloadPluginSecrets().catch((error) => log(`plugins: ${String((error as Error)?.message ?? error)}`)); });
       const engine = new BotlingdEngine(coreEngine, { live, feed: (event) => { void exports.feed(event)?.catch?.(() => undefined); } });
       const content = new ContentService({
         store, dataDir: paths.dataDir, serverId, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: (text) => log(`content: ${text}`),
