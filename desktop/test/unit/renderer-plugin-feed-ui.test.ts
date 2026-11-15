@@ -48,7 +48,9 @@ describe("ShellFrame and the plugin feed", () => {
     expect(shown.host.innerHTML).toBe('<main class="shell">page</main>');
     expect(held()).toEqual(view.plugins.map((plugin) => plugin.name));
     expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
-    expect(pluginFeed.rows("chat/link")).toEqual(view.menus!.filter((row) => row.menu === "chat/link"));
+    expect(pluginFeed.rows("browser/tab")).toEqual(view.menus!.filter((row) => row.menu === "browser/tab"));
+    // `chat/link` is botling.chat's slot since M7-06a (a test has an empty FE manifest, so the plugin is not loaded and the slot has no owner: it takes nothing).
+    expect(pluginFeed.rows("chat/link")).toEqual([]);
     expect(pluginFeed.rows("app/bottom")).toEqual(view.bottomPanels);
     expect(rendererKernel.state(SHELL_SURFACE)).toBe("active");
   });
