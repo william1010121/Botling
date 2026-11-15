@@ -22,21 +22,32 @@ export function rowWeb(rows: ReadonlyMap<string, unknown> | undefined, name: str
 
 export interface BySource {
   fetch: BundleFetcher | undefined;
-  rows: ReadonlyMap<string, unknown> | undefined;
+  /** The attached server's own rows as they are now (read again after each fetch: a row may move while its bundle is read). */
+  rows: () => ReadonlyMap<string, unknown> | undefined;
   /** One clean line when a bundle was not had (the server's source is used then). */
   log: (line: string) => void;
 }
 
 /** The bundle of plugin `name` by its row's reference, and the row's key (code hash and reference); null when the server's source stays. */
+// A row that moves while its bundle is read is read again (L-008): a slower fetch of the old bundle never answers for the new row.
+const MOVES_FOLLOWED = 3;
+
 export async function sourceByRef(by: BySource, name: string): Promise<{ source: string; key: string } | null> {
-  const web = by.fetch ? rowWeb(by.rows, name) : null;
-  if (!web || !by.fetch) return null;
-  try {
-    return { source: await by.fetch({ plugin: name, ref: web.ref }), key: web.key };
-  } catch (error) {
-    by.log(`the web part of ${JSON.stringify(name.slice(0, 80))} was not read by its reference; the server's source is used: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 120))}`);
-    return null;
+  if (!by.fetch) return null;
+  for (let tries = 0; tries < MOVES_FOLLOWED; tries++) {
+    const web = rowWeb(by.rows(), name);
+    if (!web) return null;
+    let source: string;
+    try {
+      source = await by.fetch({ plugin: name, ref: web.ref });
+    } catch (error) {
+      by.log(`the web part of ${JSON.stringify(name.slice(0, 80))} was not read by its reference; the server's source is used: ${JSON.stringify(String((error as Error)?.message ?? error).slice(0, 120))}`);
+      return null;
+    }
+    if (rowWeb(by.rows(), name)?.key === web.key) return { source, key: web.key };
   }
+  by.log(`the row of ${JSON.stringify(name.slice(0, 80))} kept moving while its web part was read; the server's source is used`);
+  return null;
 }
 
 /** The `plugins.web` answer with each spec's `source` from its row's bundle where the row names one; `served` gets the key of each. */

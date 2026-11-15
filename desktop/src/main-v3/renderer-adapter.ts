@@ -247,7 +247,8 @@ export class RendererAdapter {
   /** M7-09b: where a plugin's web part is read from by its row (the attached server's own rows, the adapter's bundle fetcher). */
   private bySource() {
     const server = this.options.link.server;
-    return { fetch: this.options.bundles, rows: server ? this.options.link.table?.(server)?.rows : undefined, log: (line: string) => this.audit(line) };
+    const rows = () => (server && this.options.link.server === server ? this.options.link.table?.(server)?.rows : undefined);
+    return { fetch: this.options.bundles, rows, log: (line: string) => this.audit(line) };
   }
 
   /**

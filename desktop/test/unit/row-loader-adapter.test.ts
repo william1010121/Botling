@@ -166,6 +166,26 @@ describe("a row that moves to another bundle", () => {
     expect((await r.web()).find((entry) => entry.name === "a")?.source).toBe("SERVER-A");
   });
 
+  it("a row that moves while its old bundle is still being read is answered with the new bundle, never the old (L-008)", async () => {
+    let release: (() => void) | null = null;
+    const held = (fetched: BundleRequest[]): BundleFetcher => async (request) => {
+      fetched.push(request);
+      if (request.ref === refOf(A1)) await new Promise<void>((resolve) => { release = resolve; });
+      return BUNDLES[request.ref]!;
+    };
+    const r = await rig({ bundles: held });
+    r.rows(0, 2, [{ key: "plugin:a", rev: 2, body: plugin("h-a1", refOf(A1)) }]);
+    await flush();
+    const asked = r.web();
+    await flush();
+    expect(release).not.toBeNull();
+    r.rows(2, 3, [{ key: "plugin:a", rev: 3, body: plugin("h-a2", refOf(A2)) }]);
+    await flush();
+    release!();
+    expect((await asked).find((entry) => entry.name === "a")?.source).toBe(A2);
+    expect(r.fetched.map((call) => call.ref)).toEqual([refOf(A1), refOf(A2)]);
+  });
+
   it("the first rows of a connection change nothing the window was told (it was given nothing from a row yet)", async () => {
     const r = await rig({ bundles: bySource(BUNDLES) });
     const before = r.updated();
