@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MemoryFeStorage } from "../../src/fe-link";
+import { SealedSecretStore, type Sealer } from "../../src/core/plugins/secrets";
+import { NO_SAFE_STORAGE_ERROR, sealWithSafeStorage, type SafeStorageLike } from "../../src/main/safe-seal";
 import { ServerClient } from "../../src/main-v3/server-client";
 import { decodeFrame, memberIdFromKey, roleRefusal, toBase64Url, type Message, type MessageOf, type Slot } from "../../src/protocol";
 import { Botlingd, NO_SAFE_STORAGE as DAEMON_NO_SAFE_STORAGE } from "../../src/server/botlingd";
@@ -149,7 +150,7 @@ describe("ShellBridge sealer (M6-06)", () => {
 });
 
 describe("botlingd secrets lifecycle (M6-06)", () => {
-  it("4 & 5. keeps plugin secrets through window, forgets without window on restart, reloads on attach, and never writes clear secret to any data file", async () => {
+  it("4 & 5 (Probe A). keeps plugin secrets through window, forgets without window on restart, reloads on attach, and never writes clear secret to server or app SQLite files", async () => {
     const root = tempFolder("bsec-daemon");
     const dataDir = join(root, "data");
     const appDir1 = join(root, "app1");
@@ -172,9 +173,9 @@ describe("botlingd secrets lifecycle (M6-06)", () => {
     const openWindow = (appDir: string) => {
       const w = new ServerClient(
         { script: join(outDir, "core", "main.cjs"), env: { BOTLING_APP_DATA_DIR: appDir, BOTLING_SERVER_DATA_DIR: dataDir }, onEvent: () => undefined, audit: () => undefined, seal: fakeSeal },
-        { storage: () => new MemoryFeStorage(), launch: () => { throw new Error("unexpected launch"); } },
+        { launch: () => { throw new Error("unexpected launch"); } },
       );
-      cleanups.push(async () => { await w.stop().catch(() => undefined); });
+      cleanups.push(async () => { await w.stop().catch(() => undefined); await w.linkForTests?.close().catch(() => undefined); });
       return w;
     };
 
@@ -190,6 +191,9 @@ describe("botlingd secrets lifecycle (M6-06)", () => {
 
     await window1.call({ type: "plugins.secret", name: "my-tool", key: "token", value: "s3cret" });
     await until(async () => ((await window1.call({ type: "plugins.command", id: "my-tool.token" })) as { result?: unknown }).result === expectedDigest || null, { timeout: 15_000, what: "plugin reads secret" });
+    // F3: botlingd writes bound secret blobs ({ v: 1, plugin, key, text }).
+    const rawFile = JSON.parse(readFileSync(join(dataDir, "plugin-secrets.json"), "utf8")) as Record<string, Record<string, string>>;
+    expect(JSON.parse(fakeSeal("open", rawFile["my-tool"]!.token!))).toEqual({ v: 1, plugin: "my-tool", key: "token", text: "s3cret" });
     await window1.stop();
     await daemon1.stop();
 
@@ -220,18 +224,23 @@ describe("botlingd secrets lifecycle (M6-06)", () => {
     await until(async () => ((await window2.call({ type: "plugins.command", id: "my-tool.token" })) as { result?: unknown }).result === expectedDigest || null, { timeout: 15_000, what: "plugin reads secret after attach" });
     expect((await window2.call({ type: "plugins.list" })).secretsProblem).toBeNull();
     await window2.stop();
+    // F1: calling plugins.secret after detach fails immediately with core_unavailable and never persists to fe-link.sqlite.
+    const detachedRes = await window2.request({ type: "plugins.secret", name: "my-tool", key: "token", value: "s3cret" });
+    expect(detachedRes).toMatchObject({ ok: false, error: { code: "core_unavailable" } });
     await daemon2.stop();
 
     const needle = Buffer.from("s3cret", "utf8");
-    const files = walkFiles(dataDir);
+    const appFiles = [...walkFiles(appDir1), ...walkFiles(appDir2)];
+    expect(appFiles.some((file) => file.endsWith("fe-link.sqlite"))).toBe(true);
+    const files = [...walkFiles(dataDir), ...appFiles];
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) expect(readFileSync(file).includes(needle), `clear secret found in ${file}`).toBe(false);
     expect(logs.join("\n")).not.toContain("s3cret");
   }, 60_000);
 });
 
-describe("protocol role check and 2.x secret report (M6-06)", () => {
-  it("6. a remote device session sending shell.seal or shell.open is refused with bye{role}", async () => {
+describe("protocol role check, remote refusal, race guard, bound format, safe-seal, and 2.x secret report (M6-06)", () => {
+  it("6 & 7. a remote device session is refused shell.seal/shell.open (bye{role}) and plugins.secret (forbidden / refused{scope})", async () => {
     expect(roleRefusal("shell.seal", "fe", { local: false })).toMatch(/may not send/);
     expect(roleRefusal("shell.open", "fe", { local: false })).toMatch(/may not send/);
     expect(roleRefusal("shell.seal", "server", { local: false })).toMatch(/local socket/);
@@ -250,6 +259,7 @@ describe("protocol role check and 2.x secret report (M6-06)", () => {
     const live = new LiveChannel({ sink: effectCheckpointSink(store), checkpointIntervalMs: 5 });
     const runtime = new IntentRuntime({ store, engine, hub, live, authorize: slotAuthorize(roster), serverEvents: "all" });
     await runtime.start();
+    const srvInc = String((hub.reader().prepare("SELECT logId FROM streams WHERE stream = ?").get(`srv:${serverId}`) as { logId: string }).logId);
     const shell = new ShellBridge();
     const remote = new RemoteSessions({
       serverId, serverName: "Test server", startedAt: Date.now(), minFeVersion: "3.0.0", token: () => "t".repeat(32),
@@ -264,7 +274,7 @@ describe("protocol role check and 2.x secret report (M6-06)", () => {
     const dh = await generateDhKeyPair();
     const signPub = new Uint8Array(await crypto.subtle.exportKey("raw", sign.publicKey));
     const deviceMember = await memberIdFromKey(signPub);
-    await roster.addDevice({ keys: { sign: toBase64Url(signPub), dh: toBase64Url(dh.publicKey) }, name: "Phone" });
+    await roster.addDevice({ keys: { sign: toBase64Url(signPub), dh: toBase64Url(dh.publicKey) }, name: "Phone", scope: ["read", "reply", "approve", "manage"] });
 
     const got: Message[] = [];
     let link!: SessionLink;
@@ -278,11 +288,119 @@ describe("protocol role check and 2.x secret report (M6-06)", () => {
     const enc = new TextEncoder();
     link.send("control", enc.encode(JSON.stringify({ t: "hello", deviceId: deviceMember, feVersion: "3.0.0", protocol: 1, originEpoch: EPOCH, cursors: {}, outbox: [], want: [] })));
     await until(() => got.some((m) => m.t === "welcome") || null, { what: "remote welcome" });
+
+    // F1 part 3: even a manage-scoped remote device is refused plugins.secret (as req and as cmd).
+    const secretCmd = { type: "plugins.secret", name: "my-tool", key: "token", value: "x" };
+    link.send("control", enc.encode(JSON.stringify({ t: "req", req: "r-sec", cmd: secretCmd })));
+    expect(await until(() => got.find((m): m is MessageOf<"res"> => m.t === "res" && m.req === "r-sec") ?? null, { what: "remote req plugins.secret refusal" })).toMatchObject({
+      ok: false, error: { code: "forbidden" },
+    });
+    link.send("control", enc.encode(JSON.stringify({
+      t: "cmd",
+      slot: { origin: deviceMember, originEpoch: EPOCH, target: `srv:${serverId}`, n: 1 },
+      floor: 1,
+      inc: srvInc,
+      cmd: secretCmd,
+    })));
+    expect(await until(() => got.find((m): m is MessageOf<"cmd.result"> => m.t === "cmd.result" && m.slot.n === 1) ?? null, { what: "remote cmd plugins.secret refusal" })).toMatchObject({
+      outcome: { kind: "refused", reason: "scope" },
+    });
+
     link.send("control", enc.encode(JSON.stringify({ t: "shell.seal", req: "r1", text: "x" })));
     expect(await until(() => got.find((m): m is MessageOf<"bye"> => m.t === "bye") ?? null, { what: "remote bye{role}" })).toMatchObject({ reason: "role" });
   });
 
-  it("8. secretReportLines emits one exact line per plugin with secret keys, none for others", () => {
+  it("8 (Probe B). load() does not restore a secret removed or replaced while open() was in flight", async () => {
+    const dir = tempFolder("bsec-race");
+    const file = join(dir, "plugin-secrets.json");
+    const immediate: Sealer = {
+      seal: async (text) => fakeSeal("seal", text),
+      open: async (sealed) => fakeSeal("open", sealed),
+    };
+    const seed = new SealedSecretStore(file, immediate, { bound: true });
+    await seed.set("p", "k", "old");
+    await seed.set("p", "k2", "old2");
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let openCalls = 0;
+    let firstStarted!: () => void;
+    const firstInFlight = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const gated: Sealer = {
+      seal: async (text) => fakeSeal("seal", text),
+      open: async (sealed) => {
+        openCalls++;
+        if (openCalls === 1) firstStarted();
+        await gate;
+        return fakeSeal("open", sealed);
+      },
+    };
+    const store = new SealedSecretStore(file, gated, { bound: true });
+    const loading = store.load();
+    await firstInFlight;
+
+    await store.set("p", "k", null);
+    await store.set("p", "k2", "new2");
+    release();
+    await loading;
+
+    expect(store.get("p", "k")).toBeNull();
+    expect(store.has("p", "k")).toBe(false);
+    expect(store.get("p", "k2")).toBe("new2");
+  });
+
+  it("9 (F3). bound SealedSecretStore rejects cross-plugin, cross-key, and raw 2.x blobs while keeping 2.x default unchanged", async () => {
+    const dir = tempFolder("bsec-bound");
+    const boundFile = join(dir, "bound.json");
+    const sealer: Sealer = {
+      seal: async (text) => fakeSeal("seal", text),
+      open: async (sealed) => fakeSeal("open", sealed),
+    };
+    const store = new SealedSecretStore(boundFile, sealer, { bound: true });
+    await store.set("plugin-a", "token", "secret-a");
+    await store.set("plugin-b", "token", "secret-b");
+
+    // Tamper: move plugin-a's blob under plugin-b/token, and under plugin-a/otherKey, plus a raw unbound blob.
+    const raw = JSON.parse(readFileSync(boundFile, "utf8")) as Record<string, Record<string, string>>;
+    raw["plugin-b"]!.token = raw["plugin-a"]!.token!;
+    raw["plugin-a"]!.otherKey = raw["plugin-a"]!.token!;
+    raw["plugin-c"] = { rawKey: fakeSeal("seal", "raw-2x-secret") };
+    writeFileSync(boundFile, JSON.stringify(raw, null, 2));
+
+    const reloaded = new SealedSecretStore(boundFile, sealer, { bound: true });
+    await reloaded.load();
+    expect(reloaded.get("plugin-a", "token")).toBe("secret-a");
+    expect(reloaded.get("plugin-b", "token")).toBeNull();
+    expect(reloaded.get("plugin-a", "otherKey")).toBeNull();
+    expect(reloaded.get("plugin-c", "rawKey")).toBeNull();
+    expect(reloaded.problem).toContain("Sealed secret");
+    expect(reloaded.problem).not.toContain("secret-a");
+    expect(reloaded.problem).not.toContain("raw-2x-secret");
+
+    // 2.x default (bound unset) keeps raw value format.
+    const legacyFile = join(dir, "legacy.json");
+    const legacy = new SealedSecretStore(legacyFile, sealer);
+    await legacy.set("plugin-a", "token", "legacy-secret");
+    const legacyRaw = JSON.parse(readFileSync(legacyFile, "utf8")) as Record<string, Record<string, string>>;
+    expect(fakeSeal("open", legacyRaw["plugin-a"]!.token!)).toBe("legacy-secret");
+  });
+
+  it("10 (F5). sealWithSafeStorage refuses Linux basic_text/unknown backends and allows strong backends / macOS", () => {
+    const stub = (available: boolean, backend: string): SafeStorageLike => ({
+      isEncryptionAvailable: () => available,
+      getSelectedStorageBackend: () => backend,
+      encryptString: (text) => Buffer.from(text, "utf8"),
+      decryptString: (buf) => buf.toString("utf8"),
+    });
+    expect(() => sealWithSafeStorage(stub(false, "gnome_libsecret"), "seal", "x", "linux")).toThrow(NO_SAFE_STORAGE_ERROR);
+    expect(() => sealWithSafeStorage(stub(true, "basic_text"), "seal", "x", "linux")).toThrow(NO_SAFE_STORAGE_ERROR);
+    expect(() => sealWithSafeStorage(stub(true, "unknown"), "open", "eA==", "linux")).toThrow(NO_SAFE_STORAGE_ERROR);
+    const sealed = sealWithSafeStorage(stub(true, "gnome_libsecret"), "seal", "x", "linux");
+    expect(sealWithSafeStorage(stub(true, "gnome_libsecret"), "open", sealed, "linux")).toBe("x");
+    expect(sealWithSafeStorage(stub(true, "unknown"), "open", sealed, "darwin")).toBe("x");
+  });
+
+  it("11. secretReportLines emits one exact line per plugin with secret keys, none for others", () => {
     expect(secretReportLines([
       { name: "my-tool", secretKeys: ["token"] },
       { name: "plain-plugin", secretKeys: [] },

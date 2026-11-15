@@ -10,6 +10,7 @@ import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import { permissionAllowed } from "./permissions";
+import { sealWithSafeStorage } from "./safe-seal";
 import {nativeEditorNavigation,hasNativeEditorHost,isNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor,nativeEditorLayer} from "./editor-host";
 import {captureScale,composeWindow} from "./window-capture";
 import {appMenuTemplate} from "./app-menu";
@@ -265,11 +266,7 @@ const core: CoreClient = new CoreClient({
     writeFileSync(file, image.toPNG());
     return { ok: true, file };
   },
-  seal: (op, text) => {
-    // Plugins' secrets: sealed with the OS keychain's key (safeStorage); only the core asks, over its own port.
-    if (!safeStorage.isEncryptionAvailable()) throw new Error("This computer offers no safe storage for secrets.");
-    return op === "seal" ? safeStorage.encryptString(text).toString("base64") : safeStorage.decryptString(Buffer.from(text, "base64"));
-  },
+  seal: (op, text) => sealWithSafeStorage(safeStorage, op, text),
 });
 
 // One install request at a time (a release's download and restart).

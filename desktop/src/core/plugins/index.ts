@@ -243,6 +243,8 @@ export interface PluginsOptions {
   /** The plugins shipped with the app (out/builtin-plugins, or the app's Resources/builtin-plugins). */
   builtIns?: string | null;
   sealer: Sealer | null;
+  /** Botling 3 binds each sealed secret blob to plugin/key (M6-06 F3); 2.x leaves it unset. */
+  boundSecrets?: boolean;
   timing?: HostTiming;
   /** The plugin host's pid, for the process ledger. */
   onPid?: (pid: number, alive: boolean) => void;
@@ -388,7 +390,7 @@ export class Plugins {
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
     this.markedTabs = new MarkedTabs(dataDir);
-    this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer);
+    this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer, options.boundSecrets ? { bound: true } : undefined);
     this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
     this.dataRoot = join(dataDir, "plugin-data");
     this.held = new PendingTags(join(dataDir, "plugin-pending-tags.json"));

@@ -10,7 +10,7 @@
 //     127.0.0.1 only, the page and the device WebSocket; `tailscale serve` publishes it) → daily backups (step 12).
 //
 // Not in botlingd (M1): the 2.x phone bridge and relay connector, the restart checkpoint and core hot swap (botlingd
-// outlives windows), plugin secrets (risk 3: no safe storage without the window, see `noSafeStorage`).
+// outlives windows), and plugin secrets when no window is attached (bound per plugin/key, sealed via `ShellBridge.sealer()`).
 import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
@@ -311,7 +311,7 @@ export class Botlingd {
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
-          node: plainHostNode(env as NodeJS.ProcessEnv), sealer: shell.sealer(), app: shell.appBridge(),
+          node: plainHostNode(env as NodeJS.ProcessEnv), sealer: shell.sealer(), boundSecrets: true, app: shell.appBridge(),
         }),
         deferTurn,
         mainBotId: ids.main,
