@@ -115,7 +115,7 @@ export function extractPushSubscription(subscription: PushSubscription | null | 
 }
 
 function subscriptionMatchesKey(subscription: PushSubscription, vapidPublicKey: string, storedKey: string | null): boolean {
-  const existing = (subscription.options as { applicationServerKey?: ArrayBuffer | null } | undefined)?.applicationServerKey;
+  const existing = subscription.options?.applicationServerKey as BufferSource | null | undefined;
   if (existing instanceof ArrayBuffer) {
     return toBase64Url(new Uint8Array(existing)) === vapidPublicKey;
   }

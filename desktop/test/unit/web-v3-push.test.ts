@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 // Botling 3 M4-25: Page-side Web Push subscription ("This device" opt-in, never on load) and service worker
 // `push` / `notificationclick` handlers (protocol v1 §18.4, Q-P1..Q-P4).
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import type { Command } from "../../src/contract";
 import { FeLink, MemoryFeStorage, type Dial } from "../../src/fe-link";
-import { decodeFrame, toBase64Url, Welcome, type Message, type MessageOf } from "../../src/protocol";
-import { Session, type SessionHost } from "../../src/server/session";
+import { decodeFrame, FrameSplitter, packFrame, toBase64Url, Welcome, type CmdBody, type Message, type MessageOf, type Scope, type SessionKind } from "../../src/protocol";
+import { Session, SessionCore, type SessionHost } from "../../src/server/session";
 import { effectCheckpointSink } from "../../src/server/effects";
 import { ensureBot } from "../../src/server/effects/log-ops";
 import { IntentRuntime } from "../../src/server/intents";
@@ -17,7 +19,7 @@ import { LogHub } from "../../src/server/log";
 import { ShellBridge } from "../../src/server/shell-bridge";
 import { openServerStore } from "../../src/server/store";
 import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
-import { formatPushNotification, handleNotificationClick, handlePush, resolveNotificationUrl } from "../../web-v3/push-sw";
+import { formatPushNotification, handleNotificationClick, handlePush, resolveNotificationUrl, type PushNotificationOptions } from "../../web-v3/push-sw";
 import { decodeApplicationServerKey, enablePushNotifications, extractPushSubscription, pushSupport, syncPushOnAttach, type PushPrefs } from "../../web-v3/shell/push";
 import { ThisDevice } from "../../web-v3/shell/Shell";
 import type { Connection } from "../../web-v3/shell/connection";
@@ -83,6 +85,53 @@ function makeFakeSubscription(endpoint = "https://push.example.com/sub/1", p256d
   };
 }
 
+class TestRemoteSession extends SessionCore {
+  protected readonly kind: SessionKind = { local: false };
+  readonly sent: Message[] = [];
+
+  constructor(host: SessionHost) { super(host); }
+  protected get writable(): boolean { return true; }
+  protected writeTexts(texts: string[]): boolean {
+    for (const text of texts) {
+      const decoded = decodeFrame(text, "server", this.kind);
+      if (decoded.ok) this.sent.push(decoded.message as Message);
+    }
+    return true;
+  }
+  protected endTransport(): void {}
+  protected destroyTransport(): void {}
+  protected checkHello() { return null; }
+  protected cmdScope(_body: CmdBody): { scope: Scope } { return { scope: "read" }; }
+  protected reqRefusal(_cmd: Command) { return null; }
+
+  receiveHello(msg: MessageOf<"hello">): void { this.onMessage(msg); }
+}
+
+class FakeLocalSocket extends EventEmitter {
+  destroyed = false;
+  writableLength = 0;
+  readonly writes: Uint8Array[] = [];
+
+  write(bytes: Uint8Array): boolean { this.writes.push(bytes); return true; }
+  end(): void {}
+  destroy(): void { this.destroyed = true; }
+  feedRaw(value: unknown): void { this.emit("data", Buffer.from(packFrame(JSON.stringify(value)))); }
+  frames(): Message[] {
+    const splitter = new FrameSplitter();
+    const out: Message[] = [];
+    for (const chunk of this.writes) {
+      const split = splitter.push(chunk);
+      if (!split.ok) throw new Error(split.detail);
+      for (const frame of split.frames) {
+        const decoded = decodeFrame(frame, "server", { local: true });
+        if (!decoded.ok) throw new Error(decoded.detail);
+        out.push(decoded.message as Message);
+      }
+    }
+    return out;
+  }
+}
+
 describe("M4-25 protocol & FeLink push support", () => {
   it("Welcome accepts optional valid vapidPublicKey and rejects malformed ones", () => {
     const base = {
@@ -138,32 +187,36 @@ describe("M4-25 protocol & FeLink push support", () => {
       vapidPublicKey: () => vapidKey,
     };
 
-    const runHello = (local: boolean) => {
-      const sent: Message[] = [];
-      const session = new Session(host, {
-        send: (text) => {
-          const decoded = decodeFrame(text, "server", { local });
-          if (decoded.ok) sent.push(decoded.message as Message);
-        },
-        close: () => undefined,
-      }, { local });
-      session.receive(JSON.stringify({
-        t: "hello",
-        deviceId: "dev1",
-        feVersion: "3.0.0",
-        protocol: 1,
-        originEpoch: "0".repeat(32),
-        cursors: {},
-        outbox: [],
-        want: [],
-        ...(local ? { token: "t".repeat(32) } : {}),
-      }));
-      session.close();
-      return sent.find((m): m is MessageOf<"welcome"> => m.t === "welcome");
-    };
+    const remoteSession = new TestRemoteSession(host);
+    remoteSession.receiveHello({
+      t: "hello",
+      deviceId: "dev1",
+      feVersion: "3.0.0",
+      protocol: 1,
+      originEpoch: "0".repeat(32),
+      cursors: {},
+      outbox: [],
+      want: [],
+    });
+    const remoteWelcome = remoteSession.sent.find((m): m is MessageOf<"welcome"> => m.t === "welcome");
+    remoteSession.close();
 
-    const remoteWelcome = runHello(false);
-    const localWelcome = runHello(true);
+    const socket = new FakeLocalSocket();
+    const localSession = new Session(socket as never, host);
+    socket.feedRaw({
+      t: "hello",
+      deviceId: "dev1",
+      feVersion: "3.0.0",
+      protocol: 1,
+      originEpoch: "0".repeat(32),
+      cursors: {},
+      outbox: [],
+      want: [],
+      token: "t".repeat(32),
+    });
+    const localWelcome = socket.frames().find((m): m is MessageOf<"welcome"> => m.t === "welcome");
+    localSession.close();
+
     expect(remoteWelcome?.vapidPublicKey).toBe(vapidKey);
     expect(localWelcome?.vapidPublicKey).toBeUndefined();
   });
@@ -174,8 +227,7 @@ describe("M4-25 protocol & FeLink push support", () => {
     const vapidKey = makeVapidPub(14);
     const sentToServer: Message[] = [];
     const dial: Dial = (handlers) => {
-      let inner: ReturnType<FakeServer["dial"]>;
-      inner = server.dial({
+      const inner = server.dial({
         open: () => handlers.open(),
         frame: (raw) => {
           if (typeof raw === "string") {
@@ -257,7 +309,7 @@ describe("M4-25 service worker push and notificationclick handlers", () => {
       },
       scope,
     );
-    expect(formatted.title).toBe("Builder [31mBot");
+    expect(formatted.title).toBe("Builder Bot");
     expect(formatted.options.body).toBe("needs you");
     expect(formatted.options.tag).toBe("botling-needs-bot-alpha_1");
     expect(formatted.options.icon).toBe("https://mac.tailnet.ts.net/v3/icon-192.png");
@@ -285,7 +337,7 @@ describe("M4-25 service worker push and notificationclick handlers", () => {
   });
 
   it("handlePush shows notification and handleNotificationClick focuses existing /v3/ window or opens a new one", async () => {
-    const shown: Array<{ title: string; options: Record<string, unknown> }> = [];
+    const shown: Array<{ title: string; options: PushNotificationOptions | undefined }> = [];
     const posted: unknown[] = [];
     let focused = 0;
     let openedUrl: string | null = null;
@@ -295,7 +347,7 @@ describe("M4-25 service worker push and notificationclick handlers", () => {
       location: new URL("https://mac.tailnet.ts.net/v3/sw.js") as unknown as Location,
       registration: {
         scope: "https://mac.tailnet.ts.net/v3/",
-        showNotification: async (title: string, options: Record<string, unknown>) => { shown.push({ title, options }); },
+        showNotification: async (title: string, options?: PushNotificationOptions) => { shown.push({ title, options }); },
       },
       clients: {
         matchAll: async () => [{
@@ -313,11 +365,11 @@ describe("M4-25 service worker push and notificationclick handlers", () => {
     });
     expect(shown).toHaveLength(1);
     expect(shown[0].title).toBe("Reviewer");
-    expect(shown[0].options.body).toBe("needs you");
+    expect(shown[0].options?.body).toBe("needs you");
 
     await handleNotificationClick(swScope, {
       notification: {
-        data: shown[0].options.data,
+        data: shown[0].options?.data,
         close: () => { closed += 1; },
       },
     });
@@ -373,6 +425,44 @@ describe("M4-25 page push opt-in UI and iOS Home Screen rules", () => {
       hasPushManager: true,
       notificationPermission: "default",
     })).toEqual({ supported: true });
+  });
+
+  it("ThisDevice renders explicit Home Screen guidance and disabled button in an iOS Safari tab", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const origUa = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+    });
+    cleanups.push(() => {
+      if (origUa) Object.defineProperty(navigator, "userAgent", origUa);
+      else delete (navigator as { userAgent?: unknown }).userAgent;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    });
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
+
+    await act(async () => {
+      root.render(createElement(ThisDevice, {
+        device: DEVICE,
+        connection: null,
+        path: "direct",
+        serverId: DEVICE.server.memberId,
+        pushPrefs: { load: async () => null, save: async () => undefined },
+        onClose: () => undefined,
+        onForget: () => undefined,
+      }));
+      await flush();
+    });
+
+    expect(host.querySelector('[data-testid="push-status"]')?.textContent).toContain("Add this app to your Home Screen");
+    const btn = host.querySelector('[data-testid="enable-notifications"]') as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    expect(btn!.disabled).toBe(true);
+    expect(btn!.textContent).toContain("Home Screen");
   });
 
   it("never subscribes on load; only subscribes after clicking Enable notifications in ThisDevice, with double-tap guard and secret hygiene", async () => {
