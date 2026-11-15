@@ -269,6 +269,10 @@ async function wave(index: number, kind: Kind, size: number, totals: Record<stri
         totals.kills++;
         expect(dropQueuedCancels(), `seed ${seed}: cancels taken back`).toBe(size);
         await a.start();
+        // Nothing puts a cancel back while B is still down: A's queue holds the asks alone.
+        await sleep(1_500);
+        const kinds = withDb(a, (db) => (db.prepare("SELECT envelope FROM forwardq").all() as Array<{ envelope: string }>).map((row) => (/callin\.(ask|cancel)/.exec(row.envelope) ?? ["other"])[0]));
+        expect(kinds, `seed ${seed}: A's forward queue after the restart`).toEqual(Array(size).fill("callin.ask"));
         await b.start();
       } else {
         await b.start();
