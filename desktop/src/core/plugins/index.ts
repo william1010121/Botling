@@ -22,6 +22,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { z } from "zod";
 import { ContractError, type ApprovalAskView, type PluginsView, type ResultOf, type WebPluginSpecView } from "../../contract";
 import { ContractId } from "../../contract/editor-card";
+import { CONTENT_CHUNK_BYTES, ContentId, EntryRef, ServerId, type StreamId } from "../../protocol";
 import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } from "../../contract/shortcuts";
 import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
@@ -187,6 +188,10 @@ export interface PluginWorld {
    * work itself, starting subagents or workers only when the user asks).
    */
   createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined, more?: PluginBotExtras): BotInfo & { created: boolean };
+  /** Botling 3 content read (`content.read`): reads up to 4 MiB of a chat-referenced item. Absent in 2.x. */
+  content?: {
+    read(ref: { owner: string; id: string; entry: { stream: StreamId; seq: number } }, offset: number, length: number): Promise<Uint8Array>;
+  };
   /** A chat's newest `limit` lines (`chat.messages`; null: no such bot). Absent: a world without chats (tests, spec adapters). */
   chat?(botId: string, limit: number): PluginChat | null;
   /** The bot a plugin names ("main" too) as the core knows it (null: none). */
@@ -333,6 +338,13 @@ const FolderParams = BotParams.extend({
 });
 const FoldersParams = z.object({ plugin: str(214), folders: z.record(str(64), z.unknown()) });
 const EngineParams = z.object({ plugin: str(214), engine: z.enum(["claude", "codex"]) });
+const CONTENT_READ_LIMIT = 4 * CONTENT_CHUNK_BYTES;
+const ContentReadParams = z.object({
+  plugin: str(214),
+  ref: z.object({ owner: ServerId, id: ContentId, entry: EntryRef }),
+  offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  length: z.number().int().nonnegative().max(CONTENT_READ_LIMIT),
+});
 /** How much one plugin may draw in one chat (`chat.decorate`), as JSON. */
 const DECORATION_BYTES = 1_000_000;
 
@@ -1518,6 +1530,12 @@ export class Plugins {
       case "workspace.face": {
         const { data } = this.asked(FaceParams, params);
         return world.workspace.face(data.bot, data.look);
+      }
+      case "content.read": {
+        const { data } = this.asked(ContentReadParams, params);
+        if (!world.content) throw new Error("Reading content needs Botling 3.");
+        const bytes = await world.content.read(data.ref, data.offset, data.length);
+        return { data: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64") };
       }
       case "chat.messages": {
         const { plugin, data } = this.asked(ChatParams, params);

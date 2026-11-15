@@ -26,6 +26,7 @@ import { ContentService } from "./content";
 import { ChunkCache, PeerCacheBudget } from "./content/chunk-cache";
 import { LocalPeerReads } from "./content/local-peer-read";
 import { LOCAL_WINDOW, PeerContent, PeerContentOwner } from "./content/peer-content";
+import { PluginContentRead } from "./content/plugin-read";
 import { RemoteContent } from "./content/remote";
 import { Uploads } from "./content/put";
 import { ContentTickets } from "./content/tickets";
@@ -306,12 +307,19 @@ export class Botlingd {
       const coreEngine = new CoreEngine();
       const shell = new ShellBridge({ appDataDir: env.BOTLING_APP_DATA_DIR || null });
       const { emit, deferTurn } = coreEngine.coreOptions();
+      let pluginRead: PluginContentRead | null = null;
       const core = new Core({
         ...coreProcessOptions({
           env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
           node: plainHostNode(env as NodeJS.ProcessEnv), sealer: noSafeStorage, app: shell.appBridge(),
         }),
         deferTurn,
+        content: {
+          read: async (ref, offset, length) => {
+            if (!pluginRead) throw new Error("The machine that has this file is not reachable.");
+            return pluginRead.read(ref, offset, length);
+          },
+        },
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory);
           opened.set(key, directory);
@@ -488,6 +496,7 @@ export class Botlingd {
         followed: (stream) => followed().has(stream),
       });
       localReads = new LocalPeerReads({ peer: peerContent, self: serverId, log });
+      pluginRead = new PluginContentRead({ serverId, service: content, peer: peerContent, roster });
       const peerContentOwner = new PeerContentOwner({ service: content, roster, log, corruptId: testCorruptContent(env) });
       roster.onChange((change) => { for (const member of change.invalidated) peerContent.dropDevice(member); });
       const remoteContent = new RemoteContent({ service: content, tickets, roster, log, peer: peerContent });

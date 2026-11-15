@@ -65,6 +65,12 @@ export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnSt
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
 export interface ChatTask { id: string; name: string; state: string; messageIDs: string[] }
+/** A chat-referenced content item (`owner`, `sha256:` id, and the `entry` that references it; protocol §9A.2, §9A.7). */
+export interface ContentRef {
+  owner: string;
+  id: string;
+  entry: { stream: string; seq: number };
+}
 /** A chat as `chat.messages` reads it: its newest lines, its task cards, its name and how much is unread. */
 export interface ChatData { botId: string; name: string; unread: number; messages: ChatLine[]; tasks: ChatTask[] }
 
@@ -636,6 +642,10 @@ export interface BotlingApi {
      */
     setData(botId: string, data: JSONValue | null): Promise<void>;
   };
+  content: {
+    /** Reads up to 4 MiB of a chat-referenced file starting at `offset` (requires Botling 3). */
+    read(ref: ContentRef, offset: number, length: number): Promise<Uint8Array>;
+  };
   engines: {
     /** How to start `claude` or `codex` here (null: that engine is not available). */
     cli(engine: "claude" | "codex"): Promise<EngineCli | null>;
@@ -928,6 +938,13 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       messages: async (botId, opts = {}) => (await ask("chat.messages", { bot: botId, ...(opts.limit === undefined ? {} : { limit: opts.limit }) })) as ChatData,
       decorate: async (botId, decorations) => { await ask("chat.decorate", { bot: botId, decorations: decorations as JSONValue }); },
       setData: async (botId, data) => { await ask("chat.setData", { bot: botId, data: data as JSONValue }); },
+    },
+    content: {
+      read: async (ref, offset, length) => {
+        const { data } = (await ask("content.read", { ref: ref as unknown as JSONValue, offset, length })) as { data: string };
+        const buf = Buffer.from(data, "base64");
+        return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+      },
     },
     engines: {
       cli: async (engine) => (await ask("engines.cli", { engine })) as EngineCli | null,
