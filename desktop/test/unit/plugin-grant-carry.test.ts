@@ -138,6 +138,18 @@ describe("a plugin update keeps its grant unless it asks for more", () => {
     expect(t.admin.list()[0]).toEqual({ name: "p-revoke", codeHash: newHash, tier: "none", asks: "write" });
   });
 
+  it("a revoke after the carry also holds over the next update (the older hash's grant does not come back)", async () => {
+    const t = await setup("p-revoke2", { permissions: ["files"] }, { tier: "write", reads: [], requests: [] });
+    const { newHash, row } = await t.update({ permissions: ["files"], code: "export const v = 2;\n" });
+    expect(row.grants[newHash]?.tier).toBe("write");
+    const { [newHash]: _gone, ...rest } = row.grants;
+    await t.writer.submit((tx) => putRow(tx, t.stream, "plugin:p-revoke2", { ...row, grants: rest }));
+    const third = await t.update({ permissions: ["files"], code: "export const v = 3;\n" });
+    expect(Object.hasOwn(third.row.grants, t.oldHash)).toBe(true);
+    expect(Object.hasOwn(third.row.grants, third.newHash)).toBe(false);
+    expect(t.audits()).toHaveLength(1);
+  });
+
   it("a grant from before the asks record (the reading-coach data: row already at the new hash, grant only at the old one) carries on the next start when the new asks are within the grant", async () => {
     const { db, writer } = memoryStore();
     const stream = ownTableStream(db);

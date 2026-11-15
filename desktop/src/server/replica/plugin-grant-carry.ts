@@ -144,11 +144,13 @@ export function carryPluginGrant(tx: Db, stream: string, input: {
   let line: string | null = null;
 
   if (!Object.hasOwn(input.grants, cur) && !Object.hasOwn(rec.carry, cur)) {
-    // The old grant: the previous hash's if it has one, else the newest; built-in grants never carry.
+    // The old grant: the previous hash's. Only the one-time step for a grant from before the asks record (row already at
+    // the new hash) falls back to the newest; otherwise a previous hash without a grant (revoked, or never allowed) carries
+    // nothing, so an older hash's grant cannot come back past a revoke. Built-in grants never carry.
     const candidates = Object.entries(input.grants).filter(([hash, grant]) => hash !== cur && grant.grantedBy !== "builtin");
     const prev = input.prevCodeHash;
     const picked = (prev !== undefined && candidates.find(([hash]) => hash === prev))
-      || candidates.sort(([, a], [, b]) => b.at - a.at)[0];
+      || (firstRecord ? candidates.sort(([, a], [, b]) => b.at - a.at)[0] : undefined);
     if (picked) {
       const [from, grant] = picked;
       const basis = Object.hasOwn(rec.hashes, from) ? rec.hashes[from] : undefined;
