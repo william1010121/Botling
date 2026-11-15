@@ -21,6 +21,7 @@ import { settingsDeclaration } from "../../src/renderer/plugins/settings";
 import { FEED_SLOTS, PLUGIN_OWNED_SLOTS } from "../../src/renderer/shell/feed-slots";
 import { InPageHost, inPageHost, type InPageApi } from "../../src/renderer/shell/inpage-host";
 import { parseFeManifest, type InPageSource } from "../../src/renderer/shell/inpage-loader";
+import { ShellFrame } from "../../src/renderer/shell/ShellFrame";
 import { pluginFeed, reconcileView } from "../../src/renderer/shell/plugin-feed";
 import { desktop } from "../helpers";
 
@@ -191,6 +192,40 @@ describe("plugins' pages in the same slot", () => {
     reconcileView(fixture());
     expect(rendererKernel.entries("settings/section").map(({ registration }) => registration.id)).toEqual(rendererKernel.entries(SECTION).map(({ registration }) => registration.id));
     expect(canonicalSlot("settings/section")).toBe(SECTION);
+  });
+});
+
+describe("who holds the host", () => {
+  it("is held while there is a holder: the first one starts it, the last one to let go unloads it, a double release counts once", async () => {
+    const one = host();
+    const first = one.acquire();
+    const second = one.acquire();
+    await vi.waitFor(() => { expect(one.loaded()).toHaveLength(1); });
+    first();
+    first();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(one.loaded()).toHaveLength(1);
+    expect(rendererKernel.state(SETTINGS_PLUGIN)).toBe("active");
+    second();
+    await vi.waitFor(() => { expect(one.loaded()).toEqual([]); expect(rendererKernel.state(SETTINGS_PLUGIN)).toBe("absent"); });
+    expect(rendererKernel.declaration(SETTINGS_PLUGIN)).toBeUndefined();
+    // Let go is not "refused": the surface is simply not up, and nothing says unavailable.
+    expect(one.unavailable(SETTINGS_PLUGIN)).toBe(false);
+  });
+
+  it("the shell frame holds the renderer's host while it is up and lets go when it unmounts", async () => {
+    const start = vi.spyOn(inPageHost, "start");
+    const stop = vi.spyOn(inPageHost, "stop");
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    const element = document.createElement("div");
+    const root = createRoot(element);
+    try {
+      await act(async () => root.render(createElement(ShellFrame, { legacy: createElement("main", null, "page") })));
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(stop).not.toHaveBeenCalled();
+      await act(async () => root.unmount());
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally { (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; }
   });
 });
 
