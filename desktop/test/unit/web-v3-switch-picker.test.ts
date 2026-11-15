@@ -3,7 +3,7 @@
 // device.servers[] (D70) when offline, and triggers immediate switching via M4-20a's pickServer(id) / onServer API.
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { MemoryFeStorage, type Dial, type FeLink, type FeSocket, type SocketHandlers } from "../../src/fe-link";
 import { decodeFrame, encodeFrame, GENESIS_HASH, PROTOCOL_VERSION, toBase64Url, type Message } from "../../src/protocol";
 import {
@@ -769,5 +769,239 @@ describe("M4-20b (D72): Shell.tsx This device › Server picker", () => {
     expect(select.getAttribute("data-target")).toBe(SRV_A);
     expect(select.getAttribute("data-attached")).toBe(SRV_A);
     expect(status.textContent).toBe("Attached to Studio");
+  });
+
+  it("marks options gone in the picker from deviceServers (knownServers) even when connected link.servers() lists them live", async () => {
+    const { ThisDevice } = await import("../../web-v3/shell/Shell");
+    const link = {
+      attached: true,
+      attachedServerId: () => SRV_A,
+      pending: () => [],
+      servers: () => [
+        { id: SRV_A, name: "Studio", state: "live" as const, since: null, self: true, dh: DH_A },
+        { id: SRV_B, name: "Linux", state: "live" as const, since: 100, self: false, dh: DH_B },
+        { id: SRV_C, name: "Removed", state: "live" as const, since: 200, self: false, dh: DH_C },
+      ],
+      on: () => () => undefined,
+    } as unknown as FeLink;
+
+    const conn: Connection = {
+      link,
+      port: link as unknown as Connection["port"],
+      path: "direct",
+      revoked: false,
+      serverId: SRV_A,
+      pickServer: vi.fn(() => true),
+      close: async () => undefined,
+    };
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    activeRoots.push({ root, el: host });
+
+    await act(async () => {
+      root.render(createElement(ThisDevice, {
+        device: makeDevice(),
+        connection: conn,
+        path: "direct",
+        serverId: SRV_A,
+        knownServers: [
+          { id: SRV_A, name: "Studio", dh: DH_A, state: "live" },
+          { id: SRV_B, name: "Linux", dh: DH_B, state: "live" },
+          { id: SRV_C, name: "Removed", dh: DH_C, state: "gone" },
+        ],
+        onClose: () => undefined,
+        onForget: () => undefined,
+      }));
+    });
+
+    const select = host.querySelector('[data-testid="server-picker"]') as HTMLSelectElement;
+    const options = [...select.options];
+    expect(options.map((o) => o.value)).toEqual([SRV_A, SRV_B, SRV_C]);
+    expect(options[0]!.disabled).toBe(false);
+    expect(options[1]!.disabled).toBe(false);
+    expect(options[2]!.disabled).toBe(true);
+    expect(options[2]!.textContent).toContain("(removed)");
+  });
+
+  it("Shell + openFallbackLink: marks gone options from sticky deviceServers when attached to a lagging server whose welcome lists them live", async () => {
+    const dialed: DialedConn[] = [];
+    const laggingWelcomeServers = [
+      { id: SRV_A, name: "Studio", state: "live" as const, since: 100, dh: DH_A, addresses: { tailnet: "wss://studio.example.invalid/v3/ws" } },
+      { id: SRV_B, name: "Linux", state: "live" as const, since: 200, dh: DH_B, addresses: { tailnet: "wss://linux.example.invalid/v3/ws" } },
+      { id: SRV_C, name: "Removed", state: "live" as const, since: 300, dh: DH_C, addresses: { tailnet: "wss://mini.example.invalid/v3/ws" } },
+    ];
+    const makeDial = (serverId: string): Dial => (handlers) => {
+      const conn: DialedConn = {
+        serverId,
+        handlers,
+        closed: false,
+        sendServer(msg) {
+          const enc = encodeFrame(msg, "server", REMOTE);
+          if (!enc.ok) throw new Error(enc.detail);
+          handlers.frame(enc.text);
+        },
+        closeFromServer() {
+          if (conn.closed) return;
+          conn.closed = true;
+          handlers.close("closed");
+        },
+      };
+      dialed.push(conn);
+      queueMicrotask(() => { if (!conn.closed) handlers.open(); });
+      return {
+        send(frame: string) {
+          const dec = decodeFrame(frame, "fe", REMOTE);
+          if (!dec.ok) return;
+          if (dec.message.t === "hello") {
+            conn.sendServer({
+              t: "welcome",
+              serverId,
+              protocol: { min: PROTOCOL_VERSION, max: PROTOCOL_VERSION },
+              minFeVersion: "3.0.0",
+              rosterDigest: null,
+              next: {},
+              servers: laggingWelcomeServers,
+              views: {},
+            });
+          } else if (dec.message.t === "sub" && dec.message.stream.startsWith("srv:")) {
+            conn.sendServer({ t: "snap", stream: dec.message.stream, logId: `log-${serverId}`, seq: 0, hash: GENESIS_HASH, view: {} });
+          }
+        },
+        close() { conn.closed = true; },
+      } satisfies FeSocket;
+    };
+
+    const clock = new FakeClock();
+    const storage = new MemoryFeStorage();
+    let fbRef: FallbackLink | undefined;
+    activeOpenConnectionImpl = async (device, _diag, _pageUrl, pathOrOpts) => {
+      const opts = typeof pathOrOpts === "string" ? {} : (pathOrOpts ?? {});
+      const fb = await openFallbackLink({
+        storage,
+        servers: [
+          { id: SRV_A, name: "Studio", dh: DH_A, addresses: { tailnet: "wss://studio.example.invalid/v3/ws" }, directDial: makeDial(SRV_A) },
+          { id: SRV_B, name: "Linux", dh: DH_B, addresses: { tailnet: "wss://linux.example.invalid/v3/ws" }, directDial: makeDial(SRV_B) },
+        ],
+        designatedServerId: device.server.memberId,
+        deviceId: device.memberId,
+        feVersion: FE_VERSION,
+        local: false,
+        clock,
+        newEpoch: nextEpoch,
+        onServer: opts.onServer,
+      });
+      fbRef = fb;
+      activeLinks.push(fb);
+      return {
+        link: fb.link,
+        port: fb.link as unknown as Connection["port"],
+        get path() { return fb.path; },
+        get revoked() { return fb.revoked; },
+        get serverId() { return fb.serverId ?? device.server.memberId; },
+        pickServer(id: string) { return fb.pickServer(id); },
+        close: () => fb.close(),
+      };
+    };
+
+    const { Shell } = await import("../../web-v3/shell/Shell");
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const root = createRoot(el);
+    activeRoots.push({ root, el });
+
+    await act(async () => { root.render(createElement(Shell)); });
+    await act(async () => { await flush(); });
+
+    const thisDeviceBtn = lastFooterEl?.querySelector("button");
+    await act(async () => { thisDeviceBtn!.click(); });
+
+    // Server A learns SRV_C is gone via a peer frame; saveDeviceServers persists sticky gone into deviceServers.
+    await act(async () => {
+      dialed[0]!.sendServer({ t: "peer", serverId: SRV_C, state: "gone", since: 400, dh: DH_C });
+      await flush();
+    });
+
+    const select = el.querySelector('[data-testid="server-picker"]') as HTMLSelectElement;
+    // Switch to lagging Server B whose welcome still lists SRV_C as live.
+    await act(async () => {
+      changeSelect(select, SRV_B);
+      await flush();
+    });
+
+    expect(fbRef?.link.attachedServerId()).toBe(SRV_B);
+    expect(fbRef?.link.servers().find((s) => s.id === SRV_C)?.state).toBe("live");
+    const optC = [...select.options].find((o) => o.value === SRV_C);
+    expect(optC).toBeDefined();
+    expect(optC!.disabled).toBe(true);
+    expect(optC!.textContent).toContain("(removed)");
+  });
+
+  it("requires serverId on ThisDevice and keeps selectedServerId driven by the serverId prop", async () => {
+    const { ThisDevice } = await import("../../web-v3/shell/Shell");
+    type ThisDeviceProps = Parameters<typeof ThisDevice>[0];
+    expectTypeOf<ThisDeviceProps["serverId"]>().toEqualTypeOf<string>();
+
+    const listeners = new Set<(e: { type: string; attached?: boolean }) => void>();
+    const link = {
+      attached: false,
+      attachedServerId: () => SRV_B,
+      pending: () => [],
+      servers: () => [
+        { id: SRV_A, name: "Studio", state: "live" as const, since: null, self: true, dh: DH_A },
+        { id: SRV_B, name: "Linux", state: "live" as const, since: null, self: false, dh: DH_B },
+      ],
+      on: (fn: (e: { type: string; attached?: boolean }) => void) => {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+    } as unknown as FeLink;
+
+    const conn: Connection = {
+      link,
+      port: link as unknown as Connection["port"],
+      path: "direct",
+      revoked: false,
+      serverId: SRV_B,
+      pickServer: vi.fn(() => true),
+      close: async () => undefined,
+    };
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    activeRoots.push({ root, el: host });
+
+    await act(async () => {
+      root.render(createElement(ThisDevice, {
+        device: makeDevice(),
+        connection: conn,
+        path: "direct",
+        serverId: SRV_A,
+        onClose: () => undefined,
+        onForget: () => undefined,
+      }));
+    });
+
+    const select = host.querySelector('[data-testid="server-picker"]') as HTMLSelectElement;
+    expect(select.value).toBe(SRV_A);
+
+    await act(async () => {
+      for (const fn of listeners) fn({ type: "attached", attached: true });
+    });
+    expect(select.value).toBe(SRV_A);
+
+    await act(async () => {
+      root.render(createElement(ThisDevice, {
+        device: makeDevice(),
+        connection: conn,
+        path: "direct",
+        serverId: SRV_B,
+        onClose: () => undefined,
+        onForget: () => undefined,
+      }));
+    });
+    expect(select.value).toBe(SRV_B);
   });
 });

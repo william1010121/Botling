@@ -202,6 +202,17 @@ export function relayAllowList(options: {
   };
 }
 
+/** Reads this server's `plugin:<name>` row (M5-13b) and returns its grant tier at the row's current `codeHash`, or `"none"`. */
+export function readPluginGrant(db: Db, serverId: string, name: string): "none" | "read" | "request" | "write" {
+  try {
+    const parsed = PluginRow.safeParse(readRowBody(db, `srv:${serverId}`, `plugin:${name}`));
+    if (!parsed.success) return "none";
+    return parsed.data.grants[parsed.data.codeHash]?.tier ?? "none";
+  } catch {
+    return "none";
+  }
+}
+
 /** The key of the bot store kept in `directory`: the bot's id, or `<id>/partner-<engine>` for a second head's store. */
 export function storeKeyOf(dataDir: string, directory: string, mainId: string): string {
   const rel = relative(dataDir, directory).split(sep).join("/");
@@ -425,6 +436,7 @@ export class Botlingd {
           },
         },
         remoteMembers: () => peerRemoteMembers(roster, hub.reader()),
+        pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
         botStore: (directory) => {
           const key = storeKeyOf(paths.dataDir, directory, ids.main);
           opened.set(key, directory);
@@ -449,16 +461,18 @@ export class Botlingd {
       coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
       const runtime = new IntentRuntime({
         store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster)), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+        // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
+        // may run and re-announces its list once (core.pluginGrantsChanged).
+        pluginRowsChanged: () => {
+          feeds.notify(feeds.ownStream);
+          core.pluginGrantsChanged();
+        },
         tapHooks: {
           eventSeen: (event) => {
             summary?.seen(event);
             if (event.type === "plugins.updated") void syncPlugins();
           },
           eventStored: (tx, event) => summary?.stored(tx, event),
-        },
-        onPluginGrant: () => {
-          feeds.notify(feeds.ownStream);
-          core.plugins.registry.rescan(true);
         },
         // §11.3 audits (a floor that skipped slots after a restore, a slot conflict, a held slot dropped).
         audit: (_tx, event) => log(`audit: ${JSON.stringify(event)}`),
@@ -500,12 +514,12 @@ export class Botlingd {
             lastPluginsStatSignature = statSig;
             return;
           }
-          let pluginTouched = false;
           await runtime.scope.submit((tx) => {
             const stream = ownTableStream(tx);
             let touched = false;
-            const pluginResult = reconcilePluginRows(tx, stream, installed, Date.now(), { log, onWritten: () => { touched = true; pluginTouched = true; } });
+            const pluginResult = reconcilePluginRows(tx, stream, installed, Date.now(), { log, onWritten: () => { touched = true; } });
             const machineRev = putRow(tx, stream, "machine", machineRow(pluginResult.digest));
+            if (touched) runtime.scope.afterCommit(() => core.pluginGrantsChanged());
             if (touched || machineRev != null) runtime.scope.afterCommit(() => feeds.notify(feeds.ownStream));
           });
           if (botWrites) {
@@ -515,7 +529,6 @@ export class Botlingd {
           }
           lastPluginsSignature = signature;
           lastPluginsStatSignature = statSig;
-          if (pluginTouched) core.plugins.registry.rescan(true);
         }).catch((error) => { log(`plugin rows: ${String((error as Error)?.message ?? error)}`); });
         return pluginSyncQueue;
       };

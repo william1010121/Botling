@@ -249,6 +249,8 @@ export interface PluginsOptions {
   onPid?: (pid: number, alive: boolean) => void;
   /** Botling 3 (M5-18a): whether a plugin's program part may start at its current code hash (absent: always allowed). */
   mayRunServerPart?: (name: string, codeHash: string) => boolean;
+  /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash, or null to omit. */
+  pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
 }
 
 export const SERVER_PART_HELD_NOTICE = "Its program part is off until you allow it to change its own data on this server.";
@@ -439,6 +441,15 @@ export class Plugins {
     this.sync();
   }
 
+  /**
+   * Botling 3 (M5-14d, M5-18a): a `plugin:` row changed (a grant, or the running hash). Which program parts may run is
+   * decided again, and the list is announced once (the world drops one that reads the same).
+   */
+  rowsChanged() {
+    if (this.started) this.sync();
+    else this.announce();
+  }
+
   /** The library is looked at again (the core's 1.5 s clock). */
   scan() {
     this.registry.rescan();
@@ -604,6 +615,7 @@ export class Plugins {
         const heldBack = plugin.enabled && !plugin.failure && !!ccb?.host
           && (this.started ? this.heldBack.has(plugin.manifest.name) : !this.serverPartAllowed(plugin));
         const failure = plugin.failure ?? (heldBack ? SERVER_PART_HELD_NOTICE : null);
+        const grant = this.options.pluginGrant?.(plugin.manifest.name) ?? null;
         return {
           name: plugin.manifest.name,
           title: title(plugin.manifest).slice(0, 200),
@@ -613,6 +625,7 @@ export class Plugins {
           failure: failure?.slice(0, 2_000) ?? null,
           installedFrom: plugin.installedFrom?.slice(0, 2_000) ?? null,
           ...(plugin.builtIn ? { builtIn: true } : {}),
+          ...(grant !== null ? { grant } : {}),
           ...(plugin.replacesBuiltIn ? { replacesBuiltIn: plugin.replacesBuiltIn.slice(0, 100) } : {}),
           ...(plugin.ignoredLibraryCopy ? { ignoredLibraryVersion: plugin.ignoredLibraryCopy.version.slice(0, 100) } : {}),
           ...(plugin.skipped?.length ? { skipped: plugin.skipped.slice(0, 50).map((problem) => problem.slice(0, 2_000)) } : {}),

@@ -398,6 +398,44 @@ export function activate(ccb) {
     expect(okResult<{ specs: Array<{ name: string }> }>(webRes).specs.some((s) => s.name === builtInName)).toBe(true);
   }, 45_000);
 
+  it("one grant change, one path: each plugins.updated differs from the last, and none shows a write grant still held back", async () => {
+    const { dataDir, daemon, client, inc, originEpoch } = await startDaemon();
+    const folder = writePlugin(join(dataDir, "plugins"), "once.tool", {
+      permissions: ["files", "composer"],
+      commands: [{ id: "once.tool.ping", title: "Ping" }],
+    });
+    const codeHash = folderHash(folder);
+    await until(async () => {
+      const res = await client.req({ type: "plugins.list" });
+      return res.ok && (res.result as PluginsView).plugins.find((p) => p.name === "once.tool")?.failure === HELD_BACK_NOTICE;
+    }, { timeout: 10_000, what: "once.tool held back" });
+    // Every plugins.updated the core sends from here on (what the window and pages receive).
+    const sent: PluginsView[] = [];
+    const core = daemon.core as unknown as { event: (event: { type: string; plugins?: PluginsView }) => void };
+    const original = core.event.bind(core);
+    core.event = (event) => { if (event.type === "plugins.updated") sent.push(event.plugins!); original(event); };
+    const entry = (view: PluginsView) => view.plugins.find((p) => p.name === "once.tool");
+    const grant = async (n: number, tier: "request" | "write") => {
+      const slot: Slot = { origin: "script", originEpoch, target: client.srv, n };
+      client.cmd(slot, { type: "plugin.grant", plugin: "once.tool", codeHash, tier, reads: [], requests: ["chat.send"] }, inc);
+      expect((await client.wait(isResult(slot), `${tier} grant`)).outcome.kind).toBe("applied");
+    };
+
+    // A grant that starts nothing: exactly one plugins.updated.
+    await grant(1, "request");
+    await until(() => sent.some((view) => entry(view)?.grant === "request") || null, { timeout: 5_000, what: "request announced" });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(sent).toHaveLength(1);
+
+    // A write grant: the list says "write" only together with the program part allowed, then registered once it loads.
+    await grant(2, "write");
+    await until(() => sent.some((view) => entry(view)?.commands[0]?.registered === true) || null, { timeout: 10_000, what: "registered announced" });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    for (const view of sent) expect(entry(view)?.grant === "write" && entry(view)?.failure === HELD_BACK_NOTICE).toBe(false);
+    const texts = sent.map((view) => JSON.stringify(view));
+    for (let i = 1; i < texts.length; i++) expect(texts[i]).not.toBe(texts[i - 1]);
+  }, 45_000);
+
   it("keeps 2.x behavior unchanged when mayRunServerPart is omitted", async () => {
     const unit = await startPluginsUnit({});
     writePlugin(join(unit.dataDir, "plugins"), "legacy.tool", {

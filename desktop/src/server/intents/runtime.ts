@@ -44,8 +44,8 @@ export interface IntentRuntimeOptions {
   uploads?: UploadedFiles | null;
   /** Extra event tap hooks (M3: the server's summary rows, src/server/replica). */
   tapHooks?: Pick<TapHooks, "eventSeen" | "eventStored">;
-  /** M5-18a: called after commit when `plugin.grant` changes a row. */
-  onPluginGrant?: (plugin: string) => void;
+  /** Botling 3's server: called after a commit that changed a `plugin:` row's grants (`plugin.grant`). */
+  pluginRowsChanged?: () => void;
 }
 
 export class NotASlotCommandError extends Error {
@@ -84,7 +84,7 @@ export class IntentRuntime {
       ...(options.serverEvents ? { serverEvents: options.serverEvents } : {}),
       ...(options.mirrorBotUpdates ? { mirrorBotUpdates: true } : {}),
     });
-    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null, onPluginGrant: options.onPluginGrant };
+    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null, pluginRowsChanged: options.pluginRowsChanged };
     const slotLog = dbSlotLog(this.scope, log);
     this.slots = new SlotEngine({
       submit: (command) => this.scope.submit(command),
