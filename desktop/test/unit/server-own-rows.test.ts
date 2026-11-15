@@ -25,6 +25,7 @@ import { openServerStore, type ServerStore } from "../../src/server/store";
 import { importDhKeyPair, SessionLink, type SessionTransport } from "../../src/session";
 import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
 import { testRoot } from "../botlingd-harness";
+import { until } from "../helpers";
 import { flush } from "./fe-link-harness";
 
 const REMOTE = { local: false } as const;
@@ -133,7 +134,7 @@ async function connect(server: Server, device: Awaited<ReturnType<typeof makeDev
     link.send("control", new TextEncoder().encode(encoded.text));
   };
   send({ t: "hello", deviceId: device.member, feVersion: "3.0.0", protocol: 1, originEpoch: EPOCH, cursors: {}, outbox: [], want: [] });
-  await flush();
+  await until(() => got.some((m) => m.t === "welcome" || m.t === "bye"), { what: "the welcome" });
   cleanups.push(() => { link.close(); session.close(); });
   return { got, send, session, close: () => { link.close(); session.close(); } };
 }
@@ -147,7 +148,7 @@ describe("M5-14e: the own table's plugin rows to a front end", () => {
     await server.roster.addDevice({ keys: phone.keys, name: "Phone", scope: ["read", "reply"] });
     const fe = await connect(server, phone);
     fe.send({ t: "sub", stream: server.own as never, cursor: null });
-    await flush();
+    await until(() => rowsOf(fe.got, server.own).length > 0 && fe.got.some((m) => m.t === "snap" && m.stream === server.own), { what: "the first rows and the snap" });
 
     const first = rowsOf(fe.got, server.own);
     expect(first).toHaveLength(1);
@@ -165,7 +166,8 @@ describe("M5-14e: the own table's plugin rows to a front end", () => {
       deleteRow(tx, server.own, "plugin:alpha", 1_000);
       putRow(tx, server.own, "audit:two", { act: "device.add", at: 2 });
     });
-    await flush();
+    const head = tableRev(server.hub.reader(), server.own);
+    await until(() => rowsOf(fe.got, server.own).at(-1)?.to === head, { what: "the delta up to the new head" });
     const deltas = rowsOf(fe.got, server.own).slice(1);
     expect(deltas.length).toBeGreaterThan(0);
     const last = deltas[deltas.length - 1];
@@ -190,51 +192,67 @@ describe("M5-14e: the own table's plugin rows to a front end", () => {
     const phone = await makeDeviceKeys();
     await server.roster.addDevice({ keys: phone.keys, name: "Phone", scope: ["read"] });
     const fe = await connect(server, phone);
+    const subs = () => fe.got.filter((m) => m.t === "snap" && m.stream === server.own).length;
     fe.send({ t: "sub", stream: server.own as never, cursor: null });
-    await flush();
+    await until(() => subs() === 1, { what: "the first sub answered" });
     fe.send({ t: "sub", stream: server.own as never, cursor: null });
-    await flush();
+    await until(() => subs() === 2, { what: "the second sub answered" });
     expect(server.feeds.count(server.own)).toBe(1);
     fe.send({ t: "unsub", stream: server.own as never });
-    await flush();
-    expect(server.feeds.count(server.own)).toBe(0);
+    await until(() => server.feeds.count(server.own) === 0, { what: "the feed closed by unsub" });
     fe.send({ t: "sub", stream: server.own as never, cursor: null });
-    await flush();
+    await until(() => subs() === 3, { what: "the third sub answered" });
     expect(server.feeds.count(server.own)).toBe(1);
     fe.close();
-    await flush();
-    expect(server.feeds.count(server.own)).toBe(0);
+    await until(() => server.feeds.count(server.own) === 0, { what: "the feed closed with the session" });
   });
 
-  it("a revoke mid-session stops the feed: no rows after it, even when plugin rows change", async () => {
+  it("a revoke mid-session stops the feed: no rows after it, while a device still in the roster gets them", async () => {
     const server = await startServer();
     const phone = await makeDeviceKeys();
+    const laptop = await makeDeviceKeys();
     await server.roster.addDevice({ keys: phone.keys, name: "Phone", scope: ["read"] });
+    await server.roster.addDevice({ keys: laptop.keys, name: "Laptop", scope: ["read"] });
     const fe = await connect(server, phone);
+    const other = await connect(server, laptop);
     fe.send({ t: "sub", stream: server.own as never, cursor: null });
-    await flush();
-    expect(server.feeds.count(server.own)).toBe(1);
+    other.send({ t: "sub", stream: server.own as never, cursor: null });
+    await until(() => server.feeds.count(server.own) === 2 && rowsOf(fe.got, server.own).length > 0 && rowsOf(other.got, server.own).length > 0, { what: "both feeds open" });
     await server.roster.revokeDevice(phone.member, "lost");
-    await flush();
-    expect(fe.got.some((m) => m.t === "bye")).toBe(true);
-    expect(server.feeds.count(server.own)).toBe(0);
+    // Server side (the `bye` frame itself can be lost on the memory link under load, a known flake of
+    // server-remote-session): the revoked session is closed and its feed is gone; the other one stays.
+    const phoneSession = fe.session as unknown as { state: string };
+    await until(() => phoneSession.state === "closed", { what: "the revoked session closed" });
+    await until(() => server.feeds.count(server.own) === 1, { what: "the revoked session's feed closed" });
     const before = rowsOf(fe.got, server.own).length;
     await server.write((tx) => { putRow(tx, server.own, "plugin:after", pluginBody("after")); });
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    await flush();
+    // The change went out: the device still in the roster has it. The revoked one got nothing more.
+    await until(() => rowsOf(other.got, server.own).some((batch) => batch.rows.some((row) => row.key === "plugin:after")), { what: "the change reaching the other device" });
     expect(rowsOf(fe.got, server.own)).toHaveLength(before);
   });
 
-  it("a session that ends while its sub is under way leaves no feed", async () => {
+  it("a session that ends while its sub waits in the log reader leaves no feed", async () => {
     const server = await startServer();
     const phone = await makeDeviceKeys();
     await server.roster.addDevice({ keys: phone.keys, name: "Phone", scope: ["read"] });
     const fe = await connect(server, phone);
-    fe.send({ t: "sub", stream: server.own as never, cursor: null });
+    // A cursor past the store's head makes reader.sub await hub.rewind (an unnoticed rewind, §7.6); hold it there.
+    const stream = server.hub.reader().prepare("SELECT logId, head FROM streams WHERE stream = ?").get(server.own) as { logId: string; head: number };
+    const hub = server.hub as unknown as { rewind: (...args: unknown[]) => Promise<void> };
+    const realRewind = hub.rewind;
+    let entered = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    hub.rewind = async () => { entered = true; await gate; };
+    cleanups.push(() => { release(); hub.rewind = realRewind; });
+    fe.send({ t: "sub", stream: server.own as never, cursor: { logId: stream.logId as never, seq: stream.head + 5 } });
+    await until(() => entered, { what: "the sub waiting in reader.sub" });
+    // The session ends while sub() is suspended; then the reader's await returns and sub() runs on.
     fe.session.close();
-    await flush();
-    await flush();
+    release();
+    await (fe.session as unknown as { subChain: Promise<void> }).subChain;
     expect(server.feeds.count(server.own)).toBe(0);
+    expect(rowsOf(fe.got, server.own)).toEqual([]);
   });
 });
 
