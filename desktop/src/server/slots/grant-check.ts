@@ -62,14 +62,15 @@ function namesPlugin(cmd: Command, plugin: string, installed: readonly string[])
 
 /**
  * Whether the user installed this plugin (or it is built in): the row is there and holds an approval record by the user,
- * by the import or by the built-in rule, at any code hash (the record belongs to the plugin, not to one version). A row
+ * by the import, at any code hash (a built-in row is approved by being built in; a `builtin` record left at an older
+ * hash does not approve a library copy that replaced the built-in) (the record belongs to the plugin, not to one version). A row
  * with none (a bot or a file copy put the folder there) is not installed until the user's card (`plugin.grant`) says so.
  * Own keys only, and a malformed grant counts for nothing (L-003, L-009).
  */
 export function pluginApproved(row: PluginRow | null): boolean {
   if (!row) return false;
   if (row.author === "builtin") return true;
-  return Object.values(row.grants).some((grant) => grant.grantedBy === "user" || grant.grantedBy === "import" || grant.grantedBy === "builtin");
+  return Object.values(row.grants).some((grant) => grant.grantedBy === "user" || grant.grantedBy === "import");
 }
 
 /**

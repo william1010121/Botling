@@ -61,6 +61,11 @@ describe("2026-11-16 trust model: grantAllows (pure)", () => {
     expect(grantAllows({ ...row(), author: "bot" }, via(), send(), NAME).ok).toBe(false);
     expect(pluginApproved(row())).toBe(false);
     expect(pluginApproved(null)).toBe(false);
+    // An edited library copy of a built-in keeps the old built-in record at the old hash: that does not install the copy.
+    const copy = { ...row({ codeHash: H2, grants: { [H1]: { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: 1 } } }), author: "user" as const };
+    expect(pluginApproved(copy)).toBe(false);
+    expect(grantAllows(copy, via("my.plugin", H2), send(), NAME).ok).toBe(false);
+    expect(pluginApproved({ ...copy, author: "builtin" })).toBe(true);
   });
 
   it("context-budget: an installed 2.x plugin (author user, tier write, an approval record only at an older hash) is allowed at its current hash", () => {
@@ -241,7 +246,8 @@ describe("M5-15: the owner's grant check in the slot engine", () => {
     const refused = await outcome(s, phone, approve(), "approve", via());
     expect(refused).toMatchObject({ kind: "refused", reason: "scope" });
     // Allowed for the plugin but forbidden by the device: still scope. An installed plugin may send any command the device may.
-    expect((await outcome(s, phone, react(), "reply", via())).kind).toBe("applied");
+    // (chat.react of a message that does not exist may still fail on its own terms; what it must not do is fail on the grant.)
+    expect(await outcome(s, phone, react(), "reply", via())).not.toMatchObject({ kind: "refused", reason: "grant" });
     // What acts on other plugins needs the manifest to declare it: the plugin's own manifest here asks for chat.send only.
     expect(await outcome(s, phone, { type: "plugins.remove", name: "other" } as unknown as Command, "manage", via())).toMatchObject({ kind: "refused", reason: "scope" });
   });

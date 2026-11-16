@@ -118,9 +118,9 @@ function authority(world: World, origin: Origin, stated: Scope, cmd: Command, vi
   if (cmd.type === "plugin.grant") return { applied: false, reason: "grant" };
   const entry = world.table.get(via.plugin);
   const row = entry?.kind === "row" ? entry.row : null;
-  // 2026-11-16: installed = a valid row that is built in or holds an approval record (user / import / builtin) at ANY hash.
+  // 2026-11-16: installed = a valid row that is built in or holds an approval record (user / import) at ANY hash.
   // The hash the command was written under, the tier and the lists inside the record decide nothing.
-  const approved = row !== null && (row.author === "builtin" || Object.values(row.grants).some((g) => ["user", "import", "builtin"].includes(g.grantedBy)));
+  const approved = row !== null && (row.author === "builtin" || Object.values(row.grants).some((g) => ["user", "import"].includes(g.grantedBy)));
   if (!approved) return { applied: false, reason: "grant" };
   const cmdName = (cmd as { name?: unknown }).name;
   // The frame helpers name one plugin: the plugin's own name only.

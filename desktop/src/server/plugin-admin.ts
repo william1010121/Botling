@@ -68,7 +68,7 @@ export class PluginAdmin {
       const entry: PluginListRow = { name, codeHash: parsed.data.codeHash, tier, asks: parsed.data.manifest.tier };
       // Truthful only while it still describes the grant: a carried grant later changed by the user is the user's own.
       const note = carryNoteAt(this.options.reader(), name, parsed.data.codeHash);
-      if (note && !note.grew && tier !== "none" && parsed.data.grants[parsed.data.codeHash]!.at === note.at) entry.carriedFrom = note.from;
+      if (note && !note.grew && tier !== "none" && Object.hasOwn(parsed.data.grants, parsed.data.codeHash) && parsed.data.grants[parsed.data.codeHash]!.at === note.at) entry.carriedFrom = note.from;
       if (note?.grew && tier === "none") entry.grewFrom = { codeHash: note.from, grew: note.grew };
       out.push(entry);
     }
