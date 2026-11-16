@@ -12,7 +12,7 @@ import manifest from "../package.json";
 import * as M from "../src/model";
 import { PLUGIN, activate, bookOf } from "../src/web";
 
-const spec: PluginSpec = { name: manifest.name, version: manifest.version, source: "", styles: [], settings: {}, commands: [] };
+const spec: PluginSpec = { name: manifest.name, version: manifest.version, source: "", styles: [], settings: {}, commands: [], builtIn: true };
 let host: PluginHost;
 let composer: Composer;
 let slots: { pinArea: HTMLElement; topArea: HTMLElement; overlay: HTMLElement };
@@ -37,6 +37,7 @@ beforeEach(async () => {
   const composerSlot = document.createElement("div");
   document.body.append(slots.topArea, slots.pinArea, composerSlot, slots.overlay);
   composer = new Composer(composerSlot);
+  composer.update(stateOf(null));
   host = new PluginHost({
     composer: {
       element: composer.root, view: composer.view, getText: () => composer.text, insert: (text) => composer.insert(text), addExtension: (extension) => composer.addExtension(extension),
@@ -47,7 +48,8 @@ beforeEach(async () => {
   });
   await host.sync([spec], async () => activate as never);
 });
-afterEach(() => { composer.view.destroy(); document.body.innerHTML = ""; setLanguage("en"); });
+// The page keeps a plugin's message hooks in module lists: unload it, or the next test would also hear this one's.
+afterEach(async () => { await host.sync([], async () => (() => {}) as never); composer.view.destroy(); document.body.innerHTML = ""; setLanguage("en"); });
 
 describe("what the chat page's state says", () => {
   it("reads the cards the program part published for this chat, and nothing that is not a list of cards", () => {

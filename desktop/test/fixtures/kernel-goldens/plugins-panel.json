@@ -31,6 +31,13 @@
     "settings": {}
   },
   {
+    "name": "botling.deps",
+    "id": "botling.deps.board",
+    "title": "Plugin dependencies",
+    "source": "<source of botling.deps>",
+    "settings": {}
+  },
+  {
     "name": "botling.git",
     "id": "botling.git.settings",
     "title": "Worktrees",
