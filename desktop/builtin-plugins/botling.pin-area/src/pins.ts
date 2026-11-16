@@ -239,6 +239,9 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
           // the bot judged that the user's plain line belongs to this card: the line and this answer go into it (once per line)
           const line = turnLine.get(botId);
           if (line && M.takeAuto(book, id, line, tag.body, ridOf(), now())) { turnLine.delete(botId); save(botId, book); }
+          // no line left to move (none behind this turn, or it moved already): the core has taken the tag out of the reply, so the
+          // answer is kept in that card as its own turn, never dropped
+          else if (M.keepAnswer(book, id, tag.body, now())) save(botId, book);
           return;
         }
         if (M.answerTurn(book, id, tag.body, now())) save(botId, book);

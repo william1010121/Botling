@@ -579,6 +579,26 @@ describe("a plain message the bot moves into a card", () => {
     expect(M.takeAuto(b, pin.id, line("m2"), "x".repeat(M.MAX_A + 50), "r3", T0)!.a).toHaveLength(M.MAX_A);
   });
 
+  it("keepAnswer (review probe): a move answer with no line left becomes its own answered turn of that card, never one of its open questions; no card or no words: false", () => {
+    const b = book();
+    const pin = make(b);
+    M.addTurn(pin, "q1", "open question", T0 + 1);
+    for (const id of ["p-0099", "constructor", "", "__proto__"]) expect(M.keepAnswer(b, id, "x", T0 + 5), id).toBe(false);
+    expect(M.keepAnswer(b, pin.id, " \n ", T0 + 5)).toBe(false);
+    expect(M.keepAnswer(b, pin.id, "x".repeat(M.MAX_A + 50), T0 + 6)).toBe(true);
+    expect(pin.thread.map((turn) => [turn.q, turn.a === null ? null : turn.a.length, turn.via])).toEqual([["open question", null, "at"], ["", M.MAX_A, "at"]]);
+    expect(M.openTurn(pin)!.rid).toBe("q1");
+    expect(pin.updatedAt).toBe(T0 + 6);
+  });
+
+  it("the briefing turns every @ into ＠ (review probe), so the core reads no @Name call-in in it", () => {
+    const b = book();
+    make(b, { title: "@DAFAWU 看一下", status: "等 @Maintainer" });
+    const brief = M.briefing(b, T0);
+    expect(brief).not.toContain("@");
+    expect(brief).toContain("p-0001「＠DAFAWU 看一下」進行中 · 等 ＠Maintainer");
+  });
+
   it("移回聊天 takes the turn out of the card's page view but keeps it (the chat shows its answer once), notes the correction, and is done once", () => {
     const b = book();
     const pin = make(b);

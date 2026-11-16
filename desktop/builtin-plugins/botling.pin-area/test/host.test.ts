@@ -558,6 +558,18 @@ describe("a plain message the bot moves into a card", () => {
     expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
   });
 
+  it("the note carries no @Name (review probe): a pinned line \"@DAFAWU 看一下\" would otherwise call that bot into the chat with every plain message", () => {
+    const t = setup();
+    t.call("pinMessage", { botId: "B1", messageId: "m1", text: "@DAFAWU 看一下部署" });
+    t.tag("B1", "pin-card", { id: "p-0001" }, "等 @Maintainer 回覆");
+    const sent = t.send("B1", "還在嗎 @Codex") as string;
+    expect(M.stripBriefing(sent)).toBe("還在嗎 @Codex");
+    const note = sent.slice(M.stripBriefing(sent).length);
+    expect(note).toContain("＠DAFAWU 看一下部署");
+    expect(note).toContain("等 ＠Maintainer 回覆");
+    expect(note).not.toContain("@");
+  });
+
   it("leaves a slash command and another plugin's 〔header〕 message exactly as they are", () => {
     const t = withCards();
     expect(t.send("B1", "/陪讀 paper.pdf")).toBeUndefined();
@@ -581,7 +593,7 @@ describe("a plain message the bot moves into a card", () => {
     t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
   });
 
-  it("a line moves once: a second move tag in the same turn, or in a later turn, takes nothing", () => {
+  it("a line moves once: a second move tag in the same turn, or in a later turn, moves no line (its answer is kept in that card as its own turn)", () => {
     const t = withCards();
     plain(t, "部署那個好了嗎");
     t.emit("turnStarted", { botId: "B1", turnId: "t1" });
@@ -590,7 +602,11 @@ describe("a plain message the bot moves into a card", () => {
     t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
     t.emit("turnStarted", { botId: "B1", turnId: "t2" });
     moveTag(t, "p-0002", "a routine's turn");
-    expect(t.book("B1").pins.map((pin) => pin.thread.length)).toEqual([1, 0]);
+    const [deploy, docs] = t.book("B1").pins;
+    expect(deploy!.thread.map((turn) => [turn.q, turn.msgId])).toEqual([["部署那個好了嗎", "u1"]]);
+    expect(docs!.thread.map((turn) => [turn.q, turn.a, turn.via, turn.msgId])).toEqual([["", "again", "at", undefined], ["", "a routine's turn", "at", undefined]]);
+    const traces = t.decorate.mock.calls.at(-1)![1] as unknown[];
+    expect(traces).toHaveLength(1);
   });
 
   it("a wrong card id keeps the line free for the right one in the same turn", () => {
@@ -604,18 +620,19 @@ describe("a plain message the bot moves into a card", () => {
     expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ a: "快好了", msgId: "u1" });
   });
 
-  it("with no plain line behind the turn (none sent, or the turn began for something else) a move tag does nothing, and a plain pin-say still answers an open turn as before", () => {
+  it("with no plain line behind the turn (none sent, or the turn began for something else) a move tag moves nothing but its answer is not lost, and a plain pin-say still answers an open turn as before", () => {
     const t = withCards();
     t.emit("turnStarted", { botId: "B1", turnId: "t0" });
     moveTag(t, "p-0001");
-    expect(t.book("B1").pins[0]!.thread).toEqual([]);
+    // review probe: the core already took the tag out of the reply, so a dropped answer would be gone from the chat and the card
+    expect(t.book("B1").pins[0]!.thread.map((turn) => [turn.q, turn.a, turn.via])).toEqual([["", "還沒好。", "at"]]);
     expect(t.decorate).not.toHaveBeenCalled();
     t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
     const sent = t.send("B1", "@Deploy 先停一下") as string;
     t.emit("messagePosted", { botId: "B1", role: "user", text: sent, id: "u9" });
     t.emit("turnStarted", { botId: "B1", turnId: "t1" });
     t.tag("B1", "pin-say", { id: "p-0001" }, "好");
-    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ q: "先停一下", a: "好", via: "at" });
+    expect(t.book("B1").pins[0]!.thread[1]).toMatchObject({ q: "先停一下", a: "好", via: "at" });
   });
 
   it("a line that comes while a turn is running waits for its own turn: the running turn cannot take it", () => {
@@ -636,7 +653,7 @@ describe("a plain message the bot moves into a card", () => {
     t.emit("messagePosted", { botId: "B1", role: "user", text: "<app_task_result task_id=\"t\" run=\"1\" status=\"completed\">ok</app_task_result>", id: "w1" });
     t.emit("turnStarted", { botId: "B1", turnId: "t1" });
     moveTag(t, "p-0001");
-    expect(t.book("B1").pins[0]!.thread).toEqual([]);
+    expect(t.book("B1").pins[0]!.thread.filter((turn) => turn.via === "auto" || turn.msgId)).toEqual([]);
   });
 
   it("移回聊天: the line leaves the card's view, the chat shows the answer under its line, a second tap changes nothing, and only that bot's book is touched", () => {

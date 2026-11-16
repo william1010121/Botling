@@ -505,7 +505,9 @@ export function briefing(book: Book, now: number): string {
   const lines = viewOf(book).pins.map((pin) => `${pin.id}「${oneLine(pin.title, MAX_TITLE)}」${STATE_WORD[pin.state]} · ${oneLine(pin.status, 60)}${pin.origin === "user" ? " · 使用者釘的" : ""}`);
   const fixes = (book.fixes ?? []).filter((fix) => now - fix.at < 86_400_000);
   const corrected = fixes.map((fix) => `「${fix.text}」不是 ${FIX_WORD(book, fix.from)}，是 ${FIX_WORD(book, fix.to)}`);
-  return `${BRIEF}\n${lines.join("\n")}${corrected.length ? `\n最近被使用者更正：${corrected.join("；")}` : ""}\n（這句若明顯在講其中一張卡，用 <pin-say id="p-…" move="yes">回答</pin-say>；拿不準就照常在聊天回答。以最後一則現況為準。）`;
+  // the note goes out inside the user's message, which the core reads for @Name call-ins: a title like "@DAFAWU 看一下" must not call that bot in
+  return `${BRIEF}\n${lines.join("\n")}${corrected.length ? `\n最近被使用者更正：${corrected.join("；")}` : ""}`.replace(/@/g, "＠")
+    + `\n（這句若明顯在講其中一張卡，用 <pin-say id="p-…" move="yes">回答</pin-say>；拿不準就照常在聊天回答。以最後一則現況為準。）`;
 }
 /** A plain message with the briefing after it; the user's own words cannot fake the marker. */
 export function withBriefing(text: string, brief: string): string {
@@ -549,6 +551,16 @@ export function takeAuto(book: Book, id: string, line: { id: string; text: strin
   turn.msgId = line.id;
   pin.updatedAt = now;
   return turn;
+}
+/** A `move` answer with no line left to move: its own turn in that card (no question), as `answerTurn` keeps an answer with nothing waiting. */
+export function keepAnswer(book: Book, id: string, answer: string, now: number): boolean {
+  const pin = isId(id) ? book.pins.find((candidate) => candidate.id === id) : undefined;
+  const text = clean(answer, MAX_A * 2).trim().slice(0, MAX_A);
+  if (!pin || !text) return false;
+  const turn = addTurn(pin, `a${now.toString(36)}-${pin.thread.length}`, "", now);
+  turn.a = text;
+  turn.aAt = now;
+  return true;
 }
 function addFix(book: Book, text: string, from: string, to: string, now: number): void {
   const line = oneLine(text, 30);
