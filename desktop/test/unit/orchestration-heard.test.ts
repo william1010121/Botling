@@ -278,6 +278,10 @@ describe("R7 and Maintainer in the real core", () => {
     expect(orchestration(undefined).granted("written")).toBe(false);
     expect(orchestration(false).granted("written")).toBe(false);
     expect(orchestration(true).granted("written")).toBe(true);
+    // The same for `installed` (no card per worker, review of bot/v3-duel-apis): unset or false is not installed.
+    expect(orchestration(undefined).installed?.("written")).toBe(false);
+    expect(orchestration(false).installed?.("written")).toBe(false);
+    expect(orchestration(true).installed?.("written")).toBe(true);
   });
 
   it("with pluginCapability unset, workers.start is refused through the wire", async () => {
