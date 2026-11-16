@@ -92,11 +92,13 @@ describe("snapshot entries stored as diffs", () => {
   it("baseline cadence: at most 200 diffs per baseline, and a new baseline once the diffs outweigh one whole body", async () => {
     const store = await setup(A);
     // Tiny changes: the count limit decides.
-    await store.submit((db) => { for (let i = 0; i < 2 * MAX_DIFFS_PER_BASE + 5; i++) appendEntries(db, A, [upd("m1", "x", { chosen: i % 7 })]); });
+    const huge = "z".repeat(40_000); // a body so big that 200 tiny patches stay below its size: only the count limit can cut the chain
+    await store.submit((db) => { for (let i = 0; i < 2 * MAX_DIFFS_PER_BASE + 5; i++) appendEntries(db, A, [{ kind: "message.updated", body: { botId: "alpha", message: { id: "m1", role: "bot", text: huge, time: TIME, chosen: i % 7 } } }]); });
     const baselines = raw(store.db, A).filter((r) => r.base === null).map((r) => Number(r.seq));
     expect(baselines[0]).toBe(1);
     for (let i = 1; i < baselines.length; i++) expect(baselines[i] - baselines[i - 1]).toBeLessThanOrEqual(MAX_DIFFS_PER_BASE + 1);
-    expect(baselines.length).toBeGreaterThanOrEqual(2);
+    expect(baselines).toHaveLength(3); // 1, 202, 403: exactly MAX_DIFFS_PER_BASE diffs hang on each baseline
+    expect(baselines[1] - baselines[0]).toBe(MAX_DIFFS_PER_BASE + 1);
     expect(raw(store.db, A).filter((r) => r.base !== null)).not.toHaveLength(0);
     expect(verifyStream(store.db, A)).toMatchObject({ ok: true });
 
@@ -246,7 +248,7 @@ describe("a corrupt diff", () => {
     const read = readAll(store.db, A);
     expect(read.unreadable).toBe(seq);
     expect(read.entries).toEqual(sent.slice(0, seq - 1));
-    expect(verifyStream(store.db, A)).toMatchObject({ ok: false, seq });
+    expect(verifyStream(store.db, A)).toEqual({ ok: false, seq, reason: "hash" });
   });
 
   it("a diff that applies but rebuilds the wrong body is caught by the hash", async () => {
@@ -268,18 +270,19 @@ describe("a corrupt diff", () => {
 
   it("a writer that finds a broken chain (cold cache) starts a new baseline instead of hanging a diff on it", async () => {
     const { store } = await filled();
-    const seq = diffSeq(store, 3);
-    store.db.prepare("UPDATE entries SET body = ? WHERE stream = ? AND seq = ?").run('[{"op":"replace","path":"/message/text","value":"forged"}]', A, seq);
+    // The newest row is made to say something else: its object's state, as the table now rebuilds it, is not what was hashed.
+    const last = Number(raw(store.db, A).at(-1)!.seq);
+    store.db.prepare("UPDATE entries SET body = ? WHERE stream = ? AND seq = ?").run('[{"op":"append","path":"/message/text","value":"X"}]', A, last);
     const db2 = openDb(store.db.path);
     try {
       db2.exec("PRAGMA busy_timeout = 5000");
       db2.exec("BEGIN IMMEDIATE");
-      appendEntries(db2, A, [upd("m1", "word ".repeat(30))]);
+      // The new text extends what the broken chain rebuilds, so a writer that trusted it would store a tiny diff.
+      appendEntries(db2, A, [upd("m1", `${"word ".repeat(last - 1)}XY`)]);
       db2.exec("COMMIT");
     } finally { db2.close(); }
-    const last = raw(store.db, A).at(-1)!;
-    expect(last.base).toBeNull();
-    expect(readAll(store.db, A, Number(last.seq)).entries).toHaveLength(1);
+    expect(raw(store.db, A).at(-1)!.base).toBeNull();
+    expect(readAll(store.db, A, last + 1).entries).toHaveLength(1);
   });
 
   it("the hub gives the reader a snap instead of the bad entry", async () => {
