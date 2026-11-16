@@ -469,7 +469,7 @@ describe("M5-12b: frame commands from the real FeLink at the owner", () => {
     const copies = await copiesFromFrame("note");
     expect(copies.map((c) => [c.cmd.type, c.via])).toEqual(frameCmds("note").map((cmd) => [cmd.type, { plugin: "note", codeHash: HC }]));
     const s = await startServer();
-    await seed(s, "note", row({ codeHash: HC, grants: { [HC]: { ...grant("write"), grantedBy: "builtin" } } }));
+    await seed(s, "note", { ...row({ codeHash: HC, grants: { [HC]: { ...grant("write"), grantedBy: "builtin" } } }), author: "builtin" });
     for (const { cmd, via: v } of copies) {
       const sent = body(s, "desktop", cmd, v);
       const first = await s.runtime.receive(sent, { scope: "local" });
