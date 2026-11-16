@@ -107,7 +107,7 @@ describe("HeadEvents: the report of a worker that owns a hand-off goes back as t
   function report(taskId: string | undefined, setup: (w: Bot["workers"]) => void) {
     const b = make("codex") as any;
     const turn: any = { ended: [], conducted: false, handoffId: null };
-    vi.spyOn(b, "backgroundTurn").mockReturnValue(turn);
+    vi.spyOn(b.headEvents, "backgroundTurn").mockReturnValue(turn);
     vi.spyOn(b.workers, "relayIfCallInWork").mockImplementation(() => {});
     const head = {} as any;
     b.headRun.head = head;
