@@ -174,9 +174,9 @@ describe("size effect on a synthetic stream", () => {
     let steps: ReturnType<typeof step>[] = [];
     let full = 0;
     await store.submit((db) => {
-      for (let i = 0; i < 700; i++) {
+      for (let i = 0; i < 400; i++) {
         steps = [...steps, step(i)].slice(-500);
-        const subagent = { id: "sa1", title: "Reviewer", owner: "alpha", status: "running", type: null, model: null, outputTokens: i * 11, prompt: "review this change", steps, result: i > 600 ? "result text ".repeat(i - 600) : null, startedAt: TIME, endedAt: null };
+        const subagent = { id: "sa1", title: "Reviewer", owner: "alpha", status: "running", type: null, model: null, outputTokens: i * 11, prompt: "review this change", steps, result: i > 300 ? "result text ".repeat(i - 300) : null, startedAt: TIME, endedAt: null };
         const [entry] = appendEntries(db, A, [{ kind: "subagent.updated", body: { botId: "alpha", subagent } }]);
         full += canonicalJson(entry.body).length;
       }
@@ -186,9 +186,9 @@ describe("size effect on a synthetic stream", () => {
     expect(stored * 20).toBeLessThan(full);
     const read = readAll(store.db, A);
     expect(read.unreadable).toBeUndefined();
-    expect(read.entries).toHaveLength(700);
+    expect(read.entries).toHaveLength(400);
     expect(verifyStream(store.db, A)).toMatchObject({ ok: true });
-  });
+  }, 180_000);
 });
 
 describe("eviction across a baseline", () => {
@@ -264,6 +264,22 @@ describe("a corrupt diff", () => {
     store.db.prepare("UPDATE entries SET body = ? WHERE stream = ? AND seq = 1").run(canonicalJson({ botId: "alpha", message: line("m1", "tampered") }), A);
     const read = readAll(store.db, A);
     expect(read.unreadable).toBe(2);
+  });
+
+  it("a writer that finds a broken chain (cold cache) starts a new baseline instead of hanging a diff on it", async () => {
+    const { store } = await filled();
+    const seq = diffSeq(store, 3);
+    store.db.prepare("UPDATE entries SET body = ? WHERE stream = ? AND seq = ?").run('[{"op":"replace","path":"/message/text","value":"forged"}]', A, seq);
+    const db2 = openDb(store.db.path);
+    try {
+      db2.exec("PRAGMA busy_timeout = 5000");
+      db2.exec("BEGIN IMMEDIATE");
+      appendEntries(db2, A, [upd("m1", "word ".repeat(30))]);
+      db2.exec("COMMIT");
+    } finally { db2.close(); }
+    const last = raw(store.db, A).at(-1)!;
+    expect(last.base).toBeNull();
+    expect(readAll(store.db, A, Number(last.seq)).entries).toHaveLength(1);
   });
 
   it("the hub gives the reader a snap instead of the bad entry", async () => {

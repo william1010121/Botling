@@ -45,9 +45,14 @@ describe("diffJson / applyPatch", () => {
       { op: "add", path: "/steps/8", value: { id: "s11", text: "step 11" } },
     ]);
     // a shift that also changes a kept member
-    const changed = [...rows.slice(2)];
-    changed[1] = { id: "s3", text: "step 3 (edited)" };
-    expect(roundTrip({ steps: rows }, { steps: changed }).some((op) => op.op === "shift")).toBe(true);
+    // a shift in the same update as a changed member (the newest step finishing, one in the middle edited)
+    for (const at of [1, 4, 7]) {
+      const changed = [...rows.slice(2)];
+      changed[at] = { id: changed[at].id, text: "edited" };
+      const ops = roundTrip({ steps: rows }, { steps: changed });
+      expect(ops[0]).toEqual({ op: "shift", path: "/steps", n: 2 });
+      expect(ops).toHaveLength(2);
+    }
   });
 
   it("arrays that shrink remove from the end; type changes and the root are replaced", () => {
