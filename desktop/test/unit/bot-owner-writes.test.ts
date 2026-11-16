@@ -1,7 +1,7 @@
 // M7-S60b (S59 review F1): the collection writes that callers made straight on another collaborator's field are named transitions on the
 // owner now: `BotSubagentRows.queueNote` -> `BotDelivery.queueNote`, `BotWorkers.endTaskHandoff` / `takeManagedHandback`,
 // `BotGuests.offerPicks` / `forgetPicks`, `BotGroup.dropPartner`, `BotSubagentRows.markDirty`. Each writes its one field and no other.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Bot } from "../../src/core/bot";
@@ -100,5 +100,45 @@ describe("the other owners", () => {
     const rows = make().subagentRowBook;
     rows.markDirty("s1"); rows.markDirty("s2"); rows.markDirty("s1");
     expect([...rows.dirtySubagents]).toEqual(["s1", "s2"]);
+  });
+});
+
+describe("HeadEvents: the report of a worker that owns a hand-off goes back as that hand-off's reply", () => {
+  function report(taskId: string | undefined, setup: (w: Bot["workers"]) => void) {
+    const b = make("codex") as any;
+    const turn: any = { ended: [], conducted: false, handoffId: null };
+    vi.spyOn(b, "backgroundTurn").mockReturnValue(turn);
+    vi.spyOn(b.workers, "relayIfCallInWork").mockImplementation(() => {});
+    setup(b.workers);
+    b.onItem({} as any, { kind: "backgroundTurn", taskId });
+    return { turn, w: b.workers as Bot["workers"] };
+  }
+
+  it("a hand-off that waits for its hand-back: the turn is conducted for it, and both routes are used up", () => {
+    const { turn, w } = report("t1", (workers) => { workers.managedTaskHandoffs.set("t1", "h1"); workers.managedTaskHandoffs.set("t2", "h2"); workers.managedHandbacks.add("h1"); workers.managedHandbacks.add("h2"); });
+    expect(turn.ended).toEqual(["t1"]);
+    expect(turn.conducted).toBe(true);
+    expect(turn.handoffId).toBe("h1");
+    expect([...w.managedTaskHandoffs]).toEqual([["t2", "h2"]]);
+    expect([...w.managedHandbacks]).toEqual(["h2"]);
+  });
+
+  it("a hand-off that no hand-back waits for: the worker's route is dropped, the turn is not conducted", () => {
+    const { turn, w } = report("t1", (workers) => { workers.managedTaskHandoffs.set("t1", "h1"); });
+    expect(turn.ended).toEqual(["t1"]);
+    expect(turn.conducted).toBe(false);
+    expect(turn.handoffId).toBeNull();
+    expect(w.managedTaskHandoffs.size).toBe(0);
+  });
+
+  it("a worker that owns no hand-off, or a report with no worker id, leaves every route alone", () => {
+    const a = report("t9", (workers) => { workers.managedTaskHandoffs.set("t1", "h1"); workers.managedHandbacks.add("h1"); });
+    expect(a.turn.conducted).toBe(false);
+    expect([...a.w.managedTaskHandoffs]).toEqual([["t1", "h1"]]);
+    expect([...a.w.managedHandbacks]).toEqual(["h1"]);
+    const b = report(undefined, (workers) => { workers.managedTaskHandoffs.set("t1", "h1"); workers.managedHandbacks.add("h1"); });
+    expect(b.turn.ended).toEqual([]);
+    expect(b.turn.conducted).toBe(false);
+    expect([...b.w.managedHandbacks]).toEqual(["h1"]);
   });
 });
