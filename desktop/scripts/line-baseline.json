@@ -1,5 +1,5 @@
 {
-  "about": "Product files over 800 lines and the size each had when M7-S00 was made (main ffadc235). One entry per line, sorted by path, so a split card edits only its own line: it lowers the number, and the last card of a file removes the entry. A file not listed here may not pass 800 lines. desktop/src/main/main.ts is frozen on purpose (not split, user 2026-11-16): its number stays. Checked by desktop/scripts/check-lines.mjs.",
+  "about": "The one product file allowed over 800 lines: desktop/src/main/main.ts (1169 lines), frozen on purpose (Botling 2 only, not split, user 2026-11-16). Its number stays; no card lowers or removes the entry, and the check fails if the file grows. Every other product file may have at most 800 lines, and a file not listed here that passes 800 fails the check. Checked by desktop/scripts/check-lines.mjs, which CI runs in the desktop job (npm run check:lines).",
   "files": {
     "desktop/src/main/main.ts": 1169
   },

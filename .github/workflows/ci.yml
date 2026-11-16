@@ -129,6 +129,10 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: npm run check:shell-version -- "${BASE_SHA:-0}" HEAD
+      # M7-S109: no product file over 800 lines except the frozen desktop/src/main/main.ts (scripts/line-baseline.json holds only that entry).
+      - name: Product file size gate
+        run: npm run check:lines
+        if: ${{ !cancelled() }}
       # npm run typecheck is incremental (.cache/tsc); the build info stores content hashes, so a cache from an older
       # commit is safe and only the changed files are checked again.
       - uses: actions/cache@v4
