@@ -14,7 +14,8 @@
 // This is the only way the app replaces itself without electron-updater (main/updates.ts), which installs
 // released versions: notices about those are announced by the core (core/self-update.ts).
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
 import { join, resolve } from "node:path";
 import { writeFileAtomic } from "../../../src/core/durable/atomic";
 
@@ -40,16 +41,59 @@ export interface BuildInfo {
    * Two builds of one commit (dirty rebuilds) differ by this; absent in a state file an older build wrote.
    */
   builtAt?: number | null;
+  /**
+   * sha256 of its app.asar (hex), taken when the install started, for the requested build. When both sides have it, it
+   * alone says whether two bundles of one label are one build: a rebuild of the same commit differs by it, and a copy
+   * that lost the asar's time does not.
+   */
+  asarSha256?: string | null;
 }
 
 /** Builds closer than this count as one build (a copy may round the time). */
 const BUILT_AT_SLACK_MS = 2_000;
 
-/** Whether two bundles are one build: the same version, commit and dirtiness, and (when both know it) built at the same time. */
+/** Whether two bundles have one label: the same version, commit and dirtiness. */
+export function sameLabel(a: BuildInfo, b: BuildInfo): boolean {
+  return a.version === b.version && (a.commit ?? null) === (b.commit ?? null) && !!a.dirty === !!b.dirty;
+}
+
+/**
+ * Whether two bundles are one build: the same label and, when both know the sha256 of their app.asar, the same content; else
+ * (an older state file, a bundle without an asar) built at the same time.
+ */
 export function sameBuild(a: BuildInfo, b: BuildInfo): boolean {
-  if (a.version !== b.version || (a.commit ?? null) !== (b.commit ?? null) || !!a.dirty !== !!b.dirty) return false;
+  if (!sameLabel(a, b)) return false;
+  if (typeof a.asarSha256 === "string" && typeof b.asarSha256 === "string") return a.asarSha256 === b.asarSha256;
   if (typeof a.builtAt === "number" && typeof b.builtAt === "number") return Math.abs(a.builtAt - b.builtAt) <= BUILT_AT_SLACK_MS;
   return true;
+}
+
+const asarHashes = new Map<string, string | null>();
+/** sha256 of the bundle's app.asar (hex), or null when it has none. Kept per file, size, time and inode: a poll does not read it again. */
+export function asarSha256(bundle: string): string | null {
+  const file = join(bundle, "Contents", "Resources", "app.asar");
+  let stat: Stats;
+  try { stat = statSync(file); } catch { return null; }
+  const key = `${file}\0${stat.size}\0${stat.mtimeMs}\0${stat.ino}`;
+  if (asarHashes.has(key)) return asarHashes.get(key)!;
+  let hash: string | null = null;
+  try {
+    const fd = openSync(file, "r");
+    try {
+      const sum = createHash("sha256");
+      const chunk = Buffer.allocUnsafe(1 << 20);
+      for (let n = readSync(fd, chunk, 0, chunk.length, null); n > 0; n = readSync(fd, chunk, 0, chunk.length, null)) sum.update(chunk.subarray(0, n));
+      hash = sum.digest("hex");
+    } finally { closeSync(fd); }
+  } catch { hash = null; }
+  if (asarHashes.size >= 16) asarHashes.clear();
+  asarHashes.set(key, hash);
+  return hash;
+}
+
+/** The build as it is on disk now, with the hash of its app.asar: what an install that starts now is going to copy. */
+export function withAsarHash(build: BuildInfo): BuildInfo {
+  return { ...build, asarSha256: asarSha256(build.path) };
 }
 
 /**
@@ -57,8 +101,11 @@ export function sameBuild(a: BuildInfo, b: BuildInfo): boolean {
  * nothing was installed) or "other". The running bundle is what decides, never what the install asked for.
  */
 export function whichBuild(running: BuildInfo, state: { from: BuildInfo; to: BuildInfo }): "to" | "from" | "other" {
-  if (sameBuild(running, state.to)) return "to";
-  return sameBuild(running, state.from) ? "from" : "other";
+  // The requested build carries the hash of its asar from when the install started; the running bundle is read for it only
+  // when its label is the requested one (a different label needs no hash to be told apart).
+  const seen = typeof state.to.asarSha256 === "string" && typeof running.asarSha256 !== "string" && sameLabel(running, state.to) ? withAsarHash(running) : running;
+  if (sameBuild(seen, state.to)) return "to";
+  return sameBuild(seen, state.from) ? "from" : "other";
 }
 
 /** "2.0.0 (abc1234)", "2.0.0 (abc1234, uncommitted changes)". */
