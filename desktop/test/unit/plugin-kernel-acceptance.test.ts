@@ -24,7 +24,7 @@ import type { Contribution } from "../../src/core/plugins/contributions";
 import { API_VERSION } from "../../src/core/plugins/manifest";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
-import { PROTOCOL_VERSION, type BotView } from "../../src/contract";
+import { PROTOCOL_VERSION, type BotView, type PluginsView } from "../../src/contract";
 import { Client } from "../../src/renderer/client";
 import { FrameBroker, registerPluginFrame } from "../../src/renderer/frame-broker";
 import { pluginFrameHost } from "../../src/renderer/plugin-frame-host";
@@ -34,11 +34,21 @@ import { startChatPlugin } from "../chat-plugin-host";
 import { INSERT_QUOTE, rendererKernel } from "../../src/renderer/renderer-kernel";
 import { writeFixturePlugins } from "../kernel-goldens";
 import { deferred, flush, manualTimers, seeded } from "../kernel-driver";
+import { ruleWatcher } from "../kernel-invariants";
+import { rendererKernelRun } from "../kernel-renderer-run";
 import { desktop, envCount } from "../helpers";
 
 const RUNS = envCount("KERNEL_ACCEPTANCE_RUNS", 500); // CI lowers it on pull requests
 const FIRST_SEED = 1001;
 const ONE = Number(process.env.KERNEL_ACCEPTANCE_SEED ?? "") || null;
+/** One check's time budget: a random run is a few ms (the jsdom frame run about 40 ms), so it grows with the run count (10,000 on the Linux host for the M7-11a evidence). */
+const BUDGET = ONE ? 20_000 : Math.max(120_000, RUNS * 100);
+/**
+ * The jsdom frame run opens real iframes: each run costs about 35 ms and about 1 MB of heap that jsdom does not give back, so a
+ * 10,000-run request (M7-11a, Linux host) stopped a 4 GB worker at about 4,250 runs. It runs the first FRAME_RUNS seeds at most;
+ * the kernel, list, host and renderer-kernel runs take all RUNS.
+ */
+const FRAME_RUNS = Math.min(RUNS, 1_000);
 const seeds = () => (ONE ? [ONE] : Array.from({ length: RUNS }, (_, index) => FIRST_SEED + index));
 /** Run counts and the most steps an unload-all took, per check, for the evidence file (printed at the end). */
 const evidence: Record<string, unknown> = {};
@@ -128,48 +138,6 @@ function setDeclarations(): PluginDeclaration[] {
       ...(plugin.name === "zed.tools" ? { requires: { services: [QUOTE] } } : {}),
     })),
   ];
-}
-
-/**
- * The kernel rules as invariants on the event log: P4/K1/D64 (a provider or slot owner begins undoing only once everything
- * depending on it is absent), P3/K2/D65 (a load starts only with its providers and slot owners active), K2 at each
- * accepted contribution. Returns the problems found.
- */
-function ruleWatcher(declarations: PluginDeclaration[], kernel: () => Kernel | undefined, problems: string[]) {
-  const byName = new Map(declarations.map((declaration) => [declaration.name, declaration]));
-  return (event: KernelEvent) => {
-    const k = kernel();
-    if (!k) return;
-    const declared = byName.get(event.plugin);
-    if (event.action === "BeginUnload") {
-      const provided = declared?.provides?.services ?? [];
-      const owned = declared?.provides?.slots ?? [];
-      const contributing = new Set(k.allContributions().filter((c) => owned.includes(c.slot)).map((c) => c.plugin));
-      for (const other of declarations) {
-        if (other.name === event.plugin) continue;
-        const depends = (other.requires?.services ?? []).some((service) => provided.includes(service)) || (other.contributes?.slots ?? []).some((slot) => owned.includes(slot)) || contributing.has(other.name);
-        if (depends && k.state(other.name) !== "absent") problems.push(`${event.plugin} began undoing while ${other.name} (depending on it) was ${k.state(other.name)}`);
-      }
-    } else if (event.action === "StartLoad") {
-      for (const service of declared?.requires?.services ?? []) {
-        const provider = declarations.find((d) => d.provides?.services?.includes(service))?.name;
-        if (!provider || k.state(provider) !== "active") problems.push(`${event.plugin} started loading while ${service}'s provider was ${provider ? k.state(provider) : "missing"}`);
-      }
-      for (const slot of declared?.contributes?.slots ?? []) {
-        const owner = declarations.find((d) => d.provides?.slots?.includes(slot))?.name;
-        if (owner && owner !== event.plugin && k.state(owner) !== "active") problems.push(`${event.plugin} started loading while ${slot}'s owner was ${k.state(owner)}`);
-      }
-    } else if (event.action === "Register" && !event.note && event.registration?.startsWith("contribution:")) {
-      const slot = event.registration.slice("contribution:".length, event.registration.lastIndexOf("#"));
-      const owner = k.slotOwner(slot);
-      if (!owner || (owner !== event.plugin && k.state(owner) !== "active")) problems.push(`${event.plugin}'s contribution to ${slot} was accepted while its owner was ${owner ? k.state(owner) : "missing"}`);
-    }
-    // P2 as the model states it (NoOrphan), at every step: a held contribution's slot has an owner that is not absent.
-    for (const contribution of k.allContributions()) {
-      const owner = k.slotOwner(contribution.slot);
-      if (!owner || k.state(owner) === "absent") problems.push(`after ${event.action} ${event.plugin}: ${contribution.plugin}'s contribution to ${contribution.slot} outlived its owner`);
-    }
-  };
 }
 
 async function kernelRun(seed: number, maxActions = 40) {
@@ -567,6 +535,7 @@ async function rendererRun(seed: number, maxActions = 20) {
 
 describe("check 2 (no residue, P1) with check 3's invariants, check 5 and check 6, in seeded random runs", () => {
   it(`the kernel: ${RUNS} runs over the plugin set keep P1-P5, K1/D64 and K2/D65 at every step, report each failure once, and unload-all ends with nothing held`, async () => {
+    const started = Date.now();
     let maxSteps = 0, maxRounds = 0, failures = 0, events = 0;
     for (const seed of seeds()) {
       const result = await kernelRun(seed);
@@ -576,26 +545,31 @@ describe("check 2 (no residue, P1) with check 3's invariants, check 5 and check 
       events += result.events;
     }
     expect(failures).toBeGreaterThan(0);
-    evidence.kernel = { runs: seeds().length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + RUNS - 1], maxUnloadAllSteps: maxSteps, maxUnloadAllRounds: maxRounds, reportedFailures: failures, events };
-  }, ONE ? 20_000 : 120_000);
+    evidence.kernel = { runs: seeds().length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + RUNS - 1], maxUnloadAllSteps: maxSteps, maxUnloadAllRounds: maxRounds, reportedFailures: failures, events, ms: Date.now() - started };
+  }, BUDGET);
 
   it(`the contribution list: ${RUNS} runs of enable / disable / reload / reorder hand out the same list as the plugins' own, and unload-all leaves nothing`, async () => {
+    const started = Date.now();
     for (const seed of seeds()) await listRun(seed);
-    evidence.list = { runs: seeds().length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + RUNS - 1] };
-  }, ONE ? 20_000 : 120_000);
+    evidence.list = { runs: seeds().length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + RUNS - 1], ms: Date.now() - started };
+  }, BUDGET);
 
   it(`the plugin host: ${RUNS} runs of overlapping syncs leave no hook, command, event, exposed method or disposer behind`, async () => {
+    const started = Date.now();
     let maxRounds = 0, instances = 0;
     for (const seed of seeds()) { const result = await hostRun(seed); maxRounds = Math.max(maxRounds, result.rounds); instances += result.instances; }
     expect(instances).toBeGreaterThan(seeds().length);
-    evidence.host = { runs: seeds().length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + RUNS - 1], maxUnloadAllRounds: maxRounds, instances };
-  }, ONE ? 20_000 : 120_000);
+    evidence.host = { runs: seeds().length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + RUNS - 1], maxUnloadAllRounds: maxRounds, instances, ms: Date.now() - started };
+  }, BUDGET);
 
-  it(`the renderer: ${RUNS} runs of quoters and plugin frames coming and going leave the renderer's kernel and the broker empty`, async () => {
+  it(`the renderer: ${FRAME_RUNS} runs of quoters and plugin frames coming and going leave the renderer's kernel and the broker empty`, async () => {
+    const started = Date.now();
     let frames = 0;
+    const frameSeeds = seeds().slice(0, FRAME_RUNS);
+    // `botling.chat` provides the quote service for every run (M7-07b): started once for the test, not per run.
     const chat = await startChatPlugin();
     try {
-      for (const seed of seeds()) frames += (await rendererRun(seed)).frames;
+      for (const seed of frameSeeds) frames += (await rendererRun(seed)).frames;
     } finally {
       await chat.stop();
     }
@@ -603,8 +577,23 @@ describe("check 2 (no residue, P1) with check 3's invariants, check 5 and check 
     expect(rendererKernel.holdsNothingOf(CHAT_PLUGIN)).toBe(true);
     expect(rendererKernel.providerOf(INSERT_QUOTE)).toBeNull();
     await expect(quoteIntoComposer(BOT, "x", false)).resolves.toBe(false);
-    evidence.renderer = { runs: seeds().length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + RUNS - 1], frames };
-  }, ONE ? 20_000 : 120_000);
+    evidence.renderer = { runs: frameSeeds.length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + frameSeeds.length - 1], frames, ms: Date.now() - started };
+  }, BUDGET);
+
+  it(`the renderer's kernel with the plugin feed: ${RUNS} runs of random plugin views, in-page and framed plugins on slots under either name, and the shell and chat surface coming and going keep P1-P5, K1/K2, the alias and feed invariants, and unload-all ends with nothing held`, async () => {
+    const started = Date.now();
+    const base = (JSON.parse(readFileSync(join(desktop, "test", "fixtures", "kernel-goldens", "plugins-list.json"), "utf8")) as PluginsView).plugins[0]!;
+    const input = { plugins: PLUGINS.map((plugin) => plugin.name), base };
+    const total = { events: 0, rounds: 0, failures: 0, aliasShown: 0, feedCompared: 0, frameEntries: 0, componentEntries: 0, shellUnloads: 0, chatUnloads: 0, settingsUnloads: 0 };
+    for (const seed of seeds()) {
+      const result = await rendererKernelRun(seed, input);
+      for (const key of Object.keys(total) as (keyof typeof total)[]) total[key] += result[key];
+    }
+    // The run did something: undo failures, slots that showed entries under both names, feed rows compared, both kinds of entry,
+    // and the shell and the chat surface unloaded while active.
+    for (const key of Object.keys(total) as (keyof typeof total)[]) expect(total[key], key).toBeGreaterThan(0);
+    evidence.rendererKernel = { runs: seeds().length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + RUNS - 1], ...total, ms: Date.now() - started };
+  }, BUDGET);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -7,8 +7,8 @@
 // bodies are what they were in `Bot` and say `this.options`, `this.head`, `this.finishTurn(...)`; the BRIDGE BLOCK below is every
 // name it borrows, one forwarder each: the shared names through the BotContext, `Bot`'s own through the host. `Bot` keeps a
 // delegate for every name moved here that something outside this class reaches, and an accessor for every field.
-// Not moved (still in `Bot`): `begin`, because a test patches `begin` on the instance and `routeTurn` must reach that patch;
-// `redrawQueued` (the decisions card).
+// Not moved (still in `Bot`): `redrawQueued` (the decisions card). `begin` is `launch` here (M7-S60) and stays in `Bot` as its delegate,
+// because a test patches `begin` on the instance and `routeTurn` must reach that patch.
 import { ContractError, type Event, type ResultOf } from "../../contract";
 import { AgyAcpHead } from "../agent/agy-acp";
 import { CodexHead } from "../agent/codex";
@@ -55,6 +55,7 @@ export class TurnControl {
   private get claimHold() { return this.host.claimHold; }
   private newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn { return this.host.newTurn(origin, words, userId, ids); }
   private begin(turn: Turn, head?: AgentHead) { this.host.begin(turn, head); }
+  private deliver(turn: Turn, given?: AgentHead) { return this.host.deliver(turn, given); }
   private delivered(turn: Turn) { this.host.delivered(turn); }
   private redrawQueued(turn: Turn) { this.host.redrawQueued(turn); }
   private turnImages(turn: Turn): string[] { return this.host.turnImages(turn); }
@@ -175,6 +176,23 @@ export class TurnControl {
   close() { this.turn = null; }
 
   // ---- Moved from `Bot` ----
+  /** Makes `turn` the one under way and sends it (waking the bot if it sleeps): the body of `Bot.begin`, which stays there as its delegate. */
+  launch(turn: Turn, head?: AgentHead) {
+    this.start(turn);
+    this.delivered(turn);
+    this.redrawQueued(turn);
+    this.clearIdle();
+    if (turn.origin !== "tidy") {
+      this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
+      this.updated();
+    } else if (turn.callIn) this.updated();
+    // Handing the turn to the agent starts its process (ps for the process ledger, locks, fsyncs, the
+    // recent-chat briefing): synchronous work that took seconds on a busy machine. A message you send is
+    // accepted once its line is saved, so chat.send must answer first; deliver re-checks the turn.
+    if (turn.origin === "user") setImmediate(() => { void this.deliver(turn, head); });
+    else void this.deliver(turn, head);
+  }
+
   /** Where a new turn goes: now, joined with the one under way, or after it. The turn that carries it. */
   route(turn: Turn): Turn {
     if (this.options.deferTurn && !turn.released) {
