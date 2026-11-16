@@ -81,6 +81,9 @@ export class InPageHost {
     });
   }
 
+  /** The list the loader trusts (what the build shipped, or the one given): `approveRoute(source, host.feManifest)` asks the same list. */
+  get feManifest(): FeManifest { return this.manifest; }
+
   /** The plugins the loader refused (not listed, or not the shipped code), for the frame host (a later card) to run in a frame. */
   offered(): readonly { name: string; codeHash: string }[] { return this.offers; }
 

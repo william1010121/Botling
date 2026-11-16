@@ -1,5 +1,5 @@
 // The reused chat page in a frame: the app page's side of it (moved out of App.tsx; the lines below are unchanged).
-import { actionPicks } from "../answer-picks";
+import { chatAnswerCommand, sendChatAnswer } from "./card-answer";
 import { composerBarMessage } from "../ComposerBar";
 import { inputTrace } from "../input-trace";
 import { ReportViewer } from "../ReportViewer";
@@ -388,20 +388,9 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = nu
           if (chat && typeof action.messageID === "string") void client.request({ type: "chat.ignoreQuestion", botId: chat.botId, messageId: action.messageID }).catch(onError);
           return;
         case "answer": {
-          // A component's answer may bring pictures (`{name, base64}`), kept as attachments by the core.
-          const images = Array.isArray(action.images) ? (action.images as unknown[]).flatMap((entry) => {
-            const image = entry as { name?: unknown; base64?: unknown };
-            return typeof image?.name === "string" && typeof image.base64 === "string" && image.base64 ? [{ name: image.name.slice(0, 255) || "picture.png", base64: image.base64 }] : [];
-          }).slice(0, 10) : [];
-          // A question group's answers, one per question; the core writes the bot's message from them.
-          const picks = actionPicks(action.picks);
-          if (!chat || typeof action.messageID !== "string" || typeof action.text !== "string") return;
-          if (picks?.length) {
-            void client.request({ type: "chat.answer", botId: chat.botId, messageId: action.messageID, text: action.text, picks }).catch(onError);
-            return;
-          }
-          if (!action.text.trim() && !images.length) return;
-          void client.request({ type: "chat.answer", botId: chat.botId, messageId: action.messageID, text: action.text, ...(images.length ? { images } : {}) }).catch(onError);
+          // The card answer (a tool approval is one): sent only while the chat plugin is the code the build shipped (card-answer.ts, Q-M7-C5).
+          const command = chatAnswerCommand(action, chat?.botId);
+          if (command) sendChatAnswer(command, { client, onError });
           return;
         }
         case "setReaction": {

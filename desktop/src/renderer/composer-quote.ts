@@ -1,28 +1,30 @@
 // A plugin frame's `ccb.composer.insertQuote` (the Note's "ask about this block"): text put into a bot's input box in the
-// chat page. It is the service `composer.insertQuote` of the chat surface in the renderer's plugin kernel
-// (renderer-kernel.ts): App provides it while it is up (it opens the Note's floating chat and asks the chat page,
-// `composerQuote`); plugin-frame-host.ts calls it for the frame's plugin through shell/frame-services.ts (bound from the plugin's declared `uses`, M7-04b),
-// only for the frame's own bot (frame-broker.ts checks that). With no provider the call finds nothing and the quote is not inserted.
-import { CHAT_SURFACE, INSERT_QUOTE, rendererKernel } from "./renderer-kernel";
+// chat page. It is the service `composer.insertQuote` that the chat plugin (`botling.chat`, plugins/chat/index.ts) provides in the
+// renderer's plugin kernel (M7-07b; it was the `:chat` stand-in of renderer-kernel.ts): the plugin's provider is `chatQuoteService`
+// below, which hands the call to the quoter App registers while it is up (`setComposerQuoter`, it opens the Note's floating chat and
+// asks the chat page, `askChatToQuote`). plugin-frame-host.ts calls the service for the frame's plugin through
+// shell/frame-services.ts (bound from the plugin's declared `uses`, M7-04b), only for the frame's own bot (frame-broker.ts checks that).
+// With the plugin refused, failed or unloaded, or with no page that has an input box, the call finds nothing and the quote is not inserted.
+import { CHAT_PLUGIN, INSERT_QUOTE } from "./chat-names";
+import { rendererKernel } from "./renderer-kernel";
 
 type Quoter = (botId: string, text: string, focus: boolean) => Promise<boolean>;
 let current: Quoter | null = null;
 
-/** App's: writes `text` into bot `botId`'s input box (the chat surface provides the service); returns the unregister. */
+/** App's: writes `text` into bot `botId`'s input box; returns the unregister. One quoter at a time: a newer one replaces the one before, and the older one's unregister leaves the newer in place. */
 export function setComposerQuoter(next: Quoter): () => void {
-  // One provider at a time: the one before goes first (every undo here is synchronous, so it is gone on return).
-  if (rendererKernel.state(CHAT_SURFACE) !== "absent") void rendererKernel.requestUnload(CHAT_SURFACE);
   current = next;
-  void rendererKernel.load(CHAT_SURFACE, (plugin) => { rendererKernel.provide(plugin, INSERT_QUOTE, next); });
-  return () => {
-    if (current !== next) return;
-    current = null;
-    void rendererKernel.requestUnload(CHAT_SURFACE);
-  };
+  return () => { if (current === next) current = null; };
 }
 
-/** Whether the text went into the bot's input box (false: no page has one). `caller`: the plugin whose frame asks. */
-export async function quoteIntoComposer(botId: string, text: string, focus: boolean, caller = CHAT_SURFACE): Promise<boolean> {
+/** What `botling.chat` provides as `composer.insertQuote`: the registered quoter's answer, or false while no page has an input box (read at each call, so a quoter that went is not called). */
+export function chatQuoteService(botId: string, text: string, focus: boolean): Promise<boolean> {
+  const quoter = current;
+  return quoter ? quoter(botId, text, focus) : Promise.resolve(false);
+}
+
+/** Whether the text went into the bot's input box (false: no page has one, or the chat plugin is away). `caller`: the plugin whose frame asks. */
+export async function quoteIntoComposer(botId: string, text: string, focus: boolean, caller = CHAT_PLUGIN): Promise<boolean> {
   const called = rendererKernel.call<Promise<boolean>>(caller, INSERT_QUOTE, botId, text, focus);
   if (called.absent) return false;
   return (await called.value) === true;
