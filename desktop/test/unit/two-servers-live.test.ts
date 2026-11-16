@@ -15,7 +15,9 @@ import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FrameSplitter, packFrame, type Entry, type Message, type MessageOf, type Slot } from "../../src/protocol";
 import { decodeFrame, encodeFrame } from "../../src/protocol/frame";
+import { readEntries } from "../../src/server/log";
 import { verifyChain } from "../../src/server/log/chain";
+import type { Db } from "../../src/server/store";
 import { LiveReceiver } from "../../src/server/live";
 import { until } from "../helpers";
 import type { FaultProxy } from "../support/fault-proxy";
@@ -42,8 +44,9 @@ const headOf = (server: TestServer) => withDb(server, (db) => {
   return row ? { logId: String(row.logId), seq: Number(row.head) } : null;
 });
 const entriesOf = (server: TestServer, logId: string) => withDb(server, (db) => new Map(
-  (db.prepare("SELECT seq, hash, kind, body FROM entries WHERE stream = ? AND logId = ?").all(stream, logId) as Array<{ seq: number; hash: string; kind: string; body: string }>)
-    .map((row) => [Number(row.seq), { hash: String(row.hash), kind: String(row.kind), body: String(row.body) }]),
+  readEntries(db as unknown as Db, stream, 1, { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: Number.MAX_SAFE_INTEGER }).entries
+    .filter((entry) => entry.logId === logId)
+    .map((entry) => [entry.seq, { hash: entry.hash, kind: entry.kind, body: JSON.stringify(entry.body) }]),
 ));
 
 /** A front end on a server's local socket that follows the bot: entries checked, live frames through a LiveReceiver. */

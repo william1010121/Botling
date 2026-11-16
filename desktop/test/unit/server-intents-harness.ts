@@ -7,6 +7,7 @@ import { effectCheckpointSink } from "../../src/server/effects";
 import { IntentRuntime, type UploadedFiles } from "../../src/server/intents";
 import { LiveChannel } from "../../src/server/live";
 import type { ReceiveStatus } from "../../src/server/slots";
+import { readEntries } from "../../src/server/log";
 import type { Db, Writer } from "../../src/server/store";
 import { FakeTurnEngine, type FakeTurnEngineOptions } from "../fixtures/fake-turn-engine";
 import { EPOCH_A, memoryStore } from "./server-slots-harness";
@@ -14,8 +15,9 @@ import { EPOCH_A, memoryStore } from "./server-slots-harness";
 export interface StoredEntry { stream: string; seq: number; kind: string; body: Record<string, unknown>; slot: unknown }
 
 export function entriesOf(db: Db, stream: string): StoredEntry[] {
-  return db.prepare("SELECT stream, seq, kind, body, slot FROM entries WHERE stream = ? ORDER BY seq").all(stream)
-    .map((row) => ({ stream: String(row.stream), seq: Number(row.seq), kind: String(row.kind), body: JSON.parse(String(row.body)), slot: row.slot ? JSON.parse(String(row.slot)) : null }));
+  // Through readEntries: snapshot kinds are stored as diffs (src/server/log/log-store.ts).
+  return readEntries(db, stream, 1, { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: Number.MAX_SAFE_INTEGER }).entries
+    .map((entry) => ({ stream, seq: entry.seq, kind: entry.kind, body: entry.body, slot: entry.slot ?? null }));
 }
 
 export const kinds = (db: Db, stream: string) => entriesOf(db, stream).map((entry) => entry.kind);
