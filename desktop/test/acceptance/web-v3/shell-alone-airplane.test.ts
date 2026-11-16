@@ -99,6 +99,13 @@ async function botOpen(page: Page): Promise<void> {
   await page.locator(".fallback-bots button[aria-pressed=true]").first().waitFor({ timeout: 60_000 });
 }
 
+/** The id of the bot open in the fallback: the chat its box sends to (a fresh server's first bot is not the harness's MAIN). */
+async function openBotId(page: Page): Promise<string> {
+  const id = await page.locator(".fallback-bots button[aria-pressed=true]").first().getAttribute("data-bot");
+  if (!id) throw new Error("no bot is open in the fallback");
+  return id;
+}
+
 /** Waits for the fallback (the page's chat column is the shell's own screen) and an open bot. */
 async function fallbackUp(page: Page): Promise<void> {
   await page.locator(`.chat-fallback ${FALLBACK_BOX}`).waitFor({ timeout: 60_000 });
@@ -211,6 +218,7 @@ async function oneRun(engine: string, type: BrowserType, run: number): Promise<R
     loader = watchLoader(page);
     await pairPage(page, server, dataDir);
     await assertShellAlone(page, dataDir, loader, { sheet: run === 1 });
+    const botId = await openBotId(page);
     for (const name of loader.map((line) => /in-page loader refused "([^"]+)"/.exec(line)?.[1])) if (name) refusedBy.add(name);
 
     let i = 0;
@@ -253,13 +261,13 @@ async function oneRun(engine: string, type: BrowserType, run: number): Promise<R
       }
     }
     // Settle: online, server up; every accepted command reaches the server.
-    await expect.poll(async () => { const m = await server!.messages(); return accepted.filter((t) => countUser(m, t) === 0).length; }, { timeout: 120_000, interval: 1_000 }).toBe(0);
+    await expect.poll(async () => { const m = await server!.messages(botId); return accepted.filter((t) => countUser(m, t) === 0).length; }, { timeout: 120_000, interval: 1_000 }).toBe(0);
     await page.waitForTimeout(2_000);
     await record();
     // Still the shell alone at the end: no frame came, no plugin row appeared.
     expect(pluginRows(dataDir), "a plugin row appeared besides the app's library").toEqual([]);
     expect(await page.locator("iframe").count(), "a frame appeared").toBe(0);
-    const messages = await server.messages();
+    const messages = await server.messages(botId);
     const users = messages.filter((m) => m.role === "user").map((m) => m.text);
     const lost = accepted.filter((t) => countUser(messages, t) === 0);
     const doubled = [...new Set(users.filter((t, k) => users.indexOf(t) !== k))];
@@ -290,9 +298,17 @@ describe("M7-08: the shell alone", () => {
         await pairPage(page, server, dataDir);
         await assertShellAlone(page, dataDir, loader, { sheet: true });
         // One message through the fallback reaches the server once.
+        const botId = await openBotId(page);
         await send(page, "setup-1");
         await shown(page, "setup-1");
-        await expect.poll(async () => countUser(await server!.messages(), "setup-1"), { timeout: 30_000 }).toBe(1);
+        try {
+          await expect.poll(async () => countUser(await server!.messages(botId), "setup-1"), { timeout: 30_000 }).toBe(1);
+        } catch (error) {
+          const open = [botId];
+          const rows = await page.locator(".fallback-lines li").evaluateAll((all) => all.map((one) => `${one.getAttribute("data-role")}/${one.getAttribute("data-queued")}/${one.textContent}`)).catch(() => []);
+          const there = open[0] ? await server.messages(open[0]) : [];
+          throw new Error(`setup-1 never reached the server once: open bot ${JSON.stringify(open)}, its chat ${JSON.stringify(there.slice(-3))}, rows ${JSON.stringify(rows)}: ${String(error).slice(0, 120)}`);
+        }
       } finally {
         await context?.close().catch(() => undefined);
         await server?.stop("SIGTERM").catch(() => undefined);
