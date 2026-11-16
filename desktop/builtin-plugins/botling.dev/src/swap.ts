@@ -198,7 +198,8 @@ recover() {
   case "$PHASE" in
     before) [ -e "$TARGET" ] || putback ;; # a signal that waited for "mv $TARGET $BACKUP" to finish
     launched) say "the new build was already opened; leaving it to come up"; return 0 ;;
-    swap) say "putting the old app back"; rm -rf "$TARGET"; putback ;;
+    # $TARGET is the new build's copy only while the backup is still there (else it is the old app, already put back).
+    swap) if [ -z "$BACKUP" ] || [ -e "$BACKUP" ]; then say "putting the old app back"; rm -rf "$TARGET"; putback; fi ;;
     rollback) say "finishing the roll back"; roll_back ;;
   esac
   echo "the install script ended early at step: $STEP" > "$ROLLED"
@@ -225,8 +226,8 @@ fi
 # From here $TARGET is empty or the new build's partial copy, so recover may remove it and put the old app back.
 PHASE="swap"
 if ! /usr/bin/ditto "$NEW" "$TARGET"; then
-  OK=1; say "could not copy the new build; putting the old one back"
-  rm -rf "$TARGET"; putback; echo "could not copy the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1
+  say "could not copy the new build; putting the old one back"
+  rm -rf "$TARGET"; putback; OK=1; echo "could not copy the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1
 fi
 rm -f "$HEALTHY"
 say "opening the new build"
@@ -324,7 +325,8 @@ recover() {
   case "$PHASE" in
     before) [ -e "$TARGET" ] || putback ;; # a signal that waited for "mv $TARGET $BACKUP" to finish
     launched) say "the new build was already opened; leaving it to come up"; return 0 ;;
-    swap) say "putting the old app back"; rm -rf "$TARGET"; putback ;;
+    # $TARGET is the new build's copy only while the backup is still there (else it is the old app, already put back).
+    swap) if [ -z "$BACKUP" ] || [ -e "$BACKUP" ]; then say "putting the old app back"; rm -rf "$TARGET"; putback; fi ;;
     rollback) say "finishing the roll back"; roll_back ;;
   esac
   echo "the install script ended early at step: $STEP" > "$ROLLED"

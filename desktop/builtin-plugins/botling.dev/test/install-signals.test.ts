@@ -54,7 +54,7 @@ function rig(dir: string, v3 = true) {
   const tools = {
     BOTLING_TEST_OPEN: tool("open", `echo "$*" >> "${opened}"\n[ -n "$MAKE_HEALTHY" ] && touch "$MAKE_HEALTHY"\nexit 0`),
     // SLOW_DITTO: the copy takes a second, as a real one does.
-    BOTLING_TEST_DITTO: tool("ditto", `[ -n "$SLOW_DITTO" ] && sleep 1\ncp -R "$1" "$2"`),
+    BOTLING_TEST_DITTO: tool("ditto", `[ -n "$SLOW_DITTO" ] && sleep 1\ncp -R "$1" "$2"\n[ -z "$FAIL_DITTO" ]`),
     BOTLING_TEST_CODESIGN: tool("codesign", "exit 0"),
     BOTLING_TEST_XATTR: tool("xattr", "exit 0"),
   };
@@ -183,6 +183,18 @@ describe("review probes: a signal at the edges of a step never loses the old app
       expect(r.openedLines().at(-1)).toContain(r.from.path);
     }, 20_000);
   }
+
+  it("v3: a SIGTERM that lands right after a failed copy put the old app back does not remove it", async () => {
+    const dir = tempDir("install-probe");
+    const r = rig(dir);
+    const args = r.make(botlingd(0).pid!);
+    const script = r.start(args, { PATH: r.path, FAIL_DITTO: "1", SLOW_MV_TO: r.from.path, MAKE_HEALTHY: join(dir, "never") });
+    await script.until("slow mv to");
+    process.kill(script.child.pid!, "SIGTERM");
+    await script.closed;
+    expect(readBuild(r.from.path)?.commit).toBe("aaaaaaa1111");
+    expect(r.openedLines().at(-1)).toContain(r.from.path);
+  });
 
   it("a second SIGTERM while recover puts things back does not stop it half way", async () => {
     const dir = tempDir("install-probe");
