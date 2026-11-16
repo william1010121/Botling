@@ -17,7 +17,7 @@ function book(opts: { botWritten?: boolean; atOnce?: number; granted?: () => boo
     stop: async () => true,
   };
   const workers = new PluginWorkers({
-    world: { granted: opts.granted ?? (() => true), workers: () => port, quota: () => ({ atOnce: opts.atOnce ?? 4 }) },
+    world: { granted: opts.granted ?? (() => true), workers: () => port, made: () => true, quota: () => ({ atOnce: opts.atOnce ?? 4 }) },
     facts: () => ({ name: "p", identity: "a".repeat(64), permissions: ALL, botWritten: opts.botWritten ?? false }),
     ask: () => new Promise<AppAnswer>((resolve) => answers.push(resolve)),
     tell: () => {},
@@ -26,17 +26,20 @@ function book(opts: { botWritten?: boolean; atOnce?: number; granted?: () => boo
 }
 
 describe("PluginWorkers guards the review found untested", () => {
-  it("re-checks the quota once the card is answered: two cards open at once with room for one start exactly one (R4)", async () => {
-    const t = book({ botWritten: true, atOnce: 1 });
+  it("re-checks the quota once the card is answered: the room that was there when the card came is gone when it is answered (R4)", async () => {
+    // One card at a time per plugin (G2), so the room goes another way: the user's setting is lowered while the card waits.
+    const opts = { botWritten: true, atOnce: 2 };
+    const t = book(opts);
     const first = t.workers.start("p", params);
+    await Promise.resolve();
+    t.answers[0]!({ index: 0 });
+    await first;
     const second = t.workers.start("p", params);
     await Promise.resolve();
     expect(t.answers).toHaveLength(2);
-    t.answers[0]!({ index: 0 });
+    opts.atOnce = 1;
     t.answers[1]!({ index: 0 });
-    const results = await Promise.allSettled([first, second]);
-    expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
-    expect(String((results.find((result) => result.status === "rejected") as PromiseRejectedResult).reason)).toContain("workers at work");
+    await expect(second).rejects.toThrow("workers at work");
     expect(t.started).toHaveLength(1);
   });
 

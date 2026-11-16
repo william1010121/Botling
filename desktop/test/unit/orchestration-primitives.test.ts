@@ -62,6 +62,7 @@ async function setup(dir: string, withWorld = true) {
       orchestration: {
         granted: (name: string) => options.grants.has(name),
         workers: (bot: string) => (bot === "main" ? workers.port : "No such bot."),
+        made: () => true,
         quota: () => options.quota,
         specWriters: () => options.specWriters,
       } satisfies OrchestrationWorld,
@@ -285,7 +286,7 @@ function book(overrides: { facts?: () => PluginFacts | null; ask?: (question: Ap
   const told: [string, Record<string, unknown>][] = [];
   const file = overrides.file ?? { text: null };
   const workers = new PluginWorkers({
-    world: { granted: overrides.granted ?? (() => true), workers: () => port },
+    world: { granted: overrides.granted ?? (() => true), workers: () => port, made: () => true },
     facts: overrides.facts ?? (() => ({ name: "p", identity: "a".repeat(64), permissions: ALL, botWritten: false })),
     ask: overrides.ask ?? (async () => ({ index: 0 })),
     tell: (_plugin, _event, data) => told.push(["workerReport", data]),
