@@ -3,7 +3,8 @@
 // checks only (contract `DoctorCheck.tool` is a closed set), so these notes stay on the server's side in M1.
 //
 // - D43: the data folder is on an external disk, so "durable" depends on the enclosure honouring F_FULLFSYNC;
-// - backups: none yet, or the newest is older than two days (the daily backup did not run: the server was not up);
+// - backups (only when daily backups are on, which they are not by default): none yet, or the newest is older than two
+//   days (the daily backup did not run: the server was not up);
 // - a restore: when, from which file, to when, and what that means for commands applied after the backup;
 // - media tools (M2 step 10, D42): what the running server did not find on its PATH (no ffmpeg: no previews, the
 //   original plays), as it recorded in `meta.mediaTools` at start.
@@ -33,16 +34,19 @@ export function newestAnyBackup(backupsDir: string): { path: string; at: number 
   return best;
 }
 
-/** The notes for this data folder; `db` (a reader of server.db) adds the restore note. */
-export function serverNotes(dataDir: string, db: Db | null, now = Date.now(), platform: NodeJS.Platform = process.platform): ServerNote[] {
+/**
+ * The notes for this data folder; `db` (a reader of server.db) adds the restore note. The two backup notes appear only
+ * when `backupsOn` (daily backups are on: `dailyBackupsOn(env)`); with them off, a missing or old backup is nothing to nag about.
+ */
+export function serverNotes(dataDir: string, db: Db | null, now = Date.now(), platform: NodeJS.Platform = process.platform, backupsOn = false): ServerNote[] {
   const notes: ServerNote[] = [];
   const disk = externalDiskNote(dataDir, platform);
   if (disk) notes.push({ id: "external-disk", level: "warning", text: disk });
   const backupsDir = join(dataDir, "backups");
-  const newest = newestAnyBackup(backupsDir);
-  if (!newest) {
+  const newest = backupsOn ? newestAnyBackup(backupsDir) : null;
+  if (backupsOn && !newest) {
     notes.push({ id: "no-backup", level: "warning", text: "There is no backup of server.db yet; botlingd takes one every day while it runs (or run botlingd backup)." });
-  } else if (now - newest.at > OLD_BACKUP_MS) {
+  } else if (newest && now - newest.at > OLD_BACKUP_MS) {
     const days = Math.floor((now - newest.at) / DAY_MS);
     notes.push({ id: "old-backup", level: "warning", text: `The newest backup of server.db is ${days} days old (${iso(newest.at)}); botlingd takes one every day while it runs.` });
   }

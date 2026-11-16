@@ -15,7 +15,7 @@ import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { Core } from "../core/server";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "../core/store/data-dir-lock";
-import { backupCheckMs, DailyBackups } from "./backup-schedule";
+import { backupCheckMs, DailyBackups, removeFutureDailyBackups } from "./backup-schedule";
 import { DbBotStores } from "./botstore";
 import { ContentService } from "./content";
 import { ChunkCache } from "./content/chunk-cache";
@@ -306,12 +306,14 @@ export class Botlingd {
     later.copyChanged = () => { runtime.callIns.retry(); };
     daemon.chatMirror?.start();
     daemon.watchLock();
+    // A daily backup stamped in the future is bogus (it would hold the real ones back): removed whether or not they are on.
+    for (const path of removeFutureDailyBackups(store.backupsDir)) log(`removed a daily backup stamped in the future: ${path}`);
     const schedule = backupCheckMs(env);
     if (schedule) {
       daemon.backups = new DailyBackups({ backupsDir: store.backupsDir, take: () => store.backup("daily"), log, ...schedule });
       daemon.backups.start();
-    } else log("daily backups are off (BOTLING_SERVER_BACKUP_CHECK_MS=0)");
-    for (const note of serverNotes(paths.dataDir, hub.reader())) log(`note (${note.id}): ${note.text}`);
+    } else log("daily backups are off (the default; BOTLING_SERVER_DAILY_BACKUP=1 turns them on)");
+    for (const note of serverNotes(paths.dataDir, hub.reader(), Date.now(), process.platform, schedule !== null)) log(`note (${note.id}): ${note.text}`);
     log(`started: server ${serverId}, data ${paths.dataDir}, ${core.botIds().length} bots, pid ${process.pid}`);
   }
 
