@@ -50,7 +50,8 @@ describe("daily backups are off by default", () => {
   });
 
   it("status says nothing about backups when off; with BOTLING_SERVER_DAILY_BACKUP=1 and none taken it warns", () => {
-    const dataDir = join(root, "default"); // has a pre-migration copy from 2020 and a manual one: "old" if backups were on
+    const dataDir = join(root, "default"); // has a daily and a pre-migration copy from 2020: "old" if backups were on
+    rmSync(join(dataDir, "backups", "server-manual-20991231T000000Z.db"), { force: true }); // a future stamp would look "new"
     const ids = (extra: Record<string, string>) => (JSON.parse(botlingdCommand(dataDir, ["status", "--json"], extra).stdout) as { notes: Array<{ id: string }> }).notes.map((note) => note.id);
     expect(ids({})).not.toContain("old-backup");
     expect(ids({})).not.toContain("no-backup");
