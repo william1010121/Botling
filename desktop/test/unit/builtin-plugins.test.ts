@@ -34,8 +34,8 @@ const registry = (library: string, builtIns: string | null = built) => new Plugi
 const card = (root: string) => join(root, "plugins", "ccb-components", "components", "網頁預覽卡片");
 
 describe("the built-in plugins as shipped", () => {
-  it("are ccb-latex, botling.board, botling.cards, botling.catchup, botling.chat-extras, botling.component-studio, botling.design, botling.dev, botling.git, botling.note, botling.report, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
-    expect(readdirSync(built).sort()).toEqual(["botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.component-studio", "botling.design", "botling.dev", "botling.git", "botling.note", "botling.report", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
+  it("are ccb-latex, botling.board, botling.cards, botling.catchup, botling.chat-extras, botling.component-studio, botling.design, botling.dev, botling.git, botling.note, botling.orchestration, botling.report, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
+    expect(readdirSync(built).sort()).toEqual(["botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.component-studio", "botling.design", "botling.dev", "botling.git", "botling.note", "botling.orchestration", "botling.report", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     for (const name of readdirSync(built)) {
       expect(checkPlugin(join(built, name), "builtIn"), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);

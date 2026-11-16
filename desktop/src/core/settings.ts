@@ -239,7 +239,18 @@ export function claudeWorkerLimit(raw: RawSettings): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? Math.min(value, 16) : 4;
 }
 
-/** settings.json's hidden `claudeWorkers`: "app" (default: every Claude subagent is an app-managed worker) or "native". */
+/**
+ * settings.json's `orchestrationPlugin` (M7-O04): "builtin" (the default, and anything that is not a plugin name) is the rules plugin
+ * Botling ships, pinned; another value is the name of a plugin whose rules.json the user chose. Back to "builtin" (or the key removed)
+ * is the one step back to the shipped rules, with no bot in it. No `SettingsChange` writes this key: only the user's own edit of
+ * settings.json does, so no bot, plugin or project can choose another set.
+ */
+export function orchestrationPlugin(raw: RawSettings): string {
+  const value = (raw as Record<string, unknown>).orchestrationPlugin;
+  return typeof value === "string" && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(value) && value !== "botling.orchestration" ? value : "builtin";
+}
+
+/** settings.json's hidden `claudeWorkers`:"app" (default: every Claude subagent is an app-managed worker) or "native". */
 export function claudeWorkersMode(raw: RawSettings): "app" | "native" {
   return (raw as Record<string, unknown>).claudeWorkers === "native" ? "native" : "app";
 }

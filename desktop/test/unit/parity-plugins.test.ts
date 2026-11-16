@@ -19,7 +19,7 @@ const HELD_BACK_NOTICE = "Its program part is off until you allow it to change i
 
 const EXPECTED_BUILTINS = [
   "botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.component-studio",
-  "botling.design", "botling.dev", "botling.git", "botling.note", "botling.report",
+  "botling.design", "botling.dev", "botling.git", "botling.note", "botling.orchestration", "botling.report",
   "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex",
 ] as const;
 
