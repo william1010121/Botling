@@ -256,7 +256,7 @@ describe("F6 in the real core: a message from a plugin that is not shipped marks
   });
 
   it("routines.add: a shipped plugin adds one; a plugin that is not shipped needs the grant, and one a bot wrote may not even with it", async () => {
-    const add = { bot: "main", cron: "0 9 * * *", task: "do the thing" };
+    const add = { bot: "main", cron: "0 9 * * *", task: "Check: do the thing" };
     const none = realCore();
     await expect(none.ask("routines.add", { plugin: "shipped", ...add })).resolves.toBeNull();
     await expect(none.ask("routines.add", { plugin: "plain", ...add })).rejects.toThrow(/permission|needs/);
