@@ -231,6 +231,8 @@ export interface InstallProposal {
   verified?: string;
   /** The version it replaces in the library (an update). */
   replacing?: string;
+  /** The folder hash the catalog check verified (plugin-store.ts): recorded at install so a built-in's update keeps its rights while the files stay as checked. */
+  verifiedSha256?: string;
 }
 
 /** The text of the question (`InstallProposal.summary`). */

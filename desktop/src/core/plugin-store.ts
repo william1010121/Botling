@@ -2,7 +2,9 @@
 // offers next to what is installed, and installing or updating one of its plugins. An install never happens here: the
 // downloaded folder is checked (its hash against the index, the plugin checks, the app version) and handed to the
 // install card Maintainer already uses for outside plugins (maintainer.ts `offerInstall`), in the main bot's chat; only
-// "Install" there puts it into the library. Nothing changes what bots may do: no tools, prompts or permissions.
+// "Install" there puts it into the library. Exception, the Update button (`direct`): an update of a plugin that is already
+// running (installed or built in) is installed at once, no card and no comparison of what it asks for (plugins are open
+// source and trusted after the first install). This file never reads or writes a grant.
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginStoreEntryView, PluginStoreView } from "../contract";
@@ -124,8 +126,9 @@ export class PluginStore {
   /**
    * Install (or update) `name` from the index: download its folder at the recorded commit, check it, and ask on the
    * install card. Returns once the card is up (or why not, in the entry's status); the answer comes later.
+   * `direct` (the Update button): an update of a plugin already running is installed now, no card.
    */
-  async install(name: string): Promise<PluginStoreView> {
+  async install(name: string, options: { direct?: boolean } = {}): Promise<PluginStoreView> {
     const catalog = this.catalog;
     const entry = catalog.entry(name);
     if (!entry) { this.setStatus(name, { kind: "failed", message: `"${name}" is not in the plugin index.` }); return this.view(); }
@@ -152,12 +155,32 @@ export class PluginStore {
       return refuse(`The downloaded folder is "${proposal.manifest.name}" ${proposal.manifest.version}, not "${entry.name}" ${entry.version} as the index says. It was not installed.`);
     }
     proposal.verified = `its files match the index (sha256 ${entry.sha256.slice(0, 12)}…) at commit ${entry.commit.slice(0, 7)}${catalog.source.official ? " of the official botling-plugins repo" : ` of ${catalog.source.indexURL}`}.`;
+    proposal.verifiedSha256 = entry.sha256;
     if (state === "update" && installedVersion) proposal.replacing = installedVersion;
+    if (options.direct && state === "update" && installedVersion && this.directStill(entry, installedVersion, catalog.source)) {
+      const problem = this.deps.desk.installNow(proposal);
+      this.setStatus(name, problem ? { kind: "failed", message: problem } : { kind: "installed", message: null });
+      return this.view();
+    }
     this.setStatus(name, { kind: "asking", message: null });
     this.deps.desk.offerInstall(proposal, (installed, problem) => {
       this.setStatus(name, installed ? { kind: "installed", message: null } : problem ? { kind: "failed", message: problem } : { kind: "declined", message: null });
     });
     return this.view();
+  }
+
+  /**
+   * Whether the Update button may still install `entry` with no card, checked again after the download (L-008): the same version
+   * still runs, and it is the built-in one or a copy from this catalog. A copy from anywhere else (git, a folder) asks on the card.
+   */
+  private directStill(entry: CatalogEntry, installedVersion: string, source: CatalogSource): boolean {
+    const now = this.stateOf(entry);
+    const running = this.deps.registry()?.plugin(entry.name);
+    if (now.state !== "update" || now.installedVersion !== installedVersion || !running || !entry.commit) return false;
+    const from = running.installedFrom ?? null;
+    if (from === null) return running.builtIn;
+    const catalogTree = `${source.folderPage(entry.commit, entry.path).split(`/${entry.commit}/`)[0]}/`;
+    return from.startsWith(catalogTree);
   }
 
   /** The page was told how an install ended: the note goes (installed / declined / failed). */

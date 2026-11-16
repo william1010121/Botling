@@ -12,6 +12,7 @@ import { Client, RequestFailed } from "./client";
 import { FrameBroker, registerPluginFrame } from "./frame-broker";
 import { frameEvent, type BuiltinCommand, type FrameRequest } from "../../../Web/src/frame-protocol";
 import { panelPage, type PanelFit } from "./panel-page";
+import { frameNeedsReload, pluginStamp } from "./plugin-stamp";
 import { pluginFrameHost, type PluginFrameHostDeps } from "./plugin-frame-host";
 import { asksLine, canInstall, installCommand } from "./plugin-grant";
 
@@ -81,7 +82,7 @@ export function PluginsPanel({ client, plugins, bots, onPanel, onClose, onAsked,
       <ul>
         {plugins?.plugins.map((plugin) => (
           <PluginItem key={plugin.name} plugin={plugin} lang={lang} catalog={catalog.get(plugin.name) ?? null}
-            onUpdate={() => { setProblem(null); void client.request({ type: "plugins.storeInstall", name: plugin.name }).then((view) => { setStore(view); const status = view.entries.find((entry) => entry.name === plugin.name)?.status; if (status?.kind === "failed") setProblem(status.message); else if (status?.kind === "asking") setResult(say(lang, "plugins.asking")); }, (failure) => setProblem(why(failure))); }}
+            onUpdate={() => { setProblem(null); void client.request({ type: "plugins.storeInstall", name: plugin.name, direct: true }).then((view) => { setStore(view); const status = view.entries.find((entry) => entry.name === plugin.name)?.status; if (status?.kind === "failed") setProblem(status.message); else if (status?.kind === "asking") setResult(say(lang, "plugins.asking")); else if (status?.kind === "installed") setResult(say(lang, "plugins.didInstall")); }, (failure) => setProblem(why(failure))); }}
             onRevert={() => run(client.request({ type: "plugins.revert", name: plugin.name }))}
             onRemove={() => run(client.request({ type: "plugins.remove", name: plugin.name }))}
             onEnable={(enabled) => run(client.request({ type: "plugins.enable", name: plugin.name, enabled }))}
@@ -303,13 +304,24 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
       frame.current?.contentWindow?.postMessage(frameEvent(event.name, event.data), "*");
     });
   }, [client, plugin, url, botKey]);
+  // An update of the plugin (a new version in `plugins.updated`) loads its web part again, in the same frame slot; `built` is what this frame came from.
+  const [reloads, setReloads] = useState(0);
+  const built = useRef<string | null>(null);
   useEffect(() => {
     let live = true;
+    // The stamp is read before the source: a version that lands between the two only causes one more reload.
+    client.request({ type: "plugins.list" })
+      .then((list) => { if (live) built.current = pluginStamp(list.plugins.find((entry) => entry.name === plugin)); }, () => { /* no stamp: this frame never reloads */ });
     client.request({ type: "plugins.panel", name: plugin, panel })
       .then((part) => client.request({ type: "card.page", html: panelPage(plugin, panel, part.source, part.settings, fit, context), panel: true }))
-      .then((page) => { if (live) setUrl(page.url); }, (failure) => { if (live) setProblem(why(failure)); });
+      .then((page) => { if (live) { setProblem(null); setUrl(page.url); } }, (failure) => { if (live) setProblem(why(failure)); });
     return () => { live = false; };
-  }, [client, plugin, panel]);
+  }, [client, plugin, panel, reloads]);
+  useEffect(() => client.onEvent(({ event }) => {
+    if (event.type !== "plugins.updated" || !frameNeedsReload(built.current, event.plugins.plugins, plugin)) return;
+    built.current = pluginStamp(event.plugins.plugins.find((entry) => entry.name === plugin));
+    setReloads((count) => count + 1);
+  }), [client, plugin]);
   useEffect(() => {
     const element = frame.current;
     if (!url || !element) return;
