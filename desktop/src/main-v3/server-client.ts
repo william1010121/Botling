@@ -7,7 +7,8 @@
 // server's asks of the window (`shell.*`) are answered by main's `app(op, args)`, the 2.x app ops, unchanged.
 // Not carried over in M1 (step 9 / later milestones decide): the restart checkpoint (`prepareRestart`), release
 // announcements, plugin hosts and secret sealing all lived in the core process; botlingd owns them now.
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import {
@@ -18,7 +19,7 @@ import type { Message } from "../protocol";
 import { FeLink, systemClock, type Clock, type Dial, type FeLinkOptions, type FeStorage } from "../fe-link";
 import type { AppOp, CoreClient as CoreClient2x, CoreClientOptions } from "../main/core-client";
 import { RendererAdapter, type LinkPort } from "./renderer-adapter";
-import { ticketBundleFetcher, type BundleFetcher, type BundleTicketPort } from "../renderer/shell/row-loader";
+import { BundleRefusedError, MAX_BUNDLE_BYTES, ticketBundleFetcher, type BundleFetcher, type BundleTicketPort } from "../renderer/shell/row-loader";
 import type { RequestVia } from "../renderer/client";
 import { unixDial } from "./unix-dial";
 import { INHERITED_IMPORT_VARS } from "../server/inherited-env";
@@ -111,8 +112,40 @@ export interface ServerClientDeps {
   packaged?: boolean;
   /** Overrides child_process.spawn (tests). */
   spawn?: typeof spawn;
-  /** M7-09b: reads a plugin's web bundle by its row's reference (default: a ticket over the session, bytes from the server's loopback listener); `null`: none, `plugins.web` is the only source. */
+  /** M7-09b: reads a plugin's web bundle by its row's reference (default: the file botlingd keeps under its data folder, else a ticket over the session with bytes from the server's loopback listener); `null`: none, `plugins.web` is the only source. */
   bundles?: ((link: LinkPort) => BundleFetcher) | null;
+}
+
+const BUNDLE_REF = /^sha256:([0-9a-f]{64})$/;
+
+/**
+ * A plugin's web part by its row's reference, read from botlingd's own data folder (`<serverDir>/plugin-bundles/<hex>`, kept by the server
+ * under the hash as its name). The window's session is a local one, and a local session does not serve `content.ticket` (it drops the ask, so
+ * the ticket fetcher alone never answers and every plugin panel stays blank). The bytes are the hash's or nothing (opened without following a
+ * link, the same file the one stat saw, read back and hashed); a file that is not there (another server's bundle) goes to `fallback`.
+ */
+export function localBundleFetcher(serverDir: string, fallback: BundleFetcher): BundleFetcher {
+  const dir = join(serverDir, "plugin-bundles");
+  return async (request) => {
+    const match = BUNDLE_REF.exec(request.ref);
+    const bytes = match ? readBundleFile(join(dir, match[1]!), request.ref) : null;
+    if (!bytes) return fallback(request);
+    try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); } catch { throw new BundleRefusedError("the web part is not UTF-8 text"); }
+  };
+}
+
+function readBundleFile(path: string, ref: string): Buffer | null {
+  try {
+    const before = lstatSync(path);
+    if (!before.isFile() || before.size > MAX_BUNDLE_BYTES) return null;
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const open = fstatSync(fd);
+      if (!open.isFile() || open.ino !== before.ino || open.dev !== before.dev) return null;
+      const bytes = readFileSync(fd);
+      return bytes.byteLength <= MAX_BUNDLE_BYTES && `sha256:${createHash("sha256").update(bytes).digest("hex")}` === ref ? bytes : null;
+    } finally { closeSync(fd); }
+  } catch { return null; }
 }
 
 /** botlingd writes its loopback listener's port here (server/net/http.ts LISTEN_FILE) in its data folder. */
@@ -205,7 +238,7 @@ export class ServerClient {
     const port = link as unknown as LinkPort;
     const bundles = this.deps.bundles === null ? undefined : this.deps.bundles
       ? this.deps.bundles(port)
-      : ticketBundleFetcher({ link: link as unknown as BundleTicketPort, base: () => this.listenBase() });
+      : localBundleFetcher(this.paths.serverDir, ticketBundleFetcher({ link: link as unknown as BundleTicketPort, base: () => this.listenBase() }));
     const adapter = new RendererAdapter({ link: port, emit: (envelope) => this.options.onEvent(envelope), clock: this.clock, audit: this.options.audit, ...(bundles ? { bundles } : {}) });
     this.adapter = adapter;
     let welcomed = false;

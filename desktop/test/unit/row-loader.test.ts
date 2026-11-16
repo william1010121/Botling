@@ -440,6 +440,16 @@ describe("the ticket fetcher", () => {
     return { fetchImpl, urls };
   }
 
+  it("gives up on a server that never answers the ticket (the window's local session drops it), so the panel falls back instead of waiting for ever", async () => {
+    const link: BundleTicketPort = { server: "srvA", remoteContent: () => new Promise(() => undefined) };
+    const { fetchImpl, urls } = web(A1);
+    const fetchBundle = ticketBundleFetcher({ link, base: "http://page.example", fetch: fetchImpl, ticketMs: 20 });
+    await expect(fetchBundle({ plugin: "a", ref: refOf(A1) })).rejects.toThrow(/did not answer/);
+    expect(urls).toEqual([]);
+    // Not kept: the next ask goes to the server again.
+    await expect(fetchBundle({ plugin: "a", ref: refOf(A1) })).rejects.toThrow(/did not answer/);
+  });
+
   it("asks for seq 1 of the plugin's row entry in the attached server's srv: stream, naming the plugin of the request", async () => {
     const { link, asked } = port();
     const { fetchImpl, urls } = web(A1);
