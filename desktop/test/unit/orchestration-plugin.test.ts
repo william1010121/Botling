@@ -365,6 +365,19 @@ describe("a rules set reaches the workers' own instructions", () => {
   });
 });
 
+describe("the coordinator's and the worker's Files touched sentences are one pair (plan 4.6)", () => {
+  it("an answer gives both followUp.5 and worker.reportBlock or neither; given together they reach the coordinator's lines and the worker's text", () => {
+    expect(() => parseSlots(answer({ "followUp.5": "A" }))).toThrow(/together/);
+    expect(() => parseSlots(answer({ "worker.reportBlock": "B", "followUp.3": "x" }))).toThrow(/together/);
+    expect(() => parseSlots(answer({ "followUp.3": "x" }))).not.toThrow();
+    const both = withSlots(DEFAULT, parseSlots(answer({ "followUp.5": "PAIR-A", "worker.reportBlock": "PAIR-B" })));
+    expect(renderFragments(both.claudeLine(DELEGATION_CAPS.claude))).toContain("PAIR-A");
+    expect(renderFragments(both.section("followUp", DELEGATION_CAPS.codex, { engine: "codex", worktree: null }))).toContain("PAIR-A");
+    expect(claudeWorkerPolicy(both)).toContain("PAIR-B");
+    expect(agyWorkerPolicy(both)).toContain("PAIR-B");
+  });
+});
+
 describe("a plugin gives sentences, never a worker's model, effort or engine (F3)", () => {
   it("withSlots hands out only the coordinator's own engine, whatever the set under it says, and nothing else", () => {
     const greedy: OrchestrationRules = { ...DEFAULT, workerDefaults: () => ({ workerEngine: "codex", workerModel: "opus", workerEffort: "max" } as never) };

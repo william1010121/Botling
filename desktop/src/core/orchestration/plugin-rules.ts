@@ -15,6 +15,8 @@ export const BUILTIN_RULES_PLUGIN = "botling.orchestration";
 export const RULES_TIME_LIMIT_MS = 3_000;
 export const RULES_NOTICE = "The orchestration rules plugin did not answer in time or failed; Botling is using its own rules.";
 const FILE_MAX = 64 * 1024, SLOT_MAX = 2_000, SLOTS_MAX = 12_000;
+/** Said twice, once to the coordinator and once to its workers: an answer gives both or neither (plan §4.6), so the two sides cannot disagree. */
+const PAIR = ["followUp.5", "worker.reportBlock"] as const;
 const FORBIDDEN_SLOTS: ReadonlySet<string> = new Set(["workerModel", "workerEffort", "workerEngine", "model", "effort", "engine"]);
 
 export type Slots = ReadonlyMap<string, string>;
@@ -41,6 +43,7 @@ export function parseSlots(bytes: Buffer): Slots {
   // F3: a plugin gives sentences, never a worker's model, effort or engine: no other key is accepted, at the top or as a slot.
   const stray = Object.keys(value).find((key) => key !== "format" && key !== "slots") ?? Object.keys(raw).find((id) => FORBIDDEN_SLOTS.has(id));
   if (stray) throw new Error(`rules.json: "${stray}" is not accepted (a plugin cannot choose a worker's model, effort or engine).`);
+  if (PAIR.some((id) => Object.hasOwn(raw, id)) && !PAIR.every((id) => Object.hasOwn(raw, id))) throw new Error(`rules.json: "${PAIR.join("\" and \"")}" are given together or not at all.`);
   let total = 0;
   const slots = new Map<string, string>();
   for (const [id, text] of Object.entries(raw)) {
