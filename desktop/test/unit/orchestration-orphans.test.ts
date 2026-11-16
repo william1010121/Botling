@@ -201,6 +201,9 @@ describe("a plugin that goes hands its workers back to core", () => {
     const t = book();
     await t.workers.start("p", params);
     t.state.identity = H2;
+    // Before the hook has run (the core looks at the library every second or so), the new hash is already not the owner of the right to send.
+    await expect(t.workers.send("p", "T1", "x")).rejects.toThrow("No such worker.");
+    await expect(t.workers.cancel("p", "T1")).rejects.toThrow("No such worker.");
     t.workers.reconcile();
     await expect(t.workers.send("p", "T1", "x")).rejects.toThrow("No such worker.");
     await expect(t.workers.cancel("p", "T1")).rejects.toThrow("No such worker.");
