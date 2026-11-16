@@ -60,6 +60,8 @@ export class Plugins {
   readonly host: PluginHostClient;
   private readonly hosts = new Map<string, PluginHostClient>();
   private readonly hostMeta = new Map<string, { main: string; dir: string; fingerprint: string }>();
+  /** The fingerprint of each plugin's code in the shared host, as last given to it (`codeOf`). */
+  private sharedCode = new Map<string, string>();
   private readonly retiring = new Set<Promise<void>>();
   readonly secrets: SealedSecretStore;
   readonly dataRoot: string;
@@ -275,6 +277,7 @@ export class Plugins {
     // M7-O03b: a plugin that is gone, held back or another version gives its workers back to core now, before the host
     // below starts the new one (a worker has one owner, the bot; the plugin's route to it ends here).
     this.workersReconcile();
+    this.sharedCode = new Map(sharedSpecs.map((spec) => [spec.name, spec.fingerprint]));
     // M5-18a: a plugin the shared host still runs lost its grant (or its granted code): a fresh host, not an unload (§18.3).
     if ([...nextHeldBack].some((name) => this.host.runs(name))) this.host.replace(sharedSpecs);
     else this.host.update(sharedSpecs);
@@ -731,7 +734,7 @@ export class Plugins {
     try { if (this.options.world.orchestration) this.workers().reconcile(); } catch (error) { this.options.world.log(`plugin workers not handed back: ${(error as Error).message}`); }
   }
 
-  codeOf(plugin: string): string | undefined { return this.hostMeta.get(plugin)?.fingerprint; }
+  codeOf(plugin: string): string | undefined { return this.hostMeta.get(plugin)?.fingerprint ?? this.sharedCode.get(plugin); }
 
   /** The user changed what a plugin may do (its `orchestrate` grant): a plugin that no longer has it hands its workers back, as when it is switched off. */
   grantChanged() { this.workersReconcile(); }
