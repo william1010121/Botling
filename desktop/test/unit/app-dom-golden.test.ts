@@ -72,9 +72,9 @@ describe("the app page's DOM", () => {
   it("is as recorded for a manager bot with the step-1 fixture view", async () => {
     const markup = await pageMarkup([bot], fixturePlugins());
     expect(markup).toContain('class="shell');
-    // The whole page is the one contribution of `:shell` to `app/main` (and so `view/main`) while it is up.
-    expect(rendererKernel.entries("app/main")).toHaveLength(1);
-    expect(rendererKernel.entries("view/main")).toHaveLength(1);
+    // The page is the frame's own layout now (M7-07a): `app/main` holds no `:shell` contribution, only botling.chat's claim once it is loaded (none here).
+    expect(rendererKernel.entries("app/main")).toHaveLength(0);
+    expect(rendererKernel.entries("view/main")).toHaveLength(0);
     same("bot-fixture", markup);
   });
   it("is as recorded with no bot and no plugins view", async () => {

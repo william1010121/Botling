@@ -1,25 +1,24 @@
 // The renderer's plugin kernel (kernel step 1 step 7; Web/src/plugin-kernel): what the app page's own surfaces provide to
-// plugin frames as services, and (M7-02a) the slots the page is drawn from. Two instances of the page's own live here, with names
+// plugin frames as services, and (M7-02a) the slots the page is drawn from. One instance of the page's own lives here, with a name
 // no plugin can have:
-//   - `:chat` provides `composer.insertQuote` while App is up (composer-quote.ts); a frame's call reaches it through the frame
-//     broker (plugin-frame-host.ts, shell/frame-services.ts) as a kernel call carrying the frame's plugin. The Note declares that it uses
-//     it in its manifest (soft: with no provider the quote is not inserted); the plugin feed installs that declaration (M7-04b).
 //   - `:shell` owns the shell's root slots (`ROOT_SLOTS`: app/rail, app/main, app/side, app/bottom, app/overlay). Whatever is
-//     drawn in one is a contribution to it: today the whole page, as one contribution to `app/main` ("the legacy surface",
-//     shell/ShellFrame.tsx). shell/KernelSlot.tsx draws a slot; it re-draws when `subscribeSlots` says the kernel changed.
+//     drawn in one is a contribution to it: the chat column is `botling.chat`'s claim on `app/main` (M7-07a), the right panel
+//     botling.bot-panel's on `app/side`, the bottom panels `:shell`'s on `app/bottom` (shell/regions.tsx); the rest of the page is
+//     shell/ShellFrame.tsx's own layout. shell/KernelSlot.tsx draws a slot; it re-draws when `subscribeSlots` says the kernel changed.
 //     It also owns the view and menu places the plugin feed fills (`FEED_SLOTS`, M7-02b): the plugin list as the page
 //     received it, one instance per plugin (shell/plugin-feed.ts), until a plugin owns a place itself.
+// `composer.insertQuote` is `botling.chat`'s service (M7-07b; the `:chat` stand-in that provided it while App was up is gone): a frame's
+// call reaches it through the frame broker (plugin-frame-host.ts, shell/frame-services.ts) as a kernel call carrying the frame's plugin, and
+// the plugin forwards it to the quoter App registers (composer-quote.ts). The Note declares that it uses it in its manifest (soft: with no
+// provider the quote is not inserted); the plugin feed installs that declaration (M7-04b).
 // Slots have the new names and the 2.x names as aliases (slot-names.ts): the kernel holds one registration and finds it under both.
 import { Kernel, ROOT_SLOTS, canonicalSlot } from "../../../Web/src/plugin-kernel";
 import { SHELL_STORAGE, provideShellStorage } from "./shell/storage";
 import { FEED_SLOTS } from "./shell/feed-slots";
 
-/** The chat surface's instance in the renderer's kernel. */
-export const CHAT_SURFACE = ":chat";
 /** The shell's instance: owns the root slots. */
 export const SHELL_SURFACE = ":shell";
-/** The service a plugin frame's `ccb.composer.insertQuote` calls. */
-export const INSERT_QUOTE = "composer.insertQuote";
+export { INSERT_QUOTE } from "./chat-names";
 export { SHELL_STORAGE };
 
 const listeners = new Set<() => void>();
@@ -49,7 +48,6 @@ export const rendererKernel = new Kernel({
     queueMicrotask(() => { scheduled = false; notifySlots(); });
   },
 });
-rendererKernel.install({ name: CHAT_SURFACE, provides: { services: [INSERT_QUOTE] } });
 const SHELL_SLOTS = [...ROOT_SLOTS, ...FEED_SLOTS];
 rendererKernel.install({ name: SHELL_SURFACE, provides: { slots: SHELL_SLOTS, services: [SHELL_STORAGE] } });
 void rendererKernel.load(SHELL_SURFACE, (plugin) => {

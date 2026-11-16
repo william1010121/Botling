@@ -236,7 +236,7 @@ describe("plugin blocks and takeovers in the plugin's slots", () => {
     expect(pluginFeed.rows(SECTION)).toEqual([]);
     expect(pluginFeed.rows(TAKEOVER)).toEqual([]);
     // Their other rows stay.
-    expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
+    expect(pluginFeed.rows("app/bottom")).toEqual(view.bottomPanels);
     await one.start();
     expect(pluginFeed.rows(SECTION)).toEqual(view.rightPanelSections);
     expect(pluginFeed.rows(TAKEOVER)).toEqual(view.takeovers);

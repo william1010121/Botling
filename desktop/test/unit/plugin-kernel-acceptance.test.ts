@@ -29,7 +29,9 @@ import { Client } from "../../src/renderer/client";
 import { FrameBroker, registerPluginFrame } from "../../src/renderer/frame-broker";
 import { pluginFrameHost } from "../../src/renderer/plugin-frame-host";
 import { quoteIntoComposer, setComposerQuoter } from "../../src/renderer/composer-quote";
-import { CHAT_SURFACE, INSERT_QUOTE, rendererKernel } from "../../src/renderer/renderer-kernel";
+import { CHAT_PLUGIN } from "../../src/renderer/chat-names";
+import { startChatPlugin } from "../chat-plugin-host";
+import { INSERT_QUOTE, rendererKernel } from "../../src/renderer/renderer-kernel";
 import { writeFixturePlugins } from "../kernel-goldens";
 import { deferred, flush, manualTimers, seeded } from "../kernel-driver";
 import { ruleWatcher } from "../kernel-invariants";
@@ -493,7 +495,8 @@ async function rendererRun(seed: number, maxActions = 20) {
   const frames: { close: () => void; send: (data: unknown) => void; posted: any[]; closed: boolean }[] = [];
   let quoted = 0;
   let id = 0;
-  if (rendererKernel.state(CHAT_SURFACE) !== "absent") throw new Error(`seed ${seed}: the chat surface was left loaded by the run before`);
+  // `botling.chat` provides the quote service for every run (M7-07b; it was the `:chat` stand-in, loaded while a quoter was registered): the test starts it once.
+  if (rendererKernel.state(CHAT_PLUGIN) !== "active") throw new Error(`seed ${seed}: the chat plugin is not up`);
   for (let index = 0; index < maxActions; index += 1) {
     const choice = random.int(5);
     if (choice === 0) quoters.push(setComposerQuoter(async () => { quoted += 1; return true; }));
@@ -509,17 +512,16 @@ async function rendererRun(seed: number, maxActions = 20) {
     } else if (choice === 3 && frames.length) { const frame = random.pick(frames); if (!frame.closed) { frame.close(); frame.closed = true; } }
     else if (frames.length) random.pick(frames).send({ ccb: "composerQuote", id: ++id, text: "x", botId: BOT, focus: false });
     await flush();
-    // While a quoter is registered the chat surface provides the service; otherwise nothing does.
-    const provides = rendererKernel.providerOf(INSERT_QUOTE) === CHAT_SURFACE;
-    if (provides !== (rendererKernel.state(CHAT_SURFACE) === "active")) throw new Error(`seed ${seed}: the chat surface provides while ${rendererKernel.state(CHAT_SURFACE)}`);
+    // While the plugin is up it provides the service, quoter or not; the quoter is what it forwards to.
+    if (rendererKernel.providerOf(INSERT_QUOTE) !== CHAT_PLUGIN || rendererKernel.state(CHAT_PLUGIN) !== "active") throw new Error(`seed ${seed}: the chat plugin does not provide while ${rendererKernel.state(CHAT_PLUGIN)}`);
   }
   for (const stop of quoters.splice(0)) stop();
   for (const frame of frames) if (!frame.closed) { frame.close(); frame.closed = true; }
   await flush();
-  // Check 4 in the renderer: after its unload nothing is provided, and a quote is not inserted.
-  if (!rendererKernel.holdsNothingOf(CHAT_SURFACE) || rendererKernel.providerOf(INSERT_QUOTE) !== null) throw new Error(`seed ${seed}: the renderer's kernel still holds the chat surface`);
+  // With every quoter taken back the plugin is still the provider, and a quote is not inserted.
+  if (rendererKernel.providerOf(INSERT_QUOTE) !== CHAT_PLUGIN) throw new Error(`seed ${seed}: the chat plugin stopped providing`);
   const before = quoted;
-  if (await quoteIntoComposer(BOT, "x", false)) throw new Error(`seed ${seed}: a quote went in with no provider`);
+  if (await quoteIntoComposer(BOT, "x", false)) throw new Error(`seed ${seed}: a quote went in with no quoter`);
   if ((broker as unknown as { targets: Set<unknown> }).targets.size) throw new Error(`seed ${seed}: the broker still holds frames`);
   // A closed frame's message is refused, not answered.
   const answered = frames.reduce((sum, frame) => sum + frame.posted.length, 0);
@@ -564,7 +566,17 @@ describe("check 2 (no residue, P1) with check 3's invariants, check 5 and check 
     const started = Date.now();
     let frames = 0;
     const frameSeeds = seeds().slice(0, FRAME_RUNS);
-    for (const seed of frameSeeds) frames += (await rendererRun(seed)).frames;
+    // `botling.chat` provides the quote service for every run (M7-07b): started once for the test, not per run.
+    const chat = await startChatPlugin();
+    try {
+      for (const seed of frameSeeds) frames += (await rendererRun(seed)).frames;
+    } finally {
+      await chat.stop();
+    }
+    // Check 4 in the renderer: after the plugin's unload nothing is provided, and a quote is not inserted.
+    expect(rendererKernel.holdsNothingOf(CHAT_PLUGIN)).toBe(true);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBeNull();
+    await expect(quoteIntoComposer(BOT, "x", false)).resolves.toBe(false);
     evidence.renderer = { runs: frameSeeds.length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + frameSeeds.length - 1], frames, ms: Date.now() - started };
   }, BUDGET);
 
@@ -713,15 +725,21 @@ describe("check 4: closed unload, scripted", () => {
     expect((host as unknown as { kernel: Kernel }).kernel.holdsNothingOf("late")).toBe(true);
   });
 
-  it("in the renderer: a provision after the chat surface's unload is refused and undone at once; the quote is not inserted", async () => {
-    const stop = setComposerQuoter(async () => true);
-    const generation = rendererKernel.generation(CHAT_SURFACE);
-    stop();
-    let undone = 0;
-    expect(rendererKernel.register(CHAT_SURFACE, "item", "late", () => { undone += 1; }, generation)).toBeNull();
-    expect(undone).toBe(1);
-    expect(rendererKernel.holdsNothingOf(CHAT_SURFACE)).toBe(true);
-    await expect(quoteIntoComposer(BOT, "x", false, "botling.note")).resolves.toBe(false);
+  it("in the renderer: a provision after the chat plugin's unload is refused and undone at once; the quote is not inserted", async () => {
+    const chat = await startChatPlugin();
+    try {
+      const stop = setComposerQuoter(async () => true);
+      const generation = rendererKernel.generation(CHAT_PLUGIN);
+      await rendererKernel.requestUnload(CHAT_PLUGIN);
+      stop();
+      let undone = 0;
+      expect(rendererKernel.register(CHAT_PLUGIN, "item", "late", () => { undone += 1; }, generation)).toBeNull();
+      expect(undone).toBe(1);
+      expect(rendererKernel.holdsNothingOf(CHAT_PLUGIN)).toBe(true);
+      await expect(quoteIntoComposer(BOT, "x", false, "botling.note")).resolves.toBe(false);
+    } finally {
+      await chat.stop();
+    }
   });
 });
 

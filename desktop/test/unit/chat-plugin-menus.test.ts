@@ -60,9 +60,9 @@ describe("the chat plugin as the FE build ships it", () => {
     expect(rendererKernel.state(CHAT_PLUGIN)).toBe("active");
   });
 
-  it("owns the six slots by either name, and :shell no longer does; the two ownership lists agree", async () => {
+  it("owns the seven slots by either name, and :shell no longer does; the two ownership lists agree", async () => {
     await host().start();
-    expect([...CHAT_SLOTS].sort()).toEqual(["chat/header", "chat/link", "composer/bar", "composer/plus", "message/context", "message/preview"]);
+    expect([...CHAT_SLOTS].sort()).toEqual(["chat/header", "chat/link", "composer/bar", "composer/plus", "main/tab", "message/context", "message/preview"]);
     for (const slot of CHAT_SLOTS) {
       expect(rendererKernel.slotOwner(slot), slot).toBe(CHAT_PLUGIN);
       expect(rendererKernel.slotOwner(canonicalSlot(slot)), canonicalSlot(slot)).toBe(CHAT_PLUGIN);
@@ -75,9 +75,11 @@ describe("the chat plugin as the FE build ships it", () => {
     expect(chatDeclaration.provides?.slots?.map(canonicalSlot).sort()).toEqual(CHAT_SLOTS.map(canonicalSlot).sort());
   });
 
-  it("is not the `:chat` surface (that name is the stand-in for composer.insertQuote and stays)", async () => {
+  it("provides composer.insertQuote itself: there is no `:chat` surface any more (M7-07b)", async () => {
     await host().start();
-    expect(rendererKernel.declaration(":chat")?.provides?.services).toEqual(["composer.insertQuote"]);
+    expect(rendererKernel.declaration(":chat")).toBeUndefined();
+    expect(rendererKernel.declaration(CHAT_PLUGIN)?.provides?.services).toEqual(["composer.insertQuote"]);
+    expect(rendererKernel.providerOf("composer.insertQuote")).toBe(CHAT_PLUGIN);
     expect(CHAT_PLUGIN).toBe("botling.chat");
   });
 });
