@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Core } from "../../src/core/server";
 import type { Bot } from "../../src/core/bot";
+import type { BotProfile } from "../../src/core/store/workspace";
 import { CoreSend } from "../../src/core/server/send";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
@@ -246,7 +247,7 @@ describe("who can choose the rules", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-const PROFILE = { id: "p", name: "P", role: "manager" as const, folder: "/p/repo", memoryPath: ".bot/memory.md", job: null, instructions: "X" };
+const PROFILE: BotProfile = { id: "p", name: "P", role: "manager", avatar: "x", folder: "/p/repo", memoryPath: ".bot/memory.md", storeDir: "/p/store", tools: [], job: null, problem: null, instructions: "X" };
 
 /** A `CoreSend` on a stub host: only what `prompts` and `sendWith` touch. */
 function fixture(options: { dataDir?: string; builtIns: string | null; registry?: PluginRegistry }) {
