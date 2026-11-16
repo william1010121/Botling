@@ -96,6 +96,17 @@ describe("plugin host", () => {
     expect(row.querySelector(".plugin-component")?.textContent).toBe("40%");
   });
 
+  it("tells a component the bot whose chat it is in and its message (4th argument); a page that is told no bot gives null", async () => {
+    const seen: unknown[] = [];
+    await host.sync([spec("meter")], async () => (ccb) => {
+      ccb.components.register("meter", (root, _data, _answer, context) => { seen.push(context); root.textContent = "x"; });
+    });
+    const shown = { text: "Progress", id: "m4", display: { name: "meter", data: "{}" } };
+    messageElement(message(shown), {}, "bot-7");
+    messageElement(message(shown), {});
+    expect(seen).toEqual([{ botId: "bot-7", messageId: "m4" }, { botId: null, messageId: "m4" }]);
+  });
+
   it("draws every component a reply shows, each where it was written", async () => {
     const answers: unknown[] = [];
     await host.sync([spec("meter")], async () => (ccb) => {

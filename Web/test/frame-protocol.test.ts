@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { builtinCommand, frameEvent, frameOf, frameParams, ownsCommand, parseFrameRequest } from "../src/frame-protocol";
+import { BUILTIN_COMMANDS, builtinCommand, frameEvent, frameOf, frameParams, ownsCommand, parseFrameRequest } from "../src/frame-protocol";
 
 describe("the frame protocol", () => {
   it("reads the four requests a plugin frame may send", () => {
@@ -81,6 +81,22 @@ describe("the frame protocol", () => {
     expect(parseFrameRequest({ ccb: "command", id: "charts.open", args: [1] })).toBeNull();
     expect(parseFrameRequest({ ccb: "command", id: "charts.open", args: ["a", "b", "c", "d", "e"] })).toBeNull();
     expect(parseFrameRequest({ ccb: "command", id: "charts.open", args: ["x".repeat(4_001)] })).toBeNull();
+  });
+
+  it("botling.openFile(botId, absolutePath): an absolute path only, exactly two arguments", () => {
+    expect(builtinCommand("botling.openFile", ["B1", "/Users/me/proj/.bot/artifacts/duel/result.html"])).toEqual({ id: "botling.openFile", botId: "B1", path: "/Users/me/proj/.bot/artifacts/duel/result.html" });
+    expect(builtinCommand("botling.openFile", ["B1", "C:\\proj\\a.html"])).toEqual({ id: "botling.openFile", botId: "B1", path: "C:\\proj\\a.html" });
+    for (const args of [["B1"], ["B1", ""], ["B1", "result.html"], ["B1", "../a.html"], ["B1", "~/a.html"], ["B1", "file:///a.html"], ["B1", "https://example.com/a.html"], ["B1", "/a.html", "x"], [""], []]) {
+      expect(builtinCommand("botling.openFile", args)).toBeNull();
+    }
+    expect((BUILTIN_COMMANDS as readonly string[])).toContain("botling.openFile");
+  });
+
+  it("hostStatus is a request with an id and nothing else", () => {
+    expect(parseFrameRequest({ ccb: "hostStatus", id: 4 })).toEqual({ ccb: "hostStatus", id: 4 });
+    expect(parseFrameRequest({ ccb: "hostStatus" })).toBeNull();
+    expect(parseFrameRequest({ ccb: "hostStatus", id: "4" })).toBeNull();
+    expect(parseFrameRequest({ ccb: "hostStatus", id: 4, plugin: "other" })).toBeNull();
   });
 
   it("Botling's own commands a frame may run: openChat(botId[, messageId]) and openResult(botId, url), nothing else", () => {

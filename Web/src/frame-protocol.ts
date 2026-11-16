@@ -32,6 +32,8 @@
 //                                                         asks the user to allow a bot's command: the page around it
 //                                                         shows its own ApprovalSheet; the reply is { allowed }. A
 //                                                         frame can ask, never allow (`ccb.requestApproval`)
+//                  { ccb: "hostStatus", id }              whether its own program part (host) runs: the reply is one of HOST_STATES
+//                                                         (`ccb.host.status()`; the page also pushes event "hostStatus" when it changes, `ccb.host.onStatus`)
 //                  { ccb: "resize", height }              how tall its content is (px), for a frame the page sizes to its content
 //                                                         (a block in Settings or a popover; `panelPage` with `fit`)
 //                  { ccb: "ready" }                       its web part is up (not a request: the page then tells it what it is in)
@@ -55,7 +57,16 @@ export type FrameRequest =
   | { ccb: "openLink"; id: number; botId: string; href: string }
   | { ccb: "composerQuote"; id: number; text: string; botId: string; focus: boolean }
   | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string; detail?: string }
-  | { ccb: "storage"; id: number; op: "get" | "set" | "remove"; key: string; value?: unknown };
+  | { ccb: "storage"; id: number; op: "get" | "set" | "remove"; key: string; value?: unknown }
+  | { ccb: "hostStatus"; id: number };
+
+/**
+ * Where a plugin's program part stands (`ccb.host.status()`): `none` it has no program part; `off` the plugin is switched off by the user;
+ * `held` it is not allowed to run yet (Settings › Plugins › Allow not pressed); `starting` allowed, on its way up; `running`;
+ * `failed` it failed to load or crashed, and the app switched it off until its files change (the plugin's failure text is in Settings › Plugins).
+ */
+export const HOST_STATES = ["none", "off", "held", "starting", "running", "failed"] as const;
+export type HostState = (typeof HOST_STATES)[number];
 
 /** A part of a frame, in its own CSS px. */
 export interface FrameRect { x: number; y: number; width: number; height: number }
@@ -97,6 +108,7 @@ const KEYS: Record<FrameRequest["ccb"], string[]> = {
   openLink: ["ccb", "id", "botId", "href"],
   composerQuote: ["ccb", "id", "text", "botId", "focus"],
   storage: ["ccb", "id", "op", "key", "value"],
+  hostStatus: ["ccb", "id"],
 };
 /** The longest text a frame may quote into an input box. */
 export const QUOTE_MAX = 200_000;
@@ -147,6 +159,8 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
       if (message.card !== undefined && !text(message.card, 200)) return null;
       if (message.detail !== undefined && !text(message.detail, 20_000)) return null;
       return { ccb: "approval", id: message.id as number, botId: message.botId, command: message.command, folder: message.folder, ...(message.card !== undefined ? { card: message.card as string } : {}), ...(message.detail !== undefined ? { detail: message.detail as string } : {}) };
+    case "hostStatus":
+      return Number.isSafeInteger(message.id) ? { ccb: "hostStatus", id: message.id as number } : null;
     case "panel":
       return typeof message.visible === "boolean" ? { ccb: "panel", visible: message.visible } : null;
     case "key":
@@ -191,7 +205,7 @@ export function ownsCommand(plugin: string, id: string): boolean {
 }
 
 /** Botling's own commands a plugin frame may run (plugin-extraction.md §4.3); the page around it runs them. */
-export const BUILTIN_COMMANDS = ["botling.openChat", "botling.openResult", "botling.openLink", "botling.openTab"] as const;
+export const BUILTIN_COMMANDS = ["botling.openChat", "botling.openResult", "botling.openLink", "botling.openTab", "botling.openFile"] as const;
 export type BuiltinCommand =
   /** A bot's chat; with `messageId`, at that line of it (scrolled to and flashed; a line it does not have: just the chat). */
   | { id: "botling.openChat"; botId: string; messageId?: string }
@@ -199,7 +213,12 @@ export type BuiltinCommand =
   /** A link the user chose to open (a pull request), as a click on it in the chat would. */
   | { id: "botling.openLink"; botId: string; url: string }
   /** A bot's main-area tab (a plugin's `mainTab` view): the bot, the plugin and the view's id. */
-  | { id: "botling.openTab"; botId: string; plugin: string; view: string };
+  | { id: "botling.openTab"; botId: string; plugin: string; view: string }
+  /** A file in the bot's project folder (an absolute path; needs the plugin's "files" permission): a page in an `artifacts` folder opens in the app's report view, any other file as `ccb.openLink` opens it. */
+  | { id: "botling.openFile"; botId: string; path: string };
+
+/** An absolute path (macOS, Linux, or a Windows drive): the only kind `botling.openFile` takes (the core decides whether it may be opened). */
+const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/])/;
 
 /** One of Botling's own commands with the arguments it needs (openChat: a bot, and maybe one of its lines; openResult: a bot and one of its links), or null. */
 export function builtinCommand(id: string, args: string[] = []): BuiltinCommand | null {
@@ -210,6 +229,7 @@ export function builtinCommand(id: string, args: string[] = []): BuiltinCommand 
   if (id === "botling.openResult" && args.length === 2 && args[1]) return { id, botId, url: args[1] };
   if (id === "botling.openLink" && args.length === 2 && args[1]) return { id, botId, url: args[1] };
   if (id === "botling.openTab" && args.length === 3 && args[1] && args[2]) return { id, botId, plugin: args[1], view: args[2] };
+  if (id === "botling.openFile" && args.length === 2 && args[1] && ABSOLUTE_PATH.test(args[1])) return { id, botId, path: args[1] };
   return null;
 }
 

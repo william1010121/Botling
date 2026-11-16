@@ -103,6 +103,11 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       if (req.op === "set") return store.set(req.key, req.value);
       return store.remove(req.key);
     },
+    // Only the frame's own plugin (the broker passes the one it registered): what the core's view says of its program part.
+    async hostStatus(plugin) {
+      const { plugins } = await client.request({ type: "plugins.list" }).catch(failed);
+      return plugins.find((each) => each.name === plugin)?.hostState ?? "none";
+    },
     async requestApproval(plugin, { botId, command, folder, card, detail }) {
       const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}), ...(detail ? { detail } : {}) }, undefined, { plugin }).catch(failed);
       if (!asked.needsApproval) return { allowed: true };

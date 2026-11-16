@@ -81,8 +81,13 @@ function linkedByNote(href: string, text: string): boolean {
   return text.includes(`](${href})`) || text.includes(`](<${href}>)`) || text.includes(`<${href}>`) || text.includes(`](${href} `);
 }
 
-/** How main opens a target: the default browser, the app's Markdown report preview, or as a chat link opens a file (its app, or Finder). */
-export function pluginLinkRoute(target: PluginLinkTarget): "browser" | "markdown" | "file" {
+/**
+ * How main opens a target: the default browser, the app's Markdown report preview, or as a chat link opens a file (its app, or Finder).
+ * `preview` (`botling.openFile`): a page (.html, .htm) is asked to open in the app's report view first ("preview"; main falls back to
+ * "file" when the page is not in an `artifacts` folder, which is the only place the app serves pages from).
+ */
+export function pluginLinkRoute(target: PluginLinkTarget, preview = false): "browser" | "markdown" | "file" | "preview" {
   if (target.kind === "web") return "browser";
-  return /\.(md|markdown)$/i.test(target.path) ? "markdown" : "file";
+  if (/\.(md|markdown)$/i.test(target.path)) return "markdown";
+  return preview && /\.html?$/i.test(target.path) ? "preview" : "file";
 }

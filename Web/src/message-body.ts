@@ -11,7 +11,7 @@ import { liveElement, stepsElement } from "./steps";
 import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, StepView } from "./types";
 import { escapeHTML, queuedBadge } from "./util";
 
-export function botBody(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
+export function botBody(message: MessageView, components: Record<string, ComponentInfo>, botId: string | null = null): HTMLElement {
   const bubble = document.createElement("div");
   bubble.className = message.role === "notice" ? `bubble notice-bubble${message.open ? " open" : ""}` : "bubble bot-bubble";
   if (message.fromSubagent) bubble.append(fromSubagent(message.fromSubagent));
@@ -39,7 +39,7 @@ export function botBody(message: MessageView, components: Record<string, Compone
     bubble.append(element);
   };
   const appendComponent = ({ display, index }: { display: DisplayView; index: number }) => {
-    const element = componentView(message, display, index, components);
+    const element = componentView(message, display, index, components, botId);
     if (element) appendWide(element);
   };
   // One written at the very end goes after the question, as a single component always has.
@@ -134,14 +134,14 @@ function fromSubagent(agent: { id: string; title: string }): HTMLElement {
  * One component a bot's message shows. Its answers go back as answers to that message; the
  * first keeps the message's id as its key (its height survives a redraw), the rest add their place.
  */
-function componentView(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {
+function componentView(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>, botId: string | null): HTMLElement | null {
   // Shown with no data and nothing to get it from: nothing to draw, and no error card in the
   // user's chat (the app tells the bot with the user's next message).
   if (display.status === "empty" && !display.command) return null;
   // Data from a command: the card around it asks to allow it, runs it, or says why it failed.
   const element = display.command || display.status
-    ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components), { lazy: true })
-    : drawComponent(message, display, index, components);
+    ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components, botId), { lazy: true })
+    : drawComponent(message, display, index, components, botId);
   // A plugin's bars (the Board's pin / ↻ / ⋯, in a chat that can pin) show on hover.
   if (!element) return element;
   const bars = extensions.cardBars.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(display, message.id, index)) ?? []);
@@ -152,7 +152,7 @@ function componentView(message: MessageView, display: DisplayView, index: number
   return holder;
 }
 
-function drawComponent(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {
+function drawComponent(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>, botId: string | null): HTMLElement | null {
   const answer = (value: ComponentAnswer) => {
     const action = answerAction(message.id, value);
     if (action) post(action);
@@ -167,7 +167,7 @@ function drawComponent(message: MessageView, display: DisplayView, index: number
       typeof value === "number" ? { index: value }
         : typeof value === "string" ? { text: value }
         : { text: value?.text ?? "", images: answerImages(value?.images) },
-    )));
+    ), { botId, messageId: message.id }));
     return root;
   }
   // ccb.save(data) keeps new data in this message; a command's card shows the command's output.

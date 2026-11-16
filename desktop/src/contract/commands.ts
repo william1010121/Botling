@@ -35,6 +35,8 @@ export const PluginView = z.strictObject({
   description: z.string().max(2_000).nullable(),
   enabled: z.boolean(),
   failure: z.string().max(2_000).nullable(),
+  /** Where its program part stands (`ccb.host.status()`, Web/src/frame-protocol.ts HOST_STATES). Absent: the core did not say (an older one). */
+  hostState: z.enum(["none", "off", "held", "starting", "running", "failed"]).optional(),
   installedFrom: z.string().max(2_000).nullable(),
   /** Shipped with Botling (step M11): read-only, can only be turned off. */
   builtIn: z.boolean().optional(),
@@ -407,7 +409,7 @@ const BASE_COMMANDS = [
    * as a chat link: a web link in the default browser, a Markdown file in the app's report preview (`previewURL`, shown by the page),
    * any other file with its app (a page, picture, video, document) or in Finder. No prompt; never run.
    */
-  z.strictObject({ type: z.literal("plugins.openLink"), name: PluginName, botId: PluginBotId, href: z.string().min(1).max(4_000) }),
+  z.strictObject({ type: z.literal("plugins.openLink"), name: PluginName, botId: PluginBotId, href: z.string().min(1).max(4_000), /** `botling.openFile`: a page in an `artifacts` folder opens in the app's report view. */ preview: z.boolean().optional() }),
   /** What `href` of a bot's note names for a plugin (core only, plugin-link.ts): asked by main for `plugins.openLink`. No page may send it. */
   z.strictObject({ type: z.literal("plugins.linkTarget"), name: PluginName, botId: PluginBotId, href: z.string().min(1).max(4_000) }),
   /** The pictures a plugin frame's tile data names, as card-page URLs: the app page puts them into the tile's page (`ccb.tile`). */

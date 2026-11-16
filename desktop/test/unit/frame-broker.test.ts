@@ -180,6 +180,41 @@ describe("the frame broker", () => {
   });
 });
 
+describe("ccb.host.status() (hostStatus)", () => {
+  it("answers with the state of the frame's own plugin, and the frame cannot name another", async () => {
+    const asked: string[] = [];
+    const rpc: PluginFrameHost = { call: async () => null, command: async () => null, hostStatus: async (plugin) => { asked.push(plugin); return plugin === "duel" ? "held" : "running"; } };
+    const frames = broker();
+    const duel = frame();
+    registerPluginFrame(frames, rpc, { frame: duel.element, plugin: "duel" });
+    send(duel.element, { ccb: "hostStatus", id: 7 });
+    send(duel.element, { ccb: "hostStatus", id: 8, plugin: "other" });
+    await settle();
+    expect(asked).toEqual(["duel"]);
+    expect(duel.posted).toEqual([{ ccb: "reply", id: 7, ok: true, value: "held" }]);
+    expect(frames.refusals).toHaveLength(1);
+  });
+
+  it("a page that does not answer it says so; a failure is the reply; it is paced like any call", async () => {
+    const frames = broker();
+    const bare = frame();
+    registerPluginFrame(frames, { call: async () => null, command: async () => null }, { frame: bare.element, plugin: "duel" });
+    send(bare.element, { ccb: "hostStatus", id: 1 });
+    await settle();
+    expect(bare.posted).toEqual([{ ccb: "reply", id: 1, ok: false, value: "This page does not answer ccb.host.status." }]);
+    const broken = frame();
+    registerPluginFrame(frames, { call: async () => null, command: async () => null, hostStatus: async () => { throw new Error("list failed"); } }, { frame: broken.element, plugin: "duel" });
+    send(broken.element, { ccb: "hostStatus", id: 2 });
+    await settle();
+    expect(broken.posted).toEqual([{ ccb: "reply", id: 2, ok: false, value: "list failed" }]);
+    const busy = frame();
+    registerPluginFrame(frames, { call: async () => null, command: async () => null, hostStatus: async () => "running" }, { frame: busy.element, plugin: "duel" });
+    for (let id = 1; id <= 21; id++) send(busy.element, { ccb: "hostStatus", id });
+    await settle();
+    expect(busy.posted).toContainEqual({ ccb: "reply", id: 21, ok: false, value: "Too many calls; wait a moment." });
+  });
+});
+
 describe("Botling's own commands from a plugin frame (plan W2)", () => {
   it("openChat and openResult go to the page, with what they need; another id or wrong arguments are refused", async () => {
     const frames = broker();
@@ -195,6 +230,19 @@ describe("Botling's own commands from a plugin frame (plan W2)", () => {
     expect(rpc.builtins).toEqual([["board", { id: "botling.openChat", botId: "B1" }], ["board", { id: "botling.openResult", botId: "B1", url: "https://example.com/r" }]]);
     expect(rpc.commands).toEqual([["board", "board.refresh", ["fast"]]]);
     expect(frames.refusals.map((refusal) => refusal.reason)).toEqual(['Botling\'s command "botling.openResult" with the wrong arguments', 'a command of another plugin ("botling.settings")']);
+  });
+
+  it("openFile(botId, absolutePath) goes to the page; a relative path or one argument is refused", async () => {
+    const frames = broker();
+    const rpc = host();
+    const duel = frame();
+    registerPluginFrame(frames, rpc, { frame: duel.element, plugin: "duel" });
+    send(duel.element, { ccb: "command", id: "botling.openFile", args: ["B1", "/p/.bot/artifacts/duel/result.html"] });
+    send(duel.element, { ccb: "command", id: "botling.openFile", args: ["B1", "result.html"] });
+    send(duel.element, { ccb: "command", id: "botling.openFile", args: ["B1"] });
+    await settle();
+    expect(rpc.builtins).toEqual([["duel", { id: "botling.openFile", botId: "B1", path: "/p/.bot/artifacts/duel/result.html" }]]);
+    expect(frames.refusals).toHaveLength(2);
   });
 
   it("openChat with a message id goes to the page with it (the chat at that line)", async () => {

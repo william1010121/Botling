@@ -429,7 +429,8 @@ describe("a plugin gives sentences, never a worker's model, effort or engine (F3
     const walk = (value: unknown): string[] => value && typeof value === "object" ? Object.entries(value).flatMap(([k, v]) => [k, ...walk(v)]) : [];
     const shipped = [JSON.parse(readFileSync(RULES_FILE, "utf8")), JSON.parse(readFileSync(join(BUILT, "botling.orchestration", "package.json"), "utf8"))];
     for (const file of shipped) expect(walk(file).filter((k) => /^worker(Model|Effort|Engine)$/.test(k))).toEqual([]);
-    expect(shipped[1].ccb).toEqual({});
+    // Since every built-in declares a kernel block (32061a43), only that block: no `contributes`, no permissions, nothing for rules.
+    expect(Object.keys(shipped[1].ccb).filter((key) => !["kernel", "provides", "requires", "uses"].includes(key))).toEqual([]);
   });
 
   it("a chosen plugin whose rules.json or manifest names a worker model or effort is refused whole; its manifest's own `contributes` is not read for rules", async () => {

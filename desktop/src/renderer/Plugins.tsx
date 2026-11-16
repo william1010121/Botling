@@ -298,7 +298,14 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
   // What the plugin's program part pushes (`ui.emit`) goes to its frames: every one, or those of the bot it names.
   useEffect(() => {
     if (!url) return;
+    // The state of its program part (`ccb.host.onStatus`): told when the plugin list changes it (the first list is told too).
+    let lastHost: string | undefined;
     return client.onEvent(({ event }) => {
+      if (event.type === "plugins.updated") {
+        const state = event.plugins.plugins.find((each) => each.name === plugin)?.hostState ?? "none";
+        if (state !== lastHost) { lastHost = state; frame.current?.contentWindow?.postMessage(frameEvent("hostStatus", state), "*"); }
+        return;
+      }
       if (event.type !== "plugins.emit" || event.plugin !== plugin) return;
       if (event.forBot !== undefined && event.forBot !== botKey) return;
       frame.current?.contentWindow?.postMessage(frameEvent(event.name, event.data), "*");

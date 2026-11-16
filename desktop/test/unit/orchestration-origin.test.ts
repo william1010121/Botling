@@ -38,7 +38,8 @@ function originCore(granted: string[] = []) {
   const core = new RealCore({
     dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true,
     plugins: { node: null, hostScript: "", sealer: null, builtIns: join(dir, "builtin") },
-    pluginCapability: (name) => granted.includes(name),
+    // Only `orchestrate`: the "installed" answer (no card, any bot) is the approval of the program part, not what these tests grant.
+    pluginCapability: (name, capability) => capability === "orchestrate" && granted.includes(name),
     routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0,
   });
   running.push(core);

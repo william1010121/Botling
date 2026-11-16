@@ -201,6 +201,7 @@ export class CorePluginWorld {
         // The worker primitives (orchestration/plugin-workers.ts): a bot's Claude-process workers, started for a plugin (`startFor`: fewer rights).
         orchestration: {
           granted: (name) => options.pluginCapability?.(name, "orchestrate") === true,
+          installed: (name) => options.pluginCapability?.(name, "installed") === true,
           workers: (botId) => {
             const bot = this.pluginBot(botId);
             if (!bot) return "No such bot.";

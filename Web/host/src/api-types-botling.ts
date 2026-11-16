@@ -170,7 +170,7 @@ export interface BotlingApi {
      */
     emit(event: string, data: JSONValue, opts?: { botId?: string }): void;
   };
-  /** Needs "orchestrate", "exec", "files" and "bots" in package.json AND the user's OK for this plugin (API 2.8, `engines` "^2.8.0"). A quota applies; a plugin a bot wrote asks the user for every worker. */
+  /** Needs "orchestrate", "exec", "files" and "bots" in package.json AND the user's Allow for this plugin (API 2.8, `engines` "^2.8.0"). The Allow the user gives once in Settings › Plugins covers every worker and message (2026-11-16), several at once; a quota applies. Only if that Allow is not on record does a plugin a bot wrote raise an "Allow once" card per worker (cards wait in a line). With that Allow the plugin may work on any of the user's bots; without it, a plugin a bot wrote works only on bots it made itself. */
   workers: {
     /** Starts a Claude worker for a bot: it has no more rights than this plugin (no spec/, the bot's approval cards). `model` that may change spec/ is refused. */
     start(opts: { bot: string; instructions: string; name?: string; group?: string; engine?: "claude"; model?: string; effort?: string }): Promise<{ taskId: string; run: number }>;
