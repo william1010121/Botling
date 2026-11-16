@@ -59,7 +59,8 @@ function claimed(region: Region, scope: string): boolean {
  * never loaded, was refused or is being unloaded leaves the shell's "unavailable" line, not a hole. Active without its entry: not drawn.
  * The main column: while `botling.chat`'s entry is held; while the plugin is not up and the host has not said it is away (not loaded yet, a
  * page drawn without a shell: the page as it was); not while the host says it was refused, failed or unloaded, nor while it is active without
- * its entry (fail closed, the same three states as chat-slot.ts).
+ * its entry (fail closed, the same three states as chat-slot.ts). With the shell's instance not up (`direct`, RegionSlot) every region is drawn as the
+ * page made it, except the main column once the host has said `botling.chat` is away: that is the fallback screen, not the column (M7-08).
  */
 export function regionShown(region: Region, scope: string, host: Pick<InPageHost, "unavailable"> = inPageHost): boolean {
   if (claimed(region, scope)) return true;
@@ -76,7 +77,7 @@ export function RegionSlot({ region }: { region: Region }) {
   const context = useContext(Regions);
   const version = useSyncExternalStore(subscribeSlots, slotsVersion, slotsVersion);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const shown = useMemo(() => !!context && (context.direct || regionShown(region, context.scope)), [context, region, version]);
+  const shown = useMemo(() => !!context && (context.direct ? !(region === "main" && mainAway()) : regionShown(region, context.scope)), [context, region, version]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const away = useMemo(() => region === "main" && !shown && mainAway(), [region, shown, version]);
   // The chat plugin is away: the shell's own fallback screen (Fallback.tsx) stands in the column's place, with the chrome the page kept out of it (`away`).

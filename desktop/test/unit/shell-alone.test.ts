@@ -8,11 +8,17 @@
 //   1. An empty manifest used to attempt nothing, so nothing was "unavailable" and the page drew the old column and rail as it was (the fallback
 //      never came): a bundle built with a manifest now asks for every plugin the shell draws a surface for (shell-plugins.ts) and refuses
 //      the ones the manifest lacks.
-//   2. On the phone page the drawer button (`web.headerLead`) sat in the chat column's header and "This device" (`web.railFooter`) in the
+//   2. (review of 07c) With the shell's own instance not up (ShellFrame draws the page `direct`) the chat column was drawn whatever the host said, a
+//      refused `botling.chat` included: it fails closed to the fallback now.
+//   3. On the phone page the drawer button (`web.headerLead`) sat in the chat column's header and "This device" (`web.railFooter`) in the
 //      rail, both plugin-drawn: with both away the shell's own sheet could not be opened. The fallback header and the rail's unavailable line
 //      draw them now.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
+import { rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
+import { RegionSlot } from "../../src/renderer/shell/regions";
+import { ShellFrame } from "../../src/renderer/shell/ShellFrame";
+import { createRoot } from "react-dom/client";
 import { inpagePluginFolders } from "../../fe-build-manifest.mjs";
 import { CHAT_UNAVAILABLE } from "../../src/renderer/chat-names";
 import { inPageHost, InPageHost } from "../../src/renderer/shell/inpage-host";
@@ -150,5 +156,39 @@ describe("the page with every in-page built-in refused", () => {
     await settle(() => { expect(page.host.querySelector(".chat-pane")).not.toBeNull(); });
     expect(page.host.querySelector(".chat-fallback")).toBeNull();
     expect(page.host.querySelector("aside.rail-unavailable")).toBeNull();
+  });
+});
+
+describe("the frame drawn directly (the shell's own kernel instance is not up)", () => {
+  const column = (label: string) => createElement("main", { className: "page" }, createElement(RegionSlot, { region: "main" }), createElement("i", { className: "tail" }, label));
+  const mount = async (host: InPageHost | null) => {
+    await rendererKernel.requestUnload(SHELL_SURFACE);
+    restore.push(async () => { await rendererKernel.load(SHELL_SURFACE); });
+    expect(rendererKernel.state(SHELL_SURFACE)).toBe("absent");
+    if (host) vi.spyOn(inPageHost, "unavailable").mockImplementation((name) => host.unavailable(name));
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    const node = document.createElement("div");
+    document.body.append(node);
+    const root = createRoot(node);
+    restore.push(async () => { await act(async () => root.unmount()); node.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; });
+    await act(async () => root.render(createElement(ShellFrame, { legacy: column("x"), regions: { main: createElement("section", { className: "old-column" }, "the chat column"), away: { parts: {} } } })));
+    return node;
+  };
+  const restore: (() => Promise<void>)[] = [];
+  afterEach(async () => { for (const undo of restore.splice(0).reverse()) await undo(); });
+
+  it("draws the fallback, not the chat column, once the host says botling.chat was refused (fail closed)", async () => {
+    const refusing = host({ manifest: { plugins: [] }, expected: SHELL_PLUGINS });
+    await refusing.start();
+    const node = await mount(refusing);
+    expect(node.querySelector(".chat-fallback")).not.toBeNull();
+    expect(node.querySelector(".old-column")).toBeNull();
+    expect(node.querySelector(".tail")).not.toBeNull();
+  });
+
+  it("still draws the page as it was when the host has said nothing (no shell, no manifest)", async () => {
+    const node = await mount(null);
+    expect(node.querySelector(".old-column")).not.toBeNull();
+    expect(node.querySelector(".chat-fallback")).toBeNull();
   });
 });
