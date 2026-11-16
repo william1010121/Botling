@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FE_MANIFEST_FILE, feBuildManifestFile } from "../../fe-build-manifest.mjs";
-import { shellInputs } from "../../fe-shell-manifest.mjs";
+import { shellAssetPaths, shellInputs } from "../../fe-shell-manifest.mjs";
 import { feManifestDefine } from "../../fe-manifest-define.mjs";
 import { bundledInPagePlugin } from "../../src/renderer/shell/inpage-bundled";
 import { embeddedFeManifest, parseFeManifest } from "../../src/renderer/shell/inpage-loader";
@@ -119,7 +119,8 @@ describe("web-v3/build.mjs", () => {
     const read = (JSON.parse(readFileSync(`${out}.inputs.json`, "utf8")) as { inputs: string[] }).inputs
       .filter((input) => !input.startsWith("<")).map((input) => relative(repo, realpathSync.native(resolve(input))).split(sep).join("/"))
       .filter((path) => !path.startsWith("..") && !path.includes("node_modules") && !/^desktop\/(?:builtin-plugins|src\/renderer\/plugins)\//.test(path)).sort();
-    // (the non-code assets the hash also covers are checked by shell-hash-assets.test.ts)
-    expect(shellInputs(repo).filter((path) => read.includes(path))).toEqual(read);
+    // The hash covers exactly the code the build read plus the non-code assets (their own list is checked by shell-hash-assets.test.ts):
+    // a plugin source leaking in, or a code file dropped, fails here.
+    expect(shellInputs(repo)).toEqual([...new Set([...read, ...shellAssetPaths(repo)])].sort());
   }, 120_000);
 });
