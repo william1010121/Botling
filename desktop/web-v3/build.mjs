@@ -25,10 +25,11 @@ import { readCharacters } from "../build-renderer.mjs";
 import { FE_MANIFEST_FILE, feBuildManifestFile } from "../fe-build-manifest.mjs";
 import { feManifestDefine } from "../fe-manifest-define.mjs";
 import { inlineTokens } from "../../Web/kit/build.mjs";
+import { PAGE_ASSETS, PAGE_BUILD_FILES } from "./page-assets.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
-const web = resolve(root, "../Web");
+const repo = resolve(root, "..");
 const outdir = resolve(process.argv[2] ?? join(here, "dist"));
 const nodePaths = [join(root, "node_modules")];
 
@@ -61,21 +62,15 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   ]);
   const files = new Map([shell, chat, pdfViewer, worker].flatMap((result) => result.outputFiles.map((file) => [file.path, file.contents])));
   const asset = (from, to, tokens = false) => sources.add(resolve(from)) && files.set(join(out, to), tokens ? Buffer.from(inlineTokens(readFileSync(from, "utf8"), from, (file) => sources.add(file))) : readFileSync(from));
-  for (const name of ["index.html", "manifest.webmanifest"]) asset(join(here, name), name);
-  asset(join(here, "shell/shell.css"), "shell.css");
-  asset(join(here, "pdf-viewer/pdf.html"), "pdf.html");
-  asset(join(here, "pdf-viewer/viewer.css"), "pdf-viewer.css");
+  // The page's own files and the 2.x page's look and icons (read, never edited): the list is page-assets.mjs, which shell.hash is made from too.
+  for (const { from, to, tokens, append } of PAGE_ASSETS) {
+    asset(join(repo, from), to, tokens);
+    if (append) { sources.add(join(repo, append)); files.set(join(out, to), Buffer.concat([Buffer.from(files.get(join(out, to))), Buffer.from("\n"), readFileSync(join(repo, append))])); }
+  }
   const pdfjs = join(root, "node_modules/pdfjs-dist");
   asset(join(pdfjs, "legacy/build/pdf.worker.min.mjs"), "pdf.worker.mjs");
   asset(join(pdfjs, "LICENSE"), "pdfjs/LICENSE.txt");
   for (const dir of ["cmaps", "standard_fonts"]) for (const name of readdirSync(join(pdfjs, dir))) asset(join(pdfjs, dir, name), `pdfjs/${dir}/${name}${name.startsWith("LICENSE") ? ".txt" : ""}`);
-  // The 2.x page's look and icons (read, never edited).
-  for (const name of ["web.css", "icon.svg", "icon-180.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "frame-host.html", "frame-host.js"]) asset(join(root, "mobile", name), name);
-  asset(join(root, "src/renderer/styles.css"), "styles.css", true);
-  files.set(join(out, "styles.css"), Buffer.concat([Buffer.from(files.get(join(out, "styles.css"))), Buffer.from("\n"), readFileSync(join(root, "src/renderer/ModelPicker.css"))]));
-  asset(join(root, "src/renderer/chat-frame/chat.html"), "chat.html");
-  asset(join(root, "src/renderer/chat-frame/frame.css"), "frame.css");
-  asset(join(web, "src/chat.css"), "chat.css", true);
   const katex = join(root, "node_modules/katex/dist");
   asset(join(katex, "katex.min.css"), "plugins/ccb-latex/katex.min.css");
   for (const name of readdirSync(join(katex, "fonts")).filter((n) => n.endsWith(".woff2"))) asset(join(katex, "fonts", name), `plugins/ccb-latex/fonts/${name}`);
@@ -84,7 +79,7 @@ export async function buildPage({ out = outdir, development = false } = {}) {
   asset(join(root, "builtin-plugins/botling.board/src/board.css"), "plugins/botling.board/board.css");
   // The in-page plugins this build ships (M7-10a): name and folder hash, built from src/renderer/plugins/* (the bundled ones are in the metafile's inputs).
   files.set(join(out, FE_MANIFEST_FILE), feBuildManifestFile(root));
-  for (const file of ["fe-build-manifest.mjs", "fe-shell-manifest.mjs"]) sources.add(join(root, file));
+  for (const file of PAGE_BUILD_FILES) sources.add(join(repo, file));
   // The build's id, stamped in index.html and version.json (as the 2.x page does).
   const hash = createHash("sha256");
   for (const [file, contents] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
