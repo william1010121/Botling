@@ -2,7 +2,7 @@
 // back from the bot's reply, and everything is kept in plugin storage: never in the note, never through notes.write.
 import { describe, expect, it, vi } from "vitest";
 import type { BotlingApi } from "../../../../Web/host/src/api";
-import { MAX_THREADS, activateMargin, askText, readBook, splitReply } from "../src/margin";
+import { MAX_BOOK_BYTES, MAX_THREADS, MAX_WAITING, activateMargin, askText, readBook, splitReply } from "../src/margin";
 
 type Handler = (data: never) => void;
 
@@ -89,6 +89,40 @@ describe("asking", () => {
     const s = setup({ stored });
     await expect(ask(s, { rid: "new" })).rejects.toThrow(`最多 ${MAX_THREADS} 則`);
     expect(s.api.bots.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("review fixes (v3-note-margin)", () => {
+  it("a send that went is never undone when the bookkeeping after it fails: a retry sends nothing again", async () => {
+    const s = setup();
+    const set = s.api.storage.set;
+    let sends = 0;
+    // the one save after the send (its message id) fails; every other save works
+    s.api.bots.send.mockImplementation(async () => { sends += 1; s.api.storage.set = () => { s.api.storage.set = set; throw new Error("disk full"); }; return { messageId: "m-1" }; });
+    await ask(s);
+    expect(book(s).threads[0].turns[0].a).toBeNull();
+    const again = await ask(s);
+    expect(again.duplicate).toBe(true);
+    expect(sends).toBe(1);
+  });
+
+  it("refuses a new question when the book is past MAX_BOOK_BYTES or MAX_WAITING questions wait", async () => {
+    const s = setup();
+    for (let i = 0; i < MAX_WAITING; i++) await ask(s, { rid: `w${i}` });
+    await expect(ask(s, { rid: "w-more" })).rejects.toThrow("同時在等");
+    const big = setup();
+    const long = "答".repeat(30_000);
+    const threads = Array.from({ length: Math.ceil(MAX_BOOK_BYTES / (long.length * 3)) + 1 }, (_, i) => ({
+      id: `c-${String(i + 1).padStart(4, "0")}`, anchor: ANCHOR, turns: [{ rid: `x${i}`, q: "q", a: long, qAt: 1, aAt: 2, seenAt: null }], folded: false, created: 1, updated: 1,
+    }));
+    big.stored.set("margin:B1", { seq: threads.length, threads });
+    await expect(ask(big)).rejects.toThrow("存得太多");
+    expect(big.api.bots.send).not.toHaveBeenCalled();
+  });
+
+  it("an answer tag wrapped in Markdown leaves no marks, and control characters in the answer are dropped", () => {
+    expect(splitReply("**〔回答 c-0001〕**\n答案")).toEqual({ ids: ["c-0001"], body: "答案" });
+    expect(splitReply("`〔回答 c-0001〕`\n答\u0007案")).toEqual({ ids: ["c-0001"], body: "答案" });
   });
 });
 

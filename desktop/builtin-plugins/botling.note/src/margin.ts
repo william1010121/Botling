@@ -12,6 +12,10 @@ export const MAX_QUESTION = 4_000;
 export const MAX_QUOTE = 4_000;
 export const MAX_LABEL = 400;
 export const MAX_ANSWER = 30_000;
+/** A bot's book in storage.json (the plugin's one file, rewritten whole on every save): no new question past this many bytes. */
+export const MAX_BOOK_BYTES = 1_000_000;
+/** Questions waiting at once per bot: each may still bring an answer of MAX_ANSWER, so the book stays bounded past MAX_BOOK_BYTES. */
+export const MAX_WAITING = 10;
 const ID = /^c-\d{4,}$/;
 const RID = /^[A-Za-z0-9_-]{1,64}$/;
 const ANSWER_TAG = /〔回答 (c-\d{4,})〕/g;
@@ -103,7 +107,8 @@ export function askText(thread: Thread, index: number): string {
 /** The ids a reply names (〔回答 c-0001〕), and the reply without those tags. */
 export function splitReply(text: string): { ids: string[]; body: string } {
   const ids = [...new Set(text.match(ANSWER_TAG)?.map((tag) => tag.slice(4, -1)) ?? [])];
-  const body = text.replace(ANSWER_TAG, "").replace(/^\s*\n/, "").trim();
+  // a tag the bot wrapped in Markdown (**〔回答 c-0001〕**, `…`) leaves its marks on the first line: that line goes too
+  const body = clean(text.replace(ANSWER_TAG, ""), MAX_ANSWER * 2).replace(/^[ \t*_`~]*\n/, "").trim();
   return { ids, body: body.slice(0, MAX_ANSWER) };
 }
 
@@ -228,6 +233,8 @@ export function activateMargin(api: BotlingApi, expose: Expose, now: () => numbe
       // a retry of a request that already went (a double tap, a repeated call): the same answer, nothing sent again
       const dup = book.threads.find((t) => t.turns.some((x) => x.rid === rid));
       if (dup) return { thread: view(dup), duplicate: true };
+      if (new TextEncoder().encode(JSON.stringify(book)).length > MAX_BOOK_BYTES) throw new Error("旁註存得太多了，請先刪掉幾則。");
+      if (waiting(book).length >= MAX_WAITING) throw new Error(`同時在等的旁註最多 ${MAX_WAITING} 則，等回答回來再問。`);
       const at = now();
       let thread: Thread;
       if (params.id !== undefined) {
@@ -249,12 +256,9 @@ export function activateMargin(api: BotlingApi, expose: Expose, now: () => numbe
       save(botId, book);
       track(botId, true);
       changed(botId);
+      let sent: { messageId?: unknown } | null | undefined;
       try {
-        const sent = await api.bots.send(botId, askText(thread, thread.turns.length - 1));
-        const now2 = load(botId);
-        const again = now2.threads.find((t) => t.id === thread.id);
-        const mine = again?.turns.find((x) => x.rid === rid);
-        if (mine && sent?.messageId) { mine.messageId = String(sent.messageId).slice(0, 200); save(botId, now2); }
+        sent = await api.bots.send(botId, askText(thread, thread.turns.length - 1));
       } catch (error) {
         // not sent: nothing is waiting for an answer
         const book2 = load(botId);
@@ -268,6 +272,12 @@ export function activateMargin(api: BotlingApi, expose: Expose, now: () => numbe
         changed(botId);
         throw new Error(`沒能把問題送給 bot：${oneLine((error as Error)?.message ?? error, 200)}`);
       }
+      // sent: from here a failure must not undo the turn (a retry would send the question twice)
+      try {
+        const now2 = load(botId);
+        const mine = now2.threads.find((t) => t.id === thread.id)?.turns.find((x) => x.rid === rid);
+        if (mine && sent?.messageId) { mine.messageId = String(sent.messageId).slice(0, 200); save(botId, now2); }
+      } catch { /* the message id is only a note */ }
       const done = load(botId);
       return { thread: view(done.threads.find((t) => t.id === thread.id) ?? thread) };
     }),
