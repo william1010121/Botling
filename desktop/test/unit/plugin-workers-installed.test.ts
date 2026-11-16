@@ -70,10 +70,41 @@ describe("an installed plugin starts workers with no card", () => {
     expect(t.log.started).toEqual([]);
   });
 
-  it("G1 stays: an installed plugin a bot wrote still works only on bots it made", async () => {
+  it("G1 is relaxed for an approved plugin: a bot-written, installed plugin may start workers (and send) on a bot it did not make", async () => {
     const t = book({ installed: () => true, made: () => false });
-    await expect(t.workers.start("duel", go("A"))).rejects.toThrow("made itself");
-    expect(t.log.started).toEqual([]);
+    const { taskId } = await t.workers.start("duel", go("A"));
+    expect(t.log.started).toHaveLength(1);
+    expect(t.log.cards).toEqual([]);
+    await t.workers.send("duel", taskId, "next round");
+    expect(t.log.sent).toEqual(["next round"]);
+    expect(t.log.cards).toEqual([]);
+  });
+
+  it("G1 stays for a bot-written plugin the user has not approved: only bots it made, for start and send", async () => {
+    for (const installed of [undefined, () => false, () => { throw new Error("db closed"); }]) {
+      const t = book({ ...(installed ? { installed } : {}), made: () => false });
+      await expect(t.workers.start("duel", go("A"))).rejects.toThrow("made itself");
+      expect(t.log.started).toEqual([]);
+      expect(t.log.cards).toEqual([]);
+    }
+    // A worker it made itself, then the approval is taken back: the send on a bot it did not make is refused.
+    let installed = true;
+    let made = true;
+    const t = book({ installed: () => installed, made: () => made });
+    const { taskId } = await t.workers.start("duel", go("A"));
+    installed = false;
+    made = false;
+    await expect(t.workers.send("duel", taskId, "x")).rejects.toThrow("made itself");
+    expect(t.log.sent).toEqual([]);
+  });
+
+  it("approval is asked at the use: taken back between two starts, the second is refused on a bot it did not make", async () => {
+    let installed = true;
+    const t = book({ installed: () => installed, made: () => false });
+    await t.workers.start("duel", go("A"));
+    installed = false;
+    await expect(t.workers.start("duel", go("B"))).rejects.toThrow("made itself");
+    expect(t.log.started).toHaveLength(1);
   });
 
   it("is asked at every use: when it turns false the next start gets its card again", async () => {

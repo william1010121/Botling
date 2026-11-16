@@ -15,7 +15,7 @@
 // M7-O04 (F6, G1, G2): a plugin that is not shipped cannot get a worker by having a bot start it either (`bots.send`, `bots.wake`): a worker
 // the bot starts in a turn that began with such a plugin's message goes through the same checks (`admitHeard`; the plugin belongs to the
 // turn, made with the message and never changed: `Turn.plugin`, M7-O05). A bot-written plugin also gets a card for every `workers.send`
-// (a new instruction is a new worker's worth of trust), may only work on bots it made itself, and has one card open at a time.
+// (a new instruction is a new worker's worth of trust), may only work on bots it made itself (both unless the user approved the plugin: `installed`), and has one card open at a time.
 // No plugin gets Maintainer (the plugin library) as a target: the world refuses it (`workers`).
 // The owner of every worker is the bot it runs for; this book only remembers which plugin started it (quota, who may
 // send or cancel it, who hears its report). A cancel or a send for a worker the plugin did not start gets the same
@@ -221,9 +221,13 @@ export class PluginWorkers {
     }
   }
 
-  /** G1: a plugin the bot wrote works on the bots it made, not on the user's own. */
+  /**
+   * G1: a plugin the bot wrote works on the bots it made, not on the user's own, unless the user approved it (`installed`: its
+   * program part is allowed to run, the one Allow of Settings › Plugins): then it works on any of the user's bots (2026-11-16).
+   * Asked at every use; no answer, an error or false is "not approved".
+   */
   private mayWorkOn(facts: PluginFacts, botId: string) {
-    if (facts.botWritten && !this.deps.world.made?.(facts.name, botId)) throw new Error("A plugin a bot wrote may only start workers on bots it made itself. Nothing was started.");
+    if (facts.botWritten && !this.installed(facts.name) && !this.deps.world.made?.(facts.name, botId)) throw new Error("A plugin a bot wrote may only start workers on bots it made itself. Nothing was started.");
   }
 
   /** The checks before a worker's room is taken: the record is readable, the plugin is allowed, the model is not one that may change spec/, there is room. */
