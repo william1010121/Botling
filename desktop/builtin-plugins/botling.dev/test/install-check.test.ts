@@ -5,13 +5,14 @@
 // that really came up look like another one. These tests run the whole path (the tag, the card, the pick, the script's
 // state, the next start's verdict) and pin: the installed build is the one the install started with (its content decides, not
 // a time), the old build is what really runs (not the bundle on disk now), and a build that changed since the card is refused.
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import * as nodeFs from "node:fs";
 import { chmodSync, copyFileSync, mkdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../../../test/helpers";
 import type { AppState, BotInfo, ReplyTag } from "../../../../Web/host/src/api";
 import { Program, type ProgramApi } from "../src/program";
-import { installOutcome } from "../src/swap";
+import { installOutcome, useBundleFs } from "../src/swap";
 
 const BUNDLE_ID = "io.github.william1010121.Botling3";
 const DEV: BotInfo = { id: "DEV", name: "botling", role: "manager", awake: true };
@@ -174,5 +175,68 @@ describe("the requested build is what the user confirmed", () => {
     expect(first.calls.some((call) => call[0] === "install")).toBe(false);
     expect(first.texts().join("\n")).toMatch(/changed since/);
     expect(installOutcome(join(root, "core"))).toBeNull();
+  });
+});
+
+// 2026-11-17, a good install reported as failed: "Botling is running 3.0.0-beta.1 (38060f5), which is neither the old build
+// (3.0.0-beta.1 (c8d1057, uncommitted changes)) nor the requested one." botlingd is an Electron process, and Electron's fs
+// treats app.asar as a folder: statSync says a directory of size 0 whose time is "now", openSync fails. So the requested
+// build's asar had no hash and a time from the card, the running one a time from the start, and equal labels did not match.
+describe("inside Electron, where fs sees app.asar as a folder", () => {
+  afterEach(() => useBundleFs(null));
+  /** What Electron's fs answers for a path ending in app.asar: a directory, size 0, mtime = the clock (which moves on every call). */
+  function electronFs() {
+    let clock = 1_900_000_000_000;
+    const isAsar = (file: unknown) => String(file).endsWith("app.asar");
+    return {
+      statSync: ((file: nodeFs.PathLike, ...rest: unknown[]) => {
+        if (!isAsar(file)) return (nodeFs.statSync as (...args: unknown[]) => nodeFs.Stats)(file, ...rest);
+        clock += 120_000;
+        return { isFile: () => false, isDirectory: () => true, size: 0, mtimeMs: clock, ino: 0 } as nodeFs.Stats;
+      }) as typeof nodeFs.statSync,
+      openSync: ((file: nodeFs.PathLike, ...rest: unknown[]) => {
+        if (isAsar(file)) throw Object.assign(new Error(`ENOENT,  not found in ${String(file)}`), { code: "ENOENT" });
+        return (nodeFs.openSync as (...args: unknown[]) => number)(file, ...rest);
+      }) as typeof nodeFs.openSync,
+      readSync: nodeFs.readSync,
+      closeSync: nodeFs.closeSync,
+    };
+  }
+
+  it("requested 38060f5 (clean), old c8d1057 (dirty): the copy that came up is reported as installed", async () => {
+    useBundleFs(electronFs());
+    const root = tempDir("install-check");
+    const full = "38060f517c3629b406e0faf7703857618fdae42b";
+    const old = fakeApp(join(root, "Applications"), "Botling 3", { BotlingGitCommit: "c8d10570aaaa", BotlingGitDirty: "1" }, "old build", T0);
+    const dist = fakeApp(join(root, "dist"), "Botling 3", { BotlingGitCommit: full, BotlingGitDirty: "0" }, "note margin build", T0 + 100);
+    const first = run(root, old);
+    await first.program.start();
+    first.ask(dist);
+    await waitFor(() => first.picks.length === 1);
+    first.picks[0]!(0);
+    await waitFor(() => first.calls.some((call) => call[0] === "install"));
+    const second = run(root, install(dist, join(root, "Applications", "Botling 3 installed.app")));
+    await second.program.start();
+    const said = await second.told();
+    expect(said).toMatch(/restarted on 3\.0\.0-beta\.1 \(38060f5\)/);
+    expect(said).not.toMatch(/not installed|neither/);
+  });
+
+  it("the old build that comes back is still 'not installed' (a clock that moves must not make it match the requested one)", async () => {
+    useBundleFs(electronFs());
+    const root = tempDir("install-check");
+    const old = fakeApp(join(root, "Applications"), "Botling 3", SAME, "old build", T0);
+    const dist = fakeApp(join(root, "dist"), "Botling 3", { ...SAME, BotlingGitCommit: "38060f517c36" , BotlingGitDirty: "0" }, "new", T0 + 100);
+    const first = run(root, old);
+    await first.program.start();
+    first.ask(dist);
+    await waitFor(() => first.picks.length === 1);
+    first.picks[0]!(0);
+    await waitFor(() => first.calls.some((call) => call[0] === "install"));
+    const second = run(root, old);
+    await second.program.start();
+    const said = await second.told();
+    expect(said).toMatch(/was not installed/);
+    expect(said).not.toMatch(/restarted on/);
   });
 });

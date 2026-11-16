@@ -15,7 +15,8 @@
 // released versions: notices about those are announced by the core (core/self-update.ts).
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
+import * as nodeFs from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
 import { join, resolve } from "node:path";
 import { writeFileAtomic } from "../../../src/core/durable/atomic";
 
@@ -49,6 +50,33 @@ export interface BuildInfo {
   asarSha256?: string | null;
 }
 
+/** The file calls that read a bundle's app.asar. */
+export type BundleFs = Pick<typeof nodeFs, "statSync" | "openSync" | "readSync" | "closeSync">;
+
+/**
+ * Inside Electron (botlingd and the window are Electron processes) `node:fs` treats a path ending in `.asar` as a folder:
+ * statSync(app.asar) says a directory of size 0 whose time is "now", and openSync fails. The asar's hash came out null and its
+ * time moved with the clock, so the build that really came up never matched the requested one (2026-11-17: "running
+ * 3.0.0-beta.1 (38060f5), which is neither the old build … nor the requested one" after a good install). `original-fs` is the
+ * plain file system; outside Electron (tests, plain node) it does not exist and `node:fs` is already plain.
+ */
+function plainFs(): BundleFs {
+  return nodeFs;
+}
+let bundleFs: BundleFs = plainFs();
+/** Test seam: the file system the bundle reads use (null puts the real one back). */
+export function useBundleFs(fs: BundleFs | null): void {
+  bundleFs = fs ?? plainFs();
+  asarHashes.clear();
+}
+
+/** The stat of a bundle file when it is a real, non-empty file (an asar-aware fs answers a directory of size 0 for app.asar), else null. */
+function fileStat(file: string): Stats | null {
+  try {
+    return bundleFs.statSync(file);
+  } catch { return null; }
+}
+
 /** Builds closer than this count as one build (a copy may round the time). */
 const BUILT_AT_SLACK_MS = 2_000;
 
@@ -72,19 +100,19 @@ const asarHashes = new Map<string, string | null>();
 /** sha256 of the bundle's app.asar (hex), or null when it has none. Kept per file, size, time and inode: a poll does not read it again. */
 export function asarSha256(bundle: string): string | null {
   const file = join(bundle, "Contents", "Resources", "app.asar");
-  let stat: Stats;
-  try { stat = statSync(file); } catch { return null; }
+  const stat = fileStat(file);
+  if (!stat) return null;
   const key = `${file}\0${stat.size}\0${stat.mtimeMs}\0${stat.ino}`;
   if (asarHashes.has(key)) return asarHashes.get(key)!;
   let hash: string | null = null;
   try {
-    const fd = openSync(file, "r");
+    const fd = bundleFs.openSync(file, "r");
     try {
       const sum = createHash("sha256");
       const chunk = Buffer.allocUnsafe(1 << 20);
-      for (let n = readSync(fd, chunk, 0, chunk.length, null); n > 0; n = readSync(fd, chunk, 0, chunk.length, null)) sum.update(chunk.subarray(0, n));
+      for (let n = bundleFs.readSync(fd, chunk, 0, chunk.length, null); n > 0; n = bundleFs.readSync(fd, chunk, 0, chunk.length, null)) sum.update(chunk.subarray(0, n));
       hash = sum.digest("hex");
-    } finally { closeSync(fd); }
+    } finally { bundleFs.closeSync(fd); }
   } catch { hash = null; }
   if (asarHashes.size >= 16) asarHashes.clear();
   asarHashes.set(key, hash);
@@ -150,7 +178,8 @@ export function readBuild(bundle: string): BuildInfo | null {
 /** The modified time of the bundle's app.asar (else its Info.plist), in ms; null when neither can be read. */
 function builtAt(bundle: string): number | null {
   for (const file of [join(bundle, "Contents", "Resources", "app.asar"), join(bundle, "Contents", "Info.plist")]) {
-    try { return Math.round(statSync(file).mtimeMs); } catch { /* try the next */ }
+    const stat = fileStat(file);
+    if (stat) return Math.round(stat.mtimeMs);
   }
   return null;
 }
