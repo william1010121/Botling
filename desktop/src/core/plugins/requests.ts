@@ -24,7 +24,8 @@ import { importAssetBytes, importAssetFile, linkedFile, linkedPictures, localize
 import type { MarkedTabs } from "./marked-tabs";
 import type { MessageDecoration, PluginsOptions } from "./types";
 import { str } from "./snapshot";
-import { SendParams, BotParams, NoteWriteParams, NoteAssetParams, NoteRefsParams, NoteLocalizeParams, NoteParseParams, NoteOutlineParams, NoteModeParams, NoteCardsParams, NoteRunParams, WakeParams, PickParams, InputParams, ViewParams, TakeoverParams, ShowTabParams, SettingParams, SecretGetParams, SecretSetParams, KeyParams, ApprovalParams, RunParams, ComponentParams, RoutineParams, CreateParams, PluginOnly, AgyUsageParams, AgyWorkerParams, RoutinesListParams, RoutinesChangeParams, CardsStates, CardsRun, CardsAsk, CardsNotes, ChatDataParams, CHAT_DATA_BYTES, TasksParams, HistoryParams, ResultsParams, IgnoreParams, FaceParams, ChatParams, DecorateParams, FolderParams, FoldersParams, EngineParams, ContentReadParams, ContentFetchParams, DECORATION_BYTES, BOT_INSTRUCTIONS_LIMIT, type PluginBotExtras } from "./request-params";
+import type { PluginWorkers } from "../orchestration/plugin-workers";
+import { SendParams, BotParams, NoteWriteParams, NoteAssetParams, NoteRefsParams, NoteLocalizeParams, NoteParseParams, NoteOutlineParams, NoteModeParams, NoteCardsParams, NoteRunParams, WakeParams, PickParams, InputParams, ViewParams, TakeoverParams, ShowTabParams, SettingParams, SecretGetParams, SecretSetParams, KeyParams, ApprovalParams, RunParams, ComponentParams, RoutineParams, CreateParams, PluginOnly, AgyUsageParams, AgyWorkerParams, RoutinesListParams, RoutinesChangeParams, CardsStates, CardsRun, CardsAsk, CardsNotes, ChatDataParams, CHAT_DATA_BYTES, TasksParams, HistoryParams, ResultsParams, IgnoreParams, FaceParams, ChatParams, DecorateParams, FolderParams, FoldersParams, EngineParams, ContentReadParams, ContentFetchParams, WorkerStartParams, WorkerSendParams, WorkerCancelParams, DECORATION_BYTES, BOT_INSTRUCTIONS_LIMIT, type PluginBotExtras } from "./request-params";
 
 /** What `requested` uses of `Plugins` through `this` (the class implements it; its members are not `private` for that). */
 export interface RequestHost {
@@ -52,6 +53,26 @@ export interface RequestHost {
   noteFile(botId: string): string;
   setSetting(name: string, key: string, value: boolean | number | string | null): void;
   shipped(name: string): boolean;
+  /** The worker primitives' book (M7-O03a); throws when this world has no workers. */
+  workers(): PluginWorkers;
+}
+
+/**
+ * `workers.start`, `workers.send`, `workers.cancel` (M7-O03a). Every check is in PluginWorkers (plugin-workers.ts) and runs before a
+ * worker exists; nothing here starts anything. Not a `case` of `requested` (as the studio's methods are not): one place, its own rows.
+ */
+function workersRequest(host: RequestHost, method: string, params: unknown): Promise<unknown> {
+  if (method === "workers.start") {
+    const { plugin, data } = host.asked(WorkerStartParams, params);
+    const { plugin: _name, ...rest } = data;
+    return host.workers().start(plugin.manifest.name, rest);
+  }
+  if (method === "workers.send") {
+    const { plugin, data } = host.asked(WorkerSendParams, params);
+    return host.workers().send(plugin.manifest.name, data.taskId, data.message);
+  }
+  const { plugin, data } = host.asked(WorkerCancelParams, params);
+  return host.workers().cancel(plugin.manifest.name, data.taskId);
 }
 
 export async function requested(this: RequestHost, method: string, params: unknown, owner?: string): Promise<unknown> {
@@ -571,6 +592,7 @@ export async function requested(this: RequestHost, method: string, params: unkno
       return world.engineCli?.(data.engine) ?? null;
     }
     default: {
+      if (method === "workers.start" || method === "workers.send" || method === "workers.cancel") return workersRequest(this, method, params);
       if (isStudioMethod(method)) {
         // The component studio's asks of the core: a plugin shipped with Botling, with the "studio" permission.
         const { plugin, data } = this.asked(StudioParams[method], params);

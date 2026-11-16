@@ -226,6 +226,9 @@ function clearApiRetry(proc: Proc) {
   if (proc.apiRetry) { clearTimeout(proc.apiRetry); proc.apiRetry = undefined; }
 }
 
+/** The handoff argument `startFor` sets: the worker has fewer rights than a worker the bot started itself (see `spawn`). */
+const PLUGIN_STARTED = "pluginStarted";
+
 /** Background work started longer ago than this no longer keeps a worker's process past its keep-alive (the bots' rule). */
 const BACKGROUND_HOLDS_MS = 6 * 3600_000;
 
@@ -276,7 +279,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const effort = claudeEffort(wanted) ?? (wanted ? null : definition?.effort ?? null);
     const ignored = [...(wanted && !claudeEffort(wanted) ? [wanted] : []), ...(!wanted && definition?.effortIgnored ? [definition.effortIgnored] : [])];
     const machine = this.machine(request.args.machine) ?? this.defaultMachine(request.args.machine);
-    return { engineData: { sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null, effort, ...(ignored.length ? { effortIgnored: ignored } : {}), ...(machine ? { machine: machine.id, machineName: machine.name } : {}) } };
+    return { engineData: { ...(request.args[PLUGIN_STARTED] === true ? { pluginStarted: true } : {}), sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null, effort, ...(ignored.length ? { effortIgnored: ignored } : {}), ...(machine ? { machine: machine.id, machineName: machine.name } : {}) } };
   }
 
   /** app_handoff's `machine`: a trusted machine, or the refusal (nothing started). */
@@ -349,11 +352,13 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const config: HeadConfig = {
       ...base, cwd: this.options.cwd(), sessionId, resume: r.engineData.sessionStarted === true, forkSession: false, persistSession: true,
       model: this.model(r, base), effort: this.effort(r, base), monitorWorker: true, appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_WORKER_TOOLS }, agentGuard: CLAUDE_WORKER_GUARD,
-      specGuard: { writers: this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
+      specGuard: { writers: r.engineData.pluginStarted === true ? [] : this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
       ...(siteToolsFolder ? { siteToolsGuard: { folder: siteToolsFolder } } : {}),
       systemPrompt: [claudeWorkerPolicy(this.options.rules?.()), def?.prompt ?? ""].filter(Boolean).join("\n\n"),
       disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
       ...(def?.tools ? { tools: def.tools } : {}),
+      // A worker a plugin started (M7-O03a, review F3/F4): never spec/ whatever its model, and never the bot's skip-the-cards modes.
+      ...(r.engineData.pluginStarted === true ? { bypassPermissions: false, autoMode: false, askPermission: true } : {}),
     };
     // A kept-alive process carries later runs too: its items belong to whichever run is under way.
     const machine = nonEmpty(r.engineData.machine);
@@ -678,6 +683,11 @@ export class ClaudeWorkers implements WorkerHost {
    * replayed, and a later app_send_message resumes its session (`--resume`).
    */
   close(): Promise<void> { return this.core.close(); }
+
+  /** A handoff a plugin asked for (plugin-workers.ts, after its checks): the worker is marked `pluginStarted` (less than a bot's own). */
+  startFor(args: Record<string, unknown>): Promise<{ task_id: string; run: number }> {
+    return this.core.handoff("claude-process", { ...args, [PLUGIN_STARTED]: true });
+  }
 
   /** The app tools (the coordinator's in-process MCP server). */
   async tool(name: string, args: Record<string, unknown>): Promise<unknown> {

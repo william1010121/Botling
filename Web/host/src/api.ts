@@ -223,14 +223,21 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       expose,
       emit: (event, data, opts = {}) => host.notify("ui.emit", { plugin: name, name: String(event), data: data === undefined ? null : data, ...(opts.botId ? { botId: opts.botId } : {}) }),
     },
+    workers: {
+      start: async (opts) => (await ask("workers.start", opts as unknown as Record<string, JSONValue>)) as { taskId: string; run: number },
+      send: async (taskId, message) => (await ask("workers.send", { taskId, message })) as { run: number; how: string },
+      cancel: async (taskId) => (await ask("workers.cancel", { taskId })) as { stopped: boolean },
+    },
     events: {
       on: (event, fn) => {
         if (!EVENT_NAMES.includes(event)) throw new Error(`No event "${String(event)}" (there are ${EVENT_NAMES.join(", ")}).`);
         const list = plugin.events.get(event) ?? [];
-        list.push(fn as (data: unknown) => void);
+        // `workerReport` is told to the plugin that started the worker only (the core sends it to that plugin's host; a shared host also checks).
+        const listener = event === "workerReport" ? (data: unknown) => { if ((data as { startedBy?: unknown } | null)?.startedBy === name) (fn as (data: unknown) => void)(data); } : fn as (data: unknown) => void;
+        list.push(listener);
         plugin.events.set(event, list);
         announceLater();
-        const off = remove(list, fn as (data: unknown) => void);
+        const off = remove(list, listener);
         return own(() => { off(); announceLater(); });
       },
     },

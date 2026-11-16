@@ -119,7 +119,7 @@ describe("contributes.menus[\"chat/link\"]", () => {
 
 describe("plugin API 2.7 and the check", () => {
   it("names the API each contribution needs", () => {
-    expect(API_VERSION).toEqual({ major: 2, minor: 7 });
+    expect(API_VERSION).toEqual({ major: 2, minor: 8 });
     const { contributions } = readContributions("coach", {
       commands: [{ id: "coach.go", title: "Go" }],
       views: [{ id: "coach.tab", title: "T", where: "mainTab", forRole: "marked", chat: "float" }, { id: "coach.side", title: "S" }],
@@ -152,7 +152,7 @@ describe("plugin API 2.7 and the check", () => {
     expect(wide.stdout).toContain('engines "^2.0.0" lets in Botling 2.0, which skips it');
     const fine = checkReport(folder(root, "fine", "^2.7.0", { commands: [{ id: "fine.go", title: "Go" }], menus: { "chat/link": [{ command: "fine.go", when: { ext: "pdf" } }] } }));
     expect(fine.code).toBe(0);
-    expect(fine.stdout).toMatch(/^✓ .*fine passes the checks\.\nPlugin API each contribution needs \(this Botling: 2\.7\):\n/);
+    expect(fine.stdout).toMatch(/^✓ .*fine passes the checks\.\nPlugin API each contribution needs \(this Botling: 2\.8\):\n/);
     // Nothing newer than 2.0: ^2.0.0 is fine (botling.note's ^2.6.0 too).
     expect(checkReport(folder(root, "old", "^2.0.0", { commands: [{ id: "old.go", title: "Go" }], menus: { "message/context": [{ command: "old.go" }] } })).code).toBe(0);
     expect(checkReport(folder(root, "note", "^2.6.0", { views: [{ id: "note.tab", title: "Note", where: "mainTab" }] })).code).toBe(0);
