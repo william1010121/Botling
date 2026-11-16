@@ -41,6 +41,8 @@ export interface RequestHost {
   readonly chatDatas: Map<string, Map<string, JSONValue>>;
   takeover: { plugin: string; view: string; botId: string; wide: boolean } | null;
   announce(): void;
+  /** The fingerprint of the code a plugin's host runs now (undefined: not running). */
+  codeOf(plugin: string): string | undefined;
   appPlugin(plugin: InstalledPlugin): AppWorld;
   asked<T extends z.ZodTypeAny>(schema: T, params: unknown, owner?: string): { plugin: InstalledPlugin; data: z.infer<T> };
   cardsAllowed(plugin: InstalledPlugin): void;
@@ -78,6 +80,14 @@ function workersRequest(host: RequestHost, method: string, params: unknown): Pro
 }
 
 export async function requested(this: RequestHost, method: string, params: unknown, owner?: string): Promise<unknown> {
+  // M7-O04: a request names the code it was made by (`code`, the plugin's fingerprint). Older code a host still runs after a
+  // swap is refused here, before any method sees it; the method's own params never carry the field.
+  if (params && typeof params === "object" && !Array.isArray(params) && Object.hasOwn(params, "code")) {
+    const { code, ...rest } = params as Record<string, unknown>;
+    const now = typeof rest.plugin === "string" ? this.codeOf(rest.plugin) : undefined;
+    if (now !== undefined && code !== now) throw new Error("This request came from older code of the plugin, which has been replaced. It was refused.");
+    params = rest;
+  }
   if (owner !== undefined) {
     const claimed = params && typeof params === "object" ? (params as { plugin?: unknown }).plugin : undefined;
     if (claimed !== undefined && claimed !== owner) throw new Error(`This host may only act for "${owner}".`);

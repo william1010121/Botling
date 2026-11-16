@@ -390,6 +390,7 @@ export class Plugins {
   /** Something plugins may listen for happened (`events.on`); only sent when one listens. */
   event(name: PluginEventName, data: unknown) {
     if (name === "botRemoved") {
+      this.botGone((data as { botId: string }).botId);
       this.notes.unwatch((data as { botId: string }).botId);
       if (this.markedTabs.forget((data as { botId: string }).botId)) this.announce();
     }
@@ -728,6 +729,17 @@ export class Plugins {
   /** The unload hook for workers (plugin-workers.ts `reconcile`); never throws into the host's sync. */
   private workersReconcile() {
     try { if (this.options.world.orchestration) this.workers().reconcile(); } catch (error) { this.options.world.log(`plugin workers not handed back: ${(error as Error).message}`); }
+  }
+
+  codeOf(plugin: string): string | undefined { return this.hostMeta.get(plugin)?.fingerprint; }
+
+  /** The user changed what a plugin may do (its `orchestrate` grant): a plugin that no longer has it hands its workers back, as when it is switched off. */
+  grantChanged() { this.workersReconcile(); }
+
+  /** A bot was removed: the plugin book closes its entries, and no plugin message is remembered as having reached it. */
+  private botGone(botId: string) {
+    this.origins.delete(botId);
+    try { if (this.options.world.orchestration) this.workers().botGone([botId]); } catch (error) { this.options.world.log(`plugin workers not closed for a removed bot: ${(error as Error).message}`); }
   }
 
   /** A host came up: what plugins are owed is told, and the workers the book still counts at work are looked at (restart pickup). */

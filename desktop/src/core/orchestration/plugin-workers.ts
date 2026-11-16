@@ -372,7 +372,7 @@ export class PluginWorkers {
    * still has its grant. Not now: the copy stays owed (a hand-back drops it; a grant given back tells it).
    */
   private mayHear(entry: Entry): boolean {
-    try { return entry.hash !== undefined && this.deps.facts(entry.plugin)?.identity === entry.hash && this.deps.world.granted(entry.plugin) === true; } catch { return false; }
+    try { return entry.hash !== undefined && this.deps.facts(entry.plugin)?.identity === entry.hash && this.granted(entry.plugin); } catch { return false; }
   }
 
   private persist() {
@@ -385,7 +385,7 @@ export class PluginWorkers {
   }
 
   /**
-   * The unload hook (the plugin was disabled, removed, held back, or is another version now): each of its workers goes
+   * The unload hook (the plugin was disabled, removed, held back, is another version now, or lost its `orchestrate` grant): each of its workers goes
    * back to core. Synchronous, so the caller can run it before the new version's host starts.
    */
   reconcile() {
@@ -393,12 +393,29 @@ export class PluginWorkers {
     for (const entry of this.entries) {
       if (entry.handed) continue;
       const facts = this.deps.facts(entry.plugin);
-      if (facts && entry.hash === facts.identity) continue;
+      if (facts && entry.hash === facts.identity && this.granted(entry.plugin)) continue;
       entry.handed = true;
       delete entry.owed;
       changed = true;
     }
     if (changed) this.persist();
+  }
+
+  /** A bot was removed: each entry on it is closed (the place is free, nothing is owed, the plugin can no longer send to it or cancel it). */
+  botGone(bots: readonly string[]) {
+    let changed = false;
+    for (const entry of this.entries) {
+      if (!bots.includes(entry.bot) || (entry.handed && !entry.open)) continue;
+      entry.handed = true;
+      entry.open = false;
+      delete entry.owed;
+      changed = true;
+    }
+    if (changed) this.persist();
+  }
+
+  private granted(plugin: string): boolean {
+    try { return this.deps.world.granted(plugin) === true; } catch { return false; }
   }
 
   /**

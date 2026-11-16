@@ -411,11 +411,16 @@ export class WorkerCore implements WorkerHost {
     if (this.closed) throw new Error("Workers are closed: the app is stopping.");
     const adapter = this.options.adapters.find((a) => a.kind === kind);
     if (!adapter) throw new Error(`No ${kind} workers here.`);
-    const instructions = firstText(args.instructions, args.prompt, args.task) ?? "";
-    if (!instructions.trim() || instructions.length > MAX_WORDS) throw new Error(`instructions required (maximum ${MAX_WORDS} characters).`);
+    const given = firstText(args.instructions, args.prompt, args.task) ?? "";
+    if (!given.trim() || given.length > MAX_WORDS) throw new Error(`instructions required (maximum ${MAX_WORDS} characters).`);
+    // Not from `args` (the coordinator's own words): only the host that checked the plugin passes who it is.
+    const by = startedBy ? readStartedBy(startedBy) : null;
+    if (startedBy && !by) throw new Error("A worker's starter must be a plugin name and a hash. Nothing was started.");
+    // A plugin's instructions say who sent them, as its messages do (after the size check: the largest legal instructions stay legal).
+    const instructions = by ? `${startedByLine(by)}\n\n${given}` : given;
     const named = firstText(args.name, args.description);
     const request: HandoffRequest = {
-      instructions, name: named ? named.trim().slice(0, 200) : instructions.split("\n")[0]!.slice(0, 80),
+      instructions, name: named ? named.trim().slice(0, 200) : given.split("\n")[0]!.slice(0, 80),
       type: firstText(args.subagent_type)?.trim() ?? null, model: firstText(args.model)?.trim() ?? null,
       engine: typeof args.engine === "string" ? args.engine : null, args,
     };
@@ -427,12 +432,7 @@ export class WorkerCore implements WorkerHost {
     };
     const group = firstText(args.group)?.trim().slice(0, 80);
     if (group) r.group = group;
-    // Not from `args` (the coordinator's own words): only the host that checked the plugin passes who it is.
-    if (startedBy) {
-      const by = readStartedBy(startedBy);
-      if (!by) throw new Error("A worker's starter must be a plugin name and a hash. Nothing was started.");
-      r.startedBy = by;
-    }
+    if (by) r.startedBy = by;
     this.records.set(r.id, r);
     // Room is made among the others: the worker being made is never the one forgotten (with none forgettable it is
     // kept as one more; the ledger keeps it too, as a running record).

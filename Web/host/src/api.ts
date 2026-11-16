@@ -36,7 +36,9 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
     if (at !== -1) list.splice(at, 1);
   });
   const announceLater = () => host.announceLater(plugin);
-  const ask = (method: string, params: Record<string, JSONValue> = {}) => host.request(method, { ...params, plugin: name });
+  // The code this instance was loaded from: a request says so, and the core refuses one from code it has since replaced.
+  const code = plugin.spec.fingerprint;
+  const ask = (method: string, params: Record<string, JSONValue> = {}) => host.request(method, { ...params, plugin: name, code });
   const limit = (opts: { limit?: number } | undefined) => (opts?.limit === undefined ? {} : { limit: opts.limit });
   let stored: Record<string, unknown> | null = null;
   const storageFile = join(plugin.spec.storageDir, "storage.json");

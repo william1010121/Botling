@@ -2,6 +2,7 @@
 // The host's side of reply tags and approvals (plugin-extraction.md W3, W4): a plugin hears the tags it declared
 // (`replyTags.on`, only its own: Botling names the plugin), and asks Botling whether the user allowed a command
 // (`approvals.check`); nothing in the api approves one.
+import { sink } from "./sink";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ describe("replyTags and approvals in the host", () => {
     const heard: { plugin: string; tag: ReplyTag }[] = [];
     const offs: Record<string, () => void> = {};
     const written: any[] = [];
-    const host = new Host((message) => written.push(message), async (s) => (api: BotlingApi) => {
+    const host = new Host(sink(written), async (s) => (api: BotlingApi) => {
       offs[s.name] = api.replyTags.on("deploy-status", (tag) => heard.push({ plugin: s.name, tag }));
       if (s.name === "b") api.replyTags.on("deploy-status", () => { throw new Error("broke"); });
     });
@@ -41,7 +42,7 @@ describe("replyTags and approvals in the host", () => {
   it("approvals.check asks Botling, naming the plugin; there is no way to approve", async () => {
     let api!: BotlingApi;
     const written: any[] = [];
-    const host = new Host((message) => written.push(message), async () => (given: BotlingApi) => { api = given; });
+    const host = new Host(sink(written), async () => (given: BotlingApi) => { api = given; });
     await host.sync([spec("botling.whiteboard")]);
     const checked = api.approvals.check("B1", "git log");
     const request = written.find((message) => message.method === "approvals.check");
@@ -55,7 +56,7 @@ describe("replyTags and approvals in the host", () => {
   it("approvals.state and approvals.run name the plugin and the run's key; Botling runs the command, the plugin only asks", async () => {
     let api!: BotlingApi;
     const written: any[] = [];
-    const host = new Host((message) => written.push(message), async () => (given: BotlingApi) => { api = given; });
+    const host = new Host(sink(written), async () => (given: BotlingApi) => { api = given; });
     await host.sync([spec("botling.whiteboard")]);
     const state = api.approvals.state("B1", "git log", "picture");
     const asked = written.find((message) => message.method === "approvals.state");
@@ -75,7 +76,7 @@ describe("replyTags and approvals in the host", () => {
   it("workspace.component asks Botling's library, naming the bot", async () => {
     let api!: BotlingApi;
     const written: any[] = [];
-    const host = new Host((message) => written.push(message), async () => (given: BotlingApi) => { api = given; });
+    const host = new Host(sink(written), async () => (given: BotlingApi) => { api = given; });
     await host.sync([spec("botling.whiteboard")]);
     const entry = api.workspace.component("B1", "gitlog", { command: "git log" });
     const request = written.find((message) => message.method === "workspace.component");
