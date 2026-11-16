@@ -35,6 +35,7 @@ const FILES: Record<string, string> = {
   "desktop/src/renderer/chat-frame/chat.html": "<!doctype html><title>chat</title>\n",
   "desktop/builtin-plugins/botling.board/src/board.css": ".board { gap: 1px; }\n",
   "desktop/builtin-plugins/botling.board/src/web.ts": "export const board = 1;\n",
+  "desktop/src/server/botlingd.ts": "export const MIN_FE_VERSION = \"3.0.0-m1\";\n",
   "docs/notes.md": "# notes\n",
 };
 
