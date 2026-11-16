@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PluginsView } from "../../src/contract";
 import { folderHash } from "../../src/core/plugins/catalog";
@@ -21,6 +22,7 @@ import {
   reconcilePluginRows,
 } from "../../src/server/replica/plugin-rows";
 import { ownTableStream, putRow, readRowBody } from "../../src/server/replica/tables";
+import { pluginApproved } from "../../src/server/slots/grant-check";
 import { openReaderDb } from "../../src/server/store/connection";
 import { botlingdEnv, ScriptClient, testRoot } from "../botlingd-harness";
 import { desktop, until } from "../helpers";
@@ -393,6 +395,37 @@ export function activate(ccb) {
       expect(rowsAfterRestart.get("plugin:sample-plugin")?.grants).toEqual({});
     } finally {
       await daemon2.stop();
+    }
+  }, 60_000);
+
+  it("fix round (M12): the import uses the trust pass up without trusting anything, even a row that was already in the target", async () => {
+    const root = testRoot("m6-04-trust-mark");
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const src = join(root, "v2");
+    const dataDir = join(root, "v3");
+    make2xFolder(src);
+    writePlugin(join(src, "plugins"), "host-tool", { permissions: ["files"] });
+    await runImport({ sourceDir: src, targetDir: dataDir, dryRun: false });
+    expect(readAllPluginRows(dataDir).find((r) => r.key === "plugin:host-tool")?.row.grants).toEqual({});
+    // The import runs again over the rows it left (a run that stopped before its final mark, on a server.db without the
+    // trust flag): the host-tool row is already there, with no record.
+    const raw = new DatabaseSync(join(dataDir, "server.db"));
+    try {
+      raw.prepare("DELETE FROM meta WHERE key = 'plugin.trust.v1' OR key LIKE 'import:%'").run();
+    } finally {
+      raw.close();
+    }
+    await runImport({ sourceDir: src, targetDir: dataDir, dryRun: false });
+    // "mark": nothing is trusted by the import (B-20(a)), the row that was already there included ...
+    const row = readAllPluginRows(dataDir).find((r) => r.key === "plugin:host-tool")?.row;
+    expect(row?.author).toBe("import");
+    expect(pluginApproved(row ?? null)).toBe(false);
+    // ... and the pass is used up, so botlingd's first sync does not trust it either.
+    const db = openReaderDb(join(dataDir, "server.db"));
+    try {
+      expect(db.prepare("SELECT 1 AS x FROM meta WHERE key = 'plugin.trust.v1'").get()).toBeDefined();
+    } finally {
+      db.close();
     }
   }, 60_000);
 

@@ -438,7 +438,8 @@ export function activate(ccb) {
     expect(cmdPayload.count).toBe(1);
     expect(cmdPayload.greeting).toBe("hello");
 
-    // 4. A request-tier plugin's command is refused `grant` before the grant and applied after (within its granted tier).
+    // 4. An uninstalled plugin's command is refused `grant` before the install card (plugin.grant) and applied after; an installed
+    //    plugin is fully allowed (2026-11-16), except it never sends plugin.grant itself.
     const reqPanel = okResult<{ title: string; source: string }>(
       await reqLarge(client, { type: "plugins.panel", name: reqPluginName, panel: "request-helper.panel" }),
     );
@@ -456,7 +457,7 @@ export function activate(ccb) {
     expect(refusedBefore.outcome).toEqual({
       kind: "refused",
       reason: "grant",
-      detail: expect.stringContaining(`${reqPluginName} may not do this`),
+      detail: expect.stringContaining(`${reqPluginName} is not installed`),
     });
 
     const grantRequest = await sendCmd(client, client.srv, ++srvN, srvInc, {
@@ -479,20 +480,16 @@ export function activate(ccb) {
     );
     expect(appliedAfter.outcome.kind).toBe("applied");
 
-    // An ungranted command outside its granted requests stays refused `grant`.
-    const ungrantedCmd = await sendCmd(
+    // A plugin never grants (D54): plugin.grant with via stays refused `grant`, installed or not.
+    const selfGrant = await sendCmd(
       client,
-      botStream,
-      ++botN,
+      client.srv,
+      ++srvN,
       srvInc,
-      { type: "chat.react", botId: mainBotId, messageId: "m1", emoji: "👍", present: true },
+      { type: "plugin.grant", plugin: reqPluginName, codeHash: reqHash, tier: "write", reads: [], requests: [] },
       reqVia,
     );
-    expect(ungrantedCmd.outcome).toEqual({
-      kind: "refused",
-      reason: "grant",
-      detail: expect.stringContaining(`${reqPluginName} may not do this`),
-    });
+    expect(selfGrant.outcome).toEqual({ kind: "refused", reason: "grant", detail: "plugin.grant cannot be sent by a plugin" });
 
     await until(() => {
       const entries = client.entriesOf(botStream);

@@ -194,8 +194,8 @@ describe("a forged call naming the Note (M5-15 at the owner, unchanged)", () => 
     expect(forged).toEqual({ ok: false, detail: "plugin evil may not do this on box" });
     const builtinNote: PluginRow = { ...row(H2), author: "builtin", grants: { [H2]: { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: 1 } } };
     expect(grantAllows(builtinNote, { plugin: "botling.note", codeHash: H2 }, call("botling.note"), "box", ["evil", "botling.note"])).toEqual({ ok: true });
-    // The same row under another plugin's via, or the Note's name under the Note's old hash: no grant.
-    expect(grantAllows(builtinNote, { plugin: "botling.note", codeHash: H1 }, call("botling.note"), "box", ["botling.note"]).ok).toBe(false);
+    // The approval is by name now (2026-11-16): the Note's old hash is allowed too; a command naming another plugin is not.
+    expect(grantAllows(builtinNote, { plugin: "botling.note", codeHash: H1 }, call("botling.note"), "box", ["botling.note"]).ok).toBe(true);
     expect(grantAllows(builtinNote, { plugin: "botling.note", codeHash: H2 }, call("evil"), "box", ["evil", "botling.note"]).ok).toBe(false);
   });
 });

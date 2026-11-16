@@ -10,6 +10,7 @@ import { PluginRow, RowKey } from "../protocol/table-rows";
 import type { IntentRuntime } from "./intents";
 import { carryNoteAt } from "./replica/plugin-grant-carry";
 import { readRowBody } from "./replica/tables";
+import { grantTierOf } from "./slots/grant-check";
 import type { Db } from "./store";
 
 export type GrantTier = "none" | "read" | "request" | "write";
@@ -33,13 +34,9 @@ export type PluginGrantAnswer =
   | { ok: false; reason: "no-plugin" }
   | { ok: false; reason: "refused"; detail: string };
 
-/**
- * The grant at the row's current codeHash. The hash is looked up as an own key (M5-15 review F1): a hash that is
- * `constructor` or `__proto__` must not find `Object`'s members, and an old hash's grant says nothing about the code now.
- */
+/** What the list shows: see `grantTierOf` (the tier at the current hash, or "write" for an installed plugin with an older record). */
 export function grantTierAt(row: PluginRow): GrantTier {
-  if (!Object.hasOwn(row.grants, row.codeHash)) return "none";
-  return row.grants[row.codeHash]!.tier;
+  return grantTierOf(row);
 }
 
 /** The local window's origin (`deviceId` "desktop"); the audit row names it as the member. */
@@ -71,7 +68,7 @@ export class PluginAdmin {
       const entry: PluginListRow = { name, codeHash: parsed.data.codeHash, tier, asks: parsed.data.manifest.tier };
       // Truthful only while it still describes the grant: a carried grant later changed by the user is the user's own.
       const note = carryNoteAt(this.options.reader(), name, parsed.data.codeHash);
-      if (note && !note.grew && tier !== "none" && parsed.data.grants[parsed.data.codeHash]!.at === note.at) entry.carriedFrom = note.from;
+      if (note && !note.grew && tier !== "none" && Object.hasOwn(parsed.data.grants, parsed.data.codeHash) && parsed.data.grants[parsed.data.codeHash]!.at === note.at) entry.carriedFrom = note.from;
       if (note?.grew && tier === "none") entry.grewFrom = { codeHash: note.from, grew: note.grew };
       out.push(entry);
     }

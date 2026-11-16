@@ -212,7 +212,9 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
     throw new SlotRefusal("changed", `codeHash ${cmd.codeHash} is not known for plugin ${cmd.plugin}`);
   }
   // Built-ins keep their grants in 3.0 (§14.4): the user neither revokes nor changes one (reconcile would restore it).
-  if (row.grants[cmd.codeHash]?.grantedBy === "builtin") {
+  // Only a built-in row: a library copy of a built-in (author user) left with the built-in's record at its hash is not
+  // installed until this card, which writes a user record over that one (review F5).
+  if (row.author === "builtin" && row.grants[cmd.codeHash]?.grantedBy === "builtin") {
     throw new SlotRefusal("invalid", "built-in");
   }
   // A plugin is never given the power to grant (D54): `plugin.grant` is a user act only.
@@ -244,13 +246,13 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
       throw new SlotRefusal("invalid", "above what the plugin asks");
     }
   }
-  // Revoking a grant that does not exist changes nothing and is not audited.
-  if (cmd.tier === "none" && !knownExisting) return { result: { applied: true } };
+  // 2026-11-16: the approval belongs to the plugin, not to a code hash, so a revoke (`none`) removes every approval record
+  // the user made, at any hash; a revoke that finds none changes nothing and is not audited.
+  const kept = Object.fromEntries(Object.entries(row.grants).filter(([, grant]) => grant.grantedBy === "builtin"));
+  if (cmd.tier === "none" && Object.keys(kept).length === Object.keys(row.grants).length) return { result: { applied: true } };
   const now = deps.now();
-  const nextGrants: Record<string, PluginGrant> = { ...row.grants };
-  if (cmd.tier === "none") {
-    delete nextGrants[cmd.codeHash];
-  } else {
+  const nextGrants: Record<string, PluginGrant> = cmd.tier === "none" ? kept : { ...row.grants };
+  if (cmd.tier !== "none") {
     if (!knownExisting && Object.keys(nextGrants).length >= MAX_PLUGIN_GRANTS) {
       const evictable = Object.entries(nextGrants)
         .filter(([hash]) => hash !== row.codeHash && hash !== cmd.codeHash)

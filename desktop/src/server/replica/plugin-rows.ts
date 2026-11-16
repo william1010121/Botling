@@ -8,6 +8,7 @@ import { bundleOfPlugin, pruneWebBundles } from "../content/plugin-bundle";
 import { carryFactsOf, carryPluginGrant, type CarryFacts } from "./plugin-grant-carry";
 import { RowKey, type AuditRow, type PluginGrant, type PluginRow, type Tier } from "../../protocol/table-rows";
 import type { Db } from "../store";
+import { pluginApproved } from "../slots/grant-check";
 import { deleteRow, putRow, readRowBody } from "./tables";
 
 const WRITE_PERMISSIONS = new Set(["network", "files", "exec", "sessions", "routines", "cards", "app", "studio", "orchestrate"]);
@@ -55,7 +56,32 @@ export interface InstalledFromRegistryOptions {
 export interface ReconcilePluginRowsOptions {
   log?: (line: string) => void;
   onWritten?: (key: string, rev: number) => void;
+  /**
+   * The one-time pass of the trust model of 2026-11-16 ("what is installed needs no managing"), once per server.db (meta
+   * `plugin.trust.v1`). `"migrate"` (the server's own sync): every plugin that already has a row and no approval record
+   * (a bot-written one and one whose last grant was a revoke excepted: they still need the card) is installed, with one
+   * `user` record at its current hash; a 2.x import row still waiting for its card is installed too (the user's decision
+   * of 2026-11-16: "先都放", every plugin of theirs is open source).
+   * `"mark"` (the 2.x import): nothing is migrated, but the pass is used up, so what an import writes waits for the user's
+   * card (B-20(a)). A plugin whose row appears later gets no record until the card either way.
+   */
+  trust?: "migrate" | "mark";
 }
+
+/** Whether the newest `audit:grant:*` row of `name` in `stream` records a revoke (`tier none`); a row that does not parse is skipped. */
+function lastGrantRevoked(tx: Db, stream: string, name: string): boolean {
+  for (const row of tx.prepare("SELECT body FROM rows WHERE stream = ? AND key LIKE 'audit:grant:%' AND deleted = 0 ORDER BY rev DESC").all(stream)) {
+    let body: unknown;
+    try { body = JSON.parse(String(row.body)); } catch { continue; }
+    const audit = body as Partial<AuditRow> | null;
+    if (!audit || audit.act !== "plugin.grant" || audit.name !== name) continue;
+    return audit.reason === "tier none";
+  }
+  return false;
+}
+
+/** Meta key of the one-time trust of the plugins that were already installed (see `ReconcilePluginRowsOptions.trust`). */
+export const TRUST_MIGRATION_KEY = "plugin.trust.v1";
 
 export interface ReconcilePluginRowsResult {
   written: number;
@@ -345,6 +371,7 @@ export function reconcilePluginRows(
   const digestEntries: Array<{ name: string; codeHash: string }> = [];
   const skipped: string[] = [];
   let written = 0;
+  const trustPass = options.trust !== undefined && tx.prepare("SELECT 1 AS x FROM meta WHERE key = ?").get(TRUST_MIGRATION_KEY) === undefined;
 
   for (const plugin of installed) {
     if (plugin.name.length > 64) {
@@ -373,6 +400,15 @@ export function reconcilePluginRows(
       if (!current || (current.grantedBy === "builtin" && current.tier !== "write")) {
         rawGrants[plugin.codeHash] = { tier: "write", reads: [], requests: [], grantedBy: "builtin", at: now };
       }
+    }
+    // One-time: a plugin installed before the trust model of 2026-11-16 is installed (no approval record yet, not built in).
+    // Not: a bot's write (this sync's, or the row's even when the files changed since), or a plugin whose last
+    // `plugin.grant` was a revoke (made before this pass, or after it on a server.db whose meta was lost). A 2.x import row
+    // waiting for its card is installed like any other (user decision 2026-11-16).
+    if (trustPass && options.trust === "migrate" && author !== "builtin" && author !== "bot" && prev && prev.author !== "bot"
+      && !pluginApproved({ ...(prev as PluginRow), grants: rawGrants }) && !lastGrantRevoked(tx, stream, plugin.name)) {
+      rawGrants[plugin.codeHash] = { tier: plugin.manifest.tier, reads: [], requests: [], grantedBy: "user", at: now };
+      options.log?.(`plugin ${plugin.name}: installed before the trust model, recorded as installed`);
     }
     // A plugin update keeps its grant unless it asks for more (plugin-grant-carry.ts).
     if (author !== "builtin" && plugin.facts) {
@@ -409,6 +445,9 @@ export function reconcilePluginRows(
       if (auditRev != null) options.onWritten?.(auditKey, auditRev);
     }
   }
+
+  // Not marked done by an empty list (a registry that has not loaded yet must not use up the one pass).
+  if (trustPass && installed.length > 0) tx.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING").run(TRUST_MIGRATION_KEY, String(now));
 
   let tombstoned = 0;
   for (const row of tx.prepare("SELECT key FROM rows WHERE stream = ? AND key LIKE 'plugin:%' AND deleted = 0").all(stream)) {

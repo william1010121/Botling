@@ -7,7 +7,7 @@
 //
 // The oracle below is written from the rules (§11.3, §11.7, D53, D54, C6, C12), not from the code under test:
 //   1. Applied ⇒ the origin and device scope allow `commandScope(cmd)` AND (no `via` ⇒ not a plugin command from a
-//      device) AND (`via` ⇒ the grant at `via.codeHash` allows `cmd`). The test checks the converse as well (a command
+//      device) AND (`via` ⇒ the plugin is installed, by name, and `cmd` is not a plugin.grant / another plugin's / an approval it did not declare). The test checks the converse as well (a command
 //      the rules allow is applied) and that the refusal names the first failing layer (scope/origin before grant, N7).
 //   2. A grant (or device, or hash) change after a command was decided never changes that command's outcome: a resend
 //      gets the stored outcome, `fresh: false`, and nothing runs again. A copy held ahead is decided under the table
@@ -19,8 +19,8 @@
 //   5. A peer server never settles a card (`chat.choose`, `chat.answer`, `chat.ignoreQuestion`, `component.approve`): refused
 //      `origin`, before any lookup and for every stated scope. Its `waiting.ignore` is applied only for a plain waiting
 //      item of the bot the slot targets, else (another bot, not plain, the waiting list unreadable) refused `scope` (peer-answer-guard, `.bot/artifacts/v3-m5/peer-answer-guard-review.md`).
-//   4. A hash swap never widens: a command with `via` h2 is never decided under h1's grant (and a resend of a decided
-//      slot with another `via` is a slot conflict, never the old outcome).
+//   4. A resend of a decided slot with another `via` is a slot conflict, never the old outcome. (Since 2026-11-16 a hash swap
+//      neither widens nor narrows: the approval is by plugin name.)
 //
 // Cases are seeded (mulberry32). A failure names the seed and the case: replay it with
 //   GRANT_PROPERTY_SEED=<seed> GRANT_PROPERTY_CASE=<case> npx vitest run test/unit/grant-property.test.ts
@@ -118,21 +118,29 @@ function authority(world: World, origin: Origin, stated: Scope, cmd: Command, vi
   if (cmd.type === "plugin.grant") return { applied: false, reason: "grant" };
   const entry = world.table.get(via.plugin);
   const row = entry?.kind === "row" ? entry.row : null;
-  const grant = row ? new Map(Object.entries(row.grants)).get(via.codeHash) : undefined; // by the hash the command was written under, never by name
-  if (!grant) return { applied: false, reason: "grant" };
+  // 2026-11-16: installed = a valid row that is built in or holds an approval record (user / import) at ANY hash.
+  // The hash the command was written under, the tier and the lists inside the record decide nothing.
+  const approved = row !== null && (row.author === "builtin" || Object.values(row.grants).some((g) => ["user", "import"].includes(g.grantedBy)));
+  if (!approved) return { applied: false, reason: "grant" };
   const cmdName = (cmd as { name?: unknown }).name;
-  if (cmd.type === "plugins.tileImages" && cmdName === via.plugin) return { applied: true };
-  if (grant.tier === "read") return { applied: false, reason: "grant" };
-  if ((grant.requests as string[]).includes(cmd.type)) return { applied: true };
-  if (grant.tier !== "write") return { applied: false, reason: "grant" };
-  if ((cmd.type === "plugins.noteSnapshot" || cmd.type === "plugins.approvalAsk") && cmdName === via.plugin) return { applied: true };
-  if (!four(cmd.type)) return { applied: false, reason: "grant" };
-  const live = [...world.table.entries()].filter(([, e]) => e.kind !== "tombstone").map(([name]) => name);
-  if (cmd.type === "plugins.call") return cmd.name === via.plugin ? { applied: true } : { applied: false, reason: "grant" };
-  const id = (cmd as unknown as { id: string }).id;
-  const ownPrefix = id.startsWith(`${via.plugin}.`);
-  const claimed = live.some((name) => name !== via.plugin && name.startsWith(`${via.plugin}.`) && id.startsWith(`${name}.`));
-  return ownPrefix && !claimed ? { applied: true } : { applied: false, reason: "grant" };
+  // The frame helpers name one plugin: the plugin's own name only.
+  if ((HELPERS as readonly string[]).includes(cmd.type)) return cmdName === via.plugin ? { applied: true } : { applied: false, reason: "grant" };
+  const declared = (row!.manifest.requests as string[]).includes(cmd.type);
+  if (four(cmd.type)) {
+    const live = [...world.table.entries()].filter(([, e]) => e.kind !== "tombstone").map(([name]) => name);
+    let own: boolean;
+    if (cmd.type === "plugins.call") own = cmd.name === via.plugin;
+    else {
+      const id = (cmd as unknown as { id: string }).id;
+      const claimed = live.some((name) => name !== via.plugin && name.startsWith(`${via.plugin}.`) && id.startsWith(`${name}.`));
+      own = id.startsWith(`${via.plugin}.`) && !claimed;
+    }
+    return own || declared ? { applied: true } : { applied: false, reason: "grant" };
+  }
+  // What acts on other plugins and the user's approvals needs the manifest to declare it; everything else passes (the admin
+  // acts included: the user chose "全部放行" over review F3).
+  if (cmd.type.startsWith("plugins.") || ["component.approve", "plugins.approve", "link.authorize"].includes(cmd.type)) return declared ? { applied: true } : { applied: false, reason: "grant" };
+  return { applied: true };
 }
 
 // --- the generator -----------------------------------------------------------------------------------------------------
