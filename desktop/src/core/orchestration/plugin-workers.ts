@@ -328,6 +328,9 @@ export class PluginWorkers {
     const entry = this.mine(plugin, taskId);
     const port = this.deps.world.workers(entry.bot);
     if (typeof port === "string") throw new Error(port);
+    // O05 (the model's CancelAsk needs no send in flight): a stop now could end the run the send is about to start, and the send's answer would
+    // then reopen what the stop closed. Refused; the plugin asks again once the send has returned.
+    if (this.sending.has(entry)) throw new Error("A message to this worker is being sent. Try again in a moment. Nothing was cancelled.");
     // Marked before the stop is awaited: the run's end that comes while the stop is under way is the cancel's, not a report.
     const was = entry.stopped;
     entry.stopped = true;
