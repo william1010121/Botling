@@ -10,6 +10,7 @@ import type { RunStatus } from "./classify";
 import type { WorkerAdapterKind } from "./events";
 import type { ReportState, WorkerStatus } from "./status";
 import { importLegacy, legacyFiles, type LegacySources } from "./migrate";
+import { readStartedBy, type StartedBy } from "./started-by";
 
 /** A checkpoint the coordinator made on a report (app_task_checkpoint). */
 export interface ReportCheckpoint { outcome: string; evidence: string; dependencyTaskId?: string }
@@ -51,6 +52,8 @@ export interface WorkerLedgerRecord {
   processes: ProcessIdentity[];
   /** Cache of the registry's owner (the registry stays authoritative: syncWorkerOwners). */
   owner?: WorkerOwner;
+  /** The plugin that started it (M7-O03b; absent: a bot or the user did, and every ledger older than this). */
+  startedBy?: StartedBy;
   createdAt: number;
   runStartedAt: number | null;
   endedAt: number | null;
@@ -100,6 +103,7 @@ export function readLedgerRecord(value: unknown): WorkerLedgerRecord | null {
     ? { outcome: report.checkpoint.outcome, evidence: report.checkpoint.evidence, ...(str(report.checkpoint.dependencyTaskId) ? { dependencyTaskId: report.checkpoint.dependencyTaskId } : {}) }
     : undefined;
   const owner = readWorkerOwner(r.owner);
+  const startedBy = readStartedBy(r.startedBy);
   return {
     v: 3, id: r.id, engine: r.engine, adapter: r.adapter, name: r.name, ...(str(r.group) && r.group ? { group: r.group } : {}), instructions: r.instructions, type: str(r.type) ? r.type : null,
     ownerSessionId: r.ownerSessionId, run: r.run, ...(Number.isSafeInteger(r.segment) && r.segment > 0 ? { segment: r.segment } : {}), status: r.status,
@@ -108,6 +112,7 @@ export function readLedgerRecord(value: unknown): WorkerLedgerRecord | null {
     conversationId: str(r.conversationId) && r.conversationId ? r.conversationId : null,
     processes: readProcesses(r.processes),
     ...(owner ? { owner } : {}),
+    ...(startedBy ? { startedBy } : {}),
     createdAt: time(r.createdAt) ?? 0, runStartedAt: time(r.runStartedAt), endedAt: time(r.endedAt),
     ...(r.interruptedBy === "quit" || r.interruptedBy === "restart" || r.interruptedBy === "crash" ? { interruptedBy: r.interruptedBy } : {}),
     ...(r.recovery === "required" ? { recovery: "required" as const } : {}),

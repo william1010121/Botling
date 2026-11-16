@@ -14,6 +14,7 @@ import { MAX_PROCESSES, MAX_WORKER_RECORDS, trimRecords, type WorkerLedgerRecord
 import { RunPipeline, type ControlEvent } from "./pipeline";
 import { ownedWorkerReport, REPORT_LIMIT, reportTag, wireStatus, withDeniedNote, type WorkerReport } from "./report";
 import { reportOwed } from "./status";
+import { shownName } from "./started-by";
 
 /** What the coordinator reads when it made no decision on a report after the allowed attempts (agy-workers.ts's words). */
 export const UNRESOLVED_REPORT = "Worker report unresolved: no task/run checkpoint or same-task continuation after one reconciliation turn. Evidence retained; explicit decision required.";
@@ -247,7 +248,7 @@ export class WorkerLives {
 
   private opening(r: WorkerLedgerRecord, adapter: WorkerAdapter, words: string) {
     const runtime = adapter.runtime?.(r) ?? { reasoningEffort: null };
-    for (const item of workerRunStarted({ id: r.id, engine: r.engine, name: r.name, ...(r.group ? { group: r.group } : {}), run: r.run, conversationId: r.conversationId, ownerSessionId: this.options.ownerSessionId() }, words, runtime, adapter.subagentType))
+    for (const item of workerRunStarted({ id: r.id, engine: r.engine, name: shownName(r), ...(r.group ? { group: r.group } : {}), run: r.run, conversationId: r.conversationId, ownerSessionId: this.options.ownerSessionId() }, words, runtime, adapter.subagentType))
       this.emit(item);
   }
 

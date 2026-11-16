@@ -206,7 +206,7 @@ export class CorePluginWorld {
             if (!bot) return "No such bot.";
             if (bot.engine !== "claude" || !bot.claudeWorkersOn()) return "That bot does not run Claude-process workers, the only kind a plugin starts for now. Nothing was started.";
             const host = bot.ensureClaudeWorkers();
-            return { id: botId, start: (args) => host.startFor(args), send: async (id, text) => host.sendToWorker(id, text), stop: (id) => host.stopWorker(id) };
+            return { id: botId, start: (args, by) => host.startFor(args, by), send: async (id, text, by) => host.sendToWorker(id, text, by), stop: (id) => host.stopWorker(id), look: (id) => host.look(id) };
           },
           ...(options.orchestrateQuota ? { quota: options.orchestrateQuota } : {}),
           specWriters: () => specWriters(readSettings(Layout.settings(options.dataDir))),

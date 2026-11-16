@@ -217,6 +217,16 @@ export class PluginHostClient {
     }
   }
 
+  /**
+   * An event that must not be lost or told twice (`workerReport`): written only to a host that runs and listens for it,
+   * and never kept for later (`early` would tell it again with the replay). false: not told; the caller keeps it owed.
+   */
+  deliver(name: string, data: unknown): boolean {
+    if (!this.running || !this.events.has(name)) return false;
+    this.write({ method: "event", params: { name, data } });
+    return true;
+  }
+
   private early: { name: string; data: unknown; at: number }[] = [];
 
   command(id: string, args: unknown[] = []): Promise<unknown> {
