@@ -636,6 +636,8 @@ export class Core {
 
   prompts(...a: Parameters<CoreSend["prompts"]>) { return this.coreSend.prompts(...a); }
 
+  orchestrationRules(...a: Parameters<CoreSend["orchestrationRules"]>) { return this.coreSend.orchestrationRules(...a); }
+
   promptSections(...a: Parameters<CoreSend["promptSections"]>) { return this.coreSend.promptSections(...a); }
 
   agentWiring(...a: Parameters<CoreSend["agentWiring"]>) { return this.coreSend.agentWiring(...a); }

@@ -229,7 +229,7 @@ async function setup(): Promise<Env> {
   running.push(plugins);
   await plugins.start();
   await until(() => plugins.host.running);
-  return { dir, plugins, world, calls, answers, note, ask: (method, params, owner) => plugins["requested"](method, params, owner) };
+  return { dir, plugins, world, calls, answers, note, ask: (method, params, owner) => plugins["requested"](method, (params && typeof params === "object" && !Array.isArray(params) ? { code: plugins.codeOf(String((params as { plugin?: unknown }).plugin)), ...params } : params), owner) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -391,8 +391,8 @@ const ROWS: Row[] = [
     ok: { params: { plugin: L, bot: "main", name: "known", command: "ls" }, reply: { exists: true, command: "ls" } },
     refuse: { params: { plugin: L, bot: "B9", name: "known" }, error: NO_BOT } },
   { method: "routines.add",
-    ok: { params: { plugin: L, bot: "main", cron: "0 9 * * *", task: "Check" }, reply: null, calls: [["addRoutine", "0 9 * * *", "Check"]] },
-    refuse: { params: { plugin: L, bot: "main", cron: "bad", task: "Check" }, error: "Invalid schedule (it must be the 5 crontab fields)." } },
+    ok: { params: { plugin: A, bot: "main", cron: "0 9 * * *", task: "Check" }, reply: null, calls: [["addRoutine", "0 9 * * *", "Check"]] },
+    refuse: { params: { plugin: A, bot: "main", cron: "bad", task: "Check" }, error: "Invalid schedule (it must be the 5 crontab fields)." } },
   { method: "routines.list",
     ok: { params: { plugin: A, bot: "main" }, reply: { routines: [] }, calls: [["routinesList", "main"]] },
     refuse: { params: { plugin: F, bot: "main" }, error: SHIPPED_ONLY("read or change routines") } },
@@ -602,7 +602,7 @@ const EXTRA_REFUSALS: [string, string, Record<string, unknown>, string | RegExp]
   ["sessions.folder", "an unknown bot", { plugin: A, bot: "B9", folder: { cwd: "/work" } }, NO_BOT],
   ["sessions.folders", "a plugin without the permission", { plugin: "botling.bare", folders: {} }, needs("Deciding a session's folder", "sessions")],
   ["routines.add", "a plugin that is not running", { plugin: "ghost", bot: "main", cron: "0 9 * * *", task: "t" }, NO_BOT],
-  ["routines.add", "an unknown bot", { plugin: L, bot: "B9", cron: "0 9 * * *", task: "t" }, NO_BOT],
+  ["routines.add", "an unknown bot", { plugin: A, bot: "B9", cron: "0 9 * * *", task: "t" }, NO_BOT],
   ["approvals.run", "a negative interval", { plugin: L, bot: "main", command: "ls", key: "k", minIntervalMs: -1 }, NOT_REQUEST],
   ["content.read", "more than one read may take", { plugin: L, ref: REF, offset: 0, length: 5 * 1024 * 1024 }, NOT_REQUEST],
   ["content.read", "a ref that is not a ref", { plugin: L, ref: { owner: "x" }, offset: 0, length: 1 }, NOT_REQUEST],

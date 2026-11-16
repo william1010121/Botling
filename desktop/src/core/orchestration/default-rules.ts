@@ -192,11 +192,13 @@ export const DEFAULT_ORCHESTRATION_RULES: OrchestrationRules = {
       case "ownership": return ownership(caps);
       case "followUp": return followUp();
       case "runDispatch": return runDispatch(ctx.engine);
-      case "notes": return workerNote(caps);
+      case "notes": return this.workerNote(caps);
       case "reports": return caps.reportVia === "prompt" ? reportsPrompt(caps) : reportsMessage();
     }
   },
-  claudeLine: (caps) => [
+  // Method syntax, not arrows: the worker note is the set's own (`this.workerNote`), so a set that replaces `workerNote` changes both lines too.
+  claudeLine(caps) {
+    return [
     c("line.0", "-"),
     p("line.1a", "Hand all real work (building, fixing, researching, editing several files, running tests, anything beyond a few quick reads) to app-managed workers"),
     c("line.1b", "with the app_handoff tool"),
@@ -214,8 +216,9 @@ export const DEFAULT_ORCHESTRATION_RULES: OrchestrationRules = {
     FILES_TOUCHED,
     p("line.verbatim", VERBATIM_HANDOFF_RULE),
     c("line.9", STOP_ONE),
-    ...workerNote(caps),
-  ],
+    ...this.workerNote(caps),
+    ];
+  },
   claudeMainLine: () => [
     c("main.0", "-"),
     c("main.1", "Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id."),
@@ -223,7 +226,8 @@ export const DEFAULT_ORCHESTRATION_RULES: OrchestrationRules = {
     p("main.3", QUOTE_WORDS),
     FILES_TOUCHED,
   ],
-  onRequestLine: (caps) => [
+  onRequestLine(caps) {
+    return [
     c("onRequest.0", "-"),
     c("onRequest.1", "Do the work yourself (reading, researching, building, running commands): the user works with you directly here."),
     c("onRequest.2", `Start an app-managed worker with the app_handoff tool only when the user explicitly asks for a worker or subagent (a worker is a ${caps.name} subagent running as its own session in this folder; the Agent tool is off).`),
@@ -236,8 +240,9 @@ export const DEFAULT_ORCHESTRATION_RULES: OrchestrationRules = {
     p("onRequest.7", QUOTE_WORDS),
     p("onRequest.verbatim", VERBATIM_HANDOFF_RULE),
     c("onRequest.8", STOP_ONE),
-    ...workerNote(caps),
-  ],
+    ...this.workerNote(caps),
+    ];
+  },
   workerNote,
   workerRules: () => ({ lookup: p("worker.lookup", WORKER_LOOKUP_RULE), reportBlock: p("worker.reportBlock", WORKER_REPORT_BLOCK_RULE) }),
   workerDefaults,

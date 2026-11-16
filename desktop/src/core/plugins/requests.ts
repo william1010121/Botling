@@ -41,6 +41,8 @@ export interface RequestHost {
   readonly chatDatas: Map<string, Map<string, JSONValue>>;
   takeover: { plugin: string; view: string; botId: string; wide: boolean } | null;
   announce(): void;
+  /** The fingerprint of the code a plugin's host runs now (undefined: not running). */
+  codeOf(plugin: string): string | undefined;
   appPlugin(plugin: InstalledPlugin): AppWorld;
   asked<T extends z.ZodTypeAny>(schema: T, params: unknown, owner?: string): { plugin: InstalledPlugin; data: z.infer<T> };
   cardsAllowed(plugin: InstalledPlugin): void;
@@ -55,6 +57,8 @@ export interface RequestHost {
   shipped(name: string): boolean;
   /** The worker primitives' book (M7-O03a); throws when this world has no workers. */
   workers(): PluginWorkers;
+  /** F6 (M7-O04): a plugin that is not shipped sent this bot a message. */
+  heard(botId: string, plugin: string): void;
 }
 
 /**
@@ -76,6 +80,16 @@ function workersRequest(host: RequestHost, method: string, params: unknown): Pro
 }
 
 export async function requested(this: RequestHost, method: string, params: unknown, owner?: string): Promise<unknown> {
+  // M7-O04: a request names the code it was made by (`code`, the plugin's fingerprint). Older code a host still runs after a
+  // swap is refused here, before any method sees it; the method's own params never carry the field.
+  // A request for a plugin whose code is known must name it: one that does not is refused (fail closed, review).
+  const named = params && typeof params === "object" && !Array.isArray(params) ? (params as Record<string, unknown>) : null;
+  const now = typeof named?.plugin === "string" ? this.codeOf(named.plugin) : undefined;
+  if (named && Object.hasOwn(named, "code")) {
+    const { code, ...rest } = named;
+    if (now !== undefined && code !== now) throw new Error("This request came from older code of the plugin, which has been replaced. It was refused.");
+    params = rest;
+  } else if (now !== undefined) throw new Error("This request does not name the code of the plugin it came from. It was refused.");
   if (owner !== undefined) {
     const claimed = params && typeof params === "object" ? (params as { plugin?: unknown }).plugin : undefined;
     if (claimed !== undefined && claimed !== owner) throw new Error(`This host may only act for "${owner}".`);
@@ -87,12 +101,14 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "bots.send": {
       const { plugin, data } = this.asked(SendParams, params);
       if (data.as === "user") this.needs(plugin, "bots", "Sending as the user");
+      this.heard(data.bot, plugin.manifest.name);
       return world.send(data.bot, data.text, data.as === "user" ? null : title(plugin.manifest));
     }
     case "bots.wake": {
       const { plugin, data } = this.asked(WakeParams, params);
       // A bot wakes when it gets a message; a wake without one waits for the core to have that.
       if (data.prompt === undefined) throw new Error("bots.wake needs a prompt for now (a bot wakes when it gets a message).");
+      this.heard(data.bot, plugin.manifest.name);
       world.send(data.bot, data.prompt, title(plugin.manifest));
       return null;
     }
@@ -365,6 +381,8 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "routines.add": {
       const parsed = RoutineParams.safeParse(params);
       if (!parsed.success || !this.loaded(parsed.data.plugin)) throw new Error("No such bot.");
+      // F6 (M7-O04, decided): a routine runs later as the bot's own prompt, with no card and no quota, so only a plugin shipped with Botling adds one.
+      if (!this.shipped(parsed.data.plugin)) throw new Error("Only a plugin shipped with Botling may add a routine: a routine starts work later, with no card to ask you first.");
       const outcome = world.addRoutine(parsed.data.bot, parsed.data.cron, parsed.data.task);
       if (outcome === "no-bot") throw new Error("No such bot.");
       if (outcome === "bad-schedule") throw new Error("Invalid schedule (it must be the 5 crontab fields).");

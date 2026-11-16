@@ -204,10 +204,14 @@ export class CorePluginWorld {
           workers: (botId) => {
             const bot = this.pluginBot(botId);
             if (!bot) return "No such bot.";
+            // Maintainer owns the plugin library: a plugin's worker there could rewrite plugins, so it is never a target.
+            if (bot.id === this.maintainerId) return "A plugin may not start workers on Maintainer. Nothing was started.";
             if (bot.engine !== "claude" || !bot.workers.claudeWorkersOn()) return "That bot does not run Claude-process workers, the only kind a plugin starts for now. Nothing was started.";
             const host = bot.ensureClaudeWorkers();
-            return { id: botId, start: (args, by) => host.startFor(args, by), send: async (id, text, by) => host.sendToWorker(id, text, by), stop: (id) => host.stopWorker(id), look: (id) => host.look(id) };
+            // The bot's own id (not "main"): the book's entries must match `botRemoved`, which names the real id (review).
+            return { id: bot.id, start: (args, by) => host.startFor(args, by), send: async (id, text, by) => host.sendToWorker(id, text, by), stop: (id) => host.stopWorker(id), look: (id) => host.look(id) };
           },
+          made: (plugin, botId) => { const id = this.pluginBot(botId)?.id; return id !== undefined && this.profiles.some((profile) => profile.id === id && profile.plugin === plugin); },
           ...(options.orchestrateQuota ? { quota: options.orchestrateQuota } : {}),
           specWriters: () => specWriters(readSettings(Layout.settings(options.dataDir))),
         },

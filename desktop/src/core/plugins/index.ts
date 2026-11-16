@@ -48,6 +48,7 @@ import { writeFileAtomic } from "../durable/atomic";
 import { isRegularFile, type BotInfo, type LineContentRef, type MessageDecoration, type PluginStatusItem, type PluginsOptions, type SnapshotFile } from "./types";
 import { materializeSnapshot, pruneSnapshots, readPluginSnapshot, SERVER_PART_HELD_NOTICE } from "./snapshot";
 import type { PluginEventName } from "./request-params";
+import type { StartedBy } from "../worker-core/started-by";
 
 // Moved out in M7-S12; every name still comes from here.
 export type { BotInfo, AppQuestion, AppAnswer, PluginStatusItem, PluginChat, MessageDecoration, EngineCli, SessionBot, NoteComponent, NoteComponents, NoteCardState, LineContentRef, PluginWorld, PluginsOptions } from "./types";
@@ -59,6 +60,8 @@ export class Plugins {
   readonly host: PluginHostClient;
   private readonly hosts = new Map<string, PluginHostClient>();
   private readonly hostMeta = new Map<string, { main: string; dir: string; fingerprint: string }>();
+  /** The fingerprint of each plugin's code in the shared host, as last given to it (`codeOf`). */
+  private sharedCode = new Map<string, string>();
   private readonly retiring = new Set<Promise<void>>();
   readonly secrets: SealedSecretStore;
   readonly dataRoot: string;
@@ -274,6 +277,7 @@ export class Plugins {
     // M7-O03b: a plugin that is gone, held back or another version gives its workers back to core now, before the host
     // below starts the new one (a worker has one owner, the bot; the plugin's route to it ends here).
     this.workersReconcile();
+    this.sharedCode = new Map(sharedSpecs.map((spec) => [spec.name, spec.fingerprint]));
     // M5-18a: a plugin the shared host still runs lost its grant (or its granted code): a fresh host, not an unload (§18.3).
     if ([...nextHeldBack].some((name) => this.host.runs(name))) this.host.replace(sharedSpecs);
     else this.host.update(sharedSpecs);
@@ -389,6 +393,7 @@ export class Plugins {
   /** Something plugins may listen for happened (`events.on`); only sent when one listens. */
   event(name: PluginEventName, data: unknown) {
     if (name === "botRemoved") {
+      this.botGone((data as { botId: string }).botId);
       this.notes.unwatch((data as { botId: string }).botId);
       if (this.markedTabs.forget((data as { botId: string }).botId)) this.announce();
     }
@@ -711,9 +716,33 @@ export class Plugins {
     });
   }
 
+  /** F6 (M7-O04): the plugin (not shipped) whose message each bot last heard, by the bot's id; the user writing to the bot clears it (CoreSend.sendWith). */
+  readonly origins = new Map<string, string>();
+
+  heard(botId: string, plugin: string) {
+    if (!this.shipped(plugin)) this.origins.set(this.options.world.botId?.(botId) ?? botId, plugin);
+  }
+
+  /** What `WorkerCore.handoff` asks (bot/workers.ts `admit`): a worker the bot starts after a plugin's message is checked as that plugin's, else it just starts. Fails closed. */
+  async admitWorker<T extends { task_id: string; run: number }>(botId: string, kind: string, args: Record<string, unknown>, run: (startedBy?: StartedBy) => Promise<T>): Promise<T> {
+    const plugin = this.origins.get(botId);
+    return plugin ? this.workers().admitHeard(plugin, botId, kind, args, run) : run();
+  }
+
   /** The unload hook for workers (plugin-workers.ts `reconcile`); never throws into the host's sync. */
   private workersReconcile() {
     try { if (this.options.world.orchestration) this.workers().reconcile(); } catch (error) { this.options.world.log(`plugin workers not handed back: ${(error as Error).message}`); }
+  }
+
+  codeOf(plugin: string): string | undefined { return this.hostMeta.get(plugin)?.fingerprint ?? this.sharedCode.get(plugin); }
+
+  /** The user changed what a plugin may do (its `orchestrate` grant): a plugin that no longer has it hands its workers back, as when it is switched off. */
+  grantChanged() { this.workersReconcile(); }
+
+  /** A bot was removed: the plugin book closes its entries, and no plugin message is remembered as having reached it. */
+  private botGone(botId: string) {
+    this.origins.delete(botId);
+    try { if (this.options.world.orchestration) this.workers().botGone([botId]); } catch (error) { this.options.world.log(`plugin workers not closed for a removed bot: ${(error as Error).message}`); }
   }
 
   /** A host came up: what plugins are owed is told, and the workers the book still counts at work are looked at (restart pickup). */

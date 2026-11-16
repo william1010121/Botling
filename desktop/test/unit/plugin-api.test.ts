@@ -115,7 +115,7 @@ async function setup(dir: string, adjust?: (world: PluginWorld) => void) {
   let nextId = 1000;
   const ask = async (method: string, params: unknown): Promise<any> => {
     const id = nextId++;
-    line({ id, method, params });
+    line({ id, method, params: (params && typeof params === "object" && !Array.isArray(params) ? { code: plugins.codeOf(String((params as { plugin?: unknown }).plugin)), ...params } : params) }); // the code, as Web/host stamps it
     await until(() => sent.some((m) => m.id === id && m.method === undefined));
     const answer = sent.find((m) => m.id === id && m.method === undefined);
     if (answer.error) throw new Error(answer.error.message);

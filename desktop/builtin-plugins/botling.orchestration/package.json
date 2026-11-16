@@ -1,0 +1,10 @@
+{
+  "name": "botling.orchestration",
+  "displayName": "Orchestration rules",
+  "version": "1.0.0",
+  "description": "The advice bots are given on how to hand out work, follow up and review reports (rules.json: one text per policy sentence of Botling's own rules). Read-only and pinned: Botling uses it only while rules.json is byte for byte the one it shipped with, else its own copy of the same words. Contract sentences (what the app does and guards) are not in it and cannot be changed by it.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {}
+}

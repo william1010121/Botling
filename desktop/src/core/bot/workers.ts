@@ -241,6 +241,7 @@ export class BotWorkers {
       note: (note, text) => this.host.workerNote(note, text),
       closeReason: () => (this.swapHold ? "restart" : "quit"),
       log: (line) => this.log(line),
+      admit: this.options.workerAdmit,
     });
     // Once the facade that asked for it is made (it may be made while this bot is).
     queueMicrotask(() => core.projectAll());
@@ -266,6 +267,7 @@ export class BotWorkers {
         } catch (error) { this.log(`claude workers: no head config: ${(error as Error).message}`); return null; }
       },
       cwd: () => this.owner.options.worktree?.()?.cwd ?? this.commandFolder,
+      rules: () => this.options.orchestrationRules?.(),
       subagentModel: () => this.owner.choices().subagentModel,
       subagentEffort: () => this.owner.choices().subagentEffort,
       defaultMachine: () => this.owner.choices().workerMachine,

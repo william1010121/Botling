@@ -63,6 +63,13 @@
     "skipped": []
   },
   {
+    "name": "botling.orchestration",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.orchestration",
+    "skipped": []
+  },
+  {
     "name": "botling.report",
     "builtIn": true,
     "enabled": true,

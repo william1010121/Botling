@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { sink } from "./sink";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +22,7 @@ function spec(name: string, overrides: Partial<HostPluginSpec> = {}): HostPlugin
 /** A host whose plugins are given as functions, and what it wrote. */
 function makeHost(plugins: Record<string, (ccb: CcbHost) => unknown>) {
   const written: any[] = [];
-  const host = new Host((message) => written.push(message), async (s) => plugins[s.name] as any);
+  const host = new Host(sink(written), async (s) => plugins[s.name] as any);
   return { host, written };
 }
 
@@ -439,5 +440,24 @@ describe("plugin host (the real Node process)", () => {
     expect((await next((m) => m.method === "notify")).params).toEqual({ plugin: "shout", text: "ready to shout" });
     send({ id: 2, method: "beforeSend", params: { bot: { id: "main" }, text: "one cat" } });
     expect((await next((m) => m.id === 2)).result).toEqual({ text: "one 🐈" });
+  });
+});
+
+describe("requests name their code (M7-O04)", () => {
+  it("each request carries the fingerprint the instance was loaded with; a new version's instance carries the new one", async () => {
+    const raw: any[] = [];
+    let api!: BotlingApi;
+    const host = new Host((message) => raw.push(message), async () => (given: BotlingApi) => { api = given; });
+    await host.sync([spec("p", { fingerprint: "one" })]);
+    const first = api;
+    void first.bots.list().catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(raw.filter((m) => m.method === "bots.list").at(-1).params).toEqual({ plugin: "p", code: "one" });
+    await host.sync([spec("p", { fingerprint: "two" })]);
+    void api.bots.list().catch(() => {});
+    void first.bots.list().catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const lists = raw.filter((m) => m.method === "bots.list").map((m) => m.params.code);
+    expect(lists.slice(-2)).toEqual(["two", "one"]);
   });
 });

@@ -62,6 +62,7 @@ async function setup(dir: string, withWorld = true) {
       orchestration: {
         granted: (name: string) => options.grants.has(name),
         workers: (bot: string) => (bot === "main" ? workers.port : "No such bot."),
+        made: () => true,
         quota: () => options.quota,
         specWriters: () => options.specWriters,
       } satisfies OrchestrationWorld,
@@ -94,7 +95,7 @@ async function setup(dir: string, withWorld = true) {
   let nextId = 1000;
   const ask = async (method: string, params: unknown): Promise<any> => {
     const id = nextId++;
-    line({ id, method, params });
+    line({ id, method, params: (params && typeof params === "object" && !Array.isArray(params) ? { code: plugins.codeOf(String((params as { plugin?: unknown }).plugin)), ...params } : params) }); // the code, as Web/host stamps it
     await until(() => sent.some((m) => m.id === id && m.method === undefined));
     const answer = sent.find((m) => m.id === id && m.method === undefined);
     if (answer.error) throw new Error(answer.error.message);
@@ -285,7 +286,7 @@ function book(overrides: { facts?: () => PluginFacts | null; ask?: (question: Ap
   const told: [string, Record<string, unknown>][] = [];
   const file = overrides.file ?? { text: null };
   const workers = new PluginWorkers({
-    world: { granted: overrides.granted ?? (() => true), workers: () => port },
+    world: { granted: overrides.granted ?? (() => true), workers: () => port, made: () => true },
     facts: overrides.facts ?? (() => ({ name: "p", identity: "a".repeat(64), permissions: ALL, botWritten: false })),
     ask: overrides.ask ?? (async () => ({ index: 0 })),
     tell: (_plugin, _event, data) => told.push(["workerReport", data]),

@@ -6,12 +6,13 @@ import { dirname, join } from "node:path";
 import { commandGuidePath } from "../plugins/app-command";
 import { rmSync } from "node:fs";
 import { linkIncoming, servedType, writeIncoming } from "../attachments";
-import { claudeWorkersMode } from "../settings";
+import { claudeWorkersMode, orchestrationPlugin, orchestrationPluginSha256 } from "../settings";
 import { botName } from "../projects";
 import { ContractError, type ResultOf } from "../../contract";
 import { Bot, type PresetTurnIds } from "../bot";
 import type { Engine, Heads } from "../heads";
-import { DEFAULT_ORCHESTRATION_RULES, type OrchestrationRules } from "../orchestration/default-rules";
+import type { OrchestrationRules } from "../orchestration/default-rules";
+import { builtinSource, chosenSource, OrchestrationRulesBook } from "../orchestration/plugin-rules";
 import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, withPluginSections, type BotPrompts } from "../prompts";
 import { readJSON } from "../store/bot-store";
 import { Layout, type BotProfile } from "../store/workspace";
@@ -20,6 +21,7 @@ import { claudeSkillFolders, placedSkillRoot } from "../plugins/engine-skills";
 
 export class CoreSend {
   constructor(private readonly host: Core) {}
+  private madeRules?: OrchestrationRulesBook;
 
   // The bridge: everything this class borrows from `Core`.
   private get activated() { return this.host.activated; }
@@ -105,6 +107,9 @@ export class CoreSend {
     // Bots you named with @ are called in: they answer here too, after reading the chat (`Workspace.send`).
     const called = this.conversations.calledIn(words, bot.id);
     const appNote = this.conversations.notes(bot, called, words);
+    // The rules plugin is asked now, off the turn: the turn below reads the set that is there, whatever the plugin does (M7-O04).
+    void this.rulesBook.refresh((notice) => bot.appNotice(notice));
+    this.plugins.origins.delete(bot.id);
     const sent = bot.send(words, { ...options, ...(appNote ? { appNote } : {}) });
     if (called.length) {
       // The line this message made (Botling 3's server: by its id, since lines sent after it may be in the chat already).
@@ -148,8 +153,20 @@ export class CoreSend {
     return savedLanguage(settings.language) ?? preferredLanguage(this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale]);
   }
 
-  /** The orchestration rules every prompt is built from: core's own defaults, the one seam a plugin's rules plug into later (M7-O04). */
-  orchestrationRules(): OrchestrationRules { return DEFAULT_ORCHESTRATION_RULES; }
+  /** The ask of the rules plugin the settings name (M7-O04): the shipped, pinned one unless the user chose another by name. First use starts the first ask. */
+  private get rulesBook(): OrchestrationRulesBook {
+    if (!this.madeRules) {
+      this.madeRules = new OrchestrationRulesBook(() => {
+        const raw = this.settingsFile() ?? {}, chosen = orchestrationPlugin(raw);
+        return (chosen === "builtin" ? builtinSource(this.options.plugins?.builtIns ?? null) : chosenSource(this.plugins.registry.plugin(chosen), orchestrationPluginSha256(raw)))();
+      });
+      void this.madeRules.refresh();
+    }
+    return this.madeRules;
+  }
+
+  /** The orchestration rules every prompt is built from: the last good answer of the rules plugin, else core's own defaults. Synchronous: a turn never waits for the plugin. */
+  orchestrationRules(): OrchestrationRules { return this.rulesBook.current(); }
 
   /** The bot's instructions (Prompts.swift's), from its profile and the app's settings. */
   /** `workingFolder`: the app worktree the session starts in, when there is one. */

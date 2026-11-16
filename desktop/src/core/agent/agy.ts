@@ -1,4 +1,5 @@
 import type { BotToolRunner } from "../bot-tools";
+import type { OrchestrationRules } from "../orchestration/default-rules";
 export const AGY_EXECUTION_BLOCKED = "Antigravity execution is blocked: the CLI has no verified pre-task policy barrier. No process or task was started. Choose another engine until a safe transport is available.";
 export interface AgyConfig {
   command: string;
@@ -11,6 +12,8 @@ export interface AgyConfig {
   workerEngine?: "agy" | "codex";
   /** A worker's app_notify_owner, from its run under way (its core's `notifyOwner`); absent: the worker has no such tool. */
   workerNotify?: (args: Record<string, unknown>) => unknown;
+  /** The orchestration rules its workers' own instructions come from, read as each worker starts (M7-O04); absent: core's defaults. */
+  rules?: () => OrchestrationRules;
   /** The bot tools (core/bot-tools.ts: the browser pane, the Note), answered by this bot; its workers inherit it. */
   browser?: BotToolRunner;
   /** The coordinator's app_routines (bot.ts `routinesTool`): its result, or a thrown error. Workers never get it. */

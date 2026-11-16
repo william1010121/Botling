@@ -5,7 +5,7 @@
 // checkpoints) is the shared WorkerCore's. `AgyWorkers` keeps the constructor and methods agy-acp.ts uses, over the
 // member's core the bot injects (its worker ledger, importing <acpHome>/workers.json once); without one (tests), a core
 // over <acpHome>/workers.json (AgyLegacyStore).
-import {AGY_WORKER_POLICY} from '../prompts-agy';
+import {agyWorkerPolicy} from '../prompts-agy';
 import {randomUUID} from 'node:crypto';
 import {join} from 'node:path';
 import type {HeadHandlers} from './head';
@@ -111,7 +111,7 @@ export class AgyAcpAdapter implements WorkerAdapter {
       if(!current())throw Error('Stale worker process registration.');
       const started=this.startTime(pid);if(!started)throw Error('Cannot record worker process identity.');
       this.config.processStarted?.(pid);handle.emit({type:'process',pid,started});
-    },acpHome:join(this.config.acpHome!,'workers',record.id),sessionId:record.conversationId||randomUUID(),resume:!!record.conversationId,systemPrompt:`${this.config.workerInstructions??''}\n${AGY_WORKER_POLICY}`};
+    },acpHome:join(this.config.acpHome!,'workers',record.id),sessionId:record.conversationId||randomUUID(),resume:!!record.conversationId,systemPrompt:`${this.config.workerInstructions??''}\n${agyWorkerPolicy(this.config.rules?.())}`};
     try{
       live.head=this.factory(config,{onItem:item=>{if(current())this.item(record,live,item,end);},
         onExit:e=>end({how:e.expected?'cancelled':'exited',finalText:null,error:e.stderr||'ACP worker exited before a result.',detail:'exit'})});
