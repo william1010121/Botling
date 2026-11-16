@@ -275,6 +275,26 @@ describe("prune: the srv: stream keeps the latest state SummaryRows.reconcile re
     expect(states.map((bot) => bot.unread)).toEqual([99]); // not [99, 7]: the old copy did not follow the newer one
     expect(verifyStream(db, SRV).ok).toBe(true);
   });
+
+  it("a newer settings.updated that arrives during the scan wins too", async () => {
+    const { db } = open();
+    fillSrv(db);
+    const writer = new Writer(db);
+    let first = true;
+    const fresh = settingsView({});
+    try {
+      await pruneInBackground({
+        ...SMALL, scanSpan: 7, submit: (command) => writer.submit(command),
+        pause: async () => {
+          if (!first) return;
+          first = false;
+          await writer.submit((tx2) => appendEntries(tx2, SRV, [{ kind: "settings.updated", body: { settings: fresh } }]));
+        },
+      });
+    } finally { await writer.close(); }
+    expect(db.prepare("SELECT count(*) AS n FROM entries WHERE stream = ? AND kind = 'settings.updated'").get(SRV)!.n).toBe(1);
+    expect(verifyStream(db, SRV).ok).toBe(true);
+  });
 });
 
 describe("stop, crash and run once", () => {
