@@ -216,13 +216,14 @@ function realCore(options: { grant?: boolean | undefined } = {}) {
   const bots = (core as unknown as { bots: Map<string, Bot> }).bots;
   const main = [...bots.values()].find((bot) => bot.profile.role === "main") ?? [...bots.values()][0]!;
   vi.spyOn(main, "send").mockReturnValue({ messageId: "m", turnId: null } as never);
+  const routines = vi.spyOn(main, "addRoutine").mockReturnValue(true);
   const ask = (method: string, params: unknown) => (core.plugins as unknown as { requested(m: string, p: unknown): Promise<unknown> }).requested(method, params);
   const admit = (kind: string, args: Record<string, unknown>) => {
     const ran = { n: 0 };
     const result = (main as unknown as { options: { workerAdmit: (k: string, a: Record<string, unknown>, run: () => Promise<Handoff>) => Promise<Handoff> } }).options.workerAdmit(kind, args, async () => { ran.n += 1; return { task_id: "H", run: 1 }; });
     return { ran, result };
   };
-  return { core, main, ask, admit, origin: () => core.plugins.origins.get(main.id) };
+  return { core, main, ask, admit, routines, origin: () => core.plugins.origins.get(main.id) };
 }
 
 describe("F6 in the real core: a message from a plugin that is not shipped marks the bot, and the user's own message clears it", () => {
@@ -259,10 +260,13 @@ describe("F6 in the real core: a message from a plugin that is not shipped marks
     const add = { bot: "main", cron: "0 9 * * *", task: "Check: do the thing" };
     const none = realCore();
     await expect(none.ask("routines.add", { plugin: "shipped", ...add })).resolves.toBeNull();
+    expect(none.routines).toHaveBeenCalledTimes(1);
     await expect(none.ask("routines.add", { plugin: "plain", ...add })).rejects.toThrow(/permission|needs/);
     await expect(none.ask("routines.add", { plugin: "written", ...add })).rejects.toThrow(/permission/);
     const granted = realCore({ grant: true });
     await expect(granted.ask("routines.add", { plugin: "written", ...add })).rejects.toThrow(/no card/);
+    expect(none.routines).toHaveBeenCalledTimes(1);
+    expect(granted.routines).not.toHaveBeenCalled();
   });
 });
 
