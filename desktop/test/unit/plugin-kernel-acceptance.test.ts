@@ -527,9 +527,8 @@ async function rendererRun(seed: number, maxActions = 20) {
   const frames: { close: () => void; send: (data: unknown) => void; posted: any[]; closed: boolean }[] = [];
   let quoted = 0;
   let id = 0;
-  if (rendererKernel.state(CHAT_PLUGIN) !== "absent") throw new Error(`seed ${seed}: the chat plugin was left loaded by the run before`);
-  // `botling.chat` provides the quote service for the whole run (M7-07b; it was the `:chat` stand-in, loaded while a quoter was registered).
-  const chat = await startChatPlugin();
+  // `botling.chat` provides the quote service for every run (M7-07b; it was the `:chat` stand-in, loaded while a quoter was registered): the test starts it once.
+  if (rendererKernel.state(CHAT_PLUGIN) !== "active") throw new Error(`seed ${seed}: the chat plugin is not up`);
   for (let index = 0; index < maxActions; index += 1) {
     const choice = random.int(5);
     if (choice === 0) quoters.push(setComposerQuoter(async () => { quoted += 1; return true; }));
@@ -551,12 +550,10 @@ async function rendererRun(seed: number, maxActions = 20) {
   for (const stop of quoters.splice(0)) stop();
   for (const frame of frames) if (!frame.closed) { frame.close(); frame.closed = true; }
   await flush();
-  await chat.stop();
-  await flush();
-  // Check 4 in the renderer: after its unload nothing is provided, and a quote is not inserted.
-  if (!rendererKernel.holdsNothingOf(CHAT_PLUGIN) || rendererKernel.providerOf(INSERT_QUOTE) !== null) throw new Error(`seed ${seed}: the renderer's kernel still holds the chat plugin`);
+  // With every quoter taken back the plugin is still the provider, and a quote is not inserted.
+  if (rendererKernel.providerOf(INSERT_QUOTE) !== CHAT_PLUGIN) throw new Error(`seed ${seed}: the chat plugin stopped providing`);
   const before = quoted;
-  if (await quoteIntoComposer(BOT, "x", false)) throw new Error(`seed ${seed}: a quote went in with no provider`);
+  if (await quoteIntoComposer(BOT, "x", false)) throw new Error(`seed ${seed}: a quote went in with no quoter`);
   if ((broker as unknown as { targets: Set<unknown> }).targets.size) throw new Error(`seed ${seed}: the broker still holds frames`);
   // A closed frame's message is refused, not answered.
   const answered = frames.reduce((sum, frame) => sum + frame.posted.length, 0);
@@ -596,7 +593,16 @@ describe("check 2 (no residue, P1) with check 3's invariants, check 5 and check 
 
   it(`the renderer: ${RUNS} runs of quoters and plugin frames coming and going leave the renderer's kernel and the broker empty`, async () => {
     let frames = 0;
-    for (const seed of seeds()) frames += (await rendererRun(seed)).frames;
+    const chat = await startChatPlugin();
+    try {
+      for (const seed of seeds()) frames += (await rendererRun(seed)).frames;
+    } finally {
+      await chat.stop();
+    }
+    // Check 4 in the renderer: after the plugin's unload nothing is provided, and a quote is not inserted.
+    expect(rendererKernel.holdsNothingOf(CHAT_PLUGIN)).toBe(true);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBeNull();
+    await expect(quoteIntoComposer(BOT, "x", false)).resolves.toBe(false);
     evidence.renderer = { runs: seeds().length, seeds: ONE ? [ONE] : [FIRST_SEED, FIRST_SEED + RUNS - 1], frames };
   }, ONE ? 20_000 : 120_000);
 });

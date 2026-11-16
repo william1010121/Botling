@@ -107,6 +107,7 @@ describe("the Note's declaration", () => {
   });
 
   it("a library copy taking over the built-in's name drops the declaration (and quotes as a 2.x plugin); the built-in back takes it again", async () => {
+    await chatHost().start();
     stops.push(setComposerQuoter(async () => true));
     reconcileView(view());
     expect(pluginFeed.declares(NOTE)).toBe(true);
