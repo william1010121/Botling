@@ -266,6 +266,22 @@ describe("@card words", () => {
     expect(t.book("B1").pins[0]!.thread[0]!.a).toBeNull();
   });
 
+  it("leaves the chat words of a reply that used <pin-say> to the chat, even with another card waiting (review)", () => {
+    const t = pinned();
+    t.call("pinMessage", { botId: "B1", messageId: "m2", text: "Other" });
+    for (const text of ["@Deploy q1", "@Other q2"]) t.emit("messagePosted", { botId: "B1", role: "user", text: t.send("B1", text) as string, id: text });
+    t.tick(10);
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    // the core hands the tag over first, then ends the turn with the reply's text without the tag
+    t.tag("B1", "pin-say", { id: "p-0001" }, "for Deploy");
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "and a word for the chat" });
+    expect(t.book("B1").pins.map((pin) => pin.thread[0]!.a)).toEqual(["for Deploy", null]);
+    // the next turn without a tag may take a plain reply again
+    t.emit("turnStarted", { botId: "B1", turnId: "t2" });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "for Other" });
+    expect(t.book("B1").pins.map((pin) => pin.thread[0]!.a)).toEqual(["for Deploy", "for Other"]);
+  });
+
   it("with two cards waiting, guesses nothing from a plain reply", () => {
     const t = pinned();
     t.call("pinMessage", { botId: "B1", messageId: "m2", text: "Other" });

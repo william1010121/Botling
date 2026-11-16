@@ -92,6 +92,8 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
   const lastLine = new Map<string, { id: string; text: string; at: number }>();
   const turnLine = new Map<string, { id: string; text: string; at: number }>();
   const lastBotLine = new Map<string, { text: string; at: number }>();
+  /** Bots that used <pin-say> in the turn now running: the rest of that reply is meant for the chat, not for a waiting card. */
+  const saidInTurn = new Set<string>();
   const tagTimes = new Map<string, number[]>();
   const allowed = (botId: string): boolean => {
     const at = now();
@@ -113,6 +115,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       // the line that was in the chat before this turn began is the one it answers; a line that comes while it runs waits for the next turn
       const line = lastLine.get(botId);
       if (line) { turnLine.set(botId, line); lastLine.delete(botId); } else turnLine.delete(botId);
+      saidInTurn.delete(botId);
       const book = load(botId);
       if (M.markSeen(book, now())) save(botId, book);
     }),
@@ -135,8 +138,9 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
         const line = lastBotLine.get(botId);
         const started = turnStart.get(botId) ?? 0;
         const text = String(reply || (line && line.at >= started ? line.text : "") || "").trim();
-        // a reply that still carries the tag is the tag's to answer, not the fallback's
-        if (!ok || !text || text.includes("<pin-say")) return;
+        // the core hands the tags over before the turn ends and takes them out of `reply`: a turn that had one is the tag's
+        const said = saidInTurn.delete(botId);
+        if (!ok || !text || said || text.includes("<pin-say")) return;
         const book = load(botId);
         if (M.answerOnlyWaiting(book, text, started, now()) !== null) save(botId, book);
       } catch (error) {
@@ -178,6 +182,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     }),
     api.replyTags.on("pin-say", (tag) => {
       const botId = tag.bot.id;
+      if (bots.has(botId)) saidInTurn.add(botId);
       if (!allowed(botId)) return;
       try {
         const book = load(botId);

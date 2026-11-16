@@ -299,17 +299,42 @@ describe("which reply answers which question", () => {
     const two = asked(b, "Two");
     expect(M.answerTurn(b, one.id, "  the answer  ", T0 + 9)).toBe(true);
     expect([one.thread[0]!.a, one.thread[0]!.aAt, two.thread[0]!.a]).toEqual(["the answer", T0 + 9, null]);
-    expect(M.answerTurn(b, one.id, "again", T0 + 10)).toBe(false);
-    expect(one.thread[0]!.a).toBe("the answer");
+    // a second answer with nothing waiting is a turn of its own, never dropped (review: the core took it out of the chat already)
+    expect(M.answerTurn(b, one.id, "again", T0 + 10)).toBe(true);
+    expect(one.thread.map((turn) => [turn.q, turn.a])).toEqual([["q", "the answer"], ["", "again"]]);
   });
 
-  it("refuses a bad id, a card that is gone, an empty answer, and a card with nothing waiting", () => {
+  it("answers two questions written into one card before any answer in the order they were asked (review)", () => {
+    const b = book();
+    const pin = make(b);
+    M.addTurn(pin, "r1", "q1", T0);
+    M.addTurn(pin, "r2", "q2", T0 + 1);
+    expect([M.markPosted(b, pin.id, T0 + 2), M.markPosted(b, pin.id, T0 + 3), M.markPosted(b, pin.id, T0 + 4)]).toEqual([true, true, false]);
+    expect(pin.thread.map((turn) => turn.postedAt)).toEqual([T0 + 2, T0 + 3]);
+    expect(M.markSeen(b, T0 + 5)).toBe(true);
+    expect(pin.thread.map((turn) => turn.seenAt)).toEqual([T0 + 5, T0 + 5]);
+    expect(M.answerTurn(b, pin.id, "a1", T0 + 6)).toBe(true);
+    expect(M.answerTurn(b, pin.id, "a2", T0 + 7)).toBe(true);
+    expect(pin.thread.map((turn) => [turn.q, turn.a])).toEqual([["q1", "a1"], ["q2", "a2"]]);
+  });
+
+  it("gives an answer to a question whose line is in the chat before one that never showed (review)", () => {
+    const b = book();
+    const pin = make(b);
+    M.addTurn(pin, "never", "stopped", T0);
+    M.addTurn(pin, "shown", "asked", T0 + 1).postedAt = T0 + 2;
+    expect(M.answerTurn(b, pin.id, "answer", T0 + 3)).toBe(true);
+    expect(pin.thread.map((turn) => turn.a)).toEqual([null, "answer"]);
+  });
+
+  it("refuses a bad id, a card that is gone and an empty answer; a card with nothing waiting takes it as a turn of its own", () => {
     const b = book();
     const pin = asked(b, "One");
     for (const id of ["", "constructor", "p-9", "p-0099", "__proto__"]) expect(M.answerTurn(b, id, "x", T0), id).toBe(false);
     expect(M.answerTurn(b, pin.id, " \n ", T0)).toBe(false);
     const empty = make(b, { title: "Empty" });
-    expect(M.answerTurn(b, empty.id, "x", T0)).toBe(false);
+    expect(M.answerTurn(b, empty.id, "x", T0)).toBe(true);
+    expect(empty.thread.map((turn) => [turn.q, turn.a])).toEqual([["", "x"]]);
     expect(M.answerTurn(b, pin.id, "x".repeat(M.MAX_A + 100), T0)).toBe(true);
     expect(pin.thread[0]!.a).toHaveLength(M.MAX_A);
   });

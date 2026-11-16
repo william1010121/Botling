@@ -50,7 +50,9 @@ The page draws `viewOf(book)` (order wait, run, done), published with `chat.setD
   `〔Pin p-0001 · title〕\nwords\n\n（Pin 卡片：回覆請用 <pin-say id="p-0001">…</pin-say>，…）`. The user's bubble shows `@title words`
   (`userText` reads the header back with `parseAsk`). One path, so nothing is sent twice; the same words to the same card within 3 s
   are dropped (`false`).
-- **The answer** is matched back by `<pin-say id>`. With no tag, the one card with an open turn whose line was in the chat before the
+- **The answer** is matched back by `<pin-say id>`: to that card's oldest unanswered question whose line is in the chat (two
+  questions before an answer each get theirs); with nothing waiting it is a turn of its own (the core has already taken it out of the
+  chat, so it is never dropped). A turn that used `<pin-say>` leaves the rest of its reply to the chat. With no tag, the one card with an open turn whose line was in the chat before the
   bot's turn began takes the plain reply; with two waiting nothing is guessed. Receipts: 已送出 (written) → bot 已看到 (`turnStarted`
   after `messagePosted` showed the line).
 - A routed message that never reached the chat (stopped by another plugin) is forgotten after 2 minutes, so it cannot hold an answer.
