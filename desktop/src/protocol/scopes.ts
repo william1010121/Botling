@@ -214,6 +214,10 @@ export const REMOTE_READS: ReadonlySet<CommandType> = new Set<CommandType>([
   "usage.view", "codex.models", "engine.models", "chat.read", "chat.shown",
   // M7-04c: the result the owner kept for the session's own slot (N2). The origin check (`slotResult`) is what keeps it private.
   "slot.result",
+  // M7-07d: a plugin frame's own source (`PanelFrame`/`MainTabFrame`/`SlotFrame` ask for it), so the Note tab and a settings block run on a page
+  // too. The adapter swaps its `source` for the bytes its row names (M7-09b `panelByRef`); it is plugin code, which the page may read through a
+  // content ticket anyway. `plugins.web` (every web part, ~2 MB) is NOT added: the page's row loader runs the plugins from their rows.
+  "plugins.panel",
 ]);
 
 /** Why a remote session may not send this command as a `cmd`, or null when its scopes allow it. */
