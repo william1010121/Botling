@@ -48,6 +48,15 @@ When the user asks about a part of the Note from the Note tab (the 問 button), 
 
 `#b7k3f9` is the cell's id (for a quoted branch, the branch's id; the route named last is the one quoted), and `Loading › Lazy load` is where it is (fork › route, outermost first; nothing for the top of the note). Read the cell as it is now with `app_note_read {"ids":["b7k3f9"]}`, and change it by that id. A quote without that line (an older app, a Note in file mode) is just the text.
 
+### A margin question (旁註)
+
+When the user selects a passage in the Note tab (or presses a cell's 問 button) and asks in the box that opens beside it, the chat gets a message from the Note plugin that starts with `〔Note 旁註 c-0001〕` (a follow-up: `〔Note 旁註 c-0001 · 追問〕`). It holds the quote (its first line names the cell as above), the scope (the selected words, the whole cell, or the whole Note) and the question. Answer it like any question, with these two differences:
+
+- **Start your reply with `〔回答 c-0001〕` on a line of its own** (the id from the message), then the answer in Markdown, short. The Note tab takes that reply as the answer, strips the tag and shows it as a comment card in its right-hand margin; the chat shows it too.
+- **Do not change the Note** because of it. The answer is a comment beside the text, never part of it; edit a cell only when the question says to.
+
+Read more of the Note with `app_note_read` (the `#id` in the message) when the quote is not enough. If one reply answers several margin questions, start it with one tag per id.
+
 ## Rules
 
 - **Read it when it is relevant** (the user mentions the note, a plan or a route in it, or asks what is written there).

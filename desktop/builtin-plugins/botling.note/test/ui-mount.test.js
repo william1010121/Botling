@@ -59,6 +59,8 @@ function makeEnv(text) {
     panels: { register: (id, fn) => { env.view_fn = fn; } },
     host: {
       call: async (method, params) => {
+        // the margin comments (旁註) have their own tests (ui-margin.test.js); none here, and their calls stay out of the goldens
+        if (method.startsWith("margin")) return method === "marginList" ? { threads: [] } : null;
         env.calls.push(method === "write" ? `write ${JSON.stringify(params.text)} base=${params.base}` : method === "viewSet" ? `viewSet ${JSON.stringify(params.view)}` : method);
         if (method === "read") return { text: env.text, mtime: env.mtime };
         if (method === "write") {

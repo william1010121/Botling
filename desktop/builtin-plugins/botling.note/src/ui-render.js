@@ -532,6 +532,7 @@ export function install(st, api) {
     } else if (st.tcell || st.msel) st.wasEditing = false;
     if (st.viewReady) saveView();
     if (st.drag?.on) dragRefresh();
+    api.marginSync?.(); // the margin comments follow their passages (ui-margin.js; nothing when there are none)
   }
 
   function activate(i, at) {

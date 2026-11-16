@@ -342,7 +342,7 @@ export function install(st, api) {
   dropZone.hidden = true;
   page.append(dropZone, dropLine);
 
-  function cellAsk(run, title = "引用到對話裡問") {
+  function cellAsk(run, title = "問 Bot（回答掛在右側旁註）") {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "cell-ask";

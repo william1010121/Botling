@@ -25,11 +25,11 @@ function fake(notes: Record<string, unknown> = {}) {
   return { api: api as unknown as BotlingApi & typeof api, exposed, events, stored };
 }
 
-it("exposes what the Note tab asks for, and hears the three note events", () => {
+it("exposes what the Note tab asks for, and hears the note events and the bot's turns (for the margin comments)", () => {
   const { api, exposed, events } = fake();
   activate(api);
-  expect([...exposed.keys()].sort()).toEqual(["assetUrls", "cards", "components", "importAsset", "localizeImages", "outline", "parse", "read", "runCard", "viewGet", "viewSet", "write"]);
-  expect([...events.keys()].sort()).toEqual(["noteCardChanged", "noteChanged", "noteConflict"]);
+  expect([...exposed.keys()].sort()).toEqual(["assetUrls", "cards", "components", "importAsset", "localizeImages", "marginAsk", "marginCancel", "marginDelete", "marginFold", "marginList", "outline", "parse", "read", "runCard", "viewGet", "viewSet", "write"]);
+  expect([...events.keys()].sort()).toEqual(["messagePosted", "noteCardChanged", "noteChanged", "noteConflict", "turnFinished", "turnStarted"]);
 });
 
 it("reads and saves the frame's bot's note through notes.read / notes.write, with the base it read", async () => {

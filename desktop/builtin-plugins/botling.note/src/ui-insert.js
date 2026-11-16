@@ -516,6 +516,7 @@ export function install(st, api) {
   }
   const onUndoKey = (e) => {
     if (e.isComposing || e.altKey || !(e.metaKey || e.ctrlKey) || (e.key ?? "").toLowerCase() !== "z" || st.drag || st.boardOpen) return;
+    if (e.target?.closest?.(".nm-ui")) return; // typing in a margin comment's box: ⌘Z is that box's, not the note's
     if (undoStep(e.shiftKey)) {
       e.preventDefault();
       e.stopPropagation();
