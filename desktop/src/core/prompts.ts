@@ -11,7 +11,8 @@
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
 import { CODEX_NOTE } from "./prompts-codex-text";
-import { DELEGATION_CAPS, delegationPolicy, FILES_TOUCHED_HANDOFF_RULE, VERBATIM_HANDOFF_RULE, WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, WORKER_REPORT_BLOCK_RULE, workerNoteRule } from "./prompts/delegation";
+import { DELEGATION_CAPS, delegationPolicy, WORKER_NOTIFY_RULE } from "./prompts/delegation";
+import { DEFAULT_ORCHESTRATION_RULES, renderFragments, type OrchestrationRules } from "./orchestration/default-rules";
 export { VERBATIM_HANDOFF_RULE } from "./prompts/delegation";
 import type { BotProfile } from "./store/workspace";
 import { progressFile } from "./sub-bots";
@@ -138,8 +139,9 @@ export const workerSubBotRule = [
 /** The native line a Claude bot is told about subagents (kept as the Swift goldens have it; replaced below for app workers). */
 export const NATIVE_SUBAGENT_LINE = "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.";
 /** What a Claude bot is told instead when its subagents are app-managed workers (the default; claude-workers.ts). */
-export const CLAUDE_WORKERS_RULE = delegationPolicy(DELEGATION_CAPS.claude, { engine: "claude", form: "line" });
-const CLAUDE_MAIN_WORKERS_LINE = `- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id. A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. ${FILES_TOUCHED_HANDOFF_RULE}`;
+export const claudeWorkersRule = (rules: OrchestrationRules = DEFAULT_ORCHESTRATION_RULES): string => delegationPolicy(DELEGATION_CAPS.claude, { engine: "claude", form: "line" }, rules);
+export const CLAUDE_WORKERS_RULE = claudeWorkersRule();
+const claudeMainWorkersLine = (rules: OrchestrationRules): string => renderFragments(rules.claudeMainLine());
 const NATIVE_SUB_BOT_AGENTS = "you may start your own subagents with the Agent tool.";
 const WORKERS_SUB_BOT_AGENTS = "you may start your own workers with app_handoff.";
 // A bot made with delegation "onRequest" (a plugin's `bots.create`, e.g. a reading coach the user works with directly): these
@@ -147,7 +149,8 @@ const WORKERS_SUB_BOT_AGENTS = "you may start your own workers with app_handoff.
 /** Instead of `NATIVE_SUBAGENT_LINE`, for a bot made with delegation "onRequest" (native subagents). */
 export const ON_REQUEST_SUBAGENT_LINE = "- Do the work yourself (reading, researching, building, running commands): the user works with you directly here. Start a subagent with the Agent tool only when the user explicitly asks for one; then give it a clear, self-contained task, say in one sentence what you handed off, and report its result when it comes back.";
 /** Instead of `CLAUDE_WORKERS_RULE`, for a bot made with delegation "onRequest" (app-managed workers, the default). */
-export const ON_REQUEST_WORKERS_RULE = `- Do the work yourself (reading, researching, building, running commands): the user works with you directly here. Start an app-managed worker with the app_handoff tool only when the user explicitly asks for a worker or subagent (a worker is a ${DELEGATION_CAPS.claude.name} subagent running as its own session in this folder; the Agent tool is off). Then give it a short name and a clear, self-contained task, say in one sentence what you handed off, and end your turn: do not wait or poll. Its report arrives later as an app message (<app_task_result task_id="…" run="…">); tell the user what came of it. To follow up, use app_send_message with its task_id; a follow-up on a worker's result goes to that same worker. Every handoff and follow-up quotes the user's own words of their question. ${VERBATIM_HANDOFF_RULE} To stop one, app_cancel_task. ${workerNoteRule(DELEGATION_CAPS.claude)}`;
+export const onRequestWorkersRule = (rules: OrchestrationRules = DEFAULT_ORCHESTRATION_RULES): string => renderFragments(rules.onRequestLine(DELEGATION_CAPS.claude));
+export const ON_REQUEST_WORKERS_RULE = onRequestWorkersRule();
 const ON_REQUEST_SUB_BOT_AGENTS = "you do the work yourself and start a subagent or worker only when the user explicitly asks.";
 /** What a sub bot a plugin made is told about its first message and progress file. */
 export function pluginSubBotLine(progress: string): string {
@@ -265,7 +268,7 @@ function worktreeSessionLine(worktree: string, project: string): string {
 }
 
 /** `BotPrompts.codexWorkerInstructions`: what app-managed Codex workers are told (never the coordinator's prompt). */
-export function codexWorkerInstructions(profile: PromptInput["profile"], language: AppLanguage, workingFolder: string | null = null): string {
+export function codexWorkerInstructions(profile: PromptInput["profile"], language: AppLanguage, workingFolder: string | null = null, rules: OrchestrationRules = DEFAULT_ORCHESTRATION_RULES): string {
   const paths = profilePaths(profile);
   return [
     `You are an execution worker for "${profile.name}", running in an independent Codex session managed by the app.`,
@@ -280,7 +283,7 @@ export function codexWorkerInstructions(profile: PromptInput["profile"], languag
     "- Execute your assigned scope yourself: inspect source, research, edit, build, and run meaningful tests as needed. Do not delegate to native subagents, app_handoff, app_send_message, another bot, Claude, a project/team inbox, or handoff/plugin/component tags. You are the worker, so coordinator-only rules about handing work off, ending after acceptance, or waiting for another worker do not apply to you.",
     "- Preserve the assigned authorization phase. For research/design-only work, deliver findings and stop: do not implement source changes in any files, including new or non-conflicting files and isolated worktrees. File-owner release is only a conflict/ownership fact, not implementation authorization; neither it nor research completion authorizes a next phase. Require explicit user authorization relayed by the coordinator before implementation. Writing an assigned research artifact is permitted. If the payload's implementation goals conflict with a research-only boundary, obey the research-only boundary and report the conflict.",
     `- ${WORKER_NOTIFY_RULE}`,
-    `- ${WORKER_LOOKUP_RULE}`,
+    `- ${rules.workerRules().lookup.text}`,
     "- Complete the task before returning your final report. Do not end with a promise to continue: the app treats your final report as this run's completion. Report a concrete blocker when you cannot continue, with the exact missing permission, information, or failed operation. Do not claim success without execution evidence.",
     "- Validation default: run only the relevant, meaningful behavior/regression checks for your assigned change; reuse sufficient existing evidence. Do not run a full suite or package build during development. Full validation and packaging belong to one separately authorized cumulative integration pass after changes are combined. Expand or repeat checks only for integration conflicts, new failures, or specific unresolved concerns, and report the reason. Prefer observable behavior tests; avoid adding redundant implementation-detail, hash, or fixture assertions unless they protect a real contract. Preserve essential permission, safety, and authorization checks. Report the checks actually run, results, reused evidence, and remaining limitations; never imply unrun checks passed. This default does not expand your assigned scope or authorization phase.",
     "- Own only the assigned files and scope. Other workers may be editing simultaneously: re-read before editing, make targeted changes, and preserve their work. Do not reserve routine validation for the coordinator; perform the checks needed to support your result yourself.",
@@ -289,7 +292,7 @@ export function codexWorkerInstructions(profile: PromptInput["profile"], languag
     codexLocalReportRule(paths.artifacts),
     "- Preserve the user's authorization and project tool restrictions. A denied tool call is not permission to bypass the restriction; report what is needed to continue.",
     "- Final report to the coordinator: keep research-only scope, test commands, and preview-tool details in this internal handback, separate from user report prose. User reports still state material uncertainty and failed checks in plain language. State completed or failed, what changed or was found, source locations or artifact paths (files and folders as full absolute paths, so the coordinator can link them), checks actually run with their results, and any remaining blocker. Distinguish observed evidence from inference. On a follow-up in this same session, retain the prior context and execute only the requested additional scope.",
-    `- ${WORKER_REPORT_BLOCK_RULE}`,
+    `- ${rules.workerRules().reportBlock.text}`,
   ].join("\n");
 }
 
@@ -305,6 +308,8 @@ export interface PromptInput {
   engine?: Engine;
   /** The folder the session actually starts in when the app attached a git worktree (never the project folder itself). */
   workingFolder?: string | null;
+  /** The orchestration rules the delegation text comes from (default: core's own, M7-O02). */
+  rules?: OrchestrationRules;
 }
 
 export interface BotPrompts {
@@ -326,7 +331,7 @@ export const SITE_TOOLS_RULE = "Browser site tools (the puzzle tools in Botling'
 export const AGY_BREVITY_RULE = "At most 3 sentences, only the conclusion and the next step; when the user asks to discuss or think something through together, discuss it in chat. Start with the answer: no praise, greeting or filler opener (never a \"Great question\" or \"You are right\" style line). No headings, no bullet lists, no emoji. Do not paste long text, reports or multi-section answers into chat; they go into a report page (see the results rule), and the chat reply links to it. This includes translations and rewrites of a report. After dispatching subagents, say in one sentence how many and what for; do not list each one.";
 /** The main bot's own app actions on Antigravity (<new-bot>, <new-project>): the app does them, no worker or Claude behind them. Component and plugin tags stay Claude-only. */
 const AGY_MAIN_APP_ACTIONS = "As the main bot you may ask the app itself (no worker) for two things. A bot of the user's own with no folder (a morning news bot, a reading coach): end your reply with <new-bot name=\"short name, no quotes\">its job in a few sentences, including when it should work</new-bot>; never for a name the list already has. A folder on the user's Mac that should get a manager (a project): end your reply with <new-project folder=\"full path of the folder\">what its manager should do first</new-project>, or <new-project folder=\"...\"/> when there is nothing to do yet; folder=\"~/tool/**\" adds every project under a folder, folder=\"~/tool/*\" the folders directly inside it, and one tag per named folder. The app asks the user on a card. Say so in one sentence only when this reply carries the tag, and never write these tags inside code or examples.";
-export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive", language = "en", heads = null, engine = "claude", workingFolder: attached = null, parentName = null }: PromptInput): BotPrompts {
+export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive", language = "en", heads = null, engine = "claude", workingFolder: attached = null, parentName = null, rules = DEFAULT_ORCHESTRATION_RULES }: PromptInput): BotPrompts {
   // Only a project or bot session can stand in an app worktree; the main bot never does.
   const tree = profile.role === "main" || !attached || attached === profile.folder ? null : attached;
   if (engine === "agy") {
@@ -338,7 +343,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
         AGY_BREVITY_RULE,
         RESTATE_RULE.slice(2),
         languageRule(language), profile.job ?? "", profile.instructions ?? "",
-        agyWorkerRuntimeEnabled() ? delegationPolicy(DELEGATION_CAPS.agy, { engine: "agy", worktree: tree }) : "Work directly on the user's request within their authorization. Be concise and report concrete results and limitations.",
+        agyWorkerRuntimeEnabled() ? delegationPolicy(DELEGATION_CAPS.agy, { engine: "agy", worktree: tree }, rules) : "Work directly on the user's request within their authorization. Be concise and report concrete results and limitations.",
         heads ? headsRule(heads, "agy") : "",
         profile.role === "main" ? AGY_MAIN_APP_ACTIONS : "",
         agyWorkerRuntimeEnabled() ? (heads ? "Use only the exposed app-managed worker tools for execution. Native subagents are unavailable in coordinator mode; hand work to a peer engine only with the <handoff> protocol above." : "Use only the exposed app-managed worker tools for execution. Native subagents and peer handoff tags are unavailable in coordinator mode.") : "Use the botling MCP tools for files and commands. Native app_handoff workers are unavailable; use the explicit peer handoff protocol below for enabled engines. Native subagents, workflows, global plugins and team/component/plugin commands are unavailable. Do not substitute another engine silently.",
@@ -350,7 +355,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
         "Use markdown links for results. Ask the user when required information is missing. Do not claim a tool action succeeded when it was refused.",
         FILE_LINK_RULE.slice(2),
       ].filter(Boolean).join("\n"),
-      codexWorkerSystem: codexWorkerInstructions(profile, language, tree).replace("independent Codex session", "independent execution session"), headsRule: heads ? headsRule(heads, "agy") : "",
+      codexWorkerSystem: codexWorkerInstructions(profile, language, tree, rules).replace("independent Codex session", "independent execution session"), headsRule: heads ? headsRule(heads, "agy") : "",
       wake: `${WAKE_LEAD} Use the supplied saved memory and recent chat as context.)`,
       tidy: `${TIDY_LEAD}. If allowed, update ${paths.memory} with useful facts, preserving its four headings. Report any refusal; otherwise reply OK.)`,
       handoff: `(App: Before switching engines, if allowed, save outstanding work to ${paths.memory}. Report any refusal; otherwise reply OK.)`,
@@ -464,8 +469,8 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
   if (codex) system += `\n${CODEX_NOTE}\n${codexLocalReportRule(paths.artifacts)}`;
   const rule = heads ? headsRule(heads, engine) : "";
   if (heads) system += `\n${rule}`;
-  if (codex) system += `\n${delegationPolicy(DELEGATION_CAPS.codex, { engine: "codex", worktree: tree })}`;
-  const codexWorkerSystem = codexWorkerInstructions(profile, language, tree);
+  if (codex) system += `\n${delegationPolicy(DELEGATION_CAPS.codex, { engine: "codex", worktree: tree }, rules)}`;
+  const codexWorkerSystem = codexWorkerInstructions(profile, language, tree, rules);
   if (codex) {
     const inProgress = MEMORY_SECTIONS[1].heading;
     return {
@@ -593,18 +598,19 @@ export function routinesRule(routines: string): string {
  * the <show> line, for every bot but the main bot; botling.report's report page line after the results rule, for every bot and
  * Codex worker).
  */
-export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent" | "instructionsFile" | "plugin">> & { delegation?: string | null }, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS): BotPrompts {
+export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent" | "instructionsFile" | "plugin">> & { delegation?: string | null }, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS, rules: OrchestrationRules = DEFAULT_ORCHESTRATION_RULES): BotPrompts {
   let system = prompts.system;
   // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
   const workers = engine === "claude" && claudeWorkers;
   if (workers) {
-    system = system.replace(NATIVE_SUBAGENT_LINE, CLAUDE_WORKERS_RULE).replace(NATIVE_SUB_BOT_AGENTS, WORKERS_SUB_BOT_AGENTS);
-    if (profile.role === "main") system = `${system}\n${CLAUDE_MAIN_WORKERS_LINE}`;
+    const workersRule = claudeWorkersRule(rules);
+    system = system.replace(NATIVE_SUBAGENT_LINE, () => workersRule).replace(NATIVE_SUB_BOT_AGENTS, WORKERS_SUB_BOT_AGENTS);
+    if (profile.role === "main") system = `${system}\n${claudeMainWorkersLine(rules)}`;
   }
   // A bot a plugin made with delegation "onRequest" (only those; never the main bot): it does the work itself. Claude only: a
   // Codex or Antigravity coordinator has no tools of its own to do it with, so its policy stays (such a bot is made on Claude).
   if (profile.delegation === "onRequest" && profile.role !== "main" && engine === "claude") {
-    system = system.replace(CLAUDE_WORKERS_RULE, () => ON_REQUEST_WORKERS_RULE).replace(NATIVE_SUBAGENT_LINE, () => ON_REQUEST_SUBAGENT_LINE)
+    system = system.replace(claudeWorkersRule(rules), () => onRequestWorkersRule(rules)).replace(NATIVE_SUBAGENT_LINE, () => ON_REQUEST_SUBAGENT_LINE)
       .replace(WORKERS_SUB_BOT_AGENTS, ON_REQUEST_SUB_BOT_AGENTS).replace(NATIVE_SUB_BOT_AGENTS, ON_REQUEST_SUB_BOT_AGENTS);
   }
   // A sub bot a plugin made (`bots.create` with a parent) took over no subagent: its first message is the plugin's, not a handoff.
