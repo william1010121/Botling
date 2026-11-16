@@ -18,7 +18,7 @@ import { processStartTime } from "../process/kill-tree";
 import { endTree, type TerminateResult } from "../process/tree";
 import {
   ClaudeLegacyStore, WorkerCore,
-  type HandoffRequest, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord,
+  type HandoffRequest, type StartedBy, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord,
 } from "../worker-core";
 import { appTools, workerAppTools } from "../app-tools/registry";
 import { isBotTool, type BotToolRunner } from "../bot-tools";
@@ -663,7 +663,8 @@ export class ClaudeWorkers implements WorkerHost {
   }
 
   listWorkers(): WorkerInfo[] { return this.core.listWorkers(); }
-  sendToWorker(id: string, words: string): WorkerSendResult | Promise<WorkerSendResult> { return this.core.sendToWorker(id, words); }
+  /** `via`: the plugin that sends (plugin-workers.ts): the words reach the worker with a line that says so. */
+  sendToWorker(id: string, words: string, via?: StartedBy): WorkerSendResult | Promise<WorkerSendResult> { return this.core.sendToWorker(id, words, "owner", via); }
   stopWorker(id: string): Promise<boolean> { return this.core.stopWorker(id); }
   /** settings.json's `claudeWorkerLimit` changed: a raised limit lets waiting workers start now. */
   slotsChanged(): void { this.core.slotsChanged(); }
@@ -681,8 +682,14 @@ export class ClaudeWorkers implements WorkerHost {
   close(): Promise<void> { return this.core.close(); }
 
   /** A handoff a plugin asked for (plugin-workers.ts, after its checks): the worker is marked `pluginStarted` (less than a bot's own). */
-  startFor(args: Record<string, unknown>): Promise<{ task_id: string; run: number }> {
-    return this.core.handoff("claude-process", { ...args, [PLUGIN_STARTED]: true });
+  startFor(args: Record<string, unknown>, startedBy?: StartedBy): Promise<{ task_id: string; run: number }> {
+    return this.core.handoff("claude-process", { ...args, [PLUGIN_STARTED]: true }, startedBy);
+  }
+
+  /** Where a worker stands now, for a plugin that was away (restart pickup, plugin-workers.ts); null: no such worker. */
+  look(id: string): { run: number; running: boolean; status: string; report: string } | null {
+    const r = this.core.get(id);
+    return r ? { run: r.run, running: r.status === "running" || r.status === "new", status: statusWord(r.status), report: r.report.text ?? "" } : null;
   }
 
   /** The app tools (the coordinator's in-process MCP server). */
