@@ -175,14 +175,14 @@ Three kinds of mistakes, one category per evidence line:
 ## L-010 · Every guard has a test that fails when the guard is removed
 - Rule: write a test that fails when each guard you added is removed; an assertion that passes either way is
   replaced. The implementing worker does NOT run the mutation check, only writes the tests and runs the related
-  test files. The reviewer runs the mutation check once, as one batch (see "Mutation check at review" below).
+  test files (at most 2 `remote-test.sh` runs, no `--typecheck`). The reviewer runs the mutation check once, as one batch (see "Mutation check at review" below).
 - Why: the mutation check kept finding guards whose removal no test noticed, and one assertion that was vacuous.
   Since 2026-11-16 (user decision) the check moves from every worker to the review: each mutant was its own commit
   and its own queued remote-test run, and queueing for the Linux test host took 39% of worker time.
 - Mutation check at review: one `remote-test.sh` connection, one worktree on the host. `remote-test.sh` has no batch
   mode yet, so pass it one script (as the command to run on the host, or a small `mutate.sh` committed once with the
   review) that, for each mutant in turn, patches the file (`sed` or `git apply mutant-N.patch`), runs vitest on the
-  related test files only, records pass/fail, then restores with `git checkout -- <file>`. No commit and no separate
+  related test files only, records pass/fail, then restores with `git checkout -- <file>`. The review's whole budget is this one connection: related tests and the mutation batch together. No commit and no separate
   queue entry per mutant. A mutant whose tests still pass is a finding (a guard no test protects).
 - Tags: test
 - Status: open · days 1 of 3 (2026-11-15)
@@ -194,8 +194,9 @@ Three kinds of mistakes, one category per evidence line:
   - 2026-11-15 | thin-check | `M5-04c-review.md` N1 (mutant M9 survives) | fix in merge `4685c93a`
 
 ## L-011 · Run both sides' related tests on the merged tree before merging, and sweep a cause across all tests
-- Rule: before review and again before merge, merge the base (main or the open batch) into the branch and run the
-  related tests of both sides on the merged tree. When a test breaks for a cause (a minted id, a new row kind, a new
+- Rule: before review, merge the base (main or the open batch) into the branch; the related tests of both sides
+  run once on the merged tree, counted in the step's budget of 1–2 `remote-test.sh` runs (no `--typecheck`). The one
+  full `--typecheck` run is the final confirmation after the merge into main, not an extra run per step. When a test breaks for a cause (a minted id, a new row kind, a new
   count), search every test for the same cause in the same fix.
 - Why: parallel branches were green alone and broke together. After M5-04g (`ff352ce8`) changed how the main bot and
   Maintainer ids are made, tests on main failed; the first fix repaired two of them, five more with the same cause
@@ -209,8 +210,9 @@ Three kinds of mistakes, one category per evidence line:
   - 2026-11-15 | thin-check | `M5-18a-review.md` F6 F7 (five-file textual and semantic overlap with M5-14d; failures already on main) | merge `8785ba3f`
 
 ## L-012 · A fix commit gets its own probe tests and a fresh mutation check
-- Rule: each fix in a review round comes with the probe that failed before it, and the reviewer's mutation check (one batch,
-  see L-010) is run again on the fixed code, including the paths the fix itself added.
+- Rule: each fix in a review round comes with the probe that failed before it, and the fix round's single
+  `remote-test.sh` run covers the probes and the paths the fix added. A re-review runs nothing of its own: it reads that
+  result and the diff; the mutation batch (L-010) is not repeated unless the coordinator asks for one more run.
 - Why: fixes brought new findings or were only half done, so cards needed a second or third review.
 - Tags: test
 - Status: open · days 1 of 3 (2026-11-15)
