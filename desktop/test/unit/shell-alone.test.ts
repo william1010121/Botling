@@ -82,12 +82,15 @@ describe("the host with a manifest that lists no plugin", () => {
     for (const name of SHELL_PLUGINS) expect(one.unavailable(name), name).toBe(true);
   });
 
-  it("does not count an unreadable or malformed manifest as one", () => {
-    vi.stubGlobal("__FE_MANIFEST__", "{not json");
-    expect(feManifestEmbedded()).toBe(false);
-    vi.stubGlobal("__FE_MANIFEST__", JSON.stringify({ version: 1 }));
-    expect(feManifestEmbedded()).toBe(false);
-    expect(embeddedFeManifest().plugins).toEqual([]);
+  it("counts an unreadable or malformed manifest as one that lists nothing: the shell's plugins are refused (fail closed)", async () => {
+    for (const text of ["{not json", JSON.stringify({ version: 1 })]) {
+      vi.stubGlobal("__FE_MANIFEST__", text);
+      expect(feManifestEmbedded(), text).toBe(true);
+      expect(embeddedFeManifest().plugins, text).toEqual([]);
+      const one = host();
+      await one.start();
+      for (const name of SHELL_PLUGINS) expect(one.unavailable(name), `${text} ${name}`).toBe(true);
+    }
   });
 });
 

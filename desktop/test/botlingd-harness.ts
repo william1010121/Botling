@@ -58,8 +58,9 @@ export class BotlingdProcess {
   stderr = "";
   private readonly closed: Promise<number | null>;
 
-  constructor(readonly dataDir: string, extra: Record<string, string> = {}) {
-    this.child = spawn(process.execPath, ["--no-warnings", botlingdScript, "start"], { env: botlingdEnv(dataDir, extra), stdio: "pipe" });
+  /** `script`: another build of the server to run (default out/server/main.cjs), e.g. a copy beside a page of its own (M7-08). */
+  constructor(readonly dataDir: string, extra: Record<string, string> = {}, script: string = botlingdScript) {
+    this.child = spawn(process.execPath, ["--no-warnings", script, "start"], { env: botlingdEnv(dataDir, extra), stdio: "pipe" });
     this.closed = new Promise((resolve) => this.child.once("close", (code) => resolve(code)));
     createInterface({ input: this.child.stdout }).on("line", (line) => { this.stdout += `${line}\n`; });
     this.child.stderr.on("data", (chunk) => { this.stderr = (this.stderr + chunk).slice(-65_536); });

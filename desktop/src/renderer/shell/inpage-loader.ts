@@ -43,27 +43,25 @@ export function parseFeManifest(value: unknown): FeManifest {
 
 declare const __FE_MANIFEST__: string | undefined;
 
-/** The manifest this bundle was built with, or null when it has none (esbuild `define`; not defined in a test or a build without it, or unreadable). */
-function builtIn(): FeManifest | null {
-  try {
-    return typeof __FE_MANIFEST__ === "string" ? parseFeManifest(JSON.parse(__FE_MANIFEST__)) : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * The manifest this page's bundle was built with (esbuild `define`, fe-manifest-define.mjs): the same bytes as
  * fe-build-manifest.json, so the list and the code cannot be from different builds. Use this in the app: the desktop
  * window's CSP (`connect-src 'none'`) blocks `fetchFeManifest`. Not defined (a test, a build without it) or unreadable: empty.
  */
 export function embeddedFeManifest(): FeManifest {
-  return builtIn() ?? EMPTY_FE_MANIFEST;
+  try {
+    return typeof __FE_MANIFEST__ === "string" ? parseFeManifest(JSON.parse(__FE_MANIFEST__)) : EMPTY_FE_MANIFEST;
+  } catch {
+    return EMPTY_FE_MANIFEST;
+  }
 }
 
-/** True when this bundle carries a manifest at all (a build said what it ships, even if the list is empty); false in a test or a build without one. */
+/**
+ * True when this bundle carries a manifest at all: a build said what it ships, even if the list is empty or the text is unreadable (then it
+ * lists nothing, and the shell's plugins are refused: fail closed). False in a test or a build without one (the page as it was).
+ */
 export function feManifestEmbedded(): boolean {
-  return builtIn() !== null;
+  return typeof __FE_MANIFEST__ === "string";
 }
 
 /** Reads fe-build-manifest.json over HTTP (the browser page only: the desktop window's CSP blocks it; prefer `embeddedFeManifest`). Any failure gives the empty manifest. */
