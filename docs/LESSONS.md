@@ -224,13 +224,16 @@ Three kinds of mistakes, one category per evidence line:
 
 ## L-013 · A branch that runs only in the packaged app gets a test that simulates packaged mode
 - Rule: when code behaves differently when packaged (`app.isPackaged`, Electron fuses, `ELECTRON_RUN_AS_NODE`,
-  `process.execPath`), add a unit test that drives the packaged branch without starting Electron or opening windows.
+  `process.execPath`), add a unit test that drives the packaged branch without starting Electron or opening windows
+  Code that runs inside an Electron process (botlingd, the plugin host's utility process) and reads a `.asar` path uses
+  `original-fs`: Electron's `node:fs` answers a folder of size 0 whose mtime is the clock, and plain-node tests never see it.
 - Why: with the RunAsNode fuse off, `ELECTRON_RUN_AS_NODE=1` is ignored, so packaged `botlingd` would have started
   the app itself instead of its plugin host and PDF job; the branch's 39 tests passed.
 - Tags: build, test
-- Status: open · days 1 of 3 (2026-11-15)
+- Status: open · days 2 of 3 (2026-11-15, 2026-11-17)
 - Evidence:
   - 2026-11-15 | thin-check | `M6-07c-review.md` F1 F2 (branch `f460f996`: packaged children spawned as the app) | fix `e7580d9d`
+  - 2026-11-17 | thin-check | `v3-m6/install-verify-review.md` (botling.dev hashed app.asar with `node:fs` inside Electron: no hash, a clock for builtAt, a good install reported as "neither"; every test ran in plain node) | fix `b3f96b07`, `9e4f5a4b`
 
 ## L-014 · A timing or two-process test passes many runs in a row before hand-off
 - Rule: a new test that starts servers, waits on timers or races processes is run at least 10 times in a row before
