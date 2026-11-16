@@ -12,6 +12,10 @@ import type { OutboxItem, RetiredLog, StoredCursor } from "./storage";
 
 export class LinkStreams {
   constructor(private readonly host: LinkHost) {}
+  /** The inc an item's last copy was sent under (memory only: after a reload a `cmd.retry` item is sent once and learns it again). */
+  private readonly sentUnder = new Map<string, LogId>();
+  /** The inc the copy a `cmd.retry` refused was sent under (`sentUnder` when the refusal arrives: one copy per session is out at a time). */
+  private readonly refusedUnder = new Map<string, LogId>();
 
   // The bridge: the names the moved bodies borrow from FeLink, one line each (`LinkHost`).
   private get options() { return this.host.options; }
@@ -114,9 +118,17 @@ export class LinkStreams {
     if (session.sent.has(key) || session.closed || this.isQueueStopped(item.slot)) return;
     const inc = this.incFor(item.slot.target);
     if (!inc) return; // the owner's srv: stream is not known yet: sent once its snap comes
-    if (item.retryInc && item.retryInc !== inc) return; // D49: wait for the owner's reset
+    // D49: wait for the owner's reset, but only while this front end is still on the inc the refused copy was sent under: an owner restored
+    // again before the first reset arrived is never shown on `retryInc`, and waiting for it would hold this item (and every one behind it) for ever.
+    // The inc at send time, not when the refusal arrives: a late refusal (a forwarded reply) can come after the stream already moved on.
+    // The refused copy's inc, not the last copy's: a copy sent under a newer inc and lost to a reconnect was never refused (re-check M7-11b).
+    if (item.retryInc && item.retryInc !== inc && this.refusedUnder.get(key) === inc) return;
     if (!this.send(session, { t: "cmd", ...this.outbox.envelope(item, inc) } as Message)) return;
     session.sent.add(key);
+    this.sentUnder.set(key, inc);
+    if (this.sentUnder.size > 256) {
+      for (const other of this.sentUnder.keys()) if (!this.outbox.get(other)) { this.sentUnder.delete(other); this.refusedUnder.delete(other); }
+    }
     if (item.cancel) this.send(session, { t: "cancel", slot: item.slot });
   }
 
@@ -334,6 +346,11 @@ export class LinkStreams {
     const key = slotKey(retry.slot);
     const item = this.outbox.get(key);
     if (!item || (item.state !== "waiting" && item.state !== "held")) return; // no longer held: ignore (§11.2)
+    // A forwarded refusal can reach a newer session than the one that sent the copy, so `sentUnder` may name a later copy: that is harmless.
+    // It holds because the attached server handles peer frames in order (D58) and the owner's `reset J` precedes its refusal under J, so the copy
+    // was sent under J (`retryInc === inc`: sent directly) or under an older inc (the stream moves to J first, then it is sent).
+    const refused = this.sentUnder.get(key);
+    if (refused) this.refusedUnder.set(key, refused);
     void this.outbox.retry(retry.slot, retry.inc).then((updated) => {
       session.sent.delete(key);
       const current = updated ?? this.outbox.get(key);
@@ -353,6 +370,8 @@ export class LinkStreams {
     const key = slotKey(slot);
     this.visibleAt.delete(key);
     this.cancelNoted.delete(key);
+    this.sentUnder.delete(key);
+    this.refusedUnder.delete(key);
     this.unsettledCounts.delete(key);
     this.unsettledStopped.delete(key);
     if (result.kind === "moved") {

@@ -93,6 +93,8 @@ jobs:
       KERNEL_ACCEPTANCE_RUNS: ${{ github.event_name == 'pull_request' && '150' || '500' }}
       V3_GOSSIP_PROPERTY_SEEDS: ${{ github.event_name == 'pull_request' && '2' || '6' }}
       V3_LOG_PROPERTY_RUNS: ${{ github.event_name == 'pull_request' && '10' || '30' }}
+      # M7-11b swap-outbox property: 2,000 on pull requests (about 50 s on Linux; still past the D49 seed 20262478, run 1,363).
+      SWAP_OUTBOX_RUNS: ${{ github.event_name == 'pull_request' && '2000' || '10000' }}
     defaults:
       run:
         working-directory: desktop
