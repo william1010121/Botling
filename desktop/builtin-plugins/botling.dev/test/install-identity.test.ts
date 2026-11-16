@@ -225,3 +225,21 @@ describe("the Botling 3 install script keeps what the next start needs", () => {
     expect(result.out).toMatch(/copying the new build/);
   });
 });
+
+describe("a script that ended early is not a build that failed to come up", () => {
+  it("does not count towards pausing installs, and says what the old build is", () => {
+    vi.useFakeTimers();
+    const root = tempDir("install-identity");
+    const from = readBuild(fakeApp(join(root, "Applications"), "Botling 3", { BotlingGitCommit: "aaaaaaa1111" }))!;
+    const to = readBuild(fakeApp(join(root, "dist"), "Botling 3", { BotlingGitCommit: "bbbbbbb2222" }))!;
+    const { builds, main } = rig(root, from);
+    for (let i = 0; i < 3; i++) {
+      prepareInstall(server(root), from, to, "DEV", "", 5151, "", new Date(), from.path, server(root));
+      writeFileSync(join(folder(root), "rolled-back"), "the install script ended early at step: waiting for the old app to quit\n");
+      builds.check(8_000);
+    }
+    expect(main.notices.at(-1)!).toContain("the install script ended early at step: waiting for the old app to quit");
+    expect(main.notices.at(-1)!).not.toMatch(/installing is paused/);
+    expect(readFileSync(join(folder(root), "failures"), "utf8").trim()).toBe("0");
+  });
+});

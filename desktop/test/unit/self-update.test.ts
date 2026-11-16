@@ -192,3 +192,26 @@ describe("a newer release", () => {
   });
 });
 
+
+describe("an install script that cannot be started (core/self-update.ts installAndQuit)", () => {
+  it("an error that comes a moment after spawn (no nohup, no bash) cancels the checkpoint and quits nothing", async () => {
+    const calls: string[] = [];
+    const quit = vi.fn(async () => {});
+    installAndQuit(["/nope/nohup"], "/l", {
+      prepareRestart: () => { calls.push("checkpoint"); },
+      cancelRestart: () => { calls.push("cancel"); },
+      spawn: () => Promise.reject(new Error("spawn /nope/nohup ENOENT")),
+      app: { request: async () => ({ ok: true }), quitForInstall: quit },
+      log: (line) => { calls.push(`log ${line}`); },
+    });
+    await vi.waitFor(() => expect(calls).toEqual(["checkpoint", "cancel", "log install: the install script did not start, nothing was quit: spawn /nope/nohup ENOENT"]));
+    expect(quit).not.toHaveBeenCalled();
+  });
+
+  it("the real spawnInstaller rejects for a program that is not there, and resolves for one that runs", async () => {
+    const { spawnInstaller } = await import("../../src/core/self-update");
+    const dir = tempDir("self-update-spawn");
+    await expect(spawnInstaller(["/nonexistent/bin/nohup"], join(dir, "log"))).rejects.toThrow(/ENOENT/);
+    await expect(spawnInstaller(["/bin/echo", "hi"], join(dir, "log"))).resolves.toBeUndefined();
+  });
+});
