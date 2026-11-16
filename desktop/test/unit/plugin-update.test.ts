@@ -8,7 +8,7 @@
 // not touched here: a plugin is trusted after its first install); a built-in's update keeps the built-in's rights (it is
 // still `builtIn`) only while its files are what the catalog check verified; Remove puts the built-in back.
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -354,6 +354,82 @@ describe("a built-in plugin can be updated the same way", () => {
     await t.store.install("demo", { direct: true });
     expect(t.registry.plugin("demo")).toMatchObject({ builtIn: true, replacesBuiltIn: "1.0.0" });
     expect(t.registry.revisionOf("demo")).toBe(expectedHash(t.v2));
+  });
+});
+
+describe("review probes (review/v3-plugin-update-fix)", () => {
+  const C3 = "3".repeat(40);
+  /** The catalog moves on to 1.2.0 (after `offer`'s 1.1.0). */
+  const offerV3 = async (t: ReturnType<typeof setup>) => {
+    const v3 = demoFiles("1.2.0", SAME);
+    t.routes[tarball(C3)] = tarballOf(v3);
+    t.routes[OFFICIAL_INDEX_URL] = JSON.stringify({ schema: 1, plugins: [entryOf("1.2.0", v3, C3, SAME)] });
+    await t.store.refresh();
+    return v3;
+  };
+
+  it("a link in a verified built-in update ends its rights, even to a file with the same bytes (its target can change unseen)", async () => {
+    const t = setup(SAME, SAME, { builtIn: true });
+    await t.store.refresh();
+    await t.offer();
+    await t.store.install("demo", { direct: true });
+    expect(t.registry.plugin("demo")!.builtIn).toBe(true);
+    const outside = join(t.root, "outside-host.mjs");
+    writeFileSync(outside, t.v2["dist/host.mjs"]!);
+    rmSync(join(t.library, "dist", "host.mjs"));
+    symlinkSync(outside, join(t.library, "dist", "host.mjs"));
+    t.registry.rescan(true);
+    expect(t.registry.plugin("demo")).toMatchObject({ builtIn: false, replacesBuiltIn: "1.0.0" });
+    // Changing the target later does not bring the rights back either.
+    appendFileSync(outside, "// changed outside\n");
+    t.registry.rescan(true);
+    expect(t.registry.plugin("demo")!.builtIn).toBe(false);
+  });
+
+  it("direct is checked again after the download: a plugin removed meanwhile asks on the card", async () => {
+    const t = setup(SAME, SAME);
+    await t.installV1();
+    await t.offer();
+    const catalog = (t.store as unknown as { catalog: { download: (...args: unknown[]) => Promise<unknown> } }).catalog;
+    const real = catalog.download.bind(catalog);
+    catalog.download = async (...args: unknown[]) => { const staged = await real(...args); expect(t.desk.removePlugin("demo")).toBeNull(); return staged; };
+    const cardsBefore = t.cards().length;
+    await t.store.install("demo", { direct: true });
+    expect(t.cards().length).toBe(cardsBefore + 1);
+    expect(t.registry.plugin("demo")).toBeUndefined();
+    expect(t.entry().status).toEqual({ kind: "asking", message: null });
+  });
+
+  it("direct only swaps a copy from this catalog (or the built-in): one installed from git asks on the card", async () => {
+    const t = setup(SAME, SAME);
+    await t.installV1();
+    t.registry.noteInstalled("demo", "https://example.invalid/demo.git");
+    await t.offer();
+    const cardsBefore = t.cards().length;
+    await t.store.install("demo", { direct: true });
+    expect(t.cards().length).toBe(cardsBefore + 1);
+    expect(t.registry.plugin("demo")!.manifest.version).toBe("1.0.0");
+  });
+
+  it("Revert between two verified built-in updates keeps the built-in's rights; a changed kept copy comes back without them", async () => {
+    const t = setup(SAME, SAME, { builtIn: true });
+    await t.store.refresh();
+    await t.offer();
+    await t.store.install("demo", { direct: true });
+    const v3 = await offerV3(t);
+    await t.store.install("demo", { direct: true });
+    expect(t.registry.plugin("demo")).toMatchObject({ builtIn: true, manifest: { version: "1.2.0" } });
+    expect(t.registry.revisionOf("demo")).toBe(expectedHash(v3));
+
+    expect(t.desk.revertPlugin("demo")).toBeNull();
+    expect(t.registry.plugin("demo")).toMatchObject({ builtIn: true, replacesBuiltIn: "1.0.0", manifest: { version: "1.1.0" } });
+    expect(t.registry.revisionOf("demo")).toBe(expectedHash(t.v2));
+
+    // The kept 1.2.0 is changed by hand before Revert again: it returns as an ordinary library copy.
+    appendFileSync(join(t.root, "plugin-previous", "demo", "dist", "host.mjs"), "// edited\n");
+    expect(t.desk.revertPlugin("demo")).toBeNull();
+    expect(t.registry.plugin("demo")).toMatchObject({ builtIn: false, manifest: { version: "1.2.0" } });
+    expect(t.registry.revisionOf("demo")).toBe(expectedHash(v3));
   });
 });
 

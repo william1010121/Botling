@@ -157,7 +157,7 @@ export class PluginStore {
     proposal.verified = `its files match the index (sha256 ${entry.sha256.slice(0, 12)}…) at commit ${entry.commit.slice(0, 7)}${catalog.source.official ? " of the official botling-plugins repo" : ` of ${catalog.source.indexURL}`}.`;
     proposal.verifiedSha256 = entry.sha256;
     if (state === "update" && installedVersion) proposal.replacing = installedVersion;
-    if (options.direct && state === "update" && installedVersion) {
+    if (options.direct && state === "update" && installedVersion && this.directStill(entry, installedVersion, catalog.source)) {
       const problem = this.deps.desk.installNow(proposal);
       this.setStatus(name, problem ? { kind: "failed", message: problem } : { kind: "installed", message: null });
       return this.view();
@@ -167,6 +167,20 @@ export class PluginStore {
       this.setStatus(name, installed ? { kind: "installed", message: null } : problem ? { kind: "failed", message: problem } : { kind: "declined", message: null });
     });
     return this.view();
+  }
+
+  /**
+   * Whether the Update button may still install `entry` with no card, checked again after the download (L-008): the same version
+   * still runs, and it is the built-in one or a copy from this catalog. A copy from anywhere else (git, a folder) asks on the card.
+   */
+  private directStill(entry: CatalogEntry, installedVersion: string, source: CatalogSource): boolean {
+    const now = this.stateOf(entry);
+    const running = this.deps.registry()?.plugin(entry.name);
+    if (now.state !== "update" || now.installedVersion !== installedVersion || !running || !entry.commit) return false;
+    const from = running.installedFrom ?? null;
+    if (from === null) return running.builtIn;
+    const catalogTree = `${source.folderPage(entry.commit, entry.path).split(`/${entry.commit}/`)[0]}/`;
+    return from.startsWith(catalogTree);
   }
 
   /** The page was told how an install ended: the note goes (installed / declined / failed). */

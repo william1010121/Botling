@@ -9,7 +9,7 @@
 // the library replaces one when its version is the same or newer (versions.ts; an older library copy is ignored). Since Phase 4a web parts run in the chat page again (it has an origin of its
 // own), with 1.x's "last version that worked" to fall back on when a new one breaks.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
 import { checkPlugin, diskFolder, loadPlugin, presentNameWarning, readManifest, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
@@ -121,6 +121,22 @@ function filesIn(folder: string, base = folder): string[] {
     const path = join(folder, entry.name);
     return entry.isDirectory() ? filesIn(path, base) : entry.isFile() ? [relative(base, path).split(sep).join("/")] : [];
   }).sort();
+}
+
+/**
+ * Every file under `folder` with its lstat signature, sorted; null when anything in it is not a plain folder or file. A link
+ * fails: `folderHash` reads through it, and its target can change with nothing in the folder moving (catalog folders have none).
+ */
+function plainSignature(folder: string, base = folder): string[] | null {
+  const lines: string[] = [];
+  for (const entry of readdirSync(folder, { withFileTypes: true })) {
+    const path = join(folder, entry.name);
+    if (entry.isDirectory()) { const inner = plainSignature(path, base); if (!inner) return null; lines.push(...inner); continue; }
+    if (!entry.isFile()) return null;
+    const stat = lstatSync(path);
+    lines.push(`${relative(base, path).split(sep).join("/")}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`);
+  }
+  return lines.sort();
 }
 
 export class PluginRegistry {
@@ -350,15 +366,18 @@ export class PluginRegistry {
 
   /**
    * Whether the library copy at `folder` is the catalog-verified update of a built-in plugin: the hash recorded when it was installed
-   * (`revisions`) equals the folder's hash now. Fails closed (no record, unreadable folder, any difference: false). The folder is hashed
-   * again only when a file's size, mtime or ctime moved.
+   * (`revisions`) equals the folder's hash now. Fails closed (no record, unreadable folder, a link in it, any difference: false). The folder is
+   * hashed again only when a file's dev:ino, size, mtime or ctime moved.
    */
   private revisionVerified(name: string, folder: string): boolean {
     const sha = this.revisionOf(name);
     if (!sha) return false;
     let signature: string;
     try {
-      signature = filesIn(folder).map((file) => { const stat = statSync(join(folder, file)); return `${file}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; }).join("|");
+      // The folder itself and everything in it must be plain folders and files (no link anywhere), else not verified.
+      const lines = lstatSync(folder).isDirectory() ? plainSignature(folder) : null;
+      if (!lines) return false;
+      signature = lines.join("|");
     } catch {
       return false;
     }
