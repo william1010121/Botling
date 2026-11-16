@@ -1,8 +1,11 @@
 // The names the shell and the chat plugin (plugins/chat/index.ts) agree on (M7-06a). Pure: the shell reads them without importing the
-// plugin's module (that one runs only through the trusted loader). Not the `:chat` surface of renderer-kernel.ts (the stand-in that
-// provides composer.insertQuote): this is the built-in plugin `botling.chat` that owns the chat's menus and views.
+// plugin's module (that one runs only through the trusted loader). `botling.chat` owns the chat's menus and views and, since M7-07b,
+// provides the service `composer.insertQuote` (the `:chat` stand-in of renderer-kernel.ts is gone).
 
 export const CHAT_PLUGIN = "botling.chat";
+
+/** The service a plugin frame's `ccb.composer.insertQuote` calls; `botling.chat` provides it (composer-quote.ts forwards it to the page's input box). */
+export const INSERT_QUOTE = "composer.insertQuote";
 
 /** The chat's menus, by their new names (the kernel finds them under the 2.x ids `menu/message/context`, … too). */
 export const CHAT_MENUS = ["message/context", "message/preview", "chat/link", "composer/plus"] as const;

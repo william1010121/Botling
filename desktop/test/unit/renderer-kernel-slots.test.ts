@@ -8,7 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ROOT_SLOTS } from "../../../Web/src/plugin-kernel";
 import type { Client } from "../../src/renderer/client";
-import { CHAT_SURFACE, rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
+import { rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
 import { KernelSlot } from "../../src/renderer/shell/KernelSlot";
 import { ShellFrame } from "../../src/renderer/shell/ShellFrame";
 
@@ -43,11 +43,12 @@ function contributor(name: string, slot: string, texts: string[], extra: Record<
 }
 
 describe("the renderer kernel's own instances", () => {
-  it("has `:shell` owning the five root slots and `:chat` (loaded while App is up) as the only other instance it declares", () => {
-    // `:chat` is not loaded here (App loads it: composer-quote.ts); `:shell` is loaded from the start.
+  it("has `:shell` owning the five root slots and no other instance of its own (the `:chat` stand-in is gone: `botling.chat` provides composer.insertQuote, M7-07b)", () => {
+    // `:shell` is loaded from the start; the plugins come through the in-page host.
     expect(rendererKernel.plugins()).toEqual([SHELL_SURFACE]);
     expect(rendererKernel.declaredOwner("composer.insertQuote")).toBeNull();
-    expect(rendererKernel.state(CHAT_SURFACE)).toBe("absent");
+    expect(rendererKernel.declaration(":chat")).toBeUndefined();
+    expect(rendererKernel.state(":chat")).toBe("absent");
     expect(rendererKernel.state(SHELL_SURFACE)).toBe("active");
     for (const slot of ROOT_SLOTS) expect(rendererKernel.slotOwner(slot), slot).toBe(SHELL_SURFACE);
     // The three that are 2.x view places are those places.
