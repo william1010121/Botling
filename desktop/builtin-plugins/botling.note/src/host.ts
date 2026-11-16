@@ -3,6 +3,7 @@
 // it hears (`ccb.on`). Built into Botling since 2.7.0 (it was the library's main.js until 1.19.0, written for older apps
 // too: the guards for a missing notes method or event stay, so the same code also runs as a newer library copy).
 import type { BotlingApi } from "../../../../Web/host/src/api";
+import { activateMargin } from "./margin";
 
 type Params = Record<string, unknown>;
 type Notes = BotlingApi["notes"];
@@ -81,6 +82,8 @@ export function activate(api: BotlingApi) {
       return api.notes.outline(botOf(params), typeof params.text === "string" ? { text: params.text } : {});
     }),
   );
+  // Margin comments (旁註): a question on a passage, the bot's answer and the follow-ups, kept beside the Note (margin.ts, MARGIN.md).
+  api.subscriptions.push(...activateMargin(api, expose));
   // A card's run started or finished: tell the bot's Note tab (an app without this event: the tab polls while a card runs).
   try {
     api.subscriptions.push(api.events.on("noteCardChanged", ({ botId, key }) => api.ui.emit("noteCardChanged", { botId, key }, { botId })));

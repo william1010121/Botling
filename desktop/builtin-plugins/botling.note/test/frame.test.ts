@@ -12,7 +12,7 @@ beforeEach(() => { document.head.innerHTML = ""; document.body.innerHTML = ""; }
 // jsdom has no layout: what the editor measures with is there and quiet.
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 
-it("registers the Note tab and draws the note: headings, a formula with inlined KaTeX fonts, the cells, and 問 quotes a cell by its id", async () => {
+it("registers the Note tab and draws the note: headings, a formula with inlined KaTeX fonts, the cells, and 問 opens the margin ask box and can quote a cell by its id", async () => {
   const text = "# Plan\n\nEnergy is $E = mc^2$.\n<!-- cell -->\nSecond cell\n";
   const calls: [string, unknown][] = [];
   const views = new Map<string, (root: HTMLElement) => (() => void) | void>();
@@ -50,8 +50,12 @@ it("registers the Note tab and draws the note: headings, a formula with inlined 
   expect(root.textContent).not.toContain("<!-- cell");
   const cells = root.querySelectorAll<HTMLElement>(".cell");
   expect(cells).toHaveLength(2);
-  // 問 on the second cell: its Markdown as a quote into the bot's composer, named by its id in note.db.
+  // 問 on the second cell opens the margin ask box (nothing is sent yet); its "改為引用到對話" puts the cell's Markdown as a
+  // quote into the bot's composer, named by its id in note.db.
   cells[1]!.querySelector<HTMLButtonElement>(".cell-ask")!.click();
+  await vi.waitFor(() => expect(root.querySelector(".nm-draft")).not.toBeNull());
+  expect(ccb.composer.insertQuote).not.toHaveBeenCalled();
+  [...root.querySelectorAll<HTMLButtonElement>(".nm-draft button")].find((b) => b.textContent === "改為引用到對話")!.click();
   await vi.waitFor(() => expect(ccb.composer.insertQuote).toHaveBeenCalled());
   expect(ccb.composer.insertQuote.mock.calls[0]).toEqual(["> 〔Note #c1〕\n> Second cell", { focus: true }]);
   if (typeof stop === "function") stop();

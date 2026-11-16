@@ -12,6 +12,7 @@ import { install as installCards } from "./ui-cards.js";
 import { install as installDrag } from "./ui-drag.js";
 import { install as installRender } from "./ui-render.js";
 import { install as installKeysSave } from "./ui-keys-save.js";
+import { install as installMargin } from "./ui-margin.js";
 export { inline, classify };
 
 function mount(root, ccb) {
@@ -46,6 +47,7 @@ function mount(root, ccb) {
   const {
     keydown, flash, changed, flush, load,
   } = api;
+  installMargin(st, api); // margin comments (旁註): after the parts it borrows from; render() reaches it through api.marginSync
 
   // Others edit the note (the bot, an editor): the app says so with noteChanged; polling is the fallback.
   const offs = [];
@@ -112,6 +114,7 @@ function mount(root, ccb) {
     clearTimeout(st.timer);
     clearTimeout(st.notice);
     for (const off of offs) off();
+    api.marginStop?.();
     window.removeEventListener("pagehide", hide);
     document.removeEventListener("visibilitychange", hide);
     document.removeEventListener("mousedown", onDocDown, true);

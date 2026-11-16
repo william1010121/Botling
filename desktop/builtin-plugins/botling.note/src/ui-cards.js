@@ -545,23 +545,18 @@ export function install(st, api) {
     return await Promise.race([ask, new Promise((r) => setTimeout(() => r(""), 2000))]);
   }
   const labelLine = (label) => (label ? `> 〔${label.replace(/[\r\n]+/g, " ")}〕\n` : "");
-  async function askCell(c) {
-    const text = cellQuoteText(c);
-    if (!text.trim()) return flash("這一格是空的，沒有可以引用的內容");
+  // Where a cell's 問 quote points in note.db (`Note #id · Fork › Route`), as noteLabel finds it; "" without one.
+  const cellLabel = (c) => {
     const lo = Number(c.dataset.start);
     const hi = Number(c.dataset.end);
-    const label = await noteLabel((o) => {
+    return noteLabel((o) => {
       const hit = (Array.isArray(o.cells) ? o.cells : []).find((x) => x && x.start === lo && x.end === hi);
       return hit?.id && typeof hit.label === "string" ? hit.label : "";
     });
-    return askQuote(text, label);
-  }
-  async function askFork(fork) {
-    const m = model();
-    const text = shownMarkdown(m, fork.start, Math.min(fork.endLine, st.lines.length - 1));
-    if (!text.trim()) return flash("這個分叉顯示的路線是空的");
+  };
+  const forkLabel = (fork) => {
     const shown = chosenRoute(fork, st.sel)?.name ?? "";
-    const label = await noteLabel((o) => {
+    return noteLabel((o) => {
       const hit = (Array.isArray(o.forks) ? o.forks : []).find((x) => x && x.start === fork.start);
       if (!hit?.id) return "";
       // The app's label (Botling 2.7: its id, the routes above it, its name), then the route shown.
@@ -570,7 +565,24 @@ export function install(st, api) {
       steps.push(shown ? `${hit.name ?? fork.name} › ${shown}` : `${hit.name ?? fork.name}`);
       return `Note #${hit.id} · ${steps.join(" › ")}`;
     });
-    return askQuote(text, label);
+  };
+  // 問: the box for a question opens in the margin beside the cell and the answer comes back as a margin comment (ui-margin.js,
+  // MARGIN.md); the old way, the quote in the chat's composer, stays behind the box's "改為引用到對話" (askQuote).
+  async function askCell(c) {
+    const text = cellQuoteText(c);
+    if (!text.trim()) return flash("這一格是空的，沒有可以引用的內容");
+    if (typeof api.marginOpen === "function") return api.marginOpen({ kind: "cell", quote: text, cellEl: c, label: () => cellLabel(c) });
+    return askQuote(text, await cellLabel(c));
+  }
+  async function askFork(fork) {
+    const m = model();
+    const text = shownMarkdown(m, fork.start, Math.min(fork.endLine, st.lines.length - 1));
+    if (!text.trim()) return flash("這個分叉顯示的路線是空的");
+    if (typeof api.marginOpen === "function") {
+      const el = [...st.doc.querySelectorAll(".cell-branch")].find((e) => e.dataset.fork === fork.key) ?? null;
+      return api.marginOpen({ kind: "cell", quote: text, cellEl: el, label: () => forkLabel(fork) });
+    }
+    return askQuote(text, await forkLabel(fork));
   }
   function copyText(text) {
     // a sandboxed frame has no clipboard permission; a copy command during the click (user activation) still works
@@ -626,6 +638,6 @@ export function install(st, api) {
   st.msel = null; // { anchor, head }: line indexes
   st.press = null; // a left-button press on a line: { line, moved }
   Object.assign(api, {
-    cardEl, afterCards, syncSoon, stopTimer, relayout, onCardMsg, cardPicker, drawBoard, closeBoard, askCell, askFork,
+    cardEl, afterCards, syncSoon, stopTimer, relayout, onCardMsg, cardPicker, drawBoard, closeBoard, askCell, askFork, askQuote, copyText, cellLabel,
   });
 }
