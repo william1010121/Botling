@@ -8,6 +8,7 @@ import type { CallinDriver, CallinDriverOptions } from "../../spec/driver/callin
 import type { CallinView } from "../../spec/reference/callin";
 import type { Bot } from "../src/core/bot";
 import type { Conversations } from "../src/core/conversations";
+import { RULES_NOTICE } from "../src/core/orchestration/plugin-rules";
 import { saveProjectRow } from "../src/core/projects";
 import { Core } from "../src/core/server";
 
@@ -49,7 +50,9 @@ export async function createCallinDriver({ dataDir }: CallinDriverOptions): Prom
     wakes[key] = 0;
     real.deliver = async () => {};
     const appNotice = real.appNotice.bind(real);
-    real.appNotice = (...args: unknown[]) => { notices[key]! += 1; return appNotice(...args); };
+    // Only a call-in's notices are the model's: the rules plugin's "using core's own rules" (M7-O04, once per failure; this
+    // app has no built-in plugins, so the first ask fails) is said in the chat too, and is not counted.
+    real.appNotice = (...args: unknown[]) => { if (args[0] !== RULES_NOTICE) notices[key]! += 1; return appNotice(...args); };
     const appMessage = real.appMessage.bind(real);
     real.appMessage = (...args: unknown[]) => { const id = appMessage(...args); if (id) wakes[key]! += 1; return id; };
   }

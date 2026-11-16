@@ -70,7 +70,11 @@ export async function createFoldersDriver({ dataDir }: { dataDir: string }): Pro
     return plugins;
   };
   let plugins = await open();
-  const send = (method: string, params: unknown, msg: FolderMsg) => { chan.push({ line: JSON.stringify({ id: nextId++, method, params }), msg }); };
+  // As the real host does (Web/host/src/api.ts, M7-O04): each request names the code it was made by; one that does not is refused.
+  const send = (method: string, params: Record<string, unknown>, msg: FolderMsg) => {
+    const code = plugins.codeOf(NAME);
+    chan.push({ line: JSON.stringify({ id: nextId++, method, params: code === undefined ? params : { ...params, code } }), msg });
+  };
   const cache = (): Place => placeOf((plugins as unknown as { folders: SessionFolders }).folders.get(NAME, BOT));
   const disk = (): Place => {
     const file = join(dataDir, "plugin-session-folders.json");
