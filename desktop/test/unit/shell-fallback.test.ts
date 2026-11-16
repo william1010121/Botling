@@ -143,7 +143,7 @@ const settle = (check: () => void) => act(async () => { await vi.waitFor(check);
 const tick = () => act(async () => { await flush(); });
 const fallbackOf = (host: HTMLElement) => host.querySelector(".chat-fallback");
 const botNames = (host: HTMLElement) => [...host.querySelectorAll(".fallback-bots button")].map((button) => button.querySelector(".fallback-bot-name")?.textContent);
-const lineIds = (host: HTMLElement) => [...host.querySelectorAll("[data-line]")].map((one) => one.getAttribute("data-line"));
+const lineIds = (host: HTMLElement) => [...host.querySelectorAll("[data-line]")].map((one) => one.getAttribute("data-line") ?? "");
 const shownLines = (host: HTMLElement) => [...host.querySelectorAll(".fallback-lines li")].map((one) => one.textContent);
 
 /** Types into the fallback's box and presses Send. */
