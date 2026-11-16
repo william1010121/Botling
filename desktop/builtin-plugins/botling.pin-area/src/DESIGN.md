@@ -65,14 +65,34 @@ left border and dot; hover grows a second line. The panel: floating, right, 420 
 "N 則更新", its own input. Esc / outside click close; ⌘1–3 toggle the first three cards. All text goes in with `textContent`. Motion honours
 `prefers-reduced-motion`. Colours are the chat page's tokens. Classes are prefixed `pt-` (`botling.board` also uses `#pin-area`).
 
-## Not in Phase 1, and the seams left for it
+## Phase 2 (worker news, automatic routing, the cards briefing)
+
+**What a bot can newly do, in addition to the list above** (nothing else was added to the bot):
+1. `<pin-card worker="w-1 w-2">`: a card follows up to 4 of the bot's own workers or sub bots (`Pin.from`). A tag with only the link changes no status.
+2. `<pin-say id="p-0001" move="yes">`: the user's last plain line (the one this turn answers) and this answer go into that card, once per line.
+3. It reads a note, `〔Pin 區現況〕`, appended to a plain message of a chat that has cards: title, id, state, status. Cards the user pinned are in it.
+
+**Worker news.** `events.workerDone` (any worker run end of that bot; `workerReport` is only for plugin-started workers) calls `news()`;
+a sub bot's reply comes from `messagePosted` of the sub bot, and counts only while `workspace.bots()` says its parent is the book's bot
+(checked at the moment of use, cached 60 s). `applyNews` rewrites the status line in place (keeping 原本) and logs to `updates[]`, which the card
+shows in its folded "N 則更新". Rules: a done card ignores news; a waiting card only logs; a failed / stopped / interrupted worker turns a
+running card into wait; a completed worker never makes a card done (the bot says that). A worker that ended before the card named it is replayed (`ends`, 50 kept).
+Limit: plugins see only a worker's run end, not its progress.
+
+**Automatic routing.** `beforeSend` appends the briefing (`withBriefing`) to a plain message; `userText` strips it, so the bubble is the user's words.
+`messagePosted` remembers that line (`lastLine`), `turnStarted` binds it to the turn (`turnLine`). With `move="yes"` the host calls `takeAuto`: a turn
+with `via: "auto"` goes into the card, the answer is stored in it, and `chat.decorate(botId, tracesOf(book))` folds the chat line behind a
+one-line trace 「→ 放進 X 的卡片 · 移回聊天 · 改到…」. A `<pin-say>` of any kind marks the turn `saidInTurn`, so the rest of the reply stays in the chat.
+**Undo** (`moveBack` / `moveTo` in the host, one tap each): the turn is marked `moved`, the line comes back, and the trace shows the bot's answer under it,
+so nobody asks twice; the correction (`Book.fixes`, 3 kept) goes into the next briefing so the bot learns. Wrong guesses cost one tap.
+Bounds: 120 traces, 4 `from` per card, 3 fixes. Every plain message in a chat with cards carries about 1 KB of note.
+
+## Not yet, and the seams left
 
 | Later | Seam |
 |---|---|
-| **Phase 2**: worker / sub-bot news into cards | `applyUpdate(pin, { source: "app" }, now)` is the one reducer; a `workerReport` listener calls it. `Source` has `"app"` (the tag 「已確認」 is drawn already). `updates[]` keeps each change. |
-| **Phase 2**: un-@ messages routed into a card automatically, with a one-tap 「移回聊天」 | `Turn.via` (`"at"`\|`"auto"`) and `Turn.moved` exist and are read/written by `readTurn`; `openTurn` skips a moved turn. `beforeSend` is the place to route; `route()` is pure. |
 | **Phase 3**: 「你不在時」 digest incl. other bots' waiting items | `Pin.waitingSince` (set when a card starts waiting, cleared when it stops); `pins:bots` lists every bot with a book; `viewOf` carries `waitingSince`. |
-| a pins briefing for bots | not built: a bot only learns the cards it made, or a user card it was written into. |
+| worker progress (not only the run end) | needs a plugin event for a worker's progress; the app has none. |
 
 Not covered: the phone / web bundle (the page slots and `chat.setData` are the desktop chat frame's; `Web/src/chat.html` has the slot
 too, the mobile page has no plugin host for it yet). Every send of every chat now makes one round trip to the plugin host (`beforeSend`
@@ -92,9 +112,11 @@ is a hook of the whole chat, answered at once for a bot with no cards).
 8. **UI and retries**: done. Per-card in-flight send guard (released when the thread grows or after 4 s), duplicate words within 3 s
    dropped in the host, a card is pinned once per message id. Tests in `ui.test.ts`, `host.test.ts`.
 9. **Authority at use**: done. The bot id comes from the tag (`tag.bot.id`) and the message (`message.bot.id`), the book is re-read at
-   every use; `by:"seen"` is re-checked against the card's state in the host.
+   every use; `by:"seen"` is re-checked against the card's state in the host. Phase 2: news goes only to the book of the event's own bot;
+   a sub bot's parent is checked when its reply arrives; `moveBack` / `moveTo` re-read the book and the turn's `via`.
 10. **Fail closed**: done. A bad tag, an unknown state, a missing id, a full strip, a rejected `setData` drop or refuse; nothing throws out
-    of an event or tag handler.
+    of an event or tag handler. Phase 2: an unknown worker id, a `worker=` that is not an id, a `move` with no line to move, or a full
+    trace list drops quietly (the line stays in the chat).
 11. **Tests**: done. `model.test.ts`, `host.test.ts`, `ui.test.ts`, `web.test.ts`, `mention-source.test.ts`. No mutation run (the reviewer's).
 12. **Before review**: base is `main` at branch time; the kernel goldens were stale on main (a `botling.deps` entry and a `hostState`
     field were already missing) and are regenerated here, so their diff has that drift too.
