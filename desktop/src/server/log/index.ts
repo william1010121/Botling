@@ -3,7 +3,7 @@
 export { GENESIS_HASH, hashEntry, verifyChain, type ChainCheck } from "./chain";
 export {
   appendEntries, botIdOf, ENTRY_BYTES_LIMIT, ensureStream, evictEntries, hashAfter, listRetired, LogError, newLogId, nextHlc,
-  readEntries, readStream, retireOwnStreams, retireStream, verifyStream,
+  okeyOf, readEntries, readStream, retireOwnStreams, retireStream, sameAsStored, verifyStream,
   type AppendItem, type ReadOptions, type RetiredLog, type StreamRow, type StreamState,
 } from "./log-store";
 export { applyReadModel, isCard, isOpenCard } from "./read-model";

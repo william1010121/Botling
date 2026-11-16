@@ -4,6 +4,8 @@
 //   worker's report, a steer that began its own turn) gets a `started` row here, so a crash interrupts it too;
 // - `turn.finished`: its row is `finished` and its checkpoint goes, in the same transaction as the entry; a second
 //   finish of a turn whose row already ended (the worker closed it, recovery interrupted it) is not stored again;
+// - `message.updated`, `bot.updated` and `subagent.updated` that repeat the state the log already holds are not stored
+//   again (D0: about 65% of `message.updated` were identical redraws);
 // - `message.added` of a line the log already has (the user's line `chat.send` stored with its intent) is stored only
 //   when it differs, as `message.updated`;
 // - `bot.updated` mirrors `unread` into the bot row; `bot.removed` drops the bot row (the snap shows no bot).
@@ -32,7 +34,7 @@ export interface TapHooks {
    * names in the same transaction (src/server/content `contentLineHook`). `event` is the whole event, even when the
    * entry's text was cut to fit a frame.
    */
-  lineStored?(tx: Db, event: ContractEvent, entry: Entry): void;
+  lineStored?(tx: Db, event: ContractEvent, entry: Pick<Entry, "stream" | "seq">): void;
   /** Every event the engine emits, before anything else (turn text included); a throw is logged and ignored (M3 summary rows). */
   eventSeen?(event: ContractEvent): void;
   /**
@@ -220,14 +222,26 @@ export class EventTap {
         return;
       }
       case "message.updated": {
+        // A redraw of a line exactly as the log has it (about two in three updates) stores nothing; the content index
+        // still looks at the line again against the entry that holds it (a file it names may have changed on disk).
+        const known = tx.prepare("SELECT rev, body FROM messages WHERE botId = ? AND msgId = ?").get(botId, event.message.id);
+        if (known && String(known.body) === canonicalJson(event.message)) {
+          this.options.hooks?.lineStored?.(tx, event, { stream, seq: Number(known.rev) });
+          return;
+        }
         const entry = appendFitted(scope, tx, stream, event.type, bodyOf(event), { log });
         if (entry) this.options.hooks?.lineStored?.(tx, event, entry);
         return;
       }
       case "bot.updated":
-        appendFitted(scope, tx, stream, event.type, bodyOf(event), { log });
-        if (this.options.mirrorBotUpdates) appendFitted(scope, tx, serverStreamOf(tx), event.type, bodyOf(event), { log });
+        // The same bot view as the last one (in the bot's stream, and in `srv:` where it is mirrored) is not stored again;
+        // the unread count always follows the event.
+        appendFitted(scope, tx, stream, event.type, bodyOf(event), { log, skipSame: true });
+        if (this.options.mirrorBotUpdates) appendFitted(scope, tx, serverStreamOf(tx), event.type, bodyOf(event), { log, skipSame: true });
         tx.prepare("UPDATE bots SET unread = ? WHERE botId = ?").run(event.bot.unread, botId);
+        return;
+      case "subagent.updated":
+        appendFitted(scope, tx, stream, event.type, bodyOf(event), { log, skipSame: true });
         return;
       case "bot.removed":
         appendFitted(scope, tx, stream, event.type, bodyOf(event), { log });

@@ -79,7 +79,7 @@ export async function openIdentity(s: Ctx): Promise<Partial<Ctx>> {
 /** The log hub, the live channel, the bots' stores and exports, the shell bridge and the 2.x Core on them (plugins through the Node plugin host). What its closures read from later phases goes through `later`. */
 export async function startCore(s: Ctx): Promise<Partial<Ctx>> {
   const { options, env, paths, log, later, store, serverId, memberId, ids, roster, prefs } = s;
-  const hub = new LogHub(store, { serverStreams: true });
+  const hub = new LogHub(store, { serverStreams: true, log });
   const live = new LiveChannel({ sink: effectCheckpointSink(store), onError: (error) => log(`live: ${String((error as Error)?.message ?? error)}`) });
   const exports = new BotExports({
     openReader: () => store.openReader(),
