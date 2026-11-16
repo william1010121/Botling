@@ -545,6 +545,7 @@ describe("a line the bot put into a card, in the card's thread", () => {
 
 describe("「你不在時」: the digest above the strip", () => {
   const H = 3_600_000;
+  beforeEach(() => { clock = 20_000_000; });
   const digestAway = (over: Record<string, unknown> = {}) => ({
     from: clock - 3 * H, to: clock, collapsed: false, counts: { wait: 1, run: 1, done: 2 }, othersMore: 0,
     rows: [
