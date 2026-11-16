@@ -59,11 +59,23 @@ export interface ReconcilePluginRowsOptions {
   /**
    * The one-time pass of the trust model of 2026-11-16 ("what is installed needs no managing"), once per server.db (meta
    * `plugin.trust.v1`). `"migrate"` (the server's own sync): every plugin that already has a row and no approval record
-   * (a bot-written one excepted: it still needs the card) is installed, with one `user` record at its current hash.
+   * (a bot-written one, a 2.x import and one whose last grant was a revoke excepted: they still need the card) is installed, with one `user` record at its current hash.
    * `"mark"` (the 2.x import): nothing is migrated, but the pass is used up, so what an import writes waits for the user's
    * card (B-20(a)). A plugin whose row appears later gets no record until the card either way.
    */
   trust?: "migrate" | "mark";
+}
+
+/** Whether the newest `audit:grant:*` row of `name` in `stream` records a revoke (`tier none`); a row that does not parse is skipped. */
+function lastGrantRevoked(tx: Db, stream: string, name: string): boolean {
+  for (const row of tx.prepare("SELECT body FROM rows WHERE stream = ? AND key LIKE 'audit:grant:%' AND deleted = 0 ORDER BY rev DESC").all(stream)) {
+    let body: unknown;
+    try { body = JSON.parse(String(row.body)); } catch { continue; }
+    const audit = body as Partial<AuditRow> | null;
+    if (!audit || audit.act !== "plugin.grant" || audit.name !== name) continue;
+    return audit.reason === "tier none";
+  }
+  return false;
 }
 
 /** Meta key of the one-time trust of the plugins that were already installed (see `ReconcilePluginRowsOptions.trust`). */
@@ -388,7 +400,10 @@ export function reconcilePluginRows(
       }
     }
     // One-time: a plugin installed before the trust model of 2026-11-16 is installed (no approval record yet, not built in).
-    if (trustPass && options.trust === "migrate" && author !== "builtin" && prev && prev.author !== "bot" && !pluginApproved({ ...(prev as PluginRow), grants: rawGrants })) {
+    // Not: a bot's write (this sync's or the row's), a 2.x import waiting for its card (B-20(a)), or a plugin whose last
+    // `plugin.grant` was a revoke (made before this pass, or after it on a server.db whose meta was lost).
+    if (trustPass && options.trust === "migrate" && author !== "builtin" && author !== "bot" && prev && prev.author !== "bot" && prev.author !== "import"
+      && !pluginApproved({ ...(prev as PluginRow), grants: rawGrants }) && !lastGrantRevoked(tx, stream, plugin.name)) {
       rawGrants[plugin.codeHash] = { tier: plugin.manifest.tier, reads: [], requests: [], grantedBy: "user", at: now };
       options.log?.(`plugin ${plugin.name}: installed before the trust model, recorded as installed`);
     }

@@ -280,6 +280,32 @@ describe("M5-13b: reconcilePluginRows and pluginsDigestOf", () => {
       b.db.close();
     });
 
+    it("review: migrate skips a bot write in this very sync, a 2.x import row, and a plugin whose newest grant audit is a revoke", async () => {
+      const BOT_ID = "6A0B0000-0000-4000-8000-000000000002";
+      const migrated = async (prefix: string, prepare: (t: ReturnType<typeof setup>, prev: PluginRow) => Promise<void>, bot = false) => {
+        const t = setup(prefix);
+        await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 1_000));
+        await prepare(t, readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow);
+        const inputs = bot ? t.installed().map((p) => ({ ...p, author: "bot" as const, writtenBy: { botId: BOT_ID, at: 1_500 } })) : t.installed();
+        await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, inputs, 2_000, { trust: "migrate" }));
+        const after = readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow;
+        await t.writer.close();
+        t.db.close();
+        return pluginApproved(after);
+      };
+      const audit = (t: ReturnType<typeof setup>, id: string, reason: string) =>
+        t.writer.submit((tx) => putRow(tx, t.stream, `audit:grant:${id}`, { act: "plugin.grant", at: 1, member: BOT_ID, name: "old.tool", hash: "h", reason }));
+      // control: an ordinary row is migrated
+      expect(await migrated("trust-ctl", async () => {})).toBe(true);
+      expect(await migrated("trust-botnow", async () => {}, true)).toBe(false);
+      expect(await migrated("trust-import", async (t, prev) => { await t.writer.submit((tx) => putRow(tx, t.stream, "plugin:old.tool", { ...prev, author: "import" })); })).toBe(false);
+      expect(await migrated("trust-revoked", async (t) => { await audit(t, "a1", "tier write"); await audit(t, "a2", "tier none"); })).toBe(false);
+      // the newest audit decides: a grant after the revoke (its record later pruned) is migrated
+      expect(await migrated("trust-regranted", async (t) => { await audit(t, "a1", "tier none"); await audit(t, "a2", "tier write"); })).toBe(true);
+      // another plugin's revoke says nothing about this one
+      expect(await migrated("trust-other", async (t) => { await t.writer.submit((tx) => putRow(tx, t.stream, "audit:grant:z", { act: "plugin.grant", at: 1, member: BOT_ID, name: "other.tool", hash: "h", reason: "tier none" })); })).toBe(true);
+    });
+
     it("mark: uses the pass up without trusting anything; no option and an empty list change nothing", async () => {
       const t = setup("plugin-rows-trust-mark");
       await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 1_000));

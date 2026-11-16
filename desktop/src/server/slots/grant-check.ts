@@ -8,7 +8,7 @@
 //   - a plugin's own commands (and the frame helpers) name that plugin, and the nested-name guard keeps `my` out of
 //     `my.plugin`'s commands, so one plugin's data is not another's.
 import type { Command } from "../../contract";
-import type { Scope, Via } from "../../protocol";
+import { COMMAND_SCOPES, type Scope, type Via } from "../../protocol";
 import type { PluginRow, Tier } from "../../protocol/table-rows";
 
 export type GrantDecision = { ok: true } | { ok: false; detail: string };
@@ -31,8 +31,16 @@ const RENDER_HELPER_COMMANDS: ReadonlySet<string> = new Set(["plugins.tileImages
  */
 export const PLUGIN_FRAME_COMMANDS: ReadonlySet<string> = new Set([...OWN_PLUGIN_COMMANDS, ...OWN_HELPER_COMMANDS, ...RENDER_HELPER_COMMANDS]);
 
-/** The user's own approvals: a plugin sends one only when its manifest declares it. */
-const USER_APPROVALS: ReadonlySet<string> = new Set(["component.approve", "plugins.approve", "link.authorize"]);
+/**
+ * The user's own approvals and the admin acts (pairing a phone or a machine, approving a machine, revoking): a plugin sends
+ * one only when its manifest declares it. Every `approve` and `admin` scope command, read from COMMAND_SCOPES so a new
+ * one is covered without a list here; an unknown type counts as one (L-009).
+ */
+function userActOnly(type: string): boolean {
+  if (!Object.hasOwn(COMMAND_SCOPES, type)) return true;
+  const scope = COMMAND_SCOPES[type as keyof typeof COMMAND_SCOPES];
+  return scope === "approve" || scope === "admin";
+}
 
 /** M5-16: what a device reads when it sends a plugin command with no `via` (a peer server is refused `origin` before this). */
 export const PLUGIN_COMMAND_NEEDS_GRANT = "plugin commands from a device need the plugin's grant";
@@ -98,10 +106,10 @@ export function grantAllows(row: PluginRow | null, via: Via, cmd: Command, serve
     return (cmd as { name?: unknown }).name === via.plugin ? { ok: true } : refused;
   }
   if (OWN_PLUGIN_COMMANDS.has(cmd.type) && namesPlugin(cmd, via.plugin, installed)) return { ok: true };
-  // What acts on other plugins (install, remove, settings, secrets, another plugin's commands) and the user's approvals
+  // What acts on other plugins (install, remove, settings, secrets, another plugin's commands), the user's approvals and the admin acts
   // pass only when the plugin's manifest declares that command type (what the card showed as "send ..."), so a plugin
   // never installs or approves anything behind the user's back. Everything else passes.
-  if (OWN_PLUGIN_COMMANDS.has(cmd.type) || cmd.type.startsWith("plugins.") || USER_APPROVALS.has(cmd.type)) {
+  if (OWN_PLUGIN_COMMANDS.has(cmd.type) || cmd.type.startsWith("plugins.") || userActOnly(cmd.type)) {
     return row.manifest.requests.includes(cmd.type as never) ? { ok: true } : refused;
   }
   return { ok: true };
