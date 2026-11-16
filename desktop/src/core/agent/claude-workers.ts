@@ -356,8 +356,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       systemPrompt: [claudeWorkerPolicy(this.options.rules?.()), def?.prompt ?? ""].filter(Boolean).join("\n\n"),
       disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
       ...(def?.tools ? { tools: def.tools } : {}),
-      // A worker a plugin started (M7-O03a, review F3/F4): never spec/ whatever its model, and never the bot's skip-the-cards modes.
-      ...(r.engineData.pluginStarted === true ? { bypassPermissions: false, autoMode: false, askPermission: true } : {}),
+      // A worker a plugin started (M7-O03a, review F3/F4): never spec/ whatever its model, never the bot's skip-the-cards modes, and none of the "always allow" rules the user gave the bot (M7-O04).
+      ...(r.engineData.pluginStarted === true ? { bypassPermissions: false, autoMode: false, askPermission: true, allowRules: [] } : {}),
     };
     // A kept-alive process carries later runs too: its items belong to whichever run is under way.
     const machine = nonEmpty(r.engineData.machine);

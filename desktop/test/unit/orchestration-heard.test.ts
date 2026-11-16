@@ -305,6 +305,18 @@ describe("the wire from the bot's own app_handoff to the book", () => {
     await expect(workers.tool("app_handoff", { instructions: "mine" })).rejects.not.toThrow(/permission/);
   });
 
+  it("a worker a plugin started does not inherit the bot's always-allow rules; the bot's own worker does", async () => {
+    const base = { command: "claude", cwd: "/elsewhere", sessionId: "coordinator", resume: true, allowedTools: ["Read"], disallowedTools: [], model: "sonnet", effort: "low", allowRules: ["Bash(npm test)"] } as never;
+    const h = claudeHarness(undefined, { base });
+    try {
+      await h.workers.startFor({ instructions: "from a plugin" });
+      await h.workers.tool("app_handoff", { instructions: "from the bot" });
+      const [fromPlugin, fromBot] = h.heads.map((head) => head.config);
+      expect(fromPlugin).toMatchObject({ allowRules: [], askPermission: true });
+      expect(fromBot).toMatchObject({ allowRules: ["Bash(npm test)"] });
+    } finally { await h.workers.close(); }
+  });
+
   it("startFor gives its handoff the ADMITTED symbol and the pluginStarted mark; a handoff of the bot's own has neither", async () => {
     const h = claudeHarness();
     try {
