@@ -1,21 +1,22 @@
 // M7-08 (plan-change §4.3 check 1): the shell alone passes the airplane check. The M2 airplane-mode script (airplane.test.ts), run against a
 // page built with NO in-page plugin (an empty FE-build manifest: the shell's loader refuses every built-in) and a botlingd with NO plugin rows
-// (an empty built-in plugins folder, a fresh data folder): the page is the shell and its fallback screen (shell/Fallback.tsx), and every message
+// (an empty built-in plugins folder, a fresh data folder; the two library rows every data folder has, plugin:ccb-core and plugin:ccb-components,
+// have no web part and are the only ones): the page is the shell and its fallback screen (shell/Fallback.tsx), and every message
 // goes in through the fallback's plain box. Same counts as M2: every accepted command is on the server exactly once (0 lost, 0 applied
 // twice), a "maybe" (the send right before a browser SIGKILL) at most once, nothing ever shown "not sent" or "lost".
 //
 // What the page is built with and served from (a temp folder, the repo's web-v3/dist is not touched):
 //   - `buildPage({ out, noPlugins: true })` (web-v3/build.mjs): the same page, its manifest lists no plugin;
 //   - a copy of the built server (out/server/*) beside that page, `out/` of the repo linked for the rest, and an empty `builtin-plugins`
-//     folder: botlingd serves `<copy>/../web-v3/dist` and installs no built-in plugin, so the server has no `plugin:` row.
-// Before the script runs, each run checks the setup (the "shell alone" part below): no `plugin:` row on the server, no frame on the page, the
+//     folder: botlingd serves `<copy>/../web-v3/dist` and installs no built-in plugin, so the server has no framed `plugin:` row.
+// Before the script runs, each run checks the setup (the "shell alone" part below): no `plugin:` row but the app's library on the server, no frame on the page, the
 // loader's refusal of each plugin the shell draws a surface for, the fallback where the chat was, and the shell's own sheet ("This device")
 // reachable through the drawer. A run whose page is not the shell alone fails there, before any command counts.
 //
 //   npm run build        (the page is built by this file)
 //   PLAYWRIGHT_BROWSERS_PATH=<the Playwright cache> npx vitest run --config test/acceptance/vitest.config.mts test/acceptance/web-v3/shell-alone-airplane.test.ts
 //   only the setup check: add `-t "shell alone"`.
-//   knobs: V3_ACCEPT_RUNS (5), V3_ACCEPT_CMDS (100), V3_ACCEPT_SEED, V3_ACCEPT_TRACE=1, V3_ENGINES=chromium,webkit (default: the engines installed)
+//   knobs: V3_ACCEPT_RUNS (5), V3_ACCEPT_CMDS (100), V3_ACCEPT_SEED, V3_ACCEPT_TRACE=1, V3_ENGINES=chromium,webkit (default: both)
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,9 +30,8 @@ import { alive, browserProcesses, KINDS, mulberry32, plan } from "./airplane-fau
 import { diag, freePort, PairCli, phone, Server } from "./page-harness";
 
 const TMP = process.env.V3_PAGE_TMP || (existsSync("/Volumes/My-SSD/botling-work/tmp") ? "/Volumes/My-SSD/botling-work/tmp" : tmpdir());
-const installed = (type: BrowserType) => { try { return existsSync(type.executablePath()); } catch { return false; } };
 const ALL = [["chromium", chromium], ["webkit", webkit]] as const;
-const ENGINES = ALL.filter(([name, type]) => (process.env.V3_ENGINES ? process.env.V3_ENGINES.split(",").includes(name) : installed(type)));
+const ENGINES = ALL.filter(([name]) => !process.env.V3_ENGINES || process.env.V3_ENGINES.split(",").includes(name));
 const RUNS = Number(process.env.V3_ACCEPT_RUNS || 5);
 const CMDS = Number(process.env.V3_ACCEPT_CMDS || 100);
 const SEED = Number(process.env.V3_ACCEPT_SEED || 20261116);
@@ -64,12 +64,23 @@ async function makeBuild(): Promise<Build> {
 beforeAll(async () => { build = await makeBuild(); }, 600_000);
 afterAll(() => { if (build) rmSync(build.root, { recursive: true, force: true }); });
 
-/** The server's `plugin:` rows (any stream): none, on a server with no plugin installed. */
+/** The plugins the app writes into every data folder as its own library (no web part, nothing a page runs): the only `plugin:` rows a server with no plugin installed has. */
+const LIBRARY_ROWS = ["plugin:ccb-components", "plugin:ccb-core"];
+
+/**
+ * The server's `plugin:` rows that are not the app's library: none on a server with no plugin installed. A row with a web part (`files.web`) is
+ * a framed plugin row; it is named as such.
+ */
 function pluginRows(dataDir: string): string[] {
   const db = new DatabaseSync(join(dataDir, "server.db"), { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout = 10000");
-    return (db.prepare("SELECT key FROM rows WHERE deleted = 0 AND substr(key, 1, 7) = 'plugin:' ORDER BY key").all() as { key: string }[]).map((row) => row.key);
+    const rows = db.prepare("SELECT key, body FROM rows WHERE deleted = 0 AND substr(key, 1, 7) = 'plugin:' ORDER BY key").all() as { key: string; body: unknown }[];
+    return rows.filter((row) => !LIBRARY_ROWS.includes(row.key)).map((row) => {
+      let web = false;
+      try { web = typeof (JSON.parse(String(row.body)) as { files?: { web?: unknown } }).files?.web === "string"; } catch { /* a body that is not JSON has no web part */ }
+      return web ? `${row.key} (framed)` : row.key;
+    });
   } finally { db.close(); }
 }
 
@@ -96,7 +107,7 @@ async function fallbackUp(page: Page): Promise<void> {
 
 /** The page is the shell alone: nothing a plugin draws, the fallback where the chat was, the shell's sheet reachable. */
 async function assertShellAlone(page: Page, dataDir: string, loader: string[], { sheet = false } = {}): Promise<void> {
-  expect(pluginRows(dataDir), "the server has a plugin row").toEqual([]);
+  expect(pluginRows(dataDir), "the server has a plugin row besides the app's library").toEqual([]);
   await fallbackUp(page);
   expect(await page.locator("iframe").count(), "a frame on the page").toBe(0);
   expect(await page.locator("#chat-frame, .chat-frame").count(), "the chat page").toBe(0);
@@ -246,7 +257,7 @@ async function oneRun(engine: string, type: BrowserType, run: number): Promise<R
     await page.waitForTimeout(2_000);
     await record();
     // Still the shell alone at the end: no frame came, no plugin row appeared.
-    expect(pluginRows(dataDir), "a plugin row appeared").toEqual([]);
+    expect(pluginRows(dataDir), "a plugin row appeared besides the app's library").toEqual([]);
     expect(await page.locator("iframe").count(), "a frame appeared").toBe(0);
     const messages = await server.messages();
     const users = messages.filter((m) => m.role === "user").map((m) => m.text);
