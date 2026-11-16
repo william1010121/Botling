@@ -9,6 +9,7 @@ import { vi } from "vitest";
 import { settingsView } from "../src/core/settings";
 import type { BotView, PluginsView } from "../src/contract";
 import { App } from "../src/renderer/App";
+import type { WebChrome } from "../src/renderer/app-shared";
 import type { Client } from "../src/renderer/client";
 import { WorkspaceStore, type WorkspaceView } from "../src/renderer/store";
 import { desktop } from "./helpers";
@@ -36,6 +37,8 @@ export interface PageOptions {
   whiteboard?: "0" | null;
   /** Command types the stub client answers with a failure (the page's error bar). */
   failing?: string[];
+  /** The browser page's chrome (the bots drawer button, "This device"); none draws the desktop's page. */
+  web?: WebChrome;
 }
 export interface Page {
   host: HTMLElement;
@@ -52,7 +55,7 @@ export async function drawPage(options: PageOptions = {}): Promise<Page> {
   if (options.whiteboard === null) localStorage.removeItem("botling.mainWhiteboard"); else localStorage.setItem("botling.mainWhiteboard", "0");
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
   const defaults = new WorkspaceStore(async () => { throw new Error("Unexpected snapshot"); }).getView();
-  let held: Required<PageOptions> = { bots: [siteBot], shown: SITE, plugins: fixtureView(), mainTabs: {}, whiteboard: "0", failing: [], ...options } as Required<PageOptions>;
+  let held: Required<PageOptions> = { bots: [siteBot], shown: SITE, plugins: fixtureView(), mainTabs: {}, whiteboard: "0", failing: [], web: undefined, ...options } as Required<PageOptions>;
   const viewOf = (): WorkspaceView => ({ ...defaults, ready: true, bots: held.bots, settings: settingsView({ mainTabs: held.mainTabs }), plugins: held.plugins,
     chat: { botId: held.shown, messages: [], running: null, live: [] } });
   let current = viewOf();
@@ -75,7 +78,7 @@ export async function drawPage(options: PageOptions = {}): Promise<Page> {
   document.body.append(host);
   const root = createRoot(host);
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-  await act(async () => root.render(createElement(App, { client, store })));
+  await act(async () => root.render(createElement(App, { client, store, ...(held.web ? { web: held.web } : {}) })));
   return {
     host,
     markup: () => host.innerHTML.replace(/:r[0-9a-z]+:/g, ":rN:"),
