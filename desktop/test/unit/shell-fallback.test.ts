@@ -262,7 +262,7 @@ describe("a chat plugin that throws in activate", () => {
     // The connection comes back: the line carrying the slot replaces the pending one (no duplicate), and nothing was sent twice.
     r.server.refuse = false;
     for (let attempt = 0; attempt < 8 && !r.link.status.attached; attempt += 1) { r.clock.advance(5_000); await tick(); }
-    await settle(() => { expect(lineIds(host)).not.toContain(pending); expect(lineIds(host).filter((id) => id.startsWith("u-"))).toHaveLength(1); });
+    await settle(() => { expect(lineIds(host)).not.toContain(pending); expect(lineIds(host).filter((id) => id?.startsWith("u-"))).toHaveLength(1); });
     expect(r.server.applied.filter(({ cmd }) => (cmd as Command).type === "chat.send")).toHaveLength(1);
   });
 
