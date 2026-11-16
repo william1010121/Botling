@@ -17,6 +17,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as nodeFs from "node:fs";
 import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { writeFileAtomic } from "../../../src/core/durable/atomic";
 
@@ -61,7 +62,7 @@ export type BundleFs = Pick<typeof nodeFs, "statSync" | "openSync" | "readSync" 
  * plain file system; outside Electron (tests, plain node) it does not exist and `node:fs` is already plain.
  */
 function plainFs(): BundleFs {
-  return nodeFs;
+  try { return createRequire(import.meta.url)("original-fs") as BundleFs; } catch { return nodeFs; }
 }
 let bundleFs: BundleFs = plainFs();
 /** Test seam: the file system the bundle reads use (null puts the real one back). */
@@ -73,7 +74,8 @@ export function useBundleFs(fs: BundleFs | null): void {
 /** The stat of a bundle file when it is a real, non-empty file (an asar-aware fs answers a directory of size 0 for app.asar), else null. */
 function fileStat(file: string): Stats | null {
   try {
-    return bundleFs.statSync(file);
+    const stat = bundleFs.statSync(file);
+    return stat.isFile() && stat.size > 0 ? stat : null;
   } catch { return null; }
 }
 
