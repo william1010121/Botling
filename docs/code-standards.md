@@ -58,10 +58,15 @@ Before you say "done" (mistakes found in reviews since 2026-11-15; answer each i
     or a failed send refuses; never 500, "allowed" or a skipped check. (L-009)
 11. Tests: every guard has a test that fails when it is removed; the implementing worker only writes
     the tests and runs the related test files, it does NOT run a mutation check (the reviewer does it once,
-    as one batch, see L-010); each fix commit brings its own probe test; timing or two-process tests pass 10 runs in a row;
+    as one batch, see L-010); each fix commit brings its own probe test; timing or two-process tests repeat their 10 runs inside one remote-test run (loop on the host), not as 10 runs;
     packaged-only branches get a test that simulates packaged mode. (L-010, L-012, L-013, L-014)
-12. Before review: merge your base (main or the open batch) and run the related tests of both
-    sides on the merged tree; when a test breaks for a cause, fix every test with that cause. (L-011)
+12. Before review: merge your base (main or the open batch) so the review sees the merged tree; the related tests of
+    both sides run once on it, inside your budget of at most 2 remote-test runs (no `--typecheck`); the one full
+    typecheck run happens after the merge into main. When a test breaks for a cause, fix every test with that
+    cause. Over the budget: stop and report. (L-011)
+13. Test budget: at most 1–2 `remote-test.sh` runs per step (implementing 2, review 1, fix 1, re-review 0),
+    only related test files, no `--typecheck`; one full `--typecheck` confirmation after the merge into main,
+    then build. Never rerun to be sure. (AGENTS.md "Test budget")
 ```
 
 Hand-offs also paste every hard rule above (none yet) and the one-line rules of the lessons whose tags match the

@@ -6,14 +6,18 @@
 
 ## 2.x desktop app (`desktop/`)
 
-- **Default check while working:** `cd desktop && npm run test:changed`. It typechecks, rebuilds
-  `out/` and runs only the unit tests related to your changes (uncommitted work against `HEAD`,
-  untracked files included). For committed work on a branch, give the base:
-  `npm run test:changed -- <base-branch>`. A typical run takes seconds.
-- **Typecheck on the Linux test host, not on the Mac:** locally run only `npm run build` (fast). For the
-  typecheck, commit and run `desktop/scripts/remote-test.sh <sha> --typecheck-only` (add `--typecheck` before
-  a test run to do both). Do not run `tsc` / `npm run typecheck` / `npm run test:changed` on the Mac in parallel
-  with other workers; they are the biggest CPU load there.
+- **Test budget (user decision 2026-11-16): run tests as little as possible; one full confirmation at the end.**
+  - Final confirmation, once: after the branch is merged into main, one
+    `desktop/scripts/remote-test.sh <sha> --typecheck <all related test files>`. Only if it passes, build.
+  - Every other step makes at most 1–2 `remote-test.sh` runs, never with `--typecheck`, only the related test files:
+    implementing worker at most 2; review 1 (related tests plus the batch mutation check in the same connection,
+    see L-010); fix round 1; re-review none of its own (it reads the fix round's result). `npm run build` on the Mac
+    does not count.
+  - Over the limit: stop and say so in your report; do not rerun. A run lost to an ssh drop or that returned no
+    result does not count.
+- **No `test:changed`, `tsc` or `npm run typecheck` on the Mac** (the biggest CPU load, and it typechecks). The
+  typecheck happens only in the final confirmation above; locally run only `npm run build` (fast). Use
+  `remote-test.sh <sha> --typecheck-only` only when the coordinator asks for it.
 - **New worktree:** run `desktop/scripts/link-deps.sh` once (no `npm install`). It links
   `desktop/node_modules` and `Web/node_modules` to the shared install for this lockfile on the
   external SSD (`/Volumes/My-SSD/botling-work/deps/desktop-<lock hash>`, made with `npm ci` the first
@@ -24,7 +28,7 @@
 - **Dev build:** `npm run dist:dir` (the unpacked app, about 15 s). Put its output and caches on a
   volume with free space: `BOTLING_DIST_DIR`, `electron_config_cache`, `ELECTRON_BUILDER_CACHE`
   (see `desktop/README.md`).
-- `npm run build` only bundles `out/` (under a second); `npm run typecheck` is `tsc --noEmit` (run it on the host, see above).
+- `npm run build` only bundles `out/` (under a second); `npm run typecheck` is `tsc --noEmit` (only in the final confirmation, on the host, see above).
 
 ## Spec program (`spec/`)
 
