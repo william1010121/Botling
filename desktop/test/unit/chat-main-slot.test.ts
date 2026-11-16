@@ -253,7 +253,8 @@ describe("the whole app with the chat column and the tabs from the chat plugin",
     await settle(() => { expect(lineOf(page)).toBe(CHAT_UNAVAILABLE); });
     expect(column(page)).toBeNull();
     expect(page.host.querySelector("#chat-frame")).toBeNull();
-    expect(page.host.querySelector(".board-switch")).toBeNull();
+    // M7-07c: the shell's fallback keeps the tab switch (Chat, and Storage: the plugin's own tabs went with it).
+    expect(switches(page)).toEqual(["chat", "botling/storage"]);
     // The rail (the sidebar plugin's place) and the right panel's column are the page's, not the chat's.
     expect(page.host.querySelector("aside.rail")).not.toBeNull();
     expect(page.host.querySelector(".right-toggle")).not.toBeNull();

@@ -1,0 +1,19 @@
+/* The shell's fallback screen (shell/Fallback.tsx, M7-07c): drawn in the chat column's place while botling.chat is away. */
+.chat-fallback .fallback-body { flex: 1; min-height: 0; display: flex; }
+.chat-fallback .fallback-bots { flex: 0 0 200px; min-width: 0; overflow-y: auto; border-right: 1px solid var(--line); padding: 8px 6px; }
+.chat-fallback .fallback-bots ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat-fallback .fallback-bots button { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.chat-fallback .fallback-bots button:hover { background: var(--hover); }
+.chat-fallback .fallback-bots button[aria-pressed="true"] { background: var(--selected); }
+.chat-fallback .fallback-bot-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-fallback .fallback-bot-status { flex: none; font-size: 11px; color: var(--muted); }
+.chat-fallback .fallback-chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.chat-fallback .fallback-lines { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 12px 20px; display: flex; flex-direction: column; gap: 8px; }
+.chat-fallback .fallback-lines li { max-width: 720px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.45; }
+.chat-fallback .fallback-lines li[data-role="user"] { align-self: flex-end; background: var(--selected); padding: 6px 10px; border-radius: 10px; }
+.chat-fallback .fallback-lines li[data-role="error"] { color: var(--error); }
+.chat-fallback .fallback-lines li[data-queued="1"] { opacity: 0.6; }
+.chat-fallback .fallback-input { flex: none; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; padding: 8px 20px 16px; }
+.chat-fallback .fallback-input textarea { flex: 1; min-width: 0; resize: none; font: inherit; font-size: 13.5px; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.chat-fallback .fallback-input button { flex: none; padding: 7px 14px; }
+.chat-fallback .fallback-problem { flex-basis: 100%; font-size: 12.5px; color: var(--error); }

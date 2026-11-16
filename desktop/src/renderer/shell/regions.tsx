@@ -17,8 +17,9 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { rendererKernel, SHELL_SURFACE, slotsVersion, subscribeSlots } from "../renderer-kernel";
 import { BOT_PANEL_PLUGIN } from "../panel-names";
-import { CHAT_PLUGIN, CHAT_UNAVAILABLE } from "../chat-names";
+import { CHAT_PLUGIN } from "../chat-names";
 import { inPageHost, type InPageHost } from "./inpage-host";
+import { Fallback, type FallbackProps } from "./Fallback";
 
 export type Region = "side" | "bottom" | "main";
 /** The root slot each region is drawn from. */
@@ -28,7 +29,9 @@ export const REGION_SLOTS: Readonly<Record<Region, string>> = { side: "app/side"
 export interface RegionEntry { kind: "region"; region: Region; /** The ShellFrame it is for (the shell's own entry); the plugin's has none. */ scope?: string }
 
 /** What the page draws in each region, as of its latest render (undefined: nothing). */
-export interface ShellRegions { side?: ReactNode; bottom?: ReactNode; main?: ReactNode }
+export interface ShellRegions { side?: ReactNode; bottom?: ReactNode; main?: ReactNode;
+  /** What the fallback screen draws while the chat plugin is away (shell/Fallback.tsx, M7-07c): its source (client, store) and the chrome that sat inside the chat column. */
+  away?: FallbackProps }
 
 interface RegionsContext {
   scope: string;
@@ -65,7 +68,7 @@ export function regionShown(region: Region, scope: string, host: Pick<InPageHost
   return false;
 }
 
-/** True when the main column is not drawn because `botling.chat` is away (the host says it was refused, failed or unloaded): the shell says so. */
+/** True when the main column is not drawn because `botling.chat` is away (the host says it was refused, failed or unloaded): the shell draws its fallback screen. */
 export function mainAway(host: Pick<InPageHost, "unavailable"> = inPageHost): boolean { return host.unavailable(CHAT_PLUGIN); }
 
 /** Draws what the page supplied for `region`, if the slot says the region is there. */
@@ -76,7 +79,8 @@ export function RegionSlot({ region }: { region: Region }) {
   const shown = useMemo(() => !!context && (context.direct || regionShown(region, context.scope)), [context, region, version]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const away = useMemo(() => region === "main" && !shown && mainAway(), [region, shown, version]);
-  if (away) return <section className="chat-pane chat-unavailable"><div className="banner" role="status">{CHAT_UNAVAILABLE}</div></section>;
+  // The chat plugin is away: the shell's own fallback screen (Fallback.tsx) stands in the column's place, with the chrome the page kept out of it (`away`).
+  if (away) return <Fallback {...(context?.regions.current.away ?? {})} parts={{ ...context?.regions.current.away?.parts, bottom: <RegionSlot region="bottom" /> }} />;
   return <>{shown ? context!.regions.current[region] ?? null : null}</>;
 }
 
