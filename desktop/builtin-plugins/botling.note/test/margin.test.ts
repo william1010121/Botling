@@ -120,6 +120,24 @@ describe("review fixes (v3-note-margin)", () => {
     expect(big.api.bots.send).not.toHaveBeenCalled();
   });
 
+  it("a tag that names nothing waiting never falls back to the one question waiting, even in a turn that could answer it", async () => {
+    const s = setup();
+    await ask(s);
+    s.tick(5);
+    s.fire("turnStarted", { botId: "B1", turnId: "t1" });
+    s.fire("turnFinished", { botId: "B1", ok: true, reply: "〔回答 c-0099〕 for someone else" });
+    expect((await s.call("marginList")).threads[0].answering).toBe(true);
+  });
+
+  it("an answered question is never overwritten by a later reply naming it (while another question keeps the bot listened to)", async () => {
+    const s = setup();
+    await ask(s);
+    await ask(s, { rid: "r2", question: "第二個" });
+    s.fire("turnFinished", { botId: "B1", ok: true, reply: "〔回答 c-0001〕 first" });
+    s.fire("turnFinished", { botId: "B1", ok: true, reply: "〔回答 c-0001〕 second" });
+    expect(book(s).threads[0].turns.map((t) => t.a)).toEqual(["first"]);
+  });
+
   it("an answer tag wrapped in Markdown leaves no marks, and control characters in the answer are dropped", () => {
     expect(splitReply("**〔回答 c-0001〕**\n答案")).toEqual({ ids: ["c-0001"], body: "答案" });
     expect(splitReply("`〔回答 c-0001〕`\n答\u0007案")).toEqual({ ids: ["c-0001"], body: "答案" });
