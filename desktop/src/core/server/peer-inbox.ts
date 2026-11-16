@@ -30,7 +30,7 @@ export class CorePeerInbox {
   projectBriefing(): string {
     const row = (profile: BotProfile, about: string): BriefingRow => ({
       name: profile.name, about, memory: join(profile.folder, profile.memoryPath), inbox: join(profile.folder, ".bot", "inbox.md"),
-      question: this.bots.get(profile.id)?.openQuestion()?.text ?? null,
+      question: this.bots.get(profile.id)?.guests.openQuestion()?.text ?? null,
     });
     const maintainer = this.profiles.find((profile) => profile.id === this.maintainerId) ?? maintainerProfile(this.options.dataDir, "", this.maintainerId);
     const peers: PeerBriefingRow[] = this.peerBots().map((peer) => {

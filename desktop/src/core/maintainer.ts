@@ -164,7 +164,7 @@ export class MaintainerDesk {
     if (!maintainer) return;
     if (allowed && !this.allowed(folder)) {
       writeFileAtomic(this.foldersFile, JSON.stringify([...this.approvedFolders(), folder]));
-      maintainer.restartBeforeNextMessage({ told: `may read ${folder}`, shown: `may read ${folder}` });
+      maintainer.restarts.restartBeforeNextMessage({ told: `may read ${folder}`, shown: `may read ${folder}` });
     }
     try { maintainer.relay(folderAnswer(folder, allowed)); } catch (error) { this.deps.log(`folder: ${(error as Error).message}`); }
   }
@@ -196,7 +196,7 @@ export class MaintainerDesk {
   reportProblem(name: string, rawText: string, bot: Bot, pin: ReportCard | null, screenshot: string | null, pictures: string[]): boolean {
     const text = rawText.trim();
     if (!text && !pictures.length) return false;
-    const kept = screenshot ? bot.keepFiles([screenshot])[0]?.path ?? null : null;
+    const kept = screenshot ? bot.guests.keepFiles([screenshot])[0]?.path ?? null : null;
     const said = text || `see the attached picture${pictures.length === 1 ? "" : "s"}`;
     this.requestComponentChange(name, problemReport(said, bot.profile.name, pin, kept), "The user", null, [...(kept ? [kept] : []), ...pictures]);
     return true;
@@ -290,7 +290,7 @@ export class MaintainerDesk {
     // Its turn ended: the components it was asked to change are no longer worked on (`finishWorking`).
     this.deps.library.finishWorking();
     if (record.choices?.length && record.chosen === undefined && record.answer === undefined) return;
-    if (maintainer.subagentsAtWork) return;
+    if (maintainer.views.subagentsAtWork) return;
     for (const ask of [...this.asks]) {
       if (!ask.changing || this.deps.library.stampOf(ask.name) === ask.stamp) continue;
       this.asks = this.asks.filter((other) => other !== ask);

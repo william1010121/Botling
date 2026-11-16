@@ -58,26 +58,26 @@ export class TurnControl {
   private deliver(turn: Turn, given?: AgentHead) { return this.host.deliver(turn, given); }
   private delivered(turn: Turn) { this.host.delivered(turn); }
   private redrawQueued(turn: Turn) { this.host.redrawQueued(turn); }
-  private turnImages(turn: Turn): string[] { return this.host.turnImages(turn); }
+  private turnImages(turn: Turn): string[] { return this.host.delivery.turnImages(turn); }
   private compose(turn: Turn, brief: boolean): string { return this.host.compose(turn, brief); }
   private finishTurn(turn: Turn, status: Status, error?: string) { this.host.finishTurn(turn, status, error); }
   private handOver(): Promise<void> { return this.host.handOver(); }
-  private canSwitchInPlace(head: AgentHead): boolean { return this.host.canSwitchInPlace(head); }
+  private canSwitchInPlace(head: AgentHead): boolean { return this.host.headRun.canSwitchInPlace(head); }
   private clearIdle() { this.host.clearIdle(); }
-  private scheduleIdle() { this.host.scheduleIdle(); }
-  private place(turn: Turn): ChatRecord { return this.host.place(turn); }
+  private scheduleIdle() { this.host.headRun.scheduleIdle(); }
+  private place(turn: Turn): ChatRecord { return this.host.headRun.place(turn); }
   private notice(text: string) { this.host.notice(text); }
   private bumpUnread() { this.host.bumpUnread(); }
-  private markSeen(ids: string[], head: Engine) { this.host.markSeen(ids, head); }
+  private markSeen(ids: string[], head: Engine) { this.host.recordsBook.markSeen(ids, head); }
   private persist(soon?: boolean) { this.host.persist(soon); }
   private messageView(record: ChatRecord) { return this.host.messageView(record); }
   private updated() { this.host.updated(); }
   private settleTurnApprovals() { this.host.settleTurnApprovals(); }
-  private headStopped(head: Engine) { this.host.headStopped(head); }
+  private headStopped(head: Engine) { this.host.group.headStopped(head); }
   private checkSettingsHold() { this.host.checkSettingsHold(); }
-  private holdForSettings(turn: Turn) { this.host.holdForSettings(turn); }
-  private releaseSettingsHold(): boolean { return this.host.releaseSettingsHold(); }
-  private waitsForRestart(turn: Turn): boolean { return this.host.waitsForRestart(turn); }
+  private holdForSettings(turn: Turn) { this.host.restarts.holdForSettings(turn); }
+  private releaseSettingsHold(): boolean { return this.host.restarts.releaseSettingsHold(); }
+  private waitsForRestart(turn: Turn): boolean { return this.host.restarts.waitsForRestart(turn); }
 
   // ---- Fields owned here (`Bot` reads and writes them through accessors) ----
   /** The turn under way. */
@@ -568,7 +568,7 @@ export class TurnControl {
         return { stopped: true, killed: [], forced: false };
       }
       // The other head's turn.
-      const peer = this.peers.find(bot => bot.ownsTurn(turnId));
+      const peer = this.peers.find(bot => bot.ctx.ownsTurn(turnId));
       if (peer) return peer.stop(turnId, { quitting });
       return { stopped: false, killed: [], forced: false };
     }
@@ -641,7 +641,7 @@ export class TurnControl {
     const turn = this.turn?.id === turnId ? this.turn : this.deferred?.id === turnId ? this.deferred : this.queue.find((candidate) => candidate.id === turnId)
       ?? (this.claimHold?.turn.id === turnId ? this.claimHold.turn : undefined);
     if (!turn) {
-      const peer = this.peers.find(bot => bot.ownsTurn(turnId));
+      const peer = this.peers.find(bot => bot.ctx.ownsTurn(turnId));
       if (peer) return peer.await(turnId, signal);
       throw new ContractError("not_found", "No such turn.");
     }

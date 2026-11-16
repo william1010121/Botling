@@ -208,7 +208,7 @@ export class Core {
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
     this.importOnce();
     // A remote worker's connection came or went: the worker rows that show it are drawn again (only those that changed).
-    options.remoteWorkers?.onChange(() => { for (const bot of this.bots.values()) bot.workerRowsChanged(); });
+    options.remoteWorkers?.onChange(() => { for (const bot of this.bots.values()) bot.subagentRowBook.workerRowsChanged(); });
     // Maintainer (1.x's built-in project): the plugin library is its folder, with the app's files in it.
     // 1.x's key is componentEditorModel (2.0 before Phase 4a read componentEditor: both are honoured).
     // After the import (1.x's settings and library), before the component library first looks: a preview card
@@ -229,7 +229,7 @@ export class Core {
     this.components.commands.onPid = (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid));
     // Every card's run goes to the plugins: botling.board's pins (`pin/<id>`), the component studio's specs' cards.
     this.components.commands.onChange = (card) => {
-      for (const bot of this.bots.values()) bot.cardChanged(card);
+      for (const bot of this.bots.values()) bot.cards.cardChanged(card);
       // A card in a bot's note (`note/<bot id>/<tail>`): the Note tab hears it by the bot and the card's key in the note.
       const note = /^note\/([^/]+)\/(.+)$/.exec(card);
       if (note) this.plugins.event("noteCardChanged", { botId: note[1], key: `note/${note[2]}` });

@@ -105,7 +105,7 @@ export class CoreCopies {
     const wanted = name.replace(/^[\t ]+|[\t ]+$/g, "").toLowerCase();
     const profile = this.profiles.find((candidate) => candidate.role !== "main" && !candidate.parent && candidate.name.toLowerCase() === wanted);
     if (!profile) { main.queueNote(`(App: There is no project or bot called "${name}"; no card was shown.)`); return; }
-    const question = this.bots.get(profile.id)?.openQuestion();
+    const question = this.bots.get(profile.id)?.guests.openQuestion();
     if (!question) {
       main.appNotice(`${profile.name} has no question waiting in its chat now.`, undefined, undefined, { sourceID: profile.id });
       main.queueNote(`(App: ${profile.name} has no open card, so none was shown. Do not ask its question again yourself; if it still needs the user, it asks in its own chat.)`);
@@ -174,7 +174,7 @@ export class CoreCopies {
     if (original?.ignoredAt) {
       const chats = [...this.bots.values()];
       for (const [copy, source] of this.copies) if (source.botId === botId && source.questionId === messageId) this.copies.delete(copy);
-      for (const chat of chats) chat.syncIgnoredCopies(botId, messageId, original.ignoredAt);
+      for (const chat of chats) chat.guests.syncIgnoredCopies(botId, messageId, original.ignoredAt);
       return;
     }
     for (const [copy, source] of [...this.copies]) {
@@ -261,9 +261,9 @@ export class CoreCopies {
       chat.settleAppQuestion(record.id, { answer: NO_LONGER_NEEDED });
       return { accepted: false };
     }
-    if (!chat.holdCardAnswer(record.id, outcome, guest.profile.name)) return { accepted: false };
+    if (!chat.guests.holdCardAnswer(record.id, outcome, guest.profile.name)) return { accepted: false };
     const told = (delivered: boolean) => {
-      chat.releaseCardAnswer(record.id, delivered);
+      chat.guests.releaseCardAnswer(record.id, delivered);
       // A relayed copy of the user's call-in (`callInBy`): the card it copies shows the answer too.
       if (delivered) this.settleRelayedOriginal(record, outcome);
     };

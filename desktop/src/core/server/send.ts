@@ -56,7 +56,7 @@ export class CoreSend {
           return this.calledInAnswer(cmd.botId, cmd.messageId, cmd.text, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files);
         } finally { for (const file of files) rmSync(file, { force: true }); }
       }
-      case "component.approve": return this.bot(cmd.botId).componentApprove(cmd.messageId, cmd.index, cmd);
+      case "component.approve": return this.bot(cmd.botId).cards.componentApprove(cmd.messageId, cmd.index, cmd);
       case "settings.set": return this.changeSetting(cmd.change);
       case "bots.create": {
         const made = this.makeBot(cmd.name, cmd.job, { setUp: true });

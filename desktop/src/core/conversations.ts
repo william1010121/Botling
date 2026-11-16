@@ -543,7 +543,7 @@ export class Conversations {
         let said = "";
         const posted = await this.postGuestReply(answer, member, bot, chat, { passes: false, tagsAct: !caller }, (line) => {
           said = line.text;
-          bot?.keepCallIn(`Called into ${host}'s chat with @: ${asked}`, askedAt, line);
+          bot?.guests.keepCallIn(`Called into ${host}'s chat with @: ${asked}`, askedAt, line);
         });
         // A bot asked and nothing was posted: not an answer; it is told so like any @ not answered, never left waiting.
         if (caller && !posted) { notHeard("NoAnswer", "it answered nothing"); this.deps.refreshWaiting(); continue; }
@@ -628,8 +628,8 @@ export class Conversations {
     // a crash posts what is missing and nothing twice, even when the crash fell between the two.
     const noticeKey = late.callId ? `late:${late.callId}` : undefined;
     const lineKey = late.callId ? `late-line:${late.callId}` : undefined;
-    if (lineKey && chat.hasMoveNotice(lineKey)) return;
-    if (!noticeKey || !chat.hasMoveNotice(noticeKey)) {
+    if (lineKey && chat.views.hasMoveNotice(lineKey)) return;
+    if (!noticeKey || !chat.views.hasMoveNotice(noticeKey)) {
       chat.appNotice(`Late answer from ${late.member.name} (after its machine was not reachable): nobody was woken for it.`,
         undefined, undefined, noticeKey ? { moveNotice: noticeKey } : {});
     }
@@ -654,7 +654,7 @@ export class Conversations {
     if (filter) { try { text = await filter(text); } catch { /* as it was */ } }
     if (policy.passes && isPass(text)) return null;
     const parsed = parseReply(text);
-    chat.guestReactions(parsed.reactions, `guest:${member.id}:${answer.engine}`);
+    chat.guests.guestReactions(parsed.reactions, `guest:${member.id}:${answer.engine}`);
     const line: ChatRecord = { id: newId(), role: "bot", text: parsed.body, date: toSwiftDate(), sourceID: member.id, engine: answer.engine };
     if (parsed.choices) line.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
     if (parsed.questions) line.questions = parsed.questions;

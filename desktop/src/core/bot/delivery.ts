@@ -50,24 +50,24 @@ export class BotDelivery {
   private get session() { return this.host.session; }
   private get restartPending() { return this.host.restartPending; }
   private get restartForPluginsOnly() { return this.host.restartForPluginsOnly; }
-  private hasCurrentPlugins() { return this.host.hasCurrentPlugins(); }
+  private hasCurrentPlugins() { return this.host.restarts.hasCurrentPlugins(); }
   private get modelSettingsPending() { return this.host.modelSettingsPending; }
-  private switchInPlace(head: AgentHead) { return this.host.switchInPlace(head); }
-  private waitsForRestart(turn: Turn) { return this.host.waitsForRestart(turn); }
+  private switchInPlace(head: AgentHead) { return this.host.headRun.switchInPlace(head); }
+  private waitsForRestart(turn: Turn) { return this.host.restarts.waitsForRestart(turn); }
   private get folderPending() { return this.host.folderPending; }
   private get ownWorkRunning() { return this.host.ownWorkRunning; }
-  private holdForSettings(turn: Turn) { return this.host.holdForSettings(turn); }
+  private holdForSettings(turn: Turn) { return this.host.restarts.holdForSettings(turn); }
   private ensureHead() { return this.host.ensureHead(); }
   private finishTurn(turn: Turn, status: Status, error?: string) { return this.host.finishTurn(turn, status, error); }
   private get startedFresh() { return this.host.startedFresh; }
   private componentNote() { return this.host.componentNote(); }
-  private withSavedMemory(prompt: string) { return this.host.withSavedMemory(prompt); }
+  private withSavedMemory(prompt: string) { return this.host.decisions.withSavedMemory(prompt); }
   private get briefing() { return this.host.briefing; }
   private briefingGiven() { this.host.headRun.briefingGiven(); }
-  private noteProgress() { return this.host.noteProgress(); }
-  private markSeen(ids: string[], head: Engine) { return this.host.markSeen(ids, head); }
+  private noteProgress() { return this.host.progress.noteProgress(); }
+  private markSeen(ids: string[], head: Engine) { return this.host.recordsBook.markSeen(ids, head); }
   private get records() { return this.host.records; }
-  private get componentsMayHaveChanged() { return this.host.componentsMayHaveChanged; }
+  private get componentsMayHaveChanged() { return this.host.cards.componentsMayHaveChanged; }
   private takeInterruptedNote() { return this.host.takeInterruptedNote(); }
   private get reactionsSeen() { return this.host.reactionsSeen; }
 
@@ -195,7 +195,7 @@ export class BotDelivery {
     // A subagent's older steps are on disk, not in memory.
     for (const bot of this.members) for (const agent of bot.subagents.list) {
       if (!agent.stepCount && !agent.runs) continue;
-      const saved = bot.subagentHistory(agent);
+      const saved = bot.views.subagentHistory(agent);
       if ([...saved.runs.flatMap(run => run.steps), ...saved.steps].some(step => readImagePaths(step).includes(path))) return path;
     }
     return null;

@@ -215,13 +215,13 @@ export class CoreSubBots {
       try { await this.moveOwners([record], { kind: "back" }, {}); returned.push({ title, to: this.agentBotName(record.host.botId) }); }
       catch (error) {
         // It cannot go back now (its report is being handed over this very moment): stopped instead, never left without an owner.
-        await host.commandWorker(record.nativeId, { kind: "stop" }).catch(() => undefined);
+        await host.workers.commandWorker(record.nativeId, { kind: "stop" }).catch(() => undefined);
         stopped.push({ title, why: `it could not go back: ${(error as Error).message}` });
       }
     }
     const sub = this.bots.get(id);
     for (const record of this.agents.all.filter((candidate) => candidate.host.botId === id && candidate.state === "running")) {
-      const stoppedNow = await sub?.commandWorker(record.nativeId, { kind: "stop" }).catch(() => null);
+      const stoppedNow = await sub?.workers.commandWorker(record.nativeId, { kind: "stop" }).catch(() => null);
       if (stoppedNow?.ok) stopped.push({ title: record.summary.description || "Agent", why: "it ran on this sub bot" });
     }
     await this.removeBot(id, { quiet: true });

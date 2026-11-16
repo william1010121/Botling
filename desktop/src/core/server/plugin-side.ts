@@ -93,13 +93,13 @@ export class CorePluginSide {
   activePluginWriter(): string | null {
     if (this.settlingMaintainer) return this.maintainerId;
     const maintainer = this.bots.get(this.maintainerId);
-    if (maintainer && (maintainer.view().working || maintainer.subagentsAtWork)) return this.maintainerId;
+    if (maintainer && (maintainer.view().working || maintainer.views.subagentsAtWork)) return this.maintainerId;
     const pluginsRoot = join(this.options.dataDir, "plugins");
     for (const bot of this.bots.values()) {
       if (bot.profile.role === "main") continue;
       const folder = bot.profile.folder;
       if (folder !== pluginsRoot && !pluginsRoot.startsWith(folder + sep) && !folder.startsWith(pluginsRoot + sep)) continue;
-      if (bot.view().working || bot.subagentsAtWork) return bot.id;
+      if (bot.view().working || bot.views.subagentsAtWork) return bot.id;
     }
     return null;
   }
@@ -121,7 +121,7 @@ export class CorePluginSide {
       try { this.maintainer.settle(record); } finally { this.settlingMaintainer = false; }
       this.plugins.event("libraryChanged", {});
       // After the reply's own tags are acted on: a change from a spec panel that did not land is said there.
-      setImmediate(() => setImmediate(() => { this.plugins.event("maintainerReplied", { role: record.role, text: record.text.slice(0, 2_000), running: bot.subagentsAtWork }); this.componentsTick(); }));
+      setImmediate(() => setImmediate(() => { this.plugins.event("maintainerReplied", { role: record.role, text: record.text.slice(0, 2_000), running: bot.views.subagentsAtWork }); this.componentsTick(); }));
       this.componentsTick();
     }
   }
@@ -140,15 +140,15 @@ export class CorePluginSide {
    */
   serverUserLine(botId: string, line: { id: string; text: string; time: string; replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }): boolean {
     const ms = Date.parse(line.time);
-    return this.bot(botId).presetUserLine({
+    return this.bot(botId).group.presetUserLine({
       id: line.id, text: line.text, date: toSwiftDate(Number.isFinite(ms) ? ms : Date.now()),
       ...(line.replyTo ? { replyTo: line.replyTo } : {}), ...(line.to ? { to: line.to } : {}),
     });
   }
 
   /** Botling 3's server: a turn it recorded before a restart (a routine's run, an answer's message), started now. */
-  serverTurn(botId: string, spec: Parameters<Bot["startPresetTurn"]>[0]): { turnId: string; done: Promise<TurnStatus> } {
-    return this.bot(botId).startPresetTurn(spec);
+  serverTurn(botId: string, spec: Parameters<Bot["group"]["startPresetTurn"]>[0]): { turnId: string; done: Promise<TurnStatus> } {
+    return this.bot(botId).group.startPresetTurn(spec);
   }
 
   /**
@@ -169,7 +169,7 @@ export class CorePluginSide {
     });
     if (answer.kind === "reply") {
       const line: ChatRecord = { id: newId(), role: "bot", text: answer.text, date: toSwiftDate(), steps: answer.steps, engine: answer.engine };
-      bot.keepCallIn(call.note, askedAt, line);
+      bot.guests.keepCallIn(call.note, askedAt, line);
     }
     return answer;
   }

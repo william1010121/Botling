@@ -59,9 +59,9 @@ export class BotSubagentRows {
   /** The rows changed: the windows hear of it once (`force`: always). */
   rowsChanged(force = false) {
     const primary = this.options.primary ?? this.host;
-    const text = JSON.stringify(primary.subagentRows());
-    if (!force && text === primary.lastRows) return;
-    primary.lastRows = text;
+    const text = JSON.stringify(primary.subagentRowBook.subagentRows());
+    if (!force && text === primary.recordsBook.lastRows) return;
+    primary.recordsBook.lastRows = text;
     primary.updated();
   }
 
@@ -89,8 +89,11 @@ export class BotSubagentRows {
   queueNote(note: string) {
     const bot = this.options.primary ?? this.host;
     if (!bot.head?.running) return;
-    bot.queuedNote = note;
+    bot.delivery.queueNote(note);
   }
+
+  /** A subagent's row changed outside `saveSubagents` (a nested Agent result): the next rows push includes it. */
+  markDirty(id: string) { this.dirtySubagents.add(id); }
 
   saveSubagents(progress = false, changed?: SubagentRecord) {
     if (this.readOnly) return;

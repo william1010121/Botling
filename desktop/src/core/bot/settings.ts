@@ -26,34 +26,33 @@ export class BotSettings {
   private get profile() { return this.ctx.profile; }
   private log(line: string) { this.ctx.log(line); }
 
-  private get partners() { return this.host.partners; }
   private get conductor() { return this.host.conductor; }
   private get readOnly() { return this.host.readOnly; }
   private get head() { return this.host.head; }
   private get turn() { return this.host.turn; }
   private get tidying() { return this.host.tidying; }
   private get approvals() { return this.host.approvals; }
-  private get inHeadSubagents() { return this.host.inHeadSubagents; }
+  private get inHeadSubagents() { return this.host.tasks.inHeadSubagents; }
   private get managedPending() { return this.host.managedPending; }
   private get shuttingDown() { return this.host.shuttingDown; }
   private get session() { return this.host.session; }
   private sessionResumed(sessionId: string) { this.host.headRun.sessionResumed(sessionId); }
   private briefingGiven() { this.host.headRun.briefingGiven(); }
 
-  private appPrimary(): Engine | null { return this.host.appPrimary(); }
+  private appPrimary(): Engine | null { return this.host.group.appPrimary(); }
   private updated() { return this.host.updated(); }
-  private headsChanged(): void { return this.host.headsChanged(); }
+  private headsChanged(): void { return this.host.views.headsChanged(); }
   private add(record: ChatRecord, options?: { archive?: boolean }) { return this.host.add(record, options); }
   private newSession() { return this.host.newSession(); }
   private clearIdle() { return this.host.clearIdle(); }
   private maintenance(text: string, timeoutMs: number, head: AgentHead): Promise<string | null> { return this.host.maintenance(text, timeoutMs, head); }
   private ensureHead(): AgentHead { return this.host.ensureHead(); }
-  private wakeNote(): string { return this.host.wakeNote(); }
+  private wakeNote(): string { return this.host.delivery.wakeNote(); }
   private componentNote(): string { return this.host.componentNote(); }
   private prompts(): BotPrompts { return this.host.prompts(); }
-  private withSavedMemory(prompt: string): string { return this.host.withSavedMemory(prompt); }
+  private withSavedMemory(prompt: string): string { return this.host.decisions.withSavedMemory(prompt); }
   private showAppReply(raw: string) { return this.host.showAppReply(raw); }
-  private scheduleIdle() { return this.host.scheduleIdle(); }
+  private scheduleIdle() { return this.host.headRun.scheduleIdle(); }
   private next(): void { return this.host.next(); }
 
   // ---- Owned state ----
@@ -93,7 +92,7 @@ export class BotSettings {
         if (saved.agyRecovery) this.store.saveSetting("agyRecovery", saved.agyRecovery);
       }
       await partner.shutdown();
-      this.partners.delete(partner.engine);
+      this.host.group.dropPartner(partner.engine);
     }
     if (switching) this.switchEngine(switching);
     for (const bot of this.members) if (bot.head?.running) bot.pendingNote = [bot.pendingNote, `(App: Collaboration settings changed. Available engines: ${settings.engines.join(", ")}. Each message has one primary recipient. Delegate only when useful, using a handoff tag with the intended engine in its to attribute and task, review or discuss in its kind attribute. Include the authorized phase, scope, constraints and acceptance criteria. Never delegate a refused action to bypass it.)`].filter(Boolean).join("\n\n");
@@ -161,7 +160,7 @@ export class BotSettings {
     return {
       botId: owner.id, engines: [...owner.headsSettings.engines] as Engine[],
       primary: owner.headsSettings.answerWith && owner.headsSettings.answerWith !== "both" ? owner.headsSettings.answerWith : null,
-      primaryEffective: resolvePrimary(owner.headsSettings, owner.appPrimary()),
+      primaryEffective: resolvePrimary(owner.headsSettings, owner.group.appPrimary()),
       model: choices.model as BotSettingsView["model"], effort: choices.effort as BotSettingsView["effort"], efforts: choices.efforts as BotSettingsView["efforts"],
       subagentModel: choices.subagentModel as BotSettingsView["subagentModel"], subagentEffort: choices.subagentEffort as BotSettingsView["subagentEffort"], codexModel: owner.headsSettings.codexModel ?? null,
       agyModel: typeof owner.store.loadSettings().agyModel === "string" ? owner.store.loadSettings().agyModel as string : null,
@@ -180,8 +179,8 @@ export class BotSettings {
       // Its own primary engine, or null to follow the app's; one the bot does not have is refused.
       if (change.primary !== null && !owner.headsSettings.engines.includes(change.primary)) throw new ContractError("bad_request", `This bot does not have ${displayName(change.primary)}.`);
       owner.headsSettings.answerWith = change.primary;
-      owner.saveHeads();
-      owner.headsChanged();
+      owner.settings.saveHeads();
+      owner.views.headsChanged();
     }
     if (change.efforts) {
       for (const [engine, level] of Object.entries(change.efforts) as [Engine, string | null | undefined][]) {
@@ -210,7 +209,7 @@ export class BotSettings {
     if (change.codexWorkers !== undefined) owner.store.saveSetting("codexWorkers", change.codexWorkers ? codexWorkersJSON(change.codexWorkers) : undefined);
     if (change.codexModel !== undefined) {
       owner.headsSettings.codexModel = change.codexModel ?? null;
-      owner.saveHeads();
+      owner.settings.saveHeads();
     }
     // Switching (1.x's `switchModel`, `setEffort`, `setSubagentModel`, a Codex model): awake, each head goes on in
     // the same session on it just before its next message; asleep, the next wake has it.

@@ -46,16 +46,16 @@ export class BotViews {
   private get headsSettings() { return this.host.headsSettings; }
   private get conductor() { return this.host.conductor; }
   private get rounds() { return this.host.rounds; }
-  private get unread() { return this.host.unread; }
+  private get unread() { return this.host.recordsBook.unread; }
   private get components() { return this.host.components; }
-  private get routineStorePath() { return this.host.routineStorePath; }
+  private get routineStorePath() { return this.host.routines.routineStorePath; }
   private log(line: string) { this.ctx.log(line); }
   private emit(event: Event) { this.ctx.emit(event); }
   private changed(record: ChatRecord) { this.host.changed(record); }
   private messageView(record: ChatRecord): MessageView { return this.host.messageView(record); }
-  private subagentRows(): SubagentRowView[] { return this.host.subagentRows(); }
+  private subagentRows(): SubagentRowView[] { return this.host.subagentRowBook.subagentRows(); }
   private subagentChanged(subagent: SubagentRecord | undefined, progress = false, redrawLine = true) { this.host.subagentChanged(subagent, progress, redrawLine); }
-  private appPrimary(): Engine | null { return this.host.appPrimary(); }
+  private appPrimary(): Engine | null { return this.host.group.appPrimary(); }
 
   // ---- Moved from `Bot` ----
 
@@ -133,8 +133,8 @@ export class BotViews {
 
   /** The head turn's token speed: the member whose head last finished a request. */
   tokenSpeed(): BotView["tokenSpeed"] {
-    const latest = this.members.filter(bot => bot.mainSpeed).sort((a, b) => b.mainSpeedAt - a.mainSpeedAt)[0];
-    const view = latest ? speedView(latest.mainSpeed) : null;
+    const latest = this.members.filter(bot => bot.views.mainSpeed).sort((a, b) => b.views.mainSpeedAt - a.views.mainSpeedAt)[0];
+    const view = latest ? speedView(latest.views.mainSpeed) : null;
     return view && latest ? { ...view, engine: latest.engine } : null;
   }
 
@@ -185,7 +185,7 @@ export class BotViews {
   }
 
   headsChanged(): void {
-    if (this.options.primary) return this.options.primary.headsChanged();
+    if (this.options.primary) return this.options.primary.views.headsChanged();
     this.options.emit({ type: "heads.updated", botId: this.id, heads: this.headsView() });
   }
 
@@ -217,7 +217,7 @@ export class BotViews {
 
   /** Its routines for the chat's scheduled work (a partner's are its primary's); none while they cannot be read. */
   chatRoutines(): RoutineView[] {
-    try { return this.owner.routinesView().routines; } catch { return []; }
+    try { return this.owner.routines.routinesView().routines; } catch { return []; }
   }
 
   /** A page of lines older than `before` (`chat.history`); with `until`, back to at least that line. */
@@ -249,7 +249,7 @@ export class BotViews {
     if (taskId.startsWith("routine:")) {
       const routine = this.chatRoutines().find((candidate) => `routine:${candidate.id}` === taskId);
       if (!routine) return { text: "" };
-      const where = routine.kind === "legacy" ? join(this.owner.profile.folder, this.owner.paths.routines) : this.routineStorePath;
+      const where = routine.kind === "legacy" ? join(this.owner.profile.folder, this.owner.ctx.paths.routines) : this.routineStorePath;
       const zone = routine.timezone === "system_local" ? "" : ` (${routine.timezone})`;
       return { text: [`Botling routine · ${routine.schedule}${zone}`, routine.task, where ? `Kept in ${where}` : ""].filter(Boolean).join("\n") };
     }
@@ -258,7 +258,7 @@ export class BotViews {
     if (!task) return { text: "" };
     const subagent = this.members.map(bot => bot.subagents.get(taskId)).find(Boolean);
     // The recent steps of an agent are read from its file (its memory tail is empty after a restart).
-    const withSteps = subagent && !subagent.steps.length && subagent.stepCount ? { ...subagent, steps: this.members.find(bot => bot.subagents.get(taskId))?.subagentHistory(subagent).steps.slice(-4) ?? [] } : subagent;
+    const withSteps = subagent && !subagent.steps.length && subagent.stepCount ? { ...subagent, steps: this.members.find(bot => bot.subagents.get(taskId))?.views.subagentHistory(subagent).steps.slice(-4) ?? [] } : subagent;
     return { text: await backgroundTaskOutput(task, withSteps) };
   }
 

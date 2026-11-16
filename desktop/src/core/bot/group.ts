@@ -21,6 +21,8 @@ import { preview, union } from "./view-functions";
 export class BotGroup {
   /** App-owned peers keyed by engine (on the conversation owner only). */
   partners = new Map<Engine, Bot>();
+  /** The partner for `engine` was shut down: it is not this bot's partner any more. */
+  dropPartner(engine: Engine) { this.partners.delete(engine); }
   conductor: Conductor;
   /** A message to both, kept from the head that does not lead until the lead says what it takes on. */
   claimHold: { id: string; lead: Engine; held: Engine; turn: Turn; timer: NodeJS.Timeout } | null = null;
@@ -57,21 +59,20 @@ export class BotGroup {
   private get ignoreResults() { return this.host.ignoreResults; }
   private get ending() { return this.host.ending; }
   private get turns() { return this.host.turns; }
-  private get cardPicks() { return this.host.cardPicks; }
-  private refuseIfClosed() { return this.host.refuseIfClosed(); }
+  private refuseIfClosed() { return this.host.questions.refuseIfClosed(); }
   private add(record: ChatRecord, opts?: { archive?: boolean }) { return this.host.add(record, opts); }
   private changed(record: ChatRecord) { return this.host.changed(record); }
   private notice(text: string) { return this.host.notice(text); }
-  private componentNotes(user: ChatRecord) { return this.host.componentNotes(user); }
+  private componentNotes(user: ChatRecord) { return this.host.cards.componentNotes(user); }
   private route(turn: Turn) { return this.host.route(turn); }
   private clearApiRetry() { return this.host.clearApiRetry(); }
   private finishTurn(turn: Turn, status: Status, error?: string) { return this.host.finishTurn(turn, status, error); }
-  private markSeen(ids: string[], head: Engine) { return this.host.markSeen(ids, head); }
+  private markSeen(ids: string[], head: Engine) { return this.host.recordsBook.markSeen(ids, head); }
   private identifyDecision(id: string) { return this.host.identifyDecision(id); }
-  private decisionContext(ids: Set<string>) { return this.host.decisionContext(ids); }
+  private decisionContext(ids: Set<string>) { return this.host.decisions.decisionContext(ids); }
   private bumpUnread() { return this.host.bumpUnread(); }
-  private headsChanged() { return this.host.headsChanged(); }
-  private forgetReturnRoutes(handoffId?: string) { return this.host.forgetReturnRoutes(handoffId); }
+  private headsChanged() { return this.host.views.headsChanged(); }
+  private forgetReturnRoutes(handoffId?: string) { return this.host.workers.forgetReturnRoutes(handoffId); }
 
   // ---- Moved from `Bot` ----
   /**
@@ -189,7 +190,7 @@ export class BotGroup {
    * already in the chat is left as it is. False: it was there.
    */
   presetUserLine(line: { id: string; text: string; date: number; replyTo?: string; to?: AnswerTarget }): boolean {
-    if (this.options.primary) return this.options.primary.presetUserLine(line);
+    if (this.options.primary) return this.options.primary.group.presetUserLine(line);
     if (this.records.some((record) => record.id === line.id)) return false;
     this.refuseIfClosed();
     this.add(this.userRecord(line.id, line.text.trim(), line.date, { ...(line.replyTo ? { replyTo: line.replyTo } : {}), ...(line.to ? { to: line.to } : {}) }).record);
@@ -208,7 +209,7 @@ export class BotGroup {
     if (extra.conducted) turn.conducted = true;
     if (extra.handoffId) turn.handoffId = extra.handoffId;
     if (extra.about) turn.about = extra.about;
-    return bot.route(bot.watchDelivery(turn, extra.delivery));
+    return bot.route(bot.group.watchDelivery(turn, extra.delivery));
   }
 
   /** `turn` tells `delivery` once whether it reached the head: it begins or is read into the turn under way
@@ -232,7 +233,7 @@ export class BotGroup {
    * message), made again with the ids it recorded and routed now, past `deferTurn`.
    */
   startPresetTurn(spec: { ids: PresetTurnIds; words: string; userId: string | null; origin: "user" | "app"; engine?: Engine; routine?: boolean }): { turnId: string; done: Promise<Status> } {
-    if (this.options.primary) return this.options.primary.startPresetTurn(spec);
+    if (this.options.primary) return this.options.primary.group.startPresetTurn(spec);
     this.refuseIfClosed();
     const turn = this.deliverTo(spec.engine ?? this.engine, spec.words, spec.userId, { origin: spec.origin, ids: spec.ids, released: true, ...(spec.routine ? { routine: true } : {}) });
     return { turnId: turn.id, done: turn.done };
@@ -307,7 +308,7 @@ export class BotGroup {
     if (!target || !target.head?.running) return;
     if (target.hearNow(note, about)) return;
     target.pendingNote = [target.pendingNote, note].filter(Boolean).join("\n\n");
-    target.pendingAbout.push(...about);
+    target.delivery.pendingAbout.push(...about);
   }
 
   /**
@@ -390,7 +391,7 @@ export class BotGroup {
         }
         case "card": {
           const record: ChatRecord = { id: newId(), role: "notice", text: action.text, date: toSwiftDate(), choices: action.choices.map((choice, index) => ({ label: choice.label, recommended: index === 0 })) };
-          this.cardPicks.set(record.id, action.choices.map((choice) => choice.pick));
+          this.host.guests.offerPicks(record.id, action.choices.map((choice) => choice.pick));
           this.add(record);
           this.bumpUnread();
           break;
@@ -408,7 +409,7 @@ export class BotGroup {
   /** "Stop now" on the rounds line: no more hand-offs for this message. */
   stopRounds(): ResultOf<"rounds.stop"> {
     this.forgetReturnRoutes();
-    for (const peer of this.peers) peer.forgetReturnRoutes();
+    for (const peer of this.peers) peer.workers.forgetReturnRoutes();
     const actions = this.conductor.stopAll();
     this.conduct(actions);
     return { stopped: actions.length > 0 };
@@ -422,7 +423,7 @@ export class BotGroup {
     this.conduct(this.conductor.stop(id));
     for (const bot of this.members) {
       if (!bot) continue;
-      for (const stopped of chain) bot.forgetReturnRoutes(stopped);
+      for (const stopped of chain) bot.workers.forgetReturnRoutes(stopped);
       for (const waiting of bot.queue.filter((turn) => turn.handoffId && chain.includes(turn.handoffId))) void bot.stop(waiting.id);
       if (bot.turn?.handoffId && chain.includes(bot.turn.handoffId)) void bot.stop(bot.turn.id);
     }
@@ -432,10 +433,10 @@ export class BotGroup {
   /** Who new messages go to (the composer's primary engine), saved in bot.json. */
   setAnswerWith(to: AnswerTarget): ResultOf<"heads.answerWith"> {
     const owner = this.owner;
-    owner.headsSettings.answerWith = fitted(owner.headsSettings, to, owner.appPrimary());
-    owner.saveHeads();
-    owner.headsChanged();
-    return { answerWith: owner.headsSettings.answerWith ?? resolvePrimary(owner.headsSettings, owner.appPrimary()) };
+    owner.headsSettings.answerWith = fitted(owner.headsSettings, to, owner.group.appPrimary());
+    owner.settings.saveHeads();
+    owner.views.headsChanged();
+    return { answerWith: owner.headsSettings.answerWith ?? resolvePrimary(owner.headsSettings, owner.group.appPrimary()) };
   }
 
   /** The app's default primary engine (Settings → Engines and models); null: none chosen. */

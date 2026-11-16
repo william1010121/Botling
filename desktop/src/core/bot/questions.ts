@@ -52,11 +52,11 @@ export class BotQuestions {
   changed(record: ChatRecord) { this.host.changed(record); }
   updated() { this.host.updated(); }
   line(id: string): ChatRecord | null { return this.host.line(id); }
-  hostFacts(): HostFacts { return this.host.hostFacts(); }
+  hostFacts(): HostFacts { return this.host.workers.hostFacts(); }
   conduct(actions: ConductorAction[]): void { this.host.conduct(actions); }
   send(...args: Parameters<Bot["send"]>): ReturnType<Bot["send"]> { return this.host.send(...args); }
   tellHead(text: string) { this.host.tellHead(text); }
-  resolveDecision(messageId: string, index: number | null, text: string | undefined): boolean | null { return this.host.resolveDecision(messageId, index, text); }
+  resolveDecision(messageId: string, index: number | null, text: string | undefined): boolean | null { return this.host.decisions.resolveDecision(messageId, index, text); }
 
   // ---- State this class owns (moved from `Bot`; `Bot` keeps an accessor for each) ----
   /** The tool approvals waiting for an answer, by message id. */
@@ -89,13 +89,13 @@ export class BotQuestions {
 
   /** The owner's side: a card for a worker it owns that another bot runs; the pick goes back to that bot's `head`. */
   askForWorker(head: ApprovalAnswerer, item: WorkerApproval): void {
-    if (this.options.primary) return this.options.primary.askForWorker(head, item);
+    if (this.options.primary) return this.options.primary.questions.askForWorker(head, item);
     this.ask(head as unknown as AgentHead, { kind: "permission", ...item }, null);
   }
 
   /** A worker's approval was withdrawn: its card here (if any) is no longer needed. */
   settleWorkerApproval(requestId: string): void {
-    if (this.options.primary) return this.options.primary.settleWorkerApproval(requestId);
+    if (this.options.primary) return this.options.primary.questions.settleWorkerApproval(requestId);
     for (const [id, approval] of [...this.approvals]) if (approval.lasting && approval.requestId === requestId) this.settle(id, NO_LONGER_NEEDED, false);
   }
 
@@ -112,7 +112,7 @@ export class BotQuestions {
   }
 
   refuseIfClosed(): void {
-    if (this.options.primary) return this.options.primary.refuseIfClosed();
+    if (this.options.primary) return this.options.primary.questions.refuseIfClosed();
     if (this.problem) throw new ContractError("conflict", this.problem);
     if (this.profile.problem) throw new ContractError("conflict", this.profile.problem);
     if (this.shuttingDown) throw new ContractError("core_unavailable", "The core is shutting down.");
@@ -343,7 +343,7 @@ export class BotQuestions {
     if (picks) {
       const record = this.records.find((candidate) => candidate.id === messageId);
       if (!record || !isOpenQuestion(record) || !picks[index]) return { accepted: false };
-      this.cardPicks.delete(messageId);
+      this.host.guests.forgetPicks(messageId);
       record.chosen = index;
       this.changed(record);
       this.conduct(this.conductor.picked(picks[index]!));

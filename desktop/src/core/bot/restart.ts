@@ -38,7 +38,7 @@ export class BotRestart {
   private botFor(head: Engine): Bot | null { return this.ctx.botFor(head); }
   private log(line: string) { this.ctx.log(line); }
   private get head(): AgentHead | null { return this.host.head; }
-  private get loadedPluginStamp(): string[] | null { return this.host.loadedPluginStamp; }
+  private get loadedPluginStamp(): string[] | null { return this.host.headRun.loadedPluginStamp; }
   private get tidying(): boolean { return this.host.tidying; }
   private get claimHold() { return this.host.claimHold; }
   private get deferred(): Turn | null { return this.host.deferred; }
@@ -49,7 +49,7 @@ export class BotRestart {
   private get turn(): Turn | null { return this.host.turn; }
   private get paused() { return this.host.paused; }
   private get ownWorkRunning(): boolean { return this.host.ownWorkRunning; }
-  private ownWorkWords(): string { return this.host.ownWorkWords(); }
+  private ownWorkWords(): string { return this.host.workers.ownWorkWords(); }
   private appNotice(text: string, choices?: { label: string; recommended?: boolean; detail?: string }[], onPick?: (index: number) => void): string { return this.host.appNotice(text, choices, onPick); }
   private deliverTo(...args: Parameters<Bot["deliverTo"]>): Turn { return this.host.deliverTo(...args); }
   private next() { this.host.next(); }
@@ -101,7 +101,7 @@ export class BotRestart {
    * "may read <folder>": a folder you allowed is one more `--add-dir`). Asleep, the next wake has it anyway.
    */
   restartBeforeNextMessage(reason: { told: string; shown: string } | null = null) {
-    if (this.options.primary) { this.options.primary.restartBeforeNextMessage(reason); return; }
+    if (this.options.primary) { this.options.primary.restarts.restartBeforeNextMessage(reason); return; }
     this.request(reason);
   }
 
@@ -361,7 +361,7 @@ export class BotRestart {
   retainRestartIdentity(entry: RestartEntry): Bot {
     const bot=this.botFor(entry.engine);
     if(!bot || !entry.sessionId)throw Error("Original engine/session unavailable; no replacement was created.");
-    bot.headRun.sessionAdopted({sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.savedPromptHash(entry.sessionId)});bot.headRun.briefingDue();
+    bot.headRun.sessionAdopted({sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.restarts.savedPromptHash(entry.sessionId)});bot.headRun.briefingDue();
     bot.headRun.adoptedAs(!!entry.continue||!!entry.workers?.length||bot.restartedWorkers(entry).length>0);
     bot.store.saveHead(bot.session);
     bot.restarts.recoveryStarted();
@@ -431,7 +431,7 @@ export class BotRestart {
       const bot = this.botFor(entry.engine);
       if (!bot) continue;
       if (entry.sessionId) {
-        bot.headRun.sessionAdopted({ sessionId: entry.sessionId, started: true, ...bot.savedPromptHash(entry.sessionId) });
+        bot.headRun.sessionAdopted({ sessionId: entry.sessionId, started: true, ...bot.restarts.savedPromptHash(entry.sessionId) });
         bot.headRun.adoptedAs(!!entry.continue);
         // The same conversation: no wake briefing (what was cut off in the background is said with its next message).
         bot.headRun.briefingGiven();

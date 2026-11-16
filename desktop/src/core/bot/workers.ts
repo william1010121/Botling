@@ -63,35 +63,34 @@ export class BotWorkers {
   private get shuttingDown() { return this.host.shuttingDown; }
   private get turns() { return this.host.turns; }
   private get swapHold() { return this.host.swapHold; }
-  private get dirtySubagents() { return this.host.dirtySubagents; }
-  private get speaker() { return this.host.speaker; }
+  private get speaker() { return this.host.views.speaker; }
   private get commandFolder() { return this.host.commandFolder; }
-  private get context(): ComponentsContext | null { return this.host.context; }
-  private get inHeadSubagents() { return this.host.inHeadSubagents; }
-  private get backgroundWorkRunning() { return this.host.backgroundWorkRunning; }
+  private get context(): ComponentsContext | null { return this.host.cards.context; }
+  private get inHeadSubagents() { return this.host.tasks.inHeadSubagents; }
+  private get backgroundWorkRunning() { return this.host.tasks.backgroundWorkRunning; }
   private persist(soon = false) { this.host.persist(soon); }
   private messageView(record: ChatRecord) { return this.host.messageView(record); }
   private changed(record: ChatRecord) { this.host.changed(record); }
   private updated() { this.host.updated(); }
-  private rowsChanged(force = false) { this.host.rowsChanged(force); }
+  private rowsChanged(force = false) { this.host.subagentRowBook.rowsChanged(force); }
   private saveSubagents(progress = false, changed?: SubagentRecord) { this.host.saveSubagents(progress, changed); }
-  private subagentHistory(subagent: SubagentRecord): SubagentHistory { return this.host.subagentHistory(subagent); }
+  private subagentHistory(subagent: SubagentRecord): SubagentHistory { return this.host.views.subagentHistory(subagent); }
   private routeWorkerApproval(head: ApprovalAnswerer, item: Extract<StreamItem, { kind: "permission" }>) { return this.host.routeWorkerApproval(head, item); }
   private prompts(): BotPrompts { return this.host.prompts(); }
-  private sessionStart(resume: boolean, prompts: BotPrompts): SessionStart { return this.host.sessionStart(resume, prompts); }
+  private sessionStart(resume: boolean, prompts: BotPrompts): SessionStart { return this.host.headRun.sessionStart(resume, prompts); }
   private emitSteps(turn: Turn) { this.host.emitSteps(turn); }
-  private recordOutage(arg: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { this.host.recordOutage(arg); }
+  private recordOutage(arg: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { this.host.progress.recordOutage(arg); }
   private addBackgroundTask(id: string, kind: BackgroundKind, title: string) { this.host.addBackgroundTask(id, kind, title); }
-  private endSubagentTasks(ownerId: string) { this.host.endSubagentTasks(ownerId); }
+  private endSubagentTasks(ownerId: string) { this.host.tasks.endSubagentTasks(ownerId); }
   private endBackground(id: string, status: string, summary: string | null) { this.host.endBackground(id, status, summary); }
   private checkSettingsHold() { this.host.checkSettingsHold(); }
-  private noteProgressOf(item: CodexItem) { this.host.noteProgressOf(item); }
-  private noteRequest(event: RequestEvent) { this.host.noteRequest(event); }
-  private scheduleIdle() { this.host.scheduleIdle(); }
-  private ownComponents() { return this.host.ownComponents(); }
+  private noteProgressOf(item: CodexItem) { this.host.progress.noteProgressOf(item); }
+  private noteRequest(event: RequestEvent) { this.host.views.noteRequest(event); }
+  private scheduleIdle() { this.host.headRun.scheduleIdle(); }
+  private ownComponents() { return this.host.cards.ownComponents(); }
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) { this.host.ask(head, item, turn); }
-  private noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) { this.host.noteToolCall(item); }
-  private showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) { this.host.showDenial(denial); }
+  private noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) { this.host.questions.noteToolCall(item); }
+  private showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) { this.host.questions.showDenial(denial); }
   private settle(id: string, answer: string, deny: boolean) { this.host.settle(id, answer, deny); }
 
   // ---- Moved from `Bot` ----
@@ -102,6 +101,14 @@ export class BotWorkers {
    */
   managedTaskHandoffs = new Map<string, string>();
   managedHandbacks = new Set<string>();
+  /** Worker `task` ended: the hand-off it owned (if any) is no longer routed to it; returns that hand-off's id. */
+  endTaskHandoff(task: string): string | undefined {
+    const handoff = this.managedTaskHandoffs.get(task);
+    if (handoff) this.managedTaskHandoffs.delete(task);
+    return handoff;
+  }
+  /** The hand-off `handoff` is answered by its worker's report: whether it was waiting for one. */
+  takeManagedHandback(handoff: string) { return this.managedHandbacks.delete(handoff); }
   /** Codex: workers at work or their reports waiting (the bot stays awake). */
   managedPending = false;
   /** The head's process is gone: nothing it managed is pending. */
@@ -126,7 +133,7 @@ export class BotWorkers {
     for (const bot of this.members) {
       const found = bot.subagents.get(nativeId);
       if (!found) continue;
-      const steps = found.steps.length ? found.steps : bot.subagentHistory(found).steps;
+      const steps = found.steps.length ? found.steps : bot.views.subagentHistory(found).steps;
       return { status: found.status, steps: [...steps], result: found.result ?? "", execution: found.execution ?? null, agentID: typeof found.agentID === "string" ? found.agentID : null, background: found.background };
     }
     return null;
@@ -134,7 +141,7 @@ export class BotWorkers {
 
   /** Its heads' subagent lists as they are now, for the registry's reconcile at start. */
   hostBooks(): StartupHost[] {
-    return this.members.map((bot) => ({ ...bot.hostFacts(), running: bot.head?.running ?? false, list: bot.subagents.list, workers: bot.workerViews }));
+    return this.members.map((bot) => ({ ...bot.workers.hostFacts(), running: bot.head?.running ?? false, list: bot.subagents.list, workers: bot.workers.workerViews }));
   }
 
   /** One of its own rows by native id (for the owner's list when another bot owns it), with the head that holds it. */
@@ -155,7 +162,7 @@ export class BotWorkers {
     for (const bot of this.members) {
       const found = bot.subagents.find(key);
       if (!found) continue;
-      const steps = found.steps.length ? found.steps : bot.subagentHistory(found).steps;
+      const steps = found.steps.length ? found.steps : bot.views.subagentHistory(found).steps;
       const runtime = (found as { runtime?: { engine?: unknown } }).runtime?.engine;
       const engine: Engine = runtime === "codex" || runtime === "agy" || runtime === "claude" ? runtime : bot.engine;
       return {
@@ -320,8 +327,8 @@ export class BotWorkers {
   /** Workers started in a call-in turn, by worker id (`CallInWork`): kept in the owner's settings, so a restart keeps them. */
   get callInWork(): CallInWorkBook {
     const bot = this.owner;
-    bot.callInWorkBook ??= new CallInWorkBook({ load: () => bot.store.loadSettings().callInWork, save: (work) => bot.store.saveSetting("callInWork", work) });
-    return bot.callInWorkBook;
+    bot.workers.callInWorkBook ??= new CallInWorkBook({ load: () => bot.store.loadSettings().callInWork, save: (work) => bot.store.saveSetting("callInWork", work) });
+    return bot.workers.callInWorkBook;
   }
   callInWorkBook: CallInWorkBook | null = null;
 
@@ -572,7 +579,7 @@ export class BotWorkers {
         const wasRunning = this.subagents.get(item.id)?.status === "running";
         if (this.subagents.toolResult(item)) {
           // A nested Agent result changes both the parent's tool step and the child's record.
-          this.dirtySubagents.add(item.id);
+          this.host.subagentRowBook.markDirty(item.id);
           this.host.subagentChanged(this.subagents.get(item.parent ?? item.id));
         }
         if (wasRunning && this.subagents.get(item.id)?.status !== "running") this.host.subagentEnded(item.id);

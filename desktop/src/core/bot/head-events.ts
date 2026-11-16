@@ -59,20 +59,18 @@ export class HeadEvents {
   private get claudeMidTurn(): WeakSet<AgentHead> { return this.host.claudeMidTurn; }
   private get draining(): Bot["draining"] { return this.host.draining; }
   private get ending(): WeakSet<AgentHead> { return this.host.ending; }
-  private get managedHandbacks(): Set<string> { return this.host.managedHandbacks; }
-  private get managedTaskHandoffs(): Map<string, string> { return this.host.managedTaskHandoffs; }
   private get outage(): Bot["outage"] { return this.host.outage; }
   private get restartRecovery(): boolean { return this.host.restartRecovery; }
   private get scheduleCalls(): Bot["scheduleCalls"] { return this.host.scheduleCalls; }
-  private get sessionCost(): Bot["sessionCost"] { return this.host.sessionCost; }
+  private get sessionCost(): Bot["headRun"]["sessionCost"] { return this.host.headRun.sessionCost; }
   private get shuttingDown(): boolean { return this.host.shuttingDown; }
   private get steered(): Map<string, Turn> { return this.host.steered; }
-  private get tidyFollowUp(): Bot["tidyFollowUp"] { return this.host.tidyFollowUp; }
+  private get tidyFollowUp(): Bot["headRun"]["tidyFollowUp"] { return this.host.headRun.tidyFollowUp; }
   private get tidying(): boolean { return this.host.tidying; }
   private get toolCalls(): Bot["toolCalls"] { return this.host.toolCalls; }
   private get unbegun(): Bot["unbegun"] { return this.host.unbegun; }
-  private get inHeadSubagents(): SubagentRecord[] { return this.host.inHeadSubagents; }
-  private get lineMediaStore(): string { return this.host.lineMediaStore; }
+  private get inHeadSubagents(): SubagentRecord[] { return this.host.tasks.inHeadSubagents; }
+  private get lineMediaStore(): string { return this.host.delivery.lineMediaStore; }
   // Fields of `Bot` it writes (a setter for another owner's field: M7-S54 ... replace these by named transitions):
   // BotHead's transitions (M7-S57):
   private briefingDue() { this.host.headRun.briefingDue(); }
@@ -90,60 +88,60 @@ export class HeadEvents {
   // Methods of `Bot`:
   private add(record: ChatRecord) { return this.host.add(record); }
   private addBackgroundTask(id: string, kind: BackgroundKind, title: string) { return this.host.addBackgroundTask(id, kind, title); }
-  private addSubagentTask(ownerId: string, id: string, kind: BackgroundKind, title: string, detail: string) { return this.host.addSubagentTask(ownerId, id, kind, title, detail); }
-  private afterReplyHooks(record: ChatRecord) { return this.host.afterReplyHooks(record); }
-  private applyReactions(actions: { messageId: string; emoji: string; present: boolean }[]) { return this.host.applyReactions(actions); }
+  private addSubagentTask(ownerId: string, id: string, kind: BackgroundKind, title: string, detail: string) { return this.host.tasks.addSubagentTask(ownerId, id, kind, title, detail); }
+  private afterReplyHooks(record: ChatRecord) { return this.host.views.afterReplyHooks(record); }
+  private applyReactions(actions: { messageId: string; emoji: string; present: boolean }[]) { return this.host.recordsBook.applyReactions(actions); }
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) { return this.host.ask(head, item, turn); }
   private associateDecision(record: ChatRecord, reference: string | null, turn: Turn) { return this.host.associateDecision(record, reference, turn); }
   private bumpUnread() { return this.host.bumpUnread(); }
-  private cancelScheduled(cancellation: ScheduleCancellation, turn: Turn | null) { return this.host.cancelScheduled(cancellation, turn); }
+  private cancelScheduled(cancellation: ScheduleCancellation, turn: Turn | null) { return this.host.tasks.cancelScheduled(cancellation, turn); }
   private changed(record: ChatRecord) { return this.host.changed(record); }
-  private clearCodexRetry() { return this.host.clearCodexRetry(); }
+  private clearCodexRetry() { return this.host.progress.clearCodexRetry(); }
   private clearIdle() { return this.host.clearIdle(); }
   private clearUnbegun() { return this.host.clearUnbegun(); }
   private commandEnded(head: AgentHead, id: string, state: CommandState) { return this.host.commandEnded(head, id, state); }
   private deliver(turn: Turn, given?: AgentHead) { return this.host.deliver(turn, given); }
   private drained(head: AgentHead) { return this.host.drained(head); }
-  private findTask(id: string): BackgroundTask | undefined { return this.host.findTask(id); }
-  private handleRequests(requests: BotRequest[]): BotRequest[] { return this.host.handleRequests(requests); }
-  private headStopped(head: Engine) { return this.host.headStopped(head); }
-  private headWords(words: string) { return this.host.headWords(words); }
-  private hostFacts(): HostFacts { return this.host.hostFacts(); }
+  private findTask(id: string): BackgroundTask | undefined { return this.host.tasks.findTask(id); }
+  private handleRequests(requests: BotRequest[]): BotRequest[] { return this.host.decisions.handleRequests(requests); }
+  private headStopped(head: Engine) { return this.host.group.headStopped(head); }
+  private headWords(words: string) { return this.host.group.headWords(words); }
+  private hostFacts(): HostFacts { return this.host.workers.hostFacts(); }
   private insertDelivered(head: AgentHead, id: string) { return this.host.insertDelivered(head, id); }
-  private keepTasks(turn: Turn, record: ChatRecord | null) { return this.host.keepTasks(turn, record); }
+  private keepTasks(turn: Turn, record: ChatRecord | null) { return this.host.tasks.keepTasks(turn, record); }
   private messageView(record: ChatRecord): MessageView { return this.host.messageView(record); }
   private monitorState(monitor: CommandMonitor) { return this.host.monitorState(monitor); }
   private newSession() { return this.host.newSession(); }
   private newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn { return this.host.newTurn(origin, words, userId, ids); }
   private next(): void { return this.host.next(); }
-  private noteCodexRetry(item: Extract<CodexItem, { kind: "apiRetry" }>) { return this.host.noteCodexRetry(item); }
-  private noteProgressOf(item: CodexItem) { return this.host.noteProgressOf(item); }
-  private noteRequest(event: RequestEvent) { return this.host.noteRequest(event); }
-  private noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) { return this.host.noteToolCall(item); }
+  private noteCodexRetry(item: Extract<CodexItem, { kind: "apiRetry" }>) { return this.host.progress.noteCodexRetry(item); }
+  private noteProgressOf(item: CodexItem) { return this.host.progress.noteProgressOf(item); }
+  private noteRequest(event: RequestEvent) { return this.host.views.noteRequest(event); }
+  private noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) { return this.host.questions.noteToolCall(item); }
   private notice(text: string) { return this.host.notice(text); }
-  private onItemPending(pending: boolean) { return this.host.onItemPending(pending); }
+  private onItemPending(pending: boolean) { return this.host.workers.onItemPending(pending); }
   private onSubagentItem(item: CodexItem): boolean { return this.host.onSubagentItem(item); }
   private persist(soon?: boolean) { return this.host.persist(soon); }
-  private place(turn: Turn): ChatRecord { return this.host.place(turn); }
-  private placeSubagentTask(ownerId: string, task: BackgroundTask) { return this.host.placeSubagentTask(ownerId, task); }
-  private recordOutage(found: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { return this.host.recordOutage(found); }
-  private refreshScheduleDue() { return this.host.refreshScheduleDue(); }
-  private relayFollowUp(turn: Turn, status: Status, record: ChatRecord | null, error?: string) { return this.host.relayFollowUp(turn, status, record, error); }
-  private relayIfCallInWork(turn: Turn, workerId: string | null | undefined, news: CallInRelay["news"]) { return this.host.relayIfCallInWork(turn, workerId, news); }
+  private place(turn: Turn): ChatRecord { return this.host.headRun.place(turn); }
+  private placeSubagentTask(ownerId: string, task: BackgroundTask) { return this.host.tasks.placeSubagentTask(ownerId, task); }
+  private recordOutage(found: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { return this.host.progress.recordOutage(found); }
+  private refreshScheduleDue() { return this.host.tasks.refreshScheduleDue(); }
+  private relayFollowUp(turn: Turn, status: Status, record: ChatRecord | null, error?: string) { return this.host.workers.relayFollowUp(turn, status, record, error); }
+  private relayIfCallInWork(turn: Turn, workerId: string | null | undefined, news: CallInRelay["news"]) { return this.host.workers.relayIfCallInWork(turn, workerId, news); }
   private remove(record: ChatRecord) { return this.host.remove(record); }
-  private reportFinished(ids: string[]) { return this.host.reportFinished(ids); }
-  private retryApiLater(turn: Turn): boolean { return this.host.retryApiLater(turn); }
+  private reportFinished(ids: string[]) { return this.host.turns.reportFinished(ids); }
+  private retryApiLater(turn: Turn): boolean { return this.host.progress.retryApiLater(turn); }
   private routeWorkerApproval(head: ApprovalAnswerer, item: Extract<StreamItem, { kind: "permission" }>): boolean { return this.host.routeWorkerApproval(head, item); }
-  private routinesEdited() { return this.host.routinesEdited(); }
+  private routinesEdited() { return this.host.routines.routinesEdited(); }
   private saveSubagents(progress?: boolean, changed?: SubagentRecord) { return this.host.saveSubagents(progress, changed); }
   private settle(id: string, answer: string, deny: boolean) { return this.host.settle(id, answer, deny); }
-  private settleSessionSchedules() { return this.host.settleSessionSchedules(); }
+  private settleSessionSchedules() { return this.host.tasks.settleSessionSchedules(); }
   private settleTurnApprovals() { return this.host.settleTurnApprovals(); }
-  private showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) { return this.host.showDenial(denial); }
-  private steeredStarted(head: AgentHead, next: Turn) { return this.host.steeredStarted(head, next); }
-  private stopTasks() { return this.host.stopTasks(); }
-  private takeHandback(turn: Turn): boolean { return this.host.takeHandback(turn); }
-  private touchTask(id: string) { return this.host.touchTask(id); }
+  private showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) { return this.host.questions.showDenial(denial); }
+  private steeredStarted(head: AgentHead, next: Turn) { return this.host.turns.steeredStarted(head, next); }
+  private stopTasks() { return this.host.tasks.stopTasks(); }
+  private takeHandback(turn: Turn): boolean { return this.host.workers.takeHandback(turn); }
+  private touchTask(id: string) { return this.host.tasks.touchTask(id); }
   private updated() { return this.host.updated(); }
 
   // ---- Moved from `Bot` ----
@@ -196,11 +194,8 @@ export class HeadEvents {
         if (item.taskId) turn.ended.push(item.taskId);
         this.relayIfCallInWork(turn, item.taskId, "report");
         // The report of a worker that owns a hand-off goes back as that hand-off's reply (`managedWorkerReportStarted`).
-        const handoff = item.taskId ? this.managedTaskHandoffs.get(item.taskId) : undefined;
-        if (item.taskId && handoff) {
-          this.managedTaskHandoffs.delete(item.taskId);
-          if (this.managedHandbacks.delete(handoff)) { turn.conducted = true; turn.handoffId = handoff; }
-        }
+        const handoff = item.taskId ? this.host.workers.endTaskHandoff(item.taskId) : undefined;
+        if (handoff && this.host.workers.takeManagedHandback(handoff)) { turn.conducted = true; turn.handoffId = handoff; }
       }
       return;
     }
@@ -486,13 +481,13 @@ export class HeadEvents {
       if (parsed.displays.length) {
         record.displays = parsed.displays;
         // A library component it drew without having it goes on its list, if there is room (`countComponents`).
-        this.owner.drewComponents((parsed.displays as Display[]).map((display) => display.name));
+        this.owner.cards.drewComponents((parsed.displays as Display[]).map((display) => display.name));
       }
       this.associateDecision(record, parsed.decisionReference, turn);
       // <show id="tests"> updates that card in place; a reply that is only that shows no line of its own.
       if (record.displays?.some((display) => (display as Display).id)) {
         record.text = text;
-        if (this.owner.updateCards(record) && !turn.steps.length) {
+        if (this.owner.cards.updateCards(record) && !turn.steps.length) {
           if (!fresh) this.remove(record);
           this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: "" });
           this.turns.recordFinished(turn.id, status);
@@ -541,7 +536,7 @@ export class HeadEvents {
     // The other head hears the reply; a hand-off in it goes on (`headReplied`).
     // A bot with one head may hand work to the other CLI too (1.x: `sharesChat || tags.handoff`): its
     // other head is made for it (`makePartner`), and the reply comes back.
-    if (status === "done" && (this.sharesChat || tags.handoff)) this.owner.headReplied(record, this.engine, tags.handoff, this.takeHandback(turn), turn.handoffId);
+    if (status === "done" && (this.sharesChat || tags.handoff)) this.owner.group.headReplied(record, this.engine, tags.handoff, this.takeHandback(turn), turn.handoffId);
     else if (this.sharesChat) this.headStopped(this.engine);
     this.next();
   }

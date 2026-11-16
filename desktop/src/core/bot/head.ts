@@ -51,10 +51,10 @@ export class BotHead {
   private get shuttingDown(): boolean { return this.host.shuttingDown; }
   private get steered(): Map<string, Turn> { return this.host.steered; }
   private get allowRules(): string[] { return this.host.allowRules; }
-  private get backgroundWorkRunning(): boolean { return this.host.backgroundWorkRunning; }
-  private get inHeadSubagents(): SubagentRecord[] { return this.host.inHeadSubagents; }
-  private get routineStorePath(): string | null { return this.host.routineStorePath; }
-  private get workerCore(): WorkerCoreFactory { return this.host.workerCore; }
+  private get backgroundWorkRunning(): boolean { return this.host.tasks.backgroundWorkRunning; }
+  private get inHeadSubagents(): SubagentRecord[] { return this.host.tasks.inHeadSubagents; }
+  private get routineStorePath(): string | null { return this.host.routines.routineStorePath; }
+  private get workerCore(): WorkerCoreFactory { return this.host.workers.workerCore; }
   private get turn(): Turn | null { return this.host.turn; }
   private get turns() { return this.host.turns; }
   private get ignoreResults(): number { return this.host.ignoreResults; }
@@ -63,7 +63,7 @@ export class BotHead {
   private becomeEngine(to: Engine) { this.host.becomeEngine(to); }
   private begin(turn: Turn, head?: AgentHead) { this.host.begin(turn, head); }
   private botTool(name: BotToolName, args: Record<string, unknown>, caller?: ToolCaller): Promise<unknown> { return this.host.botTool(name, args, caller); }
-  private claudeWorkersOn(): boolean { return this.host.claudeWorkersOn(); }
+  private claudeWorkersOn(): boolean { return this.host.workers.claudeWorkersOn(); }
   private ensureClaudeWorkers(): ClaudeWorkers { return this.host.ensureClaudeWorkers(); }
   private newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn { return this.host.newTurn(origin, words, userId, ids); }
   private next() { this.host.next(); }
@@ -72,7 +72,7 @@ export class BotHead {
   private onWorkerOutput(item: CodexItem) { this.host.onWorkerOutput(item); }
   private prompts(): BotPrompts { return this.host.prompts(); }
   private promptHash(): string { return this.host.promptHash(); }
-  private routinesTool(args: Record<string, unknown>) { return this.host.routinesTool(args); }
+  private routinesTool(args: Record<string, unknown>) { return this.host.routines.routinesTool(args); }
   private settingsView(): BotSettingsView { return this.host.settingsView(); }
   private syncWorkerOwners() { this.host.syncWorkerOwners(); }
   private updated() { this.host.updated(); }

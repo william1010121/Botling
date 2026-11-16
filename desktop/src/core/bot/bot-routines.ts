@@ -100,7 +100,7 @@ export class BotRoutines {
 
   /** The store Codex's `app_routines` uses (null for a partner: its primary's). */
   get routineStorePath(): string | null {
-    return (this.owner.scheduledStore ?? null)?.file ?? null;
+    return (this.owner.routines.scheduledStore ?? null)?.file ?? null;
   }
 
   loadRoutines(): { jobs: Routine[]; scheduled: ScheduledRoutine[] } {
@@ -117,7 +117,7 @@ export class BotRoutines {
 
   /** What the app shows of its routines. */
   routinesView(now = Date.now()): ResultOf<"routines.list"> {
-    if (this.options.primary) return this.options.primary.routinesView(now);
+    if (this.options.primary) return this.options.primary.routines.routinesView(now);
     const { jobs, scheduled } = this.loadRoutines();
     const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
     const views: RoutineView[] = scheduled.slice(-150).map((job) => {
@@ -170,7 +170,7 @@ export class BotRoutines {
 
   /** Codex changed its routines through `app_routines`: the app's view follows. */
   routinesEdited() {
-    this.owner.routinesChanged();
+    this.owner.routines.routinesChanged();
   }
 
   /**
