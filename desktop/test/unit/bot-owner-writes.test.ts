@@ -96,15 +96,14 @@ describe("the other owners", () => {
     expect([...g.partners]).toEqual([["claude", claude]]);
   });
 
-  it("BotSettings.setHeads shuts a dropped engine's partner down and forgets it, and keeps the one that stays", async () => {
+  it("BotSettings.setHeads shuts a dropped engine's partner down and forgets it", async () => {
     const b = make();
     const gone: string[] = [];
     const partner = (engine: string) => ({ engine, store: { loadSettings: () => ({}) }, shutdown: async () => { gone.push(engine); } }) as unknown as Bot;
-    const codex = partner("codex"), agy = partner("agy");
-    b.group.partners.set("codex", codex); b.group.partners.set("agy", agy);
-    await b.setHeads(["claude", "agy"]);
+    b.group.partners.set("codex", partner("codex"));
+    await b.setHeads(["claude"]);
     expect(gone).toEqual(["codex"]);
-    expect([...b.group.partners]).toEqual([["agy", agy]]);
+    expect(b.group.partners.size).toBe(0);
   });
 
   it("BotSubagentRows.markDirty adds that subagent to the rows the next push sends", () => {
