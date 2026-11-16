@@ -239,6 +239,7 @@ function PluginRow({ plugin, lang, catalog, selected, updating, updated, onPick,
         <span className="plugin-names">
           <span className="plugin-title">{plugin.title}</span>
           <span className={`plugin-sub${needsAllow ? " allow" : ""}`}>{sub}</span>
+          {plugin.failure && <span className="plugin-sub failure" title={plugin.failure}>{plugin.failure}</span>}
         </span>
       </button>
       {needsAllow && <button type="button" className="plugin-allow-open" onClick={onAllow}>{w("plugins.allow")}</button>}

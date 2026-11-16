@@ -171,6 +171,12 @@ describe("Installed", () => {
     expect(own).not.toMatch(/plugin-update|plugin-remove|plugin-allow/);
   });
 
+  it("a plugin that is turned off with a reason says so on its row too, not only in its detail", () => {
+    const html = draw([mine, plugin("broke", { failure: "Held back: no Allow yet" })]);
+    expect(row(html, "broke")).toContain('<span class="plugin-sub failure" title="Held back: no Allow yet">Held back: no Allow yet</span>');
+    expect(row(html, "mine")).not.toContain("failure");
+  });
+
   it("the Dependencies tab holds the board (its frame), or says the board is off", () => {
     const deps = plugin("botling.deps", { title: "Plugin dependencies", builtIn: true });
     expect(draw([deps], "deps")).toMatch(/class="plugins-deps"><div class="plugin-slot" data-plugin="botling.deps" data-view="botling.deps.board"/);

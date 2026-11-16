@@ -328,7 +328,7 @@ describe("a plugin that waits for the user's Allow cannot be missed (2026-11-16)
   const tables = { [SRV_A]: null, [SRV_B]: { "plugin:aaa": row({ grants: { [HASH]: grant("read") } }), "plugin:zzz": row({ author: "bot" }) }, [SRV_C]: { "plugin:aaa": row({ grants: { [HASH]: grant("read") } }), "plugin:zzz": row({ author: "bot" }) } };
 
   it("listPlugins marks a plugin with no grant at its hash (not a built-in one) as needing Allow", () => {
-    const list = listPlugins(source({ [SRV_A]: { "plugin:note": row({ author: "builtin", grants: {} }), "plugin:ok": row({ grants: { [HASH]: grant("read") } }), "plugin:new": row({ author: "bot" }) } }));
+    const list = listPlugins(source({ [SRV_A]: { "plugin:note": row({ author: "builtin", manifest: manifest("write"), grants: { [HASH]: grant("write", "builtin") } }), "plugin:ok": row({ grants: { [HASH]: grant("read") } }), "plugin:new": row({ author: "bot" }) } }));
     expect(Object.fromEntries(list.map((p) => [p.name, p.needsAllow]))).toEqual({ new: true, note: false, ok: false });
   });
 
