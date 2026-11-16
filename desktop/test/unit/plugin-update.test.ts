@@ -1,12 +1,12 @@
 // The one-click plugin Update (core/plugin-store.ts `direct`, maintainer.ts `installNow`, plugins/registry.ts `revisions`,
-// plugins/asks-growth.ts, renderer/plugin-stamp.ts). Real folders in a temp dir, the core's registry, store and desk, and
-// the server's row reconcile on an in-memory server.db; the catalog is a fake fetch serving real (crafted) tarballs. No app,
-// no network, no git (BOTLING_GIT_PATH points nowhere, as plugin-catalog.test.ts).
+// renderer/plugin-stamp.ts). Real folders in a temp dir, the core's registry, store and desk, and the server's row reconcile on
+// an in-memory server.db; the catalog is a fake fetch serving real (crafted) tarballs. No app, no network, no git
+// (BOTLING_GIT_PATH points nowhere, as plugin-catalog.test.ts).
 //
 // What it shows: a newer catalog version is an update offer for an installed and for a built-in plugin; the Update button
-// (direct) swaps the code in the library with no install card and keeps the grant when the new version asks for no more;
-// asking more (a permission, a program part) still goes to the card, which names what is new; a built-in's update keeps the
-// built-in's rights only while its files are what the catalog check verified; Remove puts the built-in back.
+// (direct) swaps the code in the library with no install card and no comparison of what the new version asks for (grants are
+// not touched here: a plugin is trusted after its first install); a built-in's update keeps the built-in's rights (it is
+// still `builtIn`) only while its files are what the catalog check verified; Remove puts the built-in back.
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,16 +14,14 @@ import { gzipSync } from "node:zlib";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tempDir } from "../helpers";
 import { folderHash, OFFICIAL_INDEX_URL, type Fetch } from "../../src/core/plugins/catalog";
-import { askFactsOf, askGrowth } from "../../src/core/plugins/asks-growth";
 import { PluginStore } from "../../src/core/plugin-store";
 import { MaintainerDesk } from "../../src/core/maintainer";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
 import { ComponentLibrary } from "../../src/core/components/library";
-import { PluginRow, type PluginGrant } from "../../src/protocol/table-rows";
-import { mayRunPluginServerPart } from "../../src/server/botlingd";
+import { PluginRow } from "../../src/protocol/table-rows";
 import { installedFromRegistry, reconcilePluginRows } from "../../src/server/replica/plugin-rows";
-import { ownTableStream, putRow, readRowBody } from "../../src/server/replica/tables";
+import { ownTableStream, readRowBody } from "../../src/server/replica/tables";
 import { frameNeedsReload, pluginStamp } from "../../src/renderer/plugin-stamp";
 import { memoryStore } from "./server-slots-harness";
 
@@ -101,7 +99,6 @@ function fakeFetch(routes: Record<string, string | Buffer>): Fetch {
 
 const C1 = "1".repeat(40), C2 = "2".repeat(40);
 const tarball = (commit: string) => `https://codeload.github.com/william1010121/botling-plugins/tar.gz/${commit}`;
-const WRITE: Omit<PluginGrant, "at" | "grantedBy"> = { tier: "write", reads: [], requests: [] };
 
 /** The core's registry, store and desk over a temp folder; `builtIn` v1 (when given) ships with the app, else nothing does. */
 function setup(from: Spec, to: Spec, options: { builtIn?: boolean } = {}) {
@@ -137,11 +134,8 @@ function setup(from: Spec, to: Spec, options: { builtIn?: boolean } = {}) {
   const stream = ownTableStream(db);
   const reconcile = (now: number) => writer.submit((tx) => reconcilePluginRows(tx, stream, installedFromRegistry(registry.plugins), now, { log: () => {} }));
   const row = () => PluginRow.parse(readRowBody(db, stream, "plugin:demo"));
-  const grantAt = async (hash: string, grant: Omit<PluginGrant, "at" | "grantedBy">) => {
-    await writer.submit((tx) => putRow(tx, stream, "plugin:demo", { ...row(), grants: { ...row().grants, [hash]: { grantedBy: "user", ...grant, at: 2_000 } } }));
-  };
   const cards = () => notices.filter((notice) => notice.choices);
-  return { root, registry, desk, store, routes, notices, entry, offer, installV1, dataRoot, library, v1, v2, db, stream, reconcile, row, grantAt, cards };
+  return { root, registry, desk, store, routes, notices, entry, offer, installV1, dataRoot, library, v1, v2, db, stream, reconcile, row, cards };
 }
 
 beforeEach(() => { vi.stubEnv("BOTLING_GIT_PATH", "/nonexistent/git"); });
@@ -177,12 +171,11 @@ describe("a newer catalog version is an update offer", () => {
 });
 
 describe("Update (direct) of an installed plugin", () => {
-  it("asks for no more: no card, the new code is live in the library and the host spec, the grant is carried, the server part may run", async () => {
-    const t = setup({ permissions: ["files", "bots"], host: true }, { permissions: ["files"], host: true });
+  it("no card: the new code is live in the library and the host spec, the old version is kept for Revert, the row follows the new code", async () => {
+    const t = setup(SAME, SAME);
     await t.installV1();
     await t.reconcile(1_000);
     const oldHash = folderHash(t.library);
-    await t.grantAt(oldHash, WRITE);
     const before = t.registry.hostSpecs(t.dataRoot)[0]!;
     expect(before).toMatchObject({ name: "demo", version: "1.0.0", main: join(t.library, "dist", "host.mjs") });
 
@@ -201,64 +194,48 @@ describe("Update (direct) of an installed plugin", () => {
     const after = t.registry.hostSpecs(t.dataRoot)[0]!;
     expect(after).toMatchObject({ name: "demo", version: "1.1.0", main: before.main });
     expect(after.fingerprint).not.toBe(before.fingerprint);
-    // The row follows, and the grant goes with it (fewer asks: lowered to what the new code asks for).
+    // The row follows the new code (its hash is what the page's loader and the host's reload key on).
     await t.reconcile(3_000);
     const newHash = folderHash(t.library);
     expect(newHash).not.toBe(oldHash);
     expect(t.row().codeHash).toBe(newHash);
-    expect(t.row().grants[newHash]).toMatchObject({ grantedBy: "user" });
-    expect(mayRunPluginServerPart(() => t.db, t.stream, "demo", newHash)).toBe(true);
     // The old version is kept for Revert.
     expect(t.desk.previousOf("demo")).toMatchObject({ version: "1.0.0" });
   });
 
-  it.each([
-    ["a new permission", { permissions: ["files"], host: true }, { permissions: ["files", "exec"], host: true }, "permission exec"],
-    ["a new program part", { permissions: ["files"], host: false }, { permissions: ["files"], host: true }, "part host"],
-    ["a new bot tools folder", { permissions: ["files"], host: false }, { permissions: ["files"], host: false, claude: true }, "part claude"],
-  ] as Array<[string, Spec, Spec, string]>)("asks for more (%s): the card names it, nothing changes until Install, and the server still wants Allow", async (_label, from, to, grew) => {
-    const t = setup(from, to);
+  it("no comparison of what it asks for: a version with a new permission, a program part and a bot tools folder is swapped the same way", async () => {
+    const t = setup({ permissions: ["files"], host: false }, { permissions: ["files", "exec"], host: true, claude: true });
     await t.installV1();
-    await t.reconcile(1_000);
-    const oldHash = folderHash(t.library);
-    await t.grantAt(oldHash, WRITE);
     await t.offer();
-
+    const cardsBefore = t.cards().length;
     const view = await t.store.install("demo", { direct: true });
-    const card = t.cards().at(-1)!;
-    expect(card.choices!.map((choice) => choice.label)).toEqual(["Install", "Don't install"]);
-    expect(card.text).toContain('Update the plugin "Demo" from 1.0.0 to 1.1.0?');
-    expect(card.text).toContain(`This update asks for more than the running version: ${grew}.`);
-    expect(t.entry(view).status).toEqual({ kind: "asking", message: `This update asks for more than the running version: ${grew}.` });
-    // Nothing moved.
-    expect(t.registry.plugin("demo")!.manifest.version).toBe("1.0.0");
-    expect(folderHash(t.library)).toBe(oldHash);
-
-    // Don't install: still nothing, and it can be asked again.
-    card.answer!(1);
-    expect(t.entry().status).toEqual({ kind: "declined", message: null });
-    expect(folderHash(t.library)).toBe(oldHash);
-    await t.store.install("demo", { direct: true });
-    t.cards().at(-1)!.answer!(0);
-    expect(t.registry.plugin("demo")!.manifest.version).toBe("1.1.0");
-    expect(t.entry().status).toEqual({ kind: "installed", message: null });
-
-    // The server's carry refuses the grown asks: the new hash has no grant, the program part is held back until Allow.
-    await t.reconcile(3_000);
-    const newHash = folderHash(t.library);
-    expect(Object.hasOwn(t.row().grants, newHash)).toBe(false);
-    expect(mayRunPluginServerPart(() => t.db, t.stream, "demo", newHash)).toBe(false);
+    expect(t.cards().length).toBe(cardsBefore);
+    expect(t.entry(view).status).toEqual({ kind: "installed", message: null });
+    expect(t.registry.plugin("demo")).toMatchObject({ manifest: { version: "1.1.0" } });
+    expect(folderHash(t.library)).toBe(expectedHash(t.v2));
+    expect(t.registry.hostSpecs(t.dataRoot)[0]).toMatchObject({ name: "demo", version: "1.1.0" });
   });
 
-  it("an update that is not direct (the Explore list's Install on an older copy) still asks, with no growth line when nothing grew", async () => {
+  it("a plugin installed from outside (not built in) is swapped as an ordinary library plugin", async () => {
+    const t = setup(SAME, SAME);
+    await t.installV1();
+    await t.offer();
+    await t.store.install("demo", { direct: true });
+    expect(t.registry.plugin("demo")).toMatchObject({ builtIn: false });
+    expect(t.registry.plugin("demo")!.replacesBuiltIn).toBeUndefined();
+    expect(t.registry.revisionOf("demo")).toBe(expectedHash(t.v2));
+  });
+
+  it("an update that is not direct (the Explore list's Install on an older copy) still asks on the card", async () => {
     const t = setup(SAME, SAME);
     await t.installV1();
     await t.offer();
     await t.store.install("demo");
     const card = t.cards().at(-1)!;
     expect(card.text).toContain('Update the plugin "Demo" from 1.0.0 to 1.1.0?');
-    expect(card.text).not.toContain("asks for more");
+    expect(card.choices!.map((choice) => choice.label)).toEqual(["Install", "Don't install"]);
     expect(t.entry().status).toEqual({ kind: "asking", message: null });
+    expect(t.registry.plugin("demo")!.manifest.version).toBe("1.0.0");
   });
 
   it("a failed check refuses before anything changes (hash mismatch), direct or not", async () => {
@@ -275,14 +252,13 @@ describe("Update (direct) of an installed plugin", () => {
 });
 
 describe("a built-in plugin can be updated the same way", () => {
-  it("asks for no more: no card, the update runs in place of the built-in with the built-in's rights (row author, write grant, server part, appDataDir)", async () => {
+  it("no card: the update runs in place of the built-in, still built in (its row stays the built-in's, appDataDir kept)", async () => {
     const t = setup(SAME, SAME, { builtIn: true });
     await t.store.refresh();
     expect(t.registry.plugin("demo")).toMatchObject({ builtIn: true, installedFrom: null });
     await t.reconcile(1_000);
     const shippedHash = t.row().codeHash;
     expect(t.row()).toMatchObject({ author: "builtin" });
-    expect(t.row().grants[shippedHash]).toMatchObject({ tier: "write", grantedBy: "builtin" });
     await t.offer();
     expect(t.registry.hostSpecs(t.dataRoot)[0]!.version).toBe("1.0.0");
 
@@ -296,28 +272,13 @@ describe("a built-in plugin can be updated the same way", () => {
     const spec = t.registry.hostSpecs(t.dataRoot)[0]!;
     expect(spec).toMatchObject({ version: "1.1.0", main: join(t.library, "dist", "host.mjs") });
     expect(spec.appDataDir).toBeDefined();
-    // The rows: still the built-in's, at the new hash, with its own write grant: the server part may run.
+    // The row: still the built-in's, at the new hash.
     await t.reconcile(3_000);
     const newHash = folderHash(t.library);
     expect(newHash).not.toBe(shippedHash);
     expect(t.row()).toMatchObject({ author: "builtin", codeHash: newHash });
-    expect(t.row().grants[newHash]).toMatchObject({ tier: "write", grantedBy: "builtin" });
-    expect(mayRunPluginServerPart(() => t.db, t.stream, "demo", newHash)).toBe(true);
     // The built-in's version is untouched in the app.
     expect(folderHash(join(t.root, "app-plugins", "demo"))).toBe(expectedHash(t.v1));
-  });
-
-  it("asks for more: the card names it and nothing is installed until Install", async () => {
-    const t = setup({ permissions: ["files"], host: true }, { permissions: ["files", "exec"], host: true }, { builtIn: true });
-    await t.store.refresh();
-    await t.offer();
-    await t.store.install("demo", { direct: true });
-    const card = t.cards().at(-1)!;
-    expect(card.text).toContain("This update asks for more than the running version: permission exec.");
-    expect(existsSync(t.library)).toBe(false);
-    expect(t.registry.plugin("demo")).toMatchObject({ builtIn: true, installedFrom: null, manifest: { version: "1.0.0" } });
-    card.answer!(0);
-    expect(t.registry.plugin("demo")).toMatchObject({ builtIn: true, replacesBuiltIn: "1.0.0", manifest: { version: "1.1.0" } });
   });
 
   it("the built-in's rights last only while the files are what the catalog check verified: one changed byte makes it an ordinary library copy", async () => {
@@ -332,12 +293,10 @@ describe("a built-in plugin can be updated the same way", () => {
     appendFileSync(join(t.library, "dist", "host.mjs"), "// edited by hand\n");
     t.registry.rescan(true);
     expect(t.registry.plugin("demo")).toMatchObject({ builtIn: false, replacesBuiltIn: "1.0.0", manifest: { version: "1.1.0" } });
-    // Its row is a user's now: the built-in grant at the old hash does not run the edited code.
+    // Its row is a user's now: edited code does not run as the built-in.
     await t.reconcile(4_000);
-    const editedHash = folderHash(t.library);
-    expect(editedHash).not.toBe(verifiedHash);
+    expect(folderHash(t.library)).not.toBe(verifiedHash);
     expect(t.row().author).toBe("user");
-    expect(mayRunPluginServerPart(() => t.db, t.stream, "demo", editedHash)).toBe(false);
   });
 
   it("the record is kept across a restart (plugins.json), and a library copy with no catalog record is not built in", async () => {
@@ -395,25 +354,6 @@ describe("a built-in plugin can be updated the same way", () => {
     await t.store.install("demo", { direct: true });
     expect(t.registry.plugin("demo")).toMatchObject({ builtIn: true, replacesBuiltIn: "1.0.0" });
     expect(t.registry.revisionOf("demo")).toBe(expectedHash(t.v2));
-  });
-});
-
-describe("what a new version asks for that the old one did not (asks-growth.ts)", () => {
-  it("lists new permissions and parts, in the order of the new version; fewer or equal asks nothing", () => {
-    const before = askFactsOf({ ccb: { permissions: ["files", "bots"], host: "dist/host.mjs" } });
-    expect(askGrowth(before, askFactsOf({ ccb: { permissions: ["bots", "files"], host: "dist/host.mjs" } }))).toEqual([]);
-    expect(askGrowth(before, askFactsOf({ ccb: { permissions: ["files"] } }))).toEqual([]);
-    expect(askGrowth(before, askFactsOf({ ccb: { permissions: ["files", "bots", "network", "exec"], host: "x", claude: "claude" } }))).toEqual(["permission exec", "permission network", "part claude"]);
-    expect(askGrowth(askFactsOf({}), askFactsOf({ ccb: { host: "h", claude: "c" } }))).toEqual(["part host", "part claude"]);
-    expect(askGrowth(askFactsOf({}), askFactsOf({}))).toEqual([]);
-  });
-
-  it("a name from a manifest is one safe line, and the facts are capped", () => {
-    expect(askGrowth(askFactsOf({}), askFactsOf({ ccb: { permissions: ["ok.name-1", "bad name\n\u0007"] } }))).toEqual(["permission \"bad name\\n\\u0007\"", "permission ok.name-1"]);
-    const many = Array.from({ length: 30 }, (_, index) => `p${String(index).padStart(2, "0")}`);
-    expect(askFactsOf({ ccb: { permissions: many } }).permissions).toHaveLength(20);
-    expect(askFactsOf({ ccb: { permissions: ["x".repeat(100)] } }).permissions[0]).toHaveLength(40);
-    expect(askFactsOf({ ccb: { permissions: ["a", "a"] } }).permissions).toEqual(["a"]);
   });
 });
 

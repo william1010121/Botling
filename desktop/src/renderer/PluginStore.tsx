@@ -88,7 +88,7 @@ function StoreItem({ entry, lang, onInstall, onShowCard, onDismiss }: { entry: P
       <div className="plugin-meta">{permissions.length ? w("plugins.asksFor", { list: permissions.join(", ") }) : w("plugins.asksNothing")}</div>
       {status?.kind === "asking" && (
         <div className="plugin-row plugin-store-status">
-          <span className="plugins-result" role="status">{status.message ?? w("plugins.asking")}</span>
+          <span className="plugins-result" role="status">{w("plugins.asking")}</span>
           {onShowCard && <span className="plugin-buttons"><button type="button" onClick={onShowCard}>{w("plugins.showCard")}</button></span>}
         </div>
       )}

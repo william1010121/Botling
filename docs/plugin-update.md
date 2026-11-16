@@ -10,7 +10,7 @@
 - `renderer/shell/row-loader.ts`:row 的 `codeHash`/`files.web` 變了 → 只換那個 plugin(`Kernel.swap`),bytes 用 `files.web` 的 sha256 驗證。FE build manifest 只釘 `src/renderer/plugins/*`(shell 自己的 in-page plugin);其他 web part 本來就是 frame。
 - host:registry rescan → `Plugins.sync` → host `load`(只重載有變的 plugin)。
 
-缺的只有:(1) 一鍵(不走安裝卡)、(2) 內建 plugin 的更新版不能保住內建權限、(3) 開著的 panel / 底部面板 frame 更新後不重載。
+缺的只有:(1) 一鍵(不走安裝卡、不比權限)、(2) 內建 plugin 的更新版不能保住內建權限、(3) 開著的 panel / 底部面板 frame 更新後不重載。
 
 ## 1. 「新版」從哪來
 
@@ -28,22 +28,21 @@
 
 ## 3. 活換:host 與開著的 frame
 
-按下 Update(`plugins.storeInstall` 加 `direct: true`):下載 → 驗證 → 比 permission → (不增加)直接 `MaintainerDesk.installNow` → `registry.noteInstalled(name, source, sha256)` → rescan:
+按下 Update(`plugins.storeInstall` 加 `direct: true`):下載 → 驗證 → 直接 `MaintainerDesk.installNow` → `registry.noteInstalled(name, source, sha256)` → rescan:
 - host:`hostSpecs()` 的 `main`/`fingerprint` 變 → `Plugins.sync` → host 重載這個 plugin,**不重啟 app**。(已知:已在跑的 host part 在 row 追上之前會被 `serverPartAllowed` 擋一下,§18.3 讓 shared host 重啟一次;見 follow-up。)
 - row:`PluginHashCache` 重算 `codeHash`、`files.web` → botlingd 寫 row → 視窗收到 → `RowLoader` 換 web part(pinned 的 in-page hash 對不上就改走 frame)。
 - 開著的 frame:`plugins.panel` 回來的 `source` 在 `usePluginFrame` 裡是一次性的。新增 `renderer/plugin-stamp.ts`:載入時記 `version|codeHash`,每個 `plugins.updated` 比對,變了就重取 source、換 frame URL(不用關再開)。底部面板共用 `usePluginFrame`,同樣重載(Terminal 的 host 重載本來就會關掉 shell)。
 
-## 4. grant 怎麼比
+## 4. grant:這個功能不碰
 
-「要求更多」= 新版有任何一項舊版沒有:`ccb.permissions` 新項、新 program part(`host`)、新 bot tools folder(`claude`)(與 `plugin-grant-carry.ts` 同一個函式 `askGrowth`,core 與 server 共用,不複製)。
-- **不更多**(相同或更少)→ 直接裝。已安裝 plugin:server 的 `carryPluginGrant` 照舊把 grant 帶到新 hash(降到新 asks 的 tier)。內建 plugin:更新版仍 `author: builtin`,reconcile 照舊給 `write` 內建 grant。
-- **更多** → 不直接裝:走既有安裝卡(主 bot 聊天),卡上寫出新增項;不按「Install」什麼都不變。已安裝 plugin 按了之後,server 的 carry 仍拒絕(grant 是綁 hash 的),使用者還要在 Settings › Plugins 再 Allow 一次——這是刻意保守,見 follow-up。
+使用者決定(2026-11-16):安裝按一次(安裝卡)就全部放行,之後更新直接換,不比對權限、不問第二次(plugin 都是開源的)。所以這個功能**完全不讀寫 grant**,也不改 grant 相關程式(`plugin-grant-carry.ts`、`plugin-rows.ts` 的 grant 段原封不動;grant 與 code hash 脫鉤由另一條分支 `bot/v3-plugin-trust` 做)。
+- 按 Update(`direct: true`)= 驗證通過(來源 + 完整性)就 `installNow`,沒有安裝卡、沒有權限比較。
+- 內建 plugin 的更新版仍是 `builtIn: true`(只要檔案 == catalog 驗過的 sha256),所以 row 的 `author` 仍是 `builtin`;reconcile 對 `author: builtin` 的既有行為(照舊給 grant)不是這個功能寫的。
+- 與 `bot/v3-plugin-trust` 合併時的接點:兩邊都不改同一段 grant 程式;此分支只改 `core/plugins/registry.ts`(`revisions`、`builtIn` 判定)、`maintainer.ts`、`plugin-store.ts`、renderer frame 重載。
 
 ## 不做 / follow-up
 
-- 「卡上確認 = 同時批准新 grant」(省掉第二次 Allow)。
-- host 更新順序:先寫 row 再 sync,避免已在跑的 plugin 更新時 shared host 重啟一次。
-- 新增 MCP server 不算 permission 增加(server carry 也沒算);catalog 的 `parts` 欄位可用來比。
+- host 更新順序:先寫 row 再 sync,避免已在跑的 plugin 更新時 shared host 重啟一次(這個「擋一下」來自 grant 綁 hash 的檢查 `serverPartAllowed`;`bot/v3-plugin-trust` 讓 grant 與 hash 脫鉤後會自然消失,合併後再確認)。
 - 主動通知(badge 已有:Plugins 分頁 `Updates (n)`)。
 - 主題套用(`main.ts` 的 live theme apply)搬進 settings plugin:不小,列 follow-up。
 - 更新底部面板的 frame 會丟掉它的畫面狀態(Terminal 的 buffer)。

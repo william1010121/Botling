@@ -394,7 +394,7 @@ export class MaintainerDesk {
     });
   }
 
-  /** The one-click update (plugin-store.ts, asks no more than the running version): the same install as the card's "Install", with no question. Null when done, else why not. */
+  /** The one-click update (plugin-store.ts `direct`): the same install as the card's "Install", with no question. Null when done, else why not. */
   installNow(proposal: InstallProposal): string | null {
     return this.finishInstall(proposal);
   }

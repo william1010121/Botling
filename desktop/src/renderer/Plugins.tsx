@@ -82,7 +82,7 @@ export function PluginsPanel({ client, plugins, bots, onPanel, onClose, onAsked,
       <ul>
         {plugins?.plugins.map((plugin) => (
           <PluginItem key={plugin.name} plugin={plugin} lang={lang} catalog={catalog.get(plugin.name) ?? null}
-            onUpdate={() => { setProblem(null); void client.request({ type: "plugins.storeInstall", name: plugin.name, direct: true }).then((view) => { setStore(view); const status = view.entries.find((entry) => entry.name === plugin.name)?.status; if (status?.kind === "failed") setProblem(status.message); else if (status?.kind === "asking") setResult(status.message ?? say(lang, "plugins.asking")); else if (status?.kind === "installed") setResult(say(lang, "plugins.didInstall")); }, (failure) => setProblem(why(failure))); }}
+            onUpdate={() => { setProblem(null); void client.request({ type: "plugins.storeInstall", name: plugin.name, direct: true }).then((view) => { setStore(view); const status = view.entries.find((entry) => entry.name === plugin.name)?.status; if (status?.kind === "failed") setProblem(status.message); else if (status?.kind === "asking") setResult(say(lang, "plugins.asking")); else if (status?.kind === "installed") setResult(say(lang, "plugins.didInstall")); }, (failure) => setProblem(why(failure))); }}
             onRevert={() => run(client.request({ type: "plugins.revert", name: plugin.name }))}
             onRemove={() => run(client.request({ type: "plugins.remove", name: plugin.name }))}
             onEnable={(enabled) => run(client.request({ type: "plugins.enable", name: plugin.name, enabled }))}

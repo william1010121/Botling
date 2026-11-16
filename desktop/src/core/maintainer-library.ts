@@ -231,8 +231,6 @@ export interface InstallProposal {
   verified?: string;
   /** The version it replaces in the library (an update). */
   replacing?: string;
-  /** An update that asks for more than the running version did (`askGrowth`): why the card is shown instead of a one-click update. */
-  grew?: string[];
   /** The folder hash the catalog check verified (plugin-store.ts): recorded at install so a built-in's update keeps its rights while the files stay as checked. */
   verifiedSha256?: string;
 }
@@ -247,7 +245,6 @@ export function installSummary(proposal: InstallProposal): string {
   lines.push(`Author: ${proposal.author ?? "not given"}; license: ${manifest.license ?? "not given"}`);
   const permissions = (manifest.ccb?.permissions ?? []).map((permission) => PERMISSIONS[permission] ?? `"${permission}"`);
   lines.push(permissions.length ? `It will: ${permissions.join(", ")}` : "It asks for no permissions.");
-  if (proposal.grew?.length) lines.push(`This update asks for more than the running version: ${proposal.grew.join(", ")}.`);
   if (proposal.mcpServers.length) lines.push(`It gives the bots new tools (MCP): ${proposal.mcpServers.join(", ")}`);
   if (manifest.ccb?.host) lines.push("It has a program part that runs on your computer (permissions are only declared, not sandboxed).");
   return lines.join("\n");
