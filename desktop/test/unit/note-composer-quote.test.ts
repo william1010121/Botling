@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The Note's "ask about this block" (`ccb.composer.insertQuote`, botling.note 1.17.1): the frame asks the page to put a
 // block into its own bot's input box. Only the bot the frame was opened for; any other answers { inserted: false }.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION, type BotView } from "../../src/contract";
 import { Client } from "../../src/renderer/client";
 import { FrameBroker, registerPluginFrame } from "../../src/renderer/frame-broker";
@@ -10,6 +10,7 @@ import { panelPage } from "../../src/renderer/panel-page";
 import { askChatToQuote, chatQuoteAnswered, setComposerQuoter } from "../../src/renderer/composer-quote";
 import { parseFrameRequest } from "../../../Web/src/frame-protocol";
 import { until } from "../helpers";
+import { startChatPlugin } from "../chat-plugin-host";
 
 const BOT = "6A0B0000-0000-4000-8000-000000000030";
 const OTHER = "6A0B0000-0000-4000-8000-000000000031";
@@ -28,7 +29,10 @@ function setup(bot?: string) {
 }
 
 let stop: (() => void) | null = null;
-afterEach(() => { stop?.(); stop = null; document.body.innerHTML = ""; });
+// `botling.chat` provides the service the frame's quote calls (M7-07b); the quoter App registers is what it forwards to.
+let chat: Awaited<ReturnType<typeof startChatPlugin>> | null = null;
+beforeEach(async () => { chat = await startChatPlugin(); });
+afterEach(async () => { stop?.(); stop = null; document.body.innerHTML = ""; await chat?.stop(); chat = null; });
 
 describe("ccb.composer.insertQuote", () => {
   it("is a frame request of its own shape", () => {

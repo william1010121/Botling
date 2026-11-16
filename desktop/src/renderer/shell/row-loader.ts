@@ -486,3 +486,19 @@ export function followRows(loader: RowLoader, link: RowsLink): () => void {
   sync();
   return off;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Following the outbox
+
+/** What `followOutcomes` needs of the link (fe-link `FeLink` has it): an outbox item got its outcome. */
+export interface OutcomeLink {
+  on(listener: (event: { type: string; item?: OutcomeItem }) => void): () => void;
+}
+
+/**
+ * Places every outbox outcome the link reports (M7-11b, M7-09b FU-4): `RowLoader.route` decides where, by the item's own `via`.
+ * The link may report an item again ("delivered, then lost", D50): `route` drops the second, so an item is placed once. Returns the undo.
+ */
+export function followOutcomes(loader: RowLoader, link: OutcomeLink): () => void {
+  return link.on((event) => { if (event.type === "outcome" && event.item) loader.route(event.item); });
+}

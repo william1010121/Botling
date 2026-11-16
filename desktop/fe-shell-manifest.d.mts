@@ -12,6 +12,7 @@ export const PLUGIN_SOURCE_ROOTS: readonly string[];
 export function isPluginSourcePath(path: string): boolean;
 export function isNeutralPath(path: string): boolean;
 export function shellInputs(repoRoot: string): string[];
+export function shellAssetPaths(repoRoot: string): string[];
 export function blobId(bytes: Uint8Array): string;
 export function fsTree(repoRoot: string): FeTree;
 export function gitTree(repoRoot: string, ref: string): FeTree;
