@@ -89,6 +89,12 @@ export class BotRestart {
   restartWorkerRecords?: import('../agent/codex').WorkerRecord[];
   /** The restart's time: its next Codex head checks and resumes the workers its ledger says that restart interrupted. */
   restartWorkersSince?: number;
+  /** The restart's recovery is on: a lost resume starts no new session. */
+  recoveryStarted() { this.restartRecovery = true; }
+  /** The restart hands the head its ledger: the workers, the time of the restart, the provider turn. */
+  restartAdopted(workers: BotRestart["restartWorkerRecords"], since: number | undefined, providerTurn: string | undefined) { this.restartWorkerRecords = workers; this.restartWorkersSince = since; this.restartProviderTurn = providerTurn; }
+  /** A head took up the restart's hand-over: providerTurn, workerRecords, workersSince (in that order) are used up. */
+  restartResumed() { this.restartProviderTurn = undefined; this.restartWorkerRecords = undefined; this.restartWorkersSince = undefined; }
 
   /**
    * Its process starts again, in the same session, before its next message (1.x's `restart(_:)` for
@@ -174,7 +180,7 @@ export class BotRestart {
     if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
     let awake = false;
     for (const bot of owner.members) {
-      if (bot.engine === "claude") bot.freshSessionPending = true;
+      if (bot.engine === "claude") bot.headRun.freshSessionAsked();
       bot.restartFor({ told: "restarted at your user's request", shown: "manual restart" });
       awake ||= bot.restartPending;
     }
@@ -355,10 +361,10 @@ export class BotRestart {
   retainRestartIdentity(entry: RestartEntry): Bot {
     const bot=this.botFor(entry.engine);
     if(!bot || !entry.sessionId)throw Error("Original engine/session unavailable; no replacement was created.");
-    bot.session={sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.savedPromptHash(entry.sessionId)};bot.briefing=entry.sessionStarted===false;
-    bot.adoptedSession=!!entry.continue||!!entry.workers?.length||bot.restartedWorkers(entry).length>0;
+    bot.headRun.sessionAdopted({sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.savedPromptHash(entry.sessionId)});bot.headRun.briefingDue();
+    bot.headRun.adoptedAs(!!entry.continue||!!entry.workers?.length||bot.restartedWorkers(entry).length>0);
     bot.store.saveHead(bot.session);
-    bot.restartRecovery=true;
+    bot.restarts.recoveryStarted();
     return bot;
   }
 
@@ -394,9 +400,8 @@ export class BotRestart {
   adoptRestart(entry: RestartEntry) {
     const bot=this.host.retainRestartIdentity(entry);
     const restarted=bot.restartedWorkers(entry);
-    bot.restartWorkerRecords=entry.workers;
-    bot.restartWorkersSince=entry.restartedAt;
-    bot.restartProviderTurn=entry.providerTurnId;
+    // `?.`: native-child-restart.test.ts hands in a bare object as the bot (only `queue`), which has no collaborator.
+    bot.restarts?.restartAdopted(entry.workers,entry.restartedAt,entry.providerTurnId);
     // The coordinator's own app workers (own processes) are told; a Codex head's workers the app reconciles itself.
     const ownWorkers=[...(entry.claudeWorkers ?? []), ...restarted.filter(r=>r.adapter==="claude-process").map(r=>r.id)];
     const reconciled=[...(entry.workers ?? []).map(w=>w.id), ...restarted.filter(r=>r.adapter!=="claude-process").map(r=>r.id)];
@@ -426,13 +431,13 @@ export class BotRestart {
       const bot = this.botFor(entry.engine);
       if (!bot) continue;
       if (entry.sessionId) {
-        bot.session = { sessionId: entry.sessionId, started: true, ...bot.savedPromptHash(entry.sessionId) };
-        bot.adoptedSession = !!entry.continue;
+        bot.headRun.sessionAdopted({ sessionId: entry.sessionId, started: true, ...bot.savedPromptHash(entry.sessionId) });
+        bot.headRun.adoptedAs(!!entry.continue);
         // The same conversation: no wake briefing (what was cut off in the background is said with its next message).
-        bot.briefing = false;
+        bot.headRun.briefingGiven();
         bot.store.saveHead(bot.session);
         const cut = bot.takeInterruptedNote();
-        if (cut) bot.queuedNote = cut;
+        if (cut) bot.delivery.queueNote(cut);
         this.log(`core swap: ${entry.engine} resumes session ${entry.sessionId}${entry.continue ? " and carries on" : ""}`);
       }
       if (entry.continue && entry.sessionId) this.deliverTo(entry.engine, CONTINUE_NOTE, null, { origin: "app" });

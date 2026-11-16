@@ -59,6 +59,8 @@ export class BotSettings {
   // ---- Owned state ----
   headsSettings!: Heads;
   switchTo: Engine | null = null;
+  /** The switch of engine that waited for the head to end is taken (or is not wanted any more). */
+  clearSwitchTo() { this.switchTo = null; }
   switching = false;
 
   // ---- Moved from `Bot` ----

@@ -121,8 +121,8 @@ export class Bot {
   get records(): ChatRecord[] { return this.recordsBook.records; }
   set records(value: ChatRecord[]) { this.recordsBook.records = value; }
   /** Set when its chat file could not be read: nothing is written over it then. */
-  problem: string | null = null;
-  readOnly = false;
+  get problem(): string | null { return this.recordsBook.problem; }
+  get readOnly(): boolean { return this.recordsBook.readOnly; }
   get head(): AgentHead | null { return this.headRun.head; }
   set head(v: AgentHead | null) { this.headRun.head = v; }
   /** Which CLI this bot's head is. */
@@ -284,7 +284,7 @@ export class Bot {
    */
   /** The components and cards of this bot (M7-S43): made on first use, from this bot. */
   private botCards: BotCards | null = null;
-  private get cards(): BotCards { return this.botCards ??= new BotCards(this, this.ctx); }
+  get cards(): BotCards { return this.botCards ??= new BotCards(this, this.ctx); }
   /** The fields BotCards owns, as this bot has always had them (`componentList` and `componentsMayHaveChanged` are read by BotCards through other bots). */
   get componentList(): string[] | null { return this.cards.componentList; }
   set componentList(list: string[] | null) { this.cards.componentList = list; }
@@ -300,32 +300,32 @@ export class Bot {
   private botQuestions: BotQuestions | null = null;
   private get questions(): BotQuestions { return this.botQuestions ??= new BotQuestions(this, this.ctx); }
   private botProgress: BotProgress | null = null;
-  private get progress(): BotProgress { return this.botProgress ??= new BotProgress(this, this.ctx); }
+  get progress(): BotProgress { return this.botProgress ??= new BotProgress(this, this.ctx); }
   private botTasks: BotTasks | null = null;
-  private get tasks(): BotTasks { return this.botTasks ??= new BotTasks(this, this.ctx); }
+  get tasks(): BotTasks { return this.botTasks ??= new BotTasks(this, this.ctx); }
   private botGuests: BotGuests | null = null;
   private get guests(): BotGuests { return this.botGuests ??= new BotGuests(this, this.ctx); }
   private botSettings: BotSettings | null = null;
-  private get settings(): BotSettings { return this.botSettings ??= new BotSettings(this, this.ctx); }
+  get settings(): BotSettings { return this.botSettings ??= new BotSettings(this, this.ctx); }
   /** Made on first use, from this bot (M7-S42). */
   private botRoutines: BotRoutines | null = null;
   private get routines(): BotRoutines { return this.botRoutines ??= new BotRoutines(this, this.ctx); }
   private botRecords: BotRecords | null = null;
-  private get recordsBook(): BotRecords { return this.botRecords ??= new BotRecords(this, this.ctx); }
+  get recordsBook(): BotRecords { return this.botRecords ??= new BotRecords(this, this.ctx); }
   private botSubagentRows: BotSubagentRows | null = null;
   private get subagentRowBook(): BotSubagentRows { return this.botSubagentRows ??= new BotSubagentRows(this, this.ctx); }
   private botGroup: BotGroup | null = null;
-  private get group(): BotGroup { return this.botGroup ??= new BotGroup(this, this.ctx); }
+  get group(): BotGroup { return this.botGroup ??= new BotGroup(this, this.ctx); }
   private botDelivery: BotDelivery | null = null;
-  private get delivery(): BotDelivery { return this.botDelivery ??= new BotDelivery(this, this.ctx); }
+  get delivery(): BotDelivery { return this.botDelivery ??= new BotDelivery(this, this.ctx); }
   private botViews: BotViews | null = null;
   private get views(): BotViews { return this.botViews ??= new BotViews(this, this.ctx); }
   private botDecisions: BotDecisions | null = null;
   private get decisions(): BotDecisions { return this.botDecisions ??= new BotDecisions(this, this.ctx); }
   private botWorkers: BotWorkers | null = null;
-  private get workers(): BotWorkers { return this.botWorkers ??= new BotWorkers(this, this.ctx); }
+  get workers(): BotWorkers { return this.botWorkers ??= new BotWorkers(this, this.ctx); }
   private botRestart: BotRestart | null = null;
-  private get restarts(): BotRestart { return this.botRestart ??= new BotRestart(this, this.ctx); }
+  get restarts(): BotRestart { return this.botRestart ??= new BotRestart(this, this.ctx); }
   private botHead: BotHead | null = null;
   get headRun(): BotHead { return this.botHead ??= new BotHead(this, this.ctx); }
 
@@ -1093,7 +1093,7 @@ export class Bot {
   async shutdown({ tidy = true }: { tidy?: boolean } = {}) {
     // 1.x waits for each awake bot's tidy at quit with no time limit (`putEveryoneToSleep`).
     const tidyMs = tidy ? this.options.quitTidyMs ?? Number.POSITIVE_INFINITY : 0;
-    if (this.claimHold) { clearTimeout(this.claimHold.timer); this.claimHold.turn.resolve("stopped"); this.claimHold = null; }
+    if (this.claimHold) { clearTimeout(this.claimHold.timer); this.claimHold.turn.resolve("stopped"); this.group.dropClaim(); }
     const partner = Promise.allSettled(this.peers.map(peer => peer.shutdown({ tidy }))).then(results => results.find((r): r is PromiseRejectedResult => r.status === "rejected")?.reason);
     this.clearIdle();
     this.clearApiRetry();
