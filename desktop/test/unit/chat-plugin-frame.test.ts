@@ -66,6 +66,8 @@ describe("1. a card answer from the chat plugin, whose hash is trusted, is sent"
     const [result] = await one.start();
     expect(result).toEqual({ status: "loaded", name: CHAT_PLUGIN, codeHash: shipped.codeHash });
     expect(one.loaded()).toEqual([{ name: CHAT_PLUGIN, codeHash: shipped.codeHash }]);
+    // The list `approveRoute` asks is the one the loader trusts (the host's own, not the bundle's global one).
+    expect(one.feManifest).toEqual(chatOnly);
     expect(approveRoute(one.loaded()[0], one.feManifest)).toBe("direct");
     expect(chatAnswerRoute(one)).toBe("direct");
     const { client, sent } = fakeClient();
