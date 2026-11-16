@@ -3,14 +3,14 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { takeBackup, type BackupKind } from "./backup";
-import { runCompaction, type CompactionOptions } from "./compaction";
+import { runStartupVacuum, type CompactionOptions } from "./compaction";
 import { externalDiskNote, openReaderDb, openWriterDb } from "./connection";
 import { LATEST_SCHEMA_VERSION, migrate, MIGRATIONS, schemaVersion, SchemaTooNewError, type Migration } from "./schema";
 import type { Db } from "./sqlite";
 import { Writer, type Command, type WriterOptions } from "./writer";
 
 export { BACKUP_AT_KEY, backupFile, listBackups, newestBackup, stampTime, takeBackup, type BackupKind } from "./backup";
-export { PRUNED_KEY, PRUNE_MAX_SCHEMA, runCompaction, VACUUMED_KEY, type CompactionOptions, type CompactionReport } from "./compaction";
+export { PRUNED_KEY, PRUNE_DELAY_MS, PRUNE_MAX_SCHEMA, pruneInBackground, runStartupVacuum, startBackgroundPrune, VACUUMED_KEY, type BackgroundPrune, type CompactionOptions, type PruneDeps, type PruneReport, type VacuumReport } from "./compaction";
 export { externalDiskNote, openReaderDb, openWriterDb, WRITER_PRAGMAS } from "./connection";
 export { LATEST_SCHEMA_VERSION, migrate, MIGRATIONS, schemaVersion, SchemaTooNewError, type Migration } from "./schema";
 export type { Db, SqlRow, SqlValue, Statement } from "./sqlite";
@@ -19,7 +19,7 @@ export { MAX_BATCH, StoreCommitError, Writer, WriterClosedError, type BatchInfo,
 export interface OpenStoreOptions extends WriterOptions {
   /** Defaults to the released migrations; tests pass their own list. */
   migrations?: readonly Migration[];
-  /** The one-time prune + VACUUM of an oversized old file (compaction.ts); `false` turns it off. */
+  /** The one-time VACUUM (after the background prune, compaction.ts) of an oversized old file; `false` turns it off. */
   compaction?: CompactionOptions | false;
 }
 
@@ -51,8 +51,8 @@ export async function openServerStore(dataDir: string, options: OpenStoreOptions
   try {
     const from = schemaVersion(db);
     if (from > known) throw new SchemaTooNewError(from, known);
-    // Before the pre-migration backup, so a bloated file is trimmed first and the backup copies the small one.
-    if (existed && from > 0 && options.compaction !== false) runCompaction(db, options.compaction ?? {});
+    // Only once the background prune is done (its marker), and before the pre-migration backup, so the backup copies the small file.
+    if (existed && from > 0 && options.compaction !== false) runStartupVacuum(db, options.compaction ?? {});
     if (existed && from > 0 && from < known) {
       // v1 §7.6: a backup before every schema migration (the writer is not running yet, nothing else writes).
       await takeBackup(file, backupsDir, "pre-migration");
