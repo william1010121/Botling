@@ -123,6 +123,7 @@ export function pluginGuideFiles(): Record<string, string> {
     "  `addExtension(ext)` (adds a CodeMirror extension), `showPopover(htmlOrElement)` (a floating box by the cursor),",
     "  `mentionSource(query => [{ name, about?, insert? }])` (rows after a single @ in the input box, before the bots'; `insert` replaces the typed @… when picked, default `@name `),",
     "  `onKeyDown(handler)` (return true to swallow the key). All of these return a dispose function.",
+    "- `ccb.page.openChat(botId, messageId?)`: shows that bot's chat (at one of its lines when `messageId` is given; an unknown bot does nothing). `ccb.page.slots` has `topArea` (above the messages), `pinArea` (above the input box) and `overlay`.",
     "- `ccb.codemirror`: `{ state, view, commands }`; use this one and do not bundle your own CodeMirror (versions must match).",
     "- `ccb.messages.use(markdownItPlugin)`: adds a markdown-it plugin. `ccb.messages.afterRender((element, message) => …)`: changes the DOM after a message is drawn.",
     "- `ccb.components.register(name, (root, data, answer, context) => …)`: a component the bot calls up with `<show name=\"name\">JSON</show>`. `answer(index)`, `answer(text)`, or `answer({ text, images: [{ name, base64 }] })` to send pictures back.",

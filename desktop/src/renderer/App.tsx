@@ -591,6 +591,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         : storagePage}
       {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
       <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onAsk={approval.ask}
+        onOpenChat={(botId, messageId) => runBuiltin("page", { id: "botling.openChat", botId, ...(messageId ? { messageId } : {}) })}
         bubbleBot={bot && !paneOpen && (!(tab || storageOn) || noteDocked || !floatMemory.preview.docked) ? bot : null} look={view.settings?.botLook ?? "original"} stripLine={stripLine}
         askAbout={askAbout} onAskDone={() => setAskAbout(null)} />
       </ChatBody>

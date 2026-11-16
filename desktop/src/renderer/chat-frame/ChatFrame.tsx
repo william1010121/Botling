@@ -28,7 +28,9 @@ import { focusComposer, runPluginCommand } from "../rail-parts";
 import { leaveMarks, pinnedNumber } from "../app-shared";
 
 /** The reused chat page, in a frame. */
-export function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onAskDone, bubbleBot = null, look = "original", stripLine = "" }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
+export function ChatFrame({ client, store, onError, onSent, onAsk, onOpenChat, askAbout = null, onAskDone, bubbleBot = null, look = "original", stripLine = "" }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
+  /** A plugin's `ccb.page.openChat`: show that bot's chat (at that line, when given). The app page checks the bot. */
+  onOpenChat?: (botId: string, messageId?: string) => void;
   /** The bot's newest line, for the report preview's strip (FloatingChat). */
   stripLine?: string;
   /** The bot whose strip the report preview offers (ReportViewer): only while its native chat can show there, i.e. the
@@ -223,8 +225,8 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = nu
   // The handlers the app passes are new functions at each of its renders (every 30 s for the column's clock, and at each
   // event): the frame's listener below reads them here, so it is not made again, and a native chat that is already bound
   // is not sent the whole state and asked for plugins again each time (its `subscribe` says "bound" to a new listener).
-  const handlers = useRef({ onError, onSent, onAsk });
-  handlers.current = { onError, onSent, onAsk };
+  const handlers = useRef({ onError, onSent, onAsk, onOpenChat });
+  handlers.current = { onError, onSent, onAsk, onOpenChat };
   useEffect(() => {
     const onError = (failure: unknown) => handlers.current.onError(failure);
     const onSent = () => handlers.current.onSent();
@@ -560,6 +562,12 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = nu
             }, (failure) => reply(false, failure instanceof RequestFailed ? failure.error.message : String(failure)));
           return;
         }
+        // A web part's `ccb.page.openChat` (the Pin area's digest: "DAFAWU waits for you"): the app page shows that bot's chat, as a plugin frame's botling.openChat does.
+        case "openChat":
+          if (typeof action.botID === "string" && action.botID && action.botID.length <= 200 && paced("openChat")) {
+            handlers.current.onOpenChat?.(action.botID, typeof action.messageID === "string" && action.messageID ? action.messageID.slice(0, 200) : undefined);
+          }
+          return;
         case "hostCall": {
           if (typeof action.plugin !== "string" || typeof action.method !== "string" || typeof action.callID !== "number") return;
           const callID = action.callID;

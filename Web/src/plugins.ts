@@ -85,6 +85,8 @@ export interface PageKit {
   /** Told whether the app's window is shown (`ccb.setWindowVisible`). */
   onWindowVisible(fn: () => void): Dispose;
   post(action: Action): void;
+  /** Shows another bot's chat (at one of its lines when `messageId` is given); a bot the app does not know does nothing. */
+  openChat(botId: string, messageId?: string): void;
   /** Calls what this plugin's program part exposes (`ui.expose`), as `ccb.call`. */
   call(method: string, params?: unknown): Promise<unknown>;
   /**
@@ -610,6 +612,7 @@ export function pageKit(slots: PageSlots, listen: Pick<PageKit, "onState" | "onW
     slots,
     ...listen,
     post: (action) => post(action),
+    openChat: (botId, messageId) => post({ type: "openChat", botID: String(botId).slice(0, 200), ...(messageId ? { messageID: String(messageId).slice(0, 200) } : {}) }),
     t, language, pieces, isComposingEnter,
     visible: { windowVisible, onScreen, whenShownAgain },
     refresh: { intervalRow, LiveSchedule, liveTick, parseInterval, presetMinutes, presetSeconds, refreshWords },

@@ -52,7 +52,7 @@ export const FEATURE_AREAS: readonly FeatureArea[] = [
   area("web", "composer", "Chat input box", ["insert", "getText", "addExtension", "showPopover", "mentionSource", "chips", "view", "element", "onKeyDown", "onPaste"]),
   area("web", "messages", "Chat messages (drawing)", ["use", "userText", "afterRender", "cardBar", "render", "media", "taskChip"]),
   area("web", "decorations", "Chat decorations", ["register"]),
-  area("web", "page", "Chat page", ["slots", "onState", "onWindowVisible", "post", "requestApproval", "t", "language", "pieces", "isComposingEnter", "visible", "refresh", "components"]),
+  area("web", "page", "Chat page", ["slots", "onState", "onWindowVisible", "post", "openChat", "requestApproval", "t", "language", "pieces", "isComposingEnter", "visible", "refresh", "components"]),
   area("web", "studio", "Component studio seam", ["specButton"]),
   area("web", "draw", "Component drawing", ["component", "pinButton", "keepFrames", "mediaClicks"]),
   area("web", "components", "Component renderers", ["register"]),
@@ -143,9 +143,9 @@ export const BUILTIN_FEATURES: Readonly<Record<string, readonly string[]>> = {
   ],
   "botling.orchestration": [],
   "botling.pin-area": [
-    "api.chat.decorate", "api.chat.setData", "api.hooks.beforeSend", "api.replyTags.on", "api.workspace.bots",
+    "api.chat.decorate", "api.chat.setData", "api.hooks.beforeSend", "api.replyTags.on", "api.workspace.bots", "api.workspace.waiting",
     "ccb.composer.mentionSource", "ccb.decorations.register", "ccb.messages.afterRender", "ccb.messages.userText",
-    "ccb.page.language", "ccb.page.onState", "ccb.page.post", "ccb.page.slots",
+    "ccb.page.language", "ccb.page.onState", "ccb.page.openChat", "ccb.page.post", "ccb.page.slots",
   ],
   "botling.report": [],
   "botling.routines": [

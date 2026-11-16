@@ -454,6 +454,8 @@ export type Action =
   /** A plugin's button beside a link in a message (`chat/link`): the app page checks it is offered and the core that the link is in it. */
   | { type: "linkCommand"; id: string; messageID: string; url: string }
   | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number }
+  /** A plugin's page kit (`ccb.page.openChat`): show another bot's chat, at one of its lines when `messageID` names one. */
+  | { type: "openChat"; botID: string; messageID?: string }
   /** A built-in plugin's page kit asks the user to allow a command of a component's card in a bot's folder (the app page answers with `approvalReply`). */
   | { type: "approvalRequest"; plugin: string; requestId: number; botId: string; command: string; folder: string; component: string; card?: string }
   | { type: "pluginApproval"; plugin: string; callID: number; botId: string; command: string; folder: string; card?: string; detail?: string };
