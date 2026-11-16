@@ -191,6 +191,63 @@ describe("O05 cancel: the model's CancelAsk needs no send in flight (sending = \
   });
 });
 
+describe("O05 send: the model's SendAsk needs no cancel under way (~stopping)", () => {
+  it("a send while a cancel is under way is refused: nothing is sent; once the stop has answered the send is judged as always", async () => {
+    const core = fakeCore();
+    const t = book(core);
+    await t.workers.start("p", params);
+    let stop!: (stopped: boolean) => void;
+    core.hooks.stop = () => new Promise<boolean>((resolve) => { stop = resolve; });
+    const cancelling = t.workers.cancel("p", "T1");
+    await Promise.resolve();
+    expect(core.log.stopped).toEqual(["T1"]);
+    await expect(t.workers.send("p", "T1", "more")).rejects.toThrow(/being cancelled/);
+    expect(core.log.sent).toEqual([]);
+    stop(true);
+    await expect(cancelling).resolves.toEqual({ stopped: true });
+    // The run is stopped and the place free: a send now starts a run again.
+    await expect(t.workers.send("p", "T1", "more")).resolves.toMatchObject({ how: "newRun" });
+    expect(core.log.sent).toEqual(["T1"]);
+  });
+
+  it("a cancel that did not stop it (it ended first), or that threw, leaves sending possible (the guard is not left on)", async () => {
+    const core = fakeCore();
+    const t = book(core);
+    await t.workers.start("p", params);
+    core.hooks.stop = async () => false;
+    await expect(t.workers.cancel("p", "T1")).resolves.toEqual({ stopped: false });
+    await expect(t.workers.send("p", "T1", "one")).resolves.toMatchObject({ how: "newRun" });
+    core.hooks.stop = async () => { throw new Error("no stop"); };
+    await expect(t.workers.cancel("p", "T1")).rejects.toThrow("no stop");
+    await expect(t.workers.send("p", "T1", "two")).resolves.toMatchObject({ how: "newRun" });
+    expect(core.log.sent).toEqual(["T1", "T1"]);
+  });
+
+  it("a plugin a bot wrote: a cancel that starts while the card waits refuses the send when the answer comes", async () => {
+    const core = fakeCore(), written = { cards: 0, answer: undefined as undefined | (() => void) };
+    const t = book(core, undefined, {}, written);
+    await t.workers.start("p", params);
+    core.hooks.stop = () => new Promise<boolean>(() => {});
+    written.answer = () => { void t.workers.cancel("p", "T1").catch(() => {}); };
+    await expect(t.workers.send("p", "T1", "more")).rejects.toThrow(/being cancelled/);
+    expect(core.log.sent).toEqual([]);
+  });
+});
+
+describe("O05 send: no card is shown for a send that cannot go", () => {
+  it("a plugin a bot wrote: a cancel already under way refuses the send before its card", async () => {
+    const core = fakeCore(), written = { cards: 0, answer: undefined as undefined | (() => void) };
+    const t = book(core, undefined, {}, written);
+    await t.workers.start("p", params);
+    const cards = written.cards;
+    core.hooks.stop = () => new Promise<boolean>(() => {});
+    void t.workers.cancel("p", "T1");
+    await Promise.resolve();
+    await expect(t.workers.send("p", "T1", "more")).rejects.toThrow(/being cancelled/);
+    expect(written.cards).toBe(cards);
+  });
+});
+
 describe("O05 item 3: a send does not start a run that drops the report the bot is still owed", () => {
   it("refused while the core says the bot has not taken the last report; nothing is sent and the entry is not reopened", async () => {
     const core = fakeCore();
