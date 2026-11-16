@@ -37,6 +37,8 @@ export interface FallbackSource {
 
 /** The chrome the page had inside the chat column, as the page draws it now (undefined: nothing to draw). */
 export interface FallbackParts {
+  /** The header's leading part (the phone page's button that opens the bots drawer, so the shell's own "This device" stays reachable; M7-08). */
+  lead?: ReactNode;
   /** The header's trailing part (where the bottom panels' toggle button is placed). */
   header?: ReactNode;
   /** The Chat / Storage switch. */
@@ -83,6 +85,7 @@ export function Fallback({ source, parts = {} }: FallbackProps) {
     <section className="chat-pane chat-unavailable chat-fallback">
       <div className="chat-column fallback-column">
         <header className="chat-header drag">
+          {parts.lead}
           <span className="chat-title">Botling</span>
           {parts.header}
         </header>
