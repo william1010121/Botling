@@ -75,9 +75,11 @@ describe("the chat plugin as the FE build ships it", () => {
     expect(chatDeclaration.provides?.slots?.map(canonicalSlot).sort()).toEqual(CHAT_SLOTS.map(canonicalSlot).sort());
   });
 
-  it("is not the `:chat` surface (that name is the stand-in for composer.insertQuote and stays)", async () => {
+  it("provides composer.insertQuote itself: there is no `:chat` surface any more (M7-07b)", async () => {
     await host().start();
-    expect(rendererKernel.declaration(":chat")?.provides?.services).toEqual(["composer.insertQuote"]);
+    expect(rendererKernel.declaration(":chat")).toBeUndefined();
+    expect(rendererKernel.declaration(CHAT_PLUGIN)?.provides?.services).toEqual(["composer.insertQuote"]);
+    expect(rendererKernel.providerOf("composer.insertQuote")).toBe(CHAT_PLUGIN);
     expect(CHAT_PLUGIN).toBe("botling.chat");
   });
 });
