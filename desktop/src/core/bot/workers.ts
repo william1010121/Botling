@@ -104,8 +104,12 @@ export class BotWorkers {
   managedHandbacks = new Set<string>();
   /** Codex: workers at work or their reports waiting (the bot stays awake). */
   managedPending = false;
+  /** The head's process is gone: nothing it managed is pending. */
+  managedEnded() { this.managedPending = false; }
   /** Subagents whose last line was claude's connection error (1.x's `cutOffByNetwork`). */
   cutOffByNetwork = new Set<string>();
+  /** The connection of subagent `id` was lost: the network is what cut it off. */
+  lostToNetwork(id: string) { this.cutOffByNetwork.add(id); }
 
   /** Each head's session, this one first (null: none started yet), for plugins' `workspace.current`. */
   headSessions(): { engine: Engine; sessionId: string | null }[] {

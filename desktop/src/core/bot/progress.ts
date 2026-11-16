@@ -40,11 +40,19 @@ export class BotProgress {
   /** Cut off by the network (1.x's `outage`): it waits for the network to come back (`networkRestored`) to carry on. */
   outage: Outage | null = null;
   retryingConnection = false;
+  /** claude is retrying the API connection. */
+  retryingStarted() { this.retryingConnection = true; }
+  /** The head's process is gone: no retry of the connection is shown. */
+  retryingEnded() { this.retryingConnection = false; }
   /** Turns tried again in a row after an API error that passes (api-retry.ts), and the wait before the next try. */
   apiRetries = 0;
+  /** A turn's API errors are over (it was given up, or it went on): the count starts again. */
+  apiRetriesReset() { this.apiRetries = 0; }
   private apiRetryTimer: NodeJS.Timeout | null = null;
   /** Its Codex head waits to try a refused request again (BotView.codexRetry): until its next item, or the turn's end. */
   codexRetry: NonNullable<BotView["codexRetry"]> | null = null;
+  /** The head's process is gone: no Codex retry is waited for. */
+  codexRetryEnded() { this.codexRetry = null; }
   /** When the turn under way last showed a step (1.x's `lastProgress`, ms), and each subagent's (`subagentProgress`). */
   private lastProgress: number | null = null;
   private subagentProgress = new Map<string, number>();

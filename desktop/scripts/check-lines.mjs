@@ -80,6 +80,23 @@ export function productSizes(root) {
   return sizes;
 }
 
+const BRIDGE_DIR = /^desktop\/src\/core\/bot\/[^/]+\.ts$/;
+const SET_ACCESSOR = /^\s*(?:(?:private|public|protected)\s+)?set\s+[A-Za-z_$][\w$]*\s*\(/;
+
+/**
+ * The `set` accessors in the collaborators under desktop/src/core/bot/ (M7-S59). A bridge block forwards a field to its owner;
+ * a write through the bridge is a foreign write, so the owner gives it a named transition instead and no setter is left.
+ * `files` is a Map from repo-relative path to text. Returns "path:line: text" for each accessor found.
+ */
+export function bridgeSetters(files) {
+  const found = [];
+  for (const [path, text] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (!BRIDGE_DIR.test(path)) continue;
+    text.split('\n').forEach((line, i) => { if (SET_ACCESSOR.test(line)) found.push(`${path}:${i + 1}: ${line.trim()}`); });
+  }
+  return found;
+}
+
 function main(argv) {
   const value = (flag) => {
     const i = argv.indexOf(flag);
@@ -97,6 +114,9 @@ function main(argv) {
   const sizes = productSizes(root);
   const frozen = JSON.parse(readFileSync(baselineFile, 'utf8')).frozen ?? {};
   const { errors, notes } = checkSizes(sizes, baseline, limit, frozen);
+  const sources = new Map();
+  for (const path of sizes.keys()) if (BRIDGE_DIR.test(path)) sources.set(path, readFileSync(resolve(root, path), 'utf8'));
+  for (const found of bridgeSetters(sources)) errors.push(`${found}: a set accessor in a bridge block; give the owner a named transition`);
   const over = [...sizes].filter(([, lines]) => lines > limit).sort(([, a], [, b]) => b - a);
   console.log(`check-lines: ${sizes.size} product files, ${over.length} over ${limit} lines, ${Object.keys(baseline).length} in the baseline`);
   for (const [path, lines] of over) console.log(`  ${String(lines).padStart(6)}  ${path}`);

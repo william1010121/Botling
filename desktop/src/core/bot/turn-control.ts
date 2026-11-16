@@ -53,7 +53,6 @@ export class TurnControl {
   private get managedPending() { return this.host.managedPending; }
   private get ownWorkRunning() { return this.host.ownWorkRunning; }
   private get claimHold() { return this.host.claimHold; }
-  private set claimHold(hold) { this.host.claimHold = hold; }
   private newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn { return this.host.newTurn(origin, words, userId, ids); }
   private begin(turn: Turn, head?: AgentHead) { this.host.begin(turn, head); }
   private delivered(turn: Turn) { this.host.delivered(turn); }
@@ -158,6 +157,10 @@ export class TurnControl {
   ignoreNone() { this.ignoreResults = 0; }
   /** `head` is being ended: nothing it prints counts any more. */
   headEnding(head: AgentHead) { this.ending.add(head); }
+  /** claude has a turn under way on `head` (it said "started" for a line, or its turn said something). */
+  midTurnStarted(head: AgentHead) { this.claudeMidTurn.add(head); }
+  /** claude's turn on `head` ended (its result came). */
+  midTurnEnded(head: AgentHead) { this.claudeMidTurn.delete(head); }
   /** How turn `id` ended. */
   recordFinished(id: string, status: Status) { this.finished.set(id, status); }
   /** A subagent ended between turns: the next turn claude starts itself reports it. */
@@ -539,7 +542,7 @@ export class TurnControl {
       // The message held for the other head (a message to both): taken back too.
       const hold = this.claimHold;
       if (hold?.turn.id === turnId) {
-        this.claimHold = null;
+        this.host.group.dropClaim();
         clearTimeout(hold.timer);
         hold.turn.open = false;
         this.emit({ type: "turn.finished", botId: this.id, turnId, messageId: hold.turn.messageId, status: "stopped", text: "" });

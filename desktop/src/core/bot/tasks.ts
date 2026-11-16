@@ -26,6 +26,10 @@ export class BotTasks {
 
   /** Session schedule calls waiting for their structured results, and the next due clock. */
   scheduleCalls = new Map<string, ScheduleCall>();
+  /** A schedule tool call `id` was made: its result tells what it scheduled. */
+  scheduleCalled(id: string, call: ScheduleCall) { this.scheduleCalls.set(id, call); }
+  /** The call `id` has its result (or its tool result came): it is forgotten. */
+  scheduleSettled(id: string) { this.scheduleCalls.delete(id); }
   private scheduleDueAt: number | null = null;
 
   refreshScheduleDue() {

@@ -23,6 +23,10 @@ export class BotDelivery {
   pendingAbout: string[] = [];
   /** What the app tells it with its next message (`queueNote`). */
   queuedNote: string | null = null;
+  /** `note` waits for the next message. */
+  queueNote(note: string) { this.queuedNote = note; }
+  /** The note that waited for the next message is dropped. */
+  forgetQueuedNote() { this.queuedNote = null; }
 
   constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
 
@@ -56,7 +60,6 @@ export class BotDelivery {
   private ensureHead() { return this.host.ensureHead(); }
   private finishTurn(turn: Turn, status: Status, error?: string) { return this.host.finishTurn(turn, status, error); }
   private get startedFresh() { return this.host.startedFresh; }
-  private set startedFresh(v) { this.host.startedFresh = v; }
   private componentNote() { return this.host.componentNote(); }
   private withSavedMemory(prompt: string) { return this.host.withSavedMemory(prompt); }
   private get briefing() { return this.host.briefing; }
@@ -67,7 +70,6 @@ export class BotDelivery {
   private get componentsMayHaveChanged() { return this.host.componentsMayHaveChanged; }
   private takeInterruptedNote() { return this.host.takeInterruptedNote(); }
   private get reactionsSeen() { return this.host.reactionsSeen; }
-  private set reactionsSeen(v) { this.host.reactionsSeen = v; }
 
   // ---- Moved from `Bot` ----
   /** Writes the turn's message to a head (starting one, in a new session, if the bot is asleep). */
@@ -117,7 +119,7 @@ export class BotDelivery {
     turn.started = toSwiftDate();
     // A new session (a changed prompt, or "Restart bot") says so with its own divider and carries the briefing.
     const fresh = this.startedFresh;
-    this.startedFresh = false;
+    this.host.headRun.endFresh();
     if (restarted && !fresh) {
       // Said in the chat, and told with this message (1.x's `resume(_:reason:)`).
       this.owner.add({ id: newId(), role: "divider", text: `Restarted → ${restarted.shown}`, date: toSwiftDate() });
@@ -252,7 +254,7 @@ export class BotDelivery {
     } else {
       parts.push(words, this.reactionsSeen ? reactionUpdate(chat, this.reactionsSeen, turn.userId) : reactionIntro(chat, turn.userId));
     }
-    this.reactionsSeen = seenReactions(chat);
+    this.host.recordsBook.seeReactions(seenReactions(chat));
     return parts.filter(Boolean).join("\n\n");
   }
 

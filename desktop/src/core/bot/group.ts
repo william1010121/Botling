@@ -24,6 +24,8 @@ export class BotGroup {
   conductor: Conductor;
   /** A message to both, kept from the head that does not lead until the lead says what it takes on. */
   claimHold: { id: string; lead: Engine; held: Engine; turn: Turn; timer: NodeJS.Timeout } | null = null;
+  /** The held message is not held any more (the caller ends its timer and its turn). */
+  dropClaim() { this.claimHold = null; }
   lastLead: Engine | null = null;
   /** The questions handed over with each hand-off (`handoffDecisions`). */
   handoffDecisions = new Map<string, Set<string>>();

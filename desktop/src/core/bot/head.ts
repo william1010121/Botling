@@ -17,8 +17,6 @@ import { ClaudeHead, type HeadExit } from "../agent/head";
 import type { HotSettings } from "../agent/hot-settings";
 import type { Bot } from "../bot";
 import { isBotTool, type BotToolName, type ToolCaller } from "../bot-tools";
-import type { SeenReactions } from "../briefing";
-import type { ComponentKnowledge } from "../components/library";
 import type { BotContext } from "./context";
 import type { Engine, Heads } from "../heads";
 import type { Outage } from "../network-resume";
@@ -61,13 +59,6 @@ export class BotHead {
   private get turns() { return this.host.turns; }
   private get ignoreResults(): number { return this.host.ignoreResults; }
   private get switchTo(): Engine | null { return this.host.switchTo; }
-  private set switchTo(v: Engine | null) { this.host.switchTo = v; }
-  private get queuedNote(): string | null { return this.host.queuedNote; }
-  private set queuedNote(v: string | null) { this.host.queuedNote = v; }
-  private get reactionsSeen(): SeenReactions | null { return this.host.reactionsSeen; }
-  private set reactionsSeen(v: SeenReactions | null) { this.host.reactionsSeen = v; }
-  private get briefedComponents(): ComponentKnowledge | null { return this.host.briefedComponents; }
-  private set briefedComponents(v: ComponentKnowledge | null) { this.host.briefedComponents = v; }
   private add(record: ChatRecord, options?: { archive?: boolean }) { this.host.add(record, options); }
   private becomeEngine(to: Engine) { this.host.becomeEngine(to); }
   private begin(turn: Turn, head?: AgentHead) { this.host.begin(turn, head); }
@@ -90,11 +81,8 @@ export class BotHead {
   private get settingsHold() { return this.host.settingsHold; }
   private get restartRecovery(): boolean { return this.host.restartRecovery; }
   private get restartProviderTurn() { return this.host.restartProviderTurn; }
-  private set restartProviderTurn(v) { this.host.restartProviderTurn = v; }
   private get restartWorkerRecords() { return this.host.restartWorkerRecords; }
-  private set restartWorkerRecords(v) { this.host.restartWorkerRecords = v; }
   private get restartWorkersSince() { return this.host.restartWorkersSince; }
-  private set restartWorkersSince(v) { this.host.restartWorkersSince = v; }
 
   // ---- Fields owned here (`Bot` reads and writes them through accessors) ----
   head: AgentHead | null = null;
@@ -115,6 +103,8 @@ export class BotHead {
   freshSessionPending = false;
   /** ensureHead began a new session for the message being sent (its briefing says it all; no restart note). */
   startedFresh = false;
+  /** The new session has been served its first message. */
+  endFresh() { this.startedFresh = false; }
 
   /** A session handed over by the old core is resumed as it is once (a cut-off turn goes on exactly where it stopped). */
   adoptedSession = false;
@@ -130,6 +120,12 @@ export class BotHead {
   sessionRenamed(sessionId: string) { this.session.sessionId = sessionId; }
   /** An earlier session goes on as it was (a conversation saved, or the one a lost network cut off): it is resumed, so no wake briefing. */
   sessionResumed(sessionId: string) { this.session = { sessionId, started: true }; this.briefing = false; }
+  /** An earlier session goes on as `session` says (a restart or a core swap handed it over). */
+  sessionAdopted(session: HeadState) { this.session = session; }
+  /** The session was handed over (`adopted`): its first message goes as it is, once. */
+  adoptedAs(adopted: boolean) { this.adoptedSession = adopted; }
+  /** The next head starts the session afresh even if it looks unchanged (a manual restart). */
+  freshSessionAsked() { this.freshSessionPending = true; }
   /** The briefing is due again, unless the session never started (an exit that keeps the session). */
   briefingDue() { this.briefing = !this.session.started; }
   /** The wake briefing has been given. */
@@ -143,7 +139,7 @@ export class BotHead {
     this.requireEngineRoute(this.engine, this.owner.engine);
     if (this.head?.running) return this.head;
     // It fell asleep before its switch of engine was done: it wakes on the new one.
-    if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
+    if (this.switchTo) { const to = this.switchTo; this.host.settings.clearSwitchTo(); this.becomeEngine(to); }
     this.requireEngineRoute(this.engine, this.owner.engine);
     this.host.releaseRestart();
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
@@ -185,9 +181,7 @@ export class BotHead {
       const restartWorkers=this.restartWorkerRecords;
       const restartTurn=this.restartProviderTurn;
       const restartRecovery=this.restartWorkersSince;
-      this.restartProviderTurn=undefined;
-      this.restartWorkerRecords=undefined;
-      this.restartWorkersSince=undefined;
+      this.host.restarts.restartResumed();
       head = new CodexHead({...config, browser: (name, args, caller) => this.botTool(name, args, caller), restartWorkers, restartRecovery, restartTurn, strictResume:this.restartRecovery && config.resume,
         workerCore: this.workerCore, workerSink: (item) => this.onWorkerOutput(item)}, { onItem: item => {
         this.onItem(head, item);
@@ -288,12 +282,12 @@ export class BotHead {
       this.store.saveSetting("agyConversation", undefined);
       this.store.saveSetting("agyRecovery", undefined);
     }
-    this.queuedNote = null;
+    this.host.delivery.forgetQueuedNote();
     this.freshSessionPending = false;
     this.session = { sessionId: randomUUID(), started: false };
     this.briefing = true;
-    this.reactionsSeen = null;
-    this.briefedComponents = null;
+    this.host.recordsBook.forgetReactions();
+    this.host.cards.forgetBriefed();
   }
 
   /** The turn's reply line, put in the chat once it has something to show. */
