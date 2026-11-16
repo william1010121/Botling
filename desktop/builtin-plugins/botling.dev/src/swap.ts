@@ -6,6 +6,11 @@
 // script puts the old build back, opens it, and writes `rolled-back`. Either way the next start tells the bot that
 // asked how it went. `<app-screenshot/>` sends that bot a picture of the app's window.
 //
+// The script is started detached (own session, output in install.log, no input) so it outlives the app. It also guards
+// itself: a hangup is ignored, every other signal it gets is written to install.log with the step it was at, and a script that
+// ends before it finished (it was signalled, or a command failed) puts the old app back and opens it at once instead of
+// leaving nothing running. It writes `rolled-back` with "the install script ended early at step: …" for that case.
+//
 // This is the only way the app replaces itself without electron-updater (main/updates.ts), which installs
 // released versions: notices about those are announced by the core (core/self-update.ts).
 import { execFileSync } from "node:child_process";
@@ -179,34 +184,60 @@ launch() (
   if [ -n "$2" ]; then "$OPEN" -n "$1" --env "BOTLING_DATA_DIR=$2"; else "$OPEN" -n "$1"; fi
 )
 reopen() { launch "$1" "$DATA"; }
-putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
+putback() { if [ -n "$BACKUP" ] && [ -e "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
+roll_back() { pkill -f "$TARGET/Contents/MacOS/" ; sleep 2; rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null; putback; }
+# As in the Botling 3 script: no terminal, no input, a hangup is ignored, signals are logged, and a script that ends early puts
+# things back and opens the old app at once.
+exec </dev/null
+STEP="starting"; PHASE="before"; OK=""
+trap 'say "got SIGHUP (ignored) at step: $STEP"' HUP
+on_signal() { say "got SIG$1 at step: $STEP; ending"; exit 1; }
+for sig in TERM INT QUIT PIPE ABRT; do trap "on_signal $sig" "$sig"; done
+recover() {
+  case "$PHASE" in
+    launched) say "the new build was already opened; leaving it to come up"; return 0 ;;
+    swap) say "putting the old app back"; rm -rf "$TARGET"; putback ;;
+    rollback) say "finishing the roll back"; roll_back ;;
+  esac
+  echo "the install script ended early at step: $STEP" > "$ROLLED"
+  if kill -0 "$PID" 2>/dev/null; then say "Botling 2 ($PID) is still quitting; the old app is not opened over it"; return 0; fi
+  say "opening the old app again"
+  reopen "$PREVIOUS"
+}
+on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; say "the install script ended early at step: $STEP (status $status)"; recover; }
+trap on_exit EXIT
 echo $$ > "$(dirname "$HEALTHY")/script.pid"
+STEP="waiting for Botling 2 to quit"
 say "waiting for Botling 2 ($PID) to quit"
 for i in $(seq 1 300); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
-if kill -0 "$PID" 2>/dev/null; then say "it did not quit; nothing changed"; echo "did not quit" > "$ROLLED"; exit 1; fi
+if kill -0 "$PID" 2>/dev/null; then OK=1; say "it did not quit; nothing changed"; echo "did not quit" > "$ROLLED"; exit 1; fi
+STEP="swapping the app"
 if [ -e "$TARGET" ]; then
   say "moving $TARGET to $BACKUP"
-  mv "$TARGET" "$BACKUP" || { say "could not move the old build"; echo "could not move the old build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1; }
+  mv "$TARGET" "$BACKUP" || { OK=1; say "could not move the old build"; echo "could not move the old build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1; }
 else
   BACKUP=""
   say "installing to $TARGET (the running build stays at $PREVIOUS)"
-  mkdir -p "$(dirname "$TARGET")" || { say "could not make $(dirname "$TARGET")"; echo "could not make the folder for the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1; }
+  mkdir -p "$(dirname "$TARGET")" || { OK=1; say "could not make $(dirname "$TARGET")"; echo "could not make the folder for the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1; }
 fi
+# From here $TARGET is empty or the new build's partial copy, so recover may remove it and put the old app back.
+PHASE="swap"
 if ! /usr/bin/ditto "$NEW" "$TARGET"; then
-  say "could not copy the new build; putting the old one back"
+  OK=1; say "could not copy the new build; putting the old one back"
   rm -rf "$TARGET"; putback; echo "could not copy the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1
 fi
 rm -f "$HEALTHY"
 say "opening the new build"
+STEP="waiting for the new build to come up"; PHASE="launched"
 launch "$TARGET" "$DATA"
 for i in $(seq 1 "$WAIT"); do
-  if [ -f "$HEALTHY" ]; then say "the new build is up"; exit 0; fi
+  if [ -f "$HEALTHY" ]; then OK=1; say "the new build is up"; exit 0; fi
   sleep 1
 done
 say "the new build did not come up in $WAIT seconds; putting the old one back"
-pkill -f "$TARGET/Contents/MacOS/" ; sleep 2
-rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null
-putback
+STEP="rolling back"; PHASE="rollback"
+roll_back
+OK=1
 echo "the new build did not come up in $WAIT seconds" > "$ROLLED"
 reopen "$PREVIOUS"
 exit 1
@@ -276,10 +307,33 @@ launch() (
   "$OPEN" "\${args[@]}"
 )
 reopen() { launch "$1"; }
-putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
-fail() { say "$1"; echo "$1" > "$ROLLED"; }
+putback() { if [ -n "$BACKUP" ] && [ -e "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
+roll_back() { end_bundle "$TARGET" 1; rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null; putback; }
+fail() { OK=1; say "$1"; echo "$1" > "$ROLLED"; }
+# Nothing may end this script unseen: it has no terminal and no input, a hangup is ignored (and logged), any other signal is logged,
+# and a script that ends before it finished (a signal, an error) puts things back and opens the old app at once (recover).
+exec </dev/null
+STEP="starting"; PHASE="before"; OK=""
+trap 'say "got SIGHUP (ignored) at step: $STEP"' HUP
+on_signal() { say "got SIG$1 at step: $STEP; ending"; exit 1; }
+for sig in TERM INT QUIT PIPE ABRT; do trap "on_signal $sig" "$sig"; done
+recover() {
+  case "$PHASE" in
+    launched) say "the new build was already opened; leaving it to come up"; return 0 ;;
+    swap) say "putting the old app back"; rm -rf "$TARGET"; putback ;;
+    rollback) say "finishing the roll back"; roll_back ;;
+  esac
+  echo "the install script ended early at step: $STEP" > "$ROLLED"
+  n=0; while alive "$PID" && [ "$n" -lt "$APP_WAIT" ]; do sleep 1; n=$((n + 1)); done
+  if alive "$PID"; then say "botlingd ($PID) is still stopping; the old app is not opened over it"; return 0; fi
+  say "opening the old app again"
+  reopen "$PREVIOUS"
+}
+on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; say "the install script ended early at step: $STEP (status $status)"; recover; }
+trap on_exit EXIT
 # The next start tells a script still at work from one that died by this pid (swap.ts installScriptRunning).
 echo $$ > "$(dirname "$HEALTHY")/script.pid"
+STEP="waiting for botlingd to stop"
 say "waiting for botlingd ($PID) to stop; it stops once the Botling 3 window quit"
 n=0; while alive "$PID" && [ "$n" -lt "$QUIT_WAIT" ]; do sleep 1; n=$((n + 1)); done
 if alive "$PID"; then
@@ -289,8 +343,10 @@ if alive "$PID"; then
 fi
 if alive "$PID"; then fail "botlingd did not stop; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
 say "botlingd ($PID) has stopped; waiting for the old app to quit"
+STEP="waiting for the old app to quit"
 if ! end_bundle "$PREVIOUS" 0; then fail "Botling 3 did not quit; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
 say "nothing runs from the old app any more"
+STEP="swapping the app"
 if [ -e "$TARGET" ]; then
   say "moving $TARGET to $BACKUP"
   mv "$TARGET" "$BACKUP" || { fail "could not move the old build"; reopen "$PREVIOUS"; exit 1; }
@@ -299,6 +355,9 @@ else
   say "installing to $TARGET (the running build stays at $PREVIOUS)"
   mkdir -p "$(dirname "$TARGET")" || { fail "could not make the folder for the new build"; reopen "$PREVIOUS"; exit 1; }
 fi
+# From here $TARGET is empty or the new build's partial copy, so recover may remove it and put the old app back.
+PHASE="swap"
+STEP="copying the new build"
 say "copying the new build $NEW to $TARGET"
 if ! "$DITTO" "$NEW" "$TARGET"; then
   rm -rf "$TARGET"; putback; fail "could not copy the new build"; reopen "$PREVIOUS"; exit 1
@@ -310,15 +369,15 @@ fi
 # A leftover healthy file (the old build, started again by hand while this waited) is not the new build's.
 rm -f "$HEALTHY"
 say "opening the new build"
+STEP="waiting for the new build to come up"; PHASE="launched"
 launch "$TARGET"
 for i in $(seq 1 "$WAIT"); do
-  if [ -f "$HEALTHY" ]; then say "the new build is up"; exit 0; fi
+  if [ -f "$HEALTHY" ]; then OK=1; say "the new build is up"; exit 0; fi
   sleep 1
 done
 say "the new build did not come up in $WAIT seconds; putting the old one back"
-end_bundle "$TARGET" 1
-rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null
-putback
+STEP="rolling back"; PHASE="rollback"
+roll_back
 fail "the new build did not come up in $WAIT seconds"
 reopen "$PREVIOUS"
 exit 1

@@ -213,6 +213,17 @@ ${appWorktree
       return timer;
     }
     finishInstall(this.deps.root);
+    // The script itself ended before the new build ever ran (it was signalled): that is not a build that failed to come up,
+    // so it does not count towards pausing installs, and the same card can be confirmed again.
+    if (outcome.reason.startsWith("the install script ended early")) {
+      const stopped = this.deps.runningBuild();
+      const old = buildLabel(stopped ?? state.from);
+      main.appNotice(`${buildLabel(state.to)} was not installed (${outcome.reason}); ${old} is running again. The install log is ${installLog(this.deps.root)}. The same card can be confirmed again.`, undefined, undefined, { sourceID: state.requesterID });
+      try {
+        this.deps.bot(state.requesterID)?.relay(`(App) The build you asked to install, ${buildLabel(state.to)}, was not installed: ${outcome.reason}. ${old} is running again. The install log is ${installLog(this.deps.root)}. The new build is still at ${state.to.path}; you can ask again.`);
+      } catch (error) { this.deps.log(`could not tell ${state.requesterID}: ${(error as Error).message}`); }
+      return null;
+    }
     const count = failures(this.deps.root) + 1;
     setFailures(this.deps.root, count);
     const paused = count >= FAILURE_LIMIT ? ` That is ${count} in a row: installing is paused until developer mode is turned off and on again.` : "";
