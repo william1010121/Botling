@@ -379,7 +379,8 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "routines.add": {
       const parsed = RoutineParams.safeParse(params);
       if (!parsed.success || !this.loaded(parsed.data.plugin)) throw new Error("No such bot.");
-      if (!this.shipped(parsed.data.plugin)) this.workers().mayAddRoutine(parsed.data.plugin);
+      // F6 (M7-O04, decided): a routine runs later as the bot's own prompt, with no card and no quota, so only a plugin shipped with Botling adds one.
+      if (!this.shipped(parsed.data.plugin)) throw new Error("Only a plugin shipped with Botling may add a routine: a routine starts work later, with no card to ask you first.");
       const outcome = world.addRoutine(parsed.data.bot, parsed.data.cron, parsed.data.task);
       if (outcome === "no-bot") throw new Error("No such bot.");
       if (outcome === "bad-schedule") throw new Error("Invalid schedule (it must be the 5 crontab fields).");

@@ -262,14 +262,6 @@ export class PluginWorkers {
   }
 
   /**
-   * F6: `routines.add` of a plugin that is not shipped. A routine runs later as the bot's own prompt, and what it starts has no card and
-   * no quota, so such a plugin needs what `workers.start` needs (declared and granted), and one a bot wrote may not add one at all.
-   */
-  mayAddRoutine(plugin: string): void {
-    if (this.allowed(plugin).botWritten) throw new Error("A routine can start workers by itself, with no card to ask you first: a plugin a bot wrote may not add one.");
-  }
-
-  /**
    * The worker this plugin (this very version of it) started and still owns the right to, or the one answer for "not
    * yours" and "not there" (nothing says which): a worker handed back, or started by another hash, is not its.
    */

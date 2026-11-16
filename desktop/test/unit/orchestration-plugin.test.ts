@@ -11,7 +11,7 @@ import type { BotProfile } from "../../src/core/store/workspace";
 import { CoreSend } from "../../src/core/server/send";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
-import { orchestrationPlugin, writeSettings } from "../../src/core/settings";
+import { orchestrationPlugin, orchestrationPluginSha256, writeSettings } from "../../src/core/settings";
 import { DEFAULT_ORCHESTRATION_RULES as DEFAULT, renderFragments, SECTION_IDS, type Fragment, type OrchestrationRules } from "../../src/core/orchestration/default-rules";
 import { BUILTIN_RULES_SHA256 } from "../../src/core/orchestration/pinned-hash";
 import { builtinSource, chosenSource, OrchestrationRulesBook, parseSlots, RULES_NOTICE, RULES_TIME_LIMIT_MS, withSlots, type Slots } from "../../src/core/orchestration/plugin-rules";
@@ -32,6 +32,7 @@ const ENGINES = ["claude", "codex", "agy"] as const;
 const CAPS: DelegationCaps[] = [...Object.values(DELEGATION_CAPS), { ...DELEGATION_CAPS.agy, appTools: new Set(["app_handoff"]) }, { ...DELEGATION_CAPS.codex, steerWorkerRun: false }];
 const slots = (entries: Record<string, string>): Slots => new Map(Object.entries(entries));
 const answer = (entries: Record<string, string>) => Buffer.from(JSON.stringify({ format: 1, slots: entries }));
+const sha = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -209,16 +210,25 @@ describe("who can choose the rules", () => {
     await h.rules().refresh();
     expect(h.send.prompts(PROFILE, "codex").system).not.toContain("EDITED");
     expect(h.rules().current()).not.toBe(DEFAULT);
-    // The user names the other copy in settings.json: now it is used. It is another hash and gets no pin, only the user's word.
+    // The user names the other copy in settings.json with the sha256 of its rules.json: now it is used. The name alone is not enough.
+    const acme = join(library, "acme.orchestration", "rules.json");
     writeSettings(join(dir, "settings.json"), { orchestrationPlugin: "acme.orchestration" });
     await h.rules().refresh();
+    expect(h.send.prompts(PROFILE, "codex").system).not.toContain("EDITED");
+    writeSettings(join(dir, "settings.json"), { orchestrationPlugin: "acme.orchestration", orchestrationPluginSha256: sha(acme) });
+    await h.rules().refresh();
     expect(h.send.prompts(PROFILE, "codex").system).toContain("EDITED by a bot (acme.orchestration)");
+    // A bot edits the chosen file afterwards (review): another hash, so core's rules, never the new text.
+    writeFileSync(acme, readFileSync(acme, "utf8").replace("EDITED by a bot", "EDITED AGAIN by a bot"));
+    await h.rules().refresh();
+    expect(h.send.prompts(PROFILE, "codex").system).not.toContain("EDITED");
+    expect(h.rules().current()).toBe(DEFAULT);
     // One setting goes back, with no bot in it.
     writeSettings(join(dir, "settings.json"), { orchestrationPlugin: "builtin" });
     await h.rules().refresh();
     expect(h.send.prompts(PROFILE, "codex").system).not.toContain("EDITED");
     // The chosen one turned off or gone: core's rules and one notice, never the edited text.
-    writeSettings(join(dir, "settings.json"), { orchestrationPlugin: "acme.orchestration" });
+    writeSettings(join(dir, "settings.json"), { orchestrationPlugin: "acme.orchestration", orchestrationPluginSha256: sha(acme) });
     registry.setEnabled("acme.orchestration", false);
     const bot = fakeBot();
     await h.rules().refresh((text) => bot.appNotice(text));
@@ -232,6 +242,21 @@ describe("who can choose the rules", () => {
     expect(orchestrationPlugin({ orchestrationPlugin: "builtin" })).toBe("builtin");
     expect(orchestrationPlugin({ orchestrationPlugin: "acme.orchestration" })).toBe("acme.orchestration");
     for (const bad of ["botling.orchestration", "__proto__", "../x", "A b", "", 5, null, ["acme"], "x".repeat(65)]) expect(orchestrationPlugin({ orchestrationPlugin: bad }), String(bad)).toBe("builtin");
+    expect(orchestrationPluginSha256({ orchestrationPluginSha256: "a".repeat(64) })).toBe("a".repeat(64));
+    for (const bad of ["A".repeat(64), "a".repeat(63), 5, null, undefined]) expect(orchestrationPluginSha256({ orchestrationPluginSha256: bad })).toBeNull();
+  });
+
+  it("a chosen plugin's rules.json is read only as a small regular file whose sha256 the user named next to its name (review)", async () => {
+    const dir = tempDir("o04-chosen-pin"), file = join(dir, "rules.json"), on = { folder: dir, enabled: true };
+    writeFileSync(file, `${JSON.stringify({ format: 1, slots: { "followUp.3": "from file" } })}${" ".repeat(70_000)}`);
+    await expect(chosenSource(on, sha(file))()).rejects.toThrow(/small regular file/);
+    writeFileSync(file, JSON.stringify({ format: 1, slots: { "followUp.3": "from file" } }));
+    await expect(chosenSource(on, sha(file))()).resolves.toBeInstanceOf(Map);
+    await expect(chosenSource(on, null)()).rejects.toThrow(/orchestrationPluginSha256/);
+    await expect(chosenSource(on, "0".repeat(64))()).rejects.toThrow(/orchestrationPluginSha256/);
+    rmSync(file);
+    mkdirSync(file);
+    await expect(chosenSource(on, null)()).rejects.toThrow(/small regular file/);
   });
 
   it("no project, Plugins-page switch or library state turns the built-in off", async () => {
@@ -399,9 +424,9 @@ describe("a plugin gives sentences, never a worker's model, effort or engine (F3
     const dir = tempDir("o04-f3");
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "acme.orchestration", version: "1.0.0", ccb: { contributes: { orchestration: { slots: { "followUp.3": "FROM MANIFEST" }, defaults: { workerModel: "opus", workerEffort: "max" } } } } }));
     writeFileSync(join(dir, "rules.json"), JSON.stringify({ format: 1, slots: { "followUp.3": "from file" }, workerModel: "opus" }));
-    await expect(chosenSource({ folder: dir, enabled: true })()).rejects.toThrow(/not accepted/);
+    await expect(chosenSource({ folder: dir, enabled: true }, sha(join(dir, "rules.json")))()).rejects.toThrow(/not accepted/);
     writeFileSync(join(dir, "rules.json"), JSON.stringify({ format: 1, slots: { "followUp.3": "from file" } }));
-    const book = new OrchestrationRulesBook(chosenSource({ folder: dir, enabled: true }));
+    const book = new OrchestrationRulesBook(chosenSource({ folder: dir, enabled: true }, sha(join(dir, "rules.json"))));
     await book.refresh();
     expect(renderFragments(book.current().section("followUp", DELEGATION_CAPS.claude, { engine: "claude", worktree: null }))).toContain("from file");
     expect(renderFragments(book.current().section("followUp", DELEGATION_CAPS.claude, { engine: "claude", worktree: null }))).not.toContain("FROM MANIFEST");

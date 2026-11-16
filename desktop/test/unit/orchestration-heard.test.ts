@@ -117,11 +117,6 @@ describe("F6: a worker the bot starts after a plugin's message goes through the 
     expect(h.ran.n).toBe(0);
   });
 
-  it("a plugin that is not written by a bot may add a routine only with the permission; one a bot wrote may not", () => {
-    expect(() => book({ granted: false }).workers.mayAddRoutine("p")).toThrow(/permission/);
-    expect(() => book({ written: true }).workers.mayAddRoutine("p")).toThrow(/no card/);
-    expect(() => book().workers.mayAddRoutine("p")).not.toThrow();
-  });
 });
 
 describe("G1: a plugin a bot wrote is asked again for a new instruction, and works only on bots it made", () => {
@@ -145,6 +140,17 @@ describe("G1: a plugin a bot wrote is asked again for a new instruction, and wor
     await plain.workers.send("p", own.taskId, "more");
     expect(plain.log.cards).toEqual([]);
     expect(plain.log.sent).toEqual(["more"]);
+  });
+
+  it("a send's card answered after the grant was taken away sends nothing (authority at use, review)", async () => {
+    const options: Parameters<typeof book>[0] & {} = { written: true };
+    let cards = 0;
+    options.ask = async () => { cards += 1; if (cards === 2) options.granted = false; return { index: 0 }; };
+    const t = book(options);
+    const { taskId } = await t.workers.start("p", { bot: "b1", instructions: "first" });
+    await expect(t.workers.send("p", taskId, "NEW ORDER")).rejects.toThrow(/not been allowed/);
+    expect(cards).toBe(2);
+    expect(t.log.sent).toEqual([]);
   });
 
   it("start refuses a bot the plugin did not make, for the bot's own model as well; a plugin not written by a bot is not restricted", async () => {
@@ -257,15 +263,13 @@ describe("F6 in the real core: a message from a plugin that is not shipped marks
     await expect(t.admit("claude-process", { instructions: "mine again" }).result).resolves.toBeTruthy();
   });
 
-  it("routines.add: a shipped plugin adds one; a plugin that is not shipped needs the grant, and one a bot wrote may not even with it", async () => {
+  it("routines.add: a shipped plugin adds one; a plugin that is not shipped never does, granted or not, written by a bot or not (decided)", async () => {
     const add = { bot: "main", cron: "0 9 * * *", task: "Check: do the thing" };
     const none = realCore();
     await expect(none.ask("routines.add", { plugin: "shipped", ...add })).resolves.toBeNull();
     expect(none.routines).toHaveBeenCalledTimes(1);
-    await expect(none.ask("routines.add", { plugin: "plain", ...add })).rejects.toThrow(/permission|needs/);
-    await expect(none.ask("routines.add", { plugin: "written", ...add })).rejects.toThrow(/permission/);
     const granted = realCore({ grant: true });
-    await expect(granted.ask("routines.add", { plugin: "written", ...add })).rejects.toThrow(/no card/);
+    for (const core of [none, granted]) for (const plugin of ["plain", "written"]) await expect(core.ask("routines.add", { plugin, ...add })).rejects.toThrow(/shipped with Botling/);
     expect(none.routines).toHaveBeenCalledTimes(1);
     expect(granted.routines).not.toHaveBeenCalled();
   });
@@ -289,6 +293,9 @@ describe("R7 and Maintainer in the real core", () => {
     const world = (t.core.plugins as unknown as { options: { world: { orchestration: OrchestrationWorld } } }).options.world.orchestration;
     const maintainer = (t.core as unknown as { maintainerId: string }).maintainerId;
     expect(world.workers(maintainer)).toMatch(/Maintainer/);
+    // "main" names the main bot, but the port (and so each entry of the book) carries its real id, the one `botRemoved` names (review).
+    const port = world.workers("main");
+    expect(typeof port === "string" ? port : port.id).toBe(t.main.id);
     expect(world.made?.("written", t.main.id)).toBe(false);
     expect(world.made?.("written", "no-such-bot")).toBe(false);
   });

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { commandGuidePath } from "../plugins/app-command";
 import { rmSync } from "node:fs";
 import { linkIncoming, servedType, writeIncoming } from "../attachments";
-import { claudeWorkersMode, orchestrationPlugin } from "../settings";
+import { claudeWorkersMode, orchestrationPlugin, orchestrationPluginSha256 } from "../settings";
 import { botName } from "../projects";
 import { ContractError, type ResultOf } from "../../contract";
 import { Bot, type PresetTurnIds } from "../bot";
@@ -157,8 +157,8 @@ export class CoreSend {
   private get rulesBook(): OrchestrationRulesBook {
     if (!this.madeRules) {
       this.madeRules = new OrchestrationRulesBook(() => {
-        const chosen = orchestrationPlugin(this.settingsFile() ?? {});
-        return (chosen === "builtin" ? builtinSource(this.options.plugins?.builtIns ?? null) : chosenSource(this.plugins.registry.plugin(chosen)))();
+        const raw = this.settingsFile() ?? {}, chosen = orchestrationPlugin(raw);
+        return (chosen === "builtin" ? builtinSource(this.options.plugins?.builtIns ?? null) : chosenSource(this.plugins.registry.plugin(chosen), orchestrationPluginSha256(raw)))();
       });
       void this.madeRules.refresh();
     }

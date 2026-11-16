@@ -184,7 +184,7 @@ describe("through Plugins", () => {
     plugin(dir, "needy");
     const state = { granted: true };
     const t = await stack(dir, state);
-    await t.ask("workers.start", start);
+    await t.ask("workers.start", { ...start, code: t.plugins.codeOf("needy") });
     state.granted = false;
     expect(t.readBook()[0]!.handed).toBeUndefined();
     t.plugins.grantChanged();
@@ -195,7 +195,7 @@ describe("through Plugins", () => {
     const dir = tempDir("o03b-review");
     plugin(dir, "needy");
     const t = await stack(dir);
-    await t.ask("workers.start", start);
+    await t.ask("workers.start", { ...start, code: t.plugins.codeOf("needy") });
     t.plugins.origins.set("main", "needy");
     t.plugins.origins.set("other", "needy");
     t.plugins.event("botRemoved", { botId: "elsewhere" });

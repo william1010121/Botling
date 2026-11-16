@@ -66,10 +66,15 @@ export const builtinSource = (builtIns: string | null): RulesSource => async () 
   return parseSlots(bytes);
 };
 
-/** A plugin the user chose by name in settings.json (`orchestrationPlugin`): its rules.json, not pinned (another hash, used only because the user asked), and only while the plugin is on. */
-export const chosenSource = (plugin: { folder: string; enabled: boolean } | undefined): RulesSource => async () => {
+/**
+ * A plugin the user chose by name in settings.json (`orchestrationPlugin`), only while it is on, and only the rules.json whose sha256 the
+ * user wrote next to it (`orchestrationPluginSha256`): a bot that edits the chosen plugin's file afterwards gets core's rules, not its text.
+ */
+export const chosenSource = (plugin: { folder: string; enabled: boolean } | undefined, sha256: string | null): RulesSource => async () => {
   if (!plugin?.enabled) throw new Error("The chosen orchestration plugin is not installed or is off.");
-  return parseSlots(await readRules(join(plugin.folder, "rules.json")));
+  const bytes = await readRules(join(plugin.folder, "rules.json"));
+  if (!sha256 || createHash("sha256").update(bytes).digest("hex") !== sha256) throw new Error("The chosen plugin's rules.json is not the one named in settings.json (orchestrationPluginSha256).");
+  return parseSlots(bytes);
 };
 
 /** `base` with each policy fragment that has a slot given that text. A contract fragment is never looked up. */

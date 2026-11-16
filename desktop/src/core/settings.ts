@@ -250,6 +250,12 @@ export function orchestrationPlugin(raw: RawSettings): string {
   return typeof value === "string" && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(value) && value !== "botling.orchestration" ? value : "builtin";
 }
 
+/** settings.json's `orchestrationPluginSha256`: the sha256 (64 lowercase hex) of the chosen plugin's rules.json the user named with it; else null, and no chosen plugin is used. */
+export function orchestrationPluginSha256(raw: RawSettings): string | null {
+  const value = (raw as Record<string, unknown>).orchestrationPluginSha256;
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value) ? value : null;
+}
+
 /** settings.json's hidden `claudeWorkers`:"app" (default: every Claude subagent is an app-managed worker) or "native". */
 export function claudeWorkersMode(raw: RawSettings): "app" | "native" {
   return (raw as Record<string, unknown>).claudeWorkers === "native" ? "native" : "app";

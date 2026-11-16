@@ -100,6 +100,14 @@ describe("a run: handoff → events → end → report", () => {
     expect(core.listWorkers()).toEqual([]);
   });
 
+  it("admit (M7-O04 F6): the plugin its check names reaches the run's words as the starter line (review)", async () => {
+    const by = { plugin: "needy", hash: "0123456789abcdef".repeat(4) };
+    const { core, adapter } = setup({ admit: (_kind, _args, run) => run(by) });
+    await core.handoff("claude-process", { instructions: "From the plugin's message." });
+    expect(adapter.started[0]!.words).toContain(by.hash);
+    expect(adapter.started[0]!.words.endsWith("\n\nFrom the plugin's message.")).toBe(true);
+  });
+
   it("the job its coordinator named (app_handoff's group) goes on the record and on the run's opening item", async () => {
     const { core, store, items } = setup();
     const { task_id } = await core.handoff("claude-process", { instructions: "Price AWS.", name: "AWS", group: "  Compare GPU clouds " });
