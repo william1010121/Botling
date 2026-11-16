@@ -70,7 +70,7 @@ describe("the shell hash covers the assets the page ships", () => {
     const { repo, commit, base, hashAt } = makeRepo();
     const first = hashAt(base);
     const seen = new Set([first]);
-    for (const change of [
+    for (const change of <Record<string, string>[]>[
       { "desktop/web-v3/shell/shell.css": ".shell { color: blue; }\n" },
       { "Web/src/tokens.css": ":root { --a: 2; }\n" },
       { "Web/src/chat/01-page.css": ".msg { padding: 2px; }\n" }, // reached only through `@import` in chat.css
