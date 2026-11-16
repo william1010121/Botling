@@ -72,6 +72,10 @@ export class InPageHost {
     this.manifest = options.manifest ?? embeddedFeManifest();
     this.expected = options.expected ?? (feManifestEmbedded() ? SHELL_PLUGINS : []);
     this.notify = options.notify ?? notifySlots;
+    // An expected plugin the manifest does not list can never load from this bundle: it is away from the start, so the first paint (before
+    // `start()`, which runs after the frame mounts) is already the shell alone, not the old column and rail for a frame (M7-08 review).
+    const listed = new Set(this.manifest.plugins.map((entry) => entry.name));
+    for (const name of this.expected) if (!listed.has(name)) this.down.add(name);
     this.loader = new InPageLoader({
       manifest: this.manifest,
       source: options.source ?? bundledInPagePlugin,
