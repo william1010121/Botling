@@ -20,8 +20,8 @@ const PAIR = ["followUp.5", "worker.reportBlock"] as const;
 const FORBIDDEN_SLOTS: ReadonlySet<string> = new Set(["workerModel", "workerEffort", "workerEngine", "model", "effort", "engine"]);
 
 export type Slots = ReadonlyMap<string, string>;
-/** Asks one plugin for its slots; rejects when it cannot answer. */
-export type RulesSource = () => Promise<Slots>;
+/** Asks one plugin for its slots; rejects when it cannot answer. `null`: there is no rules plugin to ask (the app runs without a plugin system), so core's own rules are the rules, not a fallback, and nothing is said. */
+export type RulesSource = () => Promise<Slots | null>;
 
 /** rules.json's bytes: a regular file (never a link) of at most FILE_MAX bytes. */
 async function readRules(file: string): Promise<Buffer> {
@@ -121,7 +121,8 @@ export class OrchestrationRulesBook {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("No answer in time.")), this.limitMs); timer.unref?.(); });
-      this.rules = withSlots(DEFAULT_ORCHESTRATION_RULES, await Promise.race([this.source(), late]));
+      const slots = await Promise.race([this.source(), late]);
+      this.rules = slots ? withSlots(DEFAULT_ORCHESTRATION_RULES, slots) : DEFAULT_ORCHESTRATION_RULES;
       this.told = false;
     } catch {
       this.rules = DEFAULT_ORCHESTRATION_RULES;

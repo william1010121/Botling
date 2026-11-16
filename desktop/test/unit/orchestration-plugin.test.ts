@@ -84,6 +84,18 @@ describe("the built-in plugin's answer is core's default", () => {
     expect(withPlugin.rules().current()).not.toBe(DEFAULT);
     expect(alone.rules().current()).toBe(DEFAULT);
   });
+
+  it("a core with no plugin system has no plugin to fail: core's own rules and no notice, however often it is asked", async () => {
+    const h = fixture({ builtIns: null }), bot = fakeBot();
+    for (let at = 0; at < 2; at++) await h.rules().refresh((text) => bot.appNotice(text));
+    expect(h.rules().current()).toBe(DEFAULT);
+    expect(bot.notices).toEqual([]);
+    const said: string[] = [];
+    const book = new OrchestrationRulesBook(async () => null);
+    await book.refresh((text) => said.push(text));
+    expect(book.current()).toBe(DEFAULT);
+    expect(said).toEqual([]);
+  });
 });
 
 describe("a plugin that fails", () => {

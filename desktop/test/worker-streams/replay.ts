@@ -247,7 +247,8 @@ export interface ReplayRegistration {
   label?: string;
 }
 
-const FAKE_PID = 4_000_000;
+// Above Linux's largest pid (pid_max is at most 2 ** 22 = 4194304): a real process, this test's own included, is never taken for a replayed one.
+const FAKE_PID = 2 ** 22 + 1_000_000;
 
 class Source implements ReplaySource {
   readonly processes: Process[] = [];
