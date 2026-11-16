@@ -266,6 +266,21 @@ Three kinds of mistakes, one category per evidence line:
   - 2026-11-15 | thin-check | `M6-10b` fix check (snapshot compared size and mtime, not content) | fix `dd6823ac`
   - 2026-11-15 | thin-check | `M6-09-review.md` F1 (snapshot skipped folders and symlinks; mutant M3 survived) | fix `c833a081`
 
+## L-017 · A batched mutation check rebuilds `out/` before tests that run the built core
+- Rule: the L-010 batch harness runs `npm run build` (or the plugin's own build) after applying each mutant and again
+  after restoring it, whenever any selected test reads `out/` (for example `desktop/test/unit/note-cards-core.test.ts`
+  through `CoreHarness`, or `desktop/builtin-plugins/botling.deps/test/frame.test.ts`, which reads the prebuilt
+  `out/…/ui.js`). A mutant whose only killer test reads `out/` and was not rebuilt is reported as "not evaluated",
+  never as "survived" or "killed".
+- Why: the harness edits `src/`, but those tests run the built output, so without a rebuild they never see the mutant.
+  The mutant looks like it survived (or is judged wrongly): M13 (drop the `files` grant check at `host-events.ts:290`)
+  in the duel-apis re-check, and R6 and R7 in the plugin-deps review.
+- Tags: test, build
+- Status: open · days 1 of 3 (2026-11-16)
+- Evidence:
+  - 2026-11-16 | thin-check | `.bot/artifacts/v3-m7/duel-apis-review.md` Re-check (M13 judged without a rebuild) | log `.bot/remote-test-logs/20261116-200436-6786-7cea257e.log`
+  - 2026-11-16 | thin-check | `.bot/artifacts/v3-m7/plugin-deps-review.md` (R6 and R7, `frame.test.ts` reads prebuilt `out/…/ui.js`)
+
 ## Watch list (seen once, not a lesson yet)
 
 - Plugin names matched by prefix: a `write` plugin `my` could run `my.plugin`'s commands
