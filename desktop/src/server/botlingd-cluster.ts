@@ -19,7 +19,7 @@ import { readRowBody } from "./replica";
 import type { MirrorBot } from "./replica/peer-chat-mirror";
 import type { RosterStore, RosterView } from "./roster";
 import type { DeviceRoster, SessionOptions } from "./session";
-import type { Db } from "./store";
+import type { CompactionOptions, Db } from "./store";
 
 /**
  * M5-18a (D56, §18.3): a plugin's server (program) part runs only when the own `plugin:<name>` row says
@@ -335,6 +335,8 @@ export interface BotlingdOptions {
   session?: SessionOptions;
   /** How long to wait for another holder of the data folder to let go (ms). */
   lockWaitMs?: number;
+  /** The one-time prune + VACUUM of an oversized old server.db (store/compaction.ts): `false` is off; tests lower the sizes and `delayMs`. */
+  compaction?: (CompactionOptions & { delayMs?: number; batchEntries?: number; scanSpan?: number }) | false;
   /** Packaged Electron run: launch child Node work (plugin host, pdf-text) via utilityProcess.fork. */
   packaged?: boolean;
   electronUtility?: ElectronUtilityContext;

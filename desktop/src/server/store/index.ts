@@ -3,12 +3,14 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { takeBackup, takePreMigrationBackup, type BackupKind } from "./backup";
+import { runStartupVacuum, type CompactionOptions } from "./compaction";
 import { externalDiskNote, openReaderDb, openWriterDb } from "./connection";
 import { LATEST_SCHEMA_VERSION, migrate, MIGRATIONS, schemaVersion, SchemaTooNewError, type Migration } from "./schema";
 import type { Db } from "./sqlite";
 import { Writer, type Command, type WriterOptions } from "./writer";
 
 export { BACKUP_AT_KEY, backupFile, CONVERSATIONS_ONLY_KEY, isConversationsBackup, KEEP, listBackups, newestBackup, PRE_MIGRATION_FULL_COPY_MAX_BYTES, serverDbBytes, stampTime, takeBackup, takePreMigrationBackup, type BackupKind } from "./backup";
+export { PRUNED_KEY, PRUNE_DELAY_MS, pruneInBackground, runStartupVacuum, startBackgroundPrune, VACUUMED_KEY, type BackgroundPrune, type CompactionOptions, type PruneDeps, type PruneReport, type VacuumReport } from "./compaction";
 export { externalDiskNote, openReaderDb, openWriterDb, WRITER_PRAGMAS } from "./connection";
 export { LATEST_SCHEMA_VERSION, migrate, MIGRATIONS, schemaVersion, SchemaTooNewError, type Migration } from "./schema";
 export type { Db, SqlRow, SqlValue, Statement } from "./sqlite";
@@ -19,6 +21,8 @@ export interface OpenStoreOptions extends WriterOptions {
   migrations?: readonly Migration[];
   /** Tests: the size above which the backup before a migration is conversations-only (default PRE_MIGRATION_FULL_COPY_MAX_BYTES). */
   preMigrationFullCopyMaxBytes?: number;
+  /** The one-time VACUUM (after the background prune, compaction.ts) of an oversized old file; `false` turns it off. */
+  compaction?: CompactionOptions | false;
 }
 
 export interface ServerStore {
@@ -49,6 +53,8 @@ export async function openServerStore(dataDir: string, options: OpenStoreOptions
   try {
     const from = schemaVersion(db);
     if (from > known) throw new SchemaTooNewError(from, known);
+    // Only once the background prune is done (its marker), and before the pre-migration backup, so the backup copies the small file.
+    if (existed && from > 0 && options.compaction !== false) runStartupVacuum(db, options.compaction ?? {});
     if (existed && from > 0 && from < known) {
       // v1 §7.6: a backup before every schema migration (the writer is not running yet, nothing else writes). A big file gets
       // a conversations-only copy instead of a whole one, and only one copy is kept (see PRE_MIGRATION_FULL_COPY_MAX_BYTES).

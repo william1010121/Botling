@@ -39,7 +39,7 @@ import { PushTriggers } from "./push";
 import { addressesValue, advertisedPort, PeerSessions, peerTimers, SessionRouter, type RelayAddress } from "./peer";
 import { VapidKeySync } from "./push";
 import { NO_SAFE_STORAGE, ShellBridge, answerSystemQuit } from "./shell-bridge";
-import { openServerStore, type ServerStore } from "./store";
+import { openServerStore, startBackgroundPrune, type BackgroundPrune, type ServerStore } from "./store";
 import { PeerChatMirror } from "./replica/peer-chat-mirror";
 import { PassThrough, PassThroughOwner, PeerLogCache, PeerTables, SummaryRows, TableFeeds } from "./replica";
 import { ServerOrigin } from "./forward";
@@ -71,6 +71,8 @@ export class Botlingd {
   static networkStopBudgetMs = NETWORK_STOP_BUDGET_MS;
   private stopping: Promise<void> | null = null;
   private lockTimer: NodeJS.Timeout | null = null;
+  /** The one-time background prune of an oversized server.db (store/compaction.ts), started after the listeners are up. */
+  private prune: BackgroundPrune | null = null;
   private pluginTimer: NodeJS.Timeout | null = null;
   private tokenValue = "";
   private backups: DailyBackups | null = null;
@@ -234,7 +236,7 @@ export class Botlingd {
       // Each phase that takes 500 ms or more says so in the log (an install waits for these one after another).
       const clock = new PhaseClock(log);
       const began = Date.now();
-      store = await clock.time("start", "open the store", () => openServerStore(paths.dataDir));
+      store = await clock.time("start", "open the store", () => openServerStore(paths.dataDir, { compaction: options.compaction === false ? false : { log, ...options.compaction } }));
       const s = { options, env, paths, port, timers, log, later, lock, store } as Ctx;
       Object.assign(s, await clock.time("start", "identity", () => openIdentity(s)));
       Object.assign(s, await clock.time("start", "core", () => startCore(s)));
@@ -320,6 +322,8 @@ export class Botlingd {
       daemon.backups.start();
     } else log("daily backups are off (the default; BOTLING_SERVER_DAILY_BACKUP=1 turns them on)");
     for (const note of serverNotes(paths.dataDir, hub.reader(), Date.now(), process.platform, schedule !== null)) log(`note (${note.id}): ${note.text}`);
+    // After the start, so it never holds up the window's attach (and with it `healthy`): it is many short writer commands.
+    if (options.compaction !== false) daemon.prune = startBackgroundPrune({ log, ...options.compaction, submit: (command) => store.submit(command), changed: (stream) => hub.committed([stream]) });
     log(`started: server ${serverId}, data ${paths.dataDir}, ${core.botIds().length} bots, pid ${process.pid}, ${Date.now() - began} ms`);
   }
 
@@ -382,6 +386,7 @@ export class Botlingd {
 
   private async doStop(): Promise<void> {
     if (this.lockTimer) clearInterval(this.lockTimer);
+    await this.prune?.stop().catch(() => undefined);
     if (this.pluginTimer) clearInterval(this.pluginTimer);
     const failures: unknown[] = [];
     const clock = new PhaseClock(this.log);

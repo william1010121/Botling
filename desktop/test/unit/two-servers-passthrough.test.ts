@@ -19,7 +19,9 @@ import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FrameSplitter, packFrame, type Cursor, type Entry, type Message, type MessageOf, type Slot } from "../../src/protocol";
 import { decodeFrame, encodeFrame } from "../../src/protocol/frame";
+import { readEntries } from "../../src/server/log";
 import { verifyChain } from "../../src/server/log/chain";
+import type { Db } from "../../src/server/store";
 import type { ScriptClient } from "../botlingd-harness";
 import { until } from "../helpers";
 import type { FaultProxy } from "../support/fault-proxy";
@@ -50,8 +52,9 @@ const headOf = (server: TestServer) => withDb(server, (db) => {
 });
 /** B's entries of `logId` by seq: hash and content (the hash covers the canonical entry). */
 const entriesOf = (server: TestServer, logId: string) => withDb(server, (db) => new Map(
-  (db.prepare("SELECT seq, hash, kind, body FROM entries WHERE stream = ? AND logId = ?").all(stream, logId) as Array<{ seq: number; hash: string; kind: string; body: string }>)
-    .map((row) => [Number(row.seq), { hash: String(row.hash), kind: String(row.kind), body: String(row.body) }]),
+  readEntries(db as unknown as Db, stream, 1, { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: Number.MAX_SAFE_INTEGER }).entries
+    .filter((entry) => entry.logId === logId)
+    .map((entry) => [entry.seq, { hash: entry.hash, kind: entry.kind, body: JSON.stringify(entry.body) }]),
 ));
 const cacheOf = (server: TestServer) => withDb(server, (db) => {
   const row = db.prepare("SELECT logId, snapSeq, head, retired FROM peerlogs WHERE stream = ?").get(stream) as { logId: string; snapSeq: number; head: number; retired: string } | undefined;

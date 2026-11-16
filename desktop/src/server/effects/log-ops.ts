@@ -2,7 +2,7 @@
 // entry that fits one frame (fit.ts), make sure a bot has its stream and read-model row, and mark the bot's running turn
 // in `bots.liveTurnId` (the §9.3 checkpoint row, which the `turn.stop` basis and recovery read).
 import type { Entry, Slot, StreamId } from "../../protocol";
-import { appendEntries, ensureStream } from "../log";
+import { appendEntries, ensureStream, sameAsStored } from "../log";
 import type { Db } from "../store";
 import { fitBody } from "./fit";
 import type { TxScope } from "./scope";
@@ -28,6 +28,11 @@ export function botKnown(tx: Db, botId: string): boolean {
 }
 
 export interface AppendOptions {
+  /**
+   * Store nothing when the body is what the object's newest stored state already is (a redraw of the same bot, sub-agent
+   * or line): returns null like a body that does not fit, without the log line.
+   */
+  skipSame?: boolean;
   slot?: Slot;
   now?: number;
   log?: (line: string) => void;
@@ -44,6 +49,7 @@ export function appendFitted(scope: TxScope, tx: Db, stream: StreamId, kind: str
     return null;
   }
   ensureStream(tx, stream);
+  if (options.skipSame && sameAsStored(tx, stream, kind, fitted.body)) return null;
   const [entry] = appendEntries(tx, stream, [{ kind, body: fitted.body, ...(options.slot ? { slot: options.slot } : {}) }], options.now ? { now: options.now } : {});
   if (fitted.full !== null) {
     const message = body.message as { id?: string } | undefined;

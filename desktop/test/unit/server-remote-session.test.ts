@@ -25,7 +25,7 @@ import { bindServerIdentity, ClusterSetup, loadOrCreateServerIdentity } from "..
 import { IntentRuntime } from "../../src/server/intents";
 import { LiveChannel } from "../../src/server/live";
 import { ensureBot } from "../../src/server/effects/log-ops";
-import { LogHub } from "../../src/server/log";
+import { LogHub, readEntries } from "../../src/server/log";
 import { RosterStore } from "../../src/server/roster";
 import {
   LIVE_SOFT_BYTES, RemoteSession, RemoteSessions, REMOTE_READS, slotAuthorize, statedScope,
@@ -117,8 +117,8 @@ async function server(options: RemoteSessionOptions = {}, extraHost: Partial<Ses
   return {
     store, identity, roster, engine, runtime, host, remote, serverId, logs,
     inc: () => String(hub.reader().prepare("SELECT logId FROM streams WHERE stream = ?").get(`srv:${serverId}`)!.logId),
-    entries: (stream) => hub.reader().prepare("SELECT kind, body, slot FROM entries WHERE stream = ? ORDER BY seq").all(stream)
-      .map((row) => ({ kind: String(row.kind), body: JSON.parse(String(row.body)), slot: row.slot ? JSON.parse(String(row.slot)) : null })),
+    entries: (stream) => readEntries(hub.reader(), stream, 1, { maxEntries: Number.MAX_SAFE_INTEGER, maxBytes: Number.MAX_SAFE_INTEGER }).entries
+      .map((entry) => ({ kind: entry.kind, body: entry.body, slot: entry.slot ?? null })),
   };
 }
 

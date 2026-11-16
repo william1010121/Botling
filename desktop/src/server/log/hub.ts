@@ -33,6 +33,8 @@ export interface LogHubOptions {
    * (new `originEpoch`s, `started` effects marked `interrupted`, the audit row), owned by other modules.
    */
   onRewind?: (db: Db) => void;
+  /** Told when a stored entry cannot be rebuilt and its reader gets a snap instead (log-store.ts `unreadable`). */
+  log?: (line: string) => void;
   /**
    * Also serve this server's `srv:` stream (botlingd, step 9): its snap is a small view (`{serverId, bots}`, snap.ts)
    * and its logId is the `inc` front ends put on every command (D49). Off by default: only bot streams.
@@ -192,11 +194,13 @@ export class LogReader {
       if (roomEntries <= 0 || roomBytes <= 0) return;
       const prevHash = hashAfter(db, row, sub.sent);
       if (prevHash === null) { this.subs.delete(sub.stream); this.snap(sub.stream); return; }
-      const read = readEntries(db, sub.stream, sub.sent + 1, { maxEntries: Math.min(roomEntries, row.head - sub.sent), maxBytes: roomBytes });
+      const read = readEntries(db, sub.stream, sub.sent + 1, { maxEntries: Math.min(roomEntries, row.head - sub.sent), maxBytes: roomBytes, ...(this.hub.log ? { log: this.hub.log } : {}) });
       // Only the current incarnation's entries: a cursor at or above the incarnation's start never reads an older one.
       const entries: Entry[] = [];
       for (const entry of read.entries) { if (entry.logId !== sub.logId) break; entries.push(entry); }
       if (!entries.length) {
+        // The next entry is stored but cannot be rebuilt (log-store.ts `unreadable`): never send a wrong body, send a snap.
+        if (read.unreadable !== undefined && !read.entries.length) { this.subs.delete(sub.stream); this.snap(sub.stream); return; }
         if (read.entries.length) { this.subs.delete(sub.stream); this.resetAndSnap(sub.stream, read.entries[0].logId); }
         return;
       }
@@ -217,6 +221,7 @@ export class LogHub {
   readonly pageEntries: number;
   readonly pageBytes: number;
   readonly serverStreams: boolean;
+  readonly log: ((line: string) => void) | undefined;
   private readonly readers = new Set<LogReader>();
   private db: Db | null = null;
   private rewinding: Promise<void> | null = null;
@@ -225,6 +230,7 @@ export class LogHub {
     this.pageEntries = Math.max(1, options.pageEntries ?? 500);
     this.pageBytes = Math.max(1024, options.pageBytes ?? 1024 * 1024);
     this.serverStreams = options.serverStreams === true;
+    this.log = options.log;
   }
 
   /** One reader connection for every read the hub does (sync reads: nothing interleaves with them). */

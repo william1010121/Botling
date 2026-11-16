@@ -251,6 +251,15 @@ CREATE TABLE slot_results (
 CREATE UNIQUE INDEX slot_results_by_slot ON slot_results (origin, originEpoch, target, n);
 `;
 
+// v15 (src/server/log/log-store.ts): snapshot entries stored as diffs. `okey` names the object an entry is a state of
+// (`s:`/`b:`/`m:` + id), `base` is NULL for a whole body (a baseline) and else the seq of the baseline a patch hangs on.
+// Existing rows keep both NULL: whole bodies, read as before.
+const V15 = `
+ALTER TABLE entries ADD COLUMN okey TEXT;
+ALTER TABLE entries ADD COLUMN base INTEGER;
+CREATE INDEX entries_by_okey ON entries (stream, okey, seq) WHERE okey IS NOT NULL;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -352,6 +361,13 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "slot results too large for their cmd.applied entry (src/server/slots/kept-results.ts): slot_results",
     up(db) {
       db.exec(V14);
+    },
+  },
+  {
+    version: 15,
+    description: "snapshot entries as diffs (src/server/log/log-store.ts): entries.okey and entries.base",
+    up(db) {
+      db.exec(V15);
     },
   },
 ];
