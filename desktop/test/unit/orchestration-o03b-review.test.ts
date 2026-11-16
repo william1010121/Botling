@@ -213,6 +213,9 @@ describe("through Plugins", () => {
     const code = t.plugins.codeOf("needy");
     expect(code).toEqual(expect.any(String));
     await expect(t.ask("workers.start", { ...start, code: `${code}-old` })).rejects.toThrow("older code");
+    // A request that names no code at all is refused too (fail closed, review).
+    await expect(t.ask("workers.start", start)).rejects.toThrow("does not name the code");
+    await expect(t.ask("bots.list", { plugin: "needy" })).rejects.toThrow("does not name the code");
     expect(t.started).toEqual([]);
     expect(t.readBook()).toEqual([]);
     // The strict params of workers.start do not see the field.

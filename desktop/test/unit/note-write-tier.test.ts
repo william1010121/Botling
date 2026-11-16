@@ -60,7 +60,7 @@ async function setup(build: (dir: string) => void) {
   running.push(plugins);
   await plugins.start();
   await until(() => plugins.host.running);
-  const ask = (method: string, params: unknown): Promise<any> => plugins["requested"](method, params);
+  const ask = (method: string, params: unknown): Promise<any> => plugins["requested"](method, (params && typeof params === "object" && !Array.isArray(params) ? { code: plugins.codeOf(String((params as { plugin?: unknown }).plugin)), ...params } : params));
   return { dir, note, ask };
 }
 

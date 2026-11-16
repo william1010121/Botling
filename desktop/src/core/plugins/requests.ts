@@ -82,12 +82,14 @@ function workersRequest(host: RequestHost, method: string, params: unknown): Pro
 export async function requested(this: RequestHost, method: string, params: unknown, owner?: string): Promise<unknown> {
   // M7-O04: a request names the code it was made by (`code`, the plugin's fingerprint). Older code a host still runs after a
   // swap is refused here, before any method sees it; the method's own params never carry the field.
-  if (params && typeof params === "object" && !Array.isArray(params) && Object.hasOwn(params, "code")) {
-    const { code, ...rest } = params as Record<string, unknown>;
-    const now = typeof rest.plugin === "string" ? this.codeOf(rest.plugin) : undefined;
+  // A request for a plugin whose code is known must name it: one that does not is refused (fail closed, review).
+  const named = params && typeof params === "object" && !Array.isArray(params) ? (params as Record<string, unknown>) : null;
+  const now = typeof named?.plugin === "string" ? this.codeOf(named.plugin) : undefined;
+  if (named && Object.hasOwn(named, "code")) {
+    const { code, ...rest } = named;
     if (now !== undefined && code !== now) throw new Error("This request came from older code of the plugin, which has been replaced. It was refused.");
     params = rest;
-  }
+  } else if (now !== undefined) throw new Error("This request does not name the code of the plugin it came from. It was refused.");
   if (owner !== undefined) {
     const claimed = params && typeof params === "object" ? (params as { plugin?: unknown }).plugin : undefined;
     if (claimed !== undefined && claimed !== owner) throw new Error(`This host may only act for "${owner}".`);

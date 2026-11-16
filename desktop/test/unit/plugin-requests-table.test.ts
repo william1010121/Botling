@@ -229,7 +229,7 @@ async function setup(): Promise<Env> {
   running.push(plugins);
   await plugins.start();
   await until(() => plugins.host.running);
-  return { dir, plugins, world, calls, answers, note, ask: (method, params, owner) => plugins["requested"](method, params, owner) };
+  return { dir, plugins, world, calls, answers, note, ask: (method, params, owner) => plugins["requested"](method, (params && typeof params === "object" && !Array.isArray(params) ? { code: plugins.codeOf(String((params as { plugin?: unknown }).plugin)), ...params } : params), owner) };
 }
 
 // ---------------------------------------------------------------------------------------------
