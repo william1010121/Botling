@@ -162,6 +162,42 @@ describe("the frame's page, made by the page itself", () => {
     expect(tokenOf("not a url at all", "not a base")).toBeNull();
     expect(tokenOf(null, BASE)).toBeNull();
   });
+
+  // Review (M7-07d): the guards above that no test pinned yet.
+  const framed = (src: string, tag = "iframe") => {
+    const frame = document.createElement(tag);
+    frame.setAttribute("src", src);
+    const post = vi.fn();
+    Object.defineProperty(frame, "contentWindow", { value: { postMessage: post } });
+    document.body.append(frame);
+    cleanups.push(() => frame.remove());
+    frame.dispatchEvent(new Event("load"));
+    return post;
+  };
+
+  it("serves nothing for a page pushed out by newer ones, and still serves the newest", () => {
+    const pages = new FramePages(document, BASE);
+    cleanups.push(pages.start());
+    const urls = Array.from({ length: KEPT_PAGES + 3 }, () => pages.make(html));
+    for (const old of urls.slice(0, 3)) expect(framed(old)).not.toHaveBeenCalled();
+    expect(framed(urls[3]!)).toHaveBeenCalledTimes(1);
+    expect(framed(urls[urls.length - 1]!)).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets its pages on stop: started again, an old token gets nothing; an element that is not an iframe gets nothing", () => {
+    const pages = new FramePages(document, BASE);
+    const stop = pages.start();
+    const url = pages.make(html);
+    expect(framed(url, "div")).not.toHaveBeenCalled();
+    stop();
+    cleanups.push(pages.start());
+    expect(framed(url)).not.toHaveBeenCalled();
+    expect(framed(pages.make(html))).toHaveBeenCalledTimes(1);
+  });
+
+  it("missingShell fails closed for null on the page", () => {
+    expect(missingShell(null, pageNeedsShell(pageCaps()))).toEqual(["?"]);
+  });
 });
 
 describe("a headless page runs plugin frames", () => {
