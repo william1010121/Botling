@@ -358,16 +358,16 @@ describe("D0: a redraw of the state the log already holds is not stored", () => 
   it("message.updated: identical is skipped, a changed line is stored, and the line's rev keeps its entry", async () => {
     const { store, scope, tap } = await tapSetup();
     const m = (text: string): Message => line("m1", text) as unknown as Message;
-    await send(scope, tap, { type: "message.added", botId: "alpha", message: m("one") } as ContractEvent);
-    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("one") } as ContractEvent);
-    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("one") } as ContractEvent);
+    await send(scope, tap, { type: "message.added", botId: "alpha", message: m("one") } as unknown as ContractEvent);
+    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("one") } as unknown as ContractEvent);
+    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("one") } as unknown as ContractEvent);
     expect(count(store, "bot:alpha", "message.updated")).toBe(0);
-    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("two") } as ContractEvent);
-    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("two") } as ContractEvent);
+    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("two") } as unknown as ContractEvent);
+    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("two") } as unknown as ContractEvent);
     expect(count(store, "bot:alpha", "message.updated")).toBe(1);
     expect(store.db.prepare("SELECT rev FROM messages WHERE botId = 'alpha' AND msgId = 'm1'").get()!.rev).toBe(2);
     // back to an earlier text is a change again
-    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("one") } as ContractEvent);
+    await send(scope, tap, { type: "message.updated", botId: "alpha", message: m("one") } as unknown as ContractEvent);
     expect(count(store, "bot:alpha", "message.updated")).toBe(2);
     expect(verifyStream(store.db, A)).toMatchObject({ ok: true });
   });
@@ -379,8 +379,8 @@ describe("D0: a redraw of the state the log already holds is not stored", () => 
     const seen: Array<{ stream: string; seq: number }> = [];
     const tap = new EventTap({ scope, hooks: { lineStored: (_tx, _event, entry) => { seen.push({ stream: entry.stream, seq: entry.seq }); } } });
     const message = line("m1", "x") as unknown as Message;
-    await send(scope, tap, { type: "message.added", botId: "alpha", message } as ContractEvent);
-    await send(scope, tap, { type: "message.updated", botId: "alpha", message } as ContractEvent);
+    await send(scope, tap, { type: "message.added", botId: "alpha", message } as unknown as ContractEvent);
+    await send(scope, tap, { type: "message.updated", botId: "alpha", message } as unknown as ContractEvent);
     expect(seen).toEqual([{ stream: A, seq: 1 }, { stream: A, seq: 1 }]);
   });
 
