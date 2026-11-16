@@ -43,7 +43,7 @@ export const ADMITTED = Symbol("plugin-workers admitted");
 /** What a worker the bot starts for a plugin's message may be given (the same few things `workers.start` takes). */
 const HEARD_KEYS: ReadonlySet<string> = new Set(["instructions", "prompt", "task", "name", "description", "group", "model", "effort", "engine"]);
 const DAY = 86_400_000, KEEP = 7 * DAY, MAX_ENTRIES = 1_000, CARD_WAIT_MS = 600_000;
-/** The most cards of one plugin that wait for the one open (a plugin that asks for more is refused, so cards cannot pile up). */
+/** The most cards of one plugin at once, the open one included (a plugin that asks for more is refused, so cards cannot pile up). */
 const CARDS_QUEUED_MAX = 8;
 
 /** One bot's Claude-process worker host, as the world lends it (null/string from `workers`: why there is none). */
@@ -206,6 +206,10 @@ export class PluginWorkers {
     let timer: NodeJS.Timeout | undefined;
     try {
       await before; // `tail` only ever resolves: the card in front is done, answered or not
+      // Authority at this card's turn (L-008): a plugin removed, revoked or changed while it waited raises no card (its error is the
+      // caller's), and one the user allowed in Settings › Plugins meanwhile needs none (the caller checks the plugin again either way).
+      this.allowed(facts.name, facts.identity);
+      if (this.installed(facts.name)) return true;
       // The text is made when it is this card's turn: nothing it shows is older than the card before it.
       const text = `The plugin "${oneLine(facts.name, 100)}" (${facts.identity.slice(0, 12)}, written by a bot) wants to ${sending ? "give a worker new instructions" : "start a worker"} for ${JSON.stringify(oneLine(botId, 100))}: ${JSON.stringify(oneLine(params.name ?? "", 100))}.\nIt would read and write files and run programs in that bot's folder.\nInstructions: ${JSON.stringify(oneLine(params.instructions, 400))}${params.model ? `\nModel: ${JSON.stringify(oneLine(params.model, 60))}` : ""}`;
       const answer = await Promise.race([

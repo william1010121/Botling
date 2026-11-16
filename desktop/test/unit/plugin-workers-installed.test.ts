@@ -181,6 +181,36 @@ describe("cards of one plugin queue instead of the second failing", () => {
     expect(t.log.started).toHaveLength(1);
   });
 
+  it("a queued card's turn re-checks first (review fix): a plugin revoked while it waited raises no card at all", async () => {
+    const card = manual();
+    let granted = true;
+    const t = book({ granted: () => granted }, card.ask);
+    const first = t.workers.start("duel", go("A"));
+    const second = t.workers.start("duel", go("B"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    granted = false;
+    card.answers[0]!({ index: 0 });
+    await expect(first).rejects.toThrow("has not been allowed to orchestrate");
+    await expect(second).rejects.toThrow("has not been allowed to orchestrate");
+    expect(card.cards).toHaveLength(1);
+    expect(t.log.started).toEqual([]);
+  });
+
+  it("a queued card's turn re-checks first (review fix): allowed in Settings while it waited, it starts with no card of its own", async () => {
+    const card = manual();
+    let installed = false;
+    const t = book({ installed: () => installed }, card.ask);
+    const first = t.workers.start("duel", go("A"));
+    const second = t.workers.start("duel", go("B"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    installed = true;
+    card.answers[0]!({ index: 1 });
+    await expect(first).rejects.toThrow("did not allow");
+    await expect(second).resolves.toBeTruthy();
+    expect(card.cards).toHaveLength(1);
+    expect(t.log.started).toEqual([expect.objectContaining({ instructions: "B" })]);
+  });
+
   it("the line is bounded: the ninth card waiting at once is refused, the eight in line are kept", async () => {
     const card = manual();
     const t = book({}, card.ask);
@@ -214,7 +244,7 @@ describe("cards of one plugin queue instead of the second failing", () => {
   });
 });
 
-describe("pluginCapability (botlingd's answer for the core): the plugin the user allowed, at its running hash", () => {
+describe("pluginCapability (botlingd's answer for the core): the plugin the user allowed (the trust model's by-name approval)", () => {
   const open: ServerStore[] = [];
   const HASH = "sha256:cur", OLD = "sha256:old";
   const row = (author: PluginRow["author"], grants: PluginRow["grants"]): PluginRow => ({
@@ -222,9 +252,9 @@ describe("pluginCapability (botlingd's answer for the core): the plugin the user
     manifest: { tier: "write", reads: [], requests: [], owns: [], provides: [], requires: [], uses: [], clients: [], needsShell: [] },
     author, grants,
   });
-  const grant = (tier: "read" | "request" | "write") => ({ tier, reads: [], requests: [], grantedBy: "user" as const, at: 1 });
+  const grant = (tier: "read" | "request" | "write", grantedBy: "user" | "import" | "builtin" = "user") => ({ tier, reads: [], requests: [], grantedBy, at: 1 });
 
-  it("true for a write grant at the running hash, for both capabilities; false for none, a read grant, an older hash, a missing or broken row, a reader that throws", async () => {
+  it("true for a user's or the import's record (any tier, any hash: the approval is the plugin's), for both capabilities; false for none, a builtin record on a non-built-in row, a missing or broken row, a reader that throws", async () => {
     const dir = tempDir("plugin-capability");
     mkdirSync(dir, { recursive: true });
     const store = await openServerStore(dir);
@@ -232,14 +262,16 @@ describe("pluginCapability (botlingd's answer for the core): the plugin the user
     const serverId = "srv-1", stream = `srv:${serverId}`, reader = () => store.openReader();
     const rows: Record<string, PluginRow> = {
       allowed: row("bot", { [HASH]: grant("write") }),
-      bare: row("bot", {}),
-      readOnly: row("bot", { [HASH]: grant("read") }),
       older: row("bot", { [OLD]: grant("write") }),
+      readOnly: row("user", { [HASH]: grant("read") }),
+      imported: row("import", { [OLD]: grant("write", "import") }),
+      bare: row("bot", {}),
+      stamped: row("bot", { [HASH]: grant("write", "builtin") }),
     };
     await store.submit((tx) => { for (const [name, body] of Object.entries(rows)) putRow(tx, stream, `plugin:${name}`, body); });
     for (const capability of ["orchestrate", "installed"] as const) {
-      expect(pluginCapability(reader, serverId, "allowed", capability)).toBe(true);
-      for (const name of ["bare", "readOnly", "older", "missing", "../x", "constructor"]) expect(pluginCapability(reader, serverId, name, capability)).toBe(false);
+      for (const name of ["allowed", "older", "readOnly", "imported"]) expect(pluginCapability(reader, serverId, name, capability)).toBe(true);
+      for (const name of ["bare", "stamped", "missing", "../x", "constructor"]) expect(pluginCapability(reader, serverId, name, capability)).toBe(false);
     }
     expect(pluginCapability(reader, serverId, "allowed", "other" as never)).toBe(false);
     expect(pluginCapability(() => { throw new Error("closed"); }, serverId, "allowed", "installed")).toBe(false);
