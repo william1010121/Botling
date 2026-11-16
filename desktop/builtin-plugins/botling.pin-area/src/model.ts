@@ -167,11 +167,11 @@ export function readBook(raw: unknown): Book {
     if (!entry || !pin) continue;
     book.removed.push({ pin, at: num(entry.at), by: entry.by === "seen" || entry.by === "bot" ? entry.by : "user" });
   }
-  const fixes = (Array.isArray(r.fixes) ? r.fixes.slice(-MAX_FIXES) : []).flatMap((item): Fix[] => {
+  const fixes = (Array.isArray(r.fixes) ? r.fixes : []).flatMap((item): Fix[] => {
     const f = item && typeof item === "object" ? item as Record<string, unknown> : null;
     const text = f ? oneLine(f.text, 30) : "";
     return f && text && typeof f.from === "string" && typeof f.to === "string" && (f.from === "chat" || isId(f.from)) && (f.to === "chat" || isId(f.to)) ? [{ text, from: f.from, to: f.to, at: num(f.at) }] : [];
-  });
+  }).slice(-MAX_FIXES);
   if (fixes.length) book.fixes = fixes;
   return book;
 }

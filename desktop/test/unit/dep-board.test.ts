@@ -232,7 +232,7 @@ describe("the plugins that ship with the app", () => {
     // (the page sorts the same way). A change in what a built-in plugin calls changes this, and app-features.test.ts says which call moved.
     const areas = board.featureAreas.map((area) => [area.id, area.plugins.length]);
     expect(areas.filter(([, count]) => (count as number) >= 2).sort((x, y) => (y[1] as number) - (x[1] as number) || String(x[0]).localeCompare(String(y[0])))).toEqual([
-      ["ccb.messages", 6], ["api.bots", 5], ["api.chat", 4], ["api.replyTags", 4], ["api.settings", 4], ["ccb.composer", 3], ["ccb.decorations", 2], ["ccb.page", 2],
+      ["ccb.messages", 6], ["api.bots", 5], ["api.chat", 4], ["api.replyTags", 4], ["api.settings", 4], ["ccb.composer", 3], ["ccb.decorations", 3], ["api.workspace", 2], ["ccb.page", 2],
     ]);
     expect(areas).toHaveLength(24);
     expect(board.featureAreas.flatMap((area) => area.features)).toHaveLength(64);
