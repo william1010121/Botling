@@ -89,8 +89,11 @@ export class BotSubagentRows {
   queueNote(note: string) {
     const bot = this.options.primary ?? this.host;
     if (!bot.head?.running) return;
-    bot.queuedNote = note;
+    bot.delivery.queueNote(note);
   }
+
+  /** A subagent's row changed outside `saveSubagents` (a nested Agent result): the next rows push includes it. */
+  markDirty(id: string) { this.dirtySubagents.add(id); }
 
   saveSubagents(progress = false, changed?: SubagentRecord) {
     if (this.readOnly) return;

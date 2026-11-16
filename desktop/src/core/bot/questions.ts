@@ -343,7 +343,7 @@ export class BotQuestions {
     if (picks) {
       const record = this.records.find((candidate) => candidate.id === messageId);
       if (!record || !isOpenQuestion(record) || !picks[index]) return { accepted: false };
-      this.cardPicks.delete(messageId);
+      this.host.guests.forgetPicks(messageId);
       record.chosen = index;
       this.changed(record);
       this.conduct(this.conductor.picked(picks[index]!));

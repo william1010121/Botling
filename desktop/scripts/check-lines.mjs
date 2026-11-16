@@ -81,7 +81,8 @@ export function productSizes(root) {
 }
 
 const BRIDGE_DIR = /^desktop\/src\/core\/bot\/[^/]+\.ts$/;
-const SET_ACCESSOR = /^\s*(?:(?:private|public|protected)\s+)?set\s+[A-Za-z_$][\w$]*\s*\(/;
+// A `set name(` anywhere on a line (not only first: `get a() { ... } set a(v) { ... }`), after any of private/public/protected/static/override.
+const SET_ACCESSOR = /(?:^|[\s;{}])(?:(?:private|public|protected|static|override)\s+)*set\s+[A-Za-z_$][\w$]*\s*\(/;
 
 /**
  * The `set` accessors in the collaborators under desktop/src/core/bot/ (M7-S59). A bridge block forwards a field to its owner;
@@ -92,7 +93,17 @@ export function bridgeSetters(files) {
   const found = [];
   for (const [path, text] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
     if (!BRIDGE_DIR.test(path)) continue;
-    text.split('\n').forEach((line, i) => { if (SET_ACCESSOR.test(line)) found.push(`${path}:${i + 1}: ${line.trim()}`); });
+    let inBlock = false;
+    text.split('\n').forEach((line, i) => {
+      // strings and comments are not code: a string's text ("owner not set yet ("), a block comment's lines, what follows `//`
+      let code = line.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, '""');
+      if (inBlock) { const end = code.indexOf('*/'); if (end < 0) return; code = code.slice(end + 2); inBlock = false; }
+      code = code.replace(/\/\*.*?\*\//g, '');
+      const open = code.indexOf('/*');
+      if (open >= 0) { code = code.slice(0, open); inBlock = true; }
+      code = code.replace(/(^|[^:])\/\/.*$/, '$1');
+      if (SET_ACCESSOR.test(code)) found.push(`${path}:${i + 1}: ${line.trim()}`);
+    });
   }
   return found;
 }

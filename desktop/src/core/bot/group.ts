@@ -21,6 +21,8 @@ import { preview, union } from "./view-functions";
 export class BotGroup {
   /** App-owned peers keyed by engine (on the conversation owner only). */
   partners = new Map<Engine, Bot>();
+  /** The partner for `engine` was shut down: it is not this bot's partner any more. */
+  dropPartner(engine: Engine) { this.partners.delete(engine); }
   conductor: Conductor;
   /** A message to both, kept from the head that does not lead until the lead says what it takes on. */
   claimHold: { id: string; lead: Engine; held: Engine; turn: Turn; timer: NodeJS.Timeout } | null = null;
@@ -57,7 +59,6 @@ export class BotGroup {
   private get ignoreResults() { return this.host.ignoreResults; }
   private get ending() { return this.host.ending; }
   private get turns() { return this.host.turns; }
-  private get cardPicks() { return this.host.cardPicks; }
   private refuseIfClosed() { return this.host.questions.refuseIfClosed(); }
   private add(record: ChatRecord, opts?: { archive?: boolean }) { return this.host.add(record, opts); }
   private changed(record: ChatRecord) { return this.host.changed(record); }
@@ -390,7 +391,7 @@ export class BotGroup {
         }
         case "card": {
           const record: ChatRecord = { id: newId(), role: "notice", text: action.text, date: toSwiftDate(), choices: action.choices.map((choice, index) => ({ label: choice.label, recommended: index === 0 })) };
-          this.cardPicks.set(record.id, action.choices.map((choice) => choice.pick));
+          this.host.guests.offerPicks(record.id, action.choices.map((choice) => choice.pick));
           this.add(record);
           this.bumpUnread();
           break;

@@ -26,7 +26,6 @@ export class BotSettings {
   private get profile() { return this.ctx.profile; }
   private log(line: string) { this.ctx.log(line); }
 
-  private get partners() { return this.host.partners; }
   private get conductor() { return this.host.conductor; }
   private get readOnly() { return this.host.readOnly; }
   private get head() { return this.host.head; }
@@ -93,7 +92,7 @@ export class BotSettings {
         if (saved.agyRecovery) this.store.saveSetting("agyRecovery", saved.agyRecovery);
       }
       await partner.shutdown();
-      this.partners.delete(partner.engine);
+      this.host.group.dropPartner(partner.engine);
     }
     if (switching) this.switchEngine(switching);
     for (const bot of this.members) if (bot.head?.running) bot.pendingNote = [bot.pendingNote, `(App: Collaboration settings changed. Available engines: ${settings.engines.join(", ")}. Each message has one primary recipient. Delegate only when useful, using a handoff tag with the intended engine in its to attribute and task, review or discuss in its kind attribute. Include the authorized phase, scope, constraints and acceptance criteria. Never delegate a refused action to bypass it.)`].filter(Boolean).join("\n\n");

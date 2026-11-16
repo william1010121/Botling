@@ -63,7 +63,6 @@ export class BotWorkers {
   private get shuttingDown() { return this.host.shuttingDown; }
   private get turns() { return this.host.turns; }
   private get swapHold() { return this.host.swapHold; }
-  private get dirtySubagents() { return this.host.subagentRowBook.dirtySubagents; }
   private get speaker() { return this.host.views.speaker; }
   private get commandFolder() { return this.host.commandFolder; }
   private get context(): ComponentsContext | null { return this.host.cards.context; }
@@ -102,6 +101,14 @@ export class BotWorkers {
    */
   managedTaskHandoffs = new Map<string, string>();
   managedHandbacks = new Set<string>();
+  /** Worker `task` ended: the hand-off it owned (if any) is no longer routed to it; returns that hand-off's id. */
+  endTaskHandoff(task: string): string | undefined {
+    const handoff = this.managedTaskHandoffs.get(task);
+    if (handoff) this.managedTaskHandoffs.delete(task);
+    return handoff;
+  }
+  /** The hand-off `handoff` is answered by its worker's report: whether it was waiting for one. */
+  takeManagedHandback(handoff: string) { return this.managedHandbacks.delete(handoff); }
   /** Codex: workers at work or their reports waiting (the bot stays awake). */
   managedPending = false;
   /** The head's process is gone: nothing it managed is pending. */
@@ -572,7 +579,7 @@ export class BotWorkers {
         const wasRunning = this.subagents.get(item.id)?.status === "running";
         if (this.subagents.toolResult(item)) {
           // A nested Agent result changes both the parent's tool step and the child's record.
-          this.dirtySubagents.add(item.id);
+          this.host.subagentRowBook.markDirty(item.id);
           this.host.subagentChanged(this.subagents.get(item.parent ?? item.id));
         }
         if (wasRunning && this.subagents.get(item.id)?.status !== "running") this.host.subagentEnded(item.id);

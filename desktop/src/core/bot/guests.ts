@@ -51,6 +51,10 @@ export class BotGuests {
 
   // ---- Owned state ----
   cardPicks = new Map<string, CardPick[]>();
+  /** The conductor's card `id` is shown: what each of its buttons does. */
+  offerPicks(id: string, picks: CardPick[]) { this.cardPicks.set(id, picks); }
+  /** Card `id` was picked on. */
+  forgetPicks(id: string) { this.cardPicks.delete(id); }
   appQuestions = new Map<string, (index: number) => void>();
   appAnswers = new Map<string, (text: string, files: string[]) => boolean>();
   guestTurn = false;

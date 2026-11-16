@@ -59,8 +59,6 @@ export class HeadEvents {
   private get claudeMidTurn(): WeakSet<AgentHead> { return this.host.claudeMidTurn; }
   private get draining(): Bot["draining"] { return this.host.draining; }
   private get ending(): WeakSet<AgentHead> { return this.host.ending; }
-  private get managedHandbacks(): Set<string> { return this.host.workers.managedHandbacks; }
-  private get managedTaskHandoffs(): Map<string, string> { return this.host.workers.managedTaskHandoffs; }
   private get outage(): Bot["outage"] { return this.host.outage; }
   private get restartRecovery(): boolean { return this.host.restartRecovery; }
   private get scheduleCalls(): Bot["scheduleCalls"] { return this.host.scheduleCalls; }
@@ -196,11 +194,8 @@ export class HeadEvents {
         if (item.taskId) turn.ended.push(item.taskId);
         this.relayIfCallInWork(turn, item.taskId, "report");
         // The report of a worker that owns a hand-off goes back as that hand-off's reply (`managedWorkerReportStarted`).
-        const handoff = item.taskId ? this.managedTaskHandoffs.get(item.taskId) : undefined;
-        if (item.taskId && handoff) {
-          this.managedTaskHandoffs.delete(item.taskId);
-          if (this.managedHandbacks.delete(handoff)) { turn.conducted = true; turn.handoffId = handoff; }
-        }
+        const handoff = item.taskId ? this.host.workers.endTaskHandoff(item.taskId) : undefined;
+        if (handoff && this.host.workers.takeManagedHandback(handoff)) { turn.conducted = true; turn.handoffId = handoff; }
       }
       return;
     }
