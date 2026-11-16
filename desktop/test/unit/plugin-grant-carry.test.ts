@@ -108,14 +108,16 @@ describe("a plugin update keeps its grant unless it asks for more", () => {
     ["a higher tier", { permissions: ["bots"] }, { permissions: ["bots", "files"] }, ["tier write", "permission files"]],
     ["a new program part", { permissions: ["files"] }, { permissions: ["files"], host: true }, ["part host"]],
     ["a new bot tools folder", { permissions: ["files"] }, { permissions: ["files"], claude: true }, ["part claude"]],
-  ] as Array<[string, Spec, Spec, string[]]>)("asks for more (%s): not allowed, needs Allow again, CLI says what grew", async (_label, before, after, grew) => {
+  ] as Array<[string, Spec, Spec, string[]]>)("asks for more (%s): the grant is not carried, but the installed plugin is allowed all the same (2026-11-16)", async (_label, before, after, grew) => {
     const t = await setup("p-more", before, before.permissions?.includes("files") ? { tier: "write", reads: [], requests: [] } : { tier: "request", reads: [], requests: ["bots.create", "chat.send"] });
     const { newHash, row } = await t.update({ ...after, code: "export const v = 2;\n" });
     expect(Object.hasOwn(row.grants, newHash)).toBe(false);
-    expect(mayRunPluginServerPart(() => t.db, t.stream, "p-more", newHash)).toBe(false);
+    // The approval is the plugin's: an update that asks for more runs with no new question. Nothing is carried or audited.
+    expect(grew.length).toBeGreaterThan(0);
+    expect(mayRunPluginServerPart(() => t.db, t.stream, "p-more", newHash)).toBe(true);
     expect(t.audits()).toEqual([]);
-    expect(t.admin.list()[0]!.grewFrom).toEqual({ codeHash: t.oldHash, grew });
-    expect((await t.cli())[0]).toBe(`p-more  Not allowed  (code ${newHash.slice(0, 8)}; asks more than code ${t.oldHash.slice(0, 8)}: ${grew.join(", ")}; allow it again)`);
+    expect(t.admin.list()[0]).toMatchObject({ name: "p-more", codeHash: newHash, tier: "write" });
+    expect(t.admin.list()[0]!.grewFrom).toBeUndefined();
   });
 
   it("a different source (now installed from elsewhere): not carried", async () => {
@@ -123,10 +125,11 @@ describe("a plugin update keeps its grant unless it asks for more", () => {
     (t.registry as unknown as { state: { installed?: Record<string, string> } }).state.installed = { "p-source": "https://example.invalid/other.git" };
     const { newHash, row } = await t.update({ permissions: ["files"], code: "export const v = 2;\n" });
     expect(Object.hasOwn(row.grants, newHash)).toBe(false);
-    expect(t.admin.list()[0]!.grewFrom?.grew).toEqual(["another source"]);
+    expect(mayRunPluginServerPart(() => t.db, t.stream, "p-source", newHash)).toBe(true);
+    expect(t.admin.list()[0]!.grewFrom).toBeUndefined();
   });
 
-  it("each new hash is decided once: a revoke after the carry stays revoked", async () => {
+  it("each new hash is decided once: a carried grant removed from the row is not carried again (the older record still installs the plugin)", async () => {
     const t = await setup("p-revoke", { permissions: ["files"] }, { tier: "write", reads: [], requests: [] });
     const { newHash, row } = await t.update({ permissions: ["files"], code: "export const v = 2;\n" });
     expect(row.grants[newHash]?.tier).toBe("write");
@@ -135,7 +138,7 @@ describe("a plugin update keeps its grant unless it asks for more", () => {
     await t.reconcile(4_000);
     const again = PluginRow.parse(readRowBody(t.db, t.stream, "plugin:p-revoke"));
     expect(Object.hasOwn(again.grants, newHash)).toBe(false);
-    expect(t.admin.list()[0]).toEqual({ name: "p-revoke", codeHash: newHash, tier: "none", asks: "write" });
+    expect(t.admin.list()[0]).toEqual({ name: "p-revoke", codeHash: newHash, tier: "write", asks: "write" });
   });
 
   it("a revoke after the carry also holds over the next update (the older hash's grant does not come back)", async () => {

@@ -11,6 +11,7 @@ import { MemorySecretStore } from "../../src/core/plugins/secrets";
 import { EntryHash } from "../../src/protocol/ids";
 import { MachineRow, PluginRow, TableRow, type PluginGrant } from "../../src/protocol/table-rows";
 import { Botlingd, PLUGIN_POLL_MS } from "../../src/server/botlingd";
+import { pluginApproved } from "../../src/server/slots/grant-check";
 import { ownTableStream, putRow, readRowBody, tableRev } from "../../src/server/replica/tables";
 import {
   MAX_PLUGIN_GRANTS, PluginHashCache, folderStatSignature, installedFromRegistry, manifestAsks, pluginsDigestOf,
@@ -220,6 +221,85 @@ describe("M5-13b: reconcilePluginRows and pluginsDigestOf", () => {
     expect(updatedBuiltin.grants[newBuiltinHash]).toBeUndefined();
     await writer.close();
     db.close();
+  });
+
+  describe("trust migration of 2026-11-16 (what is installed needs no managing)", () => {
+    function setup(prefix: string) {
+      const dir = makeTempDir(prefix);
+      const library = join(dir, "plugins");
+      mkdirSync(library, { recursive: true });
+      const folder = writePlugin(library, "old.tool", { permissions: ["files"] });
+      const registry = new PluginRegistry(library, join(dir, "plugins.json"), new MemorySecretStore(), null);
+      const { db, writer } = memoryStore();
+      const stream = ownTableStream(db);
+      const installed = () => installedFromRegistry(registry.plugins);
+      const metaFlag = () => db.prepare("SELECT value FROM meta WHERE key = 'plugin.trust.v1'").get();
+      return { folder, registry, db, writer, stream, installed, metaFlag };
+    }
+
+    it("migrate: a row that existed without an approval is recorded as installed, once; a revoke afterwards stays", async () => {
+      const t = setup("plugin-rows-trust");
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 1_000));
+      expect((readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow).grants).toEqual({});
+      expect(t.metaFlag()).toBeUndefined();
+
+      const logs: string[] = [];
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 2_000, { trust: "migrate", log: (l) => logs.push(l) }));
+      const row = readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow;
+      expect(pluginApproved(row)).toBe(true);
+      expect(row.grants[row.codeHash]).toMatchObject({ grantedBy: "user", at: 2_000 });
+      expect(logs.some((l) => l.includes("old.tool") && l.includes("recorded as installed"))).toBe(true);
+      expect(t.metaFlag()).toBeDefined();
+
+      // The user revokes it; the pass is used up, so a later sync does not give it back.
+      await t.writer.submit((tx) => putRow(tx, t.stream, "plugin:old.tool", { ...row, grants: {} }));
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 3_000, { trust: "migrate" }));
+      expect((readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow).grants).toEqual({});
+      await t.writer.close();
+      t.db.close();
+    });
+
+    it("migrate: a plugin that is new in this sync, and a bot-written row, get no record", async () => {
+      const t = setup("plugin-rows-trust-new");
+      // new: no previous row at all
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 1_000, { trust: "migrate" }));
+      expect((readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow).grants).toEqual({});
+      expect(t.metaFlag()).toBeDefined();
+      await t.writer.close();
+      t.db.close();
+
+      const b = setup("plugin-rows-trust-bot");
+      await b.writer.submit((tx) => reconcilePluginRows(tx, b.stream, b.installed(), 1_000));
+      const prev = readRowBody(b.db, b.stream, "plugin:old.tool") as PluginRow;
+      await b.writer.submit((tx) => putRow(tx, b.stream, "plugin:old.tool", { ...prev, author: "bot" }));
+      await b.writer.submit((tx) => reconcilePluginRows(tx, b.stream, b.installed(), 2_000, { trust: "migrate" }));
+      const after = readRowBody(b.db, b.stream, "plugin:old.tool") as PluginRow;
+      expect(after.author).toBe("bot");
+      expect(pluginApproved(after)).toBe(false);
+      await b.writer.close();
+      b.db.close();
+    });
+
+    it("mark: uses the pass up without trusting anything; no option and an empty list change nothing", async () => {
+      const t = setup("plugin-rows-trust-mark");
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 1_000));
+
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, [], 1_500, { trust: "migrate" }));
+      expect(t.metaFlag()).toBeUndefined();
+
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 2_000));
+      expect(t.metaFlag()).toBeUndefined();
+      expect((readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow).grants).toEqual({});
+
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 3_000, { trust: "mark" }));
+      expect(t.metaFlag()).toBeDefined();
+      expect((readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow).grants).toEqual({});
+      // After a mark, a later migrate does nothing either.
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 4_000, { trust: "migrate" }));
+      expect((readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow).grants).toEqual({});
+      await t.writer.close();
+      t.db.close();
+    });
   });
 
   it("computes pluginsDigest deterministically from sorted <name>\\t<codeHash> lines and changes exactly on name/hash changes", () => {

@@ -94,9 +94,9 @@ describe("N1: via on the cmd envelope", () => {
     });
     const body = { ...react(1), via } as CmdBody;
     const status = await engine.receive(body, { scope: "local", reply: (m) => replies.push(m) });
-    // M5-15: no plugin row, so the owner says the plugin differs here (a machine without a name row uses its server id).
+    // M5-15: no plugin row, so the owner says the plugin is not installed here (a machine without a name row uses its server id).
     const serverId = String(db.prepare("SELECT value FROM meta WHERE key = 'serverId'").get()!.value);
-    const detail = `plugin notes-helper differs on ${serverId}`;
+    const detail = `plugin notes-helper is not installed on ${serverId}`;
     expect(status.status === "result" && status.message.outcome).toEqual({ kind: "refused", reason: "grant", detail });
     expect(applied).toEqual([]);
     const refusal = entries(db).find((entry) => entry.kind === "cmd.refused");
@@ -120,7 +120,7 @@ describe("N1: via on the cmd envelope", () => {
     await h.runtime.idle();
     const body = { slot: { origin: "desktop", originEpoch: EPOCH_A, target: "bot:B1", n: 1 }, floor: 1, inc: h.inc, cmd: { type: "chat.read", botId: "B1" }, via } as CmdBody;
     const outcome = outcomeOf(await h.runtime.receive(body, { scope: "local" }));
-    expect(outcome).toMatchObject({ kind: "refused", reason: "grant", detail: expect.stringMatching(/^plugin notes-helper differs on /) });
+    expect(outcome).toMatchObject({ kind: "refused", reason: "grant", detail: expect.stringMatching(/^plugin notes-helper is not installed on /) });
     expect(h.engine.runs).toHaveLength(0);
     // Intent path through the runtime too (chat.react is a core-set intent).
     const react2 = { ...body, slot: { ...body.slot, n: 2 }, floor: 2, cmd: { type: "chat.react", botId: "B1", messageId: "m1", emoji: "👍", present: true } } as CmdBody;

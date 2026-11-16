@@ -293,7 +293,7 @@ export async function startContent(s: Ctx): Promise<Partial<Ctx>> {
       await runtime.scope.submit((tx) => {
         const stream = ownTableStream(tx);
         let touched = false;
-        const pluginResult = reconcilePluginRows(tx, stream, installed, Date.now(), { log, onWritten: () => { touched = true; } });
+        const pluginResult = reconcilePluginRows(tx, stream, installed, Date.now(), { log, trust: "migrate", onWritten: () => { touched = true; } });
         const machineRev = putRow(tx, stream, "machine", machineRow(pluginResult.digest));
         if (touched) runtime.scope.afterCommit(() => core.pluginGrantsChanged());
         if (touched || machineRev != null) runtime.scope.afterCommit(() => feeds.notify(feeds.ownStream));

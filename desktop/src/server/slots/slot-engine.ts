@@ -232,7 +232,7 @@ export class SlotEngine {
    * command's handler, so a command the owner would refuse never runs its handler (the slot is then decided as usual).
    */
   denies(tx: Db, input: { slot: Slot; cmd: Command; scope: Scope; via?: Via; peer?: string | null }): { reason: "scope" | "origin" | "grant"; detail?: string } | null {
-    // §11.3 / D53 / M5-15: the device's scope first (N7), then the plugin's grant at `via.codeHash`, read from this
+    // §11.3 / D53 / M5-15: the device's scope first (N7), then the plugin's installed state (by name, not by code hash), read from this
     // owner's own `srv:` row inside the decision transaction. Only the owner refuses for a grant (D58).
     const denied = this.authorize(tx, input);
     if (denied) return denied;

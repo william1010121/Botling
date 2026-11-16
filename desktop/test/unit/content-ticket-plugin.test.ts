@@ -322,7 +322,7 @@ describe("M5-17: /v3/c/ plugin ticket enforcement", () => {
     expect(widened.headers.get("x-botling-content")).toBe("refused; reason=binding");
   });
 
-  it("3. plugin A's row removed, ungranted, or hash-bumped without grant -> stops serving (403)", async () => {
+  it("3. plugin A's row removed or not installed -> stops serving (403); a new hash of an installed plugin keeps serving", async () => {
     const s = await setupServer();
     await s.store.submit((tx) => {
       putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_1, HASH_1, "request"));
@@ -342,15 +342,21 @@ describe("M5-17: /v3/c/ plugin ticket enforcement", () => {
     const url = s.origin + contentUrlPath({ owner: s.owner, id: s.id, variant: "original", entry: s.entry, ticket: granted.ticket, plugin: "plugin-a" });
     expect((await fetch(url)).status).toBe(200);
 
-    // Hash changed without a grant at the new current hash -> 403
+    // 2026-11-16: the plugin was installed at HASH_1, then updated to HASH_2 (the record is still at the old hash) -> serves, no new question.
     await s.store.submit((tx) => {
       putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_2, HASH_1, "read"));
     });
-    const hashMismatch = await fetch(url);
-    expect(hashMismatch.status).toBe(403);
-    expect(hashMismatch.headers.get("x-botling-content")).toBe("refused; reason=plugin");
+    expect((await fetch(url)).status).toBe(200);
 
-    // Grant added at new hash -> serves again
+    // A row with no approval record at all (not installed) -> 403
+    await s.store.submit((tx) => {
+      putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_2, null));
+    });
+    const notInstalled = await fetch(url);
+    expect(notInstalled.status).toBe(403);
+    expect(notInstalled.headers.get("x-botling-content")).toBe("refused; reason=plugin");
+
+    // Installed (the card) -> serves again
     await s.store.submit((tx) => {
       putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_2, HASH_2, "write"));
     });
@@ -467,7 +473,7 @@ describe("M5-17: /v3/c/ plugin ticket enforcement", () => {
     return { ask, urlFor };
   }
 
-  it("M1: peer-owned content needs the owner's grant for the RUNNING hash (this server's own row), not the owner's own hash", async () => {
+  it("M1: peer-owned content needs the plugin installed on both: this server's own row and the owner's", async () => {
     const s = await setupServer();
     const PEER_OWNER = "peer-b";
     await s.store.submit((tx) => {
@@ -481,7 +487,7 @@ describe("M5-17: /v3/c/ plugin ticket enforcement", () => {
     if (granted.t !== "content.granted") throw new Error("expected granted");
     expect((await fetch(urlFor(granted.ticket))).status).toBe(200);
 
-    // A bot rewrites plugin A on this server: new running hash, no grant. The peer still holds the old granted hash.
+    // A bot rewrites plugin A on this server and its row has no approval record (not installed here). The peer's copy is installed.
     await s.store.submit((tx) => {
       putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_2, null));
     });
@@ -494,10 +500,14 @@ describe("M5-17: /v3/c/ plugin ticket enforcement", () => {
     expect(await s.remote.ticket(DEVICE_A, { t: "content.ticket", req: "m1c", owner: s.owner, id: s.id, entry: s.entry, plugin: "plugin-a" }))
       .toMatchObject({ t: "content.gone", reason: "denied" });
 
-    // The owner grants the new running hash too: serves again.
-    await s.store.submit((tx) => {
-      putRow(tx, `srv:${PEER_OWNER}`, "plugin:plugin-a", { ...makePluginRow(HASH_1, HASH_1, "read"), grants: { ...makePluginRow(HASH_1, HASH_1).grants, ...makePluginRow(HASH_2, HASH_2).grants } });
-    });
+    // The owner's copy alone does not serve it; installed here (the card) at the new hash, it serves again.
+    await s.store.submit((tx) => { putRow(tx, ownTableStream(tx), "plugin:plugin-a", makePluginRow(HASH_2, HASH_2, "read")); });
+    expect((await fetch(urlFor(granted.ticket))).status).toBe(200);
+
+    // The owner's copy not installed (no approval record): refused although this server's copy is.
+    await s.store.submit((tx) => { putRow(tx, `srv:${PEER_OWNER}`, "plugin:plugin-a", makePluginRow(HASH_1, null)); });
+    expect((await fetch(urlFor(granted.ticket))).status).toBe(403);
+    await s.store.submit((tx) => { putRow(tx, `srv:${PEER_OWNER}`, "plugin:plugin-a", makePluginRow(HASH_1, HASH_1, "read")); });
     expect((await fetch(urlFor(granted.ticket))).status).toBe(200);
 
     // No own row at all (plugin not installed here): refused.

@@ -12,8 +12,9 @@
 // plugin-bound), and the entry's reference (remote.ts).
 import { randomBytes } from "node:crypto";
 import { CONTENT_TICKET_TTL_MS, type ContentTicketGrant, type EntryRef } from "../../protocol";
-import { PluginRow, type Tier } from "../../protocol/table-rows";
+import { PluginRow } from "../../protocol/table-rows";
 import { readRowBody } from "../replica/tables";
+import { pluginApproved } from "../slots/grant-check";
 import type { Db } from "../store";
 
 /** The most tickets kept at once (the oldest go first); a phone showing a long chat holds a few hundred. */
@@ -22,8 +23,6 @@ export const TICKETS_LIMIT = 20_000;
 export interface TicketBinding { deviceId: string; owner: string; id: string; entry: EntryRef; plugin?: string }
 
 const bindingKey = (b: TicketBinding) => `${b.deviceId}\n${b.owner}\n${b.id}\n${b.entry.stream}\n${b.entry.seq}\n${b.plugin ?? ""}`;
-
-const TIER_RANK: Record<Tier, number> = { read: 1, request: 2, write: 3 };
 
 /**
  * Checks that `plugin` may read `owner`'s content (§9A.7, C7, D54, M5-17). The running code is this server's own copy
@@ -42,9 +41,8 @@ export function hasPluginReadGrant(db: Db, self: string, owner: string, plugin: 
       if (!theirs.success) return false;
       granting = theirs.data;
     }
-    const grant = granting.grants[running.data.codeHash];
-    if (!grant) return false;
-    return TIER_RANK[grant.tier] >= TIER_RANK.read;
+    // Both copies must be installed: the code running here (this server's row) and the owner's own copy of the plugin.
+    return pluginApproved(running.data) && pluginApproved(granting);
   } catch {
     return false;
   }

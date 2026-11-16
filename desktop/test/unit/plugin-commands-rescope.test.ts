@@ -195,14 +195,19 @@ const GRANT_REFUSED = { kind: "refused", reason: "grant", detail: PLUGIN_COMMAND
 const ORIGIN_REFUSED = { kind: "refused", reason: "origin", detail: PLUGIN_ORIGIN_DETAIL };
 
 describe("M5-16: a default phone and a plugin's button", () => {
-  it("1. via of a request-tier plugin whose `requests` holds the command: applied, and the handler runs", async () => {
+  it("1. via of an installed plugin: its own four commands apply (any tier record); another plugin's applies only for a type its manifest declares", async () => {
     const s = await startServer();
     await seed(s, "note", row({ tier: "request", requests: ["plugins.linkCommand"], grants: { [H1]: grant("request", ["plugins.linkCommand"]) } }));
     const phone = await device(s, DEFAULT);
     expect((await asPhone(s, phone, link("note.coach"), via())).kind).toBe("applied");
     expect(ran(s)).toEqual(["plugins.linkCommand"]);
-    // The grant lists linkCommand only: the other three are refused grant, whatever their target (the handler never runs).
-    for (const cmd of [pcommand("note.coach"), tab("note.coach"), pcall("note")]) {
+    // 2026-11-16: the tier record decides nothing, so the plugin's other own commands apply too ...
+    for (const cmd of [pcommand("note.coach"), tab("note.coach"), pcall("note")]) expect((await asPhone(s, phone, cmd, via())).kind, cmd.type).toBe("applied");
+    expect(ran(s)).toEqual(["plugins.linkCommand", "plugins.command", "plugins.tabCommand", "plugins.call"]);
+    // ... and another plugin's only for a type the manifest declares (here linkCommand only); the handler never runs for the rest.
+    s.engine.runs.length = 0;
+    expect((await asPhone(s, phone, link("other.go"), via())).kind).toBe("applied");
+    for (const cmd of [pcommand("other.go"), tab("other.go"), pcall("other")]) {
       expect(await asPhone(s, phone, cmd, via()), cmd.type).toMatchObject({ kind: "refused", reason: "grant", detail: `plugin note may not do this on ${NAME}` });
     }
     expect(ran(s)).toEqual(["plugins.linkCommand"]);
@@ -221,7 +226,7 @@ describe("M5-16: a default phone and a plugin's button", () => {
     expect(ran(s)).toEqual([]);
   });
 
-  it("3. plugins.call naming another plugin than via.plugin: refused grant (write tier, request tier, and a read tier)", async () => {
+  it("3. plugins.call naming another plugin than via.plugin: refused grant unless the manifest declares plugins.call (any tier record)", async () => {
     const s = await startServer();
     await seed(s, "note", row({ tier: "write", grants: { [H1]: grant("write") } }));
     await seed(s, "other", row({ tier: "write", grants: { [H1]: grant("write") } }));
@@ -232,9 +237,13 @@ describe("M5-16: a default phone and a plugin's button", () => {
     s.engine.runs.length = 0;
     await seed(s, "req", row({ tier: "request", grants: { [H1]: grant("request", ["chat.send"]) } }));
     await seed(s, "ro", row({ tier: "read", grants: { [H1]: grant("read") } }));
-    for (const plugin of ["req", "ro"]) expect(await asPhone(s, phone, pcall(plugin), via(plugin)), plugin).toMatchObject({ kind: "refused", reason: "grant" });
-    // An explicit cross-plugin request entry in the grant (C6) is the only way across.
-    await seed(s, "note", row({ tier: "request", grants: { [H1]: grant("request", ["plugins.call"]) } }));
+    for (const plugin of ["req", "ro"]) {
+      expect(await asPhone(s, phone, pcall("other"), via(plugin)), plugin).toMatchObject({ kind: "refused", reason: "grant" });
+      expect((await asPhone(s, phone, pcall(plugin), via(plugin))).kind, plugin).toBe("applied");
+    }
+    s.engine.runs.length = 0;
+    // An explicit cross-plugin entry in the plugin's manifest (C6) is the only way across.
+    await seed(s, "note", row({ tier: "request", requests: ["plugins.call"], grants: { [H1]: grant("request", ["plugins.call"]) } }));
     expect((await asPhone(s, phone, pcall("other"), via("note"))).kind).toBe("applied");
     expect(ran(s)).toEqual(["plugins.call"]);
   });
@@ -391,23 +400,23 @@ describe("M5-16: dotted plugin names (M5-15 F2): a default phone reaches `reply`
 });
 
 describe("M5-16: hostile keys and fail-closed grant lookups on a plugin command", () => {
-  it("a prototype-key via.codeHash on a plugin command is refused grant (no throw) and the queue moves on", async () => {
+  it("a prototype-key via.codeHash on a plugin command is no lookup key (installed by name: applies, no throw) and the queue moves on", async () => {
     const s = await startServer();
     await seed(s, "note", row({ tier: "write", grants: { [H1]: grant("write") } }));
     const phone = await device(s, DEFAULT);
     for (const h of ["constructor", "__proto__", "toString"]) {
-      expect(await asPhone(s, phone, pcall("note"), via("note", h)), h).toMatchObject({ kind: "refused", reason: "grant", detail: `plugin note differs on ${NAME}` });
+      expect((await asPhone(s, phone, pcall("note"), via("note", h))).kind, h).toBe("applied");
     }
     expect((await asPhone(s, phone, pcall("note"), via("note", H1))).kind).toBe("applied");
-    expect(ran(s)).toEqual(["plugins.call"]);
+    expect(ran(s)).toEqual(["plugins.call", "plugins.call", "plugins.call", "plugins.call"]);
   });
 
-  it("a plugin swapped to new code: a command written at the old hash applies (C12); at the new hash it has no grant yet", async () => {
+  it("a plugin swapped to new code: a command written at the old hash and one at the new hash both apply (2026-11-16: no new question for an update)", async () => {
     const s = await startServer();
     await seed(s, "note", row({ codeHash: H2, tier: "write", grants: { [H1]: grant("write") } }));
     const phone = await device(s, DEFAULT);
     expect((await asPhone(s, phone, pcall("note"), via("note", H1))).kind).toBe("applied");
-    expect(await asPhone(s, phone, pcall("note"), via("note", H2))).toMatchObject({ kind: "refused", reason: "grant", detail: `plugin note may not do this on ${NAME}` });
+    expect((await asPhone(s, phone, pcall("note"), via("note", H2))).kind).toBe("applied");
   });
 
   it("a malformed row, a missing row and a removed device: refused, handler never runs", async () => {
@@ -470,14 +479,14 @@ describe("M5-12b: frame commands from the real FeLink at the owner", () => {
     }
   });
 
-  it("a read grant: only its own tileImages applies; a via naming another plugin is refused grant", async () => {
+  it("a read-tier record installs the plugin: all five of its own apply; a helper via naming another plugin is refused grant", async () => {
     const copies = await copiesFromFrame("reader");
     const s = await startServer();
     await seed(s, "reader", row({ codeHash: HC, tier: "read", grants: { [HC]: grant("read") } }));
     await seed(s, "note", row({ codeHash: HC, grants: { [HC]: grant("write") } }));
     const kinds: string[] = [];
     for (const { cmd, via: v } of copies) kinds.push((await outcome(s, "desktop", cmd, "local", v)).kind);
-    expect(kinds).toEqual(["refused", "refused", "applied", "refused", "refused"]);
+    expect(kinds).toEqual(["applied", "applied", "applied", "applied", "applied"]);
     for (const cmd of frameCmds("note").slice(2)) expect(await outcome(s, "desktop", cmd, "local", via("reader", HC)), cmd.type).toMatchObject({ kind: "refused", reason: "grant" });
   });
 });

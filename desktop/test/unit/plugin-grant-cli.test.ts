@@ -279,12 +279,13 @@ describe("M5-14c: wire and own-property checks", () => {
     db.close();
   });
 
-  it("10. grantTierAt looks the hash up as an own key: prototype names and old hashes give none", () => {
+  it("10. grantTierAt looks the hash up as an own key: prototype names with no record give none, an older record shows installed", () => {
     const manifest = { tier: "write" as const, reads: [], requests: [], owns: [], provides: [], requires: [], uses: [], clients: [], needsShell: [] };
     const grant = { tier: "request" as const, reads: [], requests: [], grantedBy: "user" as const, at: 1 };
     const row = (codeHash: string, grants: Record<string, typeof grant>) => ({ codeHash, manifest, author: "user" as const, grants });
     expect(grantTierAt(row("H1", { H1: grant }))).toBe("request");
-    expect(grantTierAt(row("H2", { H1: grant }))).toBe("none");
+    // 2026-11-16: an installed plugin whose record is at an older hash is shown as installed ("write"), not "none".
+    expect(grantTierAt(row("H2", { H1: grant }))).toBe("write");
     for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
       expect(grantTierAt(row(name, {}))).toBe("none");
     }

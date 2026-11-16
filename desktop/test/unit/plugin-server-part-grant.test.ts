@@ -301,7 +301,7 @@ export function activate(ccb) {
       return entry?.failure === HELD_BACK_NOTICE;
     }, { timeout: 10_000, what: "grantable.tool held back initially" });
 
-    // Lower tier ("request") must NOT start the server part.
+    // 2026-11-16: the install card is the whole decision, so any tier record (here "request") installs and starts the server part.
     const slotReq: Slot = { origin: "script", originEpoch, target: client.srv, n: 1 };
     client.cmd(slotReq, {
       type: "plugin.grant",
@@ -312,11 +312,15 @@ export function activate(ccb) {
       requests: ["chat.send"],
     }, inc);
     expect((await client.wait(isResult(slotReq), "request grant result")).outcome.kind).toBe("applied");
-    const afterRequest = okResult<PluginsView>(await client.req({ type: "plugins.list" }));
-    expect(afterRequest.plugins.find((p) => p.name === "grantable.tool")?.failure).toBe(HELD_BACK_NOTICE);
-    expect((await runPluginCommand(client, inc, originEpoch, 2, "grantable.tool.ping")).outcome.kind).toBe("refused");
+    await until(async () => {
+      const res = await client.req({ type: "plugins.list" });
+      if (!res.ok) return false;
+      const entry = (res.result as PluginsView).plugins.find((p) => p.name === "grantable.tool");
+      return entry?.failure === null && entry.commands[0]?.registered === true;
+    }, { timeout: 10_000, what: "grantable.tool registered after the request-tier install" });
+    expect((await runPluginCommand(client, inc, originEpoch, 2, "grantable.tool.ping")).outcome.kind).toBe("applied");
 
-    // Grant "write": reload runs automatically and starts the server part.
+    // A second approval at "write" changes nothing the plugin may do.
     const slotWrite: Slot = { origin: "script", originEpoch, target: client.srv, n: 3 };
     client.cmd(slotWrite, {
       type: "plugin.grant",
@@ -339,7 +343,7 @@ export function activate(ccb) {
     expect(pingRes.outcome.kind).toBe("applied");
     expect((pingRes.outcome as { kind: "applied"; result: { result: string } }).result.result).toMatch(/^pong:\d+$/);
 
-    // Remove grant ("none"): server part stops and notice returns.
+    // Revoke ("none"): the install is taken back (every record of the plugin), the server part stops and the notice returns.
     const slotRevoke: Slot = { origin: "script", originEpoch, target: client.srv, n: 5 };
     client.cmd(slotRevoke, {
       type: "plugin.grant",
@@ -435,14 +439,9 @@ export function activate(ccb) {
       expect((await client.wait(isResult(slot), `${tier} grant`)).outcome.kind).toBe("applied");
     };
 
-    // A grant that starts nothing: exactly one plugins.updated.
-    await grant(1, "request");
-    await until(() => sent.some((view) => entry(view)?.grant === "request") || null, { timeout: 5_000, what: "request announced" });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(sent).toHaveLength(1);
-
-    // A write grant: the list says "write" only together with the program part allowed, then registered once it loads.
-    await grant(2, "write");
+    // The install (any tier record now starts the program part): the list says the grant only together with the program part
+    // allowed, then registered once it loads.
+    await grant(1, "write");
     await until(() => sent.some((view) => entry(view)?.commands[0]?.registered === true) || null, { timeout: 10_000, what: "registered announced" });
     await new Promise((resolve) => setTimeout(resolve, 500));
     for (const view of sent) expect(entry(view)?.grant === "write" && entry(view)?.failure === HELD_BACK_NOTICE).toBe(false);
@@ -483,14 +482,17 @@ describe("M5-18a review: the grant is read at the folder's current hash, and not
   }) as unknown as Db;
   const may = (rows: Record<string, string>, name: string, hash: string) => mayRunPluginServerPart(db(rows), "srv:s", name, hash);
 
-  it("checks the hash it is given, not the row's, and fails closed", () => {
+  it("is by plugin name (any hash), and fails closed", () => {
     expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "write" } }) }, "p", "h1")).toBe(true);
-    // The folder moved on to h2 before reconcile rewrote the row: the grant at h1 does not cover h2.
-    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "write" } }) }, "p", "h2")).toBe(false);
-    // An old hash still granted runs only that old code.
+    // The folder may move on to h2 before reconcile rewrites the row.
+    // 2026-11-16: the approval is the plugin's, not a hash's: any hash runs, at any tier record, once the plugin is installed.
+    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "write" } }) }, "p", "h2")).toBe(true);
     expect(may({ "plugin:p": row("user", "h2", { h1: { tier: "write" } }) }, "p", "h1")).toBe(true);
-    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "request" } }) }, "p", "h1")).toBe(false);
-    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "read" } }) }, "p", "h1")).toBe(false);
+    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "request" } }) }, "p", "h1")).toBe(true);
+    expect(may({ "plugin:p": row("user", "h1", { h1: { tier: "read" } }) }, "p", "h1")).toBe(true);
+    // ... and a row with no approval record at all is not installed.
+    expect(may({ "plugin:p": row("user", "h1", {}) }, "p", "h1")).toBe(false);
+    expect(may({ "plugin:p": row("bot", "h1", {}) }, "p", "h1")).toBe(false);
     expect(may({ "plugin:p": row("bot", "h1", {}) }, "p", "h1")).toBe(false);
     // A built-in runs only at the hash its row was written for.
     expect(may({ "plugin:b": row("builtin", "s1", { s1: { tier: "write" } }) }, "b", "s1")).toBe(true);

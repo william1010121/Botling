@@ -1,5 +1,5 @@
-// M5-14d: the 2.x desktop window's Plugins list shows each plugin's grant on this machine, read-only,
-// with the CLI line to change non-built-in plugins; 2.x cores leave `grant` unset and show nothing new.
+// M5-14d: the 2.x desktop window's Plugins list shows whether each plugin is installed on this machine (2026-11-16: no tiers),
+// 2.x cores leave `grant` unset and show nothing new.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
@@ -219,7 +219,7 @@ describe("M5-14d: Plugins.view() and CoreOptions.pluginGrant", () => {
 });
 
 describe("M5-14d: readPluginGrant from server.db", () => {
-  it("reads the grant at the row's current codeHash, returns none when absent/stale/tombstoned, and updates lazily", async () => {
+  it("reads the tier at the row's current codeHash, write for an older record, none when not installed/tombstoned, and updates lazily", async () => {
     const dir = tempDir("read-plugin-grant");
     const store = await openServerStore(dir);
     openStores.push(store);
@@ -253,13 +253,13 @@ describe("M5-14d: readPluginGrant from server.db", () => {
     });
     expect(readPluginGrant(reader, serverId, "my-tool")).toBe("none");
 
-    // Grant only for an old codeHash -> "none" at current codeHash.
+    // Grant only for an old codeHash -> installed all the same (2026-11-16: by name, a new version needs no new question): "write".
     await store.submit((tx) => {
       putRow(tx, stream, "plugin:my-tool", makeRow("sha256:curr", {
         "sha256:old": { tier: "write", reads: [], requests: [], grantedBy: "user", at: 10 },
       }));
     });
-    expect(readPluginGrant(reader, serverId, "my-tool")).toBe("none");
+    expect(readPluginGrant(reader, serverId, "my-tool")).toBe("write");
 
     // Grant at current codeHash -> returns its tier.
     await store.submit((tx) => {
@@ -290,27 +290,24 @@ describe("M5-14d: readPluginGrant from server.db", () => {
 });
 
 describe("M5-14d: PluginsPanel renderer", () => {
-  it("shows exact tier wording for each tier and the CLI line only for non-built-in plugins", () => {
-    const cases: Array<{ grant: NonNullable<PluginView["grant"]>; expected: string }> = [
-      { grant: "none", expected: "Allowed on this machine: nothing yet" },
-      { grant: "read", expected: "Allowed on this machine: Read only" },
-      { grant: "request", expected: "Allowed on this machine: Send what it asks for" },
-      { grant: "write", expected: "Allowed on this machine: Change its own data on the server" },
-    ];
-    for (const { grant, expected } of cases) {
+  it("says installed or not installed (no tier words, no CLI line), and nothing for a built-in plugin", () => {
+    const none = draw([basePlugin({ name: "my-tool", grant: "none" })]);
+    expect(none).toContain(`<div class="plugin-meta">Not installed on this machine</div>`);
+    for (const grant of ["read", "request", "write"] as const) {
       const html = draw([basePlugin({ name: "my-tool", grant })]);
-      expect(html, grant).toContain(`<div class="plugin-meta">${expected}</div>`);
-      expect(html, grant).toContain(`<div class="plugin-meta">To change it: botlingd plugins grant my-tool --tier read|request|write</div>`);
+      expect(html, grant).toContain(`<div class="plugin-meta">Installed on this machine: allowed, and so are its new versions</div>`);
+      expect(html, grant).not.toContain("botlingd plugins grant");
+      expect(html, grant).not.toContain("Read only");
     }
 
     const builtInHtml = draw([basePlugin({ name: "botling.note", title: "Note", builtIn: true, grant: "write" })]);
-    expect(builtInHtml).toContain(`<div class="plugin-meta">Allowed on this machine: Change its own data on the server</div>`);
+    expect(builtInHtml).not.toContain("on this machine");
     expect(builtInHtml).not.toContain("To change it: botlingd plugins grant");
   });
 
   it("shows nothing new in 2.x (grant omitted) and renders no extra buttons or inputs (read-only)", () => {
     const v2Html = draw([basePlugin({ name: "my-tool" })]);
-    expect(v2Html).not.toContain("Allowed on this machine");
+    expect(v2Html).not.toContain("on this machine");
     expect(v2Html).not.toContain("botlingd plugins grant");
 
     const v3Html = draw([basePlugin({ name: "my-tool", grant: "read" })]);
@@ -353,12 +350,13 @@ describe("M5-14d: botlingd keeps the window's list on the running hash", () => {
       expect((status as any).message.outcome).toMatchObject({ kind: "applied" });
       await until(() => shown()?.grant === "request" || null, { timeout: 2_000, every: 20, what: "window shows the grant" });
 
-      // The update asks for more (files: tier write), so the old grant is not carried (plugin-grant-carry.ts).
+      // The update asks for more (files: tier write). 2026-11-16: an update of an installed plugin needs no new question, so
+      // the window shows it installed at the new hash (the record is still at h1: shown as "write", the installed state).
       write("1.0.1", "export function activate() { return 2; }\n", ["composer", "files"]);
       daemon.core.plugins.scan();
       const h2 = folderHash(folder);
       await until(() => codeHash() === h2 || null, { timeout: 5_000, every: 50, what: "row at h2" });
-      await until(() => (shown()?.version === "1.0.1" && shown()?.grant === "none") || null, { timeout: 2_000, every: 20, what: "window drops the old hash's grant" });
+      await until(() => (shown()?.version === "1.0.1" && shown()?.grant === "write" && shown()?.asks?.codeHash === h2) || null, { timeout: 2_000, every: 20, what: "window shows the update installed, at the new hash" });
     } finally {
       await daemon.stop();
       rmSync(dir, { recursive: true, force: true });

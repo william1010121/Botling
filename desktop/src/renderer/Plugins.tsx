@@ -13,7 +13,7 @@ import { FrameBroker, registerPluginFrame } from "./frame-broker";
 import { frameEvent, type BuiltinCommand, type FrameRequest } from "../../../Web/src/frame-protocol";
 import { panelPage, type PanelFit } from "./panel-page";
 import { pluginFrameHost, type PluginFrameHostDeps } from "./plugin-frame-host";
-import { asksLine, grantTiersFor, windowGrantCommand, WINDOW_GRANT_WORDS, type WindowGrantTier } from "./plugin-grant";
+import { asksLine, canInstall, installCommand } from "./plugin-grant";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
@@ -122,54 +122,37 @@ function AskMaintainer({ onSend }: { onSend: (text: string) => void }) {
 }
 
 /**
- * Botling 3: approve a plugin from the window (an imported 2.x plugin waits at "nothing yet" until the user approves it).
- * The tiers go up to what it asks at the shown hash; [Allow] sends one `plugin.grant` at that hash with those asks. One tap
- * sends once (an in-flight guard in a ref, L-007); a refused grant shows why and can be tried again.
+ * Botling 3: the install card. A plugin that is not installed yet (a bot wrote it, or a folder was copied in) waits at
+ * "not installed" until the user taps [Install]: one `plugin.grant` at the shown hash with the shown asks. After it the
+ * plugin and its new versions are fully allowed. One tap sends once (an in-flight guard in a ref, L-007); a refused
+ * install shows why and can be tried again.
  */
-function GrantChoice({ plugin, onGrant }: { plugin: PluginView; onGrant: (cmd: Extract<Command, { type: "plugin.grant" }>) => Promise<void> }) {
-  const tiers = grantTiersFor(plugin);
-  const current = plugin.grant !== undefined && plugin.grant !== "none" && tiers.includes(plugin.grant) ? plugin.grant : null;
-  const [choice, setChoice] = useState<WindowGrantTier | null>(null);
+function InstallCard({ plugin, onGrant }: { plugin: PluginView; onGrant: (cmd: Extract<Command, { type: "plugin.grant" }>) => Promise<void> }) {
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [allowed, setAllowed] = useState<WindowGrantTier | null>(null);
-  const granting = useRef(false);
-  const shown = choice ?? current;
-  const allow = () => {
-    if (granting.current || shown === null || shown === current) return;
-    const cmd = windowGrantCommand(plugin, shown);
+  const [installed, setInstalled] = useState(false);
+  const installing = useRef(false);
+  const install = () => {
+    if (installing.current) return;
+    const cmd = installCommand(plugin);
     if (!cmd) return;
-    granting.current = true;
+    installing.current = true;
     setSending(true);
     setProblem(null);
-    setAllowed(null);
     void onGrant(cmd).then(
-      () => { setAllowed(shown); setChoice(null); },
+      () => setInstalled(true),
       (failure) => setProblem(why(failure)),
-    ).finally(() => { granting.current = false; setSending(false); });
+    ).finally(() => { installing.current = false; setSending(false); });
   };
   return (
-    <div className="plugin-grant" role="group" aria-label={`Allow ${plugin.name} to`}>
+    <div className="plugin-grant" role="group" aria-label={`Install ${plugin.name}`}>
       <div className="plugin-meta plugin-asks">{asksLine(plugin.asks!)}</div>
-      {tiers.map((tier) => (
-        <label key={tier} className="plugin-grant-option">
-          <input type="radio" name={`grant-${plugin.name}`} value={tier} checked={shown === tier} disabled={sending}
-            onChange={() => { setChoice(tier); setAllowed(null); setProblem(null); }} /> {WINDOW_GRANT_WORDS[tier]}
-        </label>
-      ))}
-      <button type="button" className="plugin-grant-allow" disabled={sending || shown === null || shown === current} onClick={allow}>Allow</button>
-      {allowed && <div className="plugin-meta plugin-grant-sent" role="status">Allowed: {WINDOW_GRANT_WORDS[allowed]}</div>}
+      <button type="button" className="plugin-grant-allow" disabled={sending || installed} onClick={install}>Install</button>
+      {installed && <div className="plugin-meta plugin-grant-sent" role="status">Installed</div>}
       {problem && <div className="plugins-problem" role="alert">{problem}</div>}
     </div>
   );
 }
-
-const GRANT_WORDS: Record<NonNullable<PluginView["grant"]>, string> = {
-  none: "nothing yet",
-  read: "Read only",
-  request: "Send what it asks for",
-  write: "Change its own data on the server",
-};
 
 function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEnable, onSetting, onSecret, onCommand, onPanel, onGrant }: {
   plugin: PluginView;
@@ -203,14 +186,11 @@ function PluginItem({ plugin, lang, catalog, onUpdate, onRevert, onRemove, onEna
       {plugin.failure && <div className="plugins-problem">Turned off: {plugin.failure}</div>}
       {plugin.skipped?.length ? <div className="plugins-problem plugins-skipped">Skipped (this Botling does not know or cannot read these; the rest loads): {plugin.skipped.join("; ")}</div> : null}
       {plugin.builtIn && <div className="plugin-meta">Built into Botling{plugin.ignoredLibraryVersion !== undefined ? " (in use)" : ""}</div>}
-      {plugin.grant !== undefined && (
-        <>
-          <div className="plugin-meta">Allowed on this machine: {GRANT_WORDS[plugin.grant]}</div>
-          {!plugin.builtIn && <div className="plugin-meta">To change it: botlingd plugins grant {plugin.name} --tier read|request|write</div>}
-        </>
+      {plugin.grant !== undefined && !plugin.builtIn && (
+        <div className="plugin-meta">{plugin.grant === "none" ? "Not installed on this machine" : "Installed on this machine: allowed, and so are its new versions"}</div>
       )}
-      {/* A new running hash starts a fresh choice (the old one was for code no longer shown). */}
-      {plugin.asks && grantTiersFor(plugin).length > 0 && <GrantChoice key={plugin.asks.codeHash} plugin={plugin} onGrant={onGrant} />}
+      {/* A new running hash starts a fresh card (the old one was for code no longer shown). */}
+      {plugin.asks && canInstall(plugin) && <InstallCard key={plugin.asks.codeHash} plugin={plugin} onGrant={onGrant} />}
       {/* Which copy runs when the library has one too (core/plugins/versions.ts): the library's at the built-in's version or newer. */}
       {plugin.ignoredLibraryVersion !== undefined && <div className="plugin-meta plugin-copy-ignored">Your plugin library's copy ({plugin.ignoredLibraryVersion}) is older and is ignored</div>}
       {plugin.replacesBuiltIn !== undefined && <div className="plugin-meta plugin-copy-library">Your plugin library's copy (in use) replaces the built-in {plugin.replacesBuiltIn}</div>}

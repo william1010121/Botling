@@ -1,25 +1,16 @@
-// Botling 3: the desktop window approves a plugin from Settings › Plugins (D74 Q-C10's local grant, from the window instead
-// of the CLI). The window sends the same `plugin.grant` the CLI and the paired page's sheet send: no `via` (the user, not a
-// plugin, is the sender), at the hash the window shows (`PluginView.asks.codeHash`), with exactly the asks it shows. The
-// owner checks it again where it is applied (a changed hash is refused as "changed", a tier above the asks as "invalid").
+// Botling 3: the desktop window installs a plugin from Settings › Plugins with one tap (the install card). The window sends
+// the same `plugin.grant` the CLI sends: no `via` (the user, not a plugin, is the sender), at the hash the window shows
+// (`PluginView.asks.codeHash`), with exactly the asks it shows. The owner checks it again where it is applied (a changed
+// hash is refused as "changed"). Since 2026-11-16 that one card is the whole decision: an installed plugin is fully allowed,
+// a new version of it too, and there are no tiers to pick.
 import type { Command, PluginView } from "../contract";
 
-export type WindowGrantTier = "read" | "request" | "write";
-const RANK: Record<WindowGrantTier, number> = { read: 1, request: 2, write: 3 };
-export const WINDOW_GRANT_TIERS: readonly WindowGrantTier[] = ["read", "request", "write"];
-
-/** Words of the tier choices (the same as the paired page's grant sheet, web-v3/shell/plugins.ts). */
-export const WINDOW_GRANT_WORDS: Record<WindowGrantTier, string> = {
-  read: "Read only",
-  request: "Send what it asks for",
-  write: "Change its own data on the server",
-};
-
-/** The tiers the window offers: up to what the plugin asks; none for a built-in plugin or without asks. */
-export function grantTiersFor(plugin: PluginView): WindowGrantTier[] {
-  if (plugin.builtIn || plugin.grant === undefined || !plugin.asks) return [];
-  const ask = plugin.asks.tier;
-  return WINDOW_GRANT_TIERS.filter((tier) => RANK[tier] <= RANK[ask]);
+/**
+ * Whether the window offers the install card for this plugin: a plugin that is not installed yet (`grant` is "none"), not
+ * a built-in, from a server that sends its asks. Once installed it is fully allowed, and so are its new versions (no tiers).
+ */
+export function canInstall(plugin: PluginView): boolean {
+  return !plugin.builtIn && plugin.grant === "none" && plugin.asks !== undefined;
 }
 
 /** `It asks to: …` for the shown hash. Manifest text is the plugin author's: quoted with its own quotes escaped (L-004). */
@@ -33,9 +24,13 @@ export function asksLine(asks: NonNullable<PluginView["asks"]>): string {
   return `It asks to: ${parts.join("; ")}.`;
 }
 
-/** The one `plugin.grant` for `tier`, or null when the window does not offer that tier for this plugin. */
-export function windowGrantCommand(plugin: PluginView, tier: WindowGrantTier): Extract<Command, { type: "plugin.grant" }> | null {
-  if (!grantTiersFor(plugin).includes(tier) || !plugin.asks) return null;
+/**
+ * The one `plugin.grant` the install card sends: at the hash shown, at the tier the plugin asks (the owner refuses more),
+ * with exactly the asks shown. Null when the window does not offer the card for this plugin.
+ */
+export function installCommand(plugin: PluginView): Extract<Command, { type: "plugin.grant" }> | null {
+  if (!canInstall(plugin) || !plugin.asks) return null;
+  const tier = plugin.asks.tier;
   return {
     type: "plugin.grant",
     plugin: plugin.name,
