@@ -81,7 +81,8 @@ export function RailSlot({ value }: { value: SidebarRailProps }) {
   return (
     <RailContext.Provider value={value}>
       {up ? <KernelSlot slot={RAIL_SLOT} />
-        : away ? <aside className="rail rail-unavailable"><p className="settings-hint settings-unavailable" role="status">The sidebar is unavailable.</p></aside>
+        : away ? <aside className="rail rail-unavailable"><p className="settings-hint settings-unavailable" role="status">The sidebar is unavailable.</p>
+          {value.web && <div className="rail-settings web-rail-footer">{value.web.railFooter}</div>}</aside>
         : <Column {...value} />}
     </RailContext.Provider>
   );

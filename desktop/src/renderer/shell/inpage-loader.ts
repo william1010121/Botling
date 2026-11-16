@@ -56,6 +56,14 @@ export function embeddedFeManifest(): FeManifest {
   }
 }
 
+/**
+ * True when this bundle carries a manifest at all: a build said what it ships, even if the list is empty or the text is unreadable (then it
+ * lists nothing, and the shell's plugins are refused: fail closed). False in a test or a build without one (the page as it was).
+ */
+export function feManifestEmbedded(): boolean {
+  return typeof __FE_MANIFEST__ === "string";
+}
+
 /** Reads fe-build-manifest.json over HTTP (the browser page only: the desktop window's CSP blocks it; prefer `embeddedFeManifest`). Any failure gives the empty manifest. */
 export async function fetchFeManifest(url: string = FE_MANIFEST_FILE, fetcher: typeof fetch = fetch): Promise<FeManifest> {
   try {
