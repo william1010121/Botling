@@ -114,4 +114,26 @@ describe("composer.insertQuote in the renderer's kernel", () => {
     await expect(quoteIntoComposer(BOT, "x", false)).resolves.toBe(true);
     expect(used).toEqual(["second"]);
   });
+  it("the chat plugin unloaded and started again while a frame stays open: the quote is not inserted while it is away, and is again once it is back (the provider churn the `:chat` stand-in's quoter swaps used to drive)", async () => {
+    const one = chatHost();
+    await one.start();
+    const calls: unknown[][] = [];
+    stops.push(setComposerQuoter(async (...args) => { calls.push(args); return true; }));
+    const { send, posted } = frame();
+    send({ ccb: "composerQuote", id: 10, text: "a", botId: BOT, focus: false });
+    await until(() => posted.length === 1);
+    expect(one.unload(CHAT_PLUGIN)).toBe(true);
+    expect(one.unavailable(CHAT_PLUGIN)).toBe(true);
+    expect(rendererKernel.holdsNothingOf(CHAT_PLUGIN)).toBe(true);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBeNull();
+    send({ ccb: "composerQuote", id: 11, text: "b", botId: BOT, focus: false });
+    await until(() => posted.length === 2);
+    await one.start();
+    expect(one.unavailable(CHAT_PLUGIN)).toBe(false);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBe(CHAT_PLUGIN);
+    send({ ccb: "composerQuote", id: 12, text: "c", botId: BOT, focus: false });
+    await until(() => posted.length === 3);
+    expect(posted).toEqual([10, 11, 12].map((id, index) => ({ ccb: "reply", id, ok: true, value: { inserted: index !== 1 } })));
+    expect(calls).toEqual([[BOT, "a", false], [BOT, "c", false]]);
+  });
 });
