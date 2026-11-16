@@ -48,6 +48,8 @@ const EXPECTED_START: string[] = [
   "log note ",
   "log note ",
   "log note ",
+  // store/compaction.ts: the one-time background prune of an oversized server.db starts PRUNE_DELAY_MS after listening.
+  "timeout 60000",
   "log started",
 ];
 /** What stop did, in order. */
