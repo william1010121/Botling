@@ -469,10 +469,10 @@ describe("when it runs at all", () => {
     db.exec("DROP TABLE slot_results");
     db.prepare("UPDATE meta SET value = '13' WHERE key = 'schemaVersion'").run(); // one migration (v14) to apply
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    const free = Number(db.pragma("freelist_count"));
     db.close();
+    const lines: string[] = [];
     const started = performance.now();
-    const store = await openServerStore(dir, { compaction: SMALL });
+    const store = await openServerStore(dir, { compaction: { ...SMALL, log: (text) => lines.push(text) } });
     try {
       expect(performance.now() - started).toBeLessThan(5_000);
       expect(store.migrated).toEqual([14]);
@@ -482,7 +482,7 @@ describe("when it runs at all", () => {
       try {
         expect(readStream(reader, A)).toMatchObject({ tail: 0, head: 400 });
         expect(Number(reader.pragma("auto_vacuum"))).toBe(0);
-        expect(Number(reader.pragma("freelist_count"))).toBe(free);
+        expect(lines).toEqual([]); // nothing was pruned or compacted at open
       } finally { reader.close(); }
     } finally {
       await store.close();
