@@ -234,6 +234,20 @@ describe("O05 send: the model's SendAsk needs no cancel under way (~stopping)", 
   });
 });
 
+describe("O05 send: no card is shown for a send that cannot go", () => {
+  it("a plugin a bot wrote: a cancel already under way refuses the send before its card", async () => {
+    const core = fakeCore(), written = { cards: 0, answer: undefined as undefined | (() => void) };
+    const t = book(core, undefined, {}, written);
+    await t.workers.start("p", params);
+    const cards = written.cards;
+    core.hooks.stop = () => new Promise<boolean>(() => {});
+    void t.workers.cancel("p", "T1");
+    await Promise.resolve();
+    await expect(t.workers.send("p", "T1", "more")).rejects.toThrow(/being cancelled/);
+    expect(written.cards).toBe(cards);
+  });
+});
+
 describe("O05 item 3: a send does not start a run that drops the report the bot is still owed", () => {
   it("refused while the core says the bot has not taken the last report; nothing is sent and the entry is not reopened", async () => {
     const core = fakeCore();
