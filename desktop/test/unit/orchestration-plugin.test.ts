@@ -321,10 +321,10 @@ describe("a rules set reaches the workers' own instructions", () => {
     const h = claudeHarness();
     await h.workers.tool("app_handoff", { instructions: "first" });
     expect(h.heads[0]!.config.systemPrompt).toBe(claudeWorkerPolicy());
-    (h.workers as unknown as { options: { rules?: () => OrchestrationRules | undefined } }).options.rules = () => MARKED;
+    (h.workers as unknown as { adapter: { options: { rules?: () => OrchestrationRules | undefined } } }).adapter.options.rules = () => MARKED;
     await h.workers.tool("app_handoff", { instructions: "second" });
     expect(h.heads[1]!.config.systemPrompt).toBe(claudeWorkerPolicy(MARKED));
-    (h.workers as unknown as { options: { rules?: () => OrchestrationRules | undefined } }).options.rules = () => undefined;
+    (h.workers as unknown as { adapter: { options: { rules?: () => OrchestrationRules | undefined } } }).adapter.options.rules = () => undefined;
     await h.workers.tool("app_handoff", { instructions: "third" });
     expect(h.heads[2]!.config.systemPrompt).toBe(claudeWorkerPolicy());
     await h.workers.close();
@@ -350,17 +350,17 @@ describe("a rules set reaches the workers' own instructions", () => {
       routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
     try {
       vi.spyOn(core, "orchestrationRules").mockImplementation(() => seen.set);
-      const main = (core as unknown as { bots: Map<string, Bot> }).bots.get(MAIN_BOT_ID) as unknown as { profile: BotProfile; options: { agyConfig: (p: BotProfile, c: AgyConfig) => AgyConfig; orchestrationRules: () => OrchestrationRules }; ensureClaudeWorkers(): { options: { rules(): OrchestrationRules | undefined } } };
+      const main = (core as unknown as { bots: Map<string, Bot> }).bots.get(MAIN_BOT_ID) as unknown as { profile: BotProfile; options: { agyConfig: (p: BotProfile, c: AgyConfig) => AgyConfig; orchestrationRules: () => OrchestrationRules }; ensureClaudeWorkers(): unknown };
       const agy = () => main.options.agyConfig(main.profile, { command: "agy", cwd: dir, sessionId: "s", resume: false });
       expect(agy().rules?.()).toBe(DEFAULT);
       seen.set = MARKED;
       expect(agy().rules?.()).toBe(MARKED);
       expect(agy().transport).toBe("acp"); // the wrapper still runs the app's own config
       expect(main.options.orchestrationRules()).toBe(MARKED);
-      const claude = main.ensureClaudeWorkers();
-      expect(claude.options.rules()).toBe(MARKED);
+      const claude = (main.ensureClaudeWorkers() as { adapter: { options: { rules(): OrchestrationRules | undefined } } }).adapter.options;
+      expect(claude.rules()).toBe(MARKED);
       seen.set = DEFAULT;
-      expect(claude.options.rules()).toBe(DEFAULT);
+      expect(claude.rules()).toBe(DEFAULT);
     } finally { vi.restoreAllMocks(); await core.shutdown(); }
   });
 });
