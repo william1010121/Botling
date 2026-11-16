@@ -18,13 +18,19 @@ it("reads the board through the program part's `deps`", async () => {
 
 const board: DepBoard = {
   plugins: [
-    { name: "botling.chat", title: "Chat (the app's page)", version: "", enabled: true, builtIn: true, failure: null, app: true, declared: true, provides: { services: ["composer.insertQuote"], slots: [] }, requires: [], uses: [], fills: ["main/tab"] },
-    { name: "botling.note", title: "Note", version: "2.1.0", enabled: true, builtIn: true, failure: null, app: false, declared: true, provides: { services: [], slots: [] }, requires: ["note.store"], uses: ["composer.insertQuote"], fills: ["main/tab"] },
-    { name: "zed.tools", title: "Zed tools", version: "0.3.0", enabled: false, builtIn: false, failure: null, app: false, declared: false, provides: { services: [], slots: [] }, requires: [], uses: [], fills: [] },
+    { name: "botling.chat", title: "Chat (the app's page)", version: "", enabled: true, builtIn: true, failure: null, app: true, declared: true, provides: { services: ["composer.insertQuote"], slots: [] }, requires: [], uses: [], fills: ["main/tab"], features: [] },
+    { name: "botling.note", title: "Note", version: "2.1.0", enabled: true, builtIn: true, failure: null, app: false, declared: true, provides: { services: [], slots: [] }, requires: ["note.store"], uses: ["composer.insertQuote"], fills: ["main/tab"], features: ["api.notes.read", "ccb.messages.render"] },
+    { name: "zed.tools", title: "Zed tools", version: "0.3.0", enabled: false, builtIn: false, failure: null, app: false, declared: false, provides: { services: [], slots: [] }, requires: [], uses: [], fills: [], features: [] },
+    { name: "botling.old", title: "Old", version: "1.0.0", enabled: false, builtIn: true, failure: null, app: false, declared: true, provides: { services: [], slots: [] }, requires: [], uses: [], fills: [], features: ["api.notes.read"] },
   ],
   edges: [{ from: "botling.note", to: "botling.chat", service: "composer.insertQuote", kind: "uses", live: true }],
   missing: [{ plugin: "botling.note", service: "note.store", offProviders: [] }],
   slots: [{ slot: "main/tab", group: "view", fills: ["botling.chat", "botling.note"] }, { slot: "chat/link", group: "menu", fills: [] }],
+  featureAreas: [
+    { id: "api.bots", side: "host", title: "Bots", plugins: ["botling.note"], features: [{ id: "api.bots.list", member: "list", plugins: ["botling.note"] }] },
+    { id: "api.notes", side: "host", title: "Notes", plugins: ["botling.note", "botling.old"], features: [{ id: "api.notes.read", member: "read", plugins: ["botling.note", "botling.old"] }] },
+    { id: "ccb.messages", side: "web", title: "Chat messages (drawing)", plugins: ["botling.note"], features: [{ id: "ccb.messages.render", member: "render", plugins: ["botling.note"] }] },
+  ],
 };
 
 // out/ is built before the unit tests run (npm run build); esbuild itself cannot run inside jsdom.
@@ -51,7 +57,7 @@ it("the shipped ui.js registers its view and draws the graph, the plugins and th
   expect(arrows).toEqual(expect.arrayContaining([["uses", "botling.note", "botling.chat", false], ["missing", "botling.note", "missing:note.store", true]]));
   expect(page.querySelector(".dep-edge-uses path")).not.toBeNull();
   expect(page.querySelector(".dep-gap")!.textContent).toContain("Note requires note.store, and no plugin that is on provides it");
-  expect(page.querySelector('[role="status"]')!.textContent).toMatch(/2 plugins, 1 on · 0 hard dependencies · 1 optional · 1 missing provider/);
+  expect(page.querySelector('[role="status"]')!.textContent).toMatch(/3 plugins, 1 on · 0 hard dependencies · 1 optional · 1 missing provider/);
 
   // The list: name, version, state, and what each declares.
   const row = (name: string) => page.querySelector(`[data-plugin="${name}"]`)!;
@@ -65,6 +71,24 @@ it("the shipped ui.js registers its view and draws the graph, the plugins and th
   // The slots, with who fills each (an empty one says so).
   expect(page.querySelector('[data-slot="main/tab"]')!.textContent).toContain("botling.note");
   expect(page.querySelector('[data-slot="chat/link"]')!.textContent).toContain("empty");
+
+  // The second layer: each area of the app with the calls and the plugins that make them (the busiest first; one that is off is dimmed),
+  // and each plugin's own calls in its row. None of it is among the services above.
+  const areas = [...page.querySelectorAll(".dep-area")].map((area) => area.getAttribute("data-area"));
+  expect(areas).toEqual(["api.notes", "api.bots", "ccb.messages"]);
+  const notes = page.querySelector('[data-area="api.notes"]')!;
+  expect(notes.querySelector(".dep-area-title")!.textContent).toBe("Notes");
+  expect(notes.querySelector(".dep-area-count")!.textContent).toBe("2 plugins");
+  expect(page.querySelector('[data-area="api.bots"] .dep-area-count')!.textContent).toBe("1 plugin");
+  expect([...notes.querySelectorAll('[data-feature="api.notes.read"] [data-plugin-chip]')].map((chip) => chip.textContent)).toEqual(["Note", "Old"]);
+  expect(notes.querySelector('[data-plugin-chip="botling.old"]')!.classList.contains("dep-who-off")).toBe(true);
+  expect(notes.querySelector('[data-plugin-chip="botling.note"]')!.classList.contains("dep-who-off")).toBe(false);
+  expect([...page.querySelectorAll("section")].map((group) => group.getAttribute("aria-label"))).toEqual(
+    expect.arrayContaining(["App features: asked of the app", "App features: chat page"]),
+  );
+  expect([...row("botling.note").querySelectorAll(".dep-calls")].map((chip) => chip.textContent)).toEqual(["api.notes.read", "ccb.messages.render"]);
+  expect(row("botling.note").querySelector(".dep-uses")!.textContent).toBe("composer.insertQuote");
+  expect(row("zed.tools").textContent).not.toContain("Declares nothing");
 
   // Read only: no control of any kind.
   expect(page.querySelectorAll("button, input, select, textarea, a, [role=switch], [draggable=true]")).toHaveLength(0);

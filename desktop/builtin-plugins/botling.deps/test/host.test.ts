@@ -5,10 +5,10 @@ import { activate } from "../src/host";
 
 it("exposes `deps` (the core's board, asked again each time) and nothing else", async () => {
   const exposed = new Map<string, () => unknown>();
-  const api = { plugins: { deps: vi.fn(async () => ({ plugins: [], edges: [], missing: [], slots: [] })) }, ui: { expose: (method: string, fn: () => unknown) => { exposed.set(method, fn); return () => {}; } } };
+  const api = { plugins: { deps: vi.fn(async () => ({ plugins: [], edges: [], missing: [], slots: [], featureAreas: [] })) }, ui: { expose: (method: string, fn: () => unknown) => { exposed.set(method, fn); return () => {}; } } };
   activate(api as unknown as BotlingApi);
   expect([...exposed.keys()]).toEqual(["deps"]);
-  expect(await exposed.get("deps")!()).toEqual({ plugins: [], edges: [], missing: [], slots: [] });
+  expect(await exposed.get("deps")!()).toEqual({ plugins: [], edges: [], missing: [], slots: [], featureAreas: [] });
   await exposed.get("deps")!();
   expect(api.plugins.deps).toHaveBeenCalledTimes(2);
 });

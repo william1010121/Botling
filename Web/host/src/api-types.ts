@@ -321,13 +321,19 @@ export interface DepNode {
   provides: { services: string[]; slots: string[] }; requires: string[]; uses: string[];
   /** The slots it fills now (new names), while it is on. */
   fills: string[];
+  /** The parts of the app it calls (`api.usage.view`, `ccb.composer.insert`), sorted; not kernel services. Declared for a built-in plugin, empty for the rest. */
+  features: string[];
 }
 /** An arrow from the plugin that needs a service to one that provides it; `live`: both are on. */
 export interface DepEdge { from: string; to: string; service: string; kind: "requires" | "uses"; live: boolean }
 /** A service an enabled plugin requires that no enabled plugin provides (`offProviders`: plugins that do, but are off). */
 export interface DepMissing { plugin: string; service: string; offProviders: string[] }
 export interface DepSlot { slot: string; group: "view" | "menu" | "status" | "hook" | "other"; fills: string[] }
-export interface DepBoard { plugins: DepNode[]; edges: DepEdge[]; missing: DepMissing[]; slots: DepSlot[] }
+/** One part of the app that plugins call (`api.<area>.<member>`: a request of the core; `ccb.<area>.<member>`: the chat page), and the plugins that do. */
+export interface DepFeature { id: string; member: string; plugins: string[] }
+/** An area of the app with the parts of it that plugins call (areas nobody uses are not listed). */
+export interface DepFeatureArea { id: string; side: "host" | "web"; title: string; features: DepFeature[]; plugins: string[] }
+export interface DepBoard { plugins: DepNode[]; edges: DepEdge[]; missing: DepMissing[]; slots: DepSlot[]; featureAreas: DepFeatureArea[] }
 export interface PluginsApi {
   /** Who depends on whom among the plugins, read only: every plugin's name, version, on or off, services, slots and the arrows between them. */
   deps(): Promise<DepBoard>;

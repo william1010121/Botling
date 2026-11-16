@@ -1,9 +1,10 @@
 // Settings → Plugin dependencies: who depends on whom, read only. The graph (arrows from a plugin to the plugins that provide
-// what it requires, solid, or uses, dashed; a service nobody provides in red), then each plugin, then the slots and who fills them.
+// what it requires, solid, or uses, dashed; a service nobody provides in red), then which parts of the app each plugin calls (a layer
+// apart from the services), then each plugin, then the slots and who fills them.
 // Nothing here changes anything: there is no switch, no button that acts, no drag.
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { DepBoard, DepNode, DepSlot } from "../../../../Web/host/src/api";
+import type { DepBoard, DepFeatureArea, DepNode, DepSlot } from "../../../../Web/host/src/api";
 import { layoutGraph, NODE_H, NODE_W, type Graph } from "./layout";
 import { REFRESH_MS, type BoardSource } from "./source";
 
@@ -82,9 +83,49 @@ function PluginRow({ plugin, board }: { plugin: DepNode; board: DepBoard }) {
         {plugin.requires.length > 0 && <div className="dep-line"><span className="dep-key">Requires</span>{plugin.requires.map((service) => <span key={service} className={`dep-chip ${gaps.has(service) ? "dep-missing" : "dep-requires"}`}>{service}{gaps.has(service) ? " · missing" : ""}</span>)}</div>}
         {plugin.uses.length > 0 && <div className="dep-line"><span className="dep-key">Uses</span><Chips names={plugin.uses} kind="uses" /></div>}
         {plugin.fills.length > 0 && <div className="dep-line"><span className="dep-key">Fills</span><Chips names={plugin.fills} kind="slot" /></div>}
-        {plugin.provides.services.length + plugin.requires.length + plugin.uses.length + plugin.fills.length === 0 && <div className="dep-line dep-none">Declares nothing{plugin.builtIn ? "" : " (installed plugins' dependency fields are not read)"}.</div>}
+        {(plugin.features ?? []).length > 0 && <div className="dep-line"><span className="dep-key">App calls</span><Chips names={plugin.features} kind="calls" /></div>}
+        {plugin.provides.services.length + plugin.requires.length + plugin.uses.length + plugin.fills.length + (plugin.features ?? []).length === 0 && <div className="dep-line dep-none">Declares nothing{plugin.builtIn ? "" : " (installed plugins' dependency fields are not read)"}.</div>}
       </div>
     </div>
+  );
+}
+
+/** "If I change this part of the app, which plugins are affected": each area with the calls plugins make of it, the busiest first. */
+function AppFeatures({ board }: { board: DepBoard }) {
+  const nodes = new Map(board.plugins.map((plugin) => [plugin.name, plugin]));
+  const sides: { side: DepFeatureArea["side"]; title: string; note: string }[] = [
+    { side: "host", title: "App features · asked of the app (api.*)", note: "What a plugin's program part asks the app to do or read." },
+    { side: "web", title: "App features · used in the chat page (ccb.*)", note: "What a plugin's web part draws or hooks into on the chat page." },
+  ];
+  const used = board.featureAreas ?? [];
+  if (!used.length) return null;
+  const who = (name: string) => <span key={name} className={`dep-chip dep-who${nodes.get(name)?.enabled === false ? " dep-who-off" : ""}`} data-plugin-chip={name}>{nodes.get(name)?.title ?? name}</span>;
+  return (
+    <>
+      {sides.map(({ side, title, note }) => {
+        const areas = used.filter((area) => area.side === side).map((area, index) => ({ area, index })).sort((a, b) => b.area.plugins.length - a.area.plugins.length || a.index - b.index).map(({ area }) => area);
+        if (!areas.length) return null;
+        return (
+          <Group key={side} title={title} label={`App features: ${side === "host" ? "asked of the app" : "chat page"}`} note={`${note} Separate from the services above: nothing here is a kernel dependency.`}>
+            {areas.map((area) => (
+              <div key={area.id} className="dep-area" data-area={area.id}>
+                <div className="dep-area-head">
+                  <span className="dep-area-title">{area.title}</span>
+                  <span className="dep-area-id">{area.id}</span>
+                  <span className="dep-area-count">{area.plugins.length} {area.plugins.length === 1 ? "plugin" : "plugins"}</span>
+                </div>
+                {area.features.map((feature) => (
+                  <div key={feature.id} className="dep-feat-row" data-feature={feature.id}>
+                    <code className="dep-feature-name">{feature.member}</code>
+                    <span className="dep-feature-who">{feature.plugins.map(who)}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </Group>
+        );
+      })}
+    </>
   );
 }
 
@@ -145,6 +186,7 @@ export function DepBoardView({ source }: { source: BoardSource }) {
           </ul>
         )}
       </Group>
+      <AppFeatures board={board} />
       <Group title="Plugins" label="Plugins">
         {board.plugins.map((plugin) => <PluginRow key={plugin.name} plugin={plugin} board={board} />)}
       </Group>

@@ -61,3 +61,16 @@
 .dep-slot { padding: 6px 0; align-items: baseline; }
 .dep-slot-name { font-size: 12.5px; color: var(--text); min-width: 150px; }
 .dep-slot-fills { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+
+.dep-area { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.dep-area:last-child { border-bottom: 0; }
+.dep-area-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.dep-area-title { font-weight: 500; }
+.dep-area-id { color: var(--faint); font-size: 11.5px; }
+.dep-area-count { color: var(--muted); font-size: 11px; margin-left: auto; background: var(--chip); border-radius: 6px; padding: 1px 7px; }
+.dep-feat-row { display: flex; align-items: baseline; gap: 10px; padding: 3px 0 0 12px; }
+.dep-feature-name { color: var(--soft-text); font-size: 12px; min-width: 130px; flex-shrink: 0; }
+.dep-feature-who { display: flex; flex-wrap: wrap; gap: 4px; }
+.dep-calls { background: var(--chip); color: var(--soft-text); }
+.dep-who { background: var(--chip); color: var(--soft-text); }
+.dep-who-off { color: var(--faint); border: 1px dashed var(--strong-line); }

@@ -4,10 +4,12 @@
 // moves anything. `buildDepBoard` is pure (plugins in, nodes / edges / missing providers / slot fills out); `readDepInputs`
 // reads the registry for it. The kernel fields are read for built-in plugins only (a third-party manifest's are ignored,
 // as the kernel does), so an installed plugin shows with no services; it still shows its version, state and slots.
+// A second layer, apart from the kernel fields: the parts of the app a plugin calls (app-features.ts), declared for built-in plugins.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalSlot, slotName } from "../../../../Web/src/plugin-kernel";
 import type { Contribution } from "./contributions";
+import { areaOf, declaredFeatures, FEATURE_AREAS } from "./app-features";
 import { CORE_SLOTS, slotOf } from "./kernel-list";
 import { readKernelFields, title } from "./manifest";
 import type { PluginRegistry } from "./registry";
@@ -41,6 +43,8 @@ export interface DepInput {
   uses: string[];
   /** The slots its contributions fill, by any name (an enabled plugin's; a disabled one's are not there). */
   contributedSlots: string[];
+  /** The parts of the app it calls (`api.usage.view`, `ccb.composer.insert`; app-features.ts): declared for a built-in plugin, none for the rest. Not kernel services. */
+  features?: string[];
 }
 
 export interface DepNode {
@@ -57,6 +61,8 @@ export interface DepNode {
   uses: string[];
   /** The slots it fills now (new names, sorted): what its contributions and `provides.slots` name, while it is on. */
   fills: string[];
+  /** The parts of the app it calls, sorted (app-features.ts). A layer apart from `uses`: these are not kernel services. */
+  features: string[];
 }
 
 /** An arrow from the plugin that needs a service to a plugin that provides it. `live`: both ends are on. */
@@ -65,7 +71,11 @@ export interface DepEdge { from: string; to: string; service: string; kind: "req
 export interface DepMissing { plugin: string; service: string; offProviders: string[] }
 export type SlotGroup = "view" | "menu" | "status" | "hook" | "other";
 export interface DepSlot { slot: string; group: SlotGroup; fills: string[] }
-export interface DepBoard { plugins: DepNode[]; edges: DepEdge[]; missing: DepMissing[]; slots: DepSlot[] }
+/** One part of the app that some plugin calls, and the plugins that do. */
+export interface DepFeature { id: string; member: string; plugins: string[] }
+/** An area of the app (the chat's input box, the usage view, ...) with the calls of it that plugins make; areas nobody uses are left out. */
+export interface DepFeatureArea { id: string; side: "host" | "web"; title: string; features: DepFeature[]; plugins: string[] }
+export interface DepBoard { plugins: DepNode[]; edges: DepEdge[]; missing: DepMissing[]; slots: DepSlot[]; featureAreas: DepFeatureArea[] }
 
 const GROUPS: [string, SlotGroup][] = [["view/", "view"], ["menu/", "menu"], ["statusItem/", "status"], ["hook/", "hook"]];
 const groupOf = (id: string): SlotGroup => GROUPS.find(([prefix]) => id.startsWith(prefix))?.[1] ?? "other";
@@ -84,6 +94,7 @@ export function buildDepBoard(inputs: readonly DepInput[], coreSlots: readonly s
     provides: { services: sorted(input.provides.services), slots: sorted(input.provides.slots.map(slotName)) },
     requires: sorted(input.requires), uses: sorted(input.uses),
     fills: input.enabled ? sorted([...input.contributedSlots, ...input.provides.slots].map(slotName)) : [],
+    features: sorted(input.features ?? []),
   })).sort((a, b) => Number(b.app) - Number(a.app) || a.name.localeCompare(b.name));
   const state = new Map(inputs.map((input) => [input.name, input.enabled]));
 
@@ -110,7 +121,29 @@ export function buildDepBoard(inputs: readonly DepInput[], coreSlots: readonly s
   const rows: DepSlot[] = coreSlots.map((id) => ({ slot: slotName(id), group: groupOf(canonicalSlot(id)), fills: sorted(fills.get(slotName(id)) ?? []) }));
   // A slot a plugin names that the core does not list still shows, so nothing a plugin declared is hidden.
   for (const [slot, names] of fills) if (!known.has(slot)) rows.push({ slot, group: groupOf(canonicalSlot(slot)), fills: sorted(names) });
-  return { plugins, edges, missing, slots: rows };
+  return { plugins, edges, missing, slots: rows, featureAreas: buildFeatureAreas(plugins) };
+}
+
+/** "If I change this part of the app, which plugins are affected": the app's areas in their listed order, each with the plugins that call it. A call in an area the list does not know still shows. */
+function buildFeatureAreas(plugins: readonly DepNode[]): DepFeatureArea[] {
+  const users = new Map<string, string[]>();
+  for (const node of plugins) for (const id of node.features) users.set(id, [...(users.get(id) ?? []), node.name]);
+  const known = new Map(FEATURE_AREAS.map((entry) => [entry.id, entry]));
+  const order = [...FEATURE_AREAS.map((entry) => entry.id)];
+  const byArea = new Map<string, DepFeature[]>();
+  for (const [id, names] of [...users].sort(([a], [b]) => a.localeCompare(b))) {
+    const areaId = areaOf(id);
+    if (!known.has(areaId) && !order.includes(areaId)) order.push(areaId);
+    byArea.set(areaId, [...(byArea.get(areaId) ?? []), { id, member: id.slice(areaId.length + 1), plugins: sorted(names) }]);
+  }
+  const rows: DepFeatureArea[] = [];
+  for (const id of order) {
+    const features = byArea.get(id);
+    if (!features) continue;
+    const entry = known.get(id);
+    rows.push({ id, side: entry?.side ?? (id.startsWith("api.") ? "host" : "web"), title: entry?.title ?? id, features, plugins: sorted(features.flatMap((feature) => feature.plugins)) });
+  }
+  return rows;
 }
 
 /** The registry's plugins (and the app's own providers) as board inputs. Never throws: a manifest that cannot be read declares nothing. */
@@ -125,6 +158,8 @@ export function readDepInputs(registry: Pick<PluginRegistry, "plugins">, contrib
       provides: { services: fields?.provides.services ?? [], slots: fields?.provides.slots ?? [] },
       requires: fields?.requires.services ?? [], uses: fields?.uses.services ?? [],
       contributedSlots: sorted(contributions.filter((entry) => entry.plugin === plugin.manifest.name).map(slotOf)),
+      // Declared for a built-in plugin only (like the kernel fields): an installed plugin's calls are not known, so it shows none.
+      features: plugin.builtIn ? declaredFeatures(plugin.manifest.name) : [],
     };
   });
   const taken = new Set(inputs.map((input) => input.name));
