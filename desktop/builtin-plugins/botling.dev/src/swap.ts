@@ -30,6 +30,30 @@ export interface BuildInfo {
   /** The git commit it was built from (`BotlingGitCommit`), and whether there were uncommitted changes. */
   commit: string | null;
   dirty: boolean;
+  /**
+   * When the bundle was built, in ms: the modified time of its app.asar (a copy with ditto keeps it), else of its Info.plist.
+   * Two builds of one commit (dirty rebuilds) differ by this; absent in a state file an older build wrote.
+   */
+  builtAt?: number | null;
+}
+
+/** Builds closer than this count as one build (a copy may round the time). */
+const BUILT_AT_SLACK_MS = 2_000;
+
+/** Whether two bundles are one build: the same version, commit and dirtiness, and (when both know it) built at the same time. */
+export function sameBuild(a: BuildInfo, b: BuildInfo): boolean {
+  if (a.version !== b.version || (a.commit ?? null) !== (b.commit ?? null) || !!a.dirty !== !!b.dirty) return false;
+  if (typeof a.builtAt === "number" && typeof b.builtAt === "number") return Math.abs(a.builtAt - b.builtAt) <= BUILT_AT_SLACK_MS;
+  return true;
+}
+
+/**
+ * Which build of an install is the one running: "to" (the requested one, or the two cannot be told apart), "from" (the old one:
+ * nothing was installed) or "other". The running bundle is what decides, never what the install asked for.
+ */
+export function whichBuild(running: BuildInfo, state: { from: BuildInfo; to: BuildInfo }): "to" | "from" | "other" {
+  if (sameBuild(running, state.to)) return "to";
+  return sameBuild(running, state.from) ? "from" : "other";
 }
 
 /** "2.0.0 (abc1234)", "2.0.0 (abc1234, uncommitted changes)". */
@@ -68,7 +92,15 @@ export function readBuild(bundle: string): BuildInfo | null {
   } catch { return null; }
   const commit = info.BotlingGitCommit || info.CCBGitCommit || null;
   const dirty = [info.BotlingGitDirty, info.CCBGitDirty].some((value) => value === "1" || value === "true");
-  return { path, bundleID: id, version: info.CFBundleShortVersionString || "?", commit, dirty };
+  return { path, bundleID: id, version: info.CFBundleShortVersionString || "?", commit, dirty, builtAt: builtAt(path) };
+}
+
+/** The modified time of the bundle's app.asar (else its Info.plist), in ms; null when neither can be read. */
+function builtAt(bundle: string): number | null {
+  for (const file of [join(bundle, "Contents", "Resources", "app.asar"), join(bundle, "Contents", "Info.plist")]) {
+    try { return Math.round(statSync(file).mtimeMs); } catch { /* try the next */ }
+  }
+  return null;
 }
 
 /** Resolve existing symlinks, retaining lexical paths for destinations that do not exist yet. */
@@ -97,6 +129,27 @@ const rolledBackFile = (root: string) => join(updateFolder(root), "rolled-back")
 export const failuresFile = (root: string) => join(updateFolder(root), "failures");
 export const installLog = (root: string) => join(updateFolder(root), "install.log");
 const scriptFile = (root: string) => join(updateFolder(root), "install.sh");
+/** The script writes its own pid here when it starts, so the next start can tell a script that is still at work from one that died. */
+export const scriptPidFile = (root: string) => join(updateFolder(root), "script.pid");
+
+/** Whether the install script of this install is still running (its pid file names a live install.sh). */
+export function installScriptRunning(root: string): boolean {
+  let pid: number;
+  try { pid = Number.parseInt(readFileSync(scriptPidFile(root), "utf8").trim(), 10); } catch { return false; }
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EPERM") return false; }
+  // A pid can be given to another program once the script is gone: it must still be an install.sh.
+  try { return execFileSync("/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 5_000 }).includes("install.sh"); } catch { return false; }
+}
+
+/** The last line of the install log as one clean line (control characters made spaces, at most 300 characters), or null. */
+export function installLogTail(root: string): string | null {
+  try {
+    const lines = readFileSync(installLog(root), "utf8").split("\n").map((line) => line.trim()).filter(Boolean);
+    const last = lines.at(-1);
+    return last ? last.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 300) : null;
+  } catch { return null; }
+}
 
 /** Builds in a row that did not come up. */
 export function failures(root: string): number {
@@ -127,6 +180,7 @@ launch() (
 )
 reopen() { launch "$1" "$DATA"; }
 putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
+echo $$ > "$(dirname "$HEALTHY")/script.pid"
 say "waiting for Botling 2 ($PID) to quit"
 for i in $(seq 1 300); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
 if kill -0 "$PID" 2>/dev/null; then say "it did not quit; nothing changed"; echo "did not quit" > "$ROLLED"; exit 1; fi
@@ -142,6 +196,7 @@ if ! /usr/bin/ditto "$NEW" "$TARGET"; then
   say "could not copy the new build; putting the old one back"
   rm -rf "$TARGET"; putback; echo "could not copy the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1
 fi
+rm -f "$HEALTHY"
 say "opening the new build"
 launch "$TARGET" "$DATA"
 for i in $(seq 1 "$WAIT"); do
@@ -223,6 +278,8 @@ launch() (
 reopen() { launch "$1"; }
 putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
 fail() { say "$1"; echo "$1" > "$ROLLED"; }
+# The next start tells a script still at work from one that died by this pid (swap.ts installScriptRunning).
+echo $$ > "$(dirname "$HEALTHY")/script.pid"
 say "waiting for botlingd ($PID) to stop; it stops once the Botling 3 window quit"
 n=0; while alive "$PID" && [ "$n" -lt "$QUIT_WAIT" ]; do sleep 1; n=$((n + 1)); done
 if alive "$PID"; then
@@ -231,7 +288,9 @@ if alive "$PID"; then
   n=0; while alive "$PID" && [ "$n" -lt "$APP_WAIT" ]; do sleep 1; n=$((n + 1)); done
 fi
 if alive "$PID"; then fail "botlingd did not stop; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
+say "botlingd ($PID) has stopped; waiting for the old app to quit"
 if ! end_bundle "$PREVIOUS" 0; then fail "Botling 3 did not quit; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
+say "nothing runs from the old app any more"
 if [ -e "$TARGET" ]; then
   say "moving $TARGET to $BACKUP"
   mv "$TARGET" "$BACKUP" || { fail "could not move the old build"; reopen "$PREVIOUS"; exit 1; }
@@ -240,6 +299,7 @@ else
   say "installing to $TARGET (the running build stays at $PREVIOUS)"
   mkdir -p "$(dirname "$TARGET")" || { fail "could not make the folder for the new build"; reopen "$PREVIOUS"; exit 1; }
 fi
+say "copying the new build $NEW to $TARGET"
 if ! "$DITTO" "$NEW" "$TARGET"; then
   rm -rf "$TARGET"; putback; fail "could not copy the new build"; reopen "$PREVIOUS"; exit 1
 fi
@@ -247,6 +307,8 @@ if ! "$CODESIGN" --verify "$TARGET"; then
   rm -rf "$TARGET"; putback; fail "the copied build's signature does not check out"; reopen "$PREVIOUS"; exit 1
 fi
 "$XATTR" -dr com.apple.quarantine "$TARGET" 2>/dev/null || true
+# A leftover healthy file (the old build, started again by hand while this waited) is not the new build's.
+rm -f "$HEALTHY"
 say "opening the new build"
 launch "$TARGET"
 for i in $(seq 1 "$WAIT"); do
@@ -274,7 +336,7 @@ export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, req
   const v3 = !!serverDir;
   const folder = updateFolder(root);
   mkdirSync(join(folder, "backups"), { recursive: true });
-  for (const marker of [healthyFile(root), rolledBackFile(root)]) rmSync(marker, { force: true });
+  for (const marker of [healthyFile(root), rolledBackFile(root), scriptPidFile(root)]) rmSync(marker, { force: true });
   const stamp = `${now.toISOString().slice(0, 10)}-${Math.floor(now.getTime() / 1000)}`;
   const backup = join(folder, "backups", `Botling-${v3 ? 3 : 2}-${from.version.replace(/[^0-9A-Za-z.-]/g, "_")}-${stamp}.app`);
   const state: InstallState = { from, to, requesterID: requester, note, startedAt: now.toISOString(), backup };

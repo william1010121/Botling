@@ -46,9 +46,11 @@ function desk(root: string, over: Partial<ConstructorParameters<typeof DevBuilds
   const dev = new FakeBot("DEV", { name: "botling", folder: join(root, "repo") });
   const other = new FakeBot("OTHER", { name: "garden", folder: join(root, "garden") });
   const running = readBuild(fakeApp(join(root, "Applications"), "Botling 2", { BotlingGitCommit: "aaaaaaa1111" }));
+  // What runs now: an install replaces the bundle on disk, so a test says when the new build is the one running.
+  let current = running;
   const launched: string[][] = [];
   const builds = new DevBuilds({
-    root: join(root, "core"), runningBuild: () => running, developer: () => dev, mainBot: () => main,
+    root: join(root, "core"), runningBuild: () => current, developer: () => dev, mainBot: () => main,
     bot: (id) => [main, dev, other].find((bot) => bot.id === id) ?? null,
     appPid: 4242, appDataDir: join(root, "data"),
     launchInstaller: (command) => { launched.push(command); },
@@ -56,7 +58,7 @@ function desk(root: string, over: Partial<ConstructorParameters<typeof DevBuilds
     log: () => {},
     ...over,
   });
-  return { builds, main, dev, other, running: running!, launched };
+  return { builds, main, dev, other, running: running!, launched, setRunning: (build: BuildInfo | null) => { current = build; } };
 }
 
 afterEach(() => { vi.useRealTimers(); });
@@ -154,10 +156,11 @@ describe("<install-build>", () => {
   it("after the restart: up counts as up after a while, and the asker hears it; a roll-back is told and counted", () => {
     vi.useFakeTimers();
     const root = tempDir("self-update");
-    const { builds, main, dev, running } = desk(root);
+    const { builds, main, dev, running, setRunning } = desk(root);
     const to = readBuild(fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" }))!;
     prepareInstall(join(root, "core"), running, to, "DEV", "Faster startup.", 1, "");
     setFailures(join(root, "core"), 1);
+    setRunning(to);
     builds.check(8_000);
     expect(main.notices).toHaveLength(0);
     vi.advanceTimersByTime(8_000);
@@ -168,6 +171,7 @@ describe("<install-build>", () => {
     expect(main.notices.at(-1)!.text).toBe("Botling restarted on 2.0.1 (bbbbbbb) (was 2.0.1 (aaaaaaa)), installed for botling.");
     expect(dev.relays.at(-1)!.text).toMatch(/^\(App\) Botling restarted on 2\.0\.1 \(bbbbbbb\), the build you asked to install \(Faster startup\.\)/);
 
+    setRunning(running);
     prepareInstall(join(root, "core"), running, to, "DEV", "", 1, "");
     writeFileSync(join(root, "core", "self-update", "rolled-back"), "the new build did not come up in 90 seconds\n");
     builds.check();

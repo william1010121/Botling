@@ -1,12 +1,12 @@
 // The developer tools' desk (1.x's Workspace+Developer.swift): the briefing the developer project's manager hears, the
 // confirm card for `<install-build>`, starting the install, how it went at the next start, and `<app-screenshot/>`.
 // What it needs of the app and the bots comes in `DevBuildDeps` (host.ts gives it the plugin api's `app`), so tests give fakes.
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { pruneBackups, pruneUpdateLeftovers } from "./prune";
 import {
-  FAILURE_LIMIT, HEALTHY_AFTER_MS, HEALTH_WAIT_S, HEALTH_WAIT_S_V3, buildLabel, healthyFile, failures, failuresFile, finishInstall, installLog, installOutcome, prepareInstall, updateFolder,
-  readBuild, sensitiveChanges, setFailures, type BuildInfo,
+  FAILURE_LIMIT, HEALTHY_AFTER_MS, HEALTH_WAIT_S, HEALTH_WAIT_S_V3, buildLabel, healthyFile, failures, failuresFile, finishInstall, installLog, installLogTail, installOutcome, installScriptRunning,
+  prepareInstall, updateFolder, readBuild, sensitiveChanges, setFailures, whichBuild, type BuildInfo, type InstallState,
 } from "./swap";
 
 /** What the desk needs of a bot. */
@@ -158,8 +158,10 @@ ${appWorktree
   }
 
   /**
-   * At start: how an install went (`checkSelfUpdate`). The new build counts as up once it has run
-   * `healthyAfterMs`; then the bot that asked is told, and so are you.
+   * At start: how an install went (`checkSelfUpdate`). What counts is the build that is running (read from the bundle on disk),
+   * not what the install asked for: the requested build is "up" only when it is the one running and has run `healthyAfterMs`;
+   * the old build coming back (the script died or never swapped) is told as "not installed", and the bot that asked and you hear it.
+   * While the install script is still at work, an old build decides nothing.
    */
   check(healthyAfterMs = HEALTHY_AFTER_MS): NodeJS.Timeout | null {
     const outcome = installOutcome(this.deps.root);
@@ -167,33 +169,46 @@ ${appWorktree
     const { state } = outcome;
     const main = this.deps.mainBot();
     if (outcome.kind === "installed") {
-      const told = () => {
+      const told = (running: BuildInfo | null) => {
         finishInstall(this.deps.root);
         setFailures(this.deps.root, 0);
         this.cleanAfterUpdate(state);
         const asker = this.deps.bot(state.requesterID);
         const how = "";
-        main.appNotice(`Botling restarted on ${buildLabel(state.to)} (was ${buildLabel(state.from)}), installed for ${asker?.profile.name ?? "a bot"}${how}.`, undefined, undefined, { sourceID: state.requesterID });
+        const now = buildLabel(running ?? state.to);
+        main.appNotice(`Botling restarted on ${now} (was ${buildLabel(state.from)}), installed for ${asker?.profile.name ?? "a bot"}${how}.`, undefined, undefined, { sourceID: state.requesterID });
         try {
-          asker?.relay(`(App) Botling restarted on ${buildLabel(state.to)}, the build you asked to install${state.note ? ` (${state.note})` : ""}${how}. Read your memory file for where you were, check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.`);
+          asker?.relay(`(App) Botling restarted on ${now}, the build you asked to install${state.note ? ` (${state.note})` : ""}${how}. Read your memory file for where you were, check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.`);
         } catch (error) { this.deps.log(`could not tell ${state.requesterID}: ${(error as Error).message}`); }
+      };
+      /** The running bundle against the install: "up" (the requested build), "wait" (the script still works), "reported" (told it did not install). */
+      const judge = (): "up" | "wait" | "reported" => {
+        const running = this.deps.runningBuild();
+        const which = running ? whichBuild(running, state) : "to";
+        if (which === "to") return "up";
+        if (installScriptRunning(this.deps.root)) return "wait";
+        this.notInstalled(state, running!, which);
+        return "reported";
       };
       if (this.v3) {
         // Botling 3: botlingd (and so this plugin) starts before a window attaches; the build is up only once the core wrote
-        // `healthy` (a window stayed attached 8 s, core/self-update.ts `confirmHealthyWhen`). Without it nothing is said: the script
-        // rolls the build back and the old one tells.
+        // `healthy` (a window stayed attached 8 s, core/self-update.ts `confirmHealthyWhen`) and the bundle running is the requested
+        // one. Without `healthy` nothing is said for a build that is the requested one: the script rolls it back and the old build
+        // tells. A build that is not the requested one is told as not installed once no script is working any more.
         let elapsed = 0;
         const limit = healthyAfterMs + (HEALTH_WAIT_S_V3 + 30) * 1_000;
         const timer = setInterval(() => {
           elapsed += HEALTHY_POLL_MS;
           if (elapsed < healthyAfterMs) return;
-          if (existsSync(healthyFile(this.deps.root))) { clearInterval(timer); told(); return; }
+          const verdict = judge();
+          if (verdict === "reported") { clearInterval(timer); return; }
+          if (verdict === "up" && existsSync(healthyFile(this.deps.root))) { clearInterval(timer); told(this.deps.runningBuild()); return; }
           if (elapsed >= limit) clearInterval(timer);
         }, HEALTHY_POLL_MS);
         timer.unref?.();
         return timer;
       }
-      const timer = setTimeout(told, healthyAfterMs);
+      const timer = setTimeout(() => { if (judge() === "up") told(this.deps.runningBuild()); }, healthyAfterMs);
       timer.unref?.();
       return timer;
     }
@@ -201,11 +216,36 @@ ${appWorktree
     const count = failures(this.deps.root) + 1;
     setFailures(this.deps.root, count);
     const paused = count >= FAILURE_LIMIT ? ` That is ${count} in a row: installing is paused until developer mode is turned off and on again.` : "";
-    main.appNotice(`The new build ${buildLabel(state.to)} did not come up (${outcome.reason}); ${buildLabel(state.from)} is running again.${paused}`, undefined, undefined, { sourceID: state.requesterID });
+    const running = this.deps.runningBuild();
+    const now = buildLabel(running ?? state.from);
+    main.appNotice(`The new build ${buildLabel(state.to)} did not come up (${outcome.reason}); ${now} is running again.${paused}`, undefined, undefined, { sourceID: state.requesterID });
     try {
-      this.deps.bot(state.requesterID)?.relay(`(App) The build you asked to install, ${buildLabel(state.to)}, did not come up: ${outcome.reason}. Botling put ${buildLabel(state.from)} back. The install log is ${installLog(this.deps.root)}; the failed build was kept beside the app as ${basename(state.from.path)}.failed. Find out why before trying again.${paused}`);
+      this.deps.bot(state.requesterID)?.relay(`(App) The build you asked to install, ${buildLabel(state.to)}, did not come up: ${outcome.reason}. Botling put ${now} back. The install log is ${installLog(this.deps.root)}; the failed build was kept beside the app as ${basename(state.from.path)}.failed. Find out why before trying again.${paused}`);
     } catch (error) { this.deps.log(`could not tell ${state.requesterID}: ${(error as Error).message}`); }
     return null;
+  }
+
+  /**
+   * The build that came up is not the requested one and no install script is working: nothing was installed (the script stopped
+   * before it swapped, or something else came up). The state is finished so this is told once; installing is not counted as a
+   * failed build (no new build ran), so the same card can be confirmed again.
+   */
+  private notInstalled(state: InstallState, running: BuildInfo, which: "from" | "other") {
+    const root = this.deps.root;
+    const tail = installLogTail(root);
+    finishInstall(root);
+    rmSync(healthyFile(root), { force: true });
+    const now = buildLabel(running);
+    const wanted = buildLabel(state.to);
+    const log = `The install log is ${installLog(root)}${tail ? `; its last line: ${JSON.stringify(tail)}` : ""}.`;
+    const what = which === "from"
+      ? `Botling is still running ${now}: the install script stopped before it replaced the app, so nothing was replaced.`
+      : `Botling is running ${now}, which is neither the old build (${buildLabel(state.from)}) nor the requested one.`;
+    const asker = this.deps.bot(state.requesterID);
+    this.deps.mainBot().appNotice(`${wanted} was not installed. ${what} ${log} The new build is still at ${state.to.path}; the same card can be confirmed again.`, undefined, undefined, { sourceID: state.requesterID });
+    try {
+      asker?.relay(`(App) The build you asked to install, ${wanted}, was not installed. ${what} ${log} The build is still at ${state.to.path}; ask for the install again once you know why it stopped.`);
+    } catch (error) { this.deps.log(`could not tell ${state.requesterID}: ${(error as Error).message}`); }
   }
 
   /**

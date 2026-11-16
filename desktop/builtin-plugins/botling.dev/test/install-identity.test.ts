@@ -5,7 +5,7 @@
 // (a) the script does not take a stale `healthy` for the new build and leaves its pid for the next start to check.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { tempDir } from "../../../test/helpers";
 import { DevBuilds, type DeskBot } from "../src/desk";
@@ -56,7 +56,11 @@ function rig(root: string, first: BuildInfo | null) {
 const folder = (root: string) => join(root, "server", "self-update");
 const server = (root: string) => join(root, "server");
 
-afterEach(() => { vi.useRealTimers(); });
+const scripts: ChildProcess[] = [];
+afterEach(() => {
+  vi.useRealTimers();
+  for (const child of scripts.splice(0)) { try { process.kill(-child.pid!, "SIGKILL"); } catch { /* gone */ } }
+});
 
 describe("an install is judged by the build that is running", () => {
   function setup(extraFrom: Record<string, string> = { BotlingGitCommit: "aaaaaaa1111" }, extraTo: Record<string, string> = { BotlingGitCommit: "bbbbbbb2222" }, fromAsar = 1_800_000_000, toAsar = 1_800_100_000) {
@@ -131,15 +135,20 @@ describe("an install is judged by the build that is running", () => {
 
   it("while the install script is still alive the old build decides nothing; once it is gone, it reports", () => {
     const { root, builds, main } = setup();
-    writeFileSync(join(folder(root), "script.pid"), `${process.pid}\n`);
+    // A real process whose command line names install.sh (the check must not take any live pid for the script).
+    const script = spawn("/bin/bash", ["-c", "sleep 30; true", "install.sh"], { stdio: "ignore", detached: true });
+    scripts.push(script);
+    writeFileSync(join(folder(root), "script.pid"), `${script.pid}\n`);
     writeFileSync(join(folder(root), "healthy"), "ok\n");
     builds.check(8_000);
     settle();
     expect(main.notices).toHaveLength(0);
     expect(installOutcome(server(root))).toMatchObject({ kind: "installed" });
-    // A pid that is gone (a script that died): the next look reports it.
-    const gone = spawnSync("/usr/bin/true").pid!;
-    writeFileSync(join(folder(root), "script.pid"), `${gone}\n`);
+    // A script that died (its pid is gone): the next look reports it.
+    process.kill(-script.pid!, "SIGKILL");
+    spawnSync("/bin/sleep", ["0.2"]);
+    // A pid that another program took over is no script either.
+    writeFileSync(join(folder(root), "script.pid"), `${process.pid}\n`);
     vi.advanceTimersByTime(60_000);
     expect(main.notices.at(-1)!).toMatch(/not installed/i);
   });

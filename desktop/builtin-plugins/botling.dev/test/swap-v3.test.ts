@@ -47,9 +47,11 @@ function desk(root: string, over: Partial<ConstructorParameters<typeof DevBuilds
   const main = new FakeBot("MAIN", { name: "Main bot", folder: join(root, "main") });
   const dev = new FakeBot("DEV", { name: "botling", folder: join(root, "repo") });
   const running = readBuild(fakeApp(join(root, "Applications"), "Botling 3", { BotlingGitCommit: "aaaaaaa1111" }));
+  // What runs now: after an install it is the new build (the test says so with setRunning).
+  let current = running;
   const launched: string[][] = [];
   const builds = new DevBuilds({
-    root: join(root, "server"), runningBuild: () => running, developer: () => dev, mainBot: () => main,
+    root: join(root, "server"), runningBuild: () => current, developer: () => dev, mainBot: () => main,
     bot: (id) => [main, dev].find((bot) => bot.id === id) ?? null,
     appPid: 5151, appDataDir: join(root, "data"), serverDir: join(root, "server"),
     launchInstaller: (command) => { launched.push(command); },
@@ -57,7 +59,7 @@ function desk(root: string, over: Partial<ConstructorParameters<typeof DevBuilds
     log: () => {},
     ...over,
   });
-  return { builds, main, dev, running: running!, launched };
+  return { builds, main, dev, running: running!, launched, setRunning: (build: BuildInfo | null) => { current = build; } };
 }
 
 const children: ChildProcess[] = [];
@@ -109,9 +111,10 @@ describe("a Botling 3 install", () => {
   it("after the restart the asker hears it only once `healthy` is there (a window attached); without it nothing is said", () => {
     vi.useFakeTimers();
     const root = tempDir("self-update-v3");
-    const { builds, main, dev, running } = desk(root);
+    const { builds, main, dev, running, setRunning } = desk(root);
     const to = readBuild(fakeApp(join(root, "dist"), "Botling 3", { BotlingGitCommit: "bbbbbbb2222" }))!;
     prepareInstall(join(root, "server"), running, to, "DEV", "Faster startup.", 1, "", new Date(), running.path, join(root, "server"));
+    setRunning(to);
     expect(builds.check(8_000)).not.toBeNull();
     vi.advanceTimersByTime(20_000);
     expect(main.notices).toHaveLength(0);
@@ -126,6 +129,7 @@ describe("a Botling 3 install", () => {
     const root2 = tempDir("self-update-v3");
     const again = desk(root2);
     prepareInstall(join(root2, "server"), again.running, to, "DEV", "", 1, "", new Date(), again.running.path, join(root2, "server"));
+    again.setRunning(to);
     again.builds.check(8_000);
     vi.advanceTimersByTime((HEALTH_WAIT_S_V3 + 60) * 1_000);
     expect(again.main.notices).toHaveLength(0);
