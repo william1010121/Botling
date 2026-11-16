@@ -228,7 +228,7 @@ export class Botlingd {
 
     let store: ServerStore | null = null;
     try {
-      store = await openServerStore(paths.dataDir);
+      store = await openServerStore(paths.dataDir, { compaction: { log } });
       const s = { options, env, paths, port, timers, log, later, lock, store } as Ctx;
       Object.assign(s, await openIdentity(s));
       Object.assign(s, await startCore(s));
