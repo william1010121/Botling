@@ -55,7 +55,7 @@ export class BotGroup {
   private get turn() { return this.host.turn; }
   private get draining() { return this.host.draining; }
   private get ignoreResults() { return this.host.ignoreResults; }
-  private get ending() { return this.host.turns.ending; }
+  private get ending() { return this.host.ending; }
   private get turns() { return this.host.turns; }
   private get cardPicks() { return this.host.cardPicks; }
   private refuseIfClosed() { return this.host.questions.refuseIfClosed(); }
@@ -64,7 +64,7 @@ export class BotGroup {
   private notice(text: string) { return this.host.notice(text); }
   private componentNotes(user: ChatRecord) { return this.host.cards.componentNotes(user); }
   private route(turn: Turn) { return this.host.route(turn); }
-  private clearApiRetry() { return this.host.progress.clearApiRetry(); }
+  private clearApiRetry() { return this.host.clearApiRetry(); }
   private finishTurn(turn: Turn, status: Status, error?: string) { return this.host.finishTurn(turn, status, error); }
   private markSeen(ids: string[], head: Engine) { return this.host.recordsBook.markSeen(ids, head); }
   private identifyDecision(id: string) { return this.host.identifyDecision(id); }

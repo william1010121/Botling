@@ -231,7 +231,7 @@ export class MaintainerDesk {
     const limit = COMPONENT_LIMIT;
     const botName = this.nameOf(bot);
     const ask: ComponentAsk = {
-      key: randomUUID().slice(0, 8).toLowerCase(), name, botId: bot.id, request, userAsked: shortened(bot.views.lastAsked, 300),
+      key: randomUUID().slice(0, 8).toLowerCase(), name, botId: bot.id, request, userAsked: shortened(bot.lastAsked, 300),
       stamp: this.deps.library.stampOf(name), changing: exists && own.includes(name),
     };
     const answerBack = ` If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for ${botName}</component-declined>; the app passes it on to ${botName}.`;

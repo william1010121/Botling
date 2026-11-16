@@ -71,18 +71,18 @@ export class BotHead {
   private onItem(head: AgentHead, item: CodexItem) { this.host.onItem(head, item); }
   private onWorkerOutput(item: CodexItem) { this.host.onWorkerOutput(item); }
   private prompts(): BotPrompts { return this.host.prompts(); }
-  private promptHash(): string { return this.host.restarts.promptHash(); }
+  private promptHash(): string { return this.host.promptHash(); }
   private routinesTool(args: Record<string, unknown>) { return this.host.routines.routinesTool(args); }
   private settingsView(): BotSettingsView { return this.host.settingsView(); }
   private syncWorkerOwners() { this.host.syncWorkerOwners(); }
   private updated() { this.host.updated(); }
   // The restart state it reads is BotRestart's (through `Bot`); it clears it through `Bot`'s named transitions:
-  private get settingsGeneration(): number { return this.host.restarts.settingsGeneration; }
+  private get settingsGeneration(): number { return this.host.settingsGeneration; }
   private get settingsHold() { return this.host.settingsHold; }
-  private get restartRecovery(): boolean { return this.host.restarts.restartRecovery; }
-  private get restartProviderTurn() { return this.host.restarts.restartProviderTurn; }
-  private get restartWorkerRecords() { return this.host.restarts.restartWorkerRecords; }
-  private get restartWorkersSince() { return this.host.restarts.restartWorkersSince; }
+  private get restartRecovery(): boolean { return this.host.restartRecovery; }
+  private get restartProviderTurn() { return this.host.restartProviderTurn; }
+  private get restartWorkerRecords() { return this.host.restartWorkerRecords; }
+  private get restartWorkersSince() { return this.host.restartWorkersSince; }
 
   // ---- Fields owned here (`Bot` reads and writes them through accessors) ----
   head: AgentHead | null = null;

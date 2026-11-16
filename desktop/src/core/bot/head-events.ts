@@ -56,21 +56,21 @@ export class HeadEvents {
   private get records(): ChatRecord[] { return this.host.records; }
   private get session(): HeadState { return this.host.session; }
   private get approvals(): Bot["approvals"] { return this.host.approvals; }
-  private get claudeMidTurn(): WeakSet<AgentHead> { return this.host.turns.claudeMidTurn; }
+  private get claudeMidTurn(): WeakSet<AgentHead> { return this.host.claudeMidTurn; }
   private get draining(): Bot["draining"] { return this.host.draining; }
-  private get ending(): WeakSet<AgentHead> { return this.host.turns.ending; }
+  private get ending(): WeakSet<AgentHead> { return this.host.ending; }
   private get managedHandbacks(): Set<string> { return this.host.workers.managedHandbacks; }
   private get managedTaskHandoffs(): Map<string, string> { return this.host.workers.managedTaskHandoffs; }
   private get outage(): Bot["outage"] { return this.host.outage; }
-  private get restartRecovery(): boolean { return this.host.restarts.restartRecovery; }
-  private get scheduleCalls(): Bot["tasks"]["scheduleCalls"] { return this.host.tasks.scheduleCalls; }
+  private get restartRecovery(): boolean { return this.host.restartRecovery; }
+  private get scheduleCalls(): Bot["scheduleCalls"] { return this.host.scheduleCalls; }
   private get sessionCost(): Bot["headRun"]["sessionCost"] { return this.host.headRun.sessionCost; }
   private get shuttingDown(): boolean { return this.host.shuttingDown; }
   private get steered(): Map<string, Turn> { return this.host.steered; }
   private get tidyFollowUp(): Bot["headRun"]["tidyFollowUp"] { return this.host.headRun.tidyFollowUp; }
   private get tidying(): boolean { return this.host.tidying; }
   private get toolCalls(): Bot["toolCalls"] { return this.host.toolCalls; }
-  private get unbegun(): Bot["turns"]["unbegun"] { return this.host.turns.unbegun; }
+  private get unbegun(): Bot["unbegun"] { return this.host.unbegun; }
   private get inHeadSubagents(): SubagentRecord[] { return this.host.tasks.inHeadSubagents; }
   private get lineMediaStore(): string { return this.host.delivery.lineMediaStore; }
   // Fields of `Bot` it writes (a setter for another owner's field: M7-S54 ... replace these by named transitions):
@@ -82,7 +82,7 @@ export class HeadEvents {
   private detach() { this.host.headRun.detach(); }
   private get ignoreResults(): number { return this.host.ignoreResults; }
   private get restarting(): AgentHead | null { return this.host.restarting; }
-  private get retryingConnection(): boolean { return this.host.progress.retryingConnection; }
+  private get retryingConnection(): boolean { return this.host.retryingConnection; }
   private get progress() { return this.host.progress; }
   private get tasks() { return this.host.tasks; }
   private get turn(): Turn | null { return this.host.turn; }
@@ -100,8 +100,8 @@ export class HeadEvents {
   private changed(record: ChatRecord) { return this.host.changed(record); }
   private clearCodexRetry() { return this.host.progress.clearCodexRetry(); }
   private clearIdle() { return this.host.clearIdle(); }
-  private clearUnbegun() { return this.host.turns.clearUnbegun(); }
-  private commandEnded(head: AgentHead, id: string, state: CommandState) { return this.host.turns.commandEnded(head, id, state); }
+  private clearUnbegun() { return this.host.clearUnbegun(); }
+  private commandEnded(head: AgentHead, id: string, state: CommandState) { return this.host.commandEnded(head, id, state); }
   private deliver(turn: Turn, given?: AgentHead) { return this.host.deliver(turn, given); }
   private drained(head: AgentHead) { return this.host.drained(head); }
   private findTask(id: string): BackgroundTask | undefined { return this.host.tasks.findTask(id); }
@@ -109,7 +109,7 @@ export class HeadEvents {
   private headStopped(head: Engine) { return this.host.group.headStopped(head); }
   private headWords(words: string) { return this.host.group.headWords(words); }
   private hostFacts(): HostFacts { return this.host.workers.hostFacts(); }
-  private insertDelivered(head: AgentHead, id: string) { return this.host.turns.insertDelivered(head, id); }
+  private insertDelivered(head: AgentHead, id: string) { return this.host.insertDelivered(head, id); }
   private keepTasks(turn: Turn, record: ChatRecord | null) { return this.host.tasks.keepTasks(turn, record); }
   private messageView(record: ChatRecord): MessageView { return this.host.messageView(record); }
   private monitorState(monitor: CommandMonitor) { return this.host.monitorState(monitor); }
@@ -647,7 +647,7 @@ export function monitorStateOf(host: Bot, monitor: CommandMonitor) {
     const tasks = host.turn.tasks ??= [];
     const index = tasks.findIndex(candidate => candidate.id === monitor.id);
     if (index < 0) tasks.push(task); else tasks[index] = task;
-    host.headEvents.emitSteps(host.turn);
+    host.emitSteps(host.turn);
     return;
   }
   const record = host.records.findLast(record => record.engine === "codex" && record.steps?.some(step => step.id === monitor.id && step.tool === "Monitor"));

@@ -719,7 +719,7 @@ export class Core {
       const entries = handover.entries.filter((entry) => entry.botId === botId);
       const bot = this.bots.get(botId);
       if (!bot) continue;
-      try { bot.restarts.adoptSwap(entries); } catch (error) { this.log(`core swap: ${botId}: ${(error as Error).message}`); }
+      try { bot.adoptSwap(entries); } catch (error) { this.log(`core swap: ${botId}: ${(error as Error).message}`); }
     }
   }
 

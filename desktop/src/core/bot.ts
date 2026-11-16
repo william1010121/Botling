@@ -54,10 +54,11 @@ import type { BotView, ChatSnapshot, Event, MessageView, ResultOf, BotSettingsVi
 import type { HeadExit } from "./agent/head";
 import type { CodexItem } from "./agent/codex";
 import { Conductor, readHeads, type AnswerTarget, type ConductorAction, type Engine, type Heads } from "./heads";
-import type { StreamItem } from "./agent/stream";
-import { archiveAll } from "./briefing";
+import type { CommandState, StreamItem } from "./agent/stream";
+import { archiveAll, type SeenReactions } from "./briefing";
 import type { BotPrompts } from "./prompts";
 import { SubagentBook, readSubagent, type SubagentRecord } from "./subagents";
+import type { ComponentKnowledge } from "./components/library";
 import type { QuestionPick } from "./questions";
 import type { WorkerLedgerRecord, WorkerNote } from "./worker-core";
 import { BotRoutines } from "./bot/bot-routines";
@@ -137,6 +138,14 @@ export class Bot {
   get managedPending() { return this.workers.managedPending; }
   set managedPending(value: boolean) { this.workers.managedPending = value; }
   get outage(): Outage | null { return this.progress.outage; }
+  get retryingConnection() { return this.progress.retryingConnection; }
+  set retryingConnection(v: boolean) { this.progress.retryingConnection = v; }
+  get apiRetries() { return this.progress.apiRetries; }
+  set apiRetries(v: number) { this.progress.apiRetries = v; }
+  get codexRetry() { return this.progress.codexRetry; }
+  set codexRetry(v: NonNullable<BotView["codexRetry"]> | null) { this.progress.codexRetry = v; }
+  /** Subagents whose last line was claude's connection error (1.x's `cutOffByNetwork`). */
+  get cutOffByNetwork() { return this.workers.cutOffByNetwork; }
   /** Tidying memory.md before it sleeps. */
   get tidying(): boolean { return this.headRun.tidying; }
   set tidying(v: boolean) { this.headRun.tidying = v; }
@@ -150,9 +159,15 @@ export class Bot {
   /** …and what words typed on one do instead of going to the bot (a copy of another bot's question). */
   get appAnswers() { return this.guests.appAnswers; }
   private set appAnswers(v) { this.guests.appAnswers = v; }
+  /** What the app tells it with its next message (`queueNote`). */
+  get queuedNote() { return this.delivery.queuedNote; }
+  set queuedNote(v) { this.delivery.queuedNote = v; }
   /** Read by BotContext (M7-S41). */
   get session(): HeadState { return this.headRun.session; }
   set session(v: HeadState) { this.headRun.session = v; }
+  /** The next head is a new session: its first message carries the wake briefing. */
+  get briefing(): boolean { return this.headRun.briefing; }
+  set briefing(v: boolean) { this.headRun.briefing = v; }
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
   get restartPending(): boolean { return this.restarts.restartPending; }
   get modelSettingsPending(): boolean { return this.restarts.modelSettingsPending; }
@@ -161,6 +176,10 @@ export class Bot {
    * still in the old one; while its own work runs it waits, as for a model change (spec/models/folders TurnStartsCurrent).
    */
   get folderPending(): boolean { return this.restarts.folderPending; }
+  /** The restart waiting is also for something other than its model or effort (plugins, folders, subagents' model): a hot switch cannot stand in for it. */
+  get restartNonModel(): boolean { return this.restarts.restartNonModel; }
+  /** Counts model/effort changes, so a hot switch that finishes after a newer one leaves that one waiting. */
+  get settingsGeneration(): number { return this.restarts.settingsGeneration; }
   /**
    * Your message waits for this head's own work (its subagents, workers, background tasks) to finish, so a
    * model or effort change that needs a restart can be applied first; it is sent then, never on the old
@@ -168,6 +187,10 @@ export class Bot {
    */
   get settingsHold(): { noticeId: string; timer: ReturnType<typeof setInterval> } | null { return this.restarts.settingsHold; }
   set settingsHold(v: { noticeId: string; timer: ReturnType<typeof setInterval> } | null) { this.restarts.settingsHold = v; }
+  /** Why it starts again before its next message (1.x's `RestartReason`): what it is told, what its divider says. */
+  get restartReason(): { told: string; shown: string } | null { return this.restarts.restartReason; }
+  /** The restart waiting is only for plugins: when they changed back, it is not needed (1.x's `pendingRestartForPluginsOnly`). */
+  get restartForPluginsOnly(): boolean { return this.restarts.restartForPluginsOnly; }
   /** A head ended for such a restart: its session carries on. */
   get restarting(): AgentHead | null { return this.restarts.restarting; }
   /** Its head runs on another CLI from its next message on (1.x's `switchEngine`): a handoff through memory.md first. */
@@ -185,14 +208,20 @@ export class Bot {
   private set sessionRules(value: string[]) { this.questions.sessionRules = value; }
   private get rulesGivenAfter(): Map<string, string | null> { return this.questions.rulesGivenAfter; }
   private set rulesGivenAfter(value: Map<string, string | null>) { this.questions.rulesGivenAfter = value; }
+  get scheduleCalls() { return this.tasks.scheduleCalls; }
   /** Owned by BotQuestions (M7-S44); an accessor each, so a test that assigns or reads one on a Bot still works. */
   get toolCalls(): Map<string, { tool: string; detail: string; parent: string | null }> { return this.questions.toolCalls; }
   private set toolCalls(value: Map<string, { tool: string; detail: string; parent: string | null }>) { this.questions.toolCalls = value; }
   shuttingDown = false;
+  /** What this head's session has been told of the chat's reactions (null: tell it from scratch). */
+  get reactionsSeen(): SeenReactions | null { return this.recordsBook.reactionsSeen; }
+  set reactionsSeen(value: SeenReactions | null) { this.recordsBook.reactionsSeen = value; }
   /** Read by BotContext (M7-S41). */
   /** The components and cards of this bot (M7-S43): made on first use, from this bot. */
   private botCards: BotCards | null = null;
   get cards(): BotCards { return this.botCards ??= new BotCards(this, this.ctx); }
+  get briefedComponents(): ComponentKnowledge | null { return this.cards.briefedComponents; }
+  set briefedComponents(told: ComponentKnowledge | null) { this.cards.briefedComponents = told; }
 
   /** Made on first use, from this bot: a fake `Object.create(Bot.prototype)` has one too. */
   private botContext: BotContext | null = null;
@@ -247,7 +276,15 @@ export class Bot {
   set ignoreResults(count: number) { this.turns.ignoreResults = count; }
   get paused() { return this.turns.paused; }
   set paused(paused: TurnControl["paused"]) { this.turns.paused = paused; }
+  private get reportAsked(): Set<string> { return this.turns.reportAsked; }
+  get pendingEnded(): string[] { return this.turns.pendingEnded; }
+  set pendingEnded(ended: string[]) { this.turns.pendingEnded = ended; }
+  get ending(): WeakSet<AgentHead> { return this.turns.ending; }
+  get contextSent(): Set<string> { return this.turns.contextSent; }
   get steered(): Map<string, Turn> { return this.turns.steered; }
+  get claudeMidTurn(): WeakSet<AgentHead> { return this.turns.claudeMidTurn; }
+  private get inserting(): Map<string, Turn> { return this.turns.inserting; }
+  get unbegun() { return this.turns.unbegun; }
 
   /** What a head says and what becomes of it (M7-S53): made on first use, from this bot. */
   private botHeadEvents: HeadEvents | null = null;
@@ -350,6 +387,14 @@ export class Bot {
   /** The core is being swapped: no turn begins (hot-swap.ts). */
   get swapHold(): boolean { return this.restarts.swapHold; }
   set swapHold(v: boolean) { this.restarts.swapHold = v; }
+  get restartRecovery(): boolean { return this.restarts.restartRecovery; }
+  set restartRecovery(v: boolean) { this.restarts.restartRecovery = v; }
+  get restartProviderTurn(): string | undefined { return this.restarts.restartProviderTurn; }
+  set restartProviderTurn(v: string | undefined) { this.restarts.restartProviderTurn = v; }
+  get restartWorkerRecords(): import('./agent/codex').WorkerRecord[] | undefined { return this.restarts.restartWorkerRecords; }
+  set restartWorkerRecords(v: import('./agent/codex').WorkerRecord[] | undefined) { this.restarts.restartWorkerRecords = v; }
+  get restartWorkersSince(): number | undefined { return this.restarts.restartWorkersSince; }
+  set restartWorkersSince(v: number | undefined) { this.restarts.restartWorkersSince = v; }
 
   groupTurn(text: string, waitForMs: number, answerWithinMs: number, options?: { callIn?: string; asked?: string; by?: "user"; onBegin?: () => void; signal?: AbortSignal }): Promise<GuestAnswer> {
     return this.guests.groupTurn(text, waitForMs, answerWithinMs, options);
@@ -361,6 +406,7 @@ export class Bot {
   line(id: string): ChatRecord | null { return this.guests.line(id); }
   ignoreQuestion(id: string, at?: string): ResultOf<"chat.ignoreQuestion"> { return this.guests.ignoreQuestion(id, at); }
   settleAppQuestion(id: string, outcome: { chosen?: number; answer?: string }): void { return this.guests.settleAppQuestion(id, outcome); }
+  openCopies(botId?: string): ChatRecord[] { return this.guests.openCopies(botId); }
   settleSubagent(id: string, settled: boolean): ResultOf<"subagent.settle"> { return this.guests.settleSubagent(id, settled); }
 
   agentFacts(nativeId: string) { return this.workers.agentFacts(nativeId); }
@@ -411,9 +457,14 @@ export class Bot {
   get components(): string[] | null { return this.cards.components; }
   setComponentList(names: string[]) { this.cards.setComponentList(names); }
 
+  get lastAsked(): string { return this.views.lastAsked; }
+
   addRoutine(cron: string, task: string): boolean { return this.routines.addRoutine(cron, task); }
 
+  get awake(): boolean { return this.views.awake; }
+
   saveSubagents(progress = false, changed?: SubagentRecord) { return this.subagentRowBook.saveSubagents(progress, changed); }
+  flushSubagents(progress = false) { return this.subagentRowBook.flushSubagents(progress); }
 
   // ------------------------------------------------------------------------------------------
   // Views
@@ -489,6 +540,10 @@ export class Bot {
 
   private routeTurn(turn: Turn): Turn { return this.turns.routeTurn(turn); }
 
+  insertDelivered(head: AgentHead, id: string) { this.turns.insertDelivered(head, id); }
+
+  commandEnded(head: AgentHead, id: string, state: CommandState) { this.turns.commandEnded(head, id, state); }
+
   /** Makes `turn` the one under way and sends it (waking the bot if it sleeps). */
   begin(turn: Turn, head?: AgentHead) { this.turns.launch(turn, head); }
 
@@ -497,6 +552,19 @@ export class Bot {
   restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) { this.restarts.request(reason, modelSettings, folder); }
 
   restartNow(): { restart: "next-message" | "asleep" } { return this.restarts.restartNow(); }
+
+  /** "Restart bot" on a claude head: its next start is a new session, whatever its prompt hash says. */
+  get freshSessionPending(): boolean { return this.headRun.freshSessionPending; }
+  set freshSessionPending(v: boolean) { this.headRun.freshSessionPending = v; }
+  /** ensureHead began a new session for the message being sent (its briefing says it all; no restart note). */
+  get startedFresh(): boolean { return this.headRun.startedFresh; }
+  set startedFresh(v: boolean) { this.headRun.startedFresh = v; }
+
+  /** A session handed over by the old core is resumed as it is once (a cut-off turn goes on exactly where it stopped). */
+  get adoptedSession(): boolean { return this.headRun.adoptedSession; }
+  set adoptedSession(v: boolean) { this.headRun.adoptedSession = v; }
+
+  promptHash(): string { return this.restarts.promptHash(); }
 
   reloadPlugins() { this.restarts.reloadPlugins(); }
 
@@ -508,6 +576,7 @@ export class Bot {
   restartSwitchedInPlace(): string { return this.restarts.switchedInPlace(); }
 
   async deliver(turn: Turn, given?: AgentHead) { return this.delivery.deliver(turn, given); }
+  attachmentPath(url: string, line?: string): string | null { return this.delivery.attachmentPath(url, line); }
   compose(turn: Turn, brief: boolean): string { return this.delivery.compose(turn, brief); }
   prompts(): BotPrompts { return this.delivery.prompts(); }
 
@@ -526,7 +595,13 @@ export class Bot {
   subagentChanged(subagent: SubagentRecord | undefined, progress?: boolean, redrawLine?: boolean) { this.workers.subagentChanged(subagent, progress, redrawLine); }
   subagentEnded(id: string) { this.workers.subagentEnded(id); }
 
+  emitSteps(turn: Turn) { return this.headEvents.emitSteps(turn); }
+
   finishTurn(turn: Turn, status: Status, error?: string) { return this.headEvents.finishTurn(turn, status, error); }
+
+  private afterTurn() { return this.headEvents.afterTurn(); }
+
+  clearUnbegun() { this.turns.clearUnbegun(); }
 
   next(): void { this.turns.next(); }
 
@@ -542,6 +617,7 @@ export class Bot {
   // The network (1.x's NetworkResume: `recordOutage`, `noteSubagentEnd`, `networkRestored`)
 
   networkRestored(now = Date.now()) { this.progress.networkRestored(now); }
+  clearApiRetry() { this.progress.clearApiRetry(); }
 
   // ------------------------------------------------------------------------------------------
   // Background work (1.x's BackgroundTask: a chip in the reply, and what a wake is told was cut off)
@@ -577,6 +653,7 @@ export class Bot {
   // Components and cards: moved to BotCards (M7-S43); one-line delegates keep every name
 
   get commandFolder(): string { return this.cards.commandFolder; }
+  componentNote(): string { return this.cards.componentNote(); }
   static pluginCard(card: string): boolean { return BotCards.pluginCard(card); }
 
   // ------------------------------------------------------------------------------------------
@@ -614,11 +691,15 @@ export class Bot {
   restartEntries(): RestartEntry[] { return (this.restarts ?? new BotRestart(this, new BotContext(this))).restartEntries(); }
   retainRestartIdentity(entry: RestartEntry): Bot { return this.restarts.retainRestartIdentity(entry); }
 
+  restartedWorkers(entry: RestartEntry): WorkerLedgerRecord[] { return this.workers.restartedWorkers(entry); }
+
   /** An entry the restart did not continue (`reason`): said in this chat, with the messages that waited behind it (BotRestart). */
   restartPaused(entry: RestartEntry, reason: string): string { return this.restarts.restartPaused(entry, reason); }
 
   /** A fake `this` (a plain object a test passes to `Bot.prototype.adoptRestart.call`) has no collaborator: one is made from it. */
   adoptRestart(entry: RestartEntry) { (this.restarts ?? new BotRestart(this, new BotContext(this))).adoptRestart(entry); }
+
+  adoptSwap(entries: SwapEntry[]) { this.restarts.adoptSwap(entries); }
 
   /** Ends the turn and the head (with its tree) and writes everything out; for quitting. An idle awake bot tidies first (1.x). */
   async shutdown({ tidy = true }: { tidy?: boolean } = {}) {
@@ -627,7 +708,7 @@ export class Bot {
     if (this.claimHold) { clearTimeout(this.claimHold.timer); this.claimHold.turn.resolve("stopped"); this.group.dropClaim(); }
     const partner = Promise.allSettled(this.peers.map(peer => peer.shutdown({ tidy }))).then(results => results.find((r): r is PromiseRejectedResult => r.status === "rejected")?.reason);
     this.clearIdle();
-    this.progress.clearApiRetry();
+    this.clearApiRetry();
     this.shuttingDown = true;
     // Messages still waiting never reached claude.
     for (const waiting of this.turns.dequeueAll()) { waiting.open = false; waiting.resolve("stopped"); }
@@ -655,7 +736,7 @@ export class Bot {
     await this.claudeWorkerHost?.close().catch((error) => this.log(`claude workers: close failed: ${(error as Error).message}`));
     const partnerError = await partner;
     let historyError: unknown;
-    try { this.subagentRowBook.flushSubagents(); if (!this.readOnly) this.store.flushSubagents(); }
+    try { this.flushSubagents(); if (!this.readOnly) this.store.flushSubagents(); }
     catch (error) { historyError = error; this.log(`subagents save failed during shutdown: ${String(error)}`); }
     this.persist();
     if (historyError) throw historyError;

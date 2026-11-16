@@ -89,7 +89,7 @@ export class BotSubagentRows {
   queueNote(note: string) {
     const bot = this.options.primary ?? this.host;
     if (!bot.head?.running) return;
-    bot.delivery.queuedNote = note;
+    bot.queuedNote = note;
   }
 
   saveSubagents(progress = false, changed?: SubagentRecord) {

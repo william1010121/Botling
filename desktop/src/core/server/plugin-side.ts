@@ -103,7 +103,7 @@ export class CorePluginSide {
   }
 
   botInfo(bot: Bot): BotInfo {
-    return { id: this.outId(bot.id), name: bot.profile.name, role: bot.profile.role, awake: bot.views.awake };
+    return { id: this.outId(bot.id), name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
   }
 
   /** A reply showed: plugins listening hear it; Maintainer's settles the component changes bots asked for. */

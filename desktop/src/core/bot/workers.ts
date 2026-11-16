@@ -79,7 +79,7 @@ export class BotWorkers {
   private routeWorkerApproval(head: ApprovalAnswerer, item: Extract<StreamItem, { kind: "permission" }>) { return this.host.routeWorkerApproval(head, item); }
   private prompts(): BotPrompts { return this.host.prompts(); }
   private sessionStart(resume: boolean, prompts: BotPrompts): SessionStart { return this.host.headRun.sessionStart(resume, prompts); }
-  private emitSteps(turn: Turn) { this.host.headEvents.emitSteps(turn); }
+  private emitSteps(turn: Turn) { this.host.emitSteps(turn); }
   private recordOutage(arg: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { this.host.progress.recordOutage(arg); }
   private addBackgroundTask(id: string, kind: BackgroundKind, title: string) { this.host.addBackgroundTask(id, kind, title); }
   private endSubagentTasks(ownerId: string) { this.host.tasks.endSubagentTasks(ownerId); }

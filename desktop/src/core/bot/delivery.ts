@@ -49,7 +49,7 @@ export class BotDelivery {
   private get head() { return this.host.head; }
   private get session() { return this.host.session; }
   private get restartPending() { return this.host.restartPending; }
-  private get restartForPluginsOnly() { return this.host.restarts.restartForPluginsOnly; }
+  private get restartForPluginsOnly() { return this.host.restartForPluginsOnly; }
   private hasCurrentPlugins() { return this.host.restarts.hasCurrentPlugins(); }
   private get modelSettingsPending() { return this.host.modelSettingsPending; }
   private switchInPlace(head: AgentHead) { return this.host.headRun.switchInPlace(head); }
@@ -59,17 +59,17 @@ export class BotDelivery {
   private holdForSettings(turn: Turn) { return this.host.restarts.holdForSettings(turn); }
   private ensureHead() { return this.host.ensureHead(); }
   private finishTurn(turn: Turn, status: Status, error?: string) { return this.host.finishTurn(turn, status, error); }
-  private get startedFresh() { return this.host.headRun.startedFresh; }
-  private componentNote() { return this.host.cards.componentNote(); }
+  private get startedFresh() { return this.host.startedFresh; }
+  private componentNote() { return this.host.componentNote(); }
   private withSavedMemory(prompt: string) { return this.host.decisions.withSavedMemory(prompt); }
-  private get briefing() { return this.host.headRun.briefing; }
+  private get briefing() { return this.host.briefing; }
   private briefingGiven() { this.host.headRun.briefingGiven(); }
   private noteProgress() { return this.host.progress.noteProgress(); }
   private markSeen(ids: string[], head: Engine) { return this.host.recordsBook.markSeen(ids, head); }
   private get records() { return this.host.records; }
   private get componentsMayHaveChanged() { return this.host.cards.componentsMayHaveChanged; }
   private takeInterruptedNote() { return this.host.takeInterruptedNote(); }
-  private get reactionsSeen() { return this.host.recordsBook.reactionsSeen; }
+  private get reactionsSeen() { return this.host.reactionsSeen; }
 
   // ---- Moved from `Bot` ----
   /** Writes the turn's message to a head (starting one, in a new session, if the bot is asleep). */
@@ -169,7 +169,7 @@ export class BotDelivery {
    * its copy of the picture, as it was when it was posted, when it has one (chat-media.ts).
    */
   attachmentPath(url: string, line?: string): string | null {
-    if (this.options.primary) return this.options.primary.delivery.attachmentPath(url, line);
+    if (this.options.primary) return this.options.primary.attachmentPath(url, line);
     const path = this.namedAttachmentPath(url);
     if (!path || !line) return path;
     const record = this.records.find((candidate) => candidate.id === line);
