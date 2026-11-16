@@ -120,6 +120,51 @@ it('passes a plugin command the shell asks the chat page to run, and how a page 
  // Sent only to an iframe chat page (the takeover's), never across this wire: still refused.
  expect(editorMessageAllowed('down',{botling:'pluginEvent',plugin:'x',name:'y',data:null})).toBe(false);
 });
+it('passes a plugin frame\'s quote (the Note\'s 問) down to the native chat and its answer up, in their shapes only',()=>{
+ const ask={botling:'composerQuote',requestID:1,botID:'6A0B0000-0000-4000-8000-000000000040',text:'> 〔Note #c1〕\n> a cell',focus:true};
+ // The shell posts exactly this (composer-quote.ts askChatToQuote); before this passed, the native chat never heard it, the
+ // quote timed out after 3 s as "not inserted" and the Note fell back to a copy that usually failed.
+ expect(editorMessageAllowed('down',ask)).toBe(true);
+ expect(editorMessageAllowed('down',{...ask,focus:false})).toBe(true);
+ expect(editorMessageAllowed('down',{...ask,text:'x'.repeat(200_000)})).toBe(true);
+ expect(editorMessageAllowed('down',{...ask,text:'x'.repeat(200_001)})).toBe(false);
+ expect(editorMessageAllowed('down',{...ask,text:''})).toBe(false);
+ expect(editorMessageAllowed('down',{...ask,botID:''})).toBe(false);
+ expect(editorMessageAllowed('down',{...ask,botID:'b'.repeat(161)})).toBe(false);
+ expect(editorMessageAllowed('down',{...ask,requestID:0})).toBe(false);
+ expect(editorMessageAllowed('down',{...ask,requestID:'1'})).toBe(false);
+ expect(editorMessageAllowed('down',{...ask,focus:'yes'})).toBe(false);
+ expect(editorMessageAllowed('down',{...ask,plugin:'botling.note'})).toBe(false);
+ // Strings, not things with a length (a reviewer's probe: the typeof checks).
+ expect(editorMessageAllowed('down',{...ask,botID:['b']})).toBe(false);
+ expect(editorMessageAllowed('down',{...ask,text:['x']})).toBe(false);
+ // Only down: the chat page cannot quote into itself over the up wire.
+ expect(editorMessageAllowed('up',ask)).toBe(false);
+ // The answer is an ordinary action; it already passes.
+ expect(editorMessageAllowed('up',{botling:'action',action:{type:'composerQuoteResult',requestID:1,inserted:true}})).toBe(true);
+ // And through the real boundary (what main routes), not just the validator.
+ const boundary=new EditorHostBoundary(),a=shell(),b=editor(),stamp=boundary.bind(a,b);
+ expect(boundary.route('down',{sender:a,senderFrame:a.mainFrame},{stamp,message:ask})?.recipient).toBe(b);
+ expect(boundary.route('up',{sender:b,senderFrame:b.mainFrame},{stamp,message:{botling:'action',action:{type:'composerQuoteResult',requestID:1,inserted:true}}})?.recipient).toBe(a);
+});
+it('passes a plugin\'s botling.openChat(botId, messageId) line down to the native chat, in its shape only',()=>{
+ const jump={botling:'jumpTo',botID:'6A0B0000-0000-4000-8000-000000000040',messageID:'m7'};
+ // app-hooks.ts posts exactly this; before this passed the native chat opened but never went to the line.
+ expect(editorMessageAllowed('down',jump)).toBe(true);
+ expect(editorMessageAllowed('down',{...jump,messageID:'m'.repeat(4000)})).toBe(true);
+ expect(editorMessageAllowed('down',{...jump,messageID:'m'.repeat(4001)})).toBe(false);
+ expect(editorMessageAllowed('down',{...jump,messageID:''})).toBe(false);
+ expect(editorMessageAllowed('down',{...jump,messageID:7})).toBe(false);
+ expect(editorMessageAllowed('down',{...jump,messageID:['m7']})).toBe(false);
+ expect(editorMessageAllowed('down',{...jump,botID:''})).toBe(false);
+ expect(editorMessageAllowed('down',{...jump,botID:'b'.repeat(161)})).toBe(false);
+ expect(editorMessageAllowed('down',{...jump,botID:['b']})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'jumpTo',messageID:'m7'})).toBe(false);
+ expect(editorMessageAllowed('down',{...jump,extra:1})).toBe(false);
+ expect(editorMessageAllowed('up',jump)).toBe(false);
+ const boundary=new EditorHostBoundary(),a=shell(),b=editor(),stamp=boundary.bind(a,b);
+ expect(boundary.route('down',{sender:a,senderFrame:a.mainFrame},{stamp,message:jump})?.recipient).toBe(b);
+});
 it('passes the floating chat\'s header down and its buttons and drags up, nothing else shaped like them',()=>{
  const chrome={name:'botling',status:'Writing…',tone:'working',face:'data:image/svg+xml;base64,PHN2Zz4=',docked:false};
  expect(editorMessageAllowed('down',{botling:'floatChrome',chrome})).toBe(true);
