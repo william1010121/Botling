@@ -126,9 +126,9 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     feed.reconcile(retitled);
     expect(new Set(steps().map((event) => event.plugin))).toEqual(new Set(["botling.git"]));
     const sections = feed.rows<{ plugin: string; title: string }>("view/settings.section");
-    expect(sections.map((row) => row.plugin)).toEqual(["botling.usage", "zed.tools", "botling.git"]);
+    expect(sections.map((row) => row.plugin)).toEqual(["botling.deps", "botling.usage", "zed.tools", "botling.git"]);
     expect(sections.at(-1)!.title).toBe("Git, changed");
-    expect(sections[1]).toEqual(zed);
+    expect(sections[2]).toEqual(zed);
   });
 
   it("holds a plugin with no rows as an instance, and a row of a plugin the list does not name", () => {

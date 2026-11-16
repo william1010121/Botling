@@ -322,7 +322,13 @@ describe("Settings and the gear, drawn with every built-in plugin loaded", () =>
 
   it("every page's nav and header, three whole dialogs and the gear, as the golden recorded before the settings plugin", async () => {
     await started();
-    const view = fixtureView();
+    // dom.json was recorded from the 18-plugin list with three plugin pages; botling.deps (its settings page) and botling.pin-area
+    // came into the shared fixture later, so this golden reads the list without them (the feed still holds every row it is given)
+    const LATER = new Set(["botling.deps", "botling.pin-area"]);
+    const full = fixtureView();
+    const view: PluginsView = { ...full, plugins: full.plugins.filter((plugin) => !LATER.has(plugin.name)), settingsSections: (full.settingsSections ?? []).filter((row) => !LATER.has(row.plugin)) };
+    expect(full.settingsSections!.map((row) => row.plugin)).toEqual(["botling.deps", "botling.git", "botling.usage", "zed.tools"]);
+    expect(view.plugins).toHaveLength(18);
     reconcileView(view);
     const golden = JSON.parse(read("settings-slots", "dom.json")) as Record<string, string>;
     const pages = SETTINGS_GROUPS.flatMap((group) => group.pages.map((page) => page.id));

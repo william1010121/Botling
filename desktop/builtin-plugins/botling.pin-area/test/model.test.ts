@@ -221,6 +221,45 @@ describe("the strip's limits", () => {
   });
 });
 
+describe("an open turn that is the oldest (review: M11, M12)", () => {
+  const answered = (pin: M.Pin, n: number, text: string) => {
+    const turn = M.addTurn(pin, `r${n}`, text, T0 + n);
+    turn.a = text.slice(0, M.MAX_A);
+    turn.aAt = T0 + n;
+    return turn;
+  };
+
+  it("fit drops answered turns after it and keeps the oldest turn that still waits", () => {
+    const b = book();
+    const pin = make(b);
+    const open = M.addTurn(pin, "open", "the first question, never answered", T0);
+    open.postedAt = T0;
+    const long = "字".repeat(M.MAX_A);
+    for (let n = 1; n < M.MAX_TURNS; n++) answered(pin, n, long);
+    expect(M.bytesOf(b)).toBeGreaterThan(M.MAX_BOOK_BYTES);
+    M.fit(b);
+    expect(M.bytesOf(b)).toBeLessThanOrEqual(M.MAX_BOOK_BYTES);
+    expect(pin.thread[0]!.rid).toBe("open");
+    expect(pin.thread.length).toBeLessThan(M.MAX_TURNS);
+    expect(pin.thread.slice(1).every((turn) => turn.a !== null)).toBe(true);
+    expect(M.openTurn(pin)?.rid).toBe("open");
+  });
+
+  it("addTurn on a full thread drops the oldest answered turn, not the older one that still waits", () => {
+    const b = book();
+    const pin = make(b);
+    const open = M.addTurn(pin, "open", "the first question, never answered", T0);
+    open.postedAt = T0;
+    for (let n = 1; n < M.MAX_TURNS; n++) answered(pin, n, `a${n}`);
+    expect(pin.thread).toHaveLength(M.MAX_TURNS);
+    M.addTurn(pin, "new", "one more", T0 + 100);
+    expect(pin.thread).toHaveLength(M.MAX_TURNS);
+    expect(pin.thread.map((turn) => turn.rid).slice(0, 3)).toEqual(["open", "r2", "r3"]);
+    expect(pin.thread[pin.thread.length - 1]!.rid).toBe("new");
+    expect(M.openTurn(pin)?.rid).toBe("open");
+  });
+});
+
 describe("a message into a card (@handle)", () => {
   it("routes '@handle words' and '@p-0001 words' to that card of this book, and nothing else", () => {
     const b = book();
