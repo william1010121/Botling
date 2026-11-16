@@ -462,6 +462,43 @@ describe("VACUUM (at the first start after the prune)", () => {
     expect(Number(db.pragma("freelist_count"))).toBe(0);
   });
 
+  it("a VACUUM that fails, or free space that cannot be read, never stops the start: the file is as it was", async () => {
+    const { db } = open();
+    fillBot(db, A, 200);
+    await prune(db);
+    const lines: string[] = [];
+    const unknown = runStartupVacuum(db, { ...SMALL, freeBytes: () => { throw new Error("ENOENT: no such temp folder"); }, log: (text) => lines.push(text) });
+    expect(unknown.vacuum).toBe("low-disk");
+    expect(marked(db, VACUUMED_KEY)).toBe(false);
+    // An open transaction makes SQLite refuse the VACUUM (as a full disk or an I/O error would make it fail).
+    db.exec("BEGIN");
+    const failed = runStartupVacuum(db, { ...SMALL, log: (text) => lines.push(text) });
+    db.exec("COMMIT");
+    expect(failed.vacuum).toBe("failed");
+    expect(lines.some((text) => /VACUUM failed, server\.db is left as it was/.test(text))).toBe(true);
+    expect(Number(db.pragma("freelist_count"))).toBeGreaterThan(0);
+    expect(db.pragma("integrity_check")).toBe("ok");
+    expect(verifyStream(db, A).ok).toBe(true);
+    // Not tried again at the next start.
+    expect(marked(db, VACUUMED_KEY)).toBe(true);
+    expect(runStartupVacuum(db, SMALL)).toMatchObject({ vacuum: null });
+  });
+
+  it("openServerStore opens a file whose VACUUM fails", async () => {
+    const { db, dir } = open();
+    fillBot(db, A, 200);
+    await prune(db);
+    db.close();
+    const lines: string[] = [];
+    const store = await openServerStore(dir, { compaction: { ...SMALL, freeBytes: () => { throw new Error("statfs failed"); }, log: (text) => lines.push(text) } });
+    try {
+      expect(lines.some((text) => /VACUUM skipped: the free space could not be read/.test(text))).toBe(true);
+      expect(store.meta(PRUNED_KEY)).toBeDefined();
+    } finally {
+      await store.close();
+    }
+  });
+
   it("is skipped (and not tried again) when little would come back", async () => {
     const { db } = open();
     fillBot(db, A, 10);

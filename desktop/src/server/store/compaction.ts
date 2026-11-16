@@ -31,7 +31,7 @@
 //      8.5 GB: ~30-40 s), well inside the install script's 120 s. VACUUM is atomic (it replaces the file when done).
 //
 // Run once: `meta` keys `compaction.pruned` and `compaction.vacuumed` (JSON: when and what). A VACUUM skipped for lack
-// of disk is tried again at the next start. A file under `minDbBytes` (1 GiB) is left alone and gets no marker: this
+// of disk is tried again at the next start; one that fails is logged, not tried again, and never stops the start. A file under `minDbBytes` (1 GiB) is left alone and gets no marker: this
 // is for the one old oversized file, not for the normal history of a young one.
 //
 // Schema 15 (snapshot bodies as diffs, log/log-store.ts) changes nothing in the rule:
@@ -85,7 +85,7 @@ export interface StreamPrune {
   carried: number;
 }
 
-export type VacuumOutcome = "done" | "nothing-to-reclaim" | "low-disk";
+export type VacuumOutcome = "done" | "nothing-to-reclaim" | "low-disk" | "failed";
 
 function fileBytes(db: Db): number {
   let total = 0;
@@ -189,8 +189,16 @@ function vacuum(db: Db, options: CompactionOptions, log: (line: string) => void)
   const result = (pages - free) * pageSize;
   const headroom = options.headroomBytes ?? 1024 * MIB;
   const freeBytes = options.freeBytes ?? freeOf;
-  const dataFree = freeBytes(dirname(db.path));
-  const tempFree = freeBytes(process.env.SQLITE_TMPDIR || tmpdir());
+  let dataFree: number;
+  let tempFree: number;
+  try {
+    dataFree = freeBytes(dirname(db.path));
+    tempFree = freeBytes(process.env.SQLITE_TMPDIR || tmpdir());
+  } catch (error) {
+    // Free space that cannot be read is not known to be enough (fail closed): skipped, tried again at the next start.
+    log(`compaction: VACUUM skipped: the free space could not be read (${String((error as Error)?.message ?? error)}). It is tried again at the next start.`);
+    return "low-disk";
+  }
   if (dataFree < 3 * result + headroom || tempFree < result + headroom) {
     log(`compaction: VACUUM skipped: it needs about ${((3 * result + headroom) / MIB).toFixed(0)} MiB free beside server.db and ${((result + headroom) / MIB).toFixed(0)} MiB in the temp folder; ${(dataFree / MIB).toFixed(0)} MiB and ${(tempFree / MIB).toFixed(0)} MiB are free. It is tried again at the next start.`);
     return "low-disk";
@@ -198,10 +206,17 @@ function vacuum(db: Db, options: CompactionOptions, log: (line: string) => void)
   const started = performance.now();
   const before = fileBytes(db);
   log(`compaction: VACUUM starts (the start waits for it, about ${Math.max(1, Math.round(result / MIB / 20))} s)`);
-  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  db.exec("PRAGMA auto_vacuum = INCREMENTAL");
-  db.exec("VACUUM");
-  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  try {
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+    db.exec("VACUUM");
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch (error) {
+    // SQLite undoes a VACUUM that fails (it is one transaction), so the file is as it was. The start goes on without it,
+    // and it is not tried again: one that failed for a reason the disk check did not see would slow every start.
+    log(`compaction: VACUUM failed, server.db is left as it was and the start goes on: ${String((error as Error)?.message ?? error)}`);
+    return "failed";
+  }
   const after = fileBytes(db);
   log(`compaction: VACUUM took ${((performance.now() - started) / 1000).toFixed(1)} s: ${(before / MIB).toFixed(0)} MiB -> ${(after / MIB).toFixed(0)} MiB (auto_vacuum ${String(db.pragma("auto_vacuum"))})`);
   return "done";
@@ -212,17 +227,23 @@ export interface VacuumReport { vacuum: VacuumOutcome | null; bytesBefore: numbe
 /**
  * At open, on the writer connection with no transaction open and no other connection: the one-time VACUUM, once the
  * background prune has finished (its marker is there). Does nothing before that, so a start never waits for the prune.
+ * Never throws: a VACUUM that fails must not keep botlingd from starting (openServerStore would refuse the file).
  */
 export function runStartupVacuum(db: Db, options: CompactionOptions = {}): VacuumReport {
   const log = options.log ?? (() => undefined);
   const none: VacuumReport = { vacuum: null, bytesBefore: 0, bytesAfter: 0 };
-  const version = schemaVersion(db);
-  if (!knownSchema(version)) return none;
-  if (marker(db, PRUNED_KEY) === null || marker(db, VACUUMED_KEY) !== null) return none;
-  const bytesBefore = fileBytes(db);
-  const outcome = vacuum(db, options, log);
-  if (outcome === "done" || outcome === "nothing-to-reclaim") setMarker(db, VACUUMED_KEY, { at: (options.now ?? Date.now)(), outcome });
-  return { vacuum: outcome, bytesBefore, bytesAfter: fileBytes(db) };
+  try {
+    const version = schemaVersion(db);
+    if (!knownSchema(version)) return none;
+    if (marker(db, PRUNED_KEY) === null || marker(db, VACUUMED_KEY) !== null) return none;
+    const bytesBefore = fileBytes(db);
+    const outcome = vacuum(db, options, log);
+    if (outcome !== "low-disk") setMarker(db, VACUUMED_KEY, { at: (options.now ?? Date.now)(), outcome });
+    return { vacuum: outcome, bytesBefore, bytesAfter: fileBytes(db) };
+  } catch (error) {
+    log(`compaction: the VACUUM step was left out of this start: ${String((error as Error)?.message ?? error)}`);
+    return none;
+  }
 }
 
 export interface PruneReport {
