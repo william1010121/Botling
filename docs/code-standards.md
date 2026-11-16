@@ -56,8 +56,9 @@ Before you say "done" (mistakes found in reviews since 2026-11-15; answer each i
    (each chunk, crash restart, hot swap, revoke, after every await). (L-008)
 10. Fail closed: a check that throws, a null / unknown / missing value, missing config, a timeout
     or a failed send refuses; never 500, "allowed" or a skipped check. (L-009)
-11. Tests: every guard has a test that fails when it is removed (run the mutation check); each fix
-    commit brings its own probe test; timing or two-process tests pass 10 runs in a row;
+11. Tests: every guard has a test that fails when it is removed; the implementing worker only writes
+    the tests and runs the related test files, it does NOT run a mutation check (the reviewer does it once,
+    as one batch, see L-010); each fix commit brings its own probe test; timing or two-process tests pass 10 runs in a row;
     packaged-only branches get a test that simulates packaged mode. (L-010, L-012, L-013, L-014)
 12. Before review: merge your base (main or the open batch) and run the related tests of both
     sides on the merged tree; when a test breaks for a cause, fix every test with that cause. (L-011)
