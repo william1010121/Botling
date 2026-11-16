@@ -50,7 +50,7 @@ export interface WorkerPort {
   send(taskId: string, text: string, startedBy?: StartedBy): Promise<{ ok: true; how: string; run: number } | { ok: false; reason: string }>;
   stop(taskId: string): Promise<boolean>;
   /** Where a worker stands now, from the core's ledger (null: no such worker). Absent: nothing can be picked up. */
-  look?(taskId: string): { run: number; running: boolean; status: string; report: string } | null;
+  look?(taskId: string): { run: number; running: boolean; status: string; report: string; /** The bot has not been handed the last run's report yet (a next run would drop it). */ botOwed?: boolean } | null;
 }
 
 export interface OrchestrationWorld {
@@ -101,6 +101,8 @@ const oneLine = (text: string, max: number) => text.replace(/[\u0000-\u001f\u007
 export class PluginWorkers {
   private entries: Entry[] = [];
   private unreadable = false;
+  /** O05: the entries a `workers.send` is awaiting the port for (how many each): nothing closes such an entry, its run is coming. Not persisted. */
+  private readonly sending = new Map<Entry, number>();
 
   constructor(private readonly deps: PluginWorkersDeps) {
     let text: string | null = null;
@@ -113,8 +115,11 @@ export class PluginWorkers {
         if (typeof row.plugin === "string" && typeof row.bot === "string" && (typeof row.task === "string" || row.task === null) && typeof row.at === "number") {
           // A reservation that never got its task id was cut off by the last stop: it counts for the day, not as at work.
           const owed = Array.isArray(row.owed) ? (row.owed as Record<string, unknown>[]).filter((o) => Number.isSafeInteger(o.run) && typeof o.status === "string" && typeof o.report === "string").map((o) => ({ run: o.run as number, status: o.status as string, report: o.report as string })).slice(-OWED_KEEP) : [];
+          const open = row.open === true && row.task !== null;
           this.entries.push({
-            plugin: row.plugin, bot: row.bot, task: row.task, at: row.at, open: row.open === true && row.task !== null, reported: typeof row.reported === "number" ? row.reported : 0, stopped: row.stopped === true,
+            // O05: a cancel under way when the app went away left `stopped` on an open row; after a restart nothing is under way, and a row
+            // that kept the mark would be skipped by `pickUp` and `ended` for ever (its place held, its run never told). A closed row keeps it.
+            plugin: row.plugin, bot: row.bot, task: row.task, at: row.at, open, reported: typeof row.reported === "number" ? row.reported : 0, stopped: row.stopped === true && !open,
             ...(typeof row.hash === "string" ? { hash: row.hash } : {}), ...(row.handed === true ? { handed: true as const } : {}), ...(owed.length ? { owed } : {}),
           });
         }
@@ -291,12 +296,15 @@ export class PluginWorkers {
     const facts = this.allowed(plugin);
     const port = this.deps.world.workers(entry.bot);
     if (typeof port === "string") throw new Error(port);
+    this.refuseWhileBotOwed(port, taskId); // before a card is shown for it (and again after the answer, below)
     // G1: a new instruction is asked about again for a plugin a bot wrote (and only on a bot it made), as a new worker is.
     if (facts.botWritten) {
       this.mayWorkOn(facts, port.id);
       if (!(await this.card(facts, port.id, { bot: port.id, instructions: message }, true))) throw new Error("You did not allow this message to the worker. Nothing was sent.");
       this.allowed(plugin, facts.identity);
     }
+    // O05: a next run drops the report the bot has not taken (`launch` resets it): not while the bot is still owed the last one.
+    this.refuseWhileBotOwed(port, taskId);
     // A run into a worker that is idle takes a place again: the same limit as a new one (not the daily count).
     const wasOpen = entry.open;
     if (!wasOpen) {
@@ -305,7 +313,16 @@ export class PluginWorkers {
       entry.open = true;
       entry.stopped = false;
     }
-    const sent = await port.send(taskId, message, { plugin: facts.name, hash: facts.identity }).catch((error: Error) => ({ ok: false as const, reason: error.message }));
+    // O05: from here until the port answers nothing closes the entry (a `pickUp` of another start's gate or a host registering would see the
+    // old run ended and told, and free the place the new run is about to take).
+    this.sending.set(entry, (this.sending.get(entry) ?? 0) + 1);
+    let sent: Awaited<ReturnType<WorkerPort["send"]>>;
+    try {
+      sent = await port.send(taskId, message, { plugin: facts.name, hash: facts.identity }).catch((error: Error) => ({ ok: false as const, reason: error.message }));
+    } finally {
+      const left = (this.sending.get(entry) ?? 1) - 1;
+      if (left > 0) this.sending.set(entry, left); else this.sending.delete(entry);
+    }
     if (!sent.ok) {
       entry.open = wasOpen;
       throw new Error(sent.reason);
@@ -314,10 +331,21 @@ export class PluginWorkers {
     return { run: sent.run, how: sent.how };
   }
 
+  /** O05 (BotNotSkipped): throws while the core says the bot has not taken the last report of this worker; a core that cannot say refuses too (a port without `look` is not asked). */
+  private refuseWhileBotOwed(port: WorkerPort, taskId: string) {
+    if (!port.look) return;
+    let owed: boolean;
+    try { owed = port.look(taskId)?.botOwed === true; } catch { owed = true; }
+    if (owed) throw new Error("The bot has not taken this worker's last report yet, and a new run would drop it. Try again in a moment. Nothing was sent.");
+  }
+
   async cancel(plugin: string, taskId: string): Promise<{ stopped: boolean }> {
     const entry = this.mine(plugin, taskId);
     const port = this.deps.world.workers(entry.bot);
     if (typeof port === "string") throw new Error(port);
+    // O05 (the model's CancelAsk needs no send in flight): a stop now could end the run the send is about to start, and the send's answer would
+    // then reopen what the stop closed. Refused; the plugin asks again once the send has returned.
+    if (this.sending.has(entry)) throw new Error("A message to this worker is being sent. Try again in a moment. Nothing was cancelled.");
     // Marked before the stop is awaited: the run's end that comes while the stop is under way is the cancel's, not a report.
     const was = entry.stopped;
     entry.stopped = true;
@@ -341,7 +369,7 @@ export class PluginWorkers {
     if (!entry || entry.stopped) return;
     if (entry.handed) {
       // Handed back: the bot has the report; the plugin is not told, and the place it held is free.
-      if (entry.open && run >= entry.reported) { entry.open = false; this.persist(); }
+      if (entry.open && run >= entry.reported) { this.shut(entry); this.persist(); }
       return;
     }
     if (entry.reported >= run) return;
@@ -351,7 +379,7 @@ export class PluginWorkers {
   /** A run to tell its plugin: the cursor and the copy are written first, then it is told, then it is no longer owed. */
   private owe(entry: Entry, run: number, status: string, report: string) {
     entry.reported = run;
-    entry.open = false;
+    this.shut(entry);
     entry.owed = [...(entry.owed ?? []), { run, status, report: report.slice(0, OWED_TEXT) }].slice(-OWED_KEEP);
     try { this.save(); } catch { return; }
     this.flush(entry);
@@ -380,6 +408,11 @@ export class PluginWorkers {
    */
   private mayHear(entry: Entry): boolean {
     try { return entry.hash !== undefined && this.deps.facts(entry.plugin)?.identity === entry.hash && this.granted(entry.plugin); } catch { return false; }
+  }
+
+  /** Frees an entry's place, unless a `workers.send` for it is in flight (its next run would then run with no place held). */
+  private shut(entry: Entry) {
+    if (!this.sending.has(entry)) entry.open = false;
   }
 
   private persist() {
@@ -440,9 +473,9 @@ export class PluginWorkers {
         if (typeof port === "string" || !port.look) continue;
         seen = port.look(entry.task);
       } catch { continue; }
-      if (seen === null) { entry.open = false; this.persist(); continue; }
+      if (seen === null) { this.shut(entry); this.persist(); continue; }
       if (seen.running) continue;
-      if (entry.handed || seen.run <= entry.reported) { entry.open = false; this.persist(); } else this.owe(entry, seen.run, seen.status, seen.report);
+      if (entry.handed || seen.run <= entry.reported) { this.shut(entry); this.persist(); } else this.owe(entry, seen.run, seen.status, seen.report);
     }
     this.redeliver();
   }
