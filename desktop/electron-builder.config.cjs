@@ -28,7 +28,10 @@ function gitInfo() {
   const { execFileSync } = require("node:child_process");
   const git = (args) => { try { return execFileSync("git", ["-C", __dirname, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; } };
   const commit = git(["rev-parse", "HEAD"]);
-  return commit ? { BotlingGitCommit: commit, BotlingGitDirty: git(["status", "--porcelain", "--untracked-files=no"]) ? "1" : "0" } : {};
+  // Dirty: a tracked change anywhere, or an untracked file where the build reads (desktop/ and Web/: a new folder in
+  // builtin-plugins/ ships without any tracked change). Untracked files elsewhere (a root node_modules/) ship nothing.
+  const dirty = git(["status", "--porcelain", "--untracked-files=no"]) || git(["status", "--porcelain", "--untracked-files=normal", "--", ".", "../Web"]);
+  return commit ? { BotlingGitCommit: commit, BotlingGitDirty: dirty ? "1" : "0" } : {};
 }
 
 /** @type {import("electron-builder").Configuration} */

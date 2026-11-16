@@ -151,7 +151,7 @@ ${appWorktree
     // recorded as (its asar's hash decides at the next start whether it came up), and a bundle whose label changed since the
     // card is not what the user confirmed.
     const current = readBuild(build.path);
-    if (!current || !sameLabel(current, build)) {
+    if (!current || current.bundleID !== build.bundleID || !sameLabel(current, build)) {
       const why = current ? `the build at ${build.path} changed since the card (it was ${buildLabel(build)}, it is ${buildLabel(current)} now)` : `there is no app bundle at ${build.path} any more`;
       this.deps.mainBot().appNotice(`${why}. Nothing was installed; ask again.`, undefined, undefined, { sourceID: requester });
       asker?.queueNote(`(App: ${buildLabel(build)} was not installed: ${why}. Ask again for the build you want.)`);
