@@ -192,7 +192,10 @@ botlingd_pids() {
     if (index(line, ENVIRON["BUNDLE_DIR"]) == 1 && index(line, " --botlingd") > 0) print $1
   }'
 }
-wait_gone() { local n=0; while [ -n "$(app_pids "$1")" ]; do [ "$n" -ge "$2" ] && return 1; sleep 1; n=$((n + 1)); done; return 0; }
+# Waits poll five times a second (a whole second per poll added up to a second to each wait); limits stay in seconds.
+TICK=0.2
+ticks() { echo $(( $1 * 5 )); }
+wait_gone() { local n=0 max; max="$(ticks "$2")"; while [ -n "$(app_pids "$1")" ]; do [ "$n" -ge "$max" ] && return 1; sleep "$TICK"; n=$((n + 1)); done; return 0; }
 # Ends what runs from bundle $1: SIGTERM (the window quits, botlingd stops as for botlingd stop), then SIGKILL; with $2 = 0
 # never botlingd (it may still be saving), so that case fails instead.
 end_bundle() {
@@ -221,37 +224,53 @@ launch() (
   "$OPEN" "\${args[@]}"
 )
 reopen() { launch "$1"; }
+# The new build is copied beside the target and its signature checked while the old build is still quitting (botlingd
+# needs about ten seconds to stop; the copy used to start only after that). Once the old one is gone the swap is two renames.
+STAGE="$TARGET.staging"
+stage() {
+  rm -rf "$STAGE"
+  mkdir -p "$(dirname "$TARGET")" || return 3
+  say "copying the new build to $STAGE while the old one quits"
+  "$DITTO" "$NEW" "$STAGE" || { rm -rf "$STAGE"; return 1; }
+  "$CODESIGN" --verify "$STAGE" || { rm -rf "$STAGE"; return 2; }
+  "$XATTR" -dr com.apple.quarantine "$STAGE" 2>/dev/null || true
+  say "the new build is copied and its signature checks out"
+}
 putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
 fail() { say "$1"; echo "$1" > "$ROLLED"; }
+# Nothing was installed: let the copy end, then remove it (the old build stays as it is).
+drop_stage() { wait "$STAGER" 2>/dev/null; rm -rf "$STAGE"; }
+stage & STAGER=$!
 say "waiting for botlingd ($PID) to stop; it stops once the Botling 3 window quit"
-n=0; while alive "$PID" && [ "$n" -lt "$QUIT_WAIT" ]; do sleep 1; n=$((n + 1)); done
+n=0; max="$(ticks "$QUIT_WAIT")"; while alive "$PID" && [ "$n" -lt "$max" ]; do sleep "$TICK"; n=$((n + 1)); done
 if alive "$PID"; then
   say "botlingd did not stop in $QUIT_WAIT seconds; SIGTERM, as botlingd stop sends"
   kill -TERM "$PID" 2>/dev/null
-  n=0; while alive "$PID" && [ "$n" -lt "$APP_WAIT" ]; do sleep 1; n=$((n + 1)); done
+  n=0; max="$(ticks "$APP_WAIT")"; while alive "$PID" && [ "$n" -lt "$max" ]; do sleep "$TICK"; n=$((n + 1)); done
 fi
-if alive "$PID"; then fail "botlingd did not stop; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
-if ! end_bundle "$PREVIOUS" 0; then fail "Botling 3 did not quit; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
+if alive "$PID"; then drop_stage; fail "botlingd did not stop; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
+if ! end_bundle "$PREVIOUS" 0; then drop_stage; fail "Botling 3 did not quit; nothing changed"; reopen "$PREVIOUS"; exit 1; fi
+wait "$STAGER"; STAGED=$?
+case "$STAGED" in
+  0) ;;
+  1) fail "could not copy the new build"; reopen "$PREVIOUS"; exit 1 ;;
+  2) fail "the copied build's signature does not check out"; reopen "$PREVIOUS"; exit 1 ;;
+  *) fail "could not make the folder for the new build"; reopen "$PREVIOUS"; exit 1 ;;
+esac
 if [ -e "$TARGET" ]; then
   say "moving $TARGET to $BACKUP"
-  mv "$TARGET" "$BACKUP" || { fail "could not move the old build"; reopen "$PREVIOUS"; exit 1; }
+  mv "$TARGET" "$BACKUP" || { rm -rf "$STAGE"; fail "could not move the old build"; reopen "$PREVIOUS"; exit 1; }
 else
   BACKUP=""
   say "installing to $TARGET (the running build stays at $PREVIOUS)"
-  mkdir -p "$(dirname "$TARGET")" || { fail "could not make the folder for the new build"; reopen "$PREVIOUS"; exit 1; }
 fi
-if ! "$DITTO" "$NEW" "$TARGET"; then
-  rm -rf "$TARGET"; putback; fail "could not copy the new build"; reopen "$PREVIOUS"; exit 1
-fi
-if ! "$CODESIGN" --verify "$TARGET"; then
-  rm -rf "$TARGET"; putback; fail "the copied build's signature does not check out"; reopen "$PREVIOUS"; exit 1
-fi
-"$XATTR" -dr com.apple.quarantine "$TARGET" 2>/dev/null || true
+mv "$STAGE" "$TARGET" || { rm -rf "$STAGE"; putback; fail "could not put the new build in place"; reopen "$PREVIOUS"; exit 1; }
 say "opening the new build"
 launch "$TARGET"
-for i in $(seq 1 "$WAIT"); do
+n=0; max="$(ticks "$WAIT")"
+while [ "$n" -lt "$max" ]; do
   if [ -f "$HEALTHY" ]; then say "the new build is up"; exit 0; fi
-  sleep 1
+  sleep "$TICK"; n=$((n + 1))
 done
 say "the new build did not come up in $WAIT seconds; putting the old one back"
 end_bundle "$TARGET" 1

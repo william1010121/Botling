@@ -1,7 +1,7 @@
 // M3 step 6: the server's own `srv:` summary rows (src/server/replica): the 2 s rule under a running fake turn, the
 // §8.2 limits, catch-up by rev (property test over random write sequences), tombstones and their 30-day purge, and no
 // secret in the settings row. One server, an in-memory server.db, injected clock and timers.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { BotView, Event as ContractEvent } from "../../src/contract";
 import { decodeWireFrame, encodeWireFrame } from "../../src/protocol/frame";
 import { Rows, SECRET_KEY, SettingsRow, SummaryRow, TableRow, TOMBSTONE_KEEP_MS } from "../../src/protocol/table-rows";
@@ -267,6 +267,38 @@ describe("summary rows: tombstones", () => {
     expect(b.row("B1")?.name).toBe("Renamed");
     expect(b.db.prepare("SELECT body FROM rows WHERE stream = ? AND key = 'machine'").get(b.stream)).toBeTruthy();
     b.close();
+  });
+});
+
+describe("summary rows: the start reads the srv: log only for what it lacks", () => {
+  /** A second start on the same server.db, with the statements it ran on `entries` noted. */
+  async function restartReading(engineViews: Record<string, BotView>): Promise<string[]> {
+    const shared = memoryStore();
+    const clock = new FakeClock();
+    const a = await setup({ shared, clock, bots: ["MAIN", "B1"], views: { MAIN: view("MAIN", { role: "main" }), B1: view("B1") } });
+    for (let i = 0; i < 20; i += 1) emit(a, { type: "bot.updated", bot: view("B1", { unread: i }) });
+    await a.settle();
+    await a.summary.flush();
+    a.close();
+    const queries: string[] = [];
+    const prepare = shared.db.prepare.bind(shared.db);
+    const spy = vi.spyOn(shared.db, "prepare").mockImplementation((sql: string) => { if (/FROM entries/.test(sql)) queries.push(sql); return prepare(sql); });
+    try {
+      // The second start: its reconcile (run inside setup) is what is noted.
+      const b = await setup({ shared, clock, bots: ["MAIN", "B1"], views: engineViews });
+      b.close();
+    } finally { spy.mockRestore(); }
+    return queries;
+  }
+
+  it("with a view of every bot from the engine, no bot.updated entry is read (the stream holds one per change of a bot)", async () => {
+    const queries = await restartReading({ MAIN: view("MAIN", { role: "main" }), B1: view("B1") });
+    expect(queries.filter((sql) => sql.includes("bot.updated"))).toEqual([]);
+  });
+
+  it("a bot the engine has no view of is read from the newest entries", async () => {
+    const queries = await restartReading({ MAIN: view("MAIN", { role: "main" }) });
+    expect(queries.filter((sql) => sql.includes("bot.updated"))).toHaveLength(1);
   });
 });
 
