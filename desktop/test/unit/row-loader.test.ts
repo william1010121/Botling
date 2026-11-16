@@ -14,7 +14,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Kernel } from "../../../Web/src/plugin-kernel";
 import {
   BundleRefusedError, RowLoader, bundleMatches, followRows, plansOf, ticketBundleFetcher, webInstance, webRefOf, MAX_BUNDLE_BYTES,
@@ -448,6 +448,20 @@ describe("the ticket fetcher", () => {
     expect(urls).toEqual([]);
     // Not kept: the next ask goes to the server again.
     await expect(fetchBundle({ plugin: "a", ref: refOf(A1) })).rejects.toThrow(/did not answer/);
+  });
+
+  it("waits 10 s for the ticket by default: not a moment less, and then gives up", async () => {
+    vi.useFakeTimers();
+    try {
+      const link: BundleTicketPort = { server: "srvA", remoteContent: () => new Promise(() => undefined) };
+      const fetchBundle = ticketBundleFetcher({ link, base: "http://page.example", fetch: web(A1).fetchImpl });
+      let state = "pending";
+      void fetchBundle({ plugin: "a", ref: refOf(A1) }).then(() => { state = "answered"; }, () => { state = "gave up"; });
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(state).toBe("pending");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(state).toBe("gave up");
+    } finally { vi.useRealTimers(); }
   });
 
   it("asks for seq 1 of the plugin's row entry in the attached server's srv: stream, naming the plugin of the request", async () => {
