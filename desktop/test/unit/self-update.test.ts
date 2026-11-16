@@ -230,7 +230,7 @@ describe("the install script outlives the process that started it (spawnInstalle
     const parent = spawn(process.execPath, ["-e", `
       const { spawn } = require("node:child_process");
       const child = spawn("/bin/sh", ["-c", "echo $$ > ${join(dir, "pid")}; echo pgid $(ps -o pgid= -p $$) >> ${logPath}; sleep 3; echo survived >> ${logPath}"],
-        { detached: true, stdio: ["ignore", ${out}, ${out}] });
+        { detached: true, stdio: ["ignore", 1, 1] });
       child.unref();
       setTimeout(() => {}, 60000);
     `], { stdio: ["ignore", out, out] });
