@@ -47,7 +47,7 @@ describe("the manifest check", () => {
 
   it("reads engines ranges as npm does (PluginTests.enginesRanges)", () => {
     // The plugin API is 2.8 (API_VERSION).
-    for (const yes of ["^2.0.0", "^2.6.0", "^2.7.0", "~2.8.1", ">=1.5.0", "*", "<2.9.0", ">=1.0.0 <3.0.0", "^1.0.0 || ^2.0.0", "2.x", "1.5 - 2.7"]) expect(compatible(yes), yes).toBe(true);
+    for (const yes of ["^2.0.0", "^2.6.0", "^2.7.0", "~2.8.1", ">=1.5.0", "*", "<2.9.0", ">=1.0.0 <3.0.0", "^1.0.0 || ^2.0.0", "2.x", "1.5 - 2.8"]) expect(compatible(yes), yes).toBe(true);
     for (const no of ["^3.0.0", "^2.9.0", "~2.6.1", "<2.7.0", "<2.0.0", ">=1.0.0 <2.0.0", ">2", "not a range"]) expect(compatible(no), no).toBe(false);
   });
 
