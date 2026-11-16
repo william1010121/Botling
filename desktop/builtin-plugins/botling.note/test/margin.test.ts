@@ -20,7 +20,7 @@ function setup(opts: { send?: () => Promise<unknown>; stored?: Map<string, unkno
   };
   const expose = (method: string, fn: (params: Record<string, unknown>) => unknown) => { exposed.set(method, fn as (params: unknown) => unknown); return () => {}; };
   activateMargin(api as unknown as BotlingApi, expose, () => clock);
-  const call = (method: string, params: Record<string, unknown> = {}) => exposed.get(method)!({ botId: "B1", ...params }) as Promise<any>;
+  const call = async (method: string, params: Record<string, unknown> = {}) => exposed.get(method)!({ botId: "B1", ...params }) as any;
   const fire = (name: string, data: Record<string, unknown>) => (events.get(name) as unknown as (d: unknown) => void)(data);
   const tick = (ms = 10) => { clock += ms; };
   return { api, call, fire, stored, tick, exposed, events };
@@ -75,7 +75,7 @@ describe("asking", () => {
     await expect(ask(s, { anchor: { ...ANCHOR, quote: " " } })).rejects.toThrow("沒有可以掛旁註的引用");
     await expect(ask(s, { anchor: { ...ANCHOR, kind: "constructor" } })).rejects.toThrow("沒有可以掛旁註的引用");
     await expect(ask(s, { rid: "../x" })).rejects.toThrow("編號");
-    await expect(s.exposed.get("marginList")!({}) as Promise<unknown>).rejects.toThrow("No bot.");
+    await expect(s.call("marginList", { botId: "" })).rejects.toThrow("No bot.");
     const r = await ask(s, { question: "a\u0000b\u001bc\r\nd", anchor: { ...ANCHOR, label: "Note #x\nline2", cell: "has space" } });
     expect(r.thread.turns[0].q).toBe("abc\nd");
     expect(r.thread.anchor.label).toBe("Note #x line2");
