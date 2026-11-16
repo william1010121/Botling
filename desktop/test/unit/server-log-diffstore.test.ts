@@ -219,6 +219,15 @@ describe("eviction across a baseline", () => {
     expect(verifyStream(store.db, A)).toMatchObject({ ok: true });
     const last = raw(store.db, A).at(-1)!;
     expect(last.base === null || store.db.prepare("SELECT 1 FROM entries WHERE stream = ? AND seq = ?").get(A, last.base)).toBeTruthy();
+    // A diff written with the writer's cache warm from before the eviction (review M11: rebaseKept must drop the cached
+    // state, whose baseline is gone) hangs on the kept baseline, not on the evicted one.
+    await store.submit((db) => { appendEntries(db, A, [upd("m2", "wb ".repeat(13))]); });
+    const grown = raw(store.db, A).at(-1)!;
+    expect(grown.okey).toBe("m:m2");
+    expect(grown.base).not.toBeNull();
+    expect(Number(grown.base)).toBeGreaterThan(10);
+    expect(readAll(store.db, A, 11).unreadable).toBeUndefined();
+    expect(verifyStream(store.db, A)).toMatchObject({ ok: true });
   });
 
   it("evicting past every row of an object leaves no dangling diff; the next write starts a baseline", async () => {
