@@ -152,7 +152,10 @@ interface ObjState {
   hash: string;
 }
 
-const valueOf = (state: ObjState): unknown => (state.json !== null ? (state.value = JSON.parse(state.json)) : state.value);
+const valueOf = (state: ObjState): unknown => {
+  if (state.json !== null) { state.value = JSON.parse(state.json); state.json = null; }
+  return state.value;
+};
 
 /** The next state of an object after its row: a baseline replaces it, a diff (hanging on the same baseline) patches it. */
 function step(state: ObjState | null, row: { seq: number; body: string; base: number | null; hash: string }): ObjState {
