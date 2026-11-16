@@ -58,6 +58,10 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
  // protocol's QUOTE_MAX (200 000 characters), the bot id as long as the other ids on this wire.
  if(direction==='down'&&value.botling==='composerQuote')return keys(value,['botling','requestID','botID','text','focus'])&&Number.isSafeInteger(value.requestID)&&value.requestID>=1
   &&typeof value.botID==='string'&&value.botID.length>0&&value.botID.length<=160&&typeof value.text==='string'&&value.text.length>0&&value.text.length<=200_000&&typeof value.focus==='boolean';
+ // A plugin frame's botling.openChat(botId, messageId) (renderer/app-hooks.ts): down, go to that line once the chat shows it.
+ // The message id is a frame command argument (frame-protocol ARG_MAX, 4 000 characters).
+ if(direction==='down'&&value.botling==='jumpTo')return keys(value,['botling','botID','messageID'])&&typeof value.botID==='string'&&value.botID.length>0&&value.botID.length<=160
+  &&typeof value.messageID==='string'&&value.messageID.length>0&&value.messageID.length<=4000;
  if(direction==='up'&&value.botling==='composerBarAsk')return keys(value,['botling']);
  if(direction==='up'&&value.botling==='composerBarFrame')return keys(value,['botling','frame','data'])&&barFrame(value.frame);
  // The floating chat (renderer/FloatingChat.tsx, chat-frame/float-chrome.ts): down, the panel's header for the chat
