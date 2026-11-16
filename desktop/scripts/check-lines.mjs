@@ -81,8 +81,9 @@ export function productSizes(root) {
 }
 
 const BRIDGE_DIR = /^desktop\/src\/core\/bot\/[^/]+\.ts$/;
-// A `set name(` anywhere on a line (not only first: `get a() { ... } set a(v) { ... }`), after any of private/public/protected/static/override.
-const SET_ACCESSOR = /(?:^|[\s;{}])(?:(?:private|public|protected|static|override)\s+)*set\s+[A-Za-z_$][\w$]*\s*\(/;
+// A `set name(` anywhere on a line, not only first (`get a() { ... } set a(v) { ... }`); any modifier before it (private, public,
+// protected, static, override) ends in whitespace, so it needs no pattern of its own. `set(`, `.set(` and `get set()` have no name after `set `.
+const SET_ACCESSOR = /(?:^|[\s;{}])set\s+[A-Za-z_$][\w$]*\s*\(/;
 
 /**
  * The `set` accessors in the collaborators under desktop/src/core/bot/ (M7-S59). A bridge block forwards a field to its owner;
