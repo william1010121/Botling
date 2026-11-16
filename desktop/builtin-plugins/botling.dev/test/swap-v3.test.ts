@@ -163,6 +163,8 @@ function scriptRig(dir: string) {
   const opened = join(dir, "opened.log");
   const signed = join(dir, "codesign.log");
   const started = join(dir, "started.pid");
+  const copiedWhile = join(dir, "copied-while");
+  const signedWhile = join(dir, "signed-while");
   const tool = (name: string, body: string) => { const file = join(bin, name); writeFileSync(file, `#!/bin/bash\n${body}\n`); chmodSync(file, 0o755); return file; };
   const tools = {
     // open -n <bundle> [--env K=V]…: record it; MAKE_HEALTHY: the new build says it is up; START_APP: a window runs from it.
@@ -171,9 +173,12 @@ function scriptRig(dir: string) {
 if [ -n "$START_APP" ] && [ ! -e "${started}" ]; then nohup "$2/Contents/MacOS/Botling 3" 60 >/dev/null 2>&1 & echo $! > "${started}"; fi
 exit 0`),
     // DITTO_FAIL: a copy that stops halfway (part of the bundle written, then an error).
-    BOTLING_TEST_DITTO: tool("ditto", `if [ -n "$DITTO_FAIL" ]; then mkdir -p "$2/Contents"; echo partial > "$2/Contents/half"; exit 1; fi
+    BOTLING_TEST_DITTO: tool("ditto", `if [ -n "$BOTLINGD_PID" ]; then kill -0 "$BOTLINGD_PID" 2>/dev/null && echo running > "${copiedWhile}" || echo stopped > "${copiedWhile}"; fi
+if [ -n "$DITTO_FAIL" ]; then mkdir -p "$2/Contents"; echo partial > "$2/Contents/half"; exit 1; fi
 cp -R "$1" "$2"`),
-    BOTLING_TEST_CODESIGN: tool("codesign", `echo "$*" >> "${signed}"; exit "\${CODESIGN_EXIT:-0}"`),
+    BOTLING_TEST_CODESIGN: tool("codesign", `echo "$*" >> "${signed}"
+if [ -n "$BOTLINGD_PID" ]; then kill -0 "$BOTLINGD_PID" 2>/dev/null && echo running > "${signedWhile}" || echo stopped > "${signedWhile}"; fi
+exit "\${CODESIGN_EXIT:-0}"`),
     BOTLING_TEST_XATTR: tool("xattr", "exit 0"),
   };
   const run = (args: string[], env: Record<string, string> = {}) => new Promise<{ status: number | null; out: string }>((resolve) => {
@@ -186,7 +191,11 @@ cp -R "$1" "$2"`),
     child.on("close", (status) => resolve({ status, out }));
   });
   const lines = (file: string) => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n") : []);
-  return { run, opened: () => lines(opened), signed: () => lines(signed), started: () => Number(lines(started)[0]) };
+  return {
+    run, opened: () => lines(opened), signed: () => lines(signed), started: () => Number(lines(started)[0]),
+    /** Whether botlingd (BOTLINGD_PID) was still running when the fake ditto / codesign ran. */
+    copiedWhile: () => lines(copiedWhile)[0], signedWhile: () => lines(signedWhile)[0],
+  };
 }
 
 /** A stand-in process (detached, own group so the test can end it). */
@@ -222,9 +231,28 @@ describe("the Botling 3 install script", () => {
     await vi.waitFor(() => expect(exited(oldWindow)).toBe(true));
     expect(readBuild(running.path)?.commit).toBe("bbbbbbb2222");
     expect(readBuild(args[3]!)?.commit).toBe("aaaaaaa1111");
-    expect(rig.signed()).toEqual([`--verify ${running.path}`]);
+    // The copy is checked where it was staged (beside the target), before the old app was moved aside.
+    expect(rig.signed()).toEqual([`--verify ${running.path}.staging`]);
+    expect(existsSync(`${running.path}.staging`)).toBe(false);
     expect(rig.opened()).toEqual([`-n ${running.path} --env BOTLING_DATA_DIR=/data --env BOTLING_SERVER_DATA_DIR=/srv`]);
     expect(installOutcome(join(dir, "server"))).toMatchObject({ kind: "installed" });
+  });
+
+  it("copies and checks the new build while botlingd is still stopping, so the swap after it is two renames", async () => {
+    const dir = tempDir("self-update-v3-script");
+    const { running, command } = prepare(dir);
+    const rig = scriptRig(dir);
+    const botlingd = standIn(SLEEP, ["3"]);
+    const args = command(botlingd.pid!, "3");
+    const result = await rig.run(args, { MAKE_HEALTHY: args[4]!, BOTLINGD_PID: String(botlingd.pid) });
+    expect(result.status, result.out).toBe(0);
+    // The fake ditto and codesign noted whether botlingd was still running when they ran.
+    expect(rig.copiedWhile()).toBe("running");
+    expect(rig.signedWhile()).toBe("running");
+    const at = (text: string) => result.out.indexOf(text);
+    expect(at("the new build is copied")).toBeGreaterThan(-1);
+    expect(at("the new build is copied")).toBeLessThan(at("moving "));
+    expect(at("moving ")).toBeLessThan(at("opening the new build"));
   });
 
   it("a new build that does not come up is ended, set aside as .failed, the old one put back and reopened", async () => {
@@ -252,6 +280,7 @@ describe("the Botling 3 install script", () => {
     expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
     expect(readBuild(build.path)?.commit).toBe("bbbbbbb2222");
     expect(existsSync(`${running.path}.failed`)).toBe(false);
+    expect(existsSync(`${running.path}.staging`)).toBe(false);
     expect(rig.opened()).toEqual([`-n ${running.path} --env BOTLING_DATA_DIR=/data --env BOTLING_SERVER_DATA_DIR=/srv`]);
     expect(installOutcome(join(dir, "server"))).toMatchObject({ kind: "rolledBack", reason: "the copied build's signature does not check out" });
   });
@@ -265,6 +294,7 @@ describe("the Botling 3 install script", () => {
     expect(result.status, result.out).toBe(1);
     expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
     expect(existsSync(join(running.path, "Contents", "half"))).toBe(false);
+    expect(existsSync(`${running.path}.staging`)).toBe(false);
     expect(existsSync(args[3]!)).toBe(false);
     expect(readBuild(build.path)?.commit).toBe("bbbbbbb2222");
     expect(rig.signed()).toEqual([]);
@@ -283,7 +313,9 @@ describe("the Botling 3 install script", () => {
     expect(exited(stuck)).toBe(false);
     expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
     expect(existsSync(args[3]!)).toBe(false);
-    expect(rig.signed()).toEqual([]);
+    // The copy was made and checked while botlingd was stopping; nothing was installed, so it is removed again.
+    expect(rig.signed()).toEqual([`--verify ${running.path}.staging`]);
+    expect(existsSync(`${running.path}.staging`)).toBe(false);
     expect(rig.opened()).toEqual([`-n ${running.path} --env BOTLING_DATA_DIR=/data --env BOTLING_SERVER_DATA_DIR=/srv`]);
     expect(installOutcome(join(dir, "server"))).toMatchObject({ kind: "rolledBack", reason: "botlingd did not stop; nothing changed" });
   });

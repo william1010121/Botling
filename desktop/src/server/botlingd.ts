@@ -45,6 +45,7 @@ import { PassThrough, PassThroughOwner, PeerLogCache, PeerTables, SummaryRows, T
 import { ServerOrigin } from "./forward";
 import { BOTLINGD_VERSION, clusterOrigins, DataDirInUseError, peerChatList, PEERS_FILE, relayAllowList, type BotlingdOptions } from "./botlingd-cluster";
 import { originTestHookEnabled, startOriginTestHook } from "./botlingd-setup";
+import { NETWORK_STOP_BUDGET_MS, PhaseClock, withinBudget } from "./phase-clock";
 import { openIdentity, startCore, startRuntime, startPush, startContent, startPairing, startForwarding, startSessions, startPeers } from "./botlingd-start";
 import type { Later, StartContext } from "./botlingd-start-context";
 export {
@@ -66,6 +67,8 @@ type Ctx = StartContext<Botlingd>;
 
 
 export class Botlingd {
+  /** How long the network closes of a stop may take together (a test shortens it). */
+  static networkStopBudgetMs = NETWORK_STOP_BUDGET_MS;
   private stopping: Promise<void> | null = null;
   private lockTimer: NodeJS.Timeout | null = null;
   private pluginTimer: NodeJS.Timeout | null = null;
@@ -228,19 +231,22 @@ export class Botlingd {
 
     let store: ServerStore | null = null;
     try {
-      store = await openServerStore(paths.dataDir);
+      // Each phase that takes 500 ms or more says so in the log (an install waits for these one after another).
+      const clock = new PhaseClock(log);
+      const began = Date.now();
+      store = await clock.time("start", "open the store", () => openServerStore(paths.dataDir));
       const s = { options, env, paths, port, timers, log, later, lock, store } as Ctx;
-      Object.assign(s, await openIdentity(s));
-      Object.assign(s, await startCore(s));
-      Object.assign(s, await startRuntime(s));
-      Object.assign(s, await startPush(s));
-      Object.assign(s, await startContent(s));
-      Object.assign(s, await startPairing(s));
-      Object.assign(s, await startForwarding(s));
-      Object.assign(s, await startSessions(s));
-      Object.assign(s, await startPeers(s));
+      Object.assign(s, await clock.time("start", "identity", () => openIdentity(s)));
+      Object.assign(s, await clock.time("start", "core", () => startCore(s)));
+      Object.assign(s, await clock.time("start", "runtime and recovery", () => startRuntime(s)));
+      Object.assign(s, await clock.time("start", "summary rows and push", () => startPush(s)));
+      Object.assign(s, await clock.time("start", "plugin rows, content and media", () => startContent(s)));
+      Object.assign(s, await clock.time("start", "pairing", () => startPairing(s)));
+      Object.assign(s, await clock.time("start", "forwarding", () => startForwarding(s)));
+      Object.assign(s, await clock.time("start", "sessions", () => startSessions(s)));
+      Object.assign(s, await clock.time("start", "peers", () => startPeers(s)));
       Object.assign(s, await Botlingd.assembleDaemon(s));
-      await Botlingd.listenAll(s);
+      await clock.time("start", "listen", () => Botlingd.listenAll(s, began));
       return s.daemon;
     } catch (error) {
       await store?.close().catch(() => undefined);
@@ -289,7 +295,7 @@ export class Botlingd {
   }
 
   /** Goes live: the Unix socket, the loopback listener, the relay room, the peer sessions, the call-in answers, the lock watch and the daily backups. */
-  private static async listenAll(s: Ctx): Promise<void> {
+  private static async listenAll(s: Ctx, began: number): Promise<void> {
     const { options, env, paths, log, port, origin, later, store, serverId, hub, core, runtime, roster, server, peers, vapidSync, forwarder, serverOrigin, daemon } = s;
     await server.listen();
     await daemon.listen(port, options.outDir, origin);
@@ -312,7 +318,7 @@ export class Botlingd {
       daemon.backups.start();
     } else log("daily backups are off (BOTLING_SERVER_BACKUP_CHECK_MS=0)");
     for (const note of serverNotes(paths.dataDir, hub.reader())) log(`note (${note.id}): ${note.text}`);
-    log(`started: server ${serverId}, data ${paths.dataDir}, ${core.botIds().length} bots, pid ${process.pid}`);
+    log(`started: server ${serverId}, data ${paths.dataDir}, ${core.botIds().length} bots, pid ${process.pid}, ${Date.now() - began} ms`);
   }
 
   /**
@@ -376,17 +382,22 @@ export class Botlingd {
     if (this.lockTimer) clearInterval(this.lockTimer);
     if (this.pluginTimer) clearInterval(this.pluginTimer);
     const failures: unknown[] = [];
+    const clock = new PhaseClock(this.log);
     const step = async (what: string, run: () => unknown) => {
-      try { await run(); } catch (error) { failures.push(error); this.log(`stop: ${what}: ${String((error as Error)?.message ?? error)}`); }
+      try { await clock.time("stop", what, run); } catch (error) { failures.push(error); this.log(`stop: ${what}: ${String((error as Error)?.message ?? error)}`); }
     };
+    // The closes of sessions, sockets and peer links share one budget: a link that never answers must not hold the core's
+    // stop (and so an install, then the new build waiting for it). What they hold is not durable; the store closes later.
+    const until = Date.now() + Botlingd.networkStopBudgetMs;
+    const network = (what: string, run: () => unknown) => step(what, () => withinBudget(until, what, run, this.log));
     await step("daily backups", () => this.backups?.stop());
-    await step("sessions", () => this.server.close());
-    await step("pairing", () => this.pairing.close());
-    await step("server pairing", () => this.join.close());
-    await step("remote sessions", () => this.remote.close());
+    await network("sessions", () => this.server.close());
+    await network("pairing", () => this.pairing.close());
+    await network("server pairing", () => this.join.close());
+    await network("remote sessions", () => this.remote.close());
     await step("relay", () => this.relay?.closeAfterDrain(1_000));
     this.vapidSync?.close();
-    await step("peer sessions", () => this.peers.close());
+    await network("peer sessions", () => this.peers.close());
     this.chatMirror?.stop();
     this.passThrough.close();
     this.passOwner.close();
@@ -400,7 +411,7 @@ export class Botlingd {
     await step("fetch source", () => this.fetchSource?.flushed());
     await step("fetch requester", () => this.fetchRequester?.flushed());
     this.feeds.close();
-    await step("listener", () => this.listener?.close());
+    await network("listener", () => this.listener?.close());
     rmSync(join(this.paths.dataDir, LISTEN_FILE), { force: true });
     rmSync(join(this.paths.dataDir, PEERS_FILE), { force: true });
     this.shell.close();

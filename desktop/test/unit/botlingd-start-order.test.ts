@@ -130,7 +130,8 @@ describe("M7-S84: Botlingd start / stop order", () => {
     const daemon = await Botlingd.start({
       env: botlingdEnv(dataDir),
       outDir: join(desktop, "out"),
-      log: (line) => mark(`log ${line.split(/[:,(]/)[0]}`),
+      // "start: <phase> took N ms" / "stop: <step> took N ms" (phase-clock.ts) appear only when a phase is slow: not part of the order.
+      log: (line) => { if (!/^(start|stop): .+ took \d+ ms$/.test(line)) mark(`log ${line.split(/[:,(]/)[0]}`); },
     });
     mark(null);
     const start = events;

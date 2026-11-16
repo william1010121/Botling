@@ -22,6 +22,7 @@ import {
 } from "../../protocol/table-rows";
 import type { TxScope } from "../effects";
 import type { Db } from "../store";
+import { latestFromEntries } from "./summary-entries";
 import { deleteRow, ownTableStream, purgeTombstones, putRow, readRowBody } from "./tables";
 
 /** How often tombstones are purged after the start. */
@@ -232,17 +233,13 @@ export class SummaryRows {
    */
   reconcile(tx: Db): { written: number; tombstoned: number; purged: number; unknown: string[] } {
     const stream = ownTableStream(tx);
-    const fromEntries = new Map<string, BotView>();
-    let settings: Record<string, unknown> | null = null;
-    for (const row of tx.prepare("SELECT kind, body FROM entries WHERE stream = ? AND kind IN ('bot.updated', 'settings.updated') ORDER BY seq").all(stream)) {
-      try {
-        const body = JSON.parse(String(row.body)) as { bot?: BotView; settings?: Record<string, unknown> };
-        if (row.kind === "bot.updated" && body.bot?.id) fromEntries.set(body.bot.id, body.bot);
-        else if (row.kind === "settings.updated" && body.settings) settings = body.settings;
-      } catch { /* a cut entry: skipped */ }
-    }
-    if (!this.settings && settings) this.settings = settings;
     const bots = new Set(this.options.engine.bots());
+    // Only a bot with no view from the engine needs its last `bot.updated` from the log, and settings only when none are
+    // known; with every bot viewed the log is not read at all (summary-entries.ts says why that matters).
+    const lacking = new Set([...bots].filter((botId) => !this.views.has(botId) && !this.options.engine.botView?.(botId)));
+    const found = latestFromEntries(tx, stream, lacking, !this.settings);
+    const fromEntries = found.bots;
+    if (!this.settings && found.settings) this.settings = found.settings;
     const unknown: string[] = [];
     let written = 0;
     for (const botId of bots) {
