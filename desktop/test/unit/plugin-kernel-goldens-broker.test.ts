@@ -9,6 +9,7 @@ import { FrameBroker, registerPluginFrame, type PluginFrameHost } from "../../sr
 import { pluginFrameHost } from "../../src/renderer/plugin-frame-host";
 import { setComposerQuoter } from "../../src/renderer/composer-quote";
 import type { Client } from "../../src/renderer/client";
+import { startChatPlugin } from "../chat-plugin-host";
 
 function frame() {
   const element = document.createElement("iframe");
@@ -31,6 +32,8 @@ afterEach(() => {
 });
 
 it("the frame broker answers a scripted sequence as recorded", async () => {
+  // `botling.chat` provides the quote service the script calls (M7-07b); it was the `:chat` stand-in, loaded by the quoter itself.
+  const chat = await startChatPlugin();
   // The broker paces by the clock (refusals carry its time too): a fixed clock makes the record exact.
   vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
   const broker = new FrameBroker(window, { name: "golden broker", frame: "plugin frame" });
@@ -102,6 +105,7 @@ it("the frame broker answers a scripted sequence as recorded", async () => {
   for (let id = 100; id < 125; id += 1) send(note.element, { ccb: "call", id, method: "burst" });
   await settle();
   stopQuoter();
+  await chat.stop();
   const record = {
     note: note.posted, zed: zed.posted, lone: lone.posted, stranger: stranger.posted, events, log,
     refusals: broker.refusals.map((refusal) => [refusal.reason, refusal.card]),

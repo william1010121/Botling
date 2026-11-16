@@ -5,13 +5,13 @@
 // the Note's name in plugin-frame-host.ts. A provider swap of the service re-binds without reloading the Note's frame.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION, type BotView, type PluginsView } from "../../src/contract";
 import { Client } from "../../src/renderer/client";
 import { FrameBroker, registerPluginFrame } from "../../src/renderer/frame-broker";
 import { pluginFrameHost } from "../../src/renderer/plugin-frame-host";
 import { setComposerQuoter } from "../../src/renderer/composer-quote";
-import { CHAT_SURFACE, INSERT_QUOTE, rendererKernel } from "../../src/renderer/renderer-kernel";
+import { INSERT_QUOTE, rendererKernel } from "../../src/renderer/renderer-kernel";
 import { FRAME_MANIFESTS, frameDeclaration, parseFrameDeclaration } from "../../src/renderer/shell/frame-declarations";
 import { pluginFeed, reconcileView } from "../../src/renderer/shell/plugin-feed";
 import { feBuildManifestFile } from "../../fe-build-manifest.mjs";
@@ -107,6 +107,7 @@ describe("the Note's declaration", () => {
   });
 
   it("a library copy taking over the built-in's name drops the declaration (and quotes as a 2.x plugin); the built-in back takes it again", async () => {
+    await chatHost().start();
     stops.push(setComposerQuoter(async () => true));
     reconcileView(view());
     expect(pluginFeed.declares(NOTE)).toBe(true);
@@ -150,7 +151,10 @@ describe("the Note's declaration", () => {
 });
 
 describe("a frame's ccb.composer.insertQuote, bound from the declaration", () => {
-  it("the Note's quote reaches the chat surface's service, called for the Note", async () => {
+  // `botling.chat` provides the service (M7-07b; the `:chat` stand-in is gone): it is up for each test here, and the quoter App registers is what it forwards to.
+  beforeEach(async () => { await chatHost().start(); });
+
+  it("the Note's quote reaches the chat plugin's service, called for the Note", async () => {
     const call = vi.spyOn(rendererKernel, "call");
     const calls: unknown[][] = [];
     stops.push(setComposerQuoter(async (...args) => { calls.push(args); return true; }));
@@ -161,7 +165,7 @@ describe("a frame's ccb.composer.insertQuote, bound from the declaration", () =>
     expect(calls).toEqual([[BOT, "> a block", false]]);
   });
 
-  it("with :chat unloaded the quote answers { inserted: false }, as before, and the Note stays loaded", async () => {
+  it("with no quoter registered the quote answers { inserted: false }, as before, and the Note stays loaded", async () => {
     const calls: unknown[] = [];
     setComposerQuoter(async (...args) => { calls.push(args); return true; })();
     reconcileView(view());
@@ -212,7 +216,7 @@ describe("a frame's ccb.composer.insertQuote, bound from the declaration", () =>
     expect(calls).toEqual([]);
   });
 
-  it("swapping :chat (unload, load) while the Note's frame stays mounted: the next quote is inserted, the frame and the Note are not reloaded", async () => {
+  it("swapping the page's quoter (taken back, registered again) while the Note's frame stays mounted: the next quote is inserted, the frame and the Note are not reloaded", async () => {
     const used: string[] = [];
     const first = setComposerQuoter(async () => { used.push("first"); return true; });
     reconcileView(view());
@@ -221,11 +225,12 @@ describe("a frame's ccb.composer.insertQuote, bound from the declaration", () =>
     expect(await quote(1)).toMatchObject({ ok: true, value: { inserted: true } });
 
     first();
-    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBeNull();
+    // The plugin keeps providing the service; with no quoter behind it the answer is "not inserted".
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBe(CHAT_PLUGIN);
     expect(await quote(2)).toMatchObject({ ok: true, value: { inserted: false } });
 
     stops.push(setComposerQuoter(async () => { used.push("second"); return true; }));
-    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBe(CHAT_SURFACE);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBe(CHAT_PLUGIN);
     expect(await quote(3)).toMatchObject({ ok: true, value: { inserted: true } });
 
     expect(used).toEqual(["first", "second"]);

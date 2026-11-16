@@ -1,15 +1,24 @@
 // @vitest-environment jsdom
-// `composer.insertQuote` as a service of the renderer's plugin kernel (kernel step 1 step 7): the chat surface provides
-// it while App is up, the Note's frame calls it through the broker as a kernel call carrying the frame's plugin, and with
-// the provider unloaded the call finds nothing and answers as when no input box exists: { inserted: false }.
+// `composer.insertQuote` as a service of the renderer's plugin kernel (kernel step 1 step 7): `botling.chat` provides it (M7-07b; it was the
+// `:chat` stand-in) and forwards it to the quoter App registers, the Note's frame calls it through the broker as a kernel call carrying the
+// frame's plugin, and with the plugin away (or no quoter) the call finds nothing and answers as when no input box exists: { inserted: false }.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PROTOCOL_VERSION, type BotView } from "../../src/contract";
 import { Client } from "../../src/renderer/client";
 import { FrameBroker, registerPluginFrame } from "../../src/renderer/frame-broker";
 import { pluginFrameHost } from "../../src/renderer/plugin-frame-host";
 import { quoteIntoComposer, setComposerQuoter } from "../../src/renderer/composer-quote";
-import { CHAT_SURFACE, INSERT_QUOTE, rendererKernel } from "../../src/renderer/renderer-kernel";
-import { until } from "../helpers";
+import { CHAT_PLUGIN } from "../../src/renderer/chat-names";
+import { INSERT_QUOTE, rendererKernel } from "../../src/renderer/renderer-kernel";
+import { InPageHost } from "../../src/renderer/shell/inpage-host";
+import { parseFeManifest } from "../../src/renderer/shell/inpage-loader";
+import { feBuildManifestFile } from "../../fe-build-manifest.mjs";
+import { desktop, until } from "../helpers";
+
+// The build ships more plugins; this host runs only the chat plugin.
+const chatManifest = { plugins: parseFeManifest(JSON.parse(feBuildManifestFile(desktop).toString("utf8"))).plugins.filter((entry) => entry.name === CHAT_PLUGIN) };
+const hosts: InPageHost[] = [];
+const chatHost = () => { const made = new InPageHost({ manifest: chatManifest, log: () => undefined }); hosts.push(made); return made; };
 
 const BOT = "6A0B0000-0000-4000-8000-000000000040";
 const BOTS = [{ id: BOT, role: "manager", name: "Site" }] as BotView[];
@@ -27,22 +36,36 @@ function frame() {
 }
 
 const stops: (() => void)[] = [];
-afterEach(() => { for (const stop of stops.splice(0)) stop(); document.body.innerHTML = ""; vi.restoreAllMocks(); });
+afterEach(async () => {
+  for (const stop of stops.splice(0)) stop();
+  for (const one of hosts.splice(0)) await one.stop();
+  document.body.innerHTML = "";
+  vi.restoreAllMocks();
+});
 
 describe("composer.insertQuote in the renderer's kernel", () => {
-  it("the chat surface provides it while its quoter is registered, and holds nothing once it is taken back", () => {
-    expect(rendererKernel.state(CHAT_SURFACE)).toBe("absent");
+  it("the chat plugin provides it while it is up (a quoter or not), holds nothing once it is unloaded, and there is no `:chat` stand-in", async () => {
     expect(rendererKernel.providerOf(INSERT_QUOTE)).toBeNull();
+    expect(rendererKernel.declaration(":chat")).toBeUndefined();
+    expect(rendererKernel.plugins()).not.toContain(":chat");
+    const one = chatHost();
+    await one.start();
+    expect(rendererKernel.state(CHAT_PLUGIN)).toBe("active");
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBe(CHAT_PLUGIN);
+    // A quoter coming and going changes nothing in the kernel: the plugin is the provider, the quoter is what it forwards to.
     const stop = setComposerQuoter(async () => true);
-    expect(rendererKernel.state(CHAT_SURFACE)).toBe("active");
-    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBe(CHAT_SURFACE);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBe(CHAT_PLUGIN);
     stop();
-    expect(rendererKernel.state(CHAT_SURFACE)).toBe("absent");
-    expect(rendererKernel.holdsNothingOf(CHAT_SURFACE)).toBe(true);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBe(CHAT_PLUGIN);
+    expect(rendererKernel.plugins()).not.toContain(":chat");
+    await one.stop();
+    expect(rendererKernel.state(CHAT_PLUGIN)).toBe("absent");
+    expect(rendererKernel.holdsNothingOf(CHAT_PLUGIN)).toBe(true);
     expect(rendererKernel.providerOf(INSERT_QUOTE)).toBeNull();
   });
 
   it("the frame's call goes through the kernel for the frame's plugin", async () => {
+    await chatHost().start();
     const call = vi.spyOn(rendererKernel, "call");
     const calls: unknown[][] = [];
     stops.push(setComposerQuoter(async (...args) => { calls.push(args); return true; }));
@@ -54,10 +77,10 @@ describe("composer.insertQuote in the renderer's kernel", () => {
     expect(calls).toEqual([[BOT, "> a block", false]]);
   });
 
-  it("with the provider unloaded the call answers { inserted: false }, and its quoter is not called", async () => {
+  it("with no quoter registered the call answers { inserted: false } and nothing is called", async () => {
+    await chatHost().start();
     const calls: unknown[] = [];
-    const stop = setComposerQuoter(async (...args) => { calls.push(args); return true; });
-    stop();
+    setComposerQuoter(async (...args) => { calls.push(args); return true; })();
     const { send, posted } = frame();
     send({ ccb: "composerQuote", id: 2, text: "x", botId: BOT, focus: true });
     await until(() => posted.length === 1);
@@ -66,15 +89,51 @@ describe("composer.insertQuote in the renderer's kernel", () => {
     await expect(quoteIntoComposer(BOT, "x", true)).resolves.toBe(false);
   });
 
+  it("with the chat plugin away (refused: its hash is not in the manifest) the call finds no provider and answers { inserted: false }, the quoter is not called", async () => {
+    const calls: unknown[] = [];
+    stops.push(setComposerQuoter(async (...args) => { calls.push(args); return true; }));
+    const refused = new InPageHost({ manifest: { plugins: [] }, log: () => undefined });
+    hosts.push(refused);
+    await refused.start([{ name: CHAT_PLUGIN, codeHash: chatManifest.plugins[0]!.codeHash }]);
+    expect(refused.unavailable(CHAT_PLUGIN)).toBe(true);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBeNull();
+    const { send, posted } = frame();
+    send({ ccb: "composerQuote", id: 3, text: "x", botId: BOT, focus: false });
+    await until(() => posted.length === 1);
+    expect(posted).toEqual([{ ccb: "reply", id: 3, ok: true, value: { inserted: false } }]);
+    expect(calls).toEqual([]);
+    await expect(quoteIntoComposer(BOT, "x", false)).resolves.toBe(false);
+  });
+
   it("a newer quoter replaces the one before; the older one's unregister does not remove the newer", async () => {
+    await chatHost().start();
     const used: string[] = [];
     const first = setComposerQuoter(async () => { used.push("first"); return true; });
-    const generation = rendererKernel.generation(CHAT_SURFACE);
     stops.push(setComposerQuoter(async () => { used.push("second"); return true; }));
-    expect(rendererKernel.generation(CHAT_SURFACE)).toBe(generation + 1);
     first();
-    expect(rendererKernel.state(CHAT_SURFACE)).toBe("active");
     await expect(quoteIntoComposer(BOT, "x", false)).resolves.toBe(true);
     expect(used).toEqual(["second"]);
+  });
+  it("the chat plugin unloaded and started again while a frame stays open: the quote is not inserted while it is away, and is again once it is back (the provider churn the `:chat` stand-in's quoter swaps used to drive)", async () => {
+    const one = chatHost();
+    await one.start();
+    const calls: unknown[][] = [];
+    stops.push(setComposerQuoter(async (...args) => { calls.push(args); return true; }));
+    const { send, posted } = frame();
+    send({ ccb: "composerQuote", id: 10, text: "a", botId: BOT, focus: false });
+    await until(() => posted.length === 1);
+    expect(one.unload(CHAT_PLUGIN)).toBe(true);
+    expect(one.unavailable(CHAT_PLUGIN)).toBe(true);
+    expect(rendererKernel.holdsNothingOf(CHAT_PLUGIN)).toBe(true);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBeNull();
+    send({ ccb: "composerQuote", id: 11, text: "b", botId: BOT, focus: false });
+    await until(() => posted.length === 2);
+    await one.start();
+    expect(one.unavailable(CHAT_PLUGIN)).toBe(false);
+    expect(rendererKernel.providerOf(INSERT_QUOTE)).toBe(CHAT_PLUGIN);
+    send({ ccb: "composerQuote", id: 12, text: "c", botId: BOT, focus: false });
+    await until(() => posted.length === 3);
+    expect(posted).toEqual([10, 11, 12].map((id, index) => ({ ccb: "reply", id, ok: true, value: { inserted: index !== 1 } })));
+    expect(calls).toEqual([[BOT, "a", false], [BOT, "c", false]]);
   });
 });
