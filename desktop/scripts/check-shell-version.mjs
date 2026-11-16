@@ -6,7 +6,7 @@
 // A commit that touches only plugin sources (desktop/builtin-plugins/**, desktop/src/renderer/plugins/**; tests, docs and
 // notes beside them do not count) must leave both halves of the manifest's shell part as they were:
 //   - the value of `MIN_FE_VERSION` (found by name under desktop/src, so a card may move the constant), and
-//   - the shell hash (fe-shell-manifest.mjs: the files the web-v3 build reads, never a plugin source; the list is the working tree's).
+//   - the shell hash (fe-shell-manifest.mjs: the code the web-v3 build bundles plus the non-code files it ships, never a plugin source; the list is the working tree's).
 // A commit that touches anything else may change them. Every non-merge commit of <base>..<head> is checked against its first
 // parent; `--whole` checks <base> → <head> as one change instead. Both values are read from git, nothing is checked out.
 // The build's manifest is not committed, so the committed baseline (desktop/fe-shell-baseline.json: `minFeVersion` only) is what the

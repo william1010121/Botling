@@ -2,8 +2,9 @@
 //
 // fe-build-manifest.json gets `shell: { minFeVersion, hash }`:
 //   - minFeVersion: the value of `MIN_FE_VERSION`, found BY NAME in desktop/src (a card may move the constant to another file);
-//   - hash: a hash of every file the shell is made of: the files the web-v3 build reads (`shellInputs`), minus plugin sources (M7-10c;
-//     it was a list of folders, which missed 23 files such as desktop/src/session/*).
+//   - hash: a hash of every file the shell is made of (`shellInputs`), minus plugin sources: the code the web-v3 build bundles (esbuild's
+//     metafile; M7-10c, it was a list of folders, which missed 23 files such as desktop/src/session/*) and the non-code files the page ships
+//     (CSS, HTML, icons and the build's own files: the list is web-v3/page-assets.mjs, which build.mjs copies from, so it cannot drift).
 // A plugin-only change (builtin-plugins/** or src/renderer/plugins/**) is not part of the shell, so it can never move either
 // value. scripts/check-shell-version.mjs fails a commit that touches only plugin sources and moves one anyway.
 //
@@ -18,7 +19,9 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
+import { inlineTokens } from "../Web/kit/build.mjs";
+import { PAGE_ASSETS, PAGE_BUILD_FILES } from "./web-v3/page-assets.mjs";
 
 /** The entries of the web-v3 build (web-v3/build.mjs): the phone/browser page's shell, chat page, PDF viewer and service worker. */
 export const WEB_V3_ENTRIES = ["desktop/web-v3/shell/main.tsx", "desktop/web-v3/chat-entry.ts", "desktop/web-v3/pdf-viewer/viewer.ts", "desktop/web-v3/sw.ts"];
@@ -54,9 +57,32 @@ function buildInputs(options) {
 }
 
 /**
+ * The non-code files of the shell (repo-relative, sorted): the assets of web-v3/page-assets.mjs, the files their `@import`s reach (found with the
+ * build's own `inlineTokens`) and the build files. Read from the working tree under `repoRoot`; a file that is not there is skipped (a scratch
+ * root has few of them: a real build fails on a missing one), plugin sources are never in it.
+ */
+export function shellAssetPaths(repoRoot) {
+  const found = new Set();
+  const add = (path) => { if (existsSync(join(repoRoot, path))) found.add(path); };
+  PAGE_BUILD_FILES.forEach(add);
+  for (const { from, tokens, append } of PAGE_ASSETS) {
+    add(from);
+    if (append) add(append);
+    if (tokens && existsSync(join(repoRoot, from))) {
+      inlineTokens(readFileSync(join(repoRoot, from), "utf8"), join(repoRoot, from), (file) => {
+        const path = relative(repoRoot, file).split(sep).join("/");
+        if (!path.startsWith("../")) add(path);
+      });
+    }
+  }
+  return [...found].filter((path) => !isPluginSourcePath(path)).sort();
+}
+
+/**
  * The files the shell is made of: what the web-v3 build reads (esbuild's metafile inputs for WEB_V3_ENTRIES, the options of
- * web-v3/build.mjs), as sorted repo-relative paths, without plugin sources, node_modules and anything outside the repository.
- * Read from the working tree under `repoRoot`; an entry that is not there is skipped (a scratch root has none), a build error throws.
+ * web-v3/build.mjs) plus its non-code files (`shellAssetPaths`), as sorted repo-relative paths, without plugin sources, node_modules and
+ * anything outside the repository. Read from the working tree under `repoRoot`; an entry that is not there is skipped (a scratch root
+ * has none), a build error throws.
  */
 export function shellInputs(repoRoot) {
   const cwd = realpathSync.native(repoRoot); // esbuild names files by real path: relative to a typed /var/... they would be "../../private/var/..."
@@ -66,7 +92,7 @@ export function shellInputs(repoRoot) {
     jsx: "automatic", target: ["chrome130", "safari17"], nodePaths: [join(cwd, "desktop/node_modules")], logLevel: "silent", logOverride: { "empty-glob": "silent" } });
   const paths = inputs.filter((path) => !path.startsWith("<")).map((path) => path.replaceAll("\\", "/"))
     .filter((path) => !path.startsWith("../") && !path.includes("node_modules/") && !isPluginSourcePath(path));
-  return [...new Set(paths)].sort();
+  return [...new Set([...paths, ...shellAssetPaths(cwd)])].sort();
 }
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
