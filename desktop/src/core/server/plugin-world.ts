@@ -204,10 +204,13 @@ export class CorePluginWorld {
           workers: (botId) => {
             const bot = this.pluginBot(botId);
             if (!bot) return "No such bot.";
+            // Maintainer owns the plugin library: a plugin's worker there could rewrite plugins, so it is never a target.
+            if (bot.id === this.maintainerId) return "A plugin may not start workers on Maintainer. Nothing was started.";
             if (bot.engine !== "claude" || !bot.claudeWorkersOn()) return "That bot does not run Claude-process workers, the only kind a plugin starts for now. Nothing was started.";
             const host = bot.ensureClaudeWorkers();
             return { id: botId, start: (args) => host.startFor(args), send: async (id, text) => host.sendToWorker(id, text), stop: (id) => host.stopWorker(id) };
           },
+          made: (plugin, botId) => { const id = this.pluginBot(botId)?.id; return id !== undefined && this.profiles.some((profile) => profile.id === id && profile.plugin === plugin); },
           ...(options.orchestrateQuota ? { quota: options.orchestrateQuota } : {}),
           specWriters: () => specWriters(readSettings(Layout.settings(options.dataDir))),
         },

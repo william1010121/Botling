@@ -109,6 +109,7 @@ export class CoreSend {
     const appNote = this.conversations.notes(bot, called, words);
     // The rules plugin is asked now, off the turn: the turn below reads the set that is there, whatever the plugin does (M7-O04).
     void this.rulesBook.refresh((notice) => bot.appNotice(notice));
+    this.plugins.origins.delete(bot.id);
     const sent = bot.send(words, { ...options, ...(appNote ? { appNote } : {}) });
     if (called.length) {
       // The line this message made (Botling 3's server: by its id, since lines sent after it may be in the chat already).

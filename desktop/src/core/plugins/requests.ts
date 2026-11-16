@@ -55,6 +55,8 @@ export interface RequestHost {
   shipped(name: string): boolean;
   /** The worker primitives' book (M7-O03a); throws when this world has no workers. */
   workers(): PluginWorkers;
+  /** F6 (M7-O04): a plugin that is not shipped sent this bot a message. */
+  heard(botId: string, plugin: string): void;
 }
 
 /**
@@ -87,12 +89,14 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "bots.send": {
       const { plugin, data } = this.asked(SendParams, params);
       if (data.as === "user") this.needs(plugin, "bots", "Sending as the user");
+      this.heard(data.bot, plugin.manifest.name);
       return world.send(data.bot, data.text, data.as === "user" ? null : title(plugin.manifest));
     }
     case "bots.wake": {
       const { plugin, data } = this.asked(WakeParams, params);
       // A bot wakes when it gets a message; a wake without one waits for the core to have that.
       if (data.prompt === undefined) throw new Error("bots.wake needs a prompt for now (a bot wakes when it gets a message).");
+      this.heard(data.bot, plugin.manifest.name);
       world.send(data.bot, data.prompt, title(plugin.manifest));
       return null;
     }
@@ -365,6 +369,7 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "routines.add": {
       const parsed = RoutineParams.safeParse(params);
       if (!parsed.success || !this.loaded(parsed.data.plugin)) throw new Error("No such bot.");
+      if (!this.shipped(parsed.data.plugin)) this.workers().mayAddRoutine(parsed.data.plugin);
       const outcome = world.addRoutine(parsed.data.bot, parsed.data.cron, parsed.data.task);
       if (outcome === "no-bot") throw new Error("No such bot.");
       if (outcome === "bad-schedule") throw new Error("Invalid schedule (it must be the 5 crontab fields).");

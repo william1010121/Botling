@@ -30,6 +30,7 @@ import type { WaitingOn } from "../worker-core/events";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
 import { WORKER_NOTIFY_RULE } from "../prompts/delegation";
 import { DEFAULT_ORCHESTRATION_RULES, type OrchestrationRules } from "../orchestration/default-rules";
+import { ADMITTED, PLUGIN_STARTED } from "../orchestration/plugin-workers";
 import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "../api-retry";
 import { EFFORTS_BY_ENGINE, type EffortLevel } from "../../contract/efforts";
 import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
@@ -226,8 +227,6 @@ function clearApiRetry(proc: Proc) {
   if (proc.apiRetry) { clearTimeout(proc.apiRetry); proc.apiRetry = undefined; }
 }
 
-/** The handoff argument `startFor` sets: the worker has fewer rights than a worker the bot started itself (see `spawn`). */
-const PLUGIN_STARTED = "pluginStarted";
 
 /** Background work started longer ago than this no longer keeps a worker's process past its keep-alive (the bots' rule). */
 const BACKGROUND_HOLDS_MS = 6 * 3600_000;
@@ -686,7 +685,7 @@ export class ClaudeWorkers implements WorkerHost {
 
   /** A handoff a plugin asked for (plugin-workers.ts, after its checks): the worker is marked `pluginStarted` (less than a bot's own). */
   startFor(args: Record<string, unknown>): Promise<{ task_id: string; run: number }> {
-    return this.core.handoff("claude-process", { ...args, [PLUGIN_STARTED]: true });
+    return this.core.handoff("claude-process", { ...args, [PLUGIN_STARTED]: true, [ADMITTED]: true });
   }
 
   /** The app tools (the coordinator's in-process MCP server). */

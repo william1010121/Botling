@@ -54,6 +54,8 @@ export interface WorkerCoreOptions {
   sink: WorkerSink;
   /** The first is the member's own kind (`workerHostKind`); a Codex member adds the component editor. */
   adapters: WorkerAdapter[];
+  /** M7-O04 (F6): called around every app_handoff with the handoff itself as `run`; it may refuse (throw) or change `args`. Absent: `run`. */
+  admit?(kind: WorkerAdapterKind, args: HandoffArgs, run: () => Promise<HandoffResult>): Promise<HandoffResult>;
   /** The coordinator's conversation now (a new worker's ownerSessionId, a run's execution.ownerSessionId). */
   ownerSessionId(): string;
   /** Workers at work at once (absent: no limit). More wait for a slot, listed at work with a line saying so. */
@@ -396,7 +398,11 @@ export class WorkerCore implements WorkerHost {
   // App tools
 
   /** app_handoff: a new worker on `adapter`, its first run started. Throws the refusal (nothing recorded). */
-  async handoff(kind: WorkerAdapterKind, args: HandoffArgs): Promise<HandoffResult> {
+  handoff(kind: WorkerAdapterKind, args: HandoffArgs): Promise<HandoffResult> {
+    return this.options.admit ? this.options.admit(kind, args, () => this.handoffNow(kind, args)) : this.handoffNow(kind, args);
+  }
+
+  private async handoffNow(kind: WorkerAdapterKind, args: HandoffArgs): Promise<HandoffResult> {
     if (this.closed) throw new Error("Workers are closed: the app is stopping.");
     const adapter = this.options.adapters.find((a) => a.kind === kind);
     if (!adapter) throw new Error(`No ${kind} workers here.`);

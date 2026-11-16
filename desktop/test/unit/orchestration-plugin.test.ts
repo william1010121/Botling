@@ -417,7 +417,7 @@ function fixture(options: { dataDir?: string; builtIns: string | null; registry?
   const dataDir = options.dataDir ?? tempDir("o04-core");
   const host = {
     options: { dataDir, languages: ["en"], plugins: { builtIns: options.builtIns } },
-    plugins: { registry: options.registry ?? { plugin: () => undefined }, promptSections: () => [], agentCommands: () => [], beforeSend: async (_bot: unknown, text: string) => ({ send: text }) },
+    plugins: { origins: new Map(), registry: options.registry ?? { plugin: () => undefined }, promptSections: () => [], agentCommands: () => [], beforeSend: async (_bot: unknown, text: string) => ({ send: text }) },
     profiles: [],
     botInfo: () => ({}),
     conversations: { calledIn: () => [], notes: () => null, callIns: () => [] },

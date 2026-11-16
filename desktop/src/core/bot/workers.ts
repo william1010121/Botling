@@ -234,6 +234,7 @@ export class BotWorkers {
       note: (note, text) => this.host.workerNote(note, text),
       closeReason: () => (this.swapHold ? "restart" : "quit"),
       log: (line) => this.log(line),
+      admit: this.options.workerAdmit,
     });
     // Once the facade that asked for it is made (it may be made while this bot is).
     queueMicrotask(() => core.projectAll());

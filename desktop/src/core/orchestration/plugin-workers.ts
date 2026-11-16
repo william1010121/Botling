@@ -10,6 +10,11 @@
 //   4. the worker has no more rights than the plugin: no `machine`, `role`, `isolated_git`, `subagent_type` (the params
 //      are strict), a model that would open spec/ is refused, and the worker itself starts without spec/ and without the
 //      bot's skip-the-cards modes (ClaudeWorkers.startFor).
+// M7-O04 (F6, G1, G2): a plugin that is not shipped cannot get a worker by having a bot start it either (`bots.send`, `bots.wake`): a worker
+// the bot starts in a turn that began with such a plugin's message goes through the same checks (`admitHeard`; the core remembers
+// that message in `Plugins.origins` until the user writes to the bot). A bot-written plugin also gets a card for every `workers.send`
+// (a new instruction is a new worker's worth of trust), may only work on bots it made itself, and has one card open at a time.
+// No plugin gets Maintainer (the plugin library) as a target: the world refuses it (`workers`).
 // The owner of every worker is the bot it runs for; this book only remembers which plugin started it (quota, who may
 // send or cancel it, who hears its report). A cancel or a send for a worker the plugin did not start gets the same
 // answer as for one that does not exist.
@@ -20,6 +25,12 @@ import type { AppAnswer, AppQuestion } from "../plugins/types";
 export const ORCHESTRATE_NEEDS = ["orchestrate", "exec", "files", "bots"] as const;
 export const DEFAULT_QUOTA = { atOnce: 4, perDay: 40 } as const;
 export const QUOTA_MAX = { atOnce: 16, perDay: 200 } as const;
+/** The handoff argument that makes a worker one a plugin started: fewer rights than a worker the bot started itself (ClaudeWorkers.prepare). */
+export const PLUGIN_STARTED = "pluginStarted";
+/** Set (a symbol, so no JSON from a model can carry it) on a handoff this book already checked; `admitHeard` lets it through. */
+export const ADMITTED = Symbol("plugin-workers admitted");
+/** What a worker the bot starts for a plugin's message may be given (the same few things `workers.start` takes). */
+const HEARD_KEYS: ReadonlySet<string> = new Set(["instructions", "prompt", "task", "name", "description", "group", "model", "effort", "engine"]);
 const DAY = 86_400_000, KEEP = 7 * DAY, MAX_ENTRIES = 1_000, CARD_WAIT_MS = 600_000;
 
 /** One bot's Claude-process worker host, as the world lends it (null/string from `workers`: why there is none). */
@@ -35,6 +46,8 @@ export interface OrchestrationWorld {
   /** Whether the user granted this plugin `orchestrate` (its own sheet, like a tier raise); absent in the world: nobody. */
   granted(plugin: string): boolean;
   workers(bot: string): WorkerPort | string;
+  /** Whether the bot is one this plugin made (`profile.plugin`): a plugin the bot wrote works only on those. Absent: none is. */
+  made?(plugin: string, bot: string): boolean;
   /** Settings: workers at once and workers a day (clamped to QUOTA_MAX). */
   quota?(): { atOnce?: number; perDay?: number };
   /** settings.json `specWriters`. */
@@ -117,41 +130,54 @@ export class PluginWorkers {
     return null;
   }
 
-  private async card(facts: PluginFacts, port: WorkerPort, params: StartParams): Promise<boolean> {
-    const text = `The plugin "${oneLine(facts.name, 100)}" (${facts.identity.slice(0, 12)}, written by a bot) wants to start a worker for ${JSON.stringify(oneLine(port.id, 100))}: ${JSON.stringify(oneLine(params.name ?? "", 100))}.\nIt would read and write files and run programs in that bot's folder.\nInstructions: ${JSON.stringify(oneLine(params.instructions, 400))}${params.model ? `\nModel: ${JSON.stringify(oneLine(params.model, 60))}` : ""}`;
+  /** One card at a time per plugin (G2): a plugin that asks again while one waits is refused, so cards cannot pile up. */
+  private readonly cards = new Set<string>();
+
+  private async card(facts: PluginFacts, botId: string, params: StartParams, sending = false): Promise<boolean> {
+    if (this.cards.has(facts.name)) throw new Error("This plugin already has a worker waiting for your answer. Nothing was started.");
+    const text = `The plugin "${oneLine(facts.name, 100)}" (${facts.identity.slice(0, 12)}, written by a bot) wants to ${sending ? "give a worker new instructions" : "start a worker"} for ${JSON.stringify(oneLine(botId, 100))}: ${JSON.stringify(oneLine(params.name ?? "", 100))}.\nIt would read and write files and run programs in that bot's folder.\nInstructions: ${JSON.stringify(oneLine(params.instructions, 400))}${params.model ? `\nModel: ${JSON.stringify(oneLine(params.model, 60))}` : ""}`;
     let timer: NodeJS.Timeout | undefined;
-    const answer = await Promise.race([
-      this.deps.ask({ text, choices: [{ label: "Allow once" }, { label: "Refuse" }], typed: false }).catch(() => null),
-      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), this.deps.cardWaitMs ?? CARD_WAIT_MS); }),
-    ]);
-    clearTimeout(timer);
-    return !!answer && "index" in answer && answer.index === 0;
+    this.cards.add(facts.name);
+    try {
+      const answer = await Promise.race([
+        this.deps.ask({ text, choices: [{ label: "Allow once" }, { label: "Refuse" }], typed: false }).catch(() => null),
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), this.deps.cardWaitMs ?? CARD_WAIT_MS); }),
+      ]);
+      return !!answer && "index" in answer && answer.index === 0;
+    } finally { clearTimeout(timer); this.cards.delete(facts.name); }
   }
 
-  /** `workers.start`: every check, then the worker. Returns the task id and run. */
-  async start(plugin: string, params: StartParams): Promise<{ taskId: string; run: number }> {
+  /** G1: a plugin the bot wrote works on the bots it made, not on the user's own. */
+  private mayWorkOn(facts: PluginFacts, botId: string) {
+    if (facts.botWritten && !this.deps.world.made?.(facts.name, botId)) throw new Error("A plugin a bot wrote may only start workers on bots it made itself. Nothing was started.");
+  }
+
+  /** The checks before a worker's room is taken: the record is readable, the plugin is allowed, the model is not one that may change spec/, there is room. */
+  private gate(plugin: string, model?: string): PluginFacts {
     if (this.unreadable) throw new Error("The record of the workers plugins started could not be read, so none is started. Nothing was started.");
     const facts = this.allowed(plugin);
-    if (params.model && maySpecWrite(params.model, this.deps.world.specWriters?.() ?? DEFAULT_SPEC_WRITERS)) {
+    if (model && maySpecWrite(model, this.deps.world.specWriters?.() ?? DEFAULT_SPEC_WRITERS)) {
       throw new Error("A plugin's worker may not use a model that may change spec/. Choose another model, or none. Nothing was started.");
     }
     const refused = this.full(plugin);
     if (refused) throw new Error(refused);
-    const port = this.deps.world.workers(params.bot);
-    if (typeof port === "string") throw new Error(port);
+    return facts;
+  }
+
+  /** The card (for a plugin a bot wrote), the room taken, then `go`; the room is given back if `go` fails. Shared by `start` and `admitHeard`. */
+  private async launched(facts: PluginFacts, botId: string, params: StartParams, go: () => Promise<{ task_id: string; run: number }>): Promise<{ taskId: string; run: number }> {
     if (facts.botWritten) {
-      if (!(await this.card(facts, port, params))) throw new Error("You did not allow this worker. Nothing was started.");
+      if (!(await this.card(facts, botId, params))) throw new Error("You did not allow this worker. Nothing was started.");
       // Authority at use: what the card showed is still true, and the room is still there.
-      this.allowed(plugin, facts.identity);
-      const nowFull = this.full(plugin);
+      this.allowed(facts.name, facts.identity);
+      const nowFull = this.full(facts.name);
       if (nowFull) throw new Error(nowFull);
     }
-    const entry: Entry = { plugin, bot: port.id, task: null, at: this.now(), open: true, reported: 0, stopped: false };
+    const entry: Entry = { plugin: facts.name, bot: botId, task: null, at: this.now(), open: true, reported: 0, stopped: false };
     this.entries.push(entry);
     try {
       this.save();
-      const args: Record<string, unknown> = { instructions: params.instructions, name: oneLine(params.name ?? "", 200) || undefined, ...(params.group ? { group: oneLine(params.group, 80) } : {}), ...(params.model ? { model: params.model } : {}), ...(params.effort ? { effort: params.effort } : {}) };
-      const started = await port.start(args);
+      const started = await go();
       entry.task = started.task_id;
       this.save();
       return { taskId: started.task_id, run: started.run };
@@ -160,6 +186,46 @@ export class PluginWorkers {
       try { this.save(); } catch { /* the reservation stays in memory only */ }
       throw error;
     }
+  }
+
+  /** `workers.start`: every check, then the worker. Returns the task id and run. */
+  async start(plugin: string, params: StartParams): Promise<{ taskId: string; run: number }> {
+    const facts = this.gate(plugin, params.model);
+    const port = this.deps.world.workers(params.bot);
+    if (typeof port === "string") throw new Error(port);
+    this.mayWorkOn(facts, port.id);
+    const args: Record<string, unknown> = { instructions: params.instructions, name: oneLine(params.name ?? "", 200) || undefined, ...(params.group ? { group: oneLine(params.group, 80) } : {}), ...(params.model ? { model: params.model } : {}), ...(params.effort ? { effort: params.effort } : {}) };
+    return this.launched(facts, port.id, params, () => port.start(args));
+  }
+
+  /**
+   * F6: a worker the bot's own model starts (`app_handoff`) in a turn that began with `plugin`'s message goes through the checks of
+   * `workers.start`, whatever the message said, and starts as one a plugin started (fewer rights). `run` is the handoff itself.
+   * A handoff this book made (`ADMITTED`) is not checked twice.
+   */
+  async admitHeard<T extends { task_id: string; run: number }>(plugin: string, botId: string, kind: string, args: Record<string, unknown>, run: () => Promise<T>): Promise<T> {
+    if ((args as Record<symbol, unknown>)[ADMITTED] === true) return run();
+    if (kind !== "claude-process") throw new Error("This turn began with a plugin's message, and a plugin's worker must be a Claude-process worker. Nothing was started.");
+    const stray = Object.keys(args).find((key) => !HEARD_KEYS.has(key));
+    if (stray || (args.engine !== undefined && args.engine !== "claude")) throw new Error(`This turn began with a plugin's message: a worker started now takes only instructions, name, group, model and effort ("${stray ?? "engine"}" is not accepted). Nothing was started.`);
+    const text = (key: string) => (typeof args[key] === "string" ? (args[key] as string) : undefined);
+    const params: StartParams = { bot: botId, instructions: text("instructions") ?? text("prompt") ?? text("task") ?? "", name: text("name") ?? text("description"), group: text("group"), model: text("model"), effort: text("effort") };
+    const facts = this.gate(plugin, params.model);
+    const port = this.deps.world.workers(botId);
+    if (typeof port === "string") throw new Error(port);
+    this.mayWorkOn(facts, port.id);
+    args[PLUGIN_STARTED] = true;
+    let started: T | undefined;
+    await this.launched(facts, port.id, params, async () => (started = await run()));
+    return started!;
+  }
+
+  /**
+   * F6: `routines.add` of a plugin that is not shipped. A routine runs later as the bot's own prompt, and what it starts has no card and
+   * no quota, so such a plugin needs what `workers.start` needs (declared and granted), and one a bot wrote may not add one at all.
+   */
+  mayAddRoutine(plugin: string): void {
+    if (this.allowed(plugin).botWritten) throw new Error("A routine can start workers by itself, with no card to ask you first: a plugin a bot wrote may not add one.");
   }
 
   /** The worker this plugin started, or the one answer for "not yours" and "not there" (nothing says which). */
@@ -171,9 +237,15 @@ export class PluginWorkers {
 
   async send(plugin: string, taskId: string, message: string): Promise<{ run: number; how: string }> {
     const entry = this.mine(plugin, taskId);
-    this.allowed(plugin);
+    const facts = this.allowed(plugin);
     const port = this.deps.world.workers(entry.bot);
     if (typeof port === "string") throw new Error(port);
+    // G1: a new instruction is asked about again for a plugin a bot wrote (and only on a bot it made), as a new worker is.
+    if (facts.botWritten) {
+      this.mayWorkOn(facts, port.id);
+      if (!(await this.card(facts, port.id, { bot: port.id, instructions: message }, true))) throw new Error("You did not allow this message to the worker. Nothing was sent.");
+      this.allowed(plugin, facts.identity);
+    }
     // A run into a worker that is idle takes a place again: the same limit as a new one (not the daily count).
     const wasOpen = entry.open;
     if (!wasOpen) {

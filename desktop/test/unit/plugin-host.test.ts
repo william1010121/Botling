@@ -55,7 +55,7 @@ describe("the plugin host", () => {
     expect((await c.chat()).pendingFiles).toEqual([]);
   });
 
-  it("afterReply, bots.onReply, notify, storage and routines.add; a plugin's own env has no core variables", async () => {
+  it("afterReply, bots.onReply, notify and storage; routines.add of a plugin that is not shipped is refused (M7-O04 F6); a plugin's own env has no core variables", async () => {
     const dir = tempDir("plugin-host");
     hostPlugin(dir, "helper", `export function activate(ccb) {
       ccb.hooks.afterReply((m) => m.text + " (checked)");
@@ -64,13 +64,12 @@ describe("the plugin host", () => {
         ccb.notify(bot.name + " replied, " + bots.length + " bots in all: " + bots.map((b) => b.id + "/" + b.role).join(","));
         ccb.storage.set("last", reply);
       });
-      ccb.routines.add("main", "0 9 * * 1", "Monday backup: Push the plugin library to the backup folder");
+      Promise.resolve(ccb.routines.add("main", "0 9 * * 1", "Monday backup: Push the plugin library to the backup folder")).catch(() => {});
       ccb.notify("env " + Object.keys(process.env).filter((k) => /^(BOTLING|FAKE|ELECTRON)/.test(k)).join(",") + "|");
     }`);
     const c = core(dir);
     await until(async () => (await notices(c)).some((text) => text.startsWith("helper: env")), { timeout: 15_000 });
     expect((await notices(c)).find((text) => text.startsWith("helper: env"))).toBe("helper: env |");
-    await until(() => readFileSync(join(dir, "main", "routines.cron"), "utf8").includes("0 9 * * 1 Monday backup"));
     const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "Hi" });
     await until(() => c.of("turn.finished").some((e: any) => e.event.turnId === turnId));
     await until(async () => (await c.chat()).messages.some((m: any) => m.role === "bot" && m.text === "You said: Hi (checked)"));
@@ -80,8 +79,8 @@ describe("the plugin host", () => {
     await until(async () => !(await c.chat()).running);
     await c.call({ type: "chat.send", botId: MAIN, text: "@Maintainer hello" });
     await until(async () => (await notices(c)).some((text) => text.startsWith("helper: Maintainer replied")), { timeout: 15_000 });
-    // A second start adds the same routine once.
-    expect(readFileSync(join(dir, "main", "routines.cron"), "utf8").match(/Monday backup/g)).toHaveLength(1);
+    // A routine runs later as the bot's own prompt, so a plugin that is not shipped is not given one without the permission to orchestrate.
+    expect(existsSync(join(dir, "main", "routines.cron")) ? readFileSync(join(dir, "main", "routines.cron"), "utf8") : "").not.toContain("Monday backup");
   });
 
   it("a plugin that fails to load is turned off and said so; commands run; a killed host comes back", async () => {

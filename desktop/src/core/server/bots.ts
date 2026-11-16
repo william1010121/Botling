@@ -80,6 +80,7 @@ export class CoreBots {
       headConfig: options.headConfig,
       agyConfig: options.agyConfig ? (p, config) => options.agyConfig!(p, { ...config, rules: () => this.host.orchestrationRules() }) : options.agyConfig,
       orchestrationRules: () => this.host.orchestrationRules(),
+      workerAdmit: (kind, args, run) => this.plugins.admitWorker(profile.id, kind, args, run),
       codexConfig: codexConfig ? (p, session) => ({
         ...codexConfig(p, session, threads),
         componentEditor: editorBinding(p, session),

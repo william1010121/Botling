@@ -704,6 +704,19 @@ export class Plugins {
     });
   }
 
+  /** F6 (M7-O04): the plugin (not shipped) whose message each bot last heard, by the bot's id; the user writing to the bot clears it (CoreSend.sendWith). */
+  readonly origins = new Map<string, string>();
+
+  heard(botId: string, plugin: string) {
+    if (!this.shipped(plugin)) this.origins.set(this.options.world.botId?.(botId) ?? botId, plugin);
+  }
+
+  /** What `WorkerCore.handoff` asks (bot/workers.ts `admit`): a worker the bot starts after a plugin's message is checked as that plugin's, else it just starts. Fails closed. */
+  async admitWorker<T extends { task_id: string; run: number }>(botId: string, kind: string, args: Record<string, unknown>, run: () => Promise<T>): Promise<T> {
+    const plugin = this.origins.get(botId);
+    return plugin ? this.workers().admitHeard(plugin, botId, kind, args, run) : run();
+  }
+
   /** A worker's run ended (the core's event): the plugin that started it hears `workerReport`, once. */
   workerEnded(taskId: string, run: number, status: string, report: string) {
     try { if (this.options.world.orchestration) this.workers().ended(taskId, run, status, report); } catch (error) { this.options.world.log(`workerReport not told: ${(error as Error).message}`); }

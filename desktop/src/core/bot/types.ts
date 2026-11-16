@@ -72,6 +72,7 @@ export interface BotOptions {
   /** The instructions for this bot's head (settings may change between wakes). */
   prompts: (engine: Engine, heads: Heads | null) => BotPrompts;
   orchestrationRules?: () => import("../orchestration/default-rules").OrchestrationRules;
+  workerAdmit?: import("../worker-core/core").WorkerCoreOptions["admit"];
   /** A partner's: the bot whose chat it speaks in (set only on the other head of a two-head bot). */
   primary?: Bot;
   /** The head a partner runs. */
