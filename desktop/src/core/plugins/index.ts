@@ -449,7 +449,7 @@ export class Plugins {
           description: plugin.manifest.description?.slice(0, 2_000) ?? null,
           enabled: plugin.enabled,
           failure: failure?.slice(0, 2_000) ?? null,
-          hostState: !ccb?.host ? "none" as const : !plugin.enabled ? "off" as const : plugin.failure ? "failed" as const : heldBack ? "held" as const : this.hostFor(plugin.manifest.name).runs(plugin.manifest.name) ? "running" as const : "starting" as const,
+          hostState: !ccb?.host ? "none" as const : plugin.failure ? "failed" as const : !plugin.enabled ? "off" as const : heldBack ? "held" as const : this.hostFor(plugin.manifest.name).runs(plugin.manifest.name) ? "running" as const : "starting" as const,
           installedFrom: plugin.installedFrom?.slice(0, 2_000) ?? null,
           ...(plugin.builtIn ? { builtIn: true } : {}),
           ...(grant !== null ? { grant } : {}),

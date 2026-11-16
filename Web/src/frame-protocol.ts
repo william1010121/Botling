@@ -61,9 +61,9 @@ export type FrameRequest =
   | { ccb: "hostStatus"; id: number };
 
 /**
- * Where a plugin's program part stands (`ccb.host.status()`): `none` it has no program part; `off` the plugin is switched off;
+ * Where a plugin's program part stands (`ccb.host.status()`): `none` it has no program part; `off` the plugin is switched off by the user;
  * `held` it is not allowed to run yet (Settings › Plugins › Allow not pressed); `starting` allowed, on its way up; `running`;
- * `failed` it failed to load or crashed (the plugin's failure text is in Settings › Plugins).
+ * `failed` it failed to load or crashed, and the app switched it off until its files change (the plugin's failure text is in Settings › Plugins).
  */
 export const HOST_STATES = ["none", "off", "held", "starting", "running", "failed"] as const;
 export type HostState = (typeof HOST_STATES)[number];
