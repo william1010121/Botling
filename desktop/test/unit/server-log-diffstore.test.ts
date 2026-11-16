@@ -12,7 +12,7 @@ import { EventTap } from "../../src/server/effects/tap";
 import {
   appendEntries, ensureStream, evictEntries, hashEntry, LogHub, readEntries, readStream, sameAsStored, verifyStream,
 } from "../../src/server/log";
-import { MAX_DIFFS_PER_BASE } from "../../src/server/log/log-store";
+import { CURRENT_STATE_SQL, LOAD_CHAIN_SQL, MAX_DIFFS_PER_BASE, REBASE_UPDATE_SQL } from "../../src/server/log/log-store";
 import { migrate, MIGRATIONS, type Db } from "../../src/server/store";
 import { openDb } from "../../src/server/store/sqlite";
 import { FakeFe, quickStore, type QuickStore } from "./server-log-helpers";
@@ -312,6 +312,47 @@ describe("a corrupt diff", () => {
     expect((fe.frames[1] as Extract<Message, { t: "snap" }>).seq).toBe(8);
     expect(JSON.stringify(fe.frames)).not.toContain('"path":"/nope"');
     expect(fe.violations).toEqual([]);
+  });
+});
+
+describe("object-key lookups stay on the partial index", () => {
+  // A database migrated to v15 has every okey NULL. The planner then takes the primary key (stream) for
+  // `WHERE stream = ? AND okey = ?` and reads every row of the stream (each with its huge body), which hung botlingd's start
+  // for minutes on a 93k-row stream. `INDEXED BY entries_by_okey` pins the partial index.
+  const PARAMS: Record<string, unknown[]> = {
+    current: [A, "m:x"], chain: [A, "m:x", 1, 100], rebase: [5, A, "m:x", 1, 1],
+  };
+  it("currentState, loadChain and the rebase update use entries_by_okey on a stream whose rows all have okey NULL", () => {
+    const dir = mkdtempSync(join(tmpdir(), "botling-okey-plan-"));
+    const db = openDb(join(dir, "server.db"));
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      migrate(db);
+      db.exec("BEGIN IMMEDIATE");
+      ensureStream(db, A);
+      const row = readStream(db, A)!;
+      const insert = db.prepare("INSERT INTO entries (stream, seq, logId, hlc, kind, body, slot, hash) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)");
+      for (let i = 1; i <= 400; i++) insert.run(A, i, row.logId, `{"c":0,"ms":${i}}`, "message.updated", FILLER, `h${i}`);
+      db.exec("COMMIT");
+      expect(db.prepare("SELECT count(*) AS n FROM entries WHERE stream = ? AND okey IS NULL").get(A)!.n).toBe(400);
+      const plans: [string, string, unknown[]][] = [
+        ["currentState", CURRENT_STATE_SQL, PARAMS.current], ["loadChain", LOAD_CHAIN_SQL, PARAMS.chain], ["rebase update", REBASE_UPDATE_SQL, PARAMS.rebase],
+      ];
+      for (const [name, sql, params] of plans) {
+        const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params as never[]).map((r) => String(r.detail)).join("\n");
+        expect(plan, name).toMatch(/entries_by_okey/);
+        expect(plan, name).not.toMatch(/PRIMARY KEY/);
+      }
+      expect(db.prepare(CURRENT_STATE_SQL).get(A, "m:x")).toBeUndefined(); // a miss is answered from the (empty) index
+    } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("every statement in log-store.ts that filters entries by okey = ? pins the index", () => {
+    const text = readFileSync(join(__dirname, "..", "..", "src", "server/log/log-store.ts"), "utf8");
+    const literals = text.match(/"[^"\n]*"|`[^`]*`/g) ?? [];
+    const byOkey = literals.filter((sql) => /\bentries\b/.test(sql) && /\bokey = \?/.test(sql));
+    expect(byOkey.length).toBeGreaterThanOrEqual(3);
+    expect(byOkey.filter((sql) => !/INDEXED BY entries_by_okey/.test(sql))).toEqual([]);
   });
 });
 
