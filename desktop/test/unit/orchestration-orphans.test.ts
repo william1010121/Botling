@@ -398,7 +398,7 @@ describe("the book keeps the truth when things go wrong", () => {
     ];
     const core = fakeCore();
     core.ledger.set("AT-WORK", { run: 1, running: true, status: "", report: "" });
-    const t = book(core, { text: JSON.stringify(rows) }, { quota: { atOnce: 4, perDay: 100 } });
+    const t = book(core, { text: JSON.stringify(rows) }, { quota: { atOnce: 4, perDay: 100 }, taken: false });
     await t.workers.start("p", params);
     const kept = t.rows().map((entry) => entry.task);
     expect(kept.length).toBe(1_000);
@@ -462,7 +462,7 @@ describe("the book keeps the truth when things go wrong", () => {
 describe("the two event checks of the review", () => {
   it("R8: a plugin's workerReport listener hears only what carries its own name as startedBy", async () => {
     const dir = tempDir("orphans-api");
-    const loaded = newLoaded({ name: "needy", storageDir: join(dir, "storage") } as HostPluginSpec);
+    const loaded = newLoaded({ name: "needy", version: "1.0.0", main: join(dir, "host.mjs"), fingerprint: "f", settings: {}, storageDir: join(dir, "storage") } satisfies HostPluginSpec);
     const api = createApi({ request: async () => null, notify: () => {}, announceLater: () => {}, announceNow: () => {} }, loaded);
     const heard: unknown[] = [];
     api.events.on("workerReport", (data) => { heard.push(data); });
