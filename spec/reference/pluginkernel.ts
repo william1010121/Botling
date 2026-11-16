@@ -199,7 +199,7 @@ export function violations(s: State, cfg: Config): string[] {
   if (!PLUGINS.every((p) => s.state[p] !== "absent" || (s.regs[p].length === 0 && s.pending[p] === 0))) out.push("NoResidue");
   if (!PLUGINS.every((p) => s.regs[p].every((r) => r.kind !== "slot" || (s.state[p] !== "absent" && s.state[SLOT_OWNER[r.t as Slot]] !== "absent")))) out.push("NoOrphan");
   if (!PLUGINS.every((p) => s.state[p] !== "active" || providers(p, bug).every((q) => s.state[q] === "active"))) out.push("DependencyGuard");
-  if (!PLUGINS.every((p) => s.state[p] !== "active" || owners(p).every((q) => s.state[q] === "active"))) out.push("OwnerActive");
+  if (!PLUGINS.every((p) => !isLive(s.state[p]) || owners(p).every((q) => s.state[q] === "active"))) out.push("OwnerActive");
   const teardown = PLUGINS.every((p) => s.state[p] !== "unloading" || bug === "failstops" || (
     dependents(p, bug).filter((q) => q !== p).every((q) => !isLive(s.state[q]))
     && s.undoing[p].every((r, i) => s.regs[p][i] !== undefined && sameReg(r, s.regs[p][i]!))));
@@ -207,9 +207,9 @@ export function violations(s: State, cfg: Config): string[] {
   return out;
 }
 
-/** The model's action property ClosedUnload, for one step from `s` to `n`: nothing registers while unloading or absent. */
+/** The model's action property ClosedUnload, for one step from `s` to `n`: nothing registers once asked to unload (K4), while unloading or absent. */
 export function stepViolations(s: State, n: State): string[] {
-  return PLUGINS.every((p) => !(s.state[p] === "unloading" || s.state[p] === "absent") || n.regs[p].length <= s.regs[p].length) ? [] : ["ClosedUnload"];
+  return PLUGINS.every((p) => !(s.state[p] === "unloading" || s.state[p] === "absent" || s.want[p] === "unload") || n.regs[p].length <= s.regs[p].length) ? [] : ["ClosedUnload"];
 }
 
 // MARK: What can be seen from outside

@@ -32,11 +32,12 @@
          what it depends on is back, after a swap or a later load of the provider; before, only after a swap.
      K4  An instance asked to unload accepts no new registration (kernel.ts: the instance is "unloading" from the
          request on, while it waits for its dependents): Register and RegisterAsyncStart need Open(p), and an async
-         registration that settles after the request is undone at once.
+         registration that settles after the request is undone at once. ClosedUnload covers the request too.
      K5  A plugin starts loading and becomes active only while the owner of every slot it contributes to is active
          (services.ts checkCanLoad, checkCanActivate; K2 only kept it from loading while the owner was leaving), and a
-         load request brings those owners too (Kernel.dependencyGraph). New invariant OwnerActive (the M7-11a review's
-         follow-up, for declarations installed before the load; installing an owner late is not modelled).
+         load request brings those owners too (Kernel.dependencyGraph). New invariant OwnerActive, while loading as well as active (the
+         M7-11a review's follow-up, for declarations installed before the load; installing an owner late is not
+         modelled).
 
    PluginKernel.cfg is the CI size (one registration per plugin). PluginKernel_case_full.cfg (two, so undo order
    matters) runs by hand: `spec/tools/tlc.sh PluginKernel.tla -config PluginKernel_case_full.cfg`.
@@ -231,15 +232,17 @@ NoOrphan == \A p \in Plugins : \A r \in Range(regs[p]) :
               r.kind = "slot" => state[p] # "absent" /\ state[SlotOwner[r.t]] # "absent"
 \* P3: an active plugin's required services each have an active provider.
 DependencyGuard == \A p \in Plugins : state[p] = "active" => \A q \in Providers(p) : state[q] = "active"
-\* K5: an active plugin's slot owners are active (no contribution of an active plugin waits for its slot).
-OwnerActive == \A p \in Plugins : state[p] = "active" => \A q \in Owners(p) : state[q] = "active"
+\* K5: a loading or active plugin's slot owners are active (it loads only while they are, and they leave only after it,
+\* so no contribution waits for its slot).
+OwnerActive == \A p \in Plugins : state[p] \in Live => \A q \in Owners(p) : state[q] = "active"
 \* P4: a provider runs undos only while no dependent is loading or active (and the stack is popped from the top, so
 \* what is left registered is exactly what is left to undo).
 TeardownOrder == \A p \in Plugins : state[p] = "unloading" /\ Bug # "failstops" =>
                    /\ \A q \in Dependents(p) \ {p} : state[q] \notin Live
                    /\ SubSeq(regs[p], 1, Len(undoing[p])) = undoing[p]
-\* P5: nothing registers while a plugin unloads or is absent.
-ClosedUnload == [][\A p \in Plugins : state[p] \in {"unloading", "absent"} => Len(regs'[p]) <= Len(regs[p])]_vars
+\* P5: nothing registers once a plugin is asked to unload (K4), while it unloads, or while it is absent.
+ClosedUnload == [][\A p \in Plugins : state[p] \in {"unloading", "absent"} \/ want[p] = "unload" =>
+                                        Len(regs'[p]) <= Len(regs[p])]_vars
 
 (* Liveness (P6) *)
 
