@@ -259,6 +259,7 @@ export class BotWorkers {
         } catch (error) { this.log(`claude workers: no head config: ${(error as Error).message}`); return null; }
       },
       cwd: () => this.owner.options.worktree?.()?.cwd ?? this.commandFolder,
+      rules: () => this.options.orchestrationRules?.(),
       subagentModel: () => this.owner.choices().subagentModel,
       subagentEffort: () => this.owner.choices().subagentEffort,
       defaultMachine: () => this.owner.choices().workerMachine,

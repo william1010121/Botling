@@ -78,7 +78,8 @@ export class CoreBots {
       ...(options.fetch ? { fetch: options.fetch } : {}),
       deferStartup: options.deferStartup && !this.activated,
       headConfig: options.headConfig,
-      agyConfig: options.agyConfig,
+      agyConfig: options.agyConfig ? (p, config) => options.agyConfig!(p, { ...config, rules: () => this.host.orchestrationRules() }) : options.agyConfig,
+      orchestrationRules: () => this.host.orchestrationRules(),
       codexConfig: codexConfig ? (p, session) => ({
         ...codexConfig(p, session, threads),
         componentEditor: editorBinding(p, session),

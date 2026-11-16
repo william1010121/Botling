@@ -15,6 +15,7 @@ export const BUILTIN_RULES_PLUGIN = "botling.orchestration";
 export const RULES_TIME_LIMIT_MS = 3_000;
 export const RULES_NOTICE = "The orchestration rules plugin did not answer in time or failed; Botling is using its own rules.";
 const FILE_MAX = 64 * 1024, SLOT_MAX = 2_000, SLOTS_MAX = 12_000;
+const FORBIDDEN_SLOTS: ReadonlySet<string> = new Set(["workerModel", "workerEffort", "workerEngine", "model", "effort", "engine"]);
 
 export type Slots = ReadonlyMap<string, string>;
 /** Asks one plugin for its slots; rejects when it cannot answer. */
@@ -37,6 +38,9 @@ export function parseSlots(bytes: Buffer): Slots {
   const value = JSON.parse(bytes.toString("utf8")) as { format?: unknown; slots?: unknown } | null;
   const raw = value?.slots;
   if (value?.format !== 1 || !raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("rules.json is not format 1.");
+  // F3: a plugin gives sentences, never a worker's model, effort or engine: no other key is accepted, at the top or as a slot.
+  const stray = Object.keys(value).find((key) => key !== "format" && key !== "slots") ?? Object.keys(raw).find((id) => FORBIDDEN_SLOTS.has(id));
+  if (stray) throw new Error(`rules.json: "${stray}" is not accepted (a plugin cannot choose a worker's model, effort or engine).`);
   let total = 0;
   const slots = new Map<string, string>();
   for (const [id, text] of Object.entries(raw)) {
@@ -79,7 +83,8 @@ export function withSlots(base: OrchestrationRules, slots: Slots): Orchestration
     onRequestLine: (caps) => all(base.onRequestLine(caps)),
     workerNote: (caps) => all(base.workerNote(caps)),
     workerRules: () => { const rules = base.workerRules(); return { lookup: apply(rules.lookup), reportBlock: apply(rules.reportBlock) }; },
-    workerDefaults: (coordinator) => base.workerDefaults(coordinator),
+    // Not yet connected to the engine choice (worker-core `prepared.engine ?? adapter.engine`): until it is, only the coordinator's own engine is accepted, and nothing but it (never a model or effort, F3).
+    workerDefaults: (coordinator) => ({ workerEngine: coordinator }),
   };
 }
 

@@ -12,10 +12,17 @@ import { CoreSend } from "../../src/core/server/send";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
 import { orchestrationPlugin, writeSettings } from "../../src/core/settings";
-import { DEFAULT_ORCHESTRATION_RULES as DEFAULT, SECTION_IDS, type Fragment, type OrchestrationRules } from "../../src/core/orchestration/default-rules";
+import { DEFAULT_ORCHESTRATION_RULES as DEFAULT, renderFragments, SECTION_IDS, type Fragment, type OrchestrationRules } from "../../src/core/orchestration/default-rules";
 import { BUILTIN_RULES_SHA256 } from "../../src/core/orchestration/pinned-hash";
-import { builtinSource, OrchestrationRulesBook, parseSlots, RULES_NOTICE, RULES_TIME_LIMIT_MS, withSlots, type Slots } from "../../src/core/orchestration/plugin-rules";
+import { builtinSource, chosenSource, OrchestrationRulesBook, parseSlots, RULES_NOTICE, RULES_TIME_LIMIT_MS, withSlots, type Slots } from "../../src/core/orchestration/plugin-rules";
 import { DELEGATION_CAPS, delegationPolicy, type DelegationCaps } from "../../src/core/prompts/delegation";
+import { claudeWorkerPolicy } from "../../src/core/agent/claude-workers";
+import { AgyWorkers, type AgyWorkerHead } from "../../src/core/agent/agy-workers";
+import type { AgyConfig } from "../../src/core/agent/agy";
+import { agyWorkerPolicy } from "../../src/core/prompts-agy";
+import { Core as RealCore } from "../../src/core/server";
+import { MAIN_BOT_ID } from "../../src/core/store/records";
+import { claudeHarness } from "../claude-workers-fake";
 import { desktop, tempDir } from "../helpers";
 
 const BUILT = join(desktop, "builtin-plugins");
@@ -243,6 +250,149 @@ describe("who can choose the rules", () => {
     expect(h.send.prompts(PROFILE, "codex")).toEqual(fixture({ builtIns: null }).send.prompts(PROFILE, "codex"));
     expect(bot.notices).toEqual([]);
     expect(asked).toEqual([]); // the registry (its on/off, its library) was not asked for it
+  });
+});
+
+/** A set whose every member answers a marked sentence of its own: a seam that is not wired to the set it was given shows the default text instead. */
+const MARK = (id: string): Fragment[] => [{ id, kind: "P", text: `<<${id}>>` }];
+const MARKED: OrchestrationRules = {
+  section: (id) => MARK(`section.${id}`), claudeLine: () => MARK("claudeLine"), claudeMainLine: () => MARK("claudeMainLine"), onRequestLine: () => MARK("onRequestLine"),
+  workerNote: () => MARK("workerNote"), workerRules: () => ({ lookup: MARK("lookup")[0], reportBlock: MARK("reportBlock")[0] }), workerDefaults: DEFAULT.workerDefaults,
+};
+
+describe("a rules set that is not core's reaches every seam (M7-O02 review MF-MJ)", () => {
+  const prompts = (profile: Partial<BotProfile> & { delegation?: string }, engine: "claude" | "codex" | "agy") => {
+    const h = fixture({ builtIns: null });
+    (h.send as unknown as { madeRules: unknown }).madeRules = { current: () => MARKED, refresh: async () => {} };
+    return h.send.prompts({ ...PROFILE, ...profile } as BotProfile, engine);
+  };
+
+  it("CoreSend.prompts gives the set to the Codex coordinator (its sections) and to its workers' instructions (lookup and the Files touched block)", () => {
+    const got = prompts({}, "codex");
+    expect(got.system).toContain("<<section.header>>");
+    expect(got.system).not.toContain("App-owned");
+    expect(got.codexWorkerSystem).toContain("- <<lookup>>");
+    expect(got.codexWorkerSystem).toContain("- <<reportBlock>>");
+    expect(got.codexWorkerSystem).not.toContain("Files touched");
+  });
+
+  it("gives it to the Claude coordinator's line, which is the one place its default line was swapped for the set's", () => {
+    const got = prompts({ role: "manager" }, "claude").system;
+    expect(got).toContain("<<claudeLine>>");
+    expect(got).not.toContain("Hand all real work");
+  });
+
+  it("gives it to the main bot's extra line, and the onRequest bot's replacement line in place of the coordinator's", () => {
+    expect(prompts({ role: "main" }, "claude").system).toContain("<<claudeMainLine>>");
+    expect(prompts({ role: "manager" }, "claude").system).not.toContain("<<claudeMainLine>>");
+    const onRequest = prompts({ role: "manager", delegation: "onRequest" } as never, "claude").system;
+    expect(onRequest).toContain("<<onRequestLine>>");
+    expect(onRequest).not.toContain("<<claudeLine>>");
+  });
+
+  it("gives it to the Antigravity coordinator's own branch and to its workers' instructions", () => {
+    const got = prompts({}, "agy");
+    expect(got.system).toContain("<<section.header>>");
+    expect(got.system).not.toContain("App-owned");
+    expect(got.codexWorkerSystem).toContain("<<lookup>>");
+    expect(got.codexWorkerSystem).toContain("<<reportBlock>>");
+  });
+
+  it("a set's own worker note is what the Claude line, the onRequest line and the notes section carry (not core's)", () => {
+    const noted: OrchestrationRules = { ...DEFAULT, workerNote: () => MARK("NOTE") };
+    for (const caps of CAPS) {
+      for (const text of [renderFragments(noted.claudeLine(caps)), renderFragments(noted.onRequestLine(caps)), renderFragments(noted.section("notes", caps, { engine: "claude", worktree: null }))]) {
+        expect(text).toContain("<<NOTE>>");
+        expect(text).not.toContain("app_worker_note");
+      }
+    }
+    // and through the rules a plugin gives: its answer for the note reaches the lines that carry it
+    const given = withSlots(DEFAULT, slots({ "note.3": "NOTE3 from a plugin" }));
+    expect(renderFragments(given.claudeLine(DELEGATION_CAPS.claude))).toContain("NOTE3 from a plugin");
+    expect(renderFragments(given.onRequestLine(DELEGATION_CAPS.claude))).toContain("NOTE3 from a plugin");
+  });
+});
+
+describe("a rules set reaches the workers' own instructions", () => {
+  it("a Claude worker starts with the set's lookup and report block, and core's when none is given", async () => {
+    expect(claudeWorkerPolicy(MARKED)).toContain("<<lookup>>");
+    expect(claudeWorkerPolicy(MARKED)).toContain("<<reportBlock>>");
+    expect(claudeWorkerPolicy(MARKED)).not.toContain("Files touched");
+    const h = claudeHarness();
+    await h.workers.tool("app_handoff", { instructions: "first" });
+    expect(h.heads[0]!.config.systemPrompt).toBe(claudeWorkerPolicy());
+    (h.workers as unknown as { options: { rules?: () => OrchestrationRules | undefined } }).options.rules = () => MARKED;
+    await h.workers.tool("app_handoff", { instructions: "second" });
+    expect(h.heads[1]!.config.systemPrompt).toBe(claudeWorkerPolicy(MARKED));
+    (h.workers as unknown as { options: { rules?: () => OrchestrationRules | undefined } }).options.rules = () => undefined;
+    await h.workers.tool("app_handoff", { instructions: "third" });
+    expect(h.heads[2]!.config.systemPrompt).toBe(claudeWorkerPolicy());
+    await h.workers.close();
+  });
+
+  it("an Antigravity worker starts with the set's lookup and report block, and core's when none is given", async () => {
+    const home = tempDir("o04-agy"), starts: AgyConfig[] = [];
+    const config: AgyConfig = { command: "not-executed", cwd: home, acpHome: home, sessionId: "owner", resume: false, systemPrompt: "c", workerInstructions: "w" };
+    const m = new AgyWorkers(config, () => {}, () => {}, (made) => { starts.push(made); return { start() {}, send() {}, answer() {}, async terminate() { return { killed: [], forced: false }; } } as AgyWorkerHead; });
+    await m.tool("app_handoff", { instructions: "first" });
+    expect(starts[0]!.systemPrompt).toContain(agyWorkerPolicy());
+    config.rules = () => MARKED;
+    await m.tool("app_handoff", { instructions: "second" });
+    expect(starts[1]!.systemPrompt).toContain(agyWorkerPolicy(MARKED));
+    expect(starts[1]!.systemPrompt).toContain("<<lookup>> <<reportBlock>>");
+    expect(starts[1]!.systemPrompt).not.toContain("Files touched");
+    await m.close();
+  });
+
+  it("the app's rules go from the core to its bots: the Antigravity config and the Claude workers read them each time", async () => {
+    const dir = tempDir("o04-core-real"), seen = { set: DEFAULT as OrchestrationRules };
+    const core = new RealCore({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, agyConfig: (_p, c) => ({ ...c, transport: "acp", command: "/never-spawn" }), emit() {}, deferStartup: true,
+      routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
+    try {
+      vi.spyOn(core, "orchestrationRules").mockImplementation(() => seen.set);
+      const main = (core as unknown as { bots: Map<string, Bot> }).bots.get(MAIN_BOT_ID) as unknown as { profile: BotProfile; options: { agyConfig: (p: BotProfile, c: AgyConfig) => AgyConfig; orchestrationRules: () => OrchestrationRules }; ensureClaudeWorkers(): { options: { rules(): OrchestrationRules | undefined } } };
+      const agy = () => main.options.agyConfig(main.profile, { command: "agy", cwd: dir, sessionId: "s", resume: false });
+      expect(agy().rules?.()).toBe(DEFAULT);
+      seen.set = MARKED;
+      expect(agy().rules?.()).toBe(MARKED);
+      expect(agy().transport).toBe("acp"); // the wrapper still runs the app's own config
+      expect(main.options.orchestrationRules()).toBe(MARKED);
+      const claude = main.ensureClaudeWorkers();
+      expect(claude.options.rules()).toBe(MARKED);
+      seen.set = DEFAULT;
+      expect(claude.options.rules()).toBe(DEFAULT);
+    } finally { vi.restoreAllMocks(); await core.shutdown(); }
+  });
+});
+
+describe("a plugin gives sentences, never a worker's model, effort or engine (F3)", () => {
+  it("withSlots hands out only the coordinator's own engine, whatever the set under it says, and nothing else", () => {
+    const greedy: OrchestrationRules = { ...DEFAULT, workerDefaults: () => ({ workerEngine: "codex", workerModel: "opus", workerEffort: "max" } as never) };
+    for (const coordinator of ENGINES) expect(withSlots(greedy, slots({})).workerDefaults(coordinator)).toEqual({ workerEngine: coordinator });
+  });
+
+  it("rules.json carries no worker model, effort or engine: a top-level key or a slot of that name refuses the whole answer", () => {
+    const keys = ["workerModel", "workerEffort", "workerEngine", "defaults"];
+    for (const key of keys) expect(() => parseSlots(Buffer.from(JSON.stringify({ format: 1, slots: {}, [key]: "opus" }))), key).toThrow(/not accepted/);
+    for (const key of ["workerModel", "workerEffort", "workerEngine"]) expect(() => parseSlots(answer({ "followUp.3": "ok", [key]: "opus" })), key).toThrow(/not accepted/);
+    expect(() => parseSlots(answer({ "followUp.3": "ok" }))).not.toThrow();
+    const walk = (value: unknown): string[] => value && typeof value === "object" ? Object.entries(value).flatMap(([k, v]) => [k, ...walk(v)]) : [];
+    const shipped = [JSON.parse(readFileSync(RULES_FILE, "utf8")), JSON.parse(readFileSync(join(BUILT, "botling.orchestration", "package.json"), "utf8"))];
+    for (const file of shipped) expect(walk(file).filter((k) => /^worker(Model|Effort|Engine)$/.test(k))).toEqual([]);
+    expect(shipped[1].ccb).toEqual({});
+  });
+
+  it("a chosen plugin whose rules.json or manifest names a worker model or effort is refused whole; its manifest's own `contributes` is not read for rules", async () => {
+    const dir = tempDir("o04-f3");
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "acme.orchestration", version: "1.0.0", ccb: { contributes: { orchestration: { slots: { "followUp.3": "FROM MANIFEST" }, defaults: { workerModel: "opus", workerEffort: "max" } } } } }));
+    writeFileSync(join(dir, "rules.json"), JSON.stringify({ format: 1, slots: { "followUp.3": "from file" }, workerModel: "opus" }));
+    await expect(chosenSource({ folder: dir, enabled: true })()).rejects.toThrow(/not accepted/);
+    writeFileSync(join(dir, "rules.json"), JSON.stringify({ format: 1, slots: { "followUp.3": "from file" } }));
+    const book = new OrchestrationRulesBook(chosenSource({ folder: dir, enabled: true }));
+    await book.refresh();
+    expect(renderFragments(book.current().section("followUp", DELEGATION_CAPS.claude, { engine: "claude", worktree: null }))).toContain("from file");
+    expect(renderFragments(book.current().section("followUp", DELEGATION_CAPS.claude, { engine: "claude", worktree: null }))).not.toContain("FROM MANIFEST");
+    expect(book.current().workerDefaults("agy")).toEqual({ workerEngine: "agy" });
   });
 });
 
