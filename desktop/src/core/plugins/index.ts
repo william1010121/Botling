@@ -48,6 +48,7 @@ import { writeFileAtomic } from "../durable/atomic";
 import { isRegularFile, type BotInfo, type LineContentRef, type MessageDecoration, type PluginStatusItem, type PluginsOptions, type SnapshotFile } from "./types";
 import { materializeSnapshot, pruneSnapshots, readPluginSnapshot, SERVER_PART_HELD_NOTICE } from "./snapshot";
 import type { PluginEventName } from "./request-params";
+import type { StartedBy } from "../worker-core/started-by";
 
 // Moved out in M7-S12; every name still comes from here.
 export type { BotInfo, AppQuestion, AppAnswer, PluginStatusItem, PluginChat, MessageDecoration, EngineCli, SessionBot, NoteComponent, NoteComponents, NoteCardState, LineContentRef, PluginWorld, PluginsOptions } from "./types";
