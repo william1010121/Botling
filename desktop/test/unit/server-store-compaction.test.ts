@@ -13,6 +13,7 @@ import { settingsView } from "../../src/core/settings";
 import { GENESIS_HASH, type StreamId } from "../../src/protocol";
 import { appendEntries, ensureStream, LogHub, readEntries, readSnap, readStream, verifyStream, type AppendItem } from "../../src/server/log";
 import { Botlingd } from "../../src/server/botlingd";
+import type { BotlingdOptions } from "../../src/server/botlingd-cluster";
 import { pruneInBackground, PRUNED_KEY, runStartupVacuum, startBackgroundPrune, VACUUMED_KEY, type CompactionOptions, type PruneDeps, type PruneReport } from "../../src/server/store/compaction";
 import { migrate, openServerStore, Writer, type Db, type WriterOptions } from "../../src/server/store";
 import { openDb } from "../../src/server/store/sqlite";
@@ -523,7 +524,7 @@ describe("botlingd: the prune runs after the start, then the next start VACUUMs"
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
     const dataDir = join(root, "data");
     mkdirSync(dataDir, { recursive: true });
-    const options = (logs: string[], compaction: CompactionOptions & { delayMs?: number }) => ({
+    const options = (logs: string[], compaction: BotlingdOptions["compaction"]) => ({
       env: botlingdEnv(dataDir, { BOTLING_SERVER_PORT: "off", BOTLING_SERVER_BACKUP_CHECK_MS: "0" }),
       outDir: join(desktop, "out"),
       log: (text: string) => logs.push(text),
