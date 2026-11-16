@@ -8,6 +8,7 @@ import { z } from "zod";
 import { findConflict, legacyKey } from "../../contract/shortcuts";
 import { commandSurfaces } from "./commands";
 import { ofKind, type Contribution } from "./contributions";
+import { readDepBoard } from "./dep-board";
 import { title, type JSONValue } from "./manifest";
 import { mustOwnNote } from "./plugin-owns";
 import type { InstalledPlugin, PluginRegistry } from "./registry";
@@ -318,6 +319,10 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "keybindings.list":
       this.asked(z.object({ plugin: str(214) }), params);
       return this.keybindings();
+    case "plugins.deps":
+      // Read only, for any plugin: who depends on whom (botling.deps's board). Names, versions, on or off and kernel fields; never a setting, a secret or where a plugin came from.
+      this.asked(PluginOnly, params);
+      return readDepBoard(this.registry, this.contributions());
     case "keybindings.set": {
       const { plugin, data } = this.asked(KeyParams, params);
       const name = plugin.manifest.name;

@@ -313,6 +313,26 @@ export interface UsageApi {
   view(): Promise<UsageView>;
 }
 
+/** One plugin on the dependency board (`plugins.deps`; desktop/src/core/plugins/dep-board.ts is the source of these shapes). `app`: the app's own page, not a plugin. */
+export interface DepNode {
+  name: string; title: string; version: string; enabled: boolean; builtIn: boolean; failure: string | null; app: boolean;
+  /** Whether its manifest has kernel fields; the lists below are empty for a plugin without them. */
+  declared: boolean;
+  provides: { services: string[]; slots: string[] }; requires: string[]; uses: string[];
+  /** The slots it fills now (new names), while it is on. */
+  fills: string[];
+}
+/** An arrow from the plugin that needs a service to one that provides it; `live`: both are on. */
+export interface DepEdge { from: string; to: string; service: string; kind: "requires" | "uses"; live: boolean }
+/** A service an enabled plugin requires that no enabled plugin provides (`offProviders`: plugins that do, but are off). */
+export interface DepMissing { plugin: string; service: string; offProviders: string[] }
+export interface DepSlot { slot: string; group: "view" | "menu" | "status" | "hook" | "other"; fills: string[] }
+export interface DepBoard { plugins: DepNode[]; edges: DepEdge[]; missing: DepMissing[]; slots: DepSlot[] }
+export interface PluginsApi {
+  /** Who depends on whom among the plugins, read only: every plugin's name, version, on or off, services, slots and the arrows between them. */
+  deps(): Promise<DepBoard>;
+}
+
 // ── Sessions (plugin-extraction.md §3.2 #2): which folder a bot's session starts in, for built-in plugins ──
 /** Where a bot's session starts (`cwd`, absolute), what else it may use there (`addDirs`) and the words it hears at each wake (`note`, appended after the app's briefing). */
 export interface SessionFolder { cwd: string; addDirs?: string[]; note?: string }

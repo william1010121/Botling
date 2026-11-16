@@ -1,0 +1,26 @@
+{
+  "name": "botling.deps",
+  "displayName": "Plugin dependencies",
+  "version": "1.0.0",
+  "description": "A read-only board of who depends on whom among the plugins: every plugin (built in and installed) with its version and whether it is on, the services it provides, requires or uses, the screen slots it fills, and arrows from each plugin to the ones that provide what it needs, with a missing provider in red. It only looks; it never turns anything on or off.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "web": "ui.js",
+    "host": "main.js",
+    "contributes": {
+      "views": [
+        {
+          "id": "botling.deps.board",
+          "title": "Plugin dependencies",
+          "where": "settings.section",
+          "after": "plugins",
+          "terms": "plugin plugins dependency dependencies depends requires uses provides services slots graph board who needs whom missing provider"
+        }
+      ]
+    }
+  }
+}

@@ -22,6 +22,7 @@ const sheets = [
   "desktop/builtin-plugins/botling.catchup/catchup.css",
   "desktop/builtin-plugins/botling.chat-extras/src/chat-extras.css",
   "desktop/builtin-plugins/botling.component-studio/studio.css",
+  "desktop/builtin-plugins/botling.deps/src/deps.css",
   "desktop/builtin-plugins/botling.git/src/git.css",
   "desktop/builtin-plugins/botling.routines/src/routines.css",
   "desktop/builtin-plugins/botling.terminal/src/terminal.css",

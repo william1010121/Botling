@@ -3,7 +3,7 @@ import { Children, type ChildHandle, type ExecOptions, type ExecResult, type Spa
 import type {
   AppApi, AppSettingKey, BotInfo, BotNote, CardsApi, ChatData, CommandRun, ContentRef, Dispose, EngineCli, Incoming, JSONValue, Keybinding,
   MessageDecoration, NewBot, NoteAsset, NoteCardState, NoteComponent, NoteLocalized, NoteOutline, NoteParsed, NoteRoutePicks, NoteSave, Outgoing,
-  PluginEventName, PluginEvents, ReplyTag, RoutinesList, SessionsApi, StatusItem, StudioApi, UsageApi, WorkspaceApi,
+  PluginEventName, PluginEvents, PluginsApi, ReplyTag, RoutinesList, SessionsApi, StatusItem, StudioApi, UsageApi, WorkspaceApi,
 } from "./api-types";
 import type { WORKSPACE_EVENT } from "./api-types";
 
@@ -105,6 +105,8 @@ export interface BotlingApi {
   };
   workspace: WorkspaceApi;
   usage: UsageApi;
+  /** The plugins and who depends on whom (read only, any plugin). */
+  plugins: PluginsApi;
   sessions: SessionsApi;
   /** The components a chat shows and their commands; needs the "cards" permission, built-in plugins only. */
   cards: CardsApi;

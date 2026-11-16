@@ -1,0 +1,63 @@
+/* botling.deps's styles: the settings page rules of the app (as botling.usage keeps them for its frame) and the board's own, all from
+   the app's tokens (Web/src/tokens.css, put before these in the frame), so the look follows the dark and light themes. */
+.settings-group { margin-top: 14px; }
+.settings-group h3 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 0 6px 4px; }
+.settings-card { background: var(--side); border: 1px solid var(--line); border-radius: 10px; padding: 4px 12px; }
+.settings-note { color: var(--faint); font-size: 12px; margin: 4px 4px 0; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.settings-row:last-child { border-bottom: 0; }
+
+.dep-summary { margin: 0 4px 2px; }
+.dep-ok { color: var(--green); }
+.dep-bad { color: var(--error); }
+.dep-none { color: var(--faint); font-size: 12px; }
+.dep-pad { padding: 10px 0; }
+.dep-scroll { overflow-x: auto; padding: 8px 0; }
+.dep-graph { display: block; font-size: 11px; }
+.dep-graph text { fill: var(--muted); }
+
+.dep-node rect { fill: var(--card); stroke: var(--card-line); stroke-width: 1; }
+.dep-node .dep-node-name { fill: var(--text); font-size: 12.5px; }
+.dep-node .dep-node-sub { fill: var(--faint); font-size: 10.5px; }
+.dep-node-app rect { stroke: var(--accent-line); fill: var(--info-bg); }
+.dep-node-off rect { stroke-dasharray: 4 3; }
+.dep-node-off .dep-node-name { fill: var(--faint); }
+.dep-node-missing rect { fill: var(--stale-bg); stroke: var(--error); stroke-dasharray: 4 3; }
+.dep-node-missing .dep-node-name, .dep-node-missing .dep-node-sub { fill: var(--error); }
+
+.dep-edge path { stroke-width: 1.5; }
+.dep-edge-ok path { stroke: var(--blue); }
+.dep-edge-off path { stroke: var(--faint); opacity: .6; }
+.dep-edge-bad path { stroke: var(--error); stroke-width: 2; }
+.dep-edge-uses path { stroke-dasharray: 5 4; }
+.dep-edge-bad text { fill: var(--error); }
+.dep-head-ok { fill: var(--blue); }
+.dep-head-off { fill: var(--faint); }
+.dep-head-bad { fill: var(--error); }
+
+.dep-gaps { list-style: none; margin: 4px 0 8px; padding: 0; }
+.dep-gap { background: var(--stale-bg); border: 1px solid var(--error); border-radius: 8px; color: var(--soft-text); font-size: 12px; padding: 6px 10px; margin-top: 6px; }
+.dep-gap code { color: var(--error); }
+
+.dep-plugin { padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.dep-plugin:last-child { border-bottom: 0; }
+.dep-plugin-off .dep-plugin-name { color: var(--faint); }
+.dep-plugin-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dep-plugin-name { font-weight: 500; }
+.dep-plugin-id { color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.dep-plugin-meta { color: var(--faint); font-size: 11px; margin-left: auto; }
+.dep-state { font-size: 11px; border-radius: 6px; padding: 1px 7px; background: var(--chip); }
+.dep-state-on { color: var(--green); }
+.dep-state-off { color: var(--faint); }
+.dep-lines { margin-top: 5px; display: flex; flex-direction: column; gap: 4px; }
+.dep-line { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.dep-key { color: var(--faint); font-size: 11px; width: 62px; flex-shrink: 0; }
+.dep-chip { font-size: 11.5px; border-radius: 6px; padding: 1px 7px; background: var(--chip); color: var(--soft-text); }
+.dep-requires { background: var(--accent-bg); color: var(--link); }
+.dep-uses { background: var(--chip); color: var(--muted); border: 1px dashed var(--strong-line); }
+.dep-provides { background: var(--done-bg); color: var(--verify); }
+.dep-missing { background: var(--stale-bg); color: var(--error); border: 1px solid var(--error); }
+
+.dep-slot { padding: 6px 0; align-items: baseline; }
+.dep-slot-name { font-size: 12.5px; color: var(--text); min-width: 150px; }
+.dep-slot-fills { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
