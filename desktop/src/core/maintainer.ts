@@ -394,6 +394,11 @@ export class MaintainerDesk {
     });
   }
 
+  /** The one-click update (plugin-store.ts, asks no more than the running version): the same install as the card's "Install", with no question. Null when done, else why not. */
+  installNow(proposal: InstallProposal): string | null {
+    return this.finishInstall(proposal);
+  }
+
   private get libraryFolder() { return join(this.deps.root, "plugins"); }
   /** Where the version an install replaced is kept (one per plugin), for Revert. */
   private previousFolder(name: string) { return join(this.deps.root, "plugin-previous", name); }
@@ -407,6 +412,16 @@ export class MaintainerDesk {
       return { version: typeof record.version === "string" ? record.version : "?", source: typeof record.source === "string" ? record.source : null };
     } catch {
       return { version: "?", source: null };
+    }
+  }
+
+  /** The catalog hash kept with the previous version (its record's `sha256`); null: none. */
+  private previousSha(name: string): string | null {
+    try {
+      const record = JSON.parse(readFileSync(this.previousRecord(name), "utf8")) as { sha256?: unknown };
+      return typeof record.sha256 === "string" ? record.sha256 : null;
+    } catch {
+      return null;
     }
   }
 
@@ -433,13 +448,13 @@ export class MaintainerDesk {
         rmSync(this.previousFolder(name), { recursive: true, force: true });
         mkdirSync(dirname(this.previousFolder(name)), { recursive: true });
         renameSync(target, this.previousFolder(name));
-        writeFileAtomic(this.previousRecord(name), JSON.stringify({ version, source: plugins?.registry.installedSource(name) ?? null }));
+        writeFileAtomic(this.previousRecord(name), JSON.stringify({ version, source: plugins?.registry.installedSource(name) ?? null, sha256: plugins?.registry.revisionOf(name) ?? null }));
       }
       rmSync(target, { recursive: true, force: true });
       cpSync(proposal.folder, target, { recursive: true });
       this.git.run(["add", "-A", "--", name]);
       this.git.run(["commit", "-q", "-m", `Install ${name} ${proposal.manifest.version} (${proposal.source})`, "--", name]);
-      plugins?.registry.noteInstalled(name, proposal.source);
+      plugins?.registry.noteInstalled(name, proposal.source, proposal.verifiedSha256 ?? null);
       main?.appNotice(`Installed: ${shown} ${proposal.manifest.version}. You can turn it off under Plugins (the header's Plugins button).`);
       return null;
     } catch (error) {
@@ -457,11 +472,13 @@ export class MaintainerDesk {
     const plugin = plugins?.registry.plugin(name);
     const previous = this.previousOf(name);
     if (!previous) return `"${name}" has no previous version to go back to.`;
+    const previousSha = this.previousSha(name);
     if (plugin && !plugin.builtIn && !plugin.installedFrom) return `The plugin library has its own "${name}" now; it won't be replaced.`;
     const target = join(this.libraryFolder, name);
     let currentVersion = "?";
     try { currentVersion = String(JSON.parse(readFileSync(join(target, "package.json"), "utf8")).version ?? "?"); } catch { /* none */ }
     const currentSource = plugins?.registry.installedSource(name) ?? null;
+    const currentSha = plugins?.registry.revisionOf(name) ?? null;
     const swap = join(this.deps.root, "plugin-previous", `.${name}-swap`);
     try {
       this.git.prepare();
@@ -471,13 +488,13 @@ export class MaintainerDesk {
       renameSync(this.previousFolder(name), target);
       if (hadCurrent) {
         renameSync(swap, this.previousFolder(name));
-        writeFileAtomic(this.previousRecord(name), JSON.stringify({ version: currentVersion, source: currentSource }));
+        writeFileAtomic(this.previousRecord(name), JSON.stringify({ version: currentVersion, source: currentSource, sha256: currentSha }));
       } else {
         rmSync(this.previousRecord(name), { force: true });
       }
       this.git.run(["add", "-A", "--", name]);
       this.git.run(["commit", "-q", "-m", `Revert ${name} to ${previous.version}`, "--", name]);
-      if (previous.source) plugins?.registry.noteInstalled(name, previous.source);
+      if (previous.source) plugins?.registry.noteInstalled(name, previous.source, previousSha);
       else plugins?.registry.rescan(true);
       return null;
     } catch (error) {
@@ -493,7 +510,8 @@ export class MaintainerDesk {
   removePlugin(name: string): string | null {
     const plugins = this.deps.plugins();
     const plugin = plugins?.registry.plugin(name);
-    if (!plugin || plugin.builtIn || !plugin.installedFrom) return `"${name}" is not a plugin installed from outside, so it can't be removed here.`;
+    // A built-in's catalog update (`replacesBuiltIn`) is removable: the built-in version returns.
+    if (!plugin || (plugin.builtIn && !plugin.replacesBuiltIn) || !plugin.installedFrom) return `"${name}" is not a plugin installed from outside, so it can't be removed here.`;
     try {
       this.git.prepare();
       rmSync(join(this.libraryFolder, name), { recursive: true, force: true });

@@ -456,8 +456,8 @@ export class Plugins {
           ...(plugin.replacesBuiltIn ? { replacesBuiltIn: plugin.replacesBuiltIn.slice(0, 100) } : {}),
           ...(plugin.ignoredLibraryCopy ? { ignoredLibraryVersion: plugin.ignoredLibraryCopy.version.slice(0, 100) } : {}),
           ...(plugin.skipped?.length ? { skipped: plugin.skipped.slice(0, 50).map((problem) => problem.slice(0, 2_000)) } : {}),
-          ...(!plugin.builtIn && plugin.installedFrom ? { removable: true } : {}),
-          ...((() => { const previous = plugin.builtIn ? null : this.previousVersion(plugin.manifest.name); return previous ? { revertTo: previous.slice(0, 100) } : {}; })()),
+          ...((!plugin.builtIn || plugin.replacesBuiltIn) && plugin.installedFrom ? { removable: true } : {}),
+          ...((() => { const previous = plugin.builtIn && !plugin.replacesBuiltIn ? null : this.previousVersion(plugin.manifest.name); return previous ? { revertTo: previous.slice(0, 100) } : {}; })()),
           permissions: (ccb?.permissions ?? []).slice(0, 20).map((permission) => permission.slice(0, 40)),
           parts: [...parts, ...(ccb?.contributes?.components ? ["components" as const] : [])],
           settings: this.registry.settingsView(plugin).slice(0, 100).map((setting) => ({

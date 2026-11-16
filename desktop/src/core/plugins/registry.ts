@@ -19,6 +19,7 @@ import type { SecretStore } from "./secrets";
 import { swiftPrettyJSON } from "../swift-json";
 import { listInspectQueries, runInspect, type InspectContext, type InspectResult } from "./introspect";
 import { libraryCopyWins } from "./versions";
+import { folderHash } from "./catalog";
 
 /** A plugin's web part as the chat page loads it (`WebPluginSpec`). `styles` are paths in the plugin's folder. */
 export interface WebSpec {
@@ -43,7 +44,10 @@ export interface InstalledPlugin {
   folder: string;
   /** Shipped with Botling (read-only, always approved); a plugin of the same name in the library at the same or a newer version replaces it. */
   builtIn: boolean;
-  /** A library plugin running in place of a built-in one of the same name: the built-in's version. */
+  /**
+   * A library plugin running in place of a built-in one of the same name: the built-in's version. When `builtIn` is also true it is a
+   * catalog update of the built-in whose files still hash to what the catalog check recorded (`revisions`): it keeps the built-in's rights.
+   */
   replacesBuiltIn?: string;
   /** A built-in plugin running while the library holds an older copy (or one with a version that is not a semver), ignored: that copy. */
   ignoredLibraryCopy?: { folder: string; version: string };
@@ -80,6 +84,11 @@ interface State {
   settings: Record<string, Record<string, JSONValue>>;
   failures: Record<string, { message: string; fingerprint: string }>;
   installed?: Record<string, string>;
+  /**
+   * A built-in plugin's catalog update: the folder hash the catalog check verified when it was installed (`noteInstalled`). The library
+   * copy keeps the built-in's rights only while its folder still hashes to this (`revisionVerified`).
+   */
+  revisions?: Record<string, string>;
   /** Keys plugins bound to their own commands (`keybindings.set`; null: no key), over their manifests'. */
   keys?: Record<string, Record<string, string | null>>;
 }
@@ -94,6 +103,9 @@ function readState(file: string): State {
     if (value.settings && typeof value.settings === "object") state.settings = value.settings as State["settings"];
     if (value.failures && typeof value.failures === "object") state.failures = value.failures as State["failures"];
     if (value.installed && typeof value.installed === "object") state.installed = value.installed;
+    if (value.revisions && typeof value.revisions === "object" && !Array.isArray(value.revisions)) {
+      state.revisions = Object.fromEntries(Object.entries(value.revisions).filter(([, hash]) => typeof hash === "string" && /^[0-9a-f]{64}$/.test(hash)));
+    }
     if (value.keys && typeof value.keys === "object") state.keys = value.keys;
     return state;
   } catch {
@@ -147,6 +159,8 @@ export class PluginRegistry {
   /** Web parts the chat page loaded without trouble (1.x's `lastGood`), and what was last handed to it. */
   private lastGood = new Map<string, WebSpec>();
   private lastSent = new Map<string, WebSpec>();
+  /** What `revisionVerified` last found for each plugin, by the stat signature of its folder (so a rescan does not hash it again). */
+  private revisionChecks = new Map<string, { folder: string; signature: string; sha: string; ok: boolean }>();
   private scanned = false;
   private suppressWriteNotice = false;
   /** The plugin kernel holding each enabled plugin's contributions (kernel step 1; kernel-list.ts). */
@@ -299,13 +313,24 @@ export class PluginRegistry {
     }
   }
 
-  /** A fetched plugin goes into the library (replacing one of the same name it installed before). */
-  noteInstalled(name: string, source: string) {
+  /**
+   * A fetched plugin goes into the library (replacing one of the same name it installed before). `verifiedSha256`: the folder hash the
+   * catalog check verified (plugin-store.ts); with it, a library copy of a built-in plugin keeps the built-in's rights while its files hash
+   * to exactly that (`revisionVerified`); without it (any other install) the copy is an ordinary library plugin.
+   */
+  noteInstalled(name: string, source: string, verifiedSha256?: string | null) {
     (this.state.installed ??= {})[name] = source;
+    if (verifiedSha256 && /^[0-9a-f]{64}$/.test(verifiedSha256)) (this.state.revisions ??= {})[name] = verifiedSha256;
+    else if (this.state.revisions) delete this.state.revisions[name];
     delete this.state.failures[name];
     this.saveState();
     this.suppressWriteNotice = true;
     try { this.rescan(true); } finally { this.suppressWriteNotice = false; }
+  }
+
+  /** The folder hash the catalog check recorded for this plugin's installed copy (`noteInstalled`); null: none. */
+  revisionOf(name: string): string | null {
+    return this.state.revisions && Object.hasOwn(this.state.revisions, name) ? this.state.revisions[name]! : null;
   }
 
   /** Where a library plugin was installed from (the catalog, git, a folder), whichever copy runs; null: the library's own. */
@@ -316,10 +341,33 @@ export class PluginRegistry {
   /** An installed plugin was removed from the library: its record goes (its settings stay, for a later install). */
   noteRemoved(name: string) {
     if (this.state.installed) delete this.state.installed[name];
+    if (this.state.revisions) delete this.state.revisions[name];
     delete this.state.failures[name];
     this.saveState();
     this.suppressWriteNotice = true;
     try { this.rescan(true); } finally { this.suppressWriteNotice = false; }
+  }
+
+  /**
+   * Whether the library copy at `folder` is the catalog-verified update of a built-in plugin: the hash recorded when it was installed
+   * (`revisions`) equals the folder's hash now. Fails closed (no record, unreadable folder, any difference: false). The folder is hashed
+   * again only when a file's size, mtime or ctime moved.
+   */
+  private revisionVerified(name: string, folder: string): boolean {
+    const sha = this.revisionOf(name);
+    if (!sha) return false;
+    let signature: string;
+    try {
+      signature = filesIn(folder).map((file) => { const stat = statSync(join(folder, file)); return `${file}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; }).join("|");
+    } catch {
+      return false;
+    }
+    const known = this.revisionChecks.get(name);
+    if (known && known.folder === folder && known.signature === signature && known.sha === sha) return known.ok;
+    let ok = false;
+    try { ok = folderHash(folder) === sha; } catch { ok = false; }
+    this.revisionChecks.set(name, { folder, signature, sha, ok });
+    return ok;
   }
 
   // ------------------------------------------------------------------------------------------
@@ -494,11 +542,13 @@ export class PluginRegistry {
       const loaded = loadPlugin(folder, builtIn ? "builtIn" : "library");
       if (loaded.ok) {
         const manifest = loaded.manifest;
-        const nameWarning = builtIn ? null : presentNameWarning(manifest.name);
-        if (nameWarning && !this.warnedNames.has(manifest.name)) { this.warnedNames.add(manifest.name); this.onNameWarning(manifest.name, nameWarning); }
-        const print = PluginRegistry.fingerprint(folder, manifest);
         // Both Botling and the library have it: the library's copy runs only at the built-in's version or a newer one (versions.ts).
         const shipped = found.get(manifest.name);
+        // The catalog's update of a built-in plugin, its files still what the catalog check verified: it keeps the built-in's rights.
+        const revision = !builtIn && !!shipped?.builtIn && libraryCopyWins(manifest.version, shipped.manifest.version) && this.revisionVerified(manifest.name, folder);
+        const nameWarning = builtIn || revision ? null : presentNameWarning(manifest.name);
+        if (nameWarning && !this.warnedNames.has(manifest.name)) { this.warnedNames.add(manifest.name); this.onNameWarning(manifest.name, nameWarning); }
+        const print = PluginRegistry.fingerprint(folder, manifest);
         if (!builtIn && shipped?.builtIn && !libraryCopyWins(manifest.version, shipped.manifest.version)) {
           shipped.ignoredLibraryCopy = { folder, version: manifest.version };
           delete this.reportedProblems[name];
@@ -511,7 +561,7 @@ export class PluginRegistry {
         if (skipped.length && JSON.stringify(this.reportedSkips[manifest.name] ?? []) !== JSON.stringify(skipped)) this.onSkipped(manifest.name, skipped);
         this.reportedSkips[manifest.name] = skipped;
         found.set(manifest.name, {
-          manifest, folder, builtIn, failure, enabled: !this.state.disabled.includes(manifest.name) && !failure,
+          manifest, folder, builtIn: builtIn || revision, failure, enabled: !this.state.disabled.includes(manifest.name) && !failure,
           installedFrom: builtIn ? null : this.state.installed?.[manifest.name] ?? null,
           ...(!builtIn && shipped?.builtIn ? { replacesBuiltIn: shipped.manifest.version } : {}),
           ...(skipped.length ? { skipped } : {}),

@@ -88,7 +88,7 @@ function StoreItem({ entry, lang, onInstall, onShowCard, onDismiss }: { entry: P
       <div className="plugin-meta">{permissions.length ? w("plugins.asksFor", { list: permissions.join(", ") }) : w("plugins.asksNothing")}</div>
       {status?.kind === "asking" && (
         <div className="plugin-row plugin-store-status">
-          <span className="plugins-result" role="status">{w("plugins.asking")}</span>
+          <span className="plugins-result" role="status">{status.message ?? w("plugins.asking")}</span>
           {onShowCard && <span className="plugin-buttons"><button type="button" onClick={onShowCard}>{w("plugins.showCard")}</button></span>}
         </div>
       )}
@@ -125,7 +125,7 @@ export function StoreList({ client, store, setStore, lang, only, onShowCard, onP
       <ul>
         {entries.map((entry) => (
           <StoreItem key={entry.name} entry={entry} lang={lang} onShowCard={onShowCard}
-            onInstall={() => { setTouched((names) => new Set([...names, entry.name])); act(client.request({ type: "plugins.storeInstall", name: entry.name })); }}
+            onInstall={() => { setTouched((names) => new Set([...names, entry.name])); act(client.request({ type: "plugins.storeInstall", name: entry.name, ...(entry.state === "update" ? { direct: true } : {}) })); }}
             onDismiss={() => act(client.request({ type: "plugins.storeDismiss", name: entry.name }))} />
         ))}
       </ul>

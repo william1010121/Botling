@@ -18,6 +18,7 @@
 // plugin) is checked once against the grant itself (tier, reads, requests), without the 2.x permissions it cannot know.
 // Each new hash is decided once: a revoke after a carry stays revoked.
 import { randomUUID } from "node:crypto";
+import { askFactsOf, askGrowth, askItem } from "../../core/plugins/asks-growth";
 import type { AuditRow, PluginGrant, PluginRow, Tier } from "../../protocol/table-rows";
 import type { Db } from "../store";
 import { putRow } from "./tables";
@@ -65,12 +66,7 @@ export function sourceKey(builtIn: boolean, installedFrom: string | null): strin
 
 /** Facts of one registry plugin. */
 export function carryFactsOf(plugin: { builtIn: boolean; installedFrom: string | null; manifest: { ccb?: { permissions?: string[]; host?: string; claude?: string } } }): CarryFacts {
-  const ccb = plugin.manifest.ccb;
-  return {
-    permissions: [...new Set(ccb?.permissions ?? [])].map((item) => String(item).slice(0, 40)).slice(0, 20).sort(),
-    parts: [...(ccb?.host ? ["host"] : []), ...(ccb?.claude ? ["claude"] : [])],
-    source: sourceKey(plugin.builtIn, plugin.installedFrom),
-  };
+  return { ...askFactsOf(plugin.manifest), source: sourceKey(plugin.builtIn, plugin.installedFrom) };
 }
 
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -107,7 +103,7 @@ function readRecord(tx: Db, name: string): CarryRecord | null | "corrupt" {
   }
 }
 
-const item = (text: string) => (/^[A-Za-z0-9._-]{1,60}$/.test(text) ? text : JSON.stringify(text.slice(0, 60)));
+const item = askItem;
 
 /** What `now` asks for that `before` did not (empty: nothing more). Permissions and parts only when both are known. */
 function grewFrom(before: { tier: Tier; reads: readonly string[]; requests: readonly string[]; permissions?: readonly string[]; parts?: readonly string[]; source?: string }, now: AsksBasis): string[] {
@@ -116,8 +112,8 @@ function grewFrom(before: { tier: Tier; reads: readonly string[]; requests: read
   if (RANK[now.tier] > RANK[before.tier]) grew.push(`tier ${now.tier}`);
   for (const r of now.reads) if (!before.reads.includes(r)) grew.push(`read ${item(r)}`);
   if (now.tier !== "read") for (const r of now.requests) if (!before.requests.includes(r)) grew.push(`request ${item(r)}`);
-  if (before.permissions) for (const p of now.permissions) if (!before.permissions.includes(p)) grew.push(`permission ${item(p)}`);
-  if (before.parts) for (const p of now.parts) if (!before.parts.includes(p)) grew.push(`part ${p}`);
+  // The 2.x permissions and parts: the same rule the core applies before a one-click update (core/plugins/asks-growth.ts); unknown before: nothing more.
+  grew.push(...askGrowth({ permissions: before.permissions ?? now.permissions, parts: before.parts ?? now.parts }, now));
   return grew;
 }
 

@@ -2,12 +2,16 @@
 // offers next to what is installed, and installing or updating one of its plugins. An install never happens here: the
 // downloaded folder is checked (its hash against the index, the plugin checks, the app version) and handed to the
 // install card Maintainer already uses for outside plugins (maintainer.ts `offerInstall`), in the main bot's chat; only
-// "Install" there puts it into the library. Nothing changes what bots may do: no tools, prompts or permissions.
+// "Install" there puts it into the library. Exception, the Update button (`direct`): an update that asks for nothing more
+// than the running version (`askGrowth`: no new permission, program part or bot tools) is installed at once, no card.
+// An update that asks for more still goes to the card, which names what is new. Nothing changes what bots may do: no
+// tools, prompts or permissions of its own.
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginStoreEntryView, PluginStoreView } from "../contract";
 import { Catalog, catalogSource, HashMismatch, OFFICIAL_INDEX_URL, type CatalogEntry, type CatalogSource, type Fetch } from "./plugins/catalog";
 import { compatible, title } from "./plugins/manifest";
+import { askFactsOf, askGrowth } from "./plugins/asks-growth";
 import { compareVersions } from "./plugins/versions";
 import type { PluginRegistry } from "./plugins/registry";
 import { readProposal, type MaintainerDesk } from "./maintainer";
@@ -124,8 +128,9 @@ export class PluginStore {
   /**
    * Install (or update) `name` from the index: download its folder at the recorded commit, check it, and ask on the
    * install card. Returns once the card is up (or why not, in the entry's status); the answer comes later.
+   * `direct` (the Update button): an update that asks for nothing more than the running version is installed now, no card.
    */
-  async install(name: string): Promise<PluginStoreView> {
+  async install(name: string, options: { direct?: boolean } = {}): Promise<PluginStoreView> {
     const catalog = this.catalog;
     const entry = catalog.entry(name);
     if (!entry) { this.setStatus(name, { kind: "failed", message: `"${name}" is not in the plugin index.` }); return this.view(); }
@@ -152,8 +157,21 @@ export class PluginStore {
       return refuse(`The downloaded folder is "${proposal.manifest.name}" ${proposal.manifest.version}, not "${entry.name}" ${entry.version} as the index says. It was not installed.`);
     }
     proposal.verified = `its files match the index (sha256 ${entry.sha256.slice(0, 12)}…) at commit ${entry.commit.slice(0, 7)}${catalog.source.official ? " of the official botling-plugins repo" : ` of ${catalog.source.indexURL}`}.`;
-    if (state === "update" && installedVersion) proposal.replacing = installedVersion;
-    this.setStatus(name, { kind: "asking", message: null });
+    proposal.verifiedSha256 = entry.sha256;
+    let growth: string[] = [];
+    if (state === "update" && installedVersion) {
+      proposal.replacing = installedVersion;
+      // The running version's asks against the new one's (the same rule as the server's grant carry); no running copy to compare: ask.
+      const running = this.deps.registry()?.plugin(name);
+      growth = running ? askGrowth(askFactsOf(running.manifest), askFactsOf(proposal.manifest)) : ["unknown"];
+      if (growth.length) proposal.grew = growth;
+    }
+    if (options.direct && state === "update" && installedVersion && !growth.length) {
+      const problem = this.deps.desk.installNow(proposal);
+      this.setStatus(name, problem ? { kind: "failed", message: problem } : { kind: "installed", message: null });
+      return this.view();
+    }
+    this.setStatus(name, { kind: "asking", message: growth.length ? `This update asks for more than the running version: ${growth.join(", ")}.` : null });
     this.deps.desk.offerInstall(proposal, (installed, problem) => {
       this.setStatus(name, installed ? { kind: "installed", message: null } : problem ? { kind: "failed", message: problem } : { kind: "declined", message: null });
     });
