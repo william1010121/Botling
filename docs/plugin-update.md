@@ -31,7 +31,7 @@
 按下 Update(`plugins.storeInstall` 加 `direct: true`):下載 → 驗證 → 直接 `MaintainerDesk.installNow` → `registry.noteInstalled(name, source, sha256)` → rescan:
 - host:`hostSpecs()` 的 `main`/`fingerprint` 變 → `Plugins.sync` → host 重載這個 plugin,**不重啟 app**。(已知:已在跑的 host part 在 row 追上之前會被 `serverPartAllowed` 擋一下,§18.3 讓 shared host 重啟一次;見 follow-up。)
 - row:`PluginHashCache` 重算 `codeHash`、`files.web` → botlingd 寫 row → 視窗收到 → `RowLoader` 換 web part(pinned 的 in-page hash 對不上就改走 frame)。
-- 開著的 frame:`plugins.panel` 回來的 `source` 在 `usePluginFrame` 裡是一次性的。新增 `renderer/plugin-stamp.ts`:載入時記 `version|codeHash`,每個 `plugins.updated` 比對,變了就重取 source、換 frame URL(不用關再開)。底部面板共用 `usePluginFrame`,同樣重載(Terminal 的 host 重載本來就會關掉 shell)。
+- 開著的 frame:`plugins.panel` 回來的 `source` 在 `usePluginFrame` 裡是一次性的。新增 `renderer/plugin-stamp.ts`:載入時記 `version|replacesBuiltIn|builtIn`(不含 code hash:更新一定換版本;同版本不同內容只會是 library 裡的 dev 副本,本來就不重載),每個 `plugins.updated` 比對,變了就重取 source、換 frame URL(不用關再開)。底部面板共用 `usePluginFrame`,同樣重載(Terminal 的 host 重載本來就會關掉 shell)。
 
 ## 4. grant:這個功能不碰
 

@@ -591,7 +591,10 @@ export class PluginRegistry {
         // A plugin that was fine before keeps running its last version.
         const old = this.plugins.find((plugin) => plugin.folder === folder);
         if (old) {
-          found.set(old.manifest.name, old);
+          // A built-in's catalog update keeps the built-in's rights only while its files are still the verified ones (L-008):
+          // its folder changed and broke the check, so what a host restart loads from it is not what was verified.
+          const kept = old.builtIn && old.replacesBuiltIn && !this.revisionVerified(old.manifest.name, folder) ? { ...old, builtIn: false } : old;
+          found.set(old.manifest.name, kept);
           prints[old.manifest.name] = this.fingerprints[old.manifest.name] ?? "";
         }
         if (JSON.stringify(this.reportedProblems[name]) !== JSON.stringify(loaded.problems)) {

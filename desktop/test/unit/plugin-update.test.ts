@@ -386,6 +386,19 @@ describe("review probes (review/v3-plugin-update-fix)", () => {
     expect(t.registry.plugin("demo")!.builtIn).toBe(false);
   });
 
+  it("a verified built-in update whose folder breaks the plugin check is kept running, but not as the built-in", async () => {
+    const t = setup(SAME, SAME, { builtIn: true });
+    await t.store.refresh();
+    await t.offer();
+    await t.store.install("demo", { direct: true });
+    expect(t.registry.plugin("demo")!.builtIn).toBe(true);
+    appendFileSync(join(t.library, "dist", "host.mjs"), "// edited\n");
+    writeFileSync(join(t.library, "package.json"), "{ not json");
+    t.registry.rescan(true);
+    expect(t.registry.problems.demo).toBeDefined();
+    expect(t.registry.plugin("demo")).toMatchObject({ builtIn: false, manifest: { version: "1.1.0" } });
+  });
+
   it("direct is checked again after the download: a plugin removed meanwhile asks on the card", async () => {
     const t = setup(SAME, SAME);
     await t.installV1();
