@@ -157,7 +157,10 @@ export class CoreSend {
     if (!this.madeRules) {
       this.madeRules = new OrchestrationRulesBook(() => {
         const raw = this.settingsFile() ?? {}, chosen = orchestrationPlugin(raw);
-        return (chosen === "builtin" ? builtinSource(this.options.plugins?.builtIns ?? null) : chosenSource(this.plugins.registry.plugin(chosen), orchestrationPluginSha256(raw)))();
+        const builtIns = this.options.plugins?.builtIns ?? null;
+        // A core without a plugin system (`plugins: null`: tools, tests) has no built-in plugin to fail: its own rules are the rules, and no notice. The packaged app always has the folder.
+        if (chosen === "builtin" && !builtIns) return Promise.resolve(null);
+        return (chosen === "builtin" ? builtinSource(builtIns) : chosenSource(this.plugins.registry.plugin(chosen), orchestrationPluginSha256(raw)))();
       });
       void this.madeRules.refresh();
     }
