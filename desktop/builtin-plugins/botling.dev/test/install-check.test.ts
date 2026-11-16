@@ -182,27 +182,27 @@ describe("the requested build is what the user confirmed", () => {
 // (3.0.0-beta.1 (c8d1057, uncommitted changes)) nor the requested one." botlingd is an Electron process, and Electron's fs
 // treats app.asar as a folder: statSync says a directory of size 0 whose time is "now", openSync fails. So the requested
 // build's asar had no hash and a time from the card, the running one a time from the start, and equal labels did not match.
+/** What Electron's fs answers for a path ending in app.asar: a directory, size 0, mtime = the clock (which moves on every call). */
+function electronFs() {
+  let clock = 1_900_000_000_000;
+  const isAsar = (file: unknown) => String(file).endsWith("app.asar");
+  return {
+    statSync: ((file: nodeFs.PathLike, ...rest: unknown[]) => {
+      if (!isAsar(file)) return (nodeFs.statSync as (...args: unknown[]) => nodeFs.Stats)(file, ...rest);
+      clock += 120_000;
+      return { isFile: () => false, isDirectory: () => true, size: 0, mtimeMs: clock, ino: 0 } as nodeFs.Stats;
+    }) as typeof nodeFs.statSync,
+    openSync: ((file: nodeFs.PathLike, ...rest: unknown[]) => {
+      if (isAsar(file)) throw Object.assign(new Error(`ENOENT,  not found in ${String(file)}`), { code: "ENOENT" });
+      return (nodeFs.openSync as (...args: unknown[]) => number)(file, ...rest);
+    }) as typeof nodeFs.openSync,
+    readSync: nodeFs.readSync,
+    closeSync: nodeFs.closeSync,
+  };
+}
+
 describe("inside Electron, where fs sees app.asar as a folder", () => {
   afterEach(() => useBundleFs(null));
-  /** What Electron's fs answers for a path ending in app.asar: a directory, size 0, mtime = the clock (which moves on every call). */
-  function electronFs() {
-    let clock = 1_900_000_000_000;
-    const isAsar = (file: unknown) => String(file).endsWith("app.asar");
-    return {
-      statSync: ((file: nodeFs.PathLike, ...rest: unknown[]) => {
-        if (!isAsar(file)) return (nodeFs.statSync as (...args: unknown[]) => nodeFs.Stats)(file, ...rest);
-        clock += 120_000;
-        return { isFile: () => false, isDirectory: () => true, size: 0, mtimeMs: clock, ino: 0 } as nodeFs.Stats;
-      }) as typeof nodeFs.statSync,
-      openSync: ((file: nodeFs.PathLike, ...rest: unknown[]) => {
-        if (isAsar(file)) throw Object.assign(new Error(`ENOENT,  not found in ${String(file)}`), { code: "ENOENT" });
-        return (nodeFs.openSync as (...args: unknown[]) => number)(file, ...rest);
-      }) as typeof nodeFs.openSync,
-      readSync: nodeFs.readSync,
-      closeSync: nodeFs.closeSync,
-    };
-  }
-
   it("requested 38060f5 (clean), old c8d1057 (dirty): the copy that came up is reported as installed", async () => {
     useBundleFs(electronFs());
     const root = tempDir("install-check");
@@ -245,6 +245,7 @@ describe("inside Electron, where fs sees app.asar as a folder", () => {
 // Electron's clock. The fixed build that comes up must not report itself as "neither" for that state (and must not take the old
 // build for the requested one either).
 describe("a state written by a build from before original-fs", () => {
+  afterEach(() => useBundleFs(null));
   /** What such a build recorded: no hash, and times that were the clock at the card and at its start. */
   function oldState(root: string) {
     const file = join(root, "core", "self-update", "state.json");
@@ -279,6 +280,22 @@ describe("a state written by a build from before original-fs", () => {
     const root = tempDir("install-check");
     const old = fakeApp(join(root, "Applications"), "Botling 3", SAME, "old build", T0);
     const dist = fakeApp(join(root, "dist"), "Botling 3", SAME, "the fix", T0 + 100);
+    await installed(root, old, dist);
+    const second = run(root, old);
+    await second.program.start();
+    const said = await second.told();
+    expect(said).toMatch(/was not installed/);
+    expect(said).not.toMatch(/restarted on/);
+  });
+
+  it("where no asar can be read at all (no hash on either side), the old build of the same label coming back is not installed", async () => {
+    useBundleFs(electronFs());
+    const root = tempDir("install-check");
+    const old = fakeApp(join(root, "Applications"), "Botling 3", SAME, "old build", T0);
+    const dist = fakeApp(join(root, "dist"), "Botling 3", SAME, "the fix", T0 + 100);
+    // Real builds write their Info.plist when they are built: the fallback time differs between two builds.
+    utimesSync(join(old, "Contents", "Info.plist"), T0, T0);
+    utimesSync(join(dist, "Contents", "Info.plist"), T0 + 100, T0 + 100);
     await installed(root, old, dist);
     const second = run(root, old);
     await second.program.start();
