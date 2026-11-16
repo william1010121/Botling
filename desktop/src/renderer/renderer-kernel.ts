@@ -5,8 +5,9 @@
 //     broker (plugin-frame-host.ts, shell/frame-services.ts) as a kernel call carrying the frame's plugin. The Note declares that it uses
 //     it in its manifest (soft: with no provider the quote is not inserted); the plugin feed installs that declaration (M7-04b).
 //   - `:shell` owns the shell's root slots (`ROOT_SLOTS`: app/rail, app/main, app/side, app/bottom, app/overlay). Whatever is
-//     drawn in one is a contribution to it: today the whole page, as one contribution to `app/main` ("the legacy surface",
-//     shell/ShellFrame.tsx). shell/KernelSlot.tsx draws a slot; it re-draws when `subscribeSlots` says the kernel changed.
+//     drawn in one is a contribution to it: the chat column is `botling.chat`'s claim on `app/main` (M7-07a), the right panel
+//     botling.bot-panel's on `app/side`, the bottom panels `:shell`'s on `app/bottom` (shell/regions.tsx); the rest of the page is
+//     shell/ShellFrame.tsx's own layout. shell/KernelSlot.tsx draws a slot; it re-draws when `subscribeSlots` says the kernel changed.
 //     It also owns the view and menu places the plugin feed fills (`FEED_SLOTS`, M7-02b): the plugin list as the page
 //     received it, one instance per plugin (shell/plugin-feed.ts), until a plugin owns a place itself.
 // Slots have the new names and the 2.x names as aliases (slot-names.ts): the kernel holds one registration and finds it under both.

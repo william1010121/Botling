@@ -14,6 +14,10 @@ import { setComposerQuoter } from "../../src/renderer/composer-quote";
 import { CHAT_SURFACE, INSERT_QUOTE, rendererKernel } from "../../src/renderer/renderer-kernel";
 import { FRAME_MANIFESTS, frameDeclaration, parseFrameDeclaration } from "../../src/renderer/shell/frame-declarations";
 import { pluginFeed, reconcileView } from "../../src/renderer/shell/plugin-feed";
+import { feBuildManifestFile } from "../../fe-build-manifest.mjs";
+import { CHAT_PLUGIN } from "../../src/renderer/chat-names";
+import { InPageHost } from "../../src/renderer/shell/inpage-host";
+import { parseFeManifest } from "../../src/renderer/shell/inpage-loader";
 import { desktop, until } from "../helpers";
 
 const NOTE = "botling.note";
@@ -47,9 +51,19 @@ function frame(plugin = NOTE) {
   return { element, posted, quote };
 }
 
+/** The chat plugin, which owns `main/tab` since M7-07a (the build ships more plugins; this host runs only that one). */
+const chatManifest = parseFeManifest(JSON.parse(feBuildManifestFile(desktop).toString("utf8")));
+const hosts: InPageHost[] = [];
+const chatHost = () => {
+  const made = new InPageHost({ manifest: { plugins: chatManifest.plugins.filter((entry) => entry.name === CHAT_PLUGIN) }, log: () => undefined });
+  hosts.push(made);
+  return made;
+};
+
 const stops: (() => void)[] = [];
-afterEach(() => {
+afterEach(async () => {
   for (const stop of stops.splice(0)) stop();
+  for (const one of hosts.splice(0)) await one.stop();
   reconcileView(null);
   FRAME_MANIFESTS.delete("botling.mute");
   document.body.innerHTML = "";
@@ -107,10 +121,14 @@ describe("the Note's declaration", () => {
     expect(rendererKernel.declaration(NOTE)?.uses?.services).toEqual([INSERT_QUOTE]);
   });
 
-  it("the tab is the Note's contribution to main/tab, kept as the page's row (2.x id view/mainTab, new name main/tab)", () => {
+  it("the tab is the Note's contribution to main/tab, kept as the page's row (2.x id view/mainTab, new name main/tab); botling.chat owns the slot, so it is taken once that plugin is up and not before", async () => {
     reconcileView(view());
     const mine = (slot: string) => rendererKernel.entries<{ kind: string; row: { plugin: string; id: string } }>(slot).filter(({ plugin }) => plugin === NOTE);
-    expect(mine("main/tab").map(({ entry }) => entry.row.id)).toEqual(["botling.note.tab"]);
+    // No owner: the kernel refuses the contribution (the Note stays loaded).
+    expect(mine("main/tab")).toEqual([]);
+    expect(rendererKernel.state(NOTE)).toBe("active");
+    await chatHost().start();
+    await vi.waitFor(() => { expect(mine("main/tab").map(({ entry }) => entry.row.id)).toEqual(["botling.note.tab"]); });
     expect(mine("view/mainTab")).toHaveLength(1);
     expect(rendererKernel.allContributions().filter(({ plugin }) => plugin === NOTE).map(({ slot }) => slot)).toEqual(["view/mainTab"]);
   });
