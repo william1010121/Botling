@@ -208,7 +208,7 @@ export class CorePluginWorld {
             if (bot.id === this.maintainerId) return "A plugin may not start workers on Maintainer. Nothing was started.";
             if (bot.engine !== "claude" || !bot.claudeWorkersOn()) return "That bot does not run Claude-process workers, the only kind a plugin starts for now. Nothing was started.";
             const host = bot.ensureClaudeWorkers();
-            return { id: botId, start: (args) => host.startFor(args), send: async (id, text) => host.sendToWorker(id, text), stop: (id) => host.stopWorker(id) };
+            return { id: botId, start: (args, by) => host.startFor(args, by), send: async (id, text, by) => host.sendToWorker(id, text, by), stop: (id) => host.stopWorker(id), look: (id) => host.look(id) };
           },
           made: (plugin, botId) => { const id = this.pluginBot(botId)?.id; return id !== undefined && this.profiles.some((profile) => profile.id === id && profile.plugin === plugin); },
           ...(options.orchestrateQuota ? { quota: options.orchestrateQuota } : {}),

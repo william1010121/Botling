@@ -26,6 +26,7 @@ import { noReport, specView, traceStep, whenDone as then, WorkerLives, type Live
 import type { LegacySources } from "./migrate";
 import { parseWorkerNote, wireStatus, workerNoteText, type AckPolicy, type WorkerNote, type WorkerReport } from "./report";
 import { reportOwed, workerState, type WorkerStatus } from "./status";
+import { readStartedBy, shownName, startedByLine, type StartedBy } from "./started-by";
 
 /** The coordinator end of report delivery (Claude: an app message; Antigravity: a queued report prompt; Codex: a turn with the tool output). */
 export interface CoordinatorPort {
@@ -55,7 +56,7 @@ export interface WorkerCoreOptions {
   /** The first is the member's own kind (`workerHostKind`); a Codex member adds the component editor. */
   adapters: WorkerAdapter[];
   /** M7-O04 (F6): called around every app_handoff with the handoff itself as `run`; it may refuse (throw) or change `args`. Absent: `run`. */
-  admit?(kind: WorkerAdapterKind, args: HandoffArgs, run: () => Promise<HandoffResult>): Promise<HandoffResult>;
+  admit?(kind: WorkerAdapterKind, args: HandoffArgs, run: (startedBy?: StartedBy) => Promise<HandoffResult>): Promise<HandoffResult>;
   /** The coordinator's conversation now (a new worker's ownerSessionId, a run's execution.ownerSessionId). */
   ownerSessionId(): string;
   /** Workers at work at once (absent: no limit). More wait for a slot, listed at work with a line saying so. */
@@ -232,7 +233,7 @@ export class WorkerCore implements WorkerHost {
 
   listWorkers(): WorkerInfo[] {
     return [...this.records.values()].filter((r) => this.visible(r)).map((r) => ({
-      id: r.id, engine: r.engine, name: r.name, run: r.run, state: workerState(r), conversationId: r.conversationId,
+      id: r.id, engine: r.engine, name: shownName(r), run: r.run, state: workerState(r), conversationId: r.conversationId,
       processes: r.processes.map((p) => ({ ...p })), owner: r.owner ? { ...r.owner } : null,
     }));
   }
@@ -247,10 +248,14 @@ export class WorkerCore implements WorkerHost {
   all(): WorkerLedgerRecord[] { return [...this.records.values()].map((r) => structuredClone(r)); }
 
   /** `from`: who is speaking, as the worker's own view shows it ("owner" for the host path, "coordinator" for app_send_message; the view names both by the owner bot). */
-  sendToWorker(id: string, words: string, from = "owner"): Maybe<WorkerSendResult> {
+  sendToWorker(id: string, words: string, from = "owner", via?: StartedBy): Maybe<WorkerSendResult> {
     const r = this.find(id);
     if (!r || this.closed) return { ok: false, reason: "No such worker." };
     if (typeof words !== "string" || !words.trim() || words.length > MAX_WORDS) return { ok: false, reason: `Message required (maximum ${MAX_WORDS} characters).` };
+    // A plugin's message says who sent it (after the size check: the largest legal message stays legal).
+    const by = via ? readStartedBy(via) : null;
+    if (via && !by) return { ok: false, reason: "A message's sender must be a plugin name and a hash." };
+    if (by) words = `${startedByLine(by)}\n\n${words}`;
     const adapter = this.adapterOf(r);
     if (!adapter) return { ok: false, reason: "This worker's engine is not available here." };
     if (this.ops.has(r.id)) return WorkerCore.BUSY;
@@ -398,11 +403,11 @@ export class WorkerCore implements WorkerHost {
   // App tools
 
   /** app_handoff: a new worker on `adapter`, its first run started. Throws the refusal (nothing recorded). */
-  handoff(kind: WorkerAdapterKind, args: HandoffArgs): Promise<HandoffResult> {
-    return this.options.admit ? this.options.admit(kind, args, () => this.handoffNow(kind, args)) : this.handoffNow(kind, args);
+  handoff(kind: WorkerAdapterKind, args: HandoffArgs, startedBy?: StartedBy): Promise<HandoffResult> {
+    return this.options.admit ? this.options.admit(kind, args, (by) => this.handoffNow(kind, args, by ?? startedBy)) : this.handoffNow(kind, args, startedBy);
   }
 
-  private async handoffNow(kind: WorkerAdapterKind, args: HandoffArgs): Promise<HandoffResult> {
+  private async handoffNow(kind: WorkerAdapterKind, args: HandoffArgs, startedBy?: StartedBy): Promise<HandoffResult> {
     if (this.closed) throw new Error("Workers are closed: the app is stopping.");
     const adapter = this.options.adapters.find((a) => a.kind === kind);
     if (!adapter) throw new Error(`No ${kind} workers here.`);
@@ -422,6 +427,12 @@ export class WorkerCore implements WorkerHost {
     };
     const group = firstText(args.group)?.trim().slice(0, 80);
     if (group) r.group = group;
+    // Not from `args` (the coordinator's own words): only the host that checked the plugin passes who it is.
+    if (startedBy) {
+      const by = readStartedBy(startedBy);
+      if (!by) throw new Error("A worker's starter must be a plugin name and a hash. Nothing was started.");
+      r.startedBy = by;
+    }
     this.records.set(r.id, r);
     // Room is made among the others: the worker being made is never the one forgotten (with none forgettable it is
     // kept as one more; the ledger keeps it too, as a running record).

@@ -25,4 +25,5 @@ export {
   type CheckpointArgs, type CheckpointResult, type CoordinatorPort, type HandoffResult, type MessageArgs, type MessageResult,
   type ReconcileArgs, type ReconcileResult, type WorkerCoreFactory, type WorkerCoreOptions, type WorkerSink,
 } from "./core";
+export { readStartedBy, shownName, startedByLine, type StartedBy } from "./started-by";
 export { hasVisibleContent, type TurnContent } from "./visible";

@@ -23,6 +23,7 @@ import { readWorkerOwner, type WorkerOwner } from "../agent/workers";
 import type { CodexThreads, WorkerRecord } from "../agent/codex";
 import { INTERRUPTED_REPORT, type RunStatus } from "./classify";
 import { wireStatus } from "./report";
+import { readStartedBy } from "./started-by";
 import { readProcesses, trimRecords, type WorkerLedgerRecord, type WorkerReportRecord, type WorkerStore } from "./ledger";
 import type { ReportState, WorkerStatus } from "./status";
 
@@ -78,7 +79,10 @@ export function fromLegacyClaude(value: unknown): WorkerLedgerRecord | null {
     v: 3, id: r.id, engine: "claude", adapter: "claude-process", name: str(r.name) ? r.name : r.instructions.slice(0, 80), instructions: r.instructions,
     type: str(r.type) ? r.type : null, ownerSessionId: "", run: r.run, conversationId: sessionStarted ? r.sessionId : null,
     processes: readProcesses(r.processes), ...ownerOf(r.owner), createdAt: Number.isFinite(r.createdAt) ? r.createdAt : Date.now(),
-    runStartedAt: null, endedAt: null, engineData: { sessionId: r.sessionId, sessionStarted, model: str(r.model) ? r.model : null },
+    runStartedAt: null, endedAt: null,
+    // `pluginStarted` (fewer rights) and `startedBy` (who) outlive a restart: a follow-up run after it has the same limits.
+    engineData: { sessionId: r.sessionId, sessionStarted, model: str(r.model) ? r.model : null, ...(r.pluginStarted === true ? { pluginStarted: true } : {}) },
+    ...(readStartedBy(r.startedBy) ? { startedBy: readStartedBy(r.startedBy)! } : {}),
   };
   const text = str(r.report) ? r.report : null;
   if (r.active === true || status === "running") {
@@ -104,6 +108,7 @@ export function toLegacyClaude(r: WorkerLedgerRecord): Record<string, unknown> {
     ...(r.report.text !== null ? { report: r.report.text } : {}),
     model: str(r.engineData.model) ? r.engineData.model : null, processes: r.processes.map((p) => ({ ...p })),
     interrupted: r.status === "interrupted", createdAt: r.createdAt, ...(r.owner ? { owner: { ...r.owner } } : {}),
+    ...(r.engineData.pluginStarted === true ? { pluginStarted: true } : {}), ...(r.startedBy ? { startedBy: { ...r.startedBy } } : {}),
   };
 }
 
