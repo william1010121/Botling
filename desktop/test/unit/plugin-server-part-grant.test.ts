@@ -541,6 +541,24 @@ describe("M5-18a review: the grant is read at the folder's current hash, and not
     expect(unit.view().plugins.find((p) => p.name === "p.throws")?.failure).toBe(HELD_BACK_NOTICE);
   });
 
+  it("tells its program part's state (`hostState`, for ccb.host.status()): held until allowed, running once it is, failed when it throws, none without one", async () => {
+    const { dataDir, unit } = plugins((name) => name !== "p.held");
+    const root = join(dataDir, "plugins");
+    program(root, "p.held", { "dist/host.mjs": "export function activate() {}\n" });
+    program(root, "p.run", { "dist/host.mjs": "export function activate() {}\n" });
+    program(root, "p.fail", { "dist/host.mjs": "export function activate() { throw new Error('boom'); }\n" });
+    const noHost = join(root, "p.web");
+    mkdirSync(join(noHost, "dist"), { recursive: true });
+    writeFileSync(join(noHost, "package.json"), JSON.stringify({ name: "p.web", version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { web: "dist/web.js" } }));
+    writeFileSync(join(noHost, "dist", "web.js"), "export function activate() {}\n");
+    unit.scan();
+    await unit.start();
+    const state = (name: string) => unit.view().plugins.find((p) => p.name === name)?.hostState;
+    await until(() => (state("p.run") === "running" && state("p.fail") === "failed") || null, { timeout: 8_000, what: "running and failed settle" });
+    expect(state("p.held")).toBe("held");
+    expect(state("p.web")).toBe("none");
+  }, 20_000);
+
   it("a crash restart decides again: a module edited after the grant (fingerprint unchanged) does not run", async () => {
     const granted = new Set<string>();
     const { dataDir, unit, pid } = plugins((_name, hash) => granted.has(hash));

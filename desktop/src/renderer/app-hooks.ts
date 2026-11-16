@@ -123,12 +123,18 @@ export function useBuiltinRunner({ client, store, fail, setError, chooseTab, set
   const dockNow = useRef(readDock);
   dockNow.current = readDock;
   // Botling's own commands a plugin frame may run: a bot's chat (its Chat tab), one of a bot's results.
-  const runBuiltin = useCallback<BuiltinRunner>((_plugin, command) => {
+  const runBuiltin = useCallback<BuiltinRunner>((plugin, command) => {
     const botId = namedBot(store.getView().bots, command.botId);
     if (!botId) { setError(`No bot "${command.botId.slice(0, 80)}".`); return; }
     if (command.id === "botling.openResult") {
       void client.request({ type: "result.open", botId, url: command.url })
         .then((result) => { if (result.previewURL) openReport(botId, result.previewURL); }).catch(fail);
+      return;
+    }
+    if (command.id === "botling.openFile") {
+      // As the plugin's own `ccb.openLink` (the core decides, as that plugin: it needs "files" and the file must be in the bot's folder), asking for the report view.
+      void client.request({ type: "plugins.openLink", name: plugin, botId, href: command.path, preview: true }, undefined, { plugin })
+        .then((result) => { if (result.previewURL && !openReport(botId, result.previewURL)) throw new Error("This page shows no report preview."); }).catch(fail);
       return;
     }
     if (command.id === "botling.openLink") {

@@ -1,12 +1,13 @@
 // A plugin frame's `ccb.openLink` (the Note tab's links, 2026-11-10): what an href names (plugin-link.ts), decided by the
 // core: web links go to the default browser, files inside the bot's folder or the note's folder (or ones the saved note
 // links) open as a chat link does, a Markdown file in the app's report preview; other schemes are refused.
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { pluginLinkRoute, pluginLinkTarget, type PluginLinkPlace } from "../../src/core/plugin-link";
-import { tempDir } from "../helpers";
+import { Command } from "../../src/contract";
+import { desktop, tempDir } from "../helpers";
 
 function place(noteText = ""): PluginLinkPlace & { root: string } {
   const root = realpathSync(tempDir("plugin-link"));
@@ -79,5 +80,40 @@ describe("pluginLinkRoute", () => {
     expect(pluginLinkRoute({ kind: "file", path: "/p/A.MARKDOWN" })).toBe("markdown");
     expect(pluginLinkRoute({ kind: "file", path: "/p/page.html" })).toBe("file");
     expect(pluginLinkRoute({ kind: "file", path: "/p/x.pdf" })).toBe("file");
+  });
+  it("botling.openFile (preview): a page asks for the app's report view, a Markdown file keeps its preview, any other file and a web link are unchanged", () => {
+    expect(pluginLinkRoute({ kind: "file", path: "/p/.bot/artifacts/duel/result.html" }, true)).toBe("preview");
+    expect(pluginLinkRoute({ kind: "file", path: "/p/result.HTM" }, true)).toBe("preview");
+    expect(pluginLinkRoute({ kind: "file", path: "/p/a.md" }, true)).toBe("markdown");
+    expect(pluginLinkRoute({ kind: "file", path: "/p/x.pdf" }, true)).toBe("file");
+    expect(pluginLinkRoute({ kind: "web", url: "https://example.com/a.html" }, true)).toBe("browser");
+    // Without the flag a page opens as it always did (ccb.openLink).
+    expect(pluginLinkRoute({ kind: "file", path: "/p/page.html" }, false)).toBe("file");
+  });
+});
+
+describe("botling.openFile wiring (plugins.openLink with preview)", () => {
+  const read = (path: string) => readFileSync(join(desktop, path), "utf8");
+  it("the contract takes `preview` on plugins.openLink and nothing a frame could use to name a path itself", () => {
+    expect(Command.safeParse({ type: "plugins.openLink", name: "duel", botId: "main", href: "/p/a.html", preview: true }).success).toBe(true);
+    expect(Command.safeParse({ type: "plugins.openLink", name: "duel", botId: "main", href: "/p/a.html" }).success).toBe(true);
+    expect(Command.safeParse({ type: "plugins.openLink", name: "duel", botId: "main", href: "/p/a.html", preview: "yes" }).success).toBe(false);
+    expect(Command.safeParse({ type: "plugins.openLink", name: "duel", botId: "main", href: "/p/a.html", path: "/etc/passwd" }).success).toBe(false);
+  });
+  it("the page's runner sends it as the plugin (via), to the core's decision, and shows the report view main hands back", () => {
+    const hooks = read("src/renderer/app-hooks.ts");
+    const block = hooks.slice(hooks.indexOf('command.id === "botling.openFile"'), hooks.indexOf('command.id === "botling.openLink"'));
+    expect(block).toContain('type: "plugins.openLink"');
+    expect(block).toContain("name: plugin");
+    expect(block).toContain("preview: true");
+    expect(block).toContain("{ plugin }");
+    expect(block).toMatch(/openReport\(/);
+  });
+  it("main opens the report view only for the page the core named, and falls back to the file's app", () => {
+    const main = read("src/main/main.ts");
+    const open = main.slice(main.indexOf("async function openPluginLink"), main.indexOf("async function openLink("));
+    expect(open).toContain('pluginLinkRoute(target, cmd.preview === true) === "preview"');
+    expect(open).toContain("reportPreviewURL(target.path)");
+    expect(open).toMatch(/catch \{[^}]*\}\s*\}\s*return openLink\(target\.path\)/);
   });
 });

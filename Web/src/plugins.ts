@@ -33,14 +33,18 @@ export interface PluginSpec {
 
 type Dispose = () => void;
 
+/** Where a plugin's component is shown: the bot whose chat it is in (null: not known, e.g. a test page) and the message it belongs to. */
+export interface ComponentContext { botId: string | null; messageId: string }
+
 /**
  * Rendering a component a plugin registered: draw into `root`, answer through `answer` (an
- * option's index, words, or `{text, images}` with pictures as `{name, base64}`).
+ * option's index, words, or `{text, images}` with pictures as `{name, base64}`); `context`: the bot and message it is in.
  */
 export type ComponentRender = (
   root: HTMLElement,
   data: unknown,
   answer: (value: number | string | { text?: string; images?: { name: string; base64: string }[] }) => void,
+  context: ComponentContext,
 ) => void | Dispose;
 
 /** What the chat lends the plugin host: the input box and redrawing. */

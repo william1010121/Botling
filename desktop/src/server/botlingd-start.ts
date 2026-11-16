@@ -47,6 +47,7 @@ import { Directory, Forwarder, OwnerInbox, ServerOrigin } from "./forward";
 import { designatedServer, machineLabel } from "./designated";
 import { release as osRelease } from "node:os";
 import { authorizeRoster, BOTLINGD_VERSION, mayRunPluginServerPart, ownMachineName, pairingAddresses, pairingPageUrl, peerMachines, peerRemoteMembers, PEERS_FILE, PLUGIN_POLL_MS, readPluginAsks, readPluginGrant, relayShown, remoteCommandVia, SERVER_NAME, storeKeyOf, tailnetOrigin } from "./botlingd-cluster";
+import { pluginCapability } from "./plugin-capability";
 import { ensureSoleServerVapidKeys, testCorruptContent, type VapidSyncState } from "./botlingd-setup";
 import type { StartContext } from "./botlingd-start-context";
 
@@ -167,6 +168,7 @@ export async function startCore(s: Ctx): Promise<Partial<Ctx>> {
     fetch: createAppFetch({ roster, requester: () => later.fetchRequester }),
     pluginGrant: (name) => readPluginGrant(hub.reader(), serverId, name),
     pluginAsks: (name) => readPluginAsks(hub.reader(), serverId, name),
+    pluginCapability: (name, capability) => pluginCapability(() => hub.reader(), serverId, name, capability),
     botStore: (directory) => {
       const key = storeKeyOf(paths.dataDir, directory, ids.main);
       opened.set(key, directory);

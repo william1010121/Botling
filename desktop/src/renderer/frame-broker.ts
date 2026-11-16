@@ -11,7 +11,7 @@
 // plugin exposed (ui.expose). A frame may also ask for a tile (a card page of a library component it
 // may frame) and ask the user to allow a bot's command (`ccb.requestApproval`): the page answers both
 // itself (plugin-frame-host.ts); the approval is the page's own ApprovalSheet, so a frame can only ask.
-import { BUILTIN_COMMANDS, builtinCommand, frameParams, frameReply, ownsCommand, parseFrameRequest, type BuiltinCommand, type FrameRequest } from "../../../Web/src/frame-protocol";
+import { BUILTIN_COMMANDS, builtinCommand, frameParams, frameReply, ownsCommand, parseFrameRequest, type BuiltinCommand, type FrameRequest, type HostState } from "../../../Web/src/frame-protocol";
 
 export interface FrameTarget {
   frame: HTMLIFrameElement;
@@ -111,6 +111,8 @@ export interface PluginFrameHost {
   requestApproval?(plugin: string, ask: Omit<Extract<FrameRequest, { ccb: "approval" }>, "ccb" | "id">): Promise<{ allowed: boolean }>;
   /** Per-device shell storage for `plugin` (`ccb.storage`). */
   storage?(plugin: string, req: Omit<Extract<FrameRequest, { ccb: "storage" }>, "ccb" | "id">): Promise<unknown>;
+  /** Where `plugin`'s own program part stands (`ccb.host.status()`); only the frame's own plugin is asked about. */
+  hostStatus?(plugin: string): Promise<HostState>;
 }
 
 export interface PluginFrame {
@@ -204,6 +206,12 @@ export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, 
           const { id, ccb: _kind, ...ask } = message;
           if (!host.storage) { reply(id, false, "This page does not answer ccb.storage."); return; }
           host.storage(plugin, ask).then((value) => reply(id, true, value), (failure) => reply(id, false, why(failure)));
+          return;
+        }
+        case "hostStatus": {
+          if (!broker.allow(target)) { reply(message.id, false, "Too many calls; wait a moment."); return; }
+          if (!host.hostStatus) { reply(message.id, false, "This page does not answer ccb.host.status."); return; }
+          host.hostStatus(plugin).then((value) => reply(message.id, true, value), (failure) => reply(message.id, false, why(failure)));
           return;
         }
         case "notify":

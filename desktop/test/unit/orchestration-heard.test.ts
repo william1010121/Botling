@@ -18,7 +18,7 @@ const ALL = ["orchestrate", "exec", "files", "bots"];
 type Handoff = { task_id: string; run: number };
 
 /** `PluginWorkers` over fakes. `written`: the plugin is one a bot wrote; `made`: the bots it made. */
-function book(options: { written?: boolean; made?: string[]; granted?: boolean; atOnce?: number; ask?: (q: AppQuestion) => Promise<AppAnswer | null>; permissions?: string[] } = {}) {
+function book(options: { written?: boolean; installed?: boolean; made?: string[]; granted?: boolean; atOnce?: number; ask?: (q: AppQuestion) => Promise<AppAnswer | null>; permissions?: string[] } = {}) {
   const log = { started: [] as Record<string, unknown>[], sent: [] as string[], cards: [] as string[] };
   const port: WorkerPort = {
     id: "b1",
@@ -28,6 +28,7 @@ function book(options: { written?: boolean; made?: string[]; granted?: boolean; 
   };
   const world: OrchestrationWorld = {
     granted: () => options.granted ?? true,
+    ...(options.installed === undefined ? {} : { installed: () => options.installed === true }),
     workers: (bot) => (bot === "b1" ? port : "No such bot."),
     made: (_plugin, bot) => (options.made ?? ["b1"]).includes(bot),
     quota: () => ({ atOnce: options.atOnce ?? 4 }),
@@ -170,21 +171,23 @@ describe("G1: a plugin a bot wrote is asked again for a new instruction, and wor
   });
 });
 
-describe("G2: one card at a time per plugin", () => {
-  it("a second ask while a card waits is refused at once, and nothing queues; after the answer a new card is asked", async () => {
-    let answer!: (answer: AppAnswer) => void;
+describe("G2: one card at a time per plugin; a second ask waits its turn (2026-11-16, no longer refused)", () => {
+  it("a second ask while a card waits queues behind it: one card is open, the second shows after the first is answered, both start", async () => {
+    const answers: ((answer: AppAnswer) => void)[] = [];
     const cards: string[] = [];
-    const t = book({ written: true, ask: (question) => { cards.push(question.text); return new Promise((resolve) => { answer = resolve; }); } });
+    const t = book({ written: true, ask: (question) => { cards.push(question.text); return new Promise((resolve) => { answers.push(resolve); }); } });
     const first = t.workers.start("p", { bot: "b1", instructions: "one" });
     await vi.waitFor(() => expect(cards).toHaveLength(1));
-    await expect(t.workers.start("p", { bot: "b1", instructions: "two" })).rejects.toThrow(/already has a worker waiting/);
+    const second = t.workers.start("p", { bot: "b1", instructions: "two" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(cards).toHaveLength(1);
-    answer({ index: 0 });
+    answers[0]!({ index: 0 });
     await expect(first).resolves.toBeTruthy();
-    const next = t.workers.start("p", { bot: "b1", instructions: "three" });
     await vi.waitFor(() => expect(cards).toHaveLength(2));
-    answer({ index: 0 });
-    await expect(next).resolves.toBeTruthy();
+    expect(cards[1]).toContain("two");
+    answers[1]!({ index: 0 });
+    await expect(second).resolves.toBeTruthy();
+    expect(t.log.started).toHaveLength(2);
   });
 
   it("a card that is refused, or answered with an error, frees the place", async () => {

@@ -170,8 +170,11 @@ export interface CoreOptions {
   machines?(): Array<{ id: string; name: string }>;
   /** Botling 3's server only (2.x leaves it unset): the grant tier at this plugin's running hash. */
   pluginGrant?: (name: string) => "none" | "read" | "request" | "write" | null;
-  /** Botling 3's server only (M7-O03a): whether the user granted this plugin the named capability at its running hash (only `orchestrate` so far). Unset: nobody has it. */
-  pluginCapability?: (name: string, capability: "orchestrate") => boolean;
+  /**
+   * Botling 3's server only (M7-O03a): whether the user granted this plugin the named capability at its running hash. `orchestrate`: it may
+   * start workers at all; `installed` (2026-11-16): the user allowed it once, so a plugin a bot wrote needs no card per worker. Unset: nobody has it.
+   */
+  pluginCapability?: (name: string, capability: "orchestrate" | "installed") => boolean;
   /** The quota of `workers.start` (workers at once, workers a day); unset: the defaults in orchestration/plugin-workers.ts. */
   orchestrateQuota?: () => { atOnce?: number; perDay?: number };
   /** Botling 3's server only: what this plugin asks at its running hash, for the window's approval (`PluginView.asks`). */

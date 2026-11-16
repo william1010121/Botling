@@ -586,7 +586,7 @@ class Chat {
   }
 
   private render(message: MessageView, state: ChatState): HTMLElement {
-    const element = state.subagent ? subagentMessageElement(message) : messageElement(message, state.components);
+    const element = state.subagent ? subagentMessageElement(message) : messageElement(message, state.components, state.botID);
     if (!message.stamp) return element;
     const group = document.createElement("div");
     group.className = "stamped";

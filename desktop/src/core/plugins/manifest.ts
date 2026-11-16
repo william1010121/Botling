@@ -77,7 +77,7 @@ export const PERMISSIONS: Record<string, string> = {
   routines: "see a bot's routines and pause, resume or cancel them (built-in plugins only)",
   cards: "read the components a chat shows and run their commands once allowed, and keep what the chat page draws (built-in plugins only)",
   app: "install a new build of Botling and restart it, take a picture of its window (built-in plugins only)",
-  orchestrate: "start workers for bots, with your OK for each plugin (it must also have exec, files and bots): they read and write files and run programs in the bots' folders, up to a quota (a plugin a bot wrote asks you for every worker)",
+  orchestrate: "start workers for bots, with your OK for each plugin (it must also have exec, files and bots): they read and write files and run programs in the bots' folders, up to a quota (your Allow of the plugin covers every worker; without it, a plugin a bot wrote asks you for each one)",
   studio: "turn replies into components: read and keep the component specs of every chat, hand Maintainer jobs, change bots' component lists, run allowed commands (built-in plugins only)",
 };
 const PERMISSION_NAMES = Object.keys(PERMISSIONS);

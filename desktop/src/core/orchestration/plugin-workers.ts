@@ -6,7 +6,9 @@
 //   2. the quota (workers at once, workers in the last 24 hours) has room, and the room is taken (a reservation,
 //      synchronously) before the first await, so N+5 requests at once start exactly N;
 //   3. a plugin the bot wrote (not shipped, not installed from the catalog; unknown counts as written) gets an approval
-//      card for every worker; its answer is checked again once it comes (the plugin may have changed, the grant gone);
+//      card for every worker, unless the user installed it (2026-11-16: "install once, everything allowed": `world.installed`);
+//      its answer is checked again once it comes (the plugin may have changed, the grant gone); cards of one plugin queue
+//      (one open at a time, the rest wait their turn) instead of the second one failing;
 //   4. the worker has no more rights than the plugin: no `machine`, `role`, `isolated_git`, `subagent_type` (the params
 //      are strict), a model that would open spec/ is refused, and the worker itself starts without spec/ and without the
 //      bot's skip-the-cards modes (ClaudeWorkers.startFor).
@@ -41,6 +43,8 @@ export const ADMITTED = Symbol("plugin-workers admitted");
 /** What a worker the bot starts for a plugin's message may be given (the same few things `workers.start` takes). */
 const HEARD_KEYS: ReadonlySet<string> = new Set(["instructions", "prompt", "task", "name", "description", "group", "model", "effort", "engine"]);
 const DAY = 86_400_000, KEEP = 7 * DAY, MAX_ENTRIES = 1_000, CARD_WAIT_MS = 600_000;
+/** The most cards of one plugin that wait for the one open (a plugin that asks for more is refused, so cards cannot pile up). */
+const CARDS_QUEUED_MAX = 8;
 
 /** One bot's Claude-process worker host, as the world lends it (null/string from `workers`: why there is none). */
 export interface WorkerPort {
@@ -57,6 +61,12 @@ export interface OrchestrationWorld {
   /** Whether the user granted this plugin `orchestrate` (its own sheet, like a tier raise); absent in the world: nobody. */
   granted(plugin: string): boolean;
   workers(bot: string): WorkerPort | string;
+  /**
+   * Whether the user installed this plugin, i.e. pressed Allow for it once in Settings › Plugins (the same approval that lets its program
+   * part run). 2026-11-16 decision: an installed plugin is fully allowed, so its workers start with no card per worker or message.
+   * Asked at every use; absent, false or a throw: not installed, so a plugin the bot wrote gets its card (fail closed).
+   */
+  installed?(plugin: string): boolean;
   /** Whether the bot is one this plugin made (`profile.plugin`): a plugin the bot wrote works only on those. Absent: none is. */
   made?(plugin: string, bot: string): boolean;
   /** Settings: workers at once and workers a day (clamped to QUOTA_MAX). */
@@ -173,21 +183,42 @@ export class PluginWorkers {
     return null;
   }
 
-  /** One card at a time per plugin (G2): a plugin that asks again while one waits is refused, so cards cannot pile up. */
-  private readonly cards = new Set<string>();
+  /**
+   * One card open at a time per plugin (G2); a card asked meanwhile waits its turn (a queue, 2026-11-16) rather than failing, so a plugin
+   * that starts two workers at once gets two cards, one after the other. `tail` settles when the last card in line is done. A plugin with
+   * more than CARDS_QUEUED_MAX cards in line is refused, so they cannot pile up.
+   */
+  private readonly cardLines = new Map<string, { tail: Promise<void>; inLine: number }>();
+
+  /** Whether the user installed `plugin`: no card is needed (a world that cannot say, or throws: not installed). */
+  private installed(plugin: string): boolean {
+    try { return this.deps.world.installed?.(plugin) === true; } catch { return false; }
+  }
 
   private async card(facts: PluginFacts, botId: string, params: StartParams, sending = false): Promise<boolean> {
-    if (this.cards.has(facts.name)) throw new Error("This plugin already has a worker waiting for your answer. Nothing was started.");
-    const text = `The plugin "${oneLine(facts.name, 100)}" (${facts.identity.slice(0, 12)}, written by a bot) wants to ${sending ? "give a worker new instructions" : "start a worker"} for ${JSON.stringify(oneLine(botId, 100))}: ${JSON.stringify(oneLine(params.name ?? "", 100))}.\nIt would read and write files and run programs in that bot's folder.\nInstructions: ${JSON.stringify(oneLine(params.instructions, 400))}${params.model ? `\nModel: ${JSON.stringify(oneLine(params.model, 60))}` : ""}`;
+    const line = this.cardLines.get(facts.name) ?? { tail: Promise.resolve(), inLine: 0 };
+    if (line.inLine >= CARDS_QUEUED_MAX) throw new Error(`This plugin already has ${CARDS_QUEUED_MAX} workers waiting for your answer. Nothing was started.`);
+    this.cardLines.set(facts.name, line);
+    line.inLine++;
+    const before = line.tail;
+    let release!: () => void;
+    line.tail = new Promise<void>((resolve) => { release = resolve; });
     let timer: NodeJS.Timeout | undefined;
-    this.cards.add(facts.name);
     try {
+      await before; // `tail` only ever resolves: the card in front is done, answered or not
+      // The text is made when it is this card's turn: nothing it shows is older than the card before it.
+      const text = `The plugin "${oneLine(facts.name, 100)}" (${facts.identity.slice(0, 12)}, written by a bot) wants to ${sending ? "give a worker new instructions" : "start a worker"} for ${JSON.stringify(oneLine(botId, 100))}: ${JSON.stringify(oneLine(params.name ?? "", 100))}.\nIt would read and write files and run programs in that bot's folder.\nInstructions: ${JSON.stringify(oneLine(params.instructions, 400))}${params.model ? `\nModel: ${JSON.stringify(oneLine(params.model, 60))}` : ""}`;
       const answer = await Promise.race([
         this.deps.ask({ text, choices: [{ label: "Allow once" }, { label: "Refuse" }], typed: false }).catch(() => null),
         new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), this.deps.cardWaitMs ?? CARD_WAIT_MS); }),
       ]);
       return !!answer && "index" in answer && answer.index === 0;
-    } finally { clearTimeout(timer); this.cards.delete(facts.name); }
+    } finally {
+      clearTimeout(timer);
+      line.inLine--;
+      if (line.inLine === 0) this.cardLines.delete(facts.name);
+      release();
+    }
   }
 
   /** G1: a plugin the bot wrote works on the bots it made, not on the user's own. */
@@ -211,7 +242,7 @@ export class PluginWorkers {
 
   /** The card (for a plugin a bot wrote), the room taken, then `go`; the room is given back if `go` fails. Shared by `start` and `admitHeard`. */
   private async launched(facts: PluginFacts, botId: string, params: StartParams, go: (startedBy: StartedBy) => Promise<{ task_id: string; run: number }>): Promise<{ taskId: string; run: number }> {
-    if (facts.botWritten) {
+    if (facts.botWritten && !this.installed(facts.name)) {
       if (!(await this.card(facts, botId, params))) throw new Error("You did not allow this worker. Nothing was started.");
       // Authority at use: what the card showed is still true, and the room is still there.
       this.allowed(facts.name, facts.identity);
@@ -303,7 +334,7 @@ export class PluginWorkers {
     // G1: a new instruction is asked about again for a plugin a bot wrote (and only on a bot it made), as a new worker is.
     if (facts.botWritten) {
       this.mayWorkOn(facts, port.id);
-      if (!(await this.card(facts, port.id, { bot: port.id, instructions: message }, true))) throw new Error("You did not allow this message to the worker. Nothing was sent.");
+      if (!this.installed(facts.name) && !(await this.card(facts, port.id, { bot: port.id, instructions: message }, true))) throw new Error("You did not allow this message to the worker. Nothing was sent.");
       this.allowed(plugin, facts.identity);
     }
     // O05: a next run drops the report the bot has not taken (`launch` resets it): not while the bot is still owed the last one.

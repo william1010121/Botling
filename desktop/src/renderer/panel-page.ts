@@ -123,6 +123,10 @@ const ccb = {
   command: (id, ...args) => ccb.commands.execute(id, ...args),
   host: {
     call: (method, params) => ask({ ccb: "call", method: String(method), params: params === undefined ? null : params }),
+    /** Where its own program part stands: "none" | "off" | "held" (not allowed yet) | "starting" | "running" | "failed". */
+    status: () => ask({ ccb: "hostStatus" }),
+    /** Hears the state change (the same words as status()); a function that stops hearing is returned. */
+    onStatus: (handler) => ccb.on("hostStatus", handler),
   },
   call: (method, params) => ccb.host.call(method, params),
   /** Hears event "name" the page pushes (the program part's ui.emit; "visible" and "toggle" for a bottomPanel view). */

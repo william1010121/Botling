@@ -735,6 +735,10 @@ async function openPluginLink(cmd: Extract<Command, { type: "plugins.openLink" }
   if (target.kind === "web" && pane && isWebUrl(target.url)) { openedResults.push(target.url); pane.open(cmd.botId, target.url); return { opened: true }; }
   if (target.kind === "web") return openLink(target.url);
   if (route === "markdown") return markdownPreview(target.path);
+  // `botling.openFile`: a page in an `artifacts` folder opens in the app's report view (as a Storage row's page does); any other page as before.
+  if (target.kind === "file" && pluginLinkRoute(target, cmd.preview === true) === "preview") {
+    try { const previewURL = reportPreviewURL(target.path); openedResults.push(target.path); return { opened: true, previewURL }; } catch { /* not in an artifacts folder: its app */ }
+  }
   return openLink(target.path);
 }
 /** `reveal`: the lightbox's "Show in Finder" (a local file only, shown in Finder rather than opened). */

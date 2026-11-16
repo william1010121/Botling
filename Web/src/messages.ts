@@ -48,13 +48,13 @@ const flagIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" st
 const moreIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>`;
 const replyIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`;
 
-/** One message, as the element that goes in the chat. */
-export function messageElement(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
+/** One message, as the element that goes in the chat. `botId`: the bot whose chat it is in (a plugin's component is told it, `ComponentContext`). */
+export function messageElement(message: MessageView, components: Record<string, ComponentInfo>, botId: string | null = null): HTMLElement {
   const row = document.createElement("div");
   row.className = `row ${message.role}`;
   row.dataset.id = message.id;
 
-  drawRole(row, message, components);
+  drawRole(row, message, components, botId);
   const tasks = row.querySelector<HTMLElement>(".task-chips");
   if (tasks || message.reactionEnabled || message.seen?.length) {
     let holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column");
@@ -158,7 +158,7 @@ export function seenMarks(seen: SeenView[]): HTMLElement {
   return marks;
 }
 
-function drawRole(row: HTMLElement, message: MessageView, components: Record<string, ComponentInfo>): void {
+function drawRole(row: HTMLElement, message: MessageView, components: Record<string, ComponentInfo>, botId: string | null): void {
   switch (message.role) {
     case "user":
       // The chat's background work never goes under your own line, only under the bot's.
@@ -166,7 +166,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       break;
     case "bot":
     case "notice": {
-      const body = botBody(message, components);
+      const body = botBody(message, components, botId);
       const actions = message.role === "bot" && (feedback.enabled || messageMenu.items.length) ? actionColumn(message) : replyButton(message);
       const tasks = message.tasks?.length ? taskChips(message.id, message.tasks) : null;
       if (message.speaker || tasks || message.role === "notice") {
