@@ -221,6 +221,11 @@ async function markupOf(node: ReturnType<typeof createElement>): Promise<string>
   return html;
 }
 const stubClient = (): Client => ({ request: vi.fn(async (command: { type: string; name?: string }) => (command.type === "plugins.web" ? { specs: [] } : command.type === "plugins.panel" ? { title: command.name, source: "", settings: {} } : command.type === "card.page" ? { url: "botling-card://page/1" } : { result: null })), onEvent: () => () => {} }) as unknown as Client;
+/** A client whose `card.page` answers one new page address per call, as the chat-header goldens were recorded. */
+function countingClient(): Client {
+  let pages = 0;
+  return { request: vi.fn(async (command: { type: string; name?: string }) => (command.type === "plugins.panel" ? { title: command.name, source: "", settings: {} } : command.type === "card.page" ? { url: `botling-card://page/${++pages}` } : { result: null })), onEvent: () => () => {} } as unknown as Client;
+}
 const golden = (dir: string, file: string, markup: string) => expect(`<!-- ${file.replace(/\.html$/, "")} -->\n${ids(markup)}\n`).toBe(read(dir, file));
 
 describe("the right panel, its takeover and the chat header, drawn with every built-in plugin loaded", () => {
@@ -242,7 +247,7 @@ describe("the right panel, its takeover and the chat header, drawn with every bu
     document.body.append(host);
     const root = createRoot(host);
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    await act(async () => root.render(createElement(ChatHeaderViews, { client: stubClient(), views, botId: "B1" })));
+    await act(async () => root.render(createElement(ChatHeaderViews, { client: countingClient(), views, botId: "B1" })));
     cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
     const same = (file: string) => expect(ids(host.innerHTML) + "\n").toBe(read("chat-header", file));
     same("header-closed.html");
