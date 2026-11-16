@@ -133,7 +133,7 @@ async function draw(r: Rig, parts: Parameters<typeof Fallback>[0]["parts"] = {})
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const draws = (): ReactNode => createElement(ShellFrame, {
     legacy: createElement("div", { className: "shell" }, createElement(RegionSlot, { region: "main" })),
-    regions: { main: createElement(ChatStub, { store: r.store }), away: { source: { client: r.client, store: r.store }, parts } },
+    regions: { main: createElement(ChatStub, { store: r.store }), bottom: createElement("div", { className: "bottom-panels" }), away: { source: { client: r.client, store: r.store }, parts } },
   });
   await act(async () => root.render(draws()));
   roots.push({ root, host });
@@ -338,7 +338,6 @@ describe("the fallback's own parts", () => {
     const host = await draw(r, {
       header: createElement("span", { className: "bottom-controls" }), bar: createElement("div", { className: "board-switch" }), alerts: createElement("div", { className: "core-swap" }),
       worker: createElement("div", { className: "worker-bar" }), error: createElement("div", { className: "banner bottom", role: "alert" }, "boom"),
-      bottom: createElement("div", { className: "bottom-panels" }),
     });
     await act(async () => { await chatHost().start(); });
     await settle(() => { expect(fallbackOf(host)).not.toBeNull(); });
@@ -386,6 +385,9 @@ describe("the whole app page with the chat plugin refused", () => {
     expect(page.host.querySelector(".right-toggle")).not.toBeNull();
     // Back to Chat shows the fallback's own lines and input (the Storage page goes).
     await act(async () => { page.host.querySelector<HTMLButtonElement>(".board-switch button:not([data-tab])")!.click(); });
+    // The pick is remembered by main (`settings.set`): the page hears the new setting.
+    expect(page.requests.filter((request) => request.type === "settings.set" && (request as { change?: { key?: string } }).change?.key === "mainTab")).toEqual([{ type: "settings.set", change: { key: "mainTab", value: { botId: SITE, tab: null } } }]);
+    await page.update({ mainTabs: {} });
     await settle(() => { expect(page.host.querySelector(".storage-main")).toBeNull(); });
     expect(page.host.querySelector(".fallback-input textarea")).not.toBeNull();
   });
