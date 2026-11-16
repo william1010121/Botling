@@ -93,7 +93,7 @@ describe("prune: the old entries of each own stream go by eviction", () => {
     expect(table(db, "messages")).toEqual(before.messages);
     expect(table(db, "bots")).toEqual(before.bots);
     expect(table(db, "cards")).toEqual(before.cards);
-    expect(before.messages.length).toBe(7);
+    expect(before.messages.length).toBe(14); // 7 lines in each of the two bots
   });
 
   it("keeps fewer entries when they are big (keepBytes) but never fewer than minKeepEntries", () => {
