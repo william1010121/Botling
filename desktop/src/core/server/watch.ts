@@ -118,7 +118,7 @@ export class CoreWatch {
     this.plugins.scan();
     const before = this.components.library.names.join("\n");
     const catalogChanged = this.components.library.rescan();
-    if (catalogChanged) for (const bot of this.bots.values()) bot.componentsChanged();
+    if (catalogChanged) for (const bot of this.bots.values()) bot.cards.componentsChanged();
     // Components bots asked Maintainer for that are in the library now go on their lists.
     if (catalogChanged || before !== this.components.library.names.join("\n")) {
       this.maintainer.deliverAsked();

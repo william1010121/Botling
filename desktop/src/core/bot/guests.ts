@@ -43,11 +43,11 @@ export class BotGuests {
   private updated() { return this.host.updated(); }
   private begin(turn: Turn, head?: AgentHead) { return this.host.begin(turn, head); }
   private next() { return this.host.next(); }
-  private refuseIfClosed() { return this.host.refuseIfClosed(); }
+  private refuseIfClosed() { return this.host.questions.refuseIfClosed(); }
   private persist(soon?: boolean) { return this.host.persist(soon); }
   private messageView(record: ChatRecord): MessageView { return this.host.messageView(record); }
   private changed(record: ChatRecord) { return this.host.changed(record); }
-  private rowsChanged(force?: boolean) { return this.host.rowsChanged(force); }
+  private rowsChanged(force?: boolean) { return this.host.subagentRowBook.rowsChanged(force); }
 
   // ---- Owned state ----
   cardPicks = new Map<string, CardPick[]>();
@@ -156,7 +156,7 @@ export class BotGuests {
    * archive too, as what it was asked there and its reply. Not unread: you read it where you called it in.
    */
   keepCallIn(asked: string, at: number, line: ChatRecord) {
-    if (this.options.primary) { this.options.primary.keepCallIn(asked, at, line); return; }
+    if (this.options.primary) { this.options.primary.guests.keepCallIn(asked, at, line); return; }
     this.add({ id: newId(), role: "notice", text: asked, date: at });
     const copy: ChatRecord = { id: newId(), role: "bot", text: line.text, date: toSwiftDate() };
     if (line.displays) copy.displays = line.displays;
@@ -175,7 +175,7 @@ export class BotGuests {
   /** A guest's reactions on this chat's lines (`applyReactions(actor: "guest:…")`). */
   guestReactions(actions: { messageId: string; emoji: string; present: boolean }[], actor: string) {
     for (const action of actions) {
-      try { this.owner.setReaction(action.messageId, action.emoji, action.present, actor); } catch { /* A line it named that is not here. */ }
+      try { this.owner.recordsBook.setReaction(action.messageId, action.emoji, action.present, actor); } catch { /* A line it named that is not here. */ }
     }
   }
 
@@ -227,7 +227,7 @@ export class BotGuests {
 
   /** The original was ignored: synchronize open or explicitly startup-invalidated copies only. */
   syncIgnoredCopies(sourceID: string, sourceMessageID: string, at: string): void {
-    if (this.options.primary) { this.options.primary.syncIgnoredCopies(sourceID, sourceMessageID, at); return; }
+    if (this.options.primary) { this.options.primary.guests.syncIgnoredCopies(sourceID, sourceMessageID, at); return; }
     for (const record of this.records) {
       if ((record.role !== "notice" && record.role !== "bot") || record.sourceID !== sourceID || record.sourceMessageID !== sourceMessageID
         || record.chosen != null || record.answer != null || record.ignoredAt != null
@@ -272,7 +272,7 @@ export class BotGuests {
 
   /** The answer `holdCardAnswer` kept reached the bot (the card shows it answered), or never will (it is open again, with a note). */
   releaseCardAnswer(id: string, delivered: boolean): void {
-    if (this.options.primary) { this.options.primary.releaseCardAnswer(id, delivered); return; }
+    if (this.options.primary) { this.options.primary.guests.releaseCardAnswer(id, delivered); return; }
     const record = this.records.find((candidate) => candidate.id === id);
     const pending = record?.pendingAnswer;
     if (!record || !pending) return;

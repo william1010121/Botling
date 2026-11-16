@@ -42,7 +42,7 @@ export function studioWorld(deps: StudioDeps): StudioWorld {
     return bot;
   };
   const chatOf = (bot: Bot): StudioChat => ({
-    id: idOf(bot), name: bot.profile.name, folder: bot.profile.folder, working: bot.view().working, components: bot.components, own: bot.ownComponentNames,
+    id: idOf(bot), name: bot.profile.name, folder: bot.profile.folder, working: bot.view().working, components: bot.components, own: bot.cards.ownComponentNames,
   });
   const entryOf = (name: string, withInfo: boolean): StudioLibraryEntry => {
     const library = deps.library;
@@ -68,7 +68,7 @@ export function studioWorld(deps: StudioDeps): StudioWorld {
       return {
         record: structuredClone(record) as unknown as Record<string, unknown>,
         asked: lines.slice(0, at).findLast((line) => line.role === "user" && line.text.trim())?.text ?? null,
-        previews: bot.previews(record),
+        previews: bot.cards.previews(record),
         preview: previewOf(record),
         turn: lines.slice(lines.findLastIndex((line) => line.role === "user") + 1).map((line) => line.id),
       };

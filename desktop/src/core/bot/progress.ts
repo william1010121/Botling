@@ -33,7 +33,7 @@ export class BotProgress {
   private checkSettingsHold() { this.host.checkSettingsHold(); }
   private add(...a: Parameters<Bot["add"]>) { return this.host.add(...a); }
   private deliverTo(...a: Parameters<Bot["deliverTo"]>) { return this.host.deliverTo(...a); }
-  private withSavedMemory(prompt: string) { return this.host.withSavedMemory(prompt); }
+  private withSavedMemory(prompt: string) { return this.host.decisions.withSavedMemory(prompt); }
   private finishTurn(turn: Turn, status: Status, error?: string) { this.host.finishTurn(turn, status, error); }
   private bumpUnread() { this.host.bumpUnread(); }
 

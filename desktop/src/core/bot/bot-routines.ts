@@ -117,7 +117,7 @@ export class BotRoutines {
 
   /** What the app shows of its routines. */
   routinesView(now = Date.now()): ResultOf<"routines.list"> {
-    if (this.options.primary) return this.options.primary.routinesView(now);
+    if (this.options.primary) return this.options.primary.routines.routinesView(now);
     const { jobs, scheduled } = this.loadRoutines();
     const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
     const views: RoutineView[] = scheduled.slice(-150).map((job) => {

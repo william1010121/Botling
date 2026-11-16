@@ -49,14 +49,14 @@ export class BotCards {
   // ---- Moved from `Bot` ----
   /** Its own components (bot.json `components`), null when it keeps no list. */
   get components(): string[] | null {
-    return this.owner.componentList ? [...this.owner.componentList] : null;
+    return this.owner.cards.componentList ? [...this.owner.cards.componentList] : null;
   }
 
   setComponentList(names: string[]) {
     const owner = this.owner;
-    owner.componentList = [...new Set(names)];
-    if (!owner.readOnly) owner.store.saveSetting("components", owner.componentList);
-    owner.componentsChanged();
+    owner.cards.componentList = [...new Set(names)];
+    if (!owner.readOnly) owner.store.saveSetting("components", owner.cards.componentList);
+    owner.cards.componentsChanged();
   }
 
   /** Its own components that are in the library, in the library's order (`ownComponents(of:)`). */
@@ -107,7 +107,7 @@ export class BotCards {
   ownComponents(): string[] {
     const context = this.context;
     if (!context) return [];
-    const own = new Set(this.owner.componentList ?? []);
+    const own = new Set(this.owner.cards.componentList ?? []);
     return context.library.names.filter((name) => own.has(name));
   }
 
@@ -274,7 +274,7 @@ export class BotCards {
 
   /** "Allow and run" on the app page's ApprovalSheet for a card: what the sheet showed (the card's command, folder and Detail command), then it runs. */
   componentApprove(messageId: string, index: number, shown: { command: string; folder: string; detail?: string }): ResultOf<"component.approve"> {
-    if (this.options.primary) return this.options.primary.componentApprove(messageId, index, shown);
+    if (this.options.primary) return this.options.primary.cards.componentApprove(messageId, index, shown);
     const context = this.context;
     const record = this.records.find((candidate) => candidate.id === messageId);
     const display = (record?.displays as Display[] | undefined)?.[index];
@@ -340,7 +340,7 @@ export class BotCards {
    * the command runs if the user allowed it in this folder and it is neither running nor was run within `minIntervalMs`.
    */
   pluginCommand(key: string, command: string, run: false | { minIntervalMs: number }): { folder: string; approved: boolean; status: CommandStatus; data: string | null; error: string | null; ranAt: number | null; started: boolean } | null {
-    if (this.options.primary) return this.options.primary.pluginCommand(key, command, run);
+    if (this.options.primary) return this.options.primary.cards.pluginCommand(key, command, run);
     const context = this.context;
     if (!context) return null;
     const card = `plugin/${key}/${this.id}`;
@@ -389,10 +389,10 @@ export class BotCards {
 
   /** Every component in its chat, newest line first and each line's last one first (what a pin is made from, what the picker lists). */
   cardsShown(): { messageId: string; index: number; name: string; command: string | null; shownCommand: string | null; data: string; author: string | null }[] {
-    if (this.options.primary) return this.options.primary.cardsShown();
+    if (this.options.primary) return this.options.primary.cards.cardsShown();
     const context = this.context;
     if (!context) return [];
-    const out: ReturnType<Bot["cardsShown"]> = [];
+    const out: ReturnType<Bot["cards"]["cardsShown"]> = [];
     for (const record of [...this.records].reverse()) {
       if (record.role !== "bot") continue;
       const displays = (record.displays ?? []) as Display[];
@@ -440,7 +440,7 @@ export class BotCards {
 
   /** What the ApprovalSheet asks about a card's command and its component's Detail command; null once both are allowed. */
   cardAskFor(card: string, command: string, name: string): ApprovalAskView | null {
-    if (this.options.primary) return this.options.primary.cardAskFor(card, command, name);
+    if (this.options.primary) return this.options.primary.cards.cardAskFor(card, command, name);
     const context = this.context;
     if (!context) return null;
     // Not a card of a plugin's kind: it is never allowed from here.
@@ -458,7 +458,7 @@ export class BotCards {
 
   /** What the plugin says changed in its cards, told to the bot with the user's next message (`cards.setNotes`). */
   setCardNotes(notes: { date: number; line: string }[]): void {
-    if (this.options.primary) return this.options.primary.setCardNotes(notes);
+    if (this.options.primary) return this.options.primary.cards.setCardNotes(notes);
     this.cardNotes = notes;
   }
 
@@ -486,7 +486,7 @@ export class BotCards {
 
   /** The bot's components as a note's insert menu lists them (its own list first, then the rest of the library). null: no component context. */
   noteComponents(): { folder: string; readOnly: boolean; components: { name: string; title: string | null; summary: string; offered: boolean; command: string | null; every: number | null; sizes: string[]; icon: string | null; chatData: string | null }[] } | null {
-    if (this.options.primary) return this.options.primary.noteComponents();
+    if (this.options.primary) return this.options.primary.cards.noteComponents();
     const context = this.context;
     if (!context) return null;
     const library = context.library;
@@ -507,7 +507,7 @@ export class BotCards {
     key: string; name: string; exists: boolean; command: string | null; folder: string; every: number | null;
     status: CommandStatus | "static"; data: string; error: string | null; ranAt: number | null; images: Record<string, string>; chatData: string | null;
   }[] | null {
-    if (this.options.primary) return this.options.primary.noteCardStates(cards);
+    if (this.options.primary) return this.options.primary.cards.noteCardStates(cards);
     const context = this.context;
     if (!context) return null;
     const folder = this.commandFolder;
@@ -531,7 +531,7 @@ export class BotCards {
 
   /** Runs a note card's command when the user allowed it in this folder; `force` runs a finished one again, at most every 2 s. */
   noteCardRun(key: string, command: string, force: boolean): { folder: string; approved: boolean; started: boolean } | null {
-    if (this.options.primary) return this.options.primary.noteCardRun(key, command, force);
+    if (this.options.primary) return this.options.primary.cards.noteCardRun(key, command, force);
     const context = this.context;
     if (!context) return null;
     const folder = this.commandFolder;

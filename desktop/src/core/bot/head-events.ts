@@ -71,7 +71,7 @@ export class HeadEvents {
   private get tidying(): boolean { return this.host.tidying; }
   private get toolCalls(): Bot["toolCalls"] { return this.host.toolCalls; }
   private get unbegun(): Bot["turns"]["unbegun"] { return this.host.turns.unbegun; }
-  private get inHeadSubagents(): SubagentRecord[] { return this.host.inHeadSubagents; }
+  private get inHeadSubagents(): SubagentRecord[] { return this.host.tasks.inHeadSubagents; }
   private get lineMediaStore(): string { return this.host.delivery.lineMediaStore; }
   // Fields of `Bot` it writes (a setter for another owner's field: M7-S54 ... replace these by named transitions):
   // BotHead's transitions (M7-S57):
@@ -108,7 +108,7 @@ export class HeadEvents {
   private handleRequests(requests: BotRequest[]): BotRequest[] { return this.host.decisions.handleRequests(requests); }
   private headStopped(head: Engine) { return this.host.group.headStopped(head); }
   private headWords(words: string) { return this.host.group.headWords(words); }
-  private hostFacts(): HostFacts { return this.host.hostFacts(); }
+  private hostFacts(): HostFacts { return this.host.workers.hostFacts(); }
   private insertDelivered(head: AgentHead, id: string) { return this.host.turns.insertDelivered(head, id); }
   private keepTasks(turn: Turn, record: ChatRecord | null) { return this.host.tasks.keepTasks(turn, record); }
   private messageView(record: ChatRecord): MessageView { return this.host.messageView(record); }
@@ -117,16 +117,16 @@ export class HeadEvents {
   private newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn { return this.host.newTurn(origin, words, userId, ids); }
   private next(): void { return this.host.next(); }
   private noteCodexRetry(item: Extract<CodexItem, { kind: "apiRetry" }>) { return this.host.progress.noteCodexRetry(item); }
-  private noteProgressOf(item: CodexItem) { return this.host.noteProgressOf(item); }
-  private noteRequest(event: RequestEvent) { return this.host.noteRequest(event); }
-  private noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) { return this.host.noteToolCall(item); }
+  private noteProgressOf(item: CodexItem) { return this.host.progress.noteProgressOf(item); }
+  private noteRequest(event: RequestEvent) { return this.host.views.noteRequest(event); }
+  private noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) { return this.host.questions.noteToolCall(item); }
   private notice(text: string) { return this.host.notice(text); }
   private onItemPending(pending: boolean) { return this.host.workers.onItemPending(pending); }
   private onSubagentItem(item: CodexItem): boolean { return this.host.onSubagentItem(item); }
   private persist(soon?: boolean) { return this.host.persist(soon); }
-  private place(turn: Turn): ChatRecord { return this.host.place(turn); }
+  private place(turn: Turn): ChatRecord { return this.host.headRun.place(turn); }
   private placeSubagentTask(ownerId: string, task: BackgroundTask) { return this.host.tasks.placeSubagentTask(ownerId, task); }
-  private recordOutage(found: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { return this.host.recordOutage(found); }
+  private recordOutage(found: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { return this.host.progress.recordOutage(found); }
   private refreshScheduleDue() { return this.host.tasks.refreshScheduleDue(); }
   private relayFollowUp(turn: Turn, status: Status, record: ChatRecord | null, error?: string) { return this.host.workers.relayFollowUp(turn, status, record, error); }
   private relayIfCallInWork(turn: Turn, workerId: string | null | undefined, news: CallInRelay["news"]) { return this.host.workers.relayIfCallInWork(turn, workerId, news); }
@@ -139,7 +139,7 @@ export class HeadEvents {
   private settle(id: string, answer: string, deny: boolean) { return this.host.settle(id, answer, deny); }
   private settleSessionSchedules() { return this.host.tasks.settleSessionSchedules(); }
   private settleTurnApprovals() { return this.host.settleTurnApprovals(); }
-  private showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) { return this.host.showDenial(denial); }
+  private showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) { return this.host.questions.showDenial(denial); }
   private steeredStarted(head: AgentHead, next: Turn) { return this.host.turns.steeredStarted(head, next); }
   private stopTasks() { return this.host.tasks.stopTasks(); }
   private takeHandback(turn: Turn): boolean { return this.host.workers.takeHandback(turn); }

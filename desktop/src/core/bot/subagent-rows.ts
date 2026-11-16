@@ -59,7 +59,7 @@ export class BotSubagentRows {
   /** The rows changed: the windows hear of it once (`force`: always). */
   rowsChanged(force = false) {
     const primary = this.options.primary ?? this.host;
-    const text = JSON.stringify(primary.subagentRows());
+    const text = JSON.stringify(primary.subagentRowBook.subagentRows());
     if (!force && text === primary.recordsBook.lastRows) return;
     primary.recordsBook.lastRows = text;
     primary.updated();

@@ -52,8 +52,8 @@ export class BotHead {
   private get steered(): Map<string, Turn> { return this.host.steered; }
   private get allowRules(): string[] { return this.host.allowRules; }
   private get backgroundWorkRunning(): boolean { return this.host.tasks.backgroundWorkRunning; }
-  private get inHeadSubagents(): SubagentRecord[] { return this.host.inHeadSubagents; }
-  private get routineStorePath(): string | null { return this.host.routineStorePath; }
+  private get inHeadSubagents(): SubagentRecord[] { return this.host.tasks.inHeadSubagents; }
+  private get routineStorePath(): string | null { return this.host.routines.routineStorePath; }
   private get workerCore(): WorkerCoreFactory { return this.host.workers.workerCore; }
   private get turn(): Turn | null { return this.host.turn; }
   private get turns() { return this.host.turns; }

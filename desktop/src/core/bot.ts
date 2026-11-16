@@ -49,17 +49,15 @@ import type { CommandMonitor } from "./agent/monitors";
 //   decision retains one owner, and a pick on any copy is applied exactly once.
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { ApprovalAnswerer, HostFacts } from "./agent-registry";
-import type { ApprovalAskView, BotView, SubagentRowView, ChatSnapshot, Event, MessageView, ResultOf, BotSettingsView, ResultView } from "../contract";
+import type { ApprovalAnswerer } from "./agent-registry";
+import type { BotView, ChatSnapshot, Event, MessageView, ResultOf, BotSettingsView, ResultView } from "../contract";
 import type { HeadExit } from "./agent/head";
 import type { CodexItem } from "./agent/codex";
 import { Conductor, readHeads, type AnswerTarget, type ConductorAction, type Engine, type Heads } from "./heads";
-import type { RequestEvent } from "./token-speed";
 import type { StreamItem } from "./agent/stream";
 import { archiveAll } from "./briefing";
 import type { BotPrompts } from "./prompts";
 import { SubagentBook, readSubagent, type SubagentRecord } from "./subagents";
-import type { SubagentHistory } from "./store/subagent-store";
 import type { QuestionPick } from "./questions";
 import type { WorkerLedgerRecord, WorkerNote } from "./worker-core";
 import { BotRoutines } from "./bot/bot-routines";
@@ -68,7 +66,7 @@ import type { Outage } from "./network-resume";
 import type { SwapEntry } from "./hot-swap";
 import type { BackgroundKind, BackgroundTask } from "./background-tasks";
 import type { ChatRecord } from "./store/records";
-import type { WorkerHost, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./agent/workers";
+import type { WorkerHost } from "./agent/workers";
 import type { ClaudeWorkers } from "./agent/claude-workers";
 import { BotContext } from "./bot/context";
 import { BotQuestions } from "./bot/questions";
@@ -98,8 +96,6 @@ export { preview, streamingText, isRule, allowRule, permissionText, stepView, su
 export class Bot {
   readonly store: BotStore;
   readonly subagents: SubagentBook;
-  get specList(): StoredSpec[] { return this.recordsBook.specList; }
-  set specList(value: StoredSpec[]) { this.recordsBook.specList = value; }
   /** Read by BotContext (M7-S41). */
   get records(): ChatRecord[] { return this.recordsBook.records; }
   set records(value: ChatRecord[]) { this.recordsBook.records = value; }
@@ -122,7 +118,6 @@ export class Bot {
   get peers(): Bot[] { return this.ctx.peers; }
   /** Read by BotContext (M7-S41): it stays here because it names `this` as the Bot itself. */
   get members(): Bot[] { return [this, ...this.peers]; }
-  ownsTurn(id: string): boolean { return this.ctx.ownsTurn(id); }
 
   get conductor() { return this.group.conductor; }
   private set conductor(v) { this.group.conductor = v; }
@@ -193,16 +188,11 @@ export class Bot {
   /** Owned by BotQuestions (M7-S44); an accessor each, so a test that assigns or reads one on a Bot still works. */
   get toolCalls(): Map<string, { tool: string; detail: string; parent: string | null }> { return this.questions.toolCalls; }
   private set toolCalls(value: Map<string, { tool: string; detail: string; parent: string | null }>) { this.questions.toolCalls = value; }
-  get unread(): number { return this.recordsBook.unread; }
-  set unread(value: number) { this.recordsBook.unread = value; }
   shuttingDown = false;
   /** Read by BotContext (M7-S41). */
   /** The components and cards of this bot (M7-S43): made on first use, from this bot. */
   private botCards: BotCards | null = null;
   get cards(): BotCards { return this.botCards ??= new BotCards(this, this.ctx); }
-  /** The fields BotCards owns, as this bot has always had them (`componentList` and `componentsMayHaveChanged` are read by BotCards through other bots). */
-  get componentList(): string[] | null { return this.cards.componentList; }
-  set componentList(list: string[] | null) { this.cards.componentList = list; }
 
   /** Made on first use, from this bot: a fake `Object.create(Bot.prototype)` has one too. */
   private botContext: BotContext | null = null;
@@ -271,7 +261,7 @@ export class Bot {
     // A new session at every start: the app starting is a wake (1.x).
     this.session = { sessionId: randomUUID(), started: false };
     this.alwaysAllowed = (primary ?? this).store.loadAlwaysAllowed();
-    this.unread = primary ? 0 : this.store.loadUnread();
+    this.recordsBook.unread = primary ? 0 : this.store.loadUnread();
     // Kept from trimming: the ones another bot owns now (their rows and steps are its to show).
     this.subagents = new SubagentBook(this.recordsBook.readList("subagents.json", readSubagent), () => new Set(this.options.agents?.retained(this.engine) ?? []));
     this.subagents.sink = (id, line) => { if (!this.readOnly) this.store.stageSubagentLine(id, line); };
@@ -279,9 +269,9 @@ export class Bot {
     this.subagents.workerProjection = true;
     this.subagents.loadSteps = (id) => this.store.readSubagentSteps(id).steps.slice(-500);
     if (!primary) {
-      this.specList = this.recordsBook.readList("specs.json", readStoredSpec);
+      this.recordsBook.specList = this.recordsBook.readList("specs.json", readStoredSpec);
       const list = this.store.loadSettings().components;
-      this.componentList = Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : null;
+      this.cards.componentList = Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : null;
     }
     if (primary) {
       this.headsSettings = primary.headsSettings;
@@ -301,7 +291,7 @@ export class Bot {
     this.workers.restoreAtStart();
     if (!options.deferStartup) this.activateStartup();
     if (!primary) {
-      if (!this.readOnly) this.saveHeads();
+      if (!this.readOnly) this.settings.saveHeads();
       for (const engine of this.headsSettings.engines) if (engine !== this.engine) this.makePartner(engine, true);
       this.cards.giveFirstComponents();
     }
@@ -310,7 +300,7 @@ export class Bot {
   activateStartup() {
     if (this.headRun.startupActive) return;
     this.headRun.startupActive = true;
-    if (!this.problem && !this.options.primary) archiveAll(this.paths.archive, this.records);
+    if (!this.problem && !this.options.primary) archiveAll(this.ctx.paths.archive, this.records);
     if (!this.options.primary) this.routines.setUpRoutines();
     for (const peer of this.peers) peer.activateStartup();
   }
@@ -329,7 +319,6 @@ export class Bot {
 
   get id() { return this.ctx.id; }
   get profile() { return this.ctx.profile; }
-  get paths() { return this.ctx.paths; }
   log(line: string) { this.ctx.log(line); }
   emit(event: Event) { this.ctx.emit(event); }
 
@@ -368,18 +357,11 @@ export class Bot {
   get takesGuest(): boolean { return this.guests.takesGuest; }
   post(record: ChatRecord, options?: { unread?: boolean }) { return this.guests.post(record, options); }
 
-  keepCallIn(asked: string, at: number, line: ChatRecord) { return this.guests.keepCallIn(asked, at, line); }
-
-  openQuestion() { return this.guests.openQuestion(); }
   lines(): readonly ChatRecord[] { return this.guests.lines(); }
   line(id: string): ChatRecord | null { return this.guests.line(id); }
   ignoreQuestion(id: string, at?: string): ResultOf<"chat.ignoreQuestion"> { return this.guests.ignoreQuestion(id, at); }
-  syncIgnoredCopies(sourceID: string, sourceMessageID: string, at: string): void { return this.guests.syncIgnoredCopies(sourceID, sourceMessageID, at); }
   settleAppQuestion(id: string, outcome: { chosen?: number; answer?: string }): void { return this.guests.settleAppQuestion(id, outcome); }
-  releaseCardAnswer(id: string, delivered: boolean): void { return this.guests.releaseCardAnswer(id, delivered); }
   settleSubagent(id: string, settled: boolean): ResultOf<"subagent.settle"> { return this.guests.settleSubagent(id, settled); }
-
-  hostFacts(): HostFacts { return this.workers.hostFacts(); }
 
   agentFacts(nativeId: string) { return this.workers.agentFacts(nativeId); }
 
@@ -415,35 +397,21 @@ export class Bot {
 
   syncWorkerOwners() { this.workers.syncWorkerOwners(); }
 
-  setWorkerOwner(nativeId: string, owner: WorkerOwner | null): WorkerOwnerResult | null { return this.workers.setWorkerOwner(nativeId, owner); }
-
-  commandWorker(nativeId: string, action: { kind: "message"; text: string } | { kind: "stop" }): Promise<WorkerSendResult | { ok: true; how: "stopped" }> { return this.workers.commandWorker(nativeId, action); }
-
   private workerReported(item: Extract<CodexItem, { kind: "workerReport" }>) { this.workers.workerReported(item); }
 
   private workerNoted(item: Extract<CodexItem, { kind: "workerNote" }>) { this.workers.workerNoted(item); }
 
   /** A worker another bot owns asks for an approval: the owner's chat shows the card (the host's own standing rules still answer what they cover). */
   routeWorkerApproval(head: ApprovalAnswerer, item: Extract<StreamItem, { kind: "permission" }>): boolean { return this.questions.routeWorkerApproval(head, item); }
-  /** A worker's approval was withdrawn: its card here (if any) is no longer needed. */
-  settleWorkerApproval(requestId: string): void { return this.questions.settleWorkerApproval(requestId); }
 
-  subagentRows(): SubagentRowView[] { return this.subagentRowBook.subagentRows(); }
-  rowsChanged(force = false) { return this.subagentRowBook.rowsChanged(force); }
   results(): ResultView[] { return this.subagentRowBook.results(); }
   queueNote(note: string) { return this.subagentRowBook.queueNote(note); }
 
   // Its own components, moved to BotCards (M7-S43).
   get components(): string[] | null { return this.cards.components; }
   setComponentList(names: string[]) { this.cards.setComponentList(names); }
-  get ownComponentNames(): string[] { return this.cards.ownComponentNames; }
-
-  get subagentsAtWork(): boolean { return this.views.subagentsAtWork; }
 
   addRoutine(cron: string, task: string): boolean { return this.routines.addRoutine(cron, task); }
-
-  /** Its tool approvals waiting for you: the tool, what it would run, when it asked (oldest first). */
-  pendingApprovals(): { tool: string; text: string; at: string | null }[] { return this.questions.pendingApprovals(); }
 
   saveSubagents(progress = false, changed?: SubagentRecord) { return this.subagentRowBook.saveSubagents(progress, changed); }
 
@@ -456,11 +424,7 @@ export class Bot {
 
   view(): BotView { return this.views.view(); }
 
-  noteRequest(event: RequestEvent) { this.views.noteRequest(event); }
-
   refresh() { this.views.refresh(); }
-
-  headsChanged(): void { this.views.headsChanged(); }
 
   updated() { this.views.updated(); }
 
@@ -472,23 +436,15 @@ export class Bot {
 
   taskOutput(messageId: string, taskId: string): Promise<ResultOf<"task.output">> { return this.views.taskOutput(messageId, taskId); }
   subagentView(id: string, who?: { owner: string; host: string | null }): ResultOf<"subagent.view"> { return this.views.subagentView(id, who); }
-  hasMoveNotice(key: string): boolean { return this.views.hasMoveNotice(key); }
-  subagentHistory(subagent: SubagentRecord): SubagentHistory { return this.views.subagentHistory(subagent); }
 
   // ------------------------------------------------------------------------------------------
   // Sending, and the turn
 
-  refuseIfClosed(): void { return this.questions.refuseIfClosed(); }
-
   send(text: string, opts: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; originals?: string[]; via?: string; onDelivery?: (delivered: boolean) => void; ids?: PresetTurnIds } = {}): ResultOf<"chat.send"> { return this.group.send(text, opts); }
-
-  presetUserLine(line: { id: string; text: string; date: number; replyTo?: string; to?: AnswerTarget }): boolean { return this.group.presetUserLine(line); }
 
   deliverTo(head: Engine, words: string, userId: string | null, extra?: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds }): Turn { return this.group.deliverTo(head, words, userId, extra); }
 
   delivered(turn: Turn) { return this.group.delivered(turn); }
-
-  startPresetTurn(spec: { ids: PresetTurnIds; words: string; userId: string | null; origin: "user" | "app"; engine?: Engine; routine?: boolean }): { turnId: string; done: Promise<Status> } { return this.group.startPresetTurn(spec); }
 
   newTurn(origin: Origin, words: string, userId: string | null, ids?: PresetTurnIds): Turn { return this.group.newTurn(origin, words, userId, ids); }
 
@@ -507,23 +463,17 @@ export class Bot {
 
   setAnswerWith(to: AnswerTarget): ResultOf<"heads.answerWith"> { return this.group.setAnswerWith(to); }
 
-  appPrimary(): Engine | null { return this.group.appPrimary(); }
-
   setHeads(engines: Engine[]): Promise<ResultOf<"heads.set">> { return this.settings.setHeads(engines); }
   choices() { return this.settings.choices(); }
   applyEngineDefaults(change: { subagentModel?: string | null; subagentEffort?: string | null; codexWorkers?: Record<string, unknown> | undefined; agyWorkerModel?: string | null; agyWorkerEffort?: string | null }) { return this.settings.applyEngineDefaults(change); }
   settingsView(): BotSettingsView { return this.settings.settingsView(); }
   configure(change: { workerMachine?: string | null; agyModel?: string | null; agyWorkerModel?: string | null; agyWorkerEffort?: string | null; codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null; model?: string | null; effort?: string | null; subagentModel?: string | null; subagentEffort?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView { return this.settings.configure(change); }
-  saveHeads(engine?: Engine) { return this.settings.saveHeads(engine); }
   becomeEngine(to: Engine) { return this.settings.becomeEngine(to); }
   get switchReady(): boolean { return this.settings.switchReady; }
   handOver(): Promise<void> { return this.settings.handOver(); }
 
-  withSavedMemory(prompt: string): string { return this.decisions.withSavedMemory(prompt); }
-
   showAppReply(raw: string) { this.decisions.showAppReply(raw); }
 
-  markSeen(ids: string[], head: Engine) { return this.recordsBook.markSeen(ids, head); }
   bumpUnread() { return this.recordsBook.bumpUnread(); }
 
   // ------------------------------------------------------------------------------------------
@@ -532,8 +482,6 @@ export class Bot {
   identifyDecision(id: string) { this.decisions.identifyDecision(id); }
 
   associateDecision(record: ChatRecord, reference: string | null, turn: Turn) { this.decisions.associateDecision(record, reference, turn); }
-
-  resolveDecision(messageId: string, index: number | null, text: string | undefined): boolean | null { return this.decisions.resolveDecision(messageId, index, text); }
 
   redrawQueued(turn: Turn) { this.decisions.redrawQueued(turn); }
 
@@ -544,15 +492,11 @@ export class Bot {
   /** Makes `turn` the one under way and sends it (waking the bot if it sleeps). */
   begin(turn: Turn, head?: AgentHead) { this.turns.launch(turn, head); }
 
-  restartBeforeNextMessage(reason: { told: string; shown: string } | null = null) { this.restarts.restartBeforeNextMessage(reason); }
-
   folderMoved(reason: { told: string; shown: string }) { this.restarts.folderMoved(reason); }
 
   restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) { this.restarts.request(reason, modelSettings, folder); }
 
   restartNow(): { restart: "next-message" | "asleep" } { return this.restarts.restartNow(); }
-
-  savedPromptHash(sessionId: string): { promptHash?: string } { return this.restarts.savedPromptHash(sessionId); }
 
   reloadPlugins() { this.restarts.reloadPlugins(); }
 
@@ -571,8 +515,6 @@ export class Bot {
 
   newSession() { this.headRun.newSession(); }
 
-  place(turn: Turn): ChatRecord { return this.headRun.place(turn); }
-
   private backgroundTurn(head: AgentHead, origin?: "background" | "app"): Turn { return this.headEvents.backgroundTurn(head, origin); }
 
   onItem(head: AgentHead, item: CodexItem) { return this.headEvents.onItem(head, item); }
@@ -585,8 +527,6 @@ export class Bot {
   subagentEnded(id: string) { this.workers.subagentEnded(id); }
 
   finishTurn(turn: Turn, status: Status, error?: string) { return this.headEvents.finishTurn(turn, status, error); }
-
-  forgetReturnRoutes(handoffId?: string) { this.workers.forgetReturnRoutes(handoffId); }
 
   next(): void { this.turns.next(); }
 
@@ -601,7 +541,6 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // The network (1.x's NetworkResume: `recordOutage`, `noteSubagentEnd`, `networkRestored`)
 
-  recordOutage(opts: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { this.progress.recordOutage(opts); }
   networkRestored(now = Date.now()) { this.progress.networkRestored(now); }
 
   // ------------------------------------------------------------------------------------------
@@ -611,9 +550,6 @@ export class Bot {
   endBackground(id: string, status: string, summary: string | null) { this.tasks.endBackground(id, status, summary); }
 
   get ownWorkRunning(): boolean { return this.tasks.ownWorkRunning; }
-  get inHeadSubagents(): SubagentRecord[] { return this.tasks.inHeadSubagents; }
-
-  waitsForRestart(turn: Turn): boolean { return this.restarts.waitsForRestart(turn); }
 
   checkSettingsHold() { this.restarts.checkSettingsHold(); }
 
@@ -622,12 +558,8 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Quiet runs (1.x's `checkStall`, `noteProgress`)
 
-  noteProgressOf(item: CodexItem) { this.progress.noteProgressOf(item); }
-
   // ------------------------------------------------------------------------------------------
   // Sleeping
-
-  scheduleIdle() { this.headRun.scheduleIdle(); }
 
   clearIdle() { this.headRun.clearIdle(); }
 
@@ -638,8 +570,6 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Routines (Routines.swift, ScheduledRoutines.swift; the clock is the core's, `Core.checkRoutines`)
 
-  get routineStorePath(): string | null { return this.routines.routineStorePath; }
-  routinesView(now?: number): ResultOf<"routines.list"> { return this.routines.routinesView(now); }
   changeRoutine(args: Record<string, unknown>): ResultOf<"routines.change"> { return this.routines.changeRoutine(args); }
   checkRoutines(now?: number) { this.routines.checkRoutines(now); }
 
@@ -647,26 +577,14 @@ export class Bot {
   // Components and cards: moved to BotCards (M7-S43); one-line delegates keep every name
 
   get commandFolder(): string { return this.cards.commandFolder; }
-  componentsChanged() { this.cards.componentsChanged(); }
-  previews(record: ChatRecord): string[] | null { return this.cards.previews(record); }
-  componentApprove(messageId: string, index: number, shown: Parameters<BotCards["componentApprove"]>[2]): ResultOf<"component.approve"> { return this.cards.componentApprove(messageId, index, shown); }
-  pluginCommand(key: string, command: string, run: false | { minIntervalMs: number }): ReturnType<BotCards["pluginCommand"]> { return this.cards.pluginCommand(key, command, run); }
   static pluginCard(card: string): boolean { return BotCards.pluginCard(card); }
-  cardsShown(): ReturnType<BotCards["cardsShown"]> { return this.cards.cardsShown(); }
-  cardAskFor(card: string, command: string, name: string): ApprovalAskView | null { return this.cards.cardAskFor(card, command, name); }
-  setCardNotes(notes: { date: number; line: string }[]): void { this.cards.setCardNotes(notes); }
-  noteComponents(): ReturnType<BotCards["noteComponents"]> { return this.cards.noteComponents(); }
-  noteCardStates(cards: Parameters<BotCards["noteCardStates"]>[0]): ReturnType<BotCards["noteCardStates"]> { return this.cards.noteCardStates(cards); }
-  noteCardRun(key: string, command: string, force: boolean): ReturnType<BotCards["noteCardRun"]> { return this.cards.noteCardRun(key, command, force); }
 
   // ------------------------------------------------------------------------------------------
   // Approvals and blocked calls (BotQuestions, M7-S44)
 
   ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) { return this.questions.ask(head, item, turn); }
   private tellReviewOutcome(approval: Approval, allowed: boolean, words?: string) { return this.questions.tellReviewOutcome(approval, allowed, words); }
-  noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) { return this.questions.noteToolCall(item); }
   get allowRules(): string[] { return this.questions.allowRules; }
-  showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) { return this.questions.showDenial(denial); }
   /** Something only the app says, to this head: wakes it like a message (`Bot.appMessage`). */
   tellHead(text: string) {
     this.owner.deliverTo(this.engine, text, null, { origin: "app" });
@@ -681,7 +599,6 @@ export class Bot {
   answer(messageId: string, text: string, files: string[] = [], picks?: QuestionPick[]): ResultOf<"chat.answer"> { return this.questions.answer(messageId, text, files, picks); }
 
   react(messageId: string, emoji: string, present: boolean): ResultOf<"chat.react"> { return this.recordsBook.react(messageId, emoji, present); }
-  setReaction(messageId: string, emoji: string, present: boolean, actor: string): boolean { return this.recordsBook.setReaction(messageId, emoji, present, actor); }
   read(): ResultOf<"chat.read"> { return this.recordsBook.read(); }
 
   // ------------------------------------------------------------------------------------------

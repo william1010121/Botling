@@ -124,7 +124,7 @@ export class BotDecisions {
    * to the head that asked (`resolveDecision`). Null: not a shared decision.
    */
   resolveDecision(messageId: string, index: number | null, text: string | undefined): boolean | null {
-    if (this.options.primary) return this.options.primary.resolveDecision(messageId, index, text);
+    if (this.options.primary) return this.options.primary.decisions.resolveDecision(messageId, index, text);
     const view = this.records.find((candidate) => candidate.id === messageId);
     const id = view?.decisionID;
     if (!view || !id) return null;

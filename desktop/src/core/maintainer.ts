@@ -164,7 +164,7 @@ export class MaintainerDesk {
     if (!maintainer) return;
     if (allowed && !this.allowed(folder)) {
       writeFileAtomic(this.foldersFile, JSON.stringify([...this.approvedFolders(), folder]));
-      maintainer.restartBeforeNextMessage({ told: `may read ${folder}`, shown: `may read ${folder}` });
+      maintainer.restarts.restartBeforeNextMessage({ told: `may read ${folder}`, shown: `may read ${folder}` });
     }
     try { maintainer.relay(folderAnswer(folder, allowed)); } catch (error) { this.deps.log(`folder: ${(error as Error).message}`); }
   }
@@ -205,7 +205,7 @@ export class MaintainerDesk {
   giveComponent(name: string, bot: Bot): boolean {
     const list = bot.components;
     if (!list || !this.deps.library.names.includes(name)) return false;
-    const own = bot.ownComponentNames;
+    const own = bot.cards.ownComponentNames;
     if (own.includes(name)) return true;
     if (own.length >= COMPONENT_LIMIT) return false;
     bot.setComponentList([...list, name]);
@@ -227,7 +227,7 @@ export class MaintainerDesk {
   /** What Maintainer is told about the bot that asked (`componentAskNote`), after giving it at once when the library has it. */
   askNote(name: string, request: string, exists: boolean, bot: Bot | null): string {
     if (!bot || bot.components === null) return "";
-    const own = bot.ownComponentNames;
+    const own = bot.cards.ownComponentNames;
     const limit = COMPONENT_LIMIT;
     const botName = this.nameOf(bot);
     const ask: ComponentAsk = {
@@ -290,7 +290,7 @@ export class MaintainerDesk {
     // Its turn ended: the components it was asked to change are no longer worked on (`finishWorking`).
     this.deps.library.finishWorking();
     if (record.choices?.length && record.chosen === undefined && record.answer === undefined) return;
-    if (maintainer.subagentsAtWork) return;
+    if (maintainer.views.subagentsAtWork) return;
     for (const ask of [...this.asks]) {
       if (!ask.changing || this.deps.library.stampOf(ask.name) === ask.stamp) continue;
       this.asks = this.asks.filter((other) => other !== ask);
@@ -332,7 +332,7 @@ export class MaintainerDesk {
     if (give) {
       if (!this.deps.library.names.includes(name)) { maintainer?.queueNote(`(App: "${name}" is not in the library, so it was not added to ${shown}'s list.)`); return; }
       if (!this.giveComponent(name, bot)) {
-        maintainer?.queueNote(`(App: ${shown} already has ${bot.ownComponentNames.length} / ${COMPONENT_LIMIT} components, so "${name}" was not added. Ask the user which one to remove from ${shown}'s list first.)`);
+        maintainer?.queueNote(`(App: ${shown} already has ${bot.cards.ownComponentNames.length} / ${COMPONENT_LIMIT} components, so "${name}" was not added. Ask the user which one to remove from ${shown}'s list first.)`);
         return;
       }
       const asked = this.asks.find((ask) => ask.botId === bot.id && ask.name === name) ?? this.asks.find((ask) => ask.botId === bot.id && !ask.changing);

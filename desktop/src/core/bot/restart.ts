@@ -101,7 +101,7 @@ export class BotRestart {
    * "may read <folder>": a folder you allowed is one more `--add-dir`). Asleep, the next wake has it anyway.
    */
   restartBeforeNextMessage(reason: { told: string; shown: string } | null = null) {
-    if (this.options.primary) { this.options.primary.restartBeforeNextMessage(reason); return; }
+    if (this.options.primary) { this.options.primary.restarts.restartBeforeNextMessage(reason); return; }
     this.request(reason);
   }
 
@@ -361,7 +361,7 @@ export class BotRestart {
   retainRestartIdentity(entry: RestartEntry): Bot {
     const bot=this.botFor(entry.engine);
     if(!bot || !entry.sessionId)throw Error("Original engine/session unavailable; no replacement was created.");
-    bot.headRun.sessionAdopted({sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.savedPromptHash(entry.sessionId)});bot.headRun.briefingDue();
+    bot.headRun.sessionAdopted({sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.restarts.savedPromptHash(entry.sessionId)});bot.headRun.briefingDue();
     bot.headRun.adoptedAs(!!entry.continue||!!entry.workers?.length||bot.workers.restartedWorkers(entry).length>0);
     bot.store.saveHead(bot.session);
     bot.restarts.recoveryStarted();
@@ -431,7 +431,7 @@ export class BotRestart {
       const bot = this.botFor(entry.engine);
       if (!bot) continue;
       if (entry.sessionId) {
-        bot.headRun.sessionAdopted({ sessionId: entry.sessionId, started: true, ...bot.savedPromptHash(entry.sessionId) });
+        bot.headRun.sessionAdopted({ sessionId: entry.sessionId, started: true, ...bot.restarts.savedPromptHash(entry.sessionId) });
         bot.headRun.adoptedAs(!!entry.continue);
         // The same conversation: no wake briefing (what was cut off in the background is said with its next message).
         bot.headRun.briefingGiven();

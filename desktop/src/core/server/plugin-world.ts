@@ -114,23 +114,23 @@ export class CorePluginWorld {
         shortcutOverrides: () => settingsView(readSettings(Layout.settings(this.options.dataDir))).shortcuts,
         createBot: (plugin, title, name, job, avatar, more) => this.createPluginBot(plugin, title, { name, job, ...(avatar ? { avatar } : {}), ...more }),
         commandApproval: (botId, command) => this.pluginBot(botId)?.cards.commandApproval(command) ?? null,
-        commandRun: (botId, key, command, run) => this.pluginBot(botId)?.pluginCommand(key, command, run) ?? null,
+        commandRun: (botId, key, command, run) => this.pluginBot(botId)?.cards.pluginCommand(key, command, run) ?? null,
         component: (botId, name, data, command) => this.pluginBot(botId)?.cards.libraryEntry(name, data, command) ?? null,
         imageUrls: (botId, data) => this.pluginBot(botId)?.cards.imageUrls(data) ?? null,
-        cardAsk: (botId, card, command, component) => this.pluginBot(botId)?.cardAskFor(card, command, component) ?? null,
+        cardAsk: (botId, card, command, component) => this.pluginBot(botId)?.cards.cardAskFor(card, command, component) ?? null,
         cardApprove: (botId, command, component, folder, detail) => this.pluginBot(botId)?.cards.cardApproveFor(command, component, folder, detail) ?? false,
         noteCards: {
-          components: (botId) => this.pluginBot(botId)?.noteComponents() ?? null,
-          states: (botId, cards) => this.pluginBot(botId)?.noteCardStates(cards) ?? null,
-          run: (botId, key, command, force) => this.pluginBot(botId)?.noteCardRun(key, command, force) ?? null,
+          components: (botId) => this.pluginBot(botId)?.cards.noteComponents() ?? null,
+          states: (botId, cards) => this.pluginBot(botId)?.cards.noteCardStates(cards) ?? null,
+          run: (botId, key, command, force) => this.pluginBot(botId)?.cards.noteCardRun(key, command, force) ?? null,
         },
         cards: {
           library: (botId) => this.pluginBot(botId)?.cards.cardLibrary() ?? null,
-          shown: (botId) => this.pluginBot(botId)?.cardsShown() ?? null,
+          shown: (botId) => this.pluginBot(botId)?.cards.cardsShown() ?? null,
           states: (botId, cards) => this.pluginBot(botId)?.cards.cardStates(cards) ?? null,
           run: (botId, card, command, force) => this.pluginBot(botId)?.cards.cardRun(card, command, force) ?? null,
-          ask: (botId, card, command, component) => this.pluginBot(botId)?.cardAskFor(card, command, component) ?? null,
-          setNotes: (botId, notes) => { const bot = this.pluginBot(botId); if (!bot) return false; bot.setCardNotes(notes); return true; },
+          ask: (botId, card, command, component) => this.pluginBot(botId)?.cards.cardAskFor(card, command, component) ?? null,
+          setNotes: (botId, notes) => { const bot = this.pluginBot(botId); if (!bot) return false; bot.cards.setCardNotes(notes); return true; },
           legacyPins: (botId) => this.pluginBot(botId)?.cards.legacyPins() ?? null,
         },
         dataChanged: (botId, plugin, data) => { if (this.bots.has(botId)) this.event({ type: "chat.pluginData", botId, plugin, data }); },
@@ -149,7 +149,7 @@ export class CorePluginWorld {
           if (!bot) return "no-bot";
           return bot.addRoutine(cron, task) ? "added" : "bad-schedule";
         },
-        routinesList: (botId) => this.pluginBot(botId)?.routinesView() ?? null,
+        routinesList: (botId) => this.pluginBot(botId)?.routines.routinesView() ?? null,
         routinesChange: (botId, operation, id) => {
           const bot = this.pluginBot(botId);
           // Not `ContractError`'s wording to a plugin: the store's own message, as the app's panel showed it.
@@ -158,7 +158,7 @@ export class CorePluginWorld {
         changed: (view) => {
           this.followClaudeParts();
           // A built-in plugin turned on or off brings or takes away its cards (botling.cards).
-          if (this.components.library.rescan()) for (const bot of this.bots.values()) bot.componentsChanged();
+          if (this.components.library.rescan()) for (const bot of this.bots.values()) bot.cards.componentsChanged();
           this.componentsTick();
           const text = JSON.stringify(view);
           if (!this.markPluginsShown(text)) return;

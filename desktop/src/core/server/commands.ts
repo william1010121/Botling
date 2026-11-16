@@ -329,7 +329,7 @@ export class CoreCommands {
         return bot.read();
       }
       case "component.command": return this.bot(cmd.botId).cards.componentCommand(cmd.messageId, cmd.index, cmd);
-      case "component.approve": return this.bot(cmd.botId).componentApprove(cmd.messageId, cmd.index, cmd);
+      case "component.approve": return this.bot(cmd.botId).cards.componentApprove(cmd.messageId, cmd.index, cmd);
       case "component.detail": return this.bot(cmd.botId).cards.componentDetail(cmd.name, cmd.folder, cmd.values, cmd.card, cmd.command);
       case "component.save": return this.bot(cmd.botId).cards.componentSave(cmd.messageId, cmd.index, cmd.data);
       case "component.report": return { sent: await this.reportComponent(cmd) };
@@ -358,7 +358,7 @@ export class CoreCommands {
       }
       case "turn.stop": return this.bot(cmd.botId).stop(cmd.turnId);
       case "turn.await": return this.bot(cmd.botId).await(cmd.turnId, signal);
-      case "routines.list": return this.bot(cmd.botId).routinesView();
+      case "routines.list": return this.bot(cmd.botId).routines.routinesView();
       case "routines.change": {
         const { type: _type, botId: _bot, requestId, ...rest } = cmd;
         return this.bot(cmd.botId).changeRoutine({ ...rest, ...(requestId ? { request_id: requestId } : {}) });

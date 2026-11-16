@@ -79,7 +79,7 @@ export class CoreAgents {
       report: (host, r) => this.agentReported(host, r),
       note: (host, n) => this.agentNoted(host, n),
       approval: (host, nativeId, item, head) => this.agentApproval(host, nativeId, item, head),
-      approvalCancelled: (_host, requestId) => { for (const bot of this.bots.values()) bot.settleWorkerApproval(requestId); },
+      approvalCancelled: (_host, requestId) => { for (const bot of this.bots.values()) bot.questions.settleWorkerApproval(requestId); },
       retained: (engine) => this.agents.retained(id, engine),
       movedOut: (engine) => new Map([...this.agents.movedOut(id, engine)].map(([nativeId, record]) => [nativeId, {
         agentId: record.id, owner: { botId: record.owner.botId, engine: record.owner.engine }, ownerName: this.agentBotName(record.owner.botId), muted: record.relay.muted,
@@ -166,7 +166,7 @@ export class CoreAgents {
     }
     for (const { record, from } of found.ownerReverted) {
       const host = this.bots.get(record.host.botId);
-      host?.setWorkerOwner(record.nativeId, null);
+      host?.workers.setWorkerOwner(record.nativeId, null);
       host?.appNotice(ownerGoneNotice({ title: record.summary.description || "Subagent", owner: this.agentBotName(from.botId) }));
     }
     for (const move of found.resend) {
@@ -185,7 +185,7 @@ export class CoreAgents {
     for (const { record } of gone.ownerReverted) {
       const host = this.bots.get(record.host.botId);
       // Its host hears its reports again (it never stopped running).
-      host?.setWorkerOwner(record.nativeId, null);
+      host?.workers.setWorkerOwner(record.nativeId, null);
       host?.appNotice(ownerGoneNotice({ title: record.summary.description || "Subagent", owner: name }));
       host?.refresh();
     }
@@ -337,14 +337,14 @@ export class CoreAgents {
       for (const [i, record] of records.entries()) {
         const target = this.agents.pendingMoves.find((candidate) => candidate.id === moves[i]!.id)!.to.owner.botId;
         if (record.host.kind === "claude-sidechain") continue;
-        const set = this.bots.get(record.host.botId)?.setWorkerOwner(record.nativeId, this.workerOwnerFor(record, target)) ?? null;
+        const set = this.bots.get(record.host.botId)?.workers.setWorkerOwner(record.nativeId, this.workerOwnerFor(record, target)) ?? null;
         if (set && !set.ok) throw new Error(`"${record.summary.description || record.nativeId}": ${set.reason}`);
         told.push(record);
       }
       for (const move of moves) this.agents.commitMove(move.id);
     } catch (error) {
       // Undo: the hosts are told the owners they had, the intents are dropped, the sub bot made for them goes.
-      for (const record of told) this.bots.get(record.host.botId)?.setWorkerOwner(record.nativeId, this.workerOwnerFor(record, record.owner.botId));
+      for (const record of told) this.bots.get(record.host.botId)?.workers.setWorkerOwner(record.nativeId, this.workerOwnerFor(record, record.owner.botId));
       for (const move of begun) this.agents.endMove(move.id);
       if (subId) await this.removeBot(subId, { quiet: true }).catch(() => undefined);
       throw error instanceof ContractError ? error : new ContractError("conflict", `It was not moved: ${(error as Error).message}`);
@@ -381,12 +381,12 @@ export class CoreAgents {
       const back = toId === hostId;
       const statusFile = back ? null : this.writeAgentStatus(record, true);
       const old = this.removed.has(fromId) ? undefined : this.bots.get(fromId);
-      if (old && !old.hasMoveNotice(`${move.id}:from`)) {
+      if (old && !old.views.hasMoveNotice(`${move.id}:from`)) {
         old.appNotice(movedAwayNotice({ title, to: toName, host: hostName }), undefined, undefined, { sourceID: toId, moveNotice: `${move.id}:from` });
         old.queueNote(movedAwayNote({ title, nativeId: record.nativeId, to: toName }));
       }
       const next = this.removed.has(toId) ? undefined : this.bots.get(toId);
-      if (next && !next.hasMoveNotice(`${move.id}:to`)) {
+      if (next && !next.views.hasMoveNotice(`${move.id}:to`)) {
         if (back) {
           next.appNotice(`${fromName} gave "${title}" back. Its reports come to you again.`, undefined, undefined, { sourceID: fromId, moveNotice: `${move.id}:to` });
           next.queueNote(backNote({ title, nativeId: record.nativeId, from: fromName }));
@@ -472,7 +472,7 @@ export class CoreAgents {
     const owner = this.removed.has(record.owner.botId) ? undefined : this.bots.get(record.owner.botId);
     if (!host) return;
     const words = this.agents.takeMessages(agentId);
-    const sent = await host.commandWorker(record.nativeId, { kind: "message", text: words.map((message) => message.text).join("\n\n") });
+    const sent = await host.workers.commandWorker(record.nativeId, { kind: "message", text: words.map((message) => message.text).join("\n\n") });
     const title = record.summary.description || "Agent";
     if (sent.ok && sent.how !== "stopped") owner?.appNotice(queuedSentNotice({ title, run: sent.run }), undefined, undefined, { sourceID: record.host.botId });
     else if (!sent.ok && sent.busy) for (const message of words) this.agents.queueMessage(agentId, message);
@@ -511,7 +511,7 @@ export class CoreAgents {
     if (record.state === "lost") throw new ContractError("conflict", "Its host is gone.");
     const host = this.removed.has(record.host.botId) ? undefined : this.bots.get(record.host.botId);
     if (!host) throw new ContractError("conflict", "Its host is gone.");
-    const result = await host.commandWorker(record.nativeId, action);
+    const result = await host.workers.commandWorker(record.nativeId, action);
     if (!result.ok) {
       if (action.kind === "message" && result.busy) {
         this.agents.queueMessage(record.id, { text: action.text, from: this.agentBotName(ownerBotId) });

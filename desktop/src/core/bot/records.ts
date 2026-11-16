@@ -36,7 +36,7 @@ export class BotRecords {
   private get shuttingDown(): boolean { return this.host.shuttingDown; }
   private get lineMediaStore(): string { return this.host.delivery.lineMediaStore; }
   private updated() { this.host.updated(); }
-  private refuseIfClosed() { this.host.refuseIfClosed(); }
+  private refuseIfClosed() { this.host.questions.refuseIfClosed(); }
   private deliverTo(head: Engine, words: string, userId: string | null, extra?: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds }): Turn { return this.host.deliverTo(head, words, userId, extra); }
 
   // ---- Moved from `Bot` ----
@@ -174,7 +174,7 @@ export class BotRecords {
     }
     if (record.notDelivered && isOpenQuestion(record)) view.notDelivered = record.notDelivered;
     // The result pages it links to, as preview cards, when the library has the card (Phase 5c).
-    const previews = this.owner.previews(record);
+    const previews = this.owner.cards.previews(record);
     if (previews) view.previews = previews.map((data) => ({ name: PAGE_COMPONENT, data }));
     // The component it already is (Phase 5a), from the component studio's seam; the studio draws the specs made from it itself (chat.decorate).
     const extras = this.owner.options.lineExtras?.(this.owner, record);
@@ -190,17 +190,17 @@ export class BotRecords {
 
   /** The specs made from its replies. */
   get specs(): readonly StoredSpec[] {
-    return this.owner.specList;
+    return this.owner.recordsBook.specList;
   }
 
   /** Changes its specs and saves them, if anything changed (`editSpecs`); the lines they belong to are drawn again. */
   editSpecs(change: (specs: StoredSpec[]) => void): boolean {
     const owner = this.owner;
-    const edited = structuredClone(owner.specList);
+    const edited = structuredClone(owner.recordsBook.specList);
     change(edited);
-    if (sameJSON(edited, owner.specList)) return false;
-    const touched = new Set([...owner.specList, ...edited].flatMap((spec) => (spec.messageID ? [spec.messageID] : [])));
-    owner.specList = edited;
+    if (sameJSON(edited, owner.recordsBook.specList)) return false;
+    const touched = new Set([...owner.recordsBook.specList, ...edited].flatMap((spec) => (spec.messageID ? [spec.messageID] : [])));
+    owner.recordsBook.specList = edited;
     if (!owner.readOnly) owner.store.saveList("specs.json", edited);
     for (const id of touched) owner.recordsBook.refreshLine(id);
     return true;
@@ -299,8 +299,8 @@ export class BotRecords {
 
   bumpUnread() {
     const owner = this.owner;
-    owner.unread += 1;
-    owner.store.saveSetting("unread", owner.unread);
+    owner.recordsBook.unread += 1;
+    owner.store.saveSetting("unread", owner.recordsBook.unread);
     owner.updated();
   }
 
@@ -345,7 +345,7 @@ export class BotRecords {
     const actor = `head:${this.engine}`;
     for (const action of actions) {
       try {
-        this.owner.setReaction(action.messageId, action.emoji, action.present, actor);
+        this.owner.recordsBook.setReaction(action.messageId, action.emoji, action.present, actor);
         // Its own reaction is not news to this head's session.
         if (this.reactionsSeen) this.reactionsSeen = applyingReaction(this.reactionsSeen, action.messageId, action.emoji, action.present, actor);
       } catch { /* A line it named that is not in the chat. */ }

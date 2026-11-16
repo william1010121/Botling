@@ -87,7 +87,7 @@ export class CoreWaiting {
         const first = this.memoryFiles.items(join(profile.folder, profile.memoryPath), "inProgress")[0];
         if (first) doing[profile.id] = first.slice(0, 400);
       }
-      const question = this.bots.get(profile.id)?.openQuestion();
+      const question = this.bots.get(profile.id)?.guests.openQuestion();
       if (question) addQuestion(profile.id, this.bots.get(profile.id), question);
       else for (const item of this.memoryFiles.items(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
     }
@@ -181,7 +181,7 @@ export class CoreWaiting {
         if (peer) this.ignoreWaitingOn(peer, text);
         else this.ignoreWaiting(this.workspaceBot(botId).bot.id, text);
       },
-      pendingApprovals: (botId) => this.workspaceBot(botId).bot.pendingApprovals(),
+      pendingApprovals: (botId) => this.workspaceBot(botId).bot.questions.pendingApprovals(),
       face: (botId, look) => {
         const { bot } = this.workspaceBot(botId);
         const view = bot.view();
@@ -211,7 +211,7 @@ export class CoreWaiting {
       out[id] = {
         bots: JSON.stringify(this.botSummary(bot, profile, pinned)),
         memory: JSON.stringify(this.memorySections(profile)),
-        waiting: JSON.stringify([waiting.items.filter((item) => item.botId === id), waiting.doing[id] ?? null, bot.pendingApprovals()]),
+        waiting: JSON.stringify([waiting.items.filter((item) => item.botId === id), waiting.doing[id] ?? null, bot.questions.pendingApprovals()]),
         results: JSON.stringify(this.resultLinks(bot, 100)),
       };
     }
