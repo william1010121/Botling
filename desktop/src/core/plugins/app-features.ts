@@ -143,8 +143,8 @@ export const BUILTIN_FEATURES: Readonly<Record<string, readonly string[]>> = {
   ],
   "botling.orchestration": [],
   "botling.pin-area": [
-    "api.chat.setData", "api.hooks.beforeSend", "api.replyTags.on",
-    "ccb.composer.mentionSource", "ccb.messages.afterRender", "ccb.messages.userText",
+    "api.chat.decorate", "api.chat.setData", "api.hooks.beforeSend", "api.replyTags.on", "api.workspace.bots",
+    "ccb.composer.mentionSource", "ccb.decorations.register", "ccb.messages.afterRender", "ccb.messages.userText",
     "ccb.page.language", "ccb.page.onState", "ccb.page.post", "ccb.page.slots",
   ],
   "botling.report": [],

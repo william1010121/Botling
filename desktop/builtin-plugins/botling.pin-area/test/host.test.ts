@@ -16,10 +16,14 @@ function setup(seed: Record<string, unknown> = {}) {
   // storage.json is JSON: what is set is not the same object that is read back
   const stored = new Map<string, unknown>(Object.entries(seed).map(([key, value]) => [key, JSON.parse(JSON.stringify(value))]));
   const setData = vi.fn(async (_botId: string, _data: unknown) => {});
+  const decorate = vi.fn(async (_botId: string, _decorations: unknown) => {});
+  // the app's bots as workspace.bots lists them (a sub bot names its parent)
+  const family: { id: string; parent: string | null }[] = [];
   const api = {
     subscriptions: [] as unknown[],
     storage: { dir: "/s", get: (key: string) => (stored.has(key) ? JSON.parse(JSON.stringify(stored.get(key))) : undefined), set: (key: string, value: unknown) => { stored.set(key, JSON.parse(JSON.stringify(value))); } },
-    chat: { setData },
+    chat: { setData, decorate },
+    workspace: { bots: vi.fn(async () => family.map((bot) => ({ ...bot, name: bot.id, role: "bot" }))) },
     ui: { expose: (method: string, fn: (params: unknown) => unknown) => { exposed.set(method, fn); return () => {}; } },
     events: { on: (event: string, fn: Handler) => { events.set(event, fn); return () => {}; } },
     replyTags: { on: (tag: string, fn: Handler) => { tags.set(tag, fn); return () => {}; } },
@@ -34,20 +38,20 @@ function setup(seed: Record<string, unknown> = {}) {
   const tag = (botId: string, name: string, attributes: Record<string, string>, body = "") => tags.get(name)!({ bot: bot(botId), tag: name, attributes, body } as never);
   const send = (botId: string, text: string) => hooks[0]!({ bot: bot(botId), text } as never) as string | false | undefined;
   const book = (botId: string) => M.readBook(stored.get(`pins:${botId}`));
-  return { api, subs, exposed, events, tags, hooks, stored, setData, call, emit, tag, send, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
+  return { api, subs, exposed, events, tags, hooks, stored, setData, decorate, family, call, emit, tag, send, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
 }
 
 describe("the program part", () => {
-  it("registers the five methods, the three events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
+  it("registers the seven methods, the four events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
     const { api, exposed, events, tags, hooks } = setup();
-    expect([...exposed.keys()].sort()).toEqual(["pinMessage", "repin", "seen", "unpin", "view"]);
-    expect([...events.keys()].sort()).toEqual(["messagePosted", "turnFinished", "turnStarted"]);
+    expect([...exposed.keys()].sort()).toEqual(["moveBack", "moveTo", "pinMessage", "repin", "seen", "unpin", "view"]);
+    expect([...events.keys()].sort()).toEqual(["messagePosted", "turnFinished", "turnStarted", "workerDone"]);
     expect([...tags.keys()].sort()).toEqual(["pin-card", "pin-say"]);
     expect(hooks).toHaveLength(1);
     const real = setup();
     real.api.subscriptions.length = 0;
     activate(real.api as unknown as BotlingApi);
-    expect(real.api.subscriptions.length).toBeGreaterThanOrEqual(10);
+    expect(real.api.subscriptions.length).toBeGreaterThanOrEqual(14);
   });
 
   it("pinMessage makes a user card (running, from the message's first line), draws it, and the same message again is the same card", () => {
@@ -79,7 +83,9 @@ describe("the program part", () => {
     t.call("pinMessage", { botId: "B2", messageId: "m1", text: "Beta" });
     expect(t.book("B1").pins.map((pin) => pin.title)).toEqual(["Alpha"]);
     expect(t.book("B2").pins.map((pin) => pin.title)).toEqual(["Beta"]);
-    expect(t.send("B2", "@Alpha hello")).toBeUndefined();
+    // B2 has a card too, but not Alpha: the words are not routed into any card (no header), whatever else is added
+    expect(M.parseAsk(t.send("B2", "@Alpha hello") as string)).toBeNull();
+    expect(t.book("B2").pins[0]!.thread).toEqual([]);
     expect(typeof t.send("B1", "@Alpha hello")).toBe("string");
     expect(() => t.call("unpin", { botId: "B2", id: "p-0001", by: "user" })).not.toThrow();
     expect(t.book("B1").pins).toHaveLength(1);
@@ -170,7 +176,11 @@ describe("@card words", () => {
 
   it("leaves every other message alone: no @, an unknown card, nothing after the name, a bot without cards", () => {
     const t = pinned();
-    for (const text of ["hello", "@Nobody hi", "@Deploy", "please @Deploy this"]) expect(t.send("B1", text), text).toBeUndefined();
+    for (const text of ["hello", "@Nobody hi", "@Deploy", "please @Deploy this"]) {
+      const sent = t.send("B1", text) as string;
+      // not routed: no card header, the user's own words first, only the note of the cards after them
+      expect([M.parseAsk(sent), M.stripBriefing(sent)], text).toEqual([null, text]);
+    }
     expect(t.send("B9", "@Deploy hi")).toBeUndefined();
     expect(t.book("B1").pins[0]!.thread).toEqual([]);
   });
@@ -339,5 +349,329 @@ describe("after a restart", () => {
     expect(() => t.call("pinMessage", { botId: "B1", messageId: "m2", text: "Beta" })).not.toThrow();
     await Promise.resolve();
     expect(t.book("B1").pins).toHaveLength(2);
+  });
+});
+
+// ---- Phase 2 ----
+
+const flush = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
+const ended = (botId: string, workerId: string, report = "結果\n細節", status = "completed") => ({ botId, workerId, status, report });
+
+describe("worker news into a card", () => {
+  const followed = (t = setup()) => {
+    t.tag("B1", "pin-card", { id: "job", title: "Build", state: "run", min: "30", worker: "t-9" }, "審核中");
+    t.tick(1_000);
+    return t;
+  };
+
+  it("a worker the card follows ends a run: the status line is rewritten in place (原本 kept), source app, logged, and drawn", () => {
+    const t = followed();
+    t.emit("workerDone", ended("B1", "t-9"));
+    const pin = t.book("B1").pins[0]!;
+    expect([pin.status, pin.prev, pin.source, pin.state]).toEqual(["worker 回報：結果", "審核中", "app", "run"]);
+    expect(pin.updates.map((u) => [u.status, u.source])).toEqual([["審核中", "bot"], ["worker 回報：結果", "app"]]);
+    const view = t.setData.mock.calls.at(-1)![1] as M.BookView;
+    expect([view.pins[0]!.status, view.pins[0]!.source, view.pins[0]!.prev]).toEqual(["worker 回報：結果", "app", "審核中"]);
+  });
+
+  it("the same run told twice, a worker no card follows, and a card of no worker change and draw nothing", () => {
+    const t = followed();
+    t.emit("workerDone", ended("B1", "t-9"));
+    const draws = t.setData.mock.calls.length;
+    t.emit("workerDone", ended("B1", "t-9"));
+    t.emit("workerDone", ended("B1", "t-other"));
+    t.emit("workerDone", ended("B7", "t-9"));
+    expect(t.setData.mock.calls.length).toBe(draws);
+    expect(t.book("B1").pins[0]!.updates).toHaveLength(2);
+  });
+
+  it("only the bot that owns the worker is heard: another bot's event with the same task id changes nothing", () => {
+    const t = followed();
+    t.call("pinMessage", { botId: "B2", messageId: "m1", text: "Theirs" });
+    t.emit("workerDone", ended("B2", "t-9", "hijack"));
+    expect(t.book("B1").pins[0]!.status).toBe("審核中");
+    expect(t.book("B2").pins[0]!.status).toBe("Theirs");
+  });
+
+  it("a failed worker turns the card into a waiting one, a stopped one says so, and an interrupted one is told as such", () => {
+    const t = followed();
+    t.emit("workerDone", ended("B1", "t-9", "tests failed: 3", "failed"));
+    expect(t.book("B1").pins[0]).toMatchObject({ state: "wait", status: "worker 失敗：tests failed: 3", source: "app" });
+    t.emit("workerDone", ended("B1", "t-9", "", "stopped"));
+    expect(t.book("B1").pins[0]!.updates.at(-1)!.status).toBe("worker 已停止");
+    t.emit("workerDone", ended("B1", "t-9", "x", "something-new"));
+    expect(t.book("B1").pins[0]!.updates.at(-1)!.status).toBe("worker 中斷：x");
+  });
+
+  it("a worker that ended before the card named it still lands, once, and only for the bot it belongs to", () => {
+    const t = setup();
+    t.emit("workerDone", ended("B1", "t-early", "早就好了"));
+    t.emit("workerDone", ended("B2", "t-theirs", "別人的"));
+    t.tag("B1", "pin-card", { id: "job", title: "Late", state: "run", min: "20", worker: "t-early t-theirs" }, "going");
+    const pin = t.book("B1").pins[0]!;
+    expect([pin.status, pin.prev, pin.source]).toEqual(["worker 回報：早就好了", "going", "app"]);
+    expect(pin.updates).toHaveLength(2);
+    t.tag("B1", "pin-card", { id: "job", worker: "t-early" }, "");
+    expect(t.book("B1").pins[0]!.updates).toHaveLength(2);
+  });
+
+  it("a user's card is followed too when the bot names it by its p-0001 id", () => {
+    const t = setup();
+    t.call("pinMessage", { botId: "B1", messageId: "m", text: "My task" });
+    t.tag("B1", "pin-card", { id: "p-0001", worker: "t-5" }, "");
+    t.emit("workerDone", ended("B1", "t-5", "跑完了"));
+    expect(t.book("B1").pins[0]).toMatchObject({ origin: "user", status: "worker 回報：跑完了", prev: "My task", source: "app" });
+  });
+
+  it("a card that waits for the user keeps its words: the news only goes into its log", () => {
+    const t = setup();
+    t.tag("B1", "pin-card", { id: "ask", title: "Ask", state: "wait", worker: "t-1" }, "要選哪一個？");
+    t.emit("workerDone", ended("B1", "t-1", "排版完成"));
+    const pin = t.book("B1").pins[0]!;
+    expect([pin.state, pin.status, pin.updates.at(-1)!.status]).toEqual(["wait", "要選哪一個？", "worker 回報：排版完成"]);
+  });
+
+  it("after a restart the links are still there, and a bad worker id in the event is dropped", () => {
+    const first = followed();
+    const second = setup(Object.fromEntries(first.stored));
+    second.emit("workerDone", ended("B1", "../t-9"));
+    expect(second.book("B1").pins[0]!.status).toBe("審核中");
+    second.emit("workerDone", ended("B1", "t-9", "重開機後"));
+    expect(second.book("B1").pins[0]!.status).toBe("worker 回報：重開機後");
+  });
+});
+
+describe("a sub bot's reply into a card", () => {
+  const withSub = (parent: string | null = "B1") => {
+    const t = setup();
+    t.family.push({ id: "S1", parent }, { id: "B1", parent: null });
+    t.tag("B1", "pin-card", { id: "job", title: "Sub work", state: "run", min: "30", worker: "S1" }, "交給 sub bot");
+    t.tick(1_000);
+    return t;
+  };
+  const speak = async (t: ReturnType<typeof setup>, botId: string, text: string) => { t.emit("messagePosted", { botId, role: "bot", text, id: "x" }); await flush(); };
+
+  it("its reply rewrites the card's status line (source app) when the sub bot works under the bot whose card follows it", async () => {
+    const t = withSub();
+    await speak(t, "S1", "分析好了\n共 3 點");
+    expect(t.book("B1").pins[0]).toMatchObject({ status: "sub bot 回覆：分析好了", prev: "交給 sub bot", source: "app" });
+  });
+
+  it("a bot that is not its parent's child is not followed: the parent is checked at the moment of the news", async () => {
+    const t = withSub("B9");
+    await speak(t, "S1", "我不是你的");
+    expect(t.book("B1").pins[0]!.status).toBe("交給 sub bot");
+    const none = withSub(null);
+    await speak(none, "S1", "no parent");
+    expect(none.book("B1").pins[0]!.status).toBe("交給 sub bot");
+  });
+
+  it("fails closed when the app cannot say who is whose child, and when the sub bot says nothing", async () => {
+    const t = withSub();
+    (t.api.workspace.bots as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("gone"));
+    await speak(t, "S1", "x");
+    expect(t.book("B1").pins[0]!.status).toBe("交給 sub bot");
+    await speak(t, "S1", "  ");
+    expect(t.book("B1").pins[0]!.status).toBe("交給 sub bot");
+  });
+
+  it("a card that stopped following it (the bot linked other ids and the card was unpinned) hears nothing", async () => {
+    const t = withSub();
+    t.tag("B1", "pin-card", { id: "job", unpin: "yes" });
+    await speak(t, "S1", "late");
+    expect(t.book("B1").pins).toEqual([]);
+  });
+
+  it("its own replies still count as ordinary replies of a bot with no cards: nothing is saved for it", async () => {
+    const t = withSub();
+    await speak(t, "S1", "hi");
+    expect(t.stored.has("pins:S1")).toBe(false);
+  });
+});
+
+describe("a plain message the bot moves into a card", () => {
+  const withCards = () => {
+    const t = setup();
+    t.call("pinMessage", { botId: "B1", messageId: "m1", text: "Deploy" });
+    t.call("pinMessage", { botId: "B1", messageId: "m2", text: "Docs" });
+    t.tick(5_000);
+    return t;
+  };
+  /** The user writes `text`; the chat shows the line (id `id`). */
+  const plain = (t: ReturnType<typeof setup>, text: string, id = "u1") => {
+    const sent = t.send("B1", text) as string;
+    t.emit("messagePosted", { botId: "B1", role: "user", text: sent, id });
+    return sent;
+  };
+  const moveTag = (t: ReturnType<typeof setup>, id: string, body = "還沒好。") => t.tag("B1", "pin-say", { id, move: "yes" }, body);
+
+  it("a plain message of a chat with cards goes to the bot with the note of the cards after the user's words; nothing else changes", () => {
+    const t = withCards();
+    const sent = t.send("B1", "部署那個好了嗎") as string;
+    expect(M.stripBriefing(sent)).toBe("部署那個好了嗎");
+    expect(sent).toContain("p-0001「Deploy」進行中");
+    expect(sent).toContain("p-0002「Docs」進行中");
+    expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
+  });
+
+  it("leaves a slash command and another plugin's 〔header〕 message exactly as they are", () => {
+    const t = withCards();
+    expect(t.send("B1", "/陪讀 paper.pdf")).toBeUndefined();
+    expect(t.send("B1", "〔陪讀提問 q-0001〕 這句")).toBeUndefined();
+  });
+
+  it("<pin-say move=\"yes\"> puts the user's line and the answer into that card (via auto, with the chat line's id), draws it and folds the line behind a trace", () => {
+    const t = withCards();
+    plain(t, "部署那個好了嗎");
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    moveTag(t, "p-0001");
+    const pin = t.book("B1").pins[0]!;
+    expect(pin.thread).toHaveLength(1);
+    expect(pin.thread[0]).toMatchObject({ q: "部署那個好了嗎", a: "還沒好。", via: "auto", msgId: "u1" });
+    expect(t.book("B1").pins[1]!.thread).toEqual([]);
+    const view = t.setData.mock.calls.at(-1)![1] as M.BookView;
+    expect(view.pins.find((p) => p.id === "p-0001")!.thread).toHaveLength(1);
+    const traces = t.decorate.mock.calls.at(-1)![1] as { key: string; fold?: string[]; data: M.TraceData }[];
+    expect(traces).toHaveLength(1);
+    expect(traces[0]).toMatchObject({ key: `mv-${pin.thread[0]!.rid}`, fold: ["u1"], data: { kind: "moved", pin: "p-0001", title: "Deploy", by: "bot" } });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
+  });
+
+  it("a line moves once: a second move tag in the same turn, or in a later turn, takes nothing", () => {
+    const t = withCards();
+    plain(t, "部署那個好了嗎");
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    moveTag(t, "p-0001");
+    moveTag(t, "p-0002", "again");
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
+    t.emit("turnStarted", { botId: "B1", turnId: "t2" });
+    moveTag(t, "p-0002", "a routine's turn");
+    expect(t.book("B1").pins.map((pin) => pin.thread.length)).toEqual([1, 0]);
+  });
+
+  it("a wrong card id keeps the line free for the right one in the same turn", () => {
+    const t = withCards();
+    plain(t, "文件寫好了嗎");
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    moveTag(t, "p-0099");
+    moveTag(t, "constructor");
+    expect(t.book("B1").pins.map((pin) => pin.thread.length)).toEqual([0, 0]);
+    moveTag(t, "p-0002", "快好了");
+    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ a: "快好了", msgId: "u1" });
+  });
+
+  it("with no plain line behind the turn (none sent, or the turn began for something else) a move tag does nothing, and a plain pin-say still answers an open turn as before", () => {
+    const t = withCards();
+    t.emit("turnStarted", { botId: "B1", turnId: "t0" });
+    moveTag(t, "p-0001");
+    expect(t.book("B1").pins[0]!.thread).toEqual([]);
+    expect(t.decorate).not.toHaveBeenCalled();
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
+    const sent = t.send("B1", "@Deploy 先停一下") as string;
+    t.emit("messagePosted", { botId: "B1", role: "user", text: sent, id: "u9" });
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    t.tag("B1", "pin-say", { id: "p-0001" }, "好");
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ q: "先停一下", a: "好", via: "at" });
+  });
+
+  it("a line that comes while a turn is running waits for its own turn: the running turn cannot take it", () => {
+    const t = withCards();
+    plain(t, "第一句", "u1");
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    plain(t, "第二句", "u2");
+    moveTag(t, "p-0001", "答第一句");
+    expect(t.book("B1").pins[0]!.thread.map((turn) => [turn.q, turn.msgId])).toEqual([["第一句", "u1"]]);
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
+    t.emit("turnStarted", { botId: "B1", turnId: "t2" });
+    moveTag(t, "p-0002", "答第二句");
+    expect(t.book("B1").pins[1]!.thread.map((turn) => [turn.q, turn.msgId])).toEqual([["第二句", "u2"]]);
+  });
+
+  it("only a line that carried the note counts (a worker's report posted as a user line, a routed @ line, are never moved)", () => {
+    const t = withCards();
+    t.emit("messagePosted", { botId: "B1", role: "user", text: "<app_task_result task_id=\"t\" run=\"1\" status=\"completed\">ok</app_task_result>", id: "w1" });
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    moveTag(t, "p-0001");
+    expect(t.book("B1").pins[0]!.thread).toEqual([]);
+  });
+
+  it("移回聊天: the line leaves the card's view, the chat shows the answer under its line, a second tap changes nothing, and only that bot's book is touched", () => {
+    const t = withCards();
+    plain(t, "部署那個好了嗎");
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    moveTag(t, "p-0001");
+    const rid = t.book("B1").pins[0]!.thread[0]!.rid;
+    t.call("pinMessage", { botId: "B2", messageId: "x", text: "Other" });
+    expect(t.call("moveBack", { botId: "B2", rid })).toEqual({ unchanged: true });
+    expect(t.book("B1").pins[0]!.thread[0]!.moved).toBeUndefined();
+    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ moved: "chat" });
+    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ unchanged: true });
+    expect((t.call("view", { botId: "B1" }) as M.BookView).pins[0]!.thread).toEqual([]);
+    const traces = t.decorate.mock.calls.at(-1)![1] as { key: string; after?: string; fold?: string[]; data: M.TraceData }[];
+    expect(traces[0]).toMatchObject({ key: `mv-${rid}`, after: "u1", data: { kind: "back", a: "還沒好。" } });
+    expect(traces[0]!.fold).toBeUndefined();
+    // the bot is told, in the next note, that this was a wrong guess
+    expect(M.stripBriefing(t.send("B1", "下一句") as string)).toBe("下一句");
+    expect(t.send("B1", "下一句")).toContain("最近被使用者更正：「部署那個好了嗎」不是 p-0001「Deploy」，是 聊天");
+  });
+
+  it("改到…: the line and its answer go to the other card, marked as the user's choice, the trace follows, and a missing or same card changes nothing", () => {
+    const t = withCards();
+    plain(t, "文件那個好了嗎");
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    moveTag(t, "p-0001", "不確定");
+    const rid = t.book("B1").pins[0]!.thread[0]!.rid;
+    expect(t.call("moveTo", { botId: "B1", rid, to: "p-0001" })).toEqual({ unchanged: true });
+    expect(t.call("moveTo", { botId: "B1", rid, to: "p-0099" })).toEqual({ unchanged: true });
+    expect(t.call("moveTo", { botId: "B1", rid, to: "__proto__" })).toEqual({ unchanged: true });
+    expect(t.call("moveTo", { botId: "B1", rid: "nope", to: "p-0002" })).toEqual({ unchanged: true });
+    expect(t.call("moveTo", { botId: "B1", rid, to: "p-0002" })).toEqual({ moved: "p-0002" });
+    expect(t.book("B1").pins.map((pin) => pin.thread.length)).toEqual([0, 1]);
+    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ q: "文件那個好了嗎", a: "不確定", redirected: true, msgId: "u1" });
+    const traces = t.decorate.mock.calls.at(-1)![1] as { fold?: string[]; data: M.TraceData }[];
+    expect(traces[0]).toMatchObject({ fold: ["u1"], data: { kind: "moved", pin: "p-0002", title: "Docs", by: "user" } });
+    expect(t.send("B1", "再一句")).toContain(`不是 p-0001「Deploy」，是 p-0002「Docs」`);
+  });
+
+  it("a card taken down gives the lines back to the chat with their answers; 釘回 folds them again", () => {
+    const t = withCards();
+    plain(t, "部署那個好了嗎");
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    moveTag(t, "p-0001");
+    t.call("unpin", { botId: "B1", id: "p-0001" });
+    expect((t.decorate.mock.calls.at(-1)![1] as { data: M.TraceData }[])[0]!.data.kind).toBe("back");
+    t.call("repin", { botId: "B1", id: "p-0001" });
+    expect((t.decorate.mock.calls.at(-1)![1] as { data: M.TraceData }[])[0]!.data.kind).toBe("moved");
+  });
+
+  it("a chat with no moved line is never asked to draw traces, and a chat that cannot draw them does not break a save", async () => {
+    const t = withCards();
+    expect(t.decorate).not.toHaveBeenCalled();
+    t.decorate.mockImplementation(() => { throw new Error("sync"); });
+    plain(t, "部署那個好了嗎");
+    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    expect(() => moveTag(t, "p-0001")).not.toThrow();
+    t.decorate.mockRejectedValue(new Error("gone"));
+    t.call("unpin", { botId: "B1", id: "p-0002" });
+    await flush();
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
+  });
+
+  it("the moved lines come back after a restart: the traces are drawn again from the book", () => {
+    const first = withCards();
+    plain(first, "部署那個好了嗎");
+    first.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    moveTag(first, "p-0001");
+    const second = setup(Object.fromEntries(first.stored));
+    expect((second.decorate.mock.calls.at(-1)![1] as { fold: string[] }[])[0]!.fold).toEqual(["u1"]);
+  });
+
+  it("the briefing carries cards the user pinned and the bot's own, so the bot can route into and update either", () => {
+    const t = withCards();
+    t.tag("B1", "pin-card", { id: "mine", title: "Bot card", state: "wait" }, "等你確認");
+    const sent = t.send("B1", "嗨") as string;
+    for (const part of ["p-0001「Deploy」進行中", "p-0003「Bot card」等你 · 等你確認"]) expect(sent).toContain(part);
+    t.tag("B1", "pin-card", { id: "p-0001", state: "done" }, "做完了");
+    expect(t.book("B1").pins[0]).toMatchObject({ state: "done", status: "做完了", origin: "user" });
   });
 });

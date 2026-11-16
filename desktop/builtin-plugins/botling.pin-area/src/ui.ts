@@ -2,7 +2,7 @@
 // waits for you always clear) and the floating panel a row opens (status, steps, the card's own thread and its own input box).
 // Every word from a bot or a thread goes in with textContent, never as HTML. No Botling import: `Deps` is all this needs, so a test
 // draws it in jsdom with fakes (no window, no focus taken).
-import type { BookView, PinView, Turn } from "./model";
+import type { BookView, PinView, TraceData, Turn } from "./model";
 import type { Words } from "./words";
 
 export interface Deps {
@@ -61,6 +61,9 @@ export class PinUi {
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly sending = new Map<string, { at: number; turns: number }>();
   private updatesOpen = false;
+  /** Traces whose "改到…" list is open, and the moves under way (a double tap moves once). */
+  private readonly alts = new Set<string>();
+  private readonly moving = new Set<string>();
   private lastThread = new Map<string, number>();
   private readonly listeners = new AbortController();
 
@@ -351,6 +354,13 @@ export class PinUi {
     for (const turn of pin.thread) {
       const mine = el("div", "pt-msg pt-me");
       mine.append(el("span", "pt-bubble", turn.q), el("span", `pt-receipt${turn.seenAt !== null ? " seen" : ""}`, `${clock(turn.qAt)} · ${this.receipt(turn)}`));
+      // a line the bot put here by itself: one tap takes it back to the chat
+      if (turn.via === "auto") {
+        const back = el("button", "pt-mv-act", words("trace.backBtn"));
+        back.type = "button";
+        back.addEventListener("click", () => this.moveBack(turn.rid));
+        mine.append(back);
+      }
       parts.thread.append(mine);
       if (turn.a !== null) {
         const bot = el("div", "pt-msg pt-bot");
@@ -365,7 +375,62 @@ export class PinUi {
 
   private receipt(turn: Turn): string {
     const { words } = this.deps;
+    if (turn.via === "auto") return turn.redirected ? words("receipt.redirected") : words("receipt.auto");
     return turn.a !== null || turn.seenAt !== null ? words("receipt.seen") : words("receipt.sent");
+  }
+
+  // ---- the trace in the chat: where the user's line went (drawn by the page's decoration for it) ----
+
+  /** 移回聊天. */
+  moveBack(rid: string): void {
+    this.move(rid, "moveBack", {});
+  }
+  /** 改到… (`to`: a card id). */
+  moveTo(rid: string, to: string): void {
+    this.alts.delete(rid);
+    this.move(rid, "moveTo", { to });
+  }
+  private move(rid: string, method: string, params: Record<string, unknown>): void {
+    if (this.moving.has(rid)) return;
+    this.moving.add(rid);
+    void this.deps.call(method, { botId: this.botId, rid, ...params }).then(() => {}, (error) => this.failed(error)).finally(() => this.moving.delete(rid));
+  }
+
+  /** One line where the user's line was: "→ 放進「X」的卡片 · 移回聊天 · 改到…"; once moved back, the answer stays under it. */
+  trace(root: HTMLElement, data: TraceData): void {
+    const { words } = this.deps;
+    root.replaceChildren();
+    const line = el("div", `pt-mv pt-mv-${data.kind}`);
+    if (data.kind === "back") {
+      line.append(el("span", "pt-mv-text", words("trace.back")));
+      root.append(line);
+      if (data.a) root.append(el("div", "pt-mv-ans", `${words("bot.name")}：${data.a}`));
+      return;
+    }
+    const open = el("button", "pt-mv-open", words(data.by === "user" ? "trace.moved" : "trace.put", { q: `“${data.q}”`, title: data.title }));
+    open.type = "button";
+    open.title = words("trace.open", { title: data.title });
+    open.addEventListener("click", () => this.open(data.pin));
+    const back = el("button", "pt-mv-act", words("trace.backBtn"));
+    back.type = "button";
+    back.addEventListener("click", () => this.moveBack(data.rid));
+    const other = el("button", "pt-mv-act", words("trace.other"));
+    other.type = "button";
+    other.setAttribute("aria-expanded", String(this.alts.has(data.rid)));
+    other.addEventListener("click", () => { if (this.alts.has(data.rid)) this.alts.delete(data.rid); else this.alts.add(data.rid); this.trace(root, data); });
+    line.append(pinIcon(), open, el("span", "pt-mv-sep", "·"), back, el("span", "pt-mv-sep", "·"), other);
+    root.append(line);
+    if (this.alts.has(data.rid)) {
+      const list = el("div", "pt-mv-alts");
+      for (const pin of this.data.pins.filter((candidate) => candidate.id !== data.pin)) {
+        const choice = el("button", "pt-mv-alt");
+        choice.type = "button";
+        choice.append(el("span", `pt-dot pt-dot-${pin.state}`), el("span", "", pin.title));
+        choice.addEventListener("click", () => this.moveTo(data.rid, pin.id));
+        list.append(choice);
+      }
+      root.append(list);
+    }
   }
 
   private drawUpdates(pin: PinView, parts: NonNullable<PinUi["panelParts"]>): void {

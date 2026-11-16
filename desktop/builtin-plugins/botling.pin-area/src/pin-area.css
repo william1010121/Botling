@@ -106,3 +106,18 @@ body { transition: padding-right .2s cubic-bezier(.2,.8,.2,1); }
   .pt-panel, .pt-panel.x, .pt-msg, .pt-dot-wait { animation-duration: 1ms !important; }
   .pt-row, .pt-row .pt-fd, .pt-l2, body { transition-duration: 1ms !important; }
 }
+
+/* Where the user's line went when the bot put it into a card (a decoration in the chat): one quiet line with two buttons. */
+.pt-mv { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 2px 0; font-size: 13px; color: var(--muted); }
+.pt-mv svg { flex: none; color: var(--faint); }
+.pt-mv-text { color: var(--faint); }
+.pt-mv-open, .pt-mv-act { background: none; border: 0; font: inherit; padding: 4px 2px; min-height: 28px; cursor: pointer; }
+.pt-mv-open { color: var(--text); text-align: left; overflow-wrap: anywhere; }
+.pt-mv-act { color: var(--link); }
+.pt-mv-open:hover, .pt-mv-act:hover, .pt-mv-open:focus-visible, .pt-mv-act:focus-visible { text-decoration: underline; }
+.pt-mv-sep { color: var(--faint); }
+.pt-mv-alts { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin: 2px 0 4px 18px; }
+.pt-mv-alt { display: inline-flex; align-items: center; gap: 8px; background: var(--side); border: 1px solid var(--line); border-radius: 8px; color: var(--text); font: inherit; font-size: 13px; padding: 4px 10px; min-height: 28px; cursor: pointer; }
+.pt-mv-alt:hover, .pt-mv-alt:focus-visible { border-color: var(--strong-line); }
+.pt-mv-ans { margin: 2px 0 4px; padding: 6px 10px; font-size: 14px; color: var(--text); background: var(--bubble); border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pt-msg .pt-mv-act { align-self: flex-end; font-size: 12px; }

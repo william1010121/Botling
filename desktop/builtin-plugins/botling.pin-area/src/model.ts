@@ -12,7 +12,11 @@ export type Via = "at" | "auto";
  * `a` null: not answered yet. `via`: how it got here (typed @card, or Phase 2's automatic routing); `moved`: the user took it back to
  * the chat (Phase 2's 移回聊天), kept so the thread still shows where it went.
  */
-export interface Turn { rid: string; q: string; a: string | null; qAt: number; postedAt: number | null; seenAt: number | null; aAt: number | null; via: Via; moved?: boolean }
+export interface Turn {
+  rid: string; q: string; a: string | null; qAt: number; postedAt: number | null; seenAt: number | null; aAt: number | null; via: Via; moved?: boolean;
+  /** `via` "auto": the user's own line in the chat (it is folded behind the trace while the turn is in the card). `redirected`: the user chose this card with 改到…. */
+  msgId?: string; redirected?: boolean;
+}
 export interface Update { at: number; state: State; status: string; source: Source }
 export interface Step { done: number; total: number }
 export interface Pin {
@@ -35,6 +39,8 @@ export interface Pin {
   updates: Update[];
   /** The message it was made from (a pin of a message). */
   msgRef?: string;
+  /** Workers (task ids) and sub bots (bot ids) the bot linked to this card: what they report lands in the status line (`applyNews`). */
+  from?: string[];
   createdAt: number;
   updatedAt: number;
   /** When the user last had the card open: anything newer than this is unread. */
@@ -42,7 +48,9 @@ export interface Pin {
 }
 /** A card taken off the strip, kept briefly so 釘回 puts it back. */
 export interface Removed { pin: Pin; at: number; by: "user" | "seen" | "bot" }
-export interface Book { seq: number; pins: Pin[]; removed: Removed[] }
+/** A guess of the automatic routing the user corrected (the bot is told, so it guesses better). `from`/`to`: a card id, or "chat". */
+export interface Fix { text: string; from: string; to: string; at: number }
+export interface Book { seq: number; pins: Pin[]; removed: Removed[]; fixes?: Fix[] }
 
 export const MAX_PINS = 8;
 /** Cards a bot made that still are not done: a bot cannot fill the strip. */
@@ -50,6 +58,9 @@ export const MAX_BOT_OPEN = 3;
 export const MAX_TURNS = 50;
 export const MAX_UPDATES = 50;
 export const MAX_REMOVED = 3;
+/** Workers / sub bots one card may follow. */
+export const MAX_FROM = 4;
+export const MAX_FIXES = 3;
 export const MAX_TITLE = 40;
 export const MAX_STATUS = 120;
 export const MAX_Q = 2_000;
@@ -63,6 +74,8 @@ export const MIN_RUN_MINUTES = 10;
 const ID = /^p-\d{4,}$/;
 const KEY = /^[A-Za-z0-9_-]{1,64}$/;
 const RID = /^[A-Za-z0-9_-]{1,64}$/;
+/** A worker's task id or a bot's id, as the app gives them. */
+const FROM = /^[A-Za-z0-9_.:-]{1,100}$/;
 const STATES: readonly State[] = ["run", "wait", "done"];
 const SOURCES: readonly Source[] = ["bot", "app", "user"];
 
@@ -79,6 +92,7 @@ const num = (value: unknown): number => (typeof value === "number" && Number.isF
 export const isId = (value: unknown): value is string => typeof value === "string" && ID.test(value);
 export const isKey = (value: unknown): value is string => typeof value === "string" && KEY.test(value);
 export const isRid = (value: unknown): value is string => typeof value === "string" && RID.test(value);
+export const isFrom = (value: unknown): value is string => typeof value === "string" && FROM.test(value);
 export const bytesOf = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length;
 
 // ---- reading what storage holds ----
@@ -101,6 +115,7 @@ function readTurn(raw: unknown): Turn | null {
   return {
     rid: t.rid, q: t.q.slice(0, MAX_Q), a, qAt: num(t.qAt), postedAt: time(t.postedAt), seenAt: time(t.seenAt), aAt: a === null ? null : num(t.aAt),
     via: t.via === "auto" ? "auto" : "at", ...(t.moved === true ? { moved: true } : {}),
+    ...(typeof t.msgId === "string" && t.msgId && t.msgId.length <= 200 ? { msgId: t.msgId } : {}), ...(t.redirected === true ? { redirected: true } : {}),
   };
 }
 function readUpdate(raw: unknown): Update | null {
@@ -120,6 +135,7 @@ export function readPin(raw: unknown): Pin | null {
   const handle = oneLine(p.handle, MAX_TITLE).replace(/\s+/g, "-");
   if (!isId(p.id) || !state || !source || !title || !handle || (p.origin !== "user" && p.origin !== "bot")) return null;
   const step = readStep(p.step);
+  const from = (Array.isArray(p.from) ? p.from : []).filter(isFrom).slice(0, MAX_FROM);
   const seenSeen = typeof p.seenAt === "number" && Number.isFinite(p.seenAt) ? { seenAt: p.seenAt } : {};
   return {
     id: p.id, ...(isKey(p.botKey) ? { botKey: p.botKey } : {}), origin: p.origin, title, handle, state, status: oneLine(p.status, MAX_STATUS), ...(typeof p.prev === "string" && p.prev ? { prev: oneLine(p.prev, MAX_STATUS) } : {}),
@@ -127,6 +143,7 @@ export function readPin(raw: unknown): Pin | null {
     thread: (Array.isArray(p.thread) ? p.thread.slice(-MAX_TURNS) : []).map(readTurn).filter((x): x is Turn => !!x),
     updates: (Array.isArray(p.updates) ? p.updates.slice(-MAX_UPDATES) : []).map(readUpdate).filter((x): x is Update => !!x),
     ...(typeof p.msgRef === "string" && p.msgRef ? { msgRef: p.msgRef.slice(0, 200) } : {}), createdAt: num(p.createdAt), updatedAt: num(p.updatedAt), ...seenSeen,
+    ...(from.length ? { from } : {}),
   };
 }
 /** What storage holds, trimmed to a book: anything that is not a pin of the shape above is dropped (a hand-edited or older file). */
@@ -150,6 +167,12 @@ export function readBook(raw: unknown): Book {
     if (!entry || !pin) continue;
     book.removed.push({ pin, at: num(entry.at), by: entry.by === "seen" || entry.by === "bot" ? entry.by : "user" });
   }
+  const fixes = (Array.isArray(r.fixes) ? r.fixes.slice(-MAX_FIXES) : []).flatMap((item): Fix[] => {
+    const f = item && typeof item === "object" ? item as Record<string, unknown> : null;
+    const text = f ? oneLine(f.text, 30) : "";
+    return f && text && typeof f.from === "string" && typeof f.to === "string" && (f.from === "chat" || isId(f.from)) && (f.to === "chat" || isId(f.to)) ? [{ text, from: f.from, to: f.to, at: num(f.at) }] : [];
+  });
+  if (fixes.length) book.fixes = fixes;
   return book;
 }
 
@@ -306,15 +329,74 @@ export function applyCardTag(book: Book, attributes: Record<string, string>, bod
   const stepText = own(attributes, "step");
   const step = stepText ? parseStep(stepText) : undefined;
   const status = oneLine(body, MAX_STATUS);
+  const links = parseFrom(own(attributes, "worker"));
   if (found) {
-    const changed = applyUpdate(found, { ...(state ? { state } : {}), ...(status ? { status } : {}), source: "bot", ...(step !== undefined ? { step } : {}) }, now);
-    return changed ? "updated" : "unchanged";
+    // a tag that only names a worker says nothing about the card: the line stays whoever's it was (an app report, say)
+    const changed = state || status || step !== undefined ? applyUpdate(found, { ...(state ? { state } : {}), ...(status ? { status } : {}), source: "bot", ...(step !== undefined ? { step } : {}) }, now) : false;
+    const linked = linkFrom(found, links);
+    if (linked) found.updatedAt = now;
+    return changed || linked ? "updated" : "unchanged";
   }
   if (!isKey(key)) return "dropped";
   const title = oneLine(own(attributes, "title"), MAX_TITLE) || oneLine(status, 24);
   if (!state || !status || !botMayMake(state, parseMinutes(own(attributes, "min")))) return "dropped";
   const made = addPin(book, { origin: "bot", title, status, state, source: "bot", botKey: key, ...(step ? { step } : {}) }, now);
+  if ("pin" in made) linkFrom(made.pin, links);
   return "pin" in made ? "created" : "dropped";
+}
+
+// ---- worker and sub-bot news into a card ----
+
+/** The ids a bot named in `worker="…"` (spaces or commas between), each checked; at most MAX_FROM. */
+export function parseFrom(value: string): string[] {
+  return [...new Set(value.split(/[\s,]+/).filter(isFrom))].slice(0, MAX_FROM);
+}
+/** Adds ids to the card's links (the oldest go when over MAX_FROM). True when something was added. */
+export function linkFrom(pin: Pin, ids: string[]): boolean {
+  const fresh = ids.filter((id) => !(pin.from ?? []).includes(id));
+  if (!fresh.length) return false;
+  pin.from = [...(pin.from ?? []), ...fresh].slice(-MAX_FROM);
+  return true;
+}
+/** Every id a book's cards follow, by card: for the host's index. */
+export function linksOf(book: Book): string[] {
+  return book.pins.flatMap((pin) => pin.from ?? []);
+}
+
+export type NewsKind = "completed" | "failed" | "stopped" | "interrupted" | "reply";
+const NEWS_WORDS: Record<NewsKind, { worker: string; bot: string }> = {
+  completed: { worker: "worker 回報", bot: "sub bot 回覆" },
+  failed: { worker: "worker 失敗", bot: "sub bot 失敗" },
+  stopped: { worker: "worker 已停止", bot: "sub bot 已停止" },
+  interrupted: { worker: "worker 中斷", bot: "sub bot 中斷" },
+  reply: { worker: "worker 回報", bot: "sub bot 回覆" },
+};
+/** The first line with words in it, as one clean line. */
+export function firstLine(text: string, max: number): string {
+  const line = clean(text, 4_000).split("\n").map((l) => l.replace(/^[#>*\-\s`]+/, "").trim()).find((l) => l.length > 0) ?? "";
+  return oneLine(line, max);
+}
+/**
+ * What a worker's or a sub bot's report does to a card that follows it: the status line is rewritten in place (「原本」 keeps the one
+ * before), source "app", and the change lands in "N 則更新". A done card takes nothing. A waiting card (it waits for the *user*) keeps its
+ * words and state, and the news only goes into its log. A run that failed or was stopped turns a running card into a waiting one: the user may
+ * have to decide. A report that completed is only the worker's account, so the card does not become "done" by it.
+ */
+export function applyNews(pin: Pin, news: { kind: NewsKind; from: "worker" | "bot"; text: string }, now: number): boolean {
+  if (pin.state === "done") return false;
+  const head = NEWS_WORDS[news.kind][news.from];
+  const line = firstLine(news.text, 80);
+  const status = oneLine(line && news.kind !== "stopped" ? `${head}：${line}` : head, MAX_STATUS);
+  if (pin.state === "wait") {
+    const last = pin.updates[pin.updates.length - 1];
+    if (last && last.status === status && last.source === "app") return false;
+    pin.updates.push({ at: now, state: pin.state, status, source: "app" });
+    if (pin.updates.length > MAX_UPDATES) pin.updates.splice(0, pin.updates.length - MAX_UPDATES);
+    pin.updatedAt = now;
+    return true;
+  }
+  const failed = news.kind === "failed" || news.kind === "stopped" || news.kind === "interrupted";
+  return applyUpdate(pin, { status, source: "app", ...(failed ? { state: "wait" as const } : {}) }, now);
 }
 
 // ---- the user's messages into a card ----
@@ -404,6 +486,111 @@ export function markPosted(book: Book, id: string, now: number): boolean {
   return true;
 }
 
+// ---- automatic routing: a plain message the bot decides belongs to a card ----
+
+/** The note appended to a plain message of a chat that has cards: the cards as they stand, so the bot can route and update them. */
+export const BRIEF = "〔Pin 區現況〕";
+const STATE_WORD: Record<State, string> = { wait: "等你", run: "進行中", done: "完成" };
+const FIX_WORD = (book: Book, id: string): string => (id === "chat" ? "聊天" : `${id}「${book.pins.find((p) => p.id === id)?.title ?? book.removed.find((r) => r.pin.id === id)?.pin.title ?? "?"}」`);
+/** The briefing for a bot's next plain message: one line per card (id, title, state, status), the last guesses the user corrected, and how to answer. "" with no cards. */
+export function briefing(book: Book, now: number): string {
+  if (!book.pins.length) return "";
+  const lines = viewOf(book).pins.map((pin) => `${pin.id}「${oneLine(pin.title, MAX_TITLE)}」${STATE_WORD[pin.state]} · ${oneLine(pin.status, 60)}${pin.origin === "user" ? " · 使用者釘的" : ""}`);
+  const fixes = (book.fixes ?? []).filter((fix) => now - fix.at < 86_400_000);
+  const corrected = fixes.map((fix) => `「${fix.text}」不是 ${FIX_WORD(book, fix.from)}，是 ${FIX_WORD(book, fix.to)}`);
+  return `${BRIEF}\n${lines.join("\n")}${corrected.length ? `\n最近被使用者更正：${corrected.join("；")}` : ""}\n（這句若明顯在講其中一張卡，用 <pin-say id="p-…" move="yes">回答</pin-say>；拿不準就照常在聊天回答。以最後一則現況為準。）`;
+}
+/** A plain message with the briefing after it; the user's own words cannot fake the marker. */
+export function withBriefing(text: string, brief: string): string {
+  return `${text.split(BRIEF).join("〔 Pin 區現況 〕")}\n\n${brief}`;
+}
+/** The user's own words of a message that carries a briefing (the whole text when it has none). */
+export function stripBriefing(text: string): string {
+  const at = text.lastIndexOf(`\n\n${BRIEF}`);
+  return at >= 0 ? text.slice(0, at) : text;
+}
+export const hasBriefing = (text: string): boolean => text.includes(`\n\n${BRIEF}`);
+/** Messages that are not routed or briefed: a slash command or another plugin's 〔header〕 would break with words after it. */
+export function briefable(text: string): boolean {
+  const t = text.trim();
+  return t.length > 0 && t.length <= MAX_ROUTED && !t.startsWith("/") && !t.startsWith("〔");
+}
+
+/** Where a turn is, anywhere in the book: the card (live or taken down) and the turn. */
+export function findTurn(book: Book, rid: string): { pin: Pin; turn: Turn; removed: boolean } | null {
+  for (const pin of book.pins) { const turn = pin.thread.find((t) => t.rid === rid); if (turn) return { pin, turn, removed: false }; }
+  for (const entry of book.removed) { const turn = entry.pin.thread.find((t) => t.rid === rid); if (turn) return { pin: entry.pin, turn, removed: true }; }
+  return null;
+}
+const lineUsed = (book: Book, msgId: string): boolean => [...book.pins, ...book.removed.map((entry) => entry.pin)].some((pin) => pin.thread.some((turn) => turn.msgId === msgId));
+
+/**
+ * The bot's `<pin-say id move="yes">answer</pin-say>`: the user's plain line (`line`, the one this turn answers) and the bot's answer go into the card
+ * as one answered turn, `via: "auto"`. Null (nothing moves, the answer is only a chat reply): no such card, no words, or that line is already in a card.
+ */
+export function takeAuto(book: Book, id: string, line: { id: string; text: string; at: number }, answer: string, rid: string, now: number): Turn | null {
+  const pin = isId(id) ? book.pins.find((candidate) => candidate.id === id) : undefined;
+  const text = clean(answer, MAX_A * 2).trim().slice(0, MAX_A);
+  const words = clean(line.text, MAX_ROUTED).trim();
+  if (!pin || !text || !words || !line.id || lineUsed(book, line.id)) return null;
+  const turn = addTurn(pin, rid, words, line.at, "auto");
+  turn.q = clean(words, MAX_Q);
+  turn.a = text;
+  turn.aAt = now;
+  turn.postedAt = line.at;
+  turn.seenAt = now;
+  turn.msgId = line.id;
+  pin.updatedAt = now;
+  return turn;
+}
+function addFix(book: Book, text: string, from: string, to: string, now: number): void {
+  const line = oneLine(text, 30);
+  if (!line) return;
+  book.fixes = [...(book.fixes ?? []), { text: line, from, to, at: now }].slice(-MAX_FIXES);
+}
+/** 移回聊天: the turn stays in the card's data (so the chat can show its answer) but leaves its thread. False: not an automatic turn of a live card, or already back. */
+export function moveBack(book: Book, rid: string, now: number): boolean {
+  const hit = findTurn(book, rid);
+  if (!hit || hit.removed || hit.turn.via !== "auto" || hit.turn.moved) return false;
+  hit.turn.moved = true;
+  hit.pin.updatedAt = now;
+  addFix(book, hit.turn.q, hit.pin.id, "chat", now);
+  return true;
+}
+/** 改到…: the turn, with its answer, goes to another live card. False: no such turn or card, the same card, or the turn is back in the chat. */
+export function moveTo(book: Book, rid: string, to: string, now: number): boolean {
+  const hit = findTurn(book, rid);
+  const target = isId(to) ? book.pins.find((candidate) => candidate.id === to) : undefined;
+  if (!hit || hit.removed || hit.turn.via !== "auto" || hit.turn.moved || !target || target === hit.pin) return false;
+  hit.pin.thread = hit.pin.thread.filter((turn) => turn !== hit.turn);
+  hit.turn.redirected = true;
+  target.thread.push(hit.turn);
+  target.thread.sort((a, b) => a.qAt - b.qAt);
+  if (target.thread.length > MAX_TURNS) {
+    const old = target.thread.findIndex((turn) => turn.a !== null && turn !== hit.turn);
+    target.thread.splice(old >= 0 ? old : 0, 1);
+  }
+  hit.pin.updatedAt = now;
+  target.updatedAt = now;
+  addFix(book, hit.turn.q, hit.pin.id, target.id, now);
+  return true;
+}
+
+/** What the chat draws for the lines the bot moved (`chat.decorate`): a one-line trace in place of the user's line, or, once moved back, the answer under it. */
+export interface TraceData { kind: "moved" | "back"; rid: string; pin: string; title: string; q: string; a?: string; by: "bot" | "user" }
+export const MAX_TRACES = 120;
+export function tracesOf(book: Book): { key: string; fold?: string[]; after?: string; data: TraceData }[] {
+  const all: { pin: Pin; turn: Turn; live: boolean }[] = [];
+  for (const pin of book.pins) for (const turn of pin.thread) if (turn.via === "auto" && turn.msgId) all.push({ pin, turn, live: true });
+  // a card taken down gives its lines back to the chat (its answers show there); 釘回 folds them again
+  for (const entry of book.removed) for (const turn of entry.pin.thread) if (turn.via === "auto" && turn.msgId) all.push({ pin: entry.pin, turn, live: false });
+  return all.sort((a, b) => b.turn.qAt - a.turn.qAt).slice(0, MAX_TRACES).map(({ pin, turn, live }) => {
+    const back = turn.moved === true || !live;
+    const data: TraceData = { kind: back ? "back" : "moved", rid: turn.rid, pin: pin.id, title: pin.title, q: oneLine(turn.q, 60), by: turn.redirected ? "user" : "bot", ...(back && turn.a ? { a: clean(turn.a, 600) } : {}) };
+    return back ? { key: `mv-${turn.rid}`, after: turn.msgId!, data } : { key: `mv-${turn.rid}`, fold: [turn.msgId!], data };
+  });
+}
+
 // ---- what the page draws ----
 
 export interface PinView {
@@ -421,7 +608,7 @@ export function viewOf(book: Book): BookView {
     pins: pins.map((pin) => ({
       id: pin.id, title: pin.title, handle: pin.handle, origin: pin.origin, state: pin.state, status: pin.status, ...(pin.prev ? { prev: pin.prev } : {}), source: pin.source,
       ...(pin.step ? { step: pin.step } : {}), ...(pin.waitingSince !== undefined ? { waitingSince: pin.waitingSince } : {}),
-      unread: pin.updatedAt > (pin.seenAt ?? 0), thread: pin.thread, updates: pin.updates, createdAt: pin.createdAt, updatedAt: pin.updatedAt,
+      unread: pin.updatedAt > (pin.seenAt ?? 0), thread: pin.thread.filter((turn) => !turn.moved), updates: pin.updates, createdAt: pin.createdAt, updatedAt: pin.updatedAt,
     })),
   };
 }

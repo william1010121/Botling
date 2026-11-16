@@ -436,3 +436,100 @@ describe("the @ rows of the main input box", () => {
     expect(ui.mentions("")).toHaveLength(8);
   });
 });
+
+// ---- Phase 2 ----
+
+describe("where a line the bot moved went (the trace in the chat)", () => {
+  const data = (over: Partial<import("../src/model").TraceData> = {}): import("../src/model").TraceData => ({ kind: "moved", rid: "r1", pin: "p-0001", title: "Title p-0001", q: "部署好了嗎", by: "bot", ...over });
+  let root: HTMLElement;
+  beforeEach(() => {
+    root = document.createElement("div");
+    document.body.append(root);
+    ui.update("B1", view(pin("p-0001"), pin("p-0002", { title: "Docs", state: "wait" }), pin("p-0003", { title: "Old", state: "done" })));
+  });
+  const acts = () => [...root.querySelectorAll<HTMLButtonElement>(".pt-mv-act")];
+
+  it("is one line: where it went, 移回聊天 and 改到…; the title opens the card", () => {
+    ui.trace(root, data());
+    expect(root.querySelector(".pt-mv-open")!.textContent).toBe("“部署好了嗎” → 放進「Title p-0001」的卡片");
+    expect(acts().map((button) => button.textContent)).toEqual(["移回聊天", "改到…"]);
+    root.querySelector<HTMLButtonElement>(".pt-mv-open")!.click();
+    expect(panel()).not.toBeNull();
+    expect(ui.isOpen("p-0001")).toBe(true);
+  });
+
+  it("says 你改到… when the user chose the card", () => {
+    ui.trace(root, data({ by: "user" }));
+    expect(root.querySelector(".pt-mv-open")!.textContent).toBe("“部署好了嗎” → 你改到「Title p-0001」的卡片");
+  });
+
+  it("移回聊天 asks the program part once, however often it is tapped before the answer, and can be asked again after", async () => {
+    ui.trace(root, data());
+    acts()[0]!.click();
+    acts()[0]!.click();
+    expect(call.mock.calls.filter(([method]) => method === "moveBack")).toEqual([["moveBack", { botId: "B1", rid: "r1" }]]);
+    await flush();
+    acts()[0]!.click();
+    expect(call.mock.calls.filter(([method]) => method === "moveBack")).toHaveLength(2);
+  });
+
+  it("改到… lists the other cards of the chat (not this one), and a pick asks the program part to move it there", async () => {
+    ui.trace(root, data());
+    acts()[1]!.click();
+    expect(acts()[1]!.getAttribute("aria-expanded")).toBe("true");
+    const choices = [...root.querySelectorAll<HTMLButtonElement>(".pt-mv-alt")];
+    expect(choices.map((choice) => choice.textContent)).toEqual(["Docs", "Old"]);
+    choices[0]!.click();
+    choices[0]!.click();
+    expect(call.mock.calls.filter(([method]) => method === "moveTo")).toEqual([["moveTo", { botId: "B1", rid: "r1", to: "p-0002" }]]);
+    await flush();
+  });
+
+  it("a second tap on 改到… closes the list", () => {
+    ui.trace(root, data());
+    acts()[1]!.click();
+    acts()[1]!.click();
+    expect(root.querySelector(".pt-mv-alts")).toBeNull();
+  });
+
+  it("once moved back, it says so and keeps the bot's answer under the line, as text", () => {
+    ui.trace(root, data({ kind: "back", a: "還沒好 <img src=x onerror=\"window.pwned=1\">" }));
+    expect(root.querySelector(".pt-mv-text")!.textContent).toBe("已移回聊天");
+    expect(root.querySelector(".pt-mv-ans")!.textContent).toBe("bot：還沒好 <img src=x onerror=\"window.pwned=1\">");
+    expect(root.querySelector("img")).toBeNull();
+    expect(root.querySelector(".pt-mv-act")).toBeNull();
+    ui.trace(root, data({ kind: "back" }));
+    expect(root.querySelector(".pt-mv-ans")).toBeNull();
+  });
+
+  it("puts the user's words and a card's title in as text", () => {
+    ui.trace(root, data({ q: "<b>x</b>", title: "<i>t</i>" }));
+    expect(root.querySelector("b")).toBeNull();
+    expect(root.querySelector("i")).toBeNull();
+    expect(root.querySelector(".pt-mv-open")!.textContent).toContain("<b>x</b>");
+  });
+
+  it("a failed move shows why in the strip's line instead of failing silently", async () => {
+    failing.add("moveBack");
+    ui.trace(root, data());
+    acts()[0]!.click();
+    await flush();
+    expect(top.querySelector(".pt-toast-text")!.textContent).toContain("moveBack failed");
+  });
+});
+
+describe("a line the bot put into a card, in the card's thread", () => {
+  const turn = (over: Partial<import("../src/model").Turn> = {}) => ({ rid: "r1", q: "部署好了嗎", a: "還沒好", qAt: clock, postedAt: clock, seenAt: clock, aAt: clock, via: "auto" as const, msgId: "u1", ...over });
+
+  it("says the bot put it here (or that you moved it here) instead of the sent / seen receipt, and has a 移回聊天 for it", async () => {
+    ui.update("B1", view(pin("p-0001", { thread: [turn(), turn({ rid: "r2", redirected: true }), { ...turn({ rid: "r3" }), via: "at" }] })));
+    ui.open("p-0001");
+    const receipts = [...panel()!.querySelectorAll(".pt-receipt")].map((node) => node.textContent!.split(" · ")[1]);
+    expect(receipts.filter((_, index) => index % 2 === 0)).toEqual(["bot 判斷放進這裡", "你改到這裡", "bot 已看到"]);
+    const backs = [...panel()!.querySelectorAll<HTMLButtonElement>(".pt-mv-act")];
+    expect(backs).toHaveLength(2);
+    backs[0]!.click();
+    expect(call.mock.calls.filter(([method]) => method === "moveBack")).toEqual([["moveBack", { botId: "B1", rid: "r1" }]]);
+    await flush();
+  });
+});

@@ -10,6 +10,8 @@ const keyOf = (botId: string) => `pins:${botId}`;
 /** A bot's tags this many times in a minute are enough: the rest are dropped (a loop of tags cannot churn the book). */
 const TAGS_PER_MINUTE = 30;
 const MAX_BOTS = 200;
+const MAX_FOLLOWED = 2_000;
+const MAX_ENDS = 50;
 
 type Params = Record<string, unknown>;
 type Expose = (method: string, fn: (params: Params) => unknown) => () => void;
@@ -38,19 +40,57 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
   };
 
   /** What the chat of `botId` draws from now on. A chat the app does not know (a bot that was removed) just takes nothing. */
+  const decorated = new Set<string>();
   const publish = (botId: string, book = load(botId)) => {
     try { void Promise.resolve(api.chat.setData(botId, M.viewOf(book) as never)).catch(() => {}); } catch { /* no page to draw it */ }
+    // the traces of lines the bot moved into cards (a chat with none and none before is not asked at all)
+    const traces = M.tracesOf(book);
+    if (!traces.length && !decorated.has(botId)) return;
+    if (traces.length) decorated.add(botId); else decorated.delete(botId);
+    try { void Promise.resolve(api.chat.decorate(botId, traces as never)).catch(() => {}); } catch { /* no page to draw it */ }
   };
   const save = (botId: string, book: M.Book) => {
     if (typeof api.storage?.set !== "function") throw new Error("unavailable: storage");
     M.fit(book);
     api.storage.set(keyOf(botId), book);
     track(botId, book.pins.length > 0 || book.removed.length > 0);
+    reindex(botId, book);
     publish(botId, book);
+  };
+
+  // ---- what a card follows: a worker's task id (its end is `workerDone`) or a sub bot's id (its replies), by the bot whose card follows it ----
+  const followers = new Map<string, string>();
+  const reindex = (botId: string, book: M.Book) => {
+    for (const [id, owner] of followers) if (owner === botId) followers.delete(id);
+    for (const id of M.linksOf(book)) if (followers.size < MAX_FOLLOWED) followers.set(id, botId);
+  };
+  for (const id of bots) reindex(id, load(id));
+  /** The ends of workers just seen, so a card that names a worker after it ended still gets its report. */
+  const ends = new Map<string, { botId: string; kind: M.NewsKind; text: string }>();
+  const news = (botId: string, id: string, item: { kind: M.NewsKind; from: "worker" | "bot"; text: string }): boolean => {
+    const book = load(botId);
+    const pins = book.pins.filter((pin) => pin.from?.includes(id));
+    let any = false;
+    for (const pin of pins) if (M.applyNews(pin, item, now())) any = true;
+    if (any) save(botId, book);
+    return any;
+  };
+  // A sub bot is followed only by the card of the bot it works under: its parent is checked now, not when the card was made.
+  const parents = { at: 0, byId: new Map<string, string | null>() };
+  const parentOf = async (id: string): Promise<string | null> => {
+    if (now() - parents.at > 60_000 || !parents.byId.has(id)) {
+      const list = typeof api.workspace?.bots === "function" ? await api.workspace.bots() : [];
+      parents.byId = new Map(list.map((bot): [string, string | null] => [bot.id, bot.parent]));
+      parents.at = now();
+    }
+    return parents.byId.get(id) ?? null;
   };
 
   // ---- which turn of the bot an answer can belong to ----
   const turnStart = new Map<string, number>();
+  // The plain line of the user that carried a briefing (the one a `move="yes"` answer is about), and the one the running turn answers.
+  const lastLine = new Map<string, { id: string; text: string; at: number }>();
+  const turnLine = new Map<string, { id: string; text: string; at: number }>();
   const lastBotLine = new Map<string, { text: string; at: number }>();
   const tagTimes = new Map<string, number[]>();
   const allowed = (botId: string): boolean => {
@@ -70,12 +110,18 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     api.events.on("turnStarted", ({ botId }) => {
       if (!bots.has(botId)) return;
       turnStart.set(botId, now());
+      // the line that was in the chat before this turn began is the one it answers; a line that comes while it runs waits for the next turn
+      const line = lastLine.get(botId);
+      if (line) { turnLine.set(botId, line); lastLine.delete(botId); } else turnLine.delete(botId);
       const book = load(botId);
       if (M.markSeen(book, now())) save(botId, book);
     }),
-    api.events.on("messagePosted", ({ botId, role, text }) => {
+    api.events.on("messagePosted", ({ botId, role, text, id }) => {
+      // a sub bot a card follows spoke: its reply goes into that card (the parent is checked first)
+      if (role === "bot" && followers.has(botId) && followers.get(botId) !== botId) void subBotNews(botId, String(text ?? ""));
       if (!bots.has(botId)) return;
       if (role === "bot") { lastBotLine.set(botId, { text: String(text ?? ""), at: now() }); return; }
+      if (M.hasBriefing(String(text ?? "")) && typeof id === "string" && id) lastLine.set(botId, { id, text: M.stripBriefing(String(text)), at: now() });
       const asked = M.parseAsk(String(text ?? ""));
       if (!asked) return;
       const book = load(botId);
@@ -84,6 +130,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     // a reply with no <pin-say>: the one card waiting for an answer takes it
     api.events.on("turnFinished", ({ botId, ok, reply }) => {
       if (!bots.has(botId)) return;
+      turnLine.delete(botId);
       try {
         const line = lastBotLine.get(botId);
         const started = turnStart.get(botId) ?? 0;
@@ -97,14 +144,34 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       }
     }),
 
+    // a worker ended a run: a card of that bot that follows it gets the news (a worker of another bot's is not heard: the event's bot is the book)
+    api.events.on("workerDone", ({ botId, workerId, status, report }) => {
+      try {
+        if (typeof workerId !== "string" || !M.isFrom(workerId)) return;
+        const kind: M.NewsKind = status === "completed" ? "completed" : status === "failed" ? "failed" : status === "stopped" ? "stopped" : "interrupted";
+        if (ends.size >= MAX_ENDS) ends.delete(ends.keys().next().value!);
+        ends.delete(workerId);
+        ends.set(workerId, { botId, kind, text: String(report ?? "") });
+        if (bots.has(botId)) news(botId, workerId, { kind, from: "worker", text: String(report ?? "") });
+      } catch (error) {
+        console.error("botling.pin-area: workerDone", error);
+      }
+    }),
+
     // what a bot writes: its own cards, and the answers in a card's thread. Only the bot that wrote the tag is touched (tag.bot).
     api.replyTags.on("pin-card", (tag) => {
       const botId = tag.bot.id;
       if (!allowed(botId)) return;
       try {
         const book = load(botId);
+        const before = new Set(M.linksOf(book));
         const outcome = M.applyCardTag(book, tag.attributes, tag.body, now());
         if (outcome === "created" || outcome === "updated" || outcome === "unpinned") save(botId, book);
+        // a worker that already ended before the card named it: its report is not lost
+        for (const id of M.linksOf(book)) {
+          const ended = before.has(id) ? undefined : ends.get(id);
+          if (ended && ended.botId === botId) news(botId, id, { kind: ended.kind, from: "worker", text: ended.text });
+        }
       } catch (error) {
         console.error("botling.pin-area: pin-card", error);
       }
@@ -114,7 +181,14 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (!allowed(botId)) return;
       try {
         const book = load(botId);
-        if (M.answerTurn(book, own(tag.attributes, "id").trim(), tag.body, now())) save(botId, book);
+        const id = own(tag.attributes, "id").trim();
+        if (M.truthy(own(tag.attributes, "move"))) {
+          // the bot judged that the user's plain line belongs to this card: the line and this answer go into it (once per line)
+          const line = turnLine.get(botId);
+          if (line && M.takeAuto(book, id, line, tag.body, ridOf(), now())) { turnLine.delete(botId); save(botId, book); }
+          return;
+        }
+        if (M.answerTurn(book, id, tag.body, now())) save(botId, book);
       } catch (error) {
         console.error("botling.pin-area: pin-say", error);
       }
@@ -126,6 +200,8 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (!bots.has(botId)) return;
       const book = load(botId);
       const hit = M.route(book, message.text);
+      // a plain message of a chat that has cards: the bot gets the cards as they stand, and may move the line into one
+      if (!hit && M.briefable(message.text)) { const brief = M.briefing(book, now()); return brief ? M.withBriefing(message.text, brief) : undefined; }
       if (!hit || hit.rest.length > M.MAX_ROUTED) return;
       const at = now();
       if (M.pruneUnposted(book, at)) save(botId, book);
@@ -136,6 +212,19 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       return M.askText(hit.pin, M.clean(hit.rest, M.MAX_ROUTED));
     }),
   ];
+
+  async function subBotNews(subId: string, text: string): Promise<void> {
+    try {
+      const owner = followers.get(subId);
+      if (!owner || owner === subId || !M.isFrom(subId) || !text.trim()) return;
+      if ((await parentOf(subId)) !== owner) return;
+      // after the await: the card may be gone or no longer follow it
+      if (followers.get(subId) !== owner) return;
+      news(owner, subId, { kind: "reply", from: "bot", text });
+    } catch (error) {
+      console.error("botling.pin-area: sub bot", error);
+    }
+  }
 
   // a chat that already has pins draws them again after a restart (what chat.setData holds lives in the app)
   for (const botId of bots) publish(botId);
@@ -187,6 +276,25 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (!pin) throw new Error("釘不回去了（已滿，或這張卡已經過期）。");
       save(botId, book);
       return { id: pin.id };
+    }),
+    // 移回聊天: the line the bot moved is the chat's again (its answer shows there, once); the bot is told by the next briefing
+    expose("moveBack", (params) => {
+      const botId = botOf(params);
+      const book = load(botId);
+      const rid = M.isRid(params.rid) ? params.rid : "";
+      if (!M.moveBack(book, rid, now())) return { unchanged: true };
+      save(botId, book);
+      return { moved: "chat" };
+    }),
+    // 改到…: the line and its answer go to another card
+    expose("moveTo", (params) => {
+      const botId = botOf(params);
+      const book = load(botId);
+      const rid = M.isRid(params.rid) ? params.rid : "";
+      const to = M.isId(params.to) ? params.to : "";
+      if (!M.moveTo(book, rid, to, now())) return { unchanged: true };
+      save(botId, book);
+      return { moved: to };
     }),
     // the card was open: what it says is read
     expose("seen", (params) => {

@@ -1,6 +1,6 @@
 import type { CcbWeb } from "../../../../Web/src/plugins";
 import type { ChatState } from "../../../../Web/src/types";
-import { parseAsk, type BookView } from "./model";
+import { parseAsk, stripBriefing, type BookView, type TraceData } from "./model";
 import { PinUi, pinIcon } from "./ui";
 import { wordsFor } from "./words";
 
@@ -10,6 +10,15 @@ export const PLUGIN = "botling.pin-area";
 export function bookOf(state: ChatState): BookView | null {
   const data = state.pluginData?.[PLUGIN] as BookView | undefined;
   return data && typeof data === "object" && Array.isArray(data.pins) ? data : null;
+}
+
+/** A decoration's data as the program part wrote it, or null (anything else is not drawn). */
+export function traceOf(raw: unknown): TraceData | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as Record<string, unknown>;
+  const text = (value: unknown) => typeof value === "string";
+  if ((d.kind !== "moved" && d.kind !== "back") || !text(d.rid) || !text(d.pin) || !text(d.title) || !text(d.q) || (d.a !== undefined && !text(d.a))) return null;
+  return { kind: d.kind, rid: d.rid as string, pin: d.pin as string, title: d.title as string, q: d.q as string, by: d.by === "user" ? "user" : "bot", ...(typeof d.a === "string" ? { a: d.a } : {}) };
 }
 
 /**
@@ -44,9 +53,18 @@ export function activate(ccb: CcbWeb): () => void {
   // "@card words": the cards after @, before the bots
   const mentions = ccb.composer.mentionSource((query) => ui.mentions(query));
   // The bubble of a message written into a card shows "@title words", not the header the bot got.
+  // The note of the cards a plain message carries for the bot is not the user's: the bubble shows their words only.
   const bubbles = ccb.messages.userText((text) => {
-    const asked = parseAsk(text);
-    return asked ? `@${asked.title} ${asked.text}` : text;
+    const own = stripBriefing(text);
+    const asked = parseAsk(own);
+    return asked ? `@${asked.title} ${asked.text}` : own;
+  });
+  // Where a line the bot put into a card went: a one-line trace in its place (a decoration the program part asked for), with 移回聊天 and 改到….
+  const traces = ccb.decorations.register({
+    draw: (root, decoration) => {
+      const data = traceOf(decoration.data);
+      if (data) ui.trace(root, data);
+    },
   });
   // The 釘選 button of any message: in a reply's hover column, beside your own message otherwise.
   const pinning = ccb.messages.afterRender((element, message) => {
@@ -71,5 +89,5 @@ export function activate(ccb: CcbWeb): () => void {
     const actions = element.querySelector(":scope > .message-actions");
     if (actions) actions.append(button); else element.append(button);
   });
-  return () => { mentions(); bubbles(); pinning(); ui.dispose(); };
+  return () => { mentions(); bubbles(); traces(); pinning(); ui.dispose(); };
 }
