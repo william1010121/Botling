@@ -313,7 +313,7 @@ export interface UsageApi {
   view(): Promise<UsageView>;
 }
 
-/** One plugin on the dependency board (`plugins.deps`; desktop/src/core/plugins/dep-board.ts is the source of these shapes). `app`: the app's own page, not a plugin. */
+/** One plugin on the dependency board (`plugins.deps`; desktop/src/core/plugins/dep-board.ts is the source of these shapes). `app`: the app's own page, not a plugin. `failure`: "failed" when it broke (never its error message), else null. */
 export interface DepNode {
   name: string; title: string; version: string; enabled: boolean; builtIn: boolean; failure: string | null; app: boolean;
   /** Whether its manifest has kernel fields; the lists below are empty for a plugin without them. */

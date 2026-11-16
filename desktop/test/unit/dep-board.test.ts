@@ -5,7 +5,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { desktop, tempDir } from "../helpers";
-import { APP_PROVIDERS, buildDepBoard, readDepBoard, type DepInput } from "../../src/core/plugins/dep-board";
+import { APP_PROVIDERS, buildDepBoard, FAILED, readDepBoard, type DepInput } from "../../src/core/plugins/dep-board";
 import { readKernelFields } from "../../src/core/plugins/manifest";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
@@ -136,6 +136,28 @@ describe("readDepBoard", () => {
       { plugin: "botling.client", service: "store.read", offProviders: ["botling.store"] },
     ]);
     expect(after.edges.find((edge) => edge.service === "store.read")).toMatchObject({ live: false });
+  });
+
+  it("hands out names, versions, states and declarations only: no setting, secret, install source, folder or error message (any plugin may ask)", async () => {
+    const dir = tempDir("dep-board-private");
+    const library = join(dir, "plugins");
+    make(library, "third.party", null);
+    make(library, "broke.one", null);
+    const registry = new PluginRegistry(library, join(dir, "plugins.json"), new MemorySecretStore(), null);
+    registry.rescan(true);
+    registry.set("third.party", "endpoint", "SETTING-VALUE-zz9");
+    await registry.setSecret("third.party", "token", "SECRET-VALUE-zz9");
+    registry.noteInstalled("third.party", "https://example.invalid/SOURCE-zz9.git");
+    registry.markFailed("broke.one", `Error: TOKEN-zz9 at ${join(library, "broke.one", "dist", "host.mjs")}:1:1`);
+    const board = readDepBoard(registry, registry.contributions());
+    const text = JSON.stringify(board);
+    for (const leak of ["SETTING-VALUE", "SECRET-VALUE", "SOURCE-zz9", "example.invalid", "TOKEN-zz9", dir, "host.mjs"]) expect(text, leak).not.toContain(leak);
+    expect(board.plugins.find((plugin) => plugin.name === "broke.one")).toMatchObject({ enabled: false, failure: FAILED });
+    expect(Object.keys(board).sort()).toEqual(["edges", "featureAreas", "missing", "plugins", "slots"]);
+    for (const plugin of board.plugins) {
+      expect(Object.keys(plugin).sort(), plugin.name).toEqual(["app", "builtIn", "declared", "enabled", "failure", "features", "fills", "name", "provides", "requires", "title", "uses", "version"]);
+      expect(Object.keys(plugin.provides).sort(), plugin.name).toEqual(["services", "slots"]);
+    }
   });
 
   it("a plugin folder whose package.json cannot be read declares nothing and does not stop the board", () => {

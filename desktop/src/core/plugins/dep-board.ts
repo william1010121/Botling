@@ -26,6 +26,9 @@ export const APP_PROVIDERS: readonly { name: string; title: string; services: re
   },
 ];
 
+/** What the board says of a plugin that broke, in place of its error message (see readDepInputs). */
+export const FAILED = "failed";
+
 /** One plugin as the board reads it (the registry's row, with its kernel fields and the slots its contributions fill). */
 export interface DepInput {
   name: string;
@@ -154,7 +157,9 @@ export function readDepInputs(registry: Pick<PluginRegistry, "plugins">, contrib
     const { fields } = readKernelFields(value, plugin.builtIn);
     return {
       name: plugin.manifest.name, title: title(plugin.manifest), version: plugin.manifest.version, enabled: plugin.enabled && !plugin.failure,
-      builtIn: plugin.builtIn, failure: plugin.failure, declared: fields !== null,
+      // Whether it broke, never why: the message is another plugin's error text (stack lines with the user's folders, whatever it threw),
+      // and any plugin may ask for this board.
+      builtIn: plugin.builtIn, failure: plugin.failure ? FAILED : null, declared: fields !== null,
       provides: { services: fields?.provides.services ?? [], slots: fields?.provides.slots ?? [] },
       requires: fields?.requires.services ?? [], uses: fields?.uses.services ?? [],
       contributedSlots: sorted(contributions.filter((entry) => entry.plugin === plugin.manifest.name).map(slotOf)),
