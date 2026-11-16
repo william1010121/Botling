@@ -70,8 +70,8 @@ describe("reading the kernel fields", () => {
 });
 
 describe("what does not change", () => {
-  it("the Plugin API is still 2.7", () => {
-    expect(API_VERSION).toEqual({ major: 2, minor: 7 });
+  it("the Plugin API is 2.8 (M7-O03a moved it from 2.7: workers.*, decided by the coordinator, user to confirm)", () => {
+    expect(API_VERSION).toEqual({ major: 2, minor: 8 });
   });
 
   it("a third-party plugin with the fields loads as before, with them ignored", () => {

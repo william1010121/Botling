@@ -64,6 +64,9 @@ describe("the host with a manifest that lists no plugin", () => {
     const listed = SHELL_PLUGINS[0]!;
     const hash = "c".repeat(64);
     const one = host({ manifest: { plugins: [{ name: listed, codeHash: hash }] }, expected: SHELL_PLUGINS, source: () => ({ activate: () => undefined }) });
+    // Before the answers: a listed plugin is about to load ("undecided", no fallback flash); only the ones the manifest lacks are away already.
+    expect(one.unavailable(listed)).toBe(false);
+    for (const name of SHELL_PLUGINS.slice(1)) expect(one.unavailable(name), name).toBe(true);
     const results = await one.start();
     expect(results.find((result) => result.name === listed)?.status).toBe("loaded");
     expect(one.unavailable(listed)).toBe(false);
@@ -145,6 +148,19 @@ describe("the page with every in-page built-in refused", () => {
     await settle(() => { expect(page.host.querySelector(".chat-fallback")).not.toBeNull(); });
     expect(page.host.querySelector(".web-nav-button")).toBeNull();
     expect(page.host.querySelector("aside.rail-unavailable .web-rail-footer")).toBeNull();
+  });
+
+  it("is the shell alone from the first paint, before the host has started (no frame of the old column or the plugin's rail)", async () => {
+    // The frame starts the host in an effect, after its first commit: the page's first paint must not wait for the loader's answers.
+    const fresh = host({ manifest: { plugins: [] }, expected: SHELL_PLUGINS });
+    for (const name of SHELL_PLUGINS) expect(fresh.unavailable(name), name).toBe(true);
+    vi.spyOn(inPageHost, "unavailable").mockImplementation((name) => fresh.unavailable(name));
+    const page = await drawPage({ web: chrome });
+    pages.push(page);
+    expect(page.host.querySelector(".chat-fallback")).not.toBeNull();
+    expect(page.host.querySelector("aside.rail.rail-unavailable")).not.toBeNull();
+    for (const selector of ["iframe", ".chat-frame", ".bot-row", ".rail-search"]) expect(page.host.querySelector(selector), selector).toBeNull();
+    expect(fresh.loaded()).toEqual([]);
   });
 
   it("is what a host that never refused is not: the same page, no plugin touched, draws the old column (the page as it was)", async () => {

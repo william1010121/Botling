@@ -57,7 +57,7 @@ describe("M6-03b: 2.x permissions -> tier and requests mapping", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("maps each of the 12 PERMISSIONS names and combinations per §14.4", () => {
+  it("maps each of the 13 PERMISSIONS names and combinations per §14.4", () => {
     expect(Object.keys(PERMISSIONS).sort()).toEqual([
       "app",
       "bots",
@@ -68,6 +68,7 @@ describe("M6-03b: 2.x permissions -> tier and requests mapping", () => {
       "files",
       "messages",
       "network",
+      "orchestrate",
       "routines",
       "sessions",
       "studio",
@@ -88,7 +89,7 @@ describe("M6-03b: 2.x permissions -> tier and requests mapping", () => {
     expect(tierOf(["claude"])).toBe("request");
     expect(requestsOf(["claude"])).toEqual(["chat.send"]);
 
-    for (const perm of ["network", "files", "exec", "sessions", "routines", "cards", "app", "studio"]) {
+    for (const perm of ["network", "files", "exec", "sessions", "routines", "cards", "app", "studio", "orchestrate"]) {
       expect(tierOf([perm])).toBe("write");
       expect(requestsOf([perm])).toEqual([]);
     }

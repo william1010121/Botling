@@ -11,6 +11,7 @@ import { type Sealer } from "./secrets";
 import { type WorkspaceSource } from "../workspace";
 import { type AppWorld } from "./app-seam";
 import { type StudioWorld } from "./studio-seam";
+import type { OrchestrationWorld } from "../orchestration/plugin-workers";
 import { type PluginBotExtras } from "./request-params";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
@@ -183,6 +184,8 @@ export interface PluginWorld {
   app?: AppWorld;
   /** What the component studio asks of the core (`studio.*`, built-in plugins only). Absent: a world without one (tests, spec adapters). */
   studio?: StudioWorld;
+  /** The worker primitives (`workers.*`, M7-O03a): the user's grant, the bots' Claude workers, the quota. Absent: no plugin starts workers here (tests, 2.x). */
+  orchestration?: OrchestrationWorld;
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
   addRoutine(botId: string, cron: string, task: string): "added" | "no-bot" | "bad-schedule";
   /** A bot's routines as the app lists them (`routines.list`; null: no such bot). Absent: a world without routines (tests, spec adapters). */

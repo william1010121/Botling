@@ -77,6 +77,7 @@ export const PERMISSIONS: Record<string, string> = {
   routines: "see a bot's routines and pause, resume or cancel them (built-in plugins only)",
   cards: "read the components a chat shows and run their commands once allowed, and keep what the chat page draws (built-in plugins only)",
   app: "install a new build of Botling and restart it, take a picture of its window (built-in plugins only)",
+  orchestrate: "start workers for bots, with your OK for each plugin (it must also have exec, files and bots): they read and write files and run programs in the bots' folders, up to a quota (a plugin a bot wrote asks you for every worker)",
   studio: "turn replies into components: read and keep the component specs of every chat, hand Maintainer jobs, change bots' component lists, run allowed commands (built-in plugins only)",
 };
 const PERMISSION_NAMES = Object.keys(PERMISSIONS);
@@ -88,8 +89,10 @@ const PERMISSION_NAMES = Object.keys(PERMISSIONS);
  * 2.7: views with `forRole: "marked"` and `chat: "float"`, `ui.showTab`, `bots.create`'s parent / instructions / delegation,
  * `botling.openChat(botId, messageId)`, menus `browser/tab` and `chat/link` (with `when`); and from 2.7 on an app skips a
  * contribution it does not know (a slot, a `where` or `forRole` value) with a warning instead of quietly (`contributionApi`).
+ * 2.8: `workers.start`, `workers.send`, `workers.cancel` and the event `workerReport` behind the permission `orchestrate` (M7-O03a);
+ * a plugin that uses them says `"^2.8.0"` in `engines`, so an older Botling refuses it at load instead of failing at the first call.
  */
-export const API_VERSION = { major: 2, minor: 7 } as const;
+export const API_VERSION = { major: 2, minor: 8 } as const;
 /** The range a plugin that needs nothing newer declares (what Maintainer's new plugins and the library's own manifests say). */
 export const ENGINE_RANGE = `^${API_VERSION.major}.0.0`;
 

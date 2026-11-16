@@ -64,14 +64,14 @@ afterAll(() => {
 });
 
 describe("M5-13b: tierOf permission mapping (§14.4)", () => {
-  it("maps every one of the 12 permission names and empty permissions per §14.4", () => {
-    expect(Object.keys(PERMISSIONS)).toHaveLength(12);
+  it("maps every one of the 13 permission names and empty permissions per §14.4", () => {
+    expect(Object.keys(PERMISSIONS)).toHaveLength(13);
     expect(tierOf([])).toBe("read");
     expect(tierOf(["messages"])).toBe("read");
     for (const perm of ["composer", "bots", "claude"]) {
       expect(tierOf([perm])).toBe("request");
     }
-    for (const perm of ["network", "files", "exec", "sessions", "routines", "cards", "app", "studio"]) {
+    for (const perm of ["network", "files", "exec", "sessions", "routines", "cards", "app", "studio", "orchestrate"]) {
       expect(tierOf([perm])).toBe("write");
     }
     expect(tierOf(["messages", "composer"])).toBe("request");
