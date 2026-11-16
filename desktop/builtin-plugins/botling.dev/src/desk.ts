@@ -214,8 +214,9 @@ ${appWorktree
     }
     finishInstall(this.deps.root);
     // The script itself ended before the new build ever ran (it was signalled): that is not a build that failed to come up,
-    // so it does not count towards pausing installs, and the same card can be confirmed again.
-    if (outcome.reason.startsWith("the install script ended early")) {
+    // so it does not count towards pausing installs, and the same card can be confirmed again. Ended while rolling back means
+    // the new build did run and did not come up: that one counts.
+    if (outcome.reason.startsWith("the install script ended early") && !outcome.reason.endsWith("step: rolling back")) {
       const stopped = this.deps.runningBuild();
       const old = buildLabel(stopped ?? state.from);
       main.appNotice(`${buildLabel(state.to)} was not installed (${outcome.reason}); ${old} is running again. The install log is ${installLog(this.deps.root)}. The same card can be confirmed again.`, undefined, undefined, { sourceID: state.requesterID });

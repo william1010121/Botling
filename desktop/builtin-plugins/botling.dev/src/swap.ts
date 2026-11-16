@@ -185,7 +185,8 @@ launch() (
 )
 reopen() { launch "$1" "$DATA"; }
 putback() { if [ -n "$BACKUP" ] && [ -e "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
-roll_back() { pkill -f "$TARGET/Contents/MacOS/" ; sleep 2; rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null; putback; }
+# Run again by recover after a signal: once the backup was put back, $TARGET is the old app and stays.
+roll_back() { if [ -n "$BACKUP" ] && [ ! -e "$BACKUP" ]; then return 0; fi; pkill -f "$TARGET/Contents/MacOS/" ; sleep 2; rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null; putback; }
 # As in the Botling 3 script: no terminal, no input, a hangup is ignored, signals are logged, and a script that ends early puts
 # things back and opens the old app at once.
 exec </dev/null
@@ -195,6 +196,7 @@ on_signal() { say "got SIG$1 at step: $STEP; ending"; exit 1; }
 for sig in TERM INT QUIT PIPE ABRT; do trap "on_signal $sig" "$sig"; done
 recover() {
   case "$PHASE" in
+    before) [ -e "$TARGET" ] || putback ;; # a signal that waited for "mv $TARGET $BACKUP" to finish
     launched) say "the new build was already opened; leaving it to come up"; return 0 ;;
     swap) say "putting the old app back"; rm -rf "$TARGET"; putback ;;
     rollback) say "finishing the roll back"; roll_back ;;
@@ -204,7 +206,7 @@ recover() {
   say "opening the old app again"
   reopen "$PREVIOUS"
 }
-on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; say "the install script ended early at step: $STEP (status $status)"; recover; }
+on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; for sig in TERM INT QUIT PIPE ABRT; do trap "say \"got SIG$sig while putting things back; carrying on\"" "$sig"; done; say "the install script ended early at step: $STEP (status $status)"; recover; }
 trap on_exit EXIT
 echo $$ > "$(dirname "$HEALTHY")/script.pid"
 STEP="waiting for Botling 2 to quit"
@@ -308,7 +310,8 @@ launch() (
 )
 reopen() { launch "$1"; }
 putback() { if [ -n "$BACKUP" ] && [ -e "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
-roll_back() { end_bundle "$TARGET" 1; rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null; putback; }
+# Run again by recover after a signal: once the backup was put back, $TARGET is the old app and stays.
+roll_back() { if [ -n "$BACKUP" ] && [ ! -e "$BACKUP" ]; then return 0; fi; end_bundle "$TARGET" 1; rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null; putback; }
 fail() { OK=1; say "$1"; echo "$1" > "$ROLLED"; }
 # Nothing may end this script unseen: it has no terminal and no input, a hangup is ignored (and logged), any other signal is logged,
 # and a script that ends before it finished (a signal, an error) puts things back and opens the old app at once (recover).
@@ -319,6 +322,7 @@ on_signal() { say "got SIG$1 at step: $STEP; ending"; exit 1; }
 for sig in TERM INT QUIT PIPE ABRT; do trap "on_signal $sig" "$sig"; done
 recover() {
   case "$PHASE" in
+    before) [ -e "$TARGET" ] || putback ;; # a signal that waited for "mv $TARGET $BACKUP" to finish
     launched) say "the new build was already opened; leaving it to come up"; return 0 ;;
     swap) say "putting the old app back"; rm -rf "$TARGET"; putback ;;
     rollback) say "finishing the roll back"; roll_back ;;
@@ -329,7 +333,7 @@ recover() {
   say "opening the old app again"
   reopen "$PREVIOUS"
 }
-on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; say "the install script ended early at step: $STEP (status $status)"; recover; }
+on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; for sig in TERM INT QUIT PIPE ABRT; do trap "say \"got SIG$sig while putting things back; carrying on\"" "$sig"; done; say "the install script ended early at step: $STEP (status $status)"; recover; }
 trap on_exit EXIT
 # The next start tells a script still at work from one that died by this pid (swap.ts installScriptRunning).
 echo $$ > "$(dirname "$HEALTHY")/script.pid"

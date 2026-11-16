@@ -242,4 +242,17 @@ describe("a script that ended early is not a build that failed to come up", () =
     expect(main.notices.at(-1)!).not.toMatch(/installing is paused/);
     expect(existsSync(join(folder(root), "failures")) ? readFileSync(join(folder(root), "failures"), "utf8").trim() : "0").toBe("0");
   });
+
+  it("ended while rolling back (the new build ran and did not come up) still counts as a failed build", () => {
+    vi.useFakeTimers();
+    const root = tempDir("install-identity");
+    const from = readBuild(fakeApp(join(root, "Applications"), "Botling 3", { BotlingGitCommit: "aaaaaaa1111" }))!;
+    const to = readBuild(fakeApp(join(root, "dist"), "Botling 3", { BotlingGitCommit: "bbbbbbb2222" }))!;
+    const { builds, main } = rig(root, from);
+    prepareInstall(server(root), from, to, "DEV", "", 5151, "", new Date(), from.path, server(root));
+    writeFileSync(join(folder(root), "rolled-back"), "the install script ended early at step: rolling back\n");
+    builds.check(8_000);
+    expect(main.notices.at(-1)!).toContain("did not come up");
+    expect(readFileSync(join(folder(root), "failures"), "utf8").trim()).toBe("1");
+  });
 });

@@ -77,7 +77,11 @@ function rig(dir: string, v3 = true) {
     return { child, closed, out: () => out, until };
   };
   const openedLines = () => (existsSync(opened) ? readFileSync(opened, "utf8").trim().split("\n") : []);
-  return { from, to, make, start, openedLines, server: join(dir, "server") };
+  /** mv and rm stand-ins (on PATH): the real command, then a second's pause when its last word is SLOW_MV_TO / SLOW_RM, so a signal lands right after it. */
+  tool("mv", `/bin/mv "$@"; s=$?; for a in "$@"; do last="$a"; done\nif [ -n "$SLOW_MV_TO" ] && [ "$last" = "$SLOW_MV_TO" ]; then echo "slow mv to $last done"; sleep 1; fi\nexit $s`);
+  tool("rm", `for a in "$@"; do last="$a"; done\nif [ -n "$SLOW_RM" ] && [ "$last" = "$SLOW_RM" ]; then echo "slow rm of $last"; sleep 1; fi\n/bin/rm "$@"`);
+  const path = `${bin}:${process.env.PATH}`;
+  return { from, to, make, start, openedLines, path, server: join(dir, "server") };
 }
 
 describe("the Botling 3 install script is not ended unseen", () => {
@@ -150,6 +154,48 @@ describe("the Botling 3 install script is not ended unseen", () => {
     await script.closed;
     expect(readBuild(r.from.path)?.commit).toBe("aaaaaaa1111");
     expect(existsSync(join(r.server, "self-update", "backups"))).toBe(true);
+  });
+});
+
+describe("review probes: a signal at the edges of a step never loses the old app", () => {
+  for (const v3 of [true, false]) {
+    it(`${v3 ? "v3" : "v2"}: a SIGTERM that lands while the old app is being moved to the backup puts it back`, async () => {
+      const dir = tempDir("install-probe");
+      const r = rig(dir, v3);
+      const args = r.make(botlingd(0).pid!);
+      const script = r.start(args, { PATH: r.path, SLOW_MV_TO: args[3]!, MAKE_HEALTHY: join(dir, "never") });
+      await script.until("slow mv to");
+      process.kill(script.child.pid!, "SIGTERM");
+      await script.closed;
+      expect(readBuild(r.from.path)?.commit).toBe("aaaaaaa1111");
+      expect(installOutcome(r.server)).toMatchObject({ kind: "rolledBack" });
+    });
+
+    it(`${v3 ? "v3" : "v2"}: a SIGTERM that lands right after the roll back put the old app back leaves it in place`, async () => {
+      const dir = tempDir("install-probe");
+      const r = rig(dir, v3);
+      const args = r.make(botlingd(0).pid!);
+      const script = r.start(args, { PATH: r.path, SLOW_MV_TO: r.from.path, MAKE_HEALTHY: join(dir, "never") });
+      await script.until("slow mv to");
+      process.kill(script.child.pid!, "SIGTERM");
+      await script.closed;
+      expect(readBuild(r.from.path)?.commit).toBe("aaaaaaa1111");
+      expect(r.openedLines().at(-1)).toContain(r.from.path);
+    }, 20_000);
+  }
+
+  it("a second SIGTERM while recover puts things back does not stop it half way", async () => {
+    const dir = tempDir("install-probe");
+    const r = rig(dir);
+    const args = r.make(botlingd(0).pid!);
+    const script = r.start(args, { PATH: r.path, SLOW_DITTO: "1", SLOW_RM: r.from.path, MAKE_HEALTHY: join(dir, "never") });
+    await script.until("copying the new build");
+    process.kill(script.child.pid!, "SIGTERM");
+    await script.until("slow rm of");
+    process.kill(script.child.pid!, "SIGTERM");
+    await script.closed;
+    expect(readBuild(r.from.path)?.commit).toBe("aaaaaaa1111");
+    expect(r.openedLines()).toEqual([`-n ${r.from.path} --env BOTLING_DATA_DIR=/data --env BOTLING_SERVER_DATA_DIR=/srv`]);
   });
 });
 
