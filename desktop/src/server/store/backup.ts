@@ -155,7 +155,7 @@ async function conversationsBackupFile(file: string, dest: string, takenAt: numb
     copy("bots", source.prepare("SELECT * FROM bots").all());
     let last: [string, string] | null = null;
     for (;;) {
-      const rows = last
+      const rows: SqlRow[] = last
         ? source.prepare("SELECT * FROM messages WHERE (botId, msgId) > (?, ?) ORDER BY botId, msgId LIMIT ?").all(last[0], last[1], PAGE)
         : source.prepare("SELECT * FROM messages ORDER BY botId, msgId LIMIT ?").all(PAGE);
       if (!rows.length) break;
