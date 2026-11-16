@@ -450,7 +450,8 @@ describe("only log-store.ts reads or writes entries.body", () => {
   const SRC = join(__dirname, "..", "..", "src");
   // Known readers that decode by hand; each is to switch to readEntries (plan db-compaction D1, with bot/v3-slow-restart).
   // store/compaction.ts: the one-time prune sizes rows and scans the whole `srv:` bot.updated / settings.updated bodies (always stored whole).
-  const KNOWN = new Set(["server/replica/summary.ts", "server/store/compaction.ts"]);
+  // replica/summary-entries.ts: main's newest-first read of the same `srv:` bodies (bot/v3-slow-restart, which moved it out of summary.ts).
+  const KNOWN = new Set(["server/replica/summary.ts", "server/replica/summary-entries.ts", "server/store/compaction.ts"]);
   function walk(dir: string, out: string[] = []): string[] {
     for (const name of readdirSync(dir)) {
       const full = join(dir, name);
