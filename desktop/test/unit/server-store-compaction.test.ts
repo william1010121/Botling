@@ -110,9 +110,12 @@ describe("prune: the old entries of each own stream go by eviction", () => {
   it("only touches own streams: a followed (live) stream's row and entries stay", () => {
     const { db } = open();
     fillBot(db, A, 40);
-    db.prepare("INSERT INTO streams (stream, owner, logId, head, headHash, state, tail, tailHash) VALUES ('bot:peer', 'other', 'lid', 0, ?, 'live', 0, ?)").run(GENESIS_HASH, GENESIS_HASH);
+    db.prepare("INSERT INTO streams (stream, owner, logId, head, headHash, state, tail, tailHash) VALUES ('bot:peer', 'other', 'lid', 40, 'h40', 'live', 0, ?)").run(GENESIS_HASH);
+    for (let seq = 1; seq <= 40; seq++) db.prepare("INSERT INTO entries (stream, seq, logId, hlc, kind, body, hash) VALUES ('bot:peer', ?, 'lid', '{}', 'turn.delta', '{}', ?)").run(seq, `h${seq}`);
     runCompaction(db, SMALL);
-    expect(readStream(db, "bot:peer")).toMatchObject({ tail: 0, head: 0, state: "live" });
+    expect(readStream(db, "bot:peer")).toMatchObject({ tail: 0, head: 40, state: "live" });
+    expect(db.prepare("SELECT count(*) AS n FROM entries WHERE stream = 'bot:peer'").get()!.n).toBe(40);
+    expect(readStream(db, A)!.tail).toBe(20);
   });
 
   it("a reader at the tail still gets entries; one behind it gets a snap whose messages are all there (catch-up before the tail)", async () => {
