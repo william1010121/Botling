@@ -55,10 +55,10 @@ export interface RequestHost {
   noteFile(botId: string): string;
   setSetting(name: string, key: string, value: boolean | number | string | null): void;
   shipped(name: string): boolean;
+  /** M7-O05 (F6): what a message from this plugin carries as `from` (a plugin that is not shipped: its name; a shipped one is a deputy and is not remembered). */
+  heardFrom(plugin: string): string | undefined;
   /** The worker primitives' book (M7-O03a); throws when this world has no workers. */
   workers(): PluginWorkers;
-  /** F6 (M7-O04): a plugin that is not shipped sent this bot a message. */
-  heard(botId: string, plugin: string): void;
 }
 
 /**
@@ -101,15 +101,13 @@ export async function requested(this: RequestHost, method: string, params: unkno
     case "bots.send": {
       const { plugin, data } = this.asked(SendParams, params);
       if (data.as === "user") this.needs(plugin, "bots", "Sending as the user");
-      this.heard(data.bot, plugin.manifest.name);
-      return world.send(data.bot, data.text, data.as === "user" ? null : title(plugin.manifest));
+      return world.send(data.bot, data.text, data.as === "user" ? null : title(plugin.manifest), this.heardFrom(plugin.manifest.name));
     }
     case "bots.wake": {
       const { plugin, data } = this.asked(WakeParams, params);
       // A bot wakes when it gets a message; a wake without one waits for the core to have that.
       if (data.prompt === undefined) throw new Error("bots.wake needs a prompt for now (a bot wakes when it gets a message).");
-      this.heard(data.bot, plugin.manifest.name);
-      world.send(data.bot, data.prompt, title(plugin.manifest));
+      world.send(data.bot, data.prompt, title(plugin.manifest), this.heardFrom(plugin.manifest.name));
       return null;
     }
     case "bots.interrupt": {

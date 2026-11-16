@@ -57,6 +57,9 @@ export interface WorkerCoreOptions {
   adapters: WorkerAdapter[];
   /** M7-O04 (F6): called around every app_handoff with the handoff itself as `run`; it may refuse (throw) or change `args`. Absent: `run`. */
   admit?(kind: WorkerAdapterKind, args: HandoffArgs, run: (startedBy?: StartedBy) => Promise<HandoffResult>): Promise<HandoffResult>;
+  /** M7-O05 (item 5): called with every app_send_message once the worker is found. Undefined: not gated, the message goes on as the coordinator's own. Else the
+   *  message was sent (a plugin's turn: only that plugin's own worker, through the plugin book) and this is its answer; it throws when the plugin's turn may not. */
+  gateMessage?(taskId: string, words: string): Promise<{ run: number; how: string } | undefined>;
   /** The coordinator's conversation now (a new worker's ownerSessionId, a run's execution.ownerSessionId). */
   ownerSessionId(): string;
   /** Workers at work at once (absent: no limit). More wait for a slot, listed at work with a line saying so. */
@@ -462,7 +465,11 @@ export class WorkerCore implements WorkerHost {
     if (this.options.port.ack === "checkpoint" && r.status !== "running" && this.activeReports.get(r.id) !== r.run
       && (r.report.state === "dispatching" || (r.report.state === "pending" && r.report.attempts === 0)))
       throw new Error("The prior worker report must be acknowledged before continuation.");
-    const sent = await this.sendToWorker(r.id, typeof args.message === "string" ? args.message : "", "coordinator");
+    const words = typeof args.message === "string" ? args.message : "";
+    // A plugin's turn (M7-O05): the gate sent it, or refused it; no other turn is gated.
+    const gated = await this.options.gateMessage?.(r.id, words);
+    if (gated) return { task_id: r.id, run: gated.run, status: gated.how === "steered" ? "steered" : "accepted" };
+    const sent = await this.sendToWorker(r.id, words, "coordinator");
     if (!sent.ok) throw new Error(sent.reason);
     return { task_id: r.id, run: sent.run, status: sent.how === "steered" ? "steered" : "accepted" };
   }

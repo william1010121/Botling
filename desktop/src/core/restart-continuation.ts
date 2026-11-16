@@ -73,9 +73,10 @@ function validEntry(e: RestartEntry): boolean {
     && typeof e.sessionId === "string" && e.sessionId.length > 0 && typeof e.continue === "boolean"
     && ["pending", "claimed", "dispatched", "blocked"].includes(e.state ?? "")
     && (e.blocked === undefined || typeof e.blocked === "string")
+    && (e.plugin === undefined || typeof e.plugin === "string")
     && Array.isArray(e.queued) && e.queued.every(q => q && typeof q.words === "string"
       && ["user", "app", "background"].includes(q.origin) && typeof q.turnId === "string"
-      && typeof q.messageId === "string" && (q.userId === null || typeof q.userId === "string"))
+      && typeof q.messageId === "string" && (q.userId === null || typeof q.userId === "string") && (q.plugin === undefined || typeof q.plugin === "string"))
     && (e.claudeWorkers === undefined || Array.isArray(e.claudeWorkers) && e.claudeWorkers.every(id => typeof id === "string"))
     && (e.restartedAt === undefined || Number.isFinite(e.restartedAt))
     && (e.workers === undefined || Array.isArray(e.workers) && e.workers.every(w => w

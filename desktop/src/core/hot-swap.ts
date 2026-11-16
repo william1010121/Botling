@@ -18,7 +18,8 @@ export const SWAP_MAX_AGE_MS = 15 * 60_000;
 /** What a cut-off head is told when the new core starts it again in the same conversation. */
 export const CONTINUE_NOTE = "(App: Botling replaced its core process while you were working, so your last turn was stopped between tool calls. This is the same conversation and your context is intact. Continue exactly where you stopped; do not repeat steps that already finished.)";
 
-export interface SwapQueued { words: string; userId: string | null; origin: string }
+/** `plugin`: the plugin (not shipped) the turn stems from (M7-O05, `Turn.plugin`): it goes with the turn, so a swap does not make it the user's. */
+export interface SwapQueued { words: string; userId: string | null; origin: string; plugin?: string }
 
 export interface SwapEntry {
   /** The bot whose chat it is (the primary's id for a partner head). */
@@ -30,6 +31,8 @@ export interface SwapEntry {
   continue: boolean;
   /** Turns that waited (messages, routines, hand-offs), delivered after the swap in order. */
   queued: SwapQueued[];
+  /** The plugin (not shipped) the turn that was cut off stems from (M7-O05): the turn that carries on is checked as that plugin's too. */
+  plugin?: string;
 }
 
 export interface SwapHandover { v: 1; at: number; entries: SwapEntry[] }
@@ -98,6 +101,9 @@ export function discardHandover(dataDir: string) {
 const ENGINES = new Set(["claude", "codex", "agy"]);
 const SESSION = /^[0-9A-Za-z-]{1,64}$/;
 
+/** A plugin name read from a file: a sane string, or nothing. */
+const pluginOf = (value: unknown): { plugin?: string } => (typeof value === "string" && value.length > 0 && value.length <= 200 ? { plugin: value } : {});
+
 /** The handover for this start, once (the file is removed); null when there is none, it is stale or unreadable. */
 export function takeHandover(dataDir: string, now = Date.now(), maxAgeMs = SWAP_MAX_AGE_MS): SwapHandover | null {
   const file = join(dataDir, SWAP_FILE);
@@ -114,8 +120,8 @@ export function takeHandover(dataDir: string, now = Date.now(), maxAgeMs = SWAP_
     const sessionId = typeof item.sessionId === "string" && SESSION.test(item.sessionId) ? item.sessionId : null;
     const queued = Array.isArray(item.queued) ? item.queued.slice(0, 50).flatMap((turn: Partial<SwapQueued>) =>
       turn && typeof turn.words === "string" && typeof turn.origin === "string"
-        ? [{ words: turn.words.slice(0, 200_000), userId: typeof turn.userId === "string" ? turn.userId : null, origin: turn.origin }] : []) : [];
-    entries.push({ botId: item.botId, engine: item.engine as Engine, sessionId, continue: item.continue === true, queued });
+        ? [{ words: turn.words.slice(0, 200_000), userId: typeof turn.userId === "string" ? turn.userId : null, origin: turn.origin, ...pluginOf(turn.plugin) }] : []) : [];
+    entries.push({ botId: item.botId, engine: item.engine as Engine, sessionId, continue: item.continue === true, queued, ...pluginOf(item.plugin) });
   }
   return { v: 1, at: value.at, entries };
 }

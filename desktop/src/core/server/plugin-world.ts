@@ -70,10 +70,10 @@ export class CorePluginWorld {
       ...(options.pluginAsks ? { pluginAsks: options.pluginAsks } : {}),
       world: {
         bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
-        send: (botId, text, via) => {
+        send: (botId, text, via, from) => {
           const bot = this.pluginBot(botId);
           if (!bot) throw new Error("No such bot.");
-          return { messageId: bot.send(text, via ? { via } : {}).messageId };
+          return { messageId: bot.send(text, { ...(via ? { via } : {}), ...(from ? { from } : {}) }).messageId };
         },
         interrupt: async (botId) => {
           const bot = this.pluginBot(botId);

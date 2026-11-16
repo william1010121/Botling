@@ -246,7 +246,7 @@ export class TurnControl {
    * handed-over work (its other turns take your message in with `turn/steer`, as 1.x).
    */
   private canPause(current: Turn, next: Turn): boolean {
-    if (next.origin !== "user" || current.origin === "user" || current.origin === "tidy" || this.paused) return false;
+    if (next.origin !== "user" || next.plugin || current.origin === "user" || current.origin === "tidy" || this.paused) return false;
     if (!current.open || !current.sent || !current.head?.running || current.head !== this.head || this.queue.length || this.draining || this.ignoreResults) return false;
     if (this.approvals.size || this.subagents.running.some((subagent) => !subagent.background)) return false;
     return this.engine === "claude" || (current.conducted && this.head instanceof CodexHead);
@@ -293,7 +293,8 @@ export class TurnControl {
    * claude takes it in the user's own turn whatever is open; in work the user did not start only with no approval open and no foreground subagent at work (else it waits).
    */
   private canSteer(current: Turn, next: Turn): boolean {
-    if (next.origin !== "user" || current.origin === "tidy" || current.conducted || !current.open || !current.sent) return false;
+    // A plugin's message is never read into a turn under way (M7-O05): that turn is checked as whoever made it, and the plugin's words would ride in it.
+    if (next.origin !== "user" || next.plugin || current.origin === "tidy" || current.conducted || !current.open || !current.sent) return false;
     if (current.head !== this.head || !this.head?.running || this.draining || this.ignoreResults || this.ending.has(this.head)) return false;
     if (this.head instanceof AgyAcpHead) return false;
     if (this.head instanceof CodexHead) return true;
@@ -313,7 +314,7 @@ export class TurnControl {
   private offerInsert(current: Turn, next: Turn): boolean {
     const head = this.head;
     if (!(head instanceof AgyAcpHead) || typeof head.offerInsert !== "function") return false;
-    if (next.origin !== "user" || current.origin === "tidy" || current.conducted || !current.open || !current.sent) return false;
+    if (next.origin !== "user" || next.plugin || current.origin === "tidy" || current.conducted || !current.open || !current.sent) return false;
     if (current.head !== head || !head.running || this.draining || this.ignoreResults || this.ending.has(head)) return false;
     // Behind a message that waits for the next turn it would jump the order.
     const offered = new Set(this.inserting.values());
@@ -408,6 +409,7 @@ export class TurnControl {
     if (waiting && (!waiting.open || waiting.head !== head || waiting.reply.text || waiting.steps.length || waiting.record || this.deferred)) return;
     if (waiting) this.setAside(waiting);
     const turn = this.newTurn("user", next.words, next.userId);
+    if (next.plugin) turn.plugin = next.plugin;
     turn.head = head;
     turn.sent = true;
     turn.about = [...next.about];
