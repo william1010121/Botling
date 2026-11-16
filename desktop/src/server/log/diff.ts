@@ -76,7 +76,7 @@ function diffValue(a: unknown, b: unknown, path: string, ops: PatchOp[]): void {
 
 function diffArray(a: unknown[], b: unknown[], path: string, ops: PatchOp[]): void {
   let cur = a;
-  // A window that moved on: the first n members of `a` went and `a[n]` is `b[0]`. Probing the middle of the overlap as well
+  // A window that moved on: the first n members of `a` went and `a[n]` is `b[0]`. Probing two places in the overlap as well
   // keeps a member that changed in the same update (the newest step finishing) from hiding the move; the members that
   // differ after the shift are diffed one by one below, so a wrong guess only makes a longer patch, never a wrong one.
   if (a.length > 1 && b.length > 0 && !deepEqual(a[0], b[0])) {
@@ -84,8 +84,8 @@ function diffArray(a: unknown[], b: unknown[], path: string, ops: PatchOp[]): vo
       if (!deepEqual(a[n], b[0])) continue;
       const rest = a.length - n;
       if (rest > b.length) continue;
-      const probe = rest >> 1;
-      if (probe > 0 && !deepEqual(a[n + probe], b[probe])) continue;
+      const probes = [rest >> 1, rest >> 2].filter((probe) => probe > 0);
+      if (probes.length && !probes.some((probe) => deepEqual(a[n + probe], b[probe]))) continue;
       ops.push({ op: "shift", path, n });
       cur = a.slice(n);
       break;
