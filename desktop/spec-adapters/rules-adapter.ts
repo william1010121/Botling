@@ -32,11 +32,13 @@ export async function createRulesDriver({ dataDir, start, wait }: RulesDriverOpt
   put(start);
   /** The answer of the ask under way, held until `answer`. */
   let release: (() => void) | null = null;
+  /** The plugin's read of its file for the ask under way (it reads when asked, so a later edit is not what it answers). */
+  let reading: Promise<unknown> | null = null;
   const real = () => chosenSource({ folder, enabled: src !== "throws" }, pinned)();
   const book = new OrchestrationRulesBook(() => {
     if (src === "hangs") return new Promise<Slots>(() => {});
     const read = real();
-    read.catch(() => {});
+    reading = read.catch(() => {});
     return new Promise<void>((resolve) => { release = resolve; }).then(() => read);
   });
   const rulesOf = (rules: OrchestrationRules): Rules => {
@@ -48,22 +50,28 @@ export async function createRulesDriver({ dataDir, start, wait }: RulesDriverOpt
   const settle = async () => { await flush(); };
   return {
     async send(withSay) {
+      reading = null;
       void book.refresh(withSay ? say : undefined);
       used = rulesOf(book.current());
+      await reading;
       await settle();
     },
     async answer() {
       const go = release;
       if (!go) throw new Error("no answer is held");
       release = null;
+      const flight = (book as unknown as { flight: Promise<void> | null }).flight;
       go();
+      await flight;
       await settle();
       // An answer taken starts a new failure period: the notices the model counts are since the last answer.
       if (book.current() !== DEFAULT_ORCHESTRATION_RULES) said = 0;
     },
     async timeout() {
       release = null;
+      const flight = (book as unknown as { flight: Promise<void> | null }).flight;
       await wait(RULES_TIME_LIMIT_MS);
+      await flight;
       await settle();
     },
     async brk(s) { put(s); await settle(); },
