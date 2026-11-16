@@ -33,12 +33,12 @@ function fakeCore() {
   return { ledger, log, hooks, port };
 }
 
-function book(core = fakeCore(), file: { text: string | null } = { text: null }, quota: { atOnce?: number } = {}) {
+function book(core = fakeCore(), file: { text: string | null } = { text: null }, quota: { atOnce?: number } = {}, written?: { cards: number; answer?: () => void }) {
   const told: Record<string, unknown>[] = [];
   const workers = new PluginWorkers({
-    world: { granted: () => true, workers: () => core.port, quota: () => quota },
-    facts: (): PluginFacts => ({ name: "p", identity: H1, permissions: ALL, botWritten: false }),
-    ask: async () => ({ index: 0 }),
+    world: { granted: () => true, workers: () => core.port, quota: () => quota, made: () => true },
+    facts: (): PluginFacts => ({ name: "p", identity: H1, permissions: ALL, botWritten: !!written }),
+    ask: async () => { if (written) { written.cards += 1; written.answer?.(); } return { index: 0 }; },
     tell: (_plugin, _event, data) => { told.push(data); },
     file: { read: () => file.text, write: (text) => { file.text = text; } },
   });
@@ -217,5 +217,22 @@ describe("O05 item 3: a send does not start a run that drops the report the bot 
       expect(h.workers.look(taskId)).toMatchObject({ botOwed: false });
       await expect(workers.send("p", taskId, "again")).resolves.toMatchObject({ run: 2, how: "newRun" });
     } finally { await h.workers.close(); }
+  });
+
+  it("a plugin a bot wrote: refused before the card is shown, and again when the answer comes if the report became owed meanwhile", async () => {
+    const core = fakeCore(), written = { cards: 0, answer: undefined as undefined | (() => void) };
+    const t = book(core, undefined, {}, written);
+    await t.workers.start("p", params);
+    core.ledger.set("T1", { run: 1, running: false, status: "completed", report: "done", botOwed: true });
+    t.workers.ended("T1", 1, "completed", "done");
+    const cards = written.cards;
+    await expect(t.workers.send("p", "T1", "again")).rejects.toThrow(/report/);
+    expect(written.cards).toBe(cards);
+    // Not owed when asked; owed by the time the user answers (the head refused a report meanwhile).
+    core.ledger.set("T1", { run: 1, running: false, status: "completed", report: "done", botOwed: false });
+    written.answer = () => { core.ledger.set("T1", { run: 1, running: false, status: "completed", report: "done", botOwed: true }); };
+    await expect(t.workers.send("p", "T1", "again")).rejects.toThrow(/report/);
+    expect(written.cards).toBe(cards + 1);
+    expect(core.log.sent).toEqual([]);
   });
 });
