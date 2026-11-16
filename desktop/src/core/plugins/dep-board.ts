@@ -1,0 +1,184 @@
+// The data of the plugin dependency board (botling.deps): every plugin, built in or installed, and who depends on whom,
+// from the kernel fields of its manifest (manifest.ts `readKernelFields`: provides.services / provides.slots,
+// requires.services, uses.services) and the slots its contributions fill. Read only: nothing here writes, enables or
+// moves anything. `buildDepBoard` is pure (plugins in, nodes / edges / missing providers / slot fills out); `readDepInputs`
+// reads the registry for it. The kernel fields are read for built-in plugins only (a third-party manifest's are ignored,
+// as the kernel does), so an installed plugin shows with no services; it still shows its version, state and slots.
+// A second layer, apart from the kernel fields: the parts of the app a plugin calls (app-features.ts), declared for built-in plugins.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { canonicalSlot, slotName } from "../../../../Web/src/plugin-kernel";
+import type { Contribution } from "./contributions";
+import { areaOf, declaredFeatures, FEATURE_AREAS } from "./app-features";
+import { CORE_SLOTS, slotOf } from "./kernel-list";
+import { readKernelFields, title } from "./manifest";
+import type { PluginRegistry } from "./registry";
+
+/**
+ * What the app's own page provides that no manifest says: the chat (`botling.chat`, desktop/src/renderer/chat-names.ts, kept in
+ * step by a test) provides the service a frame's `ccb.composer.insertQuote` calls and fills the chat's slots. Shown as a node of
+ * its own so a plugin that uses it has an arrow and is never marked as missing a provider.
+ */
+export const APP_PROVIDERS: readonly { name: string; title: string; services: readonly string[]; slots: readonly string[] }[] = [
+  {
+    name: "botling.chat", title: "Chat (the app's page)", services: ["composer.insertQuote"],
+    slots: ["message/context", "message/preview", "chat/link", "composer/plus", "composer/bar", "chat/header", "main/tab"],
+  },
+];
+
+/** What the board says of a plugin that broke, in place of its error message (see readDepInputs). */
+export const FAILED = "failed";
+
+/** One plugin as the board reads it (the registry's row, with its kernel fields and the slots its contributions fill). */
+export interface DepInput {
+  name: string;
+  title: string;
+  version: string;
+  enabled: boolean;
+  builtIn: boolean;
+  failure: string | null;
+  /** The app's own page, not a plugin of the library. */
+  app?: boolean;
+  /** Whether its manifest has kernel fields at all (a plugin without them declares nothing, as a 2.x plugin). */
+  declared: boolean;
+  provides: { services: string[]; slots: string[] };
+  requires: string[];
+  uses: string[];
+  /** The slots its contributions fill, by any name (an enabled plugin's; a disabled one's are not there). */
+  contributedSlots: string[];
+  /** The parts of the app it calls (`api.usage.view`, `ccb.composer.insert`; app-features.ts): declared for a built-in plugin, none for the rest. Not kernel services. */
+  features?: string[];
+}
+
+export interface DepNode {
+  name: string;
+  title: string;
+  version: string;
+  enabled: boolean;
+  builtIn: boolean;
+  failure: string | null;
+  app: boolean;
+  declared: boolean;
+  provides: { services: string[]; slots: string[] };
+  requires: string[];
+  uses: string[];
+  /** The slots it fills now (new names, sorted): what its contributions and `provides.slots` name, while it is on. */
+  fills: string[];
+  /** The parts of the app it calls, sorted (app-features.ts). A layer apart from `uses`: these are not kernel services. */
+  features: string[];
+}
+
+/** An arrow from the plugin that needs a service to a plugin that provides it. `live`: both ends are on. */
+export interface DepEdge { from: string; to: string; service: string; kind: "requires" | "uses"; live: boolean }
+/** A service an enabled plugin requires and no enabled plugin provides; `offProviders` are the plugins that would, but are off. */
+export interface DepMissing { plugin: string; service: string; offProviders: string[] }
+export type SlotGroup = "view" | "menu" | "status" | "hook" | "other";
+export interface DepSlot { slot: string; group: SlotGroup; fills: string[] }
+/** One part of the app that some plugin calls, and the plugins that do. */
+export interface DepFeature { id: string; member: string; plugins: string[] }
+/** An area of the app (the chat's input box, the usage view, ...) with the calls of it that plugins make; areas nobody uses are left out. */
+export interface DepFeatureArea { id: string; side: "host" | "web"; title: string; features: DepFeature[]; plugins: string[] }
+export interface DepBoard { plugins: DepNode[]; edges: DepEdge[]; missing: DepMissing[]; slots: DepSlot[]; featureAreas: DepFeatureArea[] }
+
+const GROUPS: [string, SlotGroup][] = [["view/", "view"], ["menu/", "menu"], ["statusItem/", "status"], ["hook/", "hook"]];
+const groupOf = (id: string): SlotGroup => GROUPS.find(([prefix]) => id.startsWith(prefix))?.[1] ?? "other";
+const sorted = (list: Iterable<string>) => [...new Set(list)].sort();
+
+/** The board of `inputs`: pure and total (a plugin that names itself, a service nobody provides or a slot the core does not know is data, not an error). */
+export function buildDepBoard(inputs: readonly DepInput[], coreSlots: readonly string[] = CORE_SLOTS): DepBoard {
+  // A Map, never an object: a service named "constructor" or "__proto__" is a name like any other.
+  const providers = new Map<string, DepInput[]>();
+  for (const input of inputs) {
+    for (const service of input.provides.services) providers.set(service, [...(providers.get(service) ?? []), input]);
+  }
+  const plugins: DepNode[] = inputs.map((input) => ({
+    name: input.name, title: input.title, version: input.version, enabled: input.enabled, builtIn: input.builtIn, failure: input.failure,
+    app: input.app === true, declared: input.declared,
+    provides: { services: sorted(input.provides.services), slots: sorted(input.provides.slots.map(slotName)) },
+    requires: sorted(input.requires), uses: sorted(input.uses),
+    fills: input.enabled ? sorted([...input.contributedSlots, ...input.provides.slots].map(slotName)) : [],
+    features: sorted(input.features ?? []),
+  })).sort((a, b) => Number(b.app) - Number(a.app) || a.name.localeCompare(b.name));
+  const state = new Map(inputs.map((input) => [input.name, input.enabled]));
+
+  const edges: DepEdge[] = [];
+  const missing: DepMissing[] = [];
+  for (const input of [...inputs].sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const [kind, services] of [["requires", sorted(input.requires)], ["uses", sorted(input.uses)]] as const) {
+      for (const service of services) {
+        const found = (providers.get(service) ?? []).filter((provider) => provider.name !== input.name);
+        for (const provider of [...found].sort((a, b) => a.name.localeCompare(b.name))) {
+          edges.push({ from: input.name, to: provider.name, service, kind, live: input.enabled && state.get(provider.name) === true });
+        }
+        // Only a plugin that is on can lack something, and only a hard requirement is a gap (a `uses` is optional).
+        if (kind === "requires" && input.enabled && !found.some((provider) => provider.enabled)) {
+          missing.push({ plugin: input.name, service, offProviders: sorted(found.map((provider) => provider.name)) });
+        }
+      }
+    }
+  }
+
+  const fills = new Map<string, string[]>();
+  for (const node of plugins) for (const slot of node.fills) fills.set(slot, [...(fills.get(slot) ?? []), node.name]);
+  const known = new Set(coreSlots.map(slotName));
+  const rows: DepSlot[] = coreSlots.map((id) => ({ slot: slotName(id), group: groupOf(canonicalSlot(id)), fills: sorted(fills.get(slotName(id)) ?? []) }));
+  // A slot a plugin names that the core does not list still shows, so nothing a plugin declared is hidden.
+  for (const [slot, names] of fills) if (!known.has(slot)) rows.push({ slot, group: groupOf(canonicalSlot(slot)), fills: sorted(names) });
+  return { plugins, edges, missing, slots: rows, featureAreas: buildFeatureAreas(plugins) };
+}
+
+/** "If I change this part of the app, which plugins are affected": the app's areas in their listed order, each with the plugins that call it. A call in an area the list does not know still shows. */
+function buildFeatureAreas(plugins: readonly DepNode[]): DepFeatureArea[] {
+  const users = new Map<string, string[]>();
+  for (const node of plugins) for (const id of node.features) users.set(id, [...(users.get(id) ?? []), node.name]);
+  const known = new Map(FEATURE_AREAS.map((entry) => [entry.id, entry]));
+  const order = [...FEATURE_AREAS.map((entry) => entry.id)];
+  const byArea = new Map<string, DepFeature[]>();
+  for (const [id, names] of [...users].sort(([a], [b]) => a.localeCompare(b))) {
+    const areaId = areaOf(id);
+    if (!known.has(areaId) && !order.includes(areaId)) order.push(areaId);
+    byArea.set(areaId, [...(byArea.get(areaId) ?? []), { id, member: id.slice(areaId.length + 1), plugins: sorted(names) }]);
+  }
+  const rows: DepFeatureArea[] = [];
+  for (const id of order) {
+    const features = byArea.get(id);
+    if (!features) continue;
+    const entry = known.get(id);
+    rows.push({ id, side: entry?.side ?? (id.startsWith("api.") ? "host" : "web"), title: entry?.title ?? id, features, plugins: sorted(features.flatMap((feature) => feature.plugins)) });
+  }
+  return rows;
+}
+
+/** The registry's plugins (and the app's own providers) as board inputs. Never throws: a manifest that cannot be read declares nothing. */
+export function readDepInputs(registry: Pick<PluginRegistry, "plugins">, contributions: readonly Contribution[]): DepInput[] {
+  const inputs: DepInput[] = registry.plugins.map((plugin) => {
+    let value: unknown = null;
+    try { value = JSON.parse(readFileSync(join(plugin.folder, "package.json"), "utf8")); } catch { /* declares nothing */ }
+    const { fields } = readKernelFields(value, plugin.builtIn);
+    return {
+      name: plugin.manifest.name, title: title(plugin.manifest), version: plugin.manifest.version, enabled: plugin.enabled && !plugin.failure,
+      // Whether it broke, never why: the message is another plugin's error text (stack lines with the user's folders, whatever it threw),
+      // and any plugin may ask for this board.
+      builtIn: plugin.builtIn, failure: plugin.failure ? FAILED : null, declared: fields !== null,
+      provides: { services: fields?.provides.services ?? [], slots: fields?.provides.slots ?? [] },
+      requires: fields?.requires.services ?? [], uses: fields?.uses.services ?? [],
+      contributedSlots: sorted(contributions.filter((entry) => entry.plugin === plugin.manifest.name).map(slotOf)),
+      // Declared for a built-in plugin only (like the kernel fields): an installed plugin's calls are not known, so it shows none.
+      features: plugin.builtIn ? declaredFeatures(plugin.manifest.name) : [],
+    };
+  });
+  const taken = new Set(inputs.map((input) => input.name));
+  for (const app of APP_PROVIDERS) {
+    if (taken.has(app.name)) continue;
+    inputs.push({
+      name: app.name, title: app.title, version: "", enabled: true, builtIn: true, failure: null, app: true, declared: true,
+      provides: { services: [...app.services], slots: [] }, requires: [], uses: [], contributedSlots: [...app.slots],
+    });
+  }
+  return inputs;
+}
+
+/** What `plugins.deps` answers. */
+export function readDepBoard(registry: Pick<PluginRegistry, "plugins">, contributions: readonly Contribution[]): DepBoard {
+  return buildDepBoard(readDepInputs(registry, contributions));
+}
