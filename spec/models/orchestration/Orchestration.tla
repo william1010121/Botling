@@ -21,7 +21,8 @@
    just takes it (BotTake). A worker the bot starts after a plugin's message is OrchestrationHeard.tla.
 
    Code = "today" is the code at c1b17be2; Code = "fixed" adds the three fixes this model asks for (see the cfgs
-   Orchestration_today_*.cfg for the counterexamples). Action names match spec/reference/orchestration.ts. *)
+   Orchestration_today_*.cfg for the counterexamples). Model only for now: a reference and conformance test follow
+   the product fixes (.bot/artifacts/v3-orch/M7-O05.md). *)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
@@ -39,7 +40,7 @@ CONSTANTS
 
 ASSUME Written \subseteq Plugins /\ Code \in {"today", "fixed"}
 ASSUME Bug \in {"none", "pluginowner", "nocursor", "nohash", "nohandback", "norecheck", "nogrant", "latereserve",
-                "nopickup", "notag"}
+                "nopickup", "notag", "noday", "fullrights", "retell", "botskip"}
 
 VARIABLES pl, wk, ent, told, crashes, changes
 vars == <<pl, wk, ent, told, crashes, changes>>
@@ -71,7 +72,7 @@ Authorized(p) == pl[p].on /\ (pl[p].granted \/ Bug = "nogrant")
 (* `full()`: an open entry is a place taken (a reservation too: the room is taken before the first await). *)
 Counted(e) == e.st \in {"reserved", "live"} /\ e.open /\ (Bug # "latereserve" \/ e.st = "live")
 OpenIn(p, E) == Cardinality({w \in Workers : E[w].plugin = p /\ Counted(E[w])})
-FullIn(p, E) == OpenIn(p, E) >= AtOnce \/ pl[p].starts >= PerDay
+FullIn(p, E) == OpenIn(p, E) >= AtOnce \/ (pl[p].starts >= PerDay /\ Bug # "noday")
 
 (* An entry is closed (its place freed). Fixed: never while a workers.send for it is in flight (its run is coming). *)
 Shut(e) == IF Code = "fixed" /\ e.sending # "no" THEN e ELSE [e EXCEPT !.open = FALSE]
@@ -144,7 +145,7 @@ CardAnswer(p, allow) == LET w == pl[p].card IN
 PortStart(w) == LET e == ent[w] IN
   /\ e.st = "reserved" /\ wk[w].status = "new"
   /\ wk' = [wk EXCEPT ![w].status = "running", ![w].run = 1, ![w].rep = "none", ![w].by = e.plugin, ![w].hash = e.hash,
-                      ![w].fewer = TRUE, ![w].owner = IF Bug = "pluginowner" THEN e.plugin ELSE "bot"]
+                      ![w].fewer = (Bug # "fullrights"), ![w].owner = IF Bug = "pluginowner" THEN e.plugin ELSE "bot"]
   /\ UNCHANGED <<pl, ent, told, crashes, changes>>
 
 (* The start failed: its place is given back (`forget`). *)
@@ -211,8 +212,8 @@ EndAgain(w) == wk[w].evt /\ wk[w].status \in Idle
   /\ UNCHANGED <<pl, wk, crashes, changes>>
 
 (* The bot (the owner) is handed its report. *)
-BotTake(w) == wk[w].rep = "pending"
-  /\ wk' = [wk EXCEPT ![w].rep = "taken"]
+BotTake(w) == wk[w].rep = "pending" /\ (Bug # "botskip" \/ wk[w].by = "none")
+  /\ wk' = [wk EXCEPT ![w].rep = IF Bug = "retell" THEN "pending" ELSE "taken"]
   /\ told' = [told EXCEPT ![w].bot[wk[w].run] = @ + 1]
   /\ UNCHANGED <<pl, ent, crashes, changes>>
 
