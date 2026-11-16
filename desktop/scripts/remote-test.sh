@@ -39,7 +39,7 @@
 #   BOTLING_REMOTE_KEEP=1   keep the host worktree after the run (for poking at a failure; remove it by hand)
 # Run counts and the seed of the seeded property tests are forwarded to the host when set here, digits only (nothing else is):
 #   KERNEL_ACCEPTANCE_RUNS=10000 desktop/scripts/remote-test.sh <sha> test/unit/plugin-kernel-acceptance.test.ts
-#   (KERNEL_ACCEPTANCE_SEED replays one seed; PLUGIN_FEED_RUNS sets the plugin feed's random view sequences)
+#   (KERNEL_ACCEPTANCE_SEED replays one seed; PLUGIN_FEED_RUNS sets the plugin feed's random view sequences; SWAP_OUTBOX_RUNS sets the swap outbox property's run count)
 #
 # Test filters (vitest args that are file names): one argument per file, relative to desktop/ ("test/unit/a.test.ts" or the
 # short name "a"). A leading "desktop/" or "./" is stripped; an argument with a space or comma is refused (exit 2). After the
@@ -130,7 +130,7 @@ fi
 
 # The replay knobs of the seeded property tests (see the header): only these names, only a number, else the run is refused.
 envs=
-for name in KERNEL_ACCEPTANCE_RUNS KERNEL_ACCEPTANCE_SEED PLUGIN_FEED_RUNS; do
+for name in KERNEL_ACCEPTANCE_RUNS KERNEL_ACCEPTANCE_SEED PLUGIN_FEED_RUNS SWAP_OUTBOX_RUNS; do
   value=${!name:-}
   [ -n "$value" ] || continue
   [[ $value =~ ^[0-9]{1,9}$ ]] || { echo "remote-test: $name must be a number (got '$value')" >&2; exit 2; }
