@@ -185,6 +185,9 @@ describe("daily backups", () => {
     expect(existsSync(manualFuture)).toBe(true); // only daily ones; a manual copy is the owner's
     expect(removeFutureDailyBackups(store.backupsDir, now)).toEqual([]);
     expect(removeFutureDailyBackups(join(store.dataDir, "no-such-folder"), now)).toEqual([]);
+    const notAFolder = join(store.dataDir, "backups-is-a-file");
+    writeFileSync(notAFolder, "x");
+    expect(removeFutureDailyBackups(notAFolder, now)).toEqual([]); // unreadable: nothing removed, no throw (runs at start)
   });
 
   it("takes one when due, one at a time, keeps 7, and stop waits for one under way", async () => {

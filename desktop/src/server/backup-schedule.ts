@@ -26,7 +26,10 @@ export function dailyBackupDue(backupsDir: string, now = Date.now()): boolean {
 /** Deletes the daily backups stamped (in their names) in the future; returns the paths removed. Other kinds are left. */
 export function removeFutureDailyBackups(backupsDir: string, now = Date.now()): string[] {
   const removed: string[] = [];
-  for (const path of listBackups(backupsDir, "daily")) {
+  let daily: string[];
+  // Runs at every start: a backups folder that cannot be read (not a folder, no permission) must not stop the server.
+  try { daily = listBackups(backupsDir, "daily"); } catch { return removed; }
+  for (const path of daily) {
     const at = stampTime(path);
     if (at === null || at <= now + FUTURE_SLACK_MS) continue;
     try { rmSync(path, { force: true }); removed.push(path); } catch { /* left in place; dailyBackupDue ignores it anyway */ }
