@@ -234,7 +234,10 @@ describe("the right panel, its takeover and the chat header, drawn with every bu
 
   it("chat-header: the plugin views closed, with a popover open, with the second one open", async () => {
     await started();
-    const views = surfaces().chatHeaderViews ?? [];
+    const feed = surfaces();
+    reconcileView(feed);
+    await vi.waitFor(() => { expect(rendererKernel.entries("chat/header")).toHaveLength(2); expect(rendererKernel.entries("composer/bar")).toHaveLength(1); });
+    const views = feed.chatHeaderViews ?? [];
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
