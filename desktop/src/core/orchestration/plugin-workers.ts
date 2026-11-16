@@ -74,7 +74,7 @@ export interface PluginWorkersDeps {
   facts(plugin: string): PluginFacts | null;
   ask(question: AppQuestion): Promise<AppAnswer | null>;
   /** `workerReport` to the plugin that started the worker (only to it). `false`: its host did not take it now (it stays owed). */
-  tell(plugin: string, event: "workerReport", data: Record<string, unknown>): void | boolean;
+  tell(plugin: string, event: "workerReport", data: Record<string, unknown>): unknown;
   log?(line: string): void;
   /** The book on disk (absent: kept in memory only). */
   file?: { read(): string | null; write(text: string): void };
