@@ -62,6 +62,18 @@ export function PluginsPanel({ client, plugins, bots, onPanel, onClose, onAsked,
   const [updating, setUpdating] = useState<ReadonlySet<string>>(new Set());
   const [updated, setUpdated] = useState<ReadonlySet<string>>(new Set());
   const updateRuns = useRef(new Set<string>());
+  // One Allow sends once per plugin and hash, also when the card is closed and opened again while it is in flight (the card's
+  // own state dies with it): a ref here, beside the list, not in the card (L-007).
+  const grantRuns = useRef(new Set<string>());
+  const [granting, setGranting] = useState<ReadonlySet<string>>(new Set());
+  const grantKey = (name: string, hash: string | undefined) => `${name}\u0000${hash ?? ""}`;
+  const grant = (cmd: Extract<Command, { type: "plugin.grant" }>): Promise<void> | null => {
+    const key = grantKey(cmd.plugin, cmd.codeHash);
+    if (grantRuns.current.has(key)) return null;
+    grantRuns.current.add(key);
+    setGranting((keys) => withName(keys, key, true));
+    return client.request(cmd).then(() => {}).finally(() => { grantRuns.current.delete(key); setGranting((keys) => withName(keys, key, false)); });
+  };
   const w = (key: Parameters<typeof say>[1], values?: Record<string, string | number>) => say(lang, key, values);
   const run = (promise: Promise<unknown>) => { setProblem(null); void promise.catch((failure) => setProblem(why(failure))); };
   const catalog = new Map((store?.entries ?? []).map((entry) => [entry.name, entry]));
@@ -136,7 +148,7 @@ export function PluginsPanel({ client, plugins, bots, onPanel, onClose, onAsked,
             </button>
           ))}
         </div>
-        <span className="plugins-summary">{w("plugins.summary", { n: list.length, on: list.filter((plugin) => plugin.enabled).length })}</span>
+        <span className="plugins-summary">{w("plugins.summary", { n: list.length, on: list.filter((plugin) => plugin.enabled && !canInstall(plugin)).length })}</span>
       </div>
       {problem && <p className="plugins-problem plugins-page-problem" role="alert">{problem}</p>}
       {tab === "explore" && <StoreList key="explore" client={client} store={store} setStore={setStore} lang={lang} onProblem={setProblem} {...(onShowMain ? { onShowCard: onShowMain } : {})} />}
@@ -194,7 +206,7 @@ export function PluginsPanel({ client, plugins, bots, onPanel, onClose, onAsked,
       {result && <div className="plugins-toast" role="status"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg><span className="plugins-result">{result}</span></div>}
       {cardPlugin && (
         <ShellOverlay>
-          <InstallCard key={cardPlugin.asks?.codeHash ?? cardPlugin.name} plugin={cardPlugin} lang={lang} onClose={() => setCard(null)} onGrant={(cmd) => client.request(cmd).then(() => {})} />
+          <InstallCard key={cardPlugin.asks?.codeHash ?? cardPlugin.name} plugin={cardPlugin} lang={lang} inFlight={granting.has(grantKey(cardPlugin.name, cardPlugin.asks?.codeHash))} onClose={() => setCard(null)} onGrant={grant} />
         </ShellOverlay>
       )}
     </div>
@@ -246,7 +258,8 @@ function PluginRow({ plugin, lang, catalog, selected, updating, updated, onPick,
       {!needsAllow && update && !updating && !updated && <button type="button" className="plugin-update" onClick={onUpdate}>{w("plugins.updateShort")}</button>}
       {updating && <span className="plugin-spinner" role="status" aria-label={w("plugins.updating")} />}
       {updated && !updating && <span className="plugin-updated">{w("plugins.updated")}</span>}
-      <input type="checkbox" role="switch" className="plugin-switch" checked={plugin.enabled} onChange={(event) => onEnable(event.target.checked)} aria-label={`${plugin.title} on`} />
+      {/* Not allowed yet, it does not run, whatever its on/off setting says: the switch shows off and waits for Allow. */}
+      <input type="checkbox" role="switch" className="plugin-switch" checked={plugin.enabled && !needsAllow} disabled={needsAllow} onChange={(event) => onEnable(event.target.checked)} aria-label={`${plugin.title} on`} />
     </li>
   );
 }
@@ -257,23 +270,24 @@ function PluginRow({ plugin, lang, catalog, selected, updating, updated, onPick,
  * plugin and its new versions are fully allowed. One tap sends once (an in-flight guard in a ref, L-007); a refused
  * install shows why and can be tried again.
  */
-function InstallCard({ plugin, lang, onClose, onGrant }: { plugin: PluginView; lang: Lang | null; onClose: () => void; onGrant: (cmd: Extract<Command, { type: "plugin.grant" }>) => Promise<void> }) {
-  const [sending, setSending] = useState(false);
+function InstallCard({ plugin, lang, inFlight, onClose, onGrant }: {
+  plugin: PluginView; lang: Lang | null;
+  /** This plugin's grant at this hash is on its way (from this card or one closed before it). */
+  inFlight: boolean;
+  onClose: () => void;
+  /** Sends the grant; null when one for this plugin and hash is already in flight (the panel's guard). */
+  onGrant: (cmd: Extract<Command, { type: "plugin.grant" }>) => Promise<void> | null;
+}) {
   const [problem, setProblem] = useState<string | null>(null);
   const [installed, setInstalled] = useState(false);
-  const installing = useRef(false);
   const w = (key: Parameters<typeof say>[1], values?: Record<string, string | number>) => say(lang, key, values);
   const install = () => {
-    if (installing.current) return;
     const cmd = installCommand(plugin);
     if (!cmd) return;
-    installing.current = true;
-    setSending(true);
+    const sent = onGrant(cmd);
+    if (!sent) return;
     setProblem(null);
-    void onGrant(cmd).then(
-      () => setInstalled(true),
-      (failure) => setProblem(why(failure)),
-    ).finally(() => { installing.current = false; setSending(false); });
+    void sent.then(() => setInstalled(true), (failure) => setProblem(why(failure)));
   };
   const done = installed || !canInstall(plugin);
   const can = permissionWords(lang, plugin.permissions);
@@ -309,7 +323,7 @@ function InstallCard({ plugin, lang, onClose, onGrant }: { plugin: PluginView; l
             ? <button type="button" className="plugin-card-primary" onClick={onClose}>{w("plugins.close")}</button>
             : <>
               <button type="button" className="plugin-card-cancel" onClick={onClose}>{w("plugins.cancel")}</button>
-              <button type="button" className="plugin-grant-allow plugin-card-primary" disabled={sending} onClick={install}>{w("plugins.allowInstall")}</button>
+              <button type="button" className="plugin-grant-allow plugin-card-primary" disabled={inFlight} onClick={install}>{w("plugins.allowInstall")}</button>
             </>}
         </div>
       </div>
@@ -360,8 +374,8 @@ function PluginDetail({ plugin, lang, catalog, updating, updated, busy, onAllow,
           </div>
         </div>
         <label className="plugin-toggle">
-          <span>{plugin.enabled ? w("plugins.on") : w("plugins.off")}</span>
-          <input type="checkbox" role="switch" className="plugin-switch" checked={plugin.enabled} onChange={(event) => onEnable(event.target.checked)} />
+          <span>{plugin.enabled && !needsAllow ? w("plugins.on") : w("plugins.off")}</span>
+          <input type="checkbox" role="switch" className="plugin-switch" checked={plugin.enabled && !needsAllow} disabled={needsAllow} onChange={(event) => onEnable(event.target.checked)} />
         </label>
       </div>
       {/* First, before anything else: the plugin waits for the user. */}
@@ -407,7 +421,7 @@ function PluginDetail({ plugin, lang, catalog, updating, updated, busy, onAllow,
         </Section>
       )}
       {access.length > 0 && (
-        <Section title={w("plugins.section.access")}>
+        <Section title={needsAllow ? w("plugins.cardCan") : w("plugins.section.access")}>
           <div className="plugin-chips">{access.map((line) => <span key={line} className="plugin-chip">{line}</span>)}</div>
         </Section>
       )}

@@ -205,6 +205,8 @@ button { font: inherit; color: inherit; }
 .plugins-v2 .plugin-switch::before { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform .15s; }
 .plugins-v2 .plugin-switch:checked { background: var(--blue); border-color: var(--blue); }
 .plugins-v2 .plugin-switch:checked::before { transform: translateX(12px); background: #fff; }
+/* A plugin that waits for Allow does not run: its switch shows off and cannot be used until Allow. */
+.plugins-v2 .plugin-switch:disabled { opacity: .45; cursor: default; }
 .plugins-ask { margin: 14px 0 0; padding: 6px 8px; }
 .plugins-ask summary { cursor: pointer; color: var(--faint); font-size: 12px; font-weight: 600; }
 .plugins-ask[open] { padding-bottom: 8px; }
