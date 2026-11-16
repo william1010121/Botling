@@ -13,6 +13,7 @@ import { CoreSend } from "../../src/core/server/send";
 import type { Core } from "../../src/core/server";
 import type { AppAnswer, AppQuestion } from "../../src/core/plugins";
 import { tempDir } from "../helpers";
+import { claudeHarness } from "../claude-workers-fake";
 
 const ALL = ["orchestrate", "exec", "files", "bots"];
 type Handoff = { task_id: string; run: number };
@@ -290,5 +291,31 @@ describe("R7 and Maintainer in the real core", () => {
     expect(world.workers(maintainer)).toMatch(/Maintainer/);
     expect(world.made?.("written", t.main.id)).toBe(false);
     expect(world.made?.("written", "no-such-bot")).toBe(false);
+  });
+});
+
+describe("the wire from the bot's own app_handoff to the book", () => {
+  it("the bot's app_handoff, after a plugin's message, is refused through the real Claude workers of the bot (hook wired to WorkerCore); with no mark it goes on", async () => {
+    const t = realCore();
+    const workers = t.main.ensureClaudeWorkers();
+    t.core.plugins.origins.set(t.main.id, "written");
+    await expect(workers.tool("app_handoff", { instructions: "from the plugin's message" })).rejects.toThrow(/permission/);
+    // Not marked: the checks are not asked, the handoff goes on as before (and stops here only because this core has no agent).
+    t.core.plugins.origins.clear();
+    await expect(workers.tool("app_handoff", { instructions: "mine" })).rejects.not.toThrow(/permission/);
+  });
+
+  it("startFor gives its handoff the ADMITTED symbol and the pluginStarted mark; a handoff of the bot's own has neither", async () => {
+    const h = claudeHarness();
+    try {
+      const handoff = vi.spyOn((h.workers as unknown as { core: { handoff: (kind: string, args: Record<string, unknown>) => Promise<unknown> } }).core, "handoff");
+      await h.workers.startFor({ instructions: "from a plugin" });
+      await h.workers.tool("app_handoff", { instructions: "from the bot" });
+      const [fromPlugin, fromBot] = handoff.mock.calls.map((call) => call[1] as Record<string | symbol, unknown>);
+      expect(fromPlugin![ADMITTED]).toBe(true);
+      expect(fromPlugin!.pluginStarted).toBe(true);
+      expect(fromBot![ADMITTED]).toBeUndefined();
+      expect(fromBot!.pluginStarted).toBeUndefined();
+    } finally { await h.workers.close(); }
   });
 });
