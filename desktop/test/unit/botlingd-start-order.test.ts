@@ -44,8 +44,7 @@ const EXPECTED_START: string[] = [
   "files +botlingd.listen.json",
   "interval 5000",
   "interval 3000",
-  "timeout 300000",
-  "log note ",
+  "log daily backups are off ",
   "log note ",
   "log note ",
   // store/compaction.ts: the one-time background prune of an oversized server.db starts PRUNE_DELAY_MS after listening.
