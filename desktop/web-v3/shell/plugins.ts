@@ -85,6 +85,8 @@ export interface PluginListItem {
   tierWords: string;
   /** Every server's grant at its current hash is the built-in one: nothing to review (3.0). */
   builtIn: boolean;
+  /** Some machine has no grant at this plugin's current hash yet: it waits for the user's Allow (the page lists it first and counts it). */
+  needsAllow: boolean;
 }
 
 /** The list under "This device › Plugins": one line per plugin name, in name order. */
@@ -104,6 +106,7 @@ export function listPlugins(source: PluginSource): PluginListItem[] {
       authorWords: AUTHOR_WORDS[held[0]!.row.author],
       tierWords: TIER_LIST_WORDS[lowest],
       builtIn: held.every((h) => isBuiltinGrant(h.row)),
+      needsAllow: lowest === "none" && !held.every((h) => isBuiltinGrant(h.row)),
     });
   }
   return items;

@@ -124,10 +124,6 @@ button { font: inherit; color: inherit; }
 /* Botling 3: approve a plugin from the window (Plugins.tsx GrantChoice); the same chips as the plugin buttons. */
 .plugin-grant { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 6px; }
 .plugin-grant .plugin-asks { flex-basis: 100%; }
-.plugin-grant-option { display: flex; align-items: center; gap: 4px; color: var(--muted); cursor: pointer; }
-.plugin-grant-allow { background: var(--chip); border: 0; border-radius: 8px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
-.plugin-grant-allow:hover:not(:disabled) { background: var(--selected); }
-.plugin-grant-allow:disabled { opacity: 0.5; cursor: default; }
 .plugin-grant .plugin-grant-sent, .plugin-grant .plugins-problem { flex-basis: 100%; }
 .plugins-problem { color: var(--error); margin: 2px 0 6px; }
 .plugins-result { color: var(--green); margin: 2px 0 6px; }
@@ -147,6 +143,131 @@ button { font: inherit; color: inherit; }
 .plugins-store-note { margin: 0 0 8px; }
 .plugin-store-status, .plugin-remove-ask { margin-top: 6px; }
 .plugin-store-status .plugins-problem, .plugin-store-status .plugins-result, .plugin-remove-ask .plugins-problem { margin: 0; }
+
+/* Settings → Plugins, as a list on the left and the chosen plugin on the right (Plugins.tsx). The page fills Settings' body and
+   the two columns scroll on their own. Colours are the app's tokens only. */
+.rail-button .plugins-allow-badge { margin-left: auto; }
+.rail-button .plugins-allow-badge + .plugins-updates-badge { margin-left: 0; }
+.settings-tab .settings-allow-badge { margin-left: auto; }
+.settings-body.plugins-page { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.plugins-v2 { display: flex; flex-direction: column; min-height: 0; position: relative; font-size: 13px; }
+.plugins-list.plugins-v2 { flex: 1; }
+.plugins-panel.plugins-v2 { width: min(940px, calc(100vw - 280px)); height: min(680px, 80vh); max-height: none; overflow: hidden; padding: 12px 0 0; }
+.plugins-panel.plugins-v2 .plugins-head { padding: 0 16px; }
+.plugins-banner { display: flex; align-items: center; gap: 10px; flex-shrink: 0; margin: 12px 20px 0; padding: 9px 12px; border: 1px solid var(--orange-line); border-radius: 10px; background: var(--waiting-bg); color: var(--orange-text); }
+.plugins-banner svg { flex-shrink: 0; color: var(--orange); }
+.plugins-banner-text { flex: 1; min-width: 0; color: var(--text); }
+.plugins-banner-text b { font-weight: 600; color: var(--orange-text); }
+.plugins-banner-show { background: var(--orange); color: #1A1206; border: 0; border-radius: 8px; padding: 3px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.plugins-bar { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+.plugins-bar .plugins-tabs { margin: 0; }
+.plugins-tabs button { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 5px 16px; }
+.plugins-tabs .badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; }
+.plugins-summary { margin-left: auto; color: var(--faint); font-size: 12px; }
+.plugins-page-problem { margin: 8px 20px 0; flex-shrink: 0; }
+.plugins-split { flex: 1; min-height: 0; display: flex; }
+.plugins-side { width: 296px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.plugins-side > .plugins-problem { margin: 8px 12px 0; }
+.plugins-search { display: flex; align-items: center; gap: 6px; margin: 10px 12px 4px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--side); color: var(--faint); }
+.plugins-search input { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: none; color: var(--text); font: inherit; font-size: 13px; }
+.plugins-search:focus-within { border-color: var(--blue); }
+.plugins-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
+.plugins-group-title { padding: 12px 8px 4px; font-size: 11px; font-weight: 600; color: var(--faint); }
+.plugins-group-title.allow { color: var(--orange-text); }
+.plugins-v2 .plugins-scroll ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.plugin-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; background: transparent; }
+.plugin-item:hover { background: var(--hover); }
+.plugin-item.selected { background: var(--selected); }
+.plugin-item.needs-allow { background: var(--waiting-bg); box-shadow: inset 0 0 0 1px var(--orange-line); }
+.plugin-item.needs-allow.selected { box-shadow: inset 0 0 0 1px var(--orange); }
+.plugin-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+.plugin-pick:focus-visible, .plugin-item button:focus-visible, .plugins-v2 .plugin-switch:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.plugin-tile { width: 30px; height: 30px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--chip); color: var(--soft-text); font-size: 13px; font-weight: 600; }
+.plugin-tile.big { width: 44px; height: 44px; border-radius: 12px; font-size: 18px; }
+.plugin-tile.built-in { background: var(--accent-bg); color: var(--link); }
+.plugin-tile.allow { background: var(--orange); color: #1A1206; }
+.plugin-names { min-width: 0; display: flex; flex-direction: column; }
+.plugin-item .plugin-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plugin-item[data-enabled="0"] .plugin-title { color: var(--faint); }
+.plugin-sub { font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plugin-sub.allow { color: var(--orange-text); font-weight: 600; }
+.plugin-allow-open { flex-shrink: 0; background: var(--orange); color: #1A1206; border: 0; border-radius: 8px; padding: 2px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.plugin-allow-open:hover { filter: brightness(1.08); }
+.plugin-allow-open.big { padding: 6px 20px; font-size: 14px; }
+.plugin-update { flex-shrink: 0; background: var(--accent-bg); color: var(--link); border: 1px solid var(--accent-line); border-radius: 8px; padding: 1px 10px; font-size: 12px; cursor: pointer; }
+.plugin-update:hover:not(:disabled) { background: var(--accent-bg-hover); }
+.plugin-update:disabled { opacity: .5; cursor: default; }
+.plugin-spinner { flex-shrink: 0; width: 14px; height: 14px; border: 2px solid var(--accent-line); border-top-color: var(--blue); border-radius: 50%; animation: plugin-spin .8s linear infinite; }
+@keyframes plugin-spin { to { transform: rotate(360deg); } }
+.plugin-updated { flex-shrink: 0; color: var(--green); font-size: 12px; }
+.plugins-v2 .plugin-switch { appearance: none; position: relative; flex-shrink: 0; width: 28px; height: 16px; margin: 0; border: 1px solid var(--muted); border-radius: 20px; background: var(--chip); cursor: pointer; }
+.plugins-v2 .plugin-switch::before { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform .15s; }
+.plugins-v2 .plugin-switch:checked { background: var(--blue); border-color: var(--blue); }
+.plugins-v2 .plugin-switch:checked::before { transform: translateX(12px); background: #fff; }
+.plugins-ask { margin: 14px 0 0; padding: 6px 8px; }
+.plugins-ask summary { cursor: pointer; color: var(--faint); font-size: 12px; font-weight: 600; }
+.plugins-ask[open] { padding-bottom: 8px; }
+.plugins-ask .plugins-starters, .plugins-ask .plugins-ask-text, .plugins-ask .plugins-ask-send { margin-top: 6px; }
+.plugins-ask .plugins-ask-text { width: 100%; background: var(--side); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; }
+.plugins-detail-pane { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 24px 28px; }
+.plugin-detail { display: flex; flex-direction: column; gap: 18px; }
+.plugin-detail-head { display: flex; align-items: flex-start; gap: 14px; }
+.plugin-detail-head .plugin-names { flex: 1; }
+.plugin-detail-title { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.3; }
+.plugin-detail-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; color: var(--faint); }
+.plugin-kind { padding: 0 6px; border-radius: 6px; background: var(--chip); color: var(--muted); font-size: 11px; }
+.plugin-detail-head .plugin-toggle { flex-shrink: 0; margin-top: 4px; gap: 8px; font-size: 12px; }
+.plugin-allow-box, .plugin-update-box, .plugin-done-box { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--info-line); border-radius: 10px; background: var(--info-bg); }
+.plugin-allow-box { padding: 14px 16px; border-color: var(--orange); background: var(--waiting-bg); box-shadow: 0 0 0 1px var(--orange-line); }
+.plugin-allow-box svg { flex-shrink: 0; color: var(--orange); }
+.plugin-update-box svg { flex-shrink: 0; color: var(--link); }
+.plugin-allow-text, .plugin-update-text { flex: 1; min-width: 0; color: var(--muted); font-size: 12.5px; }
+.plugin-allow-title, .plugin-update-title { color: var(--text); font-size: 14px; font-weight: 600; }
+.plugin-allow-title { color: var(--orange-text); font-size: 15px; }
+.plugin-done-box { border-color: var(--green); background: var(--done-bg); color: var(--green); }
+.plugin-off-note { padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--notice); color: var(--muted); font-size: 12.5px; }
+.plugin-section h3 { margin: 0 0 6px 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.plugin-section .plugin-description { color: var(--soft-text); margin: 0; }
+.plugin-section .plugin-meta { margin-top: 4px; }
+.plugin-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.plugin-chip { padding: 2px 8px; border-radius: 6px; background: var(--chip); color: var(--soft-text); font-size: 12px; }
+.plugin-settings-card { padding: 2px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--side); }
+.plugin-settings-card .plugin-setting { margin: 0; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.plugin-settings-card .plugin-setting:last-child { border-bottom: 0; }
+.plugin-section .plugin-buttons { margin-top: 0; }
+.plugin-section .plugin-buttons button { padding: 4px 12px; }
+.plugin-foot { padding-top: 12px; border-top: 1px solid var(--line); }
+.plugin-remove { background: var(--chip); color: var(--error); border: 0; border-radius: 8px; padding: 2px 12px; font-size: 12px; cursor: pointer; }
+.plugin-remove:disabled { opacity: .5; cursor: default; }
+.plugins-deps { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 20px 20px; }
+.plugins-store { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 20px 20px; }
+.plugins-v2 .plugins-store ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.plugins-v2 .plugins-store .plugin { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--side); }
+.plugins-v2 .plugins-store .plugin[data-state="update"] { border-color: var(--info-line); }
+.plugins-v2 .plugins-store .plugin-row { justify-content: flex-start; gap: 10px; }
+.plugins-v2 .plugins-store .plugin-row .plugin-title { flex: 1; min-width: 0; }
+.plugins-v2 .plugins-store .plugin-store-action { margin-left: auto; }
+.plugins-v2 .plugins-store .plugin-store-install { background: var(--blue); color: #fff; border: 0; border-radius: 8px; padding: 3px 14px; font-weight: 600; }
+.plugins-v2 .plugins-store [data-state="update"] .plugin-store-install { background: var(--accent-bg); color: var(--link); border: 1px solid var(--accent-line); font-weight: 400; }
+.plugins-v2 .plugins-store .plugin-store-status { flex-wrap: wrap; }
+.plugins-toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 40px); padding: 8px 14px; border: 1px solid var(--strong-line); border-radius: 10px; background: var(--raised); color: var(--green); box-shadow: 0 8px 28px rgb(0 0 0 / calc(0.45 * var(--shade, 1))); }
+.plugins-toast .plugins-result { margin: 0; color: var(--text); }
+/* The install card, over Settings: one card, one button. */
+.plugin-card-backdrop { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; background: rgb(0 0 0 / calc(0.5 * var(--shade, 1))); }
+.plugin-install-card { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 14px; margin: 0; padding: 20px 20px 16px; border: 1px solid var(--card-line); border-radius: 14px; background: var(--bubble); box-shadow: 0 16px 48px rgb(0 0 0 / calc(0.55 * var(--shade, 1))); font-size: 13px; }
+.plugin-card-head { display: flex; align-items: center; gap: 12px; }
+.plugin-card-title { margin: 0; font-size: 15px; font-weight: 600; }
+.plugin-card-box { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--side); }
+.plugin-card-box-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+.plugin-card-can { margin: 0; padding-left: 18px; color: var(--text); }
+.plugin-card-box .plugin-asks { margin: 0; }
+.plugin-card-note { margin: 0; line-height: 1.55; }
+.plugin-card-done { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--green); border-radius: 10px; background: var(--done-bg); }
+.plugin-card-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+.plugin-card-buttons button { background: var(--chip); color: var(--text); border: 0; border-radius: 8px; padding: 5px 16px; font-size: 13px; cursor: pointer; }
+.plugin-card-buttons button.plugin-card-primary { background: var(--blue); color: #fff; font-weight: 600; }
+.plugin-card-buttons button:disabled { opacity: .5; cursor: default; }
+.plugin-card-buttons button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* Settings (SettingsWindow.swift): a sheet with the sections on the left, 1.x's 900×640. */
 .rail-settings { padding: 0 10px 8px; }

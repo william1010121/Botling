@@ -322,3 +322,30 @@ describe("M5-14b the sheet in Shell.tsx", () => {
     expect(sent).toEqual([]);
   });
 });
+
+describe("a plugin that waits for the user's Allow cannot be missed (2026-11-16)", () => {
+  const SRV_C = "srvc-000000000000000000000";
+  const tables = { [SRV_A]: null, [SRV_B]: { "plugin:aaa": row({ grants: { [HASH]: grant("read") } }), "plugin:zzz": row({ author: "bot" }) }, [SRV_C]: { "plugin:aaa": row({ grants: { [HASH]: grant("read") } }), "plugin:zzz": row({ author: "bot" }) } };
+
+  it("listPlugins marks a plugin with no grant at its hash (not a built-in one) as needing Allow", () => {
+    const list = listPlugins(source({ [SRV_A]: { "plugin:note": row({ author: "builtin", grants: {} }), "plugin:ok": row({ grants: { [HASH]: grant("read") } }), "plugin:new": row({ author: "bot" }) } }));
+    expect(Object.fromEntries(list.map((p) => [p.name, p.needsAllow]))).toEqual({ new: true, note: false, ok: false });
+  });
+
+  it("the sheet lists it first with a banner and a primary Review button, though its name sorts last", async () => {
+    const sent: Sent[] = [];
+    const el = await mountSheet(["read", "reply", "manage"], tables, sent);
+    expect(el.querySelector('[data-testid="plugins-banner"]')?.textContent).toBe("1 plugin is waiting for your Allow.");
+    const rows = [...el.querySelectorAll('[data-testid="plugin-row"]')];
+    expect(rows.map((r) => r.querySelector(".v3-plugin-name")?.textContent)).toEqual(["zzz", "aaa"]);
+    expect(rows[0]!.textContent).toContain("waiting for your Allow");
+    expect(rows[0]!.querySelector("button")?.className).toBe("web-primary");
+    expect(rows[1]!.querySelector("button")?.className).toBe("web-secondary");
+  });
+
+  it("without one, there is no banner", async () => {
+    const calm = { [SRV_A]: null, [SRV_B]: { "plugin:aaa": row({ grants: { [HASH]: grant("read") } }) } };
+    const el = await mountSheet(["read", "reply", "manage"], calm, []);
+    expect(el.querySelector('[data-testid="plugins-banner"]')).toBeNull();
+  });
+});

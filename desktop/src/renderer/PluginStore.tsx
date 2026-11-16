@@ -33,6 +33,11 @@ const PERMISSION_KEYS: Record<string, Key> = {
   exec: "plugins.perm.exec", bots: "plugins.perm.bots", claude: "plugins.perm.claude",
 };
 
+/** What each permission of a plugin means, in the user's words (a permission this Botling does not know stays as it is). */
+export function permissionWords(lang: Lang | null, permissions: readonly string[]): string[] {
+  return permissions.map((permission) => (Object.hasOwn(PERMISSION_KEYS, permission) ? say(lang, PERMISSION_KEYS[permission]!) : permission));
+}
+
 export const sizeLabel = (bytes: number) => (bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1_000))} KB`);
 const when = (ms: number) => new Date(ms).toLocaleString();
 
@@ -63,7 +68,7 @@ function StoreItem({ entry, lang, onInstall, onShowCard, onDismiss }: { entry: P
   const w = (key: Key, values?: Record<string, string | number>) => say(lang, key, values);
   const status = entry.status;
   const busy = status?.kind === "checking" || status?.kind === "asking";
-  const permissions = entry.permissions.map((permission) => (PERMISSION_KEYS[permission] ? w(PERMISSION_KEYS[permission]) : permission));
+  const permissions = permissionWords(lang, entry.permissions);
   let action: React.ReactNode;
   if (entry.state === "available" || entry.state === "update") {
     action = <button type="button" className="plugin-store-install" disabled={busy} onClick={onInstall}>
@@ -78,7 +83,8 @@ function StoreItem({ entry, lang, onInstall, onShowCard, onDismiss }: { entry: P
   return (
     <li className="plugin plugin-store" data-plugin={entry.name} data-state={entry.state}>
       <div className="plugin-row">
-        <div className="plugin-title">{entry.title} <span className="plugin-version">{entry.installedVersion && entry.state === "update" ? `${entry.installedVersion} → ${entry.version}` : entry.version}</span></div>
+        <span className="plugin-tile" aria-hidden="true">{Array.from(entry.title.trim())[0]?.toUpperCase() ?? "?"}</span>
+        <div className="plugin-title plugin-store-name">{entry.title} <span className="plugin-version">{entry.installedVersion && entry.state === "update" ? `${entry.installedVersion} → ${entry.version}` : entry.version}</span></div>
         <span className="plugin-buttons plugin-store-action">{action}</span>
       </div>
       {entry.description && <div className="plugin-description">{entry.description}</div>}
@@ -104,28 +110,26 @@ function StoreItem({ entry, lang, onInstall, onShowCard, onDismiss }: { entry: P
   );
 }
 
-/** Explore (every catalog plugin) or Updates (installed ones with a newer version). */
-export function StoreList({ client, store, setStore, lang, only, onShowCard, onProblem }: {
-  client: Client; store: PluginStoreView | null; setStore: (view: PluginStoreView) => void; lang: Lang | null; only: "all" | "updates";
+/** The Store tab: every plugin of the public catalog, two to a row. */
+export function StoreList({ client, store, setStore, lang, onShowCard, onProblem }: {
+  client: Client; store: PluginStoreView | null; setStore: (view: PluginStoreView) => void; lang: Lang | null;
   onShowCard?: () => void; onProblem: (problem: string | null) => void;
 }) {
   const w = (key: Key, values?: Record<string, string | number>) => say(lang, key, values);
   const act = (promise: Promise<PluginStoreView>) => { onProblem(null); void promise.then(setStore, (failure) => onProblem(String((failure as Error)?.message ?? failure))); };
   const refresh = () => act(client.request({ type: "plugins.store", refresh: true }));
-  // Opening Explore or Updates checks the catalog once (later, "Check again").
+  // Opening the Store checks the catalog once (later, "Check again").
   useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // Updates: those with a newer version, and the ones updated from here (so how it went stays in view until OK).
-  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
-  const entries = (store?.entries ?? []).filter((entry) => only === "all" || entry.state === "update" || (touched.has(entry.name) && entry.status !== null));
+  const entries = store?.entries ?? [];
   return (
-    <div className="plugins-store" data-list={only}>
+    <div className="plugins-store" data-list="all">
       <CatalogHead store={store} lang={lang} onRefresh={refresh} />
-      {only === "all" && <p className="plugin-meta plugins-store-note">{w("plugins.exploreNote")}</p>}
-      {store && !store.loading && !entries.length && (store.fetchedAt || !store.error) && <p className="plugins-empty">{only === "all" ? w("plugins.exploreEmpty") : w("plugins.upToDate")}</p>}
+      <p className="plugin-meta plugins-store-note">{w("plugins.exploreNote")}</p>
+      {store && !store.loading && !entries.length && (store.fetchedAt || !store.error) && <p className="plugins-empty">{w("plugins.exploreEmpty")}</p>}
       <ul>
         {entries.map((entry) => (
           <StoreItem key={entry.name} entry={entry} lang={lang} onShowCard={onShowCard}
-            onInstall={() => { setTouched((names) => new Set([...names, entry.name])); act(client.request({ type: "plugins.storeInstall", name: entry.name, ...(entry.state === "update" ? { direct: true } : {}) })); }}
+            onInstall={() => act(client.request({ type: "plugins.storeInstall", name: entry.name, ...(entry.state === "update" ? { direct: true } : {}) }))}
             onDismiss={() => act(client.request({ type: "plugins.storeDismiss", name: entry.name }))} />
         ))}
       </ul>

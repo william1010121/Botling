@@ -41,3 +41,8 @@ export function installCommand(plugin: PluginView): Extract<Command, { type: "pl
     requests: tier === "read" ? [] : plugin.asks.requests.filter((type) => type !== "plugin.grant"),
   };
 }
+
+/** The plugins that still wait for the user's Allow (the install card). The window badges them and lists them first. */
+export function waitingForAllow(plugins: readonly PluginView[] | undefined): PluginView[] {
+  return (plugins ?? []).filter(canInstall);
+}

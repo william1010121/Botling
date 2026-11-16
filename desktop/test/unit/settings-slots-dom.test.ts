@@ -146,7 +146,31 @@ describe("the DOM is the one the PluginsView arrays gave (golden recorded before
     }
     const golden = JSON.parse(readFileSync(GOLDEN, "utf8")) as Record<string, string>;
     expect(Object.keys(got)).toEqual(Object.keys(golden));
+    // A key that changed prints its new DOM the same way (one short line per piece), so a change that means to change a page can record it.
+    for (const key of Object.keys(golden).filter((one) => got[one] !== golden[one])) {
+      console.log(`GOLDEN-KEY ${JSON.stringify(key)}`);
+      for (let at = 0; at < got[key]!.length; at += 1500) console.log(`GOLDEN-PART ${JSON.stringify(got[key]!.slice(at, at + 1500))}`);
+    }
     for (const key of Object.keys(golden)) expect(got[key], key).toBe(golden[key]);
+  });
+});
+
+describe("a plugin that waits for the user's Allow is counted on the Plugins entry", () => {
+  const waiting = { name: "wait.tool", title: "Waiter", version: "1.0.0", description: null, enabled: true, failure: null, installedFrom: null, permissions: ["files"], parts: ["web"], settings: [], commands: [], panels: [],
+    grant: "none", asks: { codeHash: "4d9bac0566d3ca220a837eba6d48c6496eb75257a36853c7775d662c52634cc8", tier: "write", reads: [], requests: ["chat.send"] } };
+
+  it("shows a count on the nav entry and Allow on the page, and nothing when no plugin waits", async () => {
+    const view = fixture();
+    shell = await loadSettingsShell(view);
+    await mountSheet(view);
+    expect(q(".settings-allow-badge")).toBeNull();
+    const withWaiting = { ...view, plugins: [...view.plugins, waiting] } as PluginsView;
+    await mountSheet(withWaiting);
+    const tab = [...element.querySelectorAll<HTMLElement>(".settings-tab")].find((one) => one.textContent?.startsWith("Plugins"))!;
+    expect(tab.querySelector(".settings-allow-badge")?.textContent).toBe("1");
+    await mountSheet(withWaiting, "plugins");
+    expect(q('[data-testid="allow-banner"]')?.textContent).toContain("Waiter");
+    expect(q("li.plugin[data-plugin='wait.tool'] button.plugin-allow-open")?.textContent).toBe("Allow");
   });
 });
 
