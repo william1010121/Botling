@@ -28,7 +28,7 @@ function gitInfo() {
   const { execFileSync } = require("node:child_process");
   const git = (args) => { try { return execFileSync("git", ["-C", __dirname, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; } };
   const commit = git(["rev-parse", "HEAD"]);
-  return commit ? { BotlingGitCommit: commit, BotlingGitDirty: git(["status", "--porcelain"]) ? "1" : "0" } : {};
+  return commit ? { BotlingGitCommit: commit, BotlingGitDirty: git(["status", "--porcelain", "--untracked-files=no"]) ? "1" : "0" } : {};
 }
 
 /** @type {import("electron-builder").Configuration} */

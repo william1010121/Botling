@@ -6,7 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { pruneBackups, pruneUpdateLeftovers } from "./prune";
 import {
   FAILURE_LIMIT, HEALTHY_AFTER_MS, HEALTH_WAIT_S, HEALTH_WAIT_S_V3, buildLabel, healthyFile, failures, failuresFile, finishInstall, installLog, installLogTail, installOutcome, installScriptRunning,
-  prepareInstall, updateFolder, readBuild, sensitiveChanges, setFailures, whichBuild, type BuildInfo, type InstallState,
+  prepareInstall, updateFolder, readBuild, sameLabel, sensitiveChanges, setFailures, whichBuild, withAsarHash, type BuildInfo, type InstallState,
 } from "./swap";
 
 /** What the desk needs of a bot. */
@@ -147,9 +147,20 @@ ${appWorktree
     }
     const running = this.deps.runningBuild();
     if (!running || !this.deps.appPid) return;
+    // The card was made some time ago: what the script copies is the bundle on disk now, so that is what the install is
+    // recorded as (its asar's hash decides at the next start whether it came up), and a bundle whose label changed since the
+    // card is not what the user confirmed.
+    const current = readBuild(build.path);
+    if (!current || !sameLabel(current, build)) {
+      const why = current ? `the build at ${build.path} changed since the card (it was ${buildLabel(build)}, it is ${buildLabel(current)} now)` : `there is no app bundle at ${build.path} any more`;
+      this.deps.mainBot().appNotice(`${why}. Nothing was installed; ask again.`, undefined, undefined, { sourceID: requester });
+      asker?.queueNote(`(App: ${buildLabel(build)} was not installed: ${why}. Ask again for the build you want.)`);
+      return;
+    }
+    const to = withAsarHash(current);
     try {
-      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid, this.deps.appDataDir ?? "", new Date(), running.path, this.deps.serverDir ?? undefined);
-      this.deps.log(`installing ${buildLabel(build)} for ${requester}`);
+      const command = prepareInstall(this.deps.root, running, to, requester, note, this.deps.appPid, this.deps.appDataDir ?? "", new Date(), running.path, this.deps.serverDir ?? undefined);
+      this.deps.log(`installing ${buildLabel(to)} for ${requester}`);
       await this.deps.launchInstaller(command, installLog(this.deps.root));
     } catch (error) {
       this.deps.mainBot().appNotice(`Couldn't install ${buildLabel(build)}: ${(error as Error).message}. Nothing was installed.`, undefined, undefined, { sourceID: requester });
