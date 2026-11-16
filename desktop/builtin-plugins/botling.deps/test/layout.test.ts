@@ -5,9 +5,9 @@ import { COL_GAP, layoutGraph, missingId, NODE_W, PAD } from "../src/layout";
 
 const node = (name: string, more: Partial<DepNode> = {}): DepNode => ({
   name, title: name, version: "1.0.0", enabled: true, builtIn: true, failure: null, app: false, declared: true,
-  provides: { services: [], slots: [] }, requires: [], uses: [], fills: [], ...more,
+  provides: { services: [], slots: [] }, requires: [], uses: [], fills: [], features: [], ...more,
 });
-const board = (plugins: DepNode[], edges: DepBoard["edges"] = [], missing: DepBoard["missing"] = []): DepBoard => ({ plugins, edges, missing, slots: [] });
+const board = (plugins: DepNode[], edges: DepBoard["edges"] = [], missing: DepBoard["missing"] = []): DepBoard => ({ plugins, edges, missing, slots: [], featureAreas: [] });
 const edge = (from: string, to: string, service = "s", kind: "requires" | "uses" = "requires", live = true) => ({ from, to, service, kind, live });
 
 describe("layoutGraph", () => {
