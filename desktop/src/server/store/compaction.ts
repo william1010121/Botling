@@ -180,15 +180,16 @@ function vacuum(db: Db, options: CompactionOptions, log: (line: string) => void)
     log(`compaction: VACUUM skipped, only ${(reclaim / MIB).toFixed(1)} MiB would come back`);
     return "nothing-to-reclaim";
   }
-  // The new file is as big as the live pages; it is built in the temp folder and then copied back through the WAL, so
-  // the data folder's volume needs about twice that, the temp folder's once, each with headroom.
+  // The new file is as big as the live pages; it is built in the temp folder and then copied back through the WAL.
+  // Measured on a 1.8 GB sample (result 0.44 GB): temp + WAL + the prune's WAL peaked at 1.1 GB above the old file,
+  // 2.5x the result. So the data folder's volume needs 3x the result, the temp folder's 1x, each with headroom.
   const result = (pages - free) * pageSize;
   const headroom = options.headroomBytes ?? 1024 * MIB;
   const freeBytes = options.freeBytes ?? freeOf;
   const dataFree = freeBytes(dirname(db.path));
   const tempFree = freeBytes(process.env.SQLITE_TMPDIR || tmpdir());
-  if (dataFree < 2 * result + headroom || tempFree < result + headroom) {
-    log(`compaction: VACUUM skipped: it needs about ${((2 * result + headroom) / MIB).toFixed(0)} MiB free beside server.db and ${((result + headroom) / MIB).toFixed(0)} MiB in the temp folder; ${(dataFree / MIB).toFixed(0)} MiB and ${(tempFree / MIB).toFixed(0)} MiB are free. It is tried again at the next start.`);
+  if (dataFree < 3 * result + headroom || tempFree < result + headroom) {
+    log(`compaction: VACUUM skipped: it needs about ${((3 * result + headroom) / MIB).toFixed(0)} MiB free beside server.db and ${((result + headroom) / MIB).toFixed(0)} MiB in the temp folder; ${(dataFree / MIB).toFixed(0)} MiB and ${(tempFree / MIB).toFixed(0)} MiB are free. It is tried again at the next start.`);
     return "low-disk";
   }
   const started = performance.now();
