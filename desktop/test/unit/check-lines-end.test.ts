@@ -7,8 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const here = dirname(new URL(import.meta.url).pathname);
-const repoRoot = resolve(here, "../../..");
+const repoRoot = resolve(__dirname, "../../..");
 const script = resolve(repoRoot, "desktop/scripts/check-lines.mjs");
 const realBaseline = resolve(repoRoot, "desktop/scripts/line-baseline.json");
 const ciFile = resolve(repoRoot, ".github/workflows/ci.yml");
@@ -101,17 +100,28 @@ describe("the real checkout", () => {
 });
 
 describe("CI", () => {
-  it("runs check-lines in the desktop job, once, not as an optional or failure-tolerant step", () => {
+  it("runs check-lines in the desktop job, once, as a step that blocks (no step-level continue-on-error)", () => {
     const text = readFileSync(ciFile, "utf8");
-    const runs = text.split("\n").filter((line) => /^\s*-?\s*run:\s*npm run check:lines\s*$/.test(line));
-    expect(runs).toHaveLength(1);
+    const all = text.split("\n");
+    const isRun = (line: string) => /^\s*(?:-\s*)?run:\s*npm run check:lines\s*$/.test(line);
+    expect(all.filter(isRun)).toHaveLength(1);
     const pkg = JSON.parse(readFileSync(resolve(repoRoot, "desktop/package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(pkg.scripts["check:lines"]).toBe("node scripts/check-lines.mjs");
-    // the step sits inside the `desktop:` job (after its header, before the `spec:` job), whose defaults run in desktop/
-    const desktopJob = text.slice(text.indexOf("\n  desktop:\n"), text.indexOf("\n  spec:\n"));
-    expect(desktopJob).toContain("working-directory: desktop");
-    expect(desktopJob).toContain("run: npm run check:lines");
-    const step = desktopJob.slice(desktopJob.indexOf("name: Product file size gate"));
-    expect(step.split("\n      - ")[0]).not.toMatch(/continue-on-error/);
+    // The `desktop:` job runs from its header to the next job header (two-space key), whichever job that is.
+    const start = all.findIndex((line) => /^  desktop:\s*$/.test(line));
+    expect(start).toBeGreaterThanOrEqual(0);
+    const next = all.findIndex((line, i) => i > start && /^  [A-Za-z0-9_-]+:\s*$/.test(line));
+    const job = all.slice(start, next < 0 ? all.length : next);
+    expect(job.join("\n")).toContain("working-directory: desktop"); // the job's defaults run in desktop/
+    // The step: found by its run line, from its `- ` line (at or above the run line) to the line before the next step.
+    const at = job.findIndex(isRun);
+    expect(at, "the check:lines step is in the desktop job").toBeGreaterThanOrEqual(0);
+    const isStepStart = (line: string) => /^ {6}- /.test(line);
+    let from = at;
+    while (from > 0 && !isStepStart(job[from])) from -= 1;
+    let to = at + 1;
+    while (to < job.length && !isStepStart(job[to])) to += 1;
+    const step = job.slice(from, to).join("\n");
+    expect(step).not.toMatch(/continue-on-error/);
   });
 });
