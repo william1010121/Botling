@@ -103,6 +103,8 @@ export class PluginWorkers {
   private unreadable = false;
   /** O05: the entries a `workers.send` is awaiting the port for (how many each): nothing closes such an entry, its run is coming. Not persisted. */
   private readonly sending = new Map<Entry, number>();
+  /** O05: the entries a `workers.cancel` is awaiting the stop for; a send for such an entry is refused (the model's SendAsk needs ~stopping). Not persisted. */
+  private readonly stopping = new Set<Entry>();
 
   constructor(private readonly deps: PluginWorkersDeps) {
     let text: string | null = null;
@@ -281,6 +283,7 @@ export class PluginWorkers {
     const facts = this.allowed(plugin);
     const port = this.deps.world.workers(entry.bot);
     if (typeof port === "string") throw new Error(port);
+    this.refuseWhileStopping(entry);
     this.refuseWhileBotOwed(port, taskId); // before a card is shown for it (and again after the answer, below)
     // G1: a new instruction is asked about again for a plugin a bot wrote (and only on a bot it made), as a new worker is.
     if (facts.botWritten) {
@@ -289,6 +292,7 @@ export class PluginWorkers {
       this.allowed(plugin, facts.identity);
     }
     // O05: a next run drops the report the bot has not taken (`launch` resets it): not while the bot is still owed the last one.
+    this.refuseWhileStopping(entry); // a cancel may have started while the card waited
     this.refuseWhileBotOwed(port, taskId);
     // A run into a worker that is idle takes a place again: the same limit as a new one (not the daily count).
     const wasOpen = entry.open;
@@ -316,6 +320,10 @@ export class PluginWorkers {
     return { run: sent.run, how: sent.how };
   }
 
+  private refuseWhileStopping(entry: Entry) {
+    if (this.stopping.has(entry)) throw new Error("This worker is being cancelled. Try again in a moment. Nothing was sent.");
+  }
+
   /** O05 (BotNotSkipped): throws while the core says the bot has not taken the last report of this worker; a core that cannot say refuses too (a port without `look` is not asked). */
   private refuseWhileBotOwed(port: WorkerPort, taskId: string) {
     if (!port.look) return;
@@ -334,8 +342,9 @@ export class PluginWorkers {
     // Marked before the stop is awaited: the run's end that comes while the stop is under way is the cancel's, not a report.
     const was = entry.stopped;
     entry.stopped = true;
+    this.stopping.add(entry);
     let stopped = false;
-    try { stopped = await port.stop(taskId); } catch (error) { entry.stopped = was; throw error; }
+    try { stopped = await port.stop(taskId); } catch (error) { entry.stopped = was; throw error; } finally { this.stopping.delete(entry); }
     if (stopped) {
       // Once: a second cancel finds it closed and gives nothing back twice.
       entry.open = false;
