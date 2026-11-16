@@ -17,6 +17,10 @@ import { Plugins, type PluginWorld } from "../../src/core/plugins";
 import type { HostCommand, HostHandlers } from "../../src/core/plugins/host-client";
 import { testSealer } from "../../src/core/plugins/secrets";
 import { PluginWorkers, type PluginFacts, type WorkerPort } from "../../src/core/orchestration/plugin-workers";
+import { createApi, newLoaded, type HostPluginSpec } from "../../../Web/host/src/api";
+import { CorePluginSide } from "../../src/core/server/plugin-side";
+import type { Core } from "../../src/core/server";
+import type { Event } from "../../src/contract";
 import { ClaudeLegacyStore, fromLegacyClaude, readLedgerRecord, toLegacyClaude, WorkerLedger, type WorkerLedgerRecord } from "../../src/core/worker-core";
 
 const ALL = ["orchestrate", "exec", "files", "bots"];
@@ -160,7 +164,8 @@ function fakeCore() {
 }
 
 /** A book over the core, one plugin "p" whose facts the test changes. */
-function book(core = fakeCore(), file: { text: string | null } = { text: null }, init: { present?: boolean; identity?: string; taken?: boolean; quota?: { atOnce?: number; perDay?: number } } = {}) {
+function book(core = fakeCore(), file: { text: string | null } = { text: null }, init: { present?: boolean; identity?: string; taken?: boolean; quota?: { atOnce?: number; perDay?: number }; write?: (n: number) => void } = {}) {
+  let writes = 0;
   const state = { present: init.present ?? true, identity: init.identity ?? H1, taken: init.taken ?? true, quota: init.quota ?? {} };
   const told: Record<string, unknown>[] = [];
   const workers = new PluginWorkers({
@@ -168,7 +173,7 @@ function book(core = fakeCore(), file: { text: string | null } = { text: null },
     facts: (): PluginFacts | null => (state.present ? { name: "p", identity: state.identity, permissions: ALL, botWritten: false } : null),
     ask: async () => ({ index: 0 }),
     tell: (_plugin, _event, data) => { if (!state.taken) return false; told.push(data); },
-    file: { read: () => file.text, write: (text) => { file.text = text; } },
+    file: { read: () => file.text, write: (text) => { init.write?.(++writes); file.text = text; } },
   });
   return { workers, core, file, state, told, rows: () => JSON.parse(file.text ?? "[]") as Record<string, unknown>[] };
 }
@@ -357,6 +362,131 @@ describe("a report the plugin is owed is not lost when its host is not there", (
     t.workers.redeliver();
     expect(t.told.map((data) => data.run)).toEqual([1]);
     expect((t.rows()[0]!.owed as { run: number }[]).map((owed) => owed.run)).toEqual([2]);
+  });
+});
+
+// ---- what the review of O03a handed on (B1 to B4, R8, R11) -------------------------------------------------------------------------
+
+describe("the book keeps the truth when things go wrong", () => {
+  it("B1: a worker that started but whose record could not be written is still running AND still the plugin's: counted, sendable, cancellable, and kept by the next write", async () => {
+    // The first write is the reservation, the second the task id: that one fails.
+    const t = book(undefined, undefined, { quota: { atOnce: 1 }, write: (n) => { if (n === 2) throw new Error("disk full"); } });
+    expect(await t.workers.start("p", params)).toEqual({ taskId: "T1", run: 1 });
+    expect(t.core.log.started).toHaveLength(1);
+    // Counted at work (the plugin cannot start a second one past its limit), though the row on disk has no task id yet.
+    await expect(t.workers.start("p", params)).rejects.toThrow("1 workers at work");
+    // Its own: it can send, and that write keeps the row with its task id.
+    expect(await t.workers.send("p", "T1", "go on")).toEqual({ run: 1, how: "steered" });
+    expect(t.rows()[0]).toMatchObject({ task: "T1", open: true });
+    expect(await t.workers.cancel("p", "T1")).toEqual({ stopped: true });
+  });
+
+  it("B1: a reservation that cannot be written starts nothing", async () => {
+    const t = book(undefined, undefined, { write: () => { throw new Error("disk full"); } });
+    await expect(t.workers.start("p", params)).rejects.toThrow("disk full");
+    expect(t.core.log.started).toEqual([]);
+  });
+
+  it("B2: a full book forgets the oldest rows nothing counts any more, never one at work, one from the last day or one with a report owed", async () => {
+    const now = Date.now(), DAYS = 86_400_000;
+    const row = (task: string, at: number, extra: Record<string, unknown> = {}) => ({ plugin: "p", bot: "main", task, at, open: false, reported: 1, stopped: false, hash: H1, ...extra });
+    const rows = [
+      row("AT-WORK", now - 5 * DAYS, { open: true }),
+      row("OWED", now - 3 * DAYS, { owed: [{ run: 2, status: "completed", report: "x" }] }),
+      ...Array.from({ length: 1_000 }, (_, n) => row(`OLD${n}`, now - 2 * DAYS - n * 1_000)),
+      ...Array.from({ length: 5 }, (_, n) => row(`RECENT${n}`, now - 3_600_000 - n)),
+    ];
+    const core = fakeCore();
+    core.ledger.set("AT-WORK", { run: 1, running: true, status: "", report: "" });
+    const t = book(core, { text: JSON.stringify(rows) }, { quota: { atOnce: 4, perDay: 100 } });
+    await t.workers.start("p", params);
+    const kept = t.rows().map((entry) => entry.task);
+    expect(kept.length).toBe(1_000);
+    for (const task of ["AT-WORK", "OWED", "RECENT0", "RECENT4", "T1"]) expect(kept, task).toContain(task);
+    // The ones forgotten are the oldest of the closed.
+    expect(kept).not.toContain("OLD999");
+    expect(kept).toContain("OLD0");
+  });
+
+  it("B3: a worker that ended without this book hearing of it frees its place when the next one is asked for, and is told once", async () => {
+    const core = fakeCore(), file = { text: null as string | null };
+    await book(core, file, { quota: { atOnce: 1 } }).workers.start("p", params);
+    // The app stopped; the worker ended; no end event ever reached the book. A new run of the app, no host up yet.
+    core.ledger.set("T1", { run: 1, running: false, status: "completed", report: "done" });
+    const again = book(core, file, { quota: { atOnce: 1 } });
+    expect(await again.workers.start("p", params)).toEqual({ taskId: "T2", run: 1 });
+    expect(again.told).toEqual([expect.objectContaining({ taskId: "T1", run: 1, report: "done" })]);
+    again.workers.pickUp();
+    expect(again.told).toHaveLength(1);
+  });
+
+  it("B3: a worker the core no longer has does not hold its place either", async () => {
+    const core = fakeCore(), file = { text: null as string | null };
+    await book(core, file, { quota: { atOnce: 1 } }).workers.start("p", params);
+    core.ledger.delete("T1");
+    const again = book(core, file, { quota: { atOnce: 1 } });
+    await again.workers.start("p", params);
+    expect(again.told).toEqual([]);
+  });
+
+  it("B4: a cancel lets no report through: the stopped end that comes before the stop is answered is the cancel's", async () => {
+    const t = book();
+    await t.workers.start("p", params);
+    t.core.port.stop = async (id) => { t.workers.ended(id, 1, "stopped", "Stopped."); return true; };
+    expect(await t.workers.cancel("p", "T1")).toEqual({ stopped: true });
+    t.workers.ended("T1", 1, "stopped", "Stopped.");
+    expect(t.told).toEqual([]);
+    expect(t.rows()[0]).toMatchObject({ open: false, stopped: true });
+  });
+
+  it("B4: a cancel that finds the worker already ended on its own does not swallow that report: it is told once", async () => {
+    const t = book();
+    await t.workers.start("p", params);
+    t.core.port.stop = async (id) => { t.workers.ended(id, 1, "completed", "done"); t.core.ledger.set(id, { run: 1, running: false, status: "completed", report: "done" }); return false; };
+    expect(await t.workers.cancel("p", "T1")).toEqual({ stopped: false });
+    t.workers.ended("T1", 1, "completed", "done");
+    expect(t.told).toEqual([expect.objectContaining({ taskId: "T1", run: 1, report: "done" })]);
+    expect(t.rows()[0]).toMatchObject({ open: false, stopped: false });
+  });
+
+  it("B4: a stop that fails leaves the worker as it was", async () => {
+    const t = book();
+    await t.workers.start("p", params);
+    t.core.port.stop = async () => { throw new Error("no process"); };
+    await expect(t.workers.cancel("p", "T1")).rejects.toThrow("no process");
+    t.workers.ended("T1", 1, "completed", "done");
+    expect(t.told).toHaveLength(1);
+  });
+});
+
+describe("the two event checks of the review", () => {
+  it("R8: a plugin's workerReport listener hears only what carries its own name as startedBy", async () => {
+    const dir = tempDir("orphans-api");
+    const loaded = newLoaded({ name: "needy", storageDir: join(dir, "storage") } as HostPluginSpec);
+    const api = createApi({ request: async () => null, notify: () => {}, announceLater: () => {}, announceNow: () => {} }, loaded);
+    const heard: unknown[] = [];
+    api.events.on("workerReport", (data) => { heard.push(data); });
+    const listeners = loaded.events.get("workerReport")!;
+    expect(listeners).toHaveLength(1);
+    for (const data of [{ taskId: "T1", startedBy: "other" }, { taskId: "T2", startedBy: "needy" }, { taskId: "T3" }, { taskId: "T4", startedBy: 7 }, null, "needy"]) listeners[0]!(data);
+    expect(heard).toEqual([{ taskId: "T2", startedBy: "needy" }]);
+    // Another event is not filtered by it.
+    const others: unknown[] = [];
+    api.events.on("workerDone", (data) => { others.push(data); });
+    loaded.events.get("workerDone")![0]!({ workerId: "x" });
+    expect(others).toEqual([{ workerId: "x" }]);
+  });
+
+  it("R11: the end of a worker reaches the book however many workers are at work (the 2,000 of workerDone does not apply)", () => {
+    const ended: unknown[][] = [], events: unknown[][] = [];
+    const side = new CorePluginSide({ outId: (id: string) => id, plugins: { workerEnded: (...args: unknown[]) => ended.push(args), event: (...args: unknown[]) => events.push(args) } } as unknown as Core);
+    const update = (id: string, status: string) => ({ type: "subagent.updated", botId: "main", subagent: { id, status, result: `r-${id}`, execution: { run: 1 } } }) as unknown as Event;
+    for (let n = 0; n <= 2_000; n++) side.pluginEvent(update(`W${n}`, "running"));
+    // The 2,001st was not remembered as at work (its workerDone is not sent) but its end still reaches the book.
+    side.pluginEvent(update("W2000", "completed"));
+    side.pluginEvent(update("W0", "completed"));
+    expect(ended).toEqual([["W2000", 1, "completed", "r-W2000"], ["W0", 1, "completed", "r-W0"]]);
+    expect(events.filter(([name]) => name === "workerDone").map(([, data]) => (data as { workerId: string }).workerId)).toEqual(["W0"]);
   });
 });
 

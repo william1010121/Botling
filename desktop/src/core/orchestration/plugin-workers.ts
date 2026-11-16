@@ -113,7 +113,17 @@ export class PluginWorkers {
 
   private save() {
     const now = this.now();
-    this.entries = this.entries.filter((entry) => entry.open || entry.at > now - KEEP).slice(-MAX_ENTRIES);
+    this.entries = this.entries.filter((entry) => entry.open || entry.at > now - KEEP);
+    // Over the most: the oldest rows that nothing counts any more go (closed, older than a day, nothing owed). A row at work,
+    // one from the last day (the quota counts it) or one with a report owed is never the one forgotten.
+    let excess = this.entries.length - MAX_ENTRIES;
+    if (excess > 0) {
+      this.entries = this.entries.filter((entry) => {
+        if (excess <= 0 || entry.open || entry.at > now - DAY || entry.owed?.length) return true;
+        excess -= 1;
+        return false;
+      });
+    }
     this.deps.file?.write(JSON.stringify(this.entries));
   }
 
@@ -161,6 +171,8 @@ export class PluginWorkers {
     if (params.model && maySpecWrite(params.model, this.deps.world.specWriters?.() ?? DEFAULT_SPEC_WRITERS)) {
       throw new Error("A plugin's worker may not use a model that may change spec/. Choose another model, or none. Nothing was started.");
     }
+    // A place held for a worker that has ended (or is gone) without this book hearing of it is free before the room is counted.
+    this.pickUp();
     const refused = this.full(plugin);
     if (refused) throw new Error(refused);
     const port = this.deps.world.workers(params.bot);
@@ -174,18 +186,21 @@ export class PluginWorkers {
     }
     const entry: Entry = { plugin, bot: port.id, task: null, at: this.now(), open: true, reported: 0, stopped: false, hash: facts.identity };
     this.entries.push(entry);
+    const forget = () => { this.entries = this.entries.filter((candidate) => candidate !== entry); this.persist(); };
+    // The reservation is written before the worker starts: a write that fails starts nothing (fail closed).
+    try { this.save(); } catch (error) { this.entries = this.entries.filter((candidate) => candidate !== entry); throw error; }
+    let started: { task_id: string; run: number };
     try {
-      this.save();
       const args: Record<string, unknown> = { instructions: params.instructions, name: oneLine(params.name ?? "", 200) || undefined, ...(params.group ? { group: oneLine(params.group, 80) } : {}), ...(params.model ? { model: params.model } : {}), ...(params.effort ? { effort: params.effort } : {}) };
-      const started = await port.start(args, { plugin: facts.name, hash: facts.identity });
-      entry.task = started.task_id;
-      this.save();
-      return { taskId: started.task_id, run: started.run };
+      started = await port.start(args, { plugin: facts.name, hash: facts.identity });
     } catch (error) {
-      this.entries = this.entries.filter((candidate) => candidate !== entry);
-      try { this.save(); } catch { /* the reservation stays in memory only */ }
+      forget();
       throw error;
     }
+    // The worker runs now. A write that fails here does not undo it: it stays counted and the plugin's, and the next write keeps it.
+    entry.task = started.task_id;
+    this.persist();
+    return { taskId: started.task_id, run: started.run };
   }
 
   /**
@@ -224,9 +239,20 @@ export class PluginWorkers {
     const entry = this.mine(plugin, taskId);
     const port = this.deps.world.workers(entry.bot);
     if (typeof port === "string") throw new Error(port);
-    const stopped = await port.stop(taskId);
-    // Once: a second cancel finds it closed and gives nothing back twice.
-    if (entry.open) { entry.open = false; entry.stopped = true; this.save(); }
+    // Marked before the stop is awaited: the run's end that comes while the stop is under way is the cancel's, not a report.
+    const was = entry.stopped;
+    entry.stopped = true;
+    let stopped = false;
+    try { stopped = await port.stop(taskId); } catch (error) { entry.stopped = was; throw error; }
+    if (stopped) {
+      // Once: a second cancel finds it closed and gives nothing back twice.
+      entry.open = false;
+      this.persist();
+    } else {
+      // Not at work any more (it ended on its own first): that end is a report like any other, from the core's ledger.
+      entry.stopped = was;
+      this.pickUp();
+    }
     return { stopped };
   }
 
