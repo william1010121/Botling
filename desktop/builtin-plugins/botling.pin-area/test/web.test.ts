@@ -60,6 +60,12 @@ describe("what the chat page's state says", () => {
     expect(bookOf({ pluginData: null } as unknown as ChatState)).toBeNull();
   });
 
+  it("carries the away digest along with the cards, and keeps nothing of it that is not a digest", () => {
+    const away = { from: 1, to: 2, collapsed: false, counts: { wait: 0, run: 0, done: 0 }, rows: [], others: [], othersMore: 0 };
+    expect(bookOf(stateOf({ ...view(card("p-0001")), away } as never))!.away).toEqual(away);
+    expect(bookOf(stateOf(view(card("p-0001"))))!.away).toBeUndefined();
+  });
+
   it("draws the strip in the page's top slot, and an empty chat takes no room", () => {
     host.chatState(stateOf(view()));
     expect(slots.topArea.querySelector<HTMLElement>(".pt-strip")!.hidden).toBe(true);
@@ -254,5 +260,61 @@ describe("where a line the bot moved went", () => {
     await host.sync([], async () => (() => {}) as never);
     host.decorations.redraw();
     expect(list.querySelector(".pt-mv")).toBeNull();
+  });
+});
+
+describe("「你不在時」 in the page", () => {
+  const away = {
+    from: 1_000, to: 4_000_000, collapsed: false, counts: { wait: 0, run: 0, done: 0 }, rows: [], othersMore: 0,
+    others: [{ botId: "B2", name: "DAFAWU", text: "選一個版本", more: 0, messageId: "q9" }],
+  };
+  const touches = () => calls().filter((call) => call.method === "touch");
+  const activity = (type: string) => window.dispatchEvent(new Event(type, { bubbles: true }));
+
+  it("says the page is being used, once a minute at most, for the chat that is open, and not while the page is hidden", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(10_000_000);
+      activity("pointermove");
+      expect(touches()).toHaveLength(0);
+      host.chatState(stateOf(view(card("p-0001"))));
+      activity("pointermove");
+      activity("keydown");
+      activity("wheel");
+      expect(touches().map((call) => [call.plugin, call.params])).toEqual([[PLUGIN, { botId: "B1" }]]);
+      vi.setSystemTime(10_000_000 + 59_000);
+      activity("pointerdown");
+      expect(touches()).toHaveLength(1);
+      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+      vi.setSystemTime(10_000_000 + 61_000);
+      activity("focus");
+      expect(touches()).toHaveLength(1);
+      visibility.mockRestore();
+      activity("focus");
+      expect(touches()).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("stops listening when the plugin is unloaded", async () => {
+    host.chatState(stateOf(view(card("p-0001"))));
+    await host.sync([], async () => (() => {}) as never);
+    activity("pointerdown");
+    expect(touches()).toHaveLength(0);
+  });
+
+  it("draws the digest above the strip, a click on another bot's line goes to that chat (the page's openChat), and a card's row opens its panel", () => {
+    host.chatState(stateOf({ ...view(card("p-0001")), away } as never));
+    const line = slots.topArea.querySelector<HTMLElement>(".pt-digest .pt-orow")!;
+    line.click();
+    expect(sent.filter((action) => action.type === "openChat")).toEqual([{ type: "openChat", botID: "B2", messageID: "q9" }]);
+    host.chatState(stateOf({ ...view(card("p-0001")), away: { ...away, rows: [{ id: "p-0001", title: "Deploy", state: "run", status: "building", source: "user", at: 5_000 }], counts: { wait: 0, run: 1, done: 0 } } } as never));
+    slots.topArea.querySelector<HTMLElement>(".pt-drow")!.click();
+    expect(slots.overlay.querySelector(".pt-panel")).not.toBeNull();
+  });
+
+  it("看完了 asks the program part to fold it for this chat's bot", () => {
+    host.chatState(stateOf({ ...view(card("p-0001")), away } as never));
+    slots.topArea.querySelector<HTMLButtonElement>(".pt-d-close")!.click();
+    expect(calls().filter((call) => call.method === "collapse").map((call) => call.params)).toEqual([{ botId: "B1", collapsed: true }]);
   });
 });

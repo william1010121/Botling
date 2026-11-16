@@ -16,6 +16,7 @@ const call = vi.fn(async (method: string, _params: Record<string, unknown>) => {
   return {};
 });
 const send = vi.fn();
+const openChat = vi.fn();
 let motion = true;
 
 const pin = (id: string, over: Partial<PinView> = {}): PinView => ({
@@ -44,7 +45,8 @@ beforeEach(() => {
   failing.clear();
   call.mockClear();
   send.mockClear();
-  ui = new PinUi(top, overlay, { call, send, words: wordsFor(() => "zh-Hant"), now: () => clock, reduceMotion: () => motion });
+  openChat.mockClear();
+  ui = new PinUi(top, overlay, { call, send, openChat, words: wordsFor(() => "zh-Hant"), now: () => clock, reduceMotion: () => motion });
 });
 afterEach(() => { ui.dispose(); vi.useRealTimers(); });
 
@@ -538,5 +540,114 @@ describe("a line the bot put into a card, in the card's thread", () => {
     backs[0]!.click();
     expect(call.mock.calls.filter(([method]) => method === "moveBack")).toEqual([["moveBack", { botId: "B1", rid: "r1" }]]);
     await flush();
+  });
+});
+
+describe("「你不在時」: the digest above the strip", () => {
+  const H = 3_600_000;
+  const digestAway = (over: Record<string, unknown> = {}) => ({
+    from: clock - 3 * H, to: clock, collapsed: false, counts: { wait: 1, run: 1, done: 2 }, othersMore: 0,
+    rows: [
+      { id: "p-0001", title: "Deploy", state: "wait", status: "要你確認", source: "bot", at: clock - H, waitingSince: clock - 20 * 60_000 },
+      { id: "p-0002", title: "Build", state: "run", status: "跑第 2 步", source: "bot", at: clock - 2 * H },
+      { id: "p-0003", title: "Docs", state: "done", status: "寫好了", source: "user", at: clock - 2 * H },
+      { id: "p-0004", title: "Lint", state: "done", status: "乾淨", source: "app", at: clock - 2 * H },
+    ],
+    others: [{ botId: "B2", name: "DAFAWU", text: "選一個版本", more: 1, messageId: "q9" }, { botId: "B3", name: "agent", text: "確認預算", more: 0 }],
+    ...over,
+  });
+  const show = (away: unknown = digestAway()) => ui.update("B1", { ...view(...["p-0001", "p-0002", "p-0003", "p-0004"].map((id) => pin(id))), away } as never);
+  const digest = () => top.querySelector<HTMLElement>(".pt-digest")!;
+
+  it("draws the title with the gap, the three counters, a row per card (waiting first and orange, with how long it waits) and a line per other bot", () => {
+    show();
+    expect(digest().hidden).toBe(false);
+    expect(digest().querySelector(".pt-d-title")!.textContent).toBe("你不在的 3 小時");
+    expect([...digest().querySelectorAll(".pt-tile")].map((tile) => [tile.className.replace("pt-tile ", ""), tile.textContent])).toEqual([["pt-tile-wait", "1等你"], ["pt-tile-run", "1進行中"], ["pt-tile-done", "2做完"]]);
+    const rows = [...digest().querySelectorAll<HTMLElement>(".pt-drow")];
+    expect(rows.map((row) => row.dataset.pin)).toEqual(["p-0001", "p-0002", "p-0003", "p-0004"]);
+    expect(rows[0]!.className).toContain("pt-drow-wait");
+    expect(rows[0]!.querySelector(".pt-dtag-wait")!.textContent).toBe("等你 20 分鐘");
+    expect(rows[0]!.textContent).toContain("Deploy：要你確認");
+    const others = [...digest().querySelectorAll<HTMLElement>(".pt-orow")];
+    expect(others.map((row) => row.textContent)).toEqual(["DAFAWU選一個版本另有 1 件", "agent確認預算"]);
+    expect(digest().querySelector(".pt-d-label")!.textContent).toBe("別的 bot 也在等你 · 2");
+  });
+
+  it("a card row opens that card's panel; a row of another bot goes to that bot's chat (with the question's id when there is one)", () => {
+    show();
+    digest().querySelector<HTMLElement>('.pt-drow[data-pin="p-0002"]')!.click();
+    expect(panel()!.querySelector(".pt-ptitle")!.textContent).toContain("Title p-0002");
+    const others = [...digest().querySelectorAll<HTMLElement>(".pt-orow")];
+    others[0]!.click();
+    others[1]!.click();
+    expect(openChat.mock.calls).toEqual([["B2", "q9"], ["B3", undefined]]);
+    expect(call).not.toHaveBeenCalledWith("collapse", expect.anything());
+  });
+
+  it("看完了 asks the program part to fold it, once however often it is tapped, and again after 2 seconds", () => {
+    vi.useFakeTimers();
+    show();
+    const close = digest().querySelector<HTMLButtonElement>(".pt-d-close")!;
+    close.click();
+    close.click();
+    expect(call.mock.calls.filter(([method]) => method === "collapse")).toEqual([["collapse", { botId: "B1", collapsed: true }]]);
+    vi.advanceTimersByTime(2_100);
+    close.click();
+    expect(call.mock.calls.filter(([method]) => method === "collapse")).toHaveLength(2);
+  });
+
+  it("folded, it is one chip with what was there; a tap on the chip asks to open it again", () => {
+    show(digestAway({ collapsed: true }));
+    expect(digest().querySelector(".pt-d-card")).toBeNull();
+    const chip = digest().querySelector<HTMLButtonElement>(".pt-digest-chip")!;
+    expect(chip.textContent).toBe("你不在時：1 等你 · 1 進行中 · 2 做完");
+    chip.click();
+    expect(call).toHaveBeenCalledWith("collapse", { botId: "B1", collapsed: false });
+  });
+
+  it("with only other bots' lines there are no tiles, and the chip says how many bots wait", () => {
+    show(digestAway({ rows: [], counts: { wait: 0, run: 0, done: 0 } }));
+    expect(digest().querySelector(".pt-d-tiles")).toBeNull();
+    expect(digest().querySelectorAll(".pt-orow")).toHaveLength(2);
+    show(digestAway({ rows: [], counts: { wait: 0, run: 0, done: 0 }, collapsed: true }));
+    expect(digest().querySelector(".pt-digest-chip")!.textContent).toBe("你不在時：2 個 bot 在等你");
+  });
+
+  it("says how many more bots wait when the lines are cut", () => {
+    show(digestAway({ othersMore: 3 }));
+    expect(digest().querySelector(".pt-d-more")!.textContent).toBe("還有 3 個 bot");
+  });
+
+  it("is gone with no digest, and when it goes (the next message) the strip stays", () => {
+    show();
+    ui.update("B1", view(pin("p-0001")));
+    expect(digest().hidden).toBe(true);
+    expect(digest().children).toHaveLength(0);
+    expect(rows()).toHaveLength(1);
+  });
+
+  it("puts a bot's words in as text, and drops a digest that is not of the shape (draws nothing odd)", () => {
+    show(digestAway({ others: [{ botId: "B2", name: "<i>x</i>", text: "<b>hi</b>", more: 0 }] }));
+    expect(digest().querySelector(".pt-orow i")).toBeNull();
+    expect(digest().querySelector(".pt-otext")!.textContent).toBe("<b>hi</b>");
+    show({ from: "x", to: 3, rows: "no" });
+    expect(digest().hidden).toBe(true);
+    show([1, 2]);
+    expect(digest().hidden).toBe(true);
+  });
+
+  it("a failed fold says why in the strip's line", async () => {
+    failing.add("collapse");
+    show();
+    digest().querySelector<HTMLButtonElement>(".pt-d-close")!.click();
+    await flush();
+    expect(top.querySelector(".pt-toast-text")!.textContent).toContain("collapse failed");
+  });
+
+  it("is taken away with the ui", () => {
+    show();
+    ui.dispose();
+    expect(top.querySelector(".pt-digest")).toBeNull();
   });
 });

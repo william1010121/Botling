@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BotlingApi } from "../../../../Web/host/src/api";
 import { activate } from "../src/host";
 import { activatePins } from "../src/pins";
+import * as D from "../src/digest";
 import * as M from "../src/model";
 
 type Handler = (data: never) => unknown;
@@ -18,12 +19,17 @@ function setup(seed: Record<string, unknown> = {}) {
   const setData = vi.fn(async (_botId: string, _data: unknown) => {});
   const decorate = vi.fn(async (_botId: string, _decorations: unknown) => {});
   // the app's bots as workspace.bots lists them (a sub bot names its parent)
-  const family: { id: string; parent: string | null }[] = [];
+  const family: { id: string; parent: string | null; name?: string }[] = [];
+  // what workspace.waiting() gives: each bot's open question, or the lines of its memory.md "Waiting on you"
+  const waitingItems: { botId: string; text: string; messageId?: string | null }[] = [];
   const api = {
     subscriptions: [] as unknown[],
     storage: { dir: "/s", get: (key: string) => (stored.has(key) ? JSON.parse(JSON.stringify(stored.get(key))) : undefined), set: (key: string, value: unknown) => { stored.set(key, JSON.parse(JSON.stringify(value))); } },
     chat: { setData, decorate },
-    workspace: { bots: vi.fn(async () => family.map((bot) => ({ ...bot, name: bot.id, role: "bot" }))) },
+    workspace: {
+      bots: vi.fn(async () => family.map((bot) => ({ ...bot, name: bot.name ?? bot.id, role: "bot" }))),
+      waiting: vi.fn(async () => ({ items: waitingItems.map((item) => ({ messageId: null, ...item })), doing: {} })),
+    },
     ui: { expose: (method: string, fn: (params: unknown) => unknown) => { exposed.set(method, fn); return () => {}; } },
     events: { on: (event: string, fn: Handler) => { events.set(event, fn); return () => {}; } },
     replyTags: { on: (tag: string, fn: Handler) => { tags.set(tag, fn); return () => {}; } },
@@ -38,13 +44,13 @@ function setup(seed: Record<string, unknown> = {}) {
   const tag = (botId: string, name: string, attributes: Record<string, string>, body = "") => tags.get(name)!({ bot: bot(botId), tag: name, attributes, body } as never);
   const send = (botId: string, text: string) => hooks[0]!({ bot: bot(botId), text } as never) as string | false | undefined;
   const book = (botId: string) => M.readBook(stored.get(`pins:${botId}`));
-  return { api, subs, exposed, events, tags, hooks, stored, setData, decorate, family, call, emit, tag, send, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
+  return { api, subs, exposed, events, tags, hooks, stored, setData, decorate, family, waitingItems, call, emit, tag, send, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
 }
 
 describe("the program part", () => {
-  it("registers the seven methods, the four events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
+  it("registers the nine methods, the four events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
     const { api, exposed, events, tags, hooks } = setup();
-    expect([...exposed.keys()].sort()).toEqual(["moveBack", "moveTo", "pinMessage", "repin", "seen", "unpin", "view"]);
+    expect([...exposed.keys()].sort()).toEqual(["collapse", "moveBack", "moveTo", "pinMessage", "repin", "seen", "touch", "unpin", "view"]);
     expect([...events.keys()].sort()).toEqual(["messagePosted", "turnFinished", "turnStarted", "workerDone"]);
     expect([...tags.keys()].sort()).toEqual(["pin-card", "pin-say"]);
     expect(hooks).toHaveLength(1);
@@ -689,5 +695,184 @@ describe("a plain message the bot moves into a card", () => {
     for (const part of ["p-0001「Deploy」進行中", "p-0003「Bot card」等你 · 等你確認"]) expect(sent).toContain(part);
     t.tag("B1", "pin-card", { id: "p-0001", state: "done" }, "做完了");
     expect(t.book("B1").pins[0]).toMatchObject({ state: "done", status: "做完了", origin: "user" });
+  });
+});
+
+describe("「你不在時」: the digest of what happened while the user was away", () => {
+  const MIN = 60_000;
+  type Setup = ReturnType<typeof setup>;
+  /** The newest thing a chat was told to draw. */
+  const drawn = (t: Setup, botId: string) => [...t.setData.mock.calls].reverse().find(([id]) => id === botId)![1] as D.PinsView;
+  /** Bot B1 has a running card; the user is here (a sign of them is on record) and leaves from this moment. */
+  async function here() {
+    const t = setup();
+    t.family.push({ id: "B1", parent: null, name: "botling" }, { id: "B2", parent: null, name: "DAFAWU" });
+    t.tag("B1", "pin-card", { id: "k", title: "Deploy", state: "run", min: "30" }, "building");
+    t.tick(MIN);
+    expect(await t.call("touch", { botId: "B1" })).toEqual({ away: false });
+    return t;
+  }
+  /** The card turns waiting 10 minutes after the user left, and they are back 35 minutes after. */
+  async function back(t: Setup) {
+    t.tick(10 * MIN);
+    t.tag("B1", "pin-card", { id: "k", state: "wait" }, "要你確認");
+    t.tick(25 * MIN);
+    return t.call("touch", { botId: "B1" });
+  }
+
+  it("a sign of the user after 30 minutes opens the digest: the cards that changed meanwhile, counted, for exactly the gap; the view call has it too", async () => {
+    const t = await here();
+    const left = t.now();
+    expect(await back(t)).toEqual({ away: true });
+    const away = drawn(t, "B1").away!;
+    expect([away.from, away.to, away.collapsed]).toEqual([left, left + 35 * MIN, false]);
+    expect(away.counts).toEqual({ wait: 1, run: 0, done: 0 });
+    expect(away.rows).toMatchObject([{ id: "p-0001", title: "Deploy", state: "wait", status: "要你確認", source: "bot" }]);
+    expect(((await t.call("view", { botId: "B1" })) as D.PinsView).away!.rows).toHaveLength(1);
+  });
+
+  it("29 minutes is not away: nothing opens and the chat draws only its cards", async () => {
+    const t = await here();
+    t.tick(29 * MIN);
+    expect(await t.call("touch", { botId: "B1" })).toEqual({ away: false });
+    expect(drawn(t, "B1").away).toBeUndefined();
+    expect(t.api.workspace.waiting).not.toHaveBeenCalled();
+  });
+
+  it("lists other bots' waiting items one line per bot (by name, a bot's own items are not repeated), read through workspace.waiting and never from files", async () => {
+    const t = await here();
+    t.waitingItems.push({ botId: "B2", text: "選一個版本" }, { botId: "B2", text: "再確認日期" }, { botId: "B1", text: "this chat's own" });
+    await back(t);
+    expect(drawn(t, "B1").away!.others).toEqual([{ botId: "B2", name: "DAFAWU", text: "選一個版本", more: 1 }]);
+    expect(t.api.workspace.waiting).toHaveBeenCalledTimes(1);
+    expect(t.stored.has("pins:B2")).toBe(false);
+    // the same chat from the other bot's side: it waits on B1's items, not its own
+    t.waitingItems.push({ botId: "B1", text: "別的 bot 的問題", messageId: "q7" });
+    t.tick(31_000);
+    await t.call("touch", { botId: "B2" });
+    expect(drawn(t, "B2").away!.others).toEqual([{ botId: "B1", name: "botling", text: "this chat's own", more: 1 }]);
+  });
+
+  it("an empty \"Waiting on you\" section, or one with only a placeholder, adds no row; with no card changed either, the chat has no digest", async () => {
+    const t = await here();
+    t.waitingItems.push({ botId: "B2", text: "—" }, { botId: "B2", text: "(none)" });
+    t.tick(40 * MIN);
+    expect(await t.call("touch", { botId: "B1" })).toEqual({ away: true });
+    expect(drawn(t, "B1").away).toBeUndefined();
+    expect(drawn(t, "B1").pins).toHaveLength(1);
+  });
+
+  it("only the other bots' lines are in it when no card of this chat changed", async () => {
+    const t = await here();
+    t.waitingItems.push({ botId: "B2", text: "選一個版本", messageId: "q1" });
+    t.tick(40 * MIN);
+    await t.call("touch", { botId: "B1" });
+    const away = drawn(t, "B1").away!;
+    expect([away.rows, away.counts, away.others]).toEqual([[], { wait: 0, run: 0, done: 0 }, [{ botId: "B2", name: "DAFAWU", text: "選一個版本", more: 0, messageId: "q1" }]]);
+  });
+
+  it("the next message of the user, in any chat, takes the digest away from every chat and from storage; a later sign does not bring it back", async () => {
+    const t = await here();
+    t.waitingItems.push({ botId: "B1", text: "確認日期" });
+    await back(t);
+    await t.call("view", { botId: "B2" });
+    expect(drawn(t, "B2").away).toBeDefined();
+    t.emit("messagePosted", { botId: "B2", role: "user", text: "hi", id: "u1" });
+    expect(drawn(t, "B1").away).toBeUndefined();
+    expect(drawn(t, "B2").away).toBeUndefined();
+    expect(t.stored.get("presence")).toMatchObject({ away: null });
+    t.tick(MIN);
+    expect(await t.call("touch", { botId: "B1" })).toEqual({ away: false });
+    expect(drawn(t, "B1").away).toBeUndefined();
+  });
+
+  it("a bot's own line is not the user's message: the digest stays", async () => {
+    const t = await here();
+    await back(t);
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "好了", id: "b1" });
+    expect(drawn(t, "B1").away).toBeDefined();
+  });
+
+  it("看完了 folds it in every chat and in storage, the same again changes nothing, and the chip's reopen opens it again", async () => {
+    const t = await here();
+    t.waitingItems.push({ botId: "B1", text: "確認日期" });
+    await back(t);
+    await t.call("view", { botId: "B2" });
+    expect(t.call("collapse", { collapsed: true })).toEqual({ collapsed: true });
+    expect(drawn(t, "B1").away!.collapsed).toBe(true);
+    expect(drawn(t, "B2").away!.collapsed).toBe(true);
+    expect((t.stored.get("presence") as D.Presence).away!.collapsed).toBe(true);
+    const draws = t.setData.mock.calls.length;
+    expect(t.call("collapse", { collapsed: true })).toEqual({ unchanged: true });
+    expect(t.setData.mock.calls).toHaveLength(draws);
+    expect(t.call("collapse", { collapsed: false })).toEqual({ collapsed: false });
+    expect(drawn(t, "B1").away!.collapsed).toBe(false);
+  });
+
+  it("with no digest open, 看完了 changes nothing", async () => {
+    const t = await here();
+    expect(t.call("collapse", { collapsed: true })).toEqual({ unchanged: true });
+    expect(t.stored.has("presence")).toBe(false);
+  });
+
+  it("a digest open (even folded) is still there after a restart, with the same range; the other bots' lines come back with the next sign of the user", async () => {
+    const first = await here();
+    await back(first);
+    first.call("collapse", { collapsed: true });
+    const second = setup(Object.fromEntries(first.stored));
+    second.family.push({ id: "B2", parent: null, name: "DAFAWU" });
+    second.waitingItems.push({ botId: "B2", text: "選一個版本" });
+    const away = drawn(second, "B1").away!;
+    expect([away.collapsed, away.rows.length, away.others]).toEqual([true, 1, []]);
+    expect(await second.call("touch", { botId: "B1" })).toEqual({ away: true });
+    expect(second.api.workspace.waiting).toHaveBeenCalledTimes(1);
+    expect(drawn(second, "B1").away!.others).toHaveLength(1);
+  });
+
+  it("other bots' lines are read again only when 30 seconds old, so an item the user dealt with goes", async () => {
+    const t = await here();
+    t.waitingItems.push({ botId: "B2", text: "選一個版本" });
+    await back(t);
+    t.waitingItems.length = 0;
+    t.tick(10_000);
+    await t.call("touch", { botId: "B1" });
+    expect(t.api.workspace.waiting).toHaveBeenCalledTimes(1);
+    expect(drawn(t, "B1").away!.others).toHaveLength(1);
+    t.tick(25_000);
+    await t.call("touch", { botId: "B1" });
+    expect(t.api.workspace.waiting).toHaveBeenCalledTimes(2);
+    expect(drawn(t, "B1").away!.others).toEqual([]);
+  });
+
+  it("when the app cannot say what waits (it throws, or has no such call), the digest still shows the cards and no line of other bots", async () => {
+    const t = await here();
+    t.waitingItems.push({ botId: "B2", text: "選一個版本" });
+    (t.api.workspace.waiting as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("gone"));
+    await back(t);
+    expect(drawn(t, "B1").away).toMatchObject({ others: [], rows: [{ title: "Deploy" }] });
+    const bare = await here();
+    delete (bare.api.workspace as { waiting?: unknown }).waiting;
+    await back(bare);
+    expect(drawn(bare, "B1").away!.others).toEqual([]);
+  });
+
+  it("writes the presence at most every 5 minutes (storage.json is rewritten whole), and at once when a digest opens", async () => {
+    const t = setup();
+    await t.call("touch", { botId: "B1" });
+    t.tick(MIN);
+    await t.call("touch", { botId: "B1" });
+    expect(t.stored.has("presence")).toBe(false);
+    t.tick(5 * MIN);
+    await t.call("touch", { botId: "B1" });
+    expect((t.stored.get("presence") as D.Presence).lastPresent).toBe(t.now());
+    t.tick(40 * MIN);
+    await t.call("touch", { botId: "B1" });
+    expect((t.stored.get("presence") as D.Presence).away).toMatchObject({ collapsed: false });
+  });
+
+  it("a touch names its bot; a presence in storage that is garbage is none", async () => {
+    const t = setup({ presence: "garbage" });
+    await expect(t.call("touch", {})).rejects.toThrow("No bot.");
+    expect(await t.call("touch", { botId: "B1" })).toEqual({ away: false });
   });
 });
