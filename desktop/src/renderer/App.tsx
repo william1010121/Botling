@@ -504,6 +504,65 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     </>
   );
 
+  // The parts of the chat column that the shell's fallback screen keeps when `botling.chat` is away (shell/Fallback.tsx, M7-07c): drawn in the column below, and
+  // handed to the fallback as `regions.away.parts`, so the tab switch (Storage stays reachable), the alert lines, the worker bar and the error bar go on without the plugin.
+  const bottomControlsSlot = !web ? <span className="bottom-controls" ref={setBottomControls} /> : null;
+  // The Chat / tabs switch (1.x's BoardSwitch bar): its own centered bar above the messages.
+  const switchBar = bot && chat && !watching ? (
+    <div className="board-switch-bar">
+      <span className="workers-badge-slot">
+        <WorkersBadge bot={bot} bots={view.bots} seen={seenFailed} on={workersMenu === bot.id} onClick={() => setWorkersMenu(workersMenu === bot.id ? null : bot.id)} />
+        {workersMenu === bot.id && <WorkersMenu bot={bot} bots={view.bots} onClose={() => setWorkersMenu(null)} onOpen={(ownerId, row) => { setWorkersMenu(null); openSubagent(ownerId, row); }} />}
+      </span>
+      {/* Navigation v5: sub bots left of the switch; the workers' badge sits at the right. */}
+      <div className="board-switch-left">
+        <SubBotNav nav={nav} open={subBotsOpen} onOpenChange={setSubBotsOpen} onOpen={selectBot}
+          flash={!!cameFrom && !!cameBack?.flash} forward={cameFrom ? { name: cameFrom.name } : null}
+          keys={{ menu: shortcutLabel("subBots"), back: shortcutLabel("roomBack"), forward: shortcutLabel("roomForward") }}
+          pinned={pinnedSubBots} pinKeys={PINNED_KEYS.map((id) => shortcutLabel(id))}
+          onPin={(botId) => setPinnedSubBots((now) => togglePinned(now, botId))} onMovePin={(botId, to) => setPinnedSubBots((now) => movePinned(now, botId, to))}
+          canAdd={bot.role === "manager" && !bot.parent}
+          onNew={(name, purpose) => newSubBot(bot.parent ?? bot.id, name, purpose)}
+          onArchive={(botId) => { const target = view.bots.find((candidate) => candidate.id === botId); if (target) setClosingSubBot(target); }} />
+      </div>
+      <div className="board-switch" role="group" aria-label="Chat views">
+        <button type="button" aria-pressed={!tab && !storageOn} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); }}><Icon name="bubble" size={13} />Chat</button>
+        {tabs.map((candidate) => (
+          <button key={tabKey(candidate)} type="button" className={`main-tab-switch${candidate === boardTab ? " whiteboard-switch" : ""}`} data-tab={tabKey(candidate)} aria-pressed={tab === candidate}
+            onClick={() => { setWhiteboardOn(candidate === boardTab); chooseTab(bot.id, candidate); }}>
+            {candidate.icon && isIconName(candidate.icon) && <Icon name={candidate.icon} size={13} />}{candidate.title}
+          </button>
+        ))}
+        {!web && <button type="button" className="main-tab-switch storage-switch" data-tab={STORAGE_TAB} aria-pressed={storageOn}
+          onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, STORAGE_TAB); }}><Icon name="tray" size={13} />{say(view.settings?.effectiveLanguage, "storage.tab")}</button>}
+      </div>
+    </div>
+  ) : null;
+  const alerts = (
+    <>
+      {view.coreSwap && <div className="core-swap" role="status" data-phase={view.coreSwap}>{view.coreSwap === "draining" ? "Updating Botling's core: finishing replies under way…" : "Updating Botling's core…"}</div>}
+      {bot?.problem && <div className="banner" role="alert">{bot.problem}</div>}
+      {bot && chat?.heads?.rounds && (
+        // The rounds line over the input box (1.x: "Review round 1 of 2 · Stop now"). The chat page
+        // in this checkout gets the same data (`rounds`, `handoffs`) but does not draw it.
+        <div className="rounds-bar" role="status">
+          <span>{chat.heads.rounds.text}</span>
+          <button type="button" onClick={() => void client.request({ type: "rounds.stop", botId: bot.id }).catch(fail)}>Stop now</button>
+        </div>
+      )}
+    </>
+  );
+  const workerBar = bot && shownWorker && view.subagent ? (
+    <WorkerAskBar key={shownWorker.id} owner={bot} worker={shownWorker} files={filesChanged(view.subagent.steps)} onAsk={askOwner}
+      onOpenFile={(path) => { void client.request({ type: "worker.file", botId: bot.id, subagentId: shownWorker.id, path }).catch(fail); }} />
+  ) : null;
+  const storagePage = storageOn && bot ? (
+    <div className="main-tab storage-main" role="region" aria-label={say(view.settings?.effectiveLanguage, "storage.tab")}>
+      <StorageTab key={bot.id} client={client} botId={bot.id} botName={bot.name} lang={view.settings?.effectiveLanguage} onError={fail} />
+    </div>
+  ) : null;
+  const errorBar = error && error !== bot?.problem ? <div className="banner bottom" role="alert">{error}</div> : null;
+
   // The chat column (header, Chat / tab / Storage switch, the tab or Storage page, the chat frame): `botling.chat`'s contribution to `app/main`.
   const mainRegion = (
     <section className="chat-pane">
@@ -515,7 +574,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           <span className="chat-heads" data-heads={bot.heads.join(" ")}>{bot.heads.map((head) => ({ claude: "Claude", codex: "Codex", agy: "Antigravity" }[head])).join(" & ")}</span>
         )}
         {bot && <span className="chat-status" data-status={status(bot)}>{statusText(bot)}</span>}
-        {!web && <span className="bottom-controls" ref={setBottomControls} />}
+        {bottomControlsSlot}
         {bot && chat && !web && (
           <span className="chat-actions">
             <button type="button" className={`header-button${paneOpen ? " on" : ""}`} aria-pressed={paneOpen} onClick={toggleBrowser}
@@ -524,70 +583,26 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           </span>
         )}
       </header>
-      {bot && chat && !watching && (
-        // The Chat / tabs switch (1.x's BoardSwitch bar): its own centered bar above the messages.
-        <div className="board-switch-bar">
-          <span className="workers-badge-slot">
-            <WorkersBadge bot={bot} bots={view.bots} seen={seenFailed} on={workersMenu === bot.id} onClick={() => setWorkersMenu(workersMenu === bot.id ? null : bot.id)} />
-            {workersMenu === bot.id && <WorkersMenu bot={bot} bots={view.bots} onClose={() => setWorkersMenu(null)} onOpen={(ownerId, row) => { setWorkersMenu(null); openSubagent(ownerId, row); }} />}
-          </span>
-          {/* Navigation v5: sub bots left of the switch; the workers' badge sits at the right. */}
-          <div className="board-switch-left">
-            <SubBotNav nav={nav} open={subBotsOpen} onOpenChange={setSubBotsOpen} onOpen={selectBot}
-              flash={!!cameFrom && !!cameBack?.flash} forward={cameFrom ? { name: cameFrom.name } : null}
-              keys={{ menu: shortcutLabel("subBots"), back: shortcutLabel("roomBack"), forward: shortcutLabel("roomForward") }}
-              pinned={pinnedSubBots} pinKeys={PINNED_KEYS.map((id) => shortcutLabel(id))}
-              onPin={(botId) => setPinnedSubBots((now) => togglePinned(now, botId))} onMovePin={(botId, to) => setPinnedSubBots((now) => movePinned(now, botId, to))}
-              canAdd={bot.role === "manager" && !bot.parent}
-              onNew={(name, purpose) => newSubBot(bot.parent ?? bot.id, name, purpose)}
-              onArchive={(botId) => { const target = view.bots.find((candidate) => candidate.id === botId); if (target) setClosingSubBot(target); }} />
-          </div>
-          <div className="board-switch" role="group" aria-label="Chat views">
-            <button type="button" aria-pressed={!tab && !storageOn} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); }}><Icon name="bubble" size={13} />Chat</button>
-            {tabs.map((candidate) => (
-              <button key={tabKey(candidate)} type="button" className={`main-tab-switch${candidate === boardTab ? " whiteboard-switch" : ""}`} data-tab={tabKey(candidate)} aria-pressed={tab === candidate}
-                onClick={() => { setWhiteboardOn(candidate === boardTab); chooseTab(bot.id, candidate); }}>
-                {candidate.icon && isIconName(candidate.icon) && <Icon name={candidate.icon} size={13} />}{candidate.title}
-              </button>
-            ))}
-            {!web && <button type="button" className="main-tab-switch storage-switch" data-tab={STORAGE_TAB} aria-pressed={storageOn}
-              onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, STORAGE_TAB); }}><Icon name="tray" size={13} />{say(view.settings?.effectiveLanguage, "storage.tab")}</button>}
-          </div>
-        </div>
-      )}
-      {view.coreSwap && <div className="core-swap" role="status" data-phase={view.coreSwap}>{view.coreSwap === "draining" ? "Updating Botling's core: finishing replies under way…" : "Updating Botling's core…"}</div>}
-      {bot?.problem && <div className="banner" role="alert">{bot.problem}</div>}
-      {bot && chat?.heads?.rounds && (
-        // The rounds line over the input box (1.x: "Review round 1 of 2 · Stop now"). The chat page
-        // in this checkout gets the same data (`rounds`, `handoffs`) but does not draw it.
-        <div className="rounds-bar" role="status">
-          <span>{chat.heads.rounds.text}</span>
-          <button type="button" onClick={() => void client.request({ type: "rounds.stop", botId: bot.id }).catch(fail)}>Stop now</button>
-        </div>
-      )}
+      {switchBar}
+      {alerts}
       <ChatBody docked={noteDocked}>
       {tab && bot ? <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask}
         overlay={noteKey ? <FloatingChat place="note" bot={bot} look={view.settings?.botLook ?? "original"} open={noteOpen} onOpen={openNoteChat} line={stripLine} area={noteArea} /> : null} />
-        : storageOn && bot ? <div className="main-tab storage-main" role="region" aria-label={say(view.settings?.effectiveLanguage, "storage.tab")}>
-          <StorageTab key={bot.id} client={client} botId={bot.id} botName={bot.name} lang={view.settings?.effectiveLanguage} onError={fail} />
-        </div> : null}
+        : storagePage}
       {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
       <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onAsk={approval.ask}
         bubbleBot={bot && !paneOpen && (!(tab || storageOn) || noteDocked || !floatMemory.preview.docked) ? bot : null} look={view.settings?.botLook ?? "original"} stripLine={stripLine}
         askAbout={askAbout} onAskDone={() => setAskAbout(null)} />
       </ChatBody>
-      {bot && shownWorker && view.subagent && (
-        <WorkerAskBar key={shownWorker.id} owner={bot} worker={shownWorker} files={filesChanged(view.subagent.steps)} onAsk={askOwner}
-          onOpenFile={(path) => { void client.request({ type: "worker.file", botId: bot.id, subagentId: shownWorker.id, path }).catch(fail); }} />
-      )}
+      {workerBar}
       {/* The bottom panels: drawn from `app/bottom` (shell/regions.tsx), where the page hands them in (`regions.bottom`). */}
       <RegionSlot region="bottom" />
       </div>
-      {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
+      {errorBar}
     </section>
   );
 
-  return <ShellFrame plugins={view.plugins} client={client} regions={{ main: mainRegion, side: sideRegion, bottom: bottomRegion }} inline={[RAIL_SLOT]} legacy={(
+  return <ShellFrame plugins={view.plugins} client={client} regions={{ main: mainRegion, side: sideRegion, bottom: bottomRegion, away: { source: { client, store }, parts: { header: bottomControlsSlot, bar: switchBar, alerts, page: storagePage, worker: workerBar, error: errorBar } } }} inline={[RAIL_SLOT]} legacy={(
     <div className={`shell${paneOpen ? " browser-on" : ""}${browserFull ? " browser-full" : ""}${browserDocked ? " browser-mini" : ""}${browserFloat ? " browser-float" : ""}`} data-ready={view.ready ? "1" : "0"}>
       {/* A panel a plugin's program part opened (`ui.openView`). */}
       {!web && view.pluginPanel && (

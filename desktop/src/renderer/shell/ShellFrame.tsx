@@ -6,6 +6,10 @@
 // more), the right panel is botling.bot-panel's `app/side`, the bottom panels `:shell`'s `app/bottom`. The frame draws no element of
 // its own and the empty slots draw none, so the page's DOM is exactly what App rendered before.
 //
+// The fallback screen (shell/Fallback.tsx, M7-07c) is the shell's, not a plugin's: with `botling.chat` refused, failed or unloaded, `<RegionSlot region="main">`
+// draws it in the chat column's place from `regions.away` (the page's client and store, and the chrome the page keeps out of the column). The frame needs
+// nothing more of it; it stays up while the plugin is away and goes the moment the plugin's claim on `app/main` is held.
+//
 // The frame also keeps the renderer kernel's copy of the plugin list (plugin-feed.ts, M7-02b) current: App hands it each `PluginsView`
 // it has, the feed reconciles the kernel with it, and the plugins' rows are taken back when the frame unmounts. A mirror only: the
 // feed's rows are not drawn (KernelSlot draws components and frames), so the page is still exactly what App rendered.
