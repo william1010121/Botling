@@ -121,3 +121,44 @@ body { transition: padding-right .2s cubic-bezier(.2,.8,.2,1); }
 .pt-mv-alt:hover, .pt-mv-alt:focus-visible { border-color: var(--strong-line); }
 .pt-mv-ans { margin: 2px 0 4px; padding: 6px 10px; font-size: 14px; color: var(--text); background: var(--bubble); border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pt-msg .pt-mv-act { align-self: flex-end; font-size: 12px; }
+
+/* 「你不在時」: one block above the strip when the user comes back after 30 minutes or more; a one-line chip once 看完了 is pressed. */
+.pt-digest[hidden] { display: none; }
+.pt-digest { padding: 10px 0 0; }
+.pt-digest-chip { display: block; margin: 0 auto; min-height: 32px; padding: 6px 14px; font-size: 13px; color: var(--muted); background: var(--bubble); border: 1px solid var(--border); border-radius: 16px; cursor: pointer; transition: border-color .12s ease, color .12s ease; }
+.pt-digest-chip:hover, .pt-digest-chip:focus-visible { color: var(--text); border-color: var(--strong-line); }
+.pt-digest-chip:focus-visible, .pt-drow:focus-visible, .pt-orow:focus-visible, .pt-d-close:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.pt-d-card { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px; background: var(--bubble); border: 1px solid var(--border); border-radius: 14px; animation: pt-fade-up .18s cubic-bezier(.2,.8,.2,1); }
+.pt-d-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+.pt-d-title { font-size: 17px; font-weight: 600; }
+.pt-d-range { font-size: 12px; color: var(--faint); }
+.pt-d-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pt-tile { display: flex; flex-direction: column; padding: 10px 14px; border-radius: 12px; }
+.pt-tile-n { font-size: 26px; font-weight: 600; line-height: 1.2; }
+.pt-tile-l { font-size: 13px; }
+.pt-tile-wait { background: var(--waiting-bg); color: var(--orange-text); }
+.pt-tile-run { background: var(--info-bg); color: var(--link); }
+.pt-tile-done { background: var(--done-bg); color: var(--verify); }
+.pt-d-rows, .pt-d-others { display: flex; flex-direction: column; gap: 2px; }
+.pt-drow, .pt-orow { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 8px 10px; text-align: left; color: var(--text); background: transparent; border: 1px solid transparent; border-bottom-color: var(--line); border-radius: 8px; cursor: pointer; }
+.pt-drow:hover, .pt-orow:hover { background: var(--side); }
+.pt-dtext { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pt-dtext b { font-weight: 600; }
+.pt-dtag { flex: none; font-size: 12px; color: var(--faint); white-space: nowrap; }
+.pt-dtag.pt-ptag-app { color: var(--verify); background: none; padding: 0; }
+.pt-dtag.pt-ptag-bot { border: 1px dashed var(--strong-line); border-radius: 6px; padding: 0 6px; }
+/* A waiting row is always clear: orange edge, orange words, whatever the pointer does. */
+.pt-drow-wait { background: var(--waiting-bg); border-color: var(--orange-line); }
+.pt-drow-wait:hover { background: var(--waiting-bg); }
+.pt-drow-wait .pt-dtext { color: var(--orange-text); }
+.pt-dtag-wait { color: var(--orange-text); }
+.pt-d-label { font-size: 12px; color: var(--orange-text); padding-bottom: 4px; }
+.pt-oname { font-weight: 600; flex: none; }
+.pt-otext { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-omore { flex: none; font-size: 12px; color: var(--faint); }
+.pt-d-more { font-size: 12px; color: var(--faint); padding: 4px 10px; }
+.pt-d-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 12px; margin-top: -2px; }
+.pt-d-close { min-height: 40px; padding: 8px 18px; color: var(--text); background: var(--raised); border: 0; border-radius: 9px; cursor: pointer; }
+.pt-d-close:hover { background: var(--hover-strong); }
+@media (width < 480px) { .pt-d-tiles { gap: 6px; } .pt-tile { padding: 8px 10px; } .pt-d-card { padding: 14px; } }
+@media (prefers-reduced-motion: reduce) { .pt-d-card { animation-duration: 1ms !important; } }

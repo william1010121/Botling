@@ -1,14 +1,17 @@
 import type { CcbWeb } from "../../../../Web/src/plugins";
 import type { ChatState } from "../../../../Web/src/types";
-import { parseAsk, stripBriefing, type BookView, type TraceData } from "./model";
+import type { PinsView } from "./digest";
+import { parseAsk, stripBriefing, type TraceData } from "./model";
 import { PinUi, pinIcon } from "./ui";
 import { wordsFor } from "./words";
 
 export const PLUGIN = "botling.pin-area";
+/** The page says the user is here at most this often. */
+export const PRESENT_EVERY_MS = 60_000;
 
 /** What the chat page's state says for the pins: what the program part published for this chat (`state.pluginData`). */
-export function bookOf(state: ChatState): BookView | null {
-  const data = state.pluginData?.[PLUGIN] as BookView | undefined;
+export function bookOf(state: ChatState): PinsView | null {
+  const data = state.pluginData?.[PLUGIN] as PinsView | undefined;
   return data && typeof data === "object" && Array.isArray(data.pins) ? data : null;
 }
 
@@ -35,7 +38,18 @@ export function activate(ccb: CcbWeb): () => void {
     words,
     now: () => Date.now(),
     reduceMotion: () => !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
+    openChat: (id, messageId) => ccb.page.openChat(id, messageId),
   });
+  // 「你不在時」: a sign that the user is here, at most once a minute (the program part decides what a gap of 30 minutes means).
+  const signs = new AbortController();
+  let lastSign = 0;
+  const present = () => {
+    const at = Date.now();
+    if (!botId || at - lastSign < PRESENT_EVERY_MS || document.visibilityState === "hidden") return;
+    lastSign = at;
+    void ccb.call("touch", { botId }).catch(() => {});
+  };
+  for (const type of ["pointerdown", "pointermove", "keydown", "wheel", "focus"]) window.addEventListener(type, present, { capture: true, passive: true, signal: signs.signal });
   // A chat with no data yet asks for it, at most every few seconds.
   const asked = new Map<string, number>();
   ccb.page.onState((state) => {
@@ -89,5 +103,5 @@ export function activate(ccb: CcbWeb): () => void {
     const actions = element.querySelector(":scope > .message-actions");
     if (actions) actions.append(button); else element.append(button);
   });
-  return () => { mentions(); bubbles(); traces(); pinning(); ui.dispose(); };
+  return () => { signs.abort(); mentions(); bubbles(); traces(); pinning(); ui.dispose(); };
 }

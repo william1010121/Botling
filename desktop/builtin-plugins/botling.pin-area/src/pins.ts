@@ -3,15 +3,21 @@
 // tags and the hook, and keeps the books. Design and limits: ../DESIGN.md.
 import type { BotlingApi } from "../../../../Web/host/src/api";
 import * as M from "./model";
+import * as D from "./digest";
 
 export const PLUGIN = "botling.pin-area";
 const INDEX = "pins:bots";
+const PRESENCE = "presence";
 const keyOf = (botId: string) => `pins:${botId}`;
 /** A bot's tags this many times in a minute are enough: the rest are dropped (a loop of tags cannot churn the book). */
 const TAGS_PER_MINUTE = 30;
 const MAX_BOTS = 200;
 const MAX_FOLLOWED = 2_000;
 const MAX_ENDS = 50;
+/** The presence (when the user was last seen) is written to storage at most this often; a digest opening or closing is written at once. */
+const PRESENCE_SAVE_MS = 5 * 60_000;
+/** What other bots wait on is read again when a sign of the user comes and it is older than this. */
+const WAITING_FRESH_MS = 30_000;
 
 type Params = Record<string, unknown>;
 type Expose = (method: string, fn: (params: Params) => unknown) => () => void;
@@ -39,10 +45,45 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     try { api.storage.set(INDEX, [...bots]); } catch { /* kept in memory only */ }
   };
 
+  // ---- 「你不在時」: when the user was last here, the digest open now, and what other bots wait on (read again from the app, never from files) ----
+  let presence = D.readPresence(typeof api.storage?.get === "function" ? api.storage.get(PRESENCE) : null);
+  let presenceSaved = now();
+  const savePresence = (force: boolean) => {
+    const at = now();
+    if (!force && at - presenceSaved < PRESENCE_SAVE_MS) return;
+    presenceSaved = at;
+    try { api.storage.set(PRESENCE, presence); } catch { /* kept in memory only */ }
+  };
+  const waiting = { at: 0, items: [] as D.WaitingItem[], names: new Map<string, string>() };
+  /** `workspace.waiting()` and the bots' names. A failure leaves nothing (a line that may be stale is worse than none). */
+  const refreshWaiting = async (): Promise<void> => {
+    try {
+      const [list, said] = await Promise.all([
+        typeof api.workspace?.bots === "function" ? api.workspace.bots() : [],
+        typeof api.workspace?.waiting === "function" ? api.workspace.waiting() : { items: [] },
+      ]);
+      waiting.names = new Map(list.map((bot): [string, string] => [bot.id, bot.name]));
+      waiting.items = (Array.isArray(said?.items) ? said.items : []).filter((item) => item && typeof item.botId === "string" && typeof item.text === "string");
+    } catch {
+      waiting.names = new Map();
+      waiting.items = [];
+    }
+    waiting.at = now();
+  };
+  const digestFor = (botId: string, book: M.Book): D.DigestView | null =>
+    presence.away ? D.digestOf(book, presence.away, D.othersOf(waiting.items, waiting.names, botId)) : null;
+  /** What the chat draws for a bot: its cards, and the digest while one is open. */
+  const viewFor = (botId: string, book: M.Book): D.PinsView => {
+    const away = digestFor(botId, book);
+    return { ...M.viewOf(book), ...(away ? { away } : {}) };
+  };
+
   /** What the chat of `botId` draws from now on. A chat the app does not know (a bot that was removed) just takes nothing. */
   const decorated = new Set<string>();
+  const published = new Set<string>();
   const publish = (botId: string, book = load(botId)) => {
-    try { void Promise.resolve(api.chat.setData(botId, M.viewOf(book) as never)).catch(() => {}); } catch { /* no page to draw it */ }
+    if (published.size < MAX_BOTS) published.add(botId);
+    try { void Promise.resolve(api.chat.setData(botId, viewFor(botId, book) as never)).catch(() => {}); } catch { /* no page to draw it */ }
     // the traces of lines the bot moved into cards (a chat with none and none before is not asked at all)
     const traces = M.tracesOf(book);
     if (!traces.length && !decorated.has(botId)) return;
@@ -120,6 +161,13 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (M.markSeen(book, now())) save(botId, book);
     }),
     api.events.on("messagePosted", ({ botId, role, text, id }) => {
+      // the user wrote something, in any chat: the digest is gone
+      if (role === "user") {
+        const sent = D.messaged(presence, now());
+        presence = sent.presence;
+        savePresence(sent.cleared);
+        if (sent.cleared) for (const other of published) publish(other);
+      }
       // a sub bot a card follows spoke: its reply goes into that card (the parent is checked first)
       if (role === "bot" && followers.has(botId) && followers.get(botId) !== botId) void subBotNews(botId, String(text ?? ""));
       if (!bots.has(botId)) return;
@@ -246,7 +294,31 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       const botId = botOf(params);
       const book = load(botId);
       publish(botId, book);
-      return M.viewOf(book);
+      return viewFor(botId, book);
+    }),
+    // the page was used (it says so at most once a minute): after a gap of 30 minutes or more the digest opens, for every chat
+    expose("touch", async (params) => {
+      const botId = botOf(params);
+      const seen = D.present(presence, now());
+      presence = seen.presence;
+      savePresence(seen.started);
+      if (!presence.away) return { away: false };
+      // a new digest, or one that has been open a while: the other bots' lines are read again, and every chat draws what is true now
+      // (a message sent meanwhile has already taken the digest away: `presence` is read again by `publish`)
+      if (seen.started || now() - waiting.at > WAITING_FRESH_MS) {
+        await refreshWaiting();
+        for (const other of new Set([...published, botId])) publish(other);
+      }
+      return { away: presence.away !== null };
+    }),
+    // 看完了 (the digest folds to its one-line chip) and the chip's reopen: one state for every chat
+    expose("collapse", (params) => {
+      const next = D.collapse(presence, params.collapsed !== false);
+      if (!next) return { unchanged: true };
+      presence = next;
+      savePresence(true);
+      for (const other of published) publish(other);
+      return { collapsed: next.away?.collapsed ?? false };
     }),
     // the user pins a message (any message: theirs or a bot's)
     expose("pinMessage", (params) => {
