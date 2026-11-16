@@ -654,7 +654,7 @@ export class Conversations {
     if (filter) { try { text = await filter(text); } catch { /* as it was */ } }
     if (policy.passes && isPass(text)) return null;
     const parsed = parseReply(text);
-    chat.guestReactions(parsed.reactions, `guest:${member.id}:${answer.engine}`);
+    chat.guests.guestReactions(parsed.reactions, `guest:${member.id}:${answer.engine}`);
     const line: ChatRecord = { id: newId(), role: "bot", text: parsed.body, date: toSwiftDate(), sourceID: member.id, engine: answer.engine };
     if (parsed.choices) line.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
     if (parsed.questions) line.questions = parsed.questions;

@@ -105,7 +105,7 @@ export class CoreAgents {
   private movedInRows(ownerId: string): SubagentRowView[] {
     const moves = this.agentFlags().agentMoves;
     return this.agents.movedIn(ownerId).map((record): SubagentRowView => {
-      const row = this.bots.get(record.host.botId)?.subagentRowFor(record.nativeId) ?? null;
+      const row = this.bots.get(record.host.botId)?.workers.subagentRowFor(record.nativeId) ?? null;
       return {
         outputTokens: row?.outputTokens ?? null,
         id: record.nativeId.slice(0, 200),
@@ -155,7 +155,7 @@ export class CoreAgents {
   /** Reconcile (A1.3). `notify`: tell what it found (and what the constructor's found), and finish moves cut short. */
   reconcileAgents(notify: boolean) {
     const alive = [...this.bots.keys()].filter((id) => !this.removed.has(id));
-    const report = this.agents.reconcile({ hosts: alive.flatMap((id) => this.bots.get(id)!.hostBooks()), bots: new Set(alive) });
+    const report = this.agents.reconcile({ hosts: alive.flatMap((id) => this.bots.get(id)!.workers.hostBooks()), bots: new Set(alive) });
     const held = this.agentReconcile;
     this.agentReconcile = null;
     const found: ReconcileReport = held ? { ...report, hostLost: [...held.hostLost, ...report.hostLost], ownerReverted: [...held.ownerReverted, ...report.ownerReverted] } : report;
@@ -490,7 +490,7 @@ export class CoreAgents {
     if (!record || !isDetached(record)) return false;
     const owner = this.removed.has(record.owner.botId) ? undefined : this.bots.get(record.owner.botId);
     if (!owner) return false;
-    owner.askForWorker(head, { ...item, summary: `${item.summary} (worker "${record.summary.description || nativeId}" on ${this.agentBotName(record.host.botId)})` });
+    owner.questions.askForWorker(head, { ...item, summary: `${item.summary} (worker "${record.summary.description || nativeId}" on ${this.agentBotName(record.host.botId)})` });
     return true;
   }
 

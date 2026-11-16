@@ -75,10 +75,10 @@ export function studioWorld(deps: StudioDeps): StudioWorld {
     },
     specs() {
       const all: Record<string, unknown[]> = {};
-      for (const bot of deps.chats()) if (bot.specs.length) all[idOf(bot)] = structuredClone(bot.specs) as unknown[];
+      for (const bot of deps.chats()) if (bot.recordsBook.specs.length) all[idOf(bot)] = structuredClone(bot.recordsBook.specs) as unknown[];
       return all;
     },
-    writeSpecs: (botId, specs) => must(botId).editSpecs((list) => { list.splice(0, list.length, ...(structuredClone(specs) as typeof list)); }),
+    writeSpecs: (botId, specs) => must(botId).recordsBook.editSpecs((list) => { list.splice(0, list.length, ...(structuredClone(specs) as typeof list)); }),
     library(withInfo): StudioLibrary {
       const entries: Record<string, StudioLibraryEntry> = {};
       for (const name of deps.library.names) entries[name] = entryOf(name, withInfo.includes(name));

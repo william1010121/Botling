@@ -112,8 +112,8 @@ export class BotViews {
       folder: this.profile.folder.slice(0, 4_000),
       phase,
       working: this.members.some(bot => bot.working),
-      connection: this.members.some(bot => bot.outage) ? "disconnected" : this.members.some(bot => bot.retryingConnection) ? "retrying" : null,
-      codexRetry: this.members.find(bot => bot.codexRetry)?.codexRetry ?? null,
+      connection: this.members.some(bot => bot.outage) ? "disconnected" : this.members.some(bot => bot.progress.retryingConnection) ? "retrying" : null,
+      codexRetry: this.members.find(bot => bot.progress.codexRetry)?.progress.codexRetry ?? null,
       approvals: this.members.reduce((n, bot) => n + bot.approvals.size, 0),
       unread: this.unread,
       subagents: this.members.reduce((n, bot) => n + bot.subagents.running.length, 0),
@@ -133,8 +133,8 @@ export class BotViews {
 
   /** The head turn's token speed: the member whose head last finished a request. */
   tokenSpeed(): BotView["tokenSpeed"] {
-    const latest = this.members.filter(bot => bot.mainSpeed).sort((a, b) => b.mainSpeedAt - a.mainSpeedAt)[0];
-    const view = latest ? speedView(latest.mainSpeed) : null;
+    const latest = this.members.filter(bot => bot.views.mainSpeed).sort((a, b) => b.views.mainSpeedAt - a.views.mainSpeedAt)[0];
+    const view = latest ? speedView(latest.views.mainSpeed) : null;
     return view && latest ? { ...view, engine: latest.engine } : null;
   }
 

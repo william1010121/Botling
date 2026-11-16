@@ -60,8 +60,8 @@ export class BotSubagentRows {
   rowsChanged(force = false) {
     const primary = this.options.primary ?? this.host;
     const text = JSON.stringify(primary.subagentRows());
-    if (!force && text === primary.lastRows) return;
-    primary.lastRows = text;
+    if (!force && text === primary.recordsBook.lastRows) return;
+    primary.recordsBook.lastRows = text;
     primary.updated();
   }
 
@@ -89,7 +89,7 @@ export class BotSubagentRows {
   queueNote(note: string) {
     const bot = this.options.primary ?? this.host;
     if (!bot.head?.running) return;
-    bot.queuedNote = note;
+    bot.delivery.queuedNote = note;
   }
 
   saveSubagents(progress = false, changed?: SubagentRecord) {

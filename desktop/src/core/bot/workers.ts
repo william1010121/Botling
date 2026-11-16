@@ -63,12 +63,12 @@ export class BotWorkers {
   private get shuttingDown() { return this.host.shuttingDown; }
   private get turns() { return this.host.turns; }
   private get swapHold() { return this.host.swapHold; }
-  private get dirtySubagents() { return this.host.dirtySubagents; }
-  private get speaker() { return this.host.speaker; }
+  private get dirtySubagents() { return this.host.subagentRowBook.dirtySubagents; }
+  private get speaker() { return this.host.views.speaker; }
   private get commandFolder() { return this.host.commandFolder; }
-  private get context(): ComponentsContext | null { return this.host.context; }
+  private get context(): ComponentsContext | null { return this.host.cards.context; }
   private get inHeadSubagents() { return this.host.inHeadSubagents; }
-  private get backgroundWorkRunning() { return this.host.backgroundWorkRunning; }
+  private get backgroundWorkRunning() { return this.host.tasks.backgroundWorkRunning; }
   private persist(soon = false) { this.host.persist(soon); }
   private messageView(record: ChatRecord) { return this.host.messageView(record); }
   private changed(record: ChatRecord) { this.host.changed(record); }
@@ -78,17 +78,17 @@ export class BotWorkers {
   private subagentHistory(subagent: SubagentRecord): SubagentHistory { return this.host.subagentHistory(subagent); }
   private routeWorkerApproval(head: ApprovalAnswerer, item: Extract<StreamItem, { kind: "permission" }>) { return this.host.routeWorkerApproval(head, item); }
   private prompts(): BotPrompts { return this.host.prompts(); }
-  private sessionStart(resume: boolean, prompts: BotPrompts): SessionStart { return this.host.sessionStart(resume, prompts); }
-  private emitSteps(turn: Turn) { this.host.emitSteps(turn); }
+  private sessionStart(resume: boolean, prompts: BotPrompts): SessionStart { return this.host.headRun.sessionStart(resume, prompts); }
+  private emitSteps(turn: Turn) { this.host.headEvents.emitSteps(turn); }
   private recordOutage(arg: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) { this.host.recordOutage(arg); }
   private addBackgroundTask(id: string, kind: BackgroundKind, title: string) { this.host.addBackgroundTask(id, kind, title); }
-  private endSubagentTasks(ownerId: string) { this.host.endSubagentTasks(ownerId); }
+  private endSubagentTasks(ownerId: string) { this.host.tasks.endSubagentTasks(ownerId); }
   private endBackground(id: string, status: string, summary: string | null) { this.host.endBackground(id, status, summary); }
   private checkSettingsHold() { this.host.checkSettingsHold(); }
   private noteProgressOf(item: CodexItem) { this.host.noteProgressOf(item); }
   private noteRequest(event: RequestEvent) { this.host.noteRequest(event); }
   private scheduleIdle() { this.host.scheduleIdle(); }
-  private ownComponents() { return this.host.ownComponents(); }
+  private ownComponents() { return this.host.cards.ownComponents(); }
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) { this.host.ask(head, item, turn); }
   private noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) { this.host.noteToolCall(item); }
   private showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) { this.host.showDenial(denial); }
@@ -134,7 +134,7 @@ export class BotWorkers {
 
   /** Its heads' subagent lists as they are now, for the registry's reconcile at start. */
   hostBooks(): StartupHost[] {
-    return this.members.map((bot) => ({ ...bot.hostFacts(), running: bot.head?.running ?? false, list: bot.subagents.list, workers: bot.workerViews }));
+    return this.members.map((bot) => ({ ...bot.hostFacts(), running: bot.head?.running ?? false, list: bot.subagents.list, workers: bot.workers.workerViews }));
   }
 
   /** One of its own rows by native id (for the owner's list when another bot owns it), with the head that holds it. */
@@ -320,8 +320,8 @@ export class BotWorkers {
   /** Workers started in a call-in turn, by worker id (`CallInWork`): kept in the owner's settings, so a restart keeps them. */
   get callInWork(): CallInWorkBook {
     const bot = this.owner;
-    bot.callInWorkBook ??= new CallInWorkBook({ load: () => bot.store.loadSettings().callInWork, save: (work) => bot.store.saveSetting("callInWork", work) });
-    return bot.callInWorkBook;
+    bot.workers.callInWorkBook ??= new CallInWorkBook({ load: () => bot.store.loadSettings().callInWork, save: (work) => bot.store.saveSetting("callInWork", work) });
+    return bot.workers.callInWorkBook;
   }
   callInWorkBook: CallInWorkBook | null = null;
 

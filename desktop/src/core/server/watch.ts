@@ -178,7 +178,7 @@ export class CoreWatch {
   /** 1.x's `checkStalls`: each bot (not a partner head) is reminded of a quiet run once per quiet spell. */
   checkStalls(now = Date.now()) {
     const minutes = settingsView(readSettings(Layout.settings(this.options.dataDir))).stallReminderMinutes;
-    for (const bot of this.bots.values()) bot.checkStall(now, minutes * (this.options.stallMinuteMs ?? 60_000));
+    for (const bot of this.bots.values()) bot.progress.checkStall(now, minutes * (this.options.stallMinuteMs ?? 60_000));
   }
 
   watchRuns() {

@@ -261,7 +261,7 @@ export class CoreCopies {
       chat.settleAppQuestion(record.id, { answer: NO_LONGER_NEEDED });
       return { accepted: false };
     }
-    if (!chat.holdCardAnswer(record.id, outcome, guest.profile.name)) return { accepted: false };
+    if (!chat.guests.holdCardAnswer(record.id, outcome, guest.profile.name)) return { accepted: false };
     const told = (delivered: boolean) => {
       chat.releaseCardAnswer(record.id, delivered);
       // A relayed copy of the user's call-in (`callInBy`): the card it copies shows the answer too.

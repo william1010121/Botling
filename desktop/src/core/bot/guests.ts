@@ -261,7 +261,7 @@ export class BotGuests {
    * shows it "Queued" and cannot be answered again until `releaseCardAnswer` says whether it got there.
    */
   holdCardAnswer(id: string, outcome: { chosen?: number; answer?: string }, to: string): boolean {
-    if (this.options.primary) return this.options.primary.holdCardAnswer(id, outcome, to);
+    if (this.options.primary) return this.options.primary.guests.holdCardAnswer(id, outcome, to);
     const record = this.records.find((candidate) => candidate.id === id);
     if (!record || !isOpenQuestion(record)) return false;
     record.pendingAnswer = { ...outcome, to };

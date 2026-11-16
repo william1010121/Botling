@@ -113,32 +113,32 @@ export class CorePluginWorld {
         },
         shortcutOverrides: () => settingsView(readSettings(Layout.settings(this.options.dataDir))).shortcuts,
         createBot: (plugin, title, name, job, avatar, more) => this.createPluginBot(plugin, title, { name, job, ...(avatar ? { avatar } : {}), ...more }),
-        commandApproval: (botId, command) => this.pluginBot(botId)?.commandApproval(command) ?? null,
+        commandApproval: (botId, command) => this.pluginBot(botId)?.cards.commandApproval(command) ?? null,
         commandRun: (botId, key, command, run) => this.pluginBot(botId)?.pluginCommand(key, command, run) ?? null,
-        component: (botId, name, data, command) => this.pluginBot(botId)?.libraryEntry(name, data, command) ?? null,
-        imageUrls: (botId, data) => this.pluginBot(botId)?.imageUrls(data) ?? null,
+        component: (botId, name, data, command) => this.pluginBot(botId)?.cards.libraryEntry(name, data, command) ?? null,
+        imageUrls: (botId, data) => this.pluginBot(botId)?.cards.imageUrls(data) ?? null,
         cardAsk: (botId, card, command, component) => this.pluginBot(botId)?.cardAskFor(card, command, component) ?? null,
-        cardApprove: (botId, command, component, folder, detail) => this.pluginBot(botId)?.cardApproveFor(command, component, folder, detail) ?? false,
+        cardApprove: (botId, command, component, folder, detail) => this.pluginBot(botId)?.cards.cardApproveFor(command, component, folder, detail) ?? false,
         noteCards: {
           components: (botId) => this.pluginBot(botId)?.noteComponents() ?? null,
           states: (botId, cards) => this.pluginBot(botId)?.noteCardStates(cards) ?? null,
           run: (botId, key, command, force) => this.pluginBot(botId)?.noteCardRun(key, command, force) ?? null,
         },
         cards: {
-          library: (botId) => this.pluginBot(botId)?.cardLibrary() ?? null,
+          library: (botId) => this.pluginBot(botId)?.cards.cardLibrary() ?? null,
           shown: (botId) => this.pluginBot(botId)?.cardsShown() ?? null,
-          states: (botId, cards) => this.pluginBot(botId)?.cardStates(cards) ?? null,
-          run: (botId, card, command, force) => this.pluginBot(botId)?.cardRun(card, command, force) ?? null,
+          states: (botId, cards) => this.pluginBot(botId)?.cards.cardStates(cards) ?? null,
+          run: (botId, card, command, force) => this.pluginBot(botId)?.cards.cardRun(card, command, force) ?? null,
           ask: (botId, card, command, component) => this.pluginBot(botId)?.cardAskFor(card, command, component) ?? null,
           setNotes: (botId, notes) => { const bot = this.pluginBot(botId); if (!bot) return false; bot.setCardNotes(notes); return true; },
-          legacyPins: (botId) => this.pluginBot(botId)?.legacyPins() ?? null,
+          legacyPins: (botId) => this.pluginBot(botId)?.cards.legacyPins() ?? null,
         },
         dataChanged: (botId, plugin, data) => { if (this.bots.has(botId)) this.event({ type: "chat.pluginData", botId, plugin, data }); },
-        approveCommand: (botId, command) => this.pluginBot(botId)?.approveCommand(command) ?? false,
+        approveCommand: (botId, command) => this.pluginBot(botId)?.cards.approveCommand(command) ?? false,
         chat: (botId, limit) => {
           const bot = this.pluginBot(botId);
           if (!bot) return null;
-          const chat = bot.pluginChat(limit);
+          const chat = bot.views.pluginChat(limit);
           return { ...chat, botId: this.outId(chat.botId) };
         },
         botId: (botId) => this.pluginBot(botId)?.id ?? null,

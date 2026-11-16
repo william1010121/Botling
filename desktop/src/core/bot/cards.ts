@@ -132,7 +132,7 @@ export class BotCards {
   /** The library or its list changed: its next message (and the other head's) says what changed. */
   componentsChanged() {
     this.componentsMayHaveChanged = true;
-    for (const peer of this.peers) peer.componentsMayHaveChanged = true;
+    for (const peer of this.peers) peer.cards.componentsMayHaveChanged = true;
     this.updated();
   }
 
@@ -233,7 +233,7 @@ export class BotCards {
 
   /** `ccb.save(data)` of a component in a line: kept there; nothing is sent or answered (`saveComponentData`). */
   componentSave(messageId: string, index: number, data: string): ResultOf<"component.save"> {
-    if (this.options.primary) return this.options.primary.componentSave(messageId, index, data);
+    if (this.options.primary) return this.options.primary.cards.componentSave(messageId, index, data);
     const context = this.context;
     const record = this.records.find((candidate) => candidate.id === messageId);
     const display = (record?.displays as Display[] | undefined)?.[index];
@@ -250,7 +250,7 @@ export class BotCards {
    * allows anything (the chat page cannot): one not allowed yet answers what the app page's ApprovalSheet asks about.
    */
   componentCommand(messageId: string, index: number, shown: { command: string; folder: string; detail?: string; force?: boolean; live?: boolean }): ResultOf<"component.command"> {
-    if (this.options.primary) return this.options.primary.componentCommand(messageId, index, shown);
+    if (this.options.primary) return this.options.primary.cards.componentCommand(messageId, index, shown);
     const context = this.context;
     const record = this.records.find((candidate) => candidate.id === messageId);
     const display = (record?.displays as Display[] | undefined)?.[index];
@@ -304,7 +304,7 @@ export class BotCards {
 
   /** `ccb.runDetail(values)`: the component's Detail command as about.md has it now, only where the user allowed it (`runComponentDetail`). */
   async componentDetail(name: string, folder: string, rawValues: unknown, card?: string, command?: string): Promise<ResultOf<"component.detail">> {
-    if (this.options.primary) return this.options.primary.componentDetail(name, folder, rawValues, card, command);
+    if (this.options.primary) return this.options.primary.cards.componentDetail(name, folder, rawValues, card, command);
     const context = this.context;
     if (!context) return { ok: false, value: "There are no components here." };
     const values = detailValues(rawValues);
@@ -320,14 +320,14 @@ export class BotCards {
 
   /** A plugin's command for this bot (its frame's `ccb.requestApproval`): the folder it runs in, and whether the user allowed it there. */
   commandApproval(command: string): { folder: string; approved: boolean } | null {
-    if (this.options.primary) return this.options.primary.commandApproval(command);
+    if (this.options.primary) return this.options.primary.cards.commandApproval(command);
     const context = this.context;
     return context ? { folder: this.commandFolder, approved: context.commands.isApproved(command, this.commandFolder) } : null;
   }
 
   /** The user allowed a plugin's command on the app page's ApprovalSheet: remembered for this bot's folder, as a card's. */
   approveCommand(command: string): boolean {
-    if (this.options.primary) return this.options.primary.approveCommand(command);
+    if (this.options.primary) return this.options.primary.cards.approveCommand(command);
     const context = this.context;
     if (!context || this.readOnly) return false;
     context.commands.approve(command, this.commandFolder);
@@ -379,7 +379,7 @@ export class BotCards {
 
   /** The component library as a card-keeping plugin sees it, with the folder commands run in. null: no component context. */
   cardLibrary(): { botId: string; names: string[]; offered: string[]; entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>; readOnly: boolean; folder: string } | null {
-    if (this.options.primary) return this.options.primary.cardLibrary();
+    if (this.options.primary) return this.options.primary.cards.cardLibrary();
     const context = this.context;
     if (!context) return null;
     const library = context.library;
@@ -412,7 +412,7 @@ export class BotCards {
     folder: string; detail: string | null; every: number | null; status: CommandStatus; data: string | null; error: string | null; ranAt: number | null;
     images: Record<string, string>; dataImages: Record<string, string>; lastRan: number | null; run: { status: CommandStatus; data: string | null; error: string | null; ranAt: number | null } | null;
   }[] | null {
-    if (this.options.primary) return this.options.primary.cardStates(cards);
+    if (this.options.primary) return this.options.primary.cards.cardStates(cards);
     const context = this.context;
     if (!context) return null;
     const folder = this.commandFolder;
@@ -431,7 +431,7 @@ export class BotCards {
 
   /** A card's command run again when the user allowed it in this folder (what a pin's ↻, its timer and its first show do); false: not allowed. */
   cardRun(card: string, command: string, force: boolean): boolean {
-    if (this.options.primary) return this.options.primary.cardRun(card, command, force);
+    if (this.options.primary) return this.options.primary.cards.cardRun(card, command, force);
     const context = this.context;
     if (!context || this.readOnly || !BotCards.pluginCard(card) || !context.commands.isApproved(command, this.commandFolder)) return false;
     void context.commands.run(card, command, this.commandFolder, force);
@@ -450,7 +450,7 @@ export class BotCards {
 
   /** "Allow" on the sheet for a card of a plugin's: its command and Detail command as the sheet showed them (`approveCard`). */
   cardApproveFor(command: string, name: string, folder: string, shownDetail: string | null): boolean {
-    if (this.options.primary) return this.options.primary.cardApproveFor(command, name, folder, shownDetail);
+    if (this.options.primary) return this.options.primary.cards.cardApproveFor(command, name, folder, shownDetail);
     const context = this.context;
     if (!context || this.readOnly || resolvePath(folder) !== resolvePath(this.commandFolder)) return false;
     return this.approveCard(command, context.library.detailCommand(name), shownDetail, this.commandFolder);
@@ -464,7 +464,7 @@ export class BotCards {
 
   /** The pins botling.board kept here before it did (pins.json, as it was); null: none. */
   legacyPins(): unknown[] | null {
-    if (this.options.primary) return this.options.primary.legacyPins();
+    if (this.options.primary) return this.options.primary.cards.legacyPins();
     try { return this.store.loadList("pins.json"); } catch { return null; }
   }
 

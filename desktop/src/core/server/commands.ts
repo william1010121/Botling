@@ -188,7 +188,7 @@ export class CoreCommands {
       case "storage.list": {
         const bot = this.bot(cmd.botId);
         const artifacts = bot.profile.folder ? profilePaths(bot.profile).artifacts : null;
-        return { items: storageItems(artifacts, this.storage.refs(cmd.botId), bot.linkedFiles()), artifacts };
+        return { items: storageItems(artifacts, this.storage.refs(cmd.botId), bot.subagentRowBook.linkedFiles()), artifacts };
       }
       // Main checked the paths are files (main.ts storageAdd).
       case "storage.add": this.bot(cmd.botId); return { added: this.storage.add(cmd.botId, cmd.paths) };
@@ -286,7 +286,7 @@ export class CoreCommands {
       case "doctor.run": return this.doctor.run(cmd.includeLatest);
       case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);
       case "handoff.stop": return this.bot(cmd.botId).stopHandoff(cmd.handoffId);
-      case "rounds.stop": return this.bot(cmd.botId).stopRounds();
+      case "rounds.stop": return this.bot(cmd.botId).group.stopRounds();
       case "chat.ignoreQuestion": return this.ignoreQuestion(cmd.botId, cmd.messageId);
       case "chat.choose": return this.calledInPick(cmd.botId, cmd.messageId, cmd.index) ?? this.bot(cmd.botId).choose(cmd.messageId, cmd.index, cmd.text);
       case "chat.answer": {
@@ -325,13 +325,13 @@ export class CoreCommands {
       case "chat.read": {
         // You read it up to its newest line: plugins hear how much was unread before (`chatRead`).
         const bot = this.bot(cmd.botId);
-        this.plugins.event("chatRead", { botId: this.outId(bot.id), ...bot.readMark() });
+        this.plugins.event("chatRead", { botId: this.outId(bot.id), ...bot.recordsBook.readMark() });
         return bot.read();
       }
-      case "component.command": return this.bot(cmd.botId).componentCommand(cmd.messageId, cmd.index, cmd);
+      case "component.command": return this.bot(cmd.botId).cards.componentCommand(cmd.messageId, cmd.index, cmd);
       case "component.approve": return this.bot(cmd.botId).componentApprove(cmd.messageId, cmd.index, cmd);
-      case "component.detail": return this.bot(cmd.botId).componentDetail(cmd.name, cmd.folder, cmd.values, cmd.card, cmd.command);
-      case "component.save": return this.bot(cmd.botId).componentSave(cmd.messageId, cmd.index, cmd.data);
+      case "component.detail": return this.bot(cmd.botId).cards.componentDetail(cmd.name, cmd.folder, cmd.values, cmd.card, cmd.command);
+      case "component.save": return this.bot(cmd.botId).cards.componentSave(cmd.messageId, cmd.index, cmd.data);
       case "component.report": return { sent: await this.reportComponent(cmd) };
       case "chat.feedback": {
         const incoming = join(this.options.dataDir, "incoming");
@@ -403,7 +403,7 @@ export class CoreCommands {
     const failed: { botId: string; name: string; reason: string }[] = [];
     let applied = 0;
     for (const [botId, bot] of [...this.bots]) {
-      try { await bot.applyEngineChoices(choices); applied += 1; }
+      try { await bot.settings.applyEngineChoices(choices); applied += 1; }
       catch (error) { failed.push({ botId, name: bot.profile.name, reason: String((error as Error)?.message ?? error).slice(0, 300) }); }
     }
     this.log(`engine defaults applied to ${applied} bots, ${failed.length} failed`);
@@ -443,8 +443,8 @@ export class CoreCommands {
       const now = settingsView(next)[key];
       if (change.key === key && now !== settingsView(before)[key]) for (const bot of this.bots.values()) bot.applyEngineDefaults({ [key]: now });
     }
-    if (change.key === "defaultPrimaryEngine" || change.key === "defaultEngines") for (const bot of this.bots.values()) bot.appPrimaryChanged();
-    if (change.key === "claudeWorkerLimit") for (const bot of this.bots.values()) bot.claudeWorkerLimitChanged();
+    if (change.key === "defaultPrimaryEngine" || change.key === "defaultEngines") for (const bot of this.bots.values()) bot.views.appPrimaryChanged();
+    if (change.key === "claudeWorkerLimit") for (const bot of this.bots.values()) bot.views.claudeWorkerLimitChanged();
     if (change.key === "language" || change.key === "botLook" || change.key === "claudeWorkerLimit") this.plugins.appSettingsChanged();
     const view = this.settingsNow();
     this.event({ type: "settings.updated", settings: view });

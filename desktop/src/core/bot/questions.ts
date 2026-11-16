@@ -89,7 +89,7 @@ export class BotQuestions {
 
   /** The owner's side: a card for a worker it owns that another bot runs; the pick goes back to that bot's `head`. */
   askForWorker(head: ApprovalAnswerer, item: WorkerApproval): void {
-    if (this.options.primary) return this.options.primary.askForWorker(head, item);
+    if (this.options.primary) return this.options.primary.questions.askForWorker(head, item);
     this.ask(head as unknown as AgentHead, { kind: "permission", ...item }, null);
   }
 

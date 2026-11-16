@@ -196,7 +196,7 @@ export class MaintainerDesk {
   reportProblem(name: string, rawText: string, bot: Bot, pin: ReportCard | null, screenshot: string | null, pictures: string[]): boolean {
     const text = rawText.trim();
     if (!text && !pictures.length) return false;
-    const kept = screenshot ? bot.keepFiles([screenshot])[0]?.path ?? null : null;
+    const kept = screenshot ? bot.guests.keepFiles([screenshot])[0]?.path ?? null : null;
     const said = text || `see the attached picture${pictures.length === 1 ? "" : "s"}`;
     this.requestComponentChange(name, problemReport(said, bot.profile.name, pin, kept), "The user", null, [...(kept ? [kept] : []), ...pictures]);
     return true;
@@ -231,7 +231,7 @@ export class MaintainerDesk {
     const limit = COMPONENT_LIMIT;
     const botName = this.nameOf(bot);
     const ask: ComponentAsk = {
-      key: randomUUID().slice(0, 8).toLowerCase(), name, botId: bot.id, request, userAsked: shortened(bot.lastAsked, 300),
+      key: randomUUID().slice(0, 8).toLowerCase(), name, botId: bot.id, request, userAsked: shortened(bot.views.lastAsked, 300),
       stamp: this.deps.library.stampOf(name), changing: exists && own.includes(name),
     };
     const answerBack = ` If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for ${botName}</component-declined>; the app passes it on to ${botName}.`;

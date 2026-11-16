@@ -100,7 +100,7 @@ export class BotRoutines {
 
   /** The store Codex's `app_routines` uses (null for a partner: its primary's). */
   get routineStorePath(): string | null {
-    return (this.owner.scheduledStore ?? null)?.file ?? null;
+    return (this.owner.routines.scheduledStore ?? null)?.file ?? null;
   }
 
   loadRoutines(): { jobs: Routine[]; scheduled: ScheduledRoutine[] } {
@@ -170,7 +170,7 @@ export class BotRoutines {
 
   /** Codex changed its routines through `app_routines`: the app's view follows. */
   routinesEdited() {
-    this.owner.routinesChanged();
+    this.owner.routines.routinesChanged();
   }
 
   /**

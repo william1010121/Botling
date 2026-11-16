@@ -34,7 +34,7 @@ export class BotRecords {
 
   // ---- Bridge: names on `Bot` (`host`) ----
   private get shuttingDown(): boolean { return this.host.shuttingDown; }
-  private get lineMediaStore(): string { return this.host.lineMediaStore; }
+  private get lineMediaStore(): string { return this.host.delivery.lineMediaStore; }
   private updated() { this.host.updated(); }
   private refuseIfClosed() { this.host.refuseIfClosed(); }
   private deliverTo(head: Engine, words: string, userId: string | null, extra?: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds }): Turn { return this.host.deliverTo(head, words, userId, extra); }
@@ -163,9 +163,9 @@ export class BotRecords {
 
   messageView(record: ChatRecord): MessageView {
     const lookup = { get: (id: string) => this.members.map(bot => bot.subagents.get(id)).find(Boolean) };
-    const view = messageView(record, this.members.map(bot => bot.approvals.get(record.id)).find(Boolean), lookup, this.owner.displayViews(record));
+    const view = messageView(record, this.members.map(bot => bot.approvals.get(record.id)).find(Boolean), lookup, this.owner.cards.displayViews(record));
     // Your line a head could not take into its turn under way waits in a queue: it says so until it is sent.
-    if (record.role === "user" && this.members.some(bot => bot.waitsFor(record.id))) view.queued = true;
+    if (record.role === "user" && this.members.some(bot => bot.decisions.waitsFor(record.id))) view.queued = true;
     // A card's answer that waits to reach the bot that asked: shown as given, "Queued" (`holdCardAnswer`).
     if (record.pendingAnswer) {
       if (record.pendingAnswer.chosen !== undefined) view.chosen = record.pendingAnswer.chosen;
@@ -202,7 +202,7 @@ export class BotRecords {
     const touched = new Set([...owner.specList, ...edited].flatMap((spec) => (spec.messageID ? [spec.messageID] : [])));
     owner.specList = edited;
     if (!owner.readOnly) owner.store.saveList("specs.json", edited);
-    for (const id of touched) owner.refreshLine(id);
+    for (const id of touched) owner.recordsBook.refreshLine(id);
     return true;
   }
 

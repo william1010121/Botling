@@ -121,7 +121,7 @@ export class CoreSend {
     const bot = this.bot(botId);
     let path: string | null = null;
     if (ref.startsWith("pending:")) path = this.pending.get(botId, ref.slice(8))?.path ?? null;
-    else path = bot.attachmentPath(ref, line);
+    else path = bot.delivery.attachmentPath(ref, line);
     if (!path) throw new ContractError("not_found", "No such attachment.");
     return { path, type: servedType(path) };
   }

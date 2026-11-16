@@ -17,7 +17,7 @@ export class BotTasks {
   private get records() { return this.host.records; }
   private get turn() { return this.host.turn; }
   private get session() { return this.host.session; }
-  private get ownRecords() { return this.host.ownRecords; }
+  private get ownRecords() { return this.host.recordsBook.ownRecords; }
   private get managedPending() { return this.host.managedPending; }
   private get outage() { return this.host.outage; }
   private get steered() { return this.host.steered; }

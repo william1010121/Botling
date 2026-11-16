@@ -38,7 +38,7 @@ export class BotRestart {
   private botFor(head: Engine): Bot | null { return this.ctx.botFor(head); }
   private log(line: string) { this.ctx.log(line); }
   private get head(): AgentHead | null { return this.host.head; }
-  private get loadedPluginStamp(): string[] | null { return this.host.loadedPluginStamp; }
+  private get loadedPluginStamp(): string[] | null { return this.host.headRun.loadedPluginStamp; }
   private get tidying(): boolean { return this.host.tidying; }
   private get claimHold() { return this.host.claimHold; }
   private get deferred(): Turn | null { return this.host.deferred; }
@@ -49,7 +49,7 @@ export class BotRestart {
   private get turn(): Turn | null { return this.host.turn; }
   private get paused() { return this.host.paused; }
   private get ownWorkRunning(): boolean { return this.host.ownWorkRunning; }
-  private ownWorkWords(): string { return this.host.ownWorkWords(); }
+  private ownWorkWords(): string { return this.host.workers.ownWorkWords(); }
   private appNotice(text: string, choices?: { label: string; recommended?: boolean; detail?: string }[], onPick?: (index: number) => void): string { return this.host.appNotice(text, choices, onPick); }
   private deliverTo(...args: Parameters<Bot["deliverTo"]>): Turn { return this.host.deliverTo(...args); }
   private next() { this.host.next(); }
@@ -314,7 +314,7 @@ export class BotRestart {
     this.persist();
     for (const peer of this.peers) peer.persist();
     const saved = await Promise.allSettled(this.members.map(async bot => {
-      try { bot.flushSubagents(); if (!bot.readOnly) bot.store.flushSubagents(); }
+      try { bot.subagentRowBook.flushSubagents(); if (!bot.readOnly) bot.store.flushSubagents(); }
       catch (error) { bot.log(`subagents save failed during core swap: ${String(error)}`); throw error; }
       finally { if (bot.session.started) bot.store.saveHead(bot.session); }
     }));
@@ -362,7 +362,7 @@ export class BotRestart {
     const bot=this.botFor(entry.engine);
     if(!bot || !entry.sessionId)throw Error("Original engine/session unavailable; no replacement was created.");
     bot.headRun.sessionAdopted({sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.savedPromptHash(entry.sessionId)});bot.headRun.briefingDue();
-    bot.headRun.adoptedAs(!!entry.continue||!!entry.workers?.length||bot.restartedWorkers(entry).length>0);
+    bot.headRun.adoptedAs(!!entry.continue||!!entry.workers?.length||bot.workers.restartedWorkers(entry).length>0);
     bot.store.saveHead(bot.session);
     bot.restarts.recoveryStarted();
     return bot;
@@ -399,7 +399,7 @@ export class BotRestart {
 
   adoptRestart(entry: RestartEntry) {
     const bot=this.host.retainRestartIdentity(entry);
-    const restarted=bot.restartedWorkers(entry);
+    const restarted=bot.workers.restartedWorkers(entry);
     // `?.`: native-child-restart.test.ts hands in a bare object as the bot (only `queue`), which has no collaborator.
     bot.restarts?.restartAdopted(entry.workers,entry.restartedAt,entry.providerTurnId);
     // The coordinator's own app workers (own processes) are told; a Codex head's workers the app reconciles itself.

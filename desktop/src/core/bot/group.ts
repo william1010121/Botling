@@ -55,20 +55,20 @@ export class BotGroup {
   private get turn() { return this.host.turn; }
   private get draining() { return this.host.draining; }
   private get ignoreResults() { return this.host.ignoreResults; }
-  private get ending() { return this.host.ending; }
+  private get ending() { return this.host.turns.ending; }
   private get turns() { return this.host.turns; }
   private get cardPicks() { return this.host.cardPicks; }
   private refuseIfClosed() { return this.host.refuseIfClosed(); }
   private add(record: ChatRecord, opts?: { archive?: boolean }) { return this.host.add(record, opts); }
   private changed(record: ChatRecord) { return this.host.changed(record); }
   private notice(text: string) { return this.host.notice(text); }
-  private componentNotes(user: ChatRecord) { return this.host.componentNotes(user); }
+  private componentNotes(user: ChatRecord) { return this.host.cards.componentNotes(user); }
   private route(turn: Turn) { return this.host.route(turn); }
-  private clearApiRetry() { return this.host.clearApiRetry(); }
+  private clearApiRetry() { return this.host.progress.clearApiRetry(); }
   private finishTurn(turn: Turn, status: Status, error?: string) { return this.host.finishTurn(turn, status, error); }
   private markSeen(ids: string[], head: Engine) { return this.host.markSeen(ids, head); }
   private identifyDecision(id: string) { return this.host.identifyDecision(id); }
-  private decisionContext(ids: Set<string>) { return this.host.decisionContext(ids); }
+  private decisionContext(ids: Set<string>) { return this.host.decisions.decisionContext(ids); }
   private bumpUnread() { return this.host.bumpUnread(); }
   private headsChanged() { return this.host.headsChanged(); }
   private forgetReturnRoutes(handoffId?: string) { return this.host.forgetReturnRoutes(handoffId); }
@@ -208,7 +208,7 @@ export class BotGroup {
     if (extra.conducted) turn.conducted = true;
     if (extra.handoffId) turn.handoffId = extra.handoffId;
     if (extra.about) turn.about = extra.about;
-    return bot.route(bot.watchDelivery(turn, extra.delivery));
+    return bot.route(bot.group.watchDelivery(turn, extra.delivery));
   }
 
   /** `turn` tells `delivery` once whether it reached the head: it begins or is read into the turn under way
@@ -307,7 +307,7 @@ export class BotGroup {
     if (!target || !target.head?.running) return;
     if (target.hearNow(note, about)) return;
     target.pendingNote = [target.pendingNote, note].filter(Boolean).join("\n\n");
-    target.pendingAbout.push(...about);
+    target.delivery.pendingAbout.push(...about);
   }
 
   /**

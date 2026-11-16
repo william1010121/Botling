@@ -58,11 +58,11 @@ export class TurnControl {
   private deliver(turn: Turn, given?: AgentHead) { return this.host.deliver(turn, given); }
   private delivered(turn: Turn) { this.host.delivered(turn); }
   private redrawQueued(turn: Turn) { this.host.redrawQueued(turn); }
-  private turnImages(turn: Turn): string[] { return this.host.turnImages(turn); }
+  private turnImages(turn: Turn): string[] { return this.host.delivery.turnImages(turn); }
   private compose(turn: Turn, brief: boolean): string { return this.host.compose(turn, brief); }
   private finishTurn(turn: Turn, status: Status, error?: string) { this.host.finishTurn(turn, status, error); }
   private handOver(): Promise<void> { return this.host.handOver(); }
-  private canSwitchInPlace(head: AgentHead): boolean { return this.host.canSwitchInPlace(head); }
+  private canSwitchInPlace(head: AgentHead): boolean { return this.host.headRun.canSwitchInPlace(head); }
   private clearIdle() { this.host.clearIdle(); }
   private scheduleIdle() { this.host.scheduleIdle(); }
   private place(turn: Turn): ChatRecord { return this.host.place(turn); }
@@ -73,10 +73,10 @@ export class TurnControl {
   private messageView(record: ChatRecord) { return this.host.messageView(record); }
   private updated() { this.host.updated(); }
   private settleTurnApprovals() { this.host.settleTurnApprovals(); }
-  private headStopped(head: Engine) { this.host.headStopped(head); }
+  private headStopped(head: Engine) { this.host.group.headStopped(head); }
   private checkSettingsHold() { this.host.checkSettingsHold(); }
-  private holdForSettings(turn: Turn) { this.host.holdForSettings(turn); }
-  private releaseSettingsHold(): boolean { return this.host.releaseSettingsHold(); }
+  private holdForSettings(turn: Turn) { this.host.restarts.holdForSettings(turn); }
+  private releaseSettingsHold(): boolean { return this.host.restarts.releaseSettingsHold(); }
   private waitsForRestart(turn: Turn): boolean { return this.host.waitsForRestart(turn); }
 
   // ---- Fields owned here (`Bot` reads and writes them through accessors) ----

@@ -48,8 +48,8 @@ export class BotSettings {
   private clearIdle() { return this.host.clearIdle(); }
   private maintenance(text: string, timeoutMs: number, head: AgentHead): Promise<string | null> { return this.host.maintenance(text, timeoutMs, head); }
   private ensureHead(): AgentHead { return this.host.ensureHead(); }
-  private wakeNote(): string { return this.host.wakeNote(); }
-  private componentNote(): string { return this.host.componentNote(); }
+  private wakeNote(): string { return this.host.delivery.wakeNote(); }
+  private componentNote(): string { return this.host.cards.componentNote(); }
   private prompts(): BotPrompts { return this.host.prompts(); }
   private withSavedMemory(prompt: string): string { return this.host.withSavedMemory(prompt); }
   private showAppReply(raw: string) { return this.host.showAppReply(raw); }

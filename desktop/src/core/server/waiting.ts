@@ -91,7 +91,7 @@ export class CoreWaiting {
       if (question) addQuestion(profile.id, this.bots.get(profile.id), question);
       else for (const item of this.memoryFiles.items(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
     }
-    for (const question of this.mainBot()?.openQuestions() ?? []) addQuestion(this.mainBotId, this.mainBot(), question);
+    for (const question of this.mainBot()?.subagentRowBook.openQuestions() ?? []) addQuestion(this.mainBotId, this.mainBot(), question);
     // M5-06c: the server's own open questions (a fetch waiting for its card). The Maintainer is a manager and its
     // `openQuestion()` sees only `role: "bot"` lines, so these app questions would be missing from the summary.
     for (const [id, pending] of this.serverAsks) {
@@ -198,7 +198,7 @@ export class CoreWaiting {
     const shown = this.shownChat;
     const bot = shown && !this.removed.has(shown.botId) ? this.bots.get(shown.botId) : undefined;
     if (!shown || !bot) return null;
-    return currentChat(shown, this.outId(bot.id), bot.view().heads[0] ?? "claude", bot.headSessions());
+    return currentChat(shown, this.outId(bot.id), bot.view().heads[0] ?? "claude", bot.workers.headSessions());
   }
 
   /** What each workspace method would answer, by bot and kind: what a change is noticed by. */
