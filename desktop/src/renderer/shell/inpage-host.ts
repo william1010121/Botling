@@ -6,8 +6,9 @@
 // What it does:
 //   - `start()` asks the loader for each plugin the build shipped (name and hash from the manifest's own pair: the page's bundle is
 //     the trust root for code it bundled itself; a pair the manifest does not list, or a hash that changed, is refused and offered
-//     to the frame host, which does not exist yet: `offered()` keeps the list for it). Nothing is attempted for an empty manifest
-//     (a test, Botling Web 2.x): no in-page plugin was shipped.
+//     to the frame host, which does not exist yet: `offered()` keeps the list for it). A bundle built with a manifest also asks for every
+//     plugin the shell draws a surface for (shell-plugins.ts) that the manifest does not list, so an empty manifest refuses them all and
+//     the page is the shell alone (M7-08). Nothing is attempted when the bundle has no manifest at all (a test, Botling Web 2.x).
 //   - A module's `activate(api)` gets `api.define(declaration, register)`: the host installs the declaration in the kernel
 //     (refused when the name is not one the manifest lists, or the kernel holds it, or a slot it provides has another owner),
 //     loads it with `register` and returns the undo, which unloads it (its dependents go first, the kernel's rule) and forgets its
@@ -19,8 +20,12 @@
 import type { Kernel, PluginDeclaration } from "../../../../Web/src/plugin-kernel";
 import { notifySlots, rendererKernel } from "../renderer-kernel";
 import { bundledInPagePlugin } from "./inpage-bundled";
-import { embeddedFeManifest, InPageLoader, type FeManifest, type InPageSource, type LoadResult } from "./inpage-loader";
+import { embeddedFeManifest, feManifestEmbedded, InPageLoader, type FeManifest, type InPageSource, type LoadResult } from "./inpage-loader";
 import { pluginFeed, type PluginFeed } from "./plugin-feed";
+import { SHELL_PLUGINS } from "./shell-plugins";
+
+/** The hash asked for a plugin the manifest does not list: no folder hashes to it, so the loader refuses it. */
+const NO_HASH = "0".repeat(64);
 
 /** What an in-page plugin module's `activate` gets. */
 export interface InPageApi {
@@ -38,6 +43,11 @@ export interface InPageHostOptions {
   /** What the build shipped (default: the manifest inside this bundle). */
   manifest?: FeManifest;
   source?: InPageSource;
+  /**
+   * The plugins the shell draws a surface for. `start()` asks for each one the manifest does not list too, so it is refused and shows as
+   * unavailable (fail closed; M7-08). Default: SHELL_PLUGINS in a bundle built with a manifest, none in a test or a build without one (the page as it was).
+   */
+  expected?: readonly string[];
   log?: (line: string) => void;
   /** Called when the host's own state changed in a way the kernel's slots do not show (a refusal). Default: the slot listeners. */
   notify?: () => void;
@@ -47,6 +57,7 @@ export class InPageHost {
   private readonly kernel: Kernel;
   private readonly feed: Pick<PluginFeed, "refresh">;
   private readonly manifest: FeManifest;
+  private readonly expected: readonly string[];
   private readonly notify: () => void;
   readonly loader: InPageLoader;
   private readonly down = new Set<string>();
@@ -59,6 +70,7 @@ export class InPageHost {
     this.kernel = options.kernel ?? rendererKernel;
     this.feed = options.feed ?? pluginFeed;
     this.manifest = options.manifest ?? embeddedFeManifest();
+    this.expected = options.expected ?? (feManifestEmbedded() ? SHELL_PLUGINS : []);
     this.notify = options.notify ?? notifySlots;
     this.loader = new InPageLoader({
       manifest: this.manifest,
@@ -82,10 +94,10 @@ export class InPageHost {
   loaded(): { name: string; codeHash: string }[] { return this.loader.loaded(); }
 
   /**
-   * Loads each of `entries` (name and hash; default: every plugin the manifest lists, under the hash it lists). Each answer is
-   * recorded: a refusal or a failure makes the name unavailable.
+   * Loads each of `entries` (name and hash; default: every plugin the manifest lists, under the hash it lists, and each expected plugin it does
+   * not list, which is refused). Each answer is recorded: a refusal or a failure makes the name unavailable.
    */
-  start(entries: readonly { name: string; codeHash: string }[] = this.manifest.plugins): Promise<LoadResult[]> {
+  start(entries: readonly { name: string; codeHash: string }[] = this.defaults()): Promise<LoadResult[]> {
     const run = Promise.all(entries.map(async ({ name, codeHash }) => {
       const result = await this.loader.load(name, codeHash);
       if (result.status === "loaded") this.down.delete(name); else this.down.add(name);
@@ -94,6 +106,11 @@ export class InPageHost {
     }));
     this.running = run;
     return run;
+  }
+
+  private defaults(): { name: string; codeHash: string }[] {
+    const listed = new Set(this.manifest.plugins.map((entry) => entry.name));
+    return [...this.manifest.plugins, ...this.expected.filter((name) => !listed.has(name)).map((name) => ({ name, codeHash: NO_HASH }))];
   }
 
   /** Unloads one plugin this host runs (its undo runs once); the name is unavailable until it loads again. True when it was running. */

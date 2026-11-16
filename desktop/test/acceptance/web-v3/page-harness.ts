@@ -30,8 +30,9 @@ export function freePort(): Promise<number> {
 
 export class Server {
   daemon: BotlingdProcess;
-  constructor(readonly dataDir: string, readonly port: number, readonly extra: Record<string, string> = {}) { this.daemon = this.spawn(); }
-  private spawn(): BotlingdProcess { return new BotlingdProcess(this.dataDir, { ...this.extra, BOTLING_SERVER_PORT: String(this.port) }); }
+  /** `script`: a copy of the built server beside a page of its own (the shell-alone check); default out/server/main.cjs. */
+  constructor(readonly dataDir: string, readonly port: number, readonly extra: Record<string, string> = {}, readonly script?: string) { this.daemon = this.spawn(); }
+  private spawn(): BotlingdProcess { return new BotlingdProcess(this.dataDir, { ...this.extra, BOTLING_SERVER_PORT: String(this.port) }, this.script); }
   get origin(): string { return `http://127.0.0.1:${this.port}`; }
   get page(): string { return `${this.origin}/v3/`; }
   async ready(): Promise<void> {
