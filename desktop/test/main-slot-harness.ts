@@ -34,6 +34,8 @@ export interface PageOptions {
   mainTabs?: Record<string, string>;
   /** Left unset (the main bot opens on the whiteboard) unless "0". */
   whiteboard?: "0" | null;
+  /** Command types the stub client answers with a failure (the page's error bar). */
+  failing?: string[];
 }
 export interface Page {
   host: HTMLElement;
@@ -50,7 +52,7 @@ export async function drawPage(options: PageOptions = {}): Promise<Page> {
   if (options.whiteboard === null) localStorage.removeItem("botling.mainWhiteboard"); else localStorage.setItem("botling.mainWhiteboard", "0");
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
   const defaults = new WorkspaceStore(async () => { throw new Error("Unexpected snapshot"); }).getView();
-  let held: Required<PageOptions> = { bots: [siteBot], shown: SITE, plugins: fixtureView(), mainTabs: {}, whiteboard: "0", ...options } as Required<PageOptions>;
+  let held: Required<PageOptions> = { bots: [siteBot], shown: SITE, plugins: fixtureView(), mainTabs: {}, whiteboard: "0", failing: [], ...options } as Required<PageOptions>;
   const viewOf = (): WorkspaceView => ({ ...defaults, ready: true, bots: held.bots, settings: settingsView({ mainTabs: held.mainTabs }), plugins: held.plugins,
     chat: { botId: held.shown, messages: [], running: null, live: [] } });
   let current = viewOf();
@@ -60,6 +62,7 @@ export async function drawPage(options: PageOptions = {}): Promise<Page> {
   const client = {
     request: vi.fn(async (command: any) => {
       requests.push(command);
+      if (held.failing.includes(command.type)) throw new Error(`${command.type} failed`);
       if (command.type === "plugins.panel") return { title: command.name, source: "", settings: {} };
       if (command.type === "card.page") return { url: "botling-card://page/1" };
       if (command.type === "plugins.web") return { specs: [] };
