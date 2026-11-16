@@ -690,9 +690,10 @@ export class ClaudeWorkers implements WorkerHost {
   }
 
   /** Where a worker stands now, for a plugin that was away (restart pickup, plugin-workers.ts); null: no such worker. */
-  look(id: string): { run: number; running: boolean; status: string; report: string } | null {
+  look(id: string): { run: number; running: boolean; status: string; report: string; botOwed: boolean } | null {
     const r = this.core.get(id);
-    return r ? { run: r.run, running: r.status === "running" || r.status === "new", status: statusWord(r.status), report: r.report.text ?? "" } : null;
+    // `botOwed`: the report is still waiting for the bot's head (not handed to it yet); the next run would reset it (workers.send refuses then, O05).
+    return r ? { run: r.run, running: r.status === "running" || r.status === "new", status: statusWord(r.status), report: r.report.text ?? "", botOwed: r.report.state === "pending" || r.report.state === "dispatching" } : null;
   }
 
   /** The app tools (the coordinator's in-process MCP server). */
