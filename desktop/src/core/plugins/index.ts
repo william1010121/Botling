@@ -703,7 +703,9 @@ export class Plugins {
         return plugin ? { name, identity: createHash("sha256").update(JSON.stringify(plugin.manifest)).digest("hex"), permissions: plugin.manifest.ccb?.permissions ?? [], botWritten: !plugin.builtIn && !plugin.installedFrom } : null;
       },
       ask: (question) => this.options.world.ask(question),
-      tell: (plugin, event, data) => this.hostFor(plugin).deliver(event, data),
+      // Only the host that runs this plugin: hostFor() falls back to the shared host when a plugin's own host is not
+      // there, and a write there would count as told while nobody listening is the plugin (the report would be lost).
+      tell: (plugin, event, data) => { const host = this.hostFor(plugin); return host.runs(plugin) && host.deliver(event, data); },
       log: (line) => this.options.world.log(line),
       file: { read: () => { try { return readFileSync(file, "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; } }, write: (text) => writeFileAtomic(file, text) },
     });

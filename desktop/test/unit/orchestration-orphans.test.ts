@@ -721,3 +721,39 @@ describe("a worker has one owner and a report is neither lost nor doubled, hande
     } finally { await second.workers.close(); }
   });
 });
+
+// ---- the O03b review: a report goes only to the version that started the worker, with its grant, through its own host -------------
+
+describe("O03b review: who may be told a report", () => {
+  it("a report is told only to the version that started the worker and only while it holds its grant; meanwhile it stays owed", async () => {
+    let granted = true;
+    const t = book();
+    (t.workers as unknown as { deps: { world: { granted: () => boolean } } }).deps.world.granted = () => granted;
+    await t.workers.start("p", params);
+    granted = false;
+    t.workers.ended("T1", 1, "completed", "while revoked");
+    expect(t.told).toEqual([]);
+    expect((t.rows()[0]!.owed as unknown[])).toHaveLength(1);
+    granted = true;
+    t.workers.redeliver();
+    expect(t.told.map((data) => data.report)).toEqual(["while revoked"]);
+    // Another hash before the hand-back has run: not told to it either.
+    t.state.identity = H2;
+    t.workers.ended("T1", 2, "completed", "for the old version");
+    t.workers.redeliver();
+    expect(t.told).toHaveLength(1);
+  });
+
+  it("a plugin whose own host is not there is not told through the shared host (it would count as told and be lost)", async () => {
+    const dir = tempDir("orphans-plugins");
+    plugin(dir, "needy");
+    const t = await stack(dir);
+    await t.listen();
+    const tell = (t.plugins.workers() as unknown as { deps: { tell: (plugin: string, event: string, data: unknown) => unknown } }).deps.tell;
+    // The shared host listens for workerReport, but it does not run "elsewhere".
+    expect(tell("elsewhere", "workerReport", { startedBy: "elsewhere" })).toBe(false);
+    expect(t.reports()).toEqual([]);
+    expect(tell("needy", "workerReport", { startedBy: "needy" })).toBe(true);
+    expect(t.reports()).toHaveLength(1);
+  });
+});

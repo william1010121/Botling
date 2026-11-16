@@ -281,7 +281,7 @@ export class PluginWorkers {
   /** Tells what the plugin is owed, oldest first, until its host does not take one; then the book says what is left. */
   private flush(entry: Entry) {
     const owed = entry.owed;
-    if (!owed?.length || entry.handed) return;
+    if (!owed?.length || entry.handed || !this.mayHear(entry)) return;
     let told = 0;
     for (const item of owed) {
       let taken = false;
@@ -293,6 +293,14 @@ export class PluginWorkers {
     entry.owed = owed.slice(told);
     if (!entry.owed.length) delete entry.owed;
     this.persist();
+  }
+
+  /**
+   * Authority at use (each tell, also after a restart): the plugin is still the version that started the worker and
+   * still has its grant. Not now: the copy stays owed (a hand-back drops it; a grant given back tells it).
+   */
+  private mayHear(entry: Entry): boolean {
+    try { return entry.hash !== undefined && this.deps.facts(entry.plugin)?.identity === entry.hash && this.deps.world.granted(entry.plugin) === true; } catch { return false; }
   }
 
   private persist() {
