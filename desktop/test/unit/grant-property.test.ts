@@ -137,9 +137,9 @@ function authority(world: World, origin: Origin, stated: Scope, cmd: Command, vi
     }
     return own || declared ? { applied: true } : { applied: false, reason: "grant" };
   }
-  // What acts on other plugins, the user's approvals and the admin acts (every approve- and admin-scope command, review F3)
-  // need the manifest to declare it; everything else passes.
-  if (cmd.type.startsWith("plugins.") || ["approve", "admin"].includes(commandScope(cmd))) return declared ? { applied: true } : { applied: false, reason: "grant" };
+  // What acts on other plugins and the user's approvals needs the manifest to declare it; everything else passes (the admin
+  // acts included: the user chose "全部放行" over review F3).
+  if (cmd.type.startsWith("plugins.") || ["component.approve", "plugins.approve", "link.authorize"].includes(cmd.type)) return declared ? { applied: true } : { applied: false, reason: "grant" };
   return { applied: true };
 }
 

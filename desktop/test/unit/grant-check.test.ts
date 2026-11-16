@@ -136,15 +136,15 @@ describe("2026-11-16 trust model: grantAllows (pure)", () => {
     expect(grantAllows(declared, via(), approve(), NAME)).toEqual({ ok: true });
   });
 
-  it("review: admin acts (pairing a phone or a machine, approving one) and every approve-scope command need the manifest to declare them", () => {
+  it("revert of review F3 (user: 全部放行): an installed plugin sends admin acts undeclared; only plugins.* and the three user approvals need the manifest", () => {
     const r = row({ grants: { [H1]: grant("write") } });
-    for (const type of ["mobile.pair", "mobile.confirm", "machines.approve", "machines.pair", "machines.revoke", "component.approve"]) {
+    for (const type of ["mobile.pair", "mobile.confirm", "machines.approve", "machines.pair", "machines.revoke", "bot.restart"]) {
+      expect(grantAllows(r, via(), { type, botId: BOT } as unknown as Command, NAME), type).toEqual({ ok: true });
+    }
+    for (const type of ["component.approve", "plugins.approve", "link.authorize", "plugins.storeInstall"]) {
       expect(grantAllows(r, via(), { type } as unknown as Command, NAME).ok, type).toBe(false);
       expect(grantAllows(row({ requests: [type], grants: { [H1]: grant("write") } }), via(), { type } as unknown as Command, NAME), type).toEqual({ ok: true });
     }
-    // an ordinary manage / reply command still passes undeclared (no tiers), and an unknown type fails closed
-    expect(grantAllows(r, via(), { type: "bot.restart", botId: BOT } as unknown as Command, NAME)).toEqual({ ok: true });
-    expect(grantAllows(r, via(), { type: "no.such" } as unknown as Command, NAME).ok).toBe(false);
   });
 
   it("M5-12b F2: helper commands are allowed only when cmd.name === via.plugin", () => {
