@@ -393,7 +393,7 @@ describe("the book keeps the truth when things go wrong", () => {
     const rows = [
       row("AT-WORK", now - 5 * DAYS, { open: true }),
       row("OWED", now - 3 * DAYS, { owed: [{ run: 2, status: "completed", report: "x" }] }),
-      ...Array.from({ length: 1_000 }, (_, n) => row(`OLD${n}`, now - 2 * DAYS - n * 1_000)),
+      ...Array.from({ length: 1_000 }, (_, n) => row(`OLD${n}`, now - 2 * DAYS + n * 1_000)),
       ...Array.from({ length: 5 }, (_, n) => row(`RECENT${n}`, now - 3_600_000 - n)),
     ];
     const core = fakeCore();
@@ -404,8 +404,8 @@ describe("the book keeps the truth when things go wrong", () => {
     expect(kept.length).toBe(1_000);
     for (const task of ["AT-WORK", "OWED", "RECENT0", "RECENT4", "T1"]) expect(kept, task).toContain(task);
     // The ones forgotten are the oldest of the closed.
-    expect(kept).not.toContain("OLD999");
-    expect(kept).toContain("OLD0");
+    expect(kept).not.toContain("OLD0");
+    expect(kept).toContain("OLD999");
   });
 
   it("B3: a worker that ended without this book hearing of it frees its place when the next one is asked for, and is told once", async () => {
