@@ -19,7 +19,7 @@ const HELD_BACK_NOTICE = "Its program part is off until you allow it to change i
 
 const EXPECTED_BUILTINS = [
   "botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.component-studio",
-  "botling.design", "botling.dev", "botling.git", "botling.note", "botling.orchestration", "botling.report",
+  "botling.deps", "botling.design", "botling.dev", "botling.git", "botling.note", "botling.orchestration", "botling.report",
   "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex",
 ] as const;
 
@@ -226,7 +226,7 @@ export function activate(ccb) {
     expect(imported.problems).toEqual([]);
     expect(imported.reportText).toContain("sample-plugin");
     expect(imported.reportText).toContain("approve in Settings › Plugins");
-    expect(imported.reportText).toContain("plugins: 18 (2 wait for your approval in Settings › Plugins)");
+    expect(imported.reportText).toContain("plugins: 19 (2 wait for your approval in Settings › Plugins)");
     expect(existsSync(join(dataDir, "plugin-secrets.json"))).toBe(false);
     expect(imported.reportText).toContain("request-helper");
     // B-20(a): each imported third-party plugin has its own "approve to restore" line; no built-in has one.
@@ -438,7 +438,8 @@ export function activate(ccb) {
     expect(cmdPayload.count).toBe(1);
     expect(cmdPayload.greeting).toBe("hello");
 
-    // 4. A request-tier plugin's command is refused `grant` before the grant and applied after (within its granted tier).
+    // 4. An uninstalled plugin's command is refused `grant` before the install card (plugin.grant) and applied after; an installed
+    //    plugin is fully allowed (2026-11-16), except it never sends plugin.grant itself.
     const reqPanel = okResult<{ title: string; source: string }>(
       await reqLarge(client, { type: "plugins.panel", name: reqPluginName, panel: "request-helper.panel" }),
     );
@@ -456,7 +457,7 @@ export function activate(ccb) {
     expect(refusedBefore.outcome).toEqual({
       kind: "refused",
       reason: "grant",
-      detail: expect.stringContaining(`${reqPluginName} may not do this`),
+      detail: expect.stringContaining(`${reqPluginName} is not installed`),
     });
 
     const grantRequest = await sendCmd(client, client.srv, ++srvN, srvInc, {
@@ -479,20 +480,16 @@ export function activate(ccb) {
     );
     expect(appliedAfter.outcome.kind).toBe("applied");
 
-    // An ungranted command outside its granted requests stays refused `grant`.
-    const ungrantedCmd = await sendCmd(
+    // A plugin never grants (D54): plugin.grant with via stays refused `grant`, installed or not.
+    const selfGrant = await sendCmd(
       client,
-      botStream,
-      ++botN,
+      client.srv,
+      ++srvN,
       srvInc,
-      { type: "chat.react", botId: mainBotId, messageId: "m1", emoji: "👍", present: true },
+      { type: "plugin.grant", plugin: reqPluginName, codeHash: reqHash, tier: "write", reads: [], requests: [] },
       reqVia,
     );
-    expect(ungrantedCmd.outcome).toEqual({
-      kind: "refused",
-      reason: "grant",
-      detail: expect.stringContaining(`${reqPluginName} may not do this`),
-    });
+    expect(selfGrant.outcome).toEqual({ kind: "refused", reason: "grant", detail: "plugin.grant cannot be sent by a plugin" });
 
     await until(() => {
       const entries = client.entriesOf(botStream);

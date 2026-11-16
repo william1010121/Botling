@@ -19,12 +19,13 @@ import { readRowBody } from "./replica";
 import type { MirrorBot } from "./replica/peer-chat-mirror";
 import type { RosterStore, RosterView } from "./roster";
 import type { DeviceRoster, SessionOptions } from "./session";
+import { grantTierOf, pluginApproved } from "./slots/grant-check";
 import type { CompactionOptions, Db } from "./store";
 
 /**
  * M5-18a (D56, §18.3): a plugin's server (program) part runs only when the own `plugin:<name>` row says
- * either it is a built-in at its shipped hash (`author === "builtin"` and `codeHash` matches), or its
- * current `codeHash` holds a `write` grant.
+ * either it is a built-in at its shipped hash (`author === "builtin"` and `codeHash` matches), or the plugin is installed
+ * (2026-11-16: approved by name, whatever its code hash, so a new version runs with no new question).
  */
 export function mayRunPluginServerPart(reader: () => Db, ownStream: string, name: string, codeHash: string): boolean {
   const key = `plugin:${name}`;
@@ -39,7 +40,7 @@ export function mayRunPluginServerPart(reader: () => Db, ownStream: string, name
   if (!parsed.success) return false;
   const row = parsed.data;
   if (row.author === "builtin") return row.codeHash === codeHash;
-  return Object.hasOwn(row.grants, codeHash) && row.grants[codeHash]?.tier === "write";
+  return pluginApproved(row);
 }
 
 /** Where a pairing link points while no tailnet origin is set (BOTLING_SERVER_TAILNET_ORIGIN; `tailscale serve`, step 6). */
@@ -182,12 +183,16 @@ export function relayAllowList(options: {
   };
 }
 
-/** Reads this server's `plugin:<name>` row (M5-13b) and returns its grant tier at the row's current `codeHash`, or `"none"`. */
+/**
+ * Reads this server's `plugin:<name>` row (M5-13b) and returns what the window shows: the tier recorded at the row's
+ * current `codeHash` when there is one, `"write"` for an installed plugin whose record is at an older hash (a new
+ * version needs no new question), else `"none"` (not installed: the window offers the install card).
+ */
 export function readPluginGrant(db: Db, serverId: string, name: string): "none" | "read" | "request" | "write" {
   try {
     const parsed = PluginRow.safeParse(readRowBody(db, `srv:${serverId}`, `plugin:${name}`));
     if (!parsed.success) return "none";
-    return (Object.hasOwn(parsed.data.grants, parsed.data.codeHash) ? parsed.data.grants[parsed.data.codeHash]?.tier : undefined) ?? "none";
+    return grantTierOf(parsed.data);
   } catch {
     return "none";
   }

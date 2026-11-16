@@ -22,17 +22,19 @@ const temp = () => { const dir = mkdtempSync(join(tmpdir(), "kernel-manifest-"))
 afterEach(() => { for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 describe("reading the kernel fields", () => {
-  it("the built-in manifests yield the expected graph: the Note may use composer.insertQuote, nothing requires anything", () => {
+  it("every built-in manifest declares kernel fields; the graph: the Note may use composer.insertQuote, the Pins may use the studio's spec button, nothing requires anything", () => {
     const declared: Record<string, unknown> = {};
     for (const name of builtInNames()) {
       const { fields, problems } = readKernelFields(manifestOf(join(BUILT_INS, name)), true);
       expect(problems, name).toEqual([]);
       if (fields) declared[name] = fields;
     }
-    expect(declared).toEqual({
-      "botling.note": { kernel: 1, provides: { services: [], slots: [] }, requires: { services: [] }, uses: { services: ["composer.insertQuote"] } },
-    });
-    // Installed into a kernel beside the app's own surfaces (the chat surface provides the quote, step 7): no edge, no cycle.
+    // Every built-in declares a block (an empty one where it depends on and offers nothing), so a missing one is a mistake, not "unknown".
+    expect(Object.keys(declared).sort()).toEqual(builtInNames());
+    const block = (provides: string[] = [], uses: string[] = []) => ({ kernel: 1, provides: { services: provides, slots: [] }, requires: { services: [] }, uses: { services: uses } });
+    expect(declared).toEqual(Object.fromEntries(builtInNames().map((name) => [name, name === "botling.note" ? block([], ["composer.insertQuote"])
+      : name === "botling.board" ? block([], ["studio.specButton"]) : name === "botling.component-studio" ? block(["studio.specButton"]) : block()])));
+    // Installed into a kernel beside the app's own surfaces (the chat surface provides the quote, step 7): no hard edge (`requires`), no cycle.
     const kernel = new Kernel();
     kernel.install({ name: "botling.core", provides: { services: ["composer.insertQuote"] } });
     for (const name of builtInNames()) {

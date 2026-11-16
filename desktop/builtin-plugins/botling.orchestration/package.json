@@ -6,5 +6,10 @@
   "license": "GPL-3.0-or-later",
   "publisher": "Botling",
   "engines": { "ccb": "^2.0.0" },
-  "ccb": {}
+  "ccb": {
+    "kernel": 1,
+    "provides": { "services": [], "slots": [] },
+    "requires": { "services": [] },
+    "uses": { "services": [] }
+  }
 }

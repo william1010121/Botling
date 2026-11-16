@@ -9,7 +9,7 @@ import { exec, spawn } from "./exec";
 import { EVENT_NAMES, WORKSPACE_EVENT } from "./api-types";
 import type {
   AgyQuota, AgyUsage, AgyWorker, AppSettingKey, AppState, BotInfo, BotNote, BotSummary, CardLibrary, CardState, ChatData, CommandRun, CurrentChat,
-  Dispose, EngineCli, JSONValue, Keybinding, NoteAsset, NoteCardState, NoteComponent, NoteLocalized, NoteOutline, NoteParsed, NoteSave,
+  DepBoard, Dispose, EngineCli, JSONValue, Keybinding, NoteAsset, NoteCardState, NoteComponent, NoteLocalized, NoteOutline, NoteParsed, NoteSave,
   RoutinesList, SessionBot, ShownCard, TaskView, UsageView, WaitingView,
 } from "./api-types";
 import type { BotlingApi, HostSide, Loaded } from "./api-types-botling";
@@ -115,6 +115,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       change: async (botId, operation, id) => (await ask("routines.change", { bot: botId, operation, id })) as RoutinesList,
     },
     usage: { view: async () => (await ask("usage.view")) as UsageView },
+    plugins: { deps: async () => (await ask("plugins.deps")) as DepBoard },
     app: {
       state: async () => (await ask("app.state")) as AppState,
       installAndRestart: async (command, log) => { await ask("app.installAndRestart", { command, log }); },

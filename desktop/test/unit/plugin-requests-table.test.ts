@@ -372,6 +372,17 @@ const ROWS: Row[] = [
   { method: "keybindings.list",
     ok: { params: { plugin: A }, reply: expect.arrayContaining([{ command: "search", key: "Mod+K", source: "default" }]) },
     refuse: { params: { plugin: "ghost" }, error: NOT_RUNNING } },
+  { method: "plugins.deps",
+    // Read only and open to any plugin (the library one with no permission asks too): every plugin, the app's chat as a provider, no arrow among these.
+    ok: { params: { plugin: L }, reply: expect.objectContaining({
+      plugins: expect.arrayContaining([
+        expect.objectContaining({ name: A, builtIn: true, enabled: true, app: false, fills: expect.arrayContaining(["main/tab"]) }),
+        expect.objectContaining({ name: L, builtIn: false, enabled: true, declared: false }),
+        expect.objectContaining({ name: "botling.chat", app: true, provides: { services: ["composer.insertQuote"], slots: [] } }),
+      ]),
+      edges: [], missing: [],
+    }) },
+    refuse: { params: { plugin: "ghost" }, error: NOT_RUNNING } },
   { method: "keybindings.set",
     ok: { params: { plugin: A, command: "botling.all.go", key: "Ctrl+Alt+O" }, reply: { ok: true },
       after: (env) => { expect(env.plugins.view().keybindings!.filter((binding) => binding.plugin === A).map((binding) => [binding.command, binding.key])).toEqual([["botling.all.go", "Ctrl+Alt+O"]]); } },
@@ -678,7 +689,7 @@ describe("what holds for every request", () => {
       await expect(env.ask(method, { plugin: "ghost" }), method).rejects.toThrow();
     }
     // The ones that need nothing but the plugin's name say so in the words of `asked`.
-    for (const method of ["usage.view", "workspace.bots", "workspace.waiting", "workspace.current", "workspace.agyQuota", "keybindings.list"]) {
+    for (const method of ["usage.view", "workspace.bots", "workspace.waiting", "workspace.current", "workspace.agyQuota", "keybindings.list", "plugins.deps"]) {
       await expect(env.ask(method, { plugin: "ghost" }), method).rejects.toThrow(NOT_RUNNING);
     }
   });

@@ -502,7 +502,7 @@ export async function runImport(options: RunImportOptions): Promise<RunImportRes
         dataRoot: join(targetResolved, "plugin-data"),
         log: options.log,
       });
-      await store.submit((tx) => reconcilePluginRows(tx, ownTableStream(tx), pluginInputs, nowMs, { log: options.log }));
+      await store.submit((tx) => reconcilePluginRows(tx, ownTableStream(tx), pluginInputs, nowMs, { log: options.log, trust: "mark" }));
 
       let pluginEntries: PluginReportEntry[];
       {

@@ -125,7 +125,7 @@ export function StoreList({ client, store, setStore, lang, only, onShowCard, onP
       <ul>
         {entries.map((entry) => (
           <StoreItem key={entry.name} entry={entry} lang={lang} onShowCard={onShowCard}
-            onInstall={() => { setTouched((names) => new Set([...names, entry.name])); act(client.request({ type: "plugins.storeInstall", name: entry.name })); }}
+            onInstall={() => { setTouched((names) => new Set([...names, entry.name])); act(client.request({ type: "plugins.storeInstall", name: entry.name, ...(entry.state === "update" ? { direct: true } : {}) })); }}
             onDismiss={() => act(client.request({ type: "plugins.storeDismiss", name: entry.name }))} />
         ))}
       </ul>

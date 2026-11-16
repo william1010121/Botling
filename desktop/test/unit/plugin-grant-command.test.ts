@@ -664,7 +664,7 @@ describe("M5-14a: plugin.grant command and owner-side apply", () => {
     expect(readGrantAudits(s.db(), s.serverStream)).toHaveLength(1);
   });
 
-  it("8. tier 'none' removes the grant at that hash only; > 20 grants prunes oldest non-current hash; schema bounds and 2.x Core refusal", async () => {
+  it("8. tier 'none' removes every user approval of the plugin (2026-11-16: the approval is by name, not by hash); > 20 grants prunes oldest non-current hash; schema bounds and 2.x Core refusal", async () => {
     const s = await startTestServer();
     const twenty: Record<string, unknown> = {};
     for (let i = 0; i < 20; i++) {
@@ -685,7 +685,7 @@ describe("M5-14a: plugin.grant command and owner-side apply", () => {
       },
     }));
 
-    // Revoking HASH_1 leaves HASH_2 intact.
+    // Revoking (at HASH_1) takes back the plugin's installed state: the record at HASH_2 goes too, or a revoke would change nothing.
     const revoke = await s.runtime.receive(
       {
         slot: { origin: "desktop", originEpoch: EPOCH_A, target: s.serverStream as StreamId, n: 1 },
@@ -697,8 +697,7 @@ describe("M5-14a: plugin.grant command and owner-side apply", () => {
     );
     expect(revoke).toMatchObject({ status: "result", message: { outcome: { kind: "applied", result: { applied: true } } } });
     const afterRevoke = PluginRow.parse(readRowBody(s.db(), s.serverStream, "plugin:two-hashes"));
-    expect(afterRevoke.grants[HASH_1]).toBeUndefined();
-    expect(afterRevoke.grants[HASH_2]?.tier).toBe("request");
+    expect(afterRevoke.grants).toEqual({});
 
     // Granting HASH_1 when 20 older grants already exist prunes the oldest (oldhash-00) and stays <= 20.
     const pruned = await s.runtime.receive(
@@ -866,5 +865,12 @@ describe("M5-14a: plugin.grant command and owner-side apply", () => {
     await send({ type: "plugin.grant", plugin: "plain", codeHash: HASH_1, tier: "none", reads: [], requests: [] });
     expect(readGrantAudits(s.db(), s.serverStream).map((row) => row.body.reason)).toEqual(["tier request", "tier none"]);
     expect(rowOf("plain").grants[HASH_1]).toBeUndefined();
+
+    // Fix round (review F5): an unmodified library copy of a built-in (author user) keeps the built-in's record at its hash
+    // but is not installed; the user's card is applied and writes a user record over it.
+    await seedPlugin(s, "builtin.copy", { ...samplePluginRow({ tier: "write" }), author: "user", grants: { [HASH_1]: builtinGrant } });
+    const installCopy = await send({ type: "plugin.grant", plugin: "builtin.copy", codeHash: HASH_1, tier: "write", reads: [], requests: [] });
+    expect(installCopy).toMatchObject({ status: "result", message: { outcome: { kind: "applied" } } });
+    expect(rowOf("builtin.copy").grants[HASH_1]).toMatchObject({ grantedBy: "user", tier: "write" });
   });
 });

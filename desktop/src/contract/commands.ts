@@ -348,7 +348,8 @@ const BASE_COMMANDS = [
   /** The public catalog's view (Explore, Updates); `refresh`: fetch index.json again first. */
   z.strictObject({ type: z.literal("plugins.store"), refresh: z.boolean().optional() }),
   /** Install or update one catalog plugin: downloaded, checked, then asked on the install card in the main bot's chat. */
-  z.strictObject({ type: z.literal("plugins.storeInstall"), name: PluginName }),
+  /** `direct`: an update of a plugin that is already running is installed at once, with no install card (the Update button). */
+  z.strictObject({ type: z.literal("plugins.storeInstall"), name: PluginName, direct: z.boolean().optional() }),
   /** The page showed how an install ended: its note goes. */
   z.strictObject({ type: z.literal("plugins.storeDismiss"), name: PluginName }),
   /** Puts back the version an install or update replaced. */

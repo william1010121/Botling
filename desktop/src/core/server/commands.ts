@@ -117,7 +117,7 @@ export class CoreCommands {
       case "plugins.list": return this.plugins.view();
       case "plugins.enable": return this.plugins.setEnabled(cmd.name, cmd.enabled);
       case "plugins.store": return cmd.refresh ? await this.pluginStore.refresh() : this.pluginStore.view();
-      case "plugins.storeInstall": return await this.pluginStore.install(cmd.name);
+      case "plugins.storeInstall": return await this.pluginStore.install(cmd.name, { direct: cmd.direct === true });
       case "plugins.storeDismiss": return this.pluginStore.dismiss(cmd.name);
       case "plugins.revert": { const problem = this.maintainer.revertPlugin(cmd.name); if (problem) throw new ContractError("conflict", problem); return this.plugins.view(); }
       case "plugins.remove": { const problem = this.maintainer.removePlugin(cmd.name); if (problem) throw new ContractError("conflict", problem); return this.plugins.view(); }

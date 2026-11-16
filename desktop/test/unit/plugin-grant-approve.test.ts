@@ -2,8 +2,8 @@
 // Botling 3: the desktop window's Settings › Plugins approves a plugin that is not allowed yet (an imported 2.x plugin is
 // kept at "nothing yet" until the user approves it, B-20(a)). Before this, the window only printed the CLI line, so a
 // plugin such as reading-coach (陪讀) opened its panel to "Not sent: the plugin may not do this". The window now shows what
-// the plugin asks at its running hash and sends one `plugin.grant` (no `via`, scope local) for the tier the user picks;
-// after it the owner's grant check lets the plugin's own commands through.
+// the plugin asks at its running hash and sends one `plugin.grant` (no `via`, scope local) at the tier it asks, from one
+// Install tap (2026-11-16: no tiers to pick); after it the owner lets the plugin and its new versions through.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ import { folderHash } from "../../src/core/plugins/catalog";
 import { Plugins, type PluginWorld } from "../../src/core/plugins";
 import { PluginsPanel } from "../../src/renderer/Plugins";
 import { RequestFailed, type Client } from "../../src/renderer/client";
-import { windowGrantCommand } from "../../src/renderer/plugin-grant";
+import { installCommand } from "../../src/renderer/plugin-grant";
 import { Botlingd, readPluginAsks } from "../../src/server/botlingd";
 import { grantAllows } from "../../src/server/slots/grant-check";
 import { putRow } from "../../src/server/replica/tables";
@@ -66,9 +66,7 @@ async function render(element: ReturnType<typeof createElement>) {
   return { host, rerender: async (next: ReturnType<typeof createElement>) => { await act(async () => root.render(next)); }, done: async () => { await act(async () => root.unmount()); host.remove(); } };
 }
 const panel = (client: Client, plugins: PluginView[]) => createElement(PluginsPanel, { client, plugins: view(plugins), onPanel() {}, onClose() {}, embedded: true });
-const tiers = (host: HTMLElement) => [...host.querySelectorAll<HTMLInputElement>(".plugin-grant input[type=radio]")].map((input) => input.value);
 const allowButton = (host: HTMLElement) => host.querySelector<HTMLButtonElement>("button.plugin-grant-allow");
-const pick = (host: HTMLElement, tier: string) => act(async () => { host.querySelector<HTMLInputElement>(`.plugin-grant input[value="${tier}"]`)!.click(); });
 const tap = (host: HTMLElement) => act(async () => { allowButton(host)!.click(); });
 
 describe("PluginView.asks", () => {
@@ -81,46 +79,41 @@ describe("PluginView.asks", () => {
   });
 });
 
-describe("Settings › Plugins: approving a plugin from the window", () => {
-  it("offers the tiers up to what the plugin asks, with what it asks, and Allow only once a tier is picked", async () => {
+describe("Settings › Plugins: the install card (2026-11-16: one tap, no tiers)", () => {
+  it("shows what the plugin asks and one Install button, with no tier to pick", async () => {
     const { client } = fakeClient();
     const ui = await render(panel(client, [plugin()]));
     try {
-      expect(tiers(ui.host)).toEqual(["read", "request", "write"]);
+      expect(ui.host.querySelectorAll(".plugin-grant input[type=radio]")).toHaveLength(0);
       expect(ui.host.querySelector(".plugin-asks")?.textContent).toBe("It asks to: read the chat it is shown in; send bots.create; send messages in that chat (chat.send); change its own data on the server.");
-      expect(allowButton(ui.host)?.disabled).toBe(true);
-      await pick(ui.host, "write");
+      expect(allowButton(ui.host)?.textContent).toBe("Install");
       expect(allowButton(ui.host)?.disabled).toBe(false);
+      expect(ui.host.textContent).toContain("Not installed on this machine");
     } finally { await ui.done(); }
-
-    const request = await render(panel(fakeClient().client, [plugin({ asks: asks({ tier: "request" }) })]));
-    try { expect(tiers(request.host)).toEqual(["read", "request"]); } finally { await request.done(); }
   });
 
-  it("sends one plugin.grant at the shown hash with the shown asks, even on a double tap", async () => {
+  it("sends one plugin.grant at the shown hash, at the tier the plugin asks, with the shown asks, even on a double tap", async () => {
     const { client, grants, settle } = fakeClient();
     const ui = await render(panel(client, [plugin()]));
     try {
-      await pick(ui.host, "write");
       // Two taps before React draws the disabled button: only the in-flight guard stops the second.
       await act(async () => { allowButton(ui.host)!.click(); allowButton(ui.host)!.click(); });
       await tap(ui.host);
       expect(grants()).toEqual([{ type: "plugin.grant", plugin: "reading-coach", codeHash: HASH, tier: "write", reads: [], requests: ["bots.create", "chat.send"] }]);
       expect(allowButton(ui.host)?.disabled).toBe(true);
       await settle("ok");
-      // The server re-announces the list with the new grant: the line says so and Allow has nothing to do.
+      // The server re-announces the list with the plugin installed: no card any more, and a line says so.
       await ui.rerender(panel(client, [plugin({ grant: "write" })]));
-      expect(ui.host.textContent).toContain("Allowed on this machine: Change its own data on the server");
-      expect(allowButton(ui.host)?.disabled).toBe(true);
+      expect(ui.host.textContent).toContain("Installed on this machine");
+      expect(ui.host.querySelector(".plugin-grant")).toBeNull();
       expect(grants()).toHaveLength(1);
     } finally { await ui.done(); }
   });
 
-  it("a read grant carries no requests, and a refused grant shows why and can be tried again", async () => {
+  it("a plugin that asks for less is sent at that tier (a read ask carries no requests); a refused install shows why and can be tried again", async () => {
     const { client, grants, settle } = fakeClient();
-    const ui = await render(panel(client, [plugin()]));
+    const ui = await render(panel(client, [plugin({ asks: asks({ tier: "read", requests: ["chat.send"] }) })]));
     try {
-      await pick(ui.host, "read");
       await tap(ui.host);
       expect(grants()[0]).toMatchObject({ tier: "read", requests: [] });
       await settle(new RequestFailed({ code: "conflict", message: "Not sent: codeHash is not known for plugin reading-coach" }));
@@ -131,8 +124,8 @@ describe("Settings › Plugins: approving a plugin from the window", () => {
     } finally { await ui.done(); }
   });
 
-  it("offers nothing for a built-in plugin, a 2.x core (no grant) or a server that sends no asks", async () => {
-    for (const one of [plugin({ builtIn: true, grant: "write" }), plugin({ grant: undefined, asks: undefined }), plugin({ grant: undefined }), plugin({ asks: undefined })]) {
+  it("offers no card for a built-in plugin, an installed one, a 2.x core (no grant) or a server that sends no asks", async () => {
+    for (const one of [plugin({ builtIn: true, grant: "write" }), plugin({ grant: "write" }), plugin({ grant: "request" }), plugin({ grant: undefined, asks: undefined }), plugin({ grant: undefined }), plugin({ asks: undefined })]) {
       const ui = await render(panel(fakeClient().client, [one]));
       try {
         expect(ui.host.querySelector(".plugin-grant")).toBeNull();
@@ -141,30 +134,24 @@ describe("Settings › Plugins: approving a plugin from the window", () => {
     }
   });
 
-  it("review: a new running hash drops the tier picked for the old code, so Allow never sends it at the new hash", async () => {
+  it("review: a new running hash starts a fresh card, and Install sends the hash it shows", async () => {
     const { client, grants } = fakeClient();
     const NEW = "5e0cbd1677e4db331b948fcb7e59d7d57fc86368b47964d8886e773d63745dd9";
     const ui = await render(panel(client, [plugin()]));
     try {
-      await pick(ui.host, "write");
-      expect(allowButton(ui.host)?.disabled).toBe(false);
       await ui.rerender(panel(client, [plugin({ asks: asks({ codeHash: NEW }) })]));
-      expect(tiers(ui.host).length).toBe(3);
-      expect(allowButton(ui.host)?.disabled).toBe(true);
       await tap(ui.host);
-      expect(grants()).toEqual([]);
-      await pick(ui.host, "read");
-      await tap(ui.host);
-      expect(grants()).toEqual([expect.objectContaining({ codeHash: NEW, tier: "read" })]);
+      expect(grants()).toEqual([expect.objectContaining({ codeHash: NEW, tier: "write" })]);
     } finally { await ui.done(); }
   });
 
-  it("windowGrantCommand never puts plugin.grant in the requests and refuses a tier above the asks", () => {
+  it("installCommand never puts plugin.grant in the requests, and offers nothing for a built-in, an installed plugin or no asks", () => {
     const shown = plugin({ asks: asks({ tier: "request", requests: ["chat.send", "plugin.grant"] as never }) });
-    expect(windowGrantCommand(shown, "request")).toEqual({ type: "plugin.grant", plugin: "reading-coach", codeHash: HASH, tier: "request", reads: [], requests: ["chat.send"] });
-    expect(windowGrantCommand(shown, "write")).toBeNull();
-    expect(windowGrantCommand(plugin({ asks: undefined }), "read")).toBeNull();
-    expect(windowGrantCommand(plugin({ builtIn: true }), "read")).toBeNull();
+    expect(installCommand(shown)).toEqual({ type: "plugin.grant", plugin: "reading-coach", codeHash: HASH, tier: "request", reads: [], requests: ["chat.send"] });
+    expect(installCommand(plugin({ asks: undefined }))).toBeNull();
+    expect(installCommand(plugin({ builtIn: true }))).toBeNull();
+    expect(installCommand(plugin({ grant: "write" }))).toBeNull();
+    expect(installCommand(plugin({ grant: undefined }))).toBeNull();
   });
 });
 
@@ -219,7 +206,7 @@ describe("Plugins.view() and readPluginAsks", () => {
 });
 
 describe("botlingd: the window's approval lets the plugin's commands through the grant check", () => {
-  it("an imported-style plugin at nothing yet is refused, and after the window's plugin.grant its own commands pass", async () => {
+  it("a plugin that is not installed is refused, and after the window's install card (plugin.grant) its commands pass", async () => {
     const dir = testRoot("plugin-grant-approve-daemon");
     const daemon = await Botlingd.start({ env: botlingdEnv(dir, { BOTLING_SERVER_PORT: "off", BOTLING_SERVER_BACKUP_CHECK_MS: "0" }), outDir: join(desktop, "out") });
     const stream = `srv:${daemon.serverId}`;
@@ -246,9 +233,9 @@ describe("botlingd: the window's approval lets the plugin's commands through the
       const via = { plugin: "probe-coach", codeHash: hash };
       const call = Command.parse({ type: "plugins.call", name: "probe-coach", method: "list", params: null, from: "frame" });
       const send = { type: "chat.send", botId: "main", text: "hi" } as unknown as Command;
-      expect(grantAllows(row(), via, call, "This Mac", ["probe-coach"])).toEqual({ ok: false, detail: "plugin probe-coach may not do this on This Mac" });
+      expect(grantAllows(row(), via, call, "This Mac", ["probe-coach"])).toEqual({ ok: false, detail: "plugin probe-coach is not installed on This Mac" });
 
-      const cmd = windowGrantCommand(shown()!, "write");
+      const cmd = installCommand(shown()!);
       expect(cmd).not.toBeNull();
       const status = await daemon.runtime.receive({
         slot: { origin: "desktop", originEpoch: "a".repeat(32), target: stream, n: 1 }, floor: 1,

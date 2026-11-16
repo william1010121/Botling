@@ -7,6 +7,10 @@
   "publisher": "Botling",
   "engines": { "ccb": "^2.0.0" },
   "ccb": {
+    "kernel": 1,
+    "provides": { "services": [], "slots": [] },
+    "requires": { "services": [] },
+    "uses": { "services": [] },
     "contributes": {
       "components": "components"
     }
