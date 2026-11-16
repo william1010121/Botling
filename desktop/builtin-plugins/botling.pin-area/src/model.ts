@@ -355,18 +355,24 @@ export function addTurn(pin: Pin, rid: string, text: string, now: number, via: V
   pin.updatedAt = now;
   return turn;
 }
-export const openTurn = (pin: Pin): Turn | undefined => {
-  const last = pin.thread[pin.thread.length - 1];
-  return last && last.a === null && !last.moved ? last : undefined;
-};
+const waits = (turn: Turn): boolean => turn.a === null && !turn.moved;
+/**
+ * The turn the card's next answer goes to: the oldest unanswered one whose line is in the chat (answers come in the order the
+ * questions were asked), else the oldest unanswered one. Two questions written into one card before an answer each get theirs.
+ */
+export const openTurn = (pin: Pin): Turn | undefined =>
+  pin.thread.find((turn) => waits(turn) && turn.postedAt !== null) ?? pin.thread.find(waits);
 
-/** A `<pin-say id>` from the bot: the open turn of that card gets the answer. False: the card or an open turn is not there. */
+/**
+ * A `<pin-say id>` from the bot: the open turn of that card gets the answer. With no open turn (a second answer, or one the bot
+ * offers by itself) it is a turn of its own, never dropped: the core has already taken it out of the chat. False: no such card.
+ */
 export function answerTurn(book: Book, id: string, body: string, now: number): boolean {
   if (!isId(id)) return false;
   const pin = book.pins.find((candidate) => candidate.id === id);
-  const turn = pin ? openTurn(pin) : undefined;
   const text = clean(body, MAX_A * 2).trim().slice(0, MAX_A);
-  if (!pin || !turn || !text) return false;
+  if (!pin || !text) return false;
+  const turn = openTurn(pin) ?? addTurn(pin, `a${now.toString(36)}-${pin.thread.length}`, "", now);
   turn.a = text;
   turn.aAt = now;
   pin.updatedAt = now;
@@ -390,15 +396,16 @@ export function answerOnlyWaiting(book: Book, reply: string, startedAt: number, 
 export function markSeen(book: Book, now: number): boolean {
   let any = false;
   for (const pin of book.pins) {
-    const turn = openTurn(pin);
-    if (turn && turn.postedAt !== null && turn.seenAt === null) { turn.seenAt = now; any = true; }
+    for (const turn of pin.thread) {
+      if (waits(turn) && turn.postedAt !== null && turn.seenAt === null) { turn.seenAt = now; any = true; }
+    }
   }
   return any;
 }
-/** The user's line showed in the chat: the open turn of that card with that header. */
+/** The user's line showed in the chat: the oldest open turn of that card with that header whose line had not shown yet. */
 export function markPosted(book: Book, id: string, now: number): boolean {
   const pin = book.pins.find((candidate) => candidate.id === id);
-  const turn = pin ? openTurn(pin) : undefined;
+  const turn = pin ? pin.thread.find((candidate) => waits(candidate) && candidate.postedAt === null) : undefined;
   if (!turn || turn.postedAt !== null) return false;
   turn.postedAt = now;
   return true;

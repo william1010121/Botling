@@ -349,9 +349,12 @@ export class PinUi {
     parts.thread.replaceChildren();
     if (!pin.thread.length) parts.thread.append(el("div", "pt-empty", words("panel.empty")));
     for (const turn of pin.thread) {
-      const mine = el("div", "pt-msg pt-me");
-      mine.append(el("span", "pt-bubble", turn.q), el("span", `pt-receipt${turn.seenAt !== null ? " seen" : ""}`, `${clock(turn.qAt)} · ${this.receipt(turn)}`));
-      parts.thread.append(mine);
+      // a turn with no words of yours is an answer the bot gave by itself (a second <pin-say>)
+      if (turn.q) {
+        const mine = el("div", "pt-msg pt-me");
+        mine.append(el("span", "pt-bubble", turn.q), el("span", `pt-receipt${turn.seenAt !== null ? " seen" : ""}`, `${clock(turn.qAt)} · ${this.receipt(turn)}`));
+        parts.thread.append(mine);
+      }
       if (turn.a !== null) {
         const bot = el("div", "pt-msg pt-bot");
         bot.append(el("span", "pt-bubble", turn.a), el("span", "pt-receipt", `${words("bot.name")} · ${clock(turn.aAt ?? turn.qAt)}`));

@@ -173,6 +173,13 @@ describe("the panel", () => {
     expect(receipts.map((node) => node.classList.contains("seen"))).toEqual([true, false, true]);
   });
 
+  it("draws an answer the bot gave by itself (a turn with no words of yours) as the bot's bubble alone (review)", () => {
+    ui.update("B1", view(pin("p-0001", { thread: [{ rid: "a1", q: "", a: "順便說一下", qAt: clock, postedAt: null, seenAt: null, aAt: clock, via: "at" }] })));
+    ui.open("p-0001");
+    const bubbles = [...panel()!.querySelectorAll(".pt-msg")].map((msg) => [msg.classList.contains("pt-me") ? "me" : "bot", msg.querySelector(".pt-bubble")!.textContent]);
+    expect(bubbles).toEqual([["bot", "順便說一下"]]);
+  });
+
   it("says so when the thread is empty", () => {
     ui.update("B1", view(pin("p-0001")));
     ui.open("p-0001");
