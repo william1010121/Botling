@@ -133,7 +133,7 @@ async function draw(r: Rig, parts: Parameters<typeof Fallback>[0]["parts"] = {})
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const draws = (): ReactNode => createElement(ShellFrame, {
     legacy: createElement("div", { className: "shell" }, createElement(RegionSlot, { region: "main" })),
-    regions: { main: createElement(ChatStub, { store: r.store }), away: { source: { client: r.client, store: r.store }, parts } },
+    regions: { main: createElement(ChatStub, { store: r.store }), bottom: createElement("div", { className: "bottom-panels" }), away: { source: { client: r.client, store: r.store }, parts } },
   });
   await act(async () => root.render(draws()));
   roots.push({ root, host });
@@ -143,7 +143,7 @@ const settle = (check: () => void) => act(async () => { await vi.waitFor(check);
 const tick = () => act(async () => { await flush(); });
 const fallbackOf = (host: HTMLElement) => host.querySelector(".chat-fallback");
 const botNames = (host: HTMLElement) => [...host.querySelectorAll(".fallback-bots button")].map((button) => button.querySelector(".fallback-bot-name")?.textContent);
-const lineIds = (host: HTMLElement) => [...host.querySelectorAll("[data-line]")].map((one) => one.getAttribute("data-line"));
+const lineIds = (host: HTMLElement) => [...host.querySelectorAll("[data-line]")].map((one) => one.getAttribute("data-line") ?? "");
 const shownLines = (host: HTMLElement) => [...host.querySelectorAll(".fallback-lines li")].map((one) => one.textContent);
 
 /** Types into the fallback's box and presses Send. */
@@ -280,13 +280,64 @@ describe("a chat plugin that throws in activate", () => {
   });
 });
 
+describe("while the host has not decided (M7-07b review)", () => {
+  /** Watches the page for every `.chat-fallback` element that is ever added, and the most there are at once. */
+  function watch(host: HTMLElement) {
+    const seen = { added: 0, most: 0 };
+    const look = () => { seen.most = Math.max(seen.most, host.querySelectorAll(".chat-fallback").length); };
+    const observer = new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) if (node instanceof Element && (node.matches(".chat-fallback") || node.querySelector(".chat-fallback"))) seen.added += 1;
+      look();
+    });
+    observer.observe(host, { childList: true, subtree: true });
+    return { seen, stop: () => observer.disconnect() };
+  }
+
+  it("never draws the fallback for a chat plugin that loads, across stop() and start() (StrictMode's effect, cleanup, effect): the column is the page's, then the plugin's", async () => {
+    const r = await rig();
+    const host = await draw(r);
+    broken.on = false;
+    const one = chatHost();
+    const { seen, stop } = watch(host);
+    await act(async () => { await one.start(); });
+    await settle(() => { expect(host.querySelector("#the-chat")).not.toBeNull(); });
+    await act(async () => { await one.stop(); });
+    // The gap: the plugin is unloaded and the host has not said anything: the page as it was, not the fallback.
+    expect(fallbackOf(host)).toBeNull();
+    expect(host.querySelector("#the-chat")).not.toBeNull();
+    await act(async () => { await one.start(); });
+    await settle(() => { expect(rendererKernel.state(CHAT_PLUGIN)).toBe("active"); });
+    expect(fallbackOf(host)).toBeNull();
+    stop();
+    expect(seen).toEqual({ added: 0, most: 0 });
+  });
+
+  it("draws one fallback, the same element, for a chat plugin that fails, across stop() and start()", async () => {
+    const r = await rig();
+    const host = await draw(r);
+    const one = chatHost();
+    const { seen, stop } = watch(host);
+    await act(async () => { await one.start(); });
+    await settle(() => { expect(fallbackOf(host)).not.toBeNull(); });
+    const first = fallbackOf(host);
+    await act(async () => { await one.stop(); });
+    expect(fallbackOf(host)).toBe(first);
+    await act(async () => { await one.start(); });
+    await settle(() => { expect(one.unavailable(CHAT_PLUGIN)).toBe(true); });
+    expect(fallbackOf(host)).toBe(first);
+    expect(host.querySelectorAll(".chat-fallback")).toHaveLength(1);
+    stop();
+    expect(seen.added).toBe(1);
+    expect(seen.most).toBe(1);
+  });
+});
+
 describe("the fallback's own parts", () => {
   it("draws the parts the page hands in (the tab switch, the alert lines, the worker bar, the error bar, the bottom panels) and the Storage page in place of the chat lines", async () => {
     const r = await rig();
     const host = await draw(r, {
       header: createElement("span", { className: "bottom-controls" }), bar: createElement("div", { className: "board-switch" }), alerts: createElement("div", { className: "core-swap" }),
       worker: createElement("div", { className: "worker-bar" }), error: createElement("div", { className: "banner bottom", role: "alert" }, "boom"),
-      bottom: createElement("div", { className: "bottom-panels" }),
     });
     await act(async () => { await chatHost().start(); });
     await settle(() => { expect(fallbackOf(host)).not.toBeNull(); });
@@ -334,6 +385,9 @@ describe("the whole app page with the chat plugin refused", () => {
     expect(page.host.querySelector(".right-toggle")).not.toBeNull();
     // Back to Chat shows the fallback's own lines and input (the Storage page goes).
     await act(async () => { page.host.querySelector<HTMLButtonElement>(".board-switch button:not([data-tab])")!.click(); });
+    // The pick is remembered by main (`settings.set`): the page hears the new setting.
+    expect(page.requests.filter((request) => request.type === "settings.set" && (request as { change?: { key?: string } }).change?.key === "mainTab")).toEqual([{ type: "settings.set", change: { key: "mainTab", value: { botId: SITE, tab: null } } }]);
+    await page.update({ mainTabs: {} });
     await settle(() => { expect(page.host.querySelector(".storage-main")).toBeNull(); });
     expect(page.host.querySelector(".fallback-input textarea")).not.toBeNull();
   });
