@@ -37,6 +37,9 @@
 .v3-plugin-list { display: flex; flex-direction: column; gap: 8px; margin: 0 0 16px; font-size: 13.5px; }
 .v3-plugin-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .v3-plugin-name { font-weight: 600; }
+.v3-plugin-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; margin-left: 8px; padding: 0 5px; border-radius: 9px; background: var(--orange); color: #1A1206; font-size: 11px; font-weight: 600; }
+.v3-plugin-banner { margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--orange-line); border-radius: 10px; background: var(--waiting-bg); color: var(--orange-text); font-size: 13px; }
+.v3-plugin-waiting { padding: 6px 8px; border: 1px solid var(--orange-line); border-radius: 10px; background: var(--waiting-bg); }
 .v3-grant-options { margin: 0 0 16px; padding: 0; border: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
 .v3-grant-options legend { padding: 0; margin: 0 0 6px; }
 .v3-grant-option { display: flex; align-items: center; gap: 8px; }

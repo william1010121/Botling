@@ -394,6 +394,9 @@ export function ThisDevice({
 }) {
   const [confirm, setConfirm] = useState(false);
   const [plugins, setPlugins] = useState(false);
+  // Plugins that still wait for the user's Allow: counted on the Plugins button, so they are not missed.
+  const pluginSource = useMemo(() => (connection?.link ? linkPluginSource(connection.link) : NO_PLUGIN_SOURCE), [connection]);
+  const waitingPlugins = countWaitingPlugins(pluginSource);
   const [pendingItems, setPendingItems] = useState(() => connection?.link.pending() ?? []);
   const [attached, setAttached] = useState(() => connection?.link.attached ?? false);
   const [attachedServerId, setAttachedServerId] = useState<string | null>(
@@ -609,7 +612,8 @@ export function ThisDevice({
         </div>)}
       </div>}
       <div className="v3-sheet-actions">
-        <button type="button" className="web-secondary" data-testid="plugins-open" onClick={() => setPlugins(true)}>Plugins</button>
+        <button type="button" className={waitingPlugins > 0 ? "web-primary" : "web-secondary"} data-testid="plugins-open" onClick={() => setPlugins(true)}>Plugins
+          {waitingPlugins > 0 && <span className="v3-plugin-badge" data-testid="plugins-waiting" role="status" aria-label={`${waitingPlugins} ${waitingPlugins === 1 ? "plugin needs" : "plugins need"} your Allow`}>{waitingPlugins}</span>}</button>
       </div>
       {device.relay && <div className="v3-sheet-actions">
         <button type="button" className="web-secondary" data-testid="switch-path" onClick={() => void savePref("path", path === "relay" ? "auto" : "relay").then(() => location.reload())}>
@@ -625,6 +629,12 @@ export function ThisDevice({
 }
 
 const NO_PLUGIN_SOURCE: PluginSource = { servers: () => [], rows: () => null };
+
+/** How many plugins wait for the user's Allow; a source that cannot be read counts as none (the list itself still shows). */
+function countWaitingPlugins(source: PluginSource): number {
+  try { return listPlugins(source).filter((plugin) => plugin.needsAllow).length; }
+  catch { return 0; }
+}
 
 /**
  * This device › Plugins (M5-14b, D54, §11.7): the list, and the grant sheet. It is the shell's own sheet, never drawn in a
@@ -727,17 +737,20 @@ export function PluginsSheet({ device, connection, onClose }: { device: DeviceRe
     </div>;
   }
 
-  const list = listPlugins(source);
+  // What waits for the user's Allow comes first (the rest keep their name order).
+  const list = [...listPlugins(source)].sort((a, b) => Number(b.needsAllow) - Number(a.needsAllow));
+  const waiting = list.filter((plugin) => plugin.needsAllow).length;
   return <div className="v3-sheet-scrim" role="presentation" onClick={onClose}>
     <section className="v3-sheet" role="dialog" aria-label="Plugins" data-testid="plugins-sheet" onClick={(event) => event.stopPropagation()}>
       <h2>This device › Plugins</h2>
+      {waiting > 0 && <p className="v3-plugin-banner" role="status" data-testid="plugins-banner">{waiting === 1 ? "1 plugin is waiting for your Allow." : `${waiting} plugins are waiting for your Allow.`}</p>}
       <div className="v3-plugin-list">
-        {list.map((plugin) => <div key={plugin.name} className="v3-plugin-row" data-testid="plugin-row">
+        {list.map((plugin) => <div key={plugin.name} className={`v3-plugin-row${plugin.needsAllow ? " v3-plugin-waiting" : ""}`} data-testid="plugin-row">
           <span className="v3-plugin-name">{plugin.name}</span>
           <span>{plugin.authorWords}</span>
-          <span>{plugin.tierWords}</span>
+          <span>{plugin.needsAllow ? "waiting for your Allow" : plugin.tierWords}</span>
           {!plugin.builtIn && (canManage
-            ? <button type="button" className="web-secondary" onClick={() => review(plugin.name)}>Review</button>
+            ? <button type="button" className={plugin.needsAllow ? "web-primary" : "web-secondary"} onClick={() => review(plugin.name)}>Review</button>
             : <span className="v3-sheet-warn">{ONLY_MANAGE}</span>)}
         </div>)}
       </div>

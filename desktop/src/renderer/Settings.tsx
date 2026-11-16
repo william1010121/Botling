@@ -11,7 +11,8 @@ import { UpdateActions } from "./Updates";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isMaintainer, type BotView, type PluginsView, type SettingsChange, type SettingsView, type UpdateView } from "../contract";
 import { Client } from "./client";
-import { PanelFrame, PluginsPanel, SlotFrame } from "./Plugins";
+import { DEPS_PLUGIN, DEPS_VIEW, PanelFrame, PluginsPanel, SlotFrame } from "./Plugins";
+import { waitingForAllow } from "./plugin-grant";
 import { faceURL } from "./avatars";
 import { FIXED_SHORTCUTS, SHORTCUTS, bindingsFor, comboFromEvent, findConflict, formatCombo, normalizeOverrides, pluginBindings, resetBinding, setBinding, type Conflict } from "../contract/shortcuts";
 import { keybindingsOf } from "./plugin-commands";
@@ -64,7 +65,12 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
   // (settings-feed.ts). When the plugin is not up, the shell says so instead of showing a blank page.
   const core = useCoreSettings();
   const { pages: pluginPages } = usePluginSettings();
-  const groups = useMemo(() => settingsNav(pluginPages, search, core.groups), [search, pluginPages, core]);
+  // The dependency board is a tab of the Plugins page now (Plugins.tsx), not a page of its own in the list.
+  const groups = useMemo(() => settingsNav(pluginPages, search, core.groups)
+    .map((group) => ({ ...group, pages: group.pages.filter((entry) => !(entry.plugin === DEPS_PLUGIN && entry.view === DEPS_VIEW)) }))
+    .filter((group) => group.pages.length > 0), [search, pluginPages, core]);
+  // Plugins that still wait for the user's Allow: counted on the Plugins entry, so they are not missed.
+  const waiting = waitingForAllow(plugins?.plugins).length;
   const pages = groups.flatMap((group) => group.pages);
   const wanted = resolveSection(section);
   const current = pages.find((entry) => entry.id === wanted) ?? pages[0];
@@ -81,6 +87,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
               {group.pages.map((entry) => (
                 <button key={entry.id} type="button" className={`settings-tab${entry.indent ? " indent" : ""}${current?.id === entry.id ? " on" : ""}`} aria-current={current?.id === entry.id ? "page" : undefined} onClick={() => setSection(entry.id)}>
                   {entry.title}
+                  {entry.id === "plugins" && waiting > 0 && <span className="badge waiting settings-allow-badge" title={say(shown?.effectiveLanguage ?? null, "plugins.allowCount", { n: waiting })} aria-label={say(shown?.effectiveLanguage ?? null, "plugins.allowCount", { n: waiting })}>{waiting}</span>}
                 </button>
               ))}
             </div>
@@ -93,7 +100,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             <button type="button" className="settings-done" onClick={onClose}>Done</button>
           </header>
           {problem && <p className="settings-problem" role="alert">{problem}</p>}
-          <div className="settings-body">
+          <div className={`settings-body${current?.id === "plugins" ? " plugins-page" : ""}`}>
             {shown && current?.id === "general" && <General settings={shown} change={change} onNavigate={go} />}
             {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} bot={bot} />}
             {shown && current?.id === "shortcuts" && <Shortcuts settings={shown} change={change} plugins={plugins} />}

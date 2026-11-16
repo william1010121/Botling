@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
-import { Command, PluginView, type PluginsView } from "../../src/contract";
+import { Command, PluginView, type PluginStoreView, type PluginsView } from "../../src/contract";
 import { folderHash } from "../../src/core/plugins/catalog";
 import { Plugins, type PluginWorld } from "../../src/core/plugins";
 import { PluginsPanel } from "../../src/renderer/Plugins";
@@ -66,8 +66,12 @@ async function render(element: ReturnType<typeof createElement>) {
   return { host, rerender: async (next: ReturnType<typeof createElement>) => { await act(async () => root.render(next)); }, done: async () => { await act(async () => root.unmount()); host.remove(); } };
 }
 const panel = (client: Client, plugins: PluginView[]) => createElement(PluginsPanel, { client, plugins: view(plugins), onPanel() {}, onClose() {}, embedded: true });
+/** The card's confirm button: only there once the card is open (the row's or the detail's Allow opens it, over Settings). */
 const allowButton = (host: HTMLElement) => host.querySelector<HTMLButtonElement>("button.plugin-grant-allow");
-const tap = (host: HTMLElement) => act(async () => { allowButton(host)!.click(); });
+/** The heading over the detail's permission chips. */
+const accessTitle = (host: HTMLElement) => [...host.querySelectorAll(".plugin-detail .plugin-section")].find((one) => one.querySelector(".plugin-chips"))?.querySelector("h3")?.textContent;
+const openCard = (host: HTMLElement) => act(async () => { host.querySelector<HTMLButtonElement>("button.plugin-allow-open")!.click(); });
+const tap = async (host: HTMLElement) => { if (!allowButton(host)) await openCard(host); await act(async () => { allowButton(host)!.click(); }); };
 
 describe("PluginView.asks", () => {
   it("accepts the running hash with its asks and refuses a malformed hash, an unknown tier or an unknown command", () => {
@@ -80,13 +84,29 @@ describe("PluginView.asks", () => {
 });
 
 describe("Settings › Plugins: the install card (2026-11-16: one tap, no tiers)", () => {
+  it("a plugin that waits for Allow has Allow on its row and at the top of its detail; the card opens only on that tap", async () => {
+    const { client } = fakeClient();
+    const ui = await render(panel(client, [plugin()]));
+    try {
+      expect(ui.host.querySelector("li.plugin[data-plugin=reading-coach] button.plugin-allow-open")?.textContent).toBe("Allow");
+      const box = ui.host.querySelector(".plugin-detail .plugin-allow-box");
+      expect(box?.querySelector("button.plugin-allow-open")?.textContent).toBe("Allow");
+      // The box comes before everything else in the detail (the permission chips, the settings).
+      expect(box?.compareDocumentPosition(ui.host.querySelector(".plugin-detail .plugin-section")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(ui.host.querySelector(".plugin-grant")).toBeNull();
+      await openCard(ui.host);
+      expect(ui.host.querySelector(".plugin-install-card.plugin-grant")).not.toBeNull();
+    } finally { await ui.done(); }
+  });
+
   it("shows what the plugin asks and one Install button, with no tier to pick", async () => {
     const { client } = fakeClient();
     const ui = await render(panel(client, [plugin()]));
     try {
+      await openCard(ui.host);
       expect(ui.host.querySelectorAll(".plugin-grant input[type=radio]")).toHaveLength(0);
       expect(ui.host.querySelector(".plugin-asks")?.textContent).toBe("It asks to: read the chat it is shown in; send bots.create; send messages in that chat (chat.send); change its own data on the server.");
-      expect(allowButton(ui.host)?.textContent).toBe("Install");
+      expect(allowButton(ui.host)?.textContent).toBe("Install and allow");
       expect(allowButton(ui.host)?.disabled).toBe(false);
       expect(ui.host.textContent).toContain("Not installed on this machine");
     } finally { await ui.done(); }
@@ -97,16 +117,73 @@ describe("Settings › Plugins: the install card (2026-11-16: one tap, no tiers)
     const ui = await render(panel(client, [plugin()]));
     try {
       // Two taps before React draws the disabled button: only the in-flight guard stops the second.
+      await openCard(ui.host);
       await act(async () => { allowButton(ui.host)!.click(); allowButton(ui.host)!.click(); });
       await tap(ui.host);
       expect(grants()).toEqual([{ type: "plugin.grant", plugin: "reading-coach", codeHash: HASH, tier: "write", reads: [], requests: ["bots.create", "chat.send"] }]);
       expect(allowButton(ui.host)?.disabled).toBe(true);
       await settle("ok");
-      // The server re-announces the list with the plugin installed: no card any more, and a line says so.
+      // The server re-announces the list with the plugin installed: the card says it is done (nothing left to confirm), and the
+      // list no longer asks for Allow.
       await ui.rerender(panel(client, [plugin({ grant: "write" })]));
       expect(ui.host.textContent).toContain("Installed on this machine");
-      expect(ui.host.querySelector(".plugin-grant")).toBeNull();
+      expect(allowButton(ui.host)).toBeNull();
+      expect(ui.host.querySelector(".plugin-card-done")?.textContent).toContain("Installed.");
+      expect(ui.host.querySelector(".plugin-allow-open")).toBeNull();
       expect(grants()).toHaveLength(1);
+    } finally { await ui.done(); }
+  });
+
+  it("review fix: closing the card while its Allow is in flight and opening it again does not send a second grant", async () => {
+    const { client, grants, settle } = fakeClient();
+    const ui = await render(panel(client, [plugin()]));
+    try {
+      await tap(ui.host);
+      expect(grants()).toHaveLength(1);
+      await act(async () => { ui.host.querySelector<HTMLButtonElement>("button.plugin-card-cancel")!.click(); });
+      expect(allowButton(ui.host)).toBeNull();
+      await openCard(ui.host);
+      // The new card knows the first grant is still on its way: its button is off, and a tap sends nothing.
+      expect(allowButton(ui.host)?.disabled).toBe(true);
+      await act(async () => { allowButton(ui.host)!.click(); });
+      expect(grants()).toHaveLength(1);
+      await settle("ok");
+      expect(allowButton(ui.host)?.disabled).toBe(false);
+    } finally { await ui.done(); }
+  });
+
+  it("review fix: a plugin that waits for Allow shows its switches off and unusable, is not counted as on, and lists what it asks as not yet allowed", async () => {
+    const { client } = fakeClient();
+    const ui = await render(panel(client, [plugin({ enabled: true, permissions: ["files"] })]));
+    try {
+      const switches = [...ui.host.querySelectorAll<HTMLInputElement>("input.plugin-switch")];
+      expect(switches).toHaveLength(2); // the row's and the detail's
+      for (const one of switches) { expect(one.checked).toBe(false); expect(one.disabled).toBe(true); }
+      expect(ui.host.querySelector(".plugin-detail .plugin-toggle")?.textContent).toBe("Off");
+      expect(ui.host.querySelector(".plugins-summary")?.textContent).toBe("1 plugins · 0 on");
+      expect(accessTitle(ui.host)).toBe("After it is installed it can");
+      // Allowed, the same plugin is on and its switches work.
+      await ui.rerender(panel(client, [plugin({ enabled: true, permissions: ["files"], grant: "write" })]));
+      for (const one of ui.host.querySelectorAll<HTMLInputElement>("input.plugin-switch")) { expect(one.checked).toBe(true); expect(one.disabled).toBe(false); }
+      expect(ui.host.querySelector(".plugins-summary")?.textContent).toBe("1 plugins · 1 on");
+      expect(accessTitle(ui.host)).toBe("It is allowed to");
+    } finally { await ui.done(); }
+  });
+
+  it("review fix: a double tap on Update sends one plugins.storeInstall (the update's in-flight guard)", async () => {
+    const { client } = fakeClient();
+    const sent: Command[] = [];
+    const counting = { ...client, request: (cmd: Command) => { sent.push(cmd); return client.request(cmd); } } as unknown as Client;
+    const catalog = {
+      url: "https://example.invalid/index.json", official: true, fetchedAt: 1, fromCache: false, error: null, offline: false, loading: false, appVersion: "3.0.0", updates: 1,
+      entries: [{ name: "reading-coach", title: "陪讀", description: null, version: "0.4.0", license: "MIT", permissions: [], parts: ["web"], minAppVersion: "2.0.0",
+        size: 1_000, files: 1, commit: "a".repeat(40), page: "https://example.invalid/reading-coach", state: "update", installedVersion: "0.3.0", status: null }],
+    } as unknown as PluginStoreView;
+    const ui = await render(createElement(PluginsPanel, { client: counting, plugins: view([plugin({ grant: "write" })]), onPanel() {}, onClose() {}, embedded: true, initialStore: catalog }));
+    try {
+      const button = ui.host.querySelector<HTMLButtonElement>("li.plugin button.plugin-update")!;
+      await act(async () => { button.click(); button.click(); });
+      expect(sent.filter((cmd) => cmd.type === "plugins.storeInstall")).toEqual([{ type: "plugins.storeInstall", name: "reading-coach", direct: true }]);
     } finally { await ui.done(); }
   });
 
