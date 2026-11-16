@@ -88,7 +88,7 @@ it("the shipped ui.js registers its view and draws the graph, the plugins and th
   );
   expect([...row("botling.note").querySelectorAll(".dep-calls")].map((chip) => chip.textContent)).toEqual(["api.notes.read", "ccb.messages.render"]);
   expect(row("botling.note").querySelector(".dep-uses")!.textContent).toBe("composer.insertQuote");
-  expect(row("zed.tools").textContent).not.toContain("Declares nothing");
+  expect(row("botling.old").textContent).not.toContain("Declares nothing");
 
   // Read only: no control of any kind.
   expect(page.querySelectorAll("button, input, select, textarea, a, [role=switch], [draggable=true]")).toHaveLength(0);
