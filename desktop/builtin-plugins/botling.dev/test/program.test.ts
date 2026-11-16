@@ -170,6 +170,8 @@ describe("after the restart", () => {
     const { program, calls, running } = setup(root);
     const to = readBuild(fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" }))!;
     prepareInstall(join(root, "core"), readBuild(running)!, to, "DEV", "Faster startup.", 1, "");
+    // The install replaced the app in place: the bundle that runs now is the new build.
+    fakeApp(join(root, "Applications"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
     await program.start();
     expect(calls.filter((call) => call[0] === "card")).toEqual([]);
     await vi.advanceTimersByTimeAsync(8_000);

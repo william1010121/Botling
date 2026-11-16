@@ -5,7 +5,7 @@
 //    install script put the old build back over a build that works). The plugin tells the bot that asked, afterwards;
 //  - newer signed releases (main/updates.ts): an update notice in the main bot's chat, in developer mode only.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 /** How long a new build must have run before it counts as up (the install script waits HEALTH_WAIT_S for that). */
@@ -73,16 +73,24 @@ export function installAndQuit(command: string[], log: string, deps: {
   prepareRestart: () => void;
   cancelRestart: () => void;
   app: InstallApp | null | undefined;
-  spawn?: (command: string[], log: string) => void;
+  /** Starts the script; a promise that rejects when the program could not be started (it is only known a moment later). */
+  spawn?: (command: string[], log: string) => void | Promise<void>;
   log: (line: string) => void;
 }): void {
   deps.prepareRestart();
-  try { (deps.spawn ?? spawnInstaller)(command, log); } catch (error) { deps.cancelRestart(); throw error; }
+  let started: Promise<void>;
+  try { started = Promise.resolve((deps.spawn ?? spawnInstaller)(command, log)); } catch (error) { deps.cancelRestart(); throw error; }
   const app = deps.app;
-  if (!app) return;
-  // Bots write their notes as the app quits; the script waits for that.
-  const quit = app.quitForInstall ? () => app.quitForInstall!() : () => app.request("quit");
-  void Promise.resolve().then(quit).catch((error) => deps.log(`install: could not stop for the install: ${(error as Error)?.message ?? String(error)}`));
+  void started.then(() => {
+    if (!app) return;
+    // Bots write their notes as the app quits; the script waits for that.
+    const quit = app.quitForInstall ? () => app.quitForInstall!() : () => app.request("quit");
+    return Promise.resolve().then(quit).catch((error) => deps.log(`install: could not stop for the install: ${(error as Error)?.message ?? String(error)}`));
+  }, (error) => {
+    // The script never ran (no /usr/bin/nohup, no bash): quitting now would leave no app and nothing to open it again.
+    deps.cancelRestart();
+    deps.log(`install: the install script did not start, nothing was quit: ${(error as Error)?.message ?? String(error)}`);
+  });
 }
 
 /** The external volume a path is on (`/Volumes/<name>`), or null when it is on this Mac's own disk. */
@@ -189,10 +197,25 @@ export class ReleaseNotices {
   }
 }
 
-/** Starts the install script detached from the core (its output in the install log); it outlives the app. */
-export function spawnInstaller(command: string[], log: string) {
+/**
+ * How the install script is started: in a session and process group of its own (`detached`: setsid), so what ends botlingd or
+ * its process group does not reach it; no input; its output goes straight to the install log file, never through a pipe to
+ * this process (nothing to break: no SIGPIPE when this process is gone). The script ignores a hangup itself and logs the
+ * signals it gets (swap.ts).
+ */
+export function installerSpawnOptions(logFd: number): { detached: true; stdio: ["ignore", number, number]; windowsHide: true } {
+  return { detached: true, stdio: ["ignore", logFd, logFd], windowsHide: true };
+}
+
+/** Starts the install script detached from the core (its output in the install log); it outlives the app. Resolves once it runs. */
+export function spawnInstaller(command: string[], log: string): Promise<void> {
   mkdirSync(join(log, ".."), { recursive: true });
   const out = openSync(log, "a");
-  const child = spawn(command[0]!, command.slice(1), { detached: true, stdio: ["ignore", out, out] });
-  child.unref();
+  try {
+    const child = spawn(command[0]!, command.slice(1), installerSpawnOptions(out));
+    child.unref();
+    return new Promise((resolve, reject) => { child.once("spawn", () => resolve()); child.once("error", reject); });
+  } finally {
+    closeSync(out); // the script has its own copy
+  }
 }
