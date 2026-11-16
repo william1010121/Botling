@@ -456,6 +456,7 @@ export class Bot {
   // Its own components, moved to BotCards (M7-S43).
   get components(): string[] | null { return this.cards.components; }
   setComponentList(names: string[]) { this.cards.setComponentList(names); }
+  get ownComponentNames(): string[] { return this.cards.ownComponentNames; }
 
   get lastAsked(): string { return this.views.lastAsked; }
 

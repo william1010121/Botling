@@ -205,7 +205,7 @@ export class MaintainerDesk {
   giveComponent(name: string, bot: Bot): boolean {
     const list = bot.components;
     if (!list || !this.deps.library.names.includes(name)) return false;
-    const own = bot.cards.ownComponentNames;
+    const own = bot.ownComponentNames;
     if (own.includes(name)) return true;
     if (own.length >= COMPONENT_LIMIT) return false;
     bot.setComponentList([...list, name]);
@@ -227,7 +227,7 @@ export class MaintainerDesk {
   /** What Maintainer is told about the bot that asked (`componentAskNote`), after giving it at once when the library has it. */
   askNote(name: string, request: string, exists: boolean, bot: Bot | null): string {
     if (!bot || bot.components === null) return "";
-    const own = bot.cards.ownComponentNames;
+    const own = bot.ownComponentNames;
     const limit = COMPONENT_LIMIT;
     const botName = this.nameOf(bot);
     const ask: ComponentAsk = {
@@ -332,7 +332,7 @@ export class MaintainerDesk {
     if (give) {
       if (!this.deps.library.names.includes(name)) { maintainer?.queueNote(`(App: "${name}" is not in the library, so it was not added to ${shown}'s list.)`); return; }
       if (!this.giveComponent(name, bot)) {
-        maintainer?.queueNote(`(App: ${shown} already has ${bot.cards.ownComponentNames.length} / ${COMPONENT_LIMIT} components, so "${name}" was not added. Ask the user which one to remove from ${shown}'s list first.)`);
+        maintainer?.queueNote(`(App: ${shown} already has ${bot.ownComponentNames.length} / ${COMPONENT_LIMIT} components, so "${name}" was not added. Ask the user which one to remove from ${shown}'s list first.)`);
         return;
       }
       const asked = this.asks.find((ask) => ask.botId === bot.id && ask.name === name) ?? this.asks.find((ask) => ask.botId === bot.id && !ask.changing);
