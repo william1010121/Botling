@@ -13,6 +13,15 @@
 // The owner of every worker is the bot it runs for; this book only remembers which plugin started it (quota, who may
 // send or cancel it, who hears its report). A cancel or a send for a worker the plugin did not start gets the same
 // answer as for one that does not exist.
+// M7-O03b: every worker and every message a plugin sends carries the plugin's name and hash (`StartedBy`: the ledger's
+// `startedBy`, the name the user sees, a line before each message). When the plugin goes (disabled, removed, held back,
+// or replaced by code with another hash), `reconcile` hands each of its workers back to core: the bot is, and always was,
+// the owner, so the worker runs on and its report reaches the bot exactly as before; only the plugin's own copy of the
+// report and its right to send or cancel end. It is synchronous, so it runs before the new plugin's host starts. A
+// report the plugin is owed is kept until the host says it listens (`tell` answers false until then) and is told again
+// after a restart; `pickUp` asks the core where each worker stands, so a run that ended while nobody was told is told
+// once and a place is not held for a worker that is gone.
+import type { StartedBy } from "../worker-core/started-by";
 import { maySpecWrite, DEFAULT_SPEC_WRITERS } from "../spec-guard";
 import type { AppAnswer, AppQuestion } from "../plugins/types";
 
@@ -26,9 +35,11 @@ const DAY = 86_400_000, KEEP = 7 * DAY, MAX_ENTRIES = 1_000, CARD_WAIT_MS = 600_
 export interface WorkerPort {
   /** The bot's id as plugins name it. */
   id: string;
-  start(args: Record<string, unknown>): Promise<{ task_id: string; run: number }>;
-  send(taskId: string, text: string): Promise<{ ok: true; how: string; run: number } | { ok: false; reason: string }>;
+  start(args: Record<string, unknown>, startedBy?: StartedBy): Promise<{ task_id: string; run: number }>;
+  send(taskId: string, text: string, startedBy?: StartedBy): Promise<{ ok: true; how: string; run: number } | { ok: false; reason: string }>;
   stop(taskId: string): Promise<boolean>;
+  /** Where a worker stands now, from the core's ledger (null: no such worker). Absent: nothing can be picked up. */
+  look?(taskId: string): { run: number; running: boolean; status: string; report: string } | null;
 }
 
 export interface OrchestrationWorld {
@@ -46,14 +57,25 @@ export interface PluginFacts { name: string; identity: string; permissions: read
 
 export interface StartParams { bot: string; instructions: string; name?: string; group?: string; engine?: "claude"; model?: string; effort?: string }
 
-interface Entry { plugin: string; bot: string; task: string | null; at: number; open: boolean; reported: number; stopped: boolean }
+/** A run's report the plugin has not been told yet (cut: the bot has the whole report; this is the plugin's copy). */
+interface Owed { run: number; status: string; report: string }
+interface Entry {
+  plugin: string; bot: string; task: string | null; at: number; open: boolean; reported: number; stopped: boolean;
+  /** The plugin's hash when it started this worker (absent: a book older than this). */
+  hash?: string;
+  /** Handed back to core: no longer this plugin's to send to, cancel or hear from; it still counts at work until it ends. */
+  handed?: true;
+  owed?: Owed[];
+}
+const OWED_KEEP = 3, OWED_TEXT = 8_000;
 
 export interface PluginWorkersDeps {
   world: OrchestrationWorld;
   facts(plugin: string): PluginFacts | null;
   ask(question: AppQuestion): Promise<AppAnswer | null>;
-  /** `workerReport` to the plugin that started the worker (only to it). */
-  tell(plugin: string, event: "workerReport", data: Record<string, unknown>): void;
+  /** `workerReport` to the plugin that started the worker (only to it). `false`: its host did not take it now (it stays owed). */
+  tell(plugin: string, event: "workerReport", data: Record<string, unknown>): unknown;
+  log?(line: string): void;
   /** The book on disk (absent: kept in memory only). */
   file?: { read(): string | null; write(text: string): void };
   now?(): number;
@@ -76,8 +98,12 @@ export class PluginWorkers {
       if (!Array.isArray(rows)) throw new Error("not a list");
       for (const row of rows as Record<string, unknown>[]) {
         if (typeof row.plugin === "string" && typeof row.bot === "string" && (typeof row.task === "string" || row.task === null) && typeof row.at === "number") {
-          // A reservation that never got its task id: kept as used until it is a day old (more, never less).
-          this.entries.push({ plugin: row.plugin, bot: row.bot, task: row.task, at: row.at, open: row.open === true, reported: typeof row.reported === "number" ? row.reported : 0, stopped: row.stopped === true });
+          // A reservation that never got its task id was cut off by the last stop: it counts for the day, not as at work.
+          const owed = Array.isArray(row.owed) ? (row.owed as Record<string, unknown>[]).filter((o) => Number.isSafeInteger(o.run) && typeof o.status === "string" && typeof o.report === "string").map((o) => ({ run: o.run as number, status: o.status as string, report: o.report as string })).slice(-OWED_KEEP) : [];
+          this.entries.push({
+            plugin: row.plugin, bot: row.bot, task: row.task, at: row.at, open: row.open === true && row.task !== null, reported: typeof row.reported === "number" ? row.reported : 0, stopped: row.stopped === true,
+            ...(typeof row.hash === "string" ? { hash: row.hash } : {}), ...(row.handed === true ? { handed: true as const } : {}), ...(owed.length ? { owed } : {}),
+          });
         }
       }
     } catch { this.unreadable = true; }
@@ -87,7 +113,17 @@ export class PluginWorkers {
 
   private save() {
     const now = this.now();
-    this.entries = this.entries.filter((entry) => entry.open || entry.at > now - KEEP).slice(-MAX_ENTRIES);
+    this.entries = this.entries.filter((entry) => entry.open || entry.at > now - KEEP);
+    // Over the most: the oldest rows that nothing counts any more go (closed, older than a day, nothing owed). A row at work,
+    // one from the last day (the quota counts it) or one with a report owed is never the one forgotten.
+    let excess = this.entries.length - MAX_ENTRIES;
+    if (excess > 0) {
+      this.entries = this.entries.filter((entry) => {
+        if (excess <= 0 || entry.open || entry.at > now - DAY || entry.owed?.length) return true;
+        excess -= 1;
+        return false;
+      });
+    }
     this.deps.file?.write(JSON.stringify(this.entries));
   }
 
@@ -135,6 +171,8 @@ export class PluginWorkers {
     if (params.model && maySpecWrite(params.model, this.deps.world.specWriters?.() ?? DEFAULT_SPEC_WRITERS)) {
       throw new Error("A plugin's worker may not use a model that may change spec/. Choose another model, or none. Nothing was started.");
     }
+    // A place held for a worker that has ended (or is gone) without this book hearing of it is free before the room is counted.
+    this.pickUp();
     const refused = this.full(plugin);
     if (refused) throw new Error(refused);
     const port = this.deps.world.workers(params.bot);
@@ -146,32 +184,38 @@ export class PluginWorkers {
       const nowFull = this.full(plugin);
       if (nowFull) throw new Error(nowFull);
     }
-    const entry: Entry = { plugin, bot: port.id, task: null, at: this.now(), open: true, reported: 0, stopped: false };
+    const entry: Entry = { plugin, bot: port.id, task: null, at: this.now(), open: true, reported: 0, stopped: false, hash: facts.identity };
     this.entries.push(entry);
+    const forget = () => { this.entries = this.entries.filter((candidate) => candidate !== entry); this.persist(); };
+    // The reservation is written before the worker starts: a write that fails starts nothing (fail closed).
+    try { this.save(); } catch (error) { this.entries = this.entries.filter((candidate) => candidate !== entry); throw error; }
+    let started: { task_id: string; run: number };
     try {
-      this.save();
       const args: Record<string, unknown> = { instructions: params.instructions, name: oneLine(params.name ?? "", 200) || undefined, ...(params.group ? { group: oneLine(params.group, 80) } : {}), ...(params.model ? { model: params.model } : {}), ...(params.effort ? { effort: params.effort } : {}) };
-      const started = await port.start(args);
-      entry.task = started.task_id;
-      this.save();
-      return { taskId: started.task_id, run: started.run };
+      started = await port.start(args, { plugin: facts.name, hash: facts.identity });
     } catch (error) {
-      this.entries = this.entries.filter((candidate) => candidate !== entry);
-      try { this.save(); } catch { /* the reservation stays in memory only */ }
+      forget();
       throw error;
     }
+    // The worker runs now. A write that fails here does not undo it: it stays counted and the plugin's, and the next write keeps it.
+    entry.task = started.task_id;
+    this.persist();
+    return { taskId: started.task_id, run: started.run };
   }
 
-  /** The worker this plugin started, or the one answer for "not yours" and "not there" (nothing says which). */
+  /**
+   * The worker this plugin (this very version of it) started and still owns the right to, or the one answer for "not
+   * yours" and "not there" (nothing says which): a worker handed back, or started by another hash, is not its.
+   */
   private mine(plugin: string, taskId: string): Entry {
-    const entry = this.entries.find((candidate) => candidate.plugin === plugin && candidate.task === taskId);
-    if (!entry) throw new Error("No such worker.");
+    const entry = this.entries.find((candidate) => candidate.plugin === plugin && candidate.task === taskId && !candidate.handed);
+    if (!entry || entry.hash === undefined || entry.hash !== this.deps.facts(plugin)?.identity) throw new Error("No such worker.");
     return entry;
   }
 
   async send(plugin: string, taskId: string, message: string): Promise<{ run: number; how: string }> {
     const entry = this.mine(plugin, taskId);
-    this.allowed(plugin);
+    const facts = this.allowed(plugin);
     const port = this.deps.world.workers(entry.bot);
     if (typeof port === "string") throw new Error(port);
     // A run into a worker that is idle takes a place again: the same limit as a new one (not the daily count).
@@ -182,7 +226,7 @@ export class PluginWorkers {
       entry.open = true;
       entry.stopped = false;
     }
-    const sent = await port.send(taskId, message).catch((error: Error) => ({ ok: false as const, reason: error.message }));
+    const sent = await port.send(taskId, message, { plugin: facts.name, hash: facts.identity }).catch((error: Error) => ({ ok: false as const, reason: error.message }));
     if (!sent.ok) {
       entry.open = wasOpen;
       throw new Error(sent.reason);
@@ -195,19 +239,115 @@ export class PluginWorkers {
     const entry = this.mine(plugin, taskId);
     const port = this.deps.world.workers(entry.bot);
     if (typeof port === "string") throw new Error(port);
-    const stopped = await port.stop(taskId);
-    // Once: a second cancel finds it closed and gives nothing back twice.
-    if (entry.open) { entry.open = false; entry.stopped = true; this.save(); }
+    // Marked before the stop is awaited: the run's end that comes while the stop is under way is the cancel's, not a report.
+    const was = entry.stopped;
+    entry.stopped = true;
+    let stopped = false;
+    try { stopped = await port.stop(taskId); } catch (error) { entry.stopped = was; throw error; }
+    if (stopped) {
+      // Once: a second cancel finds it closed and gives nothing back twice.
+      entry.open = false;
+      this.persist();
+    } else {
+      // Not at work any more (it ended on its own first): that end is a report like any other, from the core's ledger.
+      entry.stopped = was;
+      this.pickUp();
+    }
     return { stopped };
   }
 
   /** A worker's run ended (the core's own event): its plugin hears it, at most once per run, and its place is free. */
   ended(taskId: string, run: number, status: string, report: string) {
     const entry = this.entries.find((candidate) => candidate.task === taskId);
-    if (!entry || entry.stopped || entry.reported >= run) return;
+    if (!entry || entry.stopped) return;
+    if (entry.handed) {
+      // Handed back: the bot has the report; the plugin is not told, and the place it held is free.
+      if (entry.open && run >= entry.reported) { entry.open = false; this.persist(); }
+      return;
+    }
+    if (entry.reported >= run) return;
+    this.owe(entry, run, status, report);
+  }
+
+  /** A run to tell its plugin: the cursor and the copy are written first, then it is told, then it is no longer owed. */
+  private owe(entry: Entry, run: number, status: string, report: string) {
     entry.reported = run;
     entry.open = false;
+    entry.owed = [...(entry.owed ?? []), { run, status, report: report.slice(0, OWED_TEXT) }].slice(-OWED_KEEP);
     try { this.save(); } catch { return; }
-    this.deps.tell(entry.plugin, "workerReport", { botId: entry.bot, taskId, run, status, report, startedBy: entry.plugin });
+    this.flush(entry);
+  }
+
+  /** Tells what the plugin is owed, oldest first, until its host does not take one; then the book says what is left. */
+  private flush(entry: Entry) {
+    const owed = entry.owed;
+    if (!owed?.length || entry.handed || !this.mayHear(entry)) return;
+    let told = 0;
+    for (const item of owed) {
+      let taken = false;
+      try { taken = this.deps.tell(entry.plugin, "workerReport", { botId: entry.bot, taskId: entry.task, run: item.run, status: item.status, report: item.report, startedBy: entry.plugin }) !== false; } catch { taken = false; }
+      if (!taken) break;
+      told += 1;
+    }
+    if (!told) return;
+    entry.owed = owed.slice(told);
+    if (!entry.owed.length) delete entry.owed;
+    this.persist();
+  }
+
+  /**
+   * Authority at use (each tell, also after a restart): the plugin is still the version that started the worker and
+   * still has its grant. Not now: the copy stays owed (a hand-back drops it; a grant given back tells it).
+   */
+  private mayHear(entry: Entry): boolean {
+    try { return entry.hash !== undefined && this.deps.facts(entry.plugin)?.identity === entry.hash && this.deps.world.granted(entry.plugin) === true; } catch { return false; }
+  }
+
+  private persist() {
+    try { this.save(); } catch (error) { this.deps.log?.(`plugin workers: the book was not saved: ${(error as Error).message}`); }
+  }
+
+  /** What is owed to plugins is told again (their host came up and listens now). */
+  redeliver() {
+    for (const entry of this.entries) this.flush(entry);
+  }
+
+  /**
+   * The unload hook (the plugin was disabled, removed, held back, or is another version now): each of its workers goes
+   * back to core. Synchronous, so the caller can run it before the new version's host starts.
+   */
+  reconcile() {
+    let changed = false;
+    for (const entry of this.entries) {
+      if (entry.handed) continue;
+      const facts = this.deps.facts(entry.plugin);
+      if (facts && entry.hash === facts.identity) continue;
+      entry.handed = true;
+      delete entry.owed;
+      changed = true;
+    }
+    if (changed) this.persist();
+  }
+
+  /**
+   * After a restart (or when a host comes up): asks the core where each worker still counted at work stands. One that
+   * ended while nobody was told is told once; one that is gone frees its place; one still running stays. Synchronous:
+   * nothing else runs between a look and what it changes, so an end the core reports meanwhile cannot be told twice.
+   */
+  pickUp() {
+    if (this.unreadable) return;
+    for (const entry of [...this.entries]) {
+      if (!entry.open || entry.task === null || entry.stopped) continue;
+      let seen: ReturnType<NonNullable<WorkerPort["look"]>>;
+      try {
+        const port = this.deps.world.workers(entry.bot);
+        if (typeof port === "string" || !port.look) continue;
+        seen = port.look(entry.task);
+      } catch { continue; }
+      if (seen === null) { entry.open = false; this.persist(); continue; }
+      if (seen.running) continue;
+      if (entry.handed || seen.run <= entry.reported) { entry.open = false; this.persist(); } else this.owe(entry, seen.run, seen.status, seen.report);
+    }
+    this.redeliver();
   }
 }
