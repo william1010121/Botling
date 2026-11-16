@@ -56,6 +56,8 @@ export interface ChatHooks {
     insert(text: string): void;
     addExtension(extension: state.Extension): Dispose;
     showPopover(content: HTMLElement | string): Dispose;
+    /** Rows after a single "@" in the box, before the bots' (a source that throws offers none); a name typed in full needs no row. */
+    mentionSource(source: (query: string) => { name: string; about?: string; insert?: string }[]): Dispose;
     /** Chips above the box in the chat open now (`list`: every plugin's). */
     chips: { add(chip: ComposerChip): ChipHandle; list(): ChipHandle[] };
   };
@@ -65,8 +67,11 @@ export interface ChatHooks {
   slots?: PageSlots;
 }
 
-/** Elements of the chat page a plugin may fill: above the input box, and over the whole page. */
-export interface PageSlots { pinArea: HTMLElement; overlay: HTMLElement }
+/**
+ * Elements of the chat page a plugin may fill: above the message list (`topArea`, empty it takes no room), above the input box
+ * (`pinArea`), and over the whole page (`overlay`).
+ */
+export interface PageSlots { pinArea: HTMLElement; overlay: HTMLElement; topArea: HTMLElement }
 
 /**
  * What the chat page lends a plugin that draws cards of its own over it (botling.board, the pins; plugin-extraction.md §3.3,
@@ -416,7 +421,7 @@ export class PluginHost {
   }
 
   private pageKit(name: string, own: (dispose: Dispose) => Dispose, remove: <T>(list: T[], item: T) => () => void): PageKit {
-    const slots = this.hooks.slots ?? { pinArea: document.createElement("div"), overlay: document.body };
+    const slots = this.hooks.slots ?? { pinArea: document.createElement("div"), topArea: document.createElement("div"), overlay: document.body };
     return pageKit(slots, {
       onState: (fn) => {
         const item = { plugin: name, fn };
@@ -472,6 +477,7 @@ export class PluginHost {
         ...this.hooks.composer,
         addExtension: (extension) => own(this.hooks.composer.addExtension(extension)),
         showPopover: (content) => own(this.hooks.composer.showPopover(content)),
+        mentionSource: (source) => own(this.hooks.composer.mentionSource((query) => this.guard(name, () => source(query)) ?? [])),
         onKeyDown: (handler) => {
           const item = { plugin: name, handler };
           this.keyHandlers.push(item);

@@ -76,7 +76,7 @@ beforeEach(async () => {
   scroller = document.getElementById("messages")!;
   const composer = new Composer(document.body.appendChild(document.createElement("div")));
   host = new PluginHost({
-    composer: { element: composer.root, view: composer.view, getText: () => composer.text, insert: (text) => composer.insert(text), addExtension: (extension) => composer.addExtension(extension), showPopover: (content) => composer.showPopover(content), chips: { add: (item) => composer.addChip(item), list: () => composer.chipsHere() } },
+    composer: { element: composer.root, view: composer.view, getText: () => composer.text, insert: (text) => composer.insert(text), addExtension: (extension) => composer.addExtension(extension), showPopover: (content) => composer.showPopover(content), mentionSource: (source) => composer.addMentionSource(source), chips: { add: (item) => composer.addChip(item), list: () => composer.chipsHere() } },
     redraw: () => {},
   });
   const spec: PluginSpec = { name: NAME, version: "1.0.0", source: "", styles: [], settings: {}, commands: [], builtIn: true } as PluginSpec;

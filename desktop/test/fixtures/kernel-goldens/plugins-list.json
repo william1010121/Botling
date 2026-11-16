@@ -7,6 +7,7 @@
       "description": "Pin a component to a bot: a chip above the input box (and the sheet it raises) or a small card floating in a corner of the window. It keeps the pins and runs their commands once you allowed them.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -28,6 +29,7 @@
       "description": "The app's own cards in the chat: the web preview card (網頁預覽卡片) shows a one-page HTML result small, with a button to open it full size. A component of the same name in the library replaces it.",
       "enabled": true,
       "failure": null,
+      "hostState": "none",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [],
@@ -45,6 +47,7 @@
       "description": "Coming back to a chat with many unread replies folds them into one card with a short summary; stretches between your messages can be summarized too. Each point links back to the messages it comes from. Settings → General → Chat summaries.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -158,6 +161,7 @@
       "description": "Pictures in a row become one gallery, a long message of yours folds to its first lines, and a long paste waits as a chip above the input box.",
       "enabled": true,
       "failure": null,
+      "hostState": "none",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -199,6 +203,7 @@
       "description": "Turns a reply into a component: \"Make into component\" under a reply (or on a result page's preview card), a bot's own <suggest-component> chip, and the spec workspace in the right panel where you and Maintainer shape it.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -219,12 +224,32 @@
       "panels": []
     },
     {
+      "name": "botling.deps",
+      "title": "Plugin dependencies",
+      "version": "1.0.0",
+      "description": "A read-only board of who depends on whom among the plugins: every plugin (built in and installed) with its version and whether it is on, the services it provides, requires or uses, the screen slots it fills, and arrows from each plugin to the ones that provide what it needs, with a missing provider in red. It only looks; it never turns anything on or off.",
+      "enabled": true,
+      "failure": null,
+      "hostState": "starting",
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [],
+      "parts": [
+        "web",
+        "host"
+      ],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
       "name": "botling.design",
       "title": "Claude Design",
       "version": "1.0.0",
       "description": "/design in the input box: the bot makes a Claude Design on claude.ai and replies with its link.",
       "enabled": true,
       "failure": null,
+      "hostState": "none",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [],
@@ -240,6 +265,7 @@
       "description": "For the project that is Botling's own source (Settings → Developer): its manager may install a build it made (<install-build>, you confirm on a card, a build that does not come up is rolled back by itself) and see the app's window (<app-screenshot/>), and hears how in its instructions.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -260,6 +286,7 @@
       "description": "App-managed git worktrees for a project's work (a branch and folder the agent works in, merged or discarded when you say so), the Review of their changes (diffs, comments sent to the agent, per-turn changes) and committing and opening a pull request from it.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -306,6 +333,7 @@
       "description": "A Note tab in each bot's header: edit the bot's own markdown note (.bot/note.md) in place; a line renders as markdown (images, KaTeX math, code, lists) once the cursor leaves it; follows the app's light/dark theme. One note can fork into routes (route tabs, a route overview, `<!-- branch / route -->` comments in the same note.md); a + button and the / menu insert headings, to-dos and images. A cell is a whole chunk of Markdown, cut by `<!-- cell -->` lines (a note without them is one cell per route); each cell is framed with a colored bar by type, can be dragged by its grip (into the route a branch shows, out of a branch, between routes, up/down; Cmd+Z undoes it) and has a toolbar to split at the cursor (Ctrl+Shift+-), merge with the next (Ctrl+Shift+M), insert, move (also into and out of branches), delete and change type (Markdown, code, math). Markdown (GFM pipe) tables render as real tables (header, borders, column alignment) and are edited cell by cell in place (Tab / Shift+Tab, Enter adds a row, a hover bar and right-click menu add or delete rows and columns, \"/表格\" inserts one); the file keeps tidy pipe-table text and untouched tables keep their bytes. Whole lines can be selected across lines, cells and tables (mouse drag, Shift+click, Shift+arrows; Cmd+A selects the cell, again the whole shown note); Cmd+C copies the Markdown (no cell, branch or route lines; only the shown routes), and typing or Delete replaces the selection (Cmd+Z undoes it). Each branch remembers its own shown route, nested branches per parent route (switching a branch away and back brings back the deeper routes chosen there), and the app keeps those choices and the cursor / scroll per note across tab switches and restarts (plugin storage, never note.md). A `<show name=\"…\">JSON</show>` (or `<show name=\"…\" command=\"…\"></show>`) on its own line(s), as the chat writes it, is drawn as a live card in a cell of its own (the note keeps the plain text): a card with a Command runs it once allowed (th",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -326,10 +354,34 @@
       "description": "The advice bots are given on how to hand out work, follow up and review reports (rules.json: one text per policy sentence of Botling's own rules). Read-only and pinned: Botling uses it only while rules.json is byte for byte the one it shipped with, else its own copy of the same words. Contract sentences (what the app does and guards) are not in it and cannot be changed by it.",
       "enabled": true,
       "failure": null,
+      "hostState": "none",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [],
       "parts": [],
+      "settings": [],
+      "commands": [],
+      "panels": []
+    },
+    {
+      "name": "botling.pin-area",
+      "title": "Pin 區",
+      "version": "1.0.0",
+      "description": "Pin 區: a strip of pinned task cards above the chat, one row per card (faded until you point at it; a card that waits for you stays clear), and a floating panel on the right that a click opens: the card's one-line status (rewritten in place, with what it said before), its steps, its own thread and its own input box. You pin any message from its 釘選 button; a bot may pin a card too, but only for a run of 10 minutes or more or when it needs you, and may rewrite the status line of its own cards (the <pin-card> reply tag) and answer in a card's thread (<pin-say>). Typing @ in the input box offers the cards: \"@card words\" goes into that card's thread, and the bot's answer lands there. Unpinning leaves a 釘回 to put it back; a done card you opened and closed unpins itself. Keys: ⌘1–3 open a card, Esc closes it. Built on two general hooks of the chat page: the topArea slot and ccb.composer.mentionSource.",
+      "enabled": true,
+      "failure": null,
+      "hostState": "starting",
+      "installedFrom": null,
+      "builtIn": true,
+      "permissions": [
+        "messages",
+        "composer",
+        "cards"
+      ],
+      "parts": [
+        "web",
+        "host"
+      ],
       "settings": [],
       "commands": [],
       "panels": []
@@ -341,6 +393,7 @@
       "description": "Report pages for the bots: a skill (the ReportSpec v2 guide) and a command (Botling 2 --render-report spec.json page.html) that renders one, with the rule that tells every bot to use them.",
       "enabled": true,
       "failure": null,
+      "hostState": "none",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [],
@@ -356,6 +409,7 @@
       "description": "The Routines button in the chat header: a bot's schedules (its routines.cron lines and the app's own one-time and recurring ones), with Pause, Resume and Cancel. Botling still keeps and runs the schedules; this plugin only lists them and asks for the change.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -376,6 +430,7 @@
       "description": "A shell in the bot's project folder under the chat: the Terminal button in the chat header (Mod+J) shows tabs of real shells, one list per bot, kept running while the panel is hidden.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -402,6 +457,7 @@
       "description": "What the bots used: the subscription quota rings in the sidebar gear's popover (Claude, Codex, Antigravity) and Settings → Usage (cost and tokens today, limits, by bot, earlier days). The numbers are read by Botling; this plugin only shows them.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [],
@@ -420,6 +476,7 @@
       "description": "The main bot's whiteboard: every bot's card (what waits on you, what runs, what is idle), numbers, charts and each bot's report, in a tab beside Chat and Board. A bot may give its card a small picture with <whiteboard>.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -440,6 +497,7 @@
       "description": "Typesets $…$, $$…$$, \\(…\\) and \\[…\\] in messages with KaTeX, previews formulas while you type, and copies formulas as TeX.",
       "enabled": true,
       "failure": null,
+      "hostState": "none",
       "installedFrom": null,
       "builtIn": true,
       "permissions": [
@@ -487,6 +545,7 @@
       "description": "A fixture in the old ccb shape.",
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "permissions": [
         "composer"
@@ -556,6 +615,7 @@
       "description": null,
       "enabled": true,
       "failure": null,
+      "hostState": "starting",
       "installedFrom": null,
       "skipped": [
         "View \"zed.tools.nowhere\": where \"ceiling\" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section, bottomPanel, chatHeader, rightPanel.takeover or composerBar.",
@@ -745,6 +805,13 @@
     }
   ],
   "settingsSections": [
+    {
+      "plugin": "botling.deps",
+      "id": "botling.deps.board",
+      "title": "Plugin dependencies",
+      "terms": "plugin plugins dependency dependencies depends requires uses provides services slots graph board who needs whom missing provider",
+      "after": "plugins"
+    },
     {
       "plugin": "botling.git",
       "id": "botling.git.settings",

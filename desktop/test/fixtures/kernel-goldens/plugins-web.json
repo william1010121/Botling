@@ -61,6 +61,15 @@
     ]
   },
   {
+    "name": "botling.deps",
+    "version": "1.0.0",
+    "source": "<source of botling.deps>",
+    "styles": [],
+    "settings": {},
+    "builtIn": true,
+    "commands": []
+  },
+  {
     "name": "botling.git",
     "version": "1.0.0",
     "source": "<source of botling.git>",
@@ -77,6 +86,17 @@
     "version": "1.19.1",
     "source": "<source of botling.note>",
     "styles": [],
+    "settings": {},
+    "builtIn": true,
+    "commands": []
+  },
+  {
+    "name": "botling.pin-area",
+    "version": "1.0.0",
+    "source": "<source of botling.pin-area>",
+    "styles": [
+      "botling-chat://chat/plugin-files/botling.pin-area/dist/pin-area.css"
+    ],
     "settings": {},
     "builtIn": true,
     "commands": []

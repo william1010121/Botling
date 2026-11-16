@@ -10,6 +10,13 @@
   ],
   "settingsSections": [
     {
+      "plugin": "botling.deps",
+      "id": "botling.deps.board",
+      "title": "Plugin dependencies",
+      "terms": "plugin plugins dependency dependencies depends requires uses provides services slots graph board who needs whom missing provider",
+      "after": "plugins"
+    },
+    {
       "plugin": "botling.git",
       "id": "botling.git.settings",
       "title": "Worktrees",

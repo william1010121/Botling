@@ -113,7 +113,7 @@ class Chat {
     });
     this.composer = new Composer(document.getElementById("composer-slot")!);
     // Where botling.board draws pins (its web part fills it; empty, it takes no room).
-    const slots = { pinArea: slot("pin-area", "div"), overlay: document.body };
+    const slots = { pinArea: slot("pin-area", "div"), topArea: slot("top-area", "div", "scroller"), overlay: document.body };
     const composer = this.composer;
     this.plugins = new PluginHost({
       composer: {
@@ -123,6 +123,7 @@ class Chat {
         insert: (text) => composer.insert(text),
         addExtension: (extension) => composer.addExtension(extension),
         showPopover: (content) => composer.showPopover(content),
+        mentionSource: (source) => composer.addMentionSource(source),
         chips: { add: (chip) => composer.addChip(chip), list: () => composer.chipsHere() },
       },
       redraw: () => this.redraw(),
@@ -652,13 +653,13 @@ class Chat {
   }
 }
 
-/** An element of the page by id, made before the input box when the page has none. */
-function slot(id: string, tag: string): HTMLElement {
+/** An element of the page by id, made before the element `before` (default: the input box) when the page has none. */
+function slot(id: string, tag: string, before = "composer-slot"): HTMLElement {
   const found = document.getElementById(id);
   if (found) return found;
   const made = document.createElement(tag);
   made.id = id;
-  const composer = document.getElementById("composer-slot");
+  const composer = document.getElementById(before);
   if (composer) composer.before(made);
   else document.body.append(made);
   return made;

@@ -38,6 +38,7 @@ beforeEach(() => {
       insert: (text) => composer.insert(text),
       addExtension: (extension) => composer.addExtension(extension),
       showPopover: (content) => composer.showPopover(content),
+      mentionSource: (source) => composer.addMentionSource(source),
       chips: { add: (chip) => composer.addChip(chip), list: () => composer.chipsHere() },
     },
     redraw: () => { redraws += 1; },

@@ -41,7 +41,7 @@ beforeEach(async () => {
   host = new PluginHost({
     composer: {} as never,
     redraw: () => { redraws++; },
-    slots: { pinArea: document.getElementById("pin-area")!, overlay: document.body },
+    slots: { pinArea: document.getElementById("pin-area")!, topArea: document.createElement("div"), overlay: document.body },
   });
   await host.sync([spec], async () => activate);
 });

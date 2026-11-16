@@ -1,0 +1,5 @@
+{
+  "copy": [
+    { "from": "builtin-plugins/botling.pin-area/src/pin-area.css", "to": "dist/pin-area.css" }
+  ]
+}

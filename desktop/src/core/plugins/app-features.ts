@@ -49,7 +49,7 @@ export const FEATURE_AREAS: readonly FeatureArea[] = [
   area("host", "keybindings", "Keybindings", ["list", "set"]),
   area("host", "hooks", "Send and reply hooks", ["beforeSend", "afterReply"]),
   area("host", "replyTags", "Reply tags", ["on"]),
-  area("web", "composer", "Chat input box", ["insert", "getText", "addExtension", "showPopover", "chips", "view", "element", "onKeyDown", "onPaste"]),
+  area("web", "composer", "Chat input box", ["insert", "getText", "addExtension", "showPopover", "mentionSource", "chips", "view", "element", "onKeyDown", "onPaste"]),
   area("web", "messages", "Chat messages (drawing)", ["use", "userText", "afterRender", "cardBar", "render", "media", "taskChip"]),
   area("web", "decorations", "Chat decorations", ["register"]),
   area("web", "page", "Chat page", ["slots", "onState", "onWindowVisible", "post", "requestApproval", "t", "language", "pieces", "isComposingEnter", "visible", "refresh", "components"]),
@@ -142,6 +142,11 @@ export const BUILTIN_FEATURES: Readonly<Record<string, readonly string[]>> = {
     "api.notes.outline", "api.notes.read", "api.notes.write",
   ],
   "botling.orchestration": [],
+  "botling.pin-area": [
+    "api.chat.setData", "api.hooks.beforeSend", "api.replyTags.on",
+    "ccb.composer.mentionSource", "ccb.messages.afterRender", "ccb.messages.userText",
+    "ccb.page.language", "ccb.page.onState", "ccb.page.post", "ccb.page.slots",
+  ],
   "botling.report": [],
   "botling.routines": [
     "api.routines.change", "api.routines.list",

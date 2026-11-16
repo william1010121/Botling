@@ -35,6 +35,13 @@
     "skipped": []
   },
   {
+    "name": "botling.deps",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.deps",
+    "skipped": []
+  },
+  {
     "name": "botling.design",
     "builtIn": true,
     "enabled": true,
@@ -67,6 +74,13 @@
     "builtIn": true,
     "enabled": true,
     "folder": "<builtins>/botling.orchestration",
+    "skipped": []
+  },
+  {
+    "name": "botling.pin-area",
+    "builtIn": true,
+    "enabled": true,
+    "folder": "<builtins>/botling.pin-area",
     "skipped": []
   },
   {

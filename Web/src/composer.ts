@@ -100,6 +100,8 @@ export class Composer {
   private slashItems: Mention[] = [];
   private readonly mentionList: HTMLElement;
   private mentionMatches: Mention[] = [];
+  /** Rows plugins add after "@" (`ccb.composer.mentionSource`), asked on every keystroke. */
+  private readonly mentionSources = new Set<MentionSource>();
   private mentionActive = 0;
   /** Where the "@…" or "/…" being typed starts. */
   private mentionFrom = -1;
@@ -345,7 +347,7 @@ export class Composer {
     const bots = this.allMentions.length > 0;
     // Like the app: an @ right after Chinese text counts; one inside a word (a@b) does not.
     const atAt = bots ? /(?:^|[^A-Za-z0-9_@])@@([^@\s]{0,40})$/.exec(before) : null;
-    const at = (bots || composerHost?.searchFiles) && !atAt ? /(?:^|[^A-Za-z0-9_@])@([^@\s]{0,40})$/.exec(before) : null;
+    const at = (bots || composerHost?.searchFiles || this.mentionSources.size > 0) && !atAt ? /(?:^|[^A-Za-z0-9_@])@([^@\s]{0,40})$/.exec(before) : null;
     // A / starts a word (after a space, a bracket or quote, or Chinese); a/b and ~/x are paths.
     const slash = !atAt && !at && this.slashItems.length ? slashQuery.exec(before) : null;
     const match = atAt ?? at ?? slash;
@@ -354,7 +356,10 @@ export class Composer {
     const items = atAt || (at && query) ? this.allMentions : at ? this.mentions
       : query ? this.slashItems : this.slashItems.filter((item) => item.kind === "command");
     // A name typed in full needs no list (Return then sends), unless it is a command that runs when picked.
-    const complete = !atAt && query !== null && items.some((mention) => mention.name.toLowerCase() === query && !mention.command);
+    // A plugin's rows (after a single @), first; one whose name is typed in full needs no list either.
+    const extra = at && query !== null ? this.extraMentions(query) : [];
+    const complete = !atAt && query !== null && (items.some((mention) => mention.name.toLowerCase() === query && !mention.command)
+      || extra.some((mention) => mention.name.toLowerCase() === query));
     const found = query === null || complete ? [] : items.filter((mention) => mention.name.toLowerCase().startsWith(query));
     if (at && query) {
       // The short list's names first.
@@ -377,7 +382,7 @@ export class Composer {
         }, 120);
       }
     }
-    this.mentionMatches = atAt ? found : [...found.slice(0, slash ? SLASH_ROWS : 8),
+    this.mentionMatches = atAt ? found : [...(complete ? [] : extra), ...found.slice(0, slash ? SLASH_ROWS : 8),
       ...(fileKey ? this.fileResults.map(file => ({name: file.path, kind: "file" as const, file})) : [])];
     this.mentionFrom = match ? head - match[1].length - (atAt ? 2 : 1) : -1;
     this.mentionActive = Math.min(this.mentionActive, Math.max(0, this.mentionMatches.length - 1));
@@ -404,7 +409,15 @@ export class Composer {
       } else label.textContent = sigil(mention) + mention.name;
       option.setAttribute("aria-selected", String(index === this.mentionActive));
       option.append(label);
-      if (mention.kind !== "bot" && mention.kind !== "file") {
+      if (mention.kind === "extra") {
+        if (mention.about) {
+          const hint = document.createElement("span");
+          hint.className = "mention-hint";
+          hint.textContent = mention.about;
+          option.append(hint);
+          option.title = mention.about;
+        }
+      } else if (mention.kind !== "bot" && mention.kind !== "file") {
         // No tag: a command keeps a faint hint of what it does, a component only its name.
         if (mention.about) {
           const hint = document.createElement("span");
@@ -487,6 +500,30 @@ export class Composer {
     return true;
   }
 
+  /** Adds a source of "@" rows; returns the function that removes it. A source that throws offers nothing. */
+  addMentionSource(source: MentionSource): () => void {
+    this.mentionSources.add(source);
+    this.refreshMentions();
+    return () => { this.mentionSources.delete(source); this.refreshMentions(); };
+  }
+
+  private extraMentions(query: string): Mention[] {
+    const rows: Mention[] = [];
+    const seen = new Set<string>();
+    for (const source of [...this.mentionSources]) {
+      let offered: ReturnType<MentionSource> = [];
+      try { offered = source(query); } catch { offered = []; }
+      if (!Array.isArray(offered)) continue;
+      for (const row of offered) {
+        if (typeof row?.name !== "string" || !row.name || seen.has(row.name.toLowerCase())) continue;
+        seen.add(row.name.toLowerCase());
+        rows.push({ name: row.name, kind: "extra", ...(typeof row.about === "string" ? { about: row.about } : {}), ...(typeof row.insert === "string" ? { insert: row.insert } : {}) });
+        if (rows.length >= EXTRA_ROWS) return rows;
+      }
+    }
+    return rows;
+  }
+
   private pickMention(mention: Mention): void {
     const head = this.view.state.selection.main.head;
     if (this.mentionFrom < 0) return;
@@ -494,7 +531,7 @@ export class Composer {
     const line = this.view.state.doc.lineAt(head);
     const rest = /^[A-Za-z0-9_\-]*/.exec(line.text.slice(head - line.from))?.[0].length ?? 0;
     // A plugin's / command runs instead of going into the message: what was typed for it goes.
-    const insert = mention.command ? "" : mention.file ? fileReference(mention.file.path, mention.file.url) : `${sigil(mention)}${mention.name} `;
+    const insert = mention.insert !== undefined ? mention.insert : mention.command ? "" : mention.file ? fileReference(mention.file.path, mention.file.url) : `${sigil(mention)}${mention.name} `;
     if (mention.command) post({ type: "runCommand", id: mention.command, via: "slash" });
     this.view.dispatch({ changes: { from: this.mentionFrom, to: head + rest, insert }, selection: { anchor: this.mentionFrom + insert.length } });
     this.mentionMatches = [];
@@ -562,8 +599,10 @@ const SLASH_ROWS = 5;
 /** Something the list offers: a bot (after @), or a command or component (after /). */
 export interface Mention {
   name: string;
-  kind: "bot" | "command" | "component" | "file";
+  kind: "bot" | "command" | "component" | "file" | "extra";
   file?: ProjectFile;
+  /** A plugin's row (`extra`): the words that replace the "@…" typed when it is picked (default `@name `). */
+  insert?: string;
   about?: string;
   /** A plugin's command, run when picked (plugin-platform.md §3.3 `slash`). */
   command?: string;
@@ -572,8 +611,14 @@ export interface Mention {
 }
 
 function sigil(mention: Mention): string {
-  return mention.kind === "bot" ? "@" : "/";
+  return mention.kind === "bot" || mention.kind === "extra" ? "@" : "/";
 }
+
+/** What a plugin offers after "@": the rows for what was typed (lower case, without the "@"). */
+export type MentionSource = (query: string) => { name: string; about?: string; insert?: string }[];
+
+/** The most rows plugins add to the "@" list. */
+const EXTRA_ROWS = 8;
 
 /** Each name once, in the order given (the first kind wins). */
 function unique(entries: Mention[]): Mention[] {

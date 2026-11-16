@@ -121,6 +121,7 @@ export function pluginGuideFiles(): Record<string, string> {
     "`ccb` has:",
     "- `ccb.composer`: `element`, `view` (CodeMirror 6 EditorView), `getText()`, `insert(text)`,",
     "  `addExtension(ext)` (adds a CodeMirror extension), `showPopover(htmlOrElement)` (a floating box by the cursor),",
+    "  `mentionSource(query => [{ name, about?, insert? }])` (rows after a single @ in the input box, before the bots'; `insert` replaces the typed @… when picked, default `@name `),",
     "  `onKeyDown(handler)` (return true to swallow the key). All of these return a dispose function.",
     "- `ccb.codemirror`: `{ state, view, commands }`; use this one and do not bundle your own CodeMirror (versions must match).",
     "- `ccb.messages.use(markdownItPlugin)`: adds a markdown-it plugin. `ccb.messages.afterRender((element, message) => …)`: changes the DOM after a message is drawn.",

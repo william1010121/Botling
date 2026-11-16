@@ -161,7 +161,7 @@ const ccb = {
   // Only the chat page can lend these; in a panel frame they do nothing, except insertQuote: text put into the input box of
   // the bot this frame was opened for (its botId; no other bot), after its draft. Resolves { inserted }.
   composer: {
-    element: null, view: null, getText: () => "", insert() {}, addExtension: nothing, showPopover: nothing, onKeyDown: nothing,
+    element: null, view: null, getText: () => "", insert() {}, addExtension: nothing, showPopover: nothing, mentionSource: nothing, onKeyDown: nothing,
     insertQuote(text, opts) {
       const words = String(text ?? ""), botId = String(opts?.botId ?? CONTEXT.botId ?? "");
       // What the page would not take as a request (nothing to quote, too long, no bot) is simply not inserted.

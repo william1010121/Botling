@@ -1,0 +1,108 @@
+/* botling.pin-area: the strip above the chat, the floating panel, the 釘選 button on a message.
+   The chat page's own colours (tokens.css) are used throughout; light follows the page. */
+
+#top-area { width: 100%; padding: 0 24px; flex: none; }
+.pt-strip[hidden] { display: none; }
+.pt-strip { display: flex; flex-direction: column; gap: 4px; padding: 10px 0 0; }
+@media (width < 480px) { #top-area { padding: 0 16px; } }
+.pt-head { display: flex; align-items: center; gap: 6px; height: 18px; margin-bottom: 2px; font-size: 12px; color: var(--faint); }
+.pt-head:empty { display: none; }
+.pt-head-label { flex: 1; }
+.pt-head-keys { font: 11px "SF Mono", "JetBrains Mono", monospace; color: var(--faint); }
+.pt-head.has-wait .pt-head-label { color: var(--orange-text); }
+.pt-rows { display: flex; flex-direction: column; gap: 4px; }
+
+/* One row: faded until the pointer or the keyboard is on it; a card that waits for you stays clear, with an orange edge. */
+.pt-row {
+  display: flex; flex-direction: column; justify-content: center; gap: 2px; width: 100%; min-height: 40px; padding: 7px 12px;
+  text-align: left; color: var(--text); border: 1px solid transparent; border-left: 3px solid transparent; border-radius: 0 10px 10px 0; background: transparent; cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+.pt-row .pt-fd { opacity: .36; transition: opacity .12s ease; }
+.pt-row:hover .pt-fd, .pt-row:focus-visible .pt-fd, .pt-row.on .pt-fd, .pt-row.pt-wait .pt-fd { opacity: 1; }
+.pt-row:hover, .pt-row:focus-visible, .pt-row.on { background: var(--side); border-color: var(--line); }
+.pt-row:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.pt-row.on { border-color: var(--accent-line); }
+.pt-row.pt-wait { border-left-color: var(--orange); }
+.pt-row.on.pt-wait, .pt-row.pt-wait:hover { border-left-color: var(--orange); }
+.pt-l1 { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pt-dot { width: 8px; height: 8px; border-radius: 4px; flex: none; background: var(--blue); }
+.pt-dot-wait { background: var(--orange); animation: pt-breathe 2.4s ease-in-out infinite; }
+.pt-dot-done { background: var(--green); }
+.pt-title { font-weight: 600; white-space: nowrap; }
+.pt-short { flex: 1; min-width: 0; font-size: 14px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-wait .pt-short { color: var(--orange-text); }
+.pt-tag { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.pt-kc { font: 11px "SF Mono", "JetBrains Mono", monospace; color: var(--faint); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; line-height: 18px; }
+.pt-unread { width: 6px; height: 6px; border-radius: 3px; background: var(--blue); flex: none; }
+.pt-l2 { display: flex; align-items: center; gap: 10px; max-height: 0; opacity: 0; overflow: hidden; font-size: 13px; color: var(--muted); transition: max-height .16s cubic-bezier(.2,.8,.2,1), opacity .12s ease; }
+.pt-row:hover .pt-l2, .pt-row:focus-visible .pt-l2 { max-height: 24px; opacity: 1; }
+.pt-l2-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pt-bars { display: flex; gap: 3px; flex: none; }
+.pt-bars:empty { display: none; }
+.pt-bar { width: 16px; height: 3px; border-radius: 2px; background: var(--border); }
+.pt-bars-l .pt-bar { width: 24px; height: 4px; }
+.pt-bar.on-run { background: var(--blue); }
+.pt-bar.on-done { background: var(--green); }
+@keyframes pt-breathe { 0%, 100% { box-shadow: 0 0 0 0 rgb(242 166 74 / 0); } 50% { box-shadow: 0 0 0 4px rgb(242 166 74 / .22); } }
+
+/* The line after unpinning ("釘回"). */
+.pt-toast { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; color: var(--faint); min-height: 28px; }
+.pt-toast[hidden] { display: none; }
+.pt-toast-act { background: none; border: 0; color: var(--link); font: inherit; font-size: 12px; padding: 4px; min-height: 28px; cursor: pointer; }
+
+/* The panel: on the right, over the page; the page yields to the left while it is open (a narrow window keeps its width and is covered). */
+body { transition: padding-right .2s cubic-bezier(.2,.8,.2,1); }
+@media (width >= 900px) { body.pt-panel-open { padding-right: 452px; } }
+.pt-panel {
+  position: fixed; z-index: 30; top: 64px; right: 16px; bottom: 16px; width: min(420px, calc(100vw - 32px)); display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bubble); border: 1px solid var(--strong-line); border-radius: 14px; box-shadow: 0 18px 48px rgb(0 0 0 / calc(.55 * var(--shade, 1)));
+  animation: pt-slide-in .2s cubic-bezier(.2,.8,.2,1);
+}
+.pt-panel.x { animation: pt-slide-out .14s ease forwards; }
+@keyframes pt-slide-in { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+@keyframes pt-slide-out { to { opacity: 0; transform: translateX(18px); } }
+.pt-phead { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line); flex: none; }
+.pt-ptitle { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pt-ptag { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.pt-ptag-app { color: var(--verify); background: var(--verify-bg); border-radius: 6px; padding: 1px 8px; }
+.pt-ptag-bot { border: 1px dashed var(--strong-line); border-radius: 6px; padding: 0 8px; }
+.pt-grow { flex: 1; }
+.pt-ib { background: none; border: 0; color: var(--muted); width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: background-color .12s ease, color .12s ease; flex: none; }
+.pt-ib:hover, .pt-ib:focus-visible { background: var(--selected); color: var(--text); }
+.pt-psummary { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--line); flex: none; }
+.pt-pstatus { font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.pt-pbefore { font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
+.pt-pbefore[hidden] { display: none; }
+.pt-pbars { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pt-pbars:empty { display: none; }
+.pt-left { font-size: 12px; color: var(--muted); }
+.pt-thread { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.pt-empty { font-size: 13px; color: var(--faint); }
+.pt-msg { display: flex; flex-direction: column; gap: 3px; animation: pt-fade-up .18s cubic-bezier(.2,.8,.2,1); }
+.pt-me { align-items: flex-end; }
+.pt-bot { max-width: 90%; }
+.pt-bubble { font-size: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.pt-me .pt-bubble { background: var(--user-bubble); padding: 8px 12px; border-radius: 12px; max-width: 82%; }
+.pt-receipt { font-size: 11px; color: var(--faint); }
+.pt-receipt.seen { color: var(--link); }
+@keyframes pt-fade-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.pt-updates { padding: 0 14px 4px; flex: none; }
+.pt-updates[hidden] { display: none; }
+.pt-updates-toggle { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; color: var(--muted); font-size: 12px; padding: 4px 0; min-height: 28px; cursor: pointer; text-align: left; }
+.pt-updates-list { margin: 0 0 6px; padding: 0 0 0 18px; font-size: 12px; color: var(--faint); display: flex; flex-direction: column; gap: 2px; }
+.pt-hint { font-size: 12px; color: var(--orange-text); padding: 0 14px; min-height: 0; }
+.pt-hint:empty, .pt-hint[hidden] { display: none; }
+.pt-form { display: flex; gap: 10px; align-items: center; margin: 0 12px 12px; padding: 6px 6px 6px 14px; background: var(--ground); border: 1px solid var(--border); border-radius: 14px; flex: none; transition: border-color .12s ease; }
+.pt-form:focus-within { border-color: var(--accent-line); }
+.pt-input { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--text); font: inherit; padding: 8px 0; }
+.pt-input::placeholder { color: var(--faint); }
+.pt-send { width: 38px; height: 38px; border-radius: 10px; border: 0; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; flex: none; cursor: pointer; }
+
+/* The 釘選 button of a message: it shows with the message's other hover buttons (.reply-button). */
+.row > .pt-pin-msg { order: -1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pt-panel, .pt-panel.x, .pt-msg, .pt-dot-wait { animation-duration: 1ms !important; }
+  .pt-row, .pt-row .pt-fd, .pt-l2, body { transition-duration: 1ms !important; }
+}
