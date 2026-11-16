@@ -14,6 +14,7 @@ import type { Bot } from "../../src/core/bot";
 import type { Turn } from "../../src/core/bot/types";
 import { CoreSend } from "../../src/core/server/send";
 import { PluginWorkers, type OrchestrationWorld, type PluginFacts, type WorkerPort } from "../../src/core/orchestration/plugin-workers";
+import { writeHandover, takeHandover } from "../../src/core/hot-swap";
 import { noReport } from "../../src/core/worker-core/lives";
 import { tempDir } from "../helpers";
 
@@ -61,7 +62,7 @@ function originCore(granted: string[] = []) {
   });
   const sendToWorker = vi.spyOn(workers.core, "sendToWorker").mockResolvedValue({ ok: true, how: "steered", run: 1 } as never);
   const message = (task_id: string) => workers.tool("app_send_message", { task_id, message: "one more thing" });
-  return { core, main, ask, send, user, startNext, workers, handoff, handoffNow, seed, sendToWorker, message, queue: () => main.queue };
+  return { dir, core, main, ask, send, user, startNext, workers, handoff, handoffNow, seed, sendToWorker, message, queue: () => main.queue };
 }
 
 describe("item 4: the plugin a turn stems from is fixed when the turn starts", () => {
@@ -157,6 +158,23 @@ describe("item 4: the plugin a turn stems from is fixed when the turn starts", (
     t.main.adoptSwap(entries);
     expect(t.queue().map((turn) => (turn as { plugin?: string }).plugin)).toEqual(["pa"]);
   });
+
+  it("the plugin of a waiting turn survives the swap file (the hand-over written and read back)", async () => {
+    const t = originCore();
+    await t.send("pa");
+    writeHandover(t.dir, t.main.swapEntries(false));
+    expect(takeHandover(t.dir)!.entries.flatMap((entry) => entry.queued).map((queued) => (queued as { plugin?: string }).plugin)).toEqual(["pa"]);
+  });
+
+  it("the plugin of a waiting turn survives a restart (the journal's entry carries it, and the turn made from it is the plugin's)", async () => {
+    const t = originCore();
+    await t.send("pa");
+    const entries = t.main.restartEntries();
+    expect(entries.flatMap((entry) => entry.queued).map((queued) => (queued as { plugin?: string }).plugin)).toEqual(["pa"]);
+    t.main.queue.length = 0;
+    t.main.adoptRestart({ ...entries[0]!, state: "pending" });
+    expect(t.queue().map((turn) => turn.plugin)).toEqual(["pa"]);
+  });
 });
 
 describe("item 5: app_send_message under a plugin's mark", () => {
@@ -172,6 +190,17 @@ describe("item 5: app_send_message under a plugin's mark", () => {
     t.startNext();
     await expect(t.message("OWN")).resolves.toBeTruthy();
     expect(t.sendToWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("what the gate sent is the answer, and the message is not sent a second time", async () => {
+    const t = originCore();
+    t.seed("MINE", "pa");
+    const admitted = vi.spyOn(t.core.plugins.workers(), "admitMessage").mockResolvedValue({ run: 2, how: "newRun" });
+    await t.send("pa");
+    t.startNext();
+    await expect(t.message("MINE")).resolves.toMatchObject({ task_id: "MINE", run: 2, status: "accepted" });
+    expect(admitted).toHaveBeenCalledWith("pa", "MINE", "one more thing");
+    expect(t.sendToWorker).not.toHaveBeenCalled();
   });
 
   it("a plugin's turn gives another plugin's worker no new run either", async () => {
